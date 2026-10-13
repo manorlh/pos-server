@@ -189,6 +189,28 @@ export function qualifiedExportList(tables: { tableId: string; keys: string[] }[
   return tables.flatMap((t) => t.keys.map((k) => qualifiedKey(t.tableId, k)));
 }
 
+/** The most columns the server keeps in one company default (P:\specs\reports-upgrade.md §4.3). */
+export const MAX_DEFAULT_COLUMNS = 100;
+
+/**
+ * What "שמור כברירת מחדל לחברה" saves: every table's chosen columns — or, for a report of many
+ * tables whose list is longer than the server keeps, only the tables whose choice is narrower than
+ * all their columns (a table the default does not name exports what the reader sees, else all).
+ * Nothing narrowed: the first table's columns, so the saved default is never empty (empty = delete).
+ * Still too long: null — the reader narrows the choice.
+ */
+export function companyDefaultColumns(
+  tables: { tableId: string; keys: string[]; all: string[] }[],
+  max: number = MAX_DEFAULT_COLUMNS,
+): string[] | null {
+  const full = qualifiedExportList(tables);
+  if (full.length <= max) return full;
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
+  const narrowed = tables.filter((t) => !same(t.keys, t.all));
+  const list = qualifiedExportList(narrowed.length ? narrowed : tables.slice(0, 1));
+  return list.length <= max ? list : null;
+}
+
 // ── Sorting ──────────────────────────────────────────────────────────────────
 
 export type SortDirection = 'asc' | 'desc';

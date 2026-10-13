@@ -139,6 +139,8 @@ export interface ExportTable {
   heading?: string[];
   /** A fill per row (ARGB) — a status colour; same order as `rows`. */
   rowFills?: (string | null | undefined)[];
+  /** Default true. */
+  autoFilter?: boolean;
 }
 
 /** The table as an Excel sheet with only `keys` (bare column keys, in order); null = all. */
@@ -151,6 +153,7 @@ export function exportTableSheet(table: ExportTable, keys: readonly string[] | n
       rows: table.rows,
       totals: table.totals,
       ...(table.rowFills?.some(Boolean) ? { rowFills: table.rowFills } : {}),
+      ...(table.autoFilter === false ? { autoFilter: false } : {}),
     },
     keys,
   );

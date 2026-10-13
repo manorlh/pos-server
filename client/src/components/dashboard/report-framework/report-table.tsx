@@ -127,6 +127,12 @@ export function ReportTable<R>({
   const [chooser, setChooser] = useState(false);
   const hasTotals = Boolean(table.totalsLabel) && table.rows.length > 0;
   const expandable = Boolean(table.expand);
+  // A row's own click (a dialog, a checkbox), never one meant for a link or a field inside it.
+  const rowClick = !expandable && table.onRowClick ? table.onRowClick : null;
+  const onRow = (row: R) => (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('a, button, input, select, textarea, label, [role="checkbox"]')) return;
+    rowClick?.(row);
+  };
   const colSpan = visible.length + (expandable ? 1 : 0);
 
   const cellOf = (c: ReportColumn<R>, row: R) => (c.cell ? c.cell(row) : formatReportValue(c.kind, c.value(row)));
@@ -222,10 +228,10 @@ export function ReportTable<R>({
                     <tr
                       className={cn(
                         'border-b transition-colors hover:bg-muted/50',
-                        expandable && 'cursor-pointer',
+                        (expandable || rowClick) && 'cursor-pointer',
                         table.rowClassName?.(row),
                       )}
-                      onClick={expandable ? () => toggleOpen(key) : undefined}
+                      onClick={expandable ? () => toggleOpen(key) : rowClick ? onRow(row) : undefined}
                       aria-expanded={expandable ? isOpen : undefined}
                     >
                       {expandable ? (
@@ -288,7 +294,11 @@ export function ReportTable<R>({
             const [first, ...rest] = visible;
             const isOpen = open.has(key);
             return (
-              <div key={key} className={cn('rounded-lg border bg-card p-3', table.rowClassName?.(row))}>
+              <div
+                key={key}
+                className={cn('rounded-lg border bg-card p-3', rowClick && 'cursor-pointer', table.rowClassName?.(row))}
+                onClick={rowClick ? onRow(row) : undefined}
+              >
                 {first ? <div className="mb-2 font-medium break-words">{cellOf(first, row)}</div> : null}
                 <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
                   {rest.map((c) => (

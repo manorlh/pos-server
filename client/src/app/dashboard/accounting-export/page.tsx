@@ -13,6 +13,13 @@
  * optionally consolidated into company entries with each line's shop as cost centre —
  * and "לפי סניף" writes a batch per shop, downloaded together as one zip. The lock is
  * per Z across both levels.
+ *
+ * On the report framework where it fits (P:\specs\reports-upgrade.md §5): the unified filter
+ * bar (days with quick ranges, the Z date basis, "only not exported"; "הפק דוח" loads the Zs —
+ * the last 30 days at once, as always), the export's options in the URL too (they take effect
+ * at once), so a link opens the same form; the Zs and the past batches as `ReportTable`s
+ * (sortable, columns, phone cards) with their checkboxes and download buttons. The export
+ * itself — preview, problems, the re-export confirmation, the downloads — is as it was.
  */
 
 import { useMemo, useState } from 'react';
@@ -23,8 +30,14 @@ import { toast } from 'sonner';
 import { AlertTriangle, Download, Eye, FileArchive, Settings2 } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { formatCurrency, formatDate } from '@/lib/format';
+import { todayIso } from '@/lib/reportWindow';
+import { defaultReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
+import {
+  ACCOUNTING_EXPORT_EXTRAS,
+  parseAccountingExportForm,
+  type AccountingExportExtraKey,
+} from '@/lib/accountingExportForm';
 import {
   createAccountingExport,
   downloadAccountingExport,
@@ -34,8 +47,6 @@ import {
   fetchAccountingZs,
   previewAccountingExport,
   type AccountingExportLevel,
-  type AccountingFormat,
-  type AccountingGrouping,
   type AlreadyExportedBatch,
   type AccountingZRow,
   type ExportBatch,
@@ -45,12 +56,17 @@ import {
 } from '@/lib/accountingApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ZDateBasisToggle } from '@/components/dashboard/z-report/by-date/z-date-basis-toggle';
-import type { ZDateBasis } from '@/lib/zByDate';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
+import {
+  ReportFilterBar,
+  ReportTable,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -66,6 +82,15 @@ import {
 const SELECT =
   'border-input bg-background h-9 rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
+const REPORT_KEY = 'accounting-export';
+
+/** The last 30 days by default (as before); which Zs and the export's options as extras. */
+const SPEC: ReportFilterSpec = {
+  filters: [],
+  defaultDaysBack: 30,
+  extras: ACCOUNTING_EXPORT_EXTRAS,
+};
+
 type ApiError = { response?: { status?: number; data?: { detail?: unknown } } };
 
 function problemsOf(err: unknown): ExportProblem[] | null {
@@ -80,30 +105,43 @@ export default function AccountingExportPage() {
   const { scope, resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'company' });
   const shopId = effective.shopId ?? undefined;
   const companyId = scope.shop?.companyId ?? effective.companyId ?? null;
+  const tb = useTranslations('zByDate');
 
-  const [from, setFrom] = useState(daysBackIso(30));
-  const [to, setTo] = useState(todayIso());
-  const [onlyUnexported, setOnlyUnexported] = useState(true);
+  /**
+   * The form is the URL's (a link opens it as it was). The range and which Zs are listed run
+   * with "הפק דוח" (before the first run: the defaults, loaded at once as always); the export's
+   * options are written at once (`apply`) — they are what the next preview / export sends.
+   */
+  const filters = useReportFilters(SPEC);
+  const { from, to } = filters.applied?.values ?? defaultReportFilters(SPEC, todayIso());
+  const listed = parseAccountingExportForm(filters.applied?.extras ?? ACCOUNTING_EXPORT_EXTRAS);
+  const form = parseAccountingExportForm(filters.draftExtras);
+  const { format, grouping, encoding, method, level, consolidate } = form;
+  const setOption = (key: AccountingExportExtraKey, value: string) => filters.apply({ extras: { [key]: value } });
+
+  /**
+   * Which Zs the range picks: by business date (as always), or by the date each Z was produced.
+   * Only the choice of Zs — the export of a Z, and the uniform file, are the same either way.
+   */
+  const zDateBasis = listed.basis;
+  const onlyUnexported = listed.onlyUnexported;
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [format, setFormat] = useState<AccountingFormat>('hashavshevet');
-  const [grouping, setGrouping] = useState<AccountingGrouping>('z');
-  const [encoding, setEncoding] = useState<'' | 'cp1255' | 'cp862'>('');
-  const [method, setMethod] = useState<'' | 'flexible' | 'detailed'>('');
   const [preview, setPreview] = useState<ExportPreview | null>(null);
   const [problems, setProblems] = useState<ExportProblem[] | null>(null);
   const [confirmReexport, setConfirmReexport] = useState<{
     batchNumbers: number[];
     batches: AlreadyExportedBatch[];
   } | null>(null);
-  const [level, setLevel] = useState<'' | AccountingExportLevel>('');
-  const [consolidate, setConsolidate] = useState<'' | 'true' | 'false'>('');
 
-  /**
-   * Which Zs the range picks: by business date (as always), or by the date each Z was produced.
-   * Only the choice of Zs — the export of a Z, and the uniform file, are the same either way.
-   */
-  const [zDateBasis, setZDateBasis] = useState<ZDateBasis>('business');
-  const tb = useTranslations('zByDate');
+  // Another basis / "only not exported" in the list: the choice starts over (a new basis
+  // drops the preview too), as the page's toggles always did.
+  const [listedSeen, setListedSeen] = useState({ basis: zDateBasis, onlyUnexported });
+  if (listedSeen.basis !== zDateBasis || listedSeen.onlyUnexported !== onlyUnexported) {
+    if (listedSeen.basis !== zDateBasis) setPreview(null);
+    setListedSeen({ basis: zDateBasis, onlyUnexported });
+    setSelected(new Set());
+  }
 
   const zs = useQuery({
     queryKey: ['accounting-zs', companyId, shopId, from, to, onlyUnexported, zDateBasis],
@@ -217,8 +255,152 @@ export default function AccountingExportPage() {
     return where ? `${where} — ${what}` : what;
   };
 
+  /** The Zs to choose: the checkbox and the Z's link in the first column. */
+  const zColumns: ReportColumn<AccountingZRow>[] = [
+    {
+      key: 'z',
+      header: t('col.z'),
+      required: true,
+      className: 'font-medium',
+      value: (z) => z.shopSequenceNumber ?? null,
+      cell: (z) => (
+        <span className="inline-flex items-center gap-2">
+          <input
+            type="checkbox"
+            aria-label={`Z ${z.shopSequenceNumber ?? '—'}`}
+            checked={selected.has(z.id)}
+            onChange={() => toggle(z.id)}
+          />
+          <Link href={`/dashboard/z-reports/${z.id}`} className="hover:underline">
+            Z {z.shopSequenceNumber ?? '—'}
+          </Link>
+        </span>
+      ),
+    },
+    { key: 'shop', header: t('col.shop'), value: (z) => z.shopName ?? null },
+    { key: 'businessDate', header: t('col.businessDate'), kind: 'date', value: (z) => z.businessDate },
+    { key: 'productionDate', header: tb('accounting.productionDate'), kind: 'date', value: (z) => z.productionDate ?? null },
+    {
+      key: 'net',
+      header: t('col.net'),
+      kind: 'money',
+      value: (z) => z.netSales ?? null,
+      total: selectedRows.length > 0 ? selectedNet : undefined,
+      totalCell: selectedRows.length > 0 ? <span className="font-semibold">{formatCurrency(selectedNet)}</span> : undefined,
+    },
+    { key: 'vat', header: t('col.vat'), kind: 'money', value: (z) => z.vatTotal ?? null },
+    {
+      key: 'status',
+      header: t('col.status'),
+      value: (z) =>
+        z.exported.length === 0
+          ? t('notExported')
+          : t('exportedIn', { numbers: z.exported.map((b) => `${b.batchNumber} (${levelLabel(b.level)})`).join(', ') }),
+      cell: (z) =>
+        z.exported.length === 0 ? (
+          <span className="text-muted-foreground text-xs">{t('notExported')}</span>
+        ) : (
+          <Badge variant="secondary">
+            {t('exportedIn', {
+              numbers: z.exported.map((b) => `${b.batchNumber} (${levelLabel(b.level)})`).join(', '),
+            })}
+          </Badge>
+        ),
+    },
+  ];
+  const zTable: ReportTableSpec<AccountingZRow> = {
+    id: 'main',
+    columns: zColumns,
+    rows,
+    rowKey: (z) => z.id,
+    // A click anywhere on the row ticks it, as the list always did.
+    onRowClick: (z) => toggle(z.id),
+    // The chosen Zs' count and net, while there are any (as the footer always was).
+    totalsLabel: selectedRows.length > 0 ? t('selectedCount', { count: selectedRows.length }) : undefined,
+    emptyText: t('noZs'),
+    noExport: true,
+  };
+
+  /** Past batches, each downloaded again as it was written. */
+  const batchColumns: ReportColumn<ExportBatch>[] = [
+    {
+      key: 'batch',
+      header: t('col.batch'),
+      required: true,
+      className: 'font-medium',
+      value: (b) => b.batchNumber,
+      cell: (b) => (
+        <>
+          {t('batchNumber', { number: b.batchNumber })}
+          {b.isReexport ? (
+            <Badge variant="outline" className="ms-2">
+              {t('reexportBadge')}
+            </Badge>
+          ) : null}
+          <Badge variant="secondary" className="ms-2">
+            {levelLabel(b.level)}
+          </Badge>
+        </>
+      ),
+    },
+    { key: 'createdAt', header: t('col.createdAt'), kind: 'datetime', className: 'text-xs', value: (b) => b.createdAt },
+    { key: 'createdBy', header: t('col.createdBy'), className: 'text-xs', value: (b) => b.createdBy ?? null },
+    { key: 'shop', header: t('col.shop'), value: (b) => b.shopName ?? t('severalShops') },
+    {
+      key: 'range',
+      header: t('col.range'),
+      kind: 'date',
+      className: 'text-xs',
+      value: (b) => b.dateFrom ?? null,
+      cell: (b) => `${formatDate(b.dateFrom)} – ${formatDate(b.dateTo)}`,
+    },
+    {
+      key: 'format',
+      header: t('fields.format'),
+      className: 'text-xs',
+      value: (b) =>
+        `${t(`format.${b.format}`)} · ${t(`grouping.${b.grouping}`)}${b.format !== 'excel' ? ` · ${b.encoding}` : ''}`,
+    },
+    { key: 'zCount', header: t('col.zCount'), kind: 'number', value: (b) => b.zCount },
+    {
+      key: 'debit',
+      header: t('col.debit'),
+      kind: 'money',
+      value: (b) => Number(b.totalDebit),
+      cell: (b) => formatCurrency(b.totalDebit),
+    },
+    {
+      key: 'download',
+      header: t('download'),
+      required: true,
+      sortable: false,
+      screenOnly: true,
+      value: () => null,
+      cell: (b) => (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() =>
+            downloadAccountingExport(b).catch((err) => toast.error(axiosErrorToToastMessage(err, tc('error'))))
+          }
+        >
+          <Download className="h-4 w-4" aria-hidden /> {t('download')}
+        </Button>
+      ),
+    },
+  ];
+  const batchTable: ReportTableSpec<ExportBatch> = {
+    id: 'batches',
+    title: t('batchesTitle'),
+    columns: batchColumns,
+    rows: batches.data ?? [],
+    rowKey: (b) => b.id,
+    emptyText: t('noBatches'),
+    noExport: true,
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4 max-sm:px-1">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('exportTitle')}</h1>
@@ -244,138 +426,48 @@ export default function AccountingExportPage() {
               </div>
             ) : null}
 
-            <Card>
-              <CardContent className="flex flex-wrap items-end gap-4 pt-6">
-                <div className="basis-full space-y-1">
-                  <ZDateBasisToggle
-                    value={zDateBasis}
-                    onChange={(basis) => {
-                      setZDateBasis(basis);
-                      setSelected(new Set());
-                      setPreview(null);
-                    }}
-                  />
-                  <p className="text-muted-foreground text-xs">
-                    {zDateBasis === 'production' ? tb('accounting.basisHintProduction') : tb('accounting.basisHintBusiness')}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">{t('from')}</Label>
-                  <DatePicker value={from} max={to} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">{t('to')}</Label>
-                  <DatePicker value={to} min={from} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
-                </div>
-                <label className="flex items-center gap-2 pb-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={onlyUnexported}
-                    onChange={(e) => {
-                      setOnlyUnexported(e.target.checked);
-                      setSelected(new Set());
-                    }}
-                  />
-                  {t('onlyUnexported')}
-                </label>
-              </CardContent>
-            </Card>
+            <ReportFilterBar filters={filters} isFetching={zs.isFetching}>
+              <div className="min-w-0 space-y-1 sm:col-span-2">
+                <ZDateBasisToggle value={form.basis} onChange={(basis) => filters.setExtra('basis', basis)} />
+                <p className="text-muted-foreground text-xs">
+                  {form.basis === 'production' ? tb('accounting.basisHintProduction') : tb('accounting.basisHintBusiness')}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 self-end pb-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={form.onlyUnexported}
+                  onChange={(e) => filters.setExtra('unexported', e.target.checked ? '1' : '0')}
+                />
+                {t('onlyUnexported')}
+              </label>
+            </ReportFilterBar>
 
             {zs.isLoading ? (
               <Skeleton className="h-48 w-full" />
             ) : zs.isError ? (
               <ReportErrorState message={axiosErrorToToastMessage(zs.error, tc('error'))} />
             ) : (
-              <div className="rounded-lg border bg-card overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10">
-                        <input
-                          type="checkbox"
-                          aria-label={t('selectAll')}
-                          checked={allSelected}
-                          onChange={() => {
-                            setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
-                            setPreview(null);
-                          }}
-                        />
-                      </TableHead>
-                      <TableHead>{t('col.z')}</TableHead>
-                      <TableHead>{t('col.shop')}</TableHead>
-                      <TableHead className={zDateBasis === 'business' ? 'text-foreground' : undefined}>
-                        {t('col.businessDate')}
-                      </TableHead>
-                      <TableHead className={zDateBasis === 'production' ? 'text-foreground' : undefined}>
-                        {tb('accounting.productionDate')}
-                      </TableHead>
-                      <TableHead className="text-end">{t('col.net')}</TableHead>
-                      <TableHead className="text-end">{t('col.vat')}</TableHead>
-                      <TableHead>{t('col.status')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-muted-foreground py-8 text-center">
-                          {t('noZs')}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      rows.map((z) => (
-                        <TableRow key={z.id} className="cursor-pointer" onClick={() => toggle(z.id)}>
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <input type="checkbox" checked={selected.has(z.id)} onChange={() => toggle(z.id)} />
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            <Link
-                              href={`/dashboard/z-reports/${z.id}`}
-                              className="hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Z {z.shopSequenceNumber ?? '—'}
-                            </Link>
-                          </TableCell>
-                          <TableCell>{z.shopName ?? '—'}</TableCell>
-                          <TableCell>{formatDate(z.businessDate)}</TableCell>
-                          <TableCell>{z.productionDate ? formatDate(z.productionDate) : '—'}</TableCell>
-                          <TableCell className="text-end tabular-nums">{formatCurrency(z.netSales)}</TableCell>
-                          <TableCell className="text-end tabular-nums">
-                            {z.vatTotal != null ? formatCurrency(z.vatTotal) : '—'}
-                          </TableCell>
-                          <TableCell>
-                            {z.exported.length === 0 ? (
-                              <span className="text-muted-foreground text-xs">{t('notExported')}</span>
-                            ) : (
-                              <Badge variant="secondary">
-                                {t('exportedIn', {
-                                  numbers: z.exported
-                                    .map((b) => `${b.batchNumber} (${levelLabel(b.level)})`)
-                                    .join(', '),
-                                })}
-                              </Badge>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                  {selectedRows.length > 0 ? (
-                    <TableFooter>
-                      <TableRow>
-                        <TableCell />
-                        <TableCell colSpan={4}>{t('selectedCount', { count: selectedRows.length })}</TableCell>
-                        <TableCell className="text-end font-semibold tabular-nums">
-                          {formatCurrency(selectedNet)}
-                        </TableCell>
-                        <TableCell colSpan={2} />
-                      </TableRow>
-                    </TableFooter>
-                  ) : null}
-                </Table>
-                {zs.data?.truncated ? (
-                  <p className="text-muted-foreground p-3 text-xs">{t('truncated')}</p>
-                ) : null}
+              <div className="min-w-0 space-y-2">
+                <ReportTable
+                  table={zTable}
+                  reportKey={REPORT_KEY}
+                  actions={
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        disabled={rows.length === 0}
+                        onChange={() => {
+                          setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)));
+                          setPreview(null);
+                        }}
+                      />
+                      {t('selectAll')}
+                    </label>
+                  }
+                />
+                {zs.data?.truncated ? <p className="text-muted-foreground text-xs">{t('truncated')}</p> : null}
               </div>
             )}
 
@@ -386,7 +478,7 @@ export default function AccountingExportPage() {
               <CardContent className="flex flex-wrap items-end gap-4">
                 <div className="space-y-1">
                   <Label className="text-xs">{t('fields.format')}</Label>
-                  <select className={SELECT} value={format} onChange={(e) => setFormat(e.target.value as AccountingFormat)}>
+                  <select className={SELECT} value={format} onChange={(e) => setOption('format', e.target.value)}>
                     <option value="hashavshevet">{t('format.hashavshevet')}</option>
                     <option value="priority">{t('format.priority')}</option>
                     <option value="excel">{t('format.excel')}</option>
@@ -398,7 +490,7 @@ export default function AccountingExportPage() {
                     className={SELECT}
                     value={grouping}
                     onChange={(e) => {
-                      setGrouping(e.target.value as AccountingGrouping);
+                      setOption('grouping', e.target.value);
                       setPreview(null);
                     }}
                   >
@@ -413,7 +505,7 @@ export default function AccountingExportPage() {
                     className={SELECT}
                     value={level}
                     onChange={(e) => {
-                      setLevel(e.target.value as typeof level);
+                      setOption('level', e.target.value);
                       setPreview(null);
                     }}
                   >
@@ -429,7 +521,7 @@ export default function AccountingExportPage() {
                       className={SELECT}
                       value={consolidate}
                       onChange={(e) => {
-                        setConsolidate(e.target.value as typeof consolidate);
+                        setOption('consolidate', e.target.value);
                         setPreview(null);
                       }}
                     >
@@ -443,7 +535,7 @@ export default function AccountingExportPage() {
                   <>
                     <div className="space-y-1">
                       <Label className="text-xs">{t('fields.encoding')}</Label>
-                      <select className={SELECT} value={encoding} onChange={(e) => setEncoding(e.target.value as typeof encoding)}>
+                      <select className={SELECT} value={encoding} onChange={(e) => setOption('encoding', e.target.value)}>
                         <option value="">{t('fromSettings')}</option>
                         <option value="cp1255">{t('encoding.cp1255')}</option>
                         <option value="cp862">{t('encoding.cp862')}</option>
@@ -451,7 +543,7 @@ export default function AccountingExportPage() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">{t('fields.method')}</Label>
-                      <select className={SELECT} value={method} onChange={(e) => setMethod(e.target.value as typeof method)}>
+                      <select className={SELECT} value={method} onChange={(e) => setOption('importMethod', e.target.value)}>
                         <option value="">{t('fromSettings')}</option>
                         <option value="flexible">{t('method.flexible')}</option>
                         <option value="detailed">{t('method.detailed')}</option>
@@ -589,78 +681,7 @@ export default function AccountingExportPage() {
               </Card>
             ) : null}
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">{t('batchesTitle')}</CardTitle>
-              </CardHeader>
-              <CardContent className="overflow-x-auto p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('col.batch')}</TableHead>
-                      <TableHead>{t('col.createdAt')}</TableHead>
-                      <TableHead>{t('col.createdBy')}</TableHead>
-                      <TableHead>{t('col.shop')}</TableHead>
-                      <TableHead>{t('col.range')}</TableHead>
-                      <TableHead>{t('fields.format')}</TableHead>
-                      <TableHead className="text-end">{t('col.zCount')}</TableHead>
-                      <TableHead className="text-end">{t('col.debit')}</TableHead>
-                      <TableHead />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(batches.data ?? []).length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={9} className="text-muted-foreground py-6 text-center">
-                          {t('noBatches')}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      (batches.data ?? []).map((b) => (
-                        <TableRow key={b.id}>
-                          <TableCell className="font-medium">
-                            {t('batchNumber', { number: b.batchNumber })}
-                            {b.isReexport ? (
-                              <Badge variant="outline" className="ms-2">
-                                {t('reexportBadge')}
-                              </Badge>
-                            ) : null}
-                            <Badge variant="secondary" className="ms-2">
-                              {levelLabel(b.level)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap">{formatDateTime(b.createdAt)}</TableCell>
-                          <TableCell className="text-xs">{b.createdBy ?? '—'}</TableCell>
-                          <TableCell>{b.shopName ?? t('severalShops')}</TableCell>
-                          <TableCell className="text-xs whitespace-nowrap">
-                            {formatDate(b.dateFrom)} – {formatDate(b.dateTo)}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {t(`format.${b.format}`)} · {t(`grouping.${b.grouping}`)}
-                            {b.format !== 'excel' ? ` · ${b.encoding}` : ''}
-                          </TableCell>
-                          <TableCell className="text-end tabular-nums">{b.zCount}</TableCell>
-                          <TableCell className="text-end tabular-nums">{formatCurrency(b.totalDebit)}</TableCell>
-                          <TableCell>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                downloadAccountingExport(b).catch((err) =>
-                                  toast.error(axiosErrorToToastMessage(err, tc('error'))),
-                                )
-                              }
-                            >
-                              <Download className="h-4 w-4" aria-hidden /> {t('download')}
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+            <ReportTable table={batchTable} reportKey={REPORT_KEY} />
           </>
         )}
       </ScopeGate>

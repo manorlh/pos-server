@@ -60,8 +60,15 @@ export interface ReportTableSpec<R> {
   rowFill?(row: R): string | null | undefined;
   /** A drill-down under the row (opened by a click on the row). */
   expand?(row: R): ReactNode;
+  /**
+   * A click on the row (not on a link, a button or a field inside it): opens the row's own
+   * dialog, ticks its checkbox… Ignored when the table has `expand`.
+   */
+  onRowClick?(row: R): void;
   /** Not in Excel / PDF (default: exported). */
   noExport?: boolean;
   /** Lines of this sheet only, under the report's header. */
   sheetHeading?: string[];
+  /** The sheet's autofilter on its header row (default true; off for a label / value sheet). */
+  autoFilter?: boolean;
 }

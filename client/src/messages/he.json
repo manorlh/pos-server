@@ -5807,6 +5807,21 @@
       "note": "הערה",
       "name": "שם",
       "count": "כמות"
+    },
+    "report": {
+      "noAreaNone": "דוח החריגות לא מסנן לפי \"ללא אזור\" — מוצגים כל האזורים.",
+      "severity": {
+        "low": "נמוכה",
+        "medium": "בינונית",
+        "high": "גבוהה"
+      },
+      "col": {
+        "severity": "חומרה",
+        "detail": "פרטים",
+        "reviewedBy": "נבדק ע״י",
+        "reviewedAt": "זמן הבדיקה",
+        "actions": "פעולות"
+      }
     }
   },
   "exceptionsLog": {
@@ -5883,6 +5898,10 @@
       "code": "קוד",
       "name": "שם",
       "count": "כמות"
+    },
+    "report": {
+      "noAreaNone": "יומן החריגות לא מסנן לפי \"ללא אזור\" — מוצגים כל האזורים.",
+      "actions": "פעולות"
     }
   },
   "exceptionAlerts": {
@@ -6233,7 +6252,8 @@
       "total": "סה״כ",
       "shiftsCol": "משמרות",
       "empty": "אין משמרות בטווח שנבחר.",
-      "open": "{n} פתוחות"
+      "open": "{n} פתוחות",
+      "openShift": "פתיחת המשמרת: שעות, הפסקות ויומן פעולות"
     },
     "detail": {
       "title": "משמרת — {name}",
@@ -7102,7 +7122,7 @@
         "sourceHint": "סוג שובר: בדיקה לפני הנפקה. סדרה: בדיקה של סדרה שכבר הונפקה, כולל השהיות, מכסות מימושים ושוברי בדיקה."
       }
     },
-    "scope": {"forWhom": "עבור מי", "forWhomAll": "כל ההפקות", "event": "אירוע", "eventAll": "כל האירועים", "type": "סוג שובר", "typeAll": "כל הסוגים", "shop": "סניף", "shopAll": "כל הסניפים", "batch": "סדרה", "batchAll": "כל הסדרות", "till": "מומש בקופה", "tillAll": "כל הקופות", "employee": "מומש על ידי", "employeeAll": "כל העובדים", "batchesN": "{n, plural, one {סדרה אחת} other {# סדרות}}", "pickerSearch": "חיפוש ברשימה…", "noMatch": "אין תוצאות", "clear": "ניקוי הבחירה", "batchStatus": "סטטוס הסדרה", "batchStatusAll": "כל הסטטוסים", "batchStatuses": {"active": "פעילה", "not_started": "טרם בתוקף", "expired": "פג תוקף", "cancelled": "בוטלה", "fully_redeemed": "מומשה במלואה", "has_open": "יש שוברים פתוחים"}, "state": "סטטוס השובר", "stateAll": "כל הסטטוסים", "states": {"open": "פתוח", "partial": "מומש חלקית", "redeemed": "מומש", "cancelled": "בוטל", "expired": "פג תוקף"}, "issued": "תאריך הנפקה", "redeemed": "תאריך מימוש", "validOn": "בתוקף ביום", "fromLabel": "מתאריך", "toLabel": "עד תאריך", "accounting": "רישום בקופה", "accountingAll": "כל אופני הרישום", "accountingOptions": {"discount": "קיזוז מהחשבונית", "payment": "אמצעי תשלום (שובר הפקה)", "zero": "₪0 עם הצגת שווי"}, "pricing": "תמחור המימוש", "pricingAll": "כל סוגי התמחור", "pricingOptions": {"fixed": "שווי קבוע", "cover": "כיסוי עד סכום"}, "override": "מוצרים שלא מקבלים הנחות", "overrideOptions": {"yes": "השובר כופה הנחה", "no": "השובר מכבד את החסימה"}, "any": "הכול", "offline": "מימוש ללא אינטרנט", "offlineOptions": {"yes": "מותר", "no": "לא מותר"}, "kind": "סוג ההטבה", "kindOptions": {"items": "שובר פריטים", "discount": "שובר הנחה"}, "value": "שווי בקופה (₪)", "price": "מחיר להפקה (₪)", "min": "מ-", "max": "עד", "createdBy": "נוצרה על ידי", "createdByAll": "כל המשתמשים", "group": "קבוצת שוברים", "qBatches": "חיפוש: שם סדרה, עבור מי, אירוע, מס׳ הזמנה או טקסט חופשי", "qVouchers": "מספר שובר, קוד שובר או הערה", "more": "סינונים נוספים", "less": "פחות סינונים", "clearAll": "ניקוי כל הסינונים", "active": "{n, plural, one {סינון פעיל} other {# סינונים פעילים}}", "sort": "מיון", "sorts": {"newest": "החדשות ראשונות", "customer": "לפי עבור מי", "event": "לפי אירוע", "redeemed": "הכי הרבה שוברים שמומשו"}, "count": "{shown} מתוך {total} סדרות", "groupPlaceholder": "מספר קבוצה, למשל 3"},
+    "scope": {"forWhom": "עבור מי", "forWhomAll": "כל ההפקות", "event": "אירוע", "eventAll": "כל האירועים", "type": "סוג שובר", "typeAll": "כל הסוגים", "shop": "סניף", "shopAll": "כל הסניפים", "batch": "סדרה", "batchAll": "כל הסדרות", "till": "מומש בקופה", "tillAll": "כל הקופות", "employee": "מומש על ידי", "employeeAll": "כל העובדים", "batchesN": "{n, plural, one {סדרה אחת} other {# סדרות}}", "pickerSearch": "חיפוש ברשימה…", "noMatch": "אין תוצאות", "clear": "ניקוי הבחירה", "batchStatus": "סטטוס הסדרה", "batchStatusAll": "כל הסטטוסים", "batchStatuses": {"active": "פעילה", "not_started": "טרם בתוקף", "expired": "פג תוקף", "cancelled": "בוטלה", "fully_redeemed": "מומשה במלואה", "has_open": "יש שוברים פתוחים"}, "state": "סטטוס השובר", "stateAll": "כל הסטטוסים", "states": {"open": "פתוח", "partial": "מומש חלקית", "redeemed": "מומש", "cancelled": "בוטל", "expired": "פג תוקף"}, "issued": "תאריך הנפקה", "redeemed": "תאריך מימוש", "validOn": "בתוקף ביום", "fromLabel": "מתאריך", "toLabel": "עד תאריך", "accounting": "רישום בקופה", "accountingAll": "כל אופני הרישום", "accountingOptions": {"discount": "קיזוז מהחשבונית", "payment": "אמצעי תשלום (שובר הפקה)", "zero": "₪0 עם הצגת שווי"}, "pricing": "תמחור המימוש", "pricingAll": "כל סוגי התמחור", "pricingOptions": {"fixed": "שווי קבוע", "cover": "כיסוי עד סכום"}, "override": "מוצרים שלא מקבלים הנחות", "overrideOptions": {"yes": "השובר כופה הנחה", "no": "השובר מכבד את החסימה"}, "any": "הכול", "offline": "מימוש ללא אינטרנט", "offlineOptions": {"yes": "מותר", "no": "לא מותר"}, "kind": "סוג ההטבה", "kindOptions": {"items": "שובר פריטים", "discount": "שובר הנחה"}, "value": "שווי בקופה (₪)", "price": "מחיר להפקה (₪)", "min": "מ-", "max": "עד", "createdBy": "נוצרה על ידי", "createdByAll": "כל המשתמשים", "group": "קבוצת שוברים", "qBatches": "חיפוש: שם סדרה, עבור מי, אירוע, מס׳ הזמנה או טקסט חופשי", "qVouchers": "מספר שובר, קוד שובר או הערה", "more": "סינונים נוספים", "less": "פחות סינונים", "clearAll": "ניקוי כל הסינונים", "active": "{n, plural, one {סינון פעיל} other {# סינונים פעילים}}", "sort": "מיון", "sorts": {"newest": "החדשות ראשונות", "customer": "לפי עבור מי", "event": "לפי אירוע", "redeemed": "הכי הרבה שוברים שמומשו"}, "count": "{shown} מתוך {total} סדרות", "groupPlaceholder": "מספר קבוצה, למשל 3", "q": "חיפוש"},
     "row": {"forWhom": "עבור: {name}", "noCustomer": "לא צוין עבור מי", "issued": "הונפקו {n} שוברים", "redeemed": "מומשו {n}", "rate": "({rate})", "open": "{n} פתוחים", "validity": "בתוקף {from} – {to}", "validFrom": "בתוקף מ-{date}", "validUntil": "בתוקף עד {date}", "noValidity": "ללא הגבלת תוקף"},
     "allVouchers": {"count": "{n, plural, one {שובר אחד} other {# שוברים}}", "empty": "אין שוברים לסינון הזה", "serial": "מספר שובר", "code": "קוד שובר", "batch": "סדרה", "forWhom": "עבור מי", "state": "סטטוס", "remaining": "יתרה", "lastRedeemed": "מימוש אחרון", "history": "היסטוריית מימושים", "export": "ייצוא לאקסל", "sheet": "שוברים", "previous": "הקודם", "next": "הבא", "exportFailed": "הייצוא נכשל", "usesLeft": "נותרו {left} מתוך {total} שימושים", "itemLeft": "{name}: נותרו {left} מתוך {total}", "loadError": "טעינת השוברים נכשלה", "unitsLeft": "נותרו {left} מתוך {total} פריטים"},
     "tills": {"title": "דוח לפי קופות", "till": "קופה", "shop": "סניף", "redemptions": "מימושים", "vouchers": "שוברים", "items": "פריטים", "value": {"discount": "קיזוז מהחשבונית", "payment": "אמצעי תשלום (שובר הפקה)", "zero": "₪0 עם הצגת שווי", "total": "סה״כ שווי"}, "topUp": "השלמת תשלום", "refusals": "סריקות שנדחו", "overrides": "כפיות ואישורי מנהל", "offlinePending": "ממתינים לסנכרון", "notRecorded": "עדיין לא נרשם", "flagged": "חריגות", "flagsCol": "חריגות", "testExcluded": "שוברי בדיקה אינם נכללים בדוח (סדרות בדיקה בסינון: {count})", "unknownTill": "קופה לא ידועה", "empty": "אין מימושים לסינון הזה", "chart": "מימושים לאורך הזמן", "byDay": "לפי יום", "byHour": "לפי שעה", "total": "סה״כ", "details": "מימושים בקופה {name}", "close": "סגירה", "time": "זמן", "voucher": "שובר", "batch": "סדרה", "employee": "עובד", "itemsCol": "מה מומש", "valueCol": "שווי", "basis": {"fixed": "שווי קבוע", "list": "לפי מחירון", "discount": "סכום ההנחה"}, "valueNote": "איך מחושב השווי: שובר בשווי קבוע — לפי הפריטים שנלקחו; כיסוי עד סכום — לפי המחירון; שובר הנחה — סכום ההנחה. כל סכום מופיע בעמודת הרישום בקופה שלו: קיזוז מהחשבונית, אמצעי תשלום או ₪0 עם הצגת שווי.", "notRecordedNote": "השלמת תשלום, סריקות שנדחו, כפיות ואישורי מנהל ומימושים ללא אינטרנט עוד לא נרשמים. עד אז העמודות שלהם מציגות „עדיין לא נרשם” ולא 0.", "sheetTills": "לפי קופה", "sheetRedemptions": "מימושים", "hour": "שעה", "day": "יום", "usesN": "{n, plural, one {שימוש אחד} other {# שימושים}}", "loadError": "טעינת הדוח נכשלה"},
@@ -8488,14 +8508,34 @@
     },
     "allInOne": {
       "title": "דוח מרוכז — הכל",
-      "subtitle": "כל הנתונים לטווח ולסניפים שנבחרו: מכירות, אמצעי תשלום, קופות, עובדים, קטגוריות ופריטים, זיכויים, הנחות, טיפים, מע״מ, דוחות Z, שידורים, ניסיונות תשלום שנכשלו, ארוחות עובדים/מנהלים וקיוסקים — וייצוא לאקסל עם גיליון לכל חלק."
+      "subtitle": "כל הנתונים לטווח ולסניפים שנבחרו: מכירות, אמצעי תשלום, קופות, עובדים, קטגוריות ופריטים, זיכויים, הנחות, טיפים, מע״מ, דוחות Z, שידורים, ניסיונות תשלום שנכשלו, ארוחות עובדים/מנהלים וקיוסקים — וייצוא לאקסל עם גיליון לכל חלק.",
+      "hoursHint": "טווח השעות חל על המסמכים (מכירות, אמצעי תשלום, קופות, עובדים, קטגוריות ופריטים, זיכויים, הנחות, טיפים, מע״מ); דוחות Z, שידורים, ניסיונות תשלום שנכשלו ומסמכים מבוטלים נספרים לפי ימים שלמים.",
+      "zDateBasis": "דוחות Z לפי",
+      "transmissionsByTill": "שידורים לפי קופה"
     },
     "reconciliation": {
       "title": "דוח התאמה",
       "subtitle": "התאמה בין העסקאות, דוחות ה-Z ושידורי האשראי — לכל סניף, קופה, יום ו-Z, עם סטטוס (תואם / הפרש / חסר / ממתין) והסיבה לכל שורה.",
       "summary": "סיכום לפי בדיקה",
       "rows": "שורות ({count})",
-      "nothingToShow": "אין שורות לסינון שנבחר"
+      "nothingToShow": "אין שורות לסינון שנבחר",
+      "checksFilter": "בדיקות",
+      "allChecks": "כל הבדיקות",
+      "noChecks": "אין בדיקות",
+      "checkName": {
+        "documents_z": "מסמכים ↔ Z",
+        "z_totals": "סכומי Z ↔ מסמכים",
+        "document_numbers": "רציפות מספרי מסמכים",
+        "z_numbers": "רציפות מספרי Z",
+        "card_legs": "עסקאות אשראי ↔ שידורים",
+        "transmissions": "שידורים",
+        "refused_documents": "מסמכים שנדחו בענן",
+        "repaired_tills": "קופות ששויכו מחדש",
+        "numbering_conflicts": "מספר מסמך כפול בקופה",
+        "z_completeness": "Z שממתין למסמכים ותיקונים ל-Z קודם",
+        "ingest_notes": "הערות קליטה ותיוק",
+        "cloud_card_refunds": "זיכויי אשראי מהענן ↔ מסמכי זיכוי"
+      }
     },
     "transmissions": {
       "title": "שידורים",
@@ -8512,7 +8552,9 @@
       "refusedReason": "סיבת הדחייה",
       "refusedAttempts": "ניסיונות",
       "refusedFirstSeen": "נדחה לראשונה",
-      "refusedLastSeen": "נדחה לאחרונה"
+      "refusedLastSeen": "נדחה לאחרונה",
+      "refusedSheet": "מסמכים שנדחו בענן",
+      "refusedIssuedAt": "הופק בקופה"
     },
     "cols": {
       "total": "סה״כ",
@@ -11748,7 +11790,17 @@
       "best": "הטוב ביותר",
       "tills": "קופות — מכירות לשעה",
       "perHour": "{value} לשעה",
-      "topItems": "פריטים מובילים"
+      "topItems": "פריטים מובילים",
+      "eventsLabel": "אירועים"
+    },
+    "report": {
+      "title": "דוח אירוע · {name}",
+      "window": "חלון האירוע",
+      "producer": "מפיק",
+      "perActiveHour": "לשעה פעילה",
+      "activeMinutes": "זמן פעיל (דק׳)",
+      "tipPct": "אחוז טיפ",
+      "refundsCount": "מס׳ זיכויים"
     }
   },
   "kitchenPrinters": {
@@ -18225,6 +18277,20 @@
       "title": "התאמת אשראי Z-Credit · מסוף {terminal} · {day}",
       "body": "{zcreditOnly} חיובים בלי מסמך · {oursOnly} מסמכים בלי עסקה",
       "failedTitle": "התאמת אשראי Z-Credit לא רצה · מסוף {terminal} · {day}"
+    },
+    "report": {
+      "runLine": "התאמה",
+      "severity": {
+        "ok": "תקין",
+        "warning": "אזהרה",
+        "error": "שגיאה"
+      },
+      "col": {
+        "ourLegs": "תשלומי אשראי שלנו",
+        "lookups": "שאילתות",
+        "error": "שגיאה",
+        "shop": "סניף"
+      }
     }
   },
   "businessCards": {
@@ -18888,5 +18954,5 @@
     "noChanges": "אין מה לשנות — הסניף כבר כך."
   },
   "catalogAdmin": {"title": "ניהול קטלוג מהקופה", "subtitle": "מסך \"ניהול קטלוג\" בקופה: האם הוא מוצג, מה הקופה רואה ועורכת, הוספת מוצרים, ועבודה בלי משמרת פתוחה — לפי חברה, סניף, נקודת מכירה או קופה. מי רשאי לעשות מה — בדף \"תפקידים בקופה\".", "noPermission": "רק מנהל-על מגדיר את ניהול הקטלוג מהקופה.", "loadError": "הטעינה נכשלה", "empty": "אין חברות או סניפים להצגה", "level": "רמה", "levelHint": "ריק = יורש מהרמה שמעל (ובסוף — ברירת המחדל). הרמה הספציפית ביותר קובעת: קופה, נקודת מכירה, סניף, חברה.", "levels": {"company": "חברה", "shop": "סניף", "area": "נקודת מכירה", "machine": "קופה"}, "till": "קופה מס׳ {number}", "inherit": "יורש", "inherited": "יורש: {value}", "on": "פעיל", "off": "כבוי", "save": "שמירה", "saving": "שומר…", "revert": "ביטול שינויים", "saved": "נשמר — הקופות יקבלו את השינוי בסנכרון הבא", "saveFailed": "השמירה נכשלה", "reset": "שחזר ברירת מחדל", "resetConfirm": "לשחזר את ברירת המחדל ברמה זו? ההגדרות שנקבעו כאן יימחקו, והרמה תירש מהרמה שמעליה.", "resetNothing": "אין ברמה זו הגדרות משלה", "resetDone": "ברירת המחדל שוחזרה ברמה זו", "hints": {"catalogAdminEnabled": "כבוי — \"ניהול קטלוג\" לא מוצג בתפריט ☰ בקופה.", "catalogAdminScope": "אוטומטי: תפריט שמשויך לקופה או לנקודת המכירה; אחרת קטלוג הסניף. \"כל הסניף\" — תמיד הכול, גם כשיש תפריט.", "catalogCreateFromTill": "אסור — אין הוספת מוצר או מחלקה מהקופה, גם למי שיש לו הרשאה.", "catalogWithoutShift": "בלי משמרת פתוחה: מנהל בלבד (בקוד שלו), או אסור."}, "options": {"catalogAdminScope": {"auto": "אוטומטי (תפריט קופה / נקודה, אחרת הסניף)", "area": "נקודת מכירה", "shop": "כל הסניף", "till": "קופה בלבד"}, "catalogWithoutShift": {"manager": "מנהל בלבד", "never": "אסור"}}, "areas": {"title": "נקודות מכירה בלי תפריט", "noMenu": "אין תפריט לנקודה — מוצג קטלוג הסניף", "setMenu": "הגדר תפריט", "allHaveMenus": "לכל נקודות המכירה כאן יש תפריט."}},
-  "reportFramework": {"filters": {"from": "מתאריך", "to": "עד תאריך", "quick": "טווח מהיר", "hours": "שעות בכל יום", "wholeDay": "כל היום", "hoursEachDay": "השעות {band} חוזרות בכל אחד מ-{days} הימים בטווח — לא רצף אחד.", "hoursWrap": "החלון חוצה חצות: מ-{fromHour} עד {toHour} של למחרת.", "hoursInvalid": "שעת ההתחלה ושעת הסיום חייבות להיות שונות.", "shop": "סניף", "allShops": "כל הסניפים", "till": "קופה", "allTills": "כל הקופות", "cashier": "קופאי", "allCashiers": "כל הקופאים", "cashierNeedsShop": "בחרו סניף כדי לסנן לפי קופאי", "unknownChoice": "(בחירה מהקישור)", "inactive": "{name} (לא פעיל)", "method": "אמצעי תשלום", "allMethods": "כל האמצעים", "category": "מחלקה", "allCategories": "כל המחלקות", "product": "מוצר", "allProducts": "כל המוצרים", "productSearch": "חיפוש מוצר…", "docType": "סוג מסמך", "allDocTypes": "כל הסוגים", "search": "חיפוש", "searchPlaceholder": "חיפוש בשורות…", "run": "הפק דוח", "running": "מפיק…", "clearAll": "נקה הכל", "rangeInvalid": "תאריך ההתחלה מאוחר מתאריך הסיום", "active": "{count, plural, one {סינון אחד פעיל} other {# סינונים פעילים}}", "pending": "יש שינויים שעוד לא הופקו — לחצו \"הפק דוח\".", "linkHint": "כל הסינונים נשמרים בקישור — אפשר לשתף אותו."}, "table": {"columns": "עמודות", "columnsTitle": "עמודות בטבלה", "columnsHint": "סמנו מה להציג. גררו שורה (או השתמשו בחצים) כדי לשנות את הסדר.", "moveUp": "הזז למעלה", "moveDown": "הזז למטה", "dragHandle": "גרירה לשינוי הסדר", "reset": "חזרה לברירת המחדל", "required": "תמיד מוצגת", "savedServer": "הבחירה נשמרת בחשבון שלך, בכל מכשיר.", "savedLocal": "הבחירה נשמרת בדפדפן הזה.", "saveFailed": "שמירת בחירת העמודות נכשלה", "close": "סגירה", "sortBy": "מיון לפי {column}", "rows": "{count, plural, one {שורה אחת} other {# שורות}}", "rowsOf": "{shown} מתוך {total} שורות", "noRows": "אין נתונים להצגה.", "noMatch": "אין שורות שמתאימות לחיפוש.", "totalsAllRows": "שורת הסיכום היא של כל השורות בדוח, גם אלה שהחיפוש הסתיר.", "details": "פירוט", "hideDetails": "הסתר פירוט"}, "export": {"excel": "אקסל", "pdf": "PDF", "print": "הדפסה", "columns": "עמודות לייצוא", "columnsTitle": "עמודות לייצוא (אקסל ו-PDF)", "columnsHint": "הבחירה חלה על הייצוא הנוכחי בלבד.", "source": "מסומן לפי: {source}", "sourceCurrent": "הבחירה שלך לייצוא הזה", "sourceCompany": "ברירת המחדל של החברה", "sourceVisible": "העמודות שמוצגות בטבלה", "sourceAll": "כל העמודות", "asTable": "כמו בטבלה", "all": "הכל", "companyDefault": "כברירת המחדל של החברה", "saveCompanyDefault": "שמור כברירת מחדל לחברה", "clearCompanyDefault": "מחק את ברירת המחדל של החברה", "companyDefaultSaved": "נשמר: אלה העמודות שייצאו כברירת מחדל ל-{company}", "companyDefaultCleared": "ברירת המחדל של החברה נמחקה", "companyDefaultFailed": "שמירת ברירת המחדל נכשלה", "companyDefaultInherited": "ברירת המחדל הנוכחית עוברת מחברת-האם.", "companyDefaultHint": "ברירת המחדל קובעת אילו עמודות יוצאות לאקסל ול-PDF לכל משתמשי {company}.", "thisCompany": "החברה", "orientation": "כיוון ה-PDF", "orientationAuto": "אוטומטי (לרוחב מעל 7 עמודות)", "orientationPortrait": "לאורך", "orientationLandscape": "לרוחב", "done": "סגירה", "excelFailed": "יצירת קובץ האקסל נכשלה", "pdfFailed": "יצירת קובץ ה-PDF נכשלה", "pdfFallback": "השרת עוד לא מפיק PDF — נפתח חלון ההדפסה: בחרו \"שמירה כ-PDF\".", "pdfTooMany": "יותר מ-{max} שורות ל-PDF — צמצמו את הסינון או ייצאו לאקסל.", "noColumns": "בחרו לפחות עמודה אחת לייצוא.", "filtersLine": "סינון: {list}", "hoursLine": "שעות: {band} בכל יום", "rangeLine": "תקופה: {range}", "generatedAt": "הופק: {at}", "allOrganization": "כל הארגון", "chosenColumns": "{count, plural, one {עמודה אחת} other {# עמודות}}"}}
+  "reportFramework": {"filters": {"from": "מתאריך", "to": "עד תאריך", "quick": "טווח מהיר", "hours": "שעות בכל יום", "wholeDay": "כל היום", "hoursEachDay": "השעות {band} חוזרות בכל אחד מ-{days} הימים בטווח — לא רצף אחד.", "hoursWrap": "החלון חוצה חצות: מ-{fromHour} עד {toHour} של למחרת.", "hoursInvalid": "שעת ההתחלה ושעת הסיום חייבות להיות שונות.", "shop": "סניף", "allShops": "כל הסניפים", "till": "קופה", "allTills": "כל הקופות", "cashier": "קופאי", "allCashiers": "כל הקופאים", "cashierNeedsShop": "בחרו סניף כדי לסנן לפי קופאי", "unknownChoice": "(בחירה מהקישור)", "inactive": "{name} (לא פעיל)", "method": "אמצעי תשלום", "allMethods": "כל האמצעים", "category": "מחלקה", "allCategories": "כל המחלקות", "product": "מוצר", "allProducts": "כל המוצרים", "productSearch": "חיפוש מוצר…", "docType": "סוג מסמך", "allDocTypes": "כל הסוגים", "search": "חיפוש", "searchPlaceholder": "חיפוש בשורות…", "run": "הפק דוח", "running": "מפיק…", "clearAll": "נקה הכל", "rangeInvalid": "תאריך ההתחלה מאוחר מתאריך הסיום", "active": "{count, plural, one {סינון אחד פעיל} other {# סינונים פעילים}}", "pending": "יש שינויים שעוד לא הופקו — לחצו \"הפק דוח\".", "linkHint": "כל הסינונים נשמרים בקישור — אפשר לשתף אותו."}, "table": {"columns": "עמודות", "columnsTitle": "עמודות בטבלה", "columnsHint": "סמנו מה להציג. גררו שורה (או השתמשו בחצים) כדי לשנות את הסדר.", "moveUp": "הזז למעלה", "moveDown": "הזז למטה", "dragHandle": "גרירה לשינוי הסדר", "reset": "חזרה לברירת המחדל", "required": "תמיד מוצגת", "savedServer": "הבחירה נשמרת בחשבון שלך, בכל מכשיר.", "savedLocal": "הבחירה נשמרת בדפדפן הזה.", "saveFailed": "שמירת בחירת העמודות נכשלה", "close": "סגירה", "sortBy": "מיון לפי {column}", "rows": "{count, plural, one {שורה אחת} other {# שורות}}", "rowsOf": "{shown} מתוך {total} שורות", "noRows": "אין נתונים להצגה.", "noMatch": "אין שורות שמתאימות לחיפוש.", "totalsAllRows": "שורת הסיכום היא של כל השורות בדוח, גם אלה שהחיפוש הסתיר.", "details": "פירוט", "hideDetails": "הסתר פירוט"}, "export": {"excel": "אקסל", "pdf": "PDF", "print": "הדפסה", "columns": "עמודות לייצוא", "columnsTitle": "עמודות לייצוא (אקסל ו-PDF)", "columnsHint": "הבחירה חלה על הייצוא הנוכחי בלבד.", "source": "מסומן לפי: {source}", "sourceCurrent": "הבחירה שלך לייצוא הזה", "sourceCompany": "ברירת המחדל של החברה", "sourceVisible": "העמודות שמוצגות בטבלה", "sourceAll": "כל העמודות", "asTable": "כמו בטבלה", "all": "הכל", "companyDefault": "כברירת המחדל של החברה", "saveCompanyDefault": "שמור כברירת מחדל לחברה", "clearCompanyDefault": "מחק את ברירת המחדל של החברה", "companyDefaultSaved": "נשמר: אלה העמודות שייצאו כברירת מחדל ל-{company}", "companyDefaultCleared": "ברירת המחדל של החברה נמחקה", "companyDefaultFailed": "שמירת ברירת המחדל נכשלה", "companyDefaultTooMany": "ברירת המחדל של החברה שומרת עד {max} עמודות — צמצמו את הבחירה באחת הטבלאות ושמרו שוב.","companyDefaultInherited": "ברירת המחדל הנוכחית עוברת מחברת-האם.", "companyDefaultHint": "ברירת המחדל קובעת אילו עמודות יוצאות לאקסל ול-PDF לכל משתמשי {company}.", "thisCompany": "החברה", "orientation": "כיוון ה-PDF", "orientationAuto": "אוטומטי (לרוחב מעל 7 עמודות)", "orientationPortrait": "לאורך", "orientationLandscape": "לרוחב", "done": "סגירה", "excelFailed": "יצירת קובץ האקסל נכשלה", "pdfFailed": "יצירת קובץ ה-PDF נכשלה", "pdfFallback": "השרת עוד לא מפיק PDF — נפתח חלון ההדפסה: בחרו \"שמירה כ-PDF\".", "pdfTooMany": "יותר מ-{max} שורות ל-PDF — צמצמו את הסינון או ייצאו לאקסל.", "noColumns": "בחרו לפחות עמודה אחת לייצוא.", "filtersLine": "סינון: {list}", "hoursLine": "שעות: {band} בכל יום", "rangeLine": "תקופה: {range}", "generatedAt": "הופק: {at}", "allOrganization": "כל הארגון", "chosenColumns": "{count, plural, one {עמודה אחת} other {# עמודות}}"}}
 }
