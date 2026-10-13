@@ -26,6 +26,8 @@ import {
 import { CustomerDisplayWebService, type DisplayWebView } from '@/lib/customerDisplayWeb';
 import { WebPairing, type PairingTexts } from '@/components/kiosk-web/web-pairing';
 import { isStandalone, useFullscreenOnTap, useKioskGuards, useWakeLock } from '@/components/kiosk-web/web-shell';
+import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
+import { shopLockShown } from '@/lib/shopActive';
 
 export const WEB_DISPLAY_VERSION = '1.0.0';
 
@@ -142,6 +144,8 @@ export function DisplayWeb({ apiUrl }: { apiUrl: string }) {
     return <WebPairing defaultServer={apiUrl} texts={PAIRING} onPair={async (input) => svc.pair(input)} />;
   }
   if (view.wrongRole) return <Splash title="קוד של מכשיר אחר" body={view.wrongRole} />;
+  // "סניף לא פעיל" (lib/shopActive.ts): the display sells nothing — locked at once, as the Android display.
+  if (shopLockShown({ shopActive: view.shopActive, surface: 'customer_display' })) return <ShopLockScreen />;
   return (
     <CustomerScreen
       config={view.config}

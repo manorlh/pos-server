@@ -142,6 +142,8 @@ import { useWebScanner } from './web-scanner';
 import { CameraScanButton, CameraScanner, cameraScanAvailable } from './web-camera';
 import { WebStaff, TapSequence, inTechnicianZone } from './web-staff';
 import { BridgePairPrompt, bridgePromptDue } from './web-bridge';
+import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
+import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@/lib/shopActive';
 
 /** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
 const FOOTER_PX = 18;
@@ -531,9 +533,17 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     return () => window.clearInterval(id);
   }, [cfg.hours, dispatch]);
 
+  // "סניף לא פעיל" (lib/shopActive.ts): the shop's lock once the customer is done — ordering, paying, the success
+  // screen — and from then on ("engaged") until the shop is on again; reported as SHOP_LOCK_FLOW, so the service
+  // sends no order under it (the Windows kiosk's KioskApp alike).
+  const shopActive = view.shopActive !== false;
+  const [shopLockWas, setShopLockWas] = useState(false);
+  const shopLockUp = shopLockShown({ shopActive, surface: 'kiosk', saleInProgress: !flowIdle(flow) || flowBusy(flow), engaged: shopLockWas });
+  const shopLockNow = shopLockEngaged(shopLockWas, shopLockUp, shopActive);
+  if (shopLockNow !== shopLockWas) setShopLockWas(shopLockNow);
   useEffect(() => {
-    svc.reportFlow({ flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
-  }, [flow, svc]);
+    svc.reportFlow(shopLockUp ? { ...SHOP_LOCK_FLOW, busy: false, idle: true } : { flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
+  }, [flow, svc, shopLockUp]);
 
   const resting = RESTING.has(flow.screen);
   // "הגדלת מכירה" as the Android kiosk asks it (kiosk-shared/upsell-window.ts): a window after a line goes in,
@@ -1055,7 +1065,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     m,
     screen: flow.screen,
     busy: flowBusy(flow),
-    staff: staffOpen,
+    // Under the shop's lock a scan starts nothing (as under the staff's sheet).
+    staff: staffOpen || shopLockUp,
     sheetOpen: !!product || leaveAsk || !!changes || pay.entry || pay.camera,
     shown: allProducts,
     codes: view.catalog.products,
@@ -1365,9 +1376,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}
       {scanNote}
+      {/* "הסניף אינו פעיל — פנו לתמיכה": no shift or document here, so no close of the day either (the bridge's own close runs). */}
+      {shopLockUp ? <ShopLockScreen /> : null}
       {staffOpen ? <WebStaff m={m} view={view} svc={svc} onClose={() => setStaffOpen(false)} /> : null}
       {/* "גשר לדפדפן": a bridge on this PC, not paired yet — asked once, only at rest (§28). */}
-      {!staffOpen && !bridgePromptClosed && bridgePromptDue(view, flow.screen === 'attract', nowMs) ? (
+      {!staffOpen && !shopLockUp && !bridgePromptClosed && bridgePromptDue(view, flow.screen === 'attract', nowMs) ? (
         <BridgePairPrompt m={m} svc={svc} words={words} onClose={() => setBridgePromptClosed(true)} />
       ) : null}
     </div>

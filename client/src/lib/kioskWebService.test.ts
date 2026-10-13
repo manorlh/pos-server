@@ -12,6 +12,7 @@ import { KV, LocalStore, MemoryStore, openKioskStore, type StorageLike } from '.
 import { apiBase, describeBrowser, detailOf, messageOf, normalizePairingCode, webDeviceInfo, type FetchFn } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage } from './kioskWebCatalog';
 import type { WebOrderLine } from './kioskWebOrders';
+import { SHOP_LOCK_FLOW, SHOP_LOCK_TEXT } from './shopActive';
 
 type Call = { method: string; path: string; body: Record<string, unknown> | null; auth: string | null };
 type Handler = (c: Call) => { status: number; body?: unknown } | 'offline';
@@ -1138,5 +1139,61 @@ describe('"תפריטים" on the browser kiosk (docs/SPEC_MENUS.md, lib/kioskMe
     const product = JSON.parse(held.lines[0].product) as Record<string, unknown>;
     assert.equal(held.lines[0].unitPrice, 4000);
     assert.deepEqual([product.price, product.menuId, product.menuName, product.priceSource, product.catalogPrice], [4000, 'lunch', 'צהריים', 'menu', 5400]);
+  });
+});
+
+describe('"סניף לא פעיל" (lib/shopActive.ts)', () => {
+  const order = { lines: [line()], service: 'take_away' as const, tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] };
+
+  it('the heartbeat locks, kept across a reload; the order waited for goes out, none after the lock is up; settings "unchanged" releases', async () => {
+    const { cloud, svc, store, tick } = await paired();
+    assert.equal(svc.view().shopActive, true);
+    cloud.handlers['POST machines/me/heartbeat'] = () => ({ status: 200, body: { ok: true, shopActive: false } });
+    tick(31_000);
+    await svc.tick();
+    assert.equal(svc.view().shopActive, false);
+    assert.equal(await store.get(KV.shopActive), false);
+    // A reload with no network opens locked.
+    cloud.setOnline(false);
+    const again = service(cloud, store);
+    await again.svc.init();
+    assert.equal(again.svc.view().shopActive, false);
+    again.svc.stop();
+    cloud.setOnline(true);
+    // The customer on the kiosk finishes: the order goes out (and keeps uploading).
+    svc.reportFlow({ flowState: 'paying', screen: 'pay', busy: false, idle: false });
+    const placed = await svc.placeOpenOrder(order);
+    assert.equal(placed.ok, true);
+    // The lock screen up: nothing more.
+    svc.reportFlow({ ...SHOP_LOCK_FLOW, busy: false, idle: true });
+    assert.deepEqual(await svc.placeOpenOrder(order), { ok: false, reason: 'rejected', message: SHOP_LOCK_TEXT.title });
+    // An answer that says nothing keeps the lock; the minute's settings pull ("unchanged") carries the re-activation.
+    cloud.handlers['POST machines/me/heartbeat'] = () => ({ status: 200, body: { ok: true } });
+    cloud.handlers['GET sync/m1/settings'] = () => ({ status: 200, body: { syncType: 'unchanged', shopActive: true } });
+    tick(61_000);
+    await svc.tick();
+    assert.equal(svc.view().shopActive, true);
+    assert.equal((await svc.placeOpenOrder(order)).ok, true);
+  });
+
+  it('machines/me and a full settings answer say it too; a full answer with neither (an older server) is active; "ניתוק" forgets it', async () => {
+    const { cloud, svc, store } = await paired();
+    cloud.handlers['GET machines/me'] = () => ({ status: 200, body: { machineId: 'm1', shopActive: false } });
+    cloud.handlers['GET sync/m1/settings'] = () => ({ status: 200, body: { syncType: 'full', settings: { shopActive: false }, shopActive: false } });
+    await svc.fullSync();
+    assert.equal(svc.view().shopActive, false);
+    cloud.handlers['GET machines/me'] = () => ({ status: 200, body: { machineId: 'm1' } });
+    cloud.handlers['GET sync/m1/settings'] = () => ({ status: 200, body: { syncType: 'full', settings: {} } });
+    await svc.fullSync();
+    assert.equal(svc.view().shopActive, true);
+    cloud.handlers['GET machines/me'] = () => ({ status: 200, body: { machineId: 'm1', shopActive: false } });
+    await svc.fullSync();
+    assert.equal(svc.view().shopActive, true, 'the full settings answer after machines/me has the last word');
+    cloud.handlers['GET sync/m1/settings'] = () => ({ status: 200, body: { syncType: 'full', settings: {}, shopActive: false } });
+    await svc.fullSync();
+    assert.equal(svc.view().shopActive, false);
+    await svc.unpair();
+    assert.equal(svc.view().shopActive, true);
+    assert.equal(await store.get(KV.shopActive), null);
   });
 });

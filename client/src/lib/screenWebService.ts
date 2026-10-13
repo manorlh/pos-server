@@ -17,7 +17,10 @@
  *  - what it shows follows the cloud: a `pickup` screen is the board, any other KDS screen the
  *    kitchen screen — whatever the route. Right after pairing, a code of another route hands the
  *    credentials over (`handoff`: the board's code typed at `/kds` opens `/board`, a kiosk's `/k`);
- *  - a revoked token (401) goes back to pairing.
+ *  - a revoked token (401) goes back to pairing;
+ *  - "סניף לא פעיל" (lib/shopActive.ts): `shopActive` from the heartbeat and machines/me, kept — the
+ *    screen shows "הסניף אינו פעיל — פנו לתמיכה" at once (it sells nothing); the feed, the actions
+ *    waiting and the heartbeat go on, so turning the shop on again releases it on the next beat.
  *
  * Pure of React and of the DOM (the browser's facts come in through `deps`), so the node tests
  * drive it with a fake fetch and a memory store. No `@/` imports.
@@ -27,6 +30,7 @@ import { KioskApi, apiBase, pairWithCode, tokenRevoked, type ApiReply, type Fetc
 import type { KvStore } from './kioskWebStore';
 import { KDS_CACHE_KEY, KDS_OUTBOX_KEY, KdsModule, boardView, feedShows, type RoleApi, type RoleApiReply, type RoleKv } from './kdsScreenEngine';
 import type { BoardView, KdsActionInput, KdsView } from './kdsScreenTypes';
+import { shopActiveAfter, shopActiveKept, shopActiveSaid } from './shopActive';
 
 export type ScreenRoute = 'kds' | 'board';
 
@@ -40,6 +44,8 @@ export function screenKeys(route: ScreenRoute) {
     machine: `r2m.${route}.machine`,
     /** The parameter `technicianCode` (the staff sheet's code), from `sync/{m}/parameters`. */
     technicianCode: `r2m.${route}.technicianCode`,
+    /** "סניף לא פעיל": the cloud's last `shopActive` (a locked screen opens locked offline). */
+    shopActive: `r2m.${route}.shopActive`,
     /** The engine's keys (the board cache, the outbox) live under this prefix. */
     kvPrefix: `r2m.${route}.kv.`,
   } as const;
@@ -125,6 +131,8 @@ export interface ScreenWebView {
   appVersion: string;
   /** The parameter `technicianCode` (a PBKDF2 hash) when the cloud set one; else the default code opens the staff sheet. */
   technicianCode: string | null;
+  /** "סניף לא פעיל": false — the shop was turned off in the cloud; the screen is locked until it is on again. */
+  shopActive: boolean;
 }
 
 export interface ScreenWebDeps {
@@ -160,6 +168,7 @@ export class ScreenWebService {
   private creds: KioskCredentials | null = null;
   private machine: Record<string, unknown> | null = null;
   private technicianCode: string | null = null;
+  private shopActive = true;
   private kv: ScreenKv;
   private kds: KdsModule | null = null;
   private loaded = false;
@@ -199,6 +208,7 @@ export class ScreenWebService {
     this.creds = await s.get<KioskCredentials>(this.keys.credentials);
     this.machine = await s.get<Record<string, unknown>>(this.keys.machine);
     this.technicianCode = await s.get<string>(this.keys.technicianCode);
+    this.shopActive = shopActiveKept(await s.get<unknown>(this.keys.shopActive));
     await this.kv.load(ENGINE_KEYS);
     if (this.creds) this.api.setBase(this.creds.serverUrl);
     this.loaded = true;
@@ -299,6 +309,7 @@ export class ScreenWebService {
       storage: this.deps.store.kind,
       appVersion: this.deps.appVersion,
       technicianCode: this.technicianCode,
+      shopActive: this.shopActive,
     };
   }
 
@@ -397,12 +408,13 @@ export class ScreenWebService {
     this.creds = null;
     this.machine = null;
     this.technicianCode = null;
+    this.shopActive = true;
     this.lastAnswerAt = null;
     this.lastBeatOkAt = null;
     this.lastBeatAt = 0;
     this.lastMachineAt = 0;
     await this.kv.clear(ENGINE_KEYS);
-    for (const key of [this.keys.credentials, this.keys.machine, this.keys.technicianCode]) await this.deps.store.del(key);
+    for (const key of [this.keys.credentials, this.keys.machine, this.keys.technicianCode, this.keys.shopActive]) await this.deps.store.del(key);
   }
 
   /* ------------------------------------------------------------------- sync */
@@ -424,8 +436,18 @@ export class ScreenWebService {
     if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object' || !this.creds) return;
     this.machine = r.body;
     await this.deps.store.set(this.keys.machine, r.body);
+    await this.noteShopActive(shopActiveSaid(r.body));
     this.changed();
     await this.pullParameters();
+  }
+
+  /** The cloud's `shopActive` in an answer (null: it said nothing), kept. */
+  private async noteShopActive(said: boolean | null) {
+    const next = shopActiveAfter(this.shopActive, said);
+    if (next === this.shopActive) return;
+    this.shopActive = next;
+    this.log(next ? 'shop active again: released' : 'shop inactive: locked');
+    await this.deps.store.set(this.keys.shopActive, next);
   }
 
   /** `technicianCode` only (the parameters are open to a display device). */
@@ -443,7 +465,10 @@ export class ScreenWebService {
     this.lastBeatAt = this.now();
     const pending = this.kds?.outbox().length ?? 0;
     const r = await this.seen(await this.api.post('machines/me/heartbeat', { appVersion: this.deps.appVersion, pendingCount: pending, realtimeConnected: false }, { timeoutMs: 15_000 }));
-    if (r.kind === 'ok') this.lastBeatOkAt = this.now();
+    if (r.kind === 'ok') {
+      this.lastBeatOkAt = this.now();
+      await this.noteShopActive(shopActiveSaid(r.body));
+    }
     this.changed();
   }
 

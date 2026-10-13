@@ -14,7 +14,10 @@
  *    collect, no tax document here) and prepaid vouchers redeemed online; never a card
  *    (`usableMethods`). An order is written here before it is sent, and sent again until the cloud
  *    has it (the screen then says "הזמנה ממתינה לסנכרון");
- *  - "עזרה": a help alert on the next kiosk/sync, as the Windows kiosk.
+ *  - "עזרה": a help alert on the next kiosk/sync, as the Windows kiosk;
+ *  - "סניף לא פעיל" (lib/shopActive.ts): `shopActive` from the heartbeat, machines/me and every
+ *    settings answer ("unchanged" too), kept; the screens lock once the customer is done, no order
+ *    is sent under the lock, and the sync — orders still waiting included — goes on.
  *
  * Pure of React and of the DOM (the browser's facts come in through `deps`), so the node tests
  * drive it with a fake fetch and a memory store.
@@ -59,6 +62,7 @@ import { DISCOUNT_PAY_HERE, redeemVoucherCode, releaseDiscount, type VoucherPost
 import type { AppliedDiscountVoucher } from './kioskVouchers';
 import { KV, type KvStore } from './kioskWebStore';
 import { bridgeCardReady, bridgeCardReason, bridgeFiscalFor, type BridgeAgent, type BridgeMachine, type BridgeState } from './kioskBridge';
+import { newSaleAllowed, SHOP_LOCK_FLOW, SHOP_LOCK_TEXT, shopActiveAfter, shopActiveKept, shopActiveSaid } from './shopActive';
 
 export const KIOSK_SYNC_MS = 15_000;
 export const BEAT_MS = 30_000;
@@ -133,6 +137,11 @@ export interface WebKioskView {
   };
   /** The parameter `technicianCode` (a PBKDF2 hash) when the cloud set one. */
   technicianCode: string | null;
+  /**
+   * "סניף לא פעיל" (lib/shopActive.ts): false — the shop was turned off in the cloud; the screens lock
+   * once the customer is done, until it is on again (the sync goes on under it).
+   */
+  shopActive: boolean;
 }
 
 export interface WebKioskDeps {
@@ -278,6 +287,8 @@ export class WebKioskService {
     settingsUpdatedAt: null,
   };
   private parameters: Record<string, unknown> = {};
+  /** "סניף לא פעיל": the cloud's last word (heartbeat, machines/me, every settings answer), kept. */
+  private shopActive = true;
   private orders = new Map<string, OpenOrder>();
   private reversals = new Set<string>();
   /** The cloud's word on the basket a moment ago (kioskBasketCheck.ts), until the catalog catches up. */
@@ -356,6 +367,7 @@ export class WebKioskService {
     this.stock = (await s.get<Record<string, number>>(KV.stock)) ?? {};
     this.settings = (await s.get<WebKioskService['settings']>(KV.settings)) ?? this.settings;
     this.parameters = (await s.get<Record<string, unknown>>(KV.parameters)) ?? {};
+    this.shopActive = shopActiveKept(await s.get<unknown>(KV.shopActive));
     for (const key of await s.keys(KV.orderPrefix)) {
       const o = await s.get<OpenOrder>(key);
       if (o) this.orders.set(o.localId, o);
@@ -550,6 +562,7 @@ export class WebKioskService {
         notKiosk: !!creds && !!this.snapshot && !kiosk,
       },
       technicianCode: s(this.parameters.technicianCode),
+      shopActive: this.shopActive,
     };
     return this.cached;
   }
@@ -600,7 +613,8 @@ export class WebKioskService {
     this.promotions = { etag: null, list: [] };
     this.parameters = {};
     this.help = null;
-    for (const key of [KV.credentials, KV.machine, KV.snapshot, KV.snapshotAt, KV.catalog, KV.promotions, KV.stock, KV.settings, KV.parameters]) await this.deps.store.del(key);
+    this.shopActive = true;
+    for (const key of [KV.credentials, KV.machine, KV.snapshot, KV.snapshotAt, KV.catalog, KV.promotions, KV.stock, KV.settings, KV.parameters, KV.shopActive]) await this.deps.store.del(key);
     this.dirty();
   }
 
@@ -688,6 +702,17 @@ export class WebKioskService {
     if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object') return;
     this.machine = r.body;
     await this.deps.store.set(KV.machine, r.body);
+    await this.noteShopActive(shopActiveSaid(r.body));
+    this.dirty();
+  }
+
+  /** The cloud's `shopActive` in an answer (null: it said nothing), kept; a change shown at once. */
+  private async noteShopActive(said: boolean | null, full = false) {
+    const next = shopActiveAfter(this.shopActive, said, full);
+    if (next === this.shopActive) return;
+    this.shopActive = next;
+    this.log(next ? 'shop active again: released' : 'shop inactive: the kiosk locks once its customer is done');
+    await this.deps.store.set(KV.shopActive, next);
     this.dirty();
   }
 
@@ -698,7 +723,10 @@ export class WebKioskService {
     if (this.bridgeFiscal()) return;
     const pending = [...this.orders.values()].filter(orderNeedsUpload).length;
     const r = await this.seen(await this.api.post('machines/me/heartbeat', { appVersion: this.deps.appVersion, pendingCount: pending, realtimeConnected: false }, { timeoutMs: 15_000 }));
-    if (r.kind === 'ok') this.lastSyncOkAt = this.now();
+    if (r.kind === 'ok') {
+      this.lastSyncOkAt = this.now();
+      await this.noteShopActive(shopActiveSaid(r.body));
+    }
   }
 
   /** What `kiosk/sync` reports: the flow, the orders, the help request, the browser's own health. */
@@ -818,7 +846,10 @@ export class WebKioskService {
     if (!this.creds) return;
     const since = !full && this.settings.settingsUpdatedAt ? `?since=${encodeURIComponent(this.settings.settingsUpdatedAt)}` : '';
     const r = await this.seen(await this.api.get<Record<string, unknown>>(this.machinePath(`settings${since}`), { timeoutMs: 20_000 }));
-    if (r.kind !== 'ok' || !r.body || r.body.syncType === 'unchanged') return;
+    if (r.kind !== 'ok' || !r.body) return;
+    // "סניף פעיל" rides on every answer ("unchanged" too) — with a bridge holding the heartbeat, this is how it arrives.
+    await this.noteShopActive(shopActiveSaid(r.body), r.body.syncType === 'full');
+    if (r.body.syncType === 'unchanged') return;
     this.settings = {
       settings: (r.body.settings as Record<string, unknown>) ?? {},
       businessInfo: (r.body.businessInfo as Record<string, unknown>) ?? null,
@@ -1127,6 +1158,8 @@ export class WebKioskService {
    */
   async placeOpenOrder(input: PlaceInput): Promise<PlaceResult> {
     if (!this.creds) return { ok: false, reason: 'error', message: 'הקיוסק אינו מצומד' };
+    // "סניף לא פעיל": no order once the lock screen is up (the screens report it as their flow).
+    if (!newSaleAllowed(this.shopActive, !this.shopActive && this.flow.screen === SHOP_LOCK_FLOW.screen)) return { ok: false, reason: 'rejected', message: SHOP_LOCK_TEXT.title };
     if (input.lines.length === 0) return { ok: false, reason: 'empty', message: '' };
     // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
     if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'rejected', message: DISCOUNT_PAY_HERE };

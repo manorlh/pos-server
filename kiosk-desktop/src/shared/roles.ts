@@ -40,6 +40,12 @@ export interface ShellView {
   shopName: string | null;
   online: boolean;
   update: UpdateView;
+  /**
+   * "סניף לא פעיל" (client lib/shopActive.ts): false — the shop was turned off in the cloud. A KDS,
+   * a board (and the roles not built yet) show the lock at once; the kiosk once its customer is done.
+   * Absent (the Android bundle's shell: the APK draws its own lock) is active.
+   */
+  shopActive?: boolean;
 }
 
 /* ------------------------------------------------- the KDS and the order status board */

@@ -305,6 +305,7 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:technicianUnlock', (_e, code: string) => svc.technicianUnlock(code));
   ipcMain.handle('kiosk:technicianInfo', () => svc.technicianInfo());
   ipcMain.handle('kiosk:technicianAction', (_e, a) => svc.technicianAction(a));
+  ipcMain.handle('kiosk:shopLockCloseDay', (_e, pin: unknown) => svc.shopLockCloseDay(typeof pin === 'string' ? pin.slice(0, 12) : ''));
   // The shell (shared/roles.ts): the role, the update status, the KDS and board screens.
   ipcMain.handle('shell:view', () => roles?.view());
   ipcMain.handle('shell:board', () => roles?.boardView());

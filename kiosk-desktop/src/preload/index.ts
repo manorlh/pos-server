@@ -31,6 +31,7 @@ const api: KioskBridge = {
   technicianUnlock: (code) => ipcRenderer.invoke('kiosk:technicianUnlock', code),
   technicianInfo: () => ipcRenderer.invoke('kiosk:technicianInfo'),
   technicianAction: (a) => ipcRenderer.invoke('kiosk:technicianAction', a),
+  shopLockCloseDay: (pin) => ipcRenderer.invoke('kiosk:shopLockCloseDay', pin),
   on: (event, fn) => {
     const channel = channels[event];
     const listener = (_e: unknown, payload: unknown) => (fn as (p: unknown) => void)(payload);
