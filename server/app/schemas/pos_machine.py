@@ -323,6 +323,17 @@ class POSMachineResponse(POSMachineBase):
     replacements: Optional[List[Dict[str, Any]]] = None
     #: "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, outside the shop's LAN group.
     independent_till: bool = Field(False, alias="independentTill")
+    #: The devices page's filters (the machines list carries them): its shop in "מצב הדרכה",
+    #: its shop switched off (null without a shop, or on an answer that did not compute it),
+    #: and "נעולה" — locked from "שליטה מרחוק" (app/services/device_commands.py).
+    training_mode: bool = Field(False, alias="trainingMode")
+    shop_active: Optional[bool] = Field(None, alias="shopActive")
+    remote_locked: bool = Field(False, alias="remoteLocked")
+
+    @field_validator("training_mode", "remote_locked", mode="before")
+    @classmethod
+    def _unset_flag_is_false(cls, value):
+        return bool(value)
 
     @field_validator("independent_till", mode="before")
     @classmethod

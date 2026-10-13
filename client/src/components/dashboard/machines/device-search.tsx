@@ -92,6 +92,7 @@ export function DeviceSearchDialog({
   shops,
   companies,
   superAdmin,
+  initialQuery = '',
 }: {
   open: boolean;
   onClose: () => void;
@@ -99,13 +100,15 @@ export function DeviceSearchDialog({
   companies: Company[];
   /** A super admin searches every tenant, and may narrow to one. */
   superAdmin: boolean;
+  /** The devices page's own search, carried over when it found nothing in its scope. */
+  initialQuery?: string;
 }) {
   const t = useTranslations('deviceSearch');
   const tModel = useTranslations('machines.deviceModel');
   const tm = useTranslations('combobox.deviceModel');
   const modelOptions = useMemo(() => deviceModelOptions((model) => tModel(model)), [tModel]);
-  const [draft, setDraft] = useState<DeviceSearchFilters>(EMPTY_DEVICE_SEARCH);
-  const [applied, setApplied] = useState<DeviceSearchFilters>(EMPTY_DEVICE_SEARCH);
+  const [draft, setDraft] = useState<DeviceSearchFilters>(() => ({ ...EMPTY_DEVICE_SEARCH, q: initialQuery.trim() }));
+  const [applied, setApplied] = useState<DeviceSearchFilters>(() => ({ ...EMPTY_DEVICE_SEARCH, q: initialQuery.trim() }));
   const [page, setPage] = useState(0);
 
   const { data: tenants = [] } = useQuery<Array<{ id: string; name: string }>>({

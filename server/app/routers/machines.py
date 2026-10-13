@@ -14,6 +14,7 @@ from app.services import device_profile
 from app.services import display_devices
 from app.services import device_identity
 from app.services import device_management
+from app.services import device_commands
 from app.services import document_prefix
 from app.services import lan_server
 from app.services import support_z, till_reset
@@ -154,6 +155,7 @@ def _enrich_machine_status(
     pending_transmit: Optional[Dict[uuid_mod.UUID, uuid_mod.UUID]] = None,
     terminal_settings: Optional[Dict[uuid_mod.UUID, TerminalSettings]] = None,
     kiosks: Optional[Dict[uuid_mod.UUID, Any]] = None,
+    remote_locked: Optional[set] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -213,6 +215,13 @@ def _enrich_machine_status(
         "replacements": getattr(machine, "replacements", None) or [],
         # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md).
         "independentTill": bool(getattr(machine, "independent_till", False)),
+        # The devices page's filters: its shop in "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md), its
+        # shop switched off (null without a shop), and "נעולה" from "שליטה מרחוק".
+        "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
+        "shopActive": bool(machine.shop.is_active) if machine.shop is not None else None,
+        "remoteLocked": machine.id in (
+            remote_locked if remote_locked is not None else device_commands.locked_machine_ids(db, [machine.id])
+        ),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -385,6 +394,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     # and priming tells every machine at once rather than one lookup each.
     kiosks = device_profile.prime_kiosks(db, machines)
     terminal = terminal_settings_for(db, machines)
+    locked = device_commands.locked_machine_ids(db, ids)
     return [
         _enrich_machine_status(
             m,
@@ -399,6 +409,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             pending_transmit=pending_transmit,
             terminal_settings=terminal,
             kiosks=kiosks,
+            remote_locked=locked,
         )
         for m in machines
     ]

@@ -885,6 +885,21 @@ export interface PosMachine {
   pendingAsOf?: string | null;
   /** Hardware serial the till reports on its heartbeat (or at pairing). */
   serialNumber?: string | null;
+  /** Where the serial came from: ftpos | sunmi | kozen | build | ro.serialno (app/services/device_identity.py). */
+  serialSource?: string | null;
+  /** The app's version as the device last reported it ("0.1.248+b6e07db-device"); null = never said. */
+  appVersion?: string | null;
+  /** The address its last heartbeat came from, and its own LAN address. */
+  lastIp?: string | null;
+  lanIp?: string | null;
+  /** Its SIMs as the last heartbeat said (carrier, phone…), or null. */
+  cellular?: { sims?: Array<{ slot?: number; carrier?: string | null; phoneNumber?: string | null } | null> | null } | null;
+  /** Its shop is in "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md). */
+  trainingMode?: boolean;
+  /** Its shop is switched off; null without a shop. */
+  shopActive?: boolean | null;
+  /** Locked from "שליטה מרחוק" ("נעולה"). */
+  remoteLocked?: boolean;
   /**
    * 0..100, or `null` when the device could not read the battery at all.
    * `null` is NOT zero — render it as unknown, never as a flat battery.
