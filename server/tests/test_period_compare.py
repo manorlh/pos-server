@@ -340,11 +340,13 @@ class TestHomePagePreference:
     def test_the_default_is_the_board_and_me_says_so(self, w):
         assert UP.read_preferences(w.admin, w.db) == {
             "homePage": "board", "simpleMode": False, "simpleModeDefault": False, "reportColumns": {},
+            "approvalsInQuietHours": False,
         }
         me = users_router.get_current_user_info(current_user=w.manager, db=w.db)
         # The short menu is the manager templates' default, never a role's.
         assert me.model_dump(by_alias=True)["preferences"] == {
             "homePage": "board", "simpleMode": False, "simpleModeDefault": False, "reportColumns": {},
+            "approvalsInQuietHours": False,
         }
 
     def test_set_read_back_and_reset(self, w):

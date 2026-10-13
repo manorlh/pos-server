@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import (
+    FISCAL_TOKEN,
     get_active_tenant_id,
     get_current_user,
     get_pos_machine_from_machine_token,
@@ -443,7 +444,7 @@ def list_approvers(
     ]
 
 
-@router.post("")
+@router.post("", dependencies=FISCAL_TOKEN)
 def create_request(
     body: ApprovalCreateIn,
     response: Response,
@@ -462,7 +463,7 @@ def create_request(
     return S.created_out(req)
 
 
-@router.post("/{request_id}/add-approvers")
+@router.post("/{request_id}/add-approvers", dependencies=FISCAL_TOKEN)
 def add_approvers(
     request_id: uuid.UUID,
     body: AddApproversIn,
@@ -480,7 +481,7 @@ def add_approvers(
     return S.created_out(req)
 
 
-@router.delete("/{request_id}")
+@router.delete("/{request_id}", dependencies=FISCAL_TOKEN)
 def cancel_request(
     request_id: uuid.UUID,
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
@@ -496,7 +497,7 @@ def cancel_request(
     return S.till_out(db, req)
 
 
-@router.post("/{request_id}/use")
+@router.post("/{request_id}/use", dependencies=FISCAL_TOKEN)
 def use_grant(
     request_id: uuid.UUID,
     body: UseGrantIn,

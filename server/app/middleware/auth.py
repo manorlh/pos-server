@@ -444,6 +444,23 @@ def _checked_grant(
     return session
 
 
+def require_fiscal_machine_from_token(
+    machine: POSMachine = Depends(get_pos_machine_from_machine_token),
+) -> POSMachine:
+    """
+    `get_pos_machine_from_machine_token` (a route with no machine id in its path, like
+    `/approvals`), refusing a display device (403 `device_not_fiscal`) as `FISCAL_MACHINE_TOKEN` does.
+    """
+    from app.services.display_devices import refuse_unless_fiscal
+
+    refuse_unless_fiscal(machine)
+    return machine
+
+
+#: For a till write whose machine comes from `get_pos_machine_from_machine_token`.
+FISCAL_TOKEN = [Depends(require_fiscal_machine_from_token)]
+
+
 def require_elevated(scope: Scope):
     """
     Build a dependency that demands a live grant for `scope` at *this* machine.

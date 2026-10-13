@@ -564,6 +564,15 @@ class TestCreate:
         entry = w.db.query(ExceptionLogEntry).filter(ExceptionLogEntry.kind == "approval_requested").one()
         assert entry.details["requestId"] == out["id"] and entry.pos_user_name == "Dana"
 
+    def test_a_display_device_cannot_ask(self, w):
+        _on(w)
+        w.machine.is_fiscal = False
+        w.db.commit()
+        r = w.client.post("/api/v1/approvals", headers=_till(w), json={
+            "clientRequestId": "kds-1", "type": "discount_basket", "percent": 10, "reasonCode": "x",
+        })
+        assert r.status_code == 403 and "device_not_fiscal" in r.text
+
     def test_only_to_the_chosen_eligible_approvers(self, w):
         _on(w)
         req, created = S.create(w.db, w.machine, _body(approver_ids=[w.ron.id]), now=NOW)
