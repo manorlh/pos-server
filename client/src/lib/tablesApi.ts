@@ -94,11 +94,41 @@ export interface LiveTable extends DiningTable {
   minutesOpen?: number | null;
 }
 
+/**
+ * A kitchen void ticket of a table cancelled from the dashboard ("בון ביטול"), relayed to the till
+ * that prints its printer: `waiting` until that till prints it, `failed` once the relay gave it up.
+ */
+export interface VoidTicket {
+  id: string;
+  tableName: string | null;
+  orderRef: string | null;
+  printerId: string | null;
+  printerName: string | null;
+  targetMachineId: string | null;
+  targetMachineName: string | null;
+  state: 'waiting' | 'printed' | 'failed';
+  taken: boolean;
+  error: string | null;
+  createdAt: string | null;
+}
+
 export interface TablesLive {
   serverTime: string;
   zones: TableZone[];
   tables: LiveTable[];
   summary: { openTables: number; openTotal: number; guests: number };
+  /** Void tickets of tables cancelled here that are not on paper yet. */
+  voidTickets?: VoidTicket[];
+}
+
+/** The dashboard's cancel: the order, and how the kitchen was told. */
+export interface DashboardCancelResult extends TableOrderSummary {
+  voidTickets: VoidTicket[];
+  /** Tasks taken off the kitchen screens; null when they never had the order. */
+  kdsCancelled: number | null;
+  /** The void tickets could not be queued: the kitchen must be told by a person. */
+  voidTicketsError?: boolean;
+  kdsError?: boolean;
 }
 
 export interface CancelReason {
@@ -284,7 +314,7 @@ export const fetchMealsReport = (shopId: string, from: string, to: string, emplo
 export const archiveTable = (tableId: string) => api.post(`/tables/tables/${tableId}/archive`).then((r) => r.data);
 
 export const cancelOpenTable = (tableId: string, body: { reasonId: string; reasonText?: string | null }) =>
-  api.post(`/tables/tables/${tableId}/cancel`, body).then((r) => r.data);
+  api.post<DashboardCancelResult>(`/tables/tables/${tableId}/cancel`, body).then((r) => r.data);
 
 export const forceReleaseTable = (tableId: string) =>
   api.post(`/tables/tables/${tableId}/force-release`).then((r) => r.data);

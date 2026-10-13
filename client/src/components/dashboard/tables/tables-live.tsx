@@ -4,7 +4,8 @@
  * Open tables now ("שולחנות פתוחים — חי"): every table of the shop in its state's colour,
  * its order's total, guests and time open, and which till is inside it. Refreshed every
  * ten seconds. A manager can free a table a till left locked, or cancel a stuck order
- * (a till gone, the mode switched off) with a reason — recorded like a till's cancel.
+ * (a till gone, the mode switched off) with a reason — recorded like a till's cancel, and the
+ * kitchen gets a void ticket of what it had ("בון ביטול"), shown here until it is on paper.
  */
 
 import { useMemo, useState } from 'react';
@@ -86,8 +87,10 @@ export function TablesLive({ shopId }: { shopId: string }) {
   });
   const cancelMut = useMutation({
     mutationFn: (id: string) => cancelOpenTable(id, { reasonId, reasonText: reasonText.trim() || null }),
-    onSuccess: () => {
-      toast.success(t('cancelledToast'));
+    onSuccess: (out) => {
+      if (out?.voidTicketsError || out?.kdsError) toast.warning(t('voidTicket.notQueued'));
+      else if (out?.voidTickets?.length) toast.success(t('cancelledWithVoid'));
+      else toast.success(t('cancelledToast'));
       setPicked(null);
       refresh();
     },
@@ -97,6 +100,7 @@ export function TablesLive({ shopId }: { shopId: string }) {
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   const summary = data?.summary;
+  const voidTickets = data?.voidTickets ?? [];
 
   return (
     <div className="space-y-3">
@@ -114,6 +118,20 @@ export function TablesLive({ shopId }: { shopId: string }) {
           <div className="text-2xl font-bold">{summary?.guests ?? 0}</div>
         </div>
       </div>
+
+      {voidTickets.length > 0 ? (
+        // "בון ביטול ממתין למדפסת": a void of a table cancelled here, not on paper yet.
+        <div className="space-y-1 rounded-lg border border-amber-500 bg-amber-50 p-3 text-sm dark:bg-amber-950/40">
+          {voidTickets.map((v) => (
+            <div key={v.id} className={v.state === 'failed' ? 'font-medium text-destructive' : undefined}>
+              {t(v.state === 'failed' ? 'voidTicket.failed' : 'voidTicket.waiting', {
+                table: v.tableName ?? '?',
+                printer: v.printerName ?? '?',
+              })}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant={zoneId === 'all' ? 'default' : 'outline'} onClick={() => setZoneId('all')}>
