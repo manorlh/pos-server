@@ -507,8 +507,11 @@ class TestMigration:
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
         # The release of 13.10.2026 joins this head with its sibling PRs' in one merge revision
-        # (78c88a7afc4f); this migration stays on test mode, on that single head's line.
-        assert script.get_heads() == ["78c88a7afc4f"]
+        # (78c88a7afc4f); this migration stays on test mode, on that single head's line (later ones
+        # chain on top).
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "78c88a7afc4f" in {r.revision for r in script.walk_revisions("base", heads[0])}
         assert "d1a5c3e7f902" in script.get_revision("78c88a7afc4f").down_revision
         assert script.get_revision("d1a5c3e7f902").down_revision == "c7e4a2f9d1b6"
 

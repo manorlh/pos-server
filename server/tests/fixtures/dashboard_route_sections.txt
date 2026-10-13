@@ -560,11 +560,13 @@ POST /promotions/{promotion_id}/duplicate -> promotions:edit
 POST /promotions/{promotion_id}/pause -> promotions:edit
 GET /push/alerts -> alerts:view
 POST /push/alerts/{entry_id}/ack -> alerts:edit
+GET /push/categories -> self
 GET /push/config -> self
 GET /push/devices -> self
 POST /push/devices -> self
 POST /push/devices/unsubscribe -> self
 DELETE /push/devices/{device_id} -> self
+PATCH /push/devices/{device_id} -> self
 GET /push/history -> alerts:view
 GET /push/options -> self
 GET /push/preferences -> self
