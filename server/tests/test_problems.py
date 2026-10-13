@@ -231,6 +231,39 @@ def test_new_kinds_of_the_alert_policy_group_and_replace_the_flags(w):
     assert P.KIND_GROUP["shift_open_overdue"] == "z_shift"
 
 
+def test_the_alert_policy_and_push_detector_kinds_group_and_a_daily_summary_never_does(w):
+    """
+    The release of 14.10.2026 (alert-policy, push-detectors and this screen merged): each of their
+    kinds the screen lists is in its group, and "סיכום יום" (`catalog.INFO_KINDS`) is information —
+    never an item, never counted.
+    """
+    from app.services.exception_alerts import catalog as C
+
+    expected = {
+        "z_missing": "z_shift", "shift_open_overdue": "z_shift",
+        "card_transmission_overdue": "card",
+        "till_printer": "devices", "device_battery": "devices", "till_idle": "devices",
+        "table_open_long": "kitchen", "kds_ticket_late": "kitchen",
+    }
+    for kind, key in expected.items():
+        assert P.KIND_GROUP[kind] == key, kind
+        assert C.kind_spec(kind) is not None, kind  # the log knows it: its label is the card's title
+    assert "daily_summary" in C.INFO_KINDS
+    assert not set(P.KIND_GROUP) & C.INFO_KINDS
+
+    rows = {kind: entry(w, kind, till=w.tills[1], severity="medium")
+            for kind in ("till_idle", "table_open_long", "kds_ticket_late")}
+    before = build(w, w.admin)
+    for kind, row in rows.items():
+        listed = group(before, expected[kind])["items"]
+        assert str(row.id) in {i["exceptionId"] for i in listed}, kind
+    summary = entry(w, "daily_summary", machine=False, severity="low")
+    after = build(w, w.admin)
+    assert str(summary.id) not in exception_ids(after)
+    assert after["counts"] == before["counts"] and after["total"] == before["total"]
+    assert [g["total"] for g in after["groups"]] == [g["total"] for g in before["groups"]]
+
+
 def test_a_failed_payment_is_a_problem_only_when_the_terminal_failed(w):
     declined = entry(w, "failed_payment", severity="low", details={"outcome": "declined"})
     no_answer = entry(w, "failed_payment", severity="medium", details={"outcome": "no_answer"})
@@ -246,12 +279,15 @@ def test_a_failed_payment_is_a_problem_only_when_the_terminal_failed(w):
 
 def test_resolve_via_the_route_this_user_may_use(w):
     offline = entry(w, "till_offline")  # a push kind
-    forced = entry(w, "forced_z_close")  # not a push kind
+    # A push kind too since alert-policy's "פעולות רגישות" (sensitive_actions): the alerts' "טופל" takes it.
+    forced = entry(w, "forced_z_close")
+    late = entry(w, "cloud_closed_shift_late_documents")  # not a push kind
     manager = user(w, UserRole.SHOP_MANAGER, shop=w.shop)
     profile(w, manager, sections={"reports": DS.VIEW, "alerts": DS.EDIT})
     items = {i["exceptionId"]: i for g in build(w, manager)["groups"] for i in g["items"]}
     assert items[str(offline.id)]["resolveVia"] == "alerts" and items[str(offline.id)]["resolvable"] is True
-    assert items[str(forced.id)]["resolvable"] is False and items[str(forced.id)]["resolveVia"] is None
+    assert items[str(forced.id)]["resolveVia"] == "alerts" and items[str(forced.id)]["resolvable"] is True
+    assert items[str(late.id)]["resolvable"] is False and items[str(late.id)]["resolveVia"] is None
 
     editor = user(w, UserRole.SHOP_MANAGER, shop=w.shop)
     profile(w, editor, sections={"reports": DS.EDIT})
@@ -354,3 +390,14 @@ def test_kiosk_health_parts_are_listed_and_give_way_to_their_log_rows(w, monkeyp
     # Only for the roles the kiosks' pages serve.
     supervisor = user(w, UserRole.SHIFT_SUPERVISOR, shop=w.shop)
     assert not any(i["id"].startswith("kiosk-") for g in build(w, supervisor)["groups"] for i in g["items"])
+
+
+def test_the_service_worker_opens_the_card_of_every_problem_kind():
+    """client/public/sw.js `PROBLEM_KINDS` (a tap on a push opens its card here) names exactly `KIND_GROUP`."""
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).absolute().parents[2] / "client" / "public" / "sw.js").read_text(encoding="utf-8")
+    block = re.search(r"const PROBLEM_KINDS = new Set\(\[(.*?)\]\);", source, re.S).group(1)
+    kinds = set(re.findall(r"'([a-z_]+)'", re.sub(r"//[^\n]*", "", block)))
+    assert kinds == set(P.KIND_GROUP)

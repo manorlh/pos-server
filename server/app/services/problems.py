@@ -5,12 +5,13 @@
 
 * `devices` — a till offline (with unsent sales), unsent sales on a till that is online, the
   till's printer (no paper, overheated, error), a kiosk's health (offline, card terminal,
-  printer, KDS, its link to the till) and a low battery;
+  printer, KDS, its link to the till), a low battery and a till not selling while the others do;
 * `z_shift` — a Z not done, a shift open past its date or too long, closed shifts awaiting a Z,
   a forced Z;
 * `card` — card transmission late or failed, a terminal not answering, a card payment left
   undecided, Z-Credit gaps;
-* `kitchen` — bons that did not print;
+* `kitchen` — bons that did not print, a table open too long without payment, a KDS order not
+  ready in time;
 * `integrity` — a refused document, a numbering conflict, Z / shift totals gaps: the super
   admin's only (§1), never listed to anyone else.
 
@@ -71,9 +72,10 @@ ZCREDIT_DAYS = 14
 #: Card payments still undecided, from this far back (the failed payments list's default).
 PAYMENTS_WINDOW_DAYS = 30
 
-#: Exception-log kinds → their group. Kinds another branch adds (§1/§2: `z_missing`,
-#: `shift_open_overdue`, `card_transmission_overdue`, `till_printer`) are named as strings, so
-#: their rows group here as soon as they exist.
+#: Exception-log kinds → their group, named as strings: feat/alert-policy's (§1/§2: `z_missing`,
+#: `shift_open_overdue`, `card_transmission_overdue`, `till_printer`, `device_battery`) and
+#: feat/push-detectors' (`till_idle`, `table_open_long`, `kds_ticket_late`) among them. Never an
+#: information kind (`catalog.INFO_KINDS`: the daily summary) — that is no problem.
 KIND_GROUP: Dict[str, str] = {
     # ── devices ──
     "till_offline": "devices",
@@ -82,6 +84,7 @@ KIND_GROUP: Dict[str, str] = {
     "kiosk_printer": "devices",
     "kiosk_terminal": "devices",
     "device_battery": "devices",
+    "till_idle": "devices",
     # ── Z and shifts ──
     "z_missing": "z_shift",
     "shift_open_overdue": "z_shift",
@@ -101,6 +104,8 @@ KIND_GROUP: Dict[str, str] = {
     "zcredit_recon": "card",
     # ── kitchen ──
     "bon_unprinted": "kitchen",
+    "table_open_long": "kitchen",
+    "kds_ticket_late": "kitchen",
     # ── data integrity (the super admin's) ──
     "document_refused": "integrity",
     "document_number_conflict": "integrity",
@@ -298,7 +303,10 @@ def _money(amount: Any) -> Optional[str]:
 def _log_rows(db: Session, reach: Reach, now: datetime, *, company_ids=None, shop_id=None) -> List[ExceptionLogEntry]:
     if reach.log_query is None:
         return []
-    kinds = [k for k in KIND_GROUP if reach.super_admin or k not in INTEGRITY_KINDS]
+    from app.services.exception_alerts.catalog import INFO_KINDS
+
+    # Information (a daily summary) is never a problem: neither an item nor a count.
+    kinds = [k for k in KIND_GROUP if k not in INFO_KINDS and (reach.super_admin or k not in INTEGRITY_KINDS)]
     q = reach.log_query.filter(
         ExceptionLogEntry.kind.in_(kinds),
         ExceptionLogEntry.acknowledged_at.is_(None),

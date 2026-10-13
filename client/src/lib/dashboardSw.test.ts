@@ -28,6 +28,13 @@ describe('a tap on a phone alert', () => {
     for (const kind of ['bon_unprinted', 'zcredit_recon', 'z_missing', 'till_printer', 'document_refused']) {
       assert.ok(sw.PROBLEM_KINDS.has(kind), kind);
     }
+    // push-detectors' kinds the screen lists (pos-server problems.py KIND_GROUP); a daily summary is
+    // information, never a problem card.
+    for (const kind of ['till_idle', 'table_open_long', 'kds_ticket_late']) {
+      assert.ok(sw.PROBLEM_KINDS.has(kind), kind);
+    }
+    assert.equal(sw.PROBLEM_KINDS.has('daily_summary'), false);
+    assert.equal(sw.notificationUrl({ url: '/x/abc123', entryId: ENTRY, kind: 'daily_summary' }), '/x/abc123');
   });
 
   it('keeps the page the server named for anything else', () => {
