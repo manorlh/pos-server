@@ -312,7 +312,7 @@ def format_cell(value: Any, kind: str, tz_name: str = "Asia/Jerusalem") -> str:
         return format_number(value)
     if kind == "percent":
         return format_percent(value)
-    if kind == "date":
+    if kind in ("date", "datetime"):
         return format_date(value, tz_name)
     if value is None or value == "":
         return DASH

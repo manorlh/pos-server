@@ -311,6 +311,9 @@ class TestPdfText:
         # A UTC instant is shown in the business's time (IDT, +3).
         assert P.format_date("2026-10-13T09:15:00+00:00") == "13.10.2026 12:15"
         assert P.format_cell(True, "text") == "כן" and P.format_cell(None, "text") == "—"
+        # The dashboard's `datetime` kind too.
+        assert P.format_cell("2026-10-13T21:05:00Z", "datetime") == "14.10.2026 00:05"
+        assert pdf_router.PdfColumn(key="at", kind="datetime").kind == "datetime"
 
     def test_the_font_draws_hebrew_and_the_shekel_sign(self):
         regular = P._Font(P._truetype(False), "F1")

@@ -34,7 +34,7 @@ class PdfColumn(BaseModel):
     key: str = Field(..., min_length=1, max_length=64)
     label: str = Field("", max_length=200)
     align: Optional[Literal["start", "end", "center", "left", "right"]] = None
-    kind: Literal["text", "money", "number", "percent", "date"] = "text"
+    kind: Literal["text", "money", "number", "percent", "date", "datetime"] = "text"
 
 
 class ReportPdfIn(BaseModel):
