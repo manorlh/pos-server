@@ -41,13 +41,16 @@ import {
   TipsSplit,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
-import { useShiftExportSheets } from '@/components/dashboard/shifts/shift-export-sheets';
+import {
+  shiftMismatchTable,
+  useShiftExportTables,
+  type ShiftMismatchRow,
+} from '@/components/dashboard/shifts/shift-export-sheets';
 import { ShiftCloseAction, useShiftCloseDialogs } from '@/components/dashboard/shifts/shift-close';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { ReportTable, StandaloneExportBar } from '@/components/dashboard/report-framework';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 /**
  * The till X keys the server compares, with the server figure each is compared to.
@@ -80,7 +83,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const t = useTranslations('shifts');
   const tSend = useTranslations('transmission');
   const shiftLabel = useShiftLabel();
-  const shiftSheets = useShiftExportSheets();
+  const shiftExport = useShiftExportTables();
   const canProduceZ = useCanProduceZ();
   const { scope } = usePageScope({ maxLevel: 'machine', silent: true });
   // "סגור משמרת" for an open shift: as on the list (the remote close, or a dead till's administrative one).
@@ -129,6 +132,15 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   // "טיפ באשראי משולם מהמזומן": what the till froze on the close (null when the parameter was off).
   const tipsFromDrawer = open ? null : cardTipsFromDrawerOf(till);
   const offline = offlineOf(shift.offline);
+  // The till's X against the cloud's, key by key — when the two disagree.
+  const mismatch: ShiftMismatchRow[] =
+    shift.totalsMismatch && till
+      ? COMPARED.flatMap(({ till: keys, server }) => {
+          const key = keys.find((k) => k in till);
+          return key ? [{ key, label: t(`detail.tillKey.${keys[0]}`), till: till[key], cloud: server(shift) }] : [];
+        })
+      : [];
+  const exported = shiftExport(shift, mismatch);
 
   return (
     <div className="space-y-6">
@@ -153,24 +165,17 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <ReportExportToolbar
+          {/* Excel / PDF / print with export columns: the X in one row, the tenders, the
+              declined card sales and the till-vs-cloud comparison; the batches and the
+              failed attempts as sheets of their own. */}
+          <StandaloneExportBar
+            reportKey="shift"
             title={t('detail.title', { shift: shiftLabel(shift) })}
+            tables={exported.tables}
+            extraSheets={exported.extraSheets}
             from={shift.businessDate}
             to={shift.businessDate}
-            scopeLabel={[shift.shopName, shift.machineName].filter(Boolean).join(' · ')}
-            getSheets={() =>
-              shiftSheets(
-                shift,
-                shift.totalsMismatch && till
-                  ? COMPARED.flatMap(({ till: keys, server }) => {
-                      const key = keys.find((k) => k in till);
-                      return key
-                        ? [{ label: t(`detail.tillKey.${keys[0]}`), till: till[key], cloud: server(shift) }]
-                        : [];
-                    })
-                  : [],
-              )
-            }
+            place={[shift.shopName, shift.machineName].filter(Boolean).join(' · ') || null}
           />
           {shift.zReportId ? (
             <Link
@@ -387,30 +392,9 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           </CardHeader>
           <CardContent className="space-y-2 p-0">
             <p className="text-muted-foreground px-4 text-xs">{t('detail.mismatchExplain')}</p>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('detail.mismatchKey')}</TableHead>
-                  <TableHead className="text-end">{t('detail.mismatchTill')}</TableHead>
-                  <TableHead className="text-end">{t('detail.mismatchCloud')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {COMPARED.map(({ till: keys, server }) => {
-                  const key = keys.find((k) => k in till);
-                  if (!key) return null;
-                  return (
-                    <TableRow key={key}>
-                      <TableCell>{t(`detail.tillKey.${keys[0]}`)}</TableCell>
-                      <TableCell className="text-end tabular-nums">{display(till[key], key)}</TableCell>
-                      <TableCell className="text-end tabular-nums">
-                        {display(server(shift), key)}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <div className="px-4 pb-4">
+              <ReportTable reportKey="shift" table={{ ...shiftMismatchTable(mismatch, t, display), title: undefined }} />
+            </div>
           </CardContent>
         </Card>
       ) : null}

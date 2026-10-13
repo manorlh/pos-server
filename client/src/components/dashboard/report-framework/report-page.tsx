@@ -13,6 +13,7 @@ import { findBySameId } from '@/lib/entityLookup';
 import type { PageScopeResolution } from '@/lib/pageScope';
 import { useScope } from '@/lib/scope';
 import type { ExcelSheet } from '@/lib/excelExport';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -46,9 +47,14 @@ export function reportQueryState(q: {
 export interface ReportExportConfig {
   /** The tables that go to Excel (each a sheet) and the PDF (the first, or `pdfTableId`). */
   tables: ReportTableSpec<unknown>[];
-  extraSheets?: () => ExcelSheet[];
+  /** Sheets that are not a table of the page; may load first. */
+  extraSheets?: () => ExcelSheet[] | Promise<ExcelSheet[]>;
   /** The extra sheets before the tables' (default: after). */
   extraSheetsFirst?: boolean;
+  /** A workbook the server builds, instead of the client's Excel. */
+  excel?: () => Promise<void>;
+  /** More buttons in the export bar (a CSV, a ZIP). */
+  actions?: ReactNode;
   pdfTableId?: string;
   /** The range the server used (`data.window`), else the applied one. */
   from?: string | null;
@@ -57,6 +63,15 @@ export interface ReportExportConfig {
   place?: string | null;
   /** The export's title, when not the page's (a mode of the report). */
   title?: string;
+  /** Excel only (no PDF / print): a page that prints its own documents. */
+  excelOnly?: boolean;
+  /**
+   * The report's own filters (its `extras`, not in the unified bar: a status, a list of tills…)
+   * as the export header's "סינון:" line names them, after the bar's ("סטטוס: פתוחות").
+   */
+  filterLines?: ReportFilterLine[];
+  /** No rows yet: the buttons wait. */
+  disabled?: boolean;
 }
 
 export interface ReportPageProps {
@@ -80,6 +95,21 @@ export interface ReportPageProps {
   children?: ReactNode;
 }
 
+/**
+ * What an export says about where it stands — the business (company) and the place (shop ·
+ * till) of the dashboard's scope, and the company whose export defaults apply. `ReportPage`
+ * uses it; a page with its own filters uses it beside a `ReportExportBar` of its own.
+ */
+export function useReportExportScope(placeOverride?: string | null) {
+  const te = useTranslations('reportFramework.export');
+  const scope = useScope();
+  const companyId = scope.company?.id ?? scope.shop?.companyId ?? null;
+  const companyName = scope.company?.name ?? (companyId ? findBySameId(scope.companies, companyId)?.name : null) ?? null;
+  const business = companyName ?? te('allOrganization');
+  const place = placeOverride ?? ([scope.shop?.name, scope.machine?.name].filter(Boolean).join(' · ') || null);
+  return { companyId, companyName, business, place };
+}
+
 export function ReportPage({
   reportKey,
   title,
@@ -96,17 +126,12 @@ export function ReportPage({
   children,
 }: ReportPageProps) {
   const tc = useTranslations('common');
-  const te = useTranslations('reportFramework.export');
-  const scope = useScope();
   const description = useFilterDescription(filters, { shopId: bar?.shopId, methodOptions: bar?.methodOptions });
 
   const search = filters.isClient('search') ? (filters.applied?.values.q ?? '') : '';
   const context = useMemo(() => ({ reportKey, search }), [reportKey, search]);
 
-  const companyId = scope.company?.id ?? scope.shop?.companyId ?? null;
-  const companyName = scope.company?.name ?? (companyId ? findBySameId(scope.companies, companyId)?.name : null) ?? null;
-  const business = companyName ?? te('allOrganization');
-  const place = exportConfig?.place ?? ([scope.shop?.name, scope.machine?.name].filter(Boolean).join(' · ') || null);
+  const { companyId, companyName, business, place } = useReportExportScope(exportConfig?.place);
 
   return (
     <ReportContext.Provider value={context}>
@@ -144,15 +169,19 @@ export function ReportPage({
                   tables={exportConfig.tables}
                   extraSheets={exportConfig.extraSheets}
                   extraSheetsFirst={exportConfig.extraSheetsFirst}
+                  excel={exportConfig.excel}
+                  actions={exportConfig.actions}
                   pdfTableId={exportConfig.pdfTableId}
                   from={exportConfig.from ?? filters.applied?.values.from}
                   to={exportConfig.to ?? filters.applied?.values.to}
                   business={business}
                   place={place}
-                  filterLines={description.lines}
+                  filterLines={exportConfig.filterLines?.length ? [...description.lines, ...exportConfig.filterLines] : description.lines}
                   hours={description.hours}
                   companyId={companyId}
                   companyName={companyName}
+                  excelOnly={exportConfig.excelOnly}
+                  disabled={exportConfig.disabled}
                 />
               ) : null}
               {children}

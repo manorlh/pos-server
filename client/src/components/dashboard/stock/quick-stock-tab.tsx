@@ -4,8 +4,14 @@
  * "מלאי מהיר" — phone first: pick a place in the hierarchy, find a product, tap + / −, or count,
  * receive, transfer, block. Each row says where an update goes (the managed level), the total under
  * the node, every location, low stock, and what the devices here show ("אזל" / "חסום").
+ *
+ * The search, the category and the filter (הכל / מלאי נמוך / אזל / חסום) live in the URL
+ * (`?q=&category=&filter=`), so a filtered view is a link. The export is the report framework's
+ * (`stock-quick`, P:\specs\reports-upgrade.md §5): Excel / PDF / print of the rows shown, with the
+ * export columns, the place picked and the filters in the header; the cards stay as they are.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowLeftRight, ChevronDown, ClipboardList, Minus, PackagePlus, PackageX, Plus, Search } from 'lucide-react';
@@ -15,12 +21,37 @@ import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
-import { BlockItemSheet, StockNodePicker, StockUpdateSheet, invalidateStock } from '@/components/dashboard/live-control';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import { ReportExportBar, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { BlockItemSheet, StockNodePicker, StockUpdateSheet, invalidateStock, treeNodes, useStockTree } from '@/components/dashboard/live-control';
 import { formatQty, levelsLabel, locationLabel, nodeKey, type QuickRow, type StockNode, type StockOp } from '@/lib/stockLive';
 import { fetchQuick, postUpdate, stockKeys } from '@/lib/stockLiveApi';
 
-type Filter = 'all' | 'low' | 'blocked';
+const FILTERS = ['all', 'low', 'blocked'] as const;
+type Filter = (typeof FILTERS)[number];
+const FILTER_LABELS: Record<Filter, string> = { all: 'הכל', low: 'מלאי נמוך', blocked: 'אזל / חסום' };
+
+/** A stock tab's own params in the page's URL (`?q=`, `?day=`…): read, and replaced in place — the scope's and the tab's kept. */
+export function useStockUrlParams(): [URLSearchParams, (patch: Record<string, string | null>) => void] {
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const query = params?.toString() ?? '';
+  const current = useMemo(() => new URLSearchParams(query), [query]);
+  const set = useCallback(
+    (patch: Record<string, string | null>) => {
+      const next = new URLSearchParams(query);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v) next.set(k, v);
+        else next.delete(k);
+      }
+      const qs = next.toString();
+      if (qs !== query) router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, query, router],
+  );
+  return [current, set];
+}
 
 function rowsOf(data: unknown): Record<string, unknown>[] {
   if (Array.isArray(data)) return data as Record<string, unknown>[];
@@ -80,10 +111,21 @@ export function QuickStockTab({
 }) {
   const qc = useQueryClient();
   const [node, setNode] = useState<StockNode>(start ?? root);
-  const [q, setQ] = useState('');
+  // The search, the category and the filter: in the URL. The box types freely; the settled words go there.
+  const [params, setParams] = useStockUrlParams();
+  const urlQ = params.get('q') ?? '';
+  const [q, setQ] = useState(urlQ);
   const query = useSettled(q.trim());
-  const [categoryId, setCategoryId] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  useEffect(() => {
+    if (query !== urlQ) setParams({ q: query || null });
+  }, [query, urlQ, setParams]);
+  // An id the server reads (a bad one in a hand-typed link is dropped, not sent).
+  const rawCategory = params.get('category') ?? '';
+  const categoryId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCategory) ? rawCategory : '';
+  const setCategoryId = (v: string) => setParams({ category: v || null });
+  const rawFilter = params.get('filter');
+  const filter: Filter = FILTERS.find((f) => f === rawFilter) ?? 'all';
+  const setFilter = (f: Filter) => setParams({ filter: f === 'all' ? null : f });
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [sheet, setSheet] = useState<{ productId: string; op?: StockOp; mode?: 'update' | 'transfer' } | null>(null);
   const [blockFor, setBlockFor] = useState<string | null>(null);
@@ -120,6 +162,32 @@ export function QuickStockTab({
       return next;
     });
 
+  // The export: the rows shown, as the Excel had them. Not a table on screen — the cards are.
+  const categories = useCategories();
+  const tree = useStockTree(root);
+  const exportScope = useReportExportScope();
+  const place = treeNodes(tree.data).find((n) => n.key === nodeKey(node))?.label ?? exportScope.place;
+  const exportTable: ReportTableSpec<QuickRow> = {
+    id: 'main',
+    title: 'מלאי',
+    rows,
+    rowKey: (r) => r.productId,
+    columns: [
+      { key: 'product', header: 'מוצר', required: true, width: 30, value: (r) => r.productName },
+      { key: 'sku', header: 'מק״ט', width: 14, value: (r) => r.sku ?? null },
+      { key: 'managedIn', header: 'מנוהל ב', width: 22, value: (r) => levelsLabel(r.managedLevels) },
+      { key: 'here', header: 'כאן', kind: 'number', value: (r) => r.quantityAtTarget ?? null },
+      { key: 'total', header: 'סה״כ', kind: 'number', value: (r) => r.total },
+      { key: 'low', header: 'נמוך', width: 8, value: (r) => (r.low ? 'נמוך' : null) },
+    ],
+  };
+  const categoryName = categoryId ? String((categories.data ?? []).find((c) => String(c.id) === categoryId)?.name ?? '') : '';
+  const filterLines: ReportFilterLine[] = [
+    ...(query ? [{ label: 'חיפוש', value: query }] : []),
+    ...(categoryId ? [{ label: 'קטגוריה', value: categoryName || categoryId }] : []),
+    ...(filter !== 'all' ? [{ label: 'סינון', value: FILTER_LABELS[filter] }] : []),
+  ];
+
   return (
     <section className="space-y-3">
       <StockNodePicker root={root} value={node} onChange={setNode} />
@@ -141,27 +209,22 @@ export function QuickStockTab({
               onClick={() => setFilter(f)}
               className={cn('min-h-9 rounded-md px-3 text-sm', filter === f ? 'bg-background shadow-sm' : 'text-muted-foreground')}
             >
-              {f === 'all' ? 'הכל' : f === 'low' ? 'מלאי נמוך' : 'אזל / חסום'}
+              {FILTER_LABELS[f]}
             </button>
           ))}
         </div>
-        <ReportExportToolbar
-          title="מלאי מהיר"
-          disabled={rows.length === 0}
-          getSheets={() => ({
-            name: 'מלאי',
-            columns: [
-              { header: 'מוצר', width: 30 },
-              { header: 'מק״ט', width: 14 },
-              { header: 'מנוהל ב', width: 22 },
-              { header: 'כאן', kind: 'number' },
-              { header: 'סה״כ', kind: 'number' },
-              { header: 'נמוך', width: 8 },
-            ],
-            rows: rows.map((r) => [r.productName, r.sku ?? null, levelsLabel(r.managedLevels), r.quantityAtTarget ?? null, r.total, r.low ? 'נמוך' : null]),
-          })}
-        />
       </div>
+      <ReportExportBar
+        reportKey="stock-quick"
+        title="מלאי מהיר"
+        tables={[exportTable] as ReportTableSpec<unknown>[]}
+        business={exportScope.business}
+        place={place}
+        filterLines={filterLines}
+        companyId={exportScope.companyId}
+        companyName={exportScope.companyName}
+        disabled={rows.length === 0}
+      />
 
       {data.isPending ? (
         <div className="grid gap-2 lg:grid-cols-2">

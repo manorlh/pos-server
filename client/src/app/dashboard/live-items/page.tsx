@@ -8,10 +8,18 @@
  *
  * The figures are `GET /reports/live-items`, the product sales report's own over the
  * same documents, scoped by role on the server; the scope here can only narrow it.
+ *
+ * On the report framework (P:\specs\reports-upgrade.md §2, §5): the board's state — its own
+ * scope (with the area), the period, the range, the search, the sort and "show all" — is in the
+ * URL (lib/liveItemsView.ts), so a link is the board. From `md` up the table is a ReportTable
+ * (sort by a header, column chooser, its totals); the phone keeps its ranked cards. Excel / PDF
+ * with export columns take every product of the scope and period (not only the top 20), with
+ * the scope's totals (a search sums its rows). No tips: an item has none.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
@@ -21,26 +29,33 @@ import { fetchLiveItems } from '@/lib/api';
 import { formatCurrency, formatQuantity } from '@/lib/format';
 import { todayIso } from '@/lib/reportWindow';
 import { normalizeNavText } from '@/lib/navigation';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import {
+  LIVE_PERIODS,
+  LIVE_SORTS,
+  liveItemsApiParams,
+  liveItemsTotals,
+  parseLiveItemsState,
+  searchLiveRows,
+  sortLiveRows,
+  writeLiveItemsState,
+  type LiveItemsState,
+} from '@/lib/liveItemsView';
 import type { LiveItemRow } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { ALL_COMPANIES, EMPTY_ORG_SCOPE, type OrgScope } from '@/components/dashboard/org-scope-cascade';
+import { ALL_COMPANIES, type OrgScope } from '@/components/dashboard/org-scope-cascade';
 import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
+import { ReportTable, StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const REFRESH_MS = 30_000;
 const TOP_N = 20;
-
-type Period = 'today' | 'shift' | 'custom';
-type SortKey = 'net' | 'qty' | 'gross' | 'name';
-const PERIODS: Period[] = ['today', 'shift', 'custom'];
-const SORTS: SortKey[] = ['net', 'qty', 'gross', 'name'];
+const ROW_LIMIT = 1000;
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(() => Date.now());
@@ -49,14 +64,6 @@ function useNow(intervalMs: number): number {
     return () => window.clearInterval(id);
   }, [intervalMs]);
   return now;
-}
-
-function sortRows(rows: LiveItemRow[], key: SortKey, desc: boolean): LiveItemRow[] {
-  const sign = desc ? -1 : 1;
-  return [...rows].sort((a, b) => {
-    if (key === 'name') return sign * (a.name ?? '').localeCompare(b.name ?? '', 'he');
-    return sign * (a[key] - b[key]);
-  });
 }
 
 /** The share as a thin bar under the card: how much of the scope's takings it is. */
@@ -68,37 +75,63 @@ function ShareBar({ share }: { share: number }) {
   );
 }
 
+const rowKeyOf = (r: LiveItemRow) => `${r.productId ?? ''}|${r.sku ?? ''}|${r.name ?? ''}`;
+
 export default function LiveItemsPage() {
   const t = useTranslations('liveBoard.items');
   const tc = useTranslations('common');
   const now = useNow(15_000);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const urlKey = searchParams.toString();
+  const today = todayIso();
 
-  const [scope, setScope] = useState<OrgScope>({ ...EMPTY_ORG_SCOPE, companyId: ALL_COMPANIES });
+  // ── The board's state: the URL ──
+  const state = useMemo(() => parseLiveItemsState(new URLSearchParams(urlKey), today), [today, urlKey]);
+  const write = (patch: Partial<LiveItemsState>) => {
+    // The live query, not this render's: a pending search write may have landed since.
+    const live = new URLSearchParams(window.location.search);
+    const next = writeLiveItemsState(live, { ...parseLiveItemsState(live, today), ...patch }, today).toString();
+    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+  };
+  const scope: OrgScope = {
+    companyId: state.companyId ?? ALL_COMPANIES,
+    shopId: state.shopId,
+    areaId: state.areaId,
+    machineId: state.machineId,
+  };
   const scopeName = useOrgScopeLabel(scope);
-  const [period, setPeriod] = useState<Period>('today');
-  const [from, setFrom] = useState(todayIso);
-  const [to, setTo] = useState(todayIso);
-  const [query, setQuery] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('net');
-  const [desc, setDesc] = useState(true);
-  const [showAll, setShowAll] = useState(false);
 
-  const params = useMemo(() => {
-    const company = scope.companyId && scope.companyId !== ALL_COMPANIES ? scope.companyId : undefined;
-    const where = {
-      companyId: company,
-      shopId: scope.shopId || undefined,
-      areaId: scope.areaId || undefined,
-      machineId: scope.machineId || undefined,
-      limit: 1000,
-    };
-    if (period === 'shift') return { ...where, shift: 'open' as const };
-    if (period === 'custom') return { ...where, from: from || undefined, to: to || undefined };
-    return where;
-  }, [from, period, scope, to]);
+  // The search box answers every key; the URL follows a moment later (a link keeps it).
+  const [query, setQuery] = useState(state.q);
+  const [urlQ, setUrlQ] = useState(state.q);
+  if (urlQ !== state.q) {
+    setUrlQ(state.q);
+    setQuery(state.q);
+  }
+  const qTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (qTimer.current !== null) window.clearTimeout(qTimer.current);
+    },
+    [],
+  );
+  const onSearch = (value: string) => {
+    setQuery(value);
+    if (qTimer.current !== null) window.clearTimeout(qTimer.current);
+    qTimer.current = window.setTimeout(() => {
+      qTimer.current = null;
+      setUrlQ(value);
+      write({ q: value });
+    }, 300);
+  };
+
+  const params = useMemo(() => liveItemsApiParams(state, ROW_LIMIT), [state]);
+  const { period, from, to } = state;
 
   // A custom range that ends before today will not change; no point polling it.
-  const live = period !== 'custom' || !to || to >= todayIso();
+  const live = period !== 'custom' || !to || to >= today;
   const report = useQuery({
     queryKey: ['live-items', params],
     queryFn: () => fetchLiveItems(params),
@@ -108,21 +141,90 @@ export default function LiveItemsPage() {
     enabled: period !== 'custom' || (!!from && !!to && from <= to),
   });
 
-  const rows = useMemo(() => {
-    const q = normalizeNavText(query);
-    const all = report.data?.rows ?? [];
-    const hit = q
-      ? all.filter(
-          (r) => normalizeNavText(r.name ?? '').includes(q) || normalizeNavText(r.sku ?? '').includes(q),
-        )
-      : all;
-    return sortRows(hit, sortKey, desc);
-  }, [desc, query, report.data?.rows, sortKey]);
+  const rows = useMemo(
+    () => sortLiveRows(searchLiveRows(report.data?.rows ?? [], query, normalizeNavText), state.sort, state.desc),
+    [query, report.data?.rows, state.desc, state.sort],
+  );
 
   const searching = query.trim().length > 0;
-  const shown = showAll || searching ? rows : rows.slice(0, TOP_N);
+  const shown = state.all || searching ? rows : rows.slice(0, TOP_N);
   const totals = report.data?.totals;
   const updatedAt = report.dataUpdatedAt;
+
+  // ── The table (md and up) and the export: every row found, the board's own order ──
+  const rank = useMemo(() => new Map(rows.map((r, i) => [rowKeyOf(r), i + 1])), [rows]);
+  const table = useMemo<ReportTableSpec<LiveItemRow>>(() => {
+    const tot = totals ? liveItemsTotals(rows, totals, searching) : null;
+    return {
+      id: 'main',
+      title: t('kpi.products'),
+      rows: shown,
+      rowKey: rowKeyOf,
+      totalsLabel: tc('total'),
+      emptyText: searching ? t('noMatch') : t('empty'),
+      // Every product of the scope and period (and the search), not just the top 20 shown.
+      exportRows: async () => rows,
+      columns: [
+        {
+          key: 'rank',
+          header: '#',
+          screenOnly: true,
+          sortable: false,
+          value: (r) => rank.get(rowKeyOf(r)) ?? null,
+          className: 'w-10 text-muted-foreground tabular-nums',
+        },
+        {
+          key: 'name',
+          header: t('col.name'),
+          required: true,
+          width: 26,
+          value: (r) => r.name || t('unnamed'),
+          cell: (r) => (
+            <>
+              <span className="font-medium">{r.name || t('unnamed')}</span>
+              {r.sku ? <span className="ms-2 text-xs text-muted-foreground">{r.sku}</span> : null}
+            </>
+          ),
+        },
+        { key: 'sku', header: t('export.sku'), width: 12, exportOnly: true, value: (r) => r.sku ?? null },
+        { key: 'qty', header: t('col.qty'), kind: 'number', value: (r) => r.qty, total: tot?.qty },
+        { key: 'unitsSold', header: t('export.unitsSold'), kind: 'number', exportOnly: true, value: (r) => r.unitsSold, total: tot?.unitsSold },
+        {
+          key: 'unitsRefunded',
+          header: t('export.unitsRefunded'),
+          kind: 'number',
+          exportOnly: true,
+          value: (r) => r.unitsRefunded,
+          total: tot?.unitsRefunded,
+        },
+        { key: 'gross', header: t('col.gross'), kind: 'money', value: (r) => r.gross, total: tot?.gross },
+        { key: 'discounts', header: t('export.discounts'), kind: 'money', exportOnly: true, value: (r) => r.discounts, total: tot?.discounts },
+        { key: 'refunds', header: t('export.refunds'), kind: 'money', exportOnly: true, value: (r) => r.refunds, total: tot?.refunds },
+        { key: 'net', header: t('col.net'), kind: 'money', value: (r) => r.net, total: tot?.net, className: 'font-semibold' },
+        {
+          key: 'share',
+          header: t('col.share'),
+          kind: 'percent',
+          value: (r) => r.share,
+          totalCell: '',
+          headClassName: 'w-48',
+          cell: (r) => (
+            <div className="flex min-w-32 items-center gap-2">
+              <ShareBar share={r.share} />
+              <span className="w-12 shrink-0 text-end text-xs tabular-nums">{r.share.toFixed(1)}%</span>
+            </div>
+          ),
+        },
+      ],
+    };
+  }, [rank, rows, searching, shown, t, tc, totals]);
+
+  // The page's own scope (not the dashboard's), the period, the search and the row limit.
+  const filterLines: ReportFilterLine[] = [
+    { label: t('period.label'), value: t(`period.${period}`) },
+    ...(searching ? [{ label: t('searchPlaceholder'), value: query.trim() }] : []),
+    ...(report.data?.truncated ? [{ label: t('kpi.products'), value: t('truncated', { n: report.data.rowLimit }) }] : []),
+  ];
 
   return (
     <div className="space-y-4">
@@ -152,7 +254,7 @@ export default function LiveItemsPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Link
           href="/dashboard"
           className="inline-flex min-h-11 items-center gap-1.5 rounded-full border bg-card px-3 text-sm hover:bg-muted"
@@ -160,65 +262,39 @@ export default function LiveItemsPage() {
           <LayoutDashboard className="h-4 w-4" aria-hidden />
           {t('toBoard')}
         </Link>
-        {/* Every product of the scope and period (and the search), not just the top 20 shown. */}
-        <ReportExportToolbar
+        <StandaloneExportBar
+          reportKey="live-items"
           title={t('title')}
+          tables={[table as ReportTableSpec<unknown>]}
           from={report.data?.window.from}
           to={report.data?.window.to}
-          // The page's own scope (not the dashboard's), the search and the row limit.
-          scopeLabel={[
-            scopeName,
-            searching ? t('export.search', { q: query.trim() }) : '',
-            report.data?.truncated ? t('truncated', { n: report.data.rowLimit }) : '',
-          ]
-            .filter(Boolean)
-            .join(' · ')}
+          place={scopeName}
+          filterLines={filterLines}
           disabled={!report.data || rows.length === 0}
-          getSheets={() => {
-            const data = report.data!;
-            const sum = (pick: (r: LiveItemRow) => number) => rows.reduce((n, r) => n + pick(r), 0);
-            return {
-              name: t('kpi.products'),
-              columns: [
-                { header: t('col.name'), width: 26 },
-                { header: t('export.sku'), width: 12 },
-                { header: t('col.qty'), kind: 'number' },
-                { header: t('export.unitsSold'), kind: 'number' },
-                { header: t('export.unitsRefunded'), kind: 'number' },
-                { header: t('col.gross'), kind: 'money' },
-                { header: t('export.discounts'), kind: 'money' },
-                { header: t('export.refunds'), kind: 'money' },
-                { header: t('col.net'), kind: 'money' },
-                { header: t('col.share'), kind: 'percent' },
-              ],
-              rows: rows.map((r) => [
-                r.name || t('unnamed'), r.sku ?? null, r.qty, r.unitsSold, r.unitsRefunded, r.gross, r.discounts,
-                r.refunds, r.net, r.share,
-              ]),
-              // The scope's own totals (every product, even past the row limit); a search sums its rows.
-              totals: searching
-                ? [
-                    tc('total'), null, sum((r) => r.qty), sum((r) => r.unitsSold), sum((r) => r.unitsRefunded),
-                    sum((r) => r.gross), sum((r) => r.discounts), sum((r) => r.refunds), sum((r) => r.net), null,
-                  ]
-                : [
-                    tc('total'), null, data.totals.qty, null, null, data.totals.gross, data.totals.discounts,
-                    data.totals.refunds, data.totals.net, null,
-                  ],
-            };
-          }}
         />
       </div>
 
-      <ScopePicker value={scope} onChange={(s) => { setScope(s); setShowAll(false); }} allowAll />
+      <ScopePicker
+        value={scope}
+        onChange={(s) =>
+          write({
+            companyId: s.companyId && s.companyId !== ALL_COMPANIES ? s.companyId : null,
+            shopId: s.shopId,
+            areaId: s.areaId,
+            machineId: s.machineId,
+            all: false,
+          })
+        }
+        allowAll
+      />
 
       <div className="space-y-2">
         <div className="flex flex-wrap gap-2" role="group" aria-label={t('period.label')}>
-          {PERIODS.map((p) => (
+          {LIVE_PERIODS.map((p) => (
             <button
               key={p}
               type="button"
-              onClick={() => setPeriod(p)}
+              onClick={() => write({ period: p })}
               aria-pressed={period === p}
               className={cn(
                 'inline-flex min-h-11 items-center rounded-full border px-4 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
@@ -233,11 +309,25 @@ export default function LiveItemsPage() {
           <div className="grid grid-cols-2 gap-2 sm:max-w-md">
             <div className="space-y-1">
               <Label htmlFor="live-from">{t('period.from')}</Label>
-              <DatePicker id="live-from" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} className="h-11" />
+              <DatePicker
+                id="live-from"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => write({ from: e.target.value })}
+                range={{ from, to, onSelect: (r) => write({ from: r.from, to: r.to }) }}
+                className="h-11"
+              />
             </div>
             <div className="space-y-1">
               <Label htmlFor="live-to">{t('period.to')}</Label>
-              <DatePicker id="live-to" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} className="h-11" />
+              <DatePicker
+                id="live-to"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => write({ to: e.target.value })}
+                range={{ from, to, onSelect: (r) => write({ from: r.from, to: r.to }) }}
+                className="h-11"
+              />
             </div>
           </div>
         ) : null}
@@ -273,13 +363,13 @@ export default function LiveItemsPage() {
             inputMode="search"
             enterKeyHint="search"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => onSearch(e.target.value.slice(0, 120))}
             placeholder={t('searchPlaceholder')}
             aria-label={t('searchPlaceholder')}
             className="h-11 rounded-xl bg-card ps-9 pe-11 text-base [&::-webkit-search-cancel-button]:hidden"
           />
           {query ? (
-            <Button variant="ghost" size="icon" className="absolute end-0 top-0 size-11" onClick={() => setQuery('')} aria-label={t('clearSearch')}>
+            <Button variant="ghost" size="icon" className="absolute end-0 top-0 size-11" onClick={() => onSearch('')} aria-label={t('clearSearch')}>
               <X className="h-4 w-4" aria-hidden />
             </Button>
           ) : null}
@@ -287,15 +377,15 @@ export default function LiveItemsPage() {
         <div className="flex items-center gap-2">
           <span className="shrink-0 text-sm text-muted-foreground">{t('sort.label')}</span>
           <Select
-            value={sortKey}
-            onValueChange={(v) => v && setSortKey(v as SortKey)}
-            items={SORTS.map((s) => ({ value: s, label: t(`sort.${s}`) }))}
+            value={state.sort}
+            onValueChange={(v) => v && write({ sort: v as LiveItemsState['sort'] })}
+            items={LIVE_SORTS.map((s) => ({ value: s, label: t(`sort.${s}`) }))}
           >
             <SelectTrigger className="h-11 min-w-0 flex-1 sm:max-w-48">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {SORTS.map((s) => (
+              {LIVE_SORTS.map((s) => (
                 <SelectItem key={s} value={s} label={t(`sort.${s}`)}>
                   {t(`sort.${s}`)}
                 </SelectItem>
@@ -306,11 +396,11 @@ export default function LiveItemsPage() {
             variant="outline"
             size="icon"
             className="size-11 shrink-0"
-            onClick={() => setDesc((d) => !d)}
-            aria-label={desc ? t('sort.desc') : t('sort.asc')}
-            title={desc ? t('sort.desc') : t('sort.asc')}
+            onClick={() => write({ desc: !state.desc })}
+            aria-label={state.desc ? t('sort.desc') : t('sort.asc')}
+            title={state.desc ? t('sort.desc') : t('sort.asc')}
           >
-            {desc ? <ArrowDownWideNarrow className="h-4 w-4" aria-hidden /> : <ArrowUpNarrowWide className="h-4 w-4" aria-hidden />}
+            {state.desc ? <ArrowDownWideNarrow className="h-4 w-4" aria-hidden /> : <ArrowUpNarrowWide className="h-4 w-4" aria-hidden />}
           </Button>
         </div>
       </div>
@@ -337,7 +427,7 @@ export default function LiveItemsPage() {
           {/* Phone: a column of cards. */}
           <ol className="space-y-2 md:hidden">
             {shown.map((r, i) => (
-              <li key={`${r.productId ?? ''}|${r.sku ?? ''}|${r.name ?? ''}`} className="space-y-2 rounded-xl bg-card p-3 ring-1 ring-foreground/10">
+              <li key={rowKeyOf(r)} className="space-y-2 rounded-xl bg-card p-3 ring-1 ring-foreground/10">
                 <div className="flex items-start gap-2">
                   <span className="mt-0.5 w-6 shrink-0 text-center text-xs tabular-nums text-muted-foreground">{i + 1}</span>
                   <div className="min-w-0 flex-1">
@@ -359,45 +449,14 @@ export default function LiveItemsPage() {
             ))}
           </ol>
 
-          {/* Wider: a table. */}
-          <div className="hidden overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10 md:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">#</TableHead>
-                  <TableHead>{t('col.name')}</TableHead>
-                  <TableHead className="text-end">{t('col.qty')}</TableHead>
-                  <TableHead className="text-end">{t('col.gross')}</TableHead>
-                  <TableHead className="text-end">{t('col.net')}</TableHead>
-                  <TableHead className="w-48">{t('col.share')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shown.map((r, i) => (
-                  <TableRow key={`${r.productId ?? ''}|${r.sku ?? ''}|${r.name ?? ''}`}>
-                    <TableCell className="tabular-nums text-muted-foreground">{i + 1}</TableCell>
-                    <TableCell>
-                      <span className="font-medium">{r.name || t('unnamed')}</span>
-                      {r.sku ? <span className="ms-2 text-xs text-muted-foreground">{r.sku}</span> : null}
-                    </TableCell>
-                    <TableCell className="text-end tabular-nums">{formatQuantity(r.qty)}</TableCell>
-                    <TableCell className="text-end tabular-nums">{formatCurrency(r.gross)}</TableCell>
-                    <TableCell className="text-end font-semibold tabular-nums">{formatCurrency(r.net)}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <ShareBar share={r.share} />
-                        <span className="w-12 shrink-0 text-end text-xs tabular-nums">{r.share.toFixed(1)}%</span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          {/* Wider: the report table (sort by a header, column chooser, the totals). */}
+          <div className="hidden md:block">
+            <ReportTable reportKey="live-items" table={table} />
           </div>
 
           {!searching && rows.length > TOP_N ? (
-            <Button variant="outline" className="min-h-11 w-full" onClick={() => setShowAll((s) => !s)}>
-              {showAll ? t('showTop', { n: TOP_N }) : t('showAll', { count: rows.length })}
+            <Button variant="outline" className="min-h-11 w-full" onClick={() => write({ all: !state.all })}>
+              {state.all ? t('showTop', { n: TOP_N }) : t('showAll', { count: rows.length })}
             </Button>
           ) : null}
           {report.data?.truncated ? (

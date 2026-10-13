@@ -17,6 +17,11 @@ export interface ReportColumn<R> {
   cell?(row: R): ReactNode;
   /** The totals row's value for this column (export and default cell); omit for an empty cell. */
   total?: ExcelValue;
+  /**
+   * The totals cell computed from the rows, when there is no `total` from the server: on screen
+   * from the table's rows, in the export from the rows exported (a paged list's every page).
+   */
+  totalOf?(rows: R[]): ExcelValue;
   /** A custom totals cell on screen. */
   totalCell?: ReactNode;
   /** The row's name: never hidden. */
@@ -36,6 +41,12 @@ export interface ReportColumn<R> {
   exportOnly?: boolean;
   /** On screen only (e.g. a share bar). */
   screenOnly?: boolean;
+  /**
+   * A column that stands for several in the export, known only from the exported rows (one per
+   * payment method the data has): chosen or left out as one, written as the columns this returns,
+   * in its place (their keys `<key>:<theirs>`).
+   */
+  expandInExport?(rows: R[]): ReportColumn<R>[];
 }
 
 export interface ReportTableSpec<R> {
@@ -53,10 +64,33 @@ export interface ReportTableSpec<R> {
   totalsLabel?: string;
   emptyText?: string;
   rowClassName?(row: R): string | undefined;
+  /**
+   * The row's fill in Excel (ARGB, `EXCEL_FILL` in lib/excelExport.ts), null for none: a status
+   * the screen colours (`rowClassName`) stays coloured in the sheet.
+   */
+  rowFill?(row: R): string | null | undefined;
   /** A drill-down under the row (opened by a click on the row). */
   expand?(row: R): ReactNode;
+  /**
+   * A click on the row (not on a link, a button or a field inside it): opens the row's own
+   * dialog, ticks its checkbox… Ignored when the table has `expand`.
+   */
+  onRowClick?(row: R): void;
   /** Not in Excel / PDF (default: exported). */
   noExport?: boolean;
   /** Lines of this sheet only, under the report's header. */
   sheetHeading?: string[];
+  /**
+   * The rows the export takes when they are not the rows on screen — every page of a paged
+   * list, or a server export endpoint — fetched on the click (Excel and the PDF). Default: `rows`.
+   */
+  exportRows?: () => Promise<R[]>;
+  /**
+   * Rows that come in runs of one group (a day): while the table is in the report's order a
+   * heading row (`groupHeading`) opens each run. A sorted table shows no headings.
+   */
+  groupOf?(row: R): string;
+  groupHeading?(group: string, rows: R[]): ReactNode;
+  /** The sheet's autofilter on its header row (default true; off for a label / value sheet). */
+  autoFilter?: boolean;
 }

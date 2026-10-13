@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   actionLog,
   adjustmentTimes,
+  attendanceFilterLines,
   cardAlerts,
   cardStatus,
   decimalHours,
@@ -13,6 +14,7 @@ import {
   liveSeconds,
   localInputToIso,
   noteKeys,
+  noteText,
   reportExportRows,
   REPORT_HEADER_KEYS,
   verifiedByKey,
@@ -136,5 +138,36 @@ describe('attendance — code per action', () => {
     assert.equal(verifiedByKey({ verifiedBy: 'session' }), 'session');
     assert.equal(verifiedByKey({ verifiedBy: 'card' }), 'unknown');
     assert.equal(verifiedByKey({ verifiedBy: null }), 'unknown');
+  });
+});
+
+describe('attendance — the report on the reports framework', () => {
+  const note = (k: string) => `[${k}]`;
+
+  it('writes the notes cell as the export always did: the notes in order, then the close reason', () => {
+    assert.equal(noteText({ notes: ['corrected', 'open'], closeReason: 'שכחה לצאת' }, { note }), '[open] · [corrected] · שכחה לצאת');
+    assert.equal(noteText({ notes: [], closeReason: null }, { note }), '');
+    assert.equal(noteText({ closeReason: 'ידני' }, { note }), 'ידני');
+    // The same text as the spreadsheet row's last cell.
+    const s = shift({ notes: ['closed_by_manager'], closeReason: 'שכחה לצאת' });
+    const row = reportExportRows([s], { note, status: (x) => x, time: () => '' })[0];
+    assert.equal(row[row.length - 1], noteText(s, { note }));
+  });
+
+  it('states the chosen job title and employee by name, only when set', () => {
+    const names = {
+      role: (id: string) => new Map([['r1', 'מלצר']]).get(id),
+      employee: (id: string) => new Map([['u1', 'דנה כהן']]).get(id),
+    };
+    const labels = { role: 'תפקיד', employee: 'עובד', unknown: '(בחירה מהקישור)' };
+    assert.deepEqual(attendanceFilterLines({ roleId: '', posUserId: '' }, names, labels), []);
+    assert.deepEqual(attendanceFilterLines({ roleId: 'r1', posUserId: 'u1' }, names, labels), [
+      { label: 'תפקיד', value: 'מלצר' },
+      { label: 'עובד', value: 'דנה כהן' },
+    ]);
+    // A name not (yet) known is never written as an id.
+    assert.deepEqual(attendanceFilterLines({ roleId: '', posUserId: 'u9' }, names, labels), [
+      { label: 'עובד', value: '(בחירה מהקישור)' },
+    ]);
   });
 });

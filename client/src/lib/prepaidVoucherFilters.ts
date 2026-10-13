@@ -187,6 +187,88 @@ export function pageStateToQuery(s: PageState): string {
   return p.toString();
 }
 
+// ── The filters in words (an export's "סינון:" line) ───────────────────────────
+
+/** A filter with a fixed set of options, written by its option's word. */
+export type VoucherChoiceKey = 'kind' | 'accounting' | 'pricing' | 'override' | 'offline' | 'testMode' | 'batchStatus' | 'state';
+/** A filter of ids, written by the names the facets give them. */
+export type VoucherIdKey = 'typeId' | 'batchId' | 'shopId' | 'machineId' | 'employee' | 'createdBy';
+/** One line per filter; a range is one line (`issued`, `redeemed`, `value`, `price`). */
+export type VoucherLineKey = 'customer' | 'event' | VoucherIdKey | VoucherChoiceKey | 'issued' | 'redeemed' | 'validOn' | 'value' | 'price' | 'group' | 'q';
+
+export interface VoucherFilterWords {
+  label(key: VoucherLineKey): string;
+  option(key: VoucherChoiceKey, value: string): string;
+  /** An id's name; null / undefined when the facets do not know it — then the id itself. */
+  name(key: VoucherIdKey, id: string): string | null | undefined;
+  /** A day as the reader writes it ("13/10/2026"). */
+  day(iso: string): string;
+  /** "מ-" and "עד": a range open on one side. */
+  min: string;
+  max: string;
+}
+
+/** "מ-10 עד 50", "מ-10", "עד 50" — `format` writes each side. */
+function rangeWords(a: string, b: string, words: VoucherFilterWords, format: (s: string) => string): string {
+  if (a && b) return a === b ? format(a) : `${words.min}${format(a)} ${words.max} ${format(b)}`;
+  return a ? `${words.min}${format(a)}` : `${words.max} ${format(b)}`;
+}
+
+/**
+ * The filters that are set, in words, in the filter bar's order — "עבור מי: קייטרינג אלון",
+ * "סניף: מרכז, צפון", "תאריך הנפקה: מ-01/10/2026 עד 05/10/2026" — for an export's header.
+ * [omit] leaves some out (the redemption days, when the export's range line already says them).
+ */
+export function voucherFilterLines(
+  f: VoucherFilters,
+  words: VoucherFilterWords,
+  omit: (keyof VoucherFilters)[] = [],
+): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+  const skip = (k: keyof VoucherFilters) => omit.includes(k);
+  const push = (key: VoucherLineKey, value: string) => {
+    if (value) out.push({ label: words.label(key), value });
+  };
+  const names = (key: VoucherIdKey, ids: string[]) => ids.map((id) => words.name(key, id) || id).join(', ');
+  const choice = (key: VoucherChoiceKey) => {
+    if (!skip(key) && f[key]) push(key, words.option(key, f[key]));
+  };
+  const ids = (key: Exclude<VoucherIdKey, 'createdBy'>) => {
+    if (!skip(key) && f[key].length) push(key, names(key, f[key]));
+  };
+  const range = (key: VoucherLineKey, a: keyof VoucherFilters, b: keyof VoucherFilters, format: (s: string) => string) => {
+    const from = skip(a) ? '' : (f[a] as string);
+    const to = skip(b) ? '' : (f[b] as string);
+    if (from || to) push(key, rangeWords(from, to, words, format));
+  };
+  const plain = (s: string) => s;
+
+  if (!skip('customer')) push('customer', f.customer.join(', '));
+  if (!skip('event')) push('event', f.event.join(', '));
+  ids('typeId');
+  choice('kind');
+  ids('batchId');
+  ids('shopId');
+  choice('accounting');
+  choice('pricing');
+  choice('override');
+  choice('offline');
+  choice('testMode');
+  range('value', 'valueMin', 'valueMax', plain);
+  range('price', 'priceMin', 'priceMax', plain);
+  if (!skip('createdBy') && f.createdBy) push('createdBy', names('createdBy', [f.createdBy]));
+  range('issued', 'issuedFrom', 'issuedTo', words.day);
+  if (!skip('validOn') && f.validOn) push('validOn', words.day(f.validOn));
+  choice('batchStatus');
+  range('redeemed', 'from', 'to', words.day);
+  ids('machineId');
+  ids('employee');
+  choice('state');
+  if (!skip('group')) push('group', f.group);
+  if (!skip('q')) push('q', f.q.trim());
+  return out;
+}
+
 /** "62%" — a rate (0–1) as a whole percent; '—' when there is nothing to divide by. */
 export function rateText(rate: number | null | undefined): string {
   if (rate === null || rate === undefined || Number.isNaN(rate)) return '—';

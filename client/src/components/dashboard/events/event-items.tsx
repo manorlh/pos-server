@@ -5,14 +5,18 @@
  * ("פילוח"): tenders, categories, hour of day, cashier or waiter, area, card brand.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { EventItemRow, EventReport } from '@/lib/eventTypes';
+import type { EventItemRow, EventItems as EventItemsData, EventReport } from '@/lib/eventTypes';
 import { CHART, Capsule, Card, IOS, Muted, Segmented, hh, tooltipStyle } from '@/components/dashboard/insights/ios';
+import { ReportTable, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { IosTable, Td, Th, compactMoney, count, money, pctText, tillColor } from './event-parts';
+import { EVENT_REPORT_KEY } from './event-tills';
 
 type ItemsView = 'top' | 'bottom' | 'categories' | 'modifiers' | 'matrix';
+type CategoryRow = EventItemsData['categories'][number];
+type ModifierRow = EventItemsData['modifiers'][number];
 
 function ItemList({ rows, max }: { rows: EventItemRow[]; max: number }) {
   const t = useTranslations('events.items');
@@ -47,6 +51,34 @@ export function EventItems({ report }: { report: EventReport }) {
   const items = report.items;
   const max = Math.max(1, ...items.rows.map((r) => r.revenue));
   const names = Object.fromEntries(report.tills.map((x) => [x.machineId, x.name]));
+  const categories = useMemo<ReportTableSpec<CategoryRow>>(
+    () => ({
+      id: 'categories',
+      rows: items.categories,
+      rowKey: (c) => c.categoryId ?? 'none',
+      columns: [
+        { key: 'category', header: t('category'), required: true, value: (c) => c.name, className: 'font-medium' },
+        { key: 'quantity', header: t('quantity'), kind: 'number', value: (c) => c.quantity },
+        { key: 'revenue', header: t('revenue'), kind: 'money', value: (c) => c.revenue },
+        { key: 'share', header: t('share'), kind: 'percent', value: (c) => c.sharePct },
+      ],
+    }),
+    [items.categories, t],
+  );
+  const modifiers = useMemo<ReportTableSpec<ModifierRow>>(
+    () => ({
+      id: 'modifiers',
+      rows: items.modifiers,
+      rowKey: (m) => m.key,
+      columns: [
+        { key: 'modifier', header: t('modifier'), required: true, value: (m) => m.name, className: 'font-medium' },
+        { key: 'group', header: t('group'), value: (m) => m.groupName ?? '' },
+        { key: 'quantity', header: t('quantity'), kind: 'number', value: (m) => m.quantity },
+        { key: 'revenue', header: t('revenue'), kind: 'money', value: (m) => m.revenue },
+      ],
+    }),
+    [items.modifiers, t],
+  );
   return (
     <Card className="space-y-3">
       <div className="overflow-x-auto print:hidden">
@@ -70,52 +102,14 @@ export function EventItems({ report }: { report: EventReport }) {
         items.categories.length === 0 ? (
           <Muted>{t('none')}</Muted>
         ) : (
-          <IosTable>
-            <thead>
-              <tr>
-                <Th>{t('category')}</Th>
-                <Th end>{t('quantity')}</Th>
-                <Th end>{t('revenue')}</Th>
-                <Th end>{t('share')}</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.categories.map((c) => (
-                <tr key={c.categoryId ?? 'none'}>
-                  <Td className="font-medium">{c.name}</Td>
-                  <Td end>{count(c.quantity)}</Td>
-                  <Td end>{money(c.revenue)}</Td>
-                  <Td end>{pctText(c.sharePct)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </IosTable>
+          <ReportTable table={categories} reportKey={EVENT_REPORT_KEY} />
         )
       ) : null}
       {view === 'modifiers' ? (
         items.modifiers.length === 0 ? (
           <Muted>{t('noModifiers')}</Muted>
         ) : (
-          <IosTable>
-            <thead>
-              <tr>
-                <Th>{t('modifier')}</Th>
-                <Th>{t('group')}</Th>
-                <Th end>{t('quantity')}</Th>
-                <Th end>{t('revenue')}</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.modifiers.map((m) => (
-                <tr key={m.key}>
-                  <Td className="font-medium">{m.name}</Td>
-                  <Td>{m.groupName ?? '—'}</Td>
-                  <Td end>{count(m.quantity)}</Td>
-                  <Td end>{money(m.revenue)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </IosTable>
+          <ReportTable table={modifiers} reportKey={EVENT_REPORT_KEY} />
         )
       ) : null}
       {view === 'matrix' ? (

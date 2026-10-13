@@ -258,6 +258,11 @@ export const REPORT_HEADER_KEYS = [
   'date', 'employee', 'workerNumber', 'role', 'shop', 'in', 'out', 'breaks', 'breakTime', 'hours', 'status', 'notes',
 ] as const;
 
+/** The notes cell of an export: the notes' labels, then the manager's close reason. */
+export function noteText(row: Pick<AttendanceShift, 'notes' | 'closeReason'>, labels: Pick<ExportLabels, 'note'>): string {
+  return [...noteKeys(row).map(labels.note), row.closeReason ? row.closeReason : null].filter(Boolean).join(' · ');
+}
+
 /** One spreadsheet row per shift, in the order of [REPORT_HEADER_KEYS]. */
 export function reportExportRows(rows: AttendanceShift[], labels: ExportLabels): (string | number | null)[][] {
   return rows.map((r) => [
@@ -272,11 +277,24 @@ export function reportExportRows(rows: AttendanceShift[], labels: ExportLabels):
     formatHours(r.breakSeconds),
     decimalHours(r.workedSeconds),
     labels.status(r.status),
-    [
-      ...noteKeys(r).map(labels.note),
-      r.closeReason ? r.closeReason : null,
-    ].filter(Boolean).join(' · '),
+    noteText(r, labels),
   ]);
+}
+
+/**
+ * The attendance report's own filters as the export header says them ("תפקיד: מלצר ·
+ * עובד: דנה"): only those set, each by the name the reader picked it by — never an id
+ * (`labels.unknown` while the name is not known).
+ */
+export function attendanceFilterLines(
+  chosen: { roleId: string; posUserId: string },
+  names: { role: (id: string) => string | null | undefined; employee: (id: string) => string | null | undefined },
+  labels: { role: string; employee: string; unknown: string },
+): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+  if (chosen.roleId) out.push({ label: labels.role, value: names.role(chosen.roleId) || labels.unknown });
+  if (chosen.posUserId) out.push({ label: labels.employee, value: names.employee(chosen.posUserId) || labels.unknown });
+  return out;
 }
 
 /** The time a correction is about, then and now: "16:40 → 16:05". */

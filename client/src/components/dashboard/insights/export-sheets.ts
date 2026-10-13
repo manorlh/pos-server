@@ -3,17 +3,23 @@
 /**
  * The insights page's Excel export (docs/ACCOUNTING_EXPORT_AND_REPORTS.md §4.1): one
  * workbook, a sheet per table the page shows for the current scope, period and filters —
- * every row, not the few a section lists before "show more". Each section's data comes
- * through the page's own query (same key, same function), so what is already on screen
- * is reused rather than fetched again. A section that fails to load is left out instead
- * of failing the whole file; sections the page hides (no stock, no tables, no identified
- * customers, no data) are left out the same way. Money arrives in agorot and is written
- * in shekels; percentages are already 0–100.
+ * every row, not the few a section lists before "show more".
+ *
+ * On the report framework's export bar (P:\specs\reports-upgrade.md §5): the headline
+ * figures and the feed — on screen with the page's first answer — are report tables
+ * (`feedTables`: "עמודות לייצוא", the company's default and the PDF work on them; the feed
+ * is the PDF's table); every other section follows as the bar's async `extraSheets`, in
+ * the page's order. Each section's data comes through the page's own query (same key,
+ * same function), so what is already on screen is reused rather than fetched again. A
+ * section that fails to load is left out instead of failing the whole file; sections the
+ * page hides (no stock, no tables, no identified customers, no data) are left out the same
+ * way. Money arrives in agorot and is written in shekels; percentages are already 0–100.
  */
 
 import { useTranslations } from 'next-intl';
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { ExcelColumn, ExcelSheet, ExcelValue } from '@/lib/excelExport';
+import type { ReportTableSpec } from '@/components/dashboard/report-framework';
 import {
   fetchAbc,
   fetchBaskets,
@@ -35,6 +41,7 @@ import {
   type Forecast,
   type ForecastDay,
   type Heatmap,
+  type InsightCard,
   type InsightScopeParams,
   type InsightsFeed,
   type KpiBlock,
@@ -69,9 +76,27 @@ export interface InsightsExportFilters {
 const ils = (v: number | null | undefined): number | null => (v === null || v === undefined ? null : v / 100);
 const sum = (values: number[]): number => values.reduce((a, b) => a + b, 0);
 
+/** A row of the headline figures' table: this period, or the one before. */
+interface KpiRow {
+  id: 'current' | 'previous';
+  label: string;
+  from: string;
+  to: string;
+  k: KpiBlock;
+}
+
+/** A card of the feed, with its words. */
+interface FeedRow {
+  card: InsightCard;
+  title: string;
+  body: string | null;
+  action: string | null;
+}
+
 /**
  * The scope line for the export's heading (the page's own scope picker, not the
- * dashboard's) and the async sheet builder for `ReportExportToolbar.getSheets`.
+ * dashboard's), the report tables of the headline figures and the feed (`feedTables`),
+ * and the async builder of every other section's sheets (`extraSheets`).
  */
 export function useInsightsExport(scope: OrgScope) {
   const qc = useQueryClient();
@@ -132,49 +157,54 @@ export function useInsightsExport(scope: OrgScope) {
   const cashierMetric = (m: CashierMetric) =>
     m === 'discount' ? t('cashiers.discounts') : m === 'refund' ? t('cashiers.refunds') : t('cashiers.voids');
 
-  // ── Headline figures and the feed ──
-  const feedSheets = (f: InsightsFeed): ExcelSheet[] => {
-    const out: ExcelSheet[] = [];
+  // ── Headline figures and the feed: report tables (the first sheets; the feed is the PDF's) ──
+  const feedTables = (f: InsightsFeed): ReportTableSpec<unknown>[] => {
+    const out: ReportTableSpec<unknown>[] = [];
     const cur = f.kpis?.current;
     if (cur) {
       const p = f.period;
       const prev = f.kpis.previous;
-      const row = (label: string, from: string, to: string, k: KpiBlock): ExcelValue[] => [
-        label, from, to, ils(k.net), k.sales, ils(k.avgCheck), k.itemsPerSale, k.discountPct, ils(k.tips), k.tipPct,
-      ];
-      out.push({
-        name: t('kpi.title'),
-        columns: [
-          ...periodCols,
-          { header: t('kpi.net'), kind: 'money' },
-          { header: t('kpi.sales'), kind: 'number' },
-          { header: t('kpi.avgCheck'), kind: 'money' },
-          { header: t('kpi.itemsPerSale'), kind: 'number', width: 12 },
-          { header: t('kpi.discountPct'), kind: 'percent', width: 12 },
-          { header: t('kpi.tips'), kind: 'money' },
-          { header: t('export.tipPct'), kind: 'percent', width: 14 },
-        ],
+      const kpi: ReportTableSpec<KpiRow> = {
+        id: 'kpi',
+        title: t('kpi.title'),
+        rowKey: (r) => r.id,
         rows: [
-          row(t('export.current'), p.from, p.to, cur),
-          ...(prev ? [row(t('export.previous'), p.prevFrom, p.prevTo, prev)] : []),
+          { id: 'current', label: t('export.current'), from: p.from, to: p.to, k: cur },
+          ...(prev ? [{ id: 'previous' as const, label: t('export.previous'), from: p.prevFrom, to: p.prevTo, k: prev }] : []),
         ],
-      });
+        columns: [
+          { key: 'period', header: periodCols[0].header, width: 14, value: (r) => r.label },
+          { key: 'from', header: periodCols[1].header, kind: 'date', value: (r) => r.from },
+          { key: 'to', header: periodCols[2].header, kind: 'date', value: (r) => r.to },
+          { key: 'net', header: t('kpi.net'), kind: 'money', value: (r) => ils(r.k.net) },
+          { key: 'sales', header: t('kpi.sales'), kind: 'number', value: (r) => r.k.sales },
+          { key: 'avgCheck', header: t('kpi.avgCheck'), kind: 'money', value: (r) => ils(r.k.avgCheck) },
+          { key: 'itemsPerSale', header: t('kpi.itemsPerSale'), kind: 'number', width: 12, value: (r) => r.k.itemsPerSale },
+          { key: 'discountPct', header: t('kpi.discountPct'), kind: 'percent', width: 12, value: (r) => r.k.discountPct },
+          { key: 'tips', header: t('kpi.tips'), kind: 'money', value: (r) => ils(r.k.tips) },
+          { key: 'tipPct', header: t('export.tipPct'), kind: 'percent', width: 14, value: (r) => r.k.tipPct },
+        ],
+      };
+      out.push(kpi as ReportTableSpec<unknown>);
     }
     // The page shows "no data" instead of the cards when the scope has no sales.
     if ((!f.availability || f.availability.hasSales) && f.cards.length > 0) {
-      out.push({
-        name: t('feed.title'),
-        columns: [
-          { header: t('export.severity'), width: 12 },
-          { header: t('export.insight'), width: 40 },
-          { header: t('export.details'), width: 70 },
-          { header: t('feed.action'), width: 50 },
-        ],
+      const feed: ReportTableSpec<FeedRow> = {
+        id: 'main',
+        title: t('feed.title'),
+        rowKey: (r, i) => `${r.card.id}-${i}`,
         rows: f.cards.map((card) => {
           const text = cardText(card);
-          return [severity(card.severity), text.title, text.body || null, text.action ?? null];
+          return { card, title: text.title, body: text.body || null, action: text.action ?? null };
         }),
-      });
+        columns: [
+          { key: 'severity', header: t('export.severity'), width: 12, value: (r) => severity(r.card.severity) },
+          { key: 'insight', header: t('export.insight'), width: 40, value: (r) => r.title },
+          { key: 'details', header: t('export.details'), width: 70, value: (r) => r.body },
+          { key: 'action', header: t('feed.action'), width: 50, value: (r) => r.action },
+        ],
+      };
+      out.push(feed as ReportTableSpec<unknown>);
     }
     return out;
   };
@@ -650,7 +680,14 @@ export function useInsightsExport(scope: OrgScope) {
     ];
   };
 
-  const getSheets = async ({ params, menuParams, slowParams }: InsightsExportFilters): Promise<ExcelSheet[]> => {
+  /**
+   * Every section after the headline figures and the feed, in the page's order. `hasTables`:
+   * the export already has the feed's tables — without them, no sheet at all is an error.
+   */
+  const extraSheets = async (
+    { params, menuParams, slowParams }: InsightsExportFilters,
+    hasTables: boolean,
+  ): Promise<ExcelSheet[]> => {
     const load = <T>(queryKey: QueryKey, queryFn: () => Promise<T>) => qc.fetchQuery({ queryKey, queryFn, staleTime: FRESH_MS });
     const feed = load(['insights-feed', params], () => fetchInsightsFeed(params));
     // Stock and tables are sections only when the feed says the scope has them.
@@ -661,7 +698,6 @@ export function useInsightsExport(scope: OrgScope) {
     const none: ExcelSheet[] = [];
     // In the page's order; each resolves to its sheets, or rejects alone.
     const parts: Promise<ExcelSheet[]>[] = [
-      feed.then(feedSheets),
       load(['insights-forecast', params], () => fetchForecast(params)).then(forecastSheets),
       load(['insights-trends', params], () => fetchTrends(params)).then(trendsSheets),
       load(['insights-heatmap', params], () => fetchHeatmap(params)).then(heatmapSheets),
@@ -680,12 +716,12 @@ export function useInsightsExport(scope: OrgScope) {
     ];
     const settled = await Promise.allSettled(parts);
     const sheets = settled.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
-    if (sheets.length === 0) {
+    if (sheets.length === 0 && !hasTables) {
       const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
       throw failed ? failed.reason : new Error(t('noData'));
     }
     return sheets;
   };
 
-  return { scopeLabel, getSheets };
+  return { scopeLabel, feedTables, extraSheets };
 }

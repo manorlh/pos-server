@@ -5,185 +5,236 @@
  * sales, and what it took off — by promotion, shop, till and day. Credit notes are left
  * out: a return credits what was paid for the item, and the promotion it was sold under
  * stays given. Server: `GET /reports/promotions`.
+ *
+ * On the report framework (P:\specs\reports-upgrade.md §5): days, hours and one promotion
+ * (`promotionId`, the report's own filter, `?promotion=` in the URL) — the shop and the till
+ * from the scope; the endpoint takes no company. No tips here on purpose (§2ה). The OTH /
+ * club discounts below run on the same window and scope (their endpoint has no promotion).
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatDate, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { isUuid, promotionChoices } from '@/lib/auditReports';
 import {
+  fetchPromotions,
   fetchPromotionsReport,
+  type Promotion,
   type PromotionReportFigures,
   type PromotionsReport,
 } from '@/lib/promotionsApi';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { OthClubReport } from '@/components/dashboard/discounts/oth-club-report';
-import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
-import { ReportErrorState, ReportWindowSummary } from '@/components/dashboard/report-window-summary';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
+import { Combobox } from '@/components/ui/combobox';
+import { Label } from '@/components/ui/label';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
-interface Row extends PromotionReportFigures {
-  key: string;
-  label: string;
-}
+const SPEC: ReportFilterSpec = { filters: ['hours'], extras: { promotion: '' } };
 
-function FiguresTable({ title, head, rows, totals }: { title: string; head: string; rows: Row[]; totals: PromotionReportFigures }) {
-  const t = useTranslations('promotionsReport');
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="overflow-x-auto p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{head}</TableHead>
-              <TableHead className="text-end">{t('col.applications')}</TableHead>
-              <TableHead className="text-end">{t('col.documents')}</TableHead>
-              <TableHead className="text-end">{t('col.discount')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.key}>
-                <TableCell className="font-medium">{r.label}</TableCell>
-                <TableCell className="text-end tabular-nums">{formatQuantity(r.applications)}</TableCell>
-                <TableCell className="text-end tabular-nums">{formatQuantity(r.documents)}</TableCell>
-                <TableCell className="text-end font-semibold tabular-nums">{formatCurrency(r.discount)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-          <TableFooter>
-            <TableRow>
-              <TableCell className="font-semibold">{t('total')}</TableCell>
-              <TableCell className="text-end tabular-nums">{formatQuantity(totals.applications)}</TableCell>
-              <TableCell className="text-end tabular-nums">{formatQuantity(totals.documents)}</TableCell>
-              <TableCell className="text-end font-bold tabular-nums">{formatCurrency(totals.discount)}</TableCell>
-            </TableRow>
-          </TableFooter>
-        </Table>
-      </CardContent>
-    </Card>
-  );
-}
+type ByPromotion = PromotionsReport['byPromotion'][number];
+type ByShop = PromotionsReport['byShop'][number];
+type ByTill = PromotionsReport['byTill'][number];
+type ByDay = PromotionsReport['byDay'][number];
 
 export default function PromotionsReportPage() {
   const t = useTranslations('promotionsReport');
   const tt = useTranslations('promotions.types');
-  const tc = useTranslations('common');
+  const ts = useTranslations('promotions.status');
   const { resolution, effective } = usePageScope({ maxLevel: 'machine', unsupported: ['company'] });
+  const filters = useReportFilters(SPEC);
 
-  const [filters, setFilters] = useState<ReportFiltersState>({ from: daysBackIso(6), to: todayIso(), hours: WHOLE_DAY });
-  const [applied, setApplied] = useState<ReportFiltersState | null>(null);
+  const appliedPromotion = (filters.applied?.extras.promotion ?? '').trim();
+  const promotionId = isUuid(appliedPromotion) ? appliedPromotion : '';
 
-  const params = useMemo(() => {
-    if (!applied) return null;
-    return {
-      from: applied.from,
-      to: applied.to,
-      ...(effective.shopId ? { shopId: effective.shopId } : {}),
-      ...(effective.machineId ? { machineId: effective.machineId } : {}),
-      ...hourQueryParams(applied.hours),
-    };
-  }, [applied, effective.shopId, effective.machineId]);
+  /** The window and scope — what the OTH / club section below takes too. */
+  const windowParams = useMemo(
+    () => (filters.apiParams ? { ...filters.apiParams, ...scopeApiParams(effective, false) } : null),
+    [effective, filters.apiParams],
+  );
+  const params = useMemo(
+    () => (windowParams ? { ...windowParams, ...(promotionId ? { promotionId } : {}) } : null),
+    [promotionId, windowParams],
+  );
 
-  const { data, isLoading, isFetching, isError, error } = useQuery<PromotionsReport>({
+  const query = useQuery<PromotionsReport>({
     queryKey: ['report-promotions', params],
     queryFn: () => fetchPromotionsReport(params!),
     enabled: params !== null,
   });
+  const data = query.data;
+
+  // The promotion filter's choices: the tenant's promotions (and any the report names that are gone).
+  const list = useQuery({
+    queryKey: ['promotions-report-choices'],
+    queryFn: () => fetchPromotions(),
+    staleTime: 5 * 60_000,
+  });
+  const promotionOptions = useMemo(() => {
+    const known = new Map<string, Promotion>((list.data?.items ?? []).map((p) => [p.id, p]));
+    const typeName = (type: string | null | undefined) => (type && tt.has(`${type}.name`) ? tt(`${type}.name`) : null);
+    const options = promotionChoices(list.data?.items ?? [], data?.byPromotion ?? []).map((c) => {
+      const p = known.get(c.id);
+      return {
+        value: c.id,
+        label: c.name || t('unknown'),
+        description: p
+          ? [typeName(p.type), ts.has(p.status) ? ts(p.status) : null].filter(Boolean).join(' · ')
+          : list.isSuccess
+            ? t('filter.deleted')
+            : undefined,
+      };
+    });
+    const chosen = (filters.draftExtras.promotion ?? '').trim();
+    return chosen && !options.some((o) => o.value === chosen)
+      ? [{ value: chosen, label: t('unknown'), description: undefined }, ...options]
+      : options;
+  }, [data, filters.draftExtras.promotion, list.data, list.isSuccess, t, ts, tt]);
+
+  const promotionLine = useMemo(() => {
+    if (!promotionId) return [];
+    const name = promotionOptions.find((o) => o.value === promotionId)?.label ?? t('unknown');
+    return [{ label: t('filter.promotion'), value: name }];
+  }, [promotionId, promotionOptions, t]);
 
   const tables = useMemo(() => {
-    if (!data) return null;
     const unknown = t('unknown');
-    return {
-      byPromotion: data.byPromotion.map((r, i) => ({
-        ...r,
-        key: r.promotionId ?? `p${i}`,
-        label: `${r.name ?? unknown}${r.type ? ` · ${tt(`${r.type}.name`)}` : ''}`,
-      })),
-      byShop: data.byShop.map((r, i) => ({ ...r, key: r.shopId ?? `s${i}`, label: r.name ?? unknown })),
-      byTill: data.byTill.map((r, i) => ({
-        ...r,
-        key: r.machineId ?? `m${i}`,
-        label: [r.shopName, r.name, r.posNumber ? t('register', { n: r.posNumber }) : null].filter(Boolean).join(' · ') || unknown,
-      })),
-      byDay: data.byDay.map((r) => ({ ...r, key: r.date, label: formatDate(r.date) })),
+    const totals = data?.totals;
+    const figures = <R extends PromotionReportFigures>(): ReportColumn<R>[] => [
+      { key: 'applications', header: t('col.applications'), kind: 'number', value: (r) => r.applications, total: totals?.applications },
+      { key: 'documents', header: t('col.documents'), kind: 'number', value: (r) => r.documents, total: totals?.documents },
+      {
+        key: 'discount',
+        header: t('col.discount'),
+        kind: 'money',
+        value: (r) => r.discount,
+        total: totals?.discount,
+        className: 'font-semibold',
+      },
+    ];
+    const common = { totalsLabel: t('total'), emptyText: t('noRows') };
+
+    const byPromotion: ReportTableSpec<ByPromotion> = {
+      ...common,
+      id: 'main',
+      title: t('byPromotion'),
+      rows: data?.byPromotion ?? [],
+      rowKey: (r, i) => r.promotionId ?? `p${i}`,
+      columns: [
+        { key: 'promotion', header: t('col.promotion'), required: true, value: (r) => r.name ?? unknown, className: 'font-medium' },
+        {
+          key: 'type',
+          header: t('col.type'),
+          value: (r) => (r.type && tt.has(`${r.type}.name`) ? tt(`${r.type}.name`) : null),
+          className: 'text-muted-foreground',
+        },
+        ...figures<ByPromotion>(),
+      ],
     };
+    const byShop: ReportTableSpec<ByShop> = {
+      ...common,
+      id: 'shops',
+      title: t('byShop'),
+      rows: data?.byShop ?? [],
+      rowKey: (r, i) => r.shopId ?? `s${i}`,
+      columns: [
+        { key: 'shop', header: t('col.shop'), required: true, value: (r) => r.name ?? unknown, className: 'font-medium' },
+        ...figures<ByShop>(),
+      ],
+    };
+    const byTill: ReportTableSpec<ByTill> = {
+      ...common,
+      id: 'tills',
+      title: t('byTill'),
+      rows: data?.byTill ?? [],
+      rowKey: (r, i) => r.machineId ?? `m${i}`,
+      columns: [
+        {
+          key: 'till',
+          header: t('col.till'),
+          required: true,
+          value: (r) =>
+            [r.shopName, r.name, r.posNumber ? t('register', { n: r.posNumber }) : null].filter(Boolean).join(' · ') || unknown,
+          className: 'font-medium',
+        },
+        ...figures<ByTill>(),
+      ],
+    };
+    const byDay: ReportTableSpec<ByDay> = {
+      ...common,
+      id: 'days',
+      title: t('byDay'),
+      rows: data?.byDay ?? [],
+      rowKey: (r) => r.date,
+      columns: [
+        { key: 'day', header: t('col.day'), kind: 'date', required: true, value: (r) => r.date, className: 'font-medium' },
+        ...figures<ByDay>(),
+      ],
+    };
+    return { byPromotion, byShop, byTill, byDay };
   }, [data, t, tt]);
 
-  const sheet = (name: string, head: string, rows: Row[], totals: PromotionReportFigures) => ({
-    name,
-    columns: [
-      { header: head },
-      { header: t('col.applications'), kind: 'number' as const },
-      { header: t('col.documents'), kind: 'number' as const },
-      { header: t('col.discount'), kind: 'money' as const },
-    ],
-    rows: rows.map((r) => [r.label, r.applications, r.documents, r.discount]),
-    totals: [t('total'), totals.applications, totals.documents, totals.discount],
-  });
+  const exportTables = [tables.byPromotion, tables.byShop, tables.byTill, tables.byDay] as ReportTableSpec<unknown>[];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
-      </div>
-
-      <ScopeGate resolution={resolution}>
-        <ReportFilters value={filters} onChange={setFilters} onRun={() => setApplied(filters)} isFetching={isFetching} />
-
-        {!applied ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">{t('selectFilters')}</p>
-        ) : isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : isError ? (
-          <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-        ) : data && tables ? (
-          <div className="space-y-4">
-            <ReportExportToolbar
-              title={t('title')}
-              from={data.window.from}
-              to={data.window.to}
-              getSheets={() => [
-                sheet(t('byPromotion'), t('col.promotion'), tables.byPromotion, data.totals),
-                sheet(t('byShop'), t('col.shop'), tables.byShop, data.totals),
-                sheet(t('byTill'), t('col.till'), tables.byTill, data.totals),
-                sheet(t('byDay'), t('col.day'), tables.byDay, data.totals),
-              ]}
+    <ReportPage
+      reportKey="promotions-report"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      resolution={resolution}
+      filters={filters}
+      bar={{
+        children: (
+          <div className="min-w-0 space-y-1">
+            <Label className="text-xs" htmlFor="promotion-filter">
+              {t('filter.promotion')}
+            </Label>
+            <Combobox
+              id="promotion-filter"
+              options={promotionOptions}
+              value={filters.draftExtras.promotion ?? ''}
+              onValueChange={(id) => filters.setExtra('promotion', id ?? '')}
+              placeholder={t('filter.all')}
+              emptyText={t('filter.noMatch')}
+              clearable
+              size="sm"
             />
-            <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
-            {data.byPromotion.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">{t('noRows')}</p>
-            ) : (
-              <>
-                <FiguresTable title={t('byPromotion')} head={t('col.promotion')} rows={tables.byPromotion} totals={data.totals} />
-                <FiguresTable title={t('byShop')} head={t('col.shop')} rows={tables.byShop} totals={data.totals} />
-                <FiguresTable title={t('byTill')} head={t('col.till')} rows={tables.byTill} totals={data.totals} />
-                <FiguresTable title={t('byDay')} head={t('col.day')} rows={tables.byDay} totals={data.totals} />
-              </>
-            )}
           </div>
-        ) : null}
-        {/* OTH ("על חשבון הבית") and the club discount, over the same window and scope. */}
-        <OthClubReport params={params} />
-      </ScopeGate>
-    </div>
+        ),
+      }}
+      query={reportQueryState(query)}
+      prompt={t('selectFilters')}
+      loading="table"
+      export={
+        data ? { tables: exportTables, from: data.window.from, to: data.window.to, filterLines: promotionLine } : null
+      }
+    >
+      {data ? (
+        <>
+          <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
+          {data.byPromotion.length === 0 ? (
+            <p className="text-muted-foreground py-10 text-center text-sm">{t('noRows')}</p>
+          ) : (
+            <>
+              <ReportTable table={tables.byPromotion} />
+              <ReportTable table={tables.byShop} />
+              <ReportTable table={tables.byTill} />
+              <ReportTable table={tables.byDay} />
+            </>
+          )}
+          {/* OTH ("על חשבון הבית") and the club discount, over the same window and scope. */}
+          {promotionId ? <p className="text-muted-foreground text-xs">{t('othNotFiltered')}</p> : null}
+          <OthClubReport params={windowParams} />
+        </>
+      ) : null}
+    </ReportPage>
   );
 }

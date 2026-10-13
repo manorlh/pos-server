@@ -16,7 +16,9 @@ import {
   type ReportFilterSpec,
 } from './reportFilters';
 import {
+  companyDefaultColumns,
   fromServerPrefs,
+  groupRuns,
   moveColumn,
   nextSort,
   orderedColumnKeys,
@@ -40,6 +42,50 @@ import {
   type ExportTable,
 } from './reportExport';
 import { selectSheetColumns, sheetHeading, type ExcelSheet } from './excelExport';
+import { listOf, listValue, transactionsQuery, txExtrasOf } from './transactionsFilters';
+import {
+  listSheetCells,
+  paymentColumnKey,
+  sumMoney,
+  transactionExportColumns,
+  zTableColumns,
+  zTillColumns,
+} from './listExportColumns';
+import { transactionsSheet, zTableSheets } from './reportSheets';
+import type { TransactionExportRow, ZTable } from './reportCenterTypes';
+import {
+  cashVarianceTotals,
+  isUuid,
+  offlineDeclinedRows,
+  promotionChoices,
+  sequenceGapRows,
+  sequenceGapText,
+  varianceTone,
+} from './auditReports';
+import {
+  MENU_REPORT_KEYS,
+  anyRowHas,
+  mealLines,
+  mealNotes,
+  optionsTakenText,
+  parseMenuReportTab,
+  ratePercent,
+  rateText,
+  targetWhen,
+  upsellFigureTotals,
+  withMenuReportTab,
+} from './menuTargetsReports';
+import {
+  defaultLiveItemsState,
+  liveItemsApiParams,
+  liveItemsTotals,
+  parseLiveItemsState,
+  searchLiveRows,
+  sortLiveRows,
+  writeLiveItemsState,
+} from './liveItemsView';
+import { ACCOUNTING_EXPORT_EXTRAS, parseAccountingExportForm } from './accountingExportForm';
+import { taxOpenFormatExtras, taxOpenFormatMode, taxOpenFormatParams } from './taxOpenFormatForm';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -338,6 +384,21 @@ describe('a sheet cut to the export columns', () => {
     assert.deepEqual(sheetHeading({ ...sheet, heading: ['פירוט'] }, { heading: ['דוח', 'הופק'] }), ['דוח', 'הופק', 'פירוט']);
     assert.deepEqual(sheetHeading(sheet), []);
   });
+
+  it('a status colour stays with its row when the columns are cut', () => {
+    const table: ExportTable = {
+      tableId: 'main',
+      name: 'התאמה',
+      columns: sheet.columns.map((c) => ({ key: c.key!, header: c.header, kind: c.kind })),
+      rows: sheet.rows,
+      rowFills: ['FFFFE5E3', null],
+    };
+    const cut = exportTableSheet(table, ['net']);
+    assert.deepEqual(cut.rows, [[30], [8]]);
+    assert.deepEqual(cut.rowFills, ['FFFFE5E3', null]);
+    // No colour at all: no fills on the sheet.
+    assert.equal(exportTableSheet({ ...table, rowFills: [null, null] }, null).rowFills, undefined);
+  });
 });
 
 describe('PDF body (§4.5)', () => {
@@ -381,5 +442,533 @@ describe('the scope as report params', () => {
     assert.deepEqual(scopeApiParams({ companyId: 'c', shopId: null, machineId: null }), { companyId: 'c' });
     assert.deepEqual(scopeApiParams({ companyId: 'c' }, false), {});
     assert.deepEqual(scopeApiParams({}), {});
+  });
+});
+
+describe('rows in runs of one group (a list by day)', () => {
+  it('a heading wherever the group changes, carrying the run’s rows', () => {
+    const rows = [
+      { id: 1, day: '2026-10-13' },
+      { id: 2, day: '2026-10-13' },
+      { id: 3, day: '2026-10-12' },
+      { id: 4, day: '2026-10-13' },
+    ];
+    const runs = groupRuns(rows, (r) => r.day);
+    assert.deepEqual(
+      runs.map((r) => (r ? [r.group, r.rows.map((x) => x.id)] : null)),
+      [['2026-10-13', [1, 2]], null, ['2026-10-12', [3]], ['2026-10-13', [4]]],
+    );
+    assert.deepEqual(groupRuns([], (r: { day: string }) => r.day), []);
+  });
+});
+
+describe('the transactions list: its own filters in the URL → the query', () => {
+  it('lists are comma-separated in the URL, de-duplicated, empty parts dropped', () => {
+    assert.deepEqual(listOf(' a,b,,c '), ['a', 'b', 'c']);
+    assert.deepEqual(listOf(''), []);
+    assert.equal(listValue(['b', 'a', 'b', ' ']), 'b,a');
+  });
+
+  it('a first visit: no days, the newest documents of every day', () => {
+    const q = transactionsQuery({ extras: txExtrasOf({}), shopId: 's' });
+    assert.deepEqual(q, { shopId: 's' });
+  });
+
+  it('every filter under the endpoint name; lists as lists', () => {
+    const q = transactionsQuery({
+      from: '2026-10-01',
+      to: '2026-10-13',
+      q: ' 20000057 ',
+      shopId: 's',
+      extras: txExtrasOf({
+        card: '1234', item: 'קפה', method: 'card', tills: 'm1,m2', types: '320,-400', employees: 'e1',
+        statuses: 'completed,refunded', amountMin: '10', amountMax: '99.5', doc: '2-57', basket: '0f8fad5b-d9cb-469f-a165-70867728950e',
+      }),
+    });
+    assert.deepEqual(q, {
+      shopId: 's', from: '2026-10-01', to: '2026-10-13', q: '20000057', cardLast4: '1234', item: 'קפה', method: 'card',
+      machineIds: ['m1', 'm2'], documentTypes: ['320', '-400'], cashierIds: ['e1'], statuses: ['completed', 'refunded'],
+      amountMin: '10', amountMax: '99.5', documentNumber: '2-57', basketId: '0f8fad5b-d9cb-469f-a165-70867728950e',
+    });
+  });
+
+  it('the scope till wins over a list of tills; "failed" and nonsense never go out', () => {
+    const q = transactionsQuery({
+      machineId: 'm9',
+      extras: txExtrasOf({ tills: 'm1', method: 'failed', card: '12', types: 'abc', statuses: 'gone', amountMin: '1e3', doc: 'x' }),
+    });
+    assert.deepEqual(q, { machineId: 'm9' });
+  });
+});
+
+describe('the lists server exports as report columns (same cells and totals as their sheets)', () => {
+  const t = (k: string) => k;
+  const row = (over: Partial<TransactionExportRow>): TransactionExportRow => ({
+    id: 'a', createdAt: '2026-10-06T10:00:00Z', documentNumber: '20000057', documentType: 320, status: 'completed',
+    shopName: 'הרצליה', machineId: 'm', machineName: 'קופה 1', posNumber: '1', cashierId: 'c', cashierName: 'דנה',
+    paymentMethod: 'cash', totalAmount: '117.00', documentDiscount: '0.00', collected: '117.00', signedAmount: '117.00',
+    vatAmount: '17.85', netOfVat: '99.15', vatRate: '18.00', tipAmount: '5.00', tipPaymentMethod: 'card', cash: '112.00',
+    card: '0.00', other: '0.00', exchange: '0.00', productionVoucher: '5.00', legs: 2, cardBrands: ['visa'], cardLast4: [],
+    approvalNumbers: [], refundOf: null, shiftNumber: 1, zNumber: null, customerName: null, customerVatNumber: null,
+    mealKind: null, ...over,
+  });
+  const labels = { documentType: (n: number | null) => `type:${n}`, status: (s: string) => s, method: (m: string) => `pm:${m}` };
+
+  it('transactions: every column of the sheet, plus the tender of the tip', () => {
+    const rows = [row({}), row({ tipAmount: '0.00', tipPaymentMethod: null, totalAmount: '-20.00', signedAmount: '-20.00' })];
+    const cols = transactionExportColumns(t, labels);
+    const legacy = transactionsSheet(rows, t, 'x', labels);
+    const at = cols.findIndex((c) => c.key === 'tipMethod');
+    const without = cols.filter((c) => c.key !== 'tipMethod');
+    const cells = listSheetCells(without, rows, 'total');
+    assert.deepEqual(without.map((c) => c.header), legacy.columns.map((c) => c.header));
+    assert.deepEqual(cells.rows, legacy.rows);
+    assert.deepEqual(cells.totals, legacy.totals);
+    const all = listSheetCells(cols, rows, 'total');
+    assert.deepEqual(all.rows.map((r) => r[at]), ['pm:card', null]);
+    assert.equal(new Set(cols.map((c) => c.key)).size, cols.length);
+  });
+
+  it('the Z table: a keyed column per payment method, every money column totalled', () => {
+    const table: ZTable = {
+      window: { from: '2026-10-01', to: '2026-10-07', dateBasis: 'business', timezone: 'Asia/Jerusalem' },
+      total: 1,
+      paymentMethods: ['cash', 'card'],
+      zs: [
+        {
+          id: 'a', zNumber: 7, zType: 'shop', zTypeLabel: 'Z סניפי', origin: 'cloud', shopName: 'הרצליה', machineName: null,
+          posNumber: null, tills: 'קופה 1', businessDate: '2026-10-06', productionDate: null, openedAt: null, periodEnd: null,
+          closedAt: null, invoiceRange: null, creditNoteRange: null, receiptRange: null, invoiceCount: 9, creditNoteDocuments: 0,
+          receiptCount: 0, transactionsCount: 9, salesCount: 9, creditNotesCount: 0, nonSaleDocumentsCount: 0, shiftCount: 2,
+          machineCount: 2, grossSales: '100.00', discountsTotal: '0.00', lineDiscountsTotal: null, promotionDiscountsTotal: null,
+          totalSales: '100.00', totalRefunds: '0.00', netSales: '100.00', vatTotal: '14.53', netOfVat: '85.47', cashSales: '60.00',
+          cardSales: '40.00', payments: { cash: '60.00', card: '40.00' }, totalTips: '3.00', cashTips: '1.00', cardTips: '2.00',
+          expectedCash: null, actualCash: null, discrepancy: null, lateDocuments: 0, amendedDocuments: 1, totalsMismatch: true,
+          builtOffline: false,
+          transmission: {
+            batchCount: 1, successfulBatches: 1, failedBatches: 0, batchNumbers: ['777'], batchesAmount: '40.00', cardLegs: 1,
+            transmittedLegs: 1, untransmittedLegs: 0, untransmittedAmount: '0.00',
+          },
+        },
+      ],
+      tills: [],
+    };
+    const [zs, tills] = zTableSheets(table, t, (m) => `pm:${m}`);
+    const zc = zTableColumns(t, (m) => `pm:${m}`, table.paymentMethods);
+    const cells = listSheetCells(zc, table.zs, 'total');
+    assert.deepEqual(zc.map((c) => c.header), zs.columns.map((c) => c.header));
+    assert.deepEqual(cells.rows, zs.rows);
+    assert.deepEqual(cells.totals, zs.totals);
+    assert.ok(zc.some((c) => c.key === paymentColumnKey('card')));
+    assert.deepEqual(zTillColumns(t, (m) => `pm:${m}`, table.paymentMethods).map((c) => c.header), tills.columns.map((c) => c.header));
+  });
+
+  it('money sums to the agora, decimal strings and empty cells alike', () => {
+    assert.equal(sumMoney(['0.10', '0.20', null, '', 0.3]), 0.6);
+  });
+});
+
+describe('control reports: cash variance, sequence, offline runs, promotions', () => {
+  it('a cash difference: over is green with a plus, short red, zero plain', () => {
+    assert.equal(varianceTone(12.5), 'over');
+    assert.equal(varianceTone(-0.1), 'short');
+    assert.equal(varianceTone(0), 'even');
+  });
+
+  it('the per-cashier totals: every shift, the counted ones, Σ over / short to the agora, the net', () => {
+    const tot = cashVarianceTotals(
+      [
+        { over: 0.1, short: 0 },
+        { over: 0.2, short: 5.05 },
+        { over: 0, short: 0 },
+      ],
+      7,
+      2,
+      -4.75,
+    );
+    assert.deepEqual(tot, { shifts: 7, counted: 5, over: 0.3, short: 5.05, net: -4.75 });
+    assert.deepEqual(cashVarianceTotals([], 0, 0, 0), { shifts: 0, counted: 0, over: 0, short: 0, net: 0 });
+  });
+
+  it('a gap is one number or a run; every gap is its own sheet row', () => {
+    assert.equal(sequenceGapText({ fromNumber: 1043, toNumber: 1043 }), '1043');
+    assert.equal(sequenceGapText({ fromNumber: 1043, toNumber: 1047 }), '1043–1047');
+    const rows = sequenceGapRows([
+      {
+        machineId: 'm1',
+        machineName: 'קופה 1',
+        documentType: 320,
+        gaps: [
+          { fromNumber: 5, toNumber: 5, missing: 1 },
+          { fromNumber: 9, toNumber: 11, missing: 3 },
+        ],
+      },
+      { machineId: 'm2', shopName: 'מרכז', documentType: null, gaps: [] },
+    ]);
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.machineName, r.shopName, r.documentType, r.fromNumber, r.toNumber, r.missing]),
+      [
+        ['m1:320:5', 'קופה 1', null, 320, 5, 5, 1],
+        ['m1:320:9', 'קופה 1', null, 320, 9, 11, 3],
+      ],
+    );
+  });
+
+  it('each declined uid of each run, with its run, in the runs’ order', () => {
+    const runs = [
+      { id: 'a', declined: [{ uid: 'x' }, { uid: 'y' }] },
+      { id: 'b', declined: [] },
+      { id: 'c', declined: [{ uid: 'z' }] },
+    ];
+    const rows = offlineDeclinedRows<{ uid: string }, (typeof runs)[number]>(runs);
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.run.id, r.leg.uid]),
+      [
+        ['a:0', 'a', 'x'],
+        ['a:1', 'a', 'y'],
+        ['c:0', 'c', 'z'],
+      ],
+    );
+  });
+
+  it('the promotion filter: the tenant’s promotions and the report’s deleted ones, one per id, by name', () => {
+    const choices = promotionChoices(
+      [
+        { id: 'p2', name: 'ב — שני' },
+        { id: 'p1', name: 'א — ראשון' },
+      ],
+      [
+        { promotionId: 'p1', name: 'שם ישן' },
+        { promotionId: 'gone', name: 'ג — נמחק' },
+        { promotionId: null, name: null },
+      ],
+    );
+    assert.deepEqual(choices, [
+      { id: 'p1', name: 'א — ראשון' },
+      { id: 'p2', name: 'ב — שני' },
+      { id: 'gone', name: 'ג — נמחק' },
+    ]);
+  });
+
+  it('only a uuid goes to the server as an id', () => {
+    assert.equal(isUuid('3f2b8c1e-9d4a-4f6b-8e2a-1c5d7e9f0a3b'), true);
+    assert.equal(isUuid('3F2B8C1E-9D4A-4F6B-8E2A-1C5D7E9F0A3B'), true);
+    assert.equal(isUuid('not-a-uuid'), false);
+    assert.equal(isUuid(''), false);
+    assert.equal(isUuid(null), false);
+  });
+});
+
+describe('menu reports, the upsell rules and the targets on the framework', () => {
+  it('the tab in the URL: the first is the default and leaves the key out, other keys kept', () => {
+    assert.equal(parseMenuReportTab('meals'), 'meals');
+    assert.equal(parseMenuReportTab('upsells'), 'upsells');
+    assert.equal(parseMenuReportTab('nonsense'), 'modifiers');
+    assert.equal(parseMenuReportTab(null), 'modifiers');
+    assert.equal(withMenuReportTab('?from=2026-10-01&to=2026-10-13&shop=s1', 'meals'), 'from=2026-10-01&to=2026-10-13&shop=s1&tab=meals');
+    assert.equal(withMenuReportTab('from=2026-10-01&tab=meals', 'modifiers'), 'from=2026-10-01');
+    // The report framework's own write keeps the tab (it rewrites only its keys).
+    const written = writeReportFilters(new URLSearchParams('tab=upsells'), clearedReportFilters({ filters: ['hours'] }, TODAY).values, {}, { filters: ['hours'] });
+    assert.equal(written.get('tab'), 'upsells');
+  });
+
+  it('each tab is its own report key (its own company export default), valid for the server', () => {
+    const keys = Object.values(MENU_REPORT_KEYS);
+    assert.equal(new Set(keys).size, 3);
+    for (const k of keys) assert.match(k, /^[a-z0-9][a-z0-9._-]{0,63}$/);
+  });
+
+  it('the meals as rows: each meal, then its components under it', () => {
+    const meals = [
+      { productId: 'm1', name: 'ארוחת המבורגר', components: [{ productId: 'c1' }, { productId: null }] },
+      { productId: null, name: 'ארוחה', components: [] },
+      { productId: 'm3', name: 'ארוחת ילדים', components: [{ productId: 'c1' }] },
+    ];
+    const lines = mealLines(meals);
+    assert.deepEqual(
+      lines.map((l) => [l.key, l.meal.name, l.component ? (l.component.productId ?? 'no id') : null]),
+      [
+        ['meal:m1', 'ארוחת המבורגר', null],
+        ['component:m1:c1', 'ארוחת המבורגר', 'c1'],
+        ['component:m1:#1', 'ארוחת המבורגר', 'no id'],
+        ['meal:#1', 'ארוחה', null],
+        ['meal:m3', 'ארוחת ילדים', null],
+        ['component:m3:c1', 'ארוחת ילדים', 'c1'],
+      ],
+    );
+    // Row keys are unique (the table keys its rows by them).
+    assert.equal(new Set(lines.map((l) => l.key)).size, lines.length);
+    assert.deepEqual(mealLines([]), []);
+  });
+
+  it("a meal's notes: unredeemed per slot, taken later, refills — nothing when none", () => {
+    const words = {
+      unredeemed: (items: string) => `לא מומש: ${items}`,
+      takenLater: (n: string) => `נלקח אחר כך: ${n}`,
+      refills: (n: string) => `ריפילים: ${n}`,
+      qty: (n: number) => String(n),
+    };
+    assert.deepEqual(
+      mealNotes(
+        { productId: 'm', components: [], unredeemed: [{ slotName: 'שתייה', count: 3 }, { slotName: 'קינוח', count: 1 }], takenLater: 2, refills: 1 },
+        words,
+      ),
+      ['לא מומש: שתייה ×3, קינוח ×1', 'נלקח אחר כך: 2', 'ריפילים: 1'],
+    );
+    assert.deepEqual(mealNotes({ productId: 'm', components: [], unredeemed: [], takenLater: 0, refills: 0 }, words), []);
+  });
+
+  it('the acceptance rate: one decimal in the export, the whole percent on screen', () => {
+    assert.equal(ratePercent(0.3333), 33.3);
+    assert.equal(ratePercent(1), 100);
+    assert.equal(ratePercent(null), null);
+    assert.equal(rateText(0.3333), '33%');
+    assert.equal(rateText(null), '—');
+    assert.equal(optionsTakenText([{ name: 'קולה', count: 3 }, { name: null, count: 1 }]), 'קולה ×3, — ×1');
+    assert.equal(optionsTakenText(undefined), '');
+  });
+
+  it("the rules' totals: summed over the rules listed, the rate taken of shown", () => {
+    const totals = upsellFigureTotals([
+      { shown: 10, accepted: 4, dismissed: 5, declined: 1, revenue: 40.1 },
+      undefined,
+      { shown: 5, accepted: 1, dismissed: 4, revenue: 9.2 },
+    ]);
+    assert.deepEqual(totals, { shown: 15, accepted: 5, dismissed: 9, declined: 1, revenue: 49.3, rate: 33.3 });
+    assert.equal(upsellFigureTotals([]).rate, null);
+  });
+
+  it('when a target applies, and a newer field only when it came', () => {
+    const words = { event: 'לאירוע', day: (d: string) => `ליום ${d}`, everyDay: (a: string, b: string) => `כל יום ${a}–${b}` };
+    assert.equal(targetWhen({ period: 'event', day: null, dayStart: '08:00', dayEnd: '23:00' }, words), 'לאירוע');
+    assert.equal(targetWhen({ period: 'day', day: '2026-10-13', dayStart: '08:00', dayEnd: '23:00' }, words), 'ליום 2026-10-13');
+    assert.equal(targetWhen({ period: 'day', day: null, dayStart: '08:00', dayEnd: '02:00' }, words), 'כל יום 08:00–02:00');
+    type Row = { id: number; shopName?: string | null };
+    const older: Row[] = [{ id: 1 }, { id: 2 }];
+    const newer: Row[] = [{ id: 1 }, { id: 2, shopName: 'מרכז' }];
+    assert.equal(anyRowHas(newer, (r) => r.shopName), true);
+    assert.equal(anyRowHas(older, (r) => r.shopName), false);
+    assert.equal(anyRowHas<Row>([{ id: 1, shopName: null }], (r) => r.shopName), true);
+  });
+});
+
+describe('the live items board: its state in the URL, its rows and totals', () => {
+  const SHOP = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  it('a fresh visit: today, every company, by net, the top rows', () => {
+    const st = parseLiveItemsState(new URLSearchParams(''), TODAY);
+    assert.deepEqual(st, defaultLiveItemsState(TODAY));
+    assert.deepEqual(liveItemsApiParams(st, 1000), { limit: 1000 });
+  });
+
+  it('round-trips the board and keeps the dashboard scope keys', () => {
+    const st = {
+      ...defaultLiveItemsState(TODAY),
+      shopId: SHOP,
+      areaId: 'none',
+      period: 'custom' as const,
+      from: '2026-10-01',
+      to: '2026-10-05',
+      q: 'קפה',
+      sort: 'qty' as const,
+      desc: false,
+      all: true,
+    };
+    const url = writeLiveItemsState(new URLSearchParams('shop=x&company=y'), st, TODAY);
+    assert.equal(url.get('shop'), 'x');
+    assert.equal(url.get('company'), 'y');
+    assert.deepEqual(parseLiveItemsState(url, TODAY), st);
+    assert.deepEqual(liveItemsApiParams(st, 50), { limit: 50, shopId: SHOP, areaId: 'none', from: '2026-10-01', to: '2026-10-05' });
+  });
+
+  it('nonsense in the URL is dropped; the open shifts are a period of their own', () => {
+    const st = parseLiveItemsState(new URLSearchParams('shopId=abc&areaId=zzz&period=shift&sort=x&from=2026-01-01'), TODAY);
+    assert.equal(st.shopId, '');
+    assert.equal(st.areaId, '');
+    assert.equal(st.sort, 'net');
+    assert.equal(st.from, TODAY);
+    assert.deepEqual(liveItemsApiParams(st, 10), { limit: 10, shift: 'open' });
+  });
+
+  it('search by name or SKU, sort, and the totals: the scope’s, or the sums of the rows found', () => {
+    const row = (name: string, sku: string, qty: number, net: number) => ({
+      name, sku, qty, unitsSold: qty, unitsRefunded: 0, gross: net, discounts: 0, refunds: 0, net,
+    });
+    const rows = [row('קפה הפוך', 'A1', 3, 30), row('עוגה', 'B2', 1, 25), row('קפה שחור', 'C3', 2, 14)];
+    const found = searchLiveRows(rows, 'קפה', (s) => s.toLowerCase());
+    assert.deepEqual(found.map((r) => r.sku), ['A1', 'C3']);
+    assert.deepEqual(searchLiveRows(rows, 'b2', (s) => s.toLowerCase()).map((r) => r.name), ['עוגה']);
+    assert.deepEqual(sortLiveRows(rows, 'net', true).map((r) => r.net), [30, 25, 14]);
+    assert.deepEqual(sortLiveRows(rows, 'qty', false).map((r) => r.qty), [1, 2, 3]);
+    const scope = { qty: 99, gross: 990, discounts: 1, refunds: 2, net: 987 };
+    assert.deepEqual(liveItemsTotals(rows, scope, false), {
+      qty: 99, unitsSold: null, unitsRefunded: null, gross: 990, discounts: 1, refunds: 2, net: 987,
+    });
+    assert.deepEqual(liveItemsTotals(found, scope, true), {
+      qty: 5, unitsSold: 5, unitsRefunded: 0, gross: 44, discounts: 0, refunds: 0, net: 44,
+    });
+  });
+});
+
+describe('ZIP export pages: the form in the URL (accounting-export, tax-reports)', () => {
+  const ACCOUNTING_SPEC: ReportFilterSpec = { filters: [], defaultDaysBack: 30, extras: ACCOUNTING_EXPORT_EXTRAS };
+  const DEFAULT_FORM = {
+    basis: 'business',
+    onlyUnexported: true,
+    format: 'hashavshevet',
+    grouping: 'z',
+    level: '',
+    consolidate: '',
+    encoding: '',
+    method: '',
+  };
+
+  it('accounting: the last 30 days and "from the settings" by default; defaults stay out of the URL', () => {
+    const fresh = parseReportFilters(new URLSearchParams(''), ACCOUNTING_SPEC, '2026-10-13');
+    assert.equal(fresh.applied, false);
+    assert.equal(fresh.values.from, '2026-09-13');
+    assert.equal(fresh.values.to, '2026-10-13');
+    assert.deepEqual(parseAccountingExportForm(fresh.extras), DEFAULT_FORM);
+    const url = writeReportFilters(new URLSearchParams(''), fresh.values, fresh.extras, ACCOUNTING_SPEC);
+    assert.deepEqual([...url.keys()].sort(), ['from', 'to']);
+  });
+
+  it('accounting: a link holds the range, the Zs listed and every export option', () => {
+    const fresh = parseReportFilters(new URLSearchParams(''), ACCOUNTING_SPEC, '2026-10-13');
+    const extras = {
+      ...fresh.extras,
+      basis: 'production',
+      unexported: '0',
+      format: 'priority',
+      grouping: 'month',
+      level: 'shop',
+      consolidate: 'true',
+      encoding: 'cp862',
+      importMethod: 'detailed',
+    };
+    const url = writeReportFilters(
+      new URLSearchParams('company=c1&shop=s1'),
+      { ...fresh.values, from: '2026-10-01', to: '2026-10-12' },
+      extras,
+      ACCOUNTING_SPEC,
+    );
+    assert.equal(url.get('shop'), 's1');
+    const back = parseReportFilters(url, ACCOUNTING_SPEC, '2026-10-13');
+    assert.equal(back.applied, true);
+    assert.equal(back.values.from, '2026-10-01');
+    assert.deepEqual(parseAccountingExportForm(back.extras), {
+      basis: 'production',
+      onlyUnexported: false,
+      format: 'priority',
+      grouping: 'month',
+      level: 'shop',
+      consolidate: 'true',
+      encoding: 'cp862',
+      method: 'detailed',
+    });
+  });
+
+  it('accounting: a hand-edited value falls back to the default', () => {
+    assert.deepEqual(
+      parseAccountingExportForm({
+        basis: 'week',
+        unexported: 'no',
+        format: 'csv',
+        grouping: 'year',
+        level: 'till',
+        consolidate: 'yes',
+        encoding: 'utf8',
+        importMethod: 'x',
+      }),
+      DEFAULT_FORM,
+    );
+    assert.deepEqual(parseAccountingExportForm({}), DEFAULT_FORM);
+  });
+
+  it('tax: the request the page always sent — the shop, else the company; a range or a year', () => {
+    const form = { shopId: '', companyId: 'c1', mode: 'date-range' as const, from: '2026-01-01', to: '2026-06-30', year: '2026' };
+    assert.deepEqual(taxOpenFormatParams(form), {
+      scope: 'company',
+      mode: 'date-range',
+      companyId: 'c1',
+      from: '2026-01-01',
+      to: '2026-06-30',
+    });
+    const shop = taxOpenFormatParams({ ...form, shopId: 's1' });
+    assert.deepEqual(shop, { scope: 'shop', mode: 'date-range', shopId: 's1', from: '2026-01-01', to: '2026-06-30' });
+    // Same keys in the same order: the query string the server always got.
+    assert.deepEqual(Object.keys(shop!), ['scope', 'mode', 'shopId', 'from', 'to']);
+    assert.deepEqual(taxOpenFormatParams({ ...form, mode: 'year', year: '2025', from: '', to: '' }), {
+      scope: 'company',
+      mode: 'year',
+      companyId: 'c1',
+      year: 2025,
+    });
+  });
+
+  it('tax: nothing to send while something is missing or wrong', () => {
+    const form = { shopId: '', companyId: 'c1', mode: 'date-range' as const, from: '2026-01-01', to: '2026-06-30', year: '2026' };
+    assert.equal(taxOpenFormatParams({ ...form, companyId: '' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, from: '' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, from: '2026-07-01' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, mode: 'year', year: '' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, mode: 'year', year: 'abc' }), null);
+  });
+
+  it('tax: today and the date range by default; the mode and the year in a link', () => {
+    const spec: ReportFilterSpec = { filters: [], defaultDaysBack: 0, extras: taxOpenFormatExtras('2026') };
+    const fresh = parseReportFilters(new URLSearchParams('company=c1'), spec, '2026-10-13');
+    assert.equal(fresh.values.from, '2026-10-13');
+    assert.equal(fresh.values.to, '2026-10-13');
+    assert.equal(taxOpenFormatMode(fresh.extras.mode), 'date-range');
+    assert.equal(fresh.extras.year, '2026');
+    const url = writeReportFilters(new URLSearchParams('company=c1'), fresh.values, { mode: 'year', year: '2025' }, spec);
+    assert.equal(url.get('company'), 'c1');
+    const back = parseReportFilters(url, spec, '2026-10-13');
+    assert.equal(taxOpenFormatMode(back.extras.mode), 'year');
+    assert.equal(back.extras.year, '2025');
+    assert.equal(taxOpenFormatMode('weekly'), 'date-range');
+    assert.equal(taxOpenFormatMode(undefined), 'date-range');
+  });
+});
+
+describe('the company default of a report with many tables (§4.3: up to 100 columns)', () => {
+  const keys = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => prefix + i);
+  it('everything that fits is saved as chosen', () => {
+    const list = companyDefaultColumns([{ tableId: 'main', keys: ['a', 'b'], all: ['a', 'b', 'c'] }]);
+    assert.deepEqual(list, ['a', 'b']);
+  });
+  it('too many: only the tables whose choice is narrower than all their columns', () => {
+    const big = keys('k', 60);
+    const tables = [
+      { tableId: 'main', keys: big, all: big },
+      { tableId: 'days', keys: ['net'], all: ['net', 'tips'] },
+      { tableId: 'zs', keys: big, all: big },
+    ];
+    assert.deepEqual(companyDefaultColumns(tables), ['days.net']);
+  });
+  it('nothing narrowed: the first table, never an empty list (empty deletes the default)', () => {
+    const big = keys('k', 60);
+    assert.deepEqual(companyDefaultColumns([
+      { tableId: 'main', keys: big, all: big },
+      { tableId: 'zs', keys: big, all: big },
+    ]), big);
+  });
+  it('still too many: null (the reader narrows)', () => {
+    const big = keys('k', 120);
+    assert.equal(companyDefaultColumns([{ tableId: 'main', keys: big.slice(1), all: big }]), null);
+  });
+});
+
+describe('a label / value sheet keeps its autofilter off', () => {
+  it('autoFilter: false reaches the sheet; the default is on', () => {
+    const table: ExportTable = {
+      tableId: 'tips',
+      name: 'טיפים',
+      columns: [{ key: 'item', header: 'פריט' }, { key: 'amount', header: 'סכום', kind: 'money' }],
+      rows: [['טיפים', 12]],
+      autoFilter: false,
+    };
+    assert.equal(exportTableSheet(table, null).autoFilter, false);
+    assert.equal(exportTableSheet({ ...table, autoFilter: undefined }, null).autoFilter, undefined);
   });
 });

@@ -1,17 +1,29 @@
 'use client';
 
+/**
+ * Tax reports — the tax authority's open format ("מבנה אחיד"): INI.TXT + BKMVDATA.TXT, zipped by
+ * the server for the authority's simulator.
+ *
+ * On the report framework where it fits (P:\specs\reports-upgrade.md §5): the heading, the form
+ * as a filter card with the unified bar's date fields and quick ranges, and the form in the URL
+ * (`useReportFilters`: the range, the mode and the tax year), so a link opens the same form. The
+ * export itself is as it always was — one click asks for the preview, then downloads the ZIP
+ * (`OPENFRMT-<vat>-<time>.zip`); a link never starts it. "ייצא ZIP" writes the form to the URL.
+ */
+
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Download, FileText, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import {
-  downloadTaxOpenFormat,
-  fetchTaxOpenFormatPreview,
-  type TaxOpenFormatParams,
-} from '@/lib/api';
+import { downloadTaxOpenFormat, fetchTaxOpenFormatPreview } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import type { TaxOpenFormatPreview } from '@/lib/types';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { RANGE_PRESETS, matchingPreset, presetRange, type RangePresetKey } from '@/lib/calendar';
+import { businessToday } from '@/lib/format';
+import type { ReportFilterSpec } from '@/lib/reportFilters';
+import { taxOpenFormatExtras, taxOpenFormatMode, taxOpenFormatParams } from '@/lib/taxOpenFormatForm';
+import { useReportFilters } from '@/components/dashboard/report-framework';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -24,9 +36,15 @@ import { useCanProduceZ } from '@/lib/zAccess';
 import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
 import { OpenFormatSoftwareCard } from '@/components/dashboard/open-format-software-card';
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+/** The form in the URL: today by default (as before), the date range, this year. */
+const SPEC: ReportFilterSpec = {
+  filters: [],
+  defaultDaysBack: 0,
+  extras: taxOpenFormatExtras(String(new Date().getFullYear())),
+};
+
+/** The unified bar's quick ranges (the date picker offers them all). */
+const QUICK: RangePresetKey[] = ['today', 'yesterday', 'last7', 'last30', 'thisMonth', 'lastMonth'];
 
 function triggerBlobDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -41,6 +59,8 @@ export default function TaxReportsPage() {
   const t = useTranslations('taxReports');
   const tc = useTranslations('common');
   const tb = useTranslations('businessType');
+  const tf = useTranslations('reportFramework.filters');
+  const tp = useTranslations('datePicker.presets');
   const canProduceZ = useCanProduceZ();
 
   /**
@@ -61,36 +81,29 @@ export default function TaxReportsPage() {
     ? sharedScope.shop?.name ?? shopId
     : sharedScope.company?.name ?? companyId;
 
-  const [mode, setMode] = useState<'date-range' | 'year'>('date-range');
-  const [from, setFrom] = useState(todayIso());
-  const [to, setTo] = useState(todayIso());
-  const [year, setYear] = useState(String(new Date().getFullYear()));
+  // The form is the URL's (a link opens it as it was); "ייצא ZIP" writes it there.
+  const filters = useReportFilters(SPEC);
+  const { from, to } = filters.draft;
+  const mode = taxOpenFormatMode(filters.draftExtras.mode);
+  const year = filters.draftExtras.year ?? '';
+  const setRange = (r: { from: string; to: string }) => filters.set({ from: r.from, to: r.to });
+
   const [isExporting, setIsExporting] = useState(false);
   const [preview, setPreview] = useState<TaxOpenFormatPreview | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const entityReady = exportScope === 'shop' ? Boolean(shopId) : Boolean(companyId);
-  const datesReady = mode === 'year' ? Boolean(year) : Boolean(from && to);
-
-  function buildParams(): TaxOpenFormatParams | null {
-    if (!entityReady || !datesReady) return null;
-    const base: TaxOpenFormatParams = {
-      scope: exportScope,
-      mode,
-      ...(exportScope === 'shop' ? { shopId } : { companyId }),
-    };
-    if (mode === 'year') {
-      return { ...base, year: parseInt(year, 10) };
-    }
-    return { ...base, from, to };
-  }
+  const today = businessToday();
+  const preset = matchingPreset({ from, to }, today);
+  const rangeInvalid = mode === 'date-range' && Boolean(from && to) && from > to;
+  const params = taxOpenFormatParams({ shopId, companyId, mode, from, to, year });
 
   const handleExport = async () => {
-    const params = buildParams();
     if (!params) {
       setExportError(t('selectFilters'));
       return;
     }
+    // The link now opens this form (it never starts the export).
+    if (filters.dirty) filters.run();
 
     setIsExporting(true);
     setExportError(null);
@@ -115,13 +128,13 @@ export default function TaxReportsPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="min-w-0 max-w-3xl space-y-4 max-sm:px-1">
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          <FileText className="size-6" />
+          <FileText className="size-6" aria-hidden />
           {t('title')}
         </h1>
-        <p className="text-muted-foreground text-sm mt-1">{t('subtitle')}</p>
+        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
       </div>
 
       <ScopeGate resolution={resolution}>
@@ -131,14 +144,14 @@ export default function TaxReportsPage() {
           (docs/SPEC_DOCUMENT_PREFIX.md §5, §9). Listed here before anyone exports.
         */}
         <DocumentPrefixConflictsAlert companyId={companyId || null} shopId={shopId || null} canEdit={canProduceZ} />
-        <Card>
+        <Card className="print:hidden" role="search">
           <CardHeader>
             <CardTitle>{t('exportSettings')}</CardTitle>
             <CardDescription>{t('exportSettingsHint')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t('scope')}</Label>
+            <div className="space-y-1">
+              <Label className="text-xs">{t('scope')}</Label>
               <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-sm">
                 <span className="text-muted-foreground">
                   {exportScope === 'shop' ? t('scopeShop') : t('scopeCompany')}
@@ -150,10 +163,10 @@ export default function TaxReportsPage() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>{t('exportMode')}</Label>
-              <Select value={mode} onValueChange={(v) => v && setMode(v as 'date-range' | 'year')}>
-                <SelectTrigger>
+            <div className="space-y-1">
+              <Label className="text-xs">{t('exportMode')}</Label>
+              <Select value={mode} onValueChange={(v) => v && filters.setExtra('mode', v)}>
+                <SelectTrigger className="w-full sm:w-64">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -168,40 +181,62 @@ export default function TaxReportsPage() {
             </div>
 
             {mode === 'date-range' ? (
-              <div className="flex flex-wrap gap-4">
-                <div className="space-y-1">
-                  <Label>{t('from')}</Label>
-                  <DatePicker
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                    range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-                  />
+              <div className="space-y-2">
+                {/* The unified bar's date fields and quick ranges. */}
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-[calc(50%-0.375rem)] space-y-1 sm:w-40">
+                    <Label className="text-xs">{t('from')}</Label>
+                    <DatePicker
+                      value={from}
+                      max={to || undefined}
+                      aria-invalid={rangeInvalid || undefined}
+                      onChange={(e) => filters.set({ from: e.target.value })}
+                      range={{ from, to, onSelect: setRange }}
+                    />
+                  </div>
+                  <div className="w-[calc(50%-0.375rem)] space-y-1 sm:w-40">
+                    <Label className="text-xs">{t('to')}</Label>
+                    <DatePicker
+                      value={to}
+                      min={from || undefined}
+                      aria-invalid={rangeInvalid || undefined}
+                      onChange={(e) => filters.set({ to: e.target.value })}
+                      range={{ from, to, onSelect: setRange }}
+                    />
+                  </div>
+                  <div className="flex min-w-0 flex-wrap gap-1.5" role="group" aria-label={tf('quick')}>
+                    {QUICK.filter((k) => RANGE_PRESETS.includes(k)).map((key) => (
+                      <Button
+                        key={key}
+                        type="button"
+                        size="sm"
+                        variant={preset === key ? 'default' : 'outline'}
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setRange(presetRange(key, today))}
+                      >
+                        {tp(key)}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <Label>{t('to')}</Label>
-                  <DatePicker
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                    range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-                  />
-                </div>
+                {rangeInvalid ? <p className="text-destructive text-xs">{tf('rangeInvalid')}</p> : null}
               </div>
             ) : (
               <div className="space-y-1 max-w-[200px]">
-                <Label>{t('taxYear')}</Label>
+                <Label className="text-xs">{t('taxYear')}</Label>
                 <Input
                   type="number"
                   min={2000}
                   max={2100}
                   value={year}
-                  onChange={(e) => setYear(e.target.value)}
+                  onChange={(e) => filters.setExtra('year', e.target.value)}
                 />
               </div>
             )}
 
             <Button
               className="w-full sm:w-auto"
-              disabled={!entityReady || !datesReady || isExporting}
+              disabled={!params || isExporting}
               onClick={() => void handleExport()}
             >
               {isExporting ? (
