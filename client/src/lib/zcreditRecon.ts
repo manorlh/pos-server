@@ -136,6 +136,8 @@ export interface ReconItem {
     machineId: string | null;
     machineName: string | null;
     shopId: string | null;
+    /** New (P:\specs\reports-upgrade.md §4.6): absent from an older server. */
+    shopName?: string | null;
     documentNumber: string | null;
     documentType: number | null;
     amount: number | null;
@@ -278,36 +280,82 @@ export const CSV_COLUMNS = [
   'oursCreatedAt', 'transmitted', 'batch', 'reason', 'handledAt', 'handledBy', 'handledNote',
 ] as const;
 
+export type CsvColumn = (typeof CSV_COLUMNS)[number];
+
+/**
+ * One item flattened (`zcredit.*` and `ours.*` side by side), by CSV column — the CSV's row and
+ * the Excel / PDF items sheet's values (P:\specs\reports-upgrade.md §4.6).
+ */
+export function itemCsvRecord(
+  run: Pick<ReconRun, 'terminalLast4' | 'businessDate'>,
+  i: ReconItem,
+  labels: Pick<CsvLabels, 'category' | 'yes' | 'no'>,
+): Record<CsvColumn, string | number | null> {
+  return {
+    category: labels.category(i.category),
+    severity: SEVERITY_MARK[i.severity] ?? '',
+    terminal: maskedTerminal(run.terminalLast4),
+    businessDate: run.businessDate,
+    zcReference: i.zcredit?.reference ?? null,
+    zcSavedAt: i.zcredit?.savedAt ?? null,
+    zcAmount: i.zcredit?.amount ?? null,
+    zcStatus: i.zcredit ? (i.zcredit.statusLabel ?? i.zcredit.statusCode) : null,
+    zcDeal: i.zcredit?.dealType ?? null,
+    zcDeposit: i.zcredit?.depositId ?? null,
+    zcCard: cardTail(i.zcredit?.cardLast4),
+    zcPayments: i.zcredit?.payments ?? null,
+    zcSource: i.zcredit?.source ?? null,
+    document: i.ours?.documentNumber ?? null,
+    till: i.ours?.machineName ?? null,
+    oursAmount: i.ours?.amount ?? null,
+    oursStatus: i.ours?.status ?? null,
+    oursCard: cardTail(i.ours?.cardLast4),
+    oursCreatedAt: i.ours?.createdAt ?? null,
+    transmitted: i.ours ? (i.ours.transmitted ? labels.yes : labels.no) : null,
+    batch: i.ours?.batch ?? null,
+    reason: i.reason,
+    handledAt: i.handled?.at ?? null,
+    handledBy: i.handled?.by ?? null,
+    handledNote: i.handled?.note ?? null,
+  };
+}
+
 /** The CSV rows of [items] — values as the server sent them (numbers stay numbers). */
 export function itemsCsvRows(run: Pick<ReconRun, 'terminalLast4' | 'businessDate'>, items: ReconItem[], labels: CsvLabels): CsvCell[][] {
-  const terminal = maskedTerminal(run.terminalLast4);
-  return items.map((i) => [
-    labels.category(i.category),
-    SEVERITY_MARK[i.severity] ?? '',
-    terminal,
-    run.businessDate,
-    i.zcredit?.reference ?? null,
-    i.zcredit?.savedAt ?? null,
-    i.zcredit?.amount ?? null,
-    i.zcredit ? (i.zcredit.statusLabel ?? i.zcredit.statusCode) : null,
-    i.zcredit?.dealType ?? null,
-    i.zcredit?.depositId ?? null,
-    cardTail(i.zcredit?.cardLast4),
-    i.zcredit?.payments ?? null,
-    i.zcredit?.source ?? null,
-    i.ours?.documentNumber ?? null,
-    i.ours?.machineName ?? null,
-    i.ours?.amount ?? null,
-    i.ours?.status ?? null,
-    cardTail(i.ours?.cardLast4),
-    i.ours?.createdAt ?? null,
-    i.ours ? (i.ours.transmitted ? labels.yes : labels.no) : null,
-    i.ours?.batch ?? null,
-    i.reason,
-    i.handled?.at ?? null,
-    i.handled?.by ?? null,
-    i.handled?.note ?? null,
-  ]);
+  return items.map((i) => {
+    const record = itemCsvRecord(run, i, labels);
+    return CSV_COLUMNS.map((c) => record[c]);
+  });
+}
+
+/**
+ * The item filters as the URL holds them (`?cats=&open=1&q=`): `cats` empty = the default
+ * (every category but "matched"), `none` = no category chosen (which shows them all, as the
+ * chips always have), else the chosen ones.
+ */
+export interface ItemFilterParams {
+  cats: string;
+  open: string;
+  q: string;
+}
+
+export function itemFilterFromParams(params: Partial<ItemFilterParams>): ItemFilter {
+  const raw = (params.cats ?? '').trim();
+  const named = raw.split(',').map((s) => s.trim());
+  const chosen = RECON_CATEGORIES.filter((c) => named.includes(c));
+  const categories = raw === 'none' ? [] : chosen.length ? chosen : [...DEFAULT_FILTER.categories];
+  return { categories, openOnly: params.open === '1', search: params.q ?? '' };
+}
+
+export function itemFilterParams(filter: ItemFilter): ItemFilterParams {
+  const set = new Set(filter.categories);
+  const isDefault =
+    set.size === DEFAULT_FILTER.categories.length && DEFAULT_FILTER.categories.every((c) => set.has(c));
+  return {
+    cats: isDefault ? '' : set.size === 0 ? 'none' : RECON_CATEGORIES.filter((c) => set.has(c)).join(','),
+    open: filter.openOnly ? '1' : '',
+    q: filter.search,
+  };
 }
 
 export function csvFileName(run: Pick<ReconRun, 'terminalLast4' | 'businessDate'>): string {

@@ -4,32 +4,45 @@
  * "יומן חריגות" — every exception the system detected, in one log (`/exception-log`):
  * documents, shift closes and till events (the exceptions report's), Z anomalies, failed
  * card payments, refused documents, kiosk and device alerts, training mode, the terminal
- * check bypass. Filters (dates, company ▸ shop ▸ point of sale ▸ till, kind, severity,
- * employee, handled or not), Excel like the other reports, "טופל" with a note per row, the
- * link to the source document / shift / Z, and the SMS each exception made.
+ * check bypass. "טופל" with a note per row, the link to the source document / shift / Z, and
+ * the SMS each exception made.
  *
- * An SMS link (`/x/<code>` → `?code=<code>`) opens the one entry it names, whatever its date.
+ * On the report framework (P:\specs\reports-upgrade.md §5): the days, the dashboard's scope
+ * (company ▸ shop ▸ till) and the bar's area, then the kind, the severity, the employee and
+ * handled or not (`?kind=&severity=&employee=&handled=`) — all in the URL; the page runs at
+ * once on the last 7 days as it always has. Excel and PDF take every row of the filters.
+ *
+ * An SMS link (`/x/<code>` → `?code=<code>`) opens the one entry it names, whatever its date:
+ * no other filter, no summary.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BellRing, Check, CheckCheck, CircleDot, ExternalLink, MessageSquareText, RotateCcw, ScrollText } from 'lucide-react';
+import { AREA_NONE } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { formatCurrency, formatDateTime } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { fetchAllPages } from '@/lib/fetchAllPages';
+import { parseReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import { todayIso } from '@/lib/reportWindow';
+import { usePageScope } from '@/lib/scope';
 import {
+  LOG_COLUMNS,
   SEVERITIES,
   dispatchTone,
-  logSheet,
+  exceptionScopeParams,
+  logRowValues,
   sourceLinks,
+  type LogColumnKey,
   type LogEntry,
   type LogFilters,
+  type LogLabels,
   type LogList,
   type LogSummary,
   type Severity,
@@ -37,18 +50,21 @@ import {
 } from '@/lib/exceptionAlerts';
 import { acknowledgeLogEntry, fetchLog, fetchLogKinds, fetchLogSummary } from '@/lib/exceptionAlertsApi';
 import {
-  ALL_COMPANIES,
-  EMPTY_ORG_SCOPE,
-  OrgScopeCascade,
-  type OrgScope,
-} from '@/components/dashboard/org-scope-cascade';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+  ReportExportBar,
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportExportScope,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
+import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -56,6 +72,12 @@ import { cn } from '@/lib/utils';
 
 const PAGE_SIZE = 50;
 const ANY = '__any__';
+
+/** The days and the area in the bar; kind, severity, employee and handled are the log's own. */
+const SPEC: ReportFilterSpec = {
+  filters: ['area'],
+  extras: { kind: '', severity: '', employee: '', handled: '' },
+};
 
 const SEVERITY_TONE: Record<Severity, string> = {
   high: 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200',
@@ -103,47 +125,65 @@ function FilterSelect({
   );
 }
 
+const isSeverity = (v: string): v is Severity => (SEVERITIES as string[]).includes(v);
+
 export default function ExceptionsLogPage() {
   const t = useTranslations('exceptionsLog');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  const urlKey = searchParams.toString();
   const code = (searchParams.get('code') ?? '').trim().toLowerCase();
   const { user } = useAuth();
   const canHandle = !!user?.role && user.role !== 'cashier' && user.role !== 'shift_supervisor';
 
-  const [scope, setScope] = useState<OrgScope>(EMPTY_ORG_SCOPE);
-  const [from, setFrom] = useState(daysBackIso(6));
-  const [to, setTo] = useState(todayIso());
-  const [kind, setKind] = useState('');
-  const [severity, setSeverity] = useState('');
-  const [employee, setEmployee] = useState('');
-  const [status, setStatus] = useState<'' | 'true' | 'false'>('');
+  const { resolution, effective } = usePageScope({ maxLevel: 'machine' });
+  const filters = useReportFilters(SPEC);
+  const exportScope = useReportExportScope();
+  const today = todayIso();
+  // What runs is what the URL says — a fresh visit runs the default days at once, as this
+  // page always has (`ready`).
+  const url = useMemo(() => parseReportFilters(new URLSearchParams(urlKey), SPEC, today), [urlKey, today]);
+  const { from, to, areaId } = url.values;
+  const kind = url.extras.kind;
+  const severity = isSeverity(url.extras.severity) ? url.extras.severity : '';
+  const employee = url.extras.employee;
+  const handled = url.extras.handled === 'true' || url.extras.handled === 'false' ? url.extras.handled : '';
+
   const [page, setPage] = useState(1);
   const [handling, setHandling] = useState<{ row: LogEntry; acknowledged: boolean; note: string } | null>(null);
 
   const kinds = useQuery({ queryKey: ['exception-log-kinds'], queryFn: fetchLogKinds, staleTime: 60 * 60 * 1000 });
 
-  const filters: LogFilters | null = useMemo(() => {
+  const { companyId, shopId, machineId } = effective;
+  const apiFilters: LogFilters = useMemo(() => {
+    // An SMS link names one entry, whatever its date: nothing else narrows it.
     if (code) return { from, to, code };
-    if (!from || !to || from > to) return null;
     return {
       from,
       to,
-      companyId: scope.companyId && scope.companyId !== ALL_COMPANIES ? scope.companyId : undefined,
-      shopId: scope.shopId || undefined,
-      areaId: scope.areaId || undefined,
-      machineId: scope.machineId || undefined,
+      // The company only when nothing narrower; the area only as an id (no "ללא אזור" here).
+      ...exceptionScopeParams({ companyId, shopId, machineId }, areaId),
       kind: kind || undefined,
       severity: severity || undefined,
       employee: employee || undefined,
-      acknowledged: status,
+      acknowledged: handled,
     };
-  }, [code, from, to, scope, kind, severity, employee, status]);
+  }, [areaId, code, companyId, employee, from, handled, kind, machineId, severity, shopId, to]);
+
+  // The endpoint has no "ללא אזור": the bar's choice of it goes back to every area.
+  const draftArea = filters.draft.areaId;
+  const setDraft = filters.set;
+  useEffect(() => {
+    if (draftArea !== AREA_NONE) return;
+    setDraft({ areaId: '' });
+    toast.info(t('report.noAreaNone'));
+  }, [draftArea, setDraft, t]);
 
   // A filter change is a different list: back to its first page.
-  const filterKey = JSON.stringify(filters);
+  const filterKey = JSON.stringify(apiFilters);
   const [seenKey, setSeenKey] = useState(filterKey);
   if (seenKey !== filterKey) {
     setSeenKey(filterKey);
@@ -151,15 +191,14 @@ export default function ExceptionsLogPage() {
   }
 
   const list = useQuery<LogList>({
-    queryKey: ['exception-log', filters, page],
-    queryFn: () => fetchLog(filters!, page, PAGE_SIZE),
-    enabled: filters !== null,
+    queryKey: ['exception-log', apiFilters, page],
+    queryFn: () => fetchLog(apiFilters, page, PAGE_SIZE),
     placeholderData: (prev) => prev,
   });
   const summary = useQuery<LogSummary>({
-    queryKey: ['exception-log-summary', filters],
-    queryFn: () => fetchLogSummary(filters!),
-    enabled: filters !== null && !code,
+    queryKey: ['exception-log-summary', apiFilters],
+    queryFn: () => fetchLogSummary(apiFilters),
+    enabled: !code,
   });
 
   const handle = useMutation({
@@ -177,99 +216,367 @@ export default function ExceptionsLogPage() {
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
-  const items = list.data?.items ?? [];
+  const items = useMemo(() => list.data?.items ?? [], [list.data]);
   const totalPages = list.data ? Math.max(1, Math.ceil(list.data.total / list.data.pageSize)) : 1;
   const kindOptions = (kinds.data?.kinds ?? []).map((k) => ({ value: k.key, label: k.label }));
-  const kindLabel = (key: string) => kinds.data?.kinds.find((k) => k.key === key)?.label ?? key;
+  const kindLabel = useCallback(
+    (key: string) => kinds.data?.kinds.find((k) => k.key === key)?.label ?? key,
+    [kinds.data],
+  );
   const smsSent = items.reduce((n, r) => n + r.sms.filter((d) => d.kind !== 'test').length, 0);
+  const employeeOptions = useMemo(() => {
+    const options = (summary.data?.byEmployee ?? []).map((r) => ({ value: r.key, label: r.label || r.key }));
+    // An employee from a link who has nothing in this range still shows as chosen.
+    const chosen = filters.draftExtras.employee;
+    return chosen && !options.some((o) => o.value === chosen) ? [{ value: chosen, label: chosen }, ...options] : options;
+  }, [filters.draftExtras.employee, summary.data]);
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold">
-            <ScrollText className="size-6" />
-            {t('title')}
-          </h1>
-          <p className="text-muted-foreground max-w-3xl text-sm">{t('subtitle')}</p>
-        </div>
-        <div className="flex gap-4 text-sm print:hidden">
-          <Link href="/dashboard/exceptions" className="text-primary hover:underline">
-            {t('reportLink')}
-          </Link>
-          {canHandle ? (
-            <Link href="/dashboard/exception-alerts" className="text-primary inline-flex items-center gap-1 hover:underline">
-              <BellRing className="size-4" />
-              {t('alertsLink')}
-            </Link>
-          ) : null}
+  const filterLines = useMemo<ReportFilterLine[]>(() => {
+    if (code) return [{ label: t('col.code'), value: code }];
+    const lines: ReportFilterLine[] = [];
+    if (kind) lines.push({ label: t('kind'), value: kindLabel(kind) });
+    if (severity) lines.push({ label: t('severity'), value: t(`severities.${severity}`) });
+    if (employee) {
+      const row = summary.data?.byEmployee.find((r) => r.key === employee);
+      lines.push({ label: t('employee'), value: row?.label || employee });
+    }
+    if (handled) lines.push({ label: t('statusLabel'), value: handled === 'true' ? t('handled') : t('open') });
+    return lines;
+  }, [code, employee, handled, kind, kindLabel, severity, summary.data, t]);
+
+  const table = useMemo<ReportTableSpec<LogEntry>>(() => {
+    const labels: LogLabels = {
+      severity: (s) => t(`severities.${s}`),
+      acknowledged: (yes) => (yes ? t('acknowledged.yes') : t('acknowledged.no')),
+    };
+    // The export's columns and values are `logSheet`'s; the screen keeps the log's look.
+    const screen: Partial<Record<LogColumnKey, Partial<ReportColumn<LogEntry>>>> = {
+      time: { required: true },
+      kind: {
+        cell: (r) => (
+          <span className="inline-flex items-center gap-1">
+            <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', SEVERITY_TONE[r.severity])}>
+              {r.kindLabel}
+            </span>
+            {r.backfilled ? <Badge variant="secondary">{t('backfilled')}</Badge> : null}
+          </span>
+        ),
+      },
+      severity: {
+        cell: (r) =>
+          r.severity === 'high' ? (
+            <Badge variant="outline">{t('severities.high')}</Badge>
+          ) : (
+            <span className="text-muted-foreground text-xs">{t(`severities.${r.severity}`)}</span>
+          ),
+      },
+      till: {
+        cell: (r) =>
+          [r.machineName, r.posNumber ? t('register', { n: r.posNumber }) : null].filter(Boolean).join(' · ') || '—',
+      },
+      employee: {
+        cell: (r) => <span className="font-medium">{r.posUserName || r.posUserId || t('noEmployee')}</span>,
+      },
+      amount: { className: 'font-semibold' },
+      details: {
+        className: 'min-w-56 whitespace-normal',
+        cell: (r) => {
+          const measure = r.value != null && (r.kind === 'discount' || r.kind === 'high_tip') ? `${r.value}%` : null;
+          const text = [measure, r.summary].filter(Boolean).join(' · ');
+          return text ? <span className="text-muted-foreground text-xs">{text}</span> : '—';
+        },
+      },
+      document: {
+        cell: (r) => {
+          const links = sourceLinks(r);
+          return links.length ? (
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              {links.map((l) => (
+                <Link key={l.kind} href={l.href} className="text-primary inline-flex items-center gap-1 hover:underline">
+                  <ExternalLink className="size-3" />
+                  {l.kind === 'document'
+                    ? l.number
+                      ? t('document', { n: l.number })
+                      : t('openDocument')
+                    : l.kind === 'shift'
+                      ? l.number != null
+                        ? t('shift', { n: l.number })
+                        : t('openShift')
+                      : l.number != null
+                        ? t('z', { n: String(l.number) })
+                        : t('openZ')}
+                </Link>
+              ))}
+            </div>
+          ) : (
+            '—'
+          );
+        },
+      },
+      status: {
+        cell: (r) => (
+          <Badge variant={r.acknowledged ? 'default' : 'destructive'}>{r.acknowledged ? t('handled') : t('open')}</Badge>
+        ),
+      },
+      acknowledgedBy: {
+        className: 'whitespace-normal',
+        cell: (r) =>
+          r.acknowledged ? (
+            <span className="text-muted-foreground text-xs">
+              {t('handledBy', { who: r.acknowledgedBy ?? '—', at: formatDateTime(r.acknowledgedAt) })}
+            </span>
+          ) : (
+            '—'
+          ),
+      },
+      note: { className: 'min-w-40 whitespace-normal' },
+      sms: {
+        className: 'min-w-56 whitespace-normal',
+        cell: (r) =>
+          r.sms.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {r.sms.map((d) => (
+                <SmsChip key={d.id} d={d} />
+              ))}
+            </div>
+          ) : (
+            '—'
+          ),
+      },
+      // The SMS link's code: in the Excel, as it always was; the screen never showed it.
+      code: { exportOnly: true },
+    };
+    const columns: ReportColumn<LogEntry>[] = LOG_COLUMNS.map((c) => ({
+      key: c.key,
+      header: t(`col.${c.key}`),
+      kind: c.kind,
+      width: c.width,
+      value: (r: LogEntry) => logRowValues(r, labels)[c.key],
+      ...screen[c.key],
+    }));
+    if (canHandle) {
+      columns.push({
+        key: 'actions',
+        header: t('report.actions'),
+        screenOnly: true,
+        sortable: false,
+        value: () => null,
+        cell: (row) =>
+          row.acknowledged ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="print:hidden"
+              onClick={() => setHandling({ row, acknowledged: false, note: row.note ?? '' })}
+              title={t('reopen')}
+            >
+              <RotateCcw className="size-4" />
+              <span className="hidden sm:inline">{t('reopen')}</span>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="print:hidden"
+              onClick={() => setHandling({ row, acknowledged: true, note: row.note ?? '' })}
+              title={t('markHandled')}
+            >
+              <Check className="size-4" />
+              <span className="hidden sm:inline">{t('markHandled')}</span>
+            </Button>
+          ),
+      });
+    }
+    return {
+      id: 'main',
+      title: t('title'),
+      columns,
+      rows: items,
+      rowKey: (r) => r.id,
+      emptyText: t('empty'),
+      // The entry an SMS link named.
+      rowClassName: (r) => (code && r.code === code ? 'bg-amber-50 dark:bg-amber-950/30' : undefined),
+    };
+  }, [canHandle, code, items, t]);
+
+  const exportTables = [table as ReportTableSpec<unknown>];
+  // Every entry of these filters, not just this page (the log's largest page is 500).
+  const loadAll = async () => [
+    {
+      ...table,
+      rows: await fetchAllPages((p, pageSize) => fetchLog(apiFilters, p, pageSize), { pageSize: 500 }),
+    } as ReportTableSpec<unknown>,
+  ];
+
+  const headerLinks = (
+    <div className="flex gap-4 text-sm print:hidden">
+      <Link href="/dashboard/exceptions" className="text-primary hover:underline">
+        {t('reportLink')}
+      </Link>
+      {canHandle ? (
+        <Link href="/dashboard/exception-alerts" className="text-primary inline-flex items-center gap-1 hover:underline">
+          <BellRing className="size-4" />
+          {t('alertsLink')}
+        </Link>
+      ) : null}
+    </div>
+  );
+
+  const pager =
+    list.data && list.data.total > PAGE_SIZE ? (
+      <div className="flex items-center justify-between text-sm print:hidden">
+        <span className="text-muted-foreground">{t('pageOf', { page, pages: totalPages, total: list.data.total })}</span>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            {t('prev')}
+          </Button>
+          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+            {t('next')}
+          </Button>
         </div>
       </div>
+    ) : null;
 
-      {code ? (
+  const dialog = (
+    <Dialog open={handling !== null} onOpenChange={(open) => (!open ? setHandling(null) : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{handling?.acknowledged ? t('handleTitle') : t('reopenTitle')}</DialogTitle>
+        </DialogHeader>
+        {handling ? (
+          <p className="text-muted-foreground text-sm">
+            {handling.row.kindLabel} · {formatDateTime(handling.row.occurredAt)}
+            {handling.row.amount != null ? ` · ${formatCurrency(handling.row.amount)}` : ''}
+          </p>
+        ) : null}
+        <div className="space-y-2">
+          <Label htmlFor="exception-log-note">{t('note')}</Label>
+          <textarea
+            id="exception-log-note"
+            className="border-input bg-background min-h-24 w-full rounded-md border px-3 py-2 text-sm"
+            value={handling?.note ?? ''}
+            maxLength={2000}
+            placeholder={t('notePlaceholder')}
+            onChange={(e) => setHandling((h) => (h ? { ...h, note: e.target.value } : h))}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setHandling(null)}>
+            {tc('cancel')}
+          </Button>
+          <Button onClick={() => handling && handle.mutate(handling)} disabled={handle.isPending}>
+            {handling?.acknowledged ? t('markHandled') : t('reopen')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (code) {
+    // An SMS link: the one entry, with no filter bar and no summary — and a way back to the log.
+    const clearCode = () => {
+      const next = new URLSearchParams(urlKey);
+      next.delete('code');
+      const query = next.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname);
+    };
+    return (
+      <div className="min-w-0 space-y-4 max-sm:px-1">
+        {/* As `ReportPage` heads the log. */}
+        <div>
+          <h1 className="text-2xl font-bold">{t('title')}</h1>
+          <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
+        </div>
+        {headerLinks}
         <Card className="print:hidden">
           <CardContent className="flex flex-wrap items-center justify-between gap-2 pt-4 text-sm">
             <span>{t('codeFilter')}</span>
-            <Button variant="outline" size="sm" onClick={() => router.replace('/dashboard/exceptions-log')}>
+            <Button variant="outline" size="sm" onClick={clearCode}>
               {t('clearCode')}
             </Button>
           </CardContent>
         </Card>
-      ) : (
-        <Card className="print:hidden">
-          <CardContent className="space-y-3 pt-4">
-            <OrgScopeCascade value={scope} onChange={setScope} allowAll />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-              <div className="space-y-1">
-                <Label className="text-xs">{t('from')}</Label>
-                <DatePicker
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">{t('to')}</Label>
-                <DatePicker
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-                />
-              </div>
-              <FilterSelect label={t('kind')} value={kind} onChange={setKind} anyLabel={t('allKinds')} options={kindOptions} />
-              <FilterSelect
-                label={t('severity')}
-                value={severity}
-                onChange={setSeverity}
-                anyLabel={t('allSeverities')}
-                options={SEVERITIES.map((s) => ({ value: s, label: t(`severities.${s}`) }))}
-              />
-              <FilterSelect
-                label={t('employee')}
-                value={employee}
-                onChange={setEmployee}
-                anyLabel={t('allEmployees')}
-                options={(summary.data?.byEmployee ?? []).map((r) => ({ value: r.key, label: r.label || r.key }))}
-              />
-              <FilterSelect
-                label={t('statusLabel')}
-                value={status}
-                onChange={(v) => setStatus(v as '' | 'true' | 'false')}
-                anyLabel={t('allStatuses')}
-                options={[
-                  { value: 'false', label: t('open') },
-                  { value: 'true', label: t('handled') },
-                ]}
-              />
-            </div>
-            {filters === null ? <p className="text-destructive text-xs">{t('badRange')}</p> : null}
-          </CardContent>
-        </Card>
-      )}
+        {list.isLoading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : list.isError ? (
+          <ReportErrorState message={axiosErrorToToastMessage(list.error, tc('error'))} />
+        ) : (
+          <>
+            <ReportExportBar
+              reportKey="exceptions-log"
+              title={t('title')}
+              tables={exportTables}
+              from={null}
+              to={null}
+              business={exportScope.business}
+              place={exportScope.place}
+              filterLines={filterLines}
+              companyId={exportScope.companyId}
+              companyName={exportScope.companyName}
+              disabled={!items.length}
+            />
+            <ReportTable table={table} reportKey="exceptions-log" />
+          </>
+        )}
+        {dialog}
+      </div>
+    );
+  }
 
-      {!code && summary.isLoading ? (
+  return (
+    <ReportPage
+      reportKey="exceptions-log"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      headerExtra={headerLinks}
+      resolution={resolution}
+      filters={filters}
+      bar={{
+        shopId,
+        children: (
+          <>
+            <FilterSelect
+              label={t('kind')}
+              value={filters.draftExtras.kind}
+              onChange={(v) => filters.setExtra('kind', v)}
+              anyLabel={t('allKinds')}
+              options={kindOptions}
+            />
+            <FilterSelect
+              label={t('severity')}
+              value={filters.draftExtras.severity}
+              onChange={(v) => filters.setExtra('severity', v)}
+              anyLabel={t('allSeverities')}
+              options={SEVERITIES.map((s) => ({ value: s, label: t(`severities.${s}`) }))}
+            />
+            <FilterSelect
+              label={t('employee')}
+              value={filters.draftExtras.employee}
+              onChange={(v) => filters.setExtra('employee', v)}
+              anyLabel={t('allEmployees')}
+              options={employeeOptions}
+            />
+            <FilterSelect
+              label={t('statusLabel')}
+              value={filters.draftExtras.handled}
+              onChange={(v) => filters.setExtra('handled', v)}
+              anyLabel={t('allStatuses')}
+              options={[
+                { value: 'false', label: t('open') },
+                { value: 'true', label: t('handled') },
+              ]}
+            />
+          </>
+        ),
+      }}
+      query={reportQueryState(list)}
+      ready
+      prompt={t('empty')}
+      export={list.data ? { tables: exportTables, loadAll, filterLines, from, to } : null}
+    >
+      {summary.isLoading ? (
         <Skeleton className="h-24 w-full" />
-      ) : !code && summary.data ? (
+      ) : summary.data ? (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <ReportStatCard title={t('total')} value={String(summary.data.total)} icon={ScrollText} emphasis />
@@ -281,112 +588,22 @@ export default function ExceptionsLogPage() {
             <CountTable
               title={t('byKind')}
               rows={summary.data.byKind.map((r) => ({ ...r, label: r.label || kindLabel(r.key) }))}
-              onPick={(key) => setKind(key)}
+              onPick={(key) => filters.apply({ extras: { kind: key } })}
               money
             />
             <CountTable
               title={t('byEmployee')}
               rows={summary.data.byEmployee.map((r) => ({ ...r, label: r.label || r.key }))}
-              onPick={(key) => setEmployee(key)}
+              onPick={(key) => filters.apply({ extras: { employee: key } })}
             />
           </div>
         </>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 print:hidden">
-        <ReportExportToolbar
-          title={t('title')}
-          from={from}
-          to={to}
-          disabled={!items.length}
-          // Every entry of these filters, not just this page (the log's largest page is 500).
-          getSheets={async () =>
-            logSheet(
-              await fetchAllPages((p, pageSize) => fetchLog(filters!, p, pageSize), { pageSize: 500 }),
-              (k) => t(`col.${k}`),
-              t('title'),
-              {
-                severity: (s) => t(`severities.${s}`),
-                acknowledged: (yes) => (yes ? t('acknowledged.yes') : t('acknowledged.no')),
-              },
-            )
-          }
-        />
-      </div>
-
-      <div className="bg-card rounded-lg border">
-        {list.isLoading ? (
-          <div className="space-y-2 p-4">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full" />
-            ))}
-          </div>
-        ) : list.isError ? (
-          <p className="text-destructive p-6 text-center text-sm">{axiosErrorToToastMessage(list.error, tc('error'))}</p>
-        ) : items.length === 0 ? (
-          <p className="text-muted-foreground p-10 text-center text-sm">{t('empty')}</p>
-        ) : (
-          <ul className="divide-y">
-            {items.map((row) => (
-              <LogRow
-                key={row.id}
-                row={row}
-                highlighted={!!code && row.code === code}
-                canHandle={canHandle}
-                onHandle={(acknowledged) => setHandling({ row, acknowledged, note: row.note ?? '' })}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {list.data && list.data.total > PAGE_SIZE ? (
-        <div className="flex items-center justify-between text-sm print:hidden">
-          <span className="text-muted-foreground">{t('pageOf', { page, pages: totalPages, total: list.data.total })}</span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              {t('prev')}
-            </Button>
-            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
-              {t('next')}
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      <Dialog open={handling !== null} onOpenChange={(open) => (!open ? setHandling(null) : undefined)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{handling?.acknowledged ? t('handleTitle') : t('reopenTitle')}</DialogTitle>
-          </DialogHeader>
-          {handling ? (
-            <p className="text-muted-foreground text-sm">
-              {handling.row.kindLabel} · {formatDateTime(handling.row.occurredAt)}
-              {handling.row.amount != null ? ` · ${formatCurrency(handling.row.amount)}` : ''}
-            </p>
-          ) : null}
-          <div className="space-y-2">
-            <Label htmlFor="exception-log-note">{t('note')}</Label>
-            <textarea
-              id="exception-log-note"
-              className="border-input bg-background min-h-24 w-full rounded-md border px-3 py-2 text-sm"
-              value={handling?.note ?? ''}
-              maxLength={2000}
-              placeholder={t('notePlaceholder')}
-              onChange={(e) => setHandling((h) => (h ? { ...h, note: e.target.value } : h))}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setHandling(null)}>
-              {tc('cancel')}
-            </Button>
-            <Button onClick={() => handling && handle.mutate(handling)} disabled={handle.isPending}>
-              {handling?.acknowledged ? t('markHandled') : t('reopen')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <ReportTable table={table} />
+      {pager}
+      {dialog}
+    </ReportPage>
   );
 }
 
@@ -448,98 +665,5 @@ function SmsChip({ d }: { d: SmsDispatch }) {
       {d.statusLabel}
       <span className="opacity-80">· {d.recipientLabel || d.recipient}</span>
     </span>
-  );
-}
-
-function LogRow({
-  row,
-  highlighted,
-  canHandle,
-  onHandle,
-}: {
-  row: LogEntry;
-  highlighted: boolean;
-  canHandle: boolean;
-  onHandle: (acknowledged: boolean) => void;
-}) {
-  const t = useTranslations('exceptionsLog');
-  const till = [row.machineName, row.posNumber ? t('register', { n: row.posNumber }) : null].filter(Boolean).join(' · ');
-  const measure =
-    row.value != null && (row.kind === 'discount' || row.kind === 'high_tip') ? `${row.value}%` : null;
-  const links = sourceLinks(row);
-  return (
-    <li className={cn('flex gap-3 px-4 py-3', highlighted && 'bg-amber-50 dark:bg-amber-950/30')}>
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap', SEVERITY_TONE[row.severity])}>
-            {row.kindLabel}
-          </span>
-          <Badge variant={row.acknowledged ? 'default' : 'destructive'}>
-            {row.acknowledged ? t('handled') : t('open')}
-          </Badge>
-          {row.severity === 'high' ? <Badge variant="outline">{t('severities.high')}</Badge> : null}
-          {row.backfilled ? <Badge variant="secondary">{t('backfilled')}</Badge> : null}
-          <span className="text-muted-foreground text-xs">{formatDateTime(row.occurredAt)}</span>
-          {row.amount != null ? (
-            <span className="ms-auto font-semibold tabular-nums">{formatCurrency(row.amount)}</span>
-          ) : null}
-        </div>
-        <div className="text-sm">
-          <span className="font-medium">{row.posUserName || row.posUserId || t('noEmployee')}</span>
-          {till ? <span className="text-muted-foreground"> · {till}</span> : null}
-          {row.areaName ? <span className="text-muted-foreground"> · {row.areaName}</span> : null}
-          {row.shopName ? <span className="text-muted-foreground"> · {row.shopName}</span> : null}
-        </div>
-        {measure || row.summary ? (
-          <div className="text-muted-foreground text-xs">{[measure, row.summary].filter(Boolean).join(' · ')}</div>
-        ) : null}
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          {links.map((l) => (
-            <Link key={l.kind} href={l.href} className="text-primary inline-flex items-center gap-1 hover:underline">
-              <ExternalLink className="size-3" />
-              {l.kind === 'document'
-                ? l.number
-                  ? t('document', { n: l.number })
-                  : t('openDocument')
-                : l.kind === 'shift'
-                  ? l.number != null
-                    ? t('shift', { n: l.number })
-                    : t('openShift')
-                  : l.number != null
-                    ? t('z', { n: String(l.number) })
-                    : t('openZ')}
-            </Link>
-          ))}
-          {row.acknowledged ? (
-            <span className="text-muted-foreground">
-              {t('handledBy', { who: row.acknowledgedBy ?? '—', at: formatDateTime(row.acknowledgedAt) })}
-              {row.note ? ` — ${row.note}` : ''}
-            </span>
-          ) : null}
-        </div>
-        {row.sms.length ? (
-          <div className="flex flex-wrap gap-1.5">
-            {row.sms.map((d) => (
-              <SmsChip key={d.id} d={d} />
-            ))}
-          </div>
-        ) : null}
-      </div>
-      {canHandle ? (
-        <div className="flex shrink-0 flex-col gap-1 print:hidden sm:flex-row sm:items-start">
-          {row.acknowledged ? (
-            <Button size="sm" variant="ghost" onClick={() => onHandle(false)} title={t('reopen')}>
-              <RotateCcw className="size-4" />
-              <span className="hidden sm:inline">{t('reopen')}</span>
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" onClick={() => onHandle(true)} title={t('markHandled')}>
-              <Check className="size-4" />
-              <span className="hidden sm:inline">{t('markHandled')}</span>
-            </Button>
-          )}
-        </div>
-      ) : null}
-    </li>
   );
 }
