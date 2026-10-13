@@ -517,6 +517,14 @@ from app.routers import business_cards as business_cards_router  # noqa: E402
 app.include_router(business_cards_router.router, prefix=_prefix)
 app.include_router(business_cards_router.public_router, prefix=_prefix)
 
+# Reports export (P:/specs/reports-upgrade.md §4.3, §4.5): a company's default export columns
+# per report, and the report PDF drawn on the server.
+from app.routers import report_export_defaults as report_export_defaults_router  # noqa: E402
+from app.routers import report_pdf as report_pdf_router  # noqa: E402
+
+app.include_router(report_export_defaults_router.router, prefix=_prefix)
+app.include_router(report_pdf_router.router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def start_whatsapp_distribution_worker():

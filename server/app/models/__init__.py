@@ -291,3 +291,5 @@ __all__ = [
 ]
 # "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).
 from app.models import business_card as _business_card  # noqa: F401,E402
+# "ברירת מחדל לייצוא" of each report per company, and its audit (app/services/report_export_defaults.py).
+from app.models.report_export_default import ReportExportDefault, ReportExportDefaultAudit  # noqa: F401,E402
