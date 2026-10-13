@@ -21,6 +21,7 @@ import { ProducerShell } from '@/components/dashboard/event-live/producer-shell'
 import { isProducer } from '@/lib/producer';
 import { DeviceCommandsTray } from '@/components/dashboard/device-commands/commands-tray';
 import { DeviceCommandPopup } from '@/components/dashboard/device-commands/command-popup';
+import { PushGate } from '@/components/dashboard/push-gate/push-gate';
 
 function ShellSkeleton() {
   return (
@@ -44,6 +45,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <ScopeProvider>
       <div className="space-y-4">
+        {/* "התראות בנייד": install / enable / reminder / required bars — phones and tablets only. */}
+        <PushGate />
         {ownFilters ? null : (
           <header className="space-y-3 print:hidden">
             <Breadcrumbs />

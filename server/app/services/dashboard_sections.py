@@ -499,6 +499,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/companies/{}/till-roles*", S("pos_users")),
     (_GET, "/companies/{}/till-drawer-params", S("till_settings", "pos_users", level=VIEW)),
     (_ALL, "/companies/{}/till-drawer-params", S("till_settings")),
+    # "התראות בנייד" for the company's users (app/routers/push_policy.py): a users' requirement.
+    (_ALL, "/companies/{}/push-policy", S("users", "organization")),
     (_ALL, "/companies*", S("organization")),
     # ── Reports ──
     (_GET, "/dashboard/*", S("reports")),

@@ -12,6 +12,7 @@ import {
   type PushOptions,
   type PushPreferences,
 } from './pushAlerts';
+import { safeSet, STOPPED_HERE_KEY } from './pushGate';
 
 export async function fetchPushConfig(): Promise<PushConfig> {
   const { data } = await api.get<PushConfig>('/push/config');
@@ -96,6 +97,33 @@ export async function subscribeThisBrowser(
   if (!publicKey) return 'not_configured';
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return 'denied';
+  await registerThisBrowser(publicKey, initial);
+  // Turned on again on purpose: the dashboard may keep it on from now (lib/pushGate.ts).
+  safeSet(localStore(), STOPPED_HERE_KEY, null);
+  return 'subscribed';
+}
+
+function localStore() {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "התראות בנייד" (pwa-push-required §2.4): the permission is there but the registration is not
+ * (gone, rotated, failing) — subscribe and register again without asking anything. False when
+ * there is no permission to do it with.
+ */
+export async function resubscribeThisBrowserSilently(publicKey: string | null): Promise<boolean> {
+  if (!publicKey || typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  await registerThisBrowser(publicKey, {});
+  return true;
+}
+
+/** Subscribe with the server's VAPID key (a subscription for another key is replaced) and register the device. */
+async function registerThisBrowser(publicKey: string, initial: { shopIds?: string[]; eventIds?: string[] }): Promise<void> {
   const reg = await serviceWorker();
   await navigator.serviceWorker.ready;
   let sub = await reg.pushManager.getSubscription();
@@ -114,7 +142,6 @@ export async function subscribeThisBrowser(
   }
   const json = sub.toJSON();
   await api.post('/push/devices', { endpoint: json.endpoint, keys: json.keys, ...initial });
-  return 'subscribed';
 }
 
 /** This browser's subscription endpoint, if it has one (to mark "this device" in the list). */
@@ -125,7 +152,12 @@ export async function currentEndpoint(): Promise<string | null> {
   return sub?.endpoint ?? null;
 }
 
-export async function unsubscribeThisBrowser(): Promise<void> {
+/**
+ * Stop this browser. `byUser` ("הפסק כאן"): a choice — the dashboard does not silently turn it
+ * back on (lib/pushGate.ts `stoppedHere`); a required user still sees the red bar.
+ */
+export async function unsubscribeThisBrowser(opts: { byUser?: boolean } = {}): Promise<void> {
+  if (opts.byUser) safeSet(localStore(), STOPPED_HERE_KEY, '1');
   const reg = await navigator.serviceWorker.getRegistration('/');
   const sub = reg ? await reg.pushManager.getSubscription() : null;
   if (!sub) return;

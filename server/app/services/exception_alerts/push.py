@@ -613,6 +613,11 @@ def _deliver(
     digest_count: Optional[int] = None,
 ) -> List[ExceptionAlertDispatch]:
     """One row per device, claimed before anything is sent; `status` given = held back."""
+    # "התראות בנייד": the recipient's behaviour for the category (stays on screen, vibration).
+    if status is None:
+        from app.services.push_policy import decorate
+
+        payload = decorate(db, rule.owner_user_id, payload, entry)
     out: List[ExceptionAlertDispatch] = []
     jobs: List[Dict[str, Any]] = []
     for device in devices:

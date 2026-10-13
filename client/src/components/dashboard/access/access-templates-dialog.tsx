@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { TemplatesPushPolicy } from '@/components/dashboard/push-policy/templates-push-policy';
 
 interface Draft {
   id?: string;
@@ -174,6 +175,8 @@ export function AccessTemplatesDialog({ open, onOpenChange }: { open: boolean; o
             <Button size="sm" onClick={() => setDraft({ name: '', sections: {} })}>
               <Plus className="ms-1 h-4 w-4" /> {t('newTemplate')}
             </Button>
+            {/* "התראות בנייד" per template and role (pwa-push-required §6). */}
+            <TemplatesPushPolicy enabled={open} />
           </div>
         )}
       </DialogContent>
