@@ -41,6 +41,14 @@ import {
 
 const EMPTY: Partial<Company> = { name: '', vatNumber: '', address: '', city: '' };
 
+/** The receipt phone a company's settings layer holds (`businessInfo.phone`), '' when none. */
+function businessPhoneOf(settings: Record<string, unknown> | undefined): string {
+  const info = settings?.businessInfo;
+  if (!info || typeof info !== 'object') return '';
+  const phone = (info as Record<string, unknown>).phone;
+  return typeof phone === 'string' ? phone.trim() : '';
+}
+
 export function CompanyFormDialog({
   company,
   open,
@@ -97,6 +105,17 @@ function CompanyForm({
     enabled: isNew,
   });
 
+  // "טלפון לחשבונית": printed under the receipt header — `businessInfo.phone` on the company's
+  // settings layer (not a column). `null` = untouched, so the loaded value shows until edited.
+  const { data: storedSettings } = useQuery({
+    queryKey: ['company-settings', draft.id],
+    queryFn: async () => (await api.get<{ settings: Record<string, unknown> }>(`/companies/${draft.id}/settings`)).data,
+    enabled: !isNew,
+  });
+  const storedPhone = businessPhoneOf(storedSettings?.settings);
+  const [phoneDraft, setPhoneDraft] = useState<string | null>(null);
+  const phone = phoneDraft ?? storedPhone;
+
   const save = useMutation({
     mutationFn: async (c: Partial<Company>) => {
       const payload = {
@@ -118,6 +137,9 @@ function CompanyForm({
       const { data } = c.id
         ? await api.put<Company>(`/companies/${c.id}`, payload)
         : await api.post<Company>('/companies', payload);
+      if (phoneDraft !== null && phoneDraft.trim() !== storedPhone) {
+        await api.patch(`/companies/${data.id}/settings`, { businessInfo: { phone: phoneDraft.trim() } });
+      }
       return data;
     },
     onSuccess: (data) => {
@@ -193,6 +215,17 @@ function CompanyForm({
             value={draft.address ?? ''}
             onChange={(e) => setDraft((c) => ({ ...c, address: e.target.value }))}
           />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="company-phone">{t('phone')}</Label>
+          <Input
+            id="company-phone"
+            dir="ltr"
+            inputMode="tel"
+            value={phone}
+            onChange={(e) => setPhoneDraft(e.target.value)}
+          />
+          <p className="text-muted-foreground text-xs">{t('phoneHint')}</p>
         </div>
         <DealerTypeField
           value={draft.dealerType}
