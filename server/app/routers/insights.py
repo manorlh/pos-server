@@ -32,8 +32,10 @@ Till anomalies and quick actions (docs/SPEC_INSIGHTS.md §10):
 
 GET  /insights/anomalies                         → each till against its peers (`window`:
                                                    period | today): cards and the figures
-GET  /insights/anomaly-settings                  → the organization's thresholds
-PUT  /insights/anomaly-settings                  → … replaced (super admin)
+GET  /insights/anomaly-settings                  → one level's thresholds (`level` tenant | company
+                                                   | shop, `id`): own, inherited, from where
+PUT  /insights/anomaly-settings                  → … replaced (tenant: super admin; company /
+                                                   shop: whoever may write its settings)
 GET  /insights/quick-actions                     → recent quick actions with their result
 GET  /insights/quick-actions/promotions/suggestion → a product's price, cost and offers
 POST /insights/quick-actions/messages            → "הודעה מהירה": a banner to the tills
@@ -299,25 +301,36 @@ def get_till_anomalies(
     return _section(S.anomalies, p, current_user, active_tenant_id, db, window=kind)
 
 
+def _level(value: Any) -> str:
+    return value if isinstance(value, str) and value else "tenant"
+
+
 @router.get("/anomaly-settings")
 def get_anomaly_settings(
+    level: Optional[str] = Query(None, description="tenant (default) | company | shop"),
+    target_id: Optional[uuid.UUID] = Query(None, alias="id", description="The company's or the shop's id."),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The organization's anomaly thresholds, the defaults and the limits."""
-    return S.anomaly_settings(db, current_user, active_tenant_id)
+    """One level's anomaly thresholds: its own, what it inherits and from where, the defaults and the limits."""
+    return S.anomaly_settings(db, current_user, active_tenant_id, _level(level), _uuid(target_id))
 
 
 @router.put("/anomaly-settings")
 def put_anomaly_settings(
-    thresholds: Optional[Dict[str, Any]] = Body(None, embed=True, description="Keys of DEFAULT_THRESHOLDS; missing: the default."),
+    thresholds: Optional[Dict[str, Any]] = Body(None, embed=True, description="Keys of DEFAULT_THRESHOLDS; missing: inherit."),
+    level: Optional[str] = Query(None, description="tenant (default) | company | shop"),
+    target_id: Optional[uuid.UUID] = Query(None, alias="id", description="The company's or the shop's id."),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Replace the organization's anomaly thresholds (the super admin: they hold for every company)."""
-    return S.set_anomaly_settings(db, current_user, active_tenant_id, thresholds)
+    """
+    Replace one level's anomaly thresholds: the organization's (the super admin), a company's or a
+    shop's (whoever may write its settings). An event keeps its own on the event.
+    """
+    return S.set_anomaly_settings(db, current_user, active_tenant_id, thresholds, _level(level), _uuid(target_id))
 
 
 # ── Quick actions ─────────────────────────────────────────────────────────────

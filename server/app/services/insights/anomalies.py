@@ -18,9 +18,11 @@ open): a small or a quiet till is never flagged on noise. A ratio threshold deci
 four peers the modified z-score (0.6745·(x − median) / MAD, Iglewicz & Hoaglin) must agree
 too, so a till that is merely the lowest of a widely spread group is not called out.
 
-Pure: plain numbers in (money in integer agorot), plain dicts out. The thresholds are the
-tenant's (`tenants.settings.insightAnomalies`), an event's own (`report_events.thresholds`,
-prefixed `anomaly…`) over them, each falling back to `DEFAULT_THRESHOLDS`.
+Pure: plain numbers in (money in integer agorot), plain dicts out. The thresholds are by level
+(P:/specs/push-more.md §B2): the tenant's (`tenants.settings.insightAnomalies`), a company's and a
+shop's (their own `settings.insightAnomalies`), an event's own (`report_events.thresholds`,
+prefixed `anomaly…`) — field by field the narrowest that sets one, else `DEFAULT_THRESHOLDS`
+(app/services/insights/service.py `thresholds_for`).
 """
 from __future__ import annotations
 
@@ -449,14 +451,21 @@ def rule_cash(t: TillStats, members: Sequence[TillStats], th: Dict[str, Any]) ->
 SEVERITY_ORDER = ("critical", "warning", "opportunity", "positive", "info")
 
 
-def evaluate(tills: Sequence[TillStats], th: Dict[str, Any]) -> Dict[str, Any]:
+def evaluate(
+    tills: Sequence[TillStats],
+    th: Dict[str, Any],
+    group_thresholds: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """
     The cards (most urgent first, then by the money at stake) and, per peer group, its
-    tills with their figures and which rules flagged them.
+    tills with their figures and which rules flagged them. `group_thresholds`: a group's own
+    thresholds (a shop's, over a scope of several shops); the others use `th`.
     """
     cards: List[Dict[str, Any]] = []
     groups_out: List[Dict[str, Any]] = []
+    scope_th = th
     for (group, kiosk), members in sorted(_groups(tills).items(), key=lambda kv: (kv[1][0].group_name or "", kv[0][1])):
+        th = (group_thresholds or {}).get(group) or scope_th
         rows = []
         for t in sorted(members, key=lambda m: m.name or ""):
             flags = []

@@ -280,6 +280,8 @@ def entry_json(r: ExceptionLogEntry, labels: Dict[str, Dict[Any, Any]]) -> Dict[
         "acknowledgedBy": labels["users"].get(r.acknowledged_by_user_id),
         "note": r.note,
         "sms": sms,
+        # Information (a daily summary), not a problem: kept out of the problem counts.
+        "info": C.is_info(r.kind),
     }
 
 
@@ -365,7 +367,11 @@ def log_summary(
     empty = {"total": 0, "open": 0, "acknowledged": 0, "byKind": [], "byEmployee": [], "bySeverity": []}
     if q is None:
         return empty
-    is_open = func.sum(case((ExceptionLogEntry.acknowledged_at.is_(None), 1), else_=0))
+    # "סיכום יום" and the like inform; they are never an open problem (catalog.INFO_KINDS).
+    is_open = func.sum(case(
+        (and_(ExceptionLogEntry.acknowledged_at.is_(None), ExceptionLogEntry.kind.notin_(list(C.INFO_KINDS))), 1),
+        else_=0,
+    ))
     amount = func.coalesce(func.sum(func.abs(ExceptionLogEntry.amount)), 0)
     by_kind = q.with_entities(ExceptionLogEntry.kind, func.count(), is_open, amount).group_by(ExceptionLogEntry.kind).all()
     by_employee = (

@@ -119,8 +119,9 @@ CATEGORIES: Tuple[Category, ...] = (
              ("drawer_open", "drawer_after_close", "drawer_manual_burst", "drawer_manual_over_max",
               "drawer_open_near_variance", "drawer_open_no_reason", "drawer_open_denied", "cash_out_over_threshold",
               "drawer_count_variance")),
-    Category("till_low_sales", "קופה כמעט לא מוכרת", "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות).",
-             ("till_low_sales",)),
+    Category("till_low_sales", "קופה כמעט לא מוכרת",
+             "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות), או שלא מכרה זמן רב בזמן שהאחרות מוכרות.",
+             ("till_low_sales", "till_idle")),
     Category("target_reached", "יעד הושג", "יעד מכירות שהושג — של אירוע, של הסניף, של נקודת מכירה או של עובד.",
              ("target_reached",)),
     Category("card_reconcile", "אי-התאמה מול Z-Credit",
@@ -161,7 +162,21 @@ CATEGORIES: Tuple[Category, ...] = (
              "שינוי נוכחות ידני, שחרור עובד מקופה אחרת, הדפסה חוזרת וסגירה עם מכירות מושהות.",
              ("attendance_manual", "user_session_release", "reprint", "close_keep_held_sales")),
     Category("stock", "מלאי", "מוצר שהמלאי שלו נמוך או אזל, לפי הספים של המלאי.", ("stock_low", "stock_out")),
-    Category("slow_order", "הזמנה ארוכה", "הזמנה שלקחה יותר מהדקות שבחוק החריגה.", ("long_order",)),
+    # One "הזמנה ארוכה": an order longer than its exception rule (long_order, push-more §B — sent where
+    # a level turns its "שלח התראה לטלפון" on), a table open too long and a late KDS ticket (§C).
+    Category("slow_order", "הזמנה ארוכה",
+             "הזמנה שלקחה יותר מהדקות שבחוק החריגה, שולחן פתוח זמן רב בלי תשלום, או הזמנה במסך המטבח שלא סומנה כמוכנה בזמן.",
+             ("long_order", "table_open_long", "kds_ticket_late")),
+    # "זיהויים חדשים" (P:/specs/push-more.md §C).
+    Category("shop_open", "הסניף לא פתח",
+             "עד השעה שנקבעה ביום עבודה אין משמרת פתוחה ואין מכירה בסניף.",
+             ("shop_not_opened",)),
+    Category("sales_pace", "קצב מכירות נמוך",
+             "מכירות הסניף מתחילת היום נמוכות מהממוצע של אותו יום בשבוע, עד אותה שעה.",
+             ("sales_pace_low",)),
+    Category("daily_summary", "סיכום יום",
+             "אחרי Z של הסניף (או בשעה שנקבעה): מכירות, עסקאות, ממוצע, מול שבוע שעבר, זיכויים, הנחות והפרשי קופה.",
+             ("daily_summary",)),
 )
 #: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
 #: super admin receives it — from every organization, past the organizations' scoping (a super

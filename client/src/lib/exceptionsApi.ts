@@ -98,6 +98,13 @@ export const EXCEPTION_TYPES = [
   'shift_open_overdue',
   'card_transmission_overdue',
   'till_printer',
+  // "זיהויים חדשים" (P:/specs/push-more.md §C, §B2): the exception alerts' background watches, each
+  // closed by itself when the case is over (details: summary, resolvedAt; value = minutes or %).
+  'shop_not_opened',
+  'sales_pace_low',
+  'table_open_long',
+  'kds_ticket_late',
+  'till_idle',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

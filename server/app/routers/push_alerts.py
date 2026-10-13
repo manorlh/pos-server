@@ -345,7 +345,12 @@ def list_alerts(
     open_switched = sum(
         1 for r in switched.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if gate.allows(r)
     )
-    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments + open_switched
+    # A daily summary informs; it is never an open alert (catalog.INFO_KINDS).
+    from app.services.exception_alerts.catalog import INFO_KINDS
+
+    open_count = main.filter(
+        ExceptionLogEntry.acknowledged_at.is_(None), ExceptionLogEntry.kind.notin_(list(INFO_KINDS)),
+    ).count() + open_payments + open_switched
     labels = _labels(db, rows)
     out = []
     for r in rows:

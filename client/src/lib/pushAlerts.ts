@@ -33,7 +33,13 @@ export type AlertCategory =
   | 'sensitive_actions'
   | 'staff_actions'
   | 'stock'
+  // An order / a table open too long or a late KDS ticket (long_order, table_open_long, kds_ticket_late).
   | 'slow_order'
+  // "זיהויים חדשים" (P:/specs/push-more.md §C): the shop not opened, its sales pace, the daily
+  // summary (information).
+  | 'shop_open'
+  | 'sales_pace'
+  | 'daily_summary'
   // "שלמות נתונים" (§1): a super admin's only — the server lists it to them alone.
   | 'integrity';
 
@@ -60,6 +66,9 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'staff_actions',
   'stock',
   'slow_order',
+  'shop_open',
+  'sales_pace',
+  'daily_summary',
 ];
 
 export const INTEGRITY_CATEGORY: AlertCategory = 'integrity';
@@ -143,6 +152,8 @@ export interface FeedAlert {
   acknowledged: boolean;
   note: string | null;
   details: Record<string, unknown> | null;
+  /** Information (a daily summary), not a problem: never an attention item (pos-server catalog.INFO_KINDS). */
+  info?: boolean;
 }
 
 export interface AlertsFeed {
@@ -301,11 +312,14 @@ export function canAcknowledgeAlerts(access: DashboardAccess, feed: Pick<AlertsF
   return canAccess(access, 'alerts', 'edit') && feed?.canAcknowledge !== false;
 }
 
-/** The open alerts, newest first, as the cockpit's attention feed (the ack action only when allowed). */
+/**
+ * The open alerts, newest first, as the cockpit's attention feed (the ack action only when allowed).
+ * A daily summary informs: it is never one.
+ */
 export function attentionItems(feed: AlertsFeed, formatTime: (iso: string) => string): AttentionItem[] {
   const rank = { high: 0, medium: 1, low: 2 } as const;
   return feed.alerts
-    .filter((a) => !a.acknowledged)
+    .filter((a) => !a.acknowledged && !a.info)
     .sort((a, b) => rank[a.severity] - rank[b.severity] || Date.parse(b.occurredAt) - Date.parse(a.occurredAt))
     .map((a) => {
       const till = a.machineName ?? (a.posNumber ? `קופה ${a.posNumber}` : null);
