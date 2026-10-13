@@ -338,6 +338,20 @@ export interface PosSettingsV1 {
    */
   voucherShowEntitlement?: VoucherOnOff;
   /**
+   * "מימוש אוטומטי בסריקת שובר": on (unset — a voucher scanned with items already in the cart is
+   * applied at once to the matching lines, no redeem sheet, when no choice is needed) or off (the
+   * redeem sheet opens, as before). In `effective` always resolved.
+   */
+  voucherAutoApply?: VoucherOnOff;
+  /**
+   * "מסך הצלחה במימוש שובר": always (unset — a large green screen after every sale that redeemed a
+   * voucher), auto_close (only when the voucher closed the sale by itself) or off. In `effective`
+   * always resolved.
+   */
+  voucherSuccessScreen?: VoucherSuccessScreen;
+  /** "משך מסך ההצלחה (שניות)": an integer 1–10 (unset — 3). In `effective` always resolved. */
+  voucherSuccessSeconds?: number;
+  /**
    * "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": on (unset — a strong sound once when a
    * voucher is accepted / refused) or off. In `effective` always resolved.
    */
@@ -431,8 +445,11 @@ export type VoucherRedeemFlow = 'items_first' | 'voucher_first' | 'both';
 /** "בירור יתרת שובר" — server/app/services/voucher_balance_check.py. */
 export type VoucherBalanceCheckMode = 'auto' | 'on' | 'off';
 
-/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` / `voucherShowEntitlement` / `voucherSound*` — server/app/services/voucher_station_settings.py. */
+/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` / `voucherShowEntitlement` / `voucherAutoApply` / `voucherSound*` — server/app/services/voucher_station_settings.py. */
 export type VoucherOnOff = 'on' | 'off';
+
+/** `voucherSuccessScreen` — server/app/services/voucher_station_settings.py. */
+export type VoucherSuccessScreen = 'always' | 'auto_close' | 'off';
 
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey =
@@ -479,6 +496,9 @@ export type PosSettingsPatch = Partial<
     | 'voucherStation'
     | 'voucherStationPaidItems'
     | 'voucherShowEntitlement'
+    | 'voucherAutoApply'
+    | 'voucherSuccessScreen'
+    | 'voucherSuccessSeconds'
     | 'voucherSoundApprove'
     | 'voucherSoundReject'
     | ResettableSwitchKey
@@ -504,6 +524,9 @@ export type PosSettingsPatch = Partial<
   voucherStation?: VoucherOnOff | null;
   voucherStationPaidItems?: VoucherOnOff | null;
   voucherShowEntitlement?: VoucherOnOff | null;
+  voucherAutoApply?: VoucherOnOff | null;
+  voucherSuccessScreen?: VoucherSuccessScreen | null;
+  voucherSuccessSeconds?: number | null;
   voucherSoundApprove?: VoucherOnOff | null;
   voucherSoundReject?: VoucherOnOff | null;
   brandLogoUrl?: string | null;

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  VOUCHER_AUTO_APPLY_DEFAULT,
+  VOUCHER_AUTO_APPLY_KEY,
+  VOUCHER_AUTO_APPLY_VALUES,
   VOUCHER_AUTO_CLOSE_DEFAULT,
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_DEFAULT,
@@ -17,14 +20,27 @@ import {
   VOUCHER_STATION_PAID_ITEMS_KEY,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
+  VOUCHER_SUCCESS_SCREEN_DEFAULT,
+  VOUCHER_SUCCESS_SCREEN_KEY,
+  VOUCHER_SUCCESS_SCREEN_VALUES,
+  VOUCHER_SUCCESS_SECONDS_DEFAULT,
+  VOUCHER_SUCCESS_SECONDS_KEY,
+  VOUCHER_SUCCESS_SECONDS_MAX,
+  VOUCHER_SUCCESS_SECONDS_MIN,
+  VOUCHER_SUCCESS_SECONDS_VALUES,
   isVoucherBalanceCheckMode,
   isVoucherOnOff,
+  isVoucherSuccessScreen,
+  isVoucherSuccessSeconds,
+  resolveVoucherAutoApply,
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
   resolveVoucherShowEntitlement,
   resolveVoucherSound,
   resolveVoucherStation,
   resolveVoucherStationPaidItems,
+  resolveVoucherSuccessScreen,
+  resolveVoucherSuccessSeconds,
   voucherBalanceCheckEnabled,
   voucherStationNeedsAdvice,
   voucherStationPaidItemsView,
@@ -174,6 +190,72 @@ test('voucherShowEntitlement: its own value, then the inherited one, then on; ju
   for (const junk of ['OFF', 'false', '', 0, false, {}]) {
     assert.equal(resolveVoucherShowEntitlement(junk, junk), 'on');
     assert.equal(resolveVoucherShowEntitlement(junk, 'off'), 'off');
+  }
+});
+
+// ── "מימוש אוטומטי בסריקת שובר" (voucherAutoApply, 12.10.2026) ──
+
+test("voucherAutoApply: the server's key, values and default (on)", () => {
+  assert.equal(VOUCHER_AUTO_APPLY_KEY, 'voucherAutoApply');
+  assert.deepEqual([...VOUCHER_AUTO_APPLY_VALUES], ['on', 'off']);
+  assert.equal(VOUCHER_AUTO_APPLY_DEFAULT, 'on');
+});
+
+test('voucherAutoApply: its own value, then the inherited one, then on; junk is unset', () => {
+  assert.equal(resolveVoucherAutoApply('off', 'on'), 'off');
+  assert.equal(resolveVoucherAutoApply('on', 'off'), 'on');
+  assert.equal(resolveVoucherAutoApply(null, 'off'), 'off');
+  assert.equal(resolveVoucherAutoApply(undefined, undefined), 'on');
+  for (const junk of ['OFF', 'false', '', 0, false, {}]) {
+    assert.equal(resolveVoucherAutoApply(junk, junk), 'on');
+    assert.equal(resolveVoucherAutoApply(junk, 'off'), 'off');
+  }
+});
+
+// ── "מסך הצלחה במימוש שובר" / "משך מסך ההצלחה (שניות)" (voucherSuccessScreen / voucherSuccessSeconds) ──
+
+test("voucherSuccessScreen / voucherSuccessSeconds: the server's keys, values and defaults", () => {
+  assert.equal(VOUCHER_SUCCESS_SCREEN_KEY, 'voucherSuccessScreen');
+  assert.equal(VOUCHER_SUCCESS_SECONDS_KEY, 'voucherSuccessSeconds');
+  assert.deepEqual([...VOUCHER_SUCCESS_SCREEN_VALUES], ['always', 'auto_close', 'off']);
+  assert.equal(VOUCHER_SUCCESS_SCREEN_DEFAULT, 'always');
+  assert.equal(VOUCHER_SUCCESS_SECONDS_MIN, 1);
+  assert.equal(VOUCHER_SUCCESS_SECONDS_MAX, 10);
+  assert.equal(VOUCHER_SUCCESS_SECONDS_DEFAULT, 3);
+  assert.deepEqual([...VOUCHER_SUCCESS_SECONDS_VALUES], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+});
+
+test('voucherSuccessScreen: its own value, then the inherited one, then always; junk is unset', () => {
+  for (const v of ['always', 'auto_close', 'off']) {
+    assert.equal(isVoucherSuccessScreen(v), true);
+    assert.equal(resolveVoucherSuccessScreen(v, 'off'), v);
+    assert.equal(resolveVoucherSuccessScreen(undefined, v), v);
+  }
+  assert.equal(resolveVoucherSuccessScreen('off', 'auto_close'), 'off');
+  assert.equal(resolveVoucherSuccessScreen(null, 'auto_close'), 'auto_close');
+  assert.equal(resolveVoucherSuccessScreen(undefined, undefined), 'always');
+  for (const junk of ['ALWAYS', 'on', 'auto-close', '', 0, 3, true, {}]) {
+    assert.equal(isVoucherSuccessScreen(junk), false);
+    assert.equal(resolveVoucherSuccessScreen(junk, junk), 'always');
+    assert.equal(resolveVoucherSuccessScreen(junk, 'off'), 'off');
+  }
+});
+
+test('voucherSuccessSeconds: an integer 1–10, its own, then the inherited one, then 3', () => {
+  for (const n of [1, 2, 5, 9, 10]) {
+    assert.equal(isVoucherSuccessSeconds(n), true);
+    assert.equal(resolveVoucherSuccessSeconds(n, 7), n);
+    assert.equal(resolveVoucherSuccessSeconds(undefined, n), n);
+  }
+  assert.equal(resolveVoucherSuccessSeconds(null, 8), 8);
+  assert.equal(resolveVoucherSuccessSeconds(undefined, undefined), 3);
+});
+
+test('voucherSuccessSeconds: out of range, non-integer or not a number counts as unset', () => {
+  for (const junk of [0, 11, -1, 100, 2.5, 9.99, NaN, Infinity, '5', '', true, null, undefined, {}, [3]]) {
+    assert.equal(isVoucherSuccessSeconds(junk), false);
+    assert.equal(resolveVoucherSuccessSeconds(junk, junk), 3);
+    assert.equal(resolveVoucherSuccessSeconds(junk, 6), 6);
   }
 });
 

@@ -7,11 +7,15 @@ deepest wins) like `voucherRedeemFlow` (app/services/voucher_redeem_settings.py)
     voucherAutoClose   "on"  — "סגירה אוטומטית כשהשובר מכסה הכל": vouchers that cover the whole sale
                                close it by themselves and the till goes on to a new order (today's
                                behaviour, the default)
-                       "off" — the green card with "סגור עסקה" stays; the sale closes on that press
+                       "off" — the green card with "סגור עסקה וממש שובר" stays; the sale closes on
+                               that press
     voucherStation     "off" — the usual sale screen (the default)
                        "on"  — "עמדת שובר": a scan-only screen (and typing the code when
                                payVoucherManualEnabled), then only what the voucher can redeem, with
-                               its terms; it always closes as if voucherAutoClose were "on"
+                               its terms; a voucher that covers the whole sale closes it by itself
+                               only while voucherAutoClose is "on", otherwise on a press of
+                               "סגור עסקה וממש שובר" (the owner, 12.10.2026: the station respects
+                               voucherAutoClose)
 
 And one more, added 12.10.2026 (the spec's §5), set and inherited the same way:
 
@@ -28,6 +32,25 @@ the same way:
                                     card with what the voucher gives and what is left; it never stops
                                     the redemption (the default)
                             "off" — the till behaves as before
+
+And one more, added 12.10.2026 ("מימוש אוטומטי בסריקת שובר"), set and inherited the same way:
+
+    voucherAutoApply  "on"  — "מימוש אוטומטי בסריקת שובר": a voucher scanned with items already in the
+                              cart is applied at once to the matching cart lines, with no redeem sheet
+                              and no "מימוש" press, when no choice is needed; the sheet opens only when
+                              one is (the default)
+                      "off" — the redeem sheet opens as before
+
+And two more, added 12.10.2026 (the green success screen after a voucher redemption), set and
+inherited the same way:
+
+    voucherSuccessScreen   "always"     — "מסך הצלחה במימוש שובר": a large green screen after every
+                                          sale in which a voucher was redeemed (the default)
+                           "auto_close" — only when the voucher closed the sale by itself
+                           "off"        — the usual end-of-sale screen only
+    voucherSuccessSeconds  1–10         — "משך מסך ההצלחה (שניות)": how long it stays (default 3);
+                                          an integer outside 1–10 is a 422 on write, and anything
+                                          but such an integer reads as 3
 
 And two more, added 12.10.2026 ("צליל אישור חזק וצליל סירוב חזק, אפשר לבטל אותם בפרמטרים — לגבי
 השוברים במימוש"), set and inherited the same way:
@@ -83,6 +106,28 @@ DEFAULT_SHOW_ENTITLEMENT = ON
 
 VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SHOW_ENTITLEMENT_KEY,)
 
+#: 12.10.2026: a voucher scanned over a cart is applied to the matching lines with no redeem sheet.
+VOUCHER_AUTO_APPLY_KEY = "voucherAutoApply"
+AUTO_APPLY_VALUES: Tuple[str, ...] = (ON, OFF)
+#: Unset everywhere: applied at once when no choice is needed.
+DEFAULT_AUTO_APPLY = ON
+
+VOUCHER_AUTO_APPLY_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_AUTO_APPLY_KEY,)
+
+#: 12.10.2026: the green success screen after a voucher redemption, and how long it stays.
+VOUCHER_SUCCESS_SCREEN_KEY = "voucherSuccessScreen"
+VOUCHER_SUCCESS_SECONDS_KEY = "voucherSuccessSeconds"
+SUCCESS_ALWAYS = "always"
+SUCCESS_AUTO_CLOSE = "auto_close"
+SUCCESS_SCREEN_VALUES: Tuple[str, ...] = (SUCCESS_ALWAYS, SUCCESS_AUTO_CLOSE, OFF)
+SUCCESS_SECONDS_MIN = 1
+SUCCESS_SECONDS_MAX = 10
+#: Unset everywhere: the screen after every voucher sale, for 3 seconds.
+DEFAULT_SUCCESS_SCREEN = SUCCESS_ALWAYS
+DEFAULT_SUCCESS_SECONDS = 3
+
+VOUCHER_SUCCESS_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SUCCESS_SCREEN_KEY, VOUCHER_SUCCESS_SECONDS_KEY)
+
 #: 12.10.2026: the strong approve / reject sounds when a voucher is redeemed.
 VOUCHER_SOUND_APPROVE_KEY = "voucherSoundApprove"
 VOUCHER_SOUND_REJECT_KEY = "voucherSoundReject"
@@ -125,6 +170,35 @@ def resolve_show_entitlement(merged: Mapping[str, Any]) -> Dict[str, Any]:
         VOUCHER_SHOW_ENTITLEMENT_KEY: show
         if isinstance(show, str) and show in SHOW_ENTITLEMENT_VALUES
         else DEFAULT_SHOW_ENTITLEMENT,
+    }
+
+
+def resolve_auto_apply(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherAutoApply` resolved from a merged settings dict; unknown or missing = "on". A view only."""
+    auto_apply = merged.get(VOUCHER_AUTO_APPLY_KEY)
+    return {
+        VOUCHER_AUTO_APPLY_KEY: auto_apply
+        if isinstance(auto_apply, str) and auto_apply in AUTO_APPLY_VALUES
+        else DEFAULT_AUTO_APPLY,
+    }
+
+
+def _success_seconds(value: Any) -> int:
+    """An int (not a bool) in 1–10 as is; anything else = 3."""
+    if isinstance(value, int) and not isinstance(value, bool) and SUCCESS_SECONDS_MIN <= value <= SUCCESS_SECONDS_MAX:
+        return value
+    return DEFAULT_SUCCESS_SECONDS
+
+
+def resolve_voucher_success(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherSuccessScreen` / `voucherSuccessSeconds` resolved from a merged settings dict; unknown or
+    missing = "always" / 3. A view only."""
+    screen = merged.get(VOUCHER_SUCCESS_SCREEN_KEY)
+    return {
+        VOUCHER_SUCCESS_SCREEN_KEY: screen
+        if isinstance(screen, str) and screen in SUCCESS_SCREEN_VALUES
+        else DEFAULT_SUCCESS_SCREEN,
+        VOUCHER_SUCCESS_SECONDS_KEY: _success_seconds(merged.get(VOUCHER_SUCCESS_SECONDS_KEY)),
     }
 
 
