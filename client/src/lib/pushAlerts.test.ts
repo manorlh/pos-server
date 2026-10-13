@@ -95,6 +95,8 @@ describe('the attention feed', () => {
         alert({ id: 'low', severity: 'low', occurredAt: '2026-09-27T16:00:00Z' }),
         alert({ id: 'done', acknowledged: true }),
         alert({ id: 'high' }),
+        // "סיכום יום" informs: never an attention item.
+        alert({ id: 'summary', kind: 'daily_summary', category: 'daily_summary', severity: 'low', info: true }),
       ],
     };
     const items = attentionItems(feed, () => '18:00');

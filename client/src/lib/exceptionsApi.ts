@@ -91,6 +91,13 @@ export const EXCEPTION_TYPES = [
   'drawer_open_near_variance',
   'drawer_open_no_reason',
   'drawer_open_denied',
+  // "זיהויים חדשים" (P:/specs/push-more.md §C, §B2): the exception alerts' background watches, each
+  // closed by itself when the case is over (details: summary, resolvedAt; value = minutes or %).
+  'shop_not_opened',
+  'sales_pace_low',
+  'table_open_long',
+  'kds_ticket_late',
+  'till_idle',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

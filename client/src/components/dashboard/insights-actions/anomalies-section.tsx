@@ -4,7 +4,8 @@
  * "חריגות בקופות" on the insights page: each till against the other tills of its shop (or
  * event) — weak sales, an odd average ticket, odd cash ("מצריך בדיקה") — as cards with the
  * numbers and three actions (the till's details, a message to it, its documents), then the
- * tills side by side, and the thresholds (the organization's, editable by its managers).
+ * tills side by side, and the thresholds — by level (organization, company, shop; an event keeps
+ * its own): the sheet edits the page's level, each empty field inheriting from the level above.
  */
 
 import { useState } from 'react';
@@ -17,8 +18,11 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatQuantity } from '@/lib/format';
 import { anomalyMessage } from '@/lib/insightsActions';
 import {
+  anomalyLevelOf,
   fetchAnomalySettings,
   saveAnomalySettings,
+  type AnomalyLevel,
+  type AnomalyLevelRef,
   type AnomalyThresholds,
   type TillAnomalies,
 } from '@/lib/insightsActionsApi';
@@ -96,16 +100,19 @@ const THRESHOLD_KEYS: (keyof AnomalyThresholds)[] = [
   'lowSalesPct', 'ticketDeviationPct', 'cashSharePoints', 'cashAvgDeviationPct', 'minPeers', 'minDocs', 'minOpenHours', 'robustZ',
 ];
 
-function ThresholdsSheet({ onDone }: { onDone: () => void }) {
+function ThresholdsSheet({ onDone, levelRef }: { onDone: () => void; levelRef: AnomalyLevelRef }) {
   const t = useTranslations('insightsActions.thresholds');
   const tc = useTranslations('common');
   const ti = useTranslations('insightsActions');
   const qc = useQueryClient();
-  const settings = useQuery({ queryKey: ['anomaly-settings'], queryFn: fetchAnomalySettings });
+  const settings = useQuery({
+    queryKey: ['anomaly-settings', levelRef.level, levelRef.id ?? null],
+    queryFn: () => fetchAnomalySettings(levelRef),
+  });
   const [draft, setDraft] = useState<Partial<Record<keyof AnomalyThresholds, string>>>({});
   const save = useMutation({
     mutationFn: (reset: boolean) => {
-      if (reset) return saveAnomalySettings(null);
+      if (reset) return saveAnomalySettings(null, levelRef);
       const out: Partial<AnomalyThresholds> = { ...settings.data?.stored };
       for (const key of THRESHOLD_KEYS) {
         const raw = draft[key];
@@ -114,7 +121,7 @@ function ThresholdsSheet({ onDone }: { onDone: () => void }) {
         if (raw.trim() === '' || !Number.isFinite(n)) delete out[key];
         else out[key] = n;
       }
-      return saveAnomalySettings(out);
+      return saveAnomalySettings(out, levelRef);
     },
     onSuccess: () => {
       toast.success(t('saved'));
@@ -127,10 +134,16 @@ function ThresholdsSheet({ onDone }: { onDone: () => void }) {
   });
   const data = settings.data;
   const canEdit = !!data?.canEdit;
+  const levelLabel = data
+    ? data.name
+      ? t('editingNamed', { level: t(`levels.${data.level}`), name: data.name })
+      : t('editing', { level: t(`levels.${data.level}`) })
+    : null;
+  const sourceLabel = (source: AnomalyLevel | null) => (source ? t(`levels.${source}`) : t('default'));
   return (
     <ActionSheet
       title={t('title')}
-      subtitle={t('subtitle')}
+      subtitle={levelLabel ? `${t('subtitle')} ${levelLabel}` : t('subtitle')}
       onClose={onDone}
       footer={
         canEdit ? (
@@ -155,6 +168,11 @@ function ThresholdsSheet({ onDone }: { onDone: () => void }) {
                   <span className="block text-[12px] text-[#8E8E93]">
                     {t('range', { min: data.limits[key].min, max: data.limits[key].max, def: data.defaults[key] })}
                   </span>
+                  {(draft[key] ?? (data.stored[key] != null ? String(data.stored[key]) : '')).trim() === '' ? (
+                    <span className="block text-[12px] text-[#8E8E93]">
+                      {t('inherited', { value: data.inherited[key], source: sourceLabel(data.inheritedSources[key]) })}
+                    </span>
+                  ) : null}
                 </span>
                 <input
                   type="number"
@@ -162,7 +180,8 @@ function ThresholdsSheet({ onDone }: { onDone: () => void }) {
                   disabled={!canEdit}
                   min={data.limits[key].min}
                   max={data.limits[key].max}
-                  value={draft[key] ?? String(data.thresholds[key])}
+                  placeholder={String(data.inherited[key])}
+                  value={draft[key] ?? (data.stored[key] != null ? String(data.stored[key]) : '')}
                   onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
                   aria-label={t(`keys.${key}`)}
                   className="h-9 w-20 rounded-lg border border-[#3C3C4349] bg-transparent px-2 text-end text-[15px] tabular-nums dark:border-[#54545899]"
@@ -183,6 +202,7 @@ export function AnomaliesSection({
   onMessage,
   canMessage,
   eventScope,
+  levelRef,
 }: {
   data: TillAnomalies;
   window: AnomalyWindow;
@@ -190,9 +210,13 @@ export function AnomaliesSection({
   onMessage: (machineId: string, text: string) => void;
   canMessage: boolean;
   eventScope: boolean;
+  /** The level the thresholds sheet edits (the page's scope); an event's: its shop's. */
+  levelRef?: AnomalyLevelRef;
 }) {
   const t = useTranslations('insightsActions.anomalies');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const editLevel =
+    eventScope && data.event ? anomalyLevelOf({ eventShopId: data.event.shopId }) : (levelRef ?? anomalyLevelOf({}));
   const judged = data.groups.filter((g) => g.tills.length > 1);
   return (
     <div className="space-y-3">
@@ -268,7 +292,7 @@ export function AnomaliesSection({
       <p className="px-4 text-[12px] leading-relaxed text-[#8E8E93]">
         {t('method', { low: data.thresholds.lowSalesPct, ticket: data.thresholds.ticketDeviationPct, cash: data.thresholds.cashSharePoints, docs: data.thresholds.minDocs, peers: data.thresholds.minPeers })}
       </p>
-      {settingsOpen ? <ThresholdsSheet onDone={() => setSettingsOpen(false)} /> : null}
+      {settingsOpen ? <ThresholdsSheet onDone={() => setSettingsOpen(false)} levelRef={editLevel} /> : null}
     </div>
   );
 }

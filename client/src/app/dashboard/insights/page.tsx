@@ -77,7 +77,7 @@ import { useInsightsExportScope, useInsightsView } from '@/components/dashboard/
 import { ReportExportBar } from '@/components/dashboard/report-framework';
 // Till anomalies, quick actions, happy hour (docs/SPEC_INSIGHTS.md §10).
 import { fetchEvents } from '@/lib/eventsApi';
-import { fetchHappyHourSuggestions, fetchTillAnomalies } from '@/lib/insightsActionsApi';
+import { anomalyLevelOf, fetchHappyHourSuggestions, fetchTillAnomalies } from '@/lib/insightsActionsApi';
 import type { ActionScope } from '@/lib/insightsActions';
 import { AnomaliesSection, TillActions, type AnomalyWindow } from '@/components/dashboard/insights-actions/anomalies-section';
 import { HappyHourSection } from '@/components/dashboard/insights-actions/happy-hour-section';
@@ -478,6 +478,7 @@ export default function InsightsPage() {
             onMessage={openTillMessage}
             canMessage={canAct}
             eventScope={!!eventId}
+            levelRef={anomalyLevelOf({ companyId: companyScope, shopId: scope.shopId || undefined })}
           />
         )}
       </Section>

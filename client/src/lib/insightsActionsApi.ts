@@ -77,9 +77,26 @@ export interface TillAnomalies extends InsightMeta {
   event?: EventMeta;
 }
 
+/** The levels the anomaly thresholds are set at (an event keeps its own, on the event). */
+export type AnomalyLevel = 'tenant' | 'company' | 'shop';
+
+export interface AnomalyLevelRef {
+  level: AnomalyLevel;
+  /** The company's or the shop's id (none for the organization). */
+  id?: string;
+}
+
 export interface AnomalySettings {
+  level: AnomalyLevel;
+  id: string | null;
+  name: string | null;
+  /** What applies at this level (its own over what it inherits). */
   thresholds: AnomalyThresholds;
+  /** This level's own values; a missing key inherits. */
   stored: Partial<AnomalyThresholds>;
+  /** What the levels above give, and which level each value comes from (null: the default). */
+  inherited: AnomalyThresholds;
+  inheritedSources: Record<keyof AnomalyThresholds, AnomalyLevel | null>;
   defaults: AnomalyThresholds;
   limits: Record<keyof AnomalyThresholds, { min: number; max: number; integer: boolean }>;
   canEdit: boolean;
@@ -90,10 +107,22 @@ export type InsightParamsWithEvent = InsightScopeParams & { eventId?: string };
 export const fetchTillAnomalies = (p: InsightParamsWithEvent & { window?: 'period' | 'today' }) =>
   api.get<TillAnomalies>('/insights/anomalies', { params: p }).then((r) => r.data);
 
-export const fetchAnomalySettings = () => api.get<AnomalySettings>('/insights/anomaly-settings').then((r) => r.data);
+const levelParams = (ref?: AnomalyLevelRef) => (ref ? { level: ref.level, id: ref.id } : undefined);
 
-export const saveAnomalySettings = (thresholds: Partial<AnomalyThresholds> | null) =>
-  api.put<AnomalySettings>('/insights/anomaly-settings', { thresholds }).then((r) => r.data);
+export const fetchAnomalySettings = (ref?: AnomalyLevelRef) =>
+  api.get<AnomalySettings>('/insights/anomaly-settings', { params: levelParams(ref) }).then((r) => r.data);
+
+/** Replace one level's own thresholds (`null`: inherit everything again). */
+export const saveAnomalySettings = (thresholds: Partial<AnomalyThresholds> | null, ref?: AnomalyLevelRef) =>
+  api.put<AnomalySettings>('/insights/anomaly-settings', { thresholds }, { params: levelParams(ref) }).then((r) => r.data);
+
+/** The level the page's scope edits: the event's shop, else the shop, else the company, else the organization. */
+export function anomalyLevelOf(scope: { companyId?: string; shopId?: string; eventShopId?: string }): AnomalyLevelRef {
+  if (scope.eventShopId) return { level: 'shop', id: scope.eventShopId };
+  if (scope.shopId) return { level: 'shop', id: scope.shopId };
+  if (scope.companyId) return { level: 'company', id: scope.companyId };
+  return { level: 'tenant' };
+}
 
 /** The scope of a sheet / the cockpit as the anomalies' parameters: today so far, or the event. */
 export const fetchScopeAnomalies = (scope: ActionScope, window: 'period' | 'today' = 'today') =>
