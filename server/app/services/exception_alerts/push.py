@@ -213,6 +213,9 @@ PUSH_MORE_CATEGORY_KEYS = (
     "device_battery", "discounts", "cash_difference", "high_tip", "high_sale", "after_hours",
     "sensitive_actions", "staff_actions", "stock", "slow_order",
 )
+#: Added with push-more §C (the detectors), the same way (the data migration 396f22daf19c). Each
+#: detector is off until a level switches it on. `payment_reversals` stays opt-in (no migration).
+DETECTOR_CATEGORY_KEYS = ("shop_open", "sales_pace", "daily_summary")
 _CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in (*CATEGORIES, INTEGRITY) for kind in c.kinds}
 
 DEFAULT_MIN_AMOUNT = Decimal("200.00")

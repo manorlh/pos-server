@@ -690,3 +690,68 @@ def test_anomaly_thresholds_by_level_and_who_sets_them(w, monkeypatch):
     wide = IR.get_till_anomalies(window="today", p=IR.InsightParams(company_id=w.company.id, days=7),
                                  current_user=w.admin, **ctx)
     assert any(c["type"] == "till_low_sales" for c in wide["cards"]) and wide["thresholds"]["lowSalesPct"] == 10
+
+
+# ── The data migration (release 14.10.2026) ──────────────────────────────────
+
+
+def test_the_migration_turns_the_detector_types_on_for_who_had_every_type(w):
+    """
+    396f22daf19c: a push rule that holds each of the six types the phone alerts started with
+    ("בחרו 'הכל'", as 3c9e5a7b1d24 / 8d4f2a6c1e93) gets `shop_open`, `sales_pace`, `daily_summary`;
+    one that left any out keeps its choice; `payment_reversals` stays opt-in.
+    """
+    import importlib.util
+    import pathlib
+
+    from alembic.config import Config
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    from app.models.exception_alerts import ExceptionAlertRule
+
+    def owner(name):
+        u = User(id=uuid.uuid4(), role=UserRole.SHOP_MANAGER, tenant_id=w.tenant.id, email=f"{name}@x",
+                 username=name, shop_id=w.shop.id)
+        w.db.add(u)
+        w.db.flush()
+        return u
+
+    original = ["till_offline", "card_terminal", "large_void", "drawer_no_sale", "till_low_sales", "target_reached"]
+    rules = {
+        "everything": [*original, *P.PUSH_MORE_CATEGORY_KEYS],
+        "picked": ["large_void", "till_offline"],
+        "partly": [*original, "sales_pace"],
+    }
+    rows = {}
+    for name, categories in rules.items():
+        rows[name] = ExceptionAlertRule(id=uuid.uuid4(), tenant_id=w.tenant.id, channel="push",
+                                        owner_user_id=owner(name).id, name="p", categories=list(categories),
+                                        kinds=[], recipients=[])
+    w.db.add_all(rows.values())
+    w.db.commit()
+    root = pathlib.Path(__file__).absolute().parents[1]
+    path = next(root.glob("alembic/versions/396f22daf19c_*.py"))
+    spec = importlib.util.spec_from_file_location("push_detector_categories_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with Operations.context(MigrationContext.configure(w.db.connection())):
+        module.upgrade()
+        module.upgrade()  # idempotent
+    w.db.expire_all()
+    got = {name: w.db.get(ExceptionAlertRule, row.id).categories for name, row in rows.items()}
+    assert got["everything"] == [*original, *P.PUSH_MORE_CATEGORY_KEYS, *P.DETECTOR_CATEGORY_KEYS]
+    assert got["picked"] == ["large_void", "till_offline"]
+    assert got["partly"] == [*original, "sales_pace", "shop_open", "daily_summary"]
+    assert "payment_reversals" not in got["everything"]
+    assert set(P.DETECTOR_CATEGORY_KEYS) <= set(P.CATEGORY_KEYS)
+    assert set(P.DETECTOR_CATEGORY_KEYS) == set(module.NEW)
+    # On the release's single head, right after its merge revision.
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "alembic"))
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert "396f22daf19c" in {r.revision for r in script.walk_revisions("base", heads[0])}
+    assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"
