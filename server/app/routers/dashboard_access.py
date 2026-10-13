@@ -215,6 +215,17 @@ def check_grant(db: Session, actor: User, values: dict, *, current: Optional[DA.
     """
     if actor.role == UserRole.SUPER_ADMIN:
         return
+    # "העברת שרת מקומי" and the like (`DS.SUPER_ADMIN_GRANTED`): the super admin's alone to give,
+    # with or without "גישה מלאה" (which never implies them, so it cannot carry them either).
+    # Keeping what the user's own profile already names is fine.
+    special = {k: v for k, v in DS.clean_sections(values["sections"]).items() if k in DS.SUPER_ADMIN_GRANTED}
+    kept = DS.clean_sections(current.sections) if current is not None else {}
+    raised = DA.sections_over(special, kept, {})
+    if raised:
+        labels = ", ".join(DS.SECTION_BY_ID[sid].label for sid in raised)
+        raise _error(
+            "grant_exceeds_own", f"רק מנהל-על מעניק את ההרשאה: {labels}.", status.HTTP_403_FORBIDDEN
+        )
     mine = DA.effective_access(db, actor)
     limit = DA.grantable(mine)
     already_full = current is not None and not current.restricted

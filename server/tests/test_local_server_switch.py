@@ -170,6 +170,14 @@ def test_the_permission_is_granted_by_the_super_admin_alone(w):
     assert LSS.SECTION not in DA.grantable(DA.effective_access(w.db, holder))
     had = DA.EffectiveAccess(restricted=True, sections={LSS.SECTION: "edit", "reports": "view"}, has_profile=True, full_access=False)
     check_grant(w.db, full, {**values, "sections": {LSS.SECTION: "edit", "reports": "view"}}, current=had)
+    # Nor does "גישה מלאה" carry it: not with full access on, not from a full-access user turned
+    # restricted (whose full access never included it).
+    e = refused(check_grant, w.db, full, {**values, "full_access": True}, current=None)
+    assert e.status_code == 403 and e.detail["code"] == "grant_exceeds_own" and "מנהל-על" in e.detail["message"]
+    was_full = DA.EffectiveAccess(restricted=False, sections={}, has_profile=True, full_access=True)
+    e = refused(check_grant, w.db, full, values, current=was_full)
+    assert e.status_code == 403
+    check_grant(w.db, full, {**values, "sections": {"reports": "view"}}, current=was_full)  # without it: fine
     # The permissions dialog marks it.
     [entry] = [s for s in DS.catalogue() if s["id"] == LSS.SECTION]
     assert entry["superAdminOnly"] is True and entry["pages"] == []
