@@ -81,6 +81,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     pages: [
       '/dashboard/products', '/dashboard/categories', '/dashboard/modifiers', '/dashboard/upsells',
       '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
+      // "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone (its menu gate,
+      // the page's role check, and its API `/till-parameters/catalog-admin` is SUPER_ADMIN).
+      '/dashboard/catalog-admin',
     ],
   },
   // "תפריט דיגיטלי" / "הזמנות אונליין" (ערוצים דיגיטליים): their profiles, each its own section.

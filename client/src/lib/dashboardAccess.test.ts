@@ -47,6 +47,7 @@ describe('sectionForPath — which section a page belongs to', () => {
     assert.equal(sectionForPath('/dashboard/shifts/abc'), 'z');
     assert.equal(sectionForPath('/dashboard/z-reports/new'), 'z');
     assert.equal(sectionForPath('/dashboard/products/import'), 'products');
+    assert.equal(sectionForPath('/dashboard/catalog-admin'), 'products');
     assert.equal(sectionForPath('/dashboard/shops/123'), 'organization');
     assert.equal(sectionForPath('/dashboard/machines/123'), 'devices');
     assert.equal(sectionForPath('/dashboard/kiosks/health'), 'kiosks');
