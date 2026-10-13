@@ -1111,6 +1111,9 @@ def _section_as_printed(t: LocalShopZTill, machine: Optional[POSMachine]) -> dic
     section.setdefault("machineName", machine.name if machine is not None else None)
     section.setdefault("shiftIds", [str(i) for i in t.shift_ids])
     section.setdefault("shiftCount", len(t.shift_ids))
+    # A kiosk's part (SPEC_INDEPENDENT_TILL §8.13): "קיוסק <name>" on the paper, and here.
+    if section.get("deviceRole") == "kiosk" or bool(getattr(machine, "is_kiosk", False)):
+        section["kiosk"] = True
     if t.late:
         section["late"] = True
         section["label"] = t.label or section.get("label") or "מסמכים מאוחרים מתקופה קודמת"

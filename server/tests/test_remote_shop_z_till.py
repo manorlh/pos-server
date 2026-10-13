@@ -128,17 +128,25 @@ class TestOffTheLocalServer:
         assert MT.main_till_of_shop(w.db, w.shop.id).id == main.id
         assert print_host_block(w.db, main)["isSelf"] is True and lan_host_block(w.db, main)["isSelf"] is True
 
-    def test_handed_no_lan_tables_host_and_no_print_server(self, w):
+    def test_handed_no_lan_tables_host_and_never_the_print_servers_address(self, w):
+        from app.models.printers import KitchenPrintHost
+        from app.services.printers import sync_payload
+
         owner_setup(w)
         four = w.six[3]
         remote_by_preset(w, four)
-        # As an independent till: no LAN tables host, no print server — its own printers.
+        w.db.add(KitchenPrintHost(machine_id=w.six[0].id, shop_id=w.shop.id, lan_address="192.168.0.10", port=8399))
+        w.db.commit()
         assert lan_host_block(w.db, four) is None
-        assert print_host_block(w.db, four) is None
-        from app.services.printers import sync_payload
-
+        # The print server away and said so (`offLan`): never over the LAN, never a shop printer's
+        # address where it stands — its own printers itself, the shop's through the cloud relay.
+        block = print_host_block(w.db, four)
+        assert block == {
+            "machineId": str(w.six[0].id), "name": block["name"], "isSelf": False, "lanAddress": None, "port": 8399,
+            "offLan": True,
+        }
         payload = sync_payload(w.db, four)
-        assert payload.get("printHost") is None and not payload.get("hostsLan")
+        assert payload["printHost"]["lanAddress"] is None and not payload.get("hostsLan")
         # A till on the server still has both.
         assert lan_host_block(w.db, w.six[1])["machineId"] == str(w.six[0].id)
         assert print_host_block(w.db, w.six[1])["machineId"] == str(w.six[0].id)
