@@ -48,6 +48,12 @@ export const EXCEPTION_TYPES = [
   'card_decision_override',
   // "הוחלפה קופה": a replacement device took over a till (§4.6.2).
   'till_replaced',
+  // "העברת שרת מקומי" from the cloud (P:/specs/local-server-switch.md): who, from, to, forced or not.
+  'local_server_switched',
+  // "סגירת משמרת מהענן": a till not heard for 5 minutes had its shift closed from the cloud.
+  'shift_closed_from_cloud',
+  // Documents of such a shift that arrived after the close (late documents).
+  'cloud_closed_shift_late_documents',
   // A super admin moved the shop Z's production before its producer handed over
   // ("קופה עצמאית בתוך סניף", docs/SPEC_INDEPENDENT_TILL.md §8).
   'shop_z_producer_forced',

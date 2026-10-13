@@ -39,6 +39,7 @@ export type SectionId =
   | 'exception_alerts'
   | 'organization'
   | 'devices'
+  | 'local_server_switch'
   | 'tables'
   | 'kiosks'
   | 'till_design'
@@ -122,6 +123,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
   { id: 'devices', pages: ['/dashboard/machines'] },
+  // "העברת שרת מקומי": no page of its own — the wizard on the shop page's main till card. Only the
+  // super admin grants it, and full access does not include it (the server says `canSwitch`).
+  { id: 'local_server_switch', pages: [] },
   { id: 'tables', pages: ['/dashboard/tables'] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },

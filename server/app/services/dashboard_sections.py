@@ -192,6 +192,15 @@ SECTIONS: Tuple[Section, ...] = (
         "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, תצורת עבודה, קופה ראשית ורשת מקומית.",
         ("/dashboard/machines",),
     ),
+    # "העברת שרת מקומי" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §7):
+    # the support's permission, without a role of its own. Only the super admin grants it, and
+    # "גישה מלאה" never implies it (`SUPER_ADMIN_GRANTED`).
+    Section(
+        "local_server_switch", "העברת שרת מקומי",
+        "העברת השרת המקומי (הקופה הראשית) של סניף לקופה אחרת מהענן, כולל כפייה כשהשרת הישן עוד נשמע "
+        "וסגירת המשמרת שלו מהענן. עריכה: מעביר. רק מנהל-על מעניק, וגישה מלאה לא כוללת אותה.",
+        (),
+    ),
     Section("tables", "שולחנות", "אזורים, שולחנות, הזמנות ודוח שולחנות.", ("/dashboard/tables",)),
     Section("kiosks", "קיוסקים", "קיוסקים, הגדרותיהם ותקינות מכשירים.", ("/dashboard/kiosks", "/dashboard/kiosks/health")),
     Section("till_design", "עיצוב קופה", "מסכי ההזמנה של הקופות.", ("/dashboard/till-design",)),
@@ -218,6 +227,11 @@ SECTIONS: Tuple[Section, ...] = (
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
 SECTION_BY_ID: Dict[str, Section] = {s.id: s for s in SECTIONS}
+
+#: Permissions only the super admin grants, each held only where a profile names it — never by
+#: "גישה מלאה" or a role (the caller checks the profile itself, app/services/local_server_switch.py
+#: `may_switch`). Nobody else may give them on (app/services/dashboard_access.py `grantable`).
+SUPER_ADMIN_GRANTED: FrozenSet[str] = frozenset({"local_server_switch"})
 
 #: "מנהל ארגון" — what a new dashboard user gets until the super admin opens more (the owner,
 #: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים"). Quick actions come with the
@@ -586,6 +600,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines/{}/payment-devices", S("till_settings", "devices", level=VIEW)),
     (_ALL, "/machines/{}/catalog", S("products")),
     ("POST", "/machines/{}/close-shift", S("z")),
+    # "סגירת משמרת מהענן" (app/routers/local_server.py): the remote close's own section.
+    (_ALL, "/machines/{}/shifts/close-from-cloud", S("z")),
     ("POST", "/machines/{}/shifts/{}/administrative-close", S("z")),
     (_ALL, "/machines/{}/support-z", S("z")),
     ("POST", "/machines/{}/till-z", S("z")),
@@ -604,6 +620,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("PUT", "/shops/{}/local-network", S("devices")),
     (_ALL, "/shops/{}/local-shop-z*", S("z")),
     (_ALL, "/shops/{}/main-till", S("devices")),
+    # "העברת שרת מקומי" (app/routers/local_server.py): read with the card; the switch is the
+    # grantable permission's (the route then checks the profile itself).
+    (_GET, "/shops/{}/local-server", S("devices", "local_server_switch", level=VIEW)),
+    ("POST", "/shops/{}/local-server/switch", S("local_server_switch")),
+    ("POST", "/shops/{}/local-server/former-host-changes/ack", S("devices", "tables")),
     (_GET, "/shops/{}/work-config", S("devices")),
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),
     (_GET, "/shops/{}/next-register-number", S("devices", "organization", level=VIEW)),
@@ -691,7 +712,14 @@ def rule_for(method: str, path: str) -> RouteRule:
 
 def catalogue() -> List[dict]:
     """The sections as the dashboard's permissions dialog shows them."""
-    return [{"id": s.id, "label": s.label, "hint": s.hint, "pages": list(s.pages)} for s in SECTIONS]
+    return [
+        {
+            "id": s.id, "label": s.label, "hint": s.hint, "pages": list(s.pages),
+            # Given by the super admin alone; "גישה מלאה" does not include it.
+            **({"superAdminOnly": True} if s.id in SUPER_ADMIN_GRANTED else {}),
+        }
+        for s in SECTIONS
+    ]
 
 
 def sections_summary(sections: Iterable[Tuple[str, str]]) -> List[dict]:

@@ -237,13 +237,22 @@ def test_the_card_sets_one_main_till_and_the_rule(w):
     assert out["zFrom"] == MT.Z_FROM_MAIN_AND_DASHBOARD
     assert out["printHost"]["machineId"] == str(t2.id)
     assert out["canEdit"] is True
-    # Moving it leaves exactly one marked.
+    assert out["canSwitch"] is True
+    # Moving it to another till is the wizard's alone ("העברת שרת מקומי", one way to move it).
+    with pytest.raises(HTTPException) as e:
+        put(w, t1.id)
+    assert e.value.status_code == 409 and e.value.detail["code"] == "use_local_server_switch"
+    assert "העברת שרת מקומי" in e.value.detail["message"]
+    # The same till again, and the rule alone, are still the card's.
+    out = put(w, t2.id, MT.Z_FROM_ANY)
+    assert out["mainTill"]["machineId"] == str(t2.id) and out["zFrom"] == MT.Z_FROM_ANY
+    # None: no main till.
+    assert put(w, None)["mainTill"] is None
+    # With none, the card names the first one: exactly one marked.
     out = put(w, t1.id)
     assert out["mainTill"]["machineId"] == str(t1.id)
     assert MT.is_on(TP.till_parameters_for_machine(w.db, t2).parameters.get(MT.MAIN_TILL_KEY)) is False
-    assert out["zFrom"] == MT.Z_FROM_MAIN_AND_DASHBOARD  # untouched when not sent
-    # None: no main till.
-    assert put(w, None)["mainTill"] is None
+    assert out["zFrom"] == MT.Z_FROM_ANY  # untouched when not sent
 
 
 def test_the_card_is_the_super_admins_and_waits_for_a_run(w):
@@ -472,20 +481,19 @@ def _switch_notices(w):
     return out
 
 
-def test_moving_the_main_till_on_the_card_tells_every_till_to_check_the_data(w):
+def test_naming_the_main_till_on_the_card_is_no_switch(w):
     t1, t2 = w.tills
     put(w, t1.id)
     assert _switch_notices(w) == [], "naming the first main till is no switch"
     put(w, t1.id)
     assert _switch_notices(w) == [], "the same till again is no switch"
-    put(w, t2.id)
-    [(message, tills)] = _switch_notices(w)
-    assert tills == {str(t1.id), str(t2.id)}
-    assert message.display == "fullscreen" and message.created_by is None and message.expires_at is not None
-    assert t1.name in message.body and t2.name in message.body and "תקינות נתונים" in message.body
+    # A move is the wizard's (tests/test_local_server_switch.py sends the notice from there).
+    with pytest.raises(HTTPException):
+        put(w, t2.id)
+    assert _switch_notices(w) == []
 
 
-def test_a_till_taking_over_tells_every_till_to_check_the_data(w):
+def test_the_tills_own_take_over_is_closed(w):
     from app.routers import tables as tables_router
     from app.schemas.tables import TakeOverIn
 
@@ -493,13 +501,17 @@ def test_a_till_taking_over_tells_every_till_to_check_the_data(w):
     set_param(w, "tablesMode", "shop", w.shop.id, LAN)
     make_main(w, t1)
     _heard(t1, 3600)
-    tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), BackgroundTasks(), machine=t2, db=w.db)
-    [(message, tills)] = _switch_notices(w)
-    assert tills == {str(t1.id), str(t2.id)}
-    assert "מנהל" in message.body
-    # Nothing moved (already the main till): no second notice.
-    tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), BackgroundTasks(), machine=t2, db=w.db)
-    assert len(_switch_notices(w)) == 1
+    # "העבר את השרת לקופה הזו" with `tillServerTakeover` at its default ("רק מהענן"): 410, in
+    # Hebrew, and nothing moves (`manager`: tests/test_local_server_switch.py).
+    with pytest.raises(HTTPException) as e:
+        tables_router.take_over_host(
+            str(t2.id), BackgroundTasks(), TakeOverIn(posUserName="מנהל"), machine=t2, db=w.db,
+        )
+    assert e.value.status_code == 410
+    assert e.value.detail["code"] == "switch_from_cloud_only"
+    assert "מהענן" in e.value.detail["message"]
+    assert MT.main_till_of_shop(w.db, w.shop.id).id == t1.id
+    assert _switch_notices(w) == []
 
 
 def test_the_notice_says_what_moved_who_moved_it_and_what_to_check():

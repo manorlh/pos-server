@@ -261,6 +261,10 @@ class LocalOrderIn(WaiterRef):
 
 class TablesReportIn(_Camel):
     orders: List[LocalOrderIn] = Field(default_factory=list, max_length=200)
+    #: Gap 1 (P:/specs/local-server-switch.md §8): the till was the shop's server before a
+    #: switch and sends the changes it never uploaded — an order the cloud changed since the
+    #: switch is a conflict, not applied.
+    former_host: bool = Field(False, alias="formerHost")
 
 
 class TakeOverIn(_Camel):

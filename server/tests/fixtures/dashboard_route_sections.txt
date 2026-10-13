@@ -337,6 +337,8 @@ POST /machines/{machine_id}/reboot -> devices|device_control:edit
 POST /machines/{machine_id}/replacement-code -> devices:edit
 GET /machines/{machine_id}/settings -> till_settings|devices:view
 PATCH /machines/{machine_id}/settings -> till_settings|devices:edit
+GET /machines/{machine_id}/shifts/close-from-cloud -> z:view
+POST /machines/{machine_id}/shifts/close-from-cloud -> z:edit
 POST /machines/{machine_id}/shifts/{shift_id}/administrative-close -> z:edit
 GET /machines/{machine_id}/support-z -> z:view
 POST /machines/{machine_id}/support-z -> z:edit
@@ -638,6 +640,9 @@ GET /shops/{shop_id}/areas -> reference
 POST /shops/{shop_id}/areas -> organization:edit
 PUT /shops/{shop_id}/kitchen-stations/{station_id}/printers -> printers:edit
 PUT /shops/{shop_id}/local-network -> devices:edit
+GET /shops/{shop_id}/local-server -> devices|local_server_switch:view
+POST /shops/{shop_id}/local-server/former-host-changes/ack -> devices|tables:edit
+POST /shops/{shop_id}/local-server/switch -> local_server_switch:edit
 DELETE /shops/{shop_id}/local-shop-z-request -> z:edit
 GET /shops/{shop_id}/local-shop-z-request -> z:view
 POST /shops/{shop_id}/local-shop-z-request -> z:edit

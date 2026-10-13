@@ -212,16 +212,30 @@ def set_main_till(db: Session, shop: Shop, machine_id: Any, *, now: Optional[dat
 HOST_KEYS = (MAIN_TILL_KEY, "tablesHostTill", "printHostTill", SHOP_Z_MASTER_KEY)
 
 
-def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) -> Dict[str, Any]:
+def take_over(
+    db: Session,
+    machine: POSMachine,
+    operator: Optional[str] = None,
+    *,
+    force: bool = False,
+    require_lan: bool = True,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
     """
-    "העבר את השרת לקופה הזו": the LAN mode's tables host (normally the main till) does not
-    answer, and a manager at `machine` makes it the shop's main till in its place — the
-    tables host, the print server and the master of the shop Z — moving to it every flag
-    the old host held. The new host then takes the tables from the cloud (`host_seed`).
+    The full move of the shop's local server to `machine`: it becomes the shop's main till in
+    the old host's place — the tables host, the print server and the master of the shop Z —
+    moving to it every flag the old host held. The new host then takes the tables from the
+    cloud (`host_seed`).
 
-    Only when the cloud too sees the old host gone (409 `host_online` otherwise): a host
-    the cloud hears but this till cannot reach is a network fault between the tills, and
-    two hosts would split the tables. 409 `tables_not_lan` outside the LAN mode.
+    Since 13.10.2026 the cloud alone moves the server ("העברת שרת מקומי", app/services/
+    local_server_switch.py; the till's own "העבר את השרת לקופה הזו" answers 410): it calls
+    this with `require_lan=False` (the dashboard moves a main till in any tables mode) and,
+    for "כפה העברה", `force`.
+
+    Only when the cloud too sees the old host gone (409 `host_online` otherwise, unless
+    `force`): a host the cloud hears but the tills cannot reach is a network fault between
+    the tills, and two hosts would split the tables. 409 `tables_not_lan` outside the LAN
+    mode when `require_lan`.
     """
     from app.models.till_parameter import TillParameter, TillParameterValue
     from app.services.machine_status import is_online
@@ -240,19 +254,19 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
     if lan_server.is_excluded(db, machine):
         # "לא משמש כשרת מקומי": in the LAN group, but never its server.
         raise lan_server.take_over_refusal(machine)
-    if mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
+    if require_lan and mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tables_not_lan")
     old = tables_host_of_shop(db, machine.shop_id)
     if old is not None and old.id == machine.id:
         return {"mainTill": till_ref(machine), "previous": None}
-    if old is not None and is_online(old.last_heartbeat_at):
+    if old is not None and is_online(old.last_heartbeat_at, now=now) and not force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "host_online", "host": till_ref(old)},
         )
 
     ensure_builtin_parameters(db)
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     # The shop's Z producer is pinned as it stands: the tables move now (they cannot wait),
     # but the Z production moves only once the old main till could hand it over cleanly —
     # it is offline, so it may still hold shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).

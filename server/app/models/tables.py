@@ -237,6 +237,11 @@ class TableOrder(Base):
     updated_machine_id = Column(UUID(as_uuid=True), nullable=True)
     updated_by_pos_user_id = Column(String(100), nullable=True)
     updated_by_pos_user_name = Column(String(200), nullable=True)
+    #: When the cloud took the last write, by the cloud's clock (`updated_at` is the till's own
+    #: for a LAN host's mirror). Gap 1 of "העברת שרת מקומי" reads it against the switch: a former
+    #: server's change to an order the cloud changed since is a conflict (app/services/
+    #: local_server_switch.py). Null: written before it existed.
+    cloud_updated_at = Column(DateTime(timezone=True), nullable=True)
     #: The last send to the kitchen ("הזמן"); `send_count` > 1 means additions.
     sent_at = Column(DateTime(timezone=True), nullable=True)
     send_count = Column(Integer, nullable=False, default=0, server_default="0")

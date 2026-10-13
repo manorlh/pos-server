@@ -633,8 +633,27 @@ def get_my_machine(
         # till, kiosk, KDS, customer display — once its current sale ends; only the super admin
         # turning the shop back on releases it, never a manager code. True in no shop.
         "shopActive": shop_active.is_active(shop),
+        # "המשמרת נסגרה מהענן" (P:/specs/local-server-switch.md §8): the shift this till last said
+        # is open was closed from the cloud — `{shiftId, closedAt, closedBy}`, else null.
+        "shiftClosedFromCloud": _shift_closed_from_cloud(
+            db if isinstance(db, Session) else object_session(machine), machine,
+            getattr(machine, "reported_open_shift_id", None),
+        ),
         **machine_realtime_refresh_info(machine=machine),
     }
+
+
+def _shift_closed_from_cloud(db: Optional[Session], machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
+    """`shiftClosedFromCloud`; never fails the call it rides on."""
+    if db is None or not shift_id:
+        return None
+    try:
+        from app.services.local_server_switch import shift_closed_from_cloud
+
+        return shift_closed_from_cloud(db, machine, shift_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("shiftClosedFromCloud failed for %s", machine.id)
+        return None
 
 
 def _closed_claimed_shift(db: Session, machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
@@ -749,6 +768,13 @@ def post_my_heartbeat(
     # told, closes it on its side too and goes to "קופה סגורה" (docs/SHIFTS_API.md §1.6).
     closed_open_shift = (
         _closed_claimed_shift(db, machine, body.open_shift_id)
+        if body is not None and not body.open_shift_id_unreadable
+        else None
+    )
+    # Closed from the cloud ("סגירת משמרת מהענן", P:/specs/local-server-switch.md §8): the till
+    # marks it closed and read-only, says "המשמרת נסגרה מהענן", and opens a new shift to sell.
+    shift_closed_from_cloud = (
+        _shift_closed_from_cloud(db, machine, body.open_shift_id)
         if body is not None and not body.open_shift_id_unreadable
         else None
     )
@@ -913,6 +939,8 @@ def post_my_heartbeat(
         response["pendingCloseShift"] = pending
     if closed_open_shift is not None:
         response["closedOpenShift"] = closed_open_shift
+    if shift_closed_from_cloud is not None:
+        response["shiftClosedFromCloud"] = shift_closed_from_cloud
     if pending_transmit is not None:
         response["pendingTransmit"] = pending_transmit
     if pending_till_z is not None:

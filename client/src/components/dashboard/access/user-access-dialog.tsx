@@ -110,10 +110,12 @@ function AccessEditor({
     return [...byId.entries()].map(([id, name]) => ({ id, name }));
   }, [allTenants, detail.organizations, detail.canEditOrganizations]);
 
+  /** Given by the super admin alone and outside full access ("העברת שרת מקומי"): ticked on its own. */
+  const superOnly = new Set(catalog.sections.filter((s) => s.superAdminOnly).map((s) => s.id));
   /** A box beyond what the caller holds is shown, not offered (keeping what the user has is fine). */
   const canTick = (id: SectionId, level: AccessLevel) => {
     const mine = detail.grantable[id];
-    const had = p.fullAccess ? 'edit' : p.sections[id];
+    const had = p.fullAccess && !superOnly.has(id) ? 'edit' : p.sections[id];
     const rank = (l?: AccessLevel) => (l === 'edit' ? 2 : l === 'view' ? 1 : 0);
     return rank(level) <= Math.max(rank(mine), rank(had));
   };
@@ -328,7 +330,7 @@ function AccessEditor({
           </Button>
         </div>
 
-        <div className={`overflow-x-auto rounded-lg border ${fullAccess ? 'opacity-50' : ''}`}>
+        <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40">
@@ -339,9 +341,17 @@ function AccessEditor({
             </thead>
             <tbody>
               {catalog.sections.map((s) => (
-                <tr key={s.id} className="border-b last:border-0">
+                // Full access covers every row but the super admin's own (ticked on its own).
+                <tr key={s.id} className={`border-b last:border-0 ${fullAccess && !superOnly.has(s.id) ? 'opacity-50' : ''}`}>
                   <td className="p-2">
-                    <div>{t(`sections.${s.id}`)}</div>
+                    <div>
+                      {t(`sections.${s.id}`)}
+                      {s.superAdminOnly ? (
+                        <span className="ms-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {t('superAdminOnly')}
+                        </span>
+                      ) : null}
+                    </div>
                     <div className="text-xs text-muted-foreground">{s.hint}</div>
                   </td>
                   {(['view', 'edit'] as AccessLevel[]).map((level) => (
@@ -349,7 +359,7 @@ function AccessEditor({
                       <input
                         type="checkbox"
                         className="h-5 w-5 accent-primary"
-                        disabled={fullAccess || !canTick(s.id, level)}
+                        disabled={(fullAccess && !superOnly.has(s.id)) || !canTick(s.id, level)}
                         aria-label={`${t(`sections.${s.id}`)} — ${t(`levels.${level}`)}`}
                         checked={level === 'view' ? sections[s.id] !== undefined : sections[s.id] === 'edit'}
                         onChange={(e) => toggle(s.id, level, e.target.checked)}

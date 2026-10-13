@@ -29,7 +29,7 @@ import { ParameterFormDialog } from '@/components/dashboard/till-parameters/para
 import { ParameterValuesPanel } from '@/components/dashboard/till-parameters/parameter-values-panel';
 import {
   ParameterImageThumb,
-  enumOptionLabel,
+  useEnumLabel,
   useFormatParameterValue,
 } from '@/components/dashboard/till-parameters/value-input';
 import { useTillParameterErrorText } from '@/components/dashboard/till-parameters/errors';
@@ -61,6 +61,7 @@ function TillParametersAdmin() {
   const qc = useQueryClient();
   const errorText = useTillParameterErrorText();
   const formatValue = useFormatParameterValue();
+  const enumLabel = useEnumLabel();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -205,7 +206,7 @@ function TillParametersAdmin() {
                     {p.widget === 'image' ? t('image') : t(`types.${p.valueType}`)}
                     {p.valueType === 'enum' && p.enumOptions?.length ? (
                       <div className="text-muted-foreground text-xs">
-                        {p.enumOptions.map((o) => enumOptionLabel(o, p.enumLabels)).join(' / ')}
+                        {p.enumOptions.map((o) => enumLabel(p.key, o, p.enumLabels)).join(' / ')}
                       </div>
                     ) : null}
                   </TableCell>
@@ -214,7 +215,7 @@ function TillParametersAdmin() {
                       p.widget === 'image' ? (
                         <ParameterImageThumb url={String(p.defaultValue)} alt={p.label} />
                       ) : (
-                        formatValue(p.defaultValue, p.enumLabels)
+                        formatValue(p.defaultValue, p.key, p.enumLabels)
                       )
                     ) : (
                       <span className="text-muted-foreground">{t('noDefault')}</span>
