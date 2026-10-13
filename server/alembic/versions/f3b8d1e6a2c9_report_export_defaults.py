@@ -34,7 +34,7 @@ INDEXES = (
 def _offline() -> bool:
     try:
         return context.is_offline_mode()
-    except NameError:  # run by hand (a test) outside alembic's environment
+    except (NameError, AttributeError):  # run by hand (a test) outside alembic's environment
         try:
             return bool(op.get_context().as_sql)
         except Exception:  # noqa: BLE001
