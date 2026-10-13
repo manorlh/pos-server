@@ -24,7 +24,7 @@ import { api, fetchCompanies } from '@/lib/api';
 import { branchCodeError, branchCodeInput, normalizeBranchCode } from '@/lib/branchCode';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
-import { TRAINING_MODE_AVAILABLE, withoutTrainingFields } from '@/lib/trainingMode';
+import { NEW_SHOP_TRAINING_DEFAULT, withoutTrainingFields } from '@/lib/trainingMode';
 import { INTEGRATION_LABELS, type PaymentIntegration } from '@/lib/paymentIntegration';
 import {
   createPayloadOf,
@@ -170,10 +170,10 @@ function ShopForm({
   );
   const isNew = !draft.id;
   const isSuperAdmin = useIsSuperAdmin();
-  // A new shop may open in training mode once the devices implement it (off and disabled
-  // until then: a practice sale would be a real document); an existing one changes it on the
-  // shop page's "מצב הדרכה" card, never through this form.
-  const [trainingMode, setTrainingMode] = useState(TRAINING_MODE_AVAILABLE);
+  // "מצב הדרכה": a new shop opens in it by default (the spec — pre-checked); it has no device
+  // yet, so nothing holds it back. An existing shop changes it on the shop page's "מצב הדרכה"
+  // card, never through this form.
+  const [trainingMode, setTrainingMode] = useState(NEW_SHOP_TRAINING_DEFAULT);
   // "סוג אינטגרציית אשראי" for all the new shop's tills; changed later in its settings.
   const [paymentIntegration, setPaymentIntegration] = useState<PaymentIntegration>('auto');
   // "קוד סניף": mandatory, digits 1–7 (the server also checks it is unique in the company).
@@ -201,7 +201,7 @@ function ShopForm({
         // "קוד סניף" is mandatory: an internal code identifying the branch (lib/branchCode.ts).
         branchId: normalizeBranchCode(s.branchId),
         ...licensePayload(s, isSuperAdmin),
-        ...(s.id || !TRAINING_MODE_AVAILABLE ? {} : { trainingMode }),
+        ...(s.id ? {} : { trainingMode }),
         // "אוטומטי" stores nothing, so it is not sent.
         ...(s.id || paymentIntegration === 'auto' ? {} : { paymentIntegration }),
         // "תצורת עבודה": `workProfile` or `copyWorkProfileFromShopId`; nothing on "דלג".
@@ -380,15 +380,10 @@ function ShopForm({
                 {tTraining('createSwitch')}
               </Label>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {TRAINING_MODE_AVAILABLE ? tTraining('createHint') : tTraining('createUnavailable')}
+                {trainingMode ? tTraining('createHint') : tTraining('createHintOff')}
               </p>
             </div>
-            <Switch
-              id="shop-training-mode"
-              checked={trainingMode}
-              onCheckedChange={setTrainingMode}
-              disabled={!TRAINING_MODE_AVAILABLE}
-            />
+            <Switch id="shop-training-mode" checked={trainingMode} onCheckedChange={setTrainingMode} />
           </div>
         ) : null}
         {isNew ? (

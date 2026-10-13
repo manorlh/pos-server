@@ -12,15 +12,17 @@ import {
   deletionTotal,
   entityCountEntries,
   hasQuarantinedData,
+  NEW_SHOP_TRAINING_DEFAULT,
+  notReadyDevices,
   pendingOf,
   splitBlockers,
+  splitNotReady,
   tableLabel,
   templateCountsAsEntities,
-  TRAINING_MODE_AVAILABLE,
   trainingCanBeEnabled,
   withoutTrainingFields,
 } from './trainingMode';
-import type { TrainingBlocker, UnsyncedTillBlocker } from './trainingMode';
+import type { TrainingBlocker, TrainingDeviceNotReady, UnsyncedTillBlocker } from './trainingMode';
 
 const unsynced = (over: Partial<UnsyncedTillBlocker> = {}): UnsyncedTillBlocker => ({
   code: 'unsynced_till',
@@ -152,14 +154,51 @@ describe('withoutTrainingFields', () => {
   });
 });
 
-describe('turning it on while no device implements it (PARITY.md gap 6)', () => {
-  it('is offered only when the server says it is available', () => {
+describe('turning it on: every device of the shop must run training mode', () => {
+  const device = (over: Partial<TrainingDeviceNotReady> = {}): TrainingDeviceNotReady => ({
+    id: 'd1',
+    name: 'קיוסק כניסה',
+    kind: 'kiosk',
+    platform: 'windows',
+    reasonCode: 'platform_unsupported',
+    reason: 'קיוסק Windows — עוד לא תומך במצב הדרכה',
+    ...over,
+  });
+
+  it('is offered only when the server says the shop is ready', () => {
     assert.equal(trainingCanBeEnabled({ available: true }), true);
     assert.equal(trainingCanBeEnabled({ available: false }), false);
     assert.equal(trainingCanBeEnabled({}), false);
   });
 
-  it('a new shop does not open in it', () => {
-    assert.equal(TRAINING_MODE_AVAILABLE, false);
+  it('a new shop opens in it by default (the create form switch is pre-checked)', () => {
+    assert.equal(NEW_SHOP_TRAINING_DEFAULT, true);
+  });
+
+  it('reads the devices from the status and from the 409 detail', () => {
+    const old = device({ id: 'd2', kind: 'till', platform: 'android', reasonCode: 'old_build', reason: 'גרסת קופה ישנה — יש לעדכן' });
+    assert.deepEqual(notReadyDevices({ notReady: [device(), old] }).map((d) => d.id), ['d1', 'd2']);
+    // `POST …/enable` → 409 {code: 'training_devices_not_ready', message, devices}.
+    const err = { response: { status: 409, data: { detail: { code: 'training_devices_not_ready', devices: [old] } } } };
+    const info = apiErrorInfo(err);
+    assert.equal(info.code, 'training_devices_not_ready');
+    assert.deepEqual(notReadyDevices(info.detail), [old]);
+  });
+
+  it('drops anything that is not a device, and copes with nothing', () => {
+    assert.deepEqual(notReadyDevices({ notReady: [device(), null, { id: 3 }, { id: 'x' }] as never }).length, 1);
+    assert.deepEqual(notReadyDevices({}), []);
+    assert.deepEqual(notReadyDevices(null), []);
+    assert.deepEqual(notReadyDevices(undefined), []);
+  });
+
+  it('in training mode, tells the devices that sell for real from those not reported yet', () => {
+    const old = device({ id: 'old', reasonCode: 'old_build' });
+    const windows = device({ id: 'win' });
+    const silent = device({ id: 'new', reasonCode: 'not_reported', reason: 'המכשיר לא דיווח עדיין' });
+    const out = splitNotReady([old, silent, windows]);
+    assert.deepEqual(out.sellingForReal.map((d) => d.id), ['old', 'win']);
+    assert.deepEqual(out.waiting.map((d) => d.id), ['new']);
+    assert.deepEqual(splitNotReady(undefined), { sellingForReal: [], waiting: [] });
   });
 });

@@ -18,6 +18,7 @@ export type {
   TrainingBlocker,
   TrainingCounts,
   TrainingDeletionCounts,
+  TrainingDeviceNotReady,
   TrainingDisableBody,
   TrainingDisablePreview,
   TrainingDisableResult,
@@ -32,7 +33,11 @@ export async function fetchTrainingMode(shopId: string): Promise<TrainingModeSta
   return data;
 }
 
-/** Refused with 409 `{code: 'real_shift_open', tills}` while a till has a real shift open. */
+/**
+ * Refused with 409 `{code: 'training_devices_not_ready', message, devices}` while a device of the
+ * shop cannot run training mode, and 409 `{code: 'real_shift_open', tills}` while a till has a
+ * real shift open.
+ */
 export async function enableTrainingMode(shopId: string): Promise<TrainingModeStatus> {
   const { data } = await api.post<TrainingModeStatus>(`/shops/${shopId}/training-mode/enable`);
   return data;
