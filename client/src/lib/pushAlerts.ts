@@ -18,8 +18,26 @@ export type AlertCategory =
   | 'target_reached'
   | 'card_reconcile'
   // "בון לא הודפס" — a kitchen / bar ticket of any till or kiosk that did not print (pos-server app/services/bon_alerts.py).
-  | 'bon_unprinted';
+  | 'bon_unprinted'
+  // The board's lights as alerts (P:/specs/manager-problems.md §2, pos-server status_watch.py).
+  | 'z_shift'
+  | 'card_transmission'
+  | 'till_printer'
+  // P:/specs/push-more.md §A, §B: the battery, and kinds sent where a level turns "שלח התראה לטלפון" on.
+  | 'device_battery'
+  | 'discounts'
+  | 'cash_difference'
+  | 'high_tip'
+  | 'high_sale'
+  | 'after_hours'
+  | 'sensitive_actions'
+  | 'staff_actions'
+  | 'stock'
+  | 'slow_order'
+  // "שלמות נתונים" (§1): a super admin's only — the server lists it to them alone.
+  | 'integrity';
 
+/** The types anyone may choose, in the form's order. */
 export const ALERT_CATEGORIES: AlertCategory[] = [
   'till_offline',
   'card_terminal',
@@ -29,7 +47,41 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'target_reached',
   'card_reconcile',
   'bon_unprinted',
+  'z_shift',
+  'card_transmission',
+  'till_printer',
+  'device_battery',
+  'discounts',
+  'cash_difference',
+  'high_tip',
+  'high_sale',
+  'after_hours',
+  'sensitive_actions',
+  'staff_actions',
+  'stock',
+  'slow_order',
 ];
+
+export const INTEGRITY_CATEGORY: AlertCategory = 'integrity';
+
+/**
+ * The types the form offers this user: every type, and "שלמות נתונים" last when the server lists it
+ * (`GET /push/config` / `GET /push/categories` — a super admin only).
+ */
+export function visibleCategories(config: Pick<PushConfig, 'categories'> | null | undefined): AlertCategory[] {
+  const listed = new Set((config?.categories ?? []).map((c) => c.key));
+  return listed.has(INTEGRITY_CATEGORY) ? [...ALERT_CATEGORIES, INTEGRITY_CATEGORY] : [...ALERT_CATEGORIES];
+}
+
+/**
+ * Whether the personal minimum (₪) applies to what is chosen: some chosen type carries an amount
+ * (the server's `amount` — a void, a discount, a cash difference, a large sale). It is a floor of
+ * the user's own above each kind's rule (push-more §B2).
+ */
+export function minAmountApplies(config: Pick<PushConfig, 'categories'> | null | undefined, chosen: AlertCategory[]): boolean {
+  const withAmount = new Set((config?.categories ?? []).filter((c) => c.amount).map((c) => c.key));
+  return chosen.some((c) => withAmount.has(c));
+}
 
 export interface PushConfig {
   enabled: boolean;
@@ -49,6 +101,8 @@ export interface PushPreferences {
   quietTo: string | null;
   rateLimitMinutes: number;
   digestEnabled: boolean;
+  /** A super admin only: "שלמות נתונים" narrowed to these companies (null = all) and the devices muted for it. */
+  integrity?: { companyIds: string[] | null; mutedDeviceIds: string[] };
 }
 
 export interface PushDevice {
@@ -60,10 +114,14 @@ export interface PushDevice {
   lastFailureAt: string | null;
   lastError: string | null;
   active: boolean;
+  /** A super admin only: "שלמות נתונים" arrives on this device. */
+  integrity?: boolean;
 }
 
 export interface PushOptions {
   shops: { id: string; name: string }[];
+  /** A super admin only: every company of every organization ("שלמות נתונים"). */
+  companies?: { id: string; name: string; tenantId: string; tenantName: string }[];
   events: { id: string; name: string; shopId: string; shopName: string | null; startsAt: string; endsAt: string }[];
 }
 
@@ -154,10 +212,13 @@ export interface PrefsDraft {
   quietTo: string;
   rateLimitMinutes: string;
   digestEnabled: boolean;
+  /** A super admin's "שלמות נתונים" companies (empty = all); undefined for anyone else. */
+  integrityCompanyIds?: string[];
 }
 
 export function draftFromPrefs(p: PushPreferences): PrefsDraft {
   return {
+    ...(p.integrity ? { integrityCompanyIds: [...(p.integrity.companyIds ?? [])] } : {}),
     enabled: p.enabled,
     categories: [...p.categories],
     shopIds: [...(p.shopIds ?? [])],
@@ -188,9 +249,9 @@ export function prefsErrors(d: PrefsDraft): PrefsError[] {
 }
 
 export function prefsBody(d: PrefsDraft): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     enabled: d.enabled,
-    categories: ALERT_CATEGORIES.filter((c) => d.categories.includes(c)),
+    categories: [...ALERT_CATEGORIES, INTEGRITY_CATEGORY].filter((c) => d.categories.includes(c)),
     shopIds: d.shopIds.length ? d.shopIds : null,
     eventIds: d.eventIds.length ? d.eventIds : null,
     minAmount: Number(d.minAmount),
@@ -199,6 +260,8 @@ export function prefsBody(d: PrefsDraft): Record<string, unknown> {
     rateLimitMinutes: Number(d.rateLimitMinutes),
     digestEnabled: d.digestEnabled,
   };
+  if (d.integrityCompanyIds) body.integrity = { companyIds: d.integrityCompanyIds.length ? d.integrityCompanyIds : null };
+  return body;
 }
 
 export function toggle<T>(list: T[], value: T): T[] {

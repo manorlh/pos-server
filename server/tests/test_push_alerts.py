@@ -200,7 +200,8 @@ def test_each_kind_has_its_alert_type():
     assert P.category_of(e("drawer_open")) == "drawer_no_sale"
     assert P.category_of(e("till_low_sales")) == "till_low_sales"
     assert P.category_of(e("target_reached")) == "target_reached"
-    assert P.category_of(e("discount")) is None
+    assert P.category_of(e("discount")) == "discounts"  # push-more §B: sent where a level turns it on
+    assert P.category_of(e("kiosk_printer")) is None
 
 
 def test_preferences_are_validated_with_defaults():
@@ -396,7 +397,8 @@ def test_subscribing_preferences_test_message_and_history(w, monkeypatch):
                        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert out["label"] == "Chrome · Windows" and out["active"]
     prefs = R.get_preferences(current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
-    assert prefs["exists"] and prefs["categories"] == list(P.CATEGORY_KEYS)  # the first device made them
+    # The first device made them; a super admin's carry "שלמות נתונים" too (manager-problems §1).
+    assert prefs["exists"] and prefs["categories"] == [*P.CATEGORY_KEYS, "integrity"]
     saved = R.put_preferences({"categories": ["till_offline"], "quietFrom": "23:00", "quietTo": "07:00"},
                               current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert saved["categories"] == ["till_offline"] and saved["quietTo"] == "07:00"
@@ -429,7 +431,7 @@ def test_the_alerts_feed_is_scoped_and_acknowledged_in_place(w, monkeypatch):
     if True:
         center = entry(w, "till_offline")
         north = entry(w, "drawer_open", shop=w.other_shop, machine=w.other_till)
-        entry(w, "discount", amount=Decimal("10"))  # not a push type
+        entry(w, "discount", amount=Decimal("10"))  # no level sends discounts (push-more §B: off by default)
         feed = R.list_alerts(company_id=None, shop_id=None, area_id=None, machine_id=None, event_id=None, open_only=True,
                              days=2, limit=50, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
         assert {a["id"] for a in feed["alerts"]} == {str(center.id), str(north.id)} and feed["open"] == 2

@@ -10,11 +10,13 @@ import {
   canAcknowledgeAlerts,
   draftFromPrefs,
   historyTone,
+  minAmountApplies,
   prefsBody,
   prefsErrors,
   pushSupport,
   toggle,
   urlBase64ToUint8Array,
+  visibleCategories,
   type AlertsFeed,
   type FeedAlert,
   type PushPreferences,
@@ -71,6 +73,42 @@ describe('the preferences form', () => {
     assert.deepEqual(prefsErrors({ ...d, minAmount: '-1' }), ['minAmount']);
     assert.deepEqual(prefsErrors({ ...d, quiet: true, quietFrom: '07:00', quietTo: '07:00' }), ['quiet']);
     assert.deepEqual(prefsErrors({ ...d, rateLimitMinutes: '1.5' }), ['rateLimit']);
+  });
+
+  it('offers "שלמות נתונים" only when the server lists it (a super admin), last', () => {
+    const general = visibleCategories({ categories: [{ key: 'till_offline', label: '', hint: '', amount: false }] });
+    assert.equal(general.includes('integrity'), false);
+    for (const c of ['z_shift', 'card_transmission', 'till_printer'] as const) assert.ok(general.includes(c), c);
+    const root = visibleCategories({ categories: [{ key: 'integrity', label: '', hint: '', amount: false }] });
+    assert.equal(root[root.length - 1], 'integrity');
+    assert.equal(visibleCategories(null).includes('integrity'), false);
+  });
+
+  it("sends a super admin's integrity switch and companies, and nothing of it for anyone else", () => {
+    const root = draftFromPrefs({ ...prefs, categories: ['integrity', 'till_printer'], integrity: { companyIds: null, mutedDeviceIds: [] } });
+    assert.deepEqual(root.integrityCompanyIds, []);
+    const body = prefsBody({ ...root, integrityCompanyIds: ['c1'] });
+    assert.deepEqual(body.categories, ['till_printer', 'integrity']);
+    assert.deepEqual(body.integrity, { companyIds: ['c1'] });
+    assert.deepEqual(prefsBody(root).integrity, { companyIds: null });
+    const manager = prefsBody(draftFromPrefs(prefs));
+    assert.equal('integrity' in manager, false);
+  });
+
+  it('offers the push-more types, and the personal minimum only when a chosen type has an amount', () => {
+    const types = visibleCategories({ categories: [] });
+    for (const c of ['device_battery', 'discounts', 'cash_difference', 'high_tip', 'high_sale', 'after_hours',
+      'sensitive_actions', 'staff_actions', 'stock', 'slow_order'] as const) assert.ok(types.includes(c), c);
+    const config = {
+      categories: [
+        { key: 'large_void' as const, label: '', hint: '', amount: true },
+        { key: 'discounts' as const, label: '', hint: '', amount: true },
+        { key: 'till_offline' as const, label: '', hint: '', amount: false },
+      ],
+    };
+    assert.equal(minAmountApplies(config, ['till_offline']), false);
+    assert.equal(minAmountApplies(config, ['till_offline', 'discounts']), true);
+    assert.equal(minAmountApplies(null, ['large_void']), false);
   });
 
   it('toggles a value in a list', () => {

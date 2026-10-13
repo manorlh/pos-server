@@ -128,6 +128,11 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   drawer_open_near_variance: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   drawer_open_no_reason: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200',
   drawer_open_denied: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
+  // "מדיניות התראות": the board's lights as alerts.
+  z_missing: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
+  shift_open_overdue: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  card_transmission_overdue: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
+  till_printer: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

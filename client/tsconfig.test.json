@@ -223,6 +223,8 @@
     "src/lib/pushPolicy.test.ts",
     "src/lib/pushGate.ts",
     "src/lib/pushGate.test.ts",
+    "src/lib/alertPolicy.ts",
+    "src/lib/alertPolicy.test.ts",
     "src/lib/producer.ts",
     "src/lib/producer.test.ts",
     "src/lib/staffing.ts",

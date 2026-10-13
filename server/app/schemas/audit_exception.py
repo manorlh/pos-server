@@ -74,6 +74,18 @@ class RuleOut(BaseModel):
     #: What applies at this level, own values included.
     effective_enabled: bool = Field(..., alias="effectiveEnabled")
     effective_params: Dict[str, float] = Field(..., alias="effectiveParams")
+    #: "שלח התראה לטלפון" (P:/specs/push-more.md §0): the default, this level's own (null = inherits),
+    #: from above (its level in `inheritedSources.push`), and what applies here.
+    push_default: bool = Field(True, alias="pushDefault")
+    own_push: Optional[bool] = Field(None, alias="ownPush")
+    inherited_push: bool = Field(True, alias="inheritedPush")
+    inherited_push_source: Optional[str] = Field(None, alias="inheritedPushSource")
+    effective_push: bool = Field(True, alias="effectivePush")
+    #: Detected elsewhere and always recorded: only the push switch applies.
+    push_only: bool = Field(False, alias="pushOnly")
+    #: The phone-alert type it is sent as (null: none — the switch does nothing; "integrity": the
+    #: super admins', never switched off by a level).
+    push_category: Optional[str] = Field(None, alias="pushCategory")
 
     class Config:
         populate_by_name = True
@@ -95,6 +107,8 @@ class RuleIn(BaseModel):
     enabled: Optional[bool] = None
     #: Thresholds this level sets; a key left out or null inherits.
     params: Optional[Dict[str, Optional[float]]] = None
+    #: "שלח התראה לטלפון" at this level; null = inherit.
+    push: Optional[bool] = None
 
 
 class RulesPut(BaseModel):

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -507,6 +508,17 @@ def _can_write(db: Session, user: User, tenant_id, level: str, shop, company) ->
         return False
 
 
+def push_category_of(kind: str) -> Optional[str]:
+    from app.services.exception_alerts.push import category_of
+
+    return category_of(SimpleNamespace(kind=kind, details={"outcome": "no_answer"}))
+
+
+def _own_push(row: Optional[ExceptionRuleValue]) -> Optional[bool]:
+    value = (row.params or {}).get(svc.PUSH_KEY) if row is not None and isinstance(row.params, dict) else None
+    return value if isinstance(value, bool) else None
+
+
 def _rules_response(db: Session, level: str, chain, can_write: bool) -> RulesResponse:
     rows = svc.rules_on_chain(db, chain)
     own_scope = chain[0]
@@ -528,12 +540,22 @@ def _rules_response(db: Session, level: str, chain, can_write: bool) -> RulesRes
                 for p in spec.params
             ],
             own_enabled=row.enabled if row is not None else None,
-            own_params={k: v for k, v in ((row.params or {}) if row is not None else {}).items() if v is not None},
+            own_params={
+                k: v for k, v in ((row.params or {}) if row is not None else {}).items()
+                if v is not None and k != svc.PUSH_KEY
+            },
             inherited_enabled=inherited[spec.type].enabled,
             inherited_params=inherited[spec.type].params,
             inherited_sources=inherited[spec.type].sources,
             effective_enabled=effective[spec.type].enabled,
             effective_params=effective[spec.type].params,
+            push_default=spec.push_default,
+            own_push=_own_push(row),
+            inherited_push=inherited[spec.type].push,
+            inherited_push_source=inherited[spec.type].push_source,
+            effective_push=effective[spec.type].push,
+            push_only=spec.push_only,
+            push_category=push_category_of(spec.type),
         ))
     return RulesResponse(level=level, id=own_scope[1], can_write=can_write, rules=out)
 
@@ -563,8 +585,9 @@ def put_rules(
     db: Session = Depends(get_db),
 ):
     """
-    Set this level's own values for the types listed (`enabled: null` and no params =
-    inherit everything again). Applies to detections from now on and to a rescan.
+    Set this level's own values for the types listed (`enabled: null`, no params and `push: null`
+    = inherit everything again). Applies to detections from now on and to a rescan; `push`
+    ("שלח התראה לטלפון") to the phone alerts from now on.
     """
     chain, shop, company = _level_target(db, current_user, active_tenant_id, level, target_id)
     if not _can_write(db, current_user, active_tenant_id, level, shop, company):
@@ -587,7 +610,11 @@ def put_rules(
             )
             .first()
         )
-        if item.enabled is None and not params:
+        # A type detected elsewhere has no on / off here: only its push switch.
+        enabled = None if spec.push_only else item.enabled
+        if item.push is not None:
+            params[svc.PUSH_KEY] = bool(item.push)
+        if enabled is None and not params:
             if row is not None:
                 db.delete(row)
             continue
@@ -597,7 +624,7 @@ def put_rules(
                 scope_id=scope_id, exception_type=spec.type,
             )
             db.add(row)
-        row.enabled = item.enabled
+        row.enabled = enabled
         row.params = params or None
         row.updated_by = current_user.id
         row.updated_at = datetime.now(timezone.utc)

@@ -34,7 +34,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -419,7 +419,8 @@ def _pending_rule_ids(db: Session) -> List[Any]:
             ExceptionAlertDispatch.digest_id.is_(None),
             ExceptionAlertRule.enabled.is_(True),
             ExceptionAlertRule.deleted_at.is_(None),
-            ExceptionAlertRule.digest_enabled.is_(True),
+            # A phone rule without a digest still sends its urgent alerts once the quiet hours end.
+            or_(ExceptionAlertRule.digest_enabled.is_(True), ExceptionAlertRule.channel == CHANNEL_PUSH),
         )
         .distinct()
         .all()
@@ -453,12 +454,14 @@ def _flush_rule(db: Session, rule_id: Any, now: datetime, provider: SMS.SmsProvi
         .with_for_update()
         .one_or_none()
     )
-    if rule is None or not rule.enabled or rule.deleted_at is not None or not rule.digest_enabled:
+    if rule is None or not rule.enabled or rule.deleted_at is not None:
         return 0
     if (rule.channel or CHANNEL_SMS) == CHANNEL_PUSH:
         from app.services.exception_alerts import push as PUSH
 
-        return PUSH.flush_rule(db, rule, now)
+        return PUSH.flush_rule(db, rule, now)  # its urgent alerts even without a digest
+    if not rule.digest_enabled:
+        return 0
     tzinfo = tz_for(db, rule.tenant_id)
     if in_quiet_hours(rule, now.astimezone(tzinfo)) or rate_limited(db, rule, now):
         return 0

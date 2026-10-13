@@ -164,9 +164,10 @@ class TestTheParameter:
             "אוטומטי — רק במכשיר שיש בו סוללה. כבוי — לקופה קבועה בלי סוללה: בלי פס 'סוללה חלשה', "
             "בלי אזעקה ובלי התראות סוללה על המכשיר הזה. פעיל — תמיד"
         )
-        # Beside the thresholds and the alarm, in the same group.
+        # Beside the thresholds and the alarm, in the same group (and the manager's phone alert after it,
+        # P:/specs/push-more.md §A).
         keys = [s["key"] for s in B.BATTERY_PARAMETER_SPECS]
-        assert keys == [B.THRESHOLDS_KEY, B.SOUND_KEY, KEY]
+        assert keys == [B.THRESHOLDS_KEY, B.SOUND_KEY, KEY, B.PUSH_LEVEL_KEY]
         row = w.db.query(TillParameter).filter(TillParameter.key == KEY).one()
         assert row.is_active and row.default_value == "auto" and row.enum_options == ["auto", "on", "off"]
 

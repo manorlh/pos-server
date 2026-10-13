@@ -113,6 +113,15 @@ export default function ExceptionAlertsPage() {
           {t('pushChannelLink')}
         </Link>
       </div>
+      {/* "מדיניות התראות" (manager-problems §2): the board's lights as alerts are exception rules, per level. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 text-sm">
+        <span>
+          <span className="font-semibold">{t('policyStrip')}</span> <span className="text-muted-foreground">{t('policyStripHint')}</span>
+        </span>
+        <Link href="/dashboard/exception-settings" className="text-primary hover:underline">
+          {t('policyStripLink')}
+        </Link>
+      </div>
       {authHydrated && !allowed ? (
         <p className="text-muted-foreground text-sm">{t('noPermission')}</p>
       ) : (

@@ -37,18 +37,24 @@ def run_once(session_factory: Callable[[], Session]) -> int:
 def run_watches(session_factory: Callable[[], Session]) -> None:
     """
     "התראות לטלפון" (feat/event-live), each pass on its own and never failing the others:
-    tills that went offline (an exception row — this session records it through the hooks,
-    so it is NOT marked to skip them) and push messages a dead process left queued. "יעד הושג"
+    tills that went offline and the board's lights (status_watch.py) — exception rows this
+    session records through the hooks, so it is NOT marked to skip them — and push messages a
+    dead process left queued. "יעד הושג"
     is not checked here: "יעדים ותחרות" records it (app/services/sales_targets.py `evaluate_due`,
     its own minute, app/services/sales_targets_worker.py) — the one source of `target_reached`.
     """
-    from app.services.exception_alerts import push, till_watch
+    from app.services.exception_alerts import push, status_watch, till_watch
     from app.services.exception_alerts.hooks import SKIP
 
-    for name, job, skip in (
+    jobs = [
         ("till offline watch", lambda db: till_watch.scan(db), False),
         ("push retry", lambda db: push.retry_stale(db), True),
-    ):
+    ]
+    # The board's lights as alerts (Z not made, a shift open too long, card transmission late, the
+    # till's printer): recorded through the hooks like a till offline; at most every 2 minutes.
+    if status_watch.due():
+        jobs.append(("status watch", lambda db: status_watch.scan(db), False))
+    for name, job, skip in jobs:
         db = session_factory()
         if skip:
             db.info[SKIP] = True

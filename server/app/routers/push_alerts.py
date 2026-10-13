@@ -6,15 +6,19 @@ Dashboard (Clerk/user JWT + X-Tenant-Id). The user's own devices and preferences
 (PRODUCER_VIEW) has none of this.
 
 GET    /push/config                → push on / off, the VAPID public key, the alert types
+GET    /push/categories            → the alert types I may choose (`integrity` for a super admin only)
 GET    /push/devices               → my subscribed devices
 POST   /push/devices               → subscribe this browser {endpoint, keys: {p256dh, auth}, label?}
 POST   /push/devices/unsubscribe   → {endpoint}: this browser unsubscribed
+PATCH  /push/devices/{id}          → a super admin: {integrity: bool} — "שלמות נתונים" on that device
 DELETE /push/devices/{id}          → stop sending to one of my devices
 GET    /push/preferences           → my preferences in this organization (defaults when none)
 PUT    /push/preferences           → {enabled, categories, shopIds, eventIds, minAmount, quietFrom,
-                                     quietTo, rateLimitMinutes, digestEnabled}
+                                     quietTo, rateLimitMinutes, digestEnabled}; a super admin also
+                                     `integrity` in categories and {integrity: {companyIds}}
 POST   /push/test                  → a test message to my devices
-GET    /push/options               → the shops and the events (current / next two weeks) I can choose
+GET    /push/options               → the shops and the events (current / next two weeks) I can choose;
+                                     a super admin also every company ("שלמות נתונים")
 GET    /push/alerts                → the alerts of the push types in my reach, newest first
                                      (companyId / shopId / areaId / machineId / eventId, open, days)
 POST   /push/alerts/{id}/ack       → "טופל" (or back to open), with a note
@@ -71,9 +75,16 @@ def get_push_config(current_user: User = Depends(get_current_user)):
     return {
         "enabled": vapid is not None,
         "publicKey": vapid.public_key if vapid is not None else None,
-        "categories": P.categories_json(),
+        "categories": P.categories_json(current_user),
         "defaults": {"minAmount": float(P.DEFAULT_MIN_AMOUNT), "rateLimitMinutes": P.DEFAULT_RATE_LIMIT},
     }
+
+
+@router.get("/categories")
+def get_push_categories(current_user: User = Depends(get_current_user)):
+    """The alert types this user may choose: "שלמות נתונים" (`integrity`) only for a super admin."""
+    _staff(current_user)
+    return {"categories": P.categories_json(current_user)}
 
 
 @router.get("/devices")
@@ -85,7 +96,7 @@ def list_devices(current_user: User = Depends(get_current_user), db: Session = D
         .order_by(PushSubscription.created_at.desc())
         .all()
     )
-    return {"devices": [P.device_json(r) for r in rows]}
+    return {"devices": [P.device_json(r, current_user) for r in rows]}
 
 
 @router.post("/devices", status_code=status.HTTP_201_CREATED)
@@ -109,7 +120,27 @@ def add_device(
         raise _rule_error(exc) from None
     db.commit()
     db.refresh(row)
-    return P.device_json(row)
+    return P.device_json(row, current_user)
+
+
+@router.patch("/devices/{device_id}")
+def update_device(device_id: uuid.UUID, body: Dict[str, Any] = Body(...),
+                  current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A super admin's "שלמות נתונים" on one of their devices: {integrity: true | false}."""
+    _staff(current_user)
+    row = db.get(PushSubscription, device_id)
+    if row is None or row.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found")
+    if "integrity" in (body or {}):
+        if not P.is_super_admin(current_user):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        if not isinstance(body["integrity"], bool):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={"code": "integrity_invalid", "field": "integrity", "detail": None})
+        P.set_device_integrity(current_user, row, body["integrity"])
+        db.commit()
+        db.refresh(row)
+    return P.device_json(row, current_user)
 
 
 @router.post("/devices/unsubscribe")
@@ -147,7 +178,7 @@ def remove_device(device_id: uuid.UUID, current_user: User = Depends(get_current
 def get_preferences(current_user: User = Depends(get_current_user), active_tenant_id=Depends(get_active_tenant_id),
                     db: Session = Depends(get_db)):
     _staff(current_user)
-    return P.as_json(P.rule_for_user(db, current_user.id, active_tenant_id))
+    return P.preferences_json(db, current_user, active_tenant_id)
 
 
 @router.put("/preferences")
@@ -159,12 +190,11 @@ def put_preferences(
 ):
     _staff(current_user)
     try:
-        rule = P.save_preferences(db, current_user, active_tenant_id, body)
+        P.save_preferences(db, current_user, active_tenant_id, body)
     except RuleError as exc:
         raise _rule_error(exc) from None
     db.commit()
-    db.refresh(rule)
-    return P.as_json(rule)
+    return P.preferences_json(db, current_user, active_tenant_id)
 
 
 @router.post("/test")
@@ -207,7 +237,7 @@ def get_options(current_user: User = Depends(get_current_user), active_tenant_id
         .all()
     )
     names = {s.id: s.name for s in shops}
-    return {
+    out = {
         "shops": [{"id": str(s.id), "name": s.name} for s in shops],
         "events": [
             {"id": str(e.id), "name": e.name, "shopId": str(e.shop_id), "shopName": names.get(e.shop_id),
@@ -215,6 +245,27 @@ def get_options(current_user: User = Depends(get_current_user), active_tenant_id
             for e in events
         ],
     }
+    if P.is_super_admin(current_user):
+        out["companies"] = _integrity_companies(db)
+    return out
+
+
+INTEGRITY_COMPANIES_MAX = 1000
+
+
+def _integrity_companies(db: Session) -> List[Dict[str, Any]]:
+    """Every company of every organization, for a super admin's "שלמות נתונים" companies."""
+    from app.models.company import Company
+    from app.models.tenant import Tenant
+
+    rows = (
+        db.query(Company.id, Company.name, Tenant.id, Tenant.name)
+        .join(Tenant, Tenant.id == Company.tenant_id)
+        .order_by(Tenant.name, Company.name)
+        .limit(INTEGRITY_COMPANIES_MAX)
+        .all()
+    )
+    return [{"id": str(c), "name": name, "tenantId": str(t), "tenantName": tenant} for c, name, t, tenant in rows]
 
 
 def _shop_order():
@@ -245,7 +296,7 @@ def list_alerts(
     from app.services.company_hierarchy import descendant_company_ids
 
     _staff(current_user)
-    q = scoped(db, current_user, active_tenant_id)
+    q = _feed_base(db, current_user, active_tenant_id)
     if q is None:
         return {"alerts": [], "open": 0, "canAcknowledge": False, "canOpenLog": False}
     q = q.filter(ExceptionLogEntry.occurred_at >= _now() - timedelta(days=days))
@@ -272,25 +323,36 @@ def list_alerts(
     # Every push kind but a failed payment is wholly a push alert; a failed payment only when the
     # terminal failed (its details say) — those are the medium / high ones, read and judged apart
     # so a run of declined cards never pushes real alerts out of the page.
-    kinds = sorted({k for c in P.CATEGORIES for k in c.kinds} - {"failed_payment"})
+    # The kinds a level must switch on ("שלח התראה לטלפון", push-more §B — off by default) are alerts
+    # only where their rule says so: read apart and judged per row like the failed payments, so the
+    # log's every discount never fills the page.
+    every = {k for c in P.categories_for(current_user) for k in c.kinds} - {"failed_payment"}
+    gated = sorted(k for k in every if P.gated_kind(k))
+    kinds = sorted(every - set(gated))
     main = q.filter(ExceptionLogEntry.kind.in_(kinds))
     payments = q.filter(ExceptionLogEntry.kind == "failed_payment", ExceptionLogEntry.severity.in_(("medium", "high")))
+    switched = q.filter(ExceptionLogEntry.kind.in_(gated or ["__none__"]))
+    gate = P.GateCache(db)
     newest = ExceptionLogEntry.occurred_at.desc()
     candidates = main.order_by(newest).limit(limit).all() + [
         r for r in payments.order_by(newest).limit(max(limit, 200)).all() if P.category_of(r)
-    ]
+    ] + [r for r in switched.order_by(newest).limit(max(limit, 200)).all() if gate.allows(r)]
     candidates.sort(key=lambda r: L.aware(r.occurred_at), reverse=True)
     rows = candidates[:limit]
     open_payments = sum(
         1 for r in payments.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if P.category_of(r)
     )
-    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments
+    open_switched = sum(
+        1 for r in switched.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if gate.allows(r)
+    )
+    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments + open_switched
     labels = _labels(db, rows)
     out = []
     for r in rows:
         item = entry_json(r, labels)
         item["category"] = P.category_of(r)
         item["categoryLabel"] = P.CATEGORY_BY_KEY[item["category"]].label
+        item["tenantId"] = str(r.tenant_id) if r.tenant_id else None
         out.append(item)
     return {
         "alerts": out,
@@ -299,6 +361,24 @@ def list_alerts(
         # An alert's own page is the exceptions log's (`/x/<code>`): only with that section.
         "canOpenLog": P.may_open_log(db, current_user),
     }
+
+
+def _feed_base(db: Session, user: User, tenant_id):
+    """
+    The entries of the feed and its "טופל": the exceptions log's scoping — and for a super admin,
+    "שלמות נתונים" from every organization as well (it reaches their phone from all of them).
+    Anyone else never sees it here (it is not a push alert of theirs).
+    """
+    from sqlalchemy import or_
+
+    from app.routers.exception_log import scoped
+
+    if P.is_super_admin(user):
+        return db.query(ExceptionLogEntry).filter(or_(
+            ExceptionLogEntry.tenant_id == tenant_id, ExceptionLogEntry.kind.in_(P.INTEGRITY_KINDS),
+        ))
+    q = scoped(db, user, tenant_id)
+    return q.filter(ExceptionLogEntry.kind.notin_(P.INTEGRITY_KINDS)) if q is not None else None
 
 
 def may_acknowledge(db: Session, user: User) -> bool:
@@ -326,7 +406,7 @@ def acknowledge_alert(
     _staff(current_user)
     if current_user.role in NO_ACK_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-    q = scoped(db, current_user, active_tenant_id)
+    q = _feed_base(db, current_user, active_tenant_id)
     row = q.filter(ExceptionLogEntry.id == entry_id).first() if q is not None else None
     if row is None or P.category_of(row) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found")

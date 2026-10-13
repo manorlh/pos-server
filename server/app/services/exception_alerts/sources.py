@@ -412,14 +412,26 @@ def _kiosk_alert(ctx: Ctx, ka) -> Optional[EntrySpec]:
 # ── device health: battery ───────────────────────────────────────────────────
 
 
+BATTERY_CLOSED = {
+    "charging": "נסגר אוטומטית: המכשיר בטעינה",
+    "recovered": "נסגר אוטומטית: הסוללה עלתה",
+    "escalated": "נסגר אוטומטית: הסוללה ירדה לסף נמוך יותר",
+    "not_monitored": "נסגר אוטומטית: ניטור הסוללה כובה",
+}
+
+
 def _battery(ctx: Ctx, b) -> Optional[EntrySpec]:
     scope = ctx.scope_of_machine(b.machine_id)
+    # Charged (or climbed back, or gone on to a lower threshold): the entry closes by itself
+    # (push-more §A) — nothing is sent for it.
+    closed_note = BATTERY_CLOSED.get(b.clear_reason or "", "נסגר אוטומטית") if b.cleared_at is not None else None
     return EntrySpec(
         source="battery",
         source_id=str(b.id),
         dedupe_key=f"battery:{b.id}",
         kind="device_battery",
-        severity="medium" if b.severity == "critical" else "low",
+        # The critical threshold is red on the phone (push-more §A).
+        severity="high" if b.severity == "critical" else "low",
         occurred_at=_utc(b.raised_at),
         tenant_id=b.tenant_id or scope.get("tenant_id"),
         company_id=scope.get("company_id"),
@@ -430,7 +442,10 @@ def _battery(ctx: Ctx, b) -> Optional[EntrySpec]:
         threshold=b.level,
         summary=f"סוללה {b.percent}%" + (" (קריטי)" if b.severity == "critical" else ""),
         details={"level": b.level, "percent": b.percent, "lastPercent": b.last_percent,
-                 "severity": b.severity, "clearReason": b.clear_reason},
+                 "severity": b.severity, "clearReason": b.clear_reason,
+                 "clearedAt": aware(b.cleared_at).isoformat() if b.cleared_at else None},
+        close_only=True,
+        ack=(aware(b.cleared_at), None, closed_note) if closed_note else None,
     )
 
 
