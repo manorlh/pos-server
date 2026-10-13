@@ -27,6 +27,8 @@ import {
   formatPercent,
   historyParams,
   inheritedSource,
+  inheritedStyleSummary,
+  isApprovalStyle,
   initialPartial,
   isOverridden,
   isPartial,
@@ -42,6 +44,8 @@ import {
   overrideDraftOf,
   overrideFromDraft,
   overrideStart,
+  ownStyle,
+  ownStyleCount,
   overriddenCount,
   overridesBody,
   partialError,
@@ -56,12 +60,17 @@ import {
   policyErrors,
   reasonsError,
   requestedText,
+  resolveStyle,
   roleLabel,
   rolesForMaps,
   secondsLeft,
   sameEmployeeIds,
   setOwnField,
   setRoleLimit,
+  setStyle,
+  STYLE_ALL,
+  styleCatalogOf,
+  stylePermissionGroups,
   statusTone,
   toggleEmployee,
   typeLabels,
@@ -306,7 +315,7 @@ const POLICY: PolicyResponse = {
 describe('the policy form', () => {
   it('drafts this level own values, nulls and empty types dropped', () => {
     const d = draftFromPolicy(POLICY);
-    assert.deepEqual(d, { enabled: true, types: { refund: { enabled: true } } });
+    assert.deepEqual(d, { enabled: true, types: { refund: { enabled: true } }, approvalStyle: {} });
     assert.equal(policyDirty(d, POLICY), false);
   });
 
@@ -319,7 +328,7 @@ describe('the policy form', () => {
     d = setOwnField(d, 'refund', 'timeoutSeconds', null);
     assert.equal(policyDirty(d, POLICY), false);
     d = clearOwnType(d, 'refund');
-    assert.deepEqual(policyBody(d), { enabled: true, types: {} });
+    assert.deepEqual(policyBody(d), { enabled: true, types: {}, approvalStyle: {} });
   });
 
   it('sends the whole own document in a stable order', () => {
@@ -403,6 +412,74 @@ describe('the policy form', () => {
     assert.deepEqual(limits, {});
     assert.deepEqual(rolesForMaps(['till:manager'], { 'dash:shop_manager': {} }, { 'till:manager': true }), ['till:manager', 'dash:shop_manager']);
     assert.deepEqual(rolesForMaps(undefined), []);
+  });
+});
+
+const STYLE_POLICY: PolicyResponse = {
+  ...POLICY,
+  own: { enabled: null, types: {}, approvalStyle: { TABLE_RESTORE: 'takeover', DISCOUNT: null as unknown as 'both', '*': 'bad' as 'both' } },
+  inherited: { ...POLICY.inherited, approvalStyle: { TABLE_RESTORE: 'both', DISCOUNT: 'approve', REFUND: 'approve' } },
+  inheritedSources: { ...POLICY.inheritedSources, approvalStyle: { TABLE_RESTORE: null, DISCOUNT: 'company', REFUND: 'company' } },
+  catalog: {
+    ...POLICY.catalog,
+    approvalStyle: {
+      options: ['approve', 'takeover', 'both'],
+      default: 'both',
+      permissions: [
+        { code: 'DISCOUNT', label: 'הנחה', group: 'sale' },
+        { code: 'TABLE_RESTORE', label: 'שחזור שולחן', group: 'tables' },
+        { code: 'REFUND', label: 'זיכוי', group: 'sale' },
+      ],
+    },
+  },
+};
+
+describe('"סגנון האישור"', () => {
+  it('drafts this level own map, nulls and unknown values dropped, and always sends it', () => {
+    const d = draftFromPolicy(STYLE_POLICY);
+    assert.deepEqual(d.approvalStyle, { TABLE_RESTORE: 'takeover' });
+    assert.deepEqual(policyBody(d).approvalStyle, { TABLE_RESTORE: 'takeover' });
+    assert.equal(policyDirty(d, STYLE_POLICY), false);
+    assert.deepEqual(policyBody(draftFromPolicy({ own: { enabled: null, types: {} } })).approvalStyle, {});
+  });
+
+  it('sets a permission, "*" and back to inherit', () => {
+    let d = draftFromPolicy(STYLE_POLICY);
+    d = setStyle(d, STYLE_ALL, 'approve');
+    d = setStyle(d, 'DISCOUNT', 'both');
+    assert.deepEqual(policyBody(d).approvalStyle, { '*': 'approve', DISCOUNT: 'both', TABLE_RESTORE: 'takeover' });
+    assert.equal(ownStyleCount(d), 2);
+    assert.equal(policyDirty(d, STYLE_POLICY), true);
+    d = setStyle(setStyle(d, STYLE_ALL, null), 'DISCOUNT', null);
+    assert.equal(policyDirty(d, STYLE_POLICY), false);
+    assert.equal(ownStyle(d, 'REFUND'), null);
+  });
+
+  it('resolves: this permission here, then "*" here, then inherited with its level', () => {
+    let d = draftFromPolicy(STYLE_POLICY);
+    assert.deepEqual(resolveStyle(d, STYLE_POLICY, 'TABLE_RESTORE'), { style: 'takeover', from: 'own', source: null });
+    assert.deepEqual(resolveStyle(d, STYLE_POLICY, 'DISCOUNT'), { style: 'approve', from: 'inherited', source: 'company' });
+    assert.deepEqual(resolveStyle(d, STYLE_POLICY, 'UNKNOWN'), { style: 'both', from: 'inherited', source: null });
+    d = setStyle(d, STYLE_ALL, 'takeover');
+    assert.deepEqual(resolveStyle(d, STYLE_POLICY, 'DISCOUNT'), { style: 'takeover', from: 'ownAll', source: null });
+  });
+
+  it('sums up what "כל ההרשאות" inherits', () => {
+    assert.deepEqual(inheritedStyleSummary(STYLE_POLICY, ['DISCOUNT', 'REFUND']), { style: 'approve', source: 'company', mixed: false });
+    assert.deepEqual(inheritedStyleSummary(STYLE_POLICY, ['DISCOUNT', 'TABLE_RESTORE']), { style: null, source: null, mixed: true });
+    assert.deepEqual(inheritedStyleSummary(STYLE_POLICY, []), { style: 'both', source: null, mixed: false });
+  });
+
+  it('reads the catalogue and groups the permissions', () => {
+    const c = styleCatalogOf(STYLE_POLICY.catalog);
+    assert.deepEqual(c.options, ['approve', 'takeover', 'both']);
+    assert.deepEqual(
+      stylePermissionGroups(c.permissions).map((g) => [g.group, g.permissions.map((p) => p.code)]),
+      [['sale', ['DISCOUNT', 'REFUND']], ['tables', ['TABLE_RESTORE']]],
+    );
+    assert.deepEqual(styleCatalogOf(null), { options: ['approve', 'takeover', 'both'], default: 'both', permissions: [] });
+    assert.equal(isApprovalStyle('takeover'), true);
+    assert.equal(isApprovalStyle('x'), false);
   });
 });
 

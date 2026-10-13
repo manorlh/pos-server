@@ -57,6 +57,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { PolicyApproversCard, policyApproversKey } from './policy-approvers-card';
+import { ApprovalStyleSection } from './approval-style-section';
 
 const NATIVE_SELECT =
   'border-input bg-background h-9 w-full rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60';
@@ -238,6 +239,9 @@ export function PolicyEditor({ data }: { data: PolicyResponse }) {
           </Card>
         </section>
       ))}
+
+      {/* "סגנון האישור": per till permission, separate from the request types. */}
+      <ApprovalStyleSection data={data} draft={draft} readOnly={readOnly} onChange={setDraft} levelName={levelName} />
 
       <div className="bg-background/95 sticky bottom-0 z-10 flex flex-wrap items-center gap-2 border-t py-3">
         <Button onClick={() => save.mutate()} disabled={readOnly || !dirty || invalid || save.isPending}>

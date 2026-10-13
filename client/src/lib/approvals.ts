@@ -549,18 +549,42 @@ export interface CatalogField {
 
 export type FieldValues = Record<string, unknown>;
 
+/**
+ * "סגנון האישור" (P:\specs\table-restore-payments.md §4): how a manager answers a till permission
+ * that needs approval — `approve` ("אישור מנהל": the action stays the employee's), `takeover`
+ * ("מנהל מבצע": the manager does it as themselves, once) or `both` (the sheet offers the two).
+ */
+export type ApprovalStyle = 'approve' | 'takeover' | 'both';
+/** A level's word for every permission it does not name. */
+export const STYLE_ALL = '*';
+
+export interface StylePermission {
+  code: string;
+  label: string;
+  group: string;
+}
+
+export interface StyleCatalog {
+  options: ApprovalStyle[];
+  default: ApprovalStyle;
+  permissions: StylePermission[];
+}
+
 export interface ApprovalCatalog {
   levels: PolicyLevel[];
   types: CatalogType[];
   roles: CatalogRole[];
   fields: CatalogField[];
   defaults?: { enabled: boolean; types: Record<string, FieldValues> };
+  approvalStyle?: StyleCatalog;
 }
 
 /** What one level sets: `enabled` null and a missing field = inherit. */
 export interface PolicyDoc {
   enabled: boolean | null;
   types: Record<string, FieldValues>;
+  /** `{code | "*": style}` — a missing code inherits. Always sent: the PUT replaces the whole doc. */
+  approvalStyle?: Record<string, ApprovalStyle>;
 }
 
 export interface PolicyResponse {
@@ -568,9 +592,13 @@ export interface PolicyResponse {
   id: string;
   canWrite: boolean;
   own: PolicyDoc;
-  inherited: { enabled: boolean; types: Record<string, FieldValues> };
-  inheritedSources: { enabled: string | null; types: Record<string, Record<string, string | null>> };
-  effective: { enabled: boolean; types: Record<string, FieldValues> };
+  inherited: { enabled: boolean; types: Record<string, FieldValues>; approvalStyle?: Record<string, ApprovalStyle> };
+  inheritedSources: {
+    enabled: string | null;
+    types: Record<string, Record<string, string | null>>;
+    approvalStyle?: Record<string, string | null>;
+  };
+  effective: { enabled: boolean; types: Record<string, FieldValues>; approvalStyle?: Record<string, ApprovalStyle> };
   catalog: ApprovalCatalog;
 }
 
@@ -591,7 +619,23 @@ export function draftFromPolicy(resp: Pick<PolicyResponse, 'own'>): PolicyDoc {
     if (Object.keys(kept).length) types[type] = kept;
   }
   const enabled = resp.own?.enabled;
-  return { enabled: enabled === true || enabled === false ? enabled : null, types };
+  return {
+    enabled: enabled === true || enabled === false ? enabled : null,
+    types,
+    approvalStyle: cleanStyles(resp.own?.approvalStyle),
+  };
+}
+
+export function isApprovalStyle(v: unknown): v is ApprovalStyle {
+  return v === 'approve' || v === 'takeover' || v === 'both';
+}
+
+/** A style map with nulls and unknown values dropped, keys in a stable order. */
+function cleanStyles(raw: unknown): Record<string, ApprovalStyle> {
+  const out: Record<string, ApprovalStyle> = {};
+  const map = asObject(raw);
+  for (const code of Object.keys(map).sort()) if (isApprovalStyle(map[code])) out[code] = map[code] as ApprovalStyle;
+  return out;
 }
 
 /** Set (or with null, inherit) one field of one type at this level. Returns a new draft. */
@@ -621,7 +665,7 @@ export function policyBody(draft: PolicyDoc): PolicyDoc {
     for (const k of Object.keys(fields).sort()) if (fields[k] !== null && fields[k] !== undefined) kept[k] = fields[k];
     if (Object.keys(kept).length) types[type] = kept;
   }
-  return { enabled: draft.enabled, types };
+  return { enabled: draft.enabled, types, approvalStyle: cleanStyles(draft.approvalStyle) };
 }
 
 export function policyDirty(draft: PolicyDoc, resp: Pick<PolicyResponse, 'own'>): boolean {
@@ -806,6 +850,103 @@ export function rolesForMaps(approverRoles: unknown, ...maps: unknown[]): string
   const out: string[] = Array.isArray(approverRoles) ? approverRoles.map(String) : [];
   for (const m of maps) for (const k of Object.keys(asObject(m))) if (!out.includes(k)) out.push(k);
   return out;
+}
+
+// ── "סגנון האישור" per till permission ──────────────────────────────────────
+
+const ALL_STYLES: ApprovalStyle[] = ['approve', 'takeover', 'both'];
+
+/** The catalogue's style block, or the spec's when a server sends none. */
+export function styleCatalogOf(catalog: Pick<ApprovalCatalog, 'approvalStyle'> | null | undefined): StyleCatalog {
+  const raw = asObject(catalog?.approvalStyle);
+  const options = Array.isArray(raw.options) ? raw.options.filter(isApprovalStyle) : [];
+  const permissions = (Array.isArray(raw.permissions) ? raw.permissions : [])
+    .map((p) => asObject(p))
+    .map((p) => ({ code: String(p.code ?? ''), label: str(p.label) ?? String(p.code ?? ''), group: str(p.group) ?? '' }))
+    .filter((p) => p.code && p.code !== STYLE_ALL);
+  return {
+    options: options.length ? options : ALL_STYLES,
+    default: isApprovalStyle(raw.default) ? raw.default : 'both',
+    permissions,
+  };
+}
+
+/** The permissions by their till-roles group, in the catalogue's order. */
+export function stylePermissionGroups(permissions: StylePermission[]): Array<{ group: string; permissions: StylePermission[] }> {
+  const out: Array<{ group: string; permissions: StylePermission[] }> = [];
+  for (const p of permissions) {
+    let g = out.find((x) => x.group === p.group);
+    if (!g) {
+      g = { group: p.group, permissions: [] };
+      out.push(g);
+    }
+    g.permissions.push(p);
+  }
+  return out;
+}
+
+/** Set (or with null, inherit) one permission's style — or "*" — at this level. Returns a new draft. */
+export function setStyle(draft: PolicyDoc, code: string, style: ApprovalStyle | null): PolicyDoc {
+  const next = { ...(draft.approvalStyle ?? {}) };
+  if (style === null) delete next[code];
+  else next[code] = style;
+  return { ...draft, approvalStyle: next };
+}
+
+export function ownStyle(draft: PolicyDoc, code: string): ApprovalStyle | null {
+  const v = draft.approvalStyle?.[code];
+  return isApprovalStyle(v) ? v : null;
+}
+
+/**
+ * Where a permission's style comes from with the draft: set here for it (`own`), set here for all
+ * permissions (`ownAll`, the "*" row), or inherited (`inherited`, with the level — null = default).
+ */
+export interface StyleResolution {
+  style: ApprovalStyle;
+  from: 'own' | 'ownAll' | 'inherited';
+  source: string | null;
+}
+
+export function resolveStyle(
+  draft: PolicyDoc,
+  resp: Pick<PolicyResponse, 'inherited' | 'inheritedSources'>,
+  code: string,
+  fallback: ApprovalStyle = 'both',
+): StyleResolution {
+  const own = ownStyle(draft, code);
+  if (own) return { style: own, from: 'own', source: null };
+  const all = ownStyle(draft, STYLE_ALL);
+  if (all) return { style: all, from: 'ownAll', source: null };
+  const inherited = resp.inherited?.approvalStyle?.[code];
+  return {
+    style: isApprovalStyle(inherited) ? inherited : fallback,
+    from: 'inherited',
+    source: resp.inheritedSources?.approvalStyle?.[code] ?? null,
+  };
+}
+
+/**
+ * What the "כל ההרשאות" row inherits: one style and one source when every permission inherits the
+ * same, else `mixed` (the levels above differ by permission).
+ */
+export function inheritedStyleSummary(
+  resp: Pick<PolicyResponse, 'inherited' | 'inheritedSources'>,
+  codes: string[],
+  fallback: ApprovalStyle = 'both',
+): { style: ApprovalStyle | null; source: string | null; mixed: boolean } {
+  if (!codes.length) return { style: fallback, source: null, mixed: false };
+  const pairs = codes.map((code) => {
+    const v = resp.inherited?.approvalStyle?.[code];
+    return { style: isApprovalStyle(v) ? v : fallback, source: resp.inheritedSources?.approvalStyle?.[code] ?? null };
+  });
+  const same = pairs.every((p) => p.style === pairs[0].style && p.source === pairs[0].source);
+  return same ? { ...pairs[0], mixed: false } : { style: null, source: null, mixed: true };
+}
+
+/** How many permissions this level names by themselves (the "*" row not counted). */
+export function ownStyleCount(draft: PolicyDoc): number {
+  return Object.keys(draft.approvalStyle ?? {}).filter((k) => k !== STYLE_ALL && isApprovalStyle(draft.approvalStyle?.[k])).length;
 }
 
 // ── Who would receive a level's requests ("מי יקבל בקשות", §5) ───────────────
