@@ -40,6 +40,8 @@ import { askPersistentStorage, isStandalone, useFullscreenOnTap, useKioskGuards,
 import { registerScreenWorker, screenManifest, useManifestLink } from './screen-shell';
 import { ScreenStaff } from './screen-staff';
 import { ScreenBridgePrompt, bridgePromptDue, useBridgeState } from './screen-bridge';
+import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
+import { shopLockShown } from '@/lib/shopActive';
 
 export const WEB_SCREEN_VERSION = '1.0.0';
 
@@ -301,6 +303,11 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
       />
     );
   }
+  const staffSheet = staff ? <ScreenStaff view={view} svc={svc} bridge={agent} onClose={() => setStaff(false)} /> : null;
+  // "סניף לא פעיל" (lib/shopActive.ts): a screen sells nothing — locked at once; the technician's corner stays.
+  if (shopLockShown({ shopActive: view.shopActive, surface: view.shows === 'board' ? 'board' : 'kds' })) {
+    return <ShopLockScreen onPointerDown={corner}>{staffSheet}</ShopLockScreen>;
+  }
   return (
     <Screen
       route={route}
@@ -311,8 +318,8 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
       onPointerDown={corner}
       onPrint={onPrint}
       overlay={
-        staff ? (
-          <ScreenStaff view={view} svc={svc} bridge={agent} onClose={() => setStaff(false)} />
+        staffSheet ? (
+          staffSheet
         ) : prompt && agent ? (
           <ScreenBridgePrompt agent={agent} route={route} onClose={() => setPromptClosed(true)} />
         ) : null

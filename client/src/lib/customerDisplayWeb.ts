@@ -9,7 +9,9 @@
  *  - the till's screen through the cloud relay (`sync/{m}/customer-display/state?after=seq`) every
  *    `poll.relayMs` — a page served over https cannot reach the till's LAN server (http), so the
  *    browser always reads through the cloud; an Android display reads the LAN first;
- *  - a heartbeat every 30 s; a revoked token (401) goes back to pairing.
+ *  - a heartbeat every 30 s; a revoked token (401) goes back to pairing;
+ *  - "סניף לא פעיל" (lib/shopActive.ts): `shopActive` from the heartbeat, kept — the screen shows
+ *    "הסניף אינו פעיל — פנו לתמיכה" at once, and is released on the beat after the shop is on again.
  *
  * Pure of React and of the DOM (the browser's facts come in through `deps`), so the node tests
  * drive it with a fake fetch and a memory store. No `@/` imports.
@@ -18,10 +20,13 @@
 import { KioskApi, apiBase, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
 import type { KvStore } from './kioskWebStore';
 import { DEFAULTS, IDLE_STATE, parseState, type CdConfig, type CdState } from './customerDisplay';
+import { shopActiveAfter, shopActiveKept, shopActiveSaid } from './shopActive';
 
 export const KEYS = {
   credentials: 'r2m.display.credentials',
   config: 'r2m.display.config',
+  /** "סניף לא פעיל": the cloud's last `shopActive` (a locked display opens locked offline). */
+  shopActive: 'r2m.display.shopActive',
 } as const;
 
 export const BEAT_MS = 30_000;
@@ -51,6 +56,8 @@ export interface DisplayWebView {
   online: boolean;
   /** Paired, but the cloud says this device is no customer display (a KDS's code, a till's). */
   wrongRole: string | null;
+  /** "סניף לא פעיל": false — the shop was turned off in the cloud; the display is locked until it is on again. */
+  shopActive: boolean;
 }
 
 export interface DisplayWebDeps {
@@ -108,6 +115,7 @@ export class CustomerDisplayWebService {
   private lastConfigAt = Number.NEGATIVE_INFINITY;
   private lastBeatAt = Number.NEGATIVE_INFINITY;
   private wrongRole: string | null = null;
+  private shopActive = true;
   private lastViewJson = '';
   private readonly listeners = new Set<(v: DisplayWebView) => void>();
 
@@ -122,6 +130,7 @@ export class CustomerDisplayWebService {
   async init(): Promise<DisplayWebView> {
     this.creds = await this.deps.store.get<KioskCredentials>(KEYS.credentials);
     this.payload = parseConfigPayload(await this.deps.store.get<unknown>(KEYS.config));
+    this.shopActive = shopActiveKept(await this.deps.store.get<unknown>(KEYS.shopActive));
     if (this.creds) this.api.setBase(this.creds.serverUrl);
     this.loaded = true;
     if (this.creds) this.start();
@@ -183,6 +192,7 @@ export class CustomerDisplayWebService {
       state: this.state,
       online,
       wrongRole: this.wrongRole,
+      shopActive: this.shopActive,
     };
   }
 
@@ -223,11 +233,13 @@ export class CustomerDisplayWebService {
     this.state = IDLE_STATE;
     this.seq = -1;
     this.wrongRole = null;
+    this.shopActive = true;
     this.lastAnswerAt = null;
     this.lastConfigAt = Number.NEGATIVE_INFINITY;
     this.lastBeatAt = Number.NEGATIVE_INFINITY;
     await this.deps.store.del(KEYS.credentials);
     await this.deps.store.del(KEYS.config);
+    await this.deps.store.del(KEYS.shopActive);
     this.changed();
   }
 
@@ -268,6 +280,12 @@ export class CustomerDisplayWebService {
   private async heartbeat() {
     if (!this.creds) return;
     this.lastBeatAt = this.now();
-    await this.seen(await this.api.post('machines/me/heartbeat', { appVersion: this.deps.appVersion, pendingCount: 0, realtimeConnected: false }, { timeoutMs: 15_000 }));
+    const r = await this.seen(await this.api.post('machines/me/heartbeat', { appVersion: this.deps.appVersion, pendingCount: 0, realtimeConnected: false }, { timeoutMs: 15_000 }));
+    if (r.kind !== 'ok') return;
+    const next = shopActiveAfter(this.shopActive, shopActiveSaid(r.body));
+    if (next === this.shopActive) return;
+    this.shopActive = next;
+    this.deps.log?.(next ? 'shop active again: released' : 'shop inactive: locked');
+    await this.deps.store.set(KEYS.shopActive, next);
   }
 }

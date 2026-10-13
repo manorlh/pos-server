@@ -125,3 +125,38 @@ test('a revoked token goes back to pairing and forgets the configuration', async
   assert.equal(svc.view().phase, 'unpaired');
   assert.equal(await store.get(KEYS.credentials), null);
 });
+
+test('"סניף לא פעיל": the heartbeat locks the display at once, kept across a reload; a beat that says nothing keeps it; re-activation releases', async () => {
+  const now = { t: 1_000_000 };
+  let beat: Record<string, unknown> = { shopActive: false };
+  const cloud = fakeCloud((c) => {
+    if (c.url.endsWith('/pairing/validate')) return { status: 200, body: { accessToken: 'tok', machineId: 'd1' } };
+    if (c.url.endsWith('/sync/d1/customer-display')) return { status: 200, body: CONFIG };
+    if (c.url.includes('/sync/d1/customer-display/state')) return { status: 204 };
+    if (c.url.endsWith('/machines/me/heartbeat')) return { status: 200, body: beat };
+    return { status: 404 };
+  });
+  const store = new MemoryStore();
+  const make = () =>
+    new CustomerDisplayWebService({ store, fetchFn: cloud.fetchFn, defaultServer: 'https://api.example', appVersion: 'test', deviceInfo: () => ({ platform: 'web' }), now: () => now.t, timers: { set: () => 0, clear: () => undefined } });
+  const svc = make();
+  await svc.init();
+  assert.equal(svc.view().shopActive, true);
+  await svc.pair({ code: 'ABC123', machineName: '' });
+  await svc.tick();
+  assert.equal(svc.view().shopActive, false);
+  assert.equal(await store.get(KEYS.shopActive), false);
+  svc.stop();
+  const again = make();
+  await again.init();
+  assert.equal(again.view().shopActive, false);
+  beat = {};
+  now.t += 31_000;
+  await again.tick();
+  assert.equal(again.view().shopActive, false);
+  beat = { shopActive: true };
+  now.t += 31_000;
+  await again.tick();
+  assert.equal(again.view().shopActive, true);
+  again.stop();
+});

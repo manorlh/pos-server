@@ -37,6 +37,8 @@ export const KV = {
   stock: 'r2m.kiosk.stock',
   settings: 'r2m.kiosk.settings',
   parameters: 'r2m.kiosk.parameters',
+  /** "סניף לא פעיל" (lib/shopActive.ts): the cloud's last `shopActive`, so a locked kiosk opens locked offline. */
+  shopActive: 'r2m.kiosk.shopActive',
   pickup: 'r2m.kiosk.pickup',
   pickupFallback: 'r2m.kiosk.pickupFallback',
   deviceId: 'r2m.kiosk.deviceId',
