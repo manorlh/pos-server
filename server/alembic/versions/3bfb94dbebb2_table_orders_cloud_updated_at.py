@@ -29,7 +29,8 @@ COLUMN = "cloud_updated_at"
 def _offline() -> bool:
     try:
         return context.is_offline_mode()
-    except NameError:  # run by hand (a test) outside alembic's environment
+    except (NameError, AttributeError):  # run by hand (a test) outside alembic's environment — or after
+        # one that left alembic's `context` proxy empty (None) behind it
         try:
             return bool(op.get_context().as_sql)
         except Exception:  # noqa: BLE001
