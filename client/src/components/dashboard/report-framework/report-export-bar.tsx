@@ -56,9 +56,18 @@ export interface ReportExportBarProps {
   title: string;
   /** The tables that go out (the first, or `pdfTableId`, is the PDF's). */
   tables: ReportTableSpec<unknown>[];
-  /** Sheets that are not a table of the page (a heat map…), appended as they are. */
-  extraSheets?: () => ExcelSheet[];
+  /** Sheets that are not a table of the page (a heat map…), appended as they are. May load first. */
+  extraSheets?: () => ExcelSheet[] | Promise<ExcelSheet[]>;
   extraSheetsFirst?: boolean;
+  /**
+   * A paged list: the export fetches every row first. Returns the tables (same ids and columns)
+   * with all their rows; Excel and the PDF use them instead of `tables` (the page on screen).
+   */
+  loadAll?: () => Promise<ReportTableSpec<unknown>[]>;
+  /** A workbook the server builds replaces the client's Excel (the columns choice is then the PDF's). */
+  excel?: () => Promise<void>;
+  /** More buttons in the bar (a CSV, a ZIP). */
+  actions?: React.ReactNode;
   pdfTableId?: string;
   from?: string | null;
   to?: string | null;
@@ -87,6 +96,7 @@ export function toExportTable(table: ReportTableSpec<unknown>, q: string, fallba
     columns: columns.map((c) => ({ key: c.key, header: c.header, kind: c.kind, width: c.width })),
     rows: rows.map((r) => columns.map((c) => c.value(r))),
     totals,
+    ...(table.rowFill ? { rowFills: rows.map((r) => table.rowFill!(r) ?? null) } : {}),
   };
 }
 
@@ -96,6 +106,9 @@ export function ReportExportBar({
   tables,
   extraSheets,
   extraSheetsFirst = false,
+  loadAll,
+  excel,
+  actions,
   pdfTableId,
   from,
   to,
@@ -156,11 +169,22 @@ export function ReportExportBar({
   const headerLines = (at: string) =>
     reportHeaderLines({ title, business, place, from, to, hours, filters: filterLines, generatedAt: at }, words);
 
+  /** The tables as exported: every row of a paged list (`loadAll`), else what the page holds. */
+  const exportTables = async (): Promise<{ table: ReportTableSpec<unknown>; keys: string[] }[]> => {
+    if (!loadAll) return resolved.map((r) => ({ table: r.table, keys: r.keys }));
+    const full = await loadAll();
+    return resolved.map((r) => ({ table: full.find((x) => x.id === r.table.id) ?? r.table, keys: r.keys }));
+  };
+
   const onExcel = async () => {
     setBusy('excel');
     try {
-      const sheets = resolved.map((r) => exportTableSheet(toExportTable(r.table, q, title), r.keys));
-      const extra = extraSheets?.() ?? [];
+      if (excel) {
+        await excel();
+        return;
+      }
+      const sheets = (await exportTables()).map((r) => exportTableSheet(toExportTable(r.table, q, title), r.keys));
+      const extra = (await extraSheets?.()) ?? [];
       await downloadExcel(extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra], fileName, {
         heading: headerLines(new Date().toISOString()),
         readableName: true,
@@ -185,15 +209,17 @@ export function ReportExportBar({
   };
 
   const onPdf = async () => {
-    const r = resolved.find((x) => x.table.id === pdfTableId) ?? resolved[0];
-    if (!r) return;
-    const table = toExportTable(r.table, q, title);
-    if (table.rows.length > PDF_MAX_ROWS) {
-      toast.error(t('pdfTooMany', { max: PDF_MAX_ROWS.toLocaleString('he-IL') }));
-      return;
-    }
+    const chosen = resolved.find((x) => x.table.id === pdfTableId) ?? resolved[0];
+    if (!chosen) return;
     setBusy('pdf');
     try {
+      const all = await exportTables();
+      const r = all.find((x) => x.table.id === chosen.table.id) ?? { table: chosen.table, keys: chosen.keys };
+      const table = toExportTable(r.table, q, title);
+      if (table.rows.length > PDF_MAX_ROWS) {
+        toast.error(t('pdfTooMany', { max: PDF_MAX_ROWS.toLocaleString('he-IL') }));
+        return;
+      }
       const pdfTitle = r.table.id !== MAIN_TABLE && r.table.title ? `${title} · ${r.table.title}` : title;
       const range = rangeText(from, to);
       const blob = await fetchReportPdf(
@@ -292,6 +318,7 @@ export function ReportExportBar({
             {t('chosenColumns', { count: chosenCount })}
           </Badge>
         </Button>
+        {actions}
       </div>
 
       {/* The print template's header. Never on screen. */}

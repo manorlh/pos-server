@@ -3,7 +3,7 @@
  * bar, `ReportTable` and the export bar. Pure logic lives in lib/reportFilters.ts,
  * lib/reportColumns.ts, lib/reportExport.ts and lib/excelExport.ts.
  */
-export { ReportPage, reportQueryState, type ReportPageProps, type ReportExportConfig, type ReportQueryState } from './report-page';
+export { ReportPage, reportQueryState, useReportExportScope, type ReportPageProps, type ReportExportConfig, type ReportQueryState } from './report-page';
 export { ReportTable, formatReportValue, searchRows } from './report-table';
 export { ReportFilterBar, type ReportFilterBarProps } from './report-filter-bar';
 export { ReportExportBar, toExportTable } from './report-export-bar';

@@ -137,6 +137,8 @@ export interface ExportTable {
   totals?: ExcelValue[];
   /** Lines of this sheet only, under the report's header lines. */
   heading?: string[];
+  /** A fill per row (ARGB) — a status colour; same order as `rows`. */
+  rowFills?: (string | null | undefined)[];
 }
 
 /** The table as an Excel sheet with only `keys` (bare column keys, in order); null = all. */
@@ -148,6 +150,7 @@ export function exportTableSheet(table: ExportTable, keys: readonly string[] | n
       columns: table.columns.map((c) => ({ key: c.key, header: c.header, kind: c.kind, width: c.width })),
       rows: table.rows,
       totals: table.totals,
+      ...(table.rowFills?.some(Boolean) ? { rowFills: table.rowFills } : {}),
     },
     keys,
   );

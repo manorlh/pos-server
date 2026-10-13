@@ -53,6 +53,11 @@ export interface ReportTableSpec<R> {
   totalsLabel?: string;
   emptyText?: string;
   rowClassName?(row: R): string | undefined;
+  /**
+   * The row's fill in Excel (ARGB, `EXCEL_FILL` in lib/excelExport.ts), null for none: a status
+   * the screen colours (`rowClassName`) stays coloured in the sheet.
+   */
+  rowFill?(row: R): string | null | undefined;
   /** A drill-down under the row (opened by a click on the row). */
   expand?(row: R): ReactNode;
   /** Not in Excel / PDF (default: exported). */

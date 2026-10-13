@@ -338,6 +338,21 @@ describe('a sheet cut to the export columns', () => {
     assert.deepEqual(sheetHeading({ ...sheet, heading: ['פירוט'] }, { heading: ['דוח', 'הופק'] }), ['דוח', 'הופק', 'פירוט']);
     assert.deepEqual(sheetHeading(sheet), []);
   });
+
+  it('a status colour stays with its row when the columns are cut', () => {
+    const table: ExportTable = {
+      tableId: 'main',
+      name: 'התאמה',
+      columns: sheet.columns.map((c) => ({ key: c.key!, header: c.header, kind: c.kind })),
+      rows: sheet.rows,
+      rowFills: ['FFFFE5E3', null],
+    };
+    const cut = exportTableSheet(table, ['net']);
+    assert.deepEqual(cut.rows, [[30], [8]]);
+    assert.deepEqual(cut.rowFills, ['FFFFE5E3', null]);
+    // No colour at all: no fills on the sheet.
+    assert.equal(exportTableSheet({ ...table, rowFills: [null, null] }, null).rowFills, undefined);
+  });
 });
 
 describe('PDF body (§4.5)', () => {
