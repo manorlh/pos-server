@@ -9716,6 +9716,36 @@
       "clear": "ניקוי סינון",
       "count": "{shown} מתוך {total} כללים",
       "none": "אין כללים שמתאימים לסינון."
+    },
+    "export": {
+      "title": "כללי הגדלות מכירה",
+      "note": "בייצוא: הכללים שברשימה ({count}), עם הנתונים של 30 הימים האחרונים.",
+      "rules": "כללים",
+      "rulesAll": "כל הכללים ({total})",
+      "rulesFiltered": "{shown} מתוך {total}, לפי הסינון",
+      "stats": "נתוני ביצוע",
+      "statsWindow": "30 הימים האחרונים",
+      "search": "חיפוש",
+      "col": {
+        "name": "כלל",
+        "action": "סוג",
+        "places": "איפה",
+        "triggerType": "מפעיל",
+        "triggers": "מה מפעיל",
+        "offers": "מה מוצע",
+        "prompt": "טקסט בקופה",
+        "display": "תצוגה",
+        "oncePerOrder": "פעם בהזמנה",
+        "when": "מתי",
+        "active": "פעיל",
+        "shown": "הוצג",
+        "accepted": "התקבל",
+        "dismissed": "נדחה",
+        "declined": "הלקוח סירב",
+        "rate": "שיעור קבלה",
+        "revenue": "הכנסה",
+        "optionsTaken": "מה נלקח"
+      }
     }
   },
   "catalogMenus": {
@@ -10036,7 +10066,37 @@
       "shown": "הוצג",
       "accepted": "התקבל",
       "dismissed": "נדחה",
-      "rate": "שיעור קבלה"
+      "rate": "שיעור קבלה",
+      "notes": "הערות",
+      "action": "סוג"
+    }
+  },
+  "targetsPage": {
+    "exportTitle": "יעדים",
+    "progressTitle": "התקדמות היום",
+    "targetsTitle": "כל היעדים",
+    "reached": "היעד הושג",
+    "period": {
+      "day": "יומי",
+      "event": "אירוע"
+    },
+    "when": {
+      "event": "לאירוע",
+      "day": "ליום {day}",
+      "everyDay": "כל יום {from}–{to}"
+    },
+    "col": {
+      "target": "יעד",
+      "shop": "סניף",
+      "scope": "יעד של",
+      "period": "תקופה",
+      "amount": "סכום היעד",
+      "actual": "בפועל",
+      "percent": "ביצוע",
+      "forecast": "צפי בקצב הנוכחי",
+      "status": "מצב",
+      "reachedAt": "הושג ב־",
+      "when": "מתי"
     }
   },
   "promotionsReport": {

@@ -61,6 +61,19 @@ import {
   sequenceGapText,
   varianceTone,
 } from './auditReports';
+import {
+  MENU_REPORT_KEYS,
+  anyRowHas,
+  mealLines,
+  mealNotes,
+  optionsTakenText,
+  parseMenuReportTab,
+  ratePercent,
+  rateText,
+  targetWhen,
+  upsellFigureTotals,
+  withMenuReportTab,
+} from './menuTargetsReports';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -616,5 +629,98 @@ describe('control reports: cash variance, sequence, offline runs, promotions', (
     assert.equal(isUuid('not-a-uuid'), false);
     assert.equal(isUuid(''), false);
     assert.equal(isUuid(null), false);
+  });
+});
+
+describe('menu reports, the upsell rules and the targets on the framework', () => {
+  it('the tab in the URL: the first is the default and leaves the key out, other keys kept', () => {
+    assert.equal(parseMenuReportTab('meals'), 'meals');
+    assert.equal(parseMenuReportTab('upsells'), 'upsells');
+    assert.equal(parseMenuReportTab('nonsense'), 'modifiers');
+    assert.equal(parseMenuReportTab(null), 'modifiers');
+    assert.equal(withMenuReportTab('?from=2026-10-01&to=2026-10-13&shop=s1', 'meals'), 'from=2026-10-01&to=2026-10-13&shop=s1&tab=meals');
+    assert.equal(withMenuReportTab('from=2026-10-01&tab=meals', 'modifiers'), 'from=2026-10-01');
+    // The report framework's own write keeps the tab (it rewrites only its keys).
+    const written = writeReportFilters(new URLSearchParams('tab=upsells'), clearedReportFilters({ filters: ['hours'] }, TODAY).values, {}, { filters: ['hours'] });
+    assert.equal(written.get('tab'), 'upsells');
+  });
+
+  it('each tab is its own report key (its own company export default), valid for the server', () => {
+    const keys = Object.values(MENU_REPORT_KEYS);
+    assert.equal(new Set(keys).size, 3);
+    for (const k of keys) assert.match(k, /^[a-z0-9][a-z0-9._-]{0,63}$/);
+  });
+
+  it('the meals as rows: each meal, then its components under it', () => {
+    const meals = [
+      { productId: 'm1', name: 'ארוחת המבורגר', components: [{ productId: 'c1' }, { productId: null }] },
+      { productId: null, name: 'ארוחה', components: [] },
+      { productId: 'm3', name: 'ארוחת ילדים', components: [{ productId: 'c1' }] },
+    ];
+    const lines = mealLines(meals);
+    assert.deepEqual(
+      lines.map((l) => [l.key, l.meal.name, l.component ? (l.component.productId ?? 'no id') : null]),
+      [
+        ['meal:m1', 'ארוחת המבורגר', null],
+        ['component:m1:c1', 'ארוחת המבורגר', 'c1'],
+        ['component:m1:#1', 'ארוחת המבורגר', 'no id'],
+        ['meal:#1', 'ארוחה', null],
+        ['meal:m3', 'ארוחת ילדים', null],
+        ['component:m3:c1', 'ארוחת ילדים', 'c1'],
+      ],
+    );
+    // Row keys are unique (the table keys its rows by them).
+    assert.equal(new Set(lines.map((l) => l.key)).size, lines.length);
+    assert.deepEqual(mealLines([]), []);
+  });
+
+  it("a meal's notes: unredeemed per slot, taken later, refills — nothing when none", () => {
+    const words = {
+      unredeemed: (items: string) => `לא מומש: ${items}`,
+      takenLater: (n: string) => `נלקח אחר כך: ${n}`,
+      refills: (n: string) => `ריפילים: ${n}`,
+      qty: (n: number) => String(n),
+    };
+    assert.deepEqual(
+      mealNotes(
+        { productId: 'm', components: [], unredeemed: [{ slotName: 'שתייה', count: 3 }, { slotName: 'קינוח', count: 1 }], takenLater: 2, refills: 1 },
+        words,
+      ),
+      ['לא מומש: שתייה ×3, קינוח ×1', 'נלקח אחר כך: 2', 'ריפילים: 1'],
+    );
+    assert.deepEqual(mealNotes({ productId: 'm', components: [], unredeemed: [], takenLater: 0, refills: 0 }, words), []);
+  });
+
+  it('the acceptance rate: one decimal in the export, the whole percent on screen', () => {
+    assert.equal(ratePercent(0.3333), 33.3);
+    assert.equal(ratePercent(1), 100);
+    assert.equal(ratePercent(null), null);
+    assert.equal(rateText(0.3333), '33%');
+    assert.equal(rateText(null), '—');
+    assert.equal(optionsTakenText([{ name: 'קולה', count: 3 }, { name: null, count: 1 }]), 'קולה ×3, — ×1');
+    assert.equal(optionsTakenText(undefined), '');
+  });
+
+  it("the rules' totals: summed over the rules listed, the rate taken of shown", () => {
+    const totals = upsellFigureTotals([
+      { shown: 10, accepted: 4, dismissed: 5, declined: 1, revenue: 40.1 },
+      undefined,
+      { shown: 5, accepted: 1, dismissed: 4, revenue: 9.2 },
+    ]);
+    assert.deepEqual(totals, { shown: 15, accepted: 5, dismissed: 9, declined: 1, revenue: 49.3, rate: 33.3 });
+    assert.equal(upsellFigureTotals([]).rate, null);
+  });
+
+  it('when a target applies, and a newer field only when it came', () => {
+    const words = { event: 'לאירוע', day: (d: string) => `ליום ${d}`, everyDay: (a: string, b: string) => `כל יום ${a}–${b}` };
+    assert.equal(targetWhen({ period: 'event', day: null, dayStart: '08:00', dayEnd: '23:00' }, words), 'לאירוע');
+    assert.equal(targetWhen({ period: 'day', day: '2026-10-13', dayStart: '08:00', dayEnd: '23:00' }, words), 'ליום 2026-10-13');
+    assert.equal(targetWhen({ period: 'day', day: null, dayStart: '08:00', dayEnd: '02:00' }, words), 'כל יום 08:00–02:00');
+    type Row = { id: number; shopName?: string | null };
+    const older: Row[] = [{ id: 1 }, { id: 2 }];
+    const newer: Row[] = [{ id: 1 }, { id: 2, shopName: 'מרכז' }];
+    assert.equal(anyRowHas(newer, (r) => r.shopName), true);
+    assert.equal(anyRowHas(older, (r) => r.shopName), false);
+    assert.equal(anyRowHas<Row>([{ id: 1, shopName: null }], (r) => r.shopName), true);
   });
 });

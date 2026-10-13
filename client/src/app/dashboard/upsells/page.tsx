@@ -9,6 +9,10 @@
  * Each rule shows its places ("איפה") and what starts it; the list filters by place (any of
  * the chosen), trigger type, active only and a search (rule name or item), all kept in the
  * URL query (lib/upsellFilters.ts) so a link keeps them.
+ *
+ * Export (P:\specs\reports-upgrade.md §5, `StandaloneExportBar`, report key `upsells`): the
+ * rules the list shows — the filters named in the export's header — with their places,
+ * trigger, offer, hours, active, and their figures over the same 30 days.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -21,7 +25,16 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { cn } from '@/lib/utils';
-import { deleteUpsell, fetchUpsellReport, fetchUpsells, type UpsellReport, type UpsellRule } from '@/lib/menuApi';
+import {
+  deleteUpsell,
+  fetchUpsellReport,
+  fetchUpsells,
+  type UpsellReport,
+  type UpsellReportRow,
+  type UpsellRule,
+} from '@/lib/menuApi';
+import { optionsTakenText, ratePercent, upsellFigureTotals } from '@/lib/menuTargetsReports';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import {
   EMPTY_UPSELL_FILTER,
   UPSELL_PLACES,
@@ -41,6 +54,10 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
+
+/** A rule of the export, with its figures in the stats window (none: not shown in it). */
+type ExportRow = { rule: UpsellRule; stats: UpsellReportRow | undefined };
 
 /** `list` with `item` switched on or off, in the canonical order of `all`. */
 function toggled<T extends string>(all: readonly T[], list: readonly T[], item: T): T[] {
@@ -136,6 +153,61 @@ export default function UpsellsPage() {
 
   const totals = stats.data?.totals;
 
+  // ── The export: the rules shown (the filters as the header's lines), their figures over 30 days ──
+  const te = useTranslations('upsells.export');
+  const statsLoaded = stats.data !== undefined;
+  /** A figure of the window: 0 for a rule not shown in it, empty while the figures are not there. */
+  const fig = (r: ExportRow, pick: (s: UpsellReportRow) => number) => (r.stats ? pick(r.stats) : statsLoaded ? 0 : null);
+  const sums = (rows: ExportRow[]) => upsellFigureTotals(rows.map((r) => r.stats));
+  const exportTable: ReportTableSpec<ExportRow> = {
+    id: 'main',
+    title: te('title'),
+    rows: rules.map((rule) => ({ rule, stats: byRule.get(rule.id) })),
+    rowKey: (r) => r.rule.id,
+    totalsLabel: tc('total'),
+    columns: [
+      { key: 'name', header: te('col.name'), required: true, width: 26, value: (r) => r.rule.name },
+      { key: 'action', header: te('col.action'), width: 10, value: (r) => t(`action.${r.rule.action}`) },
+      { key: 'places', header: te('col.places'), width: 22, value: (r) => placesOf(r.rule).map((p) => t(`places.${p}`)).join(', ') },
+      { key: 'triggerType', header: te('col.triggerType'), width: 16, value: (r) => scopeLabel(r.rule) },
+      { key: 'triggers', header: te('col.triggers'), width: 30, value: (r) => (r.rule.triggerType === 'order' ? null : triggerText(r.rule)) },
+      { key: 'offers', header: te('col.offers'), width: 30, value: (r) => offered(r.rule) },
+      { key: 'prompt', header: te('col.prompt'), width: 30, defaultHidden: true, value: (r) => r.rule.prompt || r.rule.message || null },
+      {
+        key: 'display',
+        header: te('col.display'),
+        width: 14,
+        defaultHidden: true,
+        // As the list's tag: "חלון בחירה" for a popup, and always for "בכל הזמנה" / "מעבר בין מסכים".
+        value: (r) =>
+          r.rule.display === 'popup' || r.rule.triggerType === 'order' || r.rule.triggerType === 'transition'
+            ? ts('tagPopup')
+            : ts('tagCard'),
+      },
+      { key: 'oncePerOrder', header: te('col.oncePerOrder'), width: 10, defaultHidden: true, value: (r) => (r.rule.oncePerOrder ? tc('yes') : tc('no')) },
+      { key: 'when', header: te('col.when'), width: 24, value: (r) => whenText(r.rule) },
+      { key: 'active', header: te('col.active'), width: 8, value: (r) => (r.rule.isActive ? tc('yes') : tc('no')) },
+      { key: 'shown', header: te('col.shown'), kind: 'number', value: (r) => fig(r, (s) => s.shown), totalOf: (rows) => sums(rows).shown },
+      { key: 'accepted', header: te('col.accepted'), kind: 'number', value: (r) => fig(r, (s) => s.accepted), totalOf: (rows) => sums(rows).accepted },
+      { key: 'dismissed', header: te('col.dismissed'), kind: 'number', value: (r) => fig(r, (s) => s.dismissed), totalOf: (rows) => sums(rows).dismissed },
+      { key: 'declined', header: te('col.declined'), kind: 'number', value: (r) => fig(r, (s) => s.declined ?? 0), totalOf: (rows) => sums(rows).declined },
+      { key: 'rate', header: te('col.rate'), kind: 'percent', value: (r) => ratePercent(r.stats?.acceptanceRate), totalOf: (rows) => sums(rows).rate },
+      { key: 'revenue', header: te('col.revenue'), kind: 'money', value: (r) => fig(r, (s) => s.revenue), totalOf: (rows) => sums(rows).revenue },
+      { key: 'optionsTaken', header: te('col.optionsTaken'), width: 36, value: (r) => optionsTakenText(r.stats?.optionsTaken) || null },
+    ],
+  };
+  const exportFilterLines: ReportFilterLine[] = [
+    {
+      label: te('rules'),
+      value: filtered ? te('rulesFiltered', { shown: rules.length, total: allRules.length }) : te('rulesAll', { total: allRules.length }),
+    },
+    ...(filter.places.length ? [{ label: t('filters.place'), value: filter.places.map((p) => t(`places.${p}`)).join(', ') }] : []),
+    ...(filter.triggers.length ? [{ label: t('filters.trigger'), value: filter.triggers.map((x) => t(`scope.${x}`)).join(', ') }] : []),
+    ...(filter.activeOnly ? [{ label: t('filters.activeOnly'), value: tc('yes') }] : []),
+    ...(qDraft.trim() ? [{ label: te('search'), value: qDraft.trim() }] : []),
+    { label: te('stats'), value: te('statsWindow') },
+  ];
+
   return (
     <div className="space-y-4">
       <MenuBroadcastBanner />
@@ -144,6 +216,21 @@ export default function UpsellsPage() {
         <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
         <p className="text-sm text-muted-foreground">{ts('example')}</p>
       </div>
+      {allRules.length > 0 ? (
+        <div className="space-y-1">
+          <StandaloneExportBar
+            reportKey="upsells"
+            title={te('title')}
+            tables={[exportTable as ReportTableSpec<unknown>]}
+            from={stats.data?.window.from ?? daysBackIso(29)}
+            to={stats.data?.window.to ?? todayIso()}
+            place={null}
+            filterLines={exportFilterLines}
+            disabled={stats.isLoading || rules.length === 0}
+          />
+          <p className="text-xs text-muted-foreground print:hidden">{te('note', { count: rules.length })}</p>
+        </div>
+      ) : null}
       <IosCanvas>
         <div className="mx-auto max-w-3xl">
           {totals && totals.shown > 0 ? (
