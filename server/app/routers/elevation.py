@@ -169,6 +169,26 @@ def _authenticate_pos_user(
     return pos_user
 
 
+def _style_allows(db: Session, machine: POSMachine, scopes, mode: str) -> bool:
+    """
+    "סגנון האישור": every requested scope's permission offers `mode` (approve / takeover) at this
+    till (app/services/remote_approvals/policy.py). An unknown mode is refused.
+    """
+    from app.services import till_permissions as TP
+    from app.services.remote_approvals import catalog as AC
+    from app.services.remote_approvals import policy as AP
+
+    mode = (mode or "").strip().lower()
+    if mode not in (AC.STYLE_APPROVE, AC.STYLE_TAKEOVER):
+        return False
+    effective = AP.for_machine(db, machine)
+    for scope in scopes:
+        code = TP.SCOPE_PERMISSIONS.get(scope.value)
+        if code is not None and not AC.style_allows(effective.style(code), mode):
+            return False
+    return True
+
+
 @router.post("/sessions", response_model=ElevationResponse)
 def create_elevation(
     data: ElevationRequest,
@@ -192,6 +212,11 @@ def create_elevation(
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no_recognised_scopes"
+        )
+    if data.mode is not None and not _style_allows(db, machine, requested, data.mode):
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="approval_style_not_allowed"
         )
 
     if pos_user is not None:

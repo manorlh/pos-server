@@ -16,6 +16,7 @@ forgiving (a stored value that no longer validates reads as inherited, never a 5
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -28,6 +29,8 @@ from app.models.pos_machine import POSMachine
 from app.models.remote_approval import ApprovalPolicyValue
 from app.models.shop import Shop
 from app.services.remote_approvals import catalog as C
+
+logger = logging.getLogger(__name__)
 
 Level = Tuple[str, uuid.UUID]
 
@@ -176,16 +179,38 @@ def clean_field(type_key: str, key: str, value: Any) -> Any:
     raise PolicyValueError(f"{type_key}: field {key!r} cannot be set")  # pragma: no cover
 
 
+def clean_styles(payload: Any) -> Dict[str, str]:
+    """`approvalStyle`: `{code | "*": approve | takeover | both}`; a null entry inherits."""
+    if payload is None:
+        return {}
+    if not isinstance(payload, Mapping):
+        raise PolicyValueError("approvalStyle must be an object")
+    codes = set(C.style_codes())
+    out: Dict[str, str] = {}
+    for code, style in payload.items():
+        if code != C.STYLE_ALL and code not in codes:
+            raise PolicyValueError(f"approvalStyle: unknown permission {code!r}")
+        if style is None:
+            continue
+        if style not in C.STYLES:
+            raise PolicyValueError(f"approvalStyle.{code} must be one of {', '.join(C.STYLES)}")
+        out[code] = style
+    return out
+
+
 def clean_values(payload: Any) -> Dict[str, Any]:
-    """A level's own values from a request body: `{enabled?, types?: {type: {field: value}}}`."""
+    """A level's own values from a request body: `{enabled?, types?: {type: {field: value}}, approvalStyle?}`."""
     if payload is None:
         return {}
     if not isinstance(payload, Mapping):
         raise PolicyValueError("the settings must be an object")
     out: Dict[str, Any] = {}
     for key in payload:
-        if key not in ("enabled", "types"):
+        if key not in ("enabled", "types", "approvalStyle"):
             raise PolicyValueError(f"unknown setting {key!r}")
+    styles = clean_styles(payload.get("approvalStyle"))
+    if styles:
+        out["approvalStyle"] = styles
     enabled = payload.get("enabled")
     if enabled is not None:
         out["enabled"] = _bool("approvalRequests", "enabled", enabled)
@@ -220,6 +245,12 @@ def _stored(row_values: Any) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     if isinstance(row_values.get("enabled"), bool):
         out["enabled"] = row_values["enabled"]
+    raw_styles = row_values.get("approvalStyle")
+    if isinstance(raw_styles, Mapping):
+        codes = set(C.style_codes()) | {C.STYLE_ALL}
+        styles = {k: v for k, v in raw_styles.items() if k in codes and v in C.STYLES}
+        if styles:
+            out["approvalStyle"] = styles
     types = row_values.get("types")
     if isinstance(types, Mapping):
         kept: Dict[str, Dict[str, Any]] = {}
@@ -251,9 +282,15 @@ class EffectivePolicy:
     #: Where each value came from: a level name, or None (the default).
     enabled_source: Optional[str] = None
     sources: Dict[str, Dict[str, Optional[str]]] = field(default_factory=dict)
+    #: "סגנון האישור" per till permission, and where each came from (a level, or None = default).
+    styles: Dict[str, str] = field(default_factory=dict)
+    style_sources: Dict[str, Optional[str]] = field(default_factory=dict)
 
     def type(self, type_key: str) -> Dict[str, Any]:
         return self.types[type_key]
+
+    def style(self, code: str) -> str:
+        return self.styles.get(code, C.DEFAULT_STYLE)
 
     def remote_open(self, type_key: str) -> bool:
         """The feature on, the type on, and "remote" among its methods."""
@@ -296,7 +333,24 @@ def resolve(rows: Iterable[ApprovalPolicyValue], chain: Sequence[Level]) -> Effe
                     break
         types[t.key] = {key: _out_value(key, value) for key, value in merged.items()}
         sources[t.key] = src
-    return EffectivePolicy(enabled=enabled, types=types, enabled_source=enabled_source, sources=sources)
+
+    # "סגנון האישור": per permission, the nearest level that names it — or says "*" for all.
+    styles: Dict[str, str] = {}
+    style_sources: Dict[str, Optional[str]] = {}
+    for code in C.style_codes():
+        styles[code], style_sources[code] = C.DEFAULT_STYLE, None
+        for _, level, values in layered:
+            own = values.get("approvalStyle") or {}
+            if code in own:
+                styles[code], style_sources[code] = own[code], level
+                break
+            if C.STYLE_ALL in own:
+                styles[code], style_sources[code] = own[C.STYLE_ALL], level
+                break
+    return EffectivePolicy(
+        enabled=enabled, types=types, enabled_source=enabled_source, sources=sources,
+        styles=styles, style_sources=style_sources,
+    )
 
 
 def company_of_shop(db: Session, shop_id: Any) -> Optional[uuid.UUID]:
@@ -364,6 +418,29 @@ def till_block(effective: EffectivePolicy) -> Dict[str, Any]:
             continue
         types[t.key] = {key: value[key] for key in TILL_FIELDS}
     return {"enabled": True, "types": types}
+
+
+def for_settings_sync(db: Session, machine: POSMachine) -> Tuple[Optional[datetime], EffectivePolicy]:
+    """
+    What the settings pull reads of the approvals: the watermark of the till's levels and the
+    effective policy. Never fails the pull — on any error, no stamp and the defaults (the feature
+    off, every style "both"), and the error is logged.
+    """
+    try:
+        with db.begin_nested():
+            chain = chain_for_machine(db, machine)
+            rows = rows_on_chain(db, chain)
+            stamp = changed_at(db, chain)
+            effective = resolve(rows, chain)
+        return (stamp if isinstance(stamp, datetime) else None), effective
+    except Exception:  # noqa: BLE001 - the approvals never fail a settings pull
+        logger.exception("approvals: settings for machine %s fell back to the defaults", getattr(machine, "id", None))
+        return None, resolve([], [])
+
+
+def till_styles(effective: EffectivePolicy) -> Dict[str, str]:
+    """`approvalStyle` as every till reads it: each permission's style (approve | takeover | both)."""
+    return dict(effective.styles)
 
 
 def till_settings(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:

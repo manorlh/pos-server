@@ -338,7 +338,8 @@ class TestPolicy:
         )
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["own"] == {"enabled": True, "types": {"refund": {"enabled": True, "timeoutSeconds": 90}}}
+        assert body["own"] == {"enabled": True, "types": {"refund": {"enabled": True, "timeoutSeconds": 90}},
+                               "approvalStyle": {}}
         assert body["effective"]["types"]["refund"]["timeoutSeconds"] == 90
         assert body["inherited"]["types"]["refund"]["timeoutSeconds"] == 180
         assert body["canWrite"] is True and len(body["catalog"]["types"]) == 33
@@ -1142,6 +1143,93 @@ class TestOverridesAndLinks:
         r = w.client.put(f"/api/v1/users/{w.avi.id}/linked-employees", headers=_dash(w, w.avi),
                          json={"posUserIds": [str(w.ron_pu.id)]})
         assert r.status_code == 403
+
+
+# ── "סגנון האישור" (P:/specs/table-restore-payments.md §4) ───────────────────
+
+
+class TestApprovalStyle:
+    def test_both_by_default_for_every_permission_but_the_approvers_own(self, w):
+        eff = P.for_machine(w.db, w.machine)
+        assert eff.style("REFUND") == "both" and eff.style("TABLE_RESTORE") == "both"
+        assert "APPROVE_REMOTE.refund" not in eff.styles
+        assert set(eff.styles) == set(C.style_codes())
+
+    def test_per_permission_and_level(self, w):
+        _policy(w.db, w, "company", w.company.id, {"approvalStyle": {"*": "approve", "REFUND": "takeover"}})
+        _policy(w.db, w, "shop", w.shop.id, {"approvalStyle": {"DISCOUNT": "both"}})
+        eff = P.for_machine(w.db, w.machine)
+        assert eff.style("REFUND") == "takeover" and eff.style_sources["REFUND"] == "company"
+        assert eff.style("DISCOUNT") == "both" and eff.style_sources["DISCOUNT"] == "shop"
+        assert eff.style("TABLE_CANCEL") == "approve" and eff.style_sources["TABLE_CANCEL"] == "company"
+        # A till's own "*" is the nearest word for everything.
+        _policy(w.db, w, "machine", w.machine.id, {"approvalStyle": {"*": "takeover"}})
+        eff = P.for_machine(w.db, w.machine)
+        assert eff.style("DISCOUNT") == "takeover" and eff.style("REFUND") == "takeover"
+        assert P.for_machine(w.db, w.machine2).style("DISCOUNT") == "both"
+
+    @pytest.mark.parametrize("bad", [
+        {"approvalStyle": {"REFUND": "sometimes"}},
+        {"approvalStyle": {"NOPE": "both"}},
+        {"approvalStyle": {"APPROVE_REMOTE.refund": "both"}},
+        {"approvalStyle": "both"},
+    ])
+    def test_bad_styles_are_refused(self, bad):
+        with pytest.raises(P.PolicyValueError):
+            P.clean_values(bad)
+
+    def test_every_till_gets_the_styles_in_its_settings(self, w):
+        _policy(w.db, w, "shop", w.shop.id, {"approvalStyle": {"REFUND": "takeover"}})
+        for m in (w.machine, w.machine2):  # with and without remote_approval_v1
+            r = w.client.get(f"/api/v1/sync/{m.id}/settings", headers=_till(w, m))
+            assert r.status_code == 200, r.text
+            styles = r.json()["settings"]["approvalStyle"]
+            assert styles["REFUND"] == "takeover" and styles["DISCOUNT"] == "both"
+        assert "approvalRequests" not in w.client.get(
+            f"/api/v1/sync/{w.machine2.id}/settings", headers=_till(w, w.machine2)).json()["settings"]
+
+    def test_the_policy_page_reads_and_writes_them(self, w):
+        r = w.client.put(f"/api/v1/approvals/policy?level=company&id={w.company.id}", headers=_dash(w, w.cm),
+                         json={"approvalStyle": {"*": "approve"}})
+        assert r.status_code == 200, r.text
+        r = w.client.get(f"/api/v1/approvals/policy?level=shop&id={w.shop.id}", headers=_dash(w, w.cm)).json()
+        assert r["own"]["approvalStyle"] == {} and r["inherited"]["approvalStyle"]["REFUND"] == "approve"
+        assert r["inheritedSources"]["approvalStyle"]["REFUND"] == "company"
+        assert r["catalog"]["approvalStyle"]["options"] == ["approve", "takeover", "both"]
+        assert any(p["code"] == "TABLE_CANCEL" for p in r["catalog"]["approvalStyle"]["permissions"])
+
+    def test_the_pin_elevation_honours_the_mode(self, w):
+        _policy(w.db, w, "shop", w.shop.id, {"approvalStyle": {"DISCOUNT": "approve"}})
+        body = {"posUserId": str(w.ron_pu.id), "pin": "8317", "scopes": ["discount"]}
+        r = w.client.post("/api/v1/elevation/sessions", headers=_till(w), json={**body, "mode": "takeover"})
+        assert r.status_code == 403 and r.json()["detail"] == "approval_style_not_allowed"
+        r = w.client.post("/api/v1/elevation/sessions", headers=_till(w), json={**body, "mode": "nonsense"})
+        assert r.status_code == 403
+        assert w.client.post("/api/v1/elevation/sessions", headers=_till(w), json={**body, "mode": "approve"}).status_code == 200
+        assert w.client.post("/api/v1/elevation/sessions", headers=_till(w), json=body).status_code == 200
+
+    def test_a_takeover_document_names_the_manager_as_its_actor(self):
+        from app.services.transactions import MANAGER_TAKEOVER, apply_takeover
+
+        manager = uuid.uuid4()
+        tx = SimpleNamespace(approval_mode="takeover", approved_by_pos_user_id=manager, cashier_id="cashier-1")
+        note = apply_takeover(tx)
+        assert tx.cashier_id == str(manager) and tx.approved_by_pos_user_id is None
+        assert note["code"] == MANAGER_TAKEOVER
+        # Sent as the actor already: filed as sent, still said.
+        tx = SimpleNamespace(approval_mode="TAKEOVER", approved_by_pos_user_id=None, cashier_id=str(manager))
+        assert apply_takeover(tx)["detail"] == str(manager) and tx.cashier_id == str(manager)
+        # An approval stays an approval.
+        tx = SimpleNamespace(approval_mode="approve", approved_by_pos_user_id=manager, cashier_id="cashier-1")
+        assert apply_takeover(tx) is None and tx.approved_by_pos_user_id == manager
+
+    def test_a_manager_named_as_the_operator_is_accepted(self, w):
+        """`X-Pos-User-Id` = the manager who took over, not the signed-in employee: their own authority."""
+        from app.middleware.auth import _operator_with_authority
+        from app.services.permissions import Scope
+
+        assert _operator_with_authority(w.db, w.machine, str(w.ron_pu.id), Scope.TABLE_CANCEL).id == w.ron_pu.id
+        assert _operator_with_authority(w.db, w.machine, str(w.dana.id), Scope.TABLE_CANCEL) is None
 
 
 def test_the_catalogue_has_a_remote_approval_permission_per_type():

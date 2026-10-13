@@ -2399,11 +2399,11 @@ def get_settings_sync(
     # "בקשות אישור" (P:/specs/manager-approval-mobile.md §7): a level's change moves the watermark too.
     from app.services.remote_approvals import policy as approval_policy
 
+    # ("סגנון האישור" too, which every till reads — not only one with the capability.)
     approval_capable = approval_policy.capable(machine)
-    if approval_capable:
-        approvals_stamp = approval_policy.changed_at(db, approval_policy.chain_for_machine(db, machine))
-        if approvals_stamp is not None:
-            stamps.append(as_utc(approvals_stamp))
+    approvals_stamp, approval_effective = approval_policy.for_settings_sync(db, machine)
+    if approvals_stamp is not None:
+        stamps.append(as_utc(approvals_stamp))
     watermark = max(stamps)
     since_dt: Optional[datetime] = None
     if since:
@@ -2528,7 +2528,10 @@ def get_settings_sync(
     # "בקשת אישור ממנהל מהנייד" (§7): the effective approval settings, only to a till whose build
     # said `remote_approval_v1` — an older till never sees `approvalRequests.enabled`.
     if approval_capable:
-        effective["approvalRequests"] = approval_policy.till_block(approval_policy.for_machine(db, machine))
+        effective["approvalRequests"] = approval_policy.till_block(approval_effective)
+    # "סגנון האישור" (P:/specs/table-restore-payments.md §4): per till permission, approve | takeover |
+    # both — to every till (an older build ignores the key).
+    effective["approvalStyle"] = approval_policy.till_styles(approval_effective)
     business_info = build_business_info(company, shop, all_settings)
     # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
     # beside the identity. The till picks its document type and VAT by it.

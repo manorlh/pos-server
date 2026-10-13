@@ -224,10 +224,16 @@ def _policy_out(db: Session, level: str, chain, company_id, can_write: bool) -> 
         "level": level,
         "id": str(own_scope[1]),
         "canWrite": can_write,
-        "own": {"enabled": own.get("enabled"), "types": own.get("types") or {}},
-        "inherited": {"enabled": inherited.enabled, "types": inherited.types},
-        "inheritedSources": {"enabled": inherited.enabled_source, "types": inherited.sources},
-        "effective": {"enabled": effective.enabled, "types": effective.types},
+        "own": {
+            "enabled": own.get("enabled"), "types": own.get("types") or {},
+            "approvalStyle": own.get("approvalStyle") or {},
+        },
+        "inherited": {"enabled": inherited.enabled, "types": inherited.types, "approvalStyle": inherited.styles},
+        "inheritedSources": {
+            "enabled": inherited.enabled_source, "types": inherited.sources,
+            "approvalStyle": inherited.style_sources,
+        },
+        "effective": {"enabled": effective.enabled, "types": effective.types, "approvalStyle": effective.styles},
         "updatedAt": own_row.updated_at.isoformat() if own_row is not None and own_row.updated_at else None,
         "catalog": C.catalog_json(_custom_till_roles(db, company_id)),
     }

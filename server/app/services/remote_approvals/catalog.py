@@ -269,6 +269,33 @@ def on_shift_only(type_policy: Dict[str, Any], role_key: str) -> bool:
     return role_key in ON_SHIFT_DEFAULT_ROLES
 
 
+# ── "סגנון האישור" (P:/specs/table-restore-payments.md §4) ────────────────────
+#
+# Per till permission and level: how a manager answers a permission that needs approval —
+# `approve` ("אישור מנהל": the action is the employee's, the manager its approver), `takeover`
+# ("מנהל מבצע": the manager does it as themselves, once, the signed-in employee unchanged), or
+# `both` (the sheet offers the two). Stored beside the approval settings (`approvalStyle`:
+# {code | "*": style}); "*" is a level's word for every permission it does not name.
+
+STYLE_APPROVE = "approve"
+STYLE_TAKEOVER = "takeover"
+STYLE_BOTH = "both"
+STYLES = (STYLE_APPROVE, STYLE_TAKEOVER, STYLE_BOTH)
+DEFAULT_STYLE = STYLE_BOTH
+STYLE_ALL = "*"
+
+
+def style_codes() -> List[str]:
+    """The till permissions a style can be set for: every one but "רשאי לאשר מרחוק" itself."""
+    from app.services import till_permissions as TP
+
+    return [c for c in TP.CODES if c not in TP.REMOTE_APPROVAL_CODES]
+
+
+def style_allows(style: str, mode: str) -> bool:
+    return style == STYLE_BOTH or style == mode
+
+
 def catalog_json(custom_roles: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     """What the settings page and the employee card read."""
     return {
@@ -289,4 +316,19 @@ def catalog_json(custom_roles: Optional[List[Dict[str, str]]] = None) -> Dict[st
             for f in FIELDS
         ],
         "defaults": {"enabled": False, "types": {t.key: type_defaults(t.key) for t in TYPES}},
+        "approvalStyle": {
+            "options": list(STYLES),
+            "default": DEFAULT_STYLE,
+            "permissions": _style_permissions(),
+        },
     }
+
+
+def _style_permissions() -> List[Dict[str, Any]]:
+    from app.services import till_permissions as TP
+
+    codes = set(style_codes())
+    return [
+        {"code": p.code, "label": p.label, "group": p.group}
+        for p in TP.PERMISSIONS if p.code in codes
+    ]

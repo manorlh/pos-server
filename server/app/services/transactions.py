@@ -917,6 +917,31 @@ def _vat_split(tx: TransactionIn) -> dict:
     }
 
 
+#: The ingest note of a document a manager made as themselves ("מנהל מבצע").
+MANAGER_TAKEOVER = "manager_takeover"
+
+
+def apply_takeover(tx: Any) -> Optional[dict]:
+    """
+    "סגנון האישור: מנהל מבצע" (P:/specs/table-restore-payments.md §4): a document sent with
+    `approvalMode: "takeover"` was made by the manager who typed their code, as themselves — the
+    signed-in employee did not change. The manager is filed as the document's actor (its cashier),
+    not as its approver, and the document says so. A till that already sent the manager as
+    `cashierId` and no approver is filed as sent. Never refuses anything.
+    """
+    if str(getattr(tx, "approval_mode", None) or "").strip().lower() != "takeover":
+        return None
+    manager = getattr(tx, "approved_by_pos_user_id", None)
+    if manager is not None:
+        tx.cashier_id = str(manager)
+        tx.approved_by_pos_user_id = None
+    return {
+        "code": MANAGER_TAKEOVER,
+        "text": "מנהל ביצע את הפעולה בעצמו (מנהל מבצע) — נרשם כמבצע המסמך",
+        "detail": str(getattr(tx, "cashier_id", None) or ""),
+    }
+
+
 def upsert_transactions(
     db: Session,
     machine: POSMachine,
@@ -1117,6 +1142,10 @@ def upsert_transactions(
             # a voucher's shares either, so no item report counts what its original already did.
             reissue_invoice = _is_reissue_invoice(tx, refund_of)
 
+            # "מנהל מבצע" (approvalStyle `takeover`): the manager is the actor, not the approver.
+            takeover_note = apply_takeover(tx)
+            if takeover_note is not None:
+                ingest_notes.append(takeover_note)
             # The approver: kept as sent, linked when they are of the issuing till's
             # business, never a reason to refuse or hold the document.
             claim = resolve_document_approver_claim(db, issuer, tx)

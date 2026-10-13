@@ -33,6 +33,10 @@ class ElevationRequest(BaseModel):
     #: A credit's amount may come negative: its size is what is checked.
     amount: Optional[float] = Field(default=None, ge=-10_000_000, le=10_000_000)
     percent: Optional[float] = Field(default=None, ge=0, le=100)
+    #: "סגנון האישור" (P:/specs/table-restore-payments.md §4) the manager chose on the sheet:
+    #: `approve` ("אישור מנהל") or `takeover` ("מנהל מבצע"). When sent, the cloud refuses a mode the
+    #: permission's style does not offer at this till (403 `approval_style_not_allowed`). Absent: as before.
+    mode: Optional[str] = Field(default=None, max_length=16)
 
     @model_validator(mode="after")
     def _exactly_one_identity(self):
