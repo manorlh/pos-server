@@ -195,8 +195,18 @@ def create_elevation(
         )
 
     if pos_user is not None:
-        granted = grantable_scopes_for_pos_user(pos_user, machine, requested)
+        granted = grantable_scopes_for_pos_user(
+            pos_user, machine, requested, amount=data.amount, percent=data.percent
+        )
+        if not granted and (data.amount is not None or data.percent is not None):
+            if grantable_scopes_for_pos_user(pos_user, machine, requested):
+                # The person may authorise this — just not this much (their role's limit).
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="limit_exceeded"
+                )
     else:
+        # A cloud account approves by its dashboard role: no till limit (§4 "ללא תקרה").
         granted = grantable_scopes(db, user, machine, requested)
     if not granted:
         db.commit()
@@ -204,7 +214,10 @@ def create_elevation(
             status_code=status.HTTP_403_FORBIDDEN, detail="not_permitted_here"
         )
 
-    raw, session = create_session(db, user, machine, granted, pos_user=pos_user)
+    raw, session = create_session(
+        db, user, machine, granted, pos_user=pos_user,
+        max_amount=abs(data.amount) if data.amount is not None else None, max_percent=data.percent,
+    )
     db.commit()
     db.refresh(session)
     if pos_user is not None:

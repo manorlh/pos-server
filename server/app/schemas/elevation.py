@@ -27,6 +27,12 @@ class ElevationRequest(BaseModel):
     #: than rejected, so a newer device asking for a scope this server has not
     #: shipped still gets a session for the rest.
     scopes: List[str] = Field(default_factory=list)
+    #: What the PIN is for, when the till says (P:/specs/manager-approval-mobile.md §1, §5): the
+    #: refund / cash out amount, the discount percent. The cloud then holds the approver to their
+    #: limit on the permission (`limit_covers`) and binds the grant to the figures. Absent: as before.
+    #: A credit's amount may come negative: its size is what is checked.
+    amount: Optional[float] = Field(default=None, ge=-10_000_000, le=10_000_000)
+    percent: Optional[float] = Field(default=None, ge=0, le=100)
 
     @model_validator(mode="after")
     def _exactly_one_identity(self):

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional, Set, Tuple
 
@@ -235,15 +236,42 @@ def pos_user_may_use_machine(pos_user: PosUser, machine: POSMachine) -> bool:
 
 
 def grantable_scopes_for_pos_user(
-    pos_user: PosUser, machine: POSMachine, requested: Iterable[Scope]
+    pos_user: PosUser,
+    machine: POSMachine,
+    requested: Iterable[Scope],
+    *,
+    amount: Optional[float] = None,
+    percent: Optional[float] = None,
 ) -> List[Scope]:
-    """`grantable_scopes` for a till user: their role's ceiling ∩ what was asked, at their own shop."""
+    """
+    `grantable_scopes` for a till user: their role's ceiling ∩ what was asked, at their own shop.
+
+    With an `amount` / `percent` (a till that sends what the PIN is for), each scope is also held
+    to the approver's limit on its permission (`till_permissions.limit_covers` — "up to ₪200 a
+    supervisor approves, above it a manager", spec §7 of the roles). Without them: as before.
+    """
     if not pos_user_may_use_machine(pos_user, machine):
         return []
     from app.services.till_roles import pos_user_scopes
 
     allowed = pos_user_scopes(pos_user)
-    return [scope for scope in requested if scope in allowed]
+    granted = [scope for scope in requested if scope in allowed]
+    if amount is None and percent is None:
+        return granted
+    return [scope for scope in granted if scope_limit_covers(pos_user, scope, amount=amount, percent=percent)]
+
+
+def scope_limit_covers(
+    pos_user: PosUser, scope: Scope, *, amount: Optional[float] = None, percent: Optional[float] = None
+) -> bool:
+    """Whether this till user's limit on the permission behind `scope` covers the figures."""
+    from app.services import till_permissions as TP
+    from app.services.till_roles import effective_for_pos_user
+
+    code = TP.SCOPE_PERMISSIONS.get(scope.value)
+    if code is None:
+        return True
+    return TP.limit_covers(effective_for_pos_user(pos_user), code, amount=amount, percent=percent)
 
 
 def create_session(
@@ -253,6 +281,8 @@ def create_session(
     scopes: Iterable[Scope],
     *,
     pos_user: Optional[PosUser] = None,
+    max_amount: Optional[float] = None,
+    max_percent: Optional[float] = None,
 ) -> Tuple[str, ElevatedSession]:
     """
     Issue a grant, returning the raw token (shown once) and the stored row.
@@ -279,6 +309,8 @@ def create_session(
         absolute_expires_at=now
         + timedelta(hours=settings.elevated_session_absolute_hours),
         last_used_at=now,
+        max_amount=max_amount,
+        max_percent=max_percent,
     )
     db.add(session)
     db.flush()
@@ -324,6 +356,23 @@ def resolve_session(db: Session, raw_token: str) -> Optional[ElevatedSession]:
     # A demotion, a deactivation or — for a till user — a move to another shop must
     # bite immediately, not at the end of the window. Whichever kind of person holds
     # the grant, their authority is re-read from their own row on every use.
+    if isinstance(getattr(session, "approval_request_id", None), uuid.UUID):
+        # A remote approval's grant ("בקשת אישור ממנהל מהנייד"): the approver's authority for
+        # exactly this request was decided when they approved it, against the approvals' own
+        # rules (role, scope, limit, shift — app/services/remote_approvals/eligibility.py). It is
+        # one use and minutes long; a holder deactivated since still loses it here.
+        holder = session.user if session.user_id is not None else session.pos_user
+        if holder is None or not getattr(holder, "is_active", False):
+            return None
+        if not session_scopes(session):
+            return None
+        slid = now + timedelta(minutes=settings.elevated_session_idle_minutes)
+        absolute = _aware(session.absolute_expires_at)
+        session.expires_at = min(slid, absolute) if absolute else slid
+        session.last_used_at = now
+        db.add(session)
+        return session
+
     if session.pos_user_id is not None:
         pos_user = session.pos_user
         if pos_user is None or not pos_user.is_active:
