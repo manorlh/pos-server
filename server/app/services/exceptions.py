@@ -194,6 +194,25 @@ RULES: Tuple[RuleSpec, ...] = (
     # "התאמת אשראי מול Z-Credit" (app/services/zcredit_reconcile.py): a charge at Z-Credit with no
     # document of ours, or a document of ours with no Z-Credit transaction — one per transaction.
     RuleSpec("zcredit_recon", True, (), "high", "zcredit"),
+    # The board's lights as alerts (P:/specs/manager-problems.md §2; app/services/exception_alerts/
+    # status_watch.py reads the same data as app/services/machine_status.py). Off at a level = neither
+    # logged nor sent there; the light stays. "Z לא בוצע": the business day over `hoursAfterDayEnd`
+    # hours ago and its closed shifts (with documents) still in no Z — per till in till-Z mode, per
+    # shop for the shop's Z (the shop's rule decides).
+    RuleSpec("z_missing", True, (ParamSpec("hoursAfterDayEnd", 2, 0, 48, integer=True),), "high", "machine_status"),
+    # A shift open more than `hours`, or past its business date.
+    RuleSpec("shift_open_overdue", True, (ParamSpec("hours", 16, 1, 96, integer=True),), "medium", "machine_status"),
+    # Card sales not transmitted: medium after `warnHours`, high from `criticalDays` (the card
+    # companies refuse a transaction transmitted more than 7 days late).
+    RuleSpec(
+        "card_transmission_overdue",
+        True,
+        (ParamSpec("warnHours", 24, 1, 144, integer=True), ParamSpec("criticalDays", 4, 1, 7, integer=True)),
+        "medium",
+        "machine_status",
+    ),
+    # A till with an open shift whose printer has no paper, overheated or errs for `minutes`.
+    RuleSpec("till_printer", True, (ParamSpec("minutes", 3, 1, 240, integer=True),), "medium", "machine_status"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",

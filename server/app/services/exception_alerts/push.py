@@ -22,9 +22,16 @@ What a user receives (`entry_matches`):
   * `till_low_sales` — a till barely selling against its peers (the insights' anomaly rules
     report it through external.py);
   * `target_reached` — a sales target reached ("יעדים ותחרות", an event's target included);
+  * `z_shift`, `card_transmission`, `till_printer` — the board's lights as alerts (a Z not made,
+    a shift open too long, card sales not transmitted, the till's printer; status_watch.py);
 * only from what the user may see in the exceptions log (the same scoping), and only with the
   dashboard sections "alerts" / "reports" / "exception_alerts" — a producer never;
 * narrowed to the chosen shops and / or events (an event = its tills inside its window).
+
+`integrity` ("שלמות נתונים": a refused document, a numbering conflict, Z / shift totals that
+differ, offline Z gaps and conflicts) is apart: super admins only, from every organization,
+never by a tenant's rules (`integrity_recipients`); their own switch, companies and muted devices
+live in their user preferences (`integrity_prefs`).
 
 Delivery: the dispatch row is written first (unique per entry, rule and device), then the
 message is encrypted and posted by a background sender thread (webpush.py), which records
@@ -112,10 +119,38 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("bon_unprinted", "בון לא הודפס",
              "בון שלא הודפס במדפסת מטבח / בר, או שלא התקבל במסך המטבח — מכל קופה וקיוסק.",
              ("bon_unprinted",)),
+    # The board's lights as alerts (status_watch.py, P:/specs/manager-problems.md §2); each kind can
+    # be switched off per company / shop / till in "הגדרות חריגות".
+    Category("z_shift", "Z / משמרת",
+             "Z שלא בוצע אחרי סוף יום העסקים, ומשמרת שפתוחה יותר מדי שעות או מעבר לתאריך שלה.",
+             ("z_missing", "shift_open_overdue")),
+    Category("card_transmission", "שידור אשראי באיחור",
+             "עסקאות אשראי שלא שודרו בזמן: בינונית אחרי השעות שנקבעו, גבוהה כשמתקרבים לסירוב חברות האשראי.",
+             ("card_transmission_overdue",)),
+    Category("till_printer", "מדפסת קופה",
+             "בקופה עם משמרת פתוחה: אין נייר, התחממות או שגיאת מדפסת יותר מכמה דקות.",
+             ("till_printer",)),
 )
-CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in CATEGORIES}
+#: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
+#: super admin receives it — from every organization, past the organizations' scoping (a super
+#: admin is not a member of each); a company never does, and cannot switch it off for them. Its
+#: switch, companies and devices are the super admin's own (`integrity_prefs`), the quiet hours
+#: and the rate limit those of their preferences (`governing_rule`).
+INTEGRITY_KINDS = (
+    "document_refused", "document_number_conflict", "z_totals_mismatch", "shift_totals_mismatch",
+    "local_shop_z_mismatch", "offline_z_gap", "offline_z_conflict",
+)
+INTEGRITY = Category("integrity", "שלמות נתונים",
+                     "מסמך שנדחה בענן, מספור כפול, פער בסכומי Z או משמרת, חור או התנגשות במספור Z אופליין — מכל הארגונים. למנהל-על בלבד.",
+                     INTEGRITY_KINDS)
+CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in (*CATEGORIES, INTEGRITY)}
+#: What any user may choose (and what "everything" means for a new user). Not `integrity`.
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)
-_CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in CATEGORIES for kind in c.kinds}
+#: Added with manager-problems §2: on for a user whose saved types hold every one the phone alerts
+#: started with (the data migration 3c9e5a7b1d24 adds them), off for one who had left some out; on
+#: for a new user (no preferences = every type).
+NEW_CATEGORY_KEYS = ("z_shift", "card_transmission", "till_printer")
+_CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in (*CATEGORIES, INTEGRITY) for kind in c.kinds}
 
 DEFAULT_MIN_AMOUNT = Decimal("200.00")
 DEFAULT_RATE_LIMIT = 2
@@ -141,8 +176,59 @@ def category_of(entry: ExceptionLogEntry) -> Optional[str]:
     return key
 
 
-def categories_json() -> List[Dict[str, Any]]:
-    return [{"key": c.key, "label": c.label, "hint": c.hint, "amount": c.amount} for c in CATEGORIES]
+def is_super_admin(user: Any) -> bool:
+    from app.models.user import UserRole
+
+    return user is not None and getattr(user, "role", None) == UserRole.SUPER_ADMIN
+
+
+def categories_for(user: Any = None) -> Tuple[Category, ...]:
+    """The alert types this user may choose: every type, and "שלמות נתונים" for a super admin."""
+    return (*CATEGORIES, INTEGRITY) if is_super_admin(user) else CATEGORIES
+
+
+def categories_json(user: Any = None) -> List[Dict[str, Any]]:
+    return [{"key": c.key, "label": c.label, "hint": c.hint, "amount": c.amount} for c in categories_for(user)]
+
+
+# ── "שלמות נתונים": the super admin's own switch ──────────────────────────────
+
+#: In `users.preferences` (the user's own settings, app/services/user_preferences.py keeps any key it
+#: does not know): `{"enabled": bool, "companyIds": [..] | absent, "mutedDeviceIds": [..]}`. Absent = on,
+#: every company, every device.
+INTEGRITY_PREFS_KEY = "pushIntegrity"
+
+
+def integrity_prefs(user: Any) -> Dict[str, Any]:
+    raw = getattr(user, "preferences", None)
+    stored = raw.get(INTEGRITY_PREFS_KEY) if isinstance(raw, dict) else None
+    stored = stored if isinstance(stored, dict) else {}
+    companies = stored.get("companyIds")
+    muted = stored.get("mutedDeviceIds")
+    return {
+        "enabled": stored.get("enabled", True) is not False,
+        "companyIds": [str(c) for c in companies] if isinstance(companies, list) and companies else None,
+        "mutedDeviceIds": [str(d) for d in muted] if isinstance(muted, list) else [],
+    }
+
+
+def save_integrity_prefs(user: Any, patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge `enabled` / `companyIds` / `mutedDeviceIds` (validated) into the user's own preferences. The caller commits."""
+    current = integrity_prefs(user)
+    if "enabled" in patch:
+        current["enabled"] = patch["enabled"] is not False
+    if "companyIds" in patch:
+        current["companyIds"] = _ids(patch["companyIds"], "integrity.companyIds")
+    if "mutedDeviceIds" in patch:
+        current["mutedDeviceIds"] = _ids(patch["mutedDeviceIds"], "integrity.mutedDeviceIds") or []
+    stored = {"enabled": current["enabled"], "mutedDeviceIds": current["mutedDeviceIds"]}
+    if current["companyIds"]:
+        stored["companyIds"] = current["companyIds"]
+    raw = getattr(user, "preferences", None)
+    prefs = dict(raw) if isinstance(raw, dict) else {}
+    prefs[INTEGRITY_PREFS_KEY] = stored
+    user.preferences = prefs  # a new dict: the JSON column is seen as changed
+    return current
 
 
 # ── Preferences (the push rule) ──────────────────────────────────────────────
@@ -250,10 +336,50 @@ def rule_for_user(db: Session, user_id: Any, tenant_id: Any) -> Optional[Excepti
     )
 
 
+def _split_integrity(user: Any, body: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    The body's "שלמות נתונים" part (a super admin's own switch, not the tenant's rule): `integrity`
+    in `categories` turns it on, `categories` without it off; `integrity: {companyIds, mutedDeviceIds}`.
+    Anyone else naming it is refused.
+    """
+    body = dict(body or {})
+    patch: Dict[str, Any] = {}
+    cats = body.get("categories")
+    extra = body.pop("integrity", None)
+    if not is_super_admin(user):
+        if extra is not None or (isinstance(cats, list) and INTEGRITY.key in cats):
+            raise RuleError("category_unknown", "categories", INTEGRITY.key)
+        return body, patch
+    if isinstance(cats, list):
+        patch["enabled"] = INTEGRITY.key in cats
+        body["categories"] = [c for c in cats if c != INTEGRITY.key]
+    if extra is not None:
+        if not isinstance(extra, dict):
+            raise RuleError("integrity_invalid", "integrity")
+        for key in ("companyIds", "mutedDeviceIds"):
+            if key in extra:
+                patch[key] = extra[key]
+    return body, patch
+
+
+def preferences_json(db: Session, user: Any, tenant_id: Any) -> Dict[str, Any]:
+    """The preferences on the wire; a super admin's carry "שלמות נתונים" (in `categories`, and `integrity`)."""
+    out = as_json(rule_for_user(db, user.id, tenant_id))
+    if is_super_admin(user):
+        own = integrity_prefs(user)
+        if own["enabled"]:
+            out["categories"] = [*out["categories"], INTEGRITY.key]
+        out["integrity"] = {"companyIds": own["companyIds"], "mutedDeviceIds": own["mutedDeviceIds"]}
+    return out
+
+
 def save_preferences(db: Session, user: Any, tenant_id: Any, body: Dict[str, Any]) -> ExceptionAlertRule:
     """Create or update the user's push rule in this tenant (validated). The caller commits."""
+    body, integrity_patch = _split_integrity(user, body)
     rule = rule_for_user(db, user.id, tenant_id)
     fields = clean(body, partial_of=as_json(rule) if rule is not None else None)
+    if integrity_patch:
+        save_integrity_prefs(user, integrity_patch)
     if rule is None:
         rule = ExceptionAlertRule(
             id=uuid.uuid4(), tenant_id=tenant_id, company_id=None, shop_id=None, channel=CHANNEL_PUSH,
@@ -361,8 +487,8 @@ def place_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntr
 
 def entry_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntry, owner: Any = None) -> bool:
     category = category_of(entry)
-    if category is None or category not in (rule.categories or []):
-        return False
+    if category is None or category == INTEGRITY.key or category not in (rule.categories or []):
+        return False  # "שלמות נתונים" never goes by a tenant's rules (`integrity_recipients`)
     if CATEGORY_BY_KEY[category].amount and rule.min_amount is not None:
         if entry.amount is None or abs(Decimal(str(entry.amount))) < Decimal(str(rule.min_amount)):
             return False
@@ -382,6 +508,71 @@ def devices_of(db: Session, user_id: Any) -> List[PushSubscription]:
         .order_by(PushSubscription.created_at)
         .all()
     )
+
+
+def governing_rule(db: Session, user: Any, tenant_id: Any) -> Optional[ExceptionAlertRule]:
+    """
+    The preferences a super admin's "שלמות נתונים" alert from `tenant_id` goes by (the on / off of
+    all their phone alerts, the quiet hours, the rate limit, the digest): theirs in that
+    organization, else their home ones — of their own organization, else the first they made.
+    """
+    rule = rule_for_user(db, user.id, tenant_id)
+    if rule is not None:
+        return rule
+    rows = (
+        db.query(ExceptionAlertRule)
+        .filter(
+            ExceptionAlertRule.channel == CHANNEL_PUSH,
+            ExceptionAlertRule.owner_user_id == user.id,
+            ExceptionAlertRule.deleted_at.is_(None),
+        )
+        .order_by(ExceptionAlertRule.created_at, ExceptionAlertRule.id)
+        .all()
+    )
+    home = [r for r in rows if getattr(user, "tenant_id", None) is not None and r.tenant_id == user.tenant_id]
+    return (home or rows or [None])[0]
+
+
+def _company_chosen(db: Session, company_id: Any, chosen: Sequence[str]) -> bool:
+    """The entry's company, or a company above it, is one of the chosen ones."""
+    from app.services.company_hierarchy import ancestor_company_ids
+
+    if company_id is None:
+        return False
+    line = [company_id, *ancestor_company_ids(db, company_id)]
+    return any(str(c) in set(chosen) for c in line)
+
+
+def integrity_recipients(db: Session, entry: ExceptionLogEntry) -> List[Tuple[Any, ExceptionAlertRule, List[PushSubscription]]]:
+    """
+    Who receives a "שלמות נתונים" alert: every active super admin — whatever organization it came
+    from, none of them a member there — whose own switch is on, whose companies (if chosen) include
+    its company, with their devices but the ones they muted for it, under their governing rule.
+    Never anyone else.
+    """
+    from app.models.user import User, UserRole
+
+    out: List[Tuple[Any, ExceptionAlertRule, List[PushSubscription]]] = []
+    admins = (
+        db.query(User)
+        .filter(User.role == UserRole.SUPER_ADMIN, User.is_active.is_(True))
+        .order_by(User.created_at, User.id)
+        .all()
+    )
+    for admin in admins:
+        own = integrity_prefs(admin)
+        if not own["enabled"]:
+            continue
+        if own["companyIds"] and not _company_chosen(db, entry.company_id, own["companyIds"]):
+            continue
+        devices = [d for d in devices_of(db, admin.id) if str(d.id) not in set(own["mutedDeviceIds"])]
+        if not devices:
+            continue
+        rule = governing_rule(db, admin, entry.tenant_id)
+        if rule is None:
+            continue
+        out.append((admin, rule, devices))
+    return out
 
 
 # ── The message ──────────────────────────────────────────────────────────────
@@ -405,8 +596,16 @@ def home_url(db: Session, user: Any) -> str:
     return "/dashboard/alerts" if may_open_alerts(db, user) else "/dashboard"
 
 
-#: Kinds that describe a state of a till: a newer alert replaces the older one on the phone.
-STATE_KINDS = frozenset({"till_offline", "kiosk_offline"})
+#: Kinds that describe a state of a till: a newer alert replaces the older one on the phone (a late
+#: transmission turning high replaces its medium one).
+STATE_KINDS = frozenset({"till_offline", "kiosk_offline", "card_transmission_overdue", "till_printer"})
+
+
+def _company_name(db: Session, company_id: Any) -> Optional[str]:
+    from app.models.company import Company
+
+    company = db.get(Company, company_id) if company_id else None
+    return company.name if company is not None else None
 
 
 def may_open_log(db: Session, user: Any) -> bool:
@@ -428,7 +627,14 @@ def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool
     what = M.what_of(label_of(entry.kind), entry.kind, entry.amount, None, False)
     summary = entry.summary if entry.summary and entry.kind not in ("refund", "line_void") else None
     title = " · ".join(p for p in (CATEGORY_BY_KEY[category].label if category else label_of(entry.kind), till) if p)
-    body = " · ".join(p for p in (shop, summary or what, local.strftime("%H:%M")) if p)
+    if category == INTEGRITY.key:
+        # From any organization: which company, what (its document / Z number is in the summary),
+        # the amount or the gap.
+        money = M.money(entry.amount) if entry.amount is not None and Decimal(str(entry.amount)) != 0 else None
+        detail = f"{summary} ({money})" if summary and money else (summary or what)
+        body = " · ".join(p for p in (_company_name(db, entry.company_id), shop, detail, local.strftime("%H:%M")) if p)
+    else:
+        body = " · ".join(p for p in (shop, summary or what, local.strftime("%H:%M")) if p)
     details = entry.details if isinstance(entry.details, dict) else {}
     if entry.kind == "target_reached" and details.get("eventId"):
         url = f"/dashboard/live-event/{details['eventId']}"
@@ -658,15 +864,22 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
     from app.services.exception_alerts import engine as E
 
     out: List[ExceptionAlertDispatch] = []
-    if entry.backfilled or category_of(entry) is None:
+    category = category_of(entry)
+    if entry.backfilled or category is None:
         return out
-    for candidate in push_rules_for(db, entry):
-        owner = db.get(User, candidate.owner_user_id)
-        if not entry_matches(db, candidate, entry, owner):
-            continue
-        devices = devices_of(db, candidate.owner_user_id)
-        if not devices:
-            continue
+    if category == INTEGRITY.key:
+        # Super admins only, from every organization (never by a tenant's rules).
+        recipients = integrity_recipients(db, entry)
+    else:
+        recipients = []
+        for candidate in push_rules_for(db, entry):
+            owner = db.get(User, candidate.owner_user_id)
+            if not entry_matches(db, candidate, entry, owner):
+                continue
+            devices = devices_of(db, candidate.owner_user_id)
+            if devices:
+                recipients.append((owner, candidate, devices))
+    for owner, candidate, devices in recipients:
         rule = (
             db.query(ExceptionAlertRule)
             .filter(ExceptionAlertRule.id == candidate.id)
@@ -884,12 +1097,12 @@ def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: 
     return row
 
 
-def device_json(row: PushSubscription) -> Dict[str, Any]:
+def device_json(row: PushSubscription, user: Any = None) -> Dict[str, Any]:
     def iso(v):
         v = aware(v)
         return v.isoformat() if v else None
 
-    return {
+    out = {
         "id": str(row.id),
         "label": row.label,
         "endpointHash": row.endpoint_hash,
@@ -899,10 +1112,22 @@ def device_json(row: PushSubscription) -> Dict[str, Any]:
         "lastError": row.last_error,
         "active": row.disabled_at is None,
     }
+    if is_super_admin(user):
+        # "שלמות נתונים" on this device (a super admin may mute it on one of their devices).
+        out["integrity"] = str(row.id) not in set(integrity_prefs(user)["mutedDeviceIds"])
+    return out
+
+
+def set_device_integrity(user: Any, device: PushSubscription, on: bool) -> None:
+    """A super admin's "שלמות נתונים" on one of their devices, on or off. The caller commits."""
+    muted = [d for d in integrity_prefs(user)["mutedDeviceIds"] if d != str(device.id)]
+    if not on:
+        muted.append(str(device.id))
+    save_integrity_prefs(user, {"mutedDeviceIds": muted})
 
 
 __all__ = [
-    "CATEGORIES", "CATEGORY_KEYS", "category_of", "clean", "as_json", "save_preferences", "rule_for_user",
-    "entry_matches", "process_entry", "flush_rule", "send_test", "retry_stale", "subscribe", "device_label",
-    "payload_for",
+    "CATEGORIES", "CATEGORY_KEYS", "INTEGRITY", "category_of", "categories_for", "clean", "as_json",
+    "preferences_json", "save_preferences", "rule_for_user", "entry_matches", "integrity_recipients",
+    "process_entry", "flush_rule", "send_test", "retry_stale", "subscribe", "device_label", "payload_for",
 ]

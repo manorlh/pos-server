@@ -396,7 +396,8 @@ def test_subscribing_preferences_test_message_and_history(w, monkeypatch):
                        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert out["label"] == "Chrome · Windows" and out["active"]
     prefs = R.get_preferences(current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
-    assert prefs["exists"] and prefs["categories"] == list(P.CATEGORY_KEYS)  # the first device made them
+    # The first device made them; a super admin's carry "שלמות נתונים" too (manager-problems §1).
+    assert prefs["exists"] and prefs["categories"] == [*P.CATEGORY_KEYS, "integrity"]
     saved = R.put_preferences({"categories": ["till_offline"], "quietFrom": "23:00", "quietTo": "07:00"},
                               current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert saved["categories"] == ["till_offline"] and saved["quietTo"] == "07:00"

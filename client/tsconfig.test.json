@@ -219,6 +219,8 @@
     "src/lib/eventLive.test.ts",
     "src/lib/pushAlerts.ts",
     "src/lib/pushAlerts.test.ts",
+    "src/lib/alertPolicy.ts",
+    "src/lib/alertPolicy.test.ts",
     "src/lib/producer.ts",
     "src/lib/producer.test.ts",
     "src/lib/staffing.ts",

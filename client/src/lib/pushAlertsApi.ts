@@ -27,6 +27,12 @@ export async function removePushDevice(id: string): Promise<void> {
   await api.delete(`/push/devices/${id}`);
 }
 
+/** A super admin: "שלמות נתונים" on one of their devices, on or off. */
+export async function setDeviceIntegrity(id: string, integrity: boolean): Promise<PushDevice> {
+  const { data } = await api.patch<PushDevice>(`/push/devices/${id}`, { integrity });
+  return data;
+}
+
 export async function fetchPushPreferences(): Promise<PushPreferences> {
   const { data } = await api.get<PushPreferences>('/push/preferences');
   return data;

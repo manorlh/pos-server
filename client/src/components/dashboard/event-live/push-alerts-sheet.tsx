@@ -8,6 +8,9 @@
  * Props: `{ scope, context?, onDone }` (./types.ts), plus `open` / `onOpenChange` when the
  * caller controls it, or a `trigger` button of its own. With a scope's shop or event and no
  * preferences yet, the form starts narrowed to it.
+ *
+ * A super admin also sees "שלמות נתונים" (the server lists it to them alone): on / off with the
+ * types, narrowed to companies of any organization, and on / off per device.
  */
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
@@ -16,12 +19,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BellRing, Loader2, Smartphone, Trash2 } from 'lucide-react';
 import {
-  ALERT_CATEGORIES,
+  INTEGRITY_CATEGORY,
   draftFromPrefs,
   prefsBody,
   prefsErrors,
   pushSupport,
   toggle,
+  visibleCategories,
   type PrefsDraft,
   type PushSupport,
 } from '@/lib/pushAlerts';
@@ -34,6 +38,7 @@ import {
   removePushDevice,
   savePushPreferences,
   sendPushTest,
+  setDeviceIntegrity,
   subscribeThisBrowser,
   unsubscribeThisBrowser,
 } from '@/lib/pushAlertsApi';
@@ -97,7 +102,7 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
 
       <fieldset className="space-y-2">
         <legend className="text-sm font-semibold">{t('types')}</legend>
-        {ALERT_CATEGORIES.map((c) => (
+        {visibleCategories(config.data).map((c) => (
           <label key={c} className="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border p-3">
             <input
               type="checkbox"
@@ -119,6 +124,29 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
                     aria-invalid={errors.includes('minAmount')}
                   />
                   ₪
+                </span>
+              ) : null}
+              {c === INTEGRITY_CATEGORY && draft.categories.includes(c) && draft.integrityCompanyIds && options.data?.companies?.length ? (
+                <span className="mt-2 block space-y-1 text-sm">
+                  <span className="block font-medium">{t('integrityCompanies')}</span>
+                  <span className="block text-xs text-muted-foreground">{t('integrityCompaniesHint')}</span>
+                  <span className="block max-h-40 space-y-1 overflow-y-auto rounded-lg border p-2">
+                    {options.data.companies.map((co) => (
+                      <span key={co.id} className="flex min-h-9 items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-[#007AFF]"
+                          checked={draft.integrityCompanyIds?.includes(co.id) ?? false}
+                          onChange={() => set({ integrityCompanyIds: toggle(draft.integrityCompanyIds ?? [], co.id) })}
+                          aria-label={co.name}
+                        />
+                        <span className="min-w-0 truncate">
+                          {co.name}
+                          <span className="text-xs text-muted-foreground"> · {co.tenantName}</span>
+                        </span>
+                      </span>
+                    ))}
+                  </span>
                 </span>
               ) : null}
             </span>
@@ -233,6 +261,11 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
     onError: () => toast.error(t('testFailed')),
   });
   const remove = useMutation({ mutationFn: removePushDevice, onSuccess: refresh });
+  const integrity = useMutation({
+    mutationFn: ({ id, on }: { id: string; on: boolean }) => setDeviceIntegrity(id, on),
+    onSuccess: refresh,
+    onError: () => toast.error(t('integrityDeviceFailed')),
+  });
   const active = (devices.data ?? []).filter((d) => d.active);
 
   return (
@@ -275,9 +308,22 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
                   {d.lastError ? ` · ${d.lastError}` : ''}
                 </span>
               </span>
-              <Button variant="ghost" size="icon" aria-label={t('removeDevice')} onClick={() => remove.mutate(d.id)}>
-                <Trash2 className="size-4 text-destructive" aria-hidden />
-              </Button>
+              <span className="flex shrink-0 items-center gap-1">
+                {d.integrity !== undefined ? (
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title={t('integrityOnDevice')}>
+                    {t('type.integrity')}
+                    <Switch
+                      checked={d.integrity}
+                      disabled={integrity.isPending}
+                      onCheckedChange={(on) => integrity.mutate({ id: d.id, on })}
+                      aria-label={t('integrityOnDevice')}
+                    />
+                  </label>
+                ) : null}
+                <Button variant="ghost" size="icon" aria-label={t('removeDevice')} onClick={() => remove.mutate(d.id)}>
+                  <Trash2 className="size-4 text-destructive" aria-hidden />
+                </Button>
+              </span>
             </li>
           ))}
         </ul>

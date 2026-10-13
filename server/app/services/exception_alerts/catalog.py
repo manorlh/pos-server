@@ -87,6 +87,12 @@ KINDS: Tuple[Kind, ...] = (
     Kind("kiosk_offline", "קיוסק לא מחובר", "high", "audit_exception"),
     Kind("till_offline", "קופה לא מחוברת", "high", "audit_exception"),
     Kind("zcredit_recon", "אי-התאמה מול Z-Credit (חיוב בלי מסמך / מסמך בלי חיוב)", "high", "audit_exception", amount=True),
+    # The board's lights as alerts (app/services/exception_alerts/status_watch.py, P:/specs/manager-problems.md
+    # §2): written as `audit_exceptions`, closed by the watch itself when the light goes out.
+    Kind("z_missing", "Z לא בוצע", "high", "audit_exception"),
+    Kind("shift_open_overdue", "משמרת פתוחה מעבר לזמן", "medium", "audit_exception", link="shift"),
+    Kind("card_transmission_overdue", "שידור אשראי באיחור", "medium", "audit_exception", amount=True),
+    Kind("till_printer", "תקלת מדפסת בקופה", "medium", "audit_exception"),
     # Listed by the exception rules as planned; nothing reports them yet.
     Kind("price_override", "שינוי מחיר ידני", "medium", "audit_exception", amount=True, link="document"),
     Kind("card_failures", "כשלי חיוב באשראי", "medium", "audit_exception"),
@@ -134,8 +140,11 @@ KINDS = KINDS + tuple(
 KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
 #: Kinds an SMS rule fires on only when it names them — an "every kind" rule written before they
 #: existed does not start texting them (feat/event-live: a till outage, a till barely selling,
-#: a target reached; the phone alerts carry them).
-OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted"})
+#: a target reached; the phone alerts carry them; the board's lights as alerts, manager-problems §2).
+OPT_IN_KINDS = frozenset({
+    "till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted",
+    "z_missing", "shift_open_overdue", "card_transmission_overdue", "till_printer",
+})
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 SEVERITY_LABELS = {"low": "נמוכה", "medium": "בינונית", "high": "גבוהה"}
 COUNT_SCOPES = ("machine", "employee", "shop")

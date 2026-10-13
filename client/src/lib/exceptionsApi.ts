@@ -91,6 +91,13 @@ export const EXCEPTION_TYPES = [
   'drawer_open_near_variance',
   'drawer_open_no_reason',
   'drawer_open_denied',
+  // "מדיניות התראות" (P:/specs/manager-problems.md §2): the board's lights as alerts, closed by the
+  // cloud when the light goes out (details: summary, resolvedAt, and per kind businessDate / scope,
+  // reason, level / pendingCount / oldestPendingAt, printerStatus / since).
+  'z_missing',
+  'shift_open_overdue',
+  'card_transmission_overdue',
+  'till_printer',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];
