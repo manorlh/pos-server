@@ -64,7 +64,7 @@ function IconButton({ m, children, label }: { m: PreviewModel; children: ReactNo
   );
 }
 
-function OrderHeader({ m }: { m: PreviewModel }) {
+export function OrderHeader({ m }: { m: PreviewModel }) {
   const P = pad(m);
   const searchField = m.view.features.includes('searchField');
   return (
@@ -418,7 +418,7 @@ function FavoritesStrip({ m, d }: { m: PreviewModel; d: D }) {
   );
 }
 
-function Extras({ m, d }: { m: PreviewModel; d: D }) {
+export function Extras({ m, d }: { m: PreviewModel; d: D }) {
   const f = m.view.features;
   const bill = m.view.billPosition[m.mode];
   const fieldsUp =
@@ -603,10 +603,13 @@ function ProductGrid({ m, d }: { m: PreviewModel; d: D }) {
   const items = m.products;
   let body: ReactNode = null;
   if (size.w > 0 && size.h > 0) {
-    const cols = gridColumns({ style, size: m.tileSize, paneWidth: size.w, handheld: m.handheld, columns: m.view.columns, gap: G });
+    // "לילה": bigger keys for the thumb — 96 dp high, 3–4 across a tablet, 2 on the handheld (§2.3).
+    const night = m.view.template === 'night';
+    const fitted = gridColumns({ style, size: m.tileSize, paneWidth: size.w, handheld: m.handheld, columns: m.view.columns, gap: G });
+    const cols = night && !m.view.columns ? (m.handheld ? 2 : Math.min(4, Math.max(3, fitted))) : fitted;
     const tileW = (size.w - (cols - 1) * G) / cols;
     const withPhoto = m.showImages && items.some((p) => !!p.imageUrl);
-    const th = tileHeight({ style, size: m.tileSize, density: m.view.density, tileWidth: tileW, withPhoto });
+    const th = night ? 96 : tileHeight({ style, size: m.tileSize, density: m.view.density, tileWidth: tileW, withPhoto });
     if (style === 'row') {
       const header = m.view.template === 'professional';
       // Every row that shows at all, the last one cut at the pane's bottom (the list scrolls on the till).
@@ -647,7 +650,7 @@ function ProductGrid({ m, d }: { m: PreviewModel; d: D }) {
   );
 }
 
-function CategoryRow({ m, d }: { m: PreviewModel; d: D }) {
+export function CategoryRow({ m, d }: { m: PreviewModel; d: D }) {
   const [ref, size] = useBoxSize<HTMLDivElement>();
   const { shown, rest } = fitChips(m, m.categories, size.w, true);
   return (
@@ -667,6 +670,9 @@ function CategoryRow({ m, d }: { m: PreviewModel; d: D }) {
 
 function CategoryRail({ m, d }: { m: PreviewModel; d: D }) {
   const t = m.t;
+  // "לילה": a 150 dp rail of 64 dp buttons for the thumb (phase 2 §2.3).
+  const night = m.view.template === 'night';
+  const width = night ? 150 : 120;
   const item = (id: string | null, label: string) => {
     const on = m.state.category === id;
     return (
@@ -676,7 +682,7 @@ function CategoryRail({ m, d }: { m: PreviewModel; d: D }) {
         aria-pressed={on}
         onClick={() => d({ type: 'category', id })}
         style={{
-          height: 48,
+          height: night ? 64 : 48,
           width: '100%',
           padding: '0 12px',
           borderRadius: R_SMALL,
@@ -698,8 +704,8 @@ function CategoryRail({ m, d }: { m: PreviewModel; d: D }) {
   return (
     <div
       style={{
-        width: 120,
-        flex: '0 0 120px',
+        width,
+        flex: `0 0 ${width}px`,
         display: 'flex',
         flexDirection: 'column',
         gap: 4,
@@ -741,7 +747,7 @@ function SearchField({ m }: { m: PreviewModel }) {
   );
 }
 
-function MenuArea({ m, d }: { m: PreviewModel; d: D }) {
+export function MenuArea({ m, d, railAtEnd = false }: { m: PreviewModel; d: D; railAtEnd?: boolean }) {
   const P = pad(m);
   const G = gap(m);
   const side = m.view.categoryBar === 'side';
@@ -752,8 +758,9 @@ function MenuArea({ m, d }: { m: PreviewModel; d: D }) {
       {m.view.features.includes('searchField') ? <SearchField m={m} /> : null}
       {side ? null : <CategoryRow m={m} d={d} />}
       <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', gap: G }}>
-        {side ? <CategoryRail m={m} d={d} /> : null}
+        {side && !railAtEnd ? <CategoryRail m={m} d={d} /> : null}
         <ProductGrid m={m} d={d} />
+        {side && railAtEnd ? <CategoryRail m={m} d={d} /> : null}
       </div>
     </div>
   );
@@ -836,7 +843,7 @@ function GroupLabel({ m, children }: { m: PreviewModel; children: ReactNode }) {
 }
 
 /** The lines in the template's bill style. `columns`: the bottom block's width (cards 3 across, groups 2). */
-function BillLines({ m, d, wide }: { m: PreviewModel; d: D; wide: boolean }) {
+export function BillLines({ m, d, wide }: { m: PreviewModel; d: D; wide: boolean }) {
   const lines = orderLines(m);
   const style = m.view.billStyle;
   const G = gap(m);
@@ -915,7 +922,7 @@ function BillLines({ m, d, wide }: { m: PreviewModel; d: D; wide: boolean }) {
   );
 }
 
-function BillHead({ m, title }: { m: PreviewModel; title?: string }) {
+export function BillHead({ m, title }: { m: PreviewModel; title?: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
       <span style={{ fontSize: m.fs(18), fontWeight: 700 }}>{title ?? m.text('orderTitle')}</span>
@@ -924,7 +931,7 @@ function BillHead({ m, title }: { m: PreviewModel; title?: string }) {
   );
 }
 
-function SidePanel({ m, d, side }: { m: PreviewModel; d: D; side: 'end' | 'start' }) {
+export function SidePanel({ m, d, side }: { m: PreviewModel; d: D; side: 'end' | 'start' | 'drawer' }) {
   const t = m.t;
   const P = pad(m);
   const width = sideBillWidth(m.view.template, m.W);
@@ -936,7 +943,7 @@ function SidePanel({ m, d, side }: { m: PreviewModel; d: D; side: 'end' | 'start
         flex: `0 0 ${width}px`,
         height: '100%',
         background: t.surface,
-        borderInlineStart: side === 'end' ? border : undefined,
+        borderInlineStart: side !== 'start' ? border : undefined,
         borderInlineEnd: side === 'start' ? border : undefined,
         display: 'flex',
         flexDirection: 'column',
@@ -961,7 +968,7 @@ function SidePanel({ m, d, side }: { m: PreviewModel; d: D; side: 'end' | 'start
   );
 }
 
-function BottomBlock({ m, d }: { m: PreviewModel; d: D }) {
+export function BottomBlock({ m, d }: { m: PreviewModel; d: D }) {
   const t = m.t;
   const P = pad(m);
   return (
@@ -989,7 +996,7 @@ function BottomBlock({ m, d }: { m: PreviewModel; d: D }) {
 }
 
 /** The handheld's (and the mobile template's) summary: a bar that opens upward, the total and the bar always in sight. */
-function CollapsibleSummary({ m, d, sheet }: { m: PreviewModel; d: D; sheet: boolean }) {
+export function CollapsibleSummary({ m, d, sheet }: { m: PreviewModel; d: D; sheet: boolean }) {
   const t = m.t;
   const P = pad(m);
   const open = m.summaryOpen;

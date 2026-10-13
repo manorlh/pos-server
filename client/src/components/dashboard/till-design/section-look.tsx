@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * "צבעים וטקסטים": one accent colour (null = the brand colour the till uses today) and light /
- * dark / as today; every screen text the business may reword, its default as the placeholder
+ * "צבעים וטקסטים": one accent colour (null = the brand colour the till uses today; "brand" = the
+ * brand colour over an accent the level above set, phase 2 §3.10) and light / dark / as today; every screen text the business may reword, its default as the placeholder
  * (empty = the default).
  */
 
@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { COLOR_MODES, TEXT_DEFAULTS, TEXT_KEYS, TEXT_MAX } from '@/lib/tillDesign';
+import { ACCENT_BRAND, COLOR_MODES, TEXT_DEFAULTS, TEXT_KEYS, TEXT_MAX } from '@/lib/tillDesign';
 import { useTillField } from './editor-context';
 import { FieldShell, SectionCard, SegmentField } from './fields';
 import { DEFAULT_ACCENT } from './preview-model';
@@ -23,7 +23,11 @@ const HEX = /^#[0-9A-Fa-f]{6}$/;
 function AccentField() {
   const t = useTranslations('tillDesign.colors');
   const f = useTillField<string | null>('colors.accent');
-  const value = typeof f.value === 'string' ? f.value.toUpperCase() : null;
+  const own = typeof f.value === 'string' && f.value !== ACCENT_BRAND ? f.value : null;
+  const value = own ? own.toUpperCase() : null;
+  const inheritedOwn = typeof f.inheritedValue === 'string' && f.inheritedValue !== ACCENT_BRAND;
+  /** Back to the brand colour: "brand" over the level above's accent, else inherit (null). */
+  const toBrand = () => f.set(inheritedOwn ? ACCENT_BRAND : null);
   return (
     <FieldShell path="colors.accent" label={t('accent')} hint={t('accentHint')}>
       <div className="flex flex-wrap items-center gap-2">
@@ -54,18 +58,19 @@ function AccentField() {
           dir="ltr"
           className="w-28 font-mono"
           disabled={f.disabled}
-          value={f.value ?? ''}
+          value={own ?? ''}
           placeholder={t('brand')}
           onChange={(e) => {
             const v = e.target.value.trim();
-            f.set(v === '' ? null : v.startsWith('#') ? v : `#${v}`);
+            if (v === '') toBrand();
+            else f.set(v.startsWith('#') ? v : `#${v}`);
           }}
         />
-        {f.value === null || f.value === undefined ? (
-          <Badge variant="outline">{t('brand')}</Badge>
+        {own === null ? (
+          <Badge variant="outline">{f.value === ACCENT_BRAND ? t('brandOver') : t('brand')}</Badge>
         ) : (
-          <Button type="button" size="xs" variant="ghost" disabled={f.disabled} onClick={() => f.set(null)}>
-            {t('useBrand')}
+          <Button type="button" size="xs" variant="ghost" disabled={f.disabled} onClick={toBrand}>
+            {inheritedOwn ? t('useBrandOver') : t('useBrand')}
           </Button>
         )}
       </div>

@@ -12,17 +12,22 @@
  * `forProfile` (what one device profile shows), the banknote buttons and the till parameters'
  * quick-pay buttons — and the shared fixture tests/fixtures/till_design_contract.json pins it
  * (tillDesign.test.ts runs every case). The till (pos-android domain/TillDesign.kt) mirrors it too.
+ *
+ * Phase 2 (P:\specs\till-design-phase2.md §6, approved: "windows לא כעת, כל השאר"): the four
+ * templates that were "בקרוב", a profile's own action bar, "כמו הבסיס" over a parent's value
+ * ("base" / "brand"), the new templates' sections, "הוצא הבא" and the table's tenders.
  */
 
 /* ------------------------------------------------------------ vocabularies */
 
 export const SCHEMA_VERSION = 1;
 
-export const TEMPLATES = ['clean', 'touch', 'professional', 'seated', 'fast', 'mobile'] as const;
+export const TEMPLATES = ['clean', 'touch', 'professional', 'seated', 'fast', 'mobile', 'courses', 'payDock', 'night', 'visual'] as const;
 export type Template = (typeof TEMPLATES)[number];
-/** Phase 2: shown in the dashboard as "בקרוב", refused on save. */
-export const PHASE2_TEMPLATES = ['courses', 'payDock', 'night', 'visual'] as const;
-export type Phase2Template = (typeof PHASE2_TEMPLATES)[number];
+/** Templates still refused on save ("template_not_available"): none since phase 2 (decision 1: hide what is not built). */
+export const PHASE2_TEMPLATES: readonly string[] = [];
+/** Phase 2's four templates: a till older than the server's `phase2MinVersion` shows "נקי" in their place. */
+export const PHASE2_NEW_TEMPLATES: readonly Template[] = ['courses', 'payDock', 'night', 'visual'];
 /** Old names, read as their template (the cloud stores the new name). */
 export const TEMPLATE_ALIASES: Record<string, Template> = {
   classic: 'clean',
@@ -51,15 +56,30 @@ export const ANDROID_PROFILES: Profile[] = ['handheld', 'tabletLandscape', 'tabl
 export const MODES = ['table', 'quick'] as const;
 export type Mode = (typeof MODES)[number];
 
+/**
+ * "כמו הבסיס (גם אם נקבע ברמה שמעל)" (phase 2 §3.10): `null` in a layer inherits, so these say
+ * it explicitly — "base" in a profile's fields (its bars too), "brand" in `colors.accent`.
+ * `forProfile` reads them as not set; they stay in the effective config.
+ */
+export const AS_BASE = 'base';
+export const ACCENT_BRAND = 'brand';
+export type AsBase = typeof AS_BASE;
+
 export const TILE_SIZES = ['auto', 'xs', 's', 'm', 'l'] as const;
 export type TileSize = (typeof TILE_SIZES)[number];
 export const TILE_STYLES = ['auto', 'card', 'photo', 'row', 'key'] as const;
 export type TileStyle = (typeof TILE_STYLES)[number];
+/** A template's own tile style, never chosen: the visual menu's dish cards. */
+export const TEMPLATE_TILE_STYLES = ['dish'] as const;
+/** A tile style once resolved (a template's own included). */
+export type ResolvedTileStyle = Exclude<TileStyle, 'auto'> | (typeof TEMPLATE_TILE_STYLES)[number];
 export const DENSITIES = ['compact', 'comfortable', 'spacious'] as const;
 export type Density = (typeof DENSITIES)[number];
 /** Where the bill stands. In RTL "end" is the LEFT side, "start" the right. */
 export const BILL_POSITIONS = ['auto', 'end', 'start', 'bottom', 'sheet'] as const;
 export type BillPosition = (typeof BILL_POSITIONS)[number];
+/** A template's own bill position, never chosen: the visual menu's floating drawer. */
+export const TEMPLATE_BILL_POSITIONS = ['drawer'] as const;
 export const CATEGORY_BARS = ['auto', 'top', 'side'] as const;
 export type CategoryBar = (typeof CATEGORY_BARS)[number];
 export const IMAGES = ['auto', 'show', 'hide'] as const;
@@ -79,12 +99,17 @@ export type MapStyle = (typeof MAP_STYLES)[number];
 export const SHOW_HIDE = ['auto', 'show', 'hide'] as const;
 export type ShowHide = (typeof SHOW_HIDE)[number];
 
+/** Phase 2 adds, at the end: a quick order's "עוד סבב", a table's "הוצא הבא" and its tenders. */
 export const QUICK_ACTIONS = [
   'pay', 'fastCard', 'cashWithChange', 'fastCash', 'cashNotes',
   'hold', 'discount', 'customer', 'orderDetails', 'clear',
+  'repeatRound',
 ] as const;
 export type QuickAction = (typeof QUICK_ACTIONS)[number];
-export const TABLE_ACTIONS = ['send', 'bill', 'pay', 'split', 'move', 'guests', 'notes', 'discount', 'repeatRound'] as const;
+export const TABLE_ACTIONS = [
+  'send', 'bill', 'pay', 'split', 'move', 'guests', 'notes', 'discount', 'repeatRound',
+  'fire', 'cashWithChange', 'cashNotes', 'fastCash', 'fastCard',
+] as const;
 export type TableAction = (typeof TABLE_ACTIONS)[number];
 export type ActionId = QuickAction | TableAction;
 /** The one button each list must keep when it is set: the payment screen / the kitchen. */
@@ -111,6 +136,8 @@ export const ACTION_LABELS: Record<ActionId, string> = {
   customer: 'לקוח',
   orderDetails: 'פרטי הזמנה',
   clear: 'נקה הזמנה',
+  // The till writes the next course's name ("הוצא עיקריות"); this is the label with none.
+  fire: 'הוצא הבא',
 };
 
 /** Banknotes / coin for "שטרות" (cashNotes). */
@@ -125,6 +152,20 @@ export const QUANTITY_MAX = 99;
 export const FAVORITES_MAX = 24;
 export const MENU_IDS_MAX = 2000;
 export const COLUMNS_CHOICES = [0, 2, 3, 4, 5, 6, 7, 8] as const;
+
+/* Phase 2's sections. */
+/** "זמן להוציא": 0 = off, else 5–60 minutes (a reminder on the screen only). */
+export const FIRE_GAP_MIN = 5;
+export const FIRE_GAP_MAX = 60;
+export const NIGHT_HANDS = ['right', 'left'] as const;
+export type NightHand = (typeof NIGHT_HANDS)[number];
+export const DESCRIPTION_LINES = [0, 1, 2] as const;
+/** `visual.dietary`: "auto" = the till parameter showDietaryMarks. */
+export const DIETARY_MODES = ['auto', 'show', 'hide'] as const;
+export type DietaryMode = (typeof DIETARY_MODES)[number];
+/** `orderNumber.prefix`: "" = auto (the till's number when the shop has more than one), else up to 4 letters / digits. */
+export const ORDER_PREFIX_MAX = 4;
+const ORDER_PREFIX = /^[0-9A-Za-z\u05D0-\u05EA]*$/;
 
 /** The screen texts a business may reword ("" = the default below). */
 export const TEXT_DEFAULTS = {
@@ -158,14 +199,22 @@ export interface ActionItem {
   label: string;
 }
 
+/** A profile's bars (phase 2 §3.4): null or "base" = the base's, [] = auto, a list = this profile's. */
+export interface ProfileActionBar {
+  table: ActionItem[] | AsBase | null;
+  quick: ActionItem[] | AsBase | null;
+}
+
+/** A profile's overrides: null inherits; "base" = as the base, over a parent's value. */
 export interface ProfileOverride {
-  template: Template | null;
-  tileSize: TileSize | null;
-  tileStyle: TileStyle | null;
-  density: Density | null;
-  billPosition: BillPosition | null;
-  categoryBar: CategoryBar | null;
-  columns: number | null;
+  template: Template | AsBase | null;
+  tileSize: TileSize | AsBase | null;
+  tileStyle: TileStyle | AsBase | null;
+  density: Density | AsBase | null;
+  billPosition: BillPosition | AsBase | null;
+  categoryBar: CategoryBar | AsBase | null;
+  columns: number | AsBase | null;
+  actionBar: ProfileActionBar;
 }
 export const PROFILE_OVERRIDE_KEYS = ['template', 'tileSize', 'tileStyle', 'density', 'billPosition', 'categoryBar', 'columns'] as const;
 export type ProfileOverrideKey = (typeof PROFILE_OVERRIDE_KEYS)[number];
@@ -186,20 +235,36 @@ export interface TillDesignConfig {
   profiles: Record<Profile, ProfileOverride>;
   actionBar: { table: ActionItem[]; quick: ActionItem[] };
   quickCash: { notes: number[]; count: number };
-  bar: { quantityPresets: number[]; favorites: string[]; repeatRound: boolean };
+  bar: { quantityPresets: number[]; favorites: string[]; repeatRound: boolean; openTabs: boolean };
   menu: { categoryOrder: string[]; productOrder: string[]; hiddenCategories: string[] };
+  /** null = the brand colour (inherits); "brand" = the brand colour over a parent's accent. */
   colors: { accent: string | null; mode: ColorMode };
   texts: Partial<Record<TextKey, string>>;
   fields: Record<FieldKey, FieldMode>;
   behavior: { summary: SummaryState; lineStatus: boolean };
   tables: { mapStyle: MapStyle; showChairs: ShowHide };
+  courses: { fireGapMinutes: number; autoFireFirst: boolean };
+  payDock: { savings: boolean };
+  night: { hand: NightHand; quickAddons: boolean };
+  visual: { descriptionLines: number; dietary: DietaryMode };
+  professional: { keyboard: boolean; fKeys: boolean };
+  orderNumber: { atOpen: boolean; prefix: string };
 }
 
 /** A partial layer as stored / sent (`{overrides}`). */
 export type TillDesignLayer = { [key: string]: unknown };
 
 function emptyProfile(): ProfileOverride {
-  return { template: null, tileSize: null, tileStyle: null, density: null, billPosition: null, categoryBar: null, columns: null };
+  return {
+    template: null,
+    tileSize: null,
+    tileStyle: null,
+    density: null,
+    billPosition: null,
+    categoryBar: null,
+    columns: null,
+    actionBar: { table: null, quick: null },
+  };
 }
 
 export const TILL_DESIGN_DEFAULTS: TillDesignConfig = {
@@ -222,32 +287,55 @@ export const TILL_DESIGN_DEFAULTS: TillDesignConfig = {
     ipadPortrait: emptyProfile(),
     ipadLandscape: emptyProfile(),
   },
-  // [] = "auto": a table's from its template, a quick order's from the till parameters.
+  // [] = "auto": a table's from its template, a quick order's from the till parameters (or the
+  // template's own, payDock).
   actionBar: { table: [], quick: [] },
   quickCash: { notes: [], count: 3 },
-  bar: { quantityPresets: [1, 2, 3, 5], favorites: [], repeatRound: true },
+  bar: { quantityPresets: [1, 2, 3, 5], favorites: [], repeatRound: true, openTabs: false },
   menu: { categoryOrder: [], productOrder: [], hiddenCategories: [] },
   colors: { accent: null, mode: 'auto' },
   texts: {},
   fields: { customerName: 'auto', serviceType: 'auto', guests: 'auto' },
   behavior: { summary: 'auto', lineStatus: true },
   tables: { mapStyle: 'auto', showChairs: 'auto' },
+  // Phase 2: every default is today's behaviour.
+  courses: { fireGapMinutes: 0, autoFireFirst: true },
+  payDock: { savings: true },
+  night: { hand: 'right', quickAddons: true },
+  visual: { descriptionLines: 2, dietary: 'auto' },
+  professional: { keyboard: false, fKeys: false },
+  orderNumber: { atOpen: false, prefix: '' },
 };
 
 /* ----------------------------------------------- what each template is */
 
-export type BillStyle = 'lines' | 'cards' | 'seats' | 'compact';
-export type Feature = 'searchField' | 'seatCards' | 'quantityPresets' | 'favorites' | 'seatPicker';
-/** A bill position once resolved ("auto" settled). */
-export type ResolvedBillPosition = Exclude<BillPosition, 'auto'>;
+export type BillStyle = 'lines' | 'cards' | 'seats' | 'compact' | 'courses';
+export type Feature =
+  | 'searchField'
+  | 'seatCards'
+  | 'quantityPresets'
+  | 'favorites'
+  | 'seatPicker'
+  | 'courseLanes'
+  | 'payDock'
+  | 'selectedLine'
+  | 'quickAddons'
+  | 'thumbs'
+  | 'dishCards';
+/** A bill position once resolved ("auto" settled; a template's own "drawer" included). */
+export type ResolvedBillPosition = Exclude<BillPosition, 'auto'> | (typeof TEMPLATE_BILL_POSITIONS)[number];
 
 export interface TemplateDefaults {
-  tileStyle: Exclude<TileStyle, 'auto'>;
+  tileStyle: ResolvedTileStyle;
   billStyle: BillStyle;
   billPosition: Record<Mode, Record<Profile, ResolvedBillPosition>>;
   tableActions: ActionId[];
+  /** A quick order's "auto" bar when the template has its own (payDock); [] = the till parameters'. */
+  quickActions: ActionId[];
   features: Feature[];
   summaryCollapsible: boolean;
+  /** What the template sets whatever the config says (night: no images, large text). */
+  fixed: { images?: ImagesMode; textSize?: TextSize };
 }
 
 function allProfiles(position: ResolvedBillPosition): Record<Profile, ResolvedBillPosition> {
@@ -266,7 +354,7 @@ function both(byProfile: Record<Profile, ResolvedBillPosition>): Record<Mode, Re
   return { table: { ...byProfile }, quick: { ...byProfile } };
 }
 
-/** The shared template table (docs/SPEC_TILL_DESIGN.md §4), as TEMPLATE_DEFAULTS in Python. */
+/** The shared template table (docs/SPEC_TILL_DESIGN.md §4, phase 2 §6.1), as TEMPLATE_DEFAULTS in Python. */
 export const TEMPLATE_DEFAULTS: Record<Template, TemplateDefaults> = {
   clean: {
     tileStyle: 'card',
@@ -276,48 +364,104 @@ export const TEMPLATE_DEFAULTS: Record<Template, TemplateDefaults> = {
       quick: { handheld: 'sheet', tabletLandscape: 'end', tabletPortrait: 'bottom', ipadPortrait: 'bottom', ipadLandscape: 'end' },
     },
     tableActions: ['send'],
+    quickActions: [],
     features: [],
     summaryCollapsible: false,
+    fixed: {},
   },
   touch: {
     tileStyle: 'photo',
     billStyle: 'cards',
     billPosition: both(SIDE),
     tableActions: ['send', 'bill'],
+    quickActions: [],
     features: [],
     summaryCollapsible: false,
+    fixed: {},
   },
   professional: {
     tileStyle: 'row',
     billStyle: 'lines',
     billPosition: both({ handheld: 'sheet', tabletLandscape: 'end', tabletPortrait: 'end', ipadPortrait: 'end', ipadLandscape: 'end' }),
     tableActions: ['send', 'bill'],
+    quickActions: [],
     features: ['searchField'],
     summaryCollapsible: false,
+    fixed: {},
   },
   seated: {
     tileStyle: 'card',
     billStyle: 'seats',
     billPosition: both(SIDE),
     tableActions: ['send', 'bill', 'split'],
+    quickActions: [],
     features: ['seatCards'],
     summaryCollapsible: false,
+    fixed: {},
   },
   fast: {
     tileStyle: 'key',
     billStyle: 'compact',
     billPosition: both(SIDE),
     tableActions: ['send', 'repeatRound', 'bill'],
+    quickActions: [],
     features: ['quantityPresets', 'favorites'],
     summaryCollapsible: false,
+    fixed: {},
   },
   mobile: {
     tileStyle: 'card',
     billStyle: 'lines',
     billPosition: both(allProfiles('bottom')),
     tableActions: ['send', 'bill'],
+    quickActions: [],
     features: ['seatPicker'],
     summaryCollapsible: true,
+    fixed: {},
+  },
+  // "לוח מנות": a lane per course; a quick order, or "מנות בשולחן" off, shows clean on the till.
+  courses: {
+    tileStyle: 'card',
+    billStyle: 'courses',
+    billPosition: both(SIDE),
+    tableActions: ['send', 'fire', 'bill'],
+    quickActions: [],
+    features: ['courseLanes'],
+    summaryCollapsible: false,
+    fixed: {},
+  },
+  // "עגינת תשלום": the fixed payment dock and the bill's selected line.
+  payDock: {
+    tileStyle: 'card',
+    billStyle: 'lines',
+    billPosition: both(SIDE),
+    tableActions: ['send', 'bill', 'pay'],
+    quickActions: ['fastCard', 'fastCash', 'cashNotes', 'pay'],
+    features: ['payDock', 'selectedLine'],
+    summaryCollapsible: false,
+    fixed: {},
+  },
+  // "לילה": dark, large text, no images whatever the config says; for the thumbs.
+  night: {
+    tileStyle: 'key',
+    billStyle: 'compact',
+    billPosition: both(SIDE),
+    tableActions: ['send', 'repeatRound', 'bill'],
+    quickActions: [],
+    features: ['quantityPresets', 'favorites', 'quickAddons', 'thumbs'],
+    summaryCollapsible: false,
+    fixed: { images: 'hide', textSize: 'large' },
+  },
+  // "תפריט ויזואלי": dish cards and a floating drawer; the handheld keeps its summary bar.
+  visual: {
+    tileStyle: 'dish',
+    billStyle: 'lines',
+    billPosition: both({ handheld: 'bottom', tabletLandscape: 'drawer', tabletPortrait: 'drawer', ipadPortrait: 'drawer', ipadLandscape: 'drawer' }),
+    tableActions: ['send', 'bill'],
+    quickActions: [],
+    features: ['dishCards'],
+    summaryCollapsible: false,
+    fixed: {},
   },
 };
 
@@ -333,6 +477,8 @@ export const LEGACY_MAP: Record<string, string[]> = {
   'colors.accent': ['brandPrimaryColor'],
   'menu.categoryOrder': ['categoryOrder'],
   'menu.productOrder': ['productOrder'],
+  courses: ['coursesEnabled'],
+  'visual.dietary': ['showDietaryMarks'],
 };
 
 /** The vocabularies and the template table, as `GET /till-design/defaults` sends them. */
@@ -341,6 +487,10 @@ export function tillDesignCatalog() {
     schemaVersion: SCHEMA_VERSION,
     templates: [...TEMPLATES],
     phase2Templates: [...PHASE2_TEMPLATES],
+    asBase: AS_BASE,
+    accentBrand: ACCENT_BRAND,
+    templateTileStyles: [...TEMPLATE_TILE_STYLES],
+    templateBillPositions: [...TEMPLATE_BILL_POSITIONS],
     templateAliases: { ...TEMPLATE_ALIASES },
     profiles: [...PROFILES],
     profileSizes: Object.fromEntries(PROFILES.map((p) => [p, [...PROFILE_SIZES[p]]])) as Record<Profile, number[]>,
@@ -371,7 +521,12 @@ export function tillDesignCatalog() {
       mapStyle: [...MAP_STYLES],
       showChairs: [...SHOW_HIDE],
       columns: [...COLUMNS_CHOICES],
+      nightHand: [...NIGHT_HANDS],
+      descriptionLines: [...DESCRIPTION_LINES],
+      visualDietary: [...DIETARY_MODES],
     },
+    fireGapMinutes: { min: FIRE_GAP_MIN, max: FIRE_GAP_MAX },
+    orderPrefixMax: ORDER_PREFIX_MAX,
   };
 }
 
@@ -520,14 +675,64 @@ class IntNode extends SchemaNode {
 }
 
 class StrNode extends SchemaNode {
-  constructor(readonly maxLen: number, readonly minLen = 0) {
+  constructor(
+    readonly maxLen: number,
+    readonly minLen = 0,
+    readonly pattern: RegExp | null = null,
+    readonly patternMessage = 'invalid format',
+  ) {
     super();
   }
   check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
     if (typeof value !== 'string') return fail(errors, path, 'invalid_type', 'must be a string');
     if (value.length > this.maxLen) return fail(errors, path, 'too_long', `at most ${this.maxLen} characters`);
     if (value.length < this.minLen) return fail(errors, path, 'required', `at least ${this.minLen} characters`);
+    if (this.pattern && !this.pattern.test(value)) return fail(errors, path, 'invalid_format', this.patternMessage);
     return value;
+  }
+}
+
+/** `node`'s values, or one literal word ("base" in a profile's fields, "brand" in the accent). */
+class OrLiteralNode extends SchemaNode {
+  constructor(
+    readonly node: SchemaNode,
+    readonly literal: string,
+  ) {
+    super();
+    this.nullable = node.nullable;
+  }
+  check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    if (value === this.literal) return value;
+    return this.node.check(value, path, errors);
+  }
+}
+
+/** 0 (off) or a whole number in [lo, hi] (`courses.fireGapMinutes`). */
+class IntOrOffNode extends SchemaNode {
+  constructor(
+    readonly lo: number,
+    readonly hi: number,
+  ) {
+    super();
+  }
+  check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    if (!isInt(value)) return fail(errors, path, 'invalid_type', 'must be an integer');
+    if (value !== 0 && (value < this.lo || value > this.hi)) {
+      return fail(errors, path, 'out_of_range', `must be 0 (off) or between ${this.lo} and ${this.hi}`);
+    }
+    return value;
+  }
+}
+
+/** A list that may be null (a profile's bar: null = the base's). */
+class NullableNode extends SchemaNode {
+  constructor(readonly node: SchemaNode) {
+    super();
+    this.nullable = true;
+  }
+  check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    if (value === null) return null;
+    return this.node.check(value, path, errors);
   }
 }
 
@@ -709,17 +914,45 @@ function actionItem(actions: readonly string[]): ObjNode {
   return new ObjNode({ action: new EnumNode(actions), label: new StrNode(ACTION_LABEL_MAX) }, { label: '' }, false);
 }
 
+function actionBar(actions: readonly string[]): ListNode {
+  return new ListNode(actionItem(actions), { maxLen: ACTION_BAR_MAX });
+}
+
+/** A profile field: its values, null (inherit) or "base" (as the base, over a parent's value). */
+function asBase(node: SchemaNode): SchemaNode {
+  return new OrLiteralNode(node, AS_BASE);
+}
+
+/** `profiles.<p>.actionBar` (phase 2 §3.4): null or "base" = the base's bar, [] = auto, a list = the profile's. */
+const PROFILE_ACTION_BAR = new ObjNode(
+  {
+    table: asBase(new NullableNode(actionBar(TABLE_ACTIONS))),
+    quick: asBase(new NullableNode(actionBar(QUICK_ACTIONS))),
+  },
+  { table: null, quick: null },
+);
+
 const PROFILE_OVERRIDE = new ObjNode(
   {
-    template: new TemplateNode(true),
-    tileSize: new EnumNode(TILE_SIZES, true),
-    tileStyle: new EnumNode(TILE_STYLES, true),
-    density: new EnumNode(DENSITIES, true),
-    billPosition: new EnumNode(BILL_POSITIONS, true),
-    categoryBar: new EnumNode(CATEGORY_BARS, true),
-    columns: new IntChoiceNode(COLUMNS_CHOICES, true),
+    template: asBase(new TemplateNode(true)),
+    tileSize: asBase(new EnumNode(TILE_SIZES, true)),
+    tileStyle: asBase(new EnumNode(TILE_STYLES, true)),
+    density: asBase(new EnumNode(DENSITIES, true)),
+    billPosition: asBase(new EnumNode(BILL_POSITIONS, true)),
+    categoryBar: asBase(new EnumNode(CATEGORY_BARS, true)),
+    columns: asBase(new IntChoiceNode(COLUMNS_CHOICES, true)),
+    actionBar: PROFILE_ACTION_BAR,
   },
-  { template: null, tileSize: null, tileStyle: null, density: null, billPosition: null, categoryBar: null, columns: null },
+  {
+    template: null,
+    tileSize: null,
+    tileStyle: null,
+    density: null,
+    billPosition: null,
+    categoryBar: null,
+    columns: null,
+    actionBar: { table: null, quick: null },
+  },
 );
 
 const SCHEMA = new ObjNode({
@@ -737,8 +970,8 @@ const SCHEMA = new ObjNode({
   }),
   profiles: new ObjNode(Object.fromEntries(PROFILES.map((p) => [p, PROFILE_OVERRIDE]))),
   actionBar: new ObjNode({
-    table: new ListNode(actionItem(TABLE_ACTIONS), { maxLen: ACTION_BAR_MAX }),
-    quick: new ListNode(actionItem(QUICK_ACTIONS), { maxLen: ACTION_BAR_MAX }),
+    table: actionBar(TABLE_ACTIONS),
+    quick: actionBar(QUICK_ACTIONS),
   }),
   quickCash: new ObjNode({
     notes: new ListNode(new IntChoiceNode(CASH_NOTE_VALUES), { maxLen: CASH_NOTES_MAX, unique: true }),
@@ -752,17 +985,28 @@ const SCHEMA = new ObjNode({
     }),
     favorites: new ListNode(ID, { maxLen: FAVORITES_MAX, unique: true }),
     repeatRound: new BoolNode(),
+    openTabs: new BoolNode(),
   }),
   menu: new ObjNode({
     categoryOrder: new ListNode(ID, { maxLen: MENU_IDS_MAX, unique: true }),
     productOrder: new ListNode(ID, { maxLen: MENU_IDS_MAX, unique: true }),
     hiddenCategories: new ListNode(ID, { maxLen: MENU_IDS_MAX, unique: true }),
   }),
-  colors: new ObjNode({ accent: new ColorNode(true), mode: new EnumNode(COLOR_MODES) }),
+  colors: new ObjNode({ accent: new OrLiteralNode(new ColorNode(true), ACCENT_BRAND), mode: new EnumNode(COLOR_MODES) }),
   texts: new MapNode(new StrNode(TEXT_MAX), TEXT_KEYS),
   fields: new ObjNode(Object.fromEntries(FIELD_KEYS.map((k) => [k, new EnumNode(FIELD_MODES)]))),
   behavior: new ObjNode({ summary: new EnumNode(SUMMARY_STATES), lineStatus: new BoolNode() }),
   tables: new ObjNode({ mapStyle: new EnumNode(MAP_STYLES), showChairs: new EnumNode(SHOW_HIDE) }),
+  // Phase 2's sections.
+  courses: new ObjNode({ fireGapMinutes: new IntOrOffNode(FIRE_GAP_MIN, FIRE_GAP_MAX), autoFireFirst: new BoolNode() }),
+  payDock: new ObjNode({ savings: new BoolNode() }),
+  night: new ObjNode({ hand: new EnumNode(NIGHT_HANDS), quickAddons: new BoolNode() }),
+  visual: new ObjNode({ descriptionLines: new IntChoiceNode(DESCRIPTION_LINES), dietary: new EnumNode(DIETARY_MODES) }),
+  professional: new ObjNode({ keyboard: new BoolNode(), fKeys: new BoolNode() }),
+  orderNumber: new ObjNode({
+    atOpen: new BoolNode(),
+    prefix: new StrNode(ORDER_PREFIX_MAX, 0, ORDER_PREFIX, 'letters and digits only'),
+  }),
 });
 
 /* --------------------------------------------------------------- validation */
@@ -780,28 +1024,46 @@ function dedupe(errors: TillDesignIssue[]): TillDesignIssue[] {
   return out;
 }
 
-/** The rules one node cannot see: the bars' required button and duplicates; a preset of 1. */
-function crossField(cfg: Dict, errors: TillDesignIssue[]): void {
-  const bars = isDict(cfg.actionBar) ? cfg.actionBar : {};
+/** One `{table, quick}` pair of bars at `prefix`: each set list keeps its required button once. */
+function checkBars(bars: unknown, prefix: string, errors: TillDesignIssue[]): void {
+  if (!isDict(bars)) return;
   for (const mode of MODES) {
     const items = bars[mode];
     if (!Array.isArray(items) || items.length === 0) continue;
     const actions = items.filter(isDict).map((i) => i.action);
     const seen = new Set<unknown>();
     actions.forEach((action, i) => {
-      if (seen.has(action)) errors.push({ path: `actionBar.${mode}[${i}]`, code: 'duplicate', message: 'this button is already on the bar' });
+      if (seen.has(action)) errors.push({ path: `${prefix}.${mode}[${i}]`, code: 'duplicate', message: 'this button is already on the bar' });
       seen.add(action);
     });
     const required = REQUIRED_ACTION[mode];
     if (!actions.includes(required)) {
-      errors.push({ path: `actionBar.${mode}`, code: `action_bar_missing_${required}`, message: `the bar must keep the '${required}' button` });
+      errors.push({ path: `${prefix}.${mode}`, code: `action_bar_missing_${required}`, message: `the bar must keep the '${required}' button` });
     }
+  }
+}
+
+/** The rules one node cannot see: the bars' (a profile's too) required button and duplicates; a preset of 1. */
+function crossField(cfg: Dict, errors: TillDesignIssue[]): void {
+  checkBars(cfg.actionBar, 'actionBar', errors);
+  const profiles = isDict(cfg.profiles) ? cfg.profiles : {};
+  for (const profile of PROFILES) {
+    const over = profiles[profile];
+    if (isDict(over)) checkBars(over.actionBar, `profiles.${profile}.actionBar`, errors);
   }
   const bar = isDict(cfg.bar) ? cfg.bar : {};
   const presets = bar.quantityPresets;
   if (Array.isArray(presets) && presets.length > 0 && !presets.includes(1)) {
     errors.push({ path: 'bar.quantityPresets', code: 'quantity_presets_need_one', message: 'the presets must include 1' });
   }
+}
+
+/** A profile's layer without an empty `actionBar`. */
+function pruneProfile(value: unknown): unknown {
+  if (!isDict(value)) return value;
+  const out: Dict = { ...value };
+  if (isDict(out.actionBar) && Object.keys(out.actionBar).length === 0) delete out.actionBar;
+  return out;
 }
 
 /** Drop objects a layer left empty (`{"layout": {}}`, a profile with nothing set). */
@@ -811,7 +1073,11 @@ function pruneEmpty(layer: Dict): Dict {
     let value = raw;
     const node = SCHEMA.fields[key];
     if (key === 'profiles' && isDict(value)) {
-      value = Object.fromEntries(Object.entries(value).filter(([, v]) => isDict(v) && Object.keys(v).length > 0));
+      value = Object.fromEntries(
+        Object.entries(value)
+          .map(([p, v]) => [p, pruneProfile(v)] as const)
+          .filter(([, v]) => isDict(v) && Object.keys(v).length > 0),
+      );
     }
     if (isDict(value) && Object.keys(value).length === 0 && node instanceof ObjNode) continue;
     out[key] = value;
@@ -842,10 +1108,13 @@ export function sanitizeStoredLayer(overrides: unknown): TillDesignLayer {
   if (!isDict(overrides)) return {};
   const { cleaned, errors } = validateTillDesignLayer(overrides);
   for (const e of errors) {
-    if (e.path.startsWith('actionBar.') && e.code.startsWith('action_bar_missing')) {
-      const mode = e.path.split('.')[1].split('[')[0];
-      const bars = cleaned.actionBar;
-      if (isDict(bars)) delete bars[mode];
+    // A bar that lost its required button: back to "auto" (a profile's: to the base's bar).
+    if (e.code.startsWith('action_bar_missing')) {
+      const parts = e.path.split('.');
+      const mode = parts.pop() as string;
+      let holder: unknown = cleaned;
+      for (const part of parts) holder = isDict(holder) ? holder[part] : undefined;
+      if (isDict(holder)) delete holder[mode];
     }
     if (e.path === 'bar.quantityPresets') {
       const bar = cleaned.bar;
@@ -940,7 +1209,7 @@ export function diffConfigs(before: unknown, after: unknown, prefix = ''): Confi
   return out;
 }
 
-/** A template id as stored or as an older name; anything else (a phase-2 one) is clean. */
+/** A template id as stored or as an older name; anything else (unknown, "base") is clean. */
 export function canonicalTemplate(value: unknown): Template {
   if (typeof value === 'string') {
     const v = TEMPLATE_ALIASES[value] ?? value;
@@ -949,8 +1218,38 @@ export function canonicalTemplate(value: unknown): Template {
   return 'clean';
 }
 
-export function isPhase2Template(value: unknown): value is Phase2Template {
-  return typeof value === 'string' && (PHASE2_TEMPLATES as readonly string[]).includes(value);
+/** A profile's value that overrides the base: neither null (inherit) nor "base". */
+export function isSet(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== AS_BASE;
+}
+
+/**
+ * What "כמו הבסיס" saves at this level: "base" when the level above set the value itself (so it
+ * is undone), else null (inherit — the base already).
+ */
+export function asBaseValue(inherited: unknown): AsBase | null {
+  return isSet(inherited) ? AS_BASE : null;
+}
+
+/** Every template the config uses: the base's and each profile's own (in TEMPLATES' order). */
+export function templatesInUse(cfg: Pick<TillDesignConfig, 'template' | 'profiles'>): Template[] {
+  const used = new Set<string>([canonicalTemplate(cfg.template)]);
+  for (const p of PROFILES) {
+    const own = cfg.profiles?.[p]?.template;
+    if (isSet(own)) used.add(canonicalTemplate(own));
+  }
+  return TEMPLATES.filter((t) => used.has(t));
+}
+
+/** Whether a phase-2 template is chosen anywhere a till reads (the base or an Android profile). */
+export function usesPhase2Template(cfg: Pick<TillDesignConfig, 'template' | 'profiles'>): Template[] {
+  const used = new Set<Template>();
+  if ((PHASE2_NEW_TEMPLATES as readonly string[]).includes(cfg.template)) used.add(cfg.template);
+  for (const p of ANDROID_PROFILES) {
+    const own = cfg.profiles?.[p]?.template;
+    if (typeof own === 'string' && (PHASE2_NEW_TEMPLATES as readonly string[]).includes(own)) used.add(own as Template);
+  }
+  return [...used];
 }
 
 /* ----------------------------------------------- what one profile shows */
@@ -962,7 +1261,7 @@ export interface ProfileView {
   template: Template;
   /** "auto" stays: the till resolves it with its parameters (resolveTileSize). */
   tileSize: TileSize;
-  tileStyle: Exclude<TileStyle, 'auto'>;
+  tileStyle: ResolvedTileStyle;
   density: Density;
   billPosition: Record<Mode, ResolvedBillPosition>;
   billStyle: BillStyle;
@@ -973,16 +1272,17 @@ export interface ProfileView {
   images: ImagesMode;
   textSize: TextSize;
   features: Feature[];
-  /** table: the bar or the template's; quick: the bar, or [] — the till parameters'. */
+  /** table: the profile's bar, else the base's, else the template's; quick: the same, or [] — the till's "auto". */
   actions: Record<Mode, ActionItem[]>;
 }
 
 /**
  * The config as one device profile shows it (Python `for_profile`): the profile's overrides
- * over the base, every "auto" the config itself can settle settled (the bill position and the
- * tile style from the template, the table's bar), and what only the till knows left "auto"
- * (the tile size, the quick order's buttons). On the handheld a side bill becomes "bottom"
- * and the category bar is always on top.
+ * over the base ("base" and null read as not set), every "auto" the config itself can settle
+ * settled (the bill position and the tile style from the template, the table's bar), what the
+ * template fixes (night: no images, large text), and what only the till knows left "auto" (the
+ * tile size, the quick order's buttons). On the handheld a side bill becomes "bottom" and the
+ * category bar is always on top. A profile's own bar (a list, [] too) replaces the base's.
  */
 export function forProfile(cfg: TillDesignConfig | Dict, rawProfile: string): ProfileView {
   const c = cfg as Dict;
@@ -993,12 +1293,12 @@ export function forProfile(cfg: TillDesignConfig | Dict, rawProfile: string): Pr
   const layoutDefaults = TILL_DESIGN_DEFAULTS.layout as unknown as Dict;
   const pick = (key: string): unknown => {
     const value = over[key];
-    if (value !== null && value !== undefined) return value;
+    if (isSet(value)) return value;
     return key in layout ? layout[key] : layoutDefaults[key];
   };
-  const template = canonicalTemplate(over.template || c.template);
+  const template = canonicalTemplate(isSet(over.template) && over.template ? over.template : c.template);
   const defaults = TEMPLATE_DEFAULTS[template];
-  let tileStyle = pick('tileStyle') as TileStyle;
+  let tileStyle = pick('tileStyle') as ResolvedTileStyle | 'auto';
   if (!(TILE_STYLES as readonly string[]).includes(tileStyle) || tileStyle === 'auto') tileStyle = defaults.tileStyle;
   const chosen = pick('billPosition') as BillPosition;
   const bill = {} as Record<Mode, ResolvedBillPosition>;
@@ -1013,11 +1313,15 @@ export function forProfile(cfg: TillDesignConfig | Dict, rawProfile: string): Pr
   let categoryBar = pick('categoryBar') as CategoryBar;
   if (!(CATEGORY_BARS as readonly string[]).includes(categoryBar) || categoryBar === 'auto' || profile === 'handheld') categoryBar = 'top';
   const bars = isDict(c.actionBar) ? c.actionBar : {};
-  const tableItems = Array.isArray(bars.table) ? (bars.table as ActionItem[]) : [];
-  const quickItems = Array.isArray(bars.quick) ? (bars.quick as ActionItem[]) : [];
-  const tableActions = tableItems.length
-    ? tableItems.map((i) => ({ ...i }))
-    : defaults.tableActions.map((a) => ({ action: a, label: '' }));
+  const ownBars = isDict(over.actionBar) ? over.actionBar : {};
+  const bar = (mode: Mode): ActionItem[] => {
+    const own = ownBars[mode];
+    const items = Array.isArray(own) ? own : bars[mode];
+    return Array.isArray(items) ? (items as ActionItem[]).map((i) => ({ ...i })) : [];
+  };
+  const tableItems = bar('table');
+  const tableActions = tableItems.length ? tableItems : defaults.tableActions.map((a) => ({ action: a, label: '' }));
+  const columns = pick('columns');
   const [width, height] = PROFILE_SIZES[profile];
   return {
     profile,
@@ -1025,17 +1329,17 @@ export function forProfile(cfg: TillDesignConfig | Dict, rawProfile: string): Pr
     height,
     template,
     tileSize: pick('tileSize') as TileSize,
-    tileStyle: tileStyle as Exclude<TileStyle, 'auto'>,
+    tileStyle,
     density: pick('density') as Density,
     billPosition: bill,
     billStyle: defaults.billStyle,
     summaryCollapsible: defaults.summaryCollapsible,
     categoryBar: categoryBar as Exclude<CategoryBar, 'auto'>,
-    columns: (pick('columns') as number) || 0,
-    images: ('images' in layout ? layout.images : 'auto') as ImagesMode,
-    textSize: ('textSize' in layout ? layout.textSize : 'normal') as TextSize,
+    columns: isInt(columns) ? columns : 0,
+    images: (defaults.fixed.images ?? ('images' in layout ? layout.images : 'auto')) as ImagesMode,
+    textSize: (defaults.fixed.textSize ?? ('textSize' in layout ? layout.textSize : 'normal')) as TextSize,
     features: [...defaults.features],
-    actions: { table: tableActions, quick: quickItems.map((i) => ({ ...i })) },
+    actions: { table: tableActions, quick: bar('quick') },
   };
 }
 
@@ -1104,6 +1408,10 @@ export interface TillDesignLegacy {
   quickActions: ActionItem[];
   fields: Record<FieldKey, 'off' | 'required'>;
   tables: { mapStyle: 'classic' | 'modern'; showChairs: 'show' | 'hide' };
+  /** "מנות בשולחן": off — "לוח מנות" shows clean (phase 2; absent from an older server). */
+  coursesEnabled?: boolean;
+  /** "הצג סימוני תזונה בקופה": the visual menu's dietary words on "auto". */
+  showDietaryMarks?: boolean;
 }
 
 /** Nothing set in the till parameters (the hints' fallback before the server answers). */
@@ -1112,6 +1420,8 @@ export const LEGACY_FALLBACK: TillDesignLegacy = {
   quickActions: legacyQuickActions({}),
   fields: { customerName: 'off', serviceType: 'off', guests: 'off' },
   tables: { mapStyle: 'classic', showChairs: 'show' },
+  coursesEnabled: false,
+  showDietaryMarks: false,
 };
 
 /** Which `legacy.tileSize` key a profile and mode read. */
@@ -1132,10 +1442,19 @@ export function resolveFieldMode(mode: FieldMode, legacy: Exclude<FieldMode, 'au
   return mode === 'auto' ? (legacy ?? 'off') : mode;
 }
 
-/** The action bar a mode shows: the view's, the quick one's "auto" from the till parameters. */
-export function actionsFor(view: Pick<ProfileView, 'actions'>, mode: Mode, legacy: TillDesignLegacy | null | undefined): ActionItem[] {
+/**
+ * The action bar a mode shows: the view's; a quick order's "auto" is the template's own
+ * (payDock: אשראי מהיר, מזומן מדויק, שטרות, תשלום), else the till parameters'.
+ */
+export function actionsFor(
+  view: Pick<ProfileView, 'actions'> & { template?: Template },
+  mode: Mode,
+  legacy: TillDesignLegacy | null | undefined,
+): ActionItem[] {
   const list = view.actions[mode];
   if (list.length > 0 || mode === 'table') return list;
+  const own = view.template ? TEMPLATE_DEFAULTS[view.template].quickActions : [];
+  if (own.length > 0) return own.map((a) => ({ action: a, label: '' }));
   return (legacy ?? LEGACY_FALLBACK).quickActions.map((i) => ({ ...i }));
 }
 
@@ -1251,6 +1570,56 @@ export function flatProductOrder<C extends MenuCategoryIn, P extends MenuProduct
   return out;
 }
 
+/* ------------------------------------------- "תפריט ויזואלי": the photos */
+
+export interface CoverageCategory {
+  id: string;
+  name: string;
+  total: number;
+  withImage: number;
+}
+
+export interface ImageCoverage {
+  total: number;
+  withImage: number;
+  /** 0–100, rounded. */
+  percent: number;
+  /** The categories with fewer than half their products photographed: the till shows them as text cards. */
+  textOnly: CoverageCategory[];
+  /** The products without a photo, in the menu's order. */
+  missing: Array<{ id: string; name: string; categoryId: string | null }>;
+  /** Fewer than 30% of the catalogue photographed: "רוב המוצרים בלי תמונה — 'מגע גדול' יתאים יותר". */
+  mostlyWithout: boolean;
+}
+
+/** Below this share of photographed products the dashboard warns before a save (§2.4). */
+export const VISUAL_MIN_COVERAGE = 0.3;
+
+/**
+ * "תמונות: 41 מתוך 56 מוצרים (73%)" and, per category with fewer than half photographed,
+ * "שתייה: 2 מתוך 14 — תוצג בלי תמונות" (phase 2 §2.4, decision 8).
+ */
+export function imageCoverage<C extends MenuCategoryIn, P extends MenuProductIn & { name: string; imageUrl: string | null }>(
+  categories: readonly C[],
+  products: readonly P[],
+): ImageCoverage {
+  const withImage = products.filter((p) => !!p.imageUrl).length;
+  const textOnly: CoverageCategory[] = [];
+  for (const c of categories) {
+    const own = products.filter((p) => p.categoryId === c.id);
+    const photographed = own.filter((p) => !!p.imageUrl).length;
+    if (own.length > 0 && photographed * 2 < own.length) textOnly.push({ id: c.id, name: c.name, total: own.length, withImage: photographed });
+  }
+  return {
+    total: products.length,
+    withImage,
+    percent: products.length ? Math.round((withImage / products.length) * 100) : 0,
+    textOnly,
+    missing: products.filter((p) => !p.imageUrl).map((p) => ({ id: p.id, name: p.name, categoryId: p.categoryId })),
+    mostlyWithout: products.length > 0 && withImage / products.length < VISUAL_MIN_COVERAGE,
+  };
+}
+
 /* ------------------------------------------------- the preview's geometry */
 
 /** Tile heights (dp) by tile size — the till's TileSize — and the density factor. */
@@ -1259,9 +1628,16 @@ export const DENSITY_FACTOR: Record<Density, number> = { compact: 0.85, comforta
 /** `textSize: large` multiplies every type size. */
 export const LARGE_TEXT_FACTOR = 1.15;
 
-/** The side bill's width (dp): 36% of the screen, 340–460 (professional: 40%, at least 300). */
+/**
+ * The side bill's width (dp): 36% of the screen, 340–460 (professional: 40%, at least 300).
+ * Phase 2: "לוח מנות" — the lanes board, about half the screen (§2.1); "לילה" — the order on the
+ * other side, 34% (§2.3); "תפריט ויזואלי" — the open drawer, 40% (§2.4).
+ */
 export function sideBillWidth(template: Template, screenWidth: number): number {
   if (template === 'professional') return Math.round(Math.max(300, Math.min(520, screenWidth * 0.4)));
+  if (template === 'courses') return Math.round(Math.max(480, screenWidth * (screenWidth >= 1600 ? 0.55 : 0.5)));
+  if (template === 'night') return Math.round(Math.max(320, Math.min(520, screenWidth * 0.34)));
+  if (template === 'visual') return Math.round(Math.max(340, Math.min(560, screenWidth * 0.4)));
   return Math.round(Math.max(340, Math.min(460, screenWidth * 0.36)));
 }
 
@@ -1270,7 +1646,7 @@ export function sideBillWidth(template: Template, screenWidth: number): number {
  * `columns` when set, else by the tile style and size. Mirrors the till's rules (TillDesign.kt).
  */
 export function gridColumns(opts: {
-  style: Exclude<TileStyle, 'auto'>;
+  style: ResolvedTileStyle;
   size: Exclude<TileSize, 'auto'>;
   paneWidth: number;
   handheld: boolean;
@@ -1284,6 +1660,10 @@ export function gridColumns(opts: {
   switch (style) {
     case 'row':
       return paneWidth > 900 ? 2 : 1;
+    case 'dish':
+      // "תפריט ויזואלי": 3 across sideways, 2 upright, 4 on a 15.6″, one per row on the handheld.
+      if (handheld) return 1;
+      return fit(380, 2, 4);
     case 'photo': {
       if (handheld) return 2;
       const target = { xs: 160, s: 200, m: 240, l: 300 }[size];
@@ -1305,7 +1685,7 @@ export function gridColumns(opts: {
 
 /** A tile's height (dp) by its style, size and density (a photo tile: by its width). */
 export function tileHeight(opts: {
-  style: Exclude<TileStyle, 'auto'>;
+  style: ResolvedTileStyle;
   size: Exclude<TileSize, 'auto'>;
   density: Density;
   tileWidth: number;
@@ -1315,6 +1695,9 @@ export function tileHeight(opts: {
   switch (opts.style) {
     case 'row':
       return opts.density === 'compact' ? 48 : opts.density === 'spacious' ? 64 : 56;
+    case 'dish':
+      // A 16:10 photo over the name, two lines of description and the price (the handheld's rows: the preview's own).
+      return Math.round(((opts.withPhoto ? (opts.tileWidth * 10) / 16 : 0) + 112) * f);
     case 'key':
       return Math.round(({ xs: 60, s: 66, m: 72, l: 88 }[opts.size]) * f);
     case 'photo':
