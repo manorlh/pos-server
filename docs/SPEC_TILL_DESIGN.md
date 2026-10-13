@@ -27,7 +27,7 @@
 
 | מפתח | ערכים | ברירת מחדל | משמעות |
 |---|---|---|---|
-| `template` | `clean` · `touch` · `professional` · `seated` · `fast` · `mobile` | `clean` | התבנית (§4). תבניות שלב 2 (`courses`, `payDock`, `night`, `visual`) נדחות בשמירה (`template_not_available`). |
+| `template` | `clean` · `touch` · `professional` · `seated` · `fast` · `mobile` · `courses` · `payDock` · `night` · `visual` | `clean` | התבנית (§4). ארבע התבניות האחרונות נוספו בשלב 2 (§14). |
 | `layout.tileSize` | `auto` · `xs` · `s` · `m` · `l` | `auto` | גודל אריח. `auto` = פרמטרי "גודל ריבוע מוצר" של היום. |
 | `layout.tileStyle` | `auto` · `card` · `photo` · `row` · `key` | `auto` | צורת אריח: כרטיס, תמונה גדולה, שורת רשימה, מקש טקסט. `auto` = של התבנית. |
 | `layout.density` | `compact` · `comfortable` · `spacious` | `comfortable` | צפיפות: גובה האריחים כפול 0.85, 1 או 1.15. |
@@ -129,7 +129,7 @@
 | `tabletPortrait` | 800×1280 | P18 וטאבלטים לאורך |
 | `ipadPortrait` | 768×1024 (CSS px) | שמור לקופת Web או Windows. בתצוגה המקדימה בדשבורד. |
 | `ipadLandscape` | 1024×768 | כנ״ל |
-| Windows | — | "בקרוב". מוצג מושבת בדשבורד, עוד לא בסכמה. |
+| Windows | — | עוד לא בנוי, ולא בסכמה. מוסתר בדשבורד (שלב 2, החלטה 1). |
 
 `for_profile(config, profile)` הוא האלגוריתם היחיד שהופך את ההגדרה למה שהפרופיל מציג:
 
@@ -480,3 +480,161 @@
 3. **קופות:** גרסת APK חדשה (OTA) מקומיט עם מספר גרסה גבוה יותר.
    - **קופה ישנה:** ממשיכה כמו היום.
    - **קופה חדשה מול שרת ישן:** מקבלת 404 על העיצוב ונשארת על ברירת המחדל.
+
+---
+
+## 14. שלב 2 — חוזה לקופה
+
+**13.10.2026.** האפיון המאושר של שלב 2: `P:\specs\till-design-phase2.md` ("windows לא כעת, כל השאר"). הסעיף הזה הוא העתק של §6 שם: מה שהענן שולח ומקבל בשלב 2, בשמות השדות המדויקים.
+
+- **מקור האמת:** `server/app/services/till_design.py` בענף `feat/till-design-phase2` של pos-server.
+- **קובץ החוזה:** `server/tests/fixtures/till_design_contract.json`, באותו ענף. נוצר מחדש: 78 מקרי `forProfile`, 4 מיזוגים ו-35 מקרי אימות. מעתיקים אותו בבתים זהים ל-`app/src/test/resources/`.
+- **`schemaVersion` נשאר 1.** כל השינויים תוספתיים. קופה ישנה:
+  - קוראת תבנית חדשה כ"נקי";
+  - מפילה כפתור או מפתח שהיא לא מכירה;
+  - קוראת את `"base"` ואת `"brand"` כ"לא נקבע".
+
+### 14.1 התבניות (`TEMPLATES`, `TEMPLATE_DEFAULTS`)
+
+- **`TEMPLATES`:** `clean`, `touch`, `professional`, `seated`, `fast`, `mobile`, `courses`, `payDock`, `night`, `visual`.
+- **`phase2Templates`:** נשאר בקטלוג, ריק (`[]`). השרת כבר לא מחזיר `template_not_available`.
+- **שני מפתחות חדשים בכל שורה של `TEMPLATE_DEFAULTS`** (גם בשש הקיימות):
+  - `quickActions`: הסרגל ה"אוטומטי" של התבנית בהזמנה מהירה. `[]` = כמו היום, מ"כפתור תשלום מהיר 1/2" ו"תשלום".
+  - `fixed`: ערכים שהתבנית קובעת בלי קשר להגדרה. `{}` בכל התבניות חוץ מ-`night`.
+
+| תבנית | `tileStyle` | `billStyle` | `billPosition` (גם `table` וגם `quick`) | `tableActions` | `quickActions` | `features` | `fixed` |
+|---|---|---|---|---|---|---|---|
+| `courses` | `card` | `courses` | handheld `bottom`, tabletLandscape `end`, tabletPortrait `bottom`, ipadPortrait `bottom`, ipadLandscape `end` | `send`, `fire`, `bill` | `[]` | `courseLanes` | `{}` |
+| `payDock` | `card` | `lines` | כמו `courses` | `send`, `bill`, `pay` | `fastCard`, `fastCash`, `cashNotes`, `pay` | `payDock`, `selectedLine` | `{}` |
+| `night` | `key` | `compact` | כמו `courses` | `send`, `repeatRound`, `bill` | `[]` | `quantityPresets`, `favorites`, `quickAddons`, `thumbs` | `{"images": "hide", "textSize": "large"}` |
+| `visual` | `dish` | `lines` | handheld `bottom`, כל השאר `drawer` | `send`, `bill` | `[]` | `dishCards` | `{}` |
+
+- **ערכים פנימיים:** `dish` (סגנון אריח) ו-`drawer` (מיקום חשבון).
+  - מגיעים רק משורת התבנית. בקטלוג: `templateTileStyles` ו-`templateBillPositions`.
+  - השרת דוחה אותם ב-`layout` ובפרופיל (`invalid_value`).
+- **`summaryCollapsible`:** `false` בארבע התבניות.
+- **"נקי" במקום התבנית:** הקופה מחליטה בעצמה, ו-`forProfile` ממשיך להחזיר את התבנית. מתי:
+  - `courses` בהזמנה מהירה;
+  - `courses` כש"מנות בשולחן" (`coursesEnabled`) כבוי, או כשאין שלבים מוגדרים.
+
+### 14.2 `forProfile` — מה השתנה
+
+אין מפתח חדש בפלט. השינויים:
+
+1. **`"base"` = לא נקבע:** בכל שדה של הפרופיל, כמו `null`. גם בתבנית של הפרופיל.
+2. **`images` ו-`textSize`:** הערך של `fixed` גובר על `layout`. כך `night` תמיד `hide` ו-`large`.
+3. **`actions`, לכל מצב (`table`, `quick`):**
+   - אם `profiles.<p>.actionBar.<mode>` הוא רשימה, גם `[]`, לוקחים אותה.
+   - אחרת (`null` או `"base"`), לוקחים את `actionBar.<mode>`.
+   - **אם יצא `[]` בשולחן:** ה-`tableActions` של התבנית.
+   - **אם יצא `[]` בהזמנה מהירה:** נשאר `[]`. הקופה בונה את הסרגל: ה-`quickActions` של התבנית אם הרשימה לא ריקה (`payDock`), ואחרת `quickPayButtons` של היום. אמצעי תשלום שכבוי בקופה יורד, כמו היום.
+4. **`columns`:** רק מספר שלם. `"base"` או `null` → העמודות של `layout`.
+
+### 14.3 ההגדרה — מפתחות חדשים וברירות המחדל
+
+```json
+"profiles": { "<p>": { "template": null, "tileSize": null, "tileStyle": null, "density": null,
+                       "billPosition": null, "categoryBar": null, "columns": null,
+                       "actionBar": { "table": null, "quick": null } } },
+"bar":          { "quantityPresets": [1, 2, 3, 5], "favorites": [], "repeatRound": true, "openTabs": false },
+"courses":      { "fireGapMinutes": 0, "autoFireFirst": true },
+"payDock":      { "savings": true },
+"night":        { "hand": "right", "quickAddons": true },
+"visual":       { "descriptionLines": 2, "dietary": "auto" },
+"professional": { "keyboard": false, "fKeys": false },
+"orderNumber":  { "atOpen": false, "prefix": "" }
+```
+
+| מפתח | ערכים | ברירת מחדל | סעיף |
+|---|---|---|---|
+| `profiles.<p>.<שדה>` | הערכים של היום, או `null` (יורש), או `"base"` (כמו הבסיס, גם מעל ערך של רמה עליונה) | `null` | §3.10 |
+| `profiles.<p>.actionBar.table` / `.quick` | `null` או `"base"` = הסרגל של הבסיס. `[]` = אוטומטי. רשימת `{action, label}`, עד 6 | `null` | §3.4 |
+| `colors.accent` | `#RRGGBB`, או `null` (יורש), או `"brand"` (צבע המותג, גם מעל צבע של רמה עליונה) | `null` | §3.10 |
+| `bar.openTabs` | `true` / `false` | `false` | §3.1 |
+| `courses.fireGapMinutes` | 0 (כבוי), או 5–60 | 0 | §2.1 |
+| `courses.autoFireFirst` | `true` / `false` | `true` | §2.1 |
+| `payDock.savings` | `true` / `false` | `true` | §2.2 |
+| `night.hand` | `right` (מחלקות מימין) / `left` | `right` | §2.3 |
+| `night.quickAddons` | `true` / `false` | `true` | §2.3 |
+| `visual.descriptionLines` | 0 / 1 / 2 | 2 | §2.4 |
+| `visual.dietary` | `auto` (לפי `showDietaryMarks`) / `show` / `hide` | `auto` | §2.4 |
+| `professional.keyboard` / `professional.fKeys` | `true` / `false` | `false` | §3.2 |
+| `orderNumber.atOpen` | `true` / `false` | `false` | §3.9 |
+| `orderNumber.prefix` | `""` = אוטומטי, או עד 4 אותיות (עברית או לטינית) וספרות | `""` | §3.9 |
+
+- **`"base"` ו-`"brand"` נשארים בהגדרה שהקופה מקבלת.**
+  - הם לא מנוקים במיזוג, כי הדשבורד צריך לשמור אותם בשכבה.
+  - הקופה קוראת אותם כ-`null`.
+  - דוגמה בקובץ החוזה: המיזוג `machineReturnsToBase`.
+- **שגיאות אימות חדשות:**
+  - `profiles.<p>.actionBar.<mode>` עם `action_bar_missing_send` / `action_bar_missing_pay`. אותם כללים כמו בסרגל של הבסיס.
+  - `profiles.<p>.actionBar.<mode>[i]` עם `duplicate`.
+  - `courses.fireGapMinutes` עם `out_of_range`.
+  - `orderNumber.prefix` עם `invalid_format`, או `too_long`.
+  - `"base"` מחוץ לפרופיל: `invalid_value`. `"base"` ב-`colors.accent`: `invalid_color`.
+- **שכבה שמורה עם סרגל פרופיל שאיבד את הכפתור החובה:** הסרגל הזה מנוקה (`sanitize_stored_layer`), והפרופיל חוזר לסרגל של הבסיס.
+
+### 14.4 כפתורי הסרגל
+
+- **`TABLE_ACTIONS`**, בסוף הרשימה:
+  - `fire` ("הוצא הבא");
+  - `cashWithChange`, `cashNotes`, `fastCash`, `fastCard`.
+- **`QUICK_ACTIONS`**, בסוף הרשימה: `repeatRound`.
+- **`ACTION_LABELS`:** נוסף `"fire": "הוצא הבא"`. בקופה הכפתור כותב את שם השלב הבא ("הוצא עיקריות"). המילים "הוצא הבא" הן לכשאין שם לשלב.
+- **הכפתור החובה לא השתנה:** `send` בשולחן, `pay` בהזמנה מהירה.
+
+### 14.5 משיכת ההגדרה (`GET /api/v1/sync/{machine}/till-design`)
+
+- **שדה חדש בתשובה:** `orderNumberPrefix` (מחרוזת). הקידומת שהקופה הזו כותבת לפני מספר ההזמנה היומי שלה.
+  - `""` = בלי קידומת. כך גם כש-`orderNumber.atOpen` כבוי.
+  - **`orderNumber.prefix` לא ריק:** הוא הקידומת.
+  - **`prefix` ריק ("אוטומטי"):** מספר הקופה (`pos_number`), אבל רק כשבסניף יותר מקופה פעילה אחת. לא נספרים קיוסק ומכשיר תצוגה.
+- **`ETag`:**
+  - בלי קידומת: `configVersion`, כמו היום.
+  - עם קידומת: hash של שניהם.
+  - הקופה רק שולחת אותו חזרה ב-`If-None-Match`.
+- **התצוגה:** הקופה כותבת `"<prefix>-047"`, ובלי קידומת `"47"`. המונה יומי, מקומי לקופה, ומתחיל מ-1 בכל יום עסקים. זה לא מספר המסמך.
+
+### 14.6 "מוכן" לכל שורה (`GET /api/v1/sync/{machine}/kds/orders/status`)
+
+- **פרמטר חדש:** `lines=1`. בלעדיו התשובה זהה להיום.
+- **התשובה:** לכל הזמנה ב-`orders[<ref>]` נוסף המפתח `lines`:
+
+```json
+"lines": [ { "lineKey": "8f1c…:0", "state": "ready", "readyAt": "2026-10-13T19:44:00+00:00" } ]
+```
+
+- **`lineKey`:** `"<מזהה שורת הסל>:<רכיב>"`, כמו שהקופה שלחה ב-release. השורה של הקופה = מה שלפני ה-`:`.
+- **`state`:**
+
+| ערך | מתי |
+|---|---|
+| `ready` | כל המשימות ששוחררו מוכנות. `readyAt` = האחרונה שבהן |
+| `preparing` | משימה בהכנה, או חלק מוכן וחלק לא |
+| `queued` | שוחררה, ואף משימה לא התחילה |
+| `held` | אף משימה לא שוחררה (השלב מושהה) |
+
+- **`readyAt`:** ISO-8601 ב-UTC, רק ב-`ready`. אחרת `null`.
+- **מה נספר:**
+  - הכנה מחדש (`~r1`) נספרת עם השורה שלה. השורה לא מוכנה עד שההכנה מחדש מוכנה.
+  - שורה שבוטלה כולה לא מופיעה.
+  - רק המשימות שנדרשות להכנה, כשיש כאלה (יעד אקספו לא מעכב).
+- **הרשימה ממוינת לפי `lineKey`.**
+- **מתי לשאול:** רק כשמסך "לוח מנות" פתוח ובחנות יש KDS. כל 15 שניות, כמו היום.
+
+### 14.7 מה לא משתנה בענן
+
+- **`holdCourses` ב-`TableExtras`:** נשמר בתוך `extrasJson` של הזמנת השולחן, שהענן שומר כמו שהוא, בלי שינוי בשרת. ב-release ל-KDS, השורות של שלב מושהה נשלחות ב-`held`, כמו כל שלב שלא הוצא.
+- **מספר ההזמנה ל-KDS ולבון:** נשלח ב-release הקיים:
+  - `pickupNumber`: מספר שלם, 1–9999;
+  - `pickupLabel`: עד 32 תווים, למשל `"2-047"`. מסך האיסוף מציג אותו.
+  - שני השדות כבר נתמכים, בלי שינוי בשרת.
+- **`lineIds` ב-`KitchenJobEntity` (§3.8) ותשלום החלק של סועד (§3.7):** מקומיים בקופה, בלי שינוי בענן.
+
+### 14.8 גרסת הקופה
+
+- **הקבוע:** `PHASE2_MIN_VERSION_CODE = 553` ב-`till_design.py`. אפשר לשנות אותו במקום אחד, אחרי שה-APK נבנה.
+- **מה הדשבורד מקבל:**
+  - **`GET /till-design/targets`:** לכל קופה `appVersion` ו-`phase2Templates`. `true` / `false`; `null` כשהגרסה לא ידועה, או כשזו לא קופת אנדרואיד.
+  - **`GET /till-design/defaults`:** `phase2MinVersion` (`"0.1.553"`).
+- **אזהרה בסקירה:** כשההגדרה משתמשת באחת מארבע התבניות, הדשבורד מציג ליד כל קופה ישנה: "גרסה 0.1.NNN — תציג 'נקי' עד עדכון".
