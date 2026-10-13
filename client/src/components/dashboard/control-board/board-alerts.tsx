@@ -11,6 +11,7 @@
  */
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { he } from 'date-fns/locale';
@@ -59,6 +60,7 @@ export function BoardAlerts({
 }) {
   const t = useTranslations('controlBoard');
   const tTerminal = useTranslations('cardTerminal');
+  const tStatus = useTranslations('machineStatus');
   const [all, setAll] = useState(false);
   const shown = all ? alerts : alerts.slice(0, VISIBLE);
 
@@ -141,6 +143,15 @@ export function BoardAlerts({
                     {m && (kind === 'flags' || till.alerts > 0) ? (
                       <div className="flex min-w-0 flex-wrap items-center gap-1">
                         {machinesColumnAlertCount(m) > 0 ? <MachineAlerts m={m} /> : null}
+                        {/* Closed shifts no Z has taken yet (counted since manager-problems §5): to those shifts. */}
+                        {m.statusFlags?.includes('closed_shifts_awaiting_z') ? (
+                          <Link
+                            href={`/dashboard/shifts?awaitingZ=1&machine=${m.id}`}
+                            className="inline-flex h-6 items-center rounded border border-cb-amber/50 bg-cb-amber/10 px-1.5 text-[11px] leading-none text-cb-amber-ink hover:underline"
+                          >
+                            {tStatus('flag.closed_shifts_awaiting_z')}
+                          </Link>
+                        ) : null}
                         {m.terminalOfflineMode ? (
                           <span className="inline-flex h-6 items-center gap-1 rounded border border-cb-amber/50 bg-cb-amber/10 px-1.5 text-[11px] leading-none text-cb-amber-ink">
                             <CreditCard className="h-3 w-3" aria-hidden />

@@ -84,6 +84,36 @@ self.addEventListener('fetch', (event) => {
 });
 
 /**
+ * The exception kinds the "בעיות" screen lists (pos-server app/services/problems.py `KIND_GROUP`;
+ * P:/specs/manager-problems.md §3 "התראת Push שנלחצת פותחת את הכרטיס שלה").
+ */
+const PROBLEM_KINDS = new Set([
+  'till_offline', 'kiosk_offline', 'till_printer', 'kiosk_printer', 'kiosk_terminal', 'device_battery',
+  'z_missing', 'shift_open_overdue', 'forced_z_close', 'z_forced_open_shifts', 'z_forced_pending_cloud_refund',
+  'shop_z_producer_forced', 'local_shop_z_till_unsynced', 'cloud_closed_shift_late_documents',
+  'card_transmission_overdue', 'z_transmission_failed', 'failed_payment', 'card_unresolved', 'terminal_mismatch',
+  'card_failures', 'zcredit_recon', 'bon_unprinted',
+  'document_refused', 'document_number_conflict', 'z_totals_mismatch', 'shift_totals_mismatch',
+  'local_shop_z_mismatch', 'offline_z_gap', 'offline_z_conflict',
+]);
+
+/**
+ * Where a tap on an alert leads. An alert the "בעיות" screen lists opens its own card there
+ * (`?focus=<log row>`, and `&code=` for the log entry should it be handled by then) — only when
+ * the server let this user open the log entry (`/x/<code>`: the reports, which the screen is
+ * part of). Anything else (a digest, a test, an event's target) where the server said.
+ */
+function notificationUrl(data) {
+  const url = data && typeof data.url === 'string' ? data.url : '/dashboard/alerts';
+  const code = /^\/x\/([a-z0-9]{1,16})$/.exec(url);
+  const entry = data && typeof data.entryId === 'string' && /^[0-9a-fA-F-]{32,36}$/.test(data.entryId) ? data.entryId : null;
+  if (code && entry && PROBLEM_KINDS.has(data.kind)) {
+    return `/dashboard/problems?focus=${entry}&code=${code[1]}`;
+  }
+  return url;
+}
+
+/**
  * "התראות לטלפון" (Web Push, pos-server app/services/exception_alerts/push.py): show the alert,
  * and a tap opens the dashboard page it names — only ever a page of this origin.
  */
@@ -105,7 +135,7 @@ self.addEventListener('push', (event) => {
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       requireInteraction: data.severity === 'high',
-      data: { url: typeof data.url === 'string' ? data.url : '/dashboard/alerts' },
+      data: { url: notificationUrl(data) },
     }),
   );
 });
@@ -137,3 +167,6 @@ self.addEventListener('notificationclick', (event) => {
     }),
   );
 });
+
+// The tests (src/lib/dashboardSw.test.ts) read the rules; a browser has no `module`.
+if (typeof module !== 'undefined' && module.exports) module.exports = { notificationUrl, PROBLEM_KINDS };

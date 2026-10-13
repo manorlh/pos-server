@@ -11,12 +11,15 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, CheckCircle2, Info, OctagonAlert } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { allowedEntries, pickVariant, sortAttention } from '@/lib/cockpitGates';
 import { formatCurrency } from '@/lib/format';
+import { PROBLEMS_HREF, badgeCount } from '@/lib/problems';
+import { useCanSeeProblems, useProblems } from '@/lib/problemsApi';
 import type { TillNode } from '@/lib/overview';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -204,7 +207,12 @@ export function AttentionFeed({ className, limit = 6 }: { className?: string; li
       ))}
       <CardTitle
         id="cb-attention-title"
-        trailing={items.length ? <span className="text-xs text-cb-muted">{t('feed.count', { count: items.length })}</span> : null}
+        trailing={
+          <span className="flex items-center gap-3">
+            {items.length ? <span className="text-xs text-cb-muted">{t('feed.count', { count: items.length })}</span> : null}
+            <ProblemsLink />
+          </span>
+        }
       >
         {t('feed.title')}
       </CardTitle>
@@ -346,3 +354,20 @@ export function DevicesStrip({
 
 /** For a sheet that wants the registered action of an id (an item's button). */
 export { actionById };
+
+/**
+ * "דורש תשומת לב" → "בעיות" (P:/specs/manager-problems.md §3): the screen with every open
+ * problem, and how many there are — for whoever may open it.
+ */
+function ProblemsLink() {
+  const t = useTranslations('problems');
+  const allowed = useCanSeeProblems();
+  const problems = useProblems({}, { enabled: allowed, refetchMs: 60_000 });
+  if (!allowed) return null;
+  const count = badgeCount(problems.data);
+  return (
+    <Link href={PROBLEMS_HREF} className="inline-flex min-h-10 items-center text-sm font-medium text-cb-blue-ink hover:underline">
+      {count > 0 ? t('allProblemsCount', { count }) : t('allProblems')}
+    </Link>
+  );
+}
