@@ -44,7 +44,7 @@ from app.services.printers import hosted_by_tills, print_host_block, print_host_
 from app.services.tables import lan_host_block, tables_host_of_shop
 from test_independent_till import (  # noqa: F401 - `w` is the fixture
     _manifest_body, _part, _put_remote, _report_body, _verification, closed_shift, cloud_mode, manager,
-    owner_setup, put_main, run_z, set_param, upload, w,
+    owner_setup, put_main, run_z, set_param, switch_server, upload, w,
 )
 
 HOST_KEYS = ("mainTill", "tablesHostTill", "printHostTill", "shopZMasterTill")
@@ -186,14 +186,24 @@ class TestOffTheLocalServer:
         owner_setup(w)
         four = w.six[3]
         _put_remote(w, [four.id])
-        with pytest.raises(HTTPException) as e:
-            put_main(w, str(four.id))
-        assert e.value.status_code == 409 and e.value.detail["code"] == "remote_main_till"
-        assert "לא מחוברת לשרת המקומי" in e.value.detail["message"]
+        # The server moves only through "העברת שרת מקומי" (P:/specs/local-server-switch.md §2ב): the
+        # card refuses any move, and the wizard refuses a remote till by name.
+        code, out = put_main(w, str(four.id))
+        assert code == 409 and out["detail"]["code"] == "use_local_server_switch"
+        code, out = switch_server(w, four)
+        assert code == 409 and out["detail"]["code"] == "target_not_eligible"
+        assert out["detail"]["reason"] == "remote" and "לא מחוברת לשרת המקומי" in out["detail"]["message"]
         with pytest.raises(HTTPException) as e:
             MT.take_over(w.db, four)
         assert e.value.detail == MT.REMOTE
         assert MT.main_till_of_shop(w.db, w.shop.id).id == w.six[0].id
+        # With no main till, the card does not name a remote one the first either.
+        code, out = put_main(w, None)
+        assert code == 200 and MT.main_till_of_shop(w.db, w.shop.id) is None
+        code, out = put_main(w, str(four.id))
+        assert code == 409 and out["detail"]["code"] == "remote_main_till"
+        assert "לא מחוברת לשרת המקומי" in out["detail"]["message"]
+        assert MT.main_till_of_shop(w.db, w.shop.id) is None
 
     def test_its_z_is_the_shops_never_its_own(self, w):
         owner_setup(w)

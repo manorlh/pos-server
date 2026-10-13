@@ -155,6 +155,7 @@ export interface LocalServerTill extends LanTillRef {
 export type LocalServerIneligible =
   | 'not_assigned'
   | 'independent'
+  | 'remote'
   | 'lan_excluded'
   | 'not_fiscal'
   | 'kiosk'

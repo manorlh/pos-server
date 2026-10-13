@@ -294,7 +294,7 @@ describe('the wizard "העברת שרת מקומי"', () => {
     for (const k of SWITCH_SUMMARY_KEYS) assert.ok(ls.summary[k], k);
     for (const k of SWITCH_BLOCKS) assert.ok(ls.blocked[k], k);
     for (const k of CLOSE_FROM_CLOUD_BLOCKS) assert.ok(ls.closeFromCloud[`blocked_${k}`], k);
-    for (const k of ['not_assigned', 'independent', 'lan_excluded', 'kiosk', 'not_android', 'offline']) assert.ok(ls.ineligible[k], k);
+    for (const k of ['not_assigned', 'independent', 'remote', 'lan_excluded', 'kiosk', 'not_android', 'offline']) assert.ok(ls.ineligible[k], k);
     for (const k of ['title', 'open', 'confirm', 'forceLabel', 'forceWarning', 'closeShiftLabel', 'releaseZLabel']) assert.ok(ls.wizard[k], k);
     for (const k of ['title', 'confirm', 'countedCash', 'reason', 'done']) assert.ok(ls.closeFromCloud[k], k);
     for (const k of ['title', 'markChecked', 'till', 'cloud']) assert.ok(ls.changes[k], k);

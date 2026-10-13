@@ -340,6 +340,7 @@ def current_server(db: Session, shop: Shop) -> Optional[POSMachine]:
 INELIGIBLE = {
     "not_assigned": "המכשיר אינו מצומד לסניף",
     "independent": "קופה עצמאית אינה חלק מהרשת המקומית של הסניף",
+    "remote": "קופה מרוחקת (לא מחוברת לשרת המקומי) אינה משמשת כשרת מקומי",
     "lan_excluded": "המכשיר מסומן \"לא משמש כשרת מקומי\"",
     "not_fiscal": "מסך מטבח או מסך מוכן / לא מוכן אינו קופה",
     "kiosk": "קיוסק לא משמש כשרת מקומי",
@@ -369,6 +370,12 @@ def ineligible_reason(
         return "not_fiscal"
     if is_independent(machine):
         return "independent"
+    from app.services.local_shop_z import is_remote_participant
+
+    if is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי" (docs/SPEC_INDEPENDENT_TILL.md §8.14): off the shop's local server, so
+        # never it — as the main-till card and the take-over refuse it, and no election names it.
+        return "remote"
     if lan_server.is_excluded(db, machine):
         return "lan_excluded"
     try:
