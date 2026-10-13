@@ -546,8 +546,8 @@ export default function ShiftsPage() {
       columns,
       rows: data?.items ?? [],
       rowKey: (s) => s.id,
-      // This page's shifts on screen (said so when there are more); every shift in the export.
-      totalsLabel: pageOnly ? tr('totalPage') : tr('total'),
+      // This page's shifts on screen (said so under the table when there are more); every shift in the export.
+      totalsLabel: tr('total'),
       emptyText: t('empty'),
       onRowClick: (s) => router.push(detailHref(s.id)),
       exportRows: () =>
@@ -555,7 +555,7 @@ export default function ShiftsPage() {
     };
     // detailHref reads the URL and the scope: both are in the deps through urlKey / scopeQuery.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canProduceZ, closer, data, pageOnly, params, router, scope.machines, scope.shops, scopeQuery, shiftLabel, t, tr, tz, urlKey]);
+  }, [canProduceZ, closer, data, params, router, scope.machines, scope.shops, scopeQuery, shiftLabel, t, tr, tz, urlKey]);
 
   // ── What the export header says the page's own filters are ──
   const extraLines: ReportFilterLine[] = [];
@@ -604,6 +604,7 @@ export default function ShiftsPage() {
         }}
       >
         <ReportTable table={table} />
+        {pageOnly ? <p className="text-muted-foreground text-xs print:hidden">{tr('totalsOfPage')}</p> : null}
         {data && data.total > 0 ? (
           <div className="flex items-center justify-end gap-2 text-sm print:hidden">
             <span className="text-muted-foreground me-auto text-xs">{tr('shifts', { count: data.total })}</span>
