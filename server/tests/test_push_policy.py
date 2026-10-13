@@ -66,8 +66,25 @@ def w(monkeypatch):
 
 @pytest.fixture
 def approvals_section(monkeypatch):
-    """feat/remote-approvals' section, as if merged."""
+    """feat/remote-approvals' section (registered since the release of 14.10.2026; kept explicit)."""
     monkeypatch.setattr(DS, "SECTION_IDS", frozenset(DS.SECTION_IDS | {"approvals"}))
+
+
+def approvals_on(w, scope_type, scope_id, enabled=True):
+    """"בקשות אישור" switched at one level (feat/remote-approvals `approval_policy_values`); None = inherit."""
+    from app.models.remote_approval import ApprovalPolicyValue
+
+    row = (
+        w.db.query(ApprovalPolicyValue)
+        .filter(ApprovalPolicyValue.scope_type == scope_type, ApprovalPolicyValue.scope_id == scope_id)
+        .one_or_none()
+    )
+    if row is None:
+        row = ApprovalPolicyValue(id=uuid.uuid4(), tenant_id=w.tenant.id, scope_type=scope_type, scope_id=scope_id,
+                                  values={})
+        w.db.add(row)
+    row.values = {} if enabled is None else {"enabled": enabled}
+    w.db.flush()
 
 
 def user(w, role, *, shop=None, company=None, sections=None, full=False, template=None, builtin=None, username=None):
@@ -129,9 +146,10 @@ def test_the_alerts_section_means_a_reminder_and_nothing_else_means_off(w):
     assert required(w, producer).mode == "off"
 
 
-def test_without_the_approvals_section_nobody_is_required_by_default(w):
-    w.shop.settings = {"approvalRequests": {"enabled": True}}
-    w.db.flush()
+def test_without_the_approvals_section_nobody_is_required_by_default(w, monkeypatch):
+    # A build without feat/remote-approvals' section (it is registered since the 14.10 release).
+    monkeypatch.setattr(DS, "SECTION_IDS", frozenset(DS.SECTION_IDS - {"approvals"}))
+    approvals_on(w, "shop", w.shop.id)
     full = user(w, UserRole.COMPANY_MANAGER, full=True)
     # A profile naming the section keeps nothing of it while it is not registered.
     named = user(w, UserRole.SHOP_MANAGER, shop=w.shop, sections={"approvals": "edit", "alerts": "view"})
@@ -143,20 +161,22 @@ def test_without_the_approvals_section_nobody_is_required_by_default(w):
 def test_an_approver_is_required_once_requests_are_on_in_one_of_their_shops(w, approvals_section):
     approver = user(w, UserRole.SHOP_MANAGER, shop=w.shop, sections={"approvals": "edit", "alerts": "view"})
     viewer = user(w, UserRole.SHOP_MANAGER, shop=w.shop, sections={"approvals": "view", "alerts": "view"})
+    assert "approvals" in DS.SECTION_IDS
     assert required(w, approver).mode == "reminder"  # requests are off everywhere
-    w.other_shop.settings = {"approvalRequests": {"enabled": True}}
-    w.db.flush()
+    # The approvals' own policy (feat/remote-approvals, resolved company → shop → area → machine).
+    approvals_on(w, "shop", w.other_shop.id)
     assert required(w, approver).mode == "reminder"  # on, but not in a shop of theirs
-    w.shop.settings = {"approvalRequests": {"enabled": True}}
-    w.db.flush()
+    approvals_on(w, "shop", w.shop.id)
     assert required(w, approver).as_json() == {"required": "required", "source": "default", "default": "required"}
     assert required(w, viewer).mode == "reminder"  # sees requests, does not decide them
     # On at the company: every shop of it.
-    w.shop.settings = {}
-    w.other_shop.settings = {}
-    w.company.settings = {"approvalRequests": {"enabled": True}}
-    w.db.flush()
+    approvals_on(w, "shop", w.shop.id, None)
+    approvals_on(w, "shop", w.other_shop.id, None)
+    approvals_on(w, "company", w.company.id)
     assert required(w, approver).mode == "required"
+    # Off at the shop, over the company's on.
+    approvals_on(w, "shop", w.shop.id, False)
+    assert required(w, approver).mode == "reminder"
 
 
 def test_feat_remote_approvals_policy_is_read_when_present(w, approvals_section, monkeypatch):

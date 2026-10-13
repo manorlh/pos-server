@@ -362,32 +362,10 @@ def approver_for(
 def device_health(db: Session, user_ids: Iterable[Any]) -> Dict[uuid.UUID, Dict[str, Any]]:
     """
     Per user, their phones as the push channel sees them: `{devices, lastSuccessAt, lastFailureAt,
-    tone}` (tone: green / yellow / red = none). The push policy's own reading when this build has it
-    (feat/pwa-push-required `push_policy.health_for`) — one seam, so both pages tell one story.
+    tone}` (tone: green / yellow = no success lately or failing / red = none). The push policy's
+    own reading ("התראות בנייד", `push_policy.health_for`) — one seam, so the approvals pages and
+    the users list tell one story.
     """
-    ids = [u for u in user_ids if u is not None]
-    try:
-        from app.services import push_policy  # type: ignore[attr-defined]
+    from app.services.push_policy import health_for
 
-        return push_policy.health_for(db, ids)
-    except ImportError:
-        pass
-    out: Dict[uuid.UUID, Dict[str, Any]] = {u: {"devices": 0, "lastSuccessAt": None, "lastFailureAt": None,
-                                               "tone": "red"} for u in ids}
-    if not ids:
-        return out
-    rows = (
-        db.query(PushSubscription)
-        .filter(PushSubscription.user_id.in_(ids), PushSubscription.disabled_at.is_(None))
-        .all()
-    )
-    for row in rows:
-        h = out.setdefault(row.user_id, {"devices": 0, "lastSuccessAt": None, "lastFailureAt": None, "tone": "red"})
-        h["devices"] += 1
-        h["tone"] = "green"
-        for key, value in (("lastSuccessAt", row.last_success_at), ("lastFailureAt", row.last_failure_at)):
-            if value is not None:
-                stamp = value.isoformat()
-                if h[key] is None or stamp > h[key]:
-                    h[key] = stamp
-    return out
+    return health_for(db, [u for u in user_ids if u is not None])

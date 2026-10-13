@@ -1416,16 +1416,17 @@ def approvals_in_quiet_hours(user: Any) -> bool:
     return isinstance(prefs, dict) and prefs.get("approvalsInQuietHours") is True
 
 
-def decorate_for_user(db: Session, user_id: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+def decorate_for_user(
+    db: Session, user_id: Any, payload: Dict[str, Any], entry: Optional[ExceptionLogEntry] = None,
+) -> Dict[str, Any]:
     """
-    The recipient's behaviour for the payload's category (stays on screen, vibration) when this
-    build has the push policy (feat/pwa-push-required `push_policy.decorate`) — the one seam.
+    The recipient's behaviour for the payload's category (stays on screen, vibration): "התראות
+    בנייד" (`push_policy.decorate`), as every alert gets it in `_deliver` — the one seam. An
+    approval request ("approvals") stays on screen and vibrates "urgent" unless a level says otherwise.
     """
-    try:
-        from app.services import push_policy  # type: ignore[attr-defined]
-    except ImportError:
-        return payload
-    return push_policy.decorate(db, user_id, payload)
+    from app.services.push_policy import decorate
+
+    return decorate(db, user_id, payload, entry)
 
 
 def deliver_to_user(
@@ -1451,7 +1452,7 @@ def deliver_to_user(
     devices = devices_of(db, user_id)
     if not devices:
         return []
-    payload = decorate_for_user(db, user_id, payload)
+    payload = decorate_for_user(db, user_id, payload, entry)
     rule = rule_for_user(db, user_id, tenant_id)
     if rule is not None and not rule.enabled:
         return []

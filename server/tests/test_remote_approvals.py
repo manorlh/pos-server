@@ -1016,14 +1016,25 @@ class TestPush:
         assert payload["tag"] == f"approval:{req.id}" and payload["renotify"] is False
         assert payload["title"] == "טופל על ידי Ron" and "אושר 20%" in payload["body"]
 
-    def test_the_push_policy_decorates_when_this_build_has_it(self, w, monkeypatch):
-        import sys
+    def test_the_push_policy_decorates_it(self, w):
+        from app.services import push_policy as PP
 
-        assert PUSH.decorate_for_user(w.db, w.ron.id, {"title": "x"}) == {"title": "x"}
-        fake = SimpleNamespace(decorate=lambda db, owner_id, payload, entry=None: {**payload, "vibrate": [1], "who": owner_id})
-        monkeypatch.setitem(sys.modules, "app.services.push_policy", fake)
-        out = PUSH.decorate_for_user(w.db, w.ron.id, {"title": "x", "category": "approvals"})
-        assert out == {"title": "x", "category": "approvals", "vibrate": [1], "who": w.ron.id}
+        # "התראות בנייד" (push_policy.decorate, as every alert in `_deliver`): a request stays on
+        # screen and vibrates "urgent" by default; a "handled" notice (no category) does neither.
+        out = PUSH.decorate_for_user(w.db, w.ron.id, {"title": "x", "category": "approvals", "severity": "high"})
+        assert out["title"] == "x" and out["requireInteraction"] is True
+        assert out["vibrate"] == PP.VIBRATE_PRESETS["urgent"]
+        done = PUSH.decorate_for_user(w.db, w.ron.id, {"title": "y", "renotify": False})
+        assert done["requireInteraction"] is False and "vibrate" not in done
+
+    def test_the_approvers_phones_are_the_push_policys_reading(self, w, monkeypatch):
+        from app.services import push_policy as PP
+        from app.services.remote_approvals import eligibility as EL
+
+        seen = []
+        monkeypatch.setattr(PP, "health_for", lambda db, ids, **kw: seen.append(list(ids)) or {"x": 1})
+        assert EL.device_health(w.db, [w.ron.id, None]) == {"x": 1}
+        assert seen == [[w.ron.id]]
 
     def test_the_category_is_listed_but_no_rule_sends_it(self, w):
         assert "approvals" in PUSH.CATEGORY_KEYS
