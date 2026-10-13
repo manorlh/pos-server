@@ -529,6 +529,9 @@ DELETE /printers/{printer_id} -> printers:edit
 PUT /printers/{printer_id} -> printers:edit
 POST /printers/{printer_id}/test -> printers:edit
 GET /printers/{printer_id}/test-jobs -> printers:view
+GET /problems -> reports:view
+GET /problems/preferences -> self
+PUT /problems/preferences -> self
 GET /producer/events -> producer
 GET /producer/events/{event_id} -> producer
 GET /producer/events/{event_id}/settlement -> producer
