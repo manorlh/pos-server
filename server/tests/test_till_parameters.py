@@ -368,7 +368,10 @@ def _set(world, parameter_id, scope_type, scope_id, value):
 
 def _pull(world, till):
     resp = get_till_parameters_sync(machine_id=str(till.id), machine=till, db=world.db)
-    return resp.model_dump(mode="json", by_alias=True)
+    out = resp.model_dump(mode="json", by_alias=True)
+    # "חסימות מהקופה": the one computed object in the map, always there (tests/test_item_block_control.py).
+    assert isinstance(out["parameters"].pop("itemBlocks"), dict)
+    return out
 
 
 def test_a_till_gets_its_resolved_parameters(world, published):
@@ -583,6 +586,8 @@ def test_the_sync_endpoint_sends_parameters_and_an_iso_watermark(client):
         resp = http.get(f"/api/v1/sync/{machine.id}/parameters")
     assert resp.status_code == 200
     body = resp.json()
+    # "חסימות מהקופה": the one computed object in the map (tests/test_item_block_control.py).
+    assert set(body["parameters"].pop("itemBlocks")) >= {"role", "localChannels"}
     assert body == {
         "parameters": {"printCopies": 2, "rate": 1.5, "beep": False, "mode": "b"},
         "updatedAt": body["updatedAt"],
@@ -593,7 +598,9 @@ def test_the_sync_endpoint_sends_parameters_and_an_iso_watermark(client):
 
     empty = TP.ResolvedParameters(parameters={}, updated_at=None)
     with patch("app.routers.sync.till_parameters_for_machine", return_value=empty):
-        assert http.get(f"/api/v1/sync/{machine.id}/parameters").json() == {
+        body = http.get(f"/api/v1/sync/{machine.id}/parameters").json()
+        body["parameters"].pop("itemBlocks")
+        assert body == {
             "parameters": {},
             "updatedAt": None,
             "catalogAdminView": {"scope": "shop", "label": "קטלוג הסניף"},

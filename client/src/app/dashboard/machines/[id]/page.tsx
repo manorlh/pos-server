@@ -71,6 +71,7 @@ import { DeviceManagementCard } from '@/components/dashboard/machines/device-man
 import { DeviceLogsCard } from '@/components/dashboard/machines/device-logs';
 import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
 import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
+import { ItemBlockRoleCard } from '@/components/dashboard/machines/item-block-role-card';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
@@ -657,6 +658,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           where it comes from — set on the device or inherited from the shop / company. A local
           server's is the shop's work profile ("שרת מקומי: מכשיר ייעודי") and "העברת שרת מקומי". */}
       {machine.shopId && !isLocalServer(machine) ? <WorkConfigCard machineId={machine.id} /> : null}
+
+      {/* "קופה מנהלת לחסימות" (P:/specs/item-block-control.md §5): the till's role in item blocks,
+          where it comes from, and a quick switch. Tills only: not a kiosk, a screen or a local server. */}
+      {machine.shopId && !isLocalServer(machine) && !display && !removed && machine.deviceRole !== 'kiosk' ? (
+        <ItemBlockRoleCard machineId={machine.id} />
+      ) : null}
 
       {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
       {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}

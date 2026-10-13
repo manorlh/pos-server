@@ -216,6 +216,13 @@ def _tip_settings_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     return {key: raw[key] for key in TIP_RESETTABLE_KEYS if key in raw}
 
 
+def _item_blocks_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """"חסימות מהקופה" (`itemBlocks`): an explicit `null` (or `{}`) clears the layer's own."""
+    if "item_blocks" not in data.model_fields_set:
+        return {}
+    return {"itemBlocks": data.item_blocks}
+
+
 def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
     """`zScope` decides how a tenant's Zs are produced; it has no company or shop layer."""
     if data.z_scope is not None:
@@ -288,6 +295,7 @@ def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
         **_refund_settings_patch(data),
         **_voucher_flow_patch(data),
         **_tip_settings_patch(data),
+        **_item_blocks_patch(data),
         # The integration type and Z-Credit's fields: `null` resets, "auto" is not stored.
         **payment_integration.resettable_patch(data),
     })

@@ -19,7 +19,12 @@ each value, each change in the change log (`till_parameter_changes`):
 * "נוכחות עובדים" (`attendanceEnabled`) and "מי מפיק Z סניפי" (`shopZFrom`) — till parameters at the
   shop's level, written as the parameters page writes them (`till_parameters.write_value`);
 * tips (`tipsEnabled`, the options' tips keys when the company's override it, `tipDistribution`) and
-  the production vouchers (`voucherStation`, `voucherBalanceCheck`) — the shop's settings layer.
+  the production vouchers (`voucherStation`, `voucherBalanceCheck`) — the shop's settings layer;
+* "חסימות פריטים" — the shop's own POS setting `itemBlocks` (`role`, `localMaxLevel`, `localChannels`;
+  its other keys kept, app/services/work_profile_templates.py `item_blocks_own`). The tills get it in
+  their parameters pull (`parameters.itemBlocks`), so they are told to pull. Read back from the shop's
+  setting merged over the company's and the tenant's (as the tips are): a role set above the shop
+  outweighs "הקופה הראשית" — nothing of the shop's own undoes it — and the status says so.
 
 **Applied to the tills** — the Z and the local server. With no till yet they wait ("יופעל כשתצומד
 הקופה הראשונה"), and the profile is the default of "הוספת מכשיר" in the shop (`suggest`): the
@@ -314,6 +319,22 @@ def _z_type_now(state: ShopState) -> str:
     return T.Z_SHOP_LOCAL if state.local_network else T.Z_SHOP_CLOUD
 
 
+def _item_blocks_merged(state: ShopState) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    """The `itemBlocks` the shop's tills start from: the tenant's, the company's, the shop's own — merged."""
+    from app.services import item_block_control as C
+
+    return C.merged([
+        ("tenant", getattr(state.tenant, "settings", None)),
+        ("company", getattr(state.company, "settings", None)),
+        ("shop", state.shop.settings),
+    ])
+
+
+def _item_blocks_now(state: ShopState) -> Dict[str, Any]:
+    values, _ = _item_blocks_merged(state)
+    return T.item_blocks_of_values(values)
+
+
 def current_values(state: ShopState) -> Dict[str, Any]:
     """The shop's configuration now, as a profile (no template)."""
     z_type = _z_type_now(state)
@@ -329,6 +350,7 @@ def current_values(state: ShopState) -> Dict[str, Any]:
         "attendance": state.params.get("attendanceEnabled") is True,
         "tips": _tips_now(state),
         "vouchers": _vouchers_now(state),
+        T.ITEM_BLOCKS: _item_blocks_now(state),
     }
 
 
@@ -590,6 +612,28 @@ def _server_device_status(db: Session, state: ShopState, profile: Dict[str, Any]
     return _applied()
 
 
+_LAYER_WORDS = {"tenant": "המפיץ", "company": "החברה"}
+_ROLE_WORDS = {"managing": "קופה מנהלת", "local": "קופה רגילה", "none": "לא חוסמת"}
+
+
+def _item_blocks_status(state: ShopState, want: Dict[str, Any]) -> Dict[str, Any]:
+    """"חסימות פריטים": applied at once — unless the company (the tenant) sets a role for every till."""
+    values, sources = _item_blocks_merged(state)
+    now_value = T.item_blocks_of_values(values)
+    if now_value == want:
+        return _applied()
+    source = sources.get("role")
+    if want["managing"] == T.MANAGING_MAIN_TILL and now_value["managing"] != want["managing"] and source != "shop":
+        # "הקופה הראשית" is the setting's default — no role of the shop's own — so a role set above it wins.
+        level = _LAYER_WORDS.get(source or "", "רמה שמעל הסניף")
+        return _blocked(
+            f"ברמת {level} מוגדר לכל הקופות התפקיד \"{_ROLE_WORDS.get(values.get('role'), values.get('role'))}\" "
+            "בחסימות פריטים, והוא גובר על \"הקופה הראשית\" של הסניף. משנים בהגדרות ניהול המלאי ← "
+            f"\"חסימות מהקופה\", ברמת {level}."
+        )
+    return _differs(T.ITEM_BLOCKS, now_value)
+
+
 def status_of(db: Session, state: ShopState, profile: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = _now(now)
     current = current_values(state)
@@ -601,6 +645,7 @@ def status_of(db: Session, state: ShopState, profile: Dict[str, Any], *, now: Op
     }
     for name in ("shopZFrom", "tablesMode", "kitchen", "customerDisplay", "attendance", "tips", "vouchers"):
         out[name] = _applied() if current[name] == profile[name] else _differs(name, current[name])
+    out[T.ITEM_BLOCKS] = _item_blocks_status(state, profile[T.ITEM_BLOCKS])
     return out
 
 
@@ -860,7 +905,7 @@ def apply_profile(
         else:
             message = (
                 f"בסניף יש כבר קופות: רק מנהל-על משנה את {names}. אפשר לשנות כאן את שאר השדות "
-                "(שולחנות, מטבח, מסך לקוח, נוכחות, טיפים ושוברים)."
+                "(שולחנות, מטבח, מסך לקוח, נוכחות, טיפים, שוברים וחסימות פריטים)."
             )
         raise _refused("work_profile_forbidden", message, denied[0], status.HTTP_403_FORBIDDEN, fields=denied)
     values_now = current_values(state)
@@ -914,6 +959,20 @@ def apply_profile(
         full = _settings_patch(state, profile)
         tip_keys = {k for k in full if k.startswith("tip") or k.startswith("pay")}
         patch = {k: v for k, v in full.items() if (k in tip_keys and allowed["tips"]) or (k not in tip_keys and allowed["vouchers"])}
+    item_blocks: Optional[Tuple[Any, Any]] = None
+    if wanted(T.ITEM_BLOCKS):
+        from app.services import item_block_control as C
+
+        own_before = C.own_of(shop.settings) or None
+        try:
+            own_after = T.item_blocks_own(own_before or {}, profile[T.ITEM_BLOCKS])
+        except C.ItemBlockSettingsError as exc:  # pragma: no cover - the shop's own values are read cleaned
+            raise _refused(
+                "work_profile_item_blocks_invalid", f"הגדרת חסימות הפריטים של הסניף לא תקינה: {exc}",
+                T.ITEM_BLOCKS, status.HTTP_422_UNPROCESSABLE_ENTITY,
+            ) from exc
+        if own_after != own_before:
+            item_blocks = (own_before, own_after)
 
     # The tills: the Z and the local server (a super admin's, once there are tills). Changed in
     # this save — a refusal refuses the save; as saved before but not applied yet (a till that
@@ -1041,6 +1100,14 @@ def apply_profile(
             shop.settings_updated_at = utc_now()
             applied.changes.extend(sorted({"tips" if k.startswith(("tip", "pay")) else "vouchers" for k in patch}))
             applied.settings = True
+        if item_blocks is not None:
+            # "חסימות פריטים": the shop's own `itemBlocks`; its tills read it in their parameters pull.
+            step = T.ITEM_BLOCKS
+            old, new = item_blocks
+            shop.settings = patch_settings_json(shop.settings, {T.ITEM_BLOCKS: new})
+            shop.settings_updated_at = utc_now()
+            _audit(db, user, T.ITEM_BLOCKS, "shop", shop.id, old, new, now)
+            applied.changes.append(T.ITEM_BLOCKS)
         # ── 3. The profile itself ──
         step = "profile"
         before_profile = stored_profile(shop)

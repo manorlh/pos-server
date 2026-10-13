@@ -2645,9 +2645,17 @@ def get_till_parameters_sync(
     """
     from app.services.catalog_admin import view_for_machine
 
+    from app.services import item_block_control
+
     resolved = till_parameters_for_machine(db, machine)
+    # "חסימות מהקופה" (P:/specs/item-block-control.md §6): the till's role and caps, worked out here —
+    # the one object in the map (the till keeps it as JSON, as it keeps `catalogAdminView`).
+    parameters = {
+        **resolved.parameters,
+        item_block_control.SETTINGS_KEY: item_block_control.till_out(db, machine, resolved.parameters),
+    }
     body = TillParametersSyncResponse(
-        parameters=resolved.parameters,
+        parameters=parameters,
         updated_at=resolved.updated_at,
         # "ניהול קטלוג מהקופה": what the till's catalog screen shows (specs/till-catalog-management.md §6.1).
         catalog_admin_view=view_for_machine(db, machine, resolved.parameters),

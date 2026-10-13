@@ -4,16 +4,17 @@
  * "מלאי" — stock along the hierarchy (company › shop › point of sale › till), in tabs:
  * "מלאי מהיר" (find, + / −, count, receive, transfer, block), "חסימות פעילות" ("חסומים כעת": "אזל" /
  * "חסום" in force, by point of sale and channel), "העברות" (and the low-stock alerts' suggested transfers), "מלאי פתיחה ואיפוס יומי",
- * "הגדרות ניהול מלאי" (the managed levels, with the switch wizard) and "נשאר בסוף היום".
+ * "הגדרות ניהול מלאי" (the managed levels, with the switch wizard; "פתיחה אחרי Z"; "חסימות מהקופה") and "נשאר בסוף היום".
  * `?tab=` opens a tab (the board links to `?tab=blocks`); picking a tab writes it there, with the
  * tab's own filters ("מלאי מהיר": `q`, `category`, `filter`; "נשאר בסוף היום": `day`).
  */
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { PackageX, SlidersHorizontal } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { PackageX, SlidersHorizontal, Zap } from 'lucide-react';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ import { OpeningTab } from '@/components/dashboard/stock/opening-tab';
 import { LevelsTab } from '@/components/dashboard/stock/levels-tab';
 import { LeftoverTab } from '@/components/dashboard/stock/leftover-tab';
 import { AvailabilityReopenCard } from '@/components/dashboard/stock/availability-reopen-card';
+import { ItemBlockControlCard } from '@/components/dashboard/stock/item-block-control-card';
 
 const TABS = [
   { id: 'quick', label: 'מלאי מהיר' },
@@ -39,8 +41,11 @@ const TABS = [
   { id: 'leftover', label: 'נשאר בסוף היום' },
 ] as const;
 type StockTab = (typeof TABS)[number]['id'];
-/** Tabs of stock locations: shown only while the server has them on (STOCK_LOCATIONS_ENABLED). */
-const LOCATION_TABS: StockTab[] = ['transfers', 'opening', 'levels', 'leftover'];
+/**
+ * Tabs of stock locations: shown only while the server has them on (STOCK_LOCATIONS_ENABLED). "הגדרות ניהול
+ * מלאי" always shows (P:/specs/item-block-control.md §5): without locations, only its stock-locations part hides.
+ */
+const LOCATION_TABS: StockTab[] = ['transfers', 'opening', 'leftover'];
 /** The tabs' own URL params ("מלאי מהיר": q / category / filter; "נשאר בסוף היום": day). */
 const TAB_PARAMS = ['q', 'category', 'filter', 'day'];
 
@@ -166,6 +171,10 @@ export default function ShopStockPage() {
           <Button size="sm" variant="outline" className="min-h-10 gap-1" onClick={() => setBlockFor(null)}>
             <PackageX className="size-4" /> חסום / אזל
           </Button>
+          {/* "חסימה מהירה" (P:/specs/item-block-control.md §4): זמין / אזל / חסום in one tap. */}
+          <Link href="/dashboard/stock/quick-block" className={cn(buttonVariants({ size: 'sm', variant: 'outline' }), 'min-h-10 gap-1')}>
+            <Zap className="size-4" /> חסימה מהירה
+          </Link>
         </div>
       </div>
 
@@ -192,20 +201,17 @@ export default function ShopStockPage() {
         <ScopeGate resolution={resolution}>
           {root ? (
             <div key={key}>
-              {tab === 'quick' ? (
-                <div className="space-y-6">
-                  <QuickStockTab root={root} start={start} scope={scope} />
-                  {/* Without stock locations the levels tab is hidden: the reopen setting lives here. */}
-                  {!locations ? <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} /> : null}
-                </div>
-              ) : null}
+              {tab === 'quick' ? <QuickStockTab root={root} start={start} scope={scope} /> : null}
               {tab === 'transfers' ? <TransfersTab scope={scope} /> : null}
               {tab === 'opening' ? <OpeningTab root={root} scope={scope} /> : null}
               {tab === 'levels' ? (
                 <div className="space-y-6">
-                  <LevelsTab root={root} />
+                  {/* The managed stock levels ("מחסנים"): only while stock locations are on. */}
+                  {locations ? <LevelsTab root={root} /> : null}
                   {/* "פתיחת פריטים אוטומטית אחרי Z": the inventory setting, per company, shop or point of sale. */}
                   <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} />
+                  {/* "חסימות מהקופה": which till blocks what, who releases, the quick block's defaults. */}
+                  <ItemBlockControlCard companyId={effective.companyId} shopId={effective.shopId} />
                 </div>
               ) : null}
               {tab === 'leftover' ? <LeftoverTab scope={scope} /> : null}

@@ -214,6 +214,11 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("ITEM_BLOCK", "חסימת פריט / אזל", "admin",
                    "חסימה או סימון \"אזל\" של פריט או מחלקה — לקופות, לקיוסקים או לשניהם, בסניף, "
                    "בנקודת המכירה או במכשיר — וביטול חסימה, מהקופה ומהקיוסק."),
+    # P:\specs\item-block-control.md §2: on top of ITEM_BLOCK, for what goes past the till's own
+    # reach — checked by the cloud against the approver (app/services/item_block_control.py).
+    PermissionSpec("ITEM_BLOCK_WIDE", "חסימה מעבר לקופה", "admin",
+                   "חסימה או \"אזל\" מעבר לקופה: בקיוסק, בהזמנות אונליין או בתפריט הדיגיטלי, או בהיקף רחב "
+                   "יותר מנקודת המכירה — ושחרור של חסימה כזו. רק בקופה שתפקידה בחסימות מתיר זאת."),
     PermissionSpec("ATTENDANCE_MANAGE", "נוכחות — אישור מנהל", "admin",
                    "יציאה ממשמרת עם שולחנות פתוחים / סיום משמרת שדורש אישור מנהל.",
                    scope="attendance:manage"),
@@ -307,6 +312,7 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "SELL_RESTRICTED_ITEMS",
     "HELD_SALE_CANCEL",
     "ITEM_BLOCK",
+    "ITEM_BLOCK_WIDE",
     # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
     "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
 })
@@ -376,6 +382,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CATALOG_CREATE":                    (D, D, P, A),
     # "חסימת פריט / אזל": the shift supervisor and the manager alone; a cashier on a manager's code.
     "ITEM_BLOCK":                        (D, P, A, A),
+    # "חסימה מעבר לקופה" (P:\specs\item-block-control.md §2): the same people; a waiter never.
+    "ITEM_BLOCK_WIDE":                   (D, P, A, A),
     "ATTENDANCE_MANAGE":                 (P, P, A, A),
     "USER_SESSION_RELEASE":              (P, P, A, A),
     "CARD_UNRESOLVED":                   (P, P, A, A),
@@ -604,8 +612,11 @@ def _role_value(role: Any) -> str:
 #: there — the direction to fail in.
 #: Not grown with codes added after roles (SELL_RESTRICTED_ITEMS): an older till never asks for
 #: them, and a custom role must not read as a cashier there because of one it cannot use.
-#: Nor the catalog's four writes (§6.2): an older till asks for `catalog:write` only.
-LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"} - CATALOG_FINE_CODES
+#: Nor the catalog's four writes (§6.2): an older till asks for `catalog:write` only. Nor
+#: ITEM_BLOCK_WIDE: an older till never asks for it.
+LEGACY_SENIOR_CODES: FrozenSet[str] = (
+    LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS", "ITEM_BLOCK_WIDE"} - CATALOG_FINE_CODES
+)
 
 
 def legacy_role_for(states: Mapping[str, str]) -> str:

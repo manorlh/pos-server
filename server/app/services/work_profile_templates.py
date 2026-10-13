@@ -17,7 +17,9 @@ A profile (stored on the shop as `settings.workProfile`):
      "customerDisplay": bool,
      "attendance": bool,
      "tips": {"enabled": bool, "distribution": "direct" | "equal_pool" | "by_sales"},
-     "vouchers": {"station": bool, "balanceCheck": "auto" | "on" | "off"}}
+     "vouchers": {"station": bool, "balanceCheck": "auto" | "on" | "off"},
+     "itemBlocks": {"managing": "main_till" | "all" | "none", "localScope": "machine" | "area" | "shop",
+                    "localWide": bool}}
 
 Two rules tie the fields together, because the system has no other way to run them: a local
 server is the shop's main till with "רשת מקומית" on, and with it on the main till produces the
@@ -28,6 +30,20 @@ LAN («רשת מקומית (קופה ראשית)») live on that main till, so `
 local server is — a till, the main till (`main_till`, the default and every profile before the field),
 or a dedicated local server device (`dedicated`, needs `localServer`). Optional in what the dashboard
 sends (absent is `main_till`); always in what is stored, and in every template (`main_till`).
+
+"חסימות פריטים" (P:/specs/item-block-control.md §5 "הקמת סניף"): `itemBlocks` —
+
+    {"managing": "main_till" | "all" | "none",      which tills are "קופה מנהלת"
+     "localScope": "machine" | "area" | "shop",     how far a regular till blocks
+     "localWide": bool}                             a regular till blocks the kiosk, orders and menu too
+
+— the shop's own POS setting `itemBlocks` (app/services/item_block_control.py) in three choices:
+`managing` main_till → no `role` of the shop's own (the main till is managing, the others local), all →
+`role: managing`, none → `role: local`; `localScope` → `localMaxLevel`; `localWide` → `localChannels`
+(all four, or `["pos"]`). The setting's other keys (quickDefaults, releaseMode…) are kept. Optional in
+what the dashboard sends (absent or null: the defaults — main till, point of sale, tills only); always in
+what is stored and returned; never in the templates (their golden file is pinned), so a template sent as
+is gets the defaults.
 """
 from __future__ import annotations
 
@@ -58,14 +74,24 @@ LOCAL_SERVER_DEVICE = "localServerDevice"
 DEVICE_MAIN_TILL, DEVICE_DEDICATED = "main_till", "dedicated"
 LOCAL_SERVER_DEVICES = (DEVICE_MAIN_TILL, DEVICE_DEDICATED)
 
+#: "חסימות פריטים": which tills manage the item blocks, and how far the regular ones reach.
+ITEM_BLOCKS = "itemBlocks"
+MANAGING_MAIN_TILL, MANAGING_ALL, MANAGING_NONE = "main_till", "all", "none"
+ITEM_BLOCKS_MANAGING = (MANAGING_MAIN_TILL, MANAGING_ALL, MANAGING_NONE)
+ITEM_BLOCKS_SCOPES = ("machine", "area", "shop")
+ITEM_BLOCKS_KEYS = ("managing", "localScope", "localWide")
+DEFAULT_ITEM_BLOCKS: Dict[str, Any] = {"managing": MANAGING_MAIN_TILL, "localScope": "area", "localWide": False}
+
 FIELDS = (
     "templateId", "zType", "shopZFrom", "localServer", LOCAL_SERVER_DEVICE, "tablesMode", "kitchen",
-    "customerDisplay", "attendance", "tips", "vouchers",
+    "customerDisplay", "attendance", "tips", "vouchers", ITEM_BLOCKS,
 )
 #: The fields that carry a status (all but the template's name).
 STATUS_FIELDS = FIELDS[1:]
 #: Fields a profile may leave out (an older dashboard, a template): read as their default.
-OPTIONAL_FIELDS = (LOCAL_SERVER_DEVICE,)
+OPTIONAL_FIELDS = (LOCAL_SERVER_DEVICE, ITEM_BLOCKS)
+#: Fields the templates leave out (their golden file is pinned): a template gets the default.
+NOT_IN_TEMPLATES = (ITEM_BLOCKS,)
 #: The Z and the local server: applied to the tills, so they wait for one.
 TILL_FIELDS = ("zType", "localServer", LOCAL_SERVER_DEVICE)
 #: Changed only by the super admin once the shop has tills (spec §5).
@@ -83,6 +109,7 @@ LABELS: Dict[str, str] = {
     "attendance": "נוכחות עובדים",
     "tips": "טיפים",
     "vouchers": "שוברי הפקה",
+    ITEM_BLOCKS: "חסימות פריטים",
 }
 
 VALUE_LABELS: Dict[str, Dict[Any, str]] = {
@@ -102,6 +129,12 @@ VALUE_LABELS: Dict[str, Dict[Any, str]] = {
     LOCAL_SERVER_DEVICE: {DEVICE_MAIN_TILL: "קופה ראשית", DEVICE_DEDICATED: "שרת מקומי: מכשיר ייעודי"},
     "distribution": {"direct": "ישירה", "equal_pool": "שווה", "by_sales": "לפי מכירות"},
     "balanceCheck": {"auto": "אוטומטי", "on": "כן", "off": "לא"},
+    "managing": {
+        MANAGING_MAIN_TILL: "הקופה הראשית",
+        MANAGING_ALL: "כל הקופות",
+        MANAGING_NONE: "אף קופה (מסמנים בהגדרות ניהול המלאי)",
+    },
+    "localScope": {"machine": "רק הקופה", "area": "נקודת המכירה", "shop": "כל הסניף"},
 }
 
 #: Spec §2.1's defaults: what a field is when nobody chose otherwise.
@@ -117,6 +150,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
     "attendance": False,
     "tips": {"enabled": False, "distribution": "direct"},
     "vouchers": {"station": False, "balanceCheck": "auto"},
+    ITEM_BLOCKS: dict(DEFAULT_ITEM_BLOCKS),
 }
 
 
@@ -132,14 +166,68 @@ def value_label(field: str, value: Any) -> str:
         station = "עמדת שובר דלוקה" if value.get("station") else "בלי עמדת שובר"
         check = VALUE_LABELS["balanceCheck"].get(value.get("balanceCheck"), value.get("balanceCheck"))
         return f"{station}, בירור יתרה: {check}"
+    if field == ITEM_BLOCKS and isinstance(value, dict):
+        managing = VALUE_LABELS["managing"].get(value.get("managing"), value.get("managing"))
+        scope = VALUE_LABELS["localScope"].get(value.get("localScope"), value.get("localScope"))
+        wide = "גם קיוסק, הזמנות ותפריט" if value.get("localWide") else "קופות בלבד"
+        return f"קופה מנהלת: {managing}; קופות רגילות: {scope}, {wide}"
     return VALUE_LABELS.get(field, {}).get(value, str(value))
+
+
+# ── "חסימות פריטים" ⇄ the shop's `itemBlocks` setting ─────────────────────────
+
+
+def item_blocks_of_values(values: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The profile's three choices read from `itemBlocks` values (a layer's own, or several merged):
+    `role` managing → all, local / none → none, unset → main_till; `localMaxLevel` (unset: area);
+    `localWide` when `localChannels` has more than the tills.
+    """
+    from app.services import item_block_control as C
+
+    role = values.get("role")
+    channels = values.get("localChannels") or C.DEFAULTS["localChannels"]
+    scope = values.get("localMaxLevel")
+    return {
+        "managing": (
+            MANAGING_ALL if role == C.MANAGING else MANAGING_NONE if role in (C.LOCAL, C.NONE) else MANAGING_MAIN_TILL
+        ),
+        "localScope": scope if scope in ITEM_BLOCKS_SCOPES else DEFAULT_ITEM_BLOCKS["localScope"],
+        "localWide": any(c != "pos" for c in channels),
+    }
+
+
+def item_blocks_of(settings: Any) -> Dict[str, Any]:
+    """The profile's `itemBlocks` from a shop's settings: its own `itemBlocks` (read leniently)."""
+    from app.services import item_block_control as C
+
+    return item_blocks_of_values(C.own_of(settings))
+
+
+def item_blocks_own(own: Dict[str, Any], choice: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    The shop's own `itemBlocks` for the profile's choice, its other keys (quickDefaults, releaseMode,
+    managingMaxLevel, localRelease) kept; None when nothing is left of its own.
+    """
+    from app.services import item_block_control as C
+
+    out = dict(own or {})
+    if choice["managing"] == MANAGING_ALL:
+        out["role"] = C.MANAGING
+    elif choice["managing"] == MANAGING_NONE:
+        out["role"] = C.LOCAL
+    else:
+        out.pop("role", None)  # the main till is managing, every other till local (the setting's default)
+    out["localMaxLevel"] = choice["localScope"]
+    out["localChannels"] = list(C.CHANNELS) if choice["localWide"] else ["pos"]
+    return C.clean(out)
 
 
 # ── The templates (spec §2.2) ─────────────────────────────────────────────────
 
 
 def _profile(template_id: str, **fields: Any) -> Dict[str, Any]:
-    out = copy.deepcopy(DEFAULT_PROFILE)
+    out = {k: copy.deepcopy(v) for k, v in DEFAULT_PROFILE.items() if k not in NOT_IN_TEMPLATES}
     out.update(fields)
     out["templateId"] = template_id
     return out
@@ -294,6 +382,18 @@ def _object(field: str, value: Any, keys: Sequence[str]) -> Dict[str, Any]:
     return value
 
 
+def _item_blocks(value: Any) -> Dict[str, Any]:
+    """"חסימות פריטים": absent or null — the defaults; else all three, each one of its values."""
+    if value is None:
+        return dict(DEFAULT_ITEM_BLOCKS)
+    choice = _object(ITEM_BLOCKS, value, ITEM_BLOCKS_KEYS)
+    return {
+        "managing": _choice(f"{ITEM_BLOCKS}.managing", choice["managing"], ITEM_BLOCKS_MANAGING),
+        "localScope": _choice(f"{ITEM_BLOCKS}.localScope", choice["localScope"], ITEM_BLOCKS_SCOPES),
+        "localWide": _bool(f"{ITEM_BLOCKS}.localWide", choice["localWide"]),
+    }
+
+
 def validate(raw: Any) -> Dict[str, Any]:
     """
     The profile as stored — every field present, each one of its values, the two rules between
@@ -341,6 +441,7 @@ def validate(raw: Any) -> Dict[str, Any]:
             "station": _bool("vouchers.station", vouchers["station"]),
             "balanceCheck": _choice("vouchers.balanceCheck", vouchers["balanceCheck"], BALANCE_CHECKS),
         },
+        ITEM_BLOCKS: _item_blocks(raw.get(ITEM_BLOCKS)),
     }
     if out["zType"] == Z_SHOP_LOCAL and not out["localServer"]:
         raise ProfileInvalid(
@@ -382,6 +483,11 @@ def stored(settings: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
     try:
-        return validate(raw)
+        out = validate(raw)
     except ProfileInvalid:
         return None
+    if raw.get(ITEM_BLOCKS) is None:
+        # Saved before "חסימות פריטים": the shop's own setting as it stands, never the default over it
+        # (a re-save then leaves what "הגדרות ניהול המלאי" set as it is).
+        out[ITEM_BLOCKS] = item_blocks_of(settings)
+    return out
