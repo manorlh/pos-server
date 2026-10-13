@@ -66,6 +66,7 @@ import {
   voucherStationTitlePatch,
   voucherStationTitleTooLong,
 } from './voucherTillSettings';
+import { resolveVoucherRedeemFlow } from './voucherRedeemFlow';
 import type { PosSettingsPatch, PosSettingsV1 } from './types';
 
 test("the values and defaults are the server's (and the till's)", () => {
@@ -113,6 +114,14 @@ test('the station recommends scanning first and a way to enter the voucher', () 
   assert.equal(voucherStationNeedsAdvice('on', 'voucher_first', false, false), true);
   assert.equal(voucherStationNeedsAdvice('on', 'voucher_first', true, false), false);
   assert.equal(voucherStationNeedsAdvice('on', 'both', false, true), false);
+});
+
+test('the station advice follows the flow in force: unset is "both" now, an explicit items_first still advises', () => {
+  // No level sets the flow: it resolves to "both" (13.10.2026), which already scans first — no advice.
+  assert.equal(voucherStationNeedsAdvice('on', resolveVoucherRedeemFlow(undefined, undefined), true, true), false);
+  // "items_first" set at this level or above still wins over the default, and still gets the advice.
+  assert.equal(voucherStationNeedsAdvice('on', resolveVoucherRedeemFlow('items_first', undefined), true, true), true);
+  assert.equal(voucherStationNeedsAdvice('on', resolveVoucherRedeemFlow(undefined, 'items_first'), true, true), true);
 });
 
 // ── "רכישה נוספת בתשלום בעמדת שובר" (voucherStationPaidItems, spec §5) ──

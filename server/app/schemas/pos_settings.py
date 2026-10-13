@@ -102,7 +102,7 @@ class PosSettingsV1Patch(BaseModel):
     #: "שובר ידני": typing the voucher's code by hand.
     pay_voucher_manual_enabled: Optional[bool] = Field(None, alias="payVoucherManualEnabled")
     # ── How the till enters a production voucher's redemption (app/services/voucher_redeem_settings.py) ──
-    #: "דרך מימוש שובר": items first (unset = today's flow), the voucher first, or both ways in.
+    #: "דרך מימוש שובר": items first, the voucher first, or both ways in (unset = both).
     #: Anything else is a 422; `null` in a PATCH resets the layer to inherit.
     voucher_redeem_flow: Optional[Literal["items_first", "voucher_first", "both"]] = Field(
         None, alias="voucherRedeemFlow"
