@@ -30,6 +30,7 @@ import { CompanyMoveDialog } from '@/components/dashboard/company-move-dialog';
 import { DealerTypeBadge, DealerTypeCard } from '@/components/dashboard/dealer-type-card';
 import { numberLabelKey } from '@/lib/dealerType';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
+import { CompanyPushPolicyCard } from '@/components/dashboard/push-policy/company-push-policy-card';
 import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -202,6 +203,9 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
 
       {/* "סוג עוסק": what the tills issue, who changed it, and an exempt dealer's ceiling. */}
       <DealerTypeCard company={company} />
+
+      {/* "התראות בנייד": who must have phone notifications on, and how they behave (company level). */}
+      <CompanyPushPolicyCard companyId={company.id} />
 
       {/* Roll-up for this company specifically, not for whatever the bar says. */}
       <SalesStats scope={{ companyId: company.id, shopId: null, machineId: null }} />

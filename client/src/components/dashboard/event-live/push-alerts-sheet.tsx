@@ -209,6 +209,8 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['push-devices'] });
     void qc.invalidateQueries({ queryKey: ['push-preferences'] });
+    // The dashboard's bar (components/dashboard/push-gate) follows this device's state.
+    void qc.invalidateQueries({ queryKey: ['push-status'] });
   };
   const subscribe = useMutation({
     mutationFn: () => subscribeThisBrowser(config.data?.publicKey ?? null, initial),
@@ -221,7 +223,7 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
     onError: () => toast.error(t('subscribeFailed')),
   });
   const stop = useMutation({
-    mutationFn: unsubscribeThisBrowser,
+    mutationFn: () => unsubscribeThisBrowser({ byUser: true }),
     onSuccess: () => {
       setEndpointKnown();
       refresh();

@@ -104,7 +104,9 @@ self.addEventListener('push', (event) => {
       lang: 'he',
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
-      requireInteraction: data.severity === 'high',
+      // Per category, per level (pos-server app/services/push_policy.py); an older server: high severity.
+      requireInteraction: typeof data.requireInteraction === 'boolean' ? data.requireInteraction : data.severity === 'high',
+      vibrate: Array.isArray(data.vibrate) ? data.vibrate : undefined,
       data: { url: typeof data.url === 'string' ? data.url : '/dashboard/alerts' },
     }),
   );
