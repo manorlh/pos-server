@@ -639,8 +639,34 @@ def get_my_machine(
             db if isinstance(db, Session) else object_session(machine), machine,
             getattr(machine, "reported_open_shift_id", None),
         ),
+        # "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11.3, §11.6): the server's own block
+        # (null for any other device), and the host the cloud named with the key to verify it by.
+        **_local_server_fields(db if isinstance(db, Session) else object_session(machine), machine, always=True),
         **machine_realtime_refresh_info(machine=machine),
     }
+
+
+def _local_server_fields(db: Optional[Session], machine: POSMachine, *, always: bool) -> Dict[str, Any]:
+    """
+    `localServer` (the server's own block) and `lanDiscovery` (§11.6). `always`: `machines/me`
+    says both, null when there is none; a heartbeat only what there is. Never fails the call.
+    """
+    out: Dict[str, Any] = {"localServer": None, "lanDiscovery": None} if always else {}
+    if db is None:
+        return out
+    try:
+        from app.services import local_server_device as LSD
+
+        block = LSD.device_block(db, machine)
+        discovery = LSD.discovery_for(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("local server blocks failed for %s", machine.id)
+        return out
+    if block is not None or always:
+        out["localServer"] = block
+    if discovery is not None or always:
+        out["lanDiscovery"] = discovery
+    return out
 
 
 def _shift_closed_from_cloud(db: Optional[Session], machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
@@ -858,6 +884,14 @@ def post_my_heartbeat(
     # The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what the cloud copy still lacks.
     if body is not None and body.lan_sync is not None:
         lan_server.note_sync(machine, body.lan_sync)
+    # "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11.4): its state and its LAN key.
+    if body is not None and (body.local_server is not None or body.lan_identity is not None):
+        from app.services import local_server_device
+
+        try:
+            local_server_device.apply_heartbeat(machine, body.local_server, body.lan_identity)
+        except Exception:  # noqa: BLE001 - a report never fails a heartbeat
+            logger.exception("local server report failed for %s", machine.id)
     # Local shop Zs of this shop still waiting for their tills' shifts and documents
     # (docs/SPEC_INDEPENDENT_TILL.md §8.12): what arrived is linked, and a Z is verified once
     # everything it names is here. Never fails a heartbeat.
@@ -927,6 +961,11 @@ def post_my_heartbeat(
         # "סניף לא פעיל", every beat too: the device locks (or is released) on the beat after
         # the change, should it have missed the realtime signal.
         "shopActive": shop_active.is_active(machine.shop),
+        # "סוג מכשיר (תפקיד)" every beat (P:/specs/dedicated-local-server.md §11.3): a device the
+        # dashboard paired as "שרת מקומי" learns it without waiting for `machines/me`.
+        "deviceRole": device_profile.effective_role(db, machine),
+        # The server's own block, and the host the cloud named with the key to verify it by (§11.6).
+        **_local_server_fields(db, machine, always=False),
     }
     # Support produced this till's Z from the cloud (offline till Z §4.6): the till makes
     # nothing for that period and keeps its data of it read-only.

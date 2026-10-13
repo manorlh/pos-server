@@ -22,6 +22,24 @@ import {
   isSilent,
   lastSwitchKey,
   tillTakeoverKey,
+  FAILOVER_DEFAULTS,
+  NO_PRINT_HOST,
+  SERVER_ROLES,
+  roleChoices,
+  rolesBody,
+  rolesDraftError,
+  rolesDraftOf,
+  SERVER_ACTIONS,
+  failoverBody,
+  failoverDraftError,
+  failoverDraftOf,
+  failoverTone,
+  hostingRoles,
+  printQueueTone,
+  printerStateOf,
+  printerTone,
+  serverCommandBody,
+  serverCommandNeedsConfirm,
   parseCountedCash,
   shiftStep,
   silentSecondsAt,
@@ -301,5 +319,110 @@ describe('"העברת שרת מקומי מהקופה" (tillServerTakeover)', () 
     assert.equal(lastSwitchKey({ source: 'till' }), 'lastSwitchFromTill');
     assert.equal(lastSwitchKey({ source: 'cloud' }), 'lastSwitch');
     assert.equal(lastSwitchKey({}), 'lastSwitch');
+    assert.equal(lastSwitchKey({ source: 'auto_failover' }), 'lastSwitchFailover');
+    assert.equal(lastSwitchKey({ source: 'work_profile' }), 'lastSwitchWorkProfile');
+    assert.equal(lastSwitchKey({ source: 'roles' }), 'lastSwitchRoles');
+  });
+});
+
+describe('"שרת מקומי ייעודי" (dedicated-local-server.md §11)', () => {
+  it('says which host roles a server holds', () => {
+    assert.deepEqual(hostingRoles({ mainTill: true, tables: true, print: false, shopZ: true }), ['mainTill', 'tables', 'shopZ']);
+    assert.deepEqual(hostingRoles(null), []);
+  });
+
+  it('reads the printers and the queue as the server does', () => {
+    assert.equal(printerStateOf(' OK '), 'ok');
+    assert.equal(printerStateOf('melting'), 'unknown');
+    assert.equal(printerTone('ok'), 'ok');
+    assert.equal(printerTone('no_paper'), 'warn');
+    assert.equal(printerTone('offline'), 'bad');
+    assert.equal(printerTone(undefined), 'muted');
+    assert.equal(printQueueTone({ pending: 0, failed: 0 }), 'ok');
+    assert.equal(printQueueTone({ pending: 2, failed: 1 }), 'bad');
+    assert.equal(printQueueTone({ pending: 2, failed: 0, oldestPendingAgeMs: 90_000 }), 'warn');
+    assert.equal(printQueueTone(null), 'muted');
+  });
+
+  it('sends a clear only once confirmed, a test page on one printer', () => {
+    assert.deepEqual([...SERVER_ACTIONS], ['restart_app', 'upload_logs', 'print_test_page', 'clear_print_queue']);
+    assert.equal(serverCommandNeedsConfirm('clear_print_queue'), true);
+    assert.equal(serverCommandNeedsConfirm('restart_app'), false);
+    assert.deepEqual(serverCommandBody('restart_app'), { action: 'restart_app' });
+    assert.deepEqual(serverCommandBody('upload_logs'), { action: 'upload_logs', params: { minutes: 120 } });
+    assert.deepEqual(serverCommandBody('print_test_page', { printerId: 'p1' }), { action: 'print_test_page', params: { printerId: 'p1' } });
+    assert.deepEqual(serverCommandBody('clear_print_queue', { scope: 'all', confirmed: true }), {
+      action: 'clear_print_queue', params: { printerId: null, scope: 'all' }, confirm: true,
+    });
+    assert.equal(serverCommandBody('clear_print_queue').confirm, false);
+  });
+
+  it('the server\'s roles: each to the server or a till, printing to none only with no remote device', () => {
+    assert.deepEqual([...SERVER_ROLES], ['tables', 'print', 'shopZ']);
+    const view = {
+      roles: {
+        tables: { holder: { machineId: 's' }, onServer: true },
+        print: { holder: null, none: true, onServer: false },
+        shopZ: { holder: { machineId: 's' }, onServer: true, applies: true },
+      },
+      choices: [
+        { machineId: 's', deviceRole: 'local_server', online: true, eligible: true, reason: null, reasonText: null },
+        { machineId: 't1', deviceRole: 'till', online: false, eligible: false, reason: 'offline', reasonText: null },
+        { machineId: 't2', deviceRole: 'till', online: true, eligible: true, reason: null, reasonText: null },
+      ],
+      localMode: true,
+      noPrintHostAllowed: true,
+    };
+    const d = rolesDraftOf(view);
+    assert.deepEqual(d, { tables: 's', print: NO_PRINT_HOST, shopZ: 's' });
+    assert.equal(rolesDraftError(d, view), null);
+    assert.equal(rolesDraftError(d, { ...view, noPrintHostAllowed: false }), 'printNone');
+    assert.equal(rolesDraftError({ ...d, shopZ: '' }, view), 'shopZ');
+    assert.equal(rolesDraftError({ ...d, shopZ: '' }, { ...view, localMode: false }), null);
+    assert.deepEqual(roleChoices(view, 's').map((c) => c.machineId), ['s', 't2']);
+    assert.deepEqual(roleChoices(view, 't1').map((c) => c.machineId), ['s', 't1', 't2']);
+    assert.deepEqual(rolesBody({ ...d, print: 't2' }, true), { tables: 's', print: 't2', shopZ: 's' });
+    assert.deepEqual(rolesBody(d, false), { tables: 's', print: NO_PRINT_HOST });
+  });
+
+  it('the failover is off by default, and on needs a target and 2–60 minutes', () => {
+    assert.deepEqual(FAILOVER_DEFAULTS, { enabled: false, targetMachineId: null, minutes: 3 });
+    const d = failoverDraftOf(null);
+    assert.deepEqual(d, { enabled: false, targetMachineId: '', minutes: '3' });
+    assert.equal(failoverDraftError(d), null);
+    assert.equal(failoverDraftError({ ...d, enabled: true }), 'target');
+    assert.equal(failoverDraftError({ ...d, minutes: '1' }), 'minutes');
+    assert.equal(failoverDraftError({ ...d, minutes: '2.5' }), 'minutes');
+    assert.equal(failoverDraftError({ ...d, minutes: '61' }), 'minutes');
+    assert.equal(failoverDraftError({ enabled: true, targetMachineId: 't', minutes: '5' }), null);
+    assert.deepEqual(failoverBody({ enabled: true, targetMachineId: 't', minutes: ' 5 ' }), {
+      enabled: true, targetMachineId: 't', minutes: 5,
+    });
+    assert.deepEqual(failoverBody(d), { enabled: false, targetMachineId: null, minutes: 3 });
+    assert.equal(failoverTone({ enabled: false, status: { code: 'off', message: '' } }), 'muted');
+    assert.equal(failoverTone({ enabled: true, status: { code: 'host_heard', message: '' } }), 'ok');
+    assert.equal(failoverTone({ enabled: true, status: { code: 'target_offline', message: '' } }), 'warn');
+  });
+
+  it('every word the cards say is in he.json', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const ls = he.localServer;
+    for (const k of ['lastSwitchFailover', 'lastSwitchWorkProfile', 'lastSwitchRoles', 'serverNoShift']) assert.ok(ls.wizard[k], k);
+    for (const k of ['title', 'offByDefault', 'enabled', 'target', 'minutes', 'save', 'saved', 'noTarget', 'lastFired',
+      'rules', 'targetRequired', 'minutesInvalid', 'readOnly']) assert.ok(ls.failover[k], k);
+    for (const k of ['title', 'hosting', 'standby', 'tills', 'openOrders', 'printQueue', 'printers', 'mirror', 'notTillLicense',
+      'commands', 'confirmClear', 'sent', 'asOf', 'none']) assert.ok(ls.device[k], k);
+    for (const a of SERVER_ACTIONS) assert.ok(ls.device.actions[a], a);
+    for (const s of ['ok', 'offline', 'error', 'no_paper', 'unknown']) assert.ok(ls.device.printerStates[s], s);
+    for (const r of ['mainTill', 'tables', 'print', 'shopZ']) assert.ok(ls.device.roles[r], r);
+    for (const k of ['title', 'hint', 'tables', 'print', 'shopZ', 'server', 'none', 'noneHint', 'noneRemote', 'save', 'saved',
+      'readOnly', 'notLocal', 'pick']) assert.ok(ls.roles[k], k);
+    for (const k of ['local_server', 'local_serverHint', 'localServerNote', 'localServerReady', 'localServerNeedsShop',
+      'localServerNotTill', 'localServerNotTillHint']) assert.ok(he.machines.deviceRole[k], k);
+    assert.ok(he.machines.deviceRole.badge.local_server);
+    for (const k of ['local_server_failover', 'local_server_failover_changed']) {
+      assert.ok(he.exceptions.types[k], k);
+      assert.ok(he.exceptionSettings.desc[k], k);
+    }
   });
 });

@@ -167,6 +167,11 @@ RULES: Tuple[RuleSpec, ...] = (
     # the cloud — who, when, from which till to which, what moved, forced or not, the old
     # server's shift closed, the shop Z released. Always recorded (high when forced).
     RuleSpec("local_server_switched", True, (), "medium", "z"),
+    # "גיבוי אוטומטי לשרת המקומי" (app/services/local_server_failover.py): the cloud moved a shop's
+    # local server by itself — the host not heard N minutes, the target online. Always recorded, high.
+    RuleSpec("local_server_failover", True, (), "high", "z"),
+    # Its setting changed (on / off, the target, the minutes): who, before and after. Always recorded.
+    RuleSpec("local_server_failover_changed", True, (), "medium", "z"),
     # "סגירת משמרת מהענן": a till the cloud had not heard for 5 minutes had its open shift closed
     # from the cloud's documents ("נסגרה מהענן — הקופה לא הייתה זמינה"): who, the basis, the
     # cash counted by hand or not. Always recorded.

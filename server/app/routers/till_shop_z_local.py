@@ -40,8 +40,9 @@ from app.middleware.auth import get_pos_machine_for_sync_path
 from app.models.pos_machine import POSMachine
 from app.services import local_shop_z as LZ
 
-# Display devices are not tills (app/services/display_devices.py).
-from app.middleware.auth import FISCAL_SYNC_PATH
+# Display devices are not tills (app/services/display_devices.py); a dedicated local server is not a
+# till either, but as the shop's host it produces the local shop Z (P:/specs/dedicated-local-server.md).
+from app.middleware.auth import FISCAL_SYNC_PATH, HOST_SYNC_PATH
 
 router = APIRouter(tags=["till-shop-z-local"])
 
@@ -132,7 +133,7 @@ class LocalShopZAckIn(BaseModel):
     message: Optional[str] = Field(None, max_length=500)
 
 
-@router.post("/sync/{machine_id}/shop-z/local-request/ack", dependencies=FISCAL_SYNC_PATH)
+@router.post("/sync/{machine_id}/shop-z/local-request/ack", dependencies=HOST_SYNC_PATH)
 def till_shop_z_local_request_ack(
     machine_id: str,
     body: LocalShopZAckIn,
@@ -150,7 +151,7 @@ def till_shop_z_local_request_ack(
     return out
 
 
-@router.post("/sync/{machine_id}/shop-z/local", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
+@router.post("/sync/{machine_id}/shop-z/local", status_code=status.HTTP_201_CREATED, dependencies=HOST_SYNC_PATH)
 def till_shop_z_local_upload(
     machine_id: str,
     body: LZ.LocalShopZIn,
@@ -219,7 +220,7 @@ def _refused(refused: "LZ.RemotePartRefused") -> JSONResponse:
     return JSONResponse(status_code=refused.status_code, content=refused.body)
 
 
-@router.post("/sync/{machine_id}/shop-z/remote-close", dependencies=FISCAL_SYNC_PATH)
+@router.post("/sync/{machine_id}/shop-z/remote-close", dependencies=HOST_SYNC_PATH)
 def till_shop_z_remote_close(
     machine_id: str,
     body: RemoteCloseIn,

@@ -84,9 +84,16 @@ def lan_members(machines: Iterable[POSMachine]) -> List[POSMachine]:
     """
     The tills of the shop's LAN group: every one but the independent tills — and never a
     display device (a KDS / the "מוכן / לא מוכן" board, app/services/display_devices.py),
-    which is no till: never the main till, the tables host or the print server.
+    which is no till: never the main till, the tables host or the print server. A dedicated
+    local server ("שרת מקומי", app/services/local_server_device.py) is in it: not a till, but
+    the shop's preferred host.
     """
-    return [m for m in machines if not is_independent(m) and getattr(m, "is_fiscal", True) is not False]
+    from app.services.local_server_device import is_local_server
+
+    return [
+        m for m in machines
+        if not is_independent(m) and (getattr(m, "is_fiscal", True) is not False or is_local_server(m))
+    ]
 
 
 def till_label(machine: POSMachine) -> str:

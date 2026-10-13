@@ -37,16 +37,29 @@ fallen server's shift is closed from the cloud (P:/specs/local-server-switch.md,
 
 The switches and the old servers' changes are kept on the shop (`shop.settings`, as the local
 shop Z keeps its producer and reports, app/services/local_shop_z.py), bounded.
+
+**"שרת מקומי ייעודי"** (P:/specs/dedicated-local-server.md §10.2, §11.7): a dedicated local server
+(app/services/local_server_device.py) takes part in every direction — till→till, till→server,
+server→till, server→server. A server has no shift: `closeOldShift` with a server as the old host
+is refused (409 `old_server_has_no_shift`). The automatic failover (app/services/
+local_server_failover.py) makes this same move, `source: "auto_failover"`; the work profile's
+"מכשיר ייעודי" makes it `source: "work_profile"`. **One at a time:** every move of a shop's server
+— the dashboard's, a till's, the failover's — runs under `switch_lock` (the shop's lock: an
+advisory transaction lock on Postgres, and a lock in the process), so two never cross.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import PairingStatus, POSMachine
@@ -125,9 +138,77 @@ def _refusal(status_code: int, code: str, message: str, **extra) -> HTTPExceptio
 
 
 def _ref(machine: Optional[POSMachine]) -> Optional[Dict[str, Any]]:
-    from app.services.main_till import till_ref
+    """`till_ref`, saying `deviceRole: "local_server"` for a dedicated server."""
+    from app.services.local_server_device import ref
 
-    return till_ref(machine)
+    return ref(machine)
+
+
+# ── One move at a time ────────────────────────────────────────────────────────
+
+#: How long a move waits for another one of the same shop before it says so.
+LOCK_WAIT_SECONDS = 30
+_LOCKS: Dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+SWITCH_IN_PROGRESS = "switch_in_progress"
+
+
+def _lock_key(shop_id: Any) -> int:
+    digest = hashlib.sha256(f"local-server-switch:{shop_id}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+def _is_postgres(db: Session) -> bool:
+    try:
+        bind = db.get_bind()
+    except Exception:  # noqa: BLE001
+        return False
+    return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
+
+
+@contextmanager
+def switch_lock(db: Session, shop_id: Any, *, wait: bool = True) -> Iterator[bool]:
+    """
+    The shop's switch lock: held by every move of its local server — the dashboard's, a till's
+    take-over, the automatic failover — from before its checks until its commit. On Postgres an
+    advisory *transaction* lock (released by the caller's commit / rollback, across every API
+    instance); in this process a lock as well (released when the block ends, after the commit).
+
+    `wait` (a person's move): waits for one under way, then goes on — its checks then see what
+    the other one did; 409 `switch_in_progress` after `LOCK_WAIT_SECONDS`. Not `wait` (the
+    failover): yields False at once when another move holds it — the failover never fires while a
+    switch is in progress, and never twice at once.
+    """
+    key = str(shop_id)
+    with _LOCKS_GUARD:
+        lock = _LOCKS.setdefault(key, threading.Lock())
+    got = lock.acquire(timeout=LOCK_WAIT_SECONDS) if wait else lock.acquire(blocking=False)
+    if not got:
+        if wait:
+            raise _refusal(
+                status.HTTP_409_CONFLICT, SWITCH_IN_PROGRESS,
+                "העברה אחרת של השרת המקומי של הסניף מתבצעת עכשיו. המתינו לסיומה ונסו שוב.",
+            )
+        yield False
+        return
+    try:
+        if _is_postgres(db):
+            k = {"k": _lock_key(shop_id)}
+            if wait:
+                db.execute(text("SELECT pg_advisory_xact_lock(:k)"), k)
+            elif not db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), k).scalar():
+                yield False
+                return
+        yield True
+    finally:
+        lock.release()
+
+
+def is_switch_locked(shop_id: Any) -> bool:
+    """A move of this shop's server is under way in this process."""
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(str(shop_id))
+    return lock is not None and lock.locked()
 
 
 # ── Who ───────────────────────────────────────────────────────────────────────
@@ -214,12 +295,18 @@ def till_state(db: Session, machine: POSMachine, now: Optional[datetime] = None)
     from app.services.display_devices import platform_of
     from app.services.machine_status import is_online
 
+    from app.services.local_server_device import is_local_server
+
     now = _now(now)
-    shifts = open_shifts(db, machine)
-    reported = getattr(machine, "reported_open_shift_id", None)
+    server = is_local_server(machine)
+    shifts = [] if server else open_shifts(db, machine)
+    reported = None if server else getattr(machine, "reported_open_shift_id", None)
     sync = machine.lan_sync if isinstance(getattr(machine, "lan_sync", None), dict) else {}
     return {
         **(_ref(machine) or {}),
+        # "שרת מקומי" (dedicated-local-server.md §11.7): no shift, nothing to close from the cloud.
+        "deviceRole": "local_server" if server else "till",
+        "hasShifts": not server,
         "platform": platform_of(machine),
         "online": is_online(machine.last_heartbeat_at, now=now),
         "lastHeartbeatAt": _iso(machine.last_heartbeat_at),
@@ -272,11 +359,13 @@ def ineligible_reason(
     from app.services import lan_server
     from app.services.display_devices import PLATFORM_ANDROID, platform_of
     from app.services.independent_till import is_independent
+    from app.services.local_server_device import is_local_server
     from app.services.machine_status import is_online
 
     if not machine.is_active or machine.pairing_status != PairingStatus.ASSIGNED:
         return "not_assigned"
-    if getattr(machine, "is_fiscal", True) is False:
+    # A dedicated local server is not a till, and may serve (dedicated-local-server.md §10.2).
+    if getattr(machine, "is_fiscal", True) is False and not is_local_server(machine):
         return "not_fiscal"
     if is_independent(machine):
         return "independent"
@@ -297,16 +386,18 @@ def ineligible_reason(
 
 def candidates(db: Session, shop: Shop, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """The shop's tills, each with whether it may take the server and why not."""
-    from app.services.main_till import till_order
+    from app.services.local_server_device import host_order, is_local_server
     from app.services.printers import shop_machines
 
     out = []
-    for m in sorted(shop_machines(db, shop.id), key=till_order):
+    # A dedicated local server first: the preferred host.
+    for m in sorted(shop_machines(db, shop.id), key=host_order):
         reason = ineligible_reason(db, m, now)
         if reason == "not_fiscal":
             continue  # a KDS / the board: no till at all, not listed
         out.append({
             **(_ref(m) or {}),
+            "deviceRole": "local_server" if is_local_server(m) else "till",
             "online": _online(m, now),
             "lastHeartbeatAt": _iso(m.last_heartbeat_at),
             "eligible": reason is None,
@@ -324,6 +415,8 @@ def _online(machine: POSMachine, now: Optional[datetime]) -> bool:
 
 def state(db: Session, shop: Shop, user: Any, now: Optional[datetime] = None) -> Dict[str, Any]:
     """The wizard's first page: the server now, the tills that may take it, and what the user may do."""
+    from app.services import local_server_device as LSD
+    from app.services import local_server_failover as LSF
     from app.services import local_shop_z as LZ
     from app.services.tables import MODE_LAN, TABLES_MODE_KEY, mode_of
     from app.services.till_parameters import resolve_for_shop
@@ -351,6 +444,10 @@ def state(db: Session, shop: Shop, user: Any, now: Optional[datetime] = None) ->
         "lastSwitch": (switches(shop) or [None])[-1],
         "switches": list(reversed(switches(shop)))[:10],
         "formerHostChanges": former_host_changes_out(shop),
+        # "שרת מקומי ייעודי" (dedicated-local-server.md §11): the shop's servers and the automatic
+        # failover's settings (off by default).
+        "servers": LSD.shop_servers(db, shop, now=now),
+        "failover": LSF.view(db, shop, user, now=now),
     }
 
 
@@ -433,6 +530,15 @@ def switch(
             host=_ref(old), canForce=may_switch(db, user),
         )
     shift_to_close: List[Shift] = []
+    from app.services.local_server_device import is_local_server
+
+    if close_old_shift and old is not None and is_local_server(old):
+        # A dedicated server has no shift (dedicated-local-server.md §10.2): nothing to close.
+        raise _refusal(
+            status.HTTP_409_CONFLICT, "old_server_has_no_shift",
+            f"{till_label(old)} הוא שרת מקומי ייעודי — אין בו משמרת, ולכן אין מה לסגור מהענן. "
+            "בטלו את \"סגירת המשמרת\" והעבירו את השרת.",
+        )
     if close_old_shift and old is not None:
         if not is_silent(old, now):
             raise _till_online(old, now)
@@ -454,6 +560,49 @@ def switch(
 
 SOURCE_CLOUD = "cloud"
 SOURCE_TILL = "till"
+#: The automatic failover ("גיבוי אוטומטי לשרת המקומי", app/services/local_server_failover.py).
+SOURCE_FAILOVER = "auto_failover"
+#: The work profile's "שרת מקומי: מכשיר ייעודי" (app/services/local_server_device.py `make_host`).
+SOURCE_WORK_PROFILE = "work_profile"
+FAILOVER_BY = "גיבוי אוטומטי"
+
+
+def move_from_work_profile(
+    db: Session, user: User, shop: Shop, server: POSMachine, old: Optional[POSMachine], *, now: datetime,
+) -> Dict[str, Any]:
+    """
+    The work profile's "מכשיר ייעודי" moves the shop's server to its dedicated server: the full
+    move, by the super admin who applied it — a till that held it (online or not) gives it up, the
+    tills are told, recorded `source: "work_profile"`. The caller checked the server.
+    """
+    from app.services.machine_status import is_online
+
+    return _move(
+        db, shop, server, old,
+        by=who(user), by_user_id=str(user.id) if getattr(user, "id", None) else None,
+        source=SOURCE_WORK_PROFILE, approved_by=None,
+        forced=old is not None and is_online(old.last_heartbeat_at, now=now),
+        now=now,
+    )
+
+
+def move_by_failover(
+    db: Session, shop: Shop, target: POSMachine, old: POSMachine, *, minutes: int, now: datetime,
+) -> Dict[str, Any]:
+    """
+    The automatic failover's move (the caller checked every condition, under `switch_lock`): the
+    same full move as the dashboard's — no shift closed, nothing forced — `source: "auto_failover"`.
+    """
+    from app.services.local_server_roles import move_roles
+
+    # Only the roles the failed device held (app/services/local_server_roles.py): a print server
+    # that fell gives up the printing, never the tables another device holds.
+    return _move(
+        db, shop, target, old,
+        by=FAILOVER_BY, by_user_id=None, source=SOURCE_FAILOVER, approved_by=None, forced=False,
+        now=now, extra={"failoverMinutes": int(minutes)},
+        mover=lambda: move_roles(db, shop, old, target, now=now),
+    )
 
 
 def _move(
@@ -470,17 +619,27 @@ def _move(
     close_old=None,
     release=None,
     now: datetime,
+    extra: Optional[Dict[str, Any]] = None,
+    mover=None,
 ) -> Dict[str, Any]:
     """
-    The move itself, after every check (the dashboard's switch, or a till's own take-over where
-    `tillServerTakeover` allows it): the full take-over, the old server's shift closed and the
-    shop Z released when asked, the notice to every till, the record and its audit exception.
+    The move itself, after every check (the dashboard's switch, a till's own take-over where
+    `tillServerTakeover` allows it, the automatic failover, the work profile's dedicated server):
+    the full take-over, the old server's shift closed and the shop Z released when asked, the
+    notice to every till, the record and its audit exception.
     """
     from app.services import local_shop_z as LZ
     from app.services import main_till as MT
+    from app.services.local_server_device import forget_shop
     from app.services.till_messages import send_server_switch_notice
 
-    out = MT.take_over(db, target, by, force=True, require_lan=False, now=now)
+    # The full take-over of the old host's roles (`mover`: the failover's, only what it held).
+    out = mover() if mover is not None else MT.take_over(db, target, by, force=True, require_lan=False, now=now)
+    forget_shop(shop.id)
+    # Relayed tickets no till took yet follow the print server (remote kiosks and tills, §11.9).
+    from app.services.printers import retarget_relay_jobs
+
+    retarget_relay_jobs(db, shop.id)
     previous = out.get("previous")
     closed = close_old() if close_old is not None else None
     if release is not None:
@@ -505,11 +664,14 @@ def _move(
             {k: closed.get(k) for k in ("shiftId", "closedAt", "countedCash", "documentsOnCloud")} if closed else None
         ),
         "releasedShopZ": release is not None,
+        **({"roles": out["roles"]} if out.get("roles") is not None else {}),
+        **(extra or {}),
     }
     _put(shop, SWITCHES_KEY, (switches(shop) + [record])[-SWITCHES_KEPT:])
     _record_switch(db, target, shop, record)
     logger.warning("shop %s: local server switched (%s): %s", shop.id, source, record)
     return {
+        "switchId": record["id"],
         "switchedAt": record["at"],
         "switchedBy": record["by"],
         "source": source,
@@ -628,9 +790,19 @@ def _summary(record: Dict[str, Any]) -> str:
             f"השרת המקומי הועבר מ{name(record.get('from'))} ל{name(record.get('to'))} מהקופה"
             + (f", באישור המנהל {approved}" if approved else "")
         ]
+    elif record.get("source") == SOURCE_FAILOVER:
+        parts = [
+            f"גיבוי אוטומטי: השרת המקומי הועבר מ{name(record.get('from'))} ל{name(record.get('to'))} — "
+            f"הענן לא שמע את השרת {record.get('failoverMinutes') or '?'} דקות"
+        ]
+    elif record.get("source") == SOURCE_WORK_PROFILE:
+        parts = [
+            f"תצורת העבודה (שרת מקומי ייעודי): השרת המקומי הועבר מ{name(record.get('from'))} ל"
+            f"{name(record.get('to'))} ע״י {record.get('by')}"
+        ]
     else:
         parts = [f"השרת המקומי הועבר מ{name(record.get('from'))} ל{name(record.get('to'))} ע״י {record.get('by')}"]
-    if record.get("forced"):
+    if record.get("forced") and record.get("source") != SOURCE_WORK_PROFILE:
         parts.append("בכפייה — הענן עוד שמע את השרת הקודם")
     if record.get("closedShift"):
         parts.append(f"המשמרת ב{name(record.get('from'))} נסגרה מהענן")
@@ -648,7 +820,7 @@ def _record_switch(db: Session, machine: POSMachine, shop: Shop, record: Dict[st
             type=SWITCH_EXCEPTION,
             key=f"{SWITCH_EXCEPTION}:{shop.id}:{record['at']}"[:200],
             occurred_at=_parse(record["at"]) or _now(),
-            severity="high" if record.get("forced") else None,
+            severity="high" if record.get("forced") or record.get("source") == SOURCE_FAILOVER else None,
             details={**record, "shopId": str(shop.id), "summary": _summary(record)},
         ))
     except Exception:  # noqa: BLE001 - the switch is what matters; the log keeps the rest
@@ -695,7 +867,15 @@ def close_from_cloud(
     """
     from app.services.administrative_close import close_shift_administratively
 
+    from app.services.local_server_device import is_local_server
+
     now = _now(now)
+    if is_local_server(machine):
+        raise _refusal(
+            status.HTTP_409_CONFLICT, "device_not_fiscal",
+            f"{till_label(machine)} הוא שרת מקומי ייעודי — אין בו משמרת, ולכן אין מה לסגור מהענן.",
+            deviceRole="local_server",
+        )
     if getattr(machine, "is_fiscal", True) is False:
         raise _refusal(status.HTTP_409_CONFLICT, "device_not_fiscal", "מסך מטבח או מסך מוכן / לא מוכן אינו קופה.")
     if not is_silent(machine, now):

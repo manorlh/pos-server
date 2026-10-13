@@ -24,6 +24,8 @@ export type Kitchen = 'printer' | 'kds' | 'both';
 export type ProfileTipDistribution = 'direct' | 'equal_pool' | 'by_sales';
 /** "בירור יתרת שובר" (`voucherBalanceCheck`). */
 export type BalanceCheck = 'auto' | 'on' | 'off';
+/** "שרת מקומי": the main till (a till that sells too), or a dedicated device (P:/specs/dedicated-local-server.md). */
+export type LocalServerDevice = 'main_till' | 'dedicated';
 
 export type TemplateId =
   | 'restaurant_tables'
@@ -39,6 +41,8 @@ export interface WorkProfile {
   zType: ZType;
   shopZFrom: ShopZFrom;
   localServer: boolean;
+  /** What the local server is: the main till, or "שרת מקומי: מכשיר ייעודי". */
+  localServerDevice: LocalServerDevice;
   tablesMode: ProfileTablesMode;
   kitchen: Kitchen;
   customerDisplay: boolean;
@@ -54,6 +58,7 @@ export const WORK_PROFILE_FIELDS: readonly WorkProfileField[] = [
   'zType',
   'shopZFrom',
   'localServer',
+  'localServerDevice',
   'tablesMode',
   'kitchen',
   'customerDisplay',
@@ -110,6 +115,7 @@ export const DEFAULT_PROFILE: WorkProfile = {
   zType: 'shop_cloud',
   shopZFrom: 'main_only',
   localServer: false,
+  localServerDevice: 'main_till',
   tablesMode: 'off',
   kitchen: 'printer',
   customerDisplay: false,
@@ -169,10 +175,20 @@ export const BALANCE_CHECK_CHOICES: readonly Choice<BalanceCheck>[] = [
   { value: 'off', label: 'לא', hint: 'לא מופיע בקופה.' },
 ];
 
+export const LOCAL_SERVER_DEVICE_CHOICES: readonly Choice<LocalServerDevice>[] = [
+  { value: 'main_till', label: 'קופה ראשית', hint: 'אחת הקופות היא השרת: היא מוכרת, וכל הסניף נשען עליה.' },
+  {
+    value: 'dedicated',
+    label: 'שרת מקומי: מכשיר ייעודי',
+    hint: 'מכשיר אנדרואיד שלא מוכר ועומד בצד: שולחנות, הדפסות ו-Z סניפי. מוסיפים אותו כ"שרת מקומי" בהוספת מכשיר.',
+  },
+];
+
 export const FIELD_LABELS: Record<WorkProfileField, string> = {
   zType: 'סוג Z',
   shopZFrom: 'מי מפיק Z סניפי',
   localServer: 'שרת מקומי (קופה ראשית)',
+  localServerDevice: 'שרת מקומי — איזה מכשיר',
   tablesMode: 'ניהול שולחנות',
   kitchen: 'מטבח',
   customerDisplay: 'מסך לקוח',
@@ -187,6 +203,8 @@ export const FIELD_HINTS: Record<WorkProfileField, string> = {
   shopZFrom: 'מאיפה מותר להפיק את ה-Z הסניפי.',
   localServer:
     'קופה אחת שכל הסניף נשען עליה ברשת: שולחנות, הדפסות ו-Z סניפי, גם בלי אינטרנט. נקבע לפי סוג ה-Z: דלוק רק ב"Z סניפי בשרת מקומי". הקופה הראשונה שתצומד תוצע כקופה הראשית.',
+  localServerDevice:
+    'קופה ראשית, או מכשיר ייעודי שאינו קופה. מכשיר ייעודי שמצמידים לסניף הופך לשרת, ואם קופה הייתה השרת — השרת עובר ממנה אליו.',
   tablesMode: 'איפה נשמרים השולחנות וההזמנות הפתוחות.',
   kitchen: 'לאן הולכות ההזמנות למטבח.',
   customerDisplay: 'מסך שני מול הלקוח: הסל, הסכום והתשלום.',
@@ -197,7 +215,7 @@ export const FIELD_HINTS: Record<WorkProfileField, string> = {
 
 /** The groups the editor shows, in order. */
 export const FIELD_GROUPS: readonly { id: string; title: string; fields: readonly WorkProfileField[] }[] = [
-  { id: 'z', title: 'Z ושרת מקומי', fields: ['zType', 'shopZFrom', 'localServer'] },
+  { id: 'z', title: 'Z ושרת מקומי', fields: ['zType', 'shopZFrom', 'localServer', 'localServerDevice'] },
   { id: 'service', title: 'שולחנות ומטבח', fields: ['tablesMode', 'kitchen'] },
   { id: 'extras', title: 'בקופה', fields: ['customerDisplay', 'attendance', 'tips', 'vouchers'] },
 ];
@@ -218,6 +236,8 @@ export function fieldValueText(field: WorkProfileField, p: WorkProfile): string 
       return p.zType === 'per_till' ? 'לא רלוונטי (Z לכל קופה)' : labelOf(SHOP_Z_FROM_CHOICES, p.shopZFrom);
     case 'localServer':
       return p.localServer ? 'כן' : 'לא';
+    case 'localServerDevice':
+      return p.localServer ? labelOf(LOCAL_SERVER_DEVICE_CHOICES, p.localServerDevice) : 'לא רלוונטי (אין שרת מקומי)';
     case 'tablesMode':
       return labelOf(TABLES_CHOICES, p.tablesMode);
     case 'kitchen':
@@ -321,6 +341,8 @@ export function normalizeProfile(raw: unknown, base: WorkProfile = DEFAULT_PROFI
     zType: pick(Z_TYPE_CHOICES, r.zType, base.zType),
     shopZFrom: pick(SHOP_Z_FROM_CHOICES, r.shopZFrom, base.shopZFrom),
     localServer: bool(r.localServer, base.localServer),
+    // An older server says nothing of it: the main till, as every profile before the field.
+    localServerDevice: pick(LOCAL_SERVER_DEVICE_CHOICES, r.localServerDevice, base.localServerDevice),
     tablesMode: pick(TABLES_CHOICES, r.tablesMode, base.tablesMode),
     kitchen: pick(KITCHEN_CHOICES, r.kitchen, base.kitchen),
     customerDisplay: bool(r.customerDisplay, base.customerDisplay),
@@ -513,6 +535,8 @@ export function withField<K extends WorkProfileField>(
     out.zType = 'shop_local';
   } else if (leavesLocal && free('zType', 'localServer')) {
     out.localServer = false;
+    // No local server, so no dedicated one either.
+    if (free('localServerDevice')) out.localServerDevice = 'main_till';
     if (out.zType === 'shop_local') out.zType = 'shop_cloud';
     if (out.tablesMode === 'lan' && free('tablesMode')) out.tablesMode = 'synced';
   }
@@ -526,7 +550,11 @@ export function tablesChoiceDisabled(p: WorkProfile, v: ProfileTablesMode): bool
 
 export interface ProfileIssue {
   field: WorkProfileField;
-  code: 'shop_local_needs_local_server' | 'local_server_needs_shop_local' | 'lan_tables_need_local_server';
+  code:
+    | 'shop_local_needs_local_server'
+    | 'local_server_needs_shop_local'
+    | 'lan_tables_need_local_server'
+    | 'dedicated_needs_local_server';
   message: string;
 }
 
@@ -548,6 +576,13 @@ export function validateProfile(p: WorkProfile): ProfileIssue[] {
       field: 'localServer',
       code: 'local_server_needs_shop_local',
       message: 'שרת מקומי פועל רק עם "Z סניפי בשרת מקומי": כשהרשת המקומית דלוקה, הקופה הראשית מפיקה את ה-Z של הסניף.',
+    });
+  }
+  if (p.localServerDevice === 'dedicated' && !p.localServer) {
+    out.push({
+      field: 'localServerDevice',
+      code: 'dedicated_needs_local_server',
+      message: '"שרת מקומי: מכשיר ייעודי" הוא סוג של שרת מקומי — בחרו "Z סניפי בשרת מקומי", או "קופה ראשית".',
     });
   }
   if (p.tablesMode === 'lan' && !p.localServer) {
@@ -617,7 +652,10 @@ export function creationSummary(p: WorkProfile): { now: SummaryLine[]; waiting: 
           : 'כל קופה שתצומד תוצע ב-Z הסניפי מהענן.',
     ),
   );
-  if (p.localServer) {
+  if (p.localServer && p.localServerDevice === 'dedicated') {
+    waiting.push(line('localServer', 'השרת הוא מכשיר ייעודי: הוסיפו "שרת מקומי" (הוספת מכשיר), וצימוד שלו יפעיל את הרשת המקומית.'));
+    waiting.push(line('localServerDevice', 'קופה לא תוצע כקופה ראשית — השרת המקומי הוא המארח.'));
+  } else if (p.localServer) {
     waiting.push(line('localServer', 'הקופה הראשונה שתצומד תוצע כקופה ראשית, והרשת המקומית תופעל איתה.'));
   } else {
     now.push(line('localServer'));

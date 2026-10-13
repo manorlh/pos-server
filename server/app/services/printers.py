@@ -1307,6 +1307,12 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 
     if shop_id is None:
         return None
+    # "ללא שרת הדפסות — כל קופה מדפיסה בעצמה" (app/services/local_server_roles.py): the shop chose
+    # no print server — not even its main till. Every till prints its network printers itself.
+    from app.services.local_server_roles import print_none
+
+    if print_none(db.get(Shop, _uuid(shop_id))):
+        return None
     # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its server;
     # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py). A printer hosted by
     # such a device is still printed by it (`is_hosted_by`): a printer endpoint, not the server.
@@ -1316,12 +1322,10 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     ]
     if not hosts:
         return main_till_of_shop(db, shop_id)
+    from app.services.local_server_device import host_order
 
-    def order(m: POSMachine):
-        number = (m.pos_number or "").strip()
-        return (0, int(number), "") if number.isdigit() else (1, 0, number or str(m.id))
-
-    return sorted(hosts, key=order)[0]
+    # A dedicated local server first ("שרת מקומי", the preferred host), then the lowest number.
+    return sorted(hosts, key=host_order)[0]
 
 
 def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
@@ -1350,6 +1354,8 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
             "port": DEFAULT_LAN_PORT,
         }
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
+    from app.services.local_server_device import host_block_fields
+
     return {
         "machineId": str(host.id),
         "name": machine_label(host),
@@ -1357,6 +1363,9 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
         # Not the report time: the ETag must not move on every heartbeat.
         "lanAddress": row.lan_address if row is not None else None,
         "port": (row.port if row is not None and row.port else DEFAULT_LAN_PORT),
+        # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.6): a dedicated server or a till, and
+        # its LAN key's id (it changes only when the device's key does — the ETag stays still).
+        **host_block_fields(host),
     }
 
 
@@ -1739,6 +1748,38 @@ def test_jobs(db: Session, printer: KitchenPrinter) -> List[KitchenPrintJob]:
     return jobs
 
 
+def retarget_relay_jobs(db: Session, shop_id: Any) -> int:
+    """
+    The print role moved (a switch, the failover, "תפקידי השרת המקומי"): relayed tickets of the
+    shop's network / Bluetooth kitchen printers that no till took yet follow the print server now.
+    One its old host already took stays there (it is in that host's own queue; sent again it
+    would print twice). No print server: they stay as they are. How many moved.
+    """
+    host = print_host_of_shop(db, shop_id)
+    if host is None:
+        return 0
+    rows = (
+        db.query(KitchenPrintJob)
+        .filter(
+            KitchenPrintJob.shop_id == _uuid(shop_id),
+            KitchenPrintJob.status == "pending",
+            KitchenPrintJob.kind == "ticket",
+            KitchenPrintJob.target_machine_id != host.id,
+        )
+        .all()
+    )
+    moved = 0
+    for job in rows:
+        printer = db.get(KitchenPrinter, job.printer_id) if job.printer_id is not None else None
+        if printer is None or not is_served(printer) or was_taken(job):
+            continue
+        job.target_machine_id = host.id
+        moved += 1
+    if moved:
+        db.flush()
+    return moved
+
+
 def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """
     The jobs `machine` should print now, handed out (pending → printing). A job already
@@ -2091,6 +2132,10 @@ def set_print_host(db: Session, shop: Shop, machine_id: Optional[uuid.UUID]) -> 
         db.add(TillParameterValue(
             id=uuid.uuid4(), parameter_id=parameter.id, scope_type="machine", scope_id=machine_id, value=True,
         ))
+        # A print server named: "ללא שרת הדפסות" (local_server_roles) no longer holds.
+        from app.services.local_server_roles import set_print_none
+
+        set_print_none(shop, False)
     # A removal must move the tills' parameters watermark too.
     parameter.updated_at = _now()
     db.flush()

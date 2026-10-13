@@ -495,6 +495,14 @@ def resolve_target(db: Session, ctx: Context, plan: Dict[str, Any]) -> Target:
             raise _refuse("work_config_unknown_preset", "תצורת העבודה לא מוכרת.", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if ctx.shop is None:
         raise _refuse(*unavailable(ctx, preset or PRESETS[SHOP_Z_CLOUD]))
+    if ctx.role == "local_server":
+        # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.8): no Z, no tables of its own — its
+        # part is the shop's work profile ("מכשיר ייעודי") and "העברת שרת מקומי".
+        raise _refuse(
+            "work_config_local_server",
+            "שרת מקומי לא מקבל תצורת עבודה של קופה. בחרו \"שרת מקומי: מכשיר ייעודי\" בתצורת העבודה של "
+            "הסניף, או העבירו אליו את השרת ב\"העברת שרת מקומי\".",
+        )
     if ctx.display:
         # A KDS / the board makes no Z and keeps no tables: only its own preset, which writes nothing.
         from app.services.display_devices import NOT_FISCAL, NOT_FISCAL_MESSAGE
@@ -1131,6 +1139,8 @@ def apply_on_pairing(db: Session, pairing_code, machine: POSMachine) -> Optional
     plan = getattr(pairing_code, "work_config", None)
     if getattr(pairing_code, "target_machine_id", None) is not None:
         return None  # a replacement keeps the configuration of the till it replaces
+    if isinstance(plan, dict) and plan.get("fromWorkProfile"):
+        return None  # the shop's work profile was applied already (a dedicated local server's pairing)
     if not isinstance(plan, dict) or not plan:
         # No plan of its own: the shop's work profile gives it its preset, if the shop has one and
         # the code is a super admin's (app/services/work_profile.py) — never failing the pairing.

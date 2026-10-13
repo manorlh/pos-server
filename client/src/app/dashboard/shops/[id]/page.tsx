@@ -44,6 +44,7 @@ import { ZParticipationCard } from '@/components/dashboard/z-participation-card'
 import { LocalShopZRequestCard } from '@/components/dashboard/local-shop-z-panel';
 import { ShopZProducerCard } from '@/components/dashboard/shop-z-producer-card';
 import { MainTillCard } from '@/components/dashboard/main-till-card';
+import { LocalServerShopCard } from '@/components/dashboard/local-server-dedicated';
 import { WorkTypesCard } from '@/components/dashboard/work-types-card';
 import { ShopWorkProfileCard } from '@/components/dashboard/shop-work-profile';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
@@ -281,6 +282,9 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
       <WorkTypesCard shopId={shop.id} />
 
       <MainTillCard shopId={shop.id} />
+      {/* "שרת מקומי" (P:/specs/dedicated-local-server.md §7, §10.2): the shop's servers and the
+          automatic failover — off by default. */}
+      <LocalServerShopCard shopId={shop.id} />
 
       <TrainingModeCard shopId={shop.id} shopName={shop.name} />
 

@@ -18,6 +18,8 @@ export interface LanTillRef {
   machineId: string;
   posNumber?: string | null;
   name?: string | null;
+  /** "local_server" for a dedicated local server (P:/specs/dedicated-local-server.md); absent for a till. */
+  deviceRole?: string | null;
 }
 
 export interface LanHealthRow {
@@ -146,6 +148,8 @@ export interface LocalServerTill extends LanTillRef {
   /** A local server's changes the cloud copy lacks. */
   lanPending?: number | null;
   lanReportedAt?: string | null;
+  /** False for a dedicated local server: it has no shift (nothing to close from the cloud). */
+  hasShifts?: boolean;
 }
 
 export type LocalServerIneligible =
@@ -191,9 +195,14 @@ export interface LocalServerSwitchRecord {
   forced: boolean;
   closedShift: { shiftId: string; closedAt: string | null; countedCash: string | null } | null;
   releasedShopZ: boolean;
-  /** `cloud`: this wizard; `till`: the till's own button (`tillServerTakeover` = manager), `approvedBy` its manager. */
-  source?: 'cloud' | 'till';
+  /**
+   * `cloud`: this wizard; `till`: the till's own button (`tillServerTakeover` = manager), `approvedBy` its
+   * manager; `auto_failover`: "גיבוי אוטומטי"; `work_profile`: the work profile's dedicated server.
+   */
+  source?: 'cloud' | 'till' | 'auto_failover' | 'work_profile' | 'roles';
   approvedBy?: string | null;
+  /** The automatic failover's N minutes. */
+  failoverMinutes?: number;
 }
 
 /** The till parameter `tillServerTakeover` ("העברת שרת מקומי מהקופה"): `off` — the cloud only. */
@@ -205,9 +214,18 @@ export function tillTakeoverKey(mode: string | null | undefined): 'tillTakeoverO
   return mode === 'manager' ? 'tillTakeoverManager' : 'tillTakeoverOff';
 }
 
-/** "העברה אחרונה" as said: from this wizard, or from a till with its manager's approval. */
-export function lastSwitchKey(record: Pick<LocalServerSwitchRecord, 'source'>): 'lastSwitch' | 'lastSwitchFromTill' {
-  return record.source === 'till' ? 'lastSwitchFromTill' : 'lastSwitch';
+/**
+ * "העברה אחרונה" as said: from this wizard, from a till with its manager's approval, by the automatic
+ * failover, or by the work profile's dedicated server.
+ */
+export function lastSwitchKey(
+  record: Pick<LocalServerSwitchRecord, 'source'>,
+): 'lastSwitch' | 'lastSwitchFromTill' | 'lastSwitchFailover' | 'lastSwitchWorkProfile' | 'lastSwitchRoles' {
+  if (record.source === 'till') return 'lastSwitchFromTill';
+  if (record.source === 'roles') return 'lastSwitchRoles';
+  if (record.source === 'auto_failover') return 'lastSwitchFailover';
+  if (record.source === 'work_profile') return 'lastSwitchWorkProfile';
+  return 'lastSwitch';
 }
 
 export interface LocalServerState {
@@ -229,6 +247,267 @@ export interface LocalServerState {
   lastSwitch: LocalServerSwitchRecord | null;
   switches: LocalServerSwitchRecord[];
   formerHostChanges: { count: number; items: FormerHostChange[]; checked: FormerHostChange[] };
+  /** The shop's dedicated local servers (absent from an older server). */
+  servers?: LocalServerSummary[];
+  /** "גיבוי אוטומטי לשרת המקומי" (absent from an older server). */
+  failover?: LocalServerFailover;
+}
+
+// ── "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11) ───────────────────
+
+/** The host roles a device holds: the main till, the tables, the printing, the shop Z. */
+export interface LocalServerHosting {
+  mainTill: boolean;
+  tables: boolean;
+  print: boolean;
+  shopZ: boolean;
+}
+
+export const HOSTING_ROLES: readonly (keyof LocalServerHosting)[] = ['mainTill', 'tables', 'print', 'shopZ'];
+
+/** The roles held, in order ([] — a standby server, serving nothing now). */
+export function hostingRoles(h: Partial<LocalServerHosting> | null | undefined): (keyof LocalServerHosting)[] {
+  return HOSTING_ROLES.filter((k) => h?.[k] === true);
+}
+
+export const PRINTER_STATES = ['ok', 'offline', 'error', 'no_paper', 'unknown'] as const;
+export type PrinterState = (typeof PRINTER_STATES)[number];
+
+/** A printer state as reported; anything else is `unknown` (the server's own rule). */
+export function printerStateOf(value: unknown): PrinterState {
+  const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return (PRINTER_STATES as readonly string[]).includes(s) ? (s as PrinterState) : 'unknown';
+}
+
+export function printerTone(state: unknown): Tone {
+  const s = printerStateOf(state);
+  if (s === 'ok') return 'ok';
+  if (s === 'unknown') return 'muted';
+  return s === 'no_paper' ? 'warn' : 'bad';
+}
+
+export interface LocalServerPrintQueue {
+  pending: number | null;
+  failed: number | null;
+  oldestPendingAgeMs?: number | null;
+}
+
+/** The queue's tone: failed jobs are bad, a job waiting over a minute a warning. */
+export function printQueueTone(q: LocalServerPrintQueue | null | undefined): Tone {
+  if (!q || q.pending === null || q.pending === undefined) return 'muted';
+  if ((q.failed ?? 0) > 0) return 'bad';
+  if ((q.oldestPendingAgeMs ?? 0) > 60_000) return 'warn';
+  return 'ok';
+}
+
+export interface LocalServerPrinter {
+  printerId: string | null;
+  name: string | null;
+  state: PrinterState | string;
+  message: string | null;
+  lastOkAgeMs: number | null;
+}
+
+/** A shop's local server on the shop page. */
+export interface LocalServerSummary {
+  machineId: string;
+  name: string;
+  online: boolean;
+  lastHeartbeatAt: string | null;
+  isHost: boolean;
+  hosting: LocalServerHosting;
+  connectedTills: number | null;
+  openOrders: number | null;
+  printQueue: LocalServerPrintQueue | null;
+  mirror: LanSyncState;
+  appVersion: string | null;
+}
+
+/** The device page's "שרת מקומי" card (`GET /machines/{id}/local-server`). */
+export interface LocalServerCardData extends LocalServerSummary {
+  shopId: string | null;
+  deviceRole: 'local_server';
+  serialNumber: string | null;
+  lanIp: string | null;
+  lastIp: string | null;
+  reportedAt: string | null;
+  /** The report is under 5 minutes old (else shown "as of"). */
+  fresh: boolean;
+  tills: { machineId: string; name: string | null; posNumber: string | null; ageMs: number | null }[];
+  printers: LocalServerPrinter[];
+  uptimeMs: number | null;
+  identity: { registered: boolean; keyId: string | null; at: string | null };
+  countsAsTillLicense: false;
+  actions: string[];
+  commands: { id: string; action: string; status: string; createdAt: string | null; createdBy: string | null; detail: string | null }[];
+}
+
+/** The server's remote commands (§11.5): two existing, two of its own. */
+export const SERVER_ACTIONS = ['restart_app', 'upload_logs', 'print_test_page', 'clear_print_queue'] as const;
+export type ServerAction = (typeof SERVER_ACTIONS)[number];
+
+/** "ניקוי תור תקוע" deletes jobs not printed: sent only once the user confirmed. */
+export function serverCommandNeedsConfirm(action: string): boolean {
+  return action === 'clear_print_queue';
+}
+
+/** The body of `POST /machines/{id}/local-server/commands`. */
+export function serverCommandBody(
+  action: ServerAction,
+  opts: { printerId?: string | null; minutes?: number; scope?: 'failed' | 'all'; confirmed?: boolean } = {},
+): { action: ServerAction; params?: Record<string, unknown>; confirm?: boolean } {
+  if (action === 'print_test_page') return { action, params: { printerId: opts.printerId ?? null } };
+  if (action === 'upload_logs') return { action, params: { minutes: opts.minutes ?? 120 } };
+  if (action === 'clear_print_queue') {
+    return { action, params: { printerId: opts.printerId ?? null, scope: opts.scope ?? 'failed' }, confirm: !!opts.confirmed };
+  }
+  return { action };
+}
+
+// ── "תפקידי השרת המקומי" (§11.9) ─────────────────────────────────────────────────
+
+export const SERVER_ROLES = ['tables', 'print', 'shopZ'] as const;
+export type ServerRole = (typeof SERVER_ROLES)[number];
+/** "ללא שרת הדפסות — כל קופה מדפיסה בעצמה". */
+export const NO_PRINT_HOST = 'none' as const;
+
+export interface LocalServerRoleChoice extends LanTillRef {
+  deviceRole: 'local_server' | 'till' | string;
+  online: boolean;
+  eligible: boolean;
+  reason: string | null;
+  reasonText: string | null;
+}
+
+/** `GET /shops/{id}/local-server/roles`. */
+export interface LocalServerRolesView {
+  shopId: string;
+  applies: boolean;
+  server: LanTillRef | null;
+  localMode: boolean;
+  roles: {
+    tables: { holder: LanTillRef | null; onServer: boolean };
+    print: { holder: LanTillRef | null; none: boolean; onServer: boolean };
+    shopZ: { holder: LanTillRef | null; onServer: boolean; applies: boolean };
+  };
+  choices: LocalServerRoleChoice[];
+  noPrintHostSupported: boolean;
+  noPrintHostAllowed: boolean;
+  remoteDevices?: LanTillRef[];
+  canEdit: boolean;
+  changed?: ServerRole[];
+}
+
+/** What the editor holds: a device id per role ('none' for printing with no print server). */
+export interface RolesDraft {
+  tables: string;
+  print: string;
+  shopZ: string;
+}
+
+export function rolesDraftOf(v: Pick<LocalServerRolesView, 'roles'> | null | undefined): RolesDraft {
+  return {
+    tables: v?.roles.tables.holder?.machineId ?? '',
+    print: v?.roles.print.none ? NO_PRINT_HOST : (v?.roles.print.holder?.machineId ?? ''),
+    shopZ: v?.roles.shopZ.holder?.machineId ?? '',
+  };
+}
+
+/** The devices a role may go to: the eligible ones, and whoever holds it now. */
+export function roleChoices(v: Pick<LocalServerRolesView, 'choices'>, current: string): LocalServerRoleChoice[] {
+  return v.choices.filter((c) => c.eligible || c.machineId === current);
+}
+
+/** Why the draft cannot be saved, or null. */
+export function rolesDraftError(
+  d: RolesDraft,
+  v: Pick<LocalServerRolesView, 'localMode' | 'noPrintHostAllowed'>,
+): 'tables' | 'print' | 'shopZ' | 'printNone' | null {
+  if (!d.tables) return 'tables';
+  if (!d.print) return 'print';
+  if (d.print === NO_PRINT_HOST && !v.noPrintHostAllowed) return 'printNone';
+  if (v.localMode && !d.shopZ) return 'shopZ';
+  return null;
+}
+
+/** `PUT /shops/{id}/local-server/roles`'s body (the shop Z only in local mode). */
+export function rolesBody(d: RolesDraft, localMode: boolean): { tables: string; print: string; shopZ?: string } {
+  return { tables: d.tables, print: d.print, ...(localMode && d.shopZ ? { shopZ: d.shopZ } : {}) };
+}
+
+// ── "גיבוי אוטומטי לשרת המקומי" (§11.7) ─────────────────────────────────────────
+
+export type FailoverStatusCode =
+  | 'off'
+  | 'no_target'
+  | 'target_not_eligible'
+  | 'target_offline'
+  | 'no_host'
+  | 'target_is_host'
+  | 'host_heard'
+  | 'target_not_heard_since'
+  | 'fire';
+
+export interface LocalServerFailover {
+  enabled: boolean;
+  targetMachineId: string | null;
+  minutes: number;
+  target: (LanTillRef & { online: boolean; lastHeartbeatAt: string | null }) | null;
+  defaultMinutes: number;
+  minMinutes: number;
+  maxMinutes: number;
+  canEdit: boolean;
+  armed: boolean;
+  status: { code: FailoverStatusCode | string; message: string };
+  updatedAt: string | null;
+  updatedBy: string | null;
+  lastFired: { at: string; from: LanTillRef | null; to: LanTillRef | null; minutes: number } | null;
+  history: { at: string; by: string; before: Record<string, unknown>; after: Record<string, unknown> }[];
+}
+
+/** Off, no target, 3 minutes — the owner's default ("לא יבצע לבד אם לא הדלקתי"). */
+export const FAILOVER_DEFAULTS = { enabled: false, targetMachineId: null as string | null, minutes: 3 };
+
+export interface FailoverDraft {
+  enabled: boolean;
+  targetMachineId: string;
+  /** As typed. */
+  minutes: string;
+}
+
+export function failoverDraftOf(f: Partial<LocalServerFailover> | null | undefined): FailoverDraft {
+  return {
+    enabled: f?.enabled === true,
+    targetMachineId: f?.targetMachineId ?? '',
+    minutes: String(f?.minutes ?? f?.defaultMinutes ?? FAILOVER_DEFAULTS.minutes),
+  };
+}
+
+/** Why the draft cannot be saved (the server refuses the same), or null. */
+export function failoverDraftError(
+  d: FailoverDraft,
+  limits: { minMinutes?: number; maxMinutes?: number } = {},
+): 'target' | 'minutes' | null {
+  const min = limits.minMinutes ?? 2;
+  const max = limits.maxMinutes ?? 60;
+  const n = Number(d.minutes.trim());
+  if (!d.minutes.trim() || !Number.isInteger(n) || n < min || n > max) return 'minutes';
+  if (d.enabled && !d.targetMachineId) return 'target';
+  return null;
+}
+
+/** `PUT /shops/{id}/local-server/failover`'s body (call once `failoverDraftError` is null). */
+export function failoverBody(d: FailoverDraft): { enabled: boolean; targetMachineId: string | null; minutes: number } {
+  return { enabled: d.enabled, targetMachineId: d.targetMachineId || null, minutes: Number(d.minutes.trim()) };
+}
+
+/** The card's tone: off is quiet; armed and watching is fine; armed but unable to act is a warning. */
+export function failoverTone(f: Pick<LocalServerFailover, 'enabled' | 'status'> | null | undefined): Tone {
+  if (!f || !f.enabled) return 'muted';
+  const code = f.status?.code;
+  if (code === 'host_heard' || code === 'target_is_host') return 'ok';
+  if (code === 'fire') return 'bad';
+  return 'warn';
 }
 
 /** The switch's body (§8). */

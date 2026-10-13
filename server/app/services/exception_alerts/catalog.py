@@ -80,6 +80,8 @@ KINDS: Tuple[Kind, ...] = (
     Kind("card_decision_override", "הכרעת אשראי בניגוד לבדיקה במסוף", "high", "audit_exception", amount=True),
     Kind("till_replaced", "הוחלפה קופה", "medium", "audit_exception"),
     Kind("local_server_switched", "השרת המקומי הועבר מהענן", "medium", "audit_exception"),
+    Kind("local_server_failover", "גיבוי אוטומטי: השרת המקומי הועבר לבד", "high", "audit_exception"),
+    Kind("local_server_failover_changed", "הגדרות הגיבוי האוטומטי לשרת המקומי שונו", "medium", "audit_exception"),
     Kind("shift_closed_from_cloud", "משמרת נסגרה מהענן", "medium", "audit_exception", link="shift"),
     Kind("cloud_closed_shift_late_documents", "מסמכים מאוחרים למשמרת שנסגרה מהענן", "high", "audit_exception", link="shift"),
     Kind("kiosk_offline", "קיוסק לא מחובר", "high", "audit_exception"),

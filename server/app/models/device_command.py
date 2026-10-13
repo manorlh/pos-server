@@ -25,6 +25,9 @@ DEVICE_ACTIONS = (
     "restart_app",      # "הפעל מחדש את האפליקציה": only at rest
     "install_update",   # "התקן עדכון עכשיו": only when one is ready, only at rest
     "upload_logs",      # "בקש לוגים": collected and uploaded in the background, any time (params {minutes})
+    # "שרת מקומי ייעודי" only (P:/specs/dedicated-local-server.md §11.5, app/services/local_server_device.py):
+    "print_test_page",  # "הדפס דף בדיקה" on one printer (params {printerId})
+    "clear_print_queue",  # "ניקוי תור תקוע", confirmed on the dashboard (params {printerId | null, scope})
 )
 OPEN_STATUSES = ("pending", "delivered")
 FINAL_STATUSES = ("done", "refused", "failed", "cancelled", "expired")
@@ -61,7 +64,8 @@ class DeviceCommand(Base):
     #: A lock / unlock: the device's lock as it was before it (locked, message, when, by whom), for
     #: a cancel to put back exactly (app/services/device_commands.py `cancel`).
     prev_state = Column(JSONB, nullable=True)
-    #: The action's parameters: `upload_logs` → {"minutes": 15–1440}.
+    #: The action's parameters: `upload_logs` → {"minutes": 15–1440}; a local server's `print_test_page`
+    #: → {"printerId"}, `clear_print_queue` → {"printerId" | null, "scope": "failed" | "all"}.
     params = Column(JSONB, nullable=True)
     #: What the device's answer carried: `upload_logs` → {"log_id": …} (app/services/device_logs.py).
     result = Column(JSONB, nullable=True)

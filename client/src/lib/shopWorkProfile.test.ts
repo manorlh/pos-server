@@ -369,3 +369,21 @@ test('a refusal as the server words it', () => {
   assert.equal(forbidden?.field, 'zType');
   assert.equal(refusalFieldLabel(forbidden), 'סוג Z');
 });
+
+test('"שרת מקומי: מכשיר ייעודי": only with a local server, main till by default, an older server reads main till', () => {
+  assert.equal(DEFAULT_PROFILE.localServerDevice, 'main_till');
+  for (const t of LOCAL_TEMPLATES) assert.equal(t.profile.localServerDevice, 'main_till', t.id);
+  const dedicated = withField(tpl('restaurant_tables').profile, 'localServerDevice', 'dedicated');
+  assert.deepEqual(validateProfile(dedicated), []);
+  assert.equal(fieldValueText('localServerDevice', dedicated), 'שרת מקומי: מכשיר ייעודי');
+  assert.deepEqual(
+    validateProfile({ ...DEFAULT_PROFILE, localServerDevice: 'dedicated' }).map((i) => i.code),
+    ['dedicated_needs_local_server'],
+  );
+  // Leaving the local server leaves the dedicated one too.
+  assert.equal(withField(dedicated, 'zType', 'shop_cloud').localServerDevice, 'main_till');
+  assert.equal(normalizeProfile({ ...dedicated, localServerDevice: undefined }).localServerDevice, 'main_till');
+  assert.equal(normalizeProfile(dedicated).localServerDevice, 'dedicated');
+  const summary = creationSummary(dedicated);
+  assert.deepEqual(summary.waiting.map((l) => l.field), ['zType', 'localServer', 'localServerDevice']);
+});

@@ -613,6 +613,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # "שליטה מרחוק": restart a till, make it sync now — from the cockpit, without the device admin.
     (_ALL, "/machines/{}/reboot", S("devices", "device_control")),
     ("POST", "/machines/{}/sync", S("devices", "device_control")),
+    # "שרת מקומי" (app/routers/local_server.py, P:/specs/dedicated-local-server.md §7): the device page's
+    # card, and its remote commands — the people of "שליטה מרחוק".
+    (_GET, "/machines/{}/local-server", S("devices", "device_control", level=VIEW)),
+    ("POST", "/machines/{}/local-server/commands", S("devices", "device_control")),
     ("POST", "/machines/{}/transmit", S("z")),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──
@@ -624,6 +628,13 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # grantable permission's (the route then checks the profile itself).
     (_GET, "/shops/{}/local-server", S("devices", "local_server_switch", level=VIEW)),
     ("POST", "/shops/{}/local-server/switch", S("local_server_switch")),
+    # "גיבוי אוטומטי לשרת המקומי" (§11.7): read with the card; changed by the grantable permission's
+    # holder or the super admin (the route checks the profile itself, and audits).
+    (_GET, "/shops/{}/local-server/failover", S("devices", "local_server_switch", level=VIEW)),
+    ("PUT", "/shops/{}/local-server/failover", S("local_server_switch")),
+    # "תפקידי השרת המקומי" (§11.9): the same people as the switch.
+    (_GET, "/shops/{}/local-server/roles", S("devices", "local_server_switch", level=VIEW)),
+    ("PUT", "/shops/{}/local-server/roles", S("local_server_switch")),
     ("POST", "/shops/{}/local-server/former-host-changes/ack", S("devices", "tables")),
     (_GET, "/shops/{}/work-config", S("devices")),
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),

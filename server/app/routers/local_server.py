@@ -15,6 +15,22 @@ GET  /machines/{machine_id}/shifts/close-from-cloud     → the till's state for
 POST /machines/{machine_id}/shifts/close-from-cloud     {countedCash?, reason?} — a till not heard
                                                           for 5 minutes; the existing remote close's
                                                           people (409 `till_online` otherwise)
+
+"שרת מקומי ייעודי" (app/services/local_server_device.py, local_server_failover.py;
+P:/specs/dedicated-local-server.md §11):
+
+GET  /shops/{shop_id}/local-server/failover             → "גיבוי אוטומטי לשרת המקומי": the setting (off
+                                                          by default), the target, what it would do now
+PUT  /shops/{shop_id}/local-server/failover             {enabled, targetMachineId?, minutes?} — the
+                                                          super admin, or "העברת שרת מקומי"; audited
+GET  /shops/{shop_id}/local-server/roles                → "תפקידי השרת המקומי": who holds tables /
+                                                          printing / shop Z, and the choices
+PUT  /shops/{shop_id}/local-server/roles                {tables, print ("none" allowed), shopZ?} — the
+                                                          super admin, or "העברת שרת מקומי"; audited
+GET  /machines/{machine_id}/local-server                → the device page's "שרת מקומי" card
+POST /machines/{machine_id}/local-server/commands       {action, params?, confirm?} — restart_app,
+                                                          upload_logs, print_test_page,
+                                                          clear_print_queue (with `confirm`)
 """
 from __future__ import annotations
 
@@ -22,7 +38,9 @@ import uuid
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from typing import Any, Dict
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -46,6 +64,37 @@ class SwitchIn(BaseModel):
     force: bool = False
     #: "העבר את הפקת ה-Z עכשיו" in the same step (the super admin's).
     release_shop_z: bool = Field(False, alias="releaseShopZ")
+
+
+class FailoverIn(BaseModel):
+    """"גיבוי אוטומטי לשרת המקומי": off by default — on only when sent so, with a target."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    target_machine_id: Optional[uuid.UUID] = Field(None, alias="targetMachineId")
+    #: Minutes the cloud must not hear the server before it moves it (2–60; default 3).
+    minutes: Optional[int] = None
+
+
+class RolesIn(BaseModel):
+    """"תפקידי השרת המקומי": who holds each role — a device id (the server or a till); print may be "none"."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    tables: uuid.UUID
+    print_: str = Field(..., alias="print", max_length=64)
+    #: Only in local shop Z mode; absent — the producer stays.
+    shop_z: Optional[uuid.UUID] = Field(None, alias="shopZ")
+
+
+class ServerCommandIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    action: str = Field(..., max_length=32)
+    params: Optional[Dict[str, Any]] = None
+    #: "ניקוי תור תקוע" deletes print jobs not printed: sent only once the user confirmed.
+    confirm: bool = False
 
 
 class AckIn(BaseModel):
@@ -99,19 +148,22 @@ def post_local_server_switch(
     from app.services import till_parameters as TP
 
     shop = _shop(db, shop_id, current_user, active_tenant_id)
-    try:
-        out = LSS.switch(
-            db, current_user, shop, body.target_machine_id,
-            close_old_shift=body.close_old_shift,
-            counted_cash=body.counted_cash,
-            force=body.force,
-            release_shop_z=body.release_shop_z,
-        )
-    except Exception:
-        db.rollback()
-        raise
-    targets = TP.notify_targets_for_scope(db, "shop", shop.id)
-    db.commit()
+    # One move of the shop's server at a time — never beside the automatic failover (§11.7).
+    with LSS.switch_lock(db, shop.id, wait=True):
+        db.expire(shop)  # what a move that held the lock committed, never a stale copy
+        try:
+            out = LSS.switch(
+                db, current_user, shop, body.target_machine_id,
+                close_old_shift=body.close_old_shift,
+                counted_cash=body.counted_cash,
+                force=body.force,
+                release_shop_z=body.release_shop_z,
+            )
+        except Exception:
+            db.rollback()
+            raise
+        targets = TP.notify_targets_for_scope(db, "shop", shop.id)
+        db.commit()
     # Every till re-reads its parameters and printers, and pulls the tables' new host.
     background_tasks.add_task(TP.publish_parameters_notify, targets)
     T.tables_changed(db, shop.id, tenant_id=shop.tenant_id)
@@ -131,6 +183,153 @@ def post_former_host_changes_ack(
     n = LSS.acknowledge_changes(shop, current_user, (body.ids if body is not None else None))
     db.commit()
     return {"acknowledged": n, "formerHostChanges": LSS.former_host_changes_out(shop)}
+
+
+@router.get("/shops/{shop_id}/local-server/failover")
+def get_local_server_failover(
+    shop_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"גיבוי אוטומטי לשרת המקומי": the setting, its target, and what the cloud would do now."""
+    from app.services import local_server_failover as LSF
+
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    return LSF.view(db, shop, current_user)
+
+
+@router.put("/shops/{shop_id}/local-server/failover")
+def put_local_server_failover(
+    shop_id: uuid.UUID,
+    body: FailoverIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Change it — the super admin, or a user granted "העברת שרת מקומי" (403 otherwise). Off by
+    default; on needs a target of the shop that may take the server; every change is audited.
+    """
+    from app.services import local_server_failover as LSF
+
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    with LSS.switch_lock(db, shop.id, wait=True):
+        db.expire(shop)
+        try:
+            out = LSF.update(
+                db, current_user, shop,
+                enabled=body.enabled, target_machine_id=body.target_machine_id, minutes=body.minutes,
+            )
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
+    return out
+
+
+@router.get("/shops/{shop_id}/local-server/roles")
+def get_local_server_roles(
+    shop_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"תפקידי השרת המקומי": who holds the tables, the printing and the shop Z, and the choices."""
+    from app.services import local_server_roles as LSR
+
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    return LSR.view(db, shop, current_user)
+
+
+@router.put("/shops/{shop_id}/local-server/roles")
+def put_local_server_roles(
+    shop_id: uuid.UUID,
+    body: RolesIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Give each host role to the dedicated server or a till (printing: or "none") — the super admin,
+    or "העברת שרת מקומי"; under the shop's switch lock, audited, every till told.
+    """
+    from app.services import local_server_device as LSD
+    from app.services import local_server_roles as LSR
+
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    with LSS.switch_lock(db, shop.id, wait=True):
+        db.expire(shop)
+        try:
+            out = LSR.update(db, current_user, shop, tables=body.tables, print_=body.print_, shop_z=body.shop_z)
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
+    if out.get("changed"):
+        LSD.after_host_change(db, shop)
+    return out
+
+
+def _server(db: Session, machine_id: uuid.UUID, user: User, tenant_id):
+    """A local server the user may control (the device commands' people and scope)."""
+    from app.models.pos_machine import POSMachine
+    from app.services import kiosk_control
+    from app.services.local_server_device import is_local_server
+
+    kiosk_control.require_kiosk_role(user)
+    machine = db.get(POSMachine, machine_id)
+    if machine is None or (tenant_id is not None and str(machine.tenant_id) != str(tenant_id)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    kiosk_control.check_machine_scope(db, user, machine, tenant_id)
+    if not is_local_server(machine):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "not_a_local_server", "message": "המכשיר אינו שרת מקומי."},
+        )
+    return machine
+
+
+@router.get("/machines/{machine_id}/local-server")
+def get_machine_local_server(
+    machine_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The device page's "שרת מקומי" card: what it serves, its tills, orders, print queue, printers, lag."""
+    from app.services import local_server_device as LSD
+
+    machine = _server(db, machine_id, current_user, active_tenant_id)
+    return LSD.card(db, machine, current_user)
+
+
+@router.post("/machines/{machine_id}/local-server/commands", status_code=status.HTTP_201_CREATED)
+def post_machine_local_server_command(
+    machine_id: uuid.UUID,
+    body: ServerCommandIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    A remote command to the server (§11.5): restart the service, send logs, a test page on one
+    printer, clear a stuck queue (only with `confirm`). Queued like every device command; the
+    server answers on its own (`GET /device-commands/status`).
+    """
+    from app.services import device_commands as DC
+    from app.services import local_server_device as LSD
+
+    machine = _server(db, machine_id, current_user, active_tenant_id)
+    try:
+        row = LSD.command(db, current_user, machine, body.action, body.params, confirm=body.confirm)
+    except Exception:
+        db.rollback()
+        raise
+    out = DC.command_out(row)
+    db.commit()
+    DC.wake([machine])
+    return out
 
 
 def _machine(db: Session, machine_id: uuid.UUID, user: User, tenant_id):
