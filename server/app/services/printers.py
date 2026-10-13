@@ -1056,11 +1056,16 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
     """
     The printing settings as this page edits them: each parameter's definition, what the
     shop inherits from above it (`inherited`: the company's value, else the default), and
-    the values set at the shop, its areas and its tills.
+    the values set at the shop, its areas and its tills. Per till: its model's own defaults
+    (`deviceDefaults`, below every level — "פתיחת מגירה" on a till with a drawer port) and
+    what it takes now (`effective`, with `effectiveSource`).
     """
+    from app.services.till_parameters import DEVICE_DEFAULT_SOURCE, device_default
+
     parameters = _option_parameters(db)
     by_id = {p.id: key for key, p in parameters.items()}
-    scope_ids = [shop.id] + [a.id for a in shop_areas(db, shop.id)] + [m.id for m in shop_machines(db, shop.id)]
+    machines = shop_machines(db, shop.id)
+    scope_ids = [shop.id] + [a.id for a in shop_areas(db, shop.id)] + [m.id for m in machines]
     if shop.company_id is not None:
         scope_ids.append(shop.company_id)
     values = (
@@ -1080,6 +1085,27 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
         levels[row.scope_type].setdefault(str(row.scope_id), {})[by_id[row.parameter_id]] = row.value
     company = levels["company"].get(str(shop.company_id), {}) if shop.company_id is not None else {}
     ordered = [parameters[key] for key in SETTING_KEYS if key in parameters]
+    shop_values = levels["shop"].get(str(shop.id), {})
+    # A device's own default in place of the parameter's ("פתיחת מגירה" on a till with a drawer port).
+    device_defaults: Dict[str, Dict[str, Any]] = {}
+    effective: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for m in machines:
+        mine = {p.key: v for p in ordered if (v := device_default(p.key, m.device_model)) is not None}
+        if mine:
+            device_defaults[str(m.id)] = mine
+        chain = (
+            ("machine", levels["machine"].get(str(m.id), {})),
+            ("area", levels["area"].get(str(m.area_id), {}) if m.area_id else {}),
+            ("shop", shop_values),
+            ("company", company),
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        for p in ordered:
+            found = next(((src, vals[p.key]) for src, vals in chain if p.key in vals), None)
+            if found is None:
+                found = (DEVICE_DEFAULT_SOURCE, mine[p.key]) if p.key in mine else ("default", p.default_value)
+            out[p.key] = {"value": found[1], "effectiveSource": found[0]}
+        effective[str(m.id)] = out
     return {
         "parameters": [
             {
@@ -1095,9 +1121,13 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
         "defaults": {p.key: p.default_value for p in ordered},
         "inherited": {p.key: company.get(p.key, p.default_value) for p in ordered},
         "fromCompany": sorted(company),
-        "shop": levels["shop"].get(str(shop.id), {}),
+        "shop": shop_values,
         "areas": levels["area"],
         "machines": levels["machine"],
+        #: machine id → {key: value} where a till's model has a default of its own (below every level).
+        "deviceDefaults": device_defaults,
+        #: machine id → {key: {value, effectiveSource: machine|area|shop|company|device_default|default}}.
+        "effective": effective,
     }
 
 

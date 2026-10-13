@@ -368,6 +368,60 @@ def resolve_till_parameters(
     return ResolvedParameters(parameters=resolved, updated_at=updated_at)
 
 
+# ── Defaults by device ("פתיחת מגירה") ───────────────────────────────────────
+#
+# The owner (12.10.2026): "ברירת מחדל שיופיע אם יש מדפסת מובנית" — on a till whose own model drives
+# a drawer port (`device_has_cash_drawer_port`: the SUNMI desktops, the iMin desktops), "פתיחת
+# מגירה" left unset at every level (company / shop / point of sale / till) resolves to the
+# option with the "פתיחת מגירה" button. Any value set at any level wins; nothing is stored.
+
+CASH_DRAWER_KEY = "cashDrawer"
+CASH_DRAWER_OFF = "כבוי"
+CASH_DRAWER_ON_CASH = "בתשלום מזומן"
+CASH_DRAWER_WITH_BUTTON = "בתשלום מזומן + כפתור פתיחה"
+#: Where a value came from when it is a device's default, not the parameter's (the dashboard).
+DEVICE_DEFAULT_SOURCE = "device_default"
+
+
+def device_default(key: str, device_model: Any) -> Any:
+    """The value `key` takes on a till of this model when no level sets it; None: the parameter's default."""
+    from app.models.pos_machine import device_has_cash_drawer_port
+
+    if key == CASH_DRAWER_KEY and device_has_cash_drawer_port(device_model):
+        return CASH_DRAWER_WITH_BUTTON
+    return None
+
+
+def _set_on_chain(parameter: TillParameter, values: Iterable[TillParameterValue], chain: TillScopeChain) -> bool:
+    """Whether some level on `chain` holds a value of `parameter` its type accepts."""
+    scopes = set(chain.scopes())
+    ident = as_uuid(parameter.id)
+    return any(
+        as_uuid(row.parameter_id) == ident
+        and (row.scope_type, as_uuid(row.scope_id)) in scopes
+        and _is_valid(parameter.value_type, row.value, parameter.enum_options)
+        for row in values
+    )
+
+
+def apply_device_defaults(
+    device_model: Any,
+    parameters: Iterable[TillParameter],
+    values: Sequence[TillParameterValue],
+    chain: TillScopeChain,
+    resolved: Dict[str, Any],
+) -> None:
+    """`resolved` (one till's map) with the device's defaults in place of the parameters' own, in place."""
+    for parameter in parameters:
+        if not parameter.is_active:
+            continue
+        value = device_default(parameter.key, device_model)
+        if value is None or not _is_valid(parameter.value_type, value, parameter.enum_options):
+            continue
+        if not _set_on_chain(parameter, values, chain):
+            resolved[parameter.key] = value
+
+
 def scope_chain_for_machine(db: Session, machine: POSMachine) -> TillScopeChain:
     """The till, its area, its shop and that shop's company — as they are right now."""
     company_id = None
@@ -391,6 +445,8 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     ]
     values = db.query(TillParameterValue).filter(or_(*on_chain)).all() if on_chain else []
     resolved = resolve_till_parameters(parameters, values, chain)
+    # "פתיחת מגירה" on a till with a drawer port of its own: on, with the button, unless set.
+    apply_device_defaults(getattr(machine, "device_model", None), parameters, values, chain, resolved.parameters)
     if getattr(machine, "independent_till", False):
         # "קופה עצמאית" (app/services/independent_till.py): never a host of the shop's LAN
         # group, and tables only when set at its own level.
@@ -883,7 +939,9 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "תשלום שבו עבר מזומן (כולל עודף והחזר כספי). «+ כפתור פתיחה» — בנוסף, \"פתיחת מגירה\" "
             "בתפריט הקופה; כל פתיחה ידנית נרשמת בענן כחריגה \"מגירה נפתחה ללא מכירה\". "
             "חל על מדפסת החשבוניות שבפרמטר; מגירה של מדפסת חשבוניות מדף \"מדפסות\" נפתחת תמיד בתשלום מזומן "
-            "ויש לה כפתור — וכשיש לקופה כמה מגירות, היא שואלת איזו לפתוח."
+            "ויש לה כפתור — וכשיש לקופה כמה מגירות, היא שואלת איזו לפתוח. "
+            "ברירת מחדל לפי המכשיר: בקופה שהמגירה מחוברת אליה ישירות (שקע מגירה במכשיר — SUNMI / iMin "
+            "שולחניות) — «בתשלום מזומן + כפתור פתיחה»; בכל מכשיר אחר — «כבוי». ערך שנקבע בכל רמה גובר."
         ),
     ),
     BuiltinParameter(

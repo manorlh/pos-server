@@ -51,6 +51,13 @@ const GROUPS = [
   { id: 'Kitchen', keys: ['kitchenTicketsOnSale', 'kitchenTicketsOnTill'] },
 ] as const;
 
+/** What a level takes when it sets nothing itself; `byDevice` — the till's model's own default. */
+interface Inherited {
+  value: PrinterSettingValue | null;
+  source: string;
+  byDevice?: boolean;
+}
+
 /** The server's `receiptPrinter` option for the till's own printer. */
 const BUILT_IN = 'מובנית בקופה';
 const EXTERNAL_ONLY = new Set(['receiptPrinterAddress', 'receiptPrinterModel']);
@@ -82,7 +89,7 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
   const areaName = (id: string) => page.areas.find((a) => a.id === id)?.name ?? '';
 
   /** What `level` takes for `key` when it has no value of its own, and from where. */
-  const inheritedOf = (lv: Level, key: string): { value: PrinterSettingValue | null; source: string } => {
+  const inheritedOf = (lv: Level, key: string): Inherited => {
     if (lv.type === 'machine' && lv.areaId) {
       const fromArea = valuesOf('area', lv.areaId)[key];
       if (fromArea !== undefined) return { value: fromArea, source: t('fromArea', { name: areaName(lv.areaId) }) };
@@ -90,10 +97,11 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
     if (lv.type !== 'shop' && options.shop[key] !== undefined) {
       return { value: options.shop[key], source: t('fromShop') };
     }
-    return {
-      value: options.inherited[key] ?? null,
-      source: options.fromCompany.includes(key) ? t('fromCompany') : t('fromDefault'),
-    };
+    if (options.fromCompany.includes(key)) return { value: options.inherited[key] ?? null, source: t('fromCompany') };
+    // A till whose model has a default of its own ("פתיחת מגירה" with a drawer port): below every level.
+    const byDevice = lv.type === 'machine' ? options.deviceDefaults?.[lv.id]?.[key] : undefined;
+    if (byDevice !== undefined) return { value: byDevice, source: t('fromDevice'), byDevice: true };
+    return { value: options.inherited[key] ?? null, source: t('fromDefault') };
   };
 
   const save = useMutation({
@@ -167,6 +175,8 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
                   <p className="text-xs text-muted-foreground">{t('groupReceiptHint')}</p>
                 ) : group.id === 'Kitchen' ? (
                   <p className="text-xs text-muted-foreground">{t('groupKitchenHint')}</p>
+                ) : group.id === 'Payment' ? (
+                  <p className="text-xs text-muted-foreground">{t('groupPaymentHint')}</p>
                 ) : null}
                 <div className="divide-y">
                   {shown.map((key) => {
@@ -210,7 +220,7 @@ function SettingRow({
 }: {
   def: PrinterSettingDef;
   own: PrinterSettingValue | undefined;
-  inherited: { value: PrinterSettingValue | null; source: string };
+  inherited: Inherited;
   canEdit: boolean;
   saving: boolean;
   onSave: (value: PrinterSettingValue | null) => void;
@@ -283,8 +293,14 @@ function SettingRow({
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm">{format(inherited.value)}</span>
-          <Badge variant="secondary">{inherited.source}</Badge>
+          {inherited.byDevice ? (
+            <span className="text-sm">{t('deviceDefault', { value: format(inherited.value) })}</span>
+          ) : (
+            <>
+              <span className="text-sm">{format(inherited.value)}</span>
+              <Badge variant="secondary">{inherited.source}</Badge>
+            </>
+          )}
           {canEdit ? (
             <Button
               size="sm"

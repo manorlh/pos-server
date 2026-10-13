@@ -212,11 +212,24 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
             .all()
         )
     inherited = resolve_till_parameters(params, values, above).parameters
+    inherited_sources: Dict[str, str] = {}
+    if scope_type == "machine":
+        # A till with a drawer port of its own: "פתיחת מגירה" unset above it → the device's default.
+        from app.models.pos_machine import POSMachine
+        from app.services.till_parameters import DEVICE_DEFAULT_SOURCE, apply_device_defaults
+
+        machine = db.get(POSMachine, ident)
+        if machine is not None:
+            before = dict(inherited)
+            apply_device_defaults(machine.device_model, params, values, above, inherited)
+            inherited_sources = {k: DEVICE_DEFAULT_SOURCE for k, v in inherited.items() if before.get(k) != v}
     return {
         "scopeType": scope_type,
         "scopeId": str(ident),
         "own": own,
         "inherited": inherited,
+        #: key → "device_default" where the inherited value is the device's default.
+        "inheritedSources": inherited_sources,
         "parameters": [
             {
                 "key": key,
