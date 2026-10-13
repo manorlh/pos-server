@@ -74,6 +74,15 @@ import {
   upsellFigureTotals,
   withMenuReportTab,
 } from './menuTargetsReports';
+import {
+  defaultLiveItemsState,
+  liveItemsApiParams,
+  liveItemsTotals,
+  parseLiveItemsState,
+  searchLiveRows,
+  sortLiveRows,
+  writeLiveItemsState,
+} from './liveItemsView';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -722,5 +731,62 @@ describe('menu reports, the upsell rules and the targets on the framework', () =
     assert.equal(anyRowHas(newer, (r) => r.shopName), true);
     assert.equal(anyRowHas(older, (r) => r.shopName), false);
     assert.equal(anyRowHas<Row>([{ id: 1, shopName: null }], (r) => r.shopName), true);
+  });
+});
+
+describe('the live items board: its state in the URL, its rows and totals', () => {
+  const SHOP = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  it('a fresh visit: today, every company, by net, the top rows', () => {
+    const st = parseLiveItemsState(new URLSearchParams(''), TODAY);
+    assert.deepEqual(st, defaultLiveItemsState(TODAY));
+    assert.deepEqual(liveItemsApiParams(st, 1000), { limit: 1000 });
+  });
+
+  it('round-trips the board and keeps the dashboard scope keys', () => {
+    const st = {
+      ...defaultLiveItemsState(TODAY),
+      shopId: SHOP,
+      areaId: 'none',
+      period: 'custom' as const,
+      from: '2026-10-01',
+      to: '2026-10-05',
+      q: 'קפה',
+      sort: 'qty' as const,
+      desc: false,
+      all: true,
+    };
+    const url = writeLiveItemsState(new URLSearchParams('shop=x&company=y'), st, TODAY);
+    assert.equal(url.get('shop'), 'x');
+    assert.equal(url.get('company'), 'y');
+    assert.deepEqual(parseLiveItemsState(url, TODAY), st);
+    assert.deepEqual(liveItemsApiParams(st, 50), { limit: 50, shopId: SHOP, areaId: 'none', from: '2026-10-01', to: '2026-10-05' });
+  });
+
+  it('nonsense in the URL is dropped; the open shifts are a period of their own', () => {
+    const st = parseLiveItemsState(new URLSearchParams('shopId=abc&areaId=zzz&period=shift&sort=x&from=2026-01-01'), TODAY);
+    assert.equal(st.shopId, '');
+    assert.equal(st.areaId, '');
+    assert.equal(st.sort, 'net');
+    assert.equal(st.from, TODAY);
+    assert.deepEqual(liveItemsApiParams(st, 10), { limit: 10, shift: 'open' });
+  });
+
+  it('search by name or SKU, sort, and the totals: the scope’s, or the sums of the rows found', () => {
+    const row = (name: string, sku: string, qty: number, net: number) => ({
+      name, sku, qty, unitsSold: qty, unitsRefunded: 0, gross: net, discounts: 0, refunds: 0, net,
+    });
+    const rows = [row('קפה הפוך', 'A1', 3, 30), row('עוגה', 'B2', 1, 25), row('קפה שחור', 'C3', 2, 14)];
+    const found = searchLiveRows(rows, 'קפה', (s) => s.toLowerCase());
+    assert.deepEqual(found.map((r) => r.sku), ['A1', 'C3']);
+    assert.deepEqual(searchLiveRows(rows, 'b2', (s) => s.toLowerCase()).map((r) => r.name), ['עוגה']);
+    assert.deepEqual(sortLiveRows(rows, 'net', true).map((r) => r.net), [30, 25, 14]);
+    assert.deepEqual(sortLiveRows(rows, 'qty', false).map((r) => r.qty), [1, 2, 3]);
+    const scope = { qty: 99, gross: 990, discounts: 1, refunds: 2, net: 987 };
+    assert.deepEqual(liveItemsTotals(rows, scope, false), {
+      qty: 99, unitsSold: null, unitsRefunded: null, gross: 990, discounts: 1, refunds: 2, net: 987,
+    });
+    assert.deepEqual(liveItemsTotals(found, scope, true), {
+      qty: 5, unitsSold: 5, unitsRefunded: 0, gross: 44, discounts: 0, refunds: 0, net: 44,
+    });
   });
 });
