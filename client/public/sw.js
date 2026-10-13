@@ -93,8 +93,9 @@ const PROBLEM_KINDS = new Set([
   'shop_z_producer_forced', 'local_shop_z_till_unsynced', 'cloud_closed_shift_late_documents',
   'card_transmission_overdue', 'z_transmission_failed', 'failed_payment', 'card_unresolved', 'terminal_mismatch',
   'card_failures', 'zcredit_recon', 'bon_unprinted',
-  // feat/push-detectors' watches (a till not selling; a table open too long, a late KDS ticket).
-  'till_idle', 'table_open_long', 'kds_ticket_late',
+  // feat/push-detectors' watches (a till not selling; a table open too long, a late KDS ticket; a
+  // shop not opened by its hour).
+  'till_idle', 'table_open_long', 'kds_ticket_late', 'shop_not_opened',
   'document_refused', 'document_number_conflict', 'z_totals_mismatch', 'shift_totals_mismatch',
   'local_shop_z_mismatch', 'offline_z_gap', 'offline_z_conflict',
 ]);

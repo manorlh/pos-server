@@ -30,10 +30,12 @@ describe('a tap on a phone alert', () => {
     }
     // push-detectors' kinds the screen lists (pos-server problems.py KIND_GROUP); a daily summary is
     // information, never a problem card.
-    for (const kind of ['till_idle', 'table_open_long', 'kds_ticket_late']) {
+    for (const kind of ['till_idle', 'table_open_long', 'kds_ticket_late', 'shop_not_opened']) {
       assert.ok(sw.PROBLEM_KINDS.has(kind), kind);
     }
-    assert.equal(sw.PROBLEM_KINDS.has('daily_summary'), false);
+    for (const kind of ['daily_summary', 'sales_pace_low', 'payment_reversed', 'table_restored']) {
+      assert.equal(sw.PROBLEM_KINDS.has(kind), false, kind);
+    }
     assert.equal(sw.notificationUrl({ url: '/x/abc123', entryId: ENTRY, kind: 'daily_summary' }), '/x/abc123');
   });
 

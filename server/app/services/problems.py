@@ -7,7 +7,7 @@
   till's printer (no paper, overheated, error), a kiosk's health (offline, card terminal,
   printer, KDS, its link to the till), a low battery and a till not selling while the others do;
 * `z_shift` — a Z not done, a shift open past its date or too long, closed shifts awaiting a Z,
-  a forced Z;
+  a forced Z, a shop not opened by its hour;
 * `card` — card transmission late or failed, a terminal not answering, a card payment left
   undecided, Z-Credit gaps;
 * `kitchen` — bons that did not print, a table open too long without payment, a KDS order not
@@ -74,8 +74,10 @@ PAYMENTS_WINDOW_DAYS = 30
 
 #: Exception-log kinds → their group, named as strings: feat/alert-policy's (§1/§2: `z_missing`,
 #: `shift_open_overdue`, `card_transmission_overdue`, `till_printer`, `device_battery`) and
-#: feat/push-detectors' (`till_idle`, `table_open_long`, `kds_ticket_late`) among them. Never an
-#: information kind (`catalog.INFO_KINDS`: the daily summary) — that is no problem.
+#: feat/push-detectors' (`till_idle`, `table_open_long`, `kds_ticket_late`, `shop_not_opened`)
+#: among them. Never an information kind (`catalog.INFO_KINDS`: the daily summary) — that is no
+#: problem; nor `sales_pace_low` (an insight, in the alerts feed) nor a table's payment reversals
+#: and restores (`payment_reversed`, `table_restored`: their own push type).
 KIND_GROUP: Dict[str, str] = {
     # ── devices ──
     "till_offline": "devices",
@@ -94,6 +96,7 @@ KIND_GROUP: Dict[str, str] = {
     "shop_z_producer_forced": "z_shift",
     "local_shop_z_till_unsynced": "z_shift",
     "cloud_closed_shift_late_documents": "z_shift",
+    "shop_not_opened": "z_shift",
     # ── card ──
     "card_transmission_overdue": "card",
     "z_transmission_failed": "card",
