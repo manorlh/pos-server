@@ -878,4 +878,8 @@ class TestMigration:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["e4a7c2d9b1f3"]
+        # The release of 13.10.2026 joins this branch's head with its sibling PRs' in one merge
+        # revision (78c88a7afc4f); this migration stays on that single head's line.
+        assert script.get_heads() == ["78c88a7afc4f"]
+        assert "e4a7c2d9b1f3" in script.get_revision("78c88a7afc4f").down_revision
+        assert "e4a7c2d9b1f3" in {r.revision for r in script.walk_revisions("base", "78c88a7afc4f")}

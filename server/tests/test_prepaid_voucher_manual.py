@@ -506,7 +506,10 @@ class TestMigration:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["d1a5c3e7f902"]
+        # The release of 13.10.2026 joins this head with its sibling PRs' in one merge revision
+        # (78c88a7afc4f); this migration stays on test mode, on that single head's line.
+        assert script.get_heads() == ["78c88a7afc4f"]
+        assert "d1a5c3e7f902" in script.get_revision("78c88a7afc4f").down_revision
         assert script.get_revision("d1a5c3e7f902").down_revision == "c7e4a2f9d1b6"
 
     def test_offline_sql_adds_the_columns_and_the_partial_index(self):

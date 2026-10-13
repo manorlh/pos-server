@@ -600,7 +600,8 @@ class TestMigration:
 
         script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
         heads = script.get_heads()
-        # One head, with this migration on its line (later migrations chain on top: the manual
-        # redemption d1a5c3e7f902, the shop active log e5a1c9d3b7f2, ...).
+        # One head, with this migration on its line. The release of 13.10.2026 put five siblings on
+        # it (d1a5c3e7f902, d3f8a6c2b9e1, 3bfb94dbebb2 → e4a7c2d9b1f3, e5a1c9d3b7f2, f3b8d1e6a2c9),
+        # joined by the merge revision 78c88a7afc4f.
         assert len(heads) == 1
         assert "c7e4a2f9d1b6" in {r.revision for r in script.walk_revisions("base", heads[0])}
