@@ -520,6 +520,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/companies/{}/till-drawer-params", S("till_settings")),
     # "התראות בנייד" for the company's users (app/routers/push_policy.py): a users' requirement.
     (_ALL, "/companies/{}/push-policy", S("users", "organization")),
+    # "שחזור שולחן ותשלומים" (app/routers/table_restore.py): till parameters edited on the tables page.
+    (_GET, "/companies/{}/table-restore-params", S("tables", "till_settings", level=VIEW)),
+    (_ALL, "/companies/{}/table-restore-params", S("tables", "till_settings")),
     (_ALL, "/companies*", S("organization")),
     # ── Reports ──
     (_GET, "/dashboard/*", S("reports")),

@@ -545,6 +545,16 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
     from app.services.z_sections import sections_of_z
 
     out.report_sections, out.report_sections_source = sections_of_z(db, z)
+    # "זיכויים וביטולי תשלום בשולחנות" (app/services/table_restore.py): as frozen, else from its documents.
+    from app.services import table_restore
+
+    stored_reversals = (z.header or {}).get(table_restore.Z_KEY)
+    if isinstance(stored_reversals, dict):
+        out.table_payment_reversals = stored_reversals
+    elif z.per_machine is not None and shifts:
+        out.table_payment_reversals, _parts = table_restore.z_reversals(
+            db, [(s.machine, [s]) for s in shifts if s.machine is not None],
+        )
     out.till_totals = z.till_totals
     out.offline_report = z.offline_report
     return out

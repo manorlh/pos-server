@@ -139,6 +139,9 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   table_open_long: 'bg-sky-200 text-sky-950 dark:bg-sky-900 dark:text-sky-100',
   kds_ticket_late: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
   till_idle: 'bg-teal-200 text-teal-950 dark:bg-teal-900 dark:text-teal-100',
+  // A table's payments (table-restore-payments): the refunds' family.
+  payment_reversed: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
+  table_restored: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

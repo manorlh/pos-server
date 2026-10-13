@@ -214,6 +214,20 @@ def _voucher_sections(z) -> List[dict]:
     return [section("שוברי הפקה", [row("קיזוז שוברי הפקה", credit(deductions))])]
 
 
+def _table_reversal_sections(z) -> List[dict]:
+    """
+    "זיכויים וביטולי תשלום בשולחנות: N · ₪" (P:/specs/table-restore-payments.md §3): the payments
+    reversed inside tables, as the Z froze them — only when there were any. Their credit notes are
+    already in the refunds and the tenders above; this line only counts them.
+    """
+    from app.services import table_restore
+
+    value = table_restore.z_line((getattr(z, "header", None) or {}).get(table_restore.Z_KEY))
+    if value is None:
+        return []
+    return [section(table_restore.Z_LABEL, [row("פעולות · סכום", value)])]
+
+
 def _vat_rows(z: ZReport, dealer_type: Optional[str] = None) -> List[Optional[dict]]:
     vat = _dec(z.vat_total)
     sales = _dec(z.total_sales)
@@ -773,6 +787,7 @@ def _v2_body(z: Any, sections: dict, tzinfo, period_rows: List[Optional[dict]]) 
         out.append(block)
         if block["title"] == payments_title:
             out += _voucher_sections(z)
+            out += _table_reversal_sections(z)
     return out
 
 
@@ -833,6 +848,7 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
         section("מע״מ", _vat_rows(z)),
         section("אמצעי תשלום", _payment_rows(z)),
         *_voucher_sections(z),
+        *_table_reversal_sections(z),
         section("תשר", _tips_rows(z)),
         section("קופה", _cash_rows(z)),
     ]
@@ -939,6 +955,7 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
             section("מע״מ", _vat_rows(z)),
             section("אמצעי תשלום", _payment_rows(z)),
             *_voucher_sections(z),
+            *_table_reversal_sections(z),
             section("תשר", _tips_rows(z)),
             section("קופה", _cash_rows(z)),
         ]
@@ -985,6 +1002,8 @@ class _TillAsZ:
             "promotionDiscountsTotal": s.get("promotionDiscountsTotal"),
             "voucherDiscountsTotal": s.get("voucherDiscountsTotal"),
             "productionVoucherDeductionsTotal": s.get("productionVoucherDeductionsTotal"),
+            # "זיכויים וביטולי תשלום בשולחנות" (app/services/table_restore.py): the till's own line.
+            "tablePaymentReversals": s.get("tablePaymentReversals"),
             # The till's own frozen movements block, read as a Z's header is (None: off).
             ZEC.BLOCK: s.get(ZEC.BLOCK),
         }
@@ -1034,6 +1053,7 @@ def build_till_document(
             section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
             section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
             *_voucher_sections(view),  # type: ignore[arg-type]
+            *_table_reversal_sections(view),  # type: ignore[arg-type]
             section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
             section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
         ]

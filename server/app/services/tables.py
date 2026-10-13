@@ -2884,8 +2884,14 @@ def closed_orders(
     # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till restores the tables
     # of its point of sale's zones and of the shop-wide ones, like the tables it sees.
     rows = _area_locked_orders(db, machine, rows, {z.id: z.area_id for z in zones})
+    # "מתי מותר לשחזר" (`restoreWindow`, app/services/table_restore.py): where each order's payment
+    # documents stand — in a Z, their shifts still open — which the till cannot know of another till's sale.
+    from app.services.table_restore import payment_state
+
+    states = payment_state(db, rows, _transaction_ids)
     return [
         {
+            **states.get(str(o.id), {}),
             "orderId": str(o.id),
             "tableId": str(o.table_id),
             "tableNumber": o.table_number,
@@ -2966,6 +2972,12 @@ def mark_restored(
         details={"status": order.status, "approvedBy": approved_by, "transactionIds": _transaction_ids(order)},
     )
     db.flush()
+    # "יומן חריגים" (P:/specs/table-restore-payments.md §3): `table_restored` — never fails the restore.
+    from app.services.table_restore import record_restore_exception
+
+    record_restore_exception(
+        db, machine, order, restored_by=actor.pos_user_name, approved_by=approved_by, restored_by_id=actor.pos_user_id,
+    )
     return order
 
 

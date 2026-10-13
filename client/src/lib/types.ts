@@ -2459,6 +2459,8 @@ export interface ZReportMachineSection {
   betweenShiftAdjustments?: Money | null;
   /** Card tips this till paid out of the drawer (Σ of its closes'); absent without the parameter. */
   cardTipsFromDrawer?: Money | null;
+  /** "זיכויים וביטולי תשלום בשולחנות" of this till — absent when it had none. */
+  tablePaymentReversals?: TablePaymentReversals | null;
   /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
   drawerCash?: Money | null;
   /** This till's Cash In / Cash Out / deposits inside expectedCash; absent when the parameter was off for it. */
@@ -2538,6 +2540,18 @@ export interface ZReportDetail extends ZReport {
    */
   reportSections?: import('./zReportSections').ZReportSections | null;
   reportSectionsSource?: 'stored' | 'documents' | null;
+  /** "זיכויים וביטולי תשלום בשולחנות" (as frozen, else read from its documents); null when none. */
+  tablePaymentReversals?: TablePaymentReversals | null;
+}
+
+/**
+ * "זיכויים וביטולי תשלום בשולחנות: N · ₪" (pos-server app/services/table_restore.py,
+ * P:/specs/table-restore-payments.md §3): the payments reversed inside tables whose credit notes are
+ * the Z's documents. Already inside the refunds and the tenders — a count, never subtracted again.
+ */
+export interface TablePaymentReversals {
+  count: number;
+  amount: Money;
 }
 
 /** One waiter's row of a Z (money as decimal strings). `waiter` null: no one on the documents. */

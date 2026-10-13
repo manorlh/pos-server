@@ -234,7 +234,7 @@ class TestLegacy:
         # "ניהול קטלוג" (specs/till-catalog-management.md §6.2): the four writes, as CATALOG_WRITE was.
         assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK", "ITEM_BLOCK_WIDE"} | {
             "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
-        }
+        } | TP.TABLE_PAYMENT_REVERSE_CODES  # a table's payment reversed: as a refund was (table-restore-payments §4)
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a
         # manager's alone (the kiosk's admin opened for a manager's code only) — and approving a request

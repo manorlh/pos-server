@@ -556,6 +556,12 @@ from app.routers import report_pdf as report_pdf_router  # noqa: E402
 app.include_router(report_export_defaults_router.router, prefix=_prefix)
 app.include_router(report_pdf_router.router, prefix=_prefix)
 
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §5): its till parameters per level,
+# edited on the dashboard's tables page.
+from app.routers import table_restore as table_restore_router  # noqa: E402
+
+app.include_router(table_restore_router.router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def start_whatsapp_distribution_worker():

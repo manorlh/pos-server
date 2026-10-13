@@ -24,6 +24,8 @@ What a user receives (`entry_matches`):
   * `target_reached` — a sales target reached ("יעדים ותחרות", an event's target included);
   * `z_shift`, `card_transmission`, `till_printer` — the board's lights as alerts (a Z not made,
     a shift open too long, card sales not transmitted, the till's printer; status_watch.py);
+  * `payment_reversals` — a payment reversed inside a table, and a closed table restored
+    (P:/specs/table-restore-payments.md);
 * only from what the user may see in the exceptions log (the same scoping), and only with the
   dashboard sections "alerts" / "reports" / "exception_alerts" — a producer never;
 * narrowed to the chosen shops and / or events (an event = its tills inside its window).
@@ -177,6 +179,14 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("daily_summary", "סיכום יום",
              "אחרי Z של הסניף (או בשעה שנקבעה): מכירות, עסקאות, ממוצע, מול שבוע שעבר, זיכויים, הנחות והפרשי קופה.",
              ("daily_summary",)),
+)
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §3): every payment reversed inside a
+# table and every table restored — its own type, so a preference saved before it does not start
+# receiving them (opt in). No amount floor: each one is a manager's business.
+CATEGORIES = CATEGORIES + (
+    Category("payment_reversals", "זיכוי / ביטול תשלום בשולחן",
+             "תשלום שזוכה או בוטל מתוך שולחן (מזומן, אשראי, שובר, חיצוני), ושולחן סגור ששוחזר.",
+             ("payment_reversed", "table_restored")),
 )
 #: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
 #: super admin receives it — from every organization, past the organizations' scoping (a super

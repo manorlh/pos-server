@@ -29,7 +29,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { cashMovementRows } from '@/lib/zCashMovements';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
-import type { Money, Shift, ZReportDetail, ZReportMachineSection } from '@/lib/types';
+import type { Money, Shift, TablePaymentReversals, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   CountedCash,
@@ -131,6 +131,8 @@ interface SalesFigures {
   totalTips?: Money | null;
   totalCashTips?: Money | null;
   totalCardTips?: Money | null;
+  /** "זיכויים וביטולי תשלום בשולחנות" — inside the refunds already; absent when none. */
+  tablePaymentReversals?: TablePaymentReversals | null;
 }
 
 /**
@@ -156,6 +158,16 @@ function SalesRows({ x, dealerType }: { x: SalesFigures; dealerType?: string | n
       <MoneyRow label={t('salesAfterDiscounts')} value={x.totalSales} strong />
       {!hasGross ? <MoneyRow label={t('discountsDeducted')} value={x.discountsTotal} /> : null}
       <MoneyRow label={t('refundsAndCredits')} value={x.totalRefunds} />
+      {(x.tablePaymentReversals?.count ?? 0) > 0 ? (
+        <div className="ps-3 text-xs text-muted-foreground" title={t('tablePaymentReversalsHint')}>
+          <MoneyRow label={t('tablePaymentReversals')}>
+            {t('tablePaymentReversalsValue', {
+              count: x.tablePaymentReversals?.count ?? 0,
+              amount: formatCurrency(x.tablePaymentReversals?.amount),
+            })}
+          </MoneyRow>
+        </div>
+      ) : null}
       {x.netSales != null ? <MoneyRow label={t('netSales')} value={x.netSales} strong /> : null}
       <MoneyRow label={t('vatNetOfCredits')}>
         {exempt ? (

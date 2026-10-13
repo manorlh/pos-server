@@ -1907,6 +1907,14 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "שחזור שולחן עם התשלומים שלו" (app/services/table_restore.py, P:/specs/table-restore-payments.md §3, §5):
+# the restored table's prefix, the restore window, printing the credit note, which payments may be
+# reversed in the table, voiding an untransmitted card, "בטל את כל התשלומים", and the bill with a
+# balance (the suggested tip's base, the items already paid). Edited on the dashboard's tables page.
+from app.services.table_restore import PARAMETER_SPECS as _TABLE_RESTORE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_RESTORE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1959,6 +1967,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         raise TillParameterValueError(
             f"{REMOTE_CANCEL_TIMEOUT_KEY} must be {REMOTE_CANCEL_TIMEOUT_MIN}–{REMOTE_CANCEL_TIMEOUT_MAX} seconds"
         )
+    # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
+    from app.services import table_restore
+
+    if key in table_restore.VALIDATED_KEYS and value is not None:
+        try:
+            return table_restore.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     return value
 
 

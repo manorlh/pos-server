@@ -40,6 +40,8 @@ export type AlertCategory =
   | 'shop_open'
   | 'sales_pace'
   | 'daily_summary'
+  // A payment reversed inside a table, and a closed table restored (P:/specs/table-restore-payments.md §3).
+  | 'payment_reversals'
   // "שלמות נתונים" (§1): a super admin's only — the server lists it to them alone.
   | 'integrity';
 
@@ -69,6 +71,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'shop_open',
   'sales_pace',
   'daily_summary',
+  'payment_reversals',
 ];
 
 export const INTEGRITY_CATEGORY: AlertCategory = 'integrity';

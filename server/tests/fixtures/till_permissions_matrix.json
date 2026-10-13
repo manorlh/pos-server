@@ -85,7 +85,10 @@
     "APPROVE_REMOTE.opening_float",
     "APPROVE_REMOTE.close_other_shift",
     "APPROVE_REMOTE.tip_over",
-    "APPROVE_REMOTE.attendance_fix"
+    "APPROVE_REMOTE.attendance_fix",
+    "PAYMENT_REVERSE_CASH",
+    "PAYMENT_REVERSE_CARD",
+    "PAYMENT_REVERSE_OTHER"
   ],
   "scopes": {
     "attendance:manage": "ATTENDANCE_MANAGE",
@@ -99,6 +102,9 @@
     "discount": "DISCOUNT",
     "kiosk:control": "KIOSK_CONTROL",
     "kiosk:unlock": "KIOSK_UNLOCK",
+    "payment:reverse-card": "PAYMENT_REVERSE_CARD",
+    "payment:reverse-cash": "PAYMENT_REVERSE_CASH",
+    "payment:reverse-other": "PAYMENT_REVERSE_OTHER",
     "refund": "REFUND",
     "sale:restricted": "SELL_RESTRICTED_ITEMS",
     "shift:close": "SHIFT_CLOSE",
@@ -197,7 +203,10 @@
         "APPROVE_REMOTE.opening_float": "deny",
         "APPROVE_REMOTE.close_other_shift": "deny",
         "APPROVE_REMOTE.tip_over": "deny",
-        "APPROVE_REMOTE.attendance_fix": "deny"
+        "APPROVE_REMOTE.attendance_fix": "deny",
+        "PAYMENT_REVERSE_CASH": "deny",
+        "PAYMENT_REVERSE_CARD": "deny",
+        "PAYMENT_REVERSE_OTHER": "deny"
       },
       "limits": {}
     },
@@ -287,7 +296,10 @@
         "APPROVE_REMOTE.opening_float": "deny",
         "APPROVE_REMOTE.close_other_shift": "deny",
         "APPROVE_REMOTE.tip_over": "deny",
-        "APPROVE_REMOTE.attendance_fix": "deny"
+        "APPROVE_REMOTE.attendance_fix": "deny",
+        "PAYMENT_REVERSE_CASH": "approval",
+        "PAYMENT_REVERSE_CARD": "approval",
+        "PAYMENT_REVERSE_OTHER": "approval"
       },
       "limits": {}
     },
@@ -377,7 +389,10 @@
         "APPROVE_REMOTE.opening_float": "allow",
         "APPROVE_REMOTE.close_other_shift": "allow",
         "APPROVE_REMOTE.tip_over": "allow",
-        "APPROVE_REMOTE.attendance_fix": "allow"
+        "APPROVE_REMOTE.attendance_fix": "allow",
+        "PAYMENT_REVERSE_CASH": "allow",
+        "PAYMENT_REVERSE_CARD": "allow",
+        "PAYMENT_REVERSE_OTHER": "allow"
       },
       "limits": {
         "CASH_DRAWER.CASH_OUT": {
@@ -388,6 +403,12 @@
         },
         "DISCOUNT": {
           "maxPercent": 30
+        },
+        "PAYMENT_REVERSE_CASH": {
+          "maxAmount": 500
+        },
+        "PAYMENT_REVERSE_CARD": {
+          "maxAmount": 500
         }
       }
     },
@@ -477,7 +498,10 @@
         "APPROVE_REMOTE.opening_float": "allow",
         "APPROVE_REMOTE.close_other_shift": "allow",
         "APPROVE_REMOTE.tip_over": "allow",
-        "APPROVE_REMOTE.attendance_fix": "allow"
+        "APPROVE_REMOTE.attendance_fix": "allow",
+        "PAYMENT_REVERSE_CASH": "allow",
+        "PAYMENT_REVERSE_CARD": "allow",
+        "PAYMENT_REVERSE_OTHER": "allow"
       },
       "limits": {}
     },
@@ -567,7 +591,10 @@
         "APPROVE_REMOTE.opening_float": "deny",
         "APPROVE_REMOTE.close_other_shift": "deny",
         "APPROVE_REMOTE.tip_over": "deny",
-        "APPROVE_REMOTE.attendance_fix": "deny"
+        "APPROVE_REMOTE.attendance_fix": "deny",
+        "PAYMENT_REVERSE_CASH": "approval",
+        "PAYMENT_REVERSE_CARD": "approval",
+        "PAYMENT_REVERSE_OTHER": "approval"
       },
       "limits": {}
     },
@@ -657,7 +684,10 @@
         "APPROVE_REMOTE.opening_float": "allow",
         "APPROVE_REMOTE.close_other_shift": "allow",
         "APPROVE_REMOTE.tip_over": "allow",
-        "APPROVE_REMOTE.attendance_fix": "allow"
+        "APPROVE_REMOTE.attendance_fix": "allow",
+        "PAYMENT_REVERSE_CASH": "allow",
+        "PAYMENT_REVERSE_CARD": "allow",
+        "PAYMENT_REVERSE_OTHER": "allow"
       },
       "limits": {}
     }

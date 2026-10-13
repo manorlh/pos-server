@@ -220,6 +220,11 @@ class ZReportDetailOut(ZReportOut):
     #: built before them, read now from its documents; null — none.
     report_sections: Optional[Dict[str, Any]] = Field(None, alias="reportSections")
     report_sections_source: Optional[str] = Field(None, alias="reportSectionsSource")
+    #: "זיכויים וביטולי תשלום בשולחנות: N · ₪" (app/services/table_restore.py): `{count, amount}` of the
+    #: payments reversed inside tables whose credit notes are this Z's documents — as frozen at build,
+    #: else read now from its documents; null when there were none. Already inside the refunds and the
+    #: tenders: a count, never a figure to subtract. Each till's is on its section (`perMachine`).
+    table_payment_reversals: Optional[Dict[str, Any]] = Field(None, alias="tablePaymentReversals")
 
 
 class ZReportWindow(BaseModel):

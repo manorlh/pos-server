@@ -127,6 +127,8 @@ GET /companies/{company_id}/push-policy -> users|organization:view
 PUT /companies/{company_id}/push-policy -> users|organization:edit
 GET /companies/{company_id}/settings -> till_settings:view
 PATCH /companies/{company_id}/settings -> till_settings:edit
+GET /companies/{company_id}/table-restore-params -> tables|till_settings:view
+PUT /companies/{company_id}/table-restore-params -> tables|till_settings:edit
 GET /companies/{company_id}/till-drawer-params -> till_settings|pos_users:view
 PUT /companies/{company_id}/till-drawer-params -> till_settings:edit
 GET /companies/{company_id}/till-roles -> pos_users:view
