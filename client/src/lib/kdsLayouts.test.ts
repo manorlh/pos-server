@@ -5,7 +5,44 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { bigCapacity, bigSplit, inPickupLane, itemsSummary, laneButton, lanesOf, railOrder } from './kdsLayouts';
+import {
+  allDayCounts,
+  bigCapacity,
+  bigSplit,
+  cardsWithItem,
+  historyAfter,
+  historyRows,
+  inPickupLane,
+  isDoneCard,
+  isReadyCard,
+  itemsSummary,
+  laneButton,
+  lanesOf,
+  nextHistory,
+  orderTypeOf,
+  overflowing,
+  passesFilters,
+  pausedView,
+  railOrder,
+  searchItems,
+  splitDone,
+  tintOf,
+} from './kdsLayouts';
+import {
+  applyPending,
+  checkAction,
+  itemTapButton,
+  orderNumberText,
+  recallFor,
+  screenOf,
+  serviceText,
+  sortOrders,
+  taskButton,
+  taskStateText,
+  ticketMenu,
+  urgencyText,
+} from './kdsBoard';
+import { DEFAULT_KDS_BEHAVIOUR } from './screenLook';
 import type { KdsOrder, KdsTask } from './kdsScreenTypes';
 
 const T0 = Date.UTC(2026, 9, 7, 10, 0, 0);
@@ -108,5 +145,176 @@ describe('rail, list, big', () => {
     assert.equal(bigCapacity(1080, 1800), 2);
     assert.equal(bigCapacity(600, 900), 1);
     assert.deepEqual(bigSplit([1, 2, 3, 4, 5], 3), { shown: [1, 2, 3], queue: [4, 5] });
+  });
+});
+
+/* ------------------------------------------- learned from a reference KDS (§16) */
+
+const ready = { state: 'ready', preparedQty: 1 } as const;
+
+describe('a tap on an item (itemTap)', () => {
+  it('"button": the row takes no tap, its button as always', () => {
+    const o = order('a', [task('a1')]);
+    assert.equal(itemTapButton(o, o.tasks[0], 'button'), null);
+    assert.equal(taskButton(o, o.tasks[0])?.label, 'מוכן');
+  });
+
+  it('"cycle": ממתין → בהכנה → מוכן → ממתין', () => {
+    const q = order('a', [task('a1')]);
+    assert.deepEqual(itemTapButton(q, q.tasks[0], 'cycle')?.actions, [{ type: 'start', taskId: 'a1' }]);
+    const p = order('a', [task('a1', { state: 'preparing' })]);
+    assert.deepEqual(itemTapButton(p, p.tasks[0], 'cycle')?.actions, [{ type: 'item_ready', taskId: 'a1' }]);
+    const r = order('a', [task('a1', ready)]);
+    assert.deepEqual(itemTapButton(r, r.tasks[0], 'cycle')?.actions, [{ type: 'requeue', taskId: 'a1' }]);
+    assert.deepEqual([q, p, r].map((o) => taskStateText(o.tasks[0])), ['ממתין', 'בהכנה', 'מוכן']);
+  });
+
+  it('"ready" (מוכן בנגיעה): one tap is ready (a start first where required), again — undo', () => {
+    const o = order('a', [task('a1')]);
+    assert.deepEqual(itemTapButton(o, o.tasks[0], 'ready')?.actions, [{ type: 'item_ready', taskId: 'a1' }]);
+    const s = order('a', [task('a1')], { requireStart: true });
+    assert.deepEqual(itemTapButton(s, s.tasks[0], 'ready')?.actions.map((a) => a.type), ['start', 'item_ready']);
+    const r = order('a', [task('a1', ready)]);
+    assert.deepEqual(itemTapButton(r, r.tasks[0], 'ready')?.actions, [{ type: 'undo_ready', taskId: 'a1' }]);
+  });
+
+  it('held, cancelled, a finished order: no tap', () => {
+    const o = order('a', [task('h', { release: 'hold' }), task('c', { activeQty: 0, cancelledQty: 1 })]);
+    assert.equal(itemTapButton(o, o.tasks[0], 'ready'), null);
+    assert.equal(itemTapButton(o, o.tasks[1], 'cycle'), null);
+    const done = order('b', [task('b1')], { groupState: 'handed_over', status: 'handed_over' });
+    assert.equal(itemTapButton(done, done.tasks[0], 'ready'), null);
+  });
+
+  it('requeue: checked, and drawn at once (never reviving a cancelled unit)', () => {
+    assert.equal(checkAction({ type: 'requeue' }), 'חסר פריט לפעולה');
+    assert.equal(checkAction({ type: 'requeue', taskId: 'a1' }), null);
+    const o = order('a', [task('a1', { ...ready, startedAt: at(1), readyAt: at(2) }), task('a2', { activeQty: 0, cancelledQty: 1 })], { groupState: 'ready_for_pickup', status: 'ready', requireExpo: false });
+    const [x] = applyPending([o], [{ type: 'requeue', taskId: 'a1' }], { role: 'expo', stationIds: [] });
+    assert.deepEqual([x.tasks[0].state, x.tasks[0].preparedQty, x.tasks[0].startedAt, x.tasks[0].readyAt], ['queued', 0, null, null]);
+    assert.equal(x.groupState, 'waiting');
+    const [y] = applyPending([o], [{ type: 'requeue', taskId: 'a2' }], { role: 'expo', stationIds: [] });
+    assert.equal(y, o);
+  });
+});
+
+describe('the ticket’s menu', () => {
+  it('the Expo: דחוף, and the items: ממתין / בהכנה / מוכן — only what changes something', () => {
+    const o = order('a', [task('a1'), task('a2', { state: 'preparing' }), task('a3', ready)]);
+    const menu = ticketMenu(o, 'expo', { stationRush: false, urgencyLevels: false });
+    assert.deepEqual(menu.map((b) => b.label), ['דחוף', 'הכול ממתין', 'הכול בהכנה', 'הכול מוכן']);
+    assert.equal(menu[0].reason, 'priority');
+    assert.deepEqual(menu[0].actions, [{ type: 'priority', orderId: 'a', priority: 1 }]);
+    assert.deepEqual(menu[1].actions.map((a) => a.taskId), ['a2', 'a3']);
+    assert.deepEqual(menu[2].actions.map((a) => [a.type, a.taskId]), [['start', 'a1'], ['undo_ready', 'a3']]);
+    assert.deepEqual(menu[3].actions.map((a) => [a.type, a.taskId]), [['item_ready', 'a1'], ['item_ready', 'a2']]);
+  });
+
+  it('a station: no דחוף unless its screen allows; levels; an urgent order can be cancelled', () => {
+    const o = order('a', [task('a1')]);
+    assert.ok(!ticketMenu(o, 'station', { stationRush: false, urgencyLevels: false }).some((b) => b.reason === 'priority'));
+    const rush = ticketMenu(o, 'station', { stationRush: true, urgencyLevels: true }).filter((b) => b.reason === 'priority');
+    assert.deepEqual(rush.map((b) => b.label), ['דחוף', 'דחוף מאוד', 'בהול']);
+    const urgent = order('b', [task('b1')], { priority: 2 });
+    assert.deepEqual(ticketMenu(urgent, 'manager', { stationRush: false, urgencyLevels: true }).filter((b) => b.reason).map((b) => b.label), ['בטל דחיפות', 'דחוף', 'בהול']);
+    assert.deepEqual(ticketMenu(urgent, 'manager', { stationRush: false, urgencyLevels: false }).filter((b) => b.reason).map((b) => b.label), ['בטל דחיפות']);
+    assert.deepEqual([urgencyText(0), urgencyText(1), urgencyText(2), urgencyText(5)], [null, 'דחוף', 'דחוף מאוד', 'בהול']);
+  });
+
+  it('a required start comes first in "הכול מוכן"; a finished order has no menu', () => {
+    const o = order('a', [task('a1'), task('a2', { state: 'preparing' })], { requireStart: true });
+    const all = ticketMenu(o, 'station', { stationRush: false, urgencyLevels: false }).find((b) => b.label === 'הכול מוכן');
+    assert.deepEqual(all?.actions.map((a) => [a.type, a.taskId]), [['start', 'a1'], ['item_ready', 'a1'], ['item_ready', 'a2']]);
+    assert.deepEqual(ticketMenu(order('b', [task('b1')], { groupState: 'handed_over', status: 'handed_over' }), 'expo', { stationRush: true, urgencyLevels: true }), []);
+  });
+});
+
+describe('what the screen shows', () => {
+  it('the order types and external orders', () => {
+    const b = DEFAULT_KDS_BEHAVIOUR;
+    const table = order('t', [task('t1')], { source: 'table', serviceType: null });
+    const quick = order('q', [task('q1')], { source: 'quick', serviceType: null });
+    const away = order('w', [task('w1')]);
+    const courier = order('d', [task('d1')], { source: 'external', serviceType: 'delivery' });
+    assert.deepEqual([table, quick, away, courier].map(orderTypeOf), ['eatIn', null, 'takeAway', 'delivery']);
+    assert.ok([table, quick, away, courier].every((o) => passesFilters(o, b)));
+    const noTa = { ...b, orderTypes: { eatIn: true, takeAway: false, delivery: true } };
+    assert.deepEqual([table, quick, away, courier].map((o) => passesFilters(o, noTa)), [true, true, false, true]);
+    assert.deepEqual([table, courier].map((o) => passesFilters(o, { ...b, externalOrders: 'only' })), [false, true]);
+    assert.deepEqual([table, courier].map((o) => passesFilters(o, { ...b, externalOrders: 'hide' })), [true, false]);
+    assert.equal(tintOf(away, b), null);
+    assert.equal(tintOf(away, { serviceTint: { takeAway: true, delivery: false } }), 'takeAway');
+    assert.equal(tintOf(courier, { serviceTint: { takeAway: true, delivery: true } }), 'delivery');
+    assert.equal(serviceText('delivery'), 'משלוח');
+  });
+
+  it('FIFO as always, LIFO the newest first — urgent first either way', () => {
+    const cards = [order('old', [task('o1')], { firstReleasedAt: at(1) }), order('new', [task('n1')], { firstReleasedAt: at(9) }), order('urgent', [task('u1')], { firstReleasedAt: at(5), priority: 1 })];
+    assert.deepEqual(sortOrders(cards, 'expo').map((o) => o.id), ['urgent', 'old', 'new']);
+    assert.deepEqual(sortOrders(cards, 'expo', true).map((o) => o.id), ['urgent', 'new', 'old']);
+    assert.deepEqual(screenOf(cards, 'station', T0).cards.map((o) => o.id), ['urgent', 'old', 'new']);
+    assert.deepEqual(screenOf(cards, 'station', T0, { lifo: true }).cards.map((o) => o.id), ['urgent', 'new', 'old']);
+    assert.deepEqual(railOrder(cards, 'expo', true).map((o) => o.id), ['new', 'urgent', 'old']);
+  });
+
+  it('"להכנה": what is left to prepare by name, the search, the filter by item', () => {
+    const cards = [
+      order('a', [task('a1', { name: 'צ׳יפס', activeQty: 2, orderedQty: 2 }), task('a2', { name: 'המבורגר' }), task('a3', { name: 'סלט', ...ready })]),
+      order('b', [task('b1', { name: 'צ׳יפס ', activeQty: 3, orderedQty: 3, preparedQty: 1, state: 'preparing' }), task('b2', { name: 'קינוח', release: 'hold' })]),
+    ];
+    const all = allDayCounts(cards);
+    assert.deepEqual(all.map((i) => [i.name, i.qty, i.orders]), [['המבורגר', 1, 1], ['צ׳יפס', 4, 2]]);
+    assert.deepEqual(searchItems(all, 'ציפ').length, 0);
+    assert.deepEqual(searchItems(all, 'צ׳י').map((i) => i.name), ['צ׳יפס']);
+    assert.deepEqual(searchItems(all, '').length, 2);
+    assert.deepEqual(cardsWithItem(cards, 'המבורגר').map((o) => o.id), ['a']);
+    assert.deepEqual(cardsWithItem(cards, 'סלט'), []);
+  });
+
+  it('keep a finished ticket or not; "מוכנות"; pause; overflow', () => {
+    const done = order('d', [task('d1', ready)]);
+    const work = order('w', [task('w1')]);
+    assert.ok(isDoneCard(done, 'station') && !isDoneCard(work, 'station'));
+    assert.deepEqual(splitDone([work, done], 'station', true).cards.map((o) => o.id), ['w', 'd']);
+    const split = splitDone([work, done], 'station', false);
+    assert.deepEqual([split.cards.map((o) => o.id), split.gone.map((o) => o.id)], [['w'], ['d']]);
+    // The Expo: only a ready-for-pickup order it has nothing left to do on.
+    const pickup = order('p', [task('p1', ready)], { groupState: 'ready_for_pickup', status: 'ready', trackHandover: false });
+    assert.ok(isDoneCard(pickup, 'expo'));
+    assert.ok(!isDoneCard({ ...pickup, trackHandover: true }, 'expo'));
+    assert.ok(isReadyCard(done, 'station') && !isReadyCard(work, 'station') && isReadyCard(pickup, 'expo'));
+    assert.deepEqual(pausedView([work, done], null), { cards: [work, done], waiting: 0 });
+    const paused = pausedView([work, done, order('n', [task('n1')])], new Set(['w', 'd']));
+    assert.deepEqual([paused.cards.map((o) => o.id), paused.waiting], [['w', 'd'], 1]);
+    assert.deepEqual([overflowing(25, 25), overflowing(26, 25), overflowing(99, null)], [false, true, false]);
+  });
+
+  it('the history: what finished here, half an hour, back when it has work again; "החזר"', () => {
+    const done = order('d', [task('d1', ready)]);
+    let h = nextHistory(new Map(), [done], new Set(), T0);
+    assert.deepEqual([...h.keys()], ['d']);
+    h = nextHistory(h, [], new Set(), T0 + 10 * 60_000);
+    assert.equal(h.get('d')?.at, T0);
+    assert.equal(nextHistory(h, [], new Set(), T0 + 31 * 60_000).size, 0);
+    assert.equal(nextHistory(h, [], new Set(['d']), T0 + 60_000).size, 0);
+    assert.deepEqual(historyRows(h, new Set(['d'])), []);
+    assert.equal(historyRows(h, new Set()).length, 1);
+    const many = nextHistory(new Map(), Array.from({ length: 50 }, (_, i) => order(`o${i}`, [task(`t${i}`, ready)])), new Set(), T0);
+    assert.equal(many.size, 40);
+    // From a board: a station's finished card; an order with work is not history.
+    const fromBoard = historyAfter(new Map(), [done, order('w', [task('w1')])], 'station', DEFAULT_KDS_BEHAVIOUR, T0);
+    assert.deepEqual([...fromBoard.keys()], ['d']);
+    // "החזר": a station's ready items back; the Expo's ready for pickup back to preparation; handed over back to ready.
+    assert.deepEqual(recallFor(done, 'station')?.actions, [{ type: 'undo_ready', taskId: 'd1' }]);
+    assert.deepEqual(recallFor(order('p', [task('p1', ready)], { groupState: 'ready_for_pickup' }), 'expo')?.actions, [{ type: 'undo_pickup', orderId: 'p' }]);
+    assert.deepEqual(recallFor(order('h', [task('h1', ready)], { groupState: 'handed_over', status: 'handed_over' }), 'expo')?.label, 'החזר');
+    assert.equal(recallFor(order('x', [task('x1')]), 'station'), null);
+  });
+
+  it('the order’s number when the title does not say it', () => {
+    assert.equal(orderNumberText(order('k', [], { pickupNumber: 41, displayRef: '41' })), null);
+    assert.equal(orderNumberText(order('q', [], { pickupNumber: 57, displayRef: '20000057', source: 'quick' })), '#20000057');
+    assert.equal(orderNumberText(order('t', [], { source: 'table', tableRef: '7', displayRef: 'שולחן 7', pickupNumber: null })), null);
+    assert.equal(orderNumberText(order('l', [], { pickupLabel: 'A-17', pickupNumber: 17, displayRef: '17' })), null);
   });
 });

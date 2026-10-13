@@ -20,12 +20,23 @@ import type { BoardLayout, BoardMedia, KdsField, KdsLayout, KdsSoundEvent, KdsSo
 import {
   BOARD_LAYOUTS,
   DEFAULT_SCREEN_DISPLAY,
+  KDS_EXTERNAL_ORDERS,
   KDS_FIELDS,
+  KDS_ITEM_TAPS,
   KDS_LAYOUTS,
+  KDS_ORDER_TYPES,
   KDS_SOUND_EVENTS,
   KDS_SOUND_TONES,
+  KDS_TICKET_INFO,
+  KDS_TICKET_ORDERS,
   MEDIA_MAX,
+  OVERFLOW_MAX,
+  OVERFLOW_MIN,
+  PER_ROW_MAX,
+  PER_ROW_MIN,
   SCREEN_THEMES,
+  TICKET_HEIGHT_MAX,
+  TICKET_HEIGHT_MIN,
   boardDisplayOf,
   kdsDisplayOf,
   lookQuery,
@@ -61,6 +72,15 @@ const SWATCH: Record<ScreenThemeName, [string, string, string]> = {
 };
 
 const READY_CHOICES = [0, 2, 3, 5, 10, 15, 20, 30];
+/** "כרטיסים בשורה" (docs/SPEC_KDS.md §16): 2–10, or as many as fit (0). */
+const PER_ROW_CHOICES = Array.from({ length: PER_ROW_MAX - PER_ROW_MIN + 1 }, (_, i) => PER_ROW_MIN + i);
+
+/** A whole number from a field, as typed (the range is checked before saving — `lookValid`); the fallback when empty. */
+const wholeNumber = (s: string, fallback: number) => {
+  const n = Math.round(Number(s));
+  return Number.isFinite(n) && s.trim() !== '' ? n : fallback;
+};
+const inRange = (n: number | null, lo: number, hi: number) => n === null || (Number.isInteger(n) && n >= lo && n <= hi);
 
 /* ------------------------------------------------------------- thumbnails */
 
@@ -383,6 +403,7 @@ function KdsOptions({ value, set }: { value: ScreenDisplay; set: (p: Partial<Scr
   const toggleField = (f: KdsField, on: boolean) => set({ fields: { ...value.fields, [f]: on } });
   const setSound = (e: KdsSoundEvent, tone: KdsSoundTone) => set({ sounds: { ...value.sounds, [e]: tone } });
   const toneItems = KDS_SOUND_TONES.map((tone) => ({ value: tone, label: t(`sounds.tones.${tone}`) }));
+  const perRowItems = [0, ...PER_ROW_CHOICES].map((n) => ({ value: String(n), label: n === 0 ? t('perRow.auto') : t('perRow.n', { n: String(n) }) }));
   return (
     <>
       <Section title={t('sections.size')}>
@@ -408,6 +429,47 @@ function KdsOptions({ value, set }: { value: ScreenDisplay; set: (p: Partial<Scr
             className="w-full accent-[var(--primary)]"
           />
         </div>
+        <div className="flex items-center gap-2">
+          <span className="w-36 shrink-0 text-sm">{t('perRow.label')}</span>
+          <Select value={String(value.perRow ?? 0)} onValueChange={(v) => set({ perRow: Number(v) || null })} items={perRowItems}>
+            <SelectTrigger className="h-9 flex-1" aria-label={t('perRow.label')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {perRowItems.map((o) => (
+                <SelectItem key={o.value} value={o.value} label={o.label}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <SwitchRow
+          label={t('maxHeight.on')}
+          hint={t('maxHeight.hint')}
+          checked={value.maxTicketHeight !== null}
+          onChange={(on) => set({ maxTicketHeight: on ? 500 : null })}
+        />
+        {value.maxTicketHeight !== null ? (
+          <div className="flex items-center gap-2">
+            <Label htmlFor="max-ticket-height" className="w-36 shrink-0">
+              {t('maxHeight.label')}
+            </Label>
+            <Input
+              id="max-ticket-height"
+              type="number"
+              min={TICKET_HEIGHT_MIN}
+              max={TICKET_HEIGHT_MAX}
+              step={20}
+              className="h-9"
+              value={value.maxTicketHeight}
+              onChange={(e) => set({ maxTicketHeight: wholeNumber(e.target.value, TICKET_HEIGHT_MIN) })}
+            />
+          </div>
+        ) : null}
+        {!inRange(value.maxTicketHeight, TICKET_HEIGHT_MIN, TICKET_HEIGHT_MAX) ? (
+          <p className="text-xs text-destructive">{t('range', { min: String(TICKET_HEIGHT_MIN), max: String(TICKET_HEIGHT_MAX) })}</p>
+        ) : null}
       </Section>
 
       <Section title={t('sections.fields')}>
@@ -418,8 +480,126 @@ function KdsOptions({ value, set }: { value: ScreenDisplay; set: (p: Partial<Scr
               {t(`fields.${f}`)}
             </label>
           ))}
+          {KDS_TICKET_INFO.map((i) => (
+            <label key={i} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[var(--primary)]"
+                checked={value.ticketInfo[i]}
+                onChange={(e) => set({ ticketInfo: { ...value.ticketInfo, [i]: e.target.checked } })}
+              />
+              {t(`ticketInfo.${i}`)}
+            </label>
+          ))}
         </div>
         {!value.fields.allergens ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('fields.allergensWarning')}</p> : null}
+      </Section>
+
+      <Section title={t('sections.behaviour')}>
+        <div className="space-y-1.5">
+          <Label>{t('behaviour.itemTap')}</Label>
+          <Segmented
+            label={t('behaviour.itemTap')}
+            value={value.itemTap}
+            onChange={(itemTap) => set({ itemTap })}
+            options={KDS_ITEM_TAPS.map((m) => ({ value: m, label: t(`behaviour.itemTaps.${m}`) }))}
+          />
+          <p className="text-xs text-muted-foreground">{t(`behaviour.itemTapHints.${value.itemTap}`)}</p>
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t('behaviour.order')}</Label>
+          <Segmented
+            label={t('behaviour.order')}
+            value={value.ticketOrder}
+            onChange={(ticketOrder) => set({ ticketOrder })}
+            options={KDS_TICKET_ORDERS.map((o) => ({ value: o, label: t(`behaviour.orders.${o}`) }))}
+          />
+          <p className="text-xs text-muted-foreground">{t('behaviour.orderHint')}</p>
+        </div>
+        <SwitchRow label={t('behaviour.keepReadyOpen')} hint={t('behaviour.keepReadyOpenHint')} checked={value.keepReadyOpen} onChange={(keepReadyOpen) => set({ keepReadyOpen })} />
+        <SwitchRow label={t('behaviour.toolbar')} hint={t('behaviour.toolbarHint')} checked={value.toolbar} onChange={(toolbar) => set({ toolbar })} />
+        <SwitchRow label={t('behaviour.allDay')} hint={t('behaviour.allDayHint')} checked={value.allDay} onChange={(allDay) => set({ allDay })} />
+        <SwitchRow
+          label={t('behaviour.filterFullTicket')}
+          hint={t('behaviour.filterFullTicketHint')}
+          checked={value.filterFullTicket}
+          onChange={(filterFullTicket) => set({ filterFullTicket })}
+        />
+        <SwitchRow
+          label={t('behaviour.overflow')}
+          hint={t('behaviour.overflowHint', { n: String(value.overflowAt ?? 25) })}
+          checked={value.overflowAt !== null}
+          onChange={(on) => set({ overflowAt: on ? 25 : null })}
+        />
+        {value.overflowAt !== null ? (
+          <div className="flex items-center gap-2">
+            <Label htmlFor="overflow-at" className="w-36 shrink-0">
+              {t('behaviour.overflowAt')}
+            </Label>
+            <Input
+              id="overflow-at"
+              type="number"
+              min={OVERFLOW_MIN}
+              max={OVERFLOW_MAX}
+              className="h-9"
+              value={value.overflowAt}
+              onChange={(e) => set({ overflowAt: wholeNumber(e.target.value, OVERFLOW_MIN) })}
+            />
+          </div>
+        ) : null}
+        {!inRange(value.overflowAt, OVERFLOW_MIN, OVERFLOW_MAX) ? <p className="text-xs text-destructive">{t('range', { min: String(OVERFLOW_MIN), max: String(OVERFLOW_MAX) })}</p> : null}
+      </Section>
+
+      <Section title={t('sections.urgency')}>
+        <SwitchRow label={t('urgency.stationRush')} hint={t('urgency.stationRushHint')} checked={value.stationRush} onChange={(stationRush) => set({ stationRush })} />
+        <SwitchRow label={t('urgency.levels')} hint={t('urgency.levelsHint')} checked={value.urgencyLevels} onChange={(urgencyLevels) => set({ urgencyLevels })} />
+      </Section>
+
+      <Section title={t('sections.orders')}>
+        <div className="space-y-1.5">
+          <Label>{t('orders.types')}</Label>
+          <div className="grid grid-cols-3 gap-1.5">
+            {KDS_ORDER_TYPES.map((type) => (
+              <label key={type} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[var(--primary)]"
+                  checked={value.orderTypes[type]}
+                  onChange={(e) => set({ orderTypes: { ...value.orderTypes, [type]: e.target.checked } })}
+                />
+                {t(`orders.${type}`)}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">{t('orders.typesHint')}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Label>{t('orders.external')}</Label>
+          <Segmented
+            label={t('orders.external')}
+            value={value.externalOrders}
+            onChange={(externalOrders) => set({ externalOrders })}
+            options={KDS_EXTERNAL_ORDERS.map((x) => ({ value: x, label: t(`orders.externals.${x}`) }))}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t('orders.tint')}</Label>
+          <div className="grid grid-cols-2 gap-1.5">
+            {(['takeAway', 'delivery'] as const).map((k) => (
+              <label key={k} className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[var(--primary)]"
+                  checked={value.serviceTint[k]}
+                  onChange={(e) => set({ serviceTint: { ...value.serviceTint, [k]: e.target.checked } })}
+                />
+                <span className="h-3 w-5 rounded-sm" style={{ background: k === 'delivery' ? KDS_THEMES[value.theme].tintDelivery : KDS_THEMES[value.theme].tintTakeAway }} aria-hidden />
+                {t(k === 'delivery' ? 'orders.tintDelivery' : 'orders.tintTakeAway')}
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">{t('orders.tintHint')}</p>
+        </div>
       </Section>
 
       <Section title={t('sections.sounds')}>
@@ -590,6 +770,8 @@ function MediaList({ value, set }: { value: ScreenDisplay; set: (p: Partial<Scre
 
 /** Whether the screen's own thresholds are valid (both or neither, late after warn). */
 function lookValid(d: ScreenDisplay): boolean {
+  // §16: the numbers the cloud takes (KdsDisplayIn) — the most height of a ticket, overflow.
+  if (!inRange(d.maxTicketHeight, TICKET_HEIGHT_MIN, TICKET_HEIGHT_MAX) || !inRange(d.overflowAt, OVERFLOW_MIN, OVERFLOW_MAX)) return false;
   if (d.warnMinutes === null && d.lateMinutes === null) return true;
   if (d.warnMinutes === null || d.lateMinutes === null) return false;
   return d.warnMinutes >= 1 && d.warnMinutes <= 240 && d.lateMinutes > d.warnMinutes && d.lateMinutes <= 480;

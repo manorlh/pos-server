@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { ChevronDown, ChevronLeft } from 'lucide-react';
-import type { KdsOrder, KdsView } from '@/lib/kdsScreenTypes';
+import type { KdsOrder, KdsTask, KdsView } from '@/lib/kdsScreenTypes';
 import {
   cardWeight,
   columnsFor,
@@ -21,6 +21,7 @@ import {
   serviceText,
   sourceText,
   TIMER_TEXT,
+  urgencyText,
   waitingFor,
   type KdsButton,
   type KdsScreenRole,
@@ -46,6 +47,14 @@ export interface LayoutProps {
   /** The layout's size in its own pixels. */
   width: number;
   height: number;
+  /** §16 — tickets per row (tickets, rail; null: as many as fit), a ticket's most height, the newest first. */
+  perRow?: number | null;
+  maxTicketHeight?: number | null;
+  lifo?: boolean;
+  /** Filtering by an item without the whole ticket: only these lines. */
+  taskFilter?: (t: KdsTask) => boolean;
+  /** A tap on a ticket's header: its menu. */
+  onMenu?: (order: KdsOrder) => void;
 }
 
 /** Whether a scroller has more below (or, `axis` x, further along the row). */
@@ -96,6 +105,8 @@ function card(p: LayoutProps, o: KdsOrder, extra: Partial<CardProps> = {}, key: 
       flashKey={p.flashKey}
       onPress={p.onPress}
       onPrint={p.onPrint}
+      taskFilter={p.taskFilter}
+      onMenu={p.onMenu}
       {...extra}
     />
   );
@@ -107,7 +118,12 @@ export function TicketsLayout(p: LayoutProps) {
   const { look } = useKdsLook();
   const spec = DENSITY_SPEC[look.density] ?? DENSITY_SPEC.normal;
   const [el, setEl] = useState<HTMLElement | null>(null);
-  const columns = useMemo(() => layoutColumns(p.cards, columnsFor(p.width - 24, spec.minWidth, spec.gap), cardWeight), [p.cards, p.width, spec]);
+  // "בונים בשורה" (§16) when the screen says how many; else as many as fit, as always.
+  const perRow = p.perRow ?? null;
+  const columns = useMemo(
+    () => layoutColumns(p.cards, perRow ?? columnsFor(p.width - 24, spec.minWidth, spec.gap), cardWeight),
+    [p.cards, p.width, spec, perRow],
+  );
   const more = useMore(el, 'y', columns);
   return (
     <div className="relative h-full">
@@ -115,7 +131,7 @@ export function TicketsLayout(p: LayoutProps) {
         <div className="flex items-start" style={{ gap: spec.gap }}>
           {columns.map((col, i) => (
             <div key={i} className="flex min-w-0 flex-1 flex-col" style={{ gap: spec.gap }}>
-              {col.map((o) => card(p, o))}
+              {col.map((o) => card(p, o, { maxHeight: p.maxTicketHeight ?? null }))}
             </div>
           ))}
         </div>
@@ -180,10 +196,11 @@ function LaneColumn({ lane, p, minWidth, gap }: { lane: Lane; p: LayoutProps; mi
 export function RailLayout(p: LayoutProps) {
   const { look } = useKdsLook();
   const spec = DENSITY_SPEC[look.density] ?? DENSITY_SPEC.normal;
-  const cards = useMemo(() => railOrder(p.cards, p.role), [p.cards, p.role]);
+  const cards = useMemo(() => railOrder(p.cards, p.role, p.lifo), [p.cards, p.role, p.lifo]);
   const [el, setEl] = useState<HTMLElement | null>(null);
   const more = useMore(el, 'x', cards);
-  const width = spec.minWidth + 30;
+  const perRow = p.perRow ?? null;
+  const width = perRow ? Math.max(200, (p.width - 24 - spec.gap * (perRow - 1)) / perRow) : spec.minWidth + 30;
   return (
     <div className="relative h-full">
       {more ? (
@@ -233,12 +250,13 @@ export function ListLayout(p: LayoutProps) {
 function ListRow({ order: o, p }: { order: KdsOrder; p: LayoutProps }) {
   const { theme, look } = useKdsLook();
   const timer = orderTimer(o, p.settings, p.nowMs, { thresholds: screenThresholds(look), ageColors: look.ageColors });
-  const parts = itemsSummary(o, look.fields);
+  const parts = itemsSummary(p.taskFilter ? { ...o, tasks: o.tasks.filter(p.taskFilter) } : o, look.fields);
   const buttons = orderButtons(o, p.role).slice(0, 2);
   const group = groupText(o);
   const waiting = p.role !== 'station' && !o.allReady && (o.groupState === 'waiting' || o.groupState === null) ? waitingFor(o) : [];
   const service = serviceText(o.serviceType);
   const who = [look.fields.name ? o.pickupName : null, look.fields.waiter && o.waiterName ? `מלצר: ${o.waiterName}` : null].filter(Boolean);
+  const menu = p.onMenu;
   const urgent = (o.priority ?? 0) > 0;
   const changes = o.changes.filter((c) => c.requiresAck && !c.acked).length;
   return (
@@ -258,11 +276,18 @@ function ListRow({ order: o, p }: { order: KdsOrder; p: LayoutProps }) {
         <div className="mt-0.5 text-sm font-extrabold">{TIMER_TEXT[timer.level]}</div>
       </div>
       <div className="min-w-0">
-        <div className="truncate text-[28px] font-black leading-tight">
-          <bdi>{orderTitle(o)}</bdi>
-          {urgent ? <span className="ms-2 rounded bg-[var(--k-late)] px-1.5 align-middle text-sm font-black text-white">דחוף</span> : null}
-        </div>
-        <div className="truncate text-base text-[var(--k-muted)]">{[look.fields.table ? sourceText(o.source) : null, service, ...who].filter(Boolean).join(' · ')}</div>
+        {menu ? (
+          <button type="button" aria-haspopup="dialog" aria-label={`תפריט — ${orderTitle(o)}`} onClick={() => menu(o)} className="block max-w-full truncate text-start text-[28px] font-black leading-tight">
+            <bdi>{orderTitle(o)}</bdi>
+            {urgent ? <span className="ms-2 rounded bg-[var(--k-late)] px-1.5 align-middle text-sm font-black text-white">{urgencyText(o.priority) ?? 'דחוף'}</span> : null}
+          </button>
+        ) : (
+          <div className="truncate text-[28px] font-black leading-tight">
+            <bdi>{orderTitle(o)}</bdi>
+            {urgent ? <span className="ms-2 rounded bg-[var(--k-late)] px-1.5 align-middle text-sm font-black text-white">{urgencyText(o.priority) ?? 'דחוף'}</span> : null}
+          </div>
+        )}
+        <div className="truncate text-base text-[var(--k-muted)]">{[look.ticketInfo.source ? sourceText(o.source) : null, service, ...who].filter(Boolean).join(' · ')}</div>
       </div>
       <div className="line-clamp-2 min-w-0 text-[20px] font-bold leading-snug">
         {changes > 0 ? <span className="me-2 rounded bg-[var(--k-warn)] px-1.5 text-base font-black text-black">{changes === 1 ? 'שינוי לאישור' : `${changes} שינויים`}</span> : null}

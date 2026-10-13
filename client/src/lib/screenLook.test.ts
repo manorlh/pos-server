@@ -8,8 +8,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_BOARD_DISPLAY,
+  DEFAULT_KDS_BEHAVIOUR,
   DEFAULT_KDS_DISPLAY,
   boardDisplayOf,
+  kdsBehaviourOf,
   kdsDisplayOf,
   lookFromQuery,
   lookQuery,
@@ -134,6 +136,74 @@ describe('the address', () => {
     assert.equal(q.get('layout'), 'ticker');
     assert.equal(q.get('prep'), '0');
     assert.equal(q.get('ready'), '7');
+  });
+});
+
+describe('how the kitchen screen behaves (§16)', () => {
+  const TODAY = {
+    toolbar: true, allDay: false, itemTap: 'button', ticketOrder: 'fifo', perRow: null, maxTicketHeight: null, keepReadyOpen: true,
+    filterFullTicket: false, stationRush: false, urgencyLevels: false, overflowAt: null,
+    orderTypes: { eatIn: true, takeAway: true, delivery: true }, externalOrders: 'all', serviceTint: { takeAway: false, delivery: false },
+    ticketInfo: { source: true, orderTime: false, orderNumber: false, readyBy: false },
+  };
+
+  it('nothing stored is today’s behaviour, and the server’s defaults are the same', () => {
+    assert.deepEqual(kdsBehaviourOf(null), DEFAULT_KDS_BEHAVIOUR);
+    assert.deepEqual(DEFAULT_KDS_BEHAVIOUR, TODAY);
+    const k = kdsDisplayOf({});
+    assert.deepEqual(Object.fromEntries(Object.keys(TODAY).map((key) => [key, (k as unknown as Record<string, unknown>)[key]])), TODAY);
+  });
+
+  it('every look of before resolves exactly as before (its keys and today’s behaviour)', () => {
+    const before = {
+      v: 2, theme: 'light', accent: '#123456', layout: 'rail', columnsBy: 'course', density: 'compact', fontScale: 1.2, ageColors: false,
+      warnMinutes: 5, lateMinutes: 9, clock: false, counts: false, fields: { table: false, waiter: false }, sounds: { new: 'bell' },
+    };
+    const k = kdsDisplayOf(before);
+    assert.deepEqual([k.theme, k.accent, k.layout, k.columnsBy, k.density, k.fontScale], ['light', '#123456', 'rail', 'course', 'compact', 1.2]);
+    assert.deepEqual([k.ageColors, k.warnMinutes, k.lateMinutes, k.clock, k.counts], [false, 5, 9, false, false]);
+    assert.equal(k.fields.table, false);
+    assert.equal(k.sounds.new, 'bell');
+    // The source chip was the "table" switch: hidden there, hidden still.
+    assert.equal(k.ticketInfo.source, false);
+    assert.equal(k.itemTap, 'button');
+    assert.equal(k.toolbar, true);
+    for (const layout of ['tickets', 'columns', 'rail', 'list', 'big']) assert.equal(kdsDisplayOf({ layout }).layout, layout);
+  });
+
+  it('a full behaviour, and every bad value back to today’s', () => {
+    const b = kdsBehaviourOf({
+      toolbar: false, allDay: true, itemTap: 'cycle', ticketOrder: 'lifo', perRow: 6, maxTicketHeight: 500, keepReadyOpen: false,
+      filterFullTicket: true, stationRush: true, urgencyLevels: true, overflowAt: 25, orderTypes: { takeAway: false },
+      externalOrders: 'only', serviceTint: { delivery: true }, ticketInfo: { orderTime: true, readyBy: true, source: false },
+    });
+    assert.deepEqual([b.toolbar, b.allDay, b.itemTap, b.ticketOrder, b.perRow, b.maxTicketHeight], [false, true, 'cycle', 'lifo', 6, 500]);
+    assert.deepEqual([b.keepReadyOpen, b.filterFullTicket, b.stationRush, b.urgencyLevels, b.overflowAt], [false, true, true, true, 25]);
+    assert.deepEqual(b.orderTypes, { eatIn: true, takeAway: false, delivery: true });
+    assert.equal(b.externalOrders, 'only');
+    assert.deepEqual(b.serviceTint, { takeAway: false, delivery: true });
+    assert.deepEqual(b.ticketInfo, { source: false, orderTime: true, orderNumber: false, readyBy: true });
+    const bad = kdsBehaviourOf({ itemTap: 'double', ticketOrder: 'random', perRow: 1, maxTicketHeight: 100, overflowAt: 500, externalOrders: 'x', toolbar: 'no' });
+    assert.deepEqual([bad.itemTap, bad.ticketOrder, bad.perRow, bad.maxTicketHeight, bad.overflowAt, bad.externalOrders, bad.toolbar], ['button', 'fifo', null, null, null, 'all', true]);
+    assert.equal(kdsBehaviourOf({ perRow: 11 }).perRow, null);
+    assert.equal(kdsBehaviourOf({ maxTicketHeight: 3001 }).maxTicketHeight, null);
+  });
+
+  it('the demo’s switches and back', () => {
+    const q = 'tap=ready&order=lifo&row=7&maxh=600&keep=0&full=1&rush=1&levels=1&overflow=30&types=takeAway&ext=hide&tint=delivery&info=orderTime,readyBy&hide=source&toolbar=0&allday=1';
+    const k = lookFromQuery(new URLSearchParams(q), 'kds');
+    assert.deepEqual([k.itemTap, k.ticketOrder, k.perRow, k.maxTicketHeight, k.keepReadyOpen, k.filterFullTicket], ['ready', 'lifo', 7, 600, false, true]);
+    assert.deepEqual([k.stationRush, k.urgencyLevels, k.overflowAt, k.externalOrders, k.toolbar, k.allDay], [true, true, 30, 'hide', false, true]);
+    assert.deepEqual(k.orderTypes, { eatIn: true, takeAway: false, delivery: true });
+    assert.deepEqual(k.serviceTint, { takeAway: false, delivery: true });
+    assert.deepEqual(k.ticketInfo, { source: false, orderTime: true, orderNumber: false, readyBy: true });
+    assert.equal(k.fields.table, true);
+    const back = lookFromQuery(new URLSearchParams(lookQuery(k, 'kds').split('?')[1]), 'kds');
+    assert.deepEqual(kdsDisplayOf(back), kdsDisplayOf(k));
+    // The table hidden, the source shown on its own: said too.
+    const own = screenDisplayOf({ fields: { table: false }, ticketInfo: { source: true } });
+    assert.equal(lookFromQuery(new URLSearchParams(lookQuery(own, 'kds').split('?')[1]), 'kds').ticketInfo.source, true);
+    assert.equal(lookQuery(screenDisplayOf({}), 'kds'), '/kds?demo=1');
   });
 });
 
