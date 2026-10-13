@@ -180,6 +180,7 @@ def _preferences_out(prefs: dict) -> UserPreferencesResponse:
         simple_mode=prefs[user_preferences.SIMPLE_MODE_KEY],
         simple_mode_default=prefs["simpleModeDefault"],
         report_columns=prefs[user_preferences.REPORT_COLUMNS_KEY],
+        approvals_in_quiet_hours=prefs[user_preferences.APPROVALS_QUIET_KEY],
     )
 
 

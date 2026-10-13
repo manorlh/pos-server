@@ -315,6 +315,8 @@
     "src/lib/demoCompany.test.ts",
     "src/lib/devicesView.ts",
     "src/lib/devicesView.test.ts",
-    "src/lib/reportFramework.test.ts"
+    "src/lib/reportFramework.test.ts",
+    "src/lib/approvals.ts",
+    "src/lib/approvals.test.ts"
   ]
 }

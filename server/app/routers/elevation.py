@@ -169,6 +169,26 @@ def _authenticate_pos_user(
     return pos_user
 
 
+def _style_allows(db: Session, machine: POSMachine, scopes, mode: str) -> bool:
+    """
+    "סגנון האישור": every requested scope's permission offers `mode` (approve / takeover) at this
+    till (app/services/remote_approvals/policy.py). An unknown mode is refused.
+    """
+    from app.services import till_permissions as TP
+    from app.services.remote_approvals import catalog as AC
+    from app.services.remote_approvals import policy as AP
+
+    mode = (mode or "").strip().lower()
+    if mode not in (AC.STYLE_APPROVE, AC.STYLE_TAKEOVER):
+        return False
+    effective = AP.for_machine(db, machine)
+    for scope in scopes:
+        code = TP.SCOPE_PERMISSIONS.get(scope.value)
+        if code is not None and not AC.style_allows(effective.style(code), mode):
+            return False
+    return True
+
+
 @router.post("/sessions", response_model=ElevationResponse)
 def create_elevation(
     data: ElevationRequest,
@@ -193,10 +213,25 @@ def create_elevation(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="no_recognised_scopes"
         )
+    if data.mode is not None and not _style_allows(db, machine, requested, data.mode):
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="approval_style_not_allowed"
+        )
 
     if pos_user is not None:
-        granted = grantable_scopes_for_pos_user(pos_user, machine, requested)
+        granted = grantable_scopes_for_pos_user(
+            pos_user, machine, requested, amount=data.amount, percent=data.percent
+        )
+        if not granted and (data.amount is not None or data.percent is not None):
+            if grantable_scopes_for_pos_user(pos_user, machine, requested):
+                # The person may authorise this — just not this much (their role's limit).
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="limit_exceeded"
+                )
     else:
+        # A cloud account approves by its dashboard role: no till limit (§4 "ללא תקרה").
         granted = grantable_scopes(db, user, machine, requested)
     if not granted:
         db.commit()
@@ -204,7 +239,10 @@ def create_elevation(
             status_code=status.HTTP_403_FORBIDDEN, detail="not_permitted_here"
         )
 
-    raw, session = create_session(db, user, machine, granted, pos_user=pos_user)
+    raw, session = create_session(
+        db, user, machine, granted, pos_user=pos_user,
+        max_amount=abs(data.amount) if data.amount is not None else None, max_percent=data.percent,
+    )
     db.commit()
     db.refresh(session)
     if pos_user is not None:

@@ -422,6 +422,10 @@ class TransactionIn(BaseModel):
     #: at most one of the two; checked the same way, and a claim that fails refuses the
     #: document.
     approved_by_pos_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByPosUserId")
+    #: "סגנון האישור" (P:/specs/table-restore-payments.md §4): `takeover` — "מנהל מבצע", the manager
+    #: who typed their code did the action as themselves. The cloud files them as the document's
+    #: actor (`cashierId`), not its approver. `approve` / absent: as before. Anything else is ignored.
+    approval_mode: Optional[str] = Field(None, alias="approvalMode", max_length=16)
 
     # The shift this document was issued in — the till's own shift id. The server
     # resolves it by id only; see `app.services.shifts.resolve_shift_for_document`.

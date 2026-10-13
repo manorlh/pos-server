@@ -9,7 +9,8 @@ import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { SlidersHorizontal } from 'lucide-react';
+import { ClipboardCheck, SlidersHorizontal } from 'lucide-react';
+import { ApprovalOverridesDialog, type OverridesTarget } from '@/components/dashboard/approvals/approval-overrides-dialog';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   groupPermissions,
@@ -58,6 +59,9 @@ export function UsersTab({
   const qc = useQueryClient();
   const [includeInactive, setIncludeInactive] = useState(false);
   const [editing, setEditing] = useState<TillRoleUser | null>(null);
+  // "בקשות אישור מרחוק": the employee's own overrides as an approver (beside "הרשאות אישיות").
+  const [approvalTarget, setApprovalTarget] = useState<OverridesTarget | null>(null);
+  const ta = useTranslations('approvals.overrides');
   const users = useQuery({
     queryKey: ['till-role-users', companyId, shopId, includeInactive],
     queryFn: () => fetchTillRoleUsers(companyId, shopId, includeInactive),
@@ -154,6 +158,15 @@ export function UsersTab({
                             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden /> {t('usersTab.edit')}
                           </Button>
                         ) : null}
+                        {canAssign ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setApprovalTarget({ shopId: u.shopId, posUserId: u.id, name: nameOf(u) })}
+                          >
+                            <ClipboardCheck className="h-3.5 w-3.5" aria-hidden /> {ta('button')}
+                          </Button>
+                        ) : null}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -163,6 +176,7 @@ export function UsersTab({
           </TableBody>
         </Table>
       </div>
+      <ApprovalOverridesDialog target={approvalTarget} onClose={() => setApprovalTarget(null)} />
       {editing ? (
         <OverridesDialog
           user={editing}

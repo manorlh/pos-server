@@ -28,6 +28,9 @@ import { fetchAccessSummaries, type UserAccessSummary } from '@/lib/dashboardAcc
 import { PushHealthCell, UserPushRequiredField } from '@/components/dashboard/push-policy/user-push-fields';
 import { saveUserPushPolicy } from '@/lib/pushPolicyApi';
 import { PUSH_MODES, type PushHealth, type PushMode } from '@/lib/pushPolicy';
+import { LinkedEmployeesField } from '@/components/dashboard/approvals/linked-employees-field';
+import { saveLinkedEmployees } from '@/lib/approvalsApi';
+import type { LinkedEmployee } from '@/lib/approvals';
 
 // A shift supervisor belongs to one shop, exactly like the cashiers they cover
 // for: leave it off these lists and the dialog hides both pickers, so the user is
@@ -108,6 +111,7 @@ export default function UsersPage() {
   const tp = useTranslations('tillPin');
   const ta = useTranslations('dashboardAccess');
   const th = useTranslations('pushGate.health');
+  const tl = useTranslations('approvals.linked');
   const [pinTarget, setPinTarget] = useState<User | null>(null);
   // "הרשאות דשבורד" — the super admin's, per user and as templates.
   const [accessTarget, setAccessTarget] = useState<User | null>(null);
@@ -120,6 +124,8 @@ export default function UsersPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserForm>(EMPTY);
+  // "עובד מקושר" (remote approvals): null = untouched; saved with the user.
+  const [linked, setLinked] = useState<LinkedEmployee[] | null>(null);
   const isNew = !editing.id;
 
   // Straight from GET /users/me. Nothing here re-derives who may do what: that
@@ -170,8 +176,19 @@ export default function UsersPage() {
     ? shops.filter((s) => s.companyId === editing.companyId)
     : shops;
 
+  /** The linked employees, when touched — the user itself is saved either way. */
+  const saveLinked = async (userId: string) => {
+    if (linked === null) return;
+    try {
+      await saveLinkedEmployees(userId, linked.map((e) => e.posUserId));
+      qc.invalidateQueries({ queryKey: ['approvals', 'linked-employees', userId] });
+    } catch (err) {
+      toast.error(axiosErrorToToastMessage(err, tl('saveFailed')));
+    }
+  };
+
   const save = useMutation({
-    mutationFn: (u: UserForm) => {
+    mutationFn: async (u: UserForm) => {
       // `originalRole` is local bookkeeping for the role picker, never a field.
       const payload: Record<string, unknown> = {
         email: u.email,
@@ -192,14 +209,17 @@ export default function UsersPage() {
         if (u.password) payload.password = u.password;
         const id = u.id;
         const pushChanged = (u.pushRequired ?? null) !== (u.pushRequiredWas ?? null);
-        return api.put(`/users/${id}`, payload).then(async (res) => {
-          // "התראות בנייד": the user's own level, its own route (never the user for themselves).
-          if (pushChanged) await saveUserPushPolicy(id, { required: u.pushRequired ?? null });
-          return res;
-        });
+        const res = await api.put(`/users/${id}`, payload);
+        // "התראות בנייד": the user's own level, its own route (never the user for themselves).
+        if (pushChanged) await saveUserPushPolicy(id, { required: u.pushRequired ?? null });
+        await saveLinked(id);
+        return res;
       }
       payload.password = u.password;
-      return api.post('/users', payload);
+      const res = await api.post('/users', payload);
+      const createdId = (res.data as { id?: unknown } | null)?.id;
+      if (createdId) await saveLinked(String(createdId));
+      return res;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] });
@@ -247,6 +267,7 @@ export default function UsersPage() {
       role: u.role, originalRole: u.role, companyId: u.companyId,
       shopId: u.shopId, pushRequired: u.pushRequired ?? null, pushRequiredWas: u.pushRequired ?? null,
     });
+    setLinked(null);
     setOpen(true);
   };
 
@@ -259,6 +280,7 @@ export default function UsersPage() {
         ? { ...EMPTY, role: 'company_manager', orgManager: true }
         : { ...EMPTY, role: creatableRoles[creatableRoles.length - 1] ?? 'cashier' },
     );
+    setLinked(null);
     setOpen(true);
   };
 
@@ -607,6 +629,16 @@ export default function UsersPage() {
                 value={editing.pushRequired ?? null}
                 isSelf={me?.id === editing.id && !isSuperAdmin}
                 onChange={(m) => setEditing((u) => ({ ...u, pushRequired: m }))}
+              />
+            )}
+
+            {editing.role !== 'super_admin' && (
+              <LinkedEmployeesField
+                key={editing.id ?? 'new'}
+                userId={editing.id ?? null}
+                shopId={editing.shopId ?? null}
+                value={linked}
+                onChange={setLinked}
               />
             )}
 

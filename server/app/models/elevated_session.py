@@ -19,7 +19,7 @@ request. Human secrets (`users.till_pin_hash`) still get bcrypt.
 
 import uuid
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -100,6 +100,16 @@ class ElevatedSession(Base):
 
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    #: "בקשת אישור ממנהל מהנייד": the remote approval this grant came from (an approver's
+    #: decision on the phone instead of a PIN typed at the till). Its holder's authority was
+    #: decided when they approved (app/services/remote_approvals/eligibility.py), so the role
+    #: ceiling `resolve_session` applies to PIN grants is not re-read for it.
+    approval_request_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    #: The amount / percent this grant was given for (a remote approval's approved figures, or
+    #: what the till sent with the PIN). Null: not bound to an amount (older tills).
+    max_amount = Column(Numeric(12, 2), nullable=True)
+    max_percent = Column(Numeric(7, 2), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     user = relationship("User")

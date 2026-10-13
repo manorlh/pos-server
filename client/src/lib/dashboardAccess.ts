@@ -50,7 +50,9 @@ export type SectionId =
   | 'attendance'
   | 'users'
   | 'branding'
-  | 'accounting';
+  | 'accounting'
+  | 'approvals'
+  | 'approval_settings';
 
 export interface DashboardSection {
   id: SectionId;
@@ -137,6 +139,10 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'users', pages: ['/dashboard/users'] },
   { id: 'branding', pages: ['/dashboard/branding'] },
   { id: 'accounting', pages: ['/dashboard/accounting-export', '/dashboard/accounting-settings'] },
+  // "בקשות אישור" (P:\specs\manager-approval-mobile.md §4): view = sees the requests, edit = decides
+  // them (the template "מאשר" is this section alone). Its settings per level are a section of their own.
+  { id: 'approvals', pages: ['/dashboard/approvals'] },
+  { id: 'approval_settings', pages: ['/dashboard/approval-settings'] },
 ];
 
 export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);

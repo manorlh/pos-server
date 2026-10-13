@@ -223,6 +223,18 @@ SECTIONS: Tuple[Section, ...] = (
         "accounting", "הנהלת חשבונות", "ייצוא להנהלת חשבונות ומיפוי חשבונות.",
         ("/dashboard/accounting-export", "/dashboard/accounting-settings"),
     ),
+    # "בקשת אישור ממנהל מהנייד" (P:/specs/manager-approval-mobile.md §4, §6): see the requests
+    # (view) and decide them (edit); the settings ("בקשות אישור") are their own section.
+    Section(
+        "approvals", "בקשות אישור",
+        "בקשות אישור מהקופות: ממתינות בזמן אמת והיסטוריה. עריכה: לאשר או לדחות בקשה שנשלחה אליך.",
+        ("/dashboard/approvals",),
+    ),
+    Section(
+        "approval_settings", "הגדרות בקשות אישור",
+        "הגדרות בקשות האישור לפי רמה (חברה, סניף, נקודת מכירה, קופה): סוגים, מאשרים, תקרות, סיבות וזמנים.",
+        ("/dashboard/approval-settings",),
+    ),
 )
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
@@ -276,6 +288,10 @@ AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מ�
 AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
 #: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
 MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
+#: "מאשר" (P:/specs/manager-approval-mobile.md §0, §4): only the approval requests — to see and decide.
+APPROVER_TEMPLATE = "approver"
+APPROVER_LABEL = "מאשר"
+APPROVER_SECTIONS: Dict[str, str] = {"approvals": EDIT}
 
 BUILTIN_TEMPLATES = {
     ORG_MANAGER_TEMPLATE: {"label": ORG_MANAGER_LABEL, "sections": ORG_MANAGER_SECTIONS, "fullAccess": False},
@@ -284,6 +300,7 @@ BUILTIN_TEMPLATES = {
     AREA_MANAGER_TEMPLATE: {
         "label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False, "hidden": True,
     },
+    APPROVER_TEMPLATE: {"label": APPROVER_LABEL, "sections": APPROVER_SECTIONS, "fullAccess": False},
 }
 
 
@@ -693,6 +710,13 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # ── Organizations (tenants) ──
     (_ALL, "/tenants/{}/settings", S("till_settings")),
     (_ALL, "/tenants*", S("organization")),
+    # ── "בקשות אישור" (P:/specs/manager-approval-mobile.md) — the till's own routes under /approvals
+    # take a machine token (never a dashboard user); these are the dashboard's ──
+    (_ALL, "/approvals/policy", S("approval_settings")),
+    (_GET, "/approvals/policy/approvers", S("approval_settings", level=VIEW)),
+    (_GET, "/approvals/catalog", S("approval_settings", "approvals", "pos_users", level=VIEW)),
+    ("POST", "/approvals/{}/decide", S("approvals", level=EDIT)),
+    (_ALL, "/approvals*", S("approvals")),
     # ── Dashboard users ──
     (_ALL, "/users*", S("users")),
 ]

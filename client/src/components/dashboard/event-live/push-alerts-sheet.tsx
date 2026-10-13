@@ -50,6 +50,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import type { CockpitProps } from './types';
+import { ApprovalsQuietHoursToggle } from '@/components/dashboard/approvals/quiet-hours-toggle';
 
 function useBrowserSupport(): PushSupport {
   return useSyncExternalStore(
@@ -196,6 +197,8 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
           </div>
         ) : null}
         {errors.includes('quiet') ? <p className="text-sm text-destructive">{t('errors.quiet')}</p> : null}
+        {/* "בקשות אישור גם בשעות שקטות" — its own preference, saved at once. */}
+        {draft.quiet ? <ApprovalsQuietHoursToggle /> : null}
         <div className="flex items-center gap-2 text-sm">
           {t('rateLimit')}
           <Input inputMode="numeric" className="h-9 w-20" value={draft.rateLimitMinutes} onChange={(e) => set({ rateLimitMinutes: e.target.value })} aria-invalid={errors.includes('rateLimit')} />

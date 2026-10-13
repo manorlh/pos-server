@@ -199,3 +199,19 @@ OPT_IN_KINDS = OPT_IN_KINDS | frozenset({
 def is_info(kind: Optional[str]) -> bool:
     """An entry that informs (a daily summary) rather than reports a problem."""
     return kind in INFO_KINDS
+
+
+# "בקשת אישור ממנהל מהנייד" (app/services/remote_approvals): every request, decision, expiry and
+# cancel, for the audit — who asked, of whom, who decided, from which device, why. Recorded by the
+# approvals themselves (source `approval_request`); the phone alerts of a request go to its chosen
+# approvers only (push.py `deliver_to_user`), never through the SMS / push rules — opt-in for SMS.
+_APPROVAL_KINDS = (
+    Kind("approval_requested", "בקשת אישור נשלחה", "low", "approval_request", amount=True, percent=True),
+    Kind("approval_approved", "בקשת אישור אושרה", "medium", "approval_request", amount=True, percent=True),
+    Kind("approval_rejected", "בקשת אישור נדחתה", "low", "approval_request", amount=True, percent=True),
+    Kind("approval_expired", "בקשת אישור פגה", "low", "approval_request", amount=True, percent=True),
+    Kind("approval_cancelled", "בקשת אישור בוטלה", "low", "approval_request", amount=True, percent=True),
+)
+KINDS = KINDS + _APPROVAL_KINDS
+KINDS_BY_KEY.update({k.key: k for k in _APPROVAL_KINDS})
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _APPROVAL_KINDS)
