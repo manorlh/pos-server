@@ -69,7 +69,8 @@ import {
   type PrepaidDuplicateRef,
   type SubmitPhase,
 } from '@/lib/prepaidBatchSubmit';
-import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
+import { changedFields, dateFieldValue, editValidity, touchesContents } from '@/lib/prepaidBatchEdit';
+import { dayBoundIso } from '@/lib/prepaidBatchDuplicate';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { BulkEditDialog } from '@/components/dashboard/prepaid-vouchers/batch-bulk-edit';
 import { MAX_BULK_BATCHES, allState, selectedShown, toggleAll, toggleOne } from '@/lib/prepaidBatchBulkEdit';
@@ -182,17 +183,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const PAGE_SIZE = 100;
 const LAYOUT_KEY = 'prepaidVouchers.layout';
 
+/** A date to read ("07/10/2026"); a date field takes `dateFieldValue` (lib/prepaidBatchEdit.ts) instead. */
 function day(iso: string | null | undefined): string {
   return isoDate(iso) ? formatDate(iso) : '';
-}
-
-/** `yyyy-mm-dd` from a date input → the start / end of that day, local time, as ISO. */
-function dayBoundIso(value: string, end: boolean): string | null {
-  if (!value) return null;
-  const [y, m, d] = value.split('-').map(Number);
-  if (!y || !m || !d) return null;
-  const at = end ? new Date(y, m - 1, d, 23, 59, 59) : new Date(y, m - 1, d, 0, 0, 0);
-  return at.toISOString();
 }
 
 const STATUS_STYLE: Record<PrepaidVoucherStatus, string> = {
@@ -321,8 +314,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const [companyId, setCompanyId] = useState(ed?.companyId ?? '');
   const [shopIds, setShopIds] = useState<string[]>(ed?.shopIds ?? []);
-  const [validFrom, setValidFrom] = useState(ed ? day(ed.validFrom) : '');
-  const [validUntil, setValidUntil] = useState(ed ? day(ed.validUntil) : '');
+  // Days as the date fields read them ("2026-10-07", Israel's day of the stored moment).
+  const [validFrom, setValidFrom] = useState(ed ? dateFieldValue(ed.validFrom) : '');
+  const [validUntil, setValidUntil] = useState(ed ? dateFieldValue(ed.validUntil) : '');
   const [splitAllowed, setSplitAllowed] = useState(ed?.splitAllowed ?? false);
   const issued = ed ? (ed.issuedCount ?? ed.stats.total) : 0;
   const [count, setCount] = useState(ed ? String(issued) : '50');
@@ -537,8 +531,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
       freeText: freeText.trim() || null,
       logoUrl,
       showItems, showValidity, showCredit, showCode, barcodeType,
-      validFrom: dayBoundIso(validFrom, false),
-      validUntil: dayBoundIso(validUntil, true),
+      ...editValidity(validFrom, validUntil),
       shopIds: shopIds.length ? [...shopIds].sort() : null,
       count: n,
       productionId: productionId || null,
