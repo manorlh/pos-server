@@ -27,7 +27,8 @@ import {
 
 /** Unset everywhere: what each setting is (the server's defaults). */
 const DEFAULTS: VoucherWorkValues = {
-  voucherRedeemFlow: 'items_first',
+  // "שתי הדרכים" since 13.10.2026 (lib/voucherRedeemFlow.ts VOUCHER_REDEEM_FLOW_DEFAULT).
+  voucherRedeemFlow: 'both',
   voucherShowUnavailable: true,
   voucherAutoApply: 'on',
   voucherFastMode: 'station',
@@ -213,7 +214,7 @@ test('each other dependency, and only while it holds', () => {
 
 test('the summary at the defaults: one line per group, in plain words', () => {
   assert.deepEqual(words(voucherWorkSummary('redeem', DEFAULTS)), [
-    'voucherRedeemFlow=items_first',
+    'voucherRedeemFlow=both',
     'voucherAutoApply=on',
     'voucherFastMode=station',
     'voucherFastAutoClose=on',
@@ -284,7 +285,11 @@ test('the group headers: one or two short badges each', () => {
 
 test('"מומלץ לעמדת שובר": the station on with items first, or with no way to enter the voucher', () => {
   assert.equal(voucherWorkStationAdvice({}, undefined), false); // the station off
-  assert.equal(voucherWorkStationAdvice({ voucherStation: 'on' }, undefined), true); // items first
+  // The flow unset resolves to "both" (13.10.2026), which already scans first: no advice.
+  assert.equal(voucherWorkStationAdvice({ voucherStation: 'on' }, undefined), false);
+  // "items_first" set here or above still wins over the default, and still gets the advice.
+  assert.equal(voucherWorkStationAdvice({ voucherStation: 'on', voucherRedeemFlow: 'items_first' }, undefined), true);
+  assert.equal(voucherWorkStationAdvice({ voucherStation: 'on' }, { voucherRedeemFlow: 'items_first' }), true);
   assert.equal(voucherWorkStationAdvice({ voucherStation: 'on', voucherRedeemFlow: 'voucher_first' }, undefined), false);
   assert.equal(voucherWorkStationAdvice({ voucherRedeemFlow: 'both' }, { voucherStation: 'on' }), false);
   assert.equal(
