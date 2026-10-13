@@ -208,7 +208,7 @@ export const OUTBOX_MAX = 2_000;
 export const QUEUED_TEXT = 'אין חיבור — הפעולה נשמרה ותישלח כשהחיבור יחזור';
 
 /** The cloud checks `expectedVersion` on these (server `_apply`: the task's version). */
-const VERSIONED = new Set(['start', 'item_ready', 'undo_ready', 'resolve_fallback']);
+const VERSIONED = new Set(['start', 'item_ready', 'undo_ready', 'resolve_fallback', 'requeue']);
 
 /** What goes to `POST kds/actions` (server schemas/kds.py `KdsActionIn`). */
 export type KdsActionBody = KdsActionInput & { id: string; occurredAt: string; expectedVersion?: number };
