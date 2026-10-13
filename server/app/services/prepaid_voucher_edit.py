@@ -23,6 +23,10 @@ A change is planned first (what changes, before → after, and what it touches),
 * **test** — "מצב בדיקה" on / off (P:/specs/voucher-test-mode.md): from the next scan. Never while
   the batch is assigned to a device offline (there is no test offline). Logged on its own line
   (`test_mode_on` / `test_mode_off`, who and when), never inside "update".
+* **active** — "סדרה פעילה" on / off (`active`, with `activeReason`): off pauses the batch's
+  redemptions with a pause of its own, on resumes them (app/services/prepaid_voucher_controls.py
+  `set_active`); nothing when it already is so. Not a column: "before" is whether a pause of its own
+  is open. Logged on its own line (`active_off` / `active_on`), never inside "update".
 
 The kind (goods / discount) and the company do not change: a new batch is made for that.
 Every applied edit is one "update" line of the batch's log, with each change before → after.
@@ -55,9 +59,11 @@ COUNT_TOO_MANY = "prepaid_voucher_count_too_many"
 OFFLINE_SHOP = "prepaid_voucher_offline_shop"
 HOLDS_LIVE = "prepaid_voucher_holds_live"
 
-FREE, VALIDITY, WHERE, RULES_OF_USE, ACCOUNTING, CONTENTS, QUANTITY, PRICE, TEST = (
-    "free", "validity", "where", "rules", "accounting", "contents", "quantity", "price", "test",
+FREE, VALIDITY, WHERE, RULES_OF_USE, ACCOUNTING, CONTENTS, QUANTITY, PRICE, TEST, ACTIVE = (
+    "free", "validity", "where", "rules", "accounting", "contents", "quantity", "price", "test", "active",
 )
+#: Switches, not terms: a cancelled batch may still take them, and each is its own log line.
+_SWITCHES = {TEST, ACTIVE}
 #: The wire name of each editable setting, and its category (the order the confirmation lists them in).
 FIELDS: Tuple[Tuple[str, str], ...] = (
     ("name", FREE), ("customerName", FREE), ("eventName", FREE), ("orderRef", FREE), ("freeText", FREE),
@@ -76,6 +82,7 @@ FIELDS: Tuple[Tuple[str, str], ...] = (
     ("count", QUANTITY),
     ("productionPrice", PRICE),
     ("testMode", TEST),
+    ("active", ACTIVE),
 )
 CATEGORY = dict(FIELDS)
 #: Stored money (agorot) on the batch; ₪ in the schema and on the wire.
@@ -273,7 +280,9 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     from app.services import prepaid_voucher_offline as PVO
     from app.services import prepaid_voucher_types as PVT
 
-    given = set(body.model_fields_set) - {"apply_to_partial"}
+    given = set(body.model_fields_set) - {"apply_to_partial", "active_reason"}
+    if getattr(body, "active", None) is None:
+        given.discard("active")
     discount = PV.is_discount(batch)
     if not discount:
         given -= set(_DISCOUNT_ONLY)
@@ -407,6 +416,12 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     before = view(batch, prices=prices)
     after_cols = dict(cols, next_serial=int(batch.next_serial or 1) + issue)
     after = view(_Overlay(batch, after_cols, items), prices=prices)
+    if "active" in given:
+        # "סדרה פעילה" is the pauses' state, not a column: read only when asked.
+        from app.services.prepaid_voucher_controls import is_active
+
+        before["active"] = is_active(db, batch)
+        after["active"] = bool(body.active)
     changes = [
         {"field": f, "category": cat, "before": before.get(f), "after": after.get(f)}
         for f, cat in FIELDS
@@ -414,8 +429,9 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     ]
     _name_refs(db, changes)
     changed = {c["category"] for c in changes}
-    # A cancelled batch: its free texts, and test mode (ending a test, or seeing "השובר בוטל" in one).
-    if batch.status == "cancelled" and changed - {FREE, TEST}:
+    # A cancelled batch: its free texts, test mode (ending a test, or seeing "השובר בוטל" in one) and
+    # "סדרה פעילה" (a bulk on / off over batches some of which are cancelled is never refused for it).
+    if batch.status == "cancelled" and changed - {FREE} - _SWITCHES:
         raise PV._http(status.HTTP_409_CONFLICT, PV.BATCH_CANCELLED)
     if CONTENTS in changed:
         from app.models.prepaid_voucher import PrepaidVoucherReservation
@@ -451,6 +467,9 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     if TEST in changed:
         # On: the next scans take nothing and count nowhere. Off: real from the next scan.
         effects[TEST] = {"on": bool(cols.get("test_mode")), "vouchers": open_n}
+    if ACTIVE in changed:
+        # Off: from the next scan no till redeems its vouchers; on: they redeem again.
+        effects[ACTIVE] = {"on": bool(body.active), "vouchers": open_n}
     return {
         "changes": changes,
         "effects": effects,
@@ -643,6 +662,7 @@ def apply_edit(
     assignment = plan["_assignment"]
     if assignment is not None and plan["_categories"] - {FREE, TEST}:
         # The device downloads the batch again (its version moved); what it redeemed meanwhile syncs as ever.
+        # "סדרה פעילה" too: the device learns the batch is paused / redeems again (its snapshot's `paused`).
         assignment.version = int(assignment.version or 1) + 1
     batch.updated_at = now
     # "מצב בדיקה" on / off: who and when on the batch, and its own line on the audit trail.
@@ -653,7 +673,13 @@ def apply_edit(
         batch.test_mode_by = PV._user_name(user) if on else None
         PV._event(db, batch, user, "test_mode_on" if on else "test_mode_off",
                   details={"bulk": dict(bulk)} if bulk else None)
-    rest = [c for c in plan["changes"] if c["field"] != "testMode"]
+    # "סדרה פעילה" on / off: the pauses (app/services/prepaid_voucher_controls.py), its own log lines.
+    active = next((c for c in plan["changes"] if c["field"] == "active"), None)
+    if active is not None:
+        from app.services.prepaid_voucher_controls import set_active
+
+        set_active(db, user, batch, bool(active["after"]), getattr(body, "active_reason", None), bulk=bulk)
+    rest = [c for c in plan["changes"] if c["field"] not in ("testMode", "active")]
     if not rest:
         db.flush()
         return plan
@@ -664,7 +690,7 @@ def apply_edit(
             {**{k: _jsonable(v) for k, v in c.items()}, **({"secret": "prices"} if c["field"] in secret else {})}
             for c in rest
         ],
-        "effects": {k: v for k, v in plan["effects"].items() if k != TEST},
+        "effects": {k: v for k, v in plan["effects"].items() if k not in _SWITCHES},
         "applyToPartial": plan["_apply_partial"],
     }
     if refit is not None:

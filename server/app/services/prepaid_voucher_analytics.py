@@ -103,6 +103,8 @@ class Scope:
     q: Optional[str] = None
     #: "מצב בדיקה": only the batches in test mode (True) / not (False).
     test_mode: Optional[bool] = None
+    #: "סדרה פעילה": only the batches on (True) / off (False) — off: a pause of its own is open.
+    active: Optional[bool] = None
 
     @property
     def has_redemption_filter(self) -> bool:
@@ -188,6 +190,7 @@ def make_scope(
     group: Optional[int] = None,
     q: Optional[str] = None,
     test_mode: Optional[str] = None,
+    active: Optional[str] = None,
 ) -> Scope:
     """The query parameters, checked: an unknown choice is a 400 `prepaid_voucher_bad_filter:<name>`."""
     scope = Scope(
@@ -219,6 +222,7 @@ def make_scope(
         group=group if group and group > 0 else None,
         q=(q or "").strip() or None,
         test_mode=_yes_no(test_mode, "testMode"),
+        active=_yes_no(active, "active"),
     )
     for lo, hi, name in (
         (scope.issued_from, scope.issued_to, "issuedTo"),
@@ -381,6 +385,12 @@ def scoped_batches(
         q = q.filter(or_(PrepaidVoucherBatch.valid_from.is_(None), PrepaidVoucherBatch.valid_from < b))
         q = q.filter(or_(PrepaidVoucherBatch.valid_until.is_(None), PrepaidVoucherBatch.valid_until >= a))
     batches = [b for b in q.order_by(PrepaidVoucherBatch.created_at.desc()).all() if PV.may_manage(db, user, tenant_id, b)]
+    if scope.active is not None and batches:
+        # "סדרה פעילה": the tenant's open pauses read once (app/services/prepaid_voucher_controls.py).
+        from app.services import prepaid_voucher_controls as CTL
+
+        pauses = CTL.open_pauses(db, tenant_id, now)
+        batches = [b for b in batches if CTL.is_active(db, b, pauses=pauses) is scope.active]
     if scope.shop_ids:
         shop_company = _shop_company(db, scope.shop_ids)
         groups: Dict[str, set] = {}
@@ -442,10 +452,13 @@ def list_batches(db: Session, user: User, tenant_id, scope: Scope, sort: str = "
         words = scope.q.lower().split()
         batches = [b for b in batches if _batch_text_match(b, words)]
     stats = PV._stats(db, [b.id for b in batches])
+    from app.services.prepaid_voucher_controls import open_pauses
+
+    pauses = open_pauses(db, tenant_id, now)  # "סדרה פעילה" / `pausedBy` of every row, read once
     rows = []
     for b in batches:
         s = stats.get(str(b.id)) or PV._empty_counts()
-        out = PV.batch_out(db, b, s, user=user)
+        out = PV.batch_out(db, b, s, user=user, pauses=pauses)
         out["figures"] = batch_figures(s)
         out["state"] = batch_state(b, s, now)
         rows.append(out)

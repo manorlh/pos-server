@@ -96,6 +96,9 @@ interface Draft {
   barcodeType: PrepaidBarcodeType;
   /** "מצב בדיקה" (each batch's own audit line). */
   testMode: boolean;
+  /** "סדרה פעילה" (each batch's own audit line) and why it is turned off. */
+  active: boolean;
+  activeReason: string;
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -106,6 +109,8 @@ const EMPTY_DRAFT: Draft = {
   pricing: 'cover', tillValue: '', allowTopUp: true, accounting: 'discount', policy: policyState(),
   showCode: false, showItems: true, showValidity: true, showCredit: true, printTillValue: false, barcodeType: 'qr',
   testMode: false,
+  // Ticked, the usual change is "turn them off": the preview lists each batch before anything is applied.
+  active: false, activeReason: '',
 };
 
 const decimal = (v: string) => (v.trim() ? Number(v.replace(',', '.')) : null);
@@ -136,6 +141,7 @@ function partsOf(d: Draft): Partial<Record<BulkField, Record<string, unknown>>> 
     printTillValue: { printTillValue: d.printTillValue },
     barcodeType: { barcodeType: d.barcodeType },
     testMode: { testMode: d.testMode },
+    active: { active: d.active, ...(!d.active && d.activeReason.trim() ? { activeReason: d.activeReason.trim() } : {}) },
   };
 }
 
@@ -177,6 +183,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
   const tp = useTranslations('prepaidVouchers');
   const tc = useTranslations('common');
   const tm = useTranslations('prepaidVoucherTestMode');
+  const tact = useTranslations('prepaidVoucherActive');
   const qc = useQueryClient();
   const label = useEditFieldLabel();
   const [step, setStep] = useState<Step>('form');
@@ -394,6 +401,21 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
       </select>
     )),
     testMode: switchRow('testMode', draft.testMode, (v) => set({ testMode: v })),
+    active: row('active', (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <span className={cn('text-sm', draft.active ? 'text-emerald-700 dark:text-emerald-400' : 'text-destructive')}>
+            {draft.active ? tact('bulk.on') : tact('bulk.off')}
+          </span>
+          <Switch checked={draft.active} disabled={!on('active')} onCheckedChange={(v) => set({ active: !!v })} aria-label={label('active')}
+            className="data-checked:bg-emerald-600 dark:data-checked:bg-emerald-500" />
+        </div>
+        {!draft.active ? (
+          <Input className="h-9" maxLength={500} value={draft.activeReason} disabled={!on('active')}
+            onChange={(e) => set({ activeReason: e.target.value })} placeholder={tact('reasonPlaceholder')} aria-label={tact('reason')} />
+        ) : null}
+      </div>
+    ), draft.active ? tact('bulk.onHint') : tact('bulk.offHint')),
   };
 
   const okCount = willChange(preview);
@@ -419,7 +441,9 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
               const here = BULK_FIELDS.filter((f) => f.section === section && shownFields.has(f.field));
               return here.length ? (
                 <section key={section} className="space-y-2">
-                  <h3 className="text-sm font-semibold">{t.has(`section.${section}`) ? t(`section.${section}`) : tm(`bulkSection.${section}`)}</h3>
+                  <h3 className="text-sm font-semibold">
+                    {t.has(`section.${section}`) ? t(`section.${section}`) : tm.has(`bulkSection.${section}`) ? tm(`bulkSection.${section}`) : tact(`bulkSection.${section}`)}
+                  </h3>
                   {here.map((f) => controls[f.field])}
                 </section>
               ) : null;
