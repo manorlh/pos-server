@@ -16,8 +16,8 @@ What each test pins, and how it could look fine while doing damage:
 * **KDS** — the kitchen screens drop the order; a KDS-only shop gets no paper.
 * **The relay** — the void goes to the print server of the moment, follows it when it moves, waits
   while no till takes it ("בון ביטול ממתין למדפסת" on the dashboard) and says so once it gave up.
-* **The LAN mode** — an order the LAN host serves while it is online is refused (the cancel would
-  never reach its floor while the kitchen stopped cooking); a silent host's is cancelled and voided.
+* **The LAN mode** — a copy no host serves (`hostless`) is cancelled and voided here; one a host
+  serves is the host's to cancel (tests/test_remote_table_cancel.py).
 
 Runs on the world of tests/test_kitchen_printers.py (SQLite).
 """
@@ -307,9 +307,9 @@ def test_a_retry_never_prints_twice(v):
 
 def test_a_tills_upload_of_the_same_cancels_void_is_the_same_job(v):
     """
-    The LAN mode: the floor's host never learnt of the dashboard's cancel (it was silent), a till
-    there cancels the table too — its void goes under the till's id for that cancel, the dashboard's
-    own: the relay keeps one job, and the till follows it as its own.
+    A till that cancels the same order too (a LAN copy cancelled here while no host served it, still
+    open on a till that comes back) sends its void under the till's id for that cancel — the
+    dashboard's own: the relay keeps one job, and the till follows it as its own.
     """
     order = order_on(v, sent(("l1", v.steak, 2)))
     cancel(v)
@@ -424,36 +424,25 @@ def test_the_dashboard_says_while_it_waits_and_when_it_gave_up(v):
     assert [(t["printerName"], t["state"]) for t in live(v)["voidTickets"]] == [("Bar", "failed")]
 
 
-# ── The LAN mode ──────────────────────────────────────────────────────────────
+# ── The LAN mode (the rest: tests/test_remote_table_cancel.py) ─────────────────
 
 
-def lan_floor(v):
+def test_a_lan_copy_no_host_serves_is_cancelled_and_voided_here(k, monkeypatch):
+    """`hostless`: no tables host (no print server, two tills, none marked) — the cloud cancels it."""
+    v = floor(k, monkeypatch, print_host=False)
     set_param(v, "tablesMode", "shop", v.shop.id, LAN)
-    set_param(v, "tablesHostTill", "machine", v.t1.id, True)
-    assert T.tables_host_of_shop(v.db, v.shop.id).id == v.t1.id
-
-
-def test_an_order_the_live_lan_host_serves_is_refused(v):
-    lan_floor(v)
-    order = order_on(v, sent(("l1", v.steak, 1)), source="local")
-    e = refused(cancel, v)
-    assert e.status_code == 409 and e.detail["code"] == "table_on_live_host"
-    v.db.refresh(order)
-    assert order.status == "open" and jobs_of(v) == []
-
-
-def test_a_silent_lan_hosts_order_is_cancelled_and_voided(v):
-    lan_floor(v)
-    heard(v.t1, timedelta(minutes=10))
-    v.db.commit()
+    assert T.tables_host_of_shop(v.db, v.shop.id) is None
     order_on(v, sent(("l1", v.steak, 1)), source="local")
-    assert cancel(v)["status"] == "cancelled"
+    out = cancel(v)
+    assert out["status"] == "cancelled" and out["mode"] == "direct"
     [job] = jobs_of(v)
-    assert job.target_machine_id == v.t2.id
+    assert job.target_machine_id == v.t1.id
 
 
 def test_a_single_tills_report_is_not_the_hosts(v):
     """«קופה אחת» beside the LAN group: its report carries no dishes — never the host's, never voided."""
-    lan_floor(v)
+    set_param(v, "tablesMode", "shop", v.shop.id, LAN)
+    set_param(v, "tablesHostTill", "machine", v.t1.id, True)
     order_on(v, None, source="local", cart=None)
-    assert cancel(v)["voidTickets"] == []
+    out = cancel(v)
+    assert out["mode"] == "direct" and out["voidTickets"] == []

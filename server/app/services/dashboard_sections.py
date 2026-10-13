@@ -579,7 +579,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/kiosks/{}/commands", S("kiosks", "device_control")),
     (_ALL, "/kiosks/{}/banner", S("kiosks", "device_control")),
     (_ALL, "/kiosks*", S("kiosks")),
-    # Remote control of tills and kiosks (app/routers/device_commands.py).
+    # Remote control of tills and kiosks (app/routers/device_commands.py). One command's status is
+    # also the tables page's: a table cancelled through the LAN host (`cancel_table`) is followed there
+    # by whoever reads the shop's tables (the route checks which: its own scope per action).
+    (_GET, "/device-commands/{}", S("device_control", "tables", level=VIEW)),
     (_ALL, "/device-commands*", S("device_control")),
     # "שליחת לוגים לענן" (app/routers/device_logs.py): the device page's "לוגים" and the super
     # admin's "לוגים ממכשירים". Any of the two at view lets the route's own rule run: the content

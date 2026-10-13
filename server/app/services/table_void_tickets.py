@@ -35,10 +35,10 @@ How the tills learn of a dashboard cancel, and why none prints a second void: in
 ("שולחנות בענן") the cancel wakes the shop's tills (the tables signal); they pull the floor and the
 table is free — no till runs its own cancel for it (one that tries is refused: the order is not open
 any more), and nothing on a till prints a void for an order closed elsewhere. In the LAN mode the host
-holds the floor and the cloud a copy: the host learns of a dashboard cancel only when it next takes the
-cloud's copy (`tables.host_seed`, after a restart or a move), and taking it prints nothing. An order
-the LAN host serves while it is online is never cancelled from here (`tables.dashboard_cancel`, 409
-`table_on_live_host`): the cancel would not reach its floor while the kitchen stopped cooking.
+holds the floor and the cloud a copy, and the host learns of a cloud-side cancel only when it next
+takes the cloud's copy (`tables.host_seed`): so there the dashboard's cancel is a command to the host,
+which cancels it as at a till (app/services/remote_table_cancel.py) — this module runs only where no
+host serves the copy (`hostless`), and the next host takes it from the cloud (taking it prints nothing).
 """
 from __future__ import annotations
 

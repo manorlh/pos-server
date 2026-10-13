@@ -652,6 +652,10 @@ class ReasonUpdate(_Camel):
 class DashboardCancelIn(_Camel):
     reason_id: uuid.UUID = Field(..., alias="reasonId")
     reason_text: Optional[str] = Field(None, alias="reasonText")
+    #: The order and its version as the dashboard showed them: another order or version now is 409
+    #: `order_changed` (the dashboard refreshes). Absent (an older dashboard): not compared.
+    order_id: Optional[uuid.UUID] = Field(None, alias="orderId")
+    expected_version: Optional[int] = Field(None, alias="expectedVersion", ge=0)
 
     @field_validator("reason_text", mode="before")
     @classmethod
