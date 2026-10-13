@@ -30,6 +30,9 @@ const DEFAULTS: VoucherWorkValues = {
   // "שתי הדרכים" since 13.10.2026 (lib/voucherRedeemFlow.ts VOUCHER_REDEEM_FLOW_DEFAULT).
   voucherRedeemFlow: 'both',
   voucherShowUnavailable: true,
+  voucherGuide: true,
+  voucherPickFilter: 'eligible',
+  voucherAutoPickSingle: true,
   voucherAutoApply: 'on',
   voucherFastMode: 'station',
   voucherFastAutoClose: 'on',
@@ -61,6 +64,10 @@ test('the four groups, their order and every setting in exactly one of them', ()
   assert.deepEqual([...voucherWorkGroupKeys('redeem')], [
     'voucherRedeemFlow',
     'voucherShowUnavailable',
+    // "בחר פריט לשובר" (P:/specs/voucher-station-fast-flows.md §4), with the item picker's other setting.
+    'voucherGuide',
+    'voucherPickFilter',
+    'voucherAutoPickSingle',
     'voucherAutoApply',
     'voucherFastMode',
     'voucherFastAutoClose',
@@ -84,8 +91,8 @@ test('the four groups, their order and every setting in exactly one of them', ()
     'voucherStationTitle',
   ]);
   assert.deepEqual([...voucherWorkGroupKeys('sound')], ['voucherSoundApprove', 'voucherSoundReject', 'voucherSoundBoost', 'voucherVibrate']);
-  assert.equal(VOUCHER_WORK_KEYS.length, 22);
-  assert.equal(new Set(VOUCHER_WORK_KEYS).size, 22);
+  assert.equal(VOUCHER_WORK_KEYS.length, 25);
+  assert.equal(new Set(VOUCHER_WORK_KEYS).size, 25);
   assert.deepEqual(Object.keys(DEFAULTS).sort(), [...VOUCHER_WORK_KEYS].sort());
   for (const g of VOUCHER_WORK_GROUPS) for (const key of g.keys) assert.equal(voucherWorkGroupOf(key), g.id);
   assert.equal(isVoucherWorkKey('voucherVibrate'), true);
@@ -97,6 +104,9 @@ test('the four groups, their order and every setting in exactly one of them', ()
 test('each setting keeps its control and values', () => {
   assert.deepEqual(voucherWorkControl('voucherRedeemFlow'), { kind: 'choice', values: ['items_first', 'voucher_first', 'both'] });
   assert.deepEqual(voucherWorkControl('voucherShowUnavailable'), { kind: 'switch' });
+  assert.deepEqual(voucherWorkControl('voucherGuide'), { kind: 'switch' });
+  assert.deepEqual(voucherWorkControl('voucherPickFilter'), { kind: 'choice', values: ['eligible', 'all'] });
+  assert.deepEqual(voucherWorkControl('voucherAutoPickSingle'), { kind: 'switch' });
   assert.deepEqual(voucherWorkControl('voucherBalanceCheck'), { kind: 'choice', values: ['auto', 'on', 'off'] });
   assert.deepEqual(voucherWorkControl('voucherStation'), { kind: 'choice', values: ['off', 'on'] });
   assert.deepEqual(voucherWorkControl('voucherAutoClose'), { kind: 'choice', values: ['on', 'off'] });
@@ -125,6 +135,31 @@ test("a level's own value: only a known one counts", () => {
   assert.equal(isVoucherWorkValue('voucherRedeemFlow', null), false);
   assert.equal(isVoucherWorkValue('voucherSuccessDismiss', 'confirm'), true);
   assert.equal(isVoucherWorkValue('voucherSuccessDismiss', 'manual'), false);
+  assert.equal(isVoucherWorkValue('voucherGuide', false), true);
+  assert.equal(isVoucherWorkValue('voucherGuide', 'off'), false);
+  assert.equal(isVoucherWorkValue('voucherAutoPickSingle', true), true);
+  assert.equal(isVoucherWorkValue('voucherAutoPickSingle', 0), false);
+  assert.equal(isVoucherWorkValue('voucherPickFilter', 'all'), true);
+  assert.equal(isVoucherWorkValue('voucherPickFilter', 'ALL'), false);
+  assert.equal(isVoucherWorkValue('voucherPickFilter', true), false);
+});
+
+test('"בחר פריט לשובר": its own, else inherited, else the guide on, eligible only, the lone item picked', () => {
+  assert.deepEqual(
+    voucherWorkEffective({ voucherGuide: false, voucherPickFilter: 'junk', voucherAutoPickSingle: 'false' }, { voucherPickFilter: 'all', voucherAutoPickSingle: false }),
+    { ...DEFAULTS, voucherGuide: false, voucherPickFilter: 'all', voucherAutoPickSingle: false },
+  );
+  assert.equal(resolveVoucherWorkValue('voucherGuide', undefined, 'off'), true); // junk inherited = the default
+  assert.equal(resolveVoucherWorkValue('voucherPickFilter', 'eligible', 'all'), 'eligible');
+  assert.equal(resolveVoucherWorkValue('voucherAutoPickSingle', true, false), true);
+  // They depend on nothing, and nothing depends on them.
+  const e = voucherWorkEffective({ voucherGuide: false, voucherPickFilter: 'all', voucherAutoPickSingle: false }, undefined);
+  for (const key of VOUCHER_WORK_KEYS) {
+    assert.equal(voucherWorkDependency(key, e), voucherWorkDependency(key, DEFAULTS), key);
+  }
+  for (const key of ['voucherGuide', 'voucherPickFilter', 'voucherAutoPickSingle'] as VoucherWorkKey[]) {
+    assert.equal(voucherWorkDependency(key, voucherWorkEffective({ voucherFastMode: 'off', voucherRedeemFlow: 'items_first' }, undefined)), null, key);
+  }
 });
 
 test('nothing set anywhere: the defaults', () => {
@@ -215,6 +250,9 @@ test('each other dependency, and only while it holds', () => {
 test('the summary at the defaults: one line per group, in plain words', () => {
   assert.deepEqual(words(voucherWorkSummary('redeem', DEFAULTS)), [
     'voucherRedeemFlow=both',
+    'voucherGuide=on',
+    'voucherPickFilter=eligible',
+    'voucherAutoPickSingle=on',
     'voucherAutoApply=on',
     'voucherFastMode=station',
     'voucherFastAutoClose=on',
@@ -240,6 +278,11 @@ test('the summary leaves out what changes nothing', () => {
     undefined,
   );
   assert.equal(words(voucherWorkSummary('redeem', e)).includes('voucherFastAutoClose=on'), false);
+  // The "בחר פריט לשובר" switches read as on / off, the filter as its value.
+  assert.deepEqual(
+    words(voucherWorkSummary('redeem', voucherWorkEffective({ voucherGuide: false, voucherPickFilter: 'all', voucherAutoPickSingle: false }, undefined))).slice(1, 4),
+    ['voucherGuide=off', 'voucherPickFilter=all', 'voucherAutoPickSingle=off'],
+  );
   assert.deepEqual(words(voucherWorkSummary('close', e)), ['voucherAutoClose=on', 'voucherSuccessScreen=off']);
   // Closed on "אישור": that, rather than the seconds.
   assert.deepEqual(words(voucherWorkSummary('close', voucherWorkEffective({ voucherSuccessDismiss: 'confirm', voucherSuccessSeconds: 6 }, undefined))), [

@@ -113,6 +113,23 @@ And nine more, added 13.10.2026 (P:/specs/voucher-fast-mode.md §0, "מצב מה
                                             longer is a 422 in Hebrew; unset, blank or junk reads as
                                             "עמדת מימוש שוברים"
 
+And three more, added 13.10.2026 (P:/specs/voucher-station-fast-flows.md §2 and §4, "בחר פריט לשובר": a
+scanned voucher that needs items opens the order screen with the voucher already on the sale), set and
+inherited the same way:
+
+    voucherGuide           true  — "הסבר לעובד מה לבחור": a short strip over the items saying what the
+                                   voucher allows and how many are left, built from the voucher (the
+                                   default)
+                           false — no strip; the tags on the eligible items stay
+    voucherPickFilter      "eligible" — "אחרי סריקת שובר שדורש פריטים": only the items the voucher applies
+                                        to, with a "כל התפריט" button (the default)
+                           "all"      — the whole menu, the eligible items tagged
+    voucherAutoPickSingle  true  — "כשיש רק פריט מתאים אחד — בחר אותו אוטומטית": a one-item voucher with
+                                   a single eligible item on the menu puts it in by itself (the default)
+                           false — the cashier taps it
+    voucherGuide and voucherAutoPickSingle are JSON booleans (like voucherShowUnavailable), anything but
+    a real bool reading as true; voucherPickFilter anything but its two values reads as "eligible".
+
 They go to the till always resolved (GET /sync/{id}/settings, `settings.<key>`): anything but a known
 value counts as unset. A change is written to the till parameters' change log
 (voucher_redeem_settings.audit_patch).
@@ -244,6 +261,22 @@ VOUCHER_FAST_CHOICES: Dict[str, Tuple[Tuple[str, ...], str]] = {
 
 VOUCHER_FAST_MODE_SETTING_KEYS: Tuple[str, ...] = (*VOUCHER_FAST_CHOICES, VOUCHER_STATION_TITLE_KEY)
 
+#: 13.10.2026 (P:/specs/voucher-station-fast-flows.md §4): the "בחר פריט לשובר" order screen after a scan
+#: of a voucher that needs items — the cashier's guide strip, which items it shows, and the lone eligible
+#: item picked by itself.
+VOUCHER_GUIDE_KEY = "voucherGuide"
+VOUCHER_PICK_FILTER_KEY = "voucherPickFilter"
+VOUCHER_AUTO_PICK_SINGLE_KEY = "voucherAutoPickSingle"
+PICK_FILTER_ELIGIBLE = "eligible"
+PICK_FILTER_ALL = "all"
+PICK_FILTER_VALUES: Tuple[str, ...] = (PICK_FILTER_ELIGIBLE, PICK_FILTER_ALL)
+#: Unset everywhere: the strip shown, only the eligible items, a lone eligible item picked by itself.
+DEFAULT_GUIDE = True
+DEFAULT_PICK_FILTER = PICK_FILTER_ELIGIBLE
+DEFAULT_AUTO_PICK_SINGLE = True
+
+VOUCHER_PICK_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_GUIDE_KEY, VOUCHER_PICK_FILTER_KEY, VOUCHER_AUTO_PICK_SINGLE_KEY)
+
 #: `code` of the 422 for a title over STATION_TITLE_MAX characters.
 STATION_TITLE_TOO_LONG = "voucher_station_title_too_long"
 
@@ -353,3 +386,18 @@ def resolve_voucher_fast_mode(merged: Mapping[str, Any]) -> Dict[str, Any]:
     title = normalize_station_title(title) if isinstance(title, str) else ""
     out[VOUCHER_STATION_TITLE_KEY] = title if title and len(title) <= STATION_TITLE_MAX else DEFAULT_STATION_TITLE
     return out
+
+
+def resolve_voucher_pick(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherGuide` / `voucherPickFilter` / `voucherAutoPickSingle` resolved from a merged settings dict:
+    the two switches a real bool, else true; the filter "eligible" or "all", else "eligible". A view only."""
+    guide = merged.get(VOUCHER_GUIDE_KEY)
+    pick_filter = merged.get(VOUCHER_PICK_FILTER_KEY)
+    auto_pick = merged.get(VOUCHER_AUTO_PICK_SINGLE_KEY)
+    return {
+        VOUCHER_GUIDE_KEY: guide if isinstance(guide, bool) else DEFAULT_GUIDE,
+        VOUCHER_PICK_FILTER_KEY: pick_filter
+        if isinstance(pick_filter, str) and pick_filter in PICK_FILTER_VALUES
+        else DEFAULT_PICK_FILTER,
+        VOUCHER_AUTO_PICK_SINGLE_KEY: auto_pick if isinstance(auto_pick, bool) else DEFAULT_AUTO_PICK_SINGLE,
+    }

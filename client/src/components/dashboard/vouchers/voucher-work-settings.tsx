@@ -104,7 +104,10 @@ export function VoucherWorkSettings({
   const stem = (key: VoucherWorkKey) => TEXT_STEM[key] ?? key;
   const valueLabel = (key: VoucherWorkKey, v: string | number | boolean): string => {
     const control = voucherWorkControl(key);
-    if (control.kind === 'switch') return v ? t('voucherUnavailableShow') : t('voucherUnavailableHide');
+    if (control.kind === 'switch') {
+      if (key === 'voucherShowUnavailable') return v ? t('voucherUnavailableShow') : t('voucherUnavailableHide');
+      return t(`voucherOnOff.${v ? 'on' : 'off'}`);
+    }
     if (control.kind === 'seconds' || control.kind === 'text') return String(v);
     if (key === 'voucherRedeemFlow') return t(`voucherFlow.${v}`);
     if (key === 'voucherBalanceCheck') return t(`voucherBalance.${v}`);
