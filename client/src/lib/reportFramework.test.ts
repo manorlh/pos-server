@@ -16,6 +16,7 @@ import {
   type ReportFilterSpec,
 } from './reportFilters';
 import {
+  companyDefaultColumns,
   fromServerPrefs,
   groupRuns,
   moveColumn,
@@ -83,6 +84,8 @@ import {
   sortLiveRows,
   writeLiveItemsState,
 } from './liveItemsView';
+import { ACCOUNTING_EXPORT_EXTRAS, parseAccountingExportForm } from './accountingExportForm';
+import { taxOpenFormatExtras, taxOpenFormatMode, taxOpenFormatParams } from './taxOpenFormatForm';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -380,6 +383,21 @@ describe('a sheet cut to the export columns', () => {
   it('every sheet gets the report’s header lines, then its own', () => {
     assert.deepEqual(sheetHeading({ ...sheet, heading: ['פירוט'] }, { heading: ['דוח', 'הופק'] }), ['דוח', 'הופק', 'פירוט']);
     assert.deepEqual(sheetHeading(sheet), []);
+  });
+
+  it('a status colour stays with its row when the columns are cut', () => {
+    const table: ExportTable = {
+      tableId: 'main',
+      name: 'התאמה',
+      columns: sheet.columns.map((c) => ({ key: c.key!, header: c.header, kind: c.kind })),
+      rows: sheet.rows,
+      rowFills: ['FFFFE5E3', null],
+    };
+    const cut = exportTableSheet(table, ['net']);
+    assert.deepEqual(cut.rows, [[30], [8]]);
+    assert.deepEqual(cut.rowFills, ['FFFFE5E3', null]);
+    // No colour at all: no fills on the sheet.
+    assert.equal(exportTableSheet({ ...table, rowFills: [null, null] }, null).rowFills, undefined);
   });
 });
 
@@ -788,5 +806,169 @@ describe('the live items board: its state in the URL, its rows and totals', () =
     assert.deepEqual(liveItemsTotals(found, scope, true), {
       qty: 5, unitsSold: 5, unitsRefunded: 0, gross: 44, discounts: 0, refunds: 0, net: 44,
     });
+  });
+});
+
+describe('ZIP export pages: the form in the URL (accounting-export, tax-reports)', () => {
+  const ACCOUNTING_SPEC: ReportFilterSpec = { filters: [], defaultDaysBack: 30, extras: ACCOUNTING_EXPORT_EXTRAS };
+  const DEFAULT_FORM = {
+    basis: 'business',
+    onlyUnexported: true,
+    format: 'hashavshevet',
+    grouping: 'z',
+    level: '',
+    consolidate: '',
+    encoding: '',
+    method: '',
+  };
+
+  it('accounting: the last 30 days and "from the settings" by default; defaults stay out of the URL', () => {
+    const fresh = parseReportFilters(new URLSearchParams(''), ACCOUNTING_SPEC, '2026-10-13');
+    assert.equal(fresh.applied, false);
+    assert.equal(fresh.values.from, '2026-09-13');
+    assert.equal(fresh.values.to, '2026-10-13');
+    assert.deepEqual(parseAccountingExportForm(fresh.extras), DEFAULT_FORM);
+    const url = writeReportFilters(new URLSearchParams(''), fresh.values, fresh.extras, ACCOUNTING_SPEC);
+    assert.deepEqual([...url.keys()].sort(), ['from', 'to']);
+  });
+
+  it('accounting: a link holds the range, the Zs listed and every export option', () => {
+    const fresh = parseReportFilters(new URLSearchParams(''), ACCOUNTING_SPEC, '2026-10-13');
+    const extras = {
+      ...fresh.extras,
+      basis: 'production',
+      unexported: '0',
+      format: 'priority',
+      grouping: 'month',
+      level: 'shop',
+      consolidate: 'true',
+      encoding: 'cp862',
+      importMethod: 'detailed',
+    };
+    const url = writeReportFilters(
+      new URLSearchParams('company=c1&shop=s1'),
+      { ...fresh.values, from: '2026-10-01', to: '2026-10-12' },
+      extras,
+      ACCOUNTING_SPEC,
+    );
+    assert.equal(url.get('shop'), 's1');
+    const back = parseReportFilters(url, ACCOUNTING_SPEC, '2026-10-13');
+    assert.equal(back.applied, true);
+    assert.equal(back.values.from, '2026-10-01');
+    assert.deepEqual(parseAccountingExportForm(back.extras), {
+      basis: 'production',
+      onlyUnexported: false,
+      format: 'priority',
+      grouping: 'month',
+      level: 'shop',
+      consolidate: 'true',
+      encoding: 'cp862',
+      method: 'detailed',
+    });
+  });
+
+  it('accounting: a hand-edited value falls back to the default', () => {
+    assert.deepEqual(
+      parseAccountingExportForm({
+        basis: 'week',
+        unexported: 'no',
+        format: 'csv',
+        grouping: 'year',
+        level: 'till',
+        consolidate: 'yes',
+        encoding: 'utf8',
+        importMethod: 'x',
+      }),
+      DEFAULT_FORM,
+    );
+    assert.deepEqual(parseAccountingExportForm({}), DEFAULT_FORM);
+  });
+
+  it('tax: the request the page always sent — the shop, else the company; a range or a year', () => {
+    const form = { shopId: '', companyId: 'c1', mode: 'date-range' as const, from: '2026-01-01', to: '2026-06-30', year: '2026' };
+    assert.deepEqual(taxOpenFormatParams(form), {
+      scope: 'company',
+      mode: 'date-range',
+      companyId: 'c1',
+      from: '2026-01-01',
+      to: '2026-06-30',
+    });
+    const shop = taxOpenFormatParams({ ...form, shopId: 's1' });
+    assert.deepEqual(shop, { scope: 'shop', mode: 'date-range', shopId: 's1', from: '2026-01-01', to: '2026-06-30' });
+    // Same keys in the same order: the query string the server always got.
+    assert.deepEqual(Object.keys(shop!), ['scope', 'mode', 'shopId', 'from', 'to']);
+    assert.deepEqual(taxOpenFormatParams({ ...form, mode: 'year', year: '2025', from: '', to: '' }), {
+      scope: 'company',
+      mode: 'year',
+      companyId: 'c1',
+      year: 2025,
+    });
+  });
+
+  it('tax: nothing to send while something is missing or wrong', () => {
+    const form = { shopId: '', companyId: 'c1', mode: 'date-range' as const, from: '2026-01-01', to: '2026-06-30', year: '2026' };
+    assert.equal(taxOpenFormatParams({ ...form, companyId: '' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, from: '' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, from: '2026-07-01' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, mode: 'year', year: '' }), null);
+    assert.equal(taxOpenFormatParams({ ...form, mode: 'year', year: 'abc' }), null);
+  });
+
+  it('tax: today and the date range by default; the mode and the year in a link', () => {
+    const spec: ReportFilterSpec = { filters: [], defaultDaysBack: 0, extras: taxOpenFormatExtras('2026') };
+    const fresh = parseReportFilters(new URLSearchParams('company=c1'), spec, '2026-10-13');
+    assert.equal(fresh.values.from, '2026-10-13');
+    assert.equal(fresh.values.to, '2026-10-13');
+    assert.equal(taxOpenFormatMode(fresh.extras.mode), 'date-range');
+    assert.equal(fresh.extras.year, '2026');
+    const url = writeReportFilters(new URLSearchParams('company=c1'), fresh.values, { mode: 'year', year: '2025' }, spec);
+    assert.equal(url.get('company'), 'c1');
+    const back = parseReportFilters(url, spec, '2026-10-13');
+    assert.equal(taxOpenFormatMode(back.extras.mode), 'year');
+    assert.equal(back.extras.year, '2025');
+    assert.equal(taxOpenFormatMode('weekly'), 'date-range');
+    assert.equal(taxOpenFormatMode(undefined), 'date-range');
+  });
+});
+
+describe('the company default of a report with many tables (§4.3: up to 100 columns)', () => {
+  const keys = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => prefix + i);
+  it('everything that fits is saved as chosen', () => {
+    const list = companyDefaultColumns([{ tableId: 'main', keys: ['a', 'b'], all: ['a', 'b', 'c'] }]);
+    assert.deepEqual(list, ['a', 'b']);
+  });
+  it('too many: only the tables whose choice is narrower than all their columns', () => {
+    const big = keys('k', 60);
+    const tables = [
+      { tableId: 'main', keys: big, all: big },
+      { tableId: 'days', keys: ['net'], all: ['net', 'tips'] },
+      { tableId: 'zs', keys: big, all: big },
+    ];
+    assert.deepEqual(companyDefaultColumns(tables), ['days.net']);
+  });
+  it('nothing narrowed: the first table, never an empty list (empty deletes the default)', () => {
+    const big = keys('k', 60);
+    assert.deepEqual(companyDefaultColumns([
+      { tableId: 'main', keys: big, all: big },
+      { tableId: 'zs', keys: big, all: big },
+    ]), big);
+  });
+  it('still too many: null (the reader narrows)', () => {
+    const big = keys('k', 120);
+    assert.equal(companyDefaultColumns([{ tableId: 'main', keys: big.slice(1), all: big }]), null);
+  });
+});
+
+describe('a label / value sheet keeps its autofilter off', () => {
+  it('autoFilter: false reaches the sheet; the default is on', () => {
+    const table: ExportTable = {
+      tableId: 'tips',
+      name: 'טיפים',
+      columns: [{ key: 'item', header: 'פריט' }, { key: 'amount', header: 'סכום', kind: 'money' }],
+      rows: [['טיפים', 12]],
+      autoFilter: false,
+    };
+    assert.equal(exportTableSheet(table, null).autoFilter, false);
+    assert.equal(exportTableSheet({ ...table, autoFilter: undefined }, null).autoFilter, undefined);
   });
 });

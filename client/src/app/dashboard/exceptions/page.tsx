@@ -5,23 +5,32 @@
  * refunds, cancelled baskets and voided lines, long orders, high tips, cash differences
  * at close and more — detected by the cloud from what the tills push (`/exceptions`).
  *
- * Filters: days, company ▸ shop ▸ point of sale ▸ till (the org cascade), type, employee
- * and status. A summary per type and per employee, then the list, each row reviewed or
- * dismissed with a note. Rules (on/off and thresholds per level) are on the
- * "הגדרות חריגות" page.
+ * On the report framework (P:\specs\reports-upgrade.md §5): the days, the dashboard's scope
+ * (company ▸ shop ▸ till) and the bar's area, then the type, the employee and the status
+ * (`?type=&employee=&status=`) — all in the URL, and the page runs at once on the last 7 days
+ * as it always has. A summary per type and per employee (a click narrows the list), then the
+ * list, 50 a page, each row reviewed or dismissed with a note (one or a selection). Excel and
+ * PDF take every row of the filters, not just the page. Rules (on/off and thresholds per
+ * level) are on the "הגדרות חריגות" page.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Check, ExternalLink, RefreshCw, RotateCcw, ShieldAlert, X } from 'lucide-react';
+import { AREA_NONE } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
+import { exceptionScopeParams } from '@/lib/exceptionAlerts';
 import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { fetchAllPages } from '@/lib/fetchAllPages';
+import { parseReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import { todayIso } from '@/lib/reportWindow';
+import { usePageScope } from '@/lib/scope';
 import {
   EXCEPTION_TYPES,
   fetchExceptionSummary,
@@ -37,16 +46,16 @@ import {
   type ExceptionType,
 } from '@/lib/exceptionsApi';
 import {
-  ALL_COMPANIES,
-  EMPTY_ORG_SCOPE,
-  OrgScopeCascade,
-  type OrgScope,
-} from '@/components/dashboard/org-scope-cascade';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -54,7 +63,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -65,6 +73,12 @@ import { ZExceptionLink, ZMismatchTable } from '@/components/dashboard/z-report/
 const PAGE_SIZE = 50;
 const ANY = '__any__';
 const STATUSES: ExceptionStatus[] = ['new', 'reviewed', 'dismissed'];
+
+/** The days and the area in the bar; the type, the employee and the status are the report's own. */
+const SPEC: ReportFilterSpec = {
+  filters: ['area'],
+  extras: { type: '', employee: '', status: '' },
+};
 
 /** One colour family per type, so the badge reads at a glance. */
 const TYPE_TONE: Record<ExceptionType, string> = {
@@ -163,6 +177,9 @@ function FilterSelect({
   );
 }
 
+const isType = (v: string): v is ExceptionType => (EXCEPTION_TYPES as readonly string[]).includes(v);
+const isStatus = (v: string): v is ExceptionStatus => (STATUSES as string[]).includes(v);
+
 export default function ExceptionsPage() {
   const t = useTranslations('exceptions');
   const tc = useTranslations('common');
@@ -170,35 +187,50 @@ export default function ExceptionsPage() {
   const { user } = useAuth();
   const canReview = !!user?.role && user.role !== 'cashier' && user.role !== 'shift_supervisor';
 
-  const [scope, setScope] = useState<OrgScope>(EMPTY_ORG_SCOPE);
-  const [from, setFrom] = useState(daysBackIso(6));
-  const [to, setTo] = useState(todayIso());
-  const [type, setType] = useState('');
-  const [employee, setEmployee] = useState('');
-  const [status, setStatus] = useState<string>('');
+  const { resolution, effective } = usePageScope({ maxLevel: 'machine' });
+  const filters = useReportFilters(SPEC);
+  const searchParams = useSearchParams();
+  const urlKey = searchParams.toString();
+  const today = todayIso();
+  // What runs is what the URL says — a fresh visit runs the default days at once, as this
+  // page always has (`ready`), and a link with a type or an employee runs it as well.
+  const url = useMemo(() => parseReportFilters(new URLSearchParams(urlKey), SPEC, today), [urlKey, today]);
+  const type = isType(url.extras.type) ? url.extras.type : '';
+  const employee = url.extras.employee;
+  const status = isStatus(url.extras.status) ? url.extras.status : '';
+  const { from, to, areaId } = url.values;
+
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reviewing, setReviewing] = useState<{ ids: string[]; status: ExceptionStatus; note: string } | null>(
     null,
   );
 
-  const filters: ExceptionFilters | null = useMemo(() => {
-    if (!from || !to || from > to) return null;
-    return {
+  const { companyId, shopId, machineId } = effective;
+  const apiFilters: ExceptionFilters = useMemo(
+    () => ({
       from,
       to,
-      companyId: scope.companyId && scope.companyId !== ALL_COMPANIES ? scope.companyId : undefined,
-      shopId: scope.shopId || undefined,
-      areaId: scope.areaId || undefined,
-      machineId: scope.machineId || undefined,
+      // The company only when nothing narrower; the area only as an id (no "ללא אזור" here).
+      ...exceptionScopeParams({ companyId, shopId, machineId }, areaId),
       type: type || undefined,
       employee: employee || undefined,
       status: status || undefined,
-    };
-  }, [from, to, scope, type, employee, status]);
+    }),
+    [areaId, companyId, employee, from, machineId, shopId, status, to, type],
+  );
+
+  // The endpoint has no "ללא אזור": the bar's choice of it goes back to every area.
+  const draftArea = filters.draft.areaId;
+  const setDraft = filters.set;
+  useEffect(() => {
+    if (draftArea !== AREA_NONE) return;
+    setDraft({ areaId: '' });
+    toast.info(t('report.noAreaNone'));
+  }, [draftArea, setDraft, t]);
 
   // A filter change is a different list: back to its first page, nothing selected.
-  const filterKey = JSON.stringify(filters);
+  const filterKey = JSON.stringify(apiFilters);
   const [seenKey, setSeenKey] = useState(filterKey);
   if (seenKey !== filterKey) {
     setSeenKey(filterKey);
@@ -207,15 +239,13 @@ export default function ExceptionsPage() {
   }
 
   const list = useQuery<ExceptionList>({
-    queryKey: ['exceptions', filters, page],
-    queryFn: () => fetchExceptions(filters!, page, PAGE_SIZE),
-    enabled: filters !== null,
+    queryKey: ['exceptions', apiFilters, page],
+    queryFn: () => fetchExceptions(apiFilters, page, PAGE_SIZE),
     placeholderData: (prev) => prev,
   });
   const summary = useQuery<ExceptionSummary>({
-    queryKey: ['exceptions-summary', filters],
-    queryFn: () => fetchExceptionSummary(filters!),
-    enabled: filters !== null,
+    queryKey: ['exceptions-summary', apiFilters],
+    queryFn: () => fetchExceptionSummary(apiFilters),
   });
 
   const invalidate = () => {
@@ -239,7 +269,7 @@ export default function ExceptionsPage() {
 
   const rescan = useMutation({
     mutationFn: () =>
-      rescanExceptions(from, to, { shopId: scope.shopId || undefined, machineId: scope.machineId || undefined }),
+      rescanExceptions(from, to, { shopId: shopId || undefined, machineId: machineId || undefined }),
     onSuccess: (r) => {
       toast.success(t('rescanDone', { created: r.created }));
       invalidate();
@@ -247,72 +277,301 @@ export default function ExceptionsPage() {
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
-  const items = list.data?.items ?? [];
+  const items = useMemo(() => list.data?.items ?? [], [list.data]);
   const totalPages = list.data ? Math.max(1, Math.ceil(list.data.total / list.data.pageSize)) : 1;
-  const typeLabel = (k?: string | null) => (k ? t(`types.${k}`) : '—');
-  const who = (row: { posUserName?: string | null; posUserId?: string | null; label?: string | null; key?: string | null }) =>
-    row.posUserName || row.label || (row.posUserId || row.key ? t('unknownEmployee') : t('noEmployee'));
+  const employeeOptions = useMemo(() => {
+    const options = (summary.data?.byEmployee ?? [])
+      .filter((r) => r.key)
+      .map((r) => ({ value: r.key as string, label: r.label || r.key || '' }));
+    // An employee from a link who has nothing in this range still shows as chosen.
+    const chosen = filters.draftExtras.employee;
+    return chosen && !options.some((o) => o.value === chosen)
+      ? [{ value: chosen, label: t('unknownEmployee') }, ...options]
+      : options;
+  }, [filters.draftExtras.employee, summary.data, t]);
 
-  const toggle = (id: string) =>
-    setSelected((s) => {
-      const next = new Set(s);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const filterLines = useMemo<ReportFilterLine[]>(() => {
+    const lines: ReportFilterLine[] = [];
+    if (type) lines.push({ label: t('type'), value: t(`types.${type}`) });
+    if (employee) {
+      const row = summary.data?.byEmployee.find((r) => r.key === employee);
+      lines.push({ label: t('employee'), value: row?.label || t('unknownEmployee') });
+    }
+    if (status) lines.push({ label: t('statusLabel'), value: t(`status.${status}`) });
+    return lines;
+  }, [employee, status, summary.data, t, type]);
+
+  const toggle = useCallback(
+    (id: string) =>
+      setSelected((s) => {
+        const next = new Set(s);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
+
+  const measureOf = useMeasure();
+  const table = useMemo<ReportTableSpec<AuditException>>(() => {
+    const typeLabel = (k?: string | null) => (k ? t(`types.${k}`) : '—');
+    const who = (row: AuditException) =>
+      row.posUserName || (row.posUserId ? t('unknownEmployee') : t('noEmployee'));
+    const tillOf = (row: AuditException) =>
+      [row.machineName, row.posNumber ? t('register', { n: row.posNumber }) : null].filter(Boolean).join(' · ');
+    const detailOf = (row: AuditException) => {
+      const detail =
+        row.type === 'table_cancelled'
+          ? tableCancelLine(row.details ?? {}, t)
+          : row.type === 'oth'
+            ? othExceptionLine(row.details ?? {}, (name) => t('tableCancel.approvedBy', { name }))
+            : row.type === 'kiosk_offline'
+              ? kioskOfflineLine(row.details ?? {}, t)
+              : detailLine(row);
+      return [measureOf(row), detail].filter(Boolean).join(' · ') || null;
+    };
+    const columns: ReportColumn<AuditException>[] = [
+      ...(canReview
+        ? [
+            {
+              key: 'select',
+              header: t('select'),
+              screenOnly: true,
+              sortable: false,
+              value: () => null,
+              cell: (row: AuditException) => (
+                <input
+                  type="checkbox"
+                  className="size-4 print:hidden"
+                  checked={selected.has(row.id)}
+                  onChange={() => toggle(row.id)}
+                  aria-label={t('select')}
+                />
+              ),
+            } satisfies ReportColumn<AuditException>,
+          ]
+        : []),
+      { key: 'time', header: t('col.time'), kind: 'datetime', required: true, value: (r) => r.occurredAt },
+      { key: 'type', header: t('col.type'), value: (r) => typeLabel(r.type), cell: (r) => <TypeBadge type={r.type} /> },
+      {
+        key: 'status',
+        header: t('col.status'),
+        value: (r) => t(`status.${r.status}`),
+        cell: (r) => <StatusBadge status={r.status} />,
+      },
+      {
+        key: 'severity',
+        header: t('report.col.severity'),
+        value: (r) => t(`report.severity.${r.severity}`),
+        cell: (r) =>
+          r.severity === 'high' ? (
+            <Badge variant="destructive">{t('severityHigh')}</Badge>
+          ) : (
+            <span className="text-muted-foreground text-xs">{t(`report.severity.${r.severity}`)}</span>
+          ),
+      },
+      {
+        key: 'employee',
+        header: t('col.employee'),
+        value: (r) => (r.posUserId || r.posUserName ? who(r) : null),
+        cell: (r) => <span className="font-medium">{who(r)}</span>,
+      },
+      { key: 'till', header: t('col.till'), value: (r) => tillOf(r) || null },
+      { key: 'area', header: t('col.area'), value: (r) => r.areaName ?? null },
+      { key: 'shop', header: t('col.shop'), value: (r) => r.shopName ?? null },
+      {
+        key: 'detail',
+        header: t('report.col.detail'),
+        value: (r) => detailOf(r),
+        className: 'min-w-56 whitespace-normal',
+        width: 40,
+        cell: (r) => {
+          const text = detailOf(r);
+          return (
+            <div className="space-y-1">
+              {text ? <div className="text-muted-foreground text-xs">{text}</div> : null}
+              {/* A local shop Z stored as printed: what it printed beside the cloud's check. */}
+              {r.type === 'local_shop_z_mismatch' ? <ZMismatchTable details={r.details} /> : null}
+              {!text && r.type !== 'local_shop_z_mismatch' ? '—' : null}
+            </div>
+          );
+        },
+      },
+      { key: 'amount', header: t('col.amount'), kind: 'money', value: (r) => r.amount ?? null, className: 'font-semibold' },
+      { key: 'value', header: t('col.value'), kind: 'number', value: (r) => r.value ?? null },
+      {
+        key: 'document',
+        header: t('col.document'),
+        value: (r) => r.transactionNumber ?? (r.shiftNumber != null ? `#${r.shiftNumber}` : null),
+        cell: (r) => (
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <ZExceptionLink details={r.details} />
+            {r.transactionId ? (
+              <Link
+                href={`/dashboard/transactions?tx=${r.transactionId}`}
+                className="text-primary inline-flex items-center gap-1 hover:underline"
+              >
+                <ExternalLink className="size-3" />
+                {r.transactionNumber ? t('document', { n: r.transactionNumber }) : t('openDocument')}
+              </Link>
+            ) : null}
+            {r.shiftId ? (
+              <Link
+                href={`/dashboard/shifts/${r.shiftId}`}
+                className="text-primary inline-flex items-center gap-1 hover:underline"
+              >
+                <ExternalLink className="size-3" />
+                {r.shiftNumber != null ? t('shift', { n: r.shiftNumber }) : t('openShift')}
+              </Link>
+            ) : null}
+          </div>
+        ),
+      },
+      {
+        key: 'note',
+        header: t('col.note'),
+        value: (r) => r.reviewNote ?? null,
+        className: 'min-w-48 whitespace-normal',
+        width: 30,
+        cell: (r) =>
+          r.status !== 'new' && (r.reviewedBy || r.reviewNote) ? (
+            <span className="text-muted-foreground text-xs">
+              {t('reviewedBy', { who: r.reviewedBy ?? '—', at: formatDateTime(r.reviewedAt) })}
+              {r.reviewNote ? ` — ${r.reviewNote}` : ''}
+            </span>
+          ) : (
+            '—'
+          ),
+      },
+      { key: 'reviewedBy', header: t('report.col.reviewedBy'), defaultHidden: true, value: (r) => r.reviewedBy ?? null },
+      {
+        key: 'reviewedAt',
+        header: t('report.col.reviewedAt'),
+        kind: 'datetime',
+        defaultHidden: true,
+        value: (r) => r.reviewedAt ?? null,
+      },
+      ...(canReview
+        ? [
+            {
+              key: 'actions',
+              header: t('report.col.actions'),
+              screenOnly: true,
+              sortable: false,
+              value: () => null,
+              cell: (row: AuditException) => (
+                <div className="flex gap-1 print:hidden">
+                  {row.status === 'new' ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setReviewing({ ids: [row.id], status: 'reviewed', note: row.reviewNote ?? '' })}
+                        title={t('markReviewed')}
+                      >
+                        <Check className="size-4" />
+                        <span className="hidden sm:inline">{t('markReviewed')}</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setReviewing({ ids: [row.id], status: 'dismissed', note: row.reviewNote ?? '' })}
+                        title={t('dismiss')}
+                      >
+                        <X className="size-4" />
+                        <span className="hidden sm:inline">{t('dismiss')}</span>
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setReviewing({ ids: [row.id], status: 'new', note: row.reviewNote ?? '' })}
+                      title={t('reopen')}
+                    >
+                      <RotateCcw className="size-4" />
+                      <span className="hidden sm:inline">{t('reopen')}</span>
+                    </Button>
+                  )}
+                </div>
+              ),
+            } satisfies ReportColumn<AuditException>,
+          ]
+        : []),
+    ];
+    return {
+      id: 'main',
+      title: t('title'),
+      columns,
+      rows: items,
+      rowKey: (r) => r.id,
+      emptyText: t('empty'),
+    };
+  }, [canReview, items, measureOf, selected, t, toggle]);
+
+  const pickLabel = (r: ExceptionSummary['byType'][number]) =>
+    r.label || (r.key ? t('unknownEmployee') : t('noEmployee'));
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">{t('title')}</h1>
-          <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-        </div>
+    <ReportPage
+      reportKey="exceptions"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      headerExtra={
         <Link href="/dashboard/exception-settings" className="text-primary text-sm hover:underline print:hidden">
           {t('settingsLink')}
         </Link>
-      </div>
-
-      <Card className="print:hidden">
-        <CardContent className="space-y-3 pt-4">
-          <OrgScopeCascade value={scope} onChange={setScope} allowAll />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="space-y-1">
-              <Label className="text-xs">{t('from')}</Label>
-              <DatePicker value={from} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{t('to')}</Label>
-              <DatePicker value={to} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
-            </div>
+      }
+      resolution={resolution}
+      filters={filters}
+      bar={{
+        shopId,
+        children: (
+          <>
             <FilterSelect
               label={t('type')}
-              value={type}
-              onChange={setType}
+              value={filters.draftExtras.type}
+              onChange={(v) => filters.setExtra('type', v)}
               anyLabel={t('allTypes')}
               options={EXCEPTION_TYPES.map((k) => ({ value: k, label: t(`types.${k}`) }))}
             />
             <FilterSelect
               label={t('employee')}
-              value={employee}
-              onChange={setEmployee}
+              value={filters.draftExtras.employee}
+              onChange={(v) => filters.setExtra('employee', v)}
               anyLabel={t('allEmployees')}
-              options={(summary.data?.byEmployee ?? [])
-                .filter((r) => r.key)
-                .map((r) => ({ value: r.key as string, label: r.label || r.key || '' }))}
+              options={employeeOptions}
             />
             <FilterSelect
               label={t('statusLabel')}
-              value={status}
-              onChange={setStatus}
+              value={filters.draftExtras.status}
+              onChange={(v) => filters.setExtra('status', v)}
               anyLabel={t('allStatuses')}
               options={STATUSES.map((s) => ({ value: s, label: t(`status.${s}`) }))}
             />
-          </div>
-          {filters === null ? <p className="text-destructive text-xs">{t('badRange')}</p> : null}
-        </CardContent>
-      </Card>
-
+          </>
+        ),
+      }}
+      query={reportQueryState(list)}
+      ready
+      prompt={t('empty')}
+      export={
+        list.data
+          ? {
+              tables: [
+                {
+                  ...table,
+                  // Every exception of these filters, not just this page (the list's largest page is 500).
+                  exportRows: () => fetchAllPages((p, pageSize) => fetchExceptions(apiFilters, p, pageSize), { pageSize: 500 }),
+                } as ReportTableSpec<unknown>,
+              ],
+              filterLines,
+              from,
+              to,
+            }
+          : null
+      }
+    >
       {summary.isLoading ? (
         <Skeleton className="h-24 w-full" />
       ) : summary.data ? (
@@ -327,122 +586,54 @@ export default function ExceptionsPage() {
             <SummaryTable
               title={t('byType')}
               rows={summary.data.byType}
-              label={(r) => typeLabel(r.key)}
-              onPick={(r) => setType(r.key ?? '')}
+              label={(r) => (r.key ? t(`types.${r.key}`) : '—')}
+              onPick={(r) => filters.apply({ extras: { type: r.key ?? '' } })}
             />
             <SummaryTable
               title={t('byEmployee')}
               rows={summary.data.byEmployee}
-              label={(r) => who(r)}
-              onPick={(r) => setEmployee(r.key ?? '')}
+              label={pickLabel}
+              onPick={(r) => filters.apply({ extras: { employee: r.key ?? '' } })}
             />
           </div>
         </>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 print:hidden">
-        <ReportExportToolbar
-          title={t('title')}
-          from={from}
-          to={to}
-          disabled={!items.length}
-          // Every exception of these filters, not just this page (the list's largest page is 500).
-          getSheets={async () => ({
-            name: t('title'),
-            columns: [
-              { header: t('col.time'), kind: 'datetime' },
-              { header: t('col.type') },
-              { header: t('col.status') },
-              { header: t('col.shop') },
-              { header: t('col.area') },
-              { header: t('col.till') },
-              { header: t('col.employee') },
-              { header: t('col.document') },
-              { header: t('col.amount'), kind: 'money' },
-              { header: t('col.value'), kind: 'number' },
-              { header: t('col.note') },
-            ],
-            rows: (
-              await fetchAllPages((p, pageSize) => fetchExceptions(filters!, p, pageSize), { pageSize: 500 })
-            ).map((r) => [
-              r.occurredAt,
-              typeLabel(r.type),
-              t(`status.${r.status}`),
-              r.shopName ?? null,
-              r.areaName ?? null,
-              r.machineName ?? null,
-              r.posUserId || r.posUserName ? who(r) : null,
-              r.transactionNumber ?? (r.shiftNumber != null ? `#${r.shiftNumber}` : null),
-              r.amount ?? null,
-              r.value ?? null,
-              r.reviewNote ?? null,
-            ]),
-          })}
-        />
-        {canReview ? (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => rescan.mutate()}
-              disabled={rescan.isPending || filters === null}
-              title={t('rescanHint')}
-            >
-              <RefreshCw className={cn('size-4', rescan.isPending && 'animate-spin')} />
-              {t('rescan')}
-            </Button>
-            {selected.size > 0 ? (
-              <>
-                <Button
-                  size="sm"
-                  onClick={() => setReviewing({ ids: [...selected], status: 'reviewed', note: '' })}
-                >
-                  <Check className="size-4" />
-                  {t('reviewSelected', { count: selected.size })}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setReviewing({ ids: [...selected], status: 'dismissed', note: '' })}
-                >
-                  <X className="size-4" />
-                  {t('dismissSelected', { count: selected.size })}
-                </Button>
-              </>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-
-      <div className="rounded-lg border bg-card">
-        {list.isLoading ? (
-          <div className="space-y-2 p-4">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full" />
-            ))}
-          </div>
-        ) : list.isError ? (
-          <p className="text-destructive p-6 text-center text-sm">
-            {axiosErrorToToastMessage(list.error, tc('error'))}
-          </p>
-        ) : items.length === 0 ? (
-          <p className="text-muted-foreground p-10 text-center text-sm">{t('empty')}</p>
-        ) : (
-          <ul className="divide-y">
-            {items.map((row) => (
-              <ExceptionRow
-                key={row.id}
-                row={row}
-                who={who(row)}
-                canReview={canReview}
-                checked={selected.has(row.id)}
-                onToggle={() => toggle(row.id)}
-                onReview={(s) => setReviewing({ ids: [row.id], status: s, note: row.reviewNote ?? '' })}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+      <ReportTable
+        table={table}
+        actions={
+          canReview ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => rescan.mutate()}
+                disabled={rescan.isPending || from > to}
+                title={t('rescanHint')}
+              >
+                <RefreshCw className={cn('size-4', rescan.isPending && 'animate-spin')} />
+                {t('rescan')}
+              </Button>
+              {selected.size > 0 ? (
+                <>
+                  <Button size="sm" onClick={() => setReviewing({ ids: [...selected], status: 'reviewed', note: '' })}>
+                    <Check className="size-4" />
+                    {t('reviewSelected', { count: selected.size })}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setReviewing({ ids: [...selected], status: 'dismissed', note: '' })}
+                  >
+                    <X className="size-4" />
+                    {t('dismissSelected', { count: selected.size })}
+                  </Button>
+                </>
+              ) : null}
+            </>
+          ) : null
+        }
+      />
 
       {list.data && list.data.total > PAGE_SIZE ? (
         <div className="flex items-center justify-between text-sm print:hidden">
@@ -494,7 +685,7 @@ export default function ExceptionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </ReportPage>
   );
 }
 
@@ -548,22 +739,26 @@ function SummaryTable({
 /** The measured value in words: "12%", "14 דקות"… by type. */
 function useMeasure() {
   const t = useTranslations('exceptions');
-  return (row: AuditException): string | null => {
-    if (row.value == null) return null;
-    switch (row.type) {
-      case 'discount':
-      case 'high_tip':
-        return t('measure.percent', { value: row.value, threshold: row.threshold ?? 0 });
-      case 'long_order':
-        return t('measure.minutes', { value: Math.round(row.value), threshold: row.threshold ?? 0 });
-      case 'after_hours': {
-        const local = typeof row.details?.localTime === 'string' ? row.details.localTime : String(row.value);
-        return t('measure.time', { time: local });
-      }
-      default:
-        return null;
-    }
-  };
+  return useMemo(
+    () =>
+      (row: AuditException): string | null => {
+        if (row.value == null) return null;
+        switch (row.type) {
+          case 'discount':
+          case 'high_tip':
+            return t('measure.percent', { value: row.value, threshold: row.threshold ?? 0 });
+          case 'long_order':
+            return t('measure.minutes', { value: Math.round(row.value), threshold: row.threshold ?? 0 });
+          case 'after_hours': {
+            const local = typeof row.details?.localTime === 'string' ? row.details.localTime : String(row.value);
+            return t('measure.time', { time: local });
+          }
+          default:
+            return null;
+        }
+      },
+    [t],
+  );
 }
 
 function detailLine(row: AuditException): string | null {
@@ -618,119 +813,4 @@ function kioskOfflineLine(
   const back = hhmm(d.backAt);
   const span = back ? t('kioskOffline.span', { from: since, to: back }) : t('kioskOffline.notBack', { from: since });
   return [typeof d.kiosk === 'string' && d.kiosk ? d.kiosk : null, span].filter(Boolean).join(' · ');
-}
-
-function ExceptionRow({
-  row,
-  who,
-  canReview,
-  checked,
-  onToggle,
-  onReview,
-}: {
-  row: AuditException;
-  who: string;
-  canReview: boolean;
-  checked: boolean;
-  onToggle: () => void;
-  onReview: (status: ExceptionStatus) => void;
-}) {
-  const t = useTranslations('exceptions');
-  const measure = useMeasure()(row);
-  const detail =
-    row.type === 'table_cancelled'
-      ? tableCancelLine(row.details ?? {}, t)
-      : row.type === 'oth'
-        ? othExceptionLine(row.details ?? {}, (name) => t('tableCancel.approvedBy', { name }))
-        : row.type === 'kiosk_offline'
-          ? kioskOfflineLine(row.details ?? {}, t)
-          : detailLine(row);
-  const till = [row.machineName, row.posNumber ? t('register', { n: row.posNumber }) : null]
-    .filter(Boolean)
-    .join(' · ');
-  return (
-    <li className="flex gap-3 px-4 py-3">
-      {canReview ? (
-        <input
-          type="checkbox"
-          className="mt-1 size-4 shrink-0 print:hidden"
-          checked={checked}
-          onChange={onToggle}
-          aria-label={t('select')}
-        />
-      ) : null}
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <TypeBadge type={row.type} />
-          <StatusBadge status={row.status} />
-          {row.severity === 'high' ? <Badge variant="destructive">{t('severityHigh')}</Badge> : null}
-          <span className="text-muted-foreground text-xs">{formatDateTime(row.occurredAt)}</span>
-          {row.amount != null ? (
-            <span className="ms-auto font-semibold tabular-nums">{formatCurrency(row.amount)}</span>
-          ) : null}
-        </div>
-        <div className="text-sm">
-          <span className="font-medium">{who}</span>
-          {till ? <span className="text-muted-foreground"> · {till}</span> : null}
-          {row.areaName ? <span className="text-muted-foreground"> · {row.areaName}</span> : null}
-          {row.shopName ? <span className="text-muted-foreground"> · {row.shopName}</span> : null}
-        </div>
-        {measure || detail ? (
-          <div className="text-muted-foreground text-xs">
-            {[measure, detail].filter(Boolean).join(' · ')}
-          </div>
-        ) : null}
-        {/* A local shop Z stored as printed: what it printed beside the cloud's check. */}
-        {row.type === 'local_shop_z_mismatch' ? <ZMismatchTable details={row.details} /> : null}
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <ZExceptionLink details={row.details} />
-          {row.transactionId ? (
-            <Link
-              href={`/dashboard/transactions?tx=${row.transactionId}`}
-              className="text-primary inline-flex items-center gap-1 hover:underline"
-            >
-              <ExternalLink className="size-3" />
-              {row.transactionNumber ? t('document', { n: row.transactionNumber }) : t('openDocument')}
-            </Link>
-          ) : null}
-          {row.shiftId ? (
-            <Link
-              href={`/dashboard/shifts/${row.shiftId}`}
-              className="text-primary inline-flex items-center gap-1 hover:underline"
-            >
-              <ExternalLink className="size-3" />
-              {row.shiftNumber != null ? t('shift', { n: row.shiftNumber }) : t('openShift')}
-            </Link>
-          ) : null}
-          {row.status !== 'new' && (row.reviewedBy || row.reviewNote) ? (
-            <span className="text-muted-foreground">
-              {t('reviewedBy', { who: row.reviewedBy ?? '—', at: formatDateTime(row.reviewedAt) })}
-              {row.reviewNote ? ` — ${row.reviewNote}` : ''}
-            </span>
-          ) : null}
-        </div>
-      </div>
-      {canReview ? (
-        <div className="flex shrink-0 flex-col gap-1 print:hidden sm:flex-row sm:items-start">
-          {row.status === 'new' ? (
-            <>
-              <Button size="sm" variant="outline" onClick={() => onReview('reviewed')} title={t('markReviewed')}>
-                <Check className="size-4" />
-                <span className="hidden sm:inline">{t('markReviewed')}</span>
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => onReview('dismissed')} title={t('dismiss')}>
-                <X className="size-4" />
-                <span className="hidden sm:inline">{t('dismiss')}</span>
-              </Button>
-            </>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={() => onReview('new')} title={t('reopen')}>
-              <RotateCcw className="size-4" />
-              <span className="hidden sm:inline">{t('reopen')}</span>
-            </Button>
-          )}
-        </div>
-      ) : null}
-    </li>
-  );
 }

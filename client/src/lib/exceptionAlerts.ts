@@ -6,8 +6,9 @@
  *
  * Pure (no React, no network, relative imports only) so `npm test` runs it with node:test.
  */
-import type { ExcelSheet, ExcelValue } from './excelExport';
+import type { ExcelCellKind, ExcelSheet, ExcelValue } from './excelExport';
 import { normalizeIsraeliMobile } from './clubSignup';
+import { scopeApiParams } from './reportFilters';
 
 export type Severity = 'low' | 'medium' | 'high';
 export const SEVERITIES: Severity[] = ['high', 'medium', 'low'];
@@ -428,48 +429,99 @@ export function smsText(sms: SmsDispatch[]): string {
 
 export type Tr = (key: string) => string;
 
+export type LogColumnKey =
+  | 'time'
+  | 'kind'
+  | 'severity'
+  | 'shop'
+  | 'area'
+  | 'till'
+  | 'employee'
+  | 'amount'
+  | 'details'
+  | 'document'
+  | 'status'
+  | 'acknowledgedBy'
+  | 'note'
+  | 'sms'
+  | 'code';
+
+/** The log's export columns, in order (keys = the `exceptionsLog.col` texts and the report's column keys). */
+export const LOG_COLUMNS: readonly { key: LogColumnKey; kind?: ExcelCellKind; width?: number }[] = [
+  { key: 'time', kind: 'datetime' },
+  { key: 'kind', width: 26 },
+  { key: 'severity', width: 10 },
+  { key: 'shop' },
+  { key: 'area' },
+  { key: 'till', width: 16 },
+  { key: 'employee' },
+  { key: 'amount', kind: 'money' },
+  { key: 'details', width: 40 },
+  { key: 'document', width: 14 },
+  { key: 'status', width: 10 },
+  { key: 'acknowledgedBy' },
+  { key: 'note', width: 30 },
+  { key: 'sms', width: 40 },
+  { key: 'code', width: 10 },
+];
+
+export interface LogLabels {
+  severity: (s: Severity) => string;
+  acknowledged: (yes: boolean) => string;
+}
+
+/** One log row as the export writes it, by column. */
+export function logRowValues(r: LogEntry, labels: LogLabels): Record<LogColumnKey, ExcelValue> {
+  return {
+    time: r.occurredAt,
+    kind: r.kindLabel,
+    severity: labels.severity(r.severity),
+    shop: r.shopName,
+    area: r.areaName,
+    till: [r.machineName, r.posNumber].filter(Boolean).join(' · ') || null,
+    employee: r.posUserName ?? r.posUserId,
+    amount: r.amount,
+    details: r.summary,
+    document: r.transactionNumber ?? (r.shiftNumber != null ? `#${r.shiftNumber}` : null),
+    status: labels.acknowledged(r.acknowledged),
+    acknowledgedBy: r.acknowledgedBy,
+    note: r.note,
+    sms: r.sms.length ? smsText(r.sms) : null,
+    code: r.code,
+  };
+}
+
 /** The log as an Excel sheet (headers through [t], the `exceptionsLog.col` translator). */
-export function logSheet(
-  rows: LogEntry[],
-  t: Tr,
-  name: string,
-  labels: { severity: (s: Severity) => string; acknowledged: (yes: boolean) => string },
-): ExcelSheet {
+export function logSheet(rows: LogEntry[], t: Tr, name: string, labels: LogLabels): ExcelSheet {
   return {
     name,
-    columns: [
-      { header: t('time'), kind: 'datetime' },
-      { header: t('kind'), width: 26 },
-      { header: t('severity'), width: 10 },
-      { header: t('shop') },
-      { header: t('area') },
-      { header: t('till'), width: 16 },
-      { header: t('employee') },
-      { header: t('amount'), kind: 'money' },
-      { header: t('details'), width: 40 },
-      { header: t('document'), width: 14 },
-      { header: t('status'), width: 10 },
-      { header: t('acknowledgedBy') },
-      { header: t('note'), width: 30 },
-      { header: t('sms'), width: 40 },
-      { header: t('code'), width: 10 },
-    ],
-    rows: rows.map((r): ExcelValue[] => [
-      r.occurredAt,
-      r.kindLabel,
-      labels.severity(r.severity),
-      r.shopName,
-      r.areaName,
-      [r.machineName, r.posNumber].filter(Boolean).join(' · ') || null,
-      r.posUserName ?? r.posUserId,
-      r.amount,
-      r.summary,
-      r.transactionNumber ?? (r.shiftNumber != null ? `#${r.shiftNumber}` : null),
-      labels.acknowledged(r.acknowledged),
-      r.acknowledgedBy,
-      r.note,
-      r.sms.length ? smsText(r.sms) : null,
-      r.code,
-    ]),
+    columns: LOG_COLUMNS.map((c) => ({
+      header: t(c.key),
+      ...(c.kind ? { kind: c.kind } : {}),
+      ...(c.width ? { width: c.width } : {}),
+    })),
+    rows: rows.map((r): ExcelValue[] => {
+      const values = logRowValues(r, labels);
+      return LOG_COLUMNS.map((c) => values[c.key]);
+    }),
+  };
+}
+
+// ── The scope of both exception lists ────────────────────────────────────────
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The dashboard's scope and the bar's area as `/exceptions` and `/exception-log` take them:
+ * the shop and the till as they are, the company only when nothing narrower is chosen, and an
+ * area only as an id — these endpoints have no "ללא אזור" (`areaId=none` is a 422 there).
+ */
+export function exceptionScopeParams(
+  scope: { companyId?: string | null; shopId?: string | null; machineId?: string | null },
+  areaId: string,
+): { companyId?: string; shopId?: string; areaId?: string; machineId?: string } {
+  return {
+    ...scopeApiParams(scope),
+    ...(UUID.test(areaId.trim()) ? { areaId: areaId.trim() } : {}),
   };
 }

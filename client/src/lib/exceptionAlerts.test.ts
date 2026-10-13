@@ -1,10 +1,23 @@
-import { test } from 'node:test';
+import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CSV_COLUMNS,
+  DEFAULT_FILTER,
+  itemCsvRecord,
+  itemFilterFromParams,
+  itemFilterParams,
+  itemsCsvRows,
+  type ReconCategory,
+  type ReconItem,
+} from './zcreditRecon';
+import {
+  LOG_COLUMNS,
   dispatchTone,
   draftFromRule,
   emptyDraft,
+  exceptionScopeParams,
   isHeldBack,
+  logRowValues,
   logSheet,
   quietHoursText,
   smsText,
@@ -144,4 +157,76 @@ test('the Excel sheet: one row per entry, in the column order', () => {
     '2026-09-27T18:00:00+00:00', 'זיכוי / החזר', 'medium', 'מרכז', null, 'קופה ראשית · 2', 'דנה', 150, null,
     '20000057', 'טופל', 'admin', 'טופל', 'דנה 050-•••-4567: הדמיה — לא נשלח', 'abcd2345',
   ]);
+});
+
+describe('report framework: exceptions, exceptions log, Z-Credit reconciliation', () => {
+  const AREA = '3f1c2a4e-9b7d-4c1e-8a2f-0d6b5e4c3a21';
+
+  it('the log report\'s columns are logSheet\'s: same keys, order and values', () => {
+    const labels = { severity: (s: string) => s, acknowledged: (yes: boolean) => (yes ? 'טופל' : 'פתוח') };
+    const row = entry({ acknowledged: true, acknowledgedBy: 'admin', note: 'טופל', shiftNumber: 4, transactionNumber: null });
+    const sheet = logSheet([row], (k) => k, 'יומן', labels);
+    assert.deepEqual(sheet.columns.map((c) => c.header), LOG_COLUMNS.map((c) => c.key));
+    const values = logRowValues(row, labels);
+    assert.deepEqual(sheet.rows[0], LOG_COLUMNS.map((c) => values[c.key]));
+    assert.equal(values.document, '#4');
+    assert.equal(values.code, 'abcd2345');
+    assert.equal(sheet.columns[0].kind, 'datetime');
+    assert.equal(sheet.columns[7].kind, 'money');
+  });
+
+  it('the scope and the area as both exception endpoints take them', () => {
+    assert.deepEqual(exceptionScopeParams({ companyId: 'c', shopId: 's', machineId: 'm' }, AREA), {
+      shopId: 's',
+      machineId: 'm',
+      areaId: AREA,
+    });
+    // The company only when nothing narrower is chosen.
+    assert.deepEqual(exceptionScopeParams({ companyId: 'c', shopId: null, machineId: null }, ''), { companyId: 'c' });
+    // No "ללא אזור" on these endpoints (a 422): it is not sent.
+    assert.deepEqual(exceptionScopeParams({ shopId: 's' }, 'none'), { shopId: 's' });
+    assert.deepEqual(exceptionScopeParams({}, ` ${AREA} `), { areaId: AREA });
+    assert.deepEqual(exceptionScopeParams({}, 'not-an-id'), {});
+  });
+
+  it('Z-Credit: the item filters round-trip through the URL', () => {
+    // Nothing in the URL: every category but "matched", as the page always opened.
+    assert.deepEqual(itemFilterFromParams({}), DEFAULT_FILTER);
+    assert.deepEqual(itemFilterParams(DEFAULT_FILTER), { cats: '', open: '', q: '' });
+    const chosen = { categories: ['ours_only', 'zcredit_only'] as ReconCategory[], openOnly: true, search: '1234' };
+    const params = itemFilterParams(chosen);
+    // Written in the display order, whatever order they were picked in.
+    assert.deepEqual(params, { cats: 'zcredit_only,ours_only', open: '1', q: '1234' });
+    assert.deepEqual(itemFilterFromParams(params), { ...chosen, categories: ['zcredit_only', 'ours_only'] });
+    // None chosen (which shows them all) is not the default.
+    assert.equal(itemFilterParams({ ...DEFAULT_FILTER, categories: [] }).cats, 'none');
+    assert.deepEqual(itemFilterFromParams({ cats: 'none' }).categories, []);
+    // Unknown names are dropped; nothing left = the default.
+    assert.deepEqual(itemFilterFromParams({ cats: 'matched,bogus' }).categories, ['matched']);
+    assert.deepEqual(itemFilterFromParams({ cats: 'bogus' }).categories, DEFAULT_FILTER.categories);
+  });
+
+  it('Z-Credit: an item flattened by CSV column is the CSV row', () => {
+    const item: ReconItem = {
+      id: 'i1', runId: 'r1', category: 'zcredit_only', categoryLabel: 'חיוב', severity: 'error', reason: 'אין מסמך',
+      zcredit: {
+        reference: '998877', amount: 10.35, statusCode: 2, statusLabel: null, dealType: '01', isRefund: false,
+        depositId: 'd7', cardLast4: '••1234', cardName: null, payments: 1, approval: null, savedAt: '2026-10-12T21:06:37',
+        source: 'report',
+      },
+      ours: null,
+      related: [],
+      handled: { at: '2026-10-13T08:00:00+00:00', by: 'דנה', note: 'זוכה' },
+      canCredit: true,
+    };
+    const run = { terminalLast4: '0101', businessDate: '2026-10-12' };
+    const labels = { header: [], category: (c: ReconCategory) => `cat:${c}`, yes: 'כן', no: 'לא' };
+    const record = itemCsvRecord(run, item, labels);
+    assert.deepEqual(itemsCsvRows(run, [item], labels)[0], CSV_COLUMNS.map((c) => record[c]));
+    assert.equal(record.terminal, '••••0101');
+    assert.equal(record.zcCard, '1234');
+    assert.equal(record.zcStatus, 2);
+    assert.equal(record.transmitted, null);
+    assert.equal(record.handledNote, 'זוכה');
+  });
 });

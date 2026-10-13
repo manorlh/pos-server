@@ -40,6 +40,11 @@ export interface ReportFiltersController {
   dirty: boolean;
   set: (patch: Partial<ReportFilterValues>) => void;
   setExtra: (key: string, value: string) => void;
+  /**
+   * A change that takes effect at once, without "הפק דוח" (a click on a summary row, a chip of
+   * the report's own): what runs now, with `patch`, written to the URL (a history entry).
+   */
+  apply: (patch: { values?: Partial<ReportFilterValues>; extras?: Record<string, string> }) => void;
   run: () => void;
   clearAll: () => void;
   isClient: (key: ReportFilterKey) => boolean;
@@ -134,6 +139,17 @@ export function useReportFilters(spec: ReportFilterSpec): ReportFiltersControlle
     setDraft((prev) => ({ ...prev, extras: { ...prev.extras, [key]: value } }));
   }, []);
 
+  const apply = useCallback(
+    (patch: { values?: Partial<ReportFilterValues>; extras?: Record<string, string> }) => {
+      const base = parsed.applied ? { values: parsed.values, extras: parsed.extras } : draft;
+      const values = { ...base.values, ...patch.values };
+      const extras = { ...base.extras, ...patch.extras };
+      setDraft((prev) => ({ values: { ...prev.values, ...patch.values }, extras: { ...prev.extras, ...patch.extras } }));
+      go(hrefFor(values, extras), 'push');
+    },
+    [draft, go, hrefFor, parsed],
+  );
+
   const run = useCallback(() => go(hrefFor(draft.values, draft.extras), 'push'), [draft, go, hrefFor]);
   const clearAll = useCallback(() => {
     const cleared = clearedReportFilters(spec, today);
@@ -164,6 +180,7 @@ export function useReportFilters(spec: ReportFilterSpec): ReportFiltersControlle
     dirty,
     set,
     setExtra,
+    apply,
     run,
     clearAll,
     isClient,

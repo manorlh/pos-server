@@ -24,6 +24,8 @@ import { formatDateTime } from '@/lib/format';
 import { downloadBlob, downloadExcel, type ExcelSheet } from '@/lib/excelExport';
 import {
   MAIN_TABLE,
+  MAX_DEFAULT_COLUMNS,
+  companyDefaultColumns,
   qualifiedExportList,
   resolveExportColumns,
   visibleColumnKeys,
@@ -59,6 +61,10 @@ export interface ReportExportBarProps {
   /** Sheets that are not a table of the page (a heat map…), appended as they are; may be fetched. */
   extraSheets?: () => ExcelSheet[] | Promise<ExcelSheet[]>;
   extraSheetsFirst?: boolean;
+  /** A workbook the server builds replaces the client's Excel (the columns choice is then the PDF's). */
+  excel?: () => Promise<void>;
+  /** More buttons in the bar (a CSV, a ZIP). */
+  actions?: React.ReactNode;
   pdfTableId?: string;
   from?: string | null;
   to?: string | null;
@@ -120,6 +126,8 @@ export function toExportTable(
     columns: columns.map((c) => ({ key: c.key, header: c.header, kind: c.kind, width: c.width })),
     rows: rows.map((r) => columns.map((c) => c.value(r))),
     totals,
+    ...(table.rowFill ? { rowFills: rows.map((r) => table.rowFill!(r) ?? null) } : {}),
+    ...(table.autoFilter === false ? { autoFilter: false } : {}),
   };
 }
 
@@ -129,6 +137,8 @@ export function ReportExportBar({
   tables,
   extraSheets,
   extraSheetsFirst = false,
+  excel,
+  actions,
   pdfTableId,
   from,
   to,
@@ -200,6 +210,10 @@ export function ReportExportBar({
   const onExcel = async () => {
     setBusy('excel');
     try {
+      if (excel) {
+        await excel();
+        return;
+      }
       const sheets = await Promise.all(
         resolved.map(async (r) => {
           const p = await prepare(r);
@@ -314,7 +328,14 @@ export function ReportExportBar({
   };
   const canEdit = Boolean(defaults.data?.supported && defaults.data.canEdit && (defaults.data.companyId ?? companyId));
   const companyLabel = companyName ?? t('thisCompany');
-  const allQualified = qualifiedExportList(resolved.map((r) => ({ tableId: r.table.id, keys: r.keys })));
+  // A report of many tables can choose more columns than a company default holds (§4.3).
+  const defaultList = companyDefaultColumns(
+    resolved.map((r) => ({
+      tableId: r.table.id,
+      keys: r.keys,
+      all: r.table.columns.filter((c) => !c.screenOnly).map((c) => c.key),
+    })),
+  );
 
   return (
     <>
@@ -342,6 +363,7 @@ export function ReportExportBar({
             {t('chosenColumns', { count: chosenCount })}
           </Badge>
         </Button>
+        {actions}
       </div>
 
       {/* The print template's header. Never on screen. */}
@@ -472,7 +494,15 @@ export function ReportExportBar({
                 <p className="text-muted-foreground text-xs">{t('companyDefaultInherited')}</p>
               ) : null}
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => void saveDefault(allQualified)} disabled={busy === 'save'}>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    defaultList
+                      ? void saveDefault(defaultList)
+                      : toast.error(t('companyDefaultTooMany', { max: MAX_DEFAULT_COLUMNS }))
+                  }
+                  disabled={busy === 'save'}
+                >
                   {busy === 'save' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
                   {t('saveCompanyDefault')}
                 </Button>
