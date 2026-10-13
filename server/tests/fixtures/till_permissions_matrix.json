@@ -51,7 +51,10 @@
     "KIOSK_CONTROL",
     "KIOSK_UNLOCK",
     "DESKTOP_EXIT",
-    "KIOSK_TILL_MODE"
+    "KIOSK_TILL_MODE",
+    "PAYMENT_REVERSE_CASH",
+    "PAYMENT_REVERSE_CARD",
+    "PAYMENT_REVERSE_OTHER"
   ],
   "scopes": {
     "attendance:manage": "ATTENDANCE_MANAGE",
@@ -65,6 +68,9 @@
     "discount": "DISCOUNT",
     "kiosk:control": "KIOSK_CONTROL",
     "kiosk:unlock": "KIOSK_UNLOCK",
+    "payment:reverse-card": "PAYMENT_REVERSE_CARD",
+    "payment:reverse-cash": "PAYMENT_REVERSE_CASH",
+    "payment:reverse-other": "PAYMENT_REVERSE_OTHER",
     "refund": "REFUND",
     "sale:restricted": "SELL_RESTRICTED_ITEMS",
     "shift:close": "SHIFT_CLOSE",
@@ -129,7 +135,10 @@
         "KIOSK_CONTROL": "deny",
         "KIOSK_UNLOCK": "deny",
         "DESKTOP_EXIT": "deny",
-        "KIOSK_TILL_MODE": "deny"
+        "KIOSK_TILL_MODE": "deny",
+        "PAYMENT_REVERSE_CASH": "deny",
+        "PAYMENT_REVERSE_CARD": "deny",
+        "PAYMENT_REVERSE_OTHER": "deny"
       },
       "limits": {}
     },
@@ -185,7 +194,10 @@
         "KIOSK_CONTROL": "approval",
         "KIOSK_UNLOCK": "approval",
         "DESKTOP_EXIT": "deny",
-        "KIOSK_TILL_MODE": "deny"
+        "KIOSK_TILL_MODE": "deny",
+        "PAYMENT_REVERSE_CASH": "approval",
+        "PAYMENT_REVERSE_CARD": "approval",
+        "PAYMENT_REVERSE_OTHER": "approval"
       },
       "limits": {}
     },
@@ -241,7 +253,10 @@
         "KIOSK_CONTROL": "allow",
         "KIOSK_UNLOCK": "approval",
         "DESKTOP_EXIT": "deny",
-        "KIOSK_TILL_MODE": "deny"
+        "KIOSK_TILL_MODE": "deny",
+        "PAYMENT_REVERSE_CASH": "allow",
+        "PAYMENT_REVERSE_CARD": "allow",
+        "PAYMENT_REVERSE_OTHER": "allow"
       },
       "limits": {
         "CASH_DRAWER.CASH_OUT": {
@@ -252,6 +267,12 @@
         },
         "DISCOUNT": {
           "maxPercent": 30
+        },
+        "PAYMENT_REVERSE_CASH": {
+          "maxAmount": 500
+        },
+        "PAYMENT_REVERSE_CARD": {
+          "maxAmount": 500
         }
       }
     },
@@ -307,7 +328,10 @@
         "KIOSK_CONTROL": "allow",
         "KIOSK_UNLOCK": "allow",
         "DESKTOP_EXIT": "allow",
-        "KIOSK_TILL_MODE": "allow"
+        "KIOSK_TILL_MODE": "allow",
+        "PAYMENT_REVERSE_CASH": "allow",
+        "PAYMENT_REVERSE_CARD": "allow",
+        "PAYMENT_REVERSE_OTHER": "allow"
       },
       "limits": {}
     },
@@ -363,7 +387,10 @@
         "KIOSK_CONTROL": "approval",
         "KIOSK_UNLOCK": "approval",
         "DESKTOP_EXIT": "deny",
-        "KIOSK_TILL_MODE": "deny"
+        "KIOSK_TILL_MODE": "deny",
+        "PAYMENT_REVERSE_CASH": "approval",
+        "PAYMENT_REVERSE_CARD": "approval",
+        "PAYMENT_REVERSE_OTHER": "approval"
       },
       "limits": {}
     },
@@ -419,7 +446,10 @@
         "KIOSK_CONTROL": "allow",
         "KIOSK_UNLOCK": "allow",
         "DESKTOP_EXIT": "allow",
-        "KIOSK_TILL_MODE": "allow"
+        "KIOSK_TILL_MODE": "allow",
+        "PAYMENT_REVERSE_CASH": "allow",
+        "PAYMENT_REVERSE_CARD": "allow",
+        "PAYMENT_REVERSE_OTHER": "allow"
       },
       "limits": {}
     }

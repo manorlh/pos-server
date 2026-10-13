@@ -215,6 +215,14 @@ from app.services.cash_drawer_exceptions import DRAWER_EXCEPTION_KINDS as _DRAWE
 
 RULES = RULES + tuple(RuleSpec(k.key, True, (), k.severity, "cash_drawer") for k in _DRAWER_KINDS)
 
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §3, app/services/table_restore.py):
+# a payment reversed inside a table — who asked, who approved or performed it, the tender, the
+# amount, the table, the invoice and its credit note — ≥ ₪X; and a closed table restored (till events).
+RULES = RULES + (
+    RuleSpec("payment_reversed", True, (ParamSpec("minAmount", 0),), "medium", "till_event"),
+    RuleSpec("table_restored", True, (), "medium", "till_event"),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
@@ -238,6 +246,9 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
                     # details to a copy of which document, when. The audit beside the annotation's own
                     # row. Recorded, feeds no rule.
                     "document_customer_details")
+#: "שחזור שולחן עם התשלומים שלו" (app/services/table_restore.py): a payment reversed inside a table
+#: (`transactionId` = its credit note) and a closed table restored — each feeds its own rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("payment_reversed", "table_restored")
 
 
 class RuleValueError(ValueError):
@@ -667,6 +678,11 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
             if minutes >= limit:
                 return [Found(type="long_order", key=f"long_order:{event.id}", amount=amount, value=minutes,
                               threshold=limit, details=details, **common)]
+    elif kind in ("payment_reversed", "table_restored"):
+        # A table's payment reversed / a table restored (app/services/table_restore.py).
+        from app.services import table_restore
+
+        return table_restore.detect_event(event, rules)
     return []
 
 
@@ -858,6 +874,11 @@ class Detector:
                 # Who forced it is the cloud's to say, from the request the till answered.
                 found.details.update(forced_close_initiator(self.db, machine, found.details.get("requestId")))
                 found.details["summary"] = forced_close_summary(found.details)
+            if found.type == "table_restored":
+                # Reported by the cloud's claim and by the till: one exception, both reports' details.
+                from app.services import table_restore
+
+                found.details = table_restore.merged_details(self.db, found)
             self._record(machine, found, area_id=event.area_id)
 
 

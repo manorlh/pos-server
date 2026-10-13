@@ -22,6 +22,8 @@ What a user receives (`entry_matches`):
   * `till_low_sales` — a till barely selling against its peers (the insights' anomaly rules
     report it through external.py);
   * `target_reached` — a sales target reached ("יעדים ותחרות", an event's target included);
+  * `payment_reversals` — a payment reversed inside a table, and a closed table restored
+    (P:/specs/table-restore-payments.md);
 * only from what the user may see in the exceptions log (the same scoping), and only with the
   dashboard sections "alerts" / "reports" / "exception_alerts" — a producer never;
 * narrowed to the chosen shops and / or events (an event = its tills inside its window).
@@ -112,6 +114,14 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("bon_unprinted", "בון לא הודפס",
              "בון שלא הודפס במדפסת מטבח / בר, או שלא התקבל במסך המטבח — מכל קופה וקיוסק.",
              ("bon_unprinted",)),
+)
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §3): every payment reversed inside a
+# table and every table restored — its own type, so a preference saved before it does not start
+# receiving them (opt in). No amount floor: each one is a manager's business.
+CATEGORIES = CATEGORIES + (
+    Category("payment_reversals", "זיכוי / ביטול תשלום בשולחן",
+             "תשלום שזוכה או בוטל מתוך שולחן (מזומן, אשראי, שובר, חיצוני), ושולחן סגור ששוחזר.",
+             ("payment_reversed", "table_restored")),
 )
 CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in CATEGORIES}
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)

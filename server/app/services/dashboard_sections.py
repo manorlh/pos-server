@@ -499,6 +499,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/companies/{}/till-roles*", S("pos_users")),
     (_GET, "/companies/{}/till-drawer-params", S("till_settings", "pos_users", level=VIEW)),
     (_ALL, "/companies/{}/till-drawer-params", S("till_settings")),
+    # "שחזור שולחן ותשלומים" (app/routers/table_restore.py): till parameters edited on the tables page.
+    (_GET, "/companies/{}/table-restore-params", S("tables", "till_settings", level=VIEW)),
+    (_ALL, "/companies/{}/table-restore-params", S("tables", "till_settings")),
     (_ALL, "/companies*", S("organization")),
     # ── Reports ──
     (_GET, "/dashboard/*", S("reports")),

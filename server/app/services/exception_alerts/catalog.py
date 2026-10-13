@@ -131,11 +131,22 @@ KINDS = KINDS + tuple(
     Kind(k.key, k.label, k.severity, "audit_exception", amount=k.amount, link=k.link) for k in _DRAWER_KINDS
 )
 
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §3, app/services/table_restore.py):
+# a payment reversed inside a table (cash, card void / refund, voucher, external) and a closed table
+# restored — from the till's events, and the restore also from the cloud's claim of the order.
+KINDS = KINDS + (
+    Kind("payment_reversed", "זיכוי / ביטול תשלום בשולחן", "medium", "audit_exception", amount=True, link="document"),
+    Kind("table_restored", "שחזור שולחן", "medium", "audit_exception", amount=True),
+)
+
 KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
 #: Kinds an SMS rule fires on only when it names them — an "every kind" rule written before they
 #: existed does not start texting them (feat/event-live: a till outage, a till barely selling,
 #: a target reached; the phone alerts carry them).
 OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted"})
+#: A table's payment reversals and restores: texted only by a rule that names them (the phone alerts
+#: have their own type, `payment_reversals`).
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset({"payment_reversed", "table_restored"})
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 SEVERITY_LABELS = {"low": "נמוכה", "medium": "בינונית", "high": "גבוהה"}
 COUNT_SCOPES = ("machine", "employee", "shop")

@@ -760,6 +760,15 @@ def build_z(
     for section, part in zip(sections, till_report_sections):
         if part is not None:
             section["reportSections"] = part
+    # "זיכויים וביטולי תשלום בשולחנות: N · ₪" (app/services/table_restore.py): the payments reversed
+    # inside tables whose credit notes are this Z's documents — the whole Z's and each till's, only
+    # when there were any. Presentation only: the documents net per tender by themselves.
+    from app.services import table_restore
+
+    table_reversals, till_table_reversals = table_restore.z_reversals(db, per_machine)
+    for section, part in zip(sections, till_table_reversals):
+        if part is not None:
+            section[table_restore.Z_KEY] = part
 
     # 4. Number, write, claim.
     if business_date is None:
@@ -849,6 +858,9 @@ def build_z(
         # The Z's presentation sections ("דו״ח Z — גרסה 2"), when they could be built.
         if report_sections is not None:
             z.header = {**z.header, "reportSections": report_sections}
+        # "זיכויים וביטולי תשלום בשולחנות" — only when there were any.
+        if table_reversals is not None:
+            z.header = {**z.header, table_restore.Z_KEY: table_reversals}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
         # "טיפ באשראי משולם מהמזומן": the card tips the tills paid out of their drawers (already

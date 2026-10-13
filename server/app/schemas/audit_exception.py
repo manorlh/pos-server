@@ -25,7 +25,13 @@ class TillEventIn(BaseModel):
     #: Kept for the record, no exception rule.
     type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close", "desktop_exit",
                   "restricted_item", "held_sale_cancelled", "held_sale_parked", "kiosk_till_mode",
-                  "document_customer_details"]
+                  "document_customer_details",
+                  # "שחזור שולחן עם התשלומים שלו" (app/services/table_restore.py): a payment reversed inside a
+                  # table (`transactionId` = its credit note; details: orderId, tableNumber, tableName, tender,
+                  # action, tip, partial, original/credit transaction ids and numbers, requestedBy, approvedBy,
+                  # performedBy, approvalStyle, note) and a closed table restored (details: orderId,
+                  # newOrderId, tableNumber, restoredAs, transactionIds, requestedBy / restoredBy, approvedBy).
+                  "payment_reversed", "table_restored"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

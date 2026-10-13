@@ -144,7 +144,8 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("TABLE_VOID", "ביטול פריט שנשלח למטבח", "tables",
                    "הורדת פריטים שכבר נשלחו למטבח.", scope="table:void"),
     PermissionSpec("TABLE_RESTORE", "שחזור שולחן", "tables",
-                   "החזרת שולחן שנסגר / בוטל.", scope="table:restore"),
+                   "החזרת שולחן שנסגר / בוטל מרשימת \"נסגרו\" — עם התשלומים שלו, לאותו מספר או עם קידומת "
+                   "(\"ש-12\") כשהוא תפוס.", scope="table:restore"),
     PermissionSpec("TABLE_UNLOCK", "שחרור נעילת שולחן", "tables",
                    "שחרור שולחן שקופה אחרת נעלה, או השתלטות על קופה מארחת.", scope="table:unlock"),
     # ── משמרת ודוחות ──
@@ -241,6 +242,30 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
 )
 # fmt: on
 
+# "שחזור שולחן עם התשלומים שלו, וזיכוי או ביטול תשלומים בתוך השולחן" (P:/specs/table-restore-payments.md
+# §4, app/services/table_restore.py): reversing one payment of a table from inside it — cash and card up
+# to an amount (above it an `allow` asks a manager whose own limit covers it), voucher / external alone.
+# Restoring the table itself stays TABLE_RESTORE. Till-only scopes: nothing in the cloud elevates to them.
+TABLE_PAYMENT_REVERSE_CODES: FrozenSet[str] = frozenset({
+    "PAYMENT_REVERSE_CASH", "PAYMENT_REVERSE_CARD", "PAYMENT_REVERSE_OTHER",
+})
+# fmt: off
+PERMISSIONS = PERMISSIONS + (
+    PermissionSpec("PAYMENT_REVERSE_CASH", "זיכוי מזומן בשולחן", "tables",
+                   "\"זכה מזומן\" לתשלום במזומן בתוך שולחן (משוחזר, או ששולם בו תשלום חלקי): המגירה נפתחת "
+                   "להחזרת הסכום, ונוצרת חשבונית זיכוי בשולחן. מעל הסכום שהוגדר נדרש אישור.",
+                   limits=(_MAX_AMOUNT,), scope="payment:reverse-cash"),
+    PermissionSpec("PAYMENT_REVERSE_CARD", "זיכוי או ביטול אשראי בשולחן", "tables",
+                   "\"בטל עסקה\" לאשראי שעוד לא שודר, או \"זכה לכרטיס\" לאשראי ששודר, בתוך שולחן — דרך המסוף, "
+                   "עם חשבונית זיכוי בשולחן. מעל הסכום שהוגדר נדרש אישור.",
+                   limits=(_MAX_AMOUNT,), scope="payment:reverse-card"),
+    PermissionSpec("PAYMENT_REVERSE_OTHER", "החזר לשובר / אמצעי חיצוני בשולחן", "tables",
+                   "\"החזר לשובר\" (שובר או תשלום מראש — היתרה חוזרת לשובר) ו\"סמן כמוחזר\" לאמצעי חיצוני בלי "
+                   "חיבור (עם הערה), בתוך שולחן.",
+                   scope="payment:reverse-other"),
+)
+# fmt: on
+
 PERMISSIONS_BY_CODE: Dict[str, PermissionSpec] = {p.code: p for p in PERMISSIONS}
 CODES: Tuple[str, ...] = tuple(PERMISSIONS_BY_CODE)
 
@@ -313,6 +338,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
 LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"})
+#: A payment reversed inside a table hands money back, as a refund did: a legacy cashier asks a manager.
+LEGACY_APPROVAL_CODES = LEGACY_APPROVAL_CODES | TABLE_PAYMENT_REVERSE_CODES
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -389,6 +416,14 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
 }
 # fmt: on
 
+# "זיכוי או ביטול תשלומים בתוך השולחן" (P:/specs/table-restore-payments.md §4): a manager alone, a shift
+# supervisor alone up to a limit (`_SPEC_LIMITS`), a cashier with approval, a waiter never.
+_SPEC_MATRIX.update({
+    "PAYMENT_REVERSE_CASH":              (D, P, A, A),
+    "PAYMENT_REVERSE_CARD":              (D, P, A, A),
+    "PAYMENT_REVERSE_OTHER":             (D, P, A, A),
+})
+
 #: The spec's example (§7): a supervisor takes cash out up to ₪200 alone (and approves it
 #: for others up to that); above it, a manager.
 _SPEC_LIMITS: Dict[str, Dict[str, Dict[str, float]]] = {
@@ -401,6 +436,13 @@ _SPEC_LIMITS: Dict[str, Dict[str, Dict[str, float]]] = {
     },
     MANAGER: {},
 }
+#: A shift supervisor reverses a table's cash or card payment alone up to ₪500 (and approves it for
+#: others up to that); above it, a manager (P:/specs/table-restore-payments.md §4 "מותר עד תקרה").
+TABLE_PAYMENT_REVERSE_SUPERVISOR_LIMIT = 500
+_SPEC_LIMITS[SUPERVISOR].update({
+    "PAYMENT_REVERSE_CASH": {"maxAmount": TABLE_PAYMENT_REVERSE_SUPERVISOR_LIMIT},
+    "PAYMENT_REVERSE_CARD": {"maxAmount": TABLE_PAYMENT_REVERSE_SUPERVISOR_LIMIT},
+})
 
 
 def _legacy_cashier_states() -> Dict[str, str]:
@@ -606,6 +648,8 @@ def _role_value(role: Any) -> str:
 #: them, and a custom role must not read as a cashier there because of one it cannot use.
 #: Nor the catalog's four writes (§6.2): an older till asks for `catalog:write` only.
 LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"} - CATALOG_FINE_CODES
+#: Nor the table's payment reversals (an older till never asks for them).
+LEGACY_SENIOR_CODES = LEGACY_SENIOR_CODES - TABLE_PAYMENT_REVERSE_CODES
 
 
 def legacy_role_for(states: Mapping[str, str]) -> str:
