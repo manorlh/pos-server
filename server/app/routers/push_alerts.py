@@ -284,7 +284,12 @@ def list_alerts(
     open_payments = sum(
         1 for r in payments.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if P.category_of(r)
     )
-    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments
+    # A daily summary informs; it is never an open alert (catalog.INFO_KINDS).
+    from app.services.exception_alerts.catalog import INFO_KINDS
+
+    open_count = main.filter(
+        ExceptionLogEntry.acknowledged_at.is_(None), ExceptionLogEntry.kind.notin_(list(INFO_KINDS)),
+    ).count() + open_payments
     labels = _labels(db, rows)
     out = []
     for r in rows:

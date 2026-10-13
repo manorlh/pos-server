@@ -118,6 +118,16 @@ KINDS: Tuple[Kind, ...] = (
     # (app/services/sales_targets.py, source `sales_target`: once per target and period). An event's
     # target is its shop target there — the live screen writes it there too — so it is never alerted twice.
     Kind("target_reached", "יעד מכירות הושג", "low", "sales_target", amount=True),
+    # "זיהויים חדשים" (P:/specs/push-more.md §C, §B2) — the background watches
+    # (app/services/exception_alerts/shop_watch.py, service_watch.py, till_activity.py) write them as
+    # `audit_exceptions` rows, closed by themselves when the case is over; "סיכום יום" goes straight
+    # to the log (daily_summary.py) and is information, not a problem (`INFO_KINDS`).
+    Kind("shop_not_opened", "הסניף לא נפתח", "medium", "audit_exception"),
+    Kind("sales_pace_low", "קצב מכירות נמוך", "medium", "audit_exception", percent=True),
+    Kind("table_open_long", "שולחן פתוח זמן רב", "low", "audit_exception"),
+    Kind("kds_ticket_late", "הזמנה במטבח לא מוכנה בזמן", "medium", "audit_exception"),
+    Kind("daily_summary", "סיכום יום", "low", "daily_summary", link="z"),
+    Kind("till_idle", "קופה לא מוכרת כשהאחרות מוכרות", "medium", "audit_exception"),
 )
 
 # "מגירת מזומן" (the drawer spec §10–§11, app/services/cash_drawer_exceptions.py): opening after
@@ -162,3 +172,21 @@ def as_json() -> list:
         }
         for k in KINDS
     ]
+
+
+# ── "זיהויים חדשים" (P:/specs/push-more.md §C, §B2) ──────────────────────────
+
+#: Information, not a problem: never in the problems screen nor in any count of open problems
+#: ("סיכום יום" — a shop's day in figures after its Z).
+INFO_KINDS = frozenset({"daily_summary"})
+
+#: Not texted by an "every kind" SMS rule written before they existed (they reach the phone
+#: through the push categories; an SMS rule that names them sends them).
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset({
+    "shop_not_opened", "sales_pace_low", "table_open_long", "kds_ticket_late", "daily_summary", "till_idle",
+})
+
+
+def is_info(kind: Optional[str]) -> bool:
+    """An entry that informs (a daily summary) rather than reports a problem."""
+    return kind in INFO_KINDS

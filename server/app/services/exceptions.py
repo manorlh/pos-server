@@ -206,6 +206,43 @@ RULES: Tuple[RuleSpec, ...] = (
     # charges are not reported to the cloud.
     RuleSpec("price_override", False, (), "medium", "till_event", available=False),
     RuleSpec("card_failures", False, (ParamSpec("count", 3, 1, 100, integer=True),), "medium", "till_event", available=False),
+    # ── "זיהויים חדשים" (P:/specs/push-more.md §C, §B2): the exception alerts' background watches,
+    # every minute (app/services/exception_alerts/worker.py). All off until a level switches them on.
+    # "הסניף לא נפתח" (shop_watch.py): a working day (`days`: the digits 1–7, 1 = Sunday) and by
+    # `time` (10 = 10:00, 9.5 = 9:30, or HHMM: 930 = 9:30) no shift opened and nothing sold.
+    # Read at the tenant / company / shop levels. Closed when the shop opens.
+    RuleSpec(
+        "shop_not_opened", False,
+        (ParamSpec("time", 10, 0, 2359), ParamSpec("days", 1234567, 1, 7654321, integer=True)),
+        "medium", "watch",
+    ),
+    # "קצב מכירות נמוך" (shop_watch.py): today's sales so far under `pacePercent`% of the average of
+    # the same weekday, to the same hour, over the `weeks` before; the shop open `minHoursOpen`
+    # hours. Checked at most hourly, once a day. Tenant / company / shop levels.
+    RuleSpec(
+        "sales_pace_low", False,
+        (ParamSpec("pacePercent", 60, 1, 100), ParamSpec("minHoursOpen", 2, 0, 24),
+         ParamSpec("weeks", 4, 1, 8, integer=True)),
+        "medium", "watch",
+    ),
+    # "שולחן פתוח זמן רב" (service_watch.py): a table open `openMinutes` with no payment — once per
+    # opening, closed when it is paid (or cancelled, merged).
+    RuleSpec("table_open_long", False, (ParamSpec("openMinutes", 180, 15, 24 * 60, integer=True),), "low", "watch"),
+    # "הזמנה במטבח לא מוכנה בזמן" (service_watch.py): a KDS ticket (a round sent to the kitchen) not
+    # marked ready `readyMinutes` after it was released — where the KDS lives in the cloud. Closed
+    # when it is ready.
+    RuleSpec("kds_ticket_late", False, (ParamSpec("readyMinutes", 20, 3, 240, integer=True),), "medium", "watch"),
+    # "סיכום יום" (daily_summary.py): the shop's day in figures — after its Z (`at` = -1), or at the
+    # hour `at` (0–23). Information, not a problem. Tenant / company / shop levels.
+    RuleSpec("daily_summary", False, (ParamSpec("at", -1, -1, 23, integer=True),), "low", "watch"),
+    # "קופה לא מוכרת כשהאחרות מוכרות" (till_activity.py): a till with an open shift (or of a live
+    # event) that sold nothing for `idleMinutes` — or nothing at all — while at least `minPeers`
+    # other tills sold. Once per streak; closed when it sells again.
+    RuleSpec(
+        "till_idle", False,
+        (ParamSpec("idleMinutes", 30, 5, 8 * 60, integer=True), ParamSpec("minPeers", 2, 1, 20, integer=True)),
+        "medium", "watch",
+    ),
 )
 
 # "מגירת מזומן" (the drawer spec §11, app/services/cash_drawer_exceptions.py): detected from the

@@ -102,8 +102,9 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("drawer_no_sale", "מגירה נפתחה ללא מכירה", "פתיחת מגירה ללא מכירה, אחרי סגירה, או ריבוי פתיחות ידניות.",
              ("drawer_open", "drawer_after_close", "drawer_manual_burst", "drawer_manual_over_max",
               "drawer_open_near_variance", "drawer_open_no_reason")),
-    Category("till_low_sales", "קופה כמעט לא מוכרת", "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות).",
-             ("till_low_sales",)),
+    Category("till_low_sales", "קופה כמעט לא מוכרת",
+             "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות), או שלא מכרה זמן רב בזמן שהאחרות מוכרות.",
+             ("till_low_sales", "till_idle")),
     Category("target_reached", "יעד הושג", "יעד מכירות שהושג — של אירוע, של הסניף, של נקודת מכירה או של עובד.",
              ("target_reached",)),
     Category("card_reconcile", "אי-התאמה מול Z-Credit",
@@ -112,6 +113,19 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("bon_unprinted", "בון לא הודפס",
              "בון שלא הודפס במדפסת מטבח / בר, או שלא התקבל במסך המטבח — מכל קופה וקיוסק.",
              ("bon_unprinted",)),
+    # "זיהויים חדשים" (P:/specs/push-more.md §C).
+    Category("shop_open", "הסניף לא פתח",
+             "עד השעה שנקבעה ביום עבודה אין משמרת פתוחה ואין מכירה בסניף.",
+             ("shop_not_opened",)),
+    Category("sales_pace", "קצב מכירות נמוך",
+             "מכירות הסניף מתחילת היום נמוכות מהממוצע של אותו יום בשבוע, עד אותה שעה.",
+             ("sales_pace_low",)),
+    Category("slow_order", "הזמנה ארוכה",
+             "שולחן פתוח זמן רב בלי תשלום, או הזמנה במסך המטבח שלא סומנה כמוכנה בזמן.",
+             ("table_open_long", "kds_ticket_late")),
+    Category("daily_summary", "סיכום יום",
+             "אחרי Z של הסניף (או בשעה שנקבעה): מכירות, עסקאות, ממוצע, מול שבוע שעבר, זיכויים, הנחות והפרשי קופה.",
+             ("daily_summary",)),
 )
 CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in CATEGORIES}
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)

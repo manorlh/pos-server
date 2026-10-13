@@ -555,19 +555,79 @@ def customers(ctx: InsightsContext) -> dict:
 ANOMALY_WINDOWS = ("period", "today")
 
 
-def _tenant_anomaly_layer(db: Session, tenant_id) -> Optional[dict]:
-    from app.models.tenant import Tenant
-
-    tenant = db.get(Tenant, tenant_id)
-    settings = tenant.settings if tenant is not None and isinstance(tenant.settings, dict) else {}
+def _settings_layer(owner) -> Optional[dict]:
+    settings = owner.settings if owner is not None and isinstance(getattr(owner, "settings", None), dict) else {}
     layer = settings.get(AN.TENANT_SETTINGS_KEY)
     return layer if isinstance(layer, dict) else None
 
 
+def _tenant_anomaly_layer(db: Session, tenant_id) -> Optional[dict]:
+    from app.models.tenant import Tenant
+
+    return _settings_layer(db.get(Tenant, tenant_id))
+
+
+#: "ספי החריגות" by level (P:/specs/push-more.md §B2): the organization's, a company's, a shop's
+#: — each in its own `settings.insightAnomalies` — and an event's own (`report_events.thresholds`).
+ANOMALY_LEVELS = ("tenant", "company", "shop")
+
+
+def anomaly_layers(db: Session, tenant_id, *, company_id=None, shop_id=None) -> List[tuple]:
+    """`(level, stored layer or None)`, widest first: the organization's, the company's, the shop's.
+    A shop's company is its own (the exception rules' chain), whatever company was asked for."""
+    from app.models.company import Company
+    from app.models.shop import Shop
+
+    shop = db.get(Shop, shop_id) if shop_id is not None else None
+    if shop is not None and str(shop.tenant_id) != str(tenant_id):
+        shop = None
+    if shop is not None:
+        company_id = shop.company_id
+    company = db.get(Company, company_id) if company_id is not None else None
+    if company is not None and str(company.tenant_id) != str(tenant_id):
+        company = None
+    return [
+        ("tenant", _tenant_anomaly_layer(db, tenant_id)),
+        ("company", _settings_layer(company)),
+        ("shop", _settings_layer(shop)),
+    ]
+
+
+def thresholds_for(db: Session, tenant_id, *, company_id=None, shop_id=None, event=None) -> dict:
+    """Defaults ← the organization's ← the company's ← the shop's ← the event's own (field by field)."""
+    layers = [layer for _level, layer in anomaly_layers(db, tenant_id, company_id=company_id, shop_id=shop_id)]
+    if event is not None:
+        layers.append(AN.from_event(event.thresholds))
+    return AN.effective_thresholds(*layers)
+
+
 def anomaly_thresholds(ctx: InsightsContext) -> dict:
-    """Defaults ← the organization's ← the event's own."""
-    event_layer = AN.from_event(ctx.scope.event.thresholds) if ctx.scope.event is not None else None
-    return AN.effective_thresholds(_tenant_anomaly_layer(ctx.db, ctx.scope.tenant_id), event_layer)
+    """The scope's: an event's (over its shop's), else the shop's (a till's: its shop's), else the company's."""
+    scope = ctx.scope
+    shop_id = scope.shop_id
+    if scope.event is not None:
+        shop_id = scope.event.shop_id
+    elif shop_id is None and scope.machine_id is not None:
+        machine = scope.machine(ctx.db)
+        shop_id = machine.shop_id if machine is not None else None
+    return thresholds_for(ctx.db, scope.tenant_id, company_id=scope.company_id, shop_id=shop_id, event=scope.event)
+
+
+def _group_thresholds(ctx: InsightsContext, tills, th: dict) -> Optional[Dict[str, dict]]:
+    """A scope wider than one shop: each shop's group judged by its own shop's thresholds."""
+    scope = ctx.scope
+    if scope.event is not None or scope.shop_id is not None or scope.machine_id is not None:
+        return None
+    out: Dict[str, dict] = {}
+    for t in tills:
+        if t.group in out or not t.shop_id:
+            continue
+        try:
+            shop_id = uuid_mod.UUID(str(t.shop_id))
+        except ValueError:
+            continue
+        out[t.group] = thresholds_for(ctx.db, scope.tenant_id, shop_id=shop_id)
+    return out or None
 
 
 def anomalies(ctx: InsightsContext, window: str = "period") -> dict:
@@ -582,7 +642,7 @@ def anomalies(ctx: InsightsContext, window: str = "period") -> dict:
     start, end = D.clamp_window(ctx.scope, start, min(end, now))
     th = anomaly_thresholds(ctx)
     tills = TS.load_till_stats(ctx.db, ctx.scope, ctx.clock, start, end, now=now)
-    out = AN.evaluate(tills, th)
+    out = AN.evaluate(tills, th, group_thresholds=_group_thresholds(ctx, tills, th))
     if ctx.scope.machine_id is not None:
         out["cards"] = TS.only_machine(out["cards"], ctx.scope.machine_id)
         out["counts"] = {s: sum(1 for c in out["cards"] if c["severity"] == s) for s in ("critical", "warning")}
@@ -646,45 +706,112 @@ def report_low_sales_alerts(db: Session, cards: List[dict], *, business_day, eve
     return reported
 
 
-#: The thresholds are the whole organization's (every company of the tenant): its super admin's.
-#: A company's own managers set an event's thresholds on the event.
+#: The organization's thresholds (every company of the tenant) are its super admin's; a company's
+#: and a shop's, whoever may write that company's / shop's settings (the exception rules' rule —
+#: P:/specs/push-more.md §B2). A company's own managers set an event's thresholds on the event.
 ANOMALY_SETTINGS_ROLES = (UserRole.SUPER_ADMIN,)
 
 
-def anomaly_settings(db: Session, user: User, tenant_id) -> dict:
-    """The organization's thresholds (each falling back to the default), the limits, who may edit."""
-    stored = AN.clean_thresholds(_tenant_anomaly_layer(db, tenant_id), strict=False)
+def _anomaly_target(db: Session, user: User, tenant_id, level: Optional[str], target_id) -> tuple:
+    """`(level, company, shop)` for a level the user may read (404 / 403 otherwise)."""
+    from app.models.company import Company
+    from app.models.shop import Shop
+    from app.routers.companies import _check_company_access
+    from app.routers.shops import _check_shop_access
+
+    level = level or "tenant"
+    if level not in ANOMALY_LEVELS:
+        raise _bad("level must be one of " + ", ".join(ANOMALY_LEVELS))
+    if level == "tenant":
+        return level, None, None
+    if target_id is None:
+        raise _bad("id is required")
+    if level == "company":
+        company = db.get(Company, target_id)
+        if company is None or str(company.tenant_id) != str(tenant_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        _check_company_access(user, company, db)
+        return level, company, None
+    shop = db.get(Shop, target_id)
+    if shop is None or str(shop.tenant_id) != str(tenant_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    _check_shop_access(user, shop, db)
+    return level, None, shop
+
+
+def _can_edit_anomalies(db: Session, user: User, level: str, company, shop) -> bool:
+    from app.routers.settings import _check_company_settings_write, _check_shop_settings_write
+
+    if level == "tenant":
+        return user.role in ANOMALY_SETTINGS_ROLES
+    try:
+        if level == "company":
+            _check_company_settings_write(user, company, db)
+        else:
+            _check_shop_settings_write(user, shop, db)
+    except HTTPException:
+        return False
+    return True
+
+
+def anomaly_settings(db: Session, user: User, tenant_id, level: Optional[str] = None, target_id=None) -> dict:
+    """
+    One level's thresholds: its own (`stored`), what it inherits from the levels above
+    (`inherited`, and from which level each — `inheritedSources`, None = the default), the result,
+    the defaults, the limits and whether this user may edit them.
+    """
+    level, company, shop = _anomaly_target(db, user, tenant_id, level, target_id)
+    layers = anomaly_layers(db, tenant_id, company_id=company.id if company is not None else None,
+                            shop_id=shop.id if shop is not None else None)
+    own = ANOMALY_LEVELS.index(level)
+    above = [(name, AN.clean_thresholds(layer, strict=False)) for name, layer in layers[:own]]
+    stored = AN.clean_thresholds(layers[own][1], strict=False)
+    sources = {}
+    for key in AN.DEFAULT_THRESHOLDS:
+        source = None
+        for name, layer in above:
+            if key in layer:
+                source = name
+        sources[key] = source
+    target = company if company is not None else shop
     return {
-        "thresholds": AN.effective_thresholds(stored),
+        "level": level,
+        "id": str(target.id) if target is not None else None,
+        "name": getattr(target, "name", None),
+        "thresholds": AN.effective_thresholds(*[layer for _n, layer in above], stored),
         "stored": stored,
+        "inherited": AN.effective_thresholds(*[layer for _n, layer in above]),
+        "inheritedSources": sources,
         "defaults": dict(AN.DEFAULT_THRESHOLDS),
         "limits": {k: {"min": lo, "max": hi, "integer": integer} for k, (lo, hi, integer) in AN.LIMITS.items()},
-        "canEdit": user.role in ANOMALY_SETTINGS_ROLES,
+        "canEdit": _can_edit_anomalies(db, user, level, company, shop),
     }
 
 
-def set_anomaly_settings(db: Session, user: User, tenant_id, raw) -> dict:
+def set_anomaly_settings(db: Session, user: User, tenant_id, raw, level: Optional[str] = None, target_id=None) -> dict:
     """
-    Replace the organization's anomaly thresholds (`null` / missing keys: the defaults).
-    In `tenants.settings.insightAnomalies`, beside the organization's other settings; the
-    tills' settings watermark is not moved — they do not use these.
+    Replace one level's anomaly thresholds (`null` / missing keys: inherit again). In that level's
+    `settings.insightAnomalies` (the tenant's, the company's or the shop's), beside its other
+    settings; the tills' settings watermark is not moved — they do not use these.
     """
     from app.models.tenant import Tenant
 
-    if user.role not in ANOMALY_SETTINGS_ROLES:
+    level, company, shop = _anomaly_target(db, user, tenant_id, level, target_id)
+    if not _can_edit_anomalies(db, user, level, company, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     cleaned = AN.clean_thresholds(raw if raw is not None else {}, strict=True)
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
+    target = company if company is not None else shop
+    owner = target if target is not None else db.get(Tenant, tenant_id)
+    if owner is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
-    settings = dict(tenant.settings) if isinstance(tenant.settings, dict) else {}
+    settings = dict(owner.settings) if isinstance(owner.settings, dict) else {}
     if cleaned:
         settings[AN.TENANT_SETTINGS_KEY] = cleaned
     else:
         settings.pop(AN.TENANT_SETTINGS_KEY, None)
-    tenant.settings = settings
+    owner.settings = settings
     db.commit()
-    return anomaly_settings(db, user, tenant_id)
+    return anomaly_settings(db, user, tenant_id, level, target.id if target is not None else None)
 
 
 # ── Product costs ────────────────────────────────────────────────────────────

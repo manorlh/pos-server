@@ -72,6 +72,12 @@ def report_till_low_sales(
                       "businessDay": business_day.isoformat()})
         if event_id is not None:
             extra["eventId"] = str(event_id)
+        else:
+            # The shop's evaluation of a till an event's already reported keeps the event it named.
+            known = L.find(db, f"till_low_sales:{machine.id}:{business_day.isoformat()}")
+            known_event = (known.details or {}).get("eventId") if known is not None and isinstance(known.details, dict) else None
+            if known_event:
+                extra["eventId"] = known_event
         spec = L.EntrySpec(
             source="insight",
             source_id=f"{machine.id}:{business_day.isoformat()}",
