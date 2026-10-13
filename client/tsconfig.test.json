@@ -17,6 +17,8 @@
     "src/lib/tableSketch.test.ts",
     "src/lib/tablePolicy.ts",
     "src/lib/tablePolicy.test.ts",
+    "src/lib/remoteTableCancel.ts",
+    "src/lib/remoteTableCancel.test.ts",
     "src/lib/trainingMode.ts",
     "src/lib/trainingMode.test.ts",
     "src/lib/eventReport.ts",

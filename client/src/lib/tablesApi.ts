@@ -6,6 +6,7 @@
 import { api } from './api';
 import type { Sketch } from './tableSketch';
 import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
+import type { RemoteCancelRequested, RemoteCancelStatus, TableCancelRoute } from './remoteTableCancel';
 
 export type ZoneLayout = 'map' | 'grid';
 export type TableShape = 'round' | 'square' | 'rect';
@@ -89,6 +90,8 @@ export interface TableLock {
 export interface LiveTable extends DiningTable {
   zoneName: string | null;
   order: TableOrderSummary | null;
+  /** How the dashboard may cancel its order: direct, through the LAN host, or not here at all. */
+  cancel?: TableCancelRoute | null;
   lock: TableLock | null;
   state: TableStateCode;
   minutesOpen?: number | null;
@@ -123,6 +126,7 @@ export interface TablesLive {
 
 /** The dashboard's cancel: the order, and how the kitchen was told. */
 export interface DashboardCancelResult extends TableOrderSummary {
+  mode: 'direct';
   voidTickets: VoidTicket[];
   /** Tasks taken off the kitchen screens; null when they never had the order. */
   kdsCancelled: number | null;
@@ -313,8 +317,21 @@ export const fetchMealsReport = (shopId: string, from: string, to: string, emplo
 
 export const archiveTable = (tableId: string) => api.post(`/tables/tables/${tableId}/archive`).then((r) => r.data);
 
-export const cancelOpenTable = (tableId: string, body: { reasonId: string; reasonText?: string | null }) =>
-  api.post<DashboardCancelResult>(`/tables/tables/${tableId}/cancel`, body).then((r) => r.data);
+/**
+ * The cloud's tables: cancelled here (200). The LAN mode with a host: a command to it (202), followed
+ * by `fetchRemoteCancel`. `orderId` / `expectedVersion`: as shown — another now is 409 `order_changed`.
+ */
+export const cancelOpenTable = (
+  tableId: string,
+  body: { reasonId: string; reasonText?: string | null; orderId?: string; expectedVersion?: number },
+) =>
+  api
+    .post<DashboardCancelResult | RemoteCancelRequested>(`/tables/tables/${tableId}/cancel`, body)
+    .then((r) => r.data);
+
+/** A table's cancel sent to the LAN host, as it stands (followed to the host it went on to). */
+export const fetchRemoteCancel = (commandId: string) =>
+  api.get<RemoteCancelStatus>(`/device-commands/${commandId}`).then((r) => r.data);
 
 export const forceReleaseTable = (tableId: string) =>
   api.post(`/tables/tables/${tableId}/force-release`).then((r) => r.data);
