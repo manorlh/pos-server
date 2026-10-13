@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -529,6 +529,9 @@ class BuiltinParameter:
     #: Changed by a super admin or a distributor only, whatever route writes it
     #: (`kioskTillModeEnabled` — app/services/kiosk_till_mode.py ADMIN_ONLY_KEYS).
     admin_only: bool = False
+    #: An enum whose stored options are codes the till reads (`sellAllTab`: first / last /
+    #: hidden): the Hebrew the dashboard shows for each (`enum_labels`, `enumLabels`).
+    enum_labels: Optional[Dict[str, str]] = field(default=None, hash=False, compare=False)
 
 
 #: Parameters the cloud itself reads or the dashboard edits specially. Created once if
@@ -1744,8 +1747,54 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "לשונית 'הכל' בקטלוג ההזמנה" (the owner, 13.10.2026): where the till's category bar puts "הכל"
+# (every product) — first as today, last, or not at all (the order opens on the first category;
+# search still covers every product). Read by the till only, on every order screen with a
+# category bar: phone, tablet, a table's order and the designed templates (till-design).
+SELL_ALL_TAB_KEY = "sellAllTab"
+SELL_ALL_TAB_FIRST = "first"
+SELL_ALL_TAB_LAST = "last"
+SELL_ALL_TAB_HIDDEN = "hidden"
+SELL_ALL_TAB_OPTIONS = (SELL_ALL_TAB_FIRST, SELL_ALL_TAB_LAST, SELL_ALL_TAB_HIDDEN)
+SELL_ALL_TAB_LABELS = {
+    SELL_ALL_TAB_FIRST: "ראשונה — כמו היום",
+    SELL_ALL_TAB_LAST: "אחרונה",
+    SELL_ALL_TAB_HIDDEN: "מוסתרת — נפתחת המחלקה הראשונה",
+}
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=SELL_ALL_TAB_KEY,
+        label="לשונית 'הכל' בקטלוג ההזמנה",
+        value_type="enum",
+        enum_options=SELL_ALL_TAB_OPTIONS,
+        enum_labels=SELL_ALL_TAB_LABELS,
+        default_value=SELL_ALL_TAB_FIRST,
+        description=(
+            "איפה מופיעה לשונית \"הכל\" (כל הפריטים) בסרגל המחלקות של ההזמנה בקופה — בטלפון, בטאבלט, "
+            "בהזמנת שולחן ובתבניות המעוצבות (\"עיצוב קופה\"). "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_FIRST]}» (ברירת מחדל) — \"הכל\" לפני כל המחלקות. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_LAST]}» — \"הכל\" אחרי המחלקה האחרונה. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_HIDDEN]}» — אין לשונית \"הכל\", וההזמנה נפתחת על המחלקה "
+            "הראשונה; החיפוש עדיין מחפש בכל המוצרים. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
+
+#: The Hebrew of each option of a built-in enum whose options are codes (`BuiltinParameter.enum_labels`).
+_ENUM_LABELS: Dict[str, Dict[str, str]] = {
+    spec.key: dict(spec.enum_labels) for spec in BUILTIN_PARAMETERS if spec.enum_labels
+}
+
+
+def enum_labels(key: str) -> Optional[Dict[str, str]]:
+    """What the dashboard shows for each option of this parameter, when its options are codes."""
+    labels = _ENUM_LABELS.get(key)
+    return dict(labels) if labels else None
 
 
 def validate_keyed_value(key: str, value: Any) -> Any:
@@ -1770,6 +1819,10 @@ def validate_keyed_value(key: str, value: Any) -> Any:
             return zcredit_reconcile.validate_time(value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
+
+    # The till knows these three and no other, even if the definition's options were re-edited.
+    if key == SELL_ALL_TAB_KEY and value is not None and value not in SELL_ALL_TAB_OPTIONS:
+        raise TillParameterValueError(f"{SELL_ALL_TAB_KEY} must be one of {', '.join(SELL_ALL_TAB_OPTIONS)}")
     return value
 
 

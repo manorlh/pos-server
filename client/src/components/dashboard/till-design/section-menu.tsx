@@ -5,15 +5,18 @@
  * one is moved ("לפי סידור הקופה" — `categoryOrder` / `productOrder` empty), dragged by their
  * handle (or moved with the arrows, from the keyboard), a category hidden from the bar (still
  * found by search), a product starred as a favourite (the bar's strip, at most 24), and the way
- * back to the till's order.
+ * back to the till's order. Where the bar's "הכל" tab sits is the till parameter `sellAllTab`
+ * (pos-server app/services/till_parameters.py), pointed to here.
  */
 
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Eye, EyeOff, GripVertical, RotateCcw, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { FAVORITES_MAX, flatProductOrder, formatShekels, moveTo, orderCategories, orderProducts } from '@/lib/tillDesign';
 import { useTillEditor } from './editor-context';
@@ -116,6 +119,8 @@ function DragList<T>({
 export function MenuSection() {
   const t = useTranslations('tillDesign.menu');
   const ed = useTillEditor();
+  // The till parameters page is the super admin's; others read where the setting lives.
+  const superAdmin = useAuth((s) => s.user?.role === 'super_admin');
   const menu = ed.draft.menu;
   const favorites = ed.draft.bar.favorites ?? [];
   const catalog = ed.catalog;
@@ -276,6 +281,17 @@ export function MenuSection() {
       }
     >
       {body}
+      <p className="text-xs text-muted-foreground">
+        {t('allTabHint')}
+        {superAdmin ? (
+          <>
+            {' '}
+            <Link href="/dashboard/till-parameters" className="font-medium text-primary underline-offset-4 hover:underline">
+              {t('allTabLink')}
+            </Link>
+          </>
+        ) : null}
+      </p>
       <div className="space-y-2 rounded-lg border p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-medium">{t('favoritesTitle', { n: favorites.length, max: FAVORITES_MAX })}</span>
