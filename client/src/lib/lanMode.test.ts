@@ -8,8 +8,25 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  CLOSE_FROM_CLOUD_AFTER_SECONDS,
+  CLOSE_FROM_CLOUD_BLOCKS,
+  EMPTY_SWITCH_FORM,
   LAN_SYSTEMS,
+  SWITCH_BLOCKS,
+  SWITCH_SUMMARY_KEYS,
   ageText,
+  closeFromCloudBlock,
+  eligibleTargets,
+  hostOnline,
+  isSilent,
+  parseCountedCash,
+  shiftStep,
+  silentSecondsAt,
+  switchBlock,
+  switchBody,
+  switchSummary,
+  type LocalServerState,
+  type LocalServerTill,
   healthRows,
   healthTone,
   localNetworkBlock,
@@ -113,5 +130,157 @@ describe('every text the card and the page show', () => {
     for (const s of ['synced', 'syncing', 'lagging', 'offline', 'unknown', 'none', 'seconds', 'minutes', 'alert']) assert.ok(ln.sync[s], s);
     for (const b of ['read_only', 'kds_screen', 'main_till', 'not_applicable']) assert.ok(he.machineLanServer.blocked[b], b);
     assert.ok(he.independentTill.lanServer.column);
+  });
+});
+
+// ── "העברת שרת מקומי" and "סגירת משמרת מהענן" ─────────────────────────────────
+
+const NOW = Date.parse('2026-10-13T20:00:00Z');
+const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
+
+const till = (over: Partial<LocalServerTill> = {}): LocalServerTill => ({
+  machineId: 'old',
+  posNumber: '1',
+  name: 'קופה 1',
+  online: false,
+  lastHeartbeatAt: ago(900),
+  silentSeconds: 900,
+  canCloseFromCloud: true,
+  openShift: { shiftId: 's1', sequenceNumber: 7 },
+  pendingDocuments: 3,
+  ...over,
+});
+
+const state = (over: Partial<LocalServerState> = {}): LocalServerState => ({
+  shopId: 'shop',
+  server: till(),
+  candidates: [
+    { machineId: 'new', posNumber: '2', name: 'קופה 2', online: true, lastHeartbeatAt: ago(5), eligible: true, reason: null, reasonText: null },
+    { machineId: 'win', posNumber: '3', name: 'קופה 3', online: true, lastHeartbeatAt: ago(5), eligible: false, reason: 'not_android', reasonText: 'x' },
+  ],
+  tablesLan: true,
+  localMode: true,
+  shopZ: { producer: { kind: 'local', machine: { machineId: 'old', posNumber: '1' }, since: null }, handover: null },
+  closeFromCloudAfterSeconds: 300,
+  canSwitch: true,
+  canForce: true,
+  canReleaseShopZ: false,
+  lastSwitch: null,
+  switches: [],
+  formerHostChanges: { count: 0, items: [], checked: [] },
+  ...over,
+});
+
+const label = (r: { posNumber?: string | null } | null | undefined) => (r?.posNumber ? `קופה ${r.posNumber}` : '—');
+
+describe('"סגירת משמרת מהענן": only a till not heard for 5 minutes', () => {
+  it('reads the silence by the clock, never heard counting as silent', () => {
+    assert.equal(silentSecondsAt(ago(42), NOW), 42);
+    assert.equal(silentSecondsAt(null, NOW), null);
+    assert.equal(silentSecondsAt('not a date', NOW), null);
+    assert.equal(isSilent(ago(299), NOW), false);
+    assert.equal(isSilent(ago(300), NOW), true);
+    assert.equal(isSilent(null, NOW), true);
+    assert.equal(CLOSE_FROM_CLOUD_AFTER_SECONDS, 300);
+  });
+  it('is offered on the device page only for a silent till with an open shift', () => {
+    assert.equal(closeFromCloudBlock({ lastHeartbeatAt: ago(600), hasOpenShift: true }, NOW), null);
+    assert.equal(closeFromCloudBlock({ lastHeartbeatAt: ago(60), hasOpenShift: true }, NOW), 'heard_recently');
+    assert.equal(closeFromCloudBlock({ lastHeartbeatAt: ago(600), hasOpenShift: false }, NOW), 'no_open_shift');
+    assert.equal(closeFromCloudBlock({ lastHeartbeatAt: ago(600), hasOpenShift: true, removed: true }, NOW), 'removed');
+    assert.equal(closeFromCloudBlock({ lastHeartbeatAt: ago(600), hasOpenShift: true, display: true }, NOW), 'display');
+  });
+  it('takes a cash count typed by hand, or none', () => {
+    assert.equal(parseCountedCash(''), null);
+    assert.equal(parseCountedCash('  '), null);
+    assert.equal(parseCountedCash('140'), 140);
+    assert.equal(parseCountedCash('99,5'), 99.5);
+    assert.equal(parseCountedCash('-3'), 'invalid');
+    assert.equal(parseCountedCash('abc'), 'invalid');
+    assert.equal(parseCountedCash('1.234'), 'invalid');
+  });
+});
+
+describe('the wizard "העברת שרת מקומי"', () => {
+  it('offers only online Android tills of the shop, never the server', () => {
+    assert.deepEqual(eligibleTargets(state()).map((c) => c.machineId), ['new']);
+    const self = state({ candidates: [{ ...state().candidates[0], machineId: 'old' }] });
+    assert.deepEqual(eligibleTargets(self), []);
+  });
+  it('refuses while the cloud hears the old server, unless forced by a permitted user', () => {
+    const heard = state({ server: till({ online: true, silentSeconds: 20, canCloseFromCloud: false }) });
+    const form = { ...EMPTY_SWITCH_FORM, targetMachineId: 'new' };
+    assert.equal(hostOnline(heard), true);
+    assert.equal(switchBlock(heard, form), 'host_online');
+    assert.equal(switchBlock(heard, { ...form, force: true }), null);
+    assert.equal(switchBlock({ ...heard, canForce: false }, { ...form, force: true }), 'host_online');
+    // Its shift cannot be closed from the cloud while it is heard.
+    assert.equal(shiftStep(heard), 'heard_recently');
+    assert.equal(switchBlock(heard, { ...form, force: true, closeOldShift: true }), 'shift_not_closable');
+  });
+  it('checks the rest before confirming', () => {
+    const s = state();
+    assert.equal(switchBlock(s, EMPTY_SWITCH_FORM), 'no_target');
+    assert.equal(switchBlock(s, { ...EMPTY_SWITCH_FORM, targetMachineId: 'win' }), 'no_target');
+    const form = { ...EMPTY_SWITCH_FORM, targetMachineId: 'new' };
+    assert.equal(switchBlock(s, form), null);
+    assert.equal(switchBlock(s, { ...form, closeOldShift: true, countedCash: 'x' }), 'bad_cash');
+    assert.equal(switchBlock(s, { ...form, releaseShopZ: true }), 'release_forbidden');
+    assert.equal(switchBlock({ ...s, canReleaseShopZ: true }, { ...form, releaseShopZ: true }), null);
+    assert.equal(switchBlock({ ...s, canSwitch: false }, form), 'forbidden');
+    assert.equal(shiftStep(state({ server: till({ openShift: null }) })), 'none');
+  });
+  it('sends only what applies (§8)', () => {
+    const s = state();
+    assert.deepEqual(switchBody(s, { ...EMPTY_SWITCH_FORM, targetMachineId: 'new', force: true }), { targetMachineId: 'new' });
+    assert.deepEqual(
+      switchBody(s, { ...EMPTY_SWITCH_FORM, targetMachineId: 'new', closeOldShift: true, countedCash: '140' }),
+      { targetMachineId: 'new', closeOldShift: true, countedCash: 140 },
+    );
+    assert.deepEqual(
+      switchBody(s, { ...EMPTY_SWITCH_FORM, targetMachineId: 'new', closeOldShift: true }),
+      { targetMachineId: 'new', closeOldShift: true, countedCash: null },
+    );
+    const heard = state({ server: till({ online: true }) });
+    assert.deepEqual(
+      switchBody(heard, { ...EMPTY_SWITCH_FORM, targetMachineId: 'new', force: true, releaseShopZ: true }),
+      { targetMachineId: 'new', force: true, releaseShopZ: true },
+    );
+  });
+  it('sums up what moves, the shift, the shop Z and the notice', () => {
+    const keys = (lines: { key: string }[]) => lines.map((l) => l.key);
+    const s = state();
+    const form = { ...EMPTY_SWITCH_FORM, targetMachineId: 'new' };
+    const lines = switchSummary(s, form, label);
+    assert.deepEqual(keys(lines), ['move', 'roles', 'shiftStays', 'zFrozen', 'notice']);
+    assert.deepEqual(lines[0].values, { from: 'קופה 1', to: 'קופה 2' });
+    assert.deepEqual(
+      keys(switchSummary(s, { ...form, closeOldShift: true, countedCash: '140', releaseShopZ: true }, label)),
+      ['move', 'roles', 'closeShiftCounted', 'zReleased', 'notice'],
+    );
+    const heard = state({ server: till({ online: true, openShift: null }) });
+    assert.deepEqual(keys(switchSummary(heard, { ...form, force: true }, label)), ['move', 'roles', 'zFrozen', 'forced', 'notice']);
+    assert.deepEqual(keys(switchSummary(state({ server: null }), form, label)), ['first', 'roles', 'notice']);
+  });
+  it('has its Hebrew for every step, line and refusal', () => {
+    const he = JSON.parse(readFileSync(join(__dirname, '..', 'src', 'messages', 'he.json'), 'utf8')) as {
+      localServer: Record<string, Record<string, string> | string>;
+      dashboardAccess: { sections: Record<string, string> };
+      exceptions: { types: Record<string, string> };
+      exceptionSettings: { desc: Record<string, string> };
+    };
+    const ls = he.localServer as Record<string, Record<string, string>>;
+    for (const k of SWITCH_SUMMARY_KEYS) assert.ok(ls.summary[k], k);
+    for (const k of SWITCH_BLOCKS) assert.ok(ls.blocked[k], k);
+    for (const k of CLOSE_FROM_CLOUD_BLOCKS) assert.ok(ls.closeFromCloud[`blocked_${k}`], k);
+    for (const k of ['not_assigned', 'independent', 'lan_excluded', 'kiosk', 'not_android', 'offline']) assert.ok(ls.ineligible[k], k);
+    for (const k of ['title', 'open', 'confirm', 'forceLabel', 'forceWarning', 'closeShiftLabel', 'releaseZLabel']) assert.ok(ls.wizard[k], k);
+    for (const k of ['title', 'confirm', 'countedCash', 'reason', 'done']) assert.ok(ls.closeFromCloud[k], k);
+    for (const k of ['title', 'markChecked', 'till', 'cloud']) assert.ok(ls.changes[k], k);
+    assert.ok(he.dashboardAccess.sections.local_server_switch);
+    for (const k of ['local_server_switched', 'shift_closed_from_cloud', 'cloud_closed_shift_late_documents']) {
+      assert.ok(he.exceptions.types[k], k);
+      assert.ok(he.exceptionSettings.desc[k], k);
+    }
   });
 });

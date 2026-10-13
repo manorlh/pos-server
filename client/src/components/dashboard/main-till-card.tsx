@@ -10,6 +10,11 @@
  * The super admin's alone, like the Z mode (pos-server app/routers/main_till.py); the
  * shop's managers see it read-only. Refused while a Z run is under way.
  *
+ * Moving the main till to another till is "העברת שרת מקומי" alone (local-server-switch.tsx — the
+ * wizard: the full move, the old server's state and shift); the select here only names the first
+ * one, or takes it off. Under it, "X שינויים מהשרת הקודם" when an old server came back with table
+ * changes the cloud kept aside.
+ *
  * Under it, "רשת מקומית" (pos-server docs/SPEC_LAN_MODE.md §4): the shop's switch (it needs a
  * main till, and moves the shop Z production only when the handover is clean), a row per
  * system with what works on the LAN through the main till today, and "סנכרון רשת מקומית" —
@@ -36,6 +41,7 @@ import { saveLocalNetwork } from '@/lib/lanServerApi';
 import { producerBusyOf, refusalOf, type ProducerBusy } from '@/lib/zParticipation';
 import { shopZProducerKey, zParticipationKey } from '@/lib/zParticipationApi';
 import { ShopZForceDialog } from '@/components/dashboard/shop-z-force-dialog';
+import { FormerHostChanges, LocalServerSwitchButton } from '@/components/dashboard/local-server-switch';
 import type { TillRef } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,6 +64,7 @@ export function MainTillCard({ shopId }: { shopId: string }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">{t('desc')}</p>
+        <FormerHostChanges shopId={shopId} />
         {query.isLoading || !data ? (
           <Skeleton className="h-28 w-full" />
         ) : (
@@ -120,6 +127,8 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
     return i >= 0 && i < Z_FROM_KEYS.length ? t(`zFrom.${Z_FROM_KEYS[i]}`) : value;
   };
   const dirty = machineId !== (data.mainTill?.machineId ?? '') || zFrom !== data.zFrom;
+  // A main till is moved by the wizard only ("העברת שרת מקומי"): the select names the first one.
+  const hasMain = !!data.mainTill;
 
   return (
     <>
@@ -135,12 +144,18 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
           onChange={(e) => setMachineId(e.target.value)}
         >
           <option value="">{t('none')}</option>
-          {data.tills.map((m) => (
-            <option key={m.machineId} value={m.machineId}>
-              {tillLabel(m)}
-            </option>
-          ))}
+          {data.tills
+            .filter((m) => !hasMain || m.machineId === data.mainTill?.machineId)
+            .map((m) => (
+              <option key={m.machineId} value={m.machineId}>
+                {tillLabel(m)}
+              </option>
+            ))}
         </select>
+      </div>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted-foreground">{hasMain ? t('switchHint') : t('firstHint')}</p>
+        <LocalServerSwitchButton shopId={shopId} canSwitch={!!data.canSwitch} />
       </div>
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <label htmlFor={`z-from-${shopId}`} className="text-sm font-medium">
