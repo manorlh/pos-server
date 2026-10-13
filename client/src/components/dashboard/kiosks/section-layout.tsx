@@ -9,22 +9,32 @@
 
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
-import { Check, ChevronDown, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, CircleCheck, Sparkles } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { resolveThemeColors, type ResolvedThemeColors } from '@/lib/kioskConfig';
+import {
+  RAIL_MOTION_COLOR_KEYS,
+  railMotionColors,
+  railMotionContrastIssues,
+  resolveThemeColors,
+  type RailMotionColorKey,
+  type ResolvedThemeColors,
+} from '@/lib/kioskConfig';
 import {
   LAYOUT_TEMPLATES,
+  LAYOUT_TOP_BAR_ITEMS,
   LAYOUT_VOCABULARY,
   layoutValueReady,
   type KioskLayout,
   type LayoutTemplate,
+  type LayoutTopBarItem,
 } from '@/lib/kioskLayout';
 import { KIOSK_ICONS, categoryIconOf, suggestCategoryIcon, type KioskIconStyle } from '@/lib/kioskIcons';
 import { KioskIconSvg } from '@/kiosk-shared/layouts/icons';
 import { useKioskEditor, useKioskField } from './editor-context';
-import { FieldShell, OverrideMark, SectionCard, Segmented, SwitchField } from './fields';
+import { ColorField, FieldShell, OverrideMark, SectionCard, Segmented, SwitchField } from './fields';
 
 /* ------------------------------------------------------------ thumbnails */
 
@@ -157,6 +167,29 @@ function LayoutThumb({ template, c }: { template: LayoutTemplate; c: ResolvedThe
         </>
       );
       break;
+    case 'restaurant_rail':
+      // "מסעדה — פס צד": the top bar, circles on the side (the chosen one filled), tiles with price pills.
+      body = (
+        <>
+          <div className="flex items-center justify-between gap-0.5">
+            <span className="block h-1.5 w-5 rounded-full" style={{ background: soft }} />
+            <span className="block h-1.5 w-3 rounded-full" style={{ background: '#DC2626' }} />
+          </div>
+          <div className="flex min-h-0 flex-1 gap-1">
+            <div className="flex w-3.5 shrink-0 flex-col items-center gap-1 py-0.5">
+              {[0, 1, 2, 3].map((i) => (
+                <span key={i} className="block rounded-full" style={{ width: i === 0 ? 11 : 9, height: i === 0 ? 11 : 9, background: i === 0 ? c.primary : muted }} />
+              ))}
+            </div>
+            <div className="grid flex-1 grid-cols-2 gap-0.5">
+              {[0, 1, 2, 3].map((i) =>
+                tile(i, <span className="block h-1 w-full rounded-full" style={{ background: `${c.primary}55` }} />),
+              )}
+            </div>
+          </div>
+        </>
+      );
+      break;
     case 'wall':
       body = (
         <div className="grid flex-1 grid-cols-4 gap-0.5">
@@ -241,7 +274,18 @@ export function LayoutTemplatePicker() {
 const AUTO = '__auto__';
 
 /** A layout key as a segmented choice; null (as today) shows as "כמו היום"; values not drawn yet as "בקרוב". */
-function LayoutChoice<K extends keyof KioskLayout>({ name, nullable = false, hint }: { name: K; nullable?: boolean; hint?: ReactNode }) {
+function LayoutChoice<K extends keyof KioskLayout>({
+  name,
+  nullable = false,
+  hint,
+  inactive = false,
+}: {
+  name: K;
+  nullable?: boolean;
+  hint?: ReactNode;
+  /** The key does nothing in the current draft (another key turns it on): still editable, dimmed. */
+  inactive?: boolean;
+}) {
   const t = useTranslations('kiosks.layouts');
   const path = `layout.${name}`;
   const f = useKioskField<KioskLayout[K]>(path);
@@ -265,7 +309,7 @@ function LayoutChoice<K extends keyof KioskLayout>({ name, nullable = false, hin
   ];
   const current = f.value === null || f.value === undefined ? AUTO : String(f.value);
   return (
-    <FieldShell path={path} label={t(`keys.${String(name)}`)} hint={hint}>
+    <FieldShell path={path} label={t(`keys.${String(name)}`)} hint={hint} className={inactive ? 'opacity-60' : undefined}>
       <Segmented<string>
         value={current}
         options={options}
@@ -339,8 +383,149 @@ export function LayoutSection() {
           ) : null}
         </div>
       </SectionCard>
+      <RailMotionCard />
       <CategoryIconsCard />
     </div>
+  );
+}
+
+/* ------------------------------------------------------------ "מסעדה — פס צד" (spec §6) */
+
+const RAIL_MOTION_PATHS = [
+  'layout.railStyle',
+  'layout.railEmphasis',
+  'layout.catalogScroll',
+  'layout.railFollow',
+  'layout.pricePill',
+  'layout.sheetMotion',
+  'layout.topBar',
+  'layout.helpButton',
+  'layout.doneScreen',
+  'layout.payMethodView',
+];
+
+/** "סרגל עליון" (layout.topBar): off — today's header; on — the buttons chosen, in their order. */
+function TopBarField() {
+  const t = useTranslations('kiosks.layouts');
+  const ed = useKioskEditor();
+  const f = useKioskField<LayoutTopBarItem[] | null>('layout.topBar');
+  const on = Array.isArray(f.value);
+  const list = on ? (f.value as LayoutTopBarItem[]) : [];
+  const shown = (item: LayoutTopBarItem): boolean => {
+    const d = ed.draft;
+    if (item === 'club') return !!d.club?.enabled || (d.payment?.methods ?? []).includes('voucher');
+    if (item === 'search') return !!d.general?.searchEnabled;
+    if (item === 'lang') return (d.general?.languages?.length ?? 0) > 1;
+    return true;
+  };
+  return (
+    <FieldShell path="layout.topBar" label={t('rail.topBarLabel')} hint={t('rail.topBarHint')}>
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={on}
+            disabled={f.disabled}
+            aria-label={t('rail.topBarOn')}
+            onCheckedChange={(v) => f.set(v ? ['club', 'cancel', 'search'] : null)}
+          />
+          {on ? t('rail.topBarOn') : t('auto')}
+        </label>
+        {on ? (
+          <ul className="divide-y rounded-xl border">
+            {LAYOUT_TOP_BAR_ITEMS.map((item) => {
+              const checked = list.includes(item);
+              return (
+                <li key={item} className="flex items-start gap-3 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-primary"
+                    checked={checked}
+                    disabled={f.disabled}
+                    aria-label={t(`rail.topBarItems.${item}`)}
+                    // Kept in the vocabulary's order: the club on the start side, the rest at the end.
+                    onChange={(e) => f.set(LAYOUT_TOP_BAR_ITEMS.filter((x) => (x === item ? e.target.checked : list.includes(x))))}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium">{t(`rail.topBarItems.${item}`)}</span>
+                    <span className={cn('block text-xs', checked && !shown(item) ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground')}>
+                      {t(`rail.topBarNeeds.${item}`)}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </div>
+    </FieldShell>
+  );
+}
+
+/** The colours, each with its fallback (what null paints), and the contrast check (a warning under 4.5:1). */
+function RailMotionColors() {
+  const t = useTranslations('kiosks.layouts');
+  const ed = useKioskEditor();
+  const theme = ed.draft.theme;
+  const shown = railMotionColors(theme);
+  const base = resolveThemeColors(theme);
+  const issues = railMotionContrastIssues(theme);
+  const fallbackOf = (key: RailMotionColorKey): string => {
+    const v = shown[key as keyof typeof shown];
+    return typeof v === 'string' ? v : base.surface;
+  };
+  return (
+    <div className="space-y-4 rounded-2xl border bg-muted/30 p-3">
+      <div>
+        <div className="text-sm font-semibold">{t('rail.colorsTitle')}</div>
+        <p className="text-xs text-muted-foreground">{t('rail.colorsHint')}</p>
+      </div>
+      <ColorField path="theme.backgroundColor" label={t('rail.colors.background')} nullable nullLabel={t('auto')} fallback={base.background} />
+      {RAIL_MOTION_COLOR_KEYS.map((key) => (
+        <ColorField key={key} path={`theme.${key}`} label={t(`rail.colors.${key}`)} nullable nullLabel={t('auto')} fallback={fallbackOf(key)} />
+      ))}
+      <div className="space-y-1.5" aria-live="polite">
+        <div className="text-sm font-semibold">{t('rail.contrastTitle')}</div>
+        {issues.length === 0 ? (
+          <p className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+            <CircleCheck className="h-3.5 w-3.5" /> {t('rail.contrastOk')}
+          </p>
+        ) : (
+          issues.map((i) => (
+            <p key={i.pair} role="alert" className="flex items-start gap-1.5 rounded-lg bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {t('rail.contrastWarn', { pair: t(`rail.contrastPairs.${i.pair}`), ratio: i.ratio.toFixed(2) })}
+            </p>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RailMotionCard() {
+  const t = useTranslations('kiosks.layouts');
+  const ed = useKioskEditor();
+  const layout = ed.draft.layout;
+  const circles = layout?.railStyle === 'circle';
+  const onRail = layout?.catalog === 'rail';
+  return (
+    <SectionCard
+      title={t('rail.title')}
+      description={t('rail.hint')}
+      paths={[...RAIL_MOTION_PATHS, 'theme.backgroundColor', ...RAIL_MOTION_COLOR_KEYS.map((k) => `theme.${k}`)]}
+    >
+      <LayoutChoice name="railStyle" hint={t('rail.railOnly')} inactive={!onRail} />
+      <LayoutChoice name="railEmphasis" hint={t('rail.emphasisCircleOnly')} inactive={!circles || !onRail} />
+      <LayoutChoice name="railFollow" hint={t('rail.railFollowHint')} inactive={!onRail} />
+      <LayoutChoice name="catalogScroll" hint={t('rail.catalogScrollHint')} />
+      <LayoutChoice name="pricePill" />
+      <LayoutChoice name="sheetMotion" nullable hint={t('rail.sheetMotionHint')} />
+      <LayoutChoice name="payMethodView" hint={t('rail.payMethodViewHint')} />
+      <TopBarField />
+      <LayoutChoice name="helpButton" hint={t('rail.helpButtonHint')} />
+      <LayoutChoice name="doneScreen" hint={t('rail.doneScreenHint')} />
+      <RailMotionColors />
+    </SectionCard>
   );
 }
 

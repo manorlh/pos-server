@@ -21,9 +21,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Banknote, Check, CreditCard, Ticket, Trash2, WalletCards } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { checkoutBar, MONO_FIGURES_STACK, type CheckoutStep, type KioskTextKey, type PaymentMethod } from '@/lib/kioskConfig';
+import { checkoutBar, MONO_FIGURES_STACK, railMotionColors, type CheckoutStep, type KioskTextKey, type PaymentMethod } from '@/lib/kioskConfig';
+import { payMethodSheet } from '@/lib/kioskLayout';
+import { cn } from '@/lib/utils';
 import { BigButton, LiveBack, cardStyle, chromeOf, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { EntryHeader } from '@/components/dashboard/kiosks/preview-entry';
+import { sheetEnter } from '@/components/dashboard/kiosks/preview-motion';
 
 /** A tile on the step: `off` — why it cannot be taken now (the host's words), else null. */
 export interface KioskPayTile {
@@ -124,8 +127,16 @@ function Spinner({ m, size = 28 }: { m: PreviewModel; size?: number }) {
   return <span aria-hidden className="inline-block animate-spin rounded-full border-4" style={{ width: size, height: size, borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />;
 }
 
+/**
+ * "איך תרצו לשלם?". layout.payMethodView = sheet ("מסעדה — פס צד", P:/specs/kiosk-rail-motion.md §3א):
+ * a window rising from the bottom (layout.sheetMotion through the transitions) over the screen behind,
+ * a big card per method — its icon in a circle and its name — in the template's colours (cardBg,
+ * railCircleBg / railIcon); else today's screen.
+ */
 export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePayMethod }) {
   const [confirming, setConfirming] = useState(false);
+  const sheet = payMethodSheet(m.cfg);
+  const rc = railMotionColors(m.cfg.theme);
   const money = (agorot: number) => m.money(agorot / 100);
   const radius = Math.min(Math.max(m.radius, 10), 20);
   const vouchered = live.vouchers.length > 0;
@@ -177,6 +188,36 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
   const tile = (t: KioskPayTile) => {
     const Icon = ICONS[t.method];
     const off = t.off !== null || live.busy;
+    if (sheet) {
+      return (
+        <button
+          key={t.method}
+          type="button"
+          data-method={t.method}
+          disabled={off}
+          aria-disabled={off}
+          onClick={() => {
+            if (off) return;
+            if (t.method === 'cash_at_till') setConfirming(true);
+            else live.onPick(t.method);
+          }}
+          className={cn(
+            'flex w-full flex-col items-center gap-2 px-3 py-5 text-center transition-transform duration-150',
+            off ? 'opacity-55' : 'active:scale-[0.97]',
+            live.tiles.length === 1 && 'col-span-2',
+          )}
+          style={{ background: rc.cardBg, color: rc.cardText, border: `1.5px solid ${m.c.border}`, borderRadius: Math.max(radius, 18) }}
+        >
+          <span className="flex h-16 w-16 items-center justify-center rounded-full" style={{ background: rc.railCircleBg, color: rc.railIcon }}>
+            <Icon className="h-8 w-8" />
+          </span>
+          <span className="text-lg font-extrabold leading-tight">{methodLabel(m, t.method)}</span>
+          <span className="kt-11 leading-snug" style={{ color: m.c.mutedText }}>
+            {t.off ?? methodSub(m, t.method)}
+          </span>
+        </button>
+      );
+    }
     return (
       <button
         key={t.method}
@@ -204,11 +245,7 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
     );
   };
 
-  return (
-    <div className="relative flex h-full flex-col">
-      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
-        <div className="my-auto w-full max-w-[640px] overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
-          <EntryHeader m={m} caption={m.txt('stepPayMethod')} start={<LiveBack m={m} size={32} />} compact={m.screen.h < 720} />
+  const body = (
           <div className="flex flex-col gap-4 p-4">
             <StepBar m={m} steps={live.steps} />
             <div className="flex flex-col items-center gap-1 text-center">
@@ -240,7 +277,7 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
                 </BigButton>
               </div>
             ) : (
-              <div className="flex flex-col gap-2.5">{live.tiles.map(tile)}</div>
+              <div className={sheet ? 'grid grid-cols-2 gap-2.5' : 'flex flex-col gap-2.5'}>{live.tiles.map(tile)}</div>
             )}
             {/* "רשות": passed with the default method. */}
             {live.skip && !asking ? (
@@ -305,6 +342,32 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
               </p>
             ) : null}
           </div>
+  );
+  if (sheet) {
+    const enter = sheetEnter(m.transitions);
+    const top = Math.max(22, m.radius);
+    return (
+      <div data-pay-sheet className="absolute inset-0 z-30 flex flex-col justify-end">
+        <div aria-hidden className={cn('absolute inset-0 bg-black/40', enter.scrim)} style={enter.style} />
+        <div
+          className={cn('relative max-h-[92%] overflow-y-auto [scrollbar-width:none]', enter.panel)}
+          style={{ ...enter.style, background: m.c.surface, color: m.c.text, borderRadius: `${top}px ${top}px 0 0` }}
+        >
+          <div className="mx-auto mt-2 h-1.5 w-12 rounded-full" style={{ background: m.c.border }} />
+          <div className="flex items-center px-3 pt-1">
+            <LiveBack m={m} size={32} />
+          </div>
+          {body}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="relative flex h-full flex-col">
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
+        <div className="my-auto w-full max-w-[640px] overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
+          <EntryHeader m={m} caption={m.txt('stepPayMethod')} start={<LiveBack m={m} size={32} />} compact={m.screen.h < 720} />
+          {body}
         </div>
       </div>
     </div>

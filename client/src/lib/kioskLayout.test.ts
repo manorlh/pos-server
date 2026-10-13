@@ -585,3 +585,44 @@ describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additi
     assert.deepEqual(bad.map((e) => e.path), ['payment.paymentChooserSkip']);
   });
 });
+
+import { kioskPayChooser } from './kioskConfig';
+
+describe('kioskPayChooser — "דלג על בחירת אמצעי תשלום" on every kiosk (the web and Windows kiosks call it)', () => {
+  const cfgOf = (layer: Record<string, unknown>) => resolveKioskConfig(layer);
+
+  it('auto (absent too): exactly one available method, the card, nothing else to choose — straight to the card', () => {
+    const cfg = cfgOf({ payment: { methods: ['card'] } });
+    assert.deepEqual(kioskPayChooser(cfg, ['card'], ['card']), { asks: false, optional: false, fallback: 'card' });
+    const older = { ...cfg, payment: { ...cfg.payment, paymentChooserSkip: undefined } };
+    assert.equal(kioskPayChooser(older, ['card'], ['card']).asks, false);
+  });
+
+  it('the window shows with a second method, a voucher, cash at the till, a split or installments', () => {
+    const cfg = cfgOf({ payment: { methods: ['card', 'voucher'] } });
+    assert.equal(kioskPayChooser(cfg, ['card', 'voucher'], ['card', 'voucher']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['card', 'cash_at_till'] } }), ['card', 'cash_at_till'], ['card', 'cash_at_till']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['cash_at_till'] } }), ['cash_at_till'], ['cash_at_till']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['card', 'split_card'] } }), ['card', 'split_card'], ['card', 'split_card']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['card'] } }), ['card'], ['card'], { installments: true }).asks, true);
+  });
+
+  it('never: the window even with the card alone; an explicit "כבוי" step still charges the card without asking', () => {
+    assert.deepEqual(kioskPayChooser(cfgOf({ payment: { methods: ['card'], paymentChooserSkip: 'never' } }), ['card'], ['card']), {
+      asks: true,
+      optional: false,
+      fallback: 'card',
+    });
+    const off = cfgOf({ payment: { methods: ['card'], paymentChooserSkip: 'never', stepModes: { payMethod: 'off' } } });
+    assert.equal(kioskPayChooser(off, ['card'], ['card']).asks, false);
+  });
+
+  it('the same in every layout template', () => {
+    for (const template of LAYOUT_TEMPLATES_READY) {
+      const cfg = cfgOf({ layout: { template }, payment: { methods: ['card'] } });
+      assert.equal(kioskPayChooser(cfg, ['card'], ['card']).asks, false, template);
+      const never = cfgOf({ layout: { template }, payment: { methods: ['card'], paymentChooserSkip: 'never' } });
+      assert.equal(kioskPayChooser(never, ['card'], ['card']).asks, true, template);
+    }
+  });
+});

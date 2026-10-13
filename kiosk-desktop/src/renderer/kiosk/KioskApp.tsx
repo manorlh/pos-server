@@ -26,10 +26,10 @@ import {
   messagePlacement,
   engineMotionSpec,
   engineTransitionSpec,
+  withSheetMotion,
   kioskMotionEngine,
   resolveThemeColors,
-  stepMode,
-  payMethodAsk,
+  kioskPayChooser,
   MULTI_CARD_METHODS,
   tickerBandPx,
   typeScaleFactor,
@@ -212,7 +212,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   const payHost = view.pay ?? { methods: ['card'] as PaymentMethod[], usable: (view.state.noPayment ? [] : ['card']) as PaymentMethod[], cardOff: null };
   const oneCard = (list: PaymentMethod[]) => list.filter((m) => !MULTI_CARD_METHODS.includes(m));
   const payInfo = { ...payHost, methods: oneCard(payHost.methods), usable: oneCard(payHost.usable) };
-  const payAsk = payMethodAsk(payInfo.methods, payInfo.usable, stepMode(cfg, 'payMethod'));
+  // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
+  const payAsk = kioskPayChooser(cfg, payInfo.methods, payInfo.usable);
   const asksPay = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : 'card';
   const flowReducer = useCallback((s: KioskFlowState, a: FlowAction) => reduce(s, a.event, { ...rulesOf(cfgIn, a.cartEmpty), asksPayMethod: asksPay }), [cfgIn, asksPay]);
@@ -637,7 +638,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   // (the light one's cheaper kinds, reduced motion's fallbacks), as the Android kiosk resolves them.
   const engine = useMemo(() => kioskMotionEngine(cfg.motion, cfg.general, profile), [cfg.motion, cfg.general, profile]);
   const motion = engineMotionSpec(engine, cfg.theme);
-  const transitions = engineTransitionSpec(engine);
+  // "פתיחת חלונות" (layout.sheetMotion, the rail-motion look): the windows' entrance over the engine's.
+  const transitions = withSheetMotion(engineTransitionSpec(engine), layoutOf(cfg).sheetMotion, { reduceMotion: cfg.general.reduceMotion, light: profile === 'light' });
   // The screen change towards this screen: back home by homeReturn, into the basket by cartOpen, else pageTransition.
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);

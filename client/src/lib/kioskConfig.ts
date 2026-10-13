@@ -2568,6 +2568,24 @@ export function payMethodAsk(
 }
 
 /**
+ * "איך תרצו לשלם?" on a kiosk of any design and platform (the browser kiosk, the Windows kiosk; the Android
+ * kiosk's KioskCheckoutSteps the same rule — P:/specs/kiosk-rail-motion.md §3א, §6.3): the configured
+ * step mode, the business's `payment.paymentChooserSkip` (absent — auto), and what this device can take
+ * now. auto skips the window only when exactly one method is available, it is the card, and nothing
+ * else is to be chosen there — no installments (`installments`: offered on this device; none today), no
+ * voucher, no cash at the till, no split; never — the window always.
+ */
+export function kioskPayChooser(
+  cfg: StepModeConfigIn & { payment: { paymentChooserSkip?: PaymentChooserSkip | null } },
+  methods: readonly PaymentMethod[],
+  usable: readonly PaymentMethod[],
+  opts: { installments?: boolean } = {},
+): PayMethodAsk {
+  const skip: PaymentChooserSkip = cfg.payment?.paymentChooserSkip === 'never' || opts.installments ? 'never' : 'auto';
+  return payMethodAsk(methods, usable, stepMode({ ...cfg, payment: { ...cfg.payment, paymentChooserSkip: skip } }, 'payMethod'), skip);
+}
+
+/**
  * A voucher is offered where the order it leaves can be finished (the Android kiosk's rule, its terminal pays the rest):
  * by the card — the Windows kiosk writes ONE document with the vouchers as legs and the card for what is left, the
  * browser kiosk does the same through its bridge —, or at the till ("מזומן בקופה"). With neither, a voucher would leave
