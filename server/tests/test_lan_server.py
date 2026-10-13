@@ -156,9 +156,9 @@ class TestNeverTheServer:
     def test_the_main_till_pickers_refuse_it(self, w):
         exclude(w, w.six[1])
         w.db.commit()
-        with pytest.raises(HTTPException) as e:
-            put_main(w, w.six[1].id)
-        assert e.value.status_code == 409 and e.value.detail["code"] == LS.MAIN_TILL_NOT_SERVER
+        # `put_main` answers (code, body) since "העברת שרת מקומי" (the card's refusals are kept).
+        code, out = put_main(w, w.six[1].id)
+        assert code == 409 and out["detail"]["code"] == LS.MAIN_TILL_NOT_SERVER
         code, out = participation(w, mainTillId=str(w.six[1].id))
         assert code == 409 and out["detail"] == LS.MAIN_TILL_NOT_SERVER and "לא משמש כשרת מקומי" in out["message"]
 

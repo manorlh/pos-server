@@ -222,11 +222,20 @@ def effective_access(db: Session, user: Any) -> EffectiveAccess:
 _RANK = {None: 0, DS.VIEW: 1, DS.EDIT: 2}
 
 
-def grantable(access: EffectiveAccess) -> Dict[str, str]:
-    """The highest level of each section this person may give someone else."""
+def grantable(access: EffectiveAccess, *, super_admin: bool = False) -> Dict[str, str]:
+    """
+    The highest level of each section this person may give someone else. The super admin's
+    own permissions (`DS.SUPER_ADMIN_GRANTED`, "העברת שרת מקומי") only by the super admin —
+    never by someone with full access or who was given one.
+    """
     if not access.restricted:
-        return {s.id: DS.EDIT for s in DS.SECTIONS}
-    return dict(access.sections)
+        out = {s.id: DS.EDIT for s in DS.SECTIONS}
+    else:
+        out = dict(access.sections)
+    if not super_admin:
+        for sid in DS.SUPER_ADMIN_GRANTED:
+            out.pop(sid, None)
+    return out
 
 
 def cap_sections(sections: Dict[str, str], limit: Dict[str, str]) -> Dict[str, str]:

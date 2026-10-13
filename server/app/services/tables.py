@@ -979,6 +979,7 @@ def _replayed(db: Session, order_id: Any, request_id: Optional[str]) -> Optional
 
 def _touch(order: TableOrder, actor: Actor, now: datetime, request_id: Optional[str]) -> None:
     order.updated_at = now
+    order.cloud_updated_at = now
     order.updated_machine_id = actor.machine.id
     order.updated_by_pos_user_id = actor.pos_user_id
     order.updated_by_pos_user_name = actor.pos_user_name
@@ -1581,6 +1582,8 @@ def merge(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datet
         _close(order, "merged", actor, now)
         order.merged_into_id = current.id
         order.updated_at = now
+        order.cloud_updated_at = now
+        order.updated_machine_id = actor.machine.id
         record_event(
             db, "merged", table, order, actor=actor, now=now,
             details={"intoOrderId": str(current.id), "intoTableId": str(target.id), "intoNumber": target.number},
@@ -1693,14 +1696,30 @@ def record_cancel_exception(db: Session, machine: POSMachine, order: TableOrder,
 # ── Single-till reporting ────────────────────────────────────────────────────
 
 
-def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) -> dict:
+def apply_local_report(
+    db: Session, machine: POSMachine, orders: Sequence[Any], *, former_host: bool = False,
+) -> dict:
     """
-    Store the orders a single-till ("קופה אחת") till reports, for the dashboard. Upsert
-    by id, newest version wins; an order of another shop's table is skipped.
+    Store the orders a single-till ("קופה אחת") till — or the LAN host's mirror — reports,
+    for the dashboard. Upsert by id, newest version wins; an order of another shop's table
+    is skipped.
+
+    `former_host` (gap 1, P:/specs/local-server-switch.md §8): the till was the server before
+    the server moved away from it, and sends what it never uploaded. An order the cloud
+    changed since that switch (the new server, the dashboard) is not applied — it is kept
+    for the shop page ("X שינויים מהשרת הקודם", app/services/local_server_switch.py). The
+    answer then adds `results` (`[{orderId, status: applied | conflict}]`) and the two lists.
     """
+    from app.services import local_server_switch as LSS
+
     accepted: List[str] = []
     skipped: List[str] = []
+    applied: List[str] = []
+    conflicts: List[str] = []
     reasons: Dict[Any, Optional[str]] = {}
+    shop = db.get(Shop, machine.shop_id) if former_host and machine.shop_id is not None else None
+    since = LSS.switched_away_at(shop, machine) if former_host else None
+    received = _now()
     for item in orders:
         table = db.get(DiningTable, item.table_id)
         if table is None or machine.shop_id is None or table.shop_id != machine.shop_id:
@@ -1710,8 +1729,13 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
         if row is not None and (row.source != "local" or row.shop_id != machine.shop_id):
             skipped.append(str(item.id))
             continue
+        if former_host and row is not None and shop is not None and LSS.changed_in_cloud_since(row, machine, since):
+            LSS.record_former_host_change(shop, machine, item, row, since=since, now=received)
+            conflicts.append(str(item.id))
+            continue
         if row is not None and (row.version or 0) >= item.version:
             accepted.append(str(item.id))
+            applied.append(str(item.id))
             continue
         newly_cancelled = item.status == "cancelled" and (row is None or row.status != "cancelled")
         if row is None:
@@ -1739,6 +1763,8 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
         row.waiter_pos_user_name = item.waiter_pos_user_name or item.opened_by_pos_user_name
         row.updated_at = as_utc(item.updated_at) or _now()
         row.updated_machine_id = machine.id
+        # The cloud's own clock: when this write arrived (gap 1 reads it against a switch).
+        row.cloud_updated_at = received
         row.sent_at = as_utc(item.sent_at)
         row.send_count = item.send_count or 0
         row.bill_printed_at = as_utc(item.bill_printed_at)
@@ -1768,7 +1794,17 @@ def apply_local_report(db: Session, machine: POSMachine, orders: Sequence[Any]) 
                 reasons[item.cancel_reason_id] = reason.name if reason is not None else None
             record_cancel_exception(db, machine, row, reason_name=reasons[item.cancel_reason_id])
         accepted.append(str(item.id))
-    return {"accepted": accepted, "skipped": skipped}
+        applied.append(str(item.id))
+    out: Dict[str, Any] = {"accepted": accepted, "skipped": skipped}
+    if former_host:
+        out.update({
+            "formerHost": True,
+            "applied": applied,
+            "conflict": conflicts,
+            "results": [{"orderId": i, "status": "applied"} for i in applied]
+            + [{"orderId": i, "status": "conflict"} for i in conflicts],
+        })
+    return out
 
 
 # ── The LAN mode's host, taken over ──────────────────────────────────────────
@@ -2634,6 +2670,9 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
     order.cancel_approved_by_user_id = user.id
     order.cancel_approved_by_name = name
     order.updated_at = now
+    # The dashboard's write, not a till's: a former server's change to it is a conflict (gap 1).
+    order.cloud_updated_at = now
+    order.updated_machine_id = None
     order.last_request_id = None
     db.flush()
     record_event(

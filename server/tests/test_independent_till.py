@@ -813,15 +813,36 @@ def put_main(w, machine_id, *, force=False, user=None):
 
     from app.routers import main_till as MR
 
-    resp = MR.put_main_till(
-        w.shop.id,
-        MR.MainTillIn(machineId=machine_id, forceProducerSwitch=force),
-        BackgroundTasks(),
-        current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
-    )
+    try:
+        resp = MR.put_main_till(
+            w.shop.id,
+            MR.MainTillIn(machineId=machine_id, forceProducerSwitch=force),
+            BackgroundTasks(),
+            current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+    except HTTPException as e:
+        return e.status_code, {"detail": e.detail}
     if isinstance(resp, dict):
         return 200, resp
     return resp.status_code, json.loads(resp.body)
+
+
+def switch_server(w, target, *, force=False, release=False, user=None):
+    """"העברת שרת מקומי" (app/routers/local_server.py) — the one way to move the main till."""
+    from fastapi import BackgroundTasks
+
+    from app.routers import local_server as LR
+
+    try:
+        out = LR.post_local_server_switch(
+            w.shop.id,
+            LR.SwitchIn(targetMachineId=target.id, force=force, releaseShopZ=release),
+            BackgroundTasks(),
+            current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+    except HTTPException as e:
+        return e.status_code, {"detail": e.detail}
+    return 200, out
 
 
 def set_value(w, key, scope_type, scope_id, value):
@@ -860,12 +881,14 @@ class TestOneProducer:
         main = w.six[0]
         report(w, main, pending=2, last=7)
         w.db.commit()
-        # Changing the main till, removing it, tables-LAN on then off, the print server: refused.
+        # Moving the main till on the card is the wizard's now ("העברת שרת מקומי", which moves the
+        # server and freezes the Z production instead — below).
         code, out = put_main(w, w.six[2].id)
+        assert code == 409 and out["detail"]["code"] == "use_local_server_switch"
+        # Removing it, tables-LAN on then off, the print server: refused.
+        code, out = put_main(w, None)
         assert code == 409 and out["detail"]["code"] == LZ.BUSY
         assert "2 דוחות Z סניפיים" in out["detail"]["message"]
-        code, out = put_main(w, None)
-        assert code == 409
         code, out = put_local_network(w, False)
         assert code == 409 and out["detail"]["code"] == LZ.BUSY
         with pytest.raises(Exception):
@@ -893,35 +916,46 @@ class TestOneProducer:
         owner_setup(w)
         report(w, w.six[0], pending=0, online=False)
         w.db.commit()
-        code, out = put_main(w, w.six[2].id)
-        assert code == 409 and "לא מחוברת לענן" in out["detail"]["message"]
+        # The server moves (the tables cannot wait), the Z production waits for the old one.
+        code, out = switch_server(w, w.six[2])
+        assert code == 200 and out["mainTill"]["machineId"] == str(w.six[2].id)
+        assert "לא מחוברת לענן" in out["shopZHandover"]["message"]
+        assert LZ.effective_producer(w.db, w.shop).is_local_of(w.six[0].id)
 
     def test_online_and_synced_hands_over_at_once(self, w):
         owner_setup(w)
         report(w, w.six[0], pending=0, last=0)
         w.db.commit()
-        code, _ = put_main(w, w.six[2].id)
-        assert code == 200
+        # Heard by the cloud: "כפה העברה" (two servers may result), the old one has nothing unsynced.
+        code, out = switch_server(w, w.six[2])
+        assert code == 409 and out["detail"]["code"] == "host_online"
+        code, out = switch_server(w, w.six[2], force=True)
+        assert code == 200 and out["forced"] is True
         assert LZ.effective_producer(w.db, w.shop).is_local_of(w.six[2].id)
 
     def test_a_till_that_never_made_a_shop_z_hands_over(self, w):
         owner_setup(w)
-        code, _ = put_main(w, w.six[2].id)
+        # Gone (the cloud lost it), and it never reported a shop Z of its own: nothing to wait for.
+        w.six[0].last_heartbeat_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        w.db.commit()
+        code, _ = switch_server(w, w.six[2])
         assert code == 200
+        assert MT.main_till_of_shop(w.db, w.shop.id).id == w.six[2].id
         assert LZ.effective_producer(w.db, w.shop).is_local_of(w.six[2].id)
 
     def test_the_super_admin_may_force_it_and_it_is_recorded(self, w):
         owner_setup(w)
-        report(w, w.six[0], pending=3)
+        report(w, w.six[0], pending=3, online=False)
         w.db.commit()
-        code, out = put_main(w, w.six[2].id, force=True)
-        assert code == 200
+        # "העבר את הפקת ה-Z עכשיו" in the wizard's step.
+        code, out = switch_server(w, w.six[2], release=True)
+        assert code == 200 and out["releasedShopZ"] is True
         pin = w.shop.settings[LZ.PRODUCER_KEY]
         assert pin["machineId"] == str(w.six[2].id) and pin["forcedBy"] == "admin"
         assert [e.details["kind"] for e in sequence_exceptions(w, "shop_z_producer_forced")] == ["forced_handover"]
         # Only the super admin.
-        with pytest.raises(HTTPException):
-            put_main(w, w.six[3].id, force=True, user=manager(w))
+        code, out = switch_server(w, w.six[3], release=True, user=manager(w))
+        assert code == 403
 
     def test_a_handover_waits_for_the_old_producer_whatever_road_changed_the_config(self, w):
         owner_setup(w)

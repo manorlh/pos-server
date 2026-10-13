@@ -224,7 +224,8 @@ def check_grant(db: Session, actor: User, values: dict, *, current: Optional[DA.
                 "grant_exceeds_own", "גישה מלאה אפשר לתת רק למי שיש לו גישה מלאה בעצמו.", status.HTTP_403_FORBIDDEN
             )
     else:
-        had = DA.grantable(current) if current is not None else {}
+        # What the user holds now, the super admin's own grants included: keeping one is never raising it.
+        had = DA.grantable(current, super_admin=True) if current is not None else {}
         over = DA.sections_over(values["sections"], had, limit)
         if over:
             labels = ", ".join(DS.SECTION_BY_ID[sid].label for sid in over)
@@ -419,7 +420,7 @@ def get_profile(
         "profile": DA.profile_out(profile),
         "orgScopeAllowed": user.role == UserRole.COMPANY_MANAGER,
         # What this caller may give (the dialog greys out the rest; the PUT refuses it).
-        "grantable": DA.grantable(mine),
+        "grantable": DA.grantable(mine, super_admin=is_admin),
         "canGrantFull": not mine.restricted,
         "canGrantOrgWide": is_admin or current_user.role == UserRole.DISTRIBUTOR or (
             current_user.role == UserRole.COMPANY_MANAGER and mine.org_wide

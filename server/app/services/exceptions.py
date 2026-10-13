@@ -163,6 +163,17 @@ RULES: Tuple[RuleSpec, ...] = (
     # "הוחלפה קופה": a replacement device took over a till (§4.6.2) — the old and the new
     # device, who, when, why, and whether support produced its Z first.
     RuleSpec("till_replaced", True, (), "medium", "z"),
+    # "העברת שרת מקומי" (app/services/local_server_switch.py): the shop's local server moved from
+    # the cloud — who, when, from which till to which, what moved, forced or not, the old
+    # server's shift closed, the shop Z released. Always recorded (high when forced).
+    RuleSpec("local_server_switched", True, (), "medium", "z"),
+    # "סגירת משמרת מהענן": a till the cloud had not heard for 5 minutes had its open shift closed
+    # from the cloud's documents ("נסגרה מהענן — הקופה לא הייתה זמינה"): who, the basis, the
+    # cash counted by hand or not. Always recorded.
+    RuleSpec("shift_closed_from_cloud", True, (), "medium", "z"),
+    # Documents of a shift closed from the cloud that the till uploaded after it: taken as late
+    # documents (into the shift, or the next Z). Always recorded.
+    RuleSpec("cloud_closed_shift_late_documents", True, (), "high", "z"),
     # A till Z closed although the card batch transmission before it failed — on the
     # cashier's explicit confirmation, or unattended ("שידור אשראי נכשל בסגירת Z", §7.3).
     RuleSpec("z_transmission_failed", True, (), "high", "z"),
