@@ -182,6 +182,8 @@ def _user_out(db: Session, user: User, tenant_id) -> Dict[str, Any]:
         "userId": str(user.id),
         "policy": PP.policy_json(PP.user_policy(user)),
         "resolved": PP.resolve_required(db, user, tenant_id).as_json(),
+        # What applies when the user's own is "inherit" (the form's "ירושה: …").
+        "inherited": PP.resolve_required(db, user, tenant_id, above_user=True).as_json(),
         "health": health,
         "catalogue": PP.catalogue_json(),
     }

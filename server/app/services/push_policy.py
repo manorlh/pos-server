@@ -447,52 +447,55 @@ def _approvals_policy_module():
         return None
 
 
-def _approvals_on_by_policy(db: Session, module: Any, shops: Sequence[Any]) -> Optional[bool]:
+def _shop_on_by_policy(db: Session, module: Any, shop: Any) -> Optional[bool]:
     """
     feat/remote-approvals (`approval_policy_values`, resolved company → shop → area → machine):
-    on in one of the shops, or switched on by one of their points of sale / tills by itself.
-    None when the module is not what is expected (then the settings are read instead).
+    on for the shop, or switched on by one of its points of sale / tills by itself. None when
+    the module is not what is expected (then the settings are read instead).
     """
     try:
-        for shop in shops:
-            chain = module.chain_for(company_id=shop.company_id, shop_id=shop.id)
-            if bool(getattr(module.resolve(module.rows_on_chain(db, chain), chain), "enabled", False)):
-                return True
+        chain = module.chain_for(company_id=shop.company_id, shop_id=shop.id)
+        if bool(getattr(module.resolve(module.rows_on_chain(db, chain), chain), "enabled", False)):
+            return True
         from app.models.pos_machine import POSMachine
 
         model = importlib.import_module("app.models.remote_approval").ApprovalPolicyValue
-        shop_ids = [s.id for s in shops]
-        if not shop_ids:
-            return False
-        machines = db.query(POSMachine.id, POSMachine.area_id).filter(POSMachine.shop_id.in_(shop_ids)).all()
+        machines = db.query(POSMachine.id, POSMachine.area_id).filter(POSMachine.shop_id == shop.id).all()
         below = {m for m, _ in machines} | {a for _, a in machines if a is not None}
         if not below:
             return False
-        for row in db.query(model).filter(model.scope_type.in_(("area", "machine")), model.scope_id.in_(below)).all():
-            values = row.values if isinstance(row.values, Mapping) else {}
-            if values.get("enabled") is True:
-                return True
-        return False
+        rows = db.query(model).filter(model.scope_type.in_(("area", "machine")), model.scope_id.in_(below)).all()
+        return any(isinstance(r.values, Mapping) and r.values.get("enabled") is True for r in rows)
     except Exception:  # noqa: BLE001 - another branch's internals; the settings are the fallback
         logger.warning("push_policy: approval requests policy could not be read", exc_info=True)
         return None
 
 
-def _approvals_on_by_settings(db: Session, shops: Sequence[Any]) -> bool:
-    """`approvalRequests.enabled` in a shop's merged settings (tenant → company → shop)."""
+def _shop_on_by_settings(db: Session, shop: Any) -> bool:
+    """`approvalRequests.enabled` in the shop's merged settings (tenant → company → shop)."""
     from app.models.company import Company
     from app.models.tenant import Tenant
     from app.services.settings_merge import merge_all_settings_layers
 
-    for shop in shops:
-        company = db.get(Company, shop.company_id) if shop.company_id else None
-        if company is None:
-            continue
-        tenant = db.get(Tenant, shop.tenant_id) if getattr(shop, "tenant_id", None) else None
-        block = merge_all_settings_layers(company, shop, tenant).get("approvalRequests")
-        if isinstance(block, Mapping) and block.get("enabled") is True:
-            return True
-    return False
+    company = db.get(Company, shop.company_id) if shop.company_id else None
+    if company is None:
+        return False
+    tenant = db.get(Tenant, shop.tenant_id) if getattr(shop, "tenant_id", None) else None
+    block = merge_all_settings_layers(company, shop, tenant).get("approvalRequests")
+    return isinstance(block, Mapping) and block.get("enabled") is True
+
+
+def shop_approvals_on(db: Session, shop: Any) -> bool:
+    """Approval requests are on in this shop (memoised per session: a users list asks once per shop)."""
+    memo = _memo(db).setdefault("approval_shops", {})
+    if shop.id in memo:
+        return memo[shop.id]
+    module = _approvals_policy_module()
+    on = _shop_on_by_policy(db, module, shop) if module is not None else None
+    if on is None:
+        on = _shop_on_by_settings(db, shop)
+    memo[shop.id] = on
+    return on
 
 
 def approvals_enabled_for(db: Session, user: Any, tenant_id: Any) -> bool:
@@ -509,11 +512,7 @@ def approvals_enabled_for(db: Session, user: Any, tenant_id: Any) -> bool:
     except Exception:  # noqa: BLE001 - the default must never fail the request
         logger.warning("push_policy: the user's shops could not be read", exc_info=True)
         shops = []
-    result = False
-    if shops:
-        module = _approvals_policy_module()
-        by_policy = _approvals_on_by_policy(db, module, shops) if module is not None else None
-        result = by_policy if by_policy is not None else _approvals_on_by_settings(db, shops)
+    result = any(shop_approvals_on(db, shop) for shop in shops)
     memo[key] = result
     return result
 
@@ -537,14 +536,16 @@ def default_required(db: Session, user: Any, tenant_id: Any) -> str:
     return OFF
 
 
-def resolve_required(db: Session, user: Any, tenant_id: Any) -> Required:
-    """The most specific level that sets `required`, else the default."""
+def resolve_required(db: Session, user: Any, tenant_id: Any, *, above_user: bool = False) -> Required:
+    """The most specific level that sets `required`, else the default (`above_user`: the user's own left out)."""
     default = default_required(db, user, tenant_id)
     from app.services import dashboard_access as DA
 
     if user is None or DA.is_producer(user):
         return Required(OFF, "default", default)
     for level, policy in reversed(_layers(db, user, home_company_id(db, user))):
+        if above_user and level == "user":
+            continue
         if policy.get("required") in MODES:
             return Required(policy["required"], level, default)
     return Required(default, "default", default)
@@ -730,8 +731,10 @@ def status_for(db: Session, user: Any, tenant_id: Any, endpoint_hash: Optional[s
         this = next((d for d in devices if d.endpoint_hash == wanted), None)
     required = resolve_required(db, user, tenant_id)
     vapid = webpush.config()
+    # Failing since its last success (a re-subscribe resets the count: no loop of re-subscribes).
     this_failing = bool(
         this is not None
+        and int(this.failure_count or 0) > 0
         and this.last_failure_at is not None
         and (this.last_success_at is None or _aware(this.last_failure_at) > _aware(this.last_success_at))
     )

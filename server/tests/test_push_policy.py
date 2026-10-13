@@ -292,6 +292,7 @@ def test_user_level_route(w):
     out = R.put_user_push_policy(manager.id, {"required": "required"}, current_user=boss, active_tenant_id=w.tenant.id, db=w.db)
     assert out["policy"]["required"] == "required"
     assert out["resolved"] == {"required": "required", "source": "user", "default": "reminder"}
+    assert out["inherited"] == {"required": "reminder", "source": "default", "default": "reminder"}
     assert manager.preferences == {"pushPolicy": {"required": "required"}}
     # Their own per-category choice stays when only `required` changes.
     PP.set_user_policy(manager, {"required": "required", "notify": {"approvals": {"vibrate": "long"}}})
@@ -334,9 +335,15 @@ def test_push_status(w, monkeypatch):
     assert out["thisDeviceRegistered"] is False and out["thisDevice"] is None
     # Failing since its last success: the dashboard re-subscribes it.
     phone.last_failure_at = NOW - timedelta(minutes=1)
+    phone.failure_count = 1
     w.db.flush()
     out = R.push_status(endpoint_hash=phone.endpoint_hash, current_user=manager, active_tenant_id=w.tenant.id, db=w.db)
     assert out["thisDevice"]["failing"] is True
+    # Re-subscribed (the count is reset): no longer failing, until it fails again.
+    phone.failure_count = 0
+    w.db.flush()
+    out = R.push_status(endpoint_hash=phone.endpoint_hash, current_user=manager, active_tenant_id=w.tenant.id, db=w.db)
+    assert out["thisDevice"]["failing"] is False
     # Push not configured on the server: the dashboard asks nothing of anyone.
     monkeypatch.setattr(W, "config", lambda: None)
     out = R.push_status(endpoint_hash=None, current_user=manager, active_tenant_id=w.tenant.id, db=w.db)
