@@ -330,7 +330,7 @@ function AccessEditor({
           </Button>
         </div>
 
-        <div className={`overflow-x-auto rounded-lg border ${fullAccess ? 'opacity-50' : ''}`}>
+        <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40">
@@ -341,7 +341,8 @@ function AccessEditor({
             </thead>
             <tbody>
               {catalog.sections.map((s) => (
-                <tr key={s.id} className="border-b last:border-0">
+                // Full access covers every row but the super admin's own (ticked on its own).
+                <tr key={s.id} className={`border-b last:border-0 ${fullAccess && !superOnly.has(s.id) ? 'opacity-50' : ''}`}>
                   <td className="p-2">
                     <div>
                       {t(`sections.${s.id}`)}
