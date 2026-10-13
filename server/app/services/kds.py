@@ -973,11 +973,17 @@ def _out(outcome: str, **extra: Any) -> Tuple[str, Dict[str, Any]]:
     return outcome, {"outcome": outcome, **extra}
 
 
+def _effective_display(db: Session, device: KdsDevice) -> Optional[Dict[str, Any]]:
+    """The look (and behaviour) this screen draws: its own, else the shop's default for its kind."""
+    shop = db.query(Shop).filter(Shop.id == device.shop_id).first()
+    return DISPLAY.effective(device, shop)
+
+
 def _apply(db: Session, device: KdsDevice, body: KdsActionIn, now: datetime) -> Tuple[str, Dict[str, Any]]:
     kind = body.type
     actor = body.actor_name or device.name
 
-    if kind in ("start", "item_ready", "undo_ready", "resolve_fallback", "remake"):
+    if kind in ("start", "item_ready", "undo_ready", "resolve_fallback", "remake", "requeue"):
         if body.task_id is None:
             raise _refuse("task_required", status.HTTP_422_UNPROCESSABLE_ENTITY)
         task = _load_task(db, device, body.task_id)
@@ -1061,7 +1067,11 @@ def _apply(db: Session, device: KdsDevice, body: KdsActionIn, now: datetime) -> 
         group = _group(db, order)
         tasks = _tasks(db, order.id)
         if kind == "priority":
-            if device.role not in ("expo", "manager"):
+            # A station marks an order urgent only when its screen is set so ("דחוף" in the
+            # ticket's menu, `stationRush` — docs/SPEC_KDS.md §16); otherwise as always.
+            if device.role not in ("expo", "manager") and not (
+                device.role == "station" and DISPLAY.station_may_rush(_effective_display(db, device))
+            ):
                 raise _refuse("expo_or_manager_only", status.HTTP_403_FORBIDDEN)
             if not (body.reason or "").strip():
                 raise _refuse("reason_required", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1199,6 +1209,21 @@ def _task_action(db, order, task, body: KdsActionIn, rules, now, actor):
         if _q(task.prepared_qty) < active_qty(task):
             task.prep_state = "preparing"
             task.ready_at = None
+        return True
+    if kind == "requeue":
+        # "ממתין" again (§16): nothing prepared, not started — the ticket menu's "הכול ממתין", or
+        # a tap cycling the item. A cancelled / held item is not work to queue.
+        if task.release_state != "released":
+            return "task_held"
+        if active_qty(task) <= ZERO:
+            return "task_cancelled"
+        if task.prep_state == "queued" and _q(task.prepared_qty) <= ZERO:
+            return None
+        task.prepared_qty = ZERO
+        task.over_prepared = False
+        task.prep_state = "queued"
+        task.started_at = None
+        task.ready_at = None
         return True
     if kind == "resolve_fallback":
         if not task.fallback_printed or task.fallback_resolved_at is not None:

@@ -15,6 +15,10 @@ What a screen gets (`device.display` in `kds/board` and `kds/device`): its own v
 one, else the shop's default for its kind ("board" for a pickup screen, "kds" for the rest), else
 null (the built-in defaults). A v1 value on a kitchen screen (written when it was a pickup screen)
 is a board look only: the kitchen screen falls through to the shop's default.
+
+The same object carries how the kitchen screen behaves (§16, learned from a reference KDS — P:\\specs\\kds-pro.md):
+tapping an item, the order of the tickets, tickets per row, the "להכנה" panel, the order-type
+filters, urgency levels, a station's rush, overflow. Missing keys behave as before.
 """
 from __future__ import annotations
 
@@ -45,6 +49,19 @@ MEDIA_URL_MAX = 1000
 MEDIA_SECONDS_MIN, MEDIA_SECONDS_MAX, MEDIA_SECONDS_DEFAULT = 3, 300, 8
 TITLE_MAX = 60
 PROMO_MAX = 140
+
+# What the kitchen learned from a reference KDS (P:\specs\kds-pro.md, docs/SPEC_KDS.md §16): how
+# the screen behaves. Every default is today's behaviour.
+ITEM_TAPS = ("button", "cycle", "ready")
+TICKET_ORDERS = ("fifo", "lifo")
+EXTERNAL_ORDERS = ("all", "hide", "only")
+ORDER_TYPES = ("eatIn", "takeAway", "delivery")
+SERVICE_TINTS = ("takeAway", "delivery")
+#: `source` follows `fields.table` when absent (it used to be the same switch).
+TICKET_INFO = ("source", "orderTime", "orderNumber", "readyBy")
+PER_ROW_MIN, PER_ROW_MAX = 2, 10
+TICKET_HEIGHT_MIN, TICKET_HEIGHT_MAX = 240, 3000
+OVERFLOW_MIN, OVERFLOW_MAX = 5, 200
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _SHA = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -159,7 +176,47 @@ def display_out(raw: Any) -> Optional[Dict[str, Any]]:
         "sounds": {e: _one_of(sounds.get(e), SOUND_TONES, DEFAULT_SOUNDS[e]) for e in SOUND_EVENTS},
         "clock": _flag(raw.get("clock"), True),
         "counts": _flag(raw.get("counts"), True),
+        # How the kitchen screen behaves (§16) — every default is today's.
+        **behaviour_out(raw, _flag(fields.get("table"), True)),
     }
+
+
+def _dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def behaviour_out(raw: Dict[str, Any], table_shown: bool = True) -> Dict[str, Any]:
+    """The kitchen screen's behaviour keys (docs/SPEC_KDS.md §16), cleaned; absent = today's."""
+    types = _dict(raw.get("orderTypes"))
+    tint = _dict(raw.get("serviceTint"))
+    info = _dict(raw.get("ticketInfo"))
+    return {
+        "toolbar": _flag(raw.get("toolbar"), True),
+        "allDay": _flag(raw.get("allDay"), False),
+        "itemTap": _one_of(raw.get("itemTap"), ITEM_TAPS, "button"),
+        "ticketOrder": _one_of(raw.get("ticketOrder"), TICKET_ORDERS, "fifo"),
+        "perRow": _int_in(raw.get("perRow"), PER_ROW_MIN, PER_ROW_MAX),
+        "maxTicketHeight": _int_in(raw.get("maxTicketHeight"), TICKET_HEIGHT_MIN, TICKET_HEIGHT_MAX),
+        "keepReadyOpen": _flag(raw.get("keepReadyOpen"), True),
+        "filterFullTicket": _flag(raw.get("filterFullTicket"), False),
+        "stationRush": _flag(raw.get("stationRush"), False),
+        "urgencyLevels": _flag(raw.get("urgencyLevels"), False),
+        "overflowAt": _int_in(raw.get("overflowAt"), OVERFLOW_MIN, OVERFLOW_MAX),
+        "orderTypes": {t: _flag(types.get(t), True) for t in ORDER_TYPES},
+        "externalOrders": _one_of(raw.get("externalOrders"), EXTERNAL_ORDERS, "all"),
+        "serviceTint": {t: _flag(tint.get(t), False) for t in SERVICE_TINTS},
+        "ticketInfo": {
+            "source": _flag(info.get("source"), table_shown),
+            "orderTime": _flag(info.get("orderTime"), False),
+            "orderNumber": _flag(info.get("orderNumber"), False),
+            "readyBy": _flag(info.get("readyBy"), False),
+        },
+    }
+
+
+def station_may_rush(display: Optional[Dict[str, Any]]) -> bool:
+    """Whether a station screen with this (effective) look may mark an order urgent."""
+    return isinstance(display, dict) and display.get("stationRush") is True
 
 
 def display_in(body: Any) -> Dict[str, Any]:
