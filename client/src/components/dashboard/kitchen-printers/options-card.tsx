@@ -4,7 +4,9 @@
  * The printing settings ("הגדרות הדפסה") by shop → point of sale → till: the till's own
  * receipt printer (type, address, model), the cash drawer, "ask before printing" and the
  * kitchen tickets' two options. They are till parameters (the server's
- * `printers.SETTING_KEYS`), edited here rather than on the till parameters page.
+ * `printers.SETTING_KEYS`), edited here rather than on the till parameters page. And
+ * "הדפסה בקופה אחרת" (P:/specs/bill-print-other-till.md §7א, `printers.PAGE_KEYS`): shown and
+ * edited here too, while the parameters page keeps them (with the company's level).
  *
  * Pick a level in the tree; each setting shows the level's own value, or what it inherits
  * and from where (till → point of sale → shop → company → default).
@@ -35,15 +37,19 @@ import { PICKER_TEMPLATES } from './ticket-design-picker';
 import { SimpleSelect } from './printer-dialog';
 import { useTicketOrderData } from './ticket-order-data';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { parseHostIds, REMOTE_PRINT_HOSTS_KEY, REMOTE_PRINT_KEYS, toggleHost } from '@/lib/remotePrint';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   draftToValue,
   ParameterValueInput,
+  useEnumLabel,
   valueToDraft,
   type ValueDraft,
 } from '@/components/dashboard/till-parameters/value-input';
+
+type PageMachine = KitchenPrintersPage['machines'][number];
 
 type LevelType = 'shop' | 'area' | 'machine';
 
@@ -58,8 +64,11 @@ interface Level {
 
 const GROUPS: ReadonlyArray<{ id: string; keys: readonly string[] }> = [
   { id: 'Receipt', keys: ['receiptPrinter', 'receiptPrinterAddress', 'receiptPrinterModel'] },
-  { id: 'Payment', keys: ['cashDrawer', 'askBeforePrint'] },
+  // "לשאול לפני פתיחה" (bill-print-other-till §9א): with cashDrawer «בתשלום מזומן — לשאול».
+  { id: 'Payment', keys: ['cashDrawer', 'cashDrawerAskTimeoutSec', 'cashDrawerAskDefault', 'askBeforePrint'] },
   { id: 'Kitchen', keys: ['kitchenTicketsOnSale', 'kitchenTicketsOnTill'] },
+  // "הדפסה בקופה אחרת": a bill or a receipt on another till's printer.
+  { id: 'Remote', keys: REMOTE_PRINT_KEYS },
 ];
 
 /** "עיצוב בון": the default design, the size and lines, the order of the lines. */
@@ -283,6 +292,8 @@ function OptionsCardBody({ page, options, ticketCard }: { page: KitchenPrintersP
                   <p className="text-xs text-muted-foreground">{t('groupPaymentHint')}</p>
                 ) : group.id.startsWith('Ticket') ? (
                   <p className="text-xs text-muted-foreground">{t(`group${group.id}Hint`)}</p>
+                ) : group.id === 'Remote' ? (
+                  <p className="text-xs text-muted-foreground">{t('groupRemoteHint')}</p>
                 ) : null}
                 <div className="divide-y">
                   {shown.map((key) => {
@@ -302,6 +313,7 @@ function OptionsCardBody({ page, options, ticketCard }: { page: KitchenPrintersP
                         inherited={inheritedOf(level, key)}
                         canEdit={page.canEdit}
                         saving={save.isPending}
+                        machines={page.machines}
                         onSave={(v) => save.mutate({ level, key, value: v })}
                         custom={custom[key]}
                       />
@@ -323,6 +335,7 @@ function SettingRow({
   inherited,
   canEdit,
   saving,
+  machines,
   onSave,
   custom,
 }: {
@@ -331,10 +344,13 @@ function SettingRow({
   inherited: Inherited;
   canEdit: boolean;
   saving: boolean;
+  /** The shop's tills — `remotePrintHosts` is picked from them. */
+  machines: PageMachine[];
   onSave: (value: PrinterSettingValue | null) => void;
   custom?: CustomEditor;
 }) {
   const t = useTranslations('kitchenPrinters.options');
+  const enumLabel = useEnumLabel();
   const isOwn = own !== undefined;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<ValueDraft>(valueToDraft(isOwn ? own : inherited.value));
@@ -342,19 +358,16 @@ function SettingRow({
   const dirty = draftValue !== null && draftValue !== own;
   // A switch or a list saves as it changes; text waits for "שמור".
   const instant = def.valueType === 'boolean' || def.valueType === 'enum';
+  const hosts = def.key === REMOTE_PRINT_HOSTS_KEY;
 
-  const format = (v: PrinterSettingValue | null) =>
-    custom
-      ? custom.format(v)
-      : v === null
-        ? t('none')
-        : typeof v === 'boolean'
-          ? v
-            ? t('on')
-            : t('off')
-          : v === ''
-            ? t('empty')
-            : def.enumLabels?.[String(v)] ?? String(v);
+  const format = (v: PrinterSettingValue | null) => {
+    if (custom) return custom.format(v);
+    if (hosts) return hostsText(v, machines, t);
+    if (v === null) return t('none');
+    if (typeof v === 'boolean') return v ? t('on') : t('off');
+    if (v === '') return t('empty');
+    return typeof v === 'string' && def.valueType === 'enum' ? enumLabel(def.key, v, def.enumLabels) : String(v);
+  };
 
   const change = (next: ValueDraft) => {
     setDraft(next);
@@ -378,11 +391,19 @@ function SettingRow({
             <div className={custom ? 'min-w-48 flex-1' : 'min-w-48 max-w-sm flex-1'}>
               {custom ? (
                 custom.render(draft.text, (text) => setDraft({ ...draft, text }), !canEdit || saving)
+              ) : hosts ? (
+                <HostsField
+                  value={draft.text}
+                  machines={machines}
+                  disabled={!canEdit || saving}
+                  onChange={(text) => change({ ...draft, text })}
+                />
               ) : (
                 <ParameterValueInput
                   type={def.valueType}
                   enumOptions={def.enumOptions}
                   enumLabels={def.enumLabels}
+                  parameterKey={def.key}
                   draft={draft}
                   onChange={change}
                   disabled={!canEdit || saving}
@@ -439,6 +460,55 @@ function SettingRow({
           ) : null}
         </div>
       )}
+    </div>
+  );
+}
+
+type OptionsT = ReturnType<typeof useTranslations<'kitchenPrinters.options'>>;
+
+/** `remotePrintHosts` in words: the tills by name, or "any host configured" when empty. */
+function hostsText(value: PrinterSettingValue | null, machines: PageMachine[], t: OptionsT): string {
+  const ids = parseHostIds(value);
+  if (ids.length === 0) return t('hostsAny');
+  const names = new Map(machines.map((m) => [m.id.toLowerCase(), m.name]));
+  return ids.map((id) => names.get(id) ?? t('hostsOther')).join(' · ');
+}
+
+/**
+ * "קופות מותרות" (`remotePrintHosts`): the shop's tills as checkboxes. None ticked — any till that hosts a
+ * receipt printer of type "ענן". A till whose build cannot print relayed documents says so.
+ */
+function HostsField({
+  value,
+  machines,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  machines: PageMachine[];
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const t = useTranslations('kitchenPrinters.options');
+  const chosen = new Set(parseHostIds(value));
+  const order = machines.map((m) => m.id);
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-col gap-1">
+        {machines.map((m) => (
+          <label key={m.id} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={chosen.has(m.id.toLowerCase())}
+              disabled={disabled}
+              onChange={(e) => onChange(toggleHost(value, m.id, e.target.checked, order))}
+            />
+            <span>{m.name}</span>
+            {m.documentRelay === false ? <span className="text-xs text-muted-foreground">{t('hostOldBuild')}</span> : null}
+          </label>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{chosen.size === 0 ? t('hostsAnyHint') : t('hostsSomeHint')}</p>
     </div>
   );
 }

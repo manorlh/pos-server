@@ -93,6 +93,9 @@ TYPES: Tuple[RequestType, ...] = (
     RequestType("oth", "על חשבון הבית", 1, _A, "פריטים, שולחן, סכום",
                 scopes=("discount",), reasons=DISCOUNT_REASONS),
     RequestType("drawer_open", "פתיחת מגירה בלי מכירה", 1, None, "קופה", reasons=DRAWER_REASONS),
+    # P:/specs/bill-print-other-till.md §9ב–§9ג: the drawer of another till's printer (CASH_DRAWER.OPEN_REMOTE).
+    RequestType("drawer_open_remote", "פתיחת מגירה בקופה אחרת", 1, None, "הקופה שבה תיפתח המגירה, הסיבה",
+                base_code="CASH_DRAWER.OPEN_REMOTE", reasons=DRAWER_REASONS),
     RequestType("cash_out", "הוצאת מזומן או הפקדה", 1, _A, "סכום",
                 base_code="CASH_DRAWER.CASH_OUT", reasons=DRAWER_REASONS, allow_partial=True),
     RequestType("shift_close", "סגירת משמרת או שידור", 1, _A, "צפוי מול נספר (תקרה: ההפרש)",

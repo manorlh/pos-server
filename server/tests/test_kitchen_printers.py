@@ -386,11 +386,15 @@ class TestTheTillsPull:
             return out
 
         page = R.list_printers(k.shop.id, **_ctx(k))["options"]
-        assert [p["key"] for p in page["parameters"]] == list(K.SETTING_KEYS)
+        # The printing settings, then "הדפסה בקופה אחרת" (bill-print-other-till §7א).
+        assert [p["key"] for p in page["parameters"]] == list(K.PAGE_KEYS)
+        assert list(K.PAGE_KEYS) == [*K.SETTING_KEYS, *K.RP.KEYS]
         # "אוטומטי" (docs/SPEC_KIOSK.md §14.7): a USB printer plugged in, else the till's own.
         assert page["inherited"]["receiptPrinter"] == "אוטומטי"
         assert set(K.SETTING_KEYS) < set(PRINTERS_PAGE_KEYS)
         assert managed_on("cashDrawer") == "printers" and managed_on("fastCash") is None
+        # Those stay on the parameters page too: every level, the company's included.
+        assert all(managed_on(key) is None for key in K.RP.KEYS)
 
         put("shop", k.shop.id, {"askBeforePrint": True, "cashDrawer": "בתשלום מזומן"})
         put("area", area.id, {"receiptPrinter": "רשת (IP)", "receiptPrinterAddress": "192.168.1.60"})
@@ -1055,8 +1059,11 @@ class TestReceiptPrinters:
     def test_a_receipt_printer_is_reached_directly_and_may_have_a_drawer(self, k):
         out = create(k, name="קופה ראשית BTP-880", purpose="receipt", cashDrawer=True)
         assert out["purpose"] == "receipt" and out["cashDrawer"] is True
-        with pytest.raises(ValidationError):
-            printer_in(name="x", purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()))
+        # Through another till ("המדפסת של <קופה>", bill-print-other-till), the drawer on the host's printer
+        # (it opens only by a `drawer` job, §9 there).
+        remote = printer_in(name="x", purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()),
+                            cashDrawer=True)
+        assert remote.cash_drawer is True and remote.host_connection == "till"
         with pytest.raises(ValidationError):
             printer_in(name="x", purpose="receipt", connectionType="till")
         # USB hangs on one till.

@@ -242,6 +242,35 @@ export interface BillPrinterOption {
   tillName: string | null;
 }
 
+/**
+ * "הדפס חשבון" in another till (P:/specs/bill-print-other-till.md §7): the till that holds the table
+ * reckons the bill and relays it to the till chosen. `why` when not `available`: off (the holder's
+ * `remotePrintFromDashboard` / `remotePrintEnabled`), owner_needs_update, no_owner.
+ */
+export interface BillRemotePrint {
+  ownerMachineId: string | null;
+  ownerName: string | null;
+  available: boolean;
+  why: 'off' | 'owner_needs_update' | 'no_owner' | null;
+  targets: BillPrintTarget[];
+}
+
+export interface BillPrintTarget {
+  machineId: string;
+  tillName: string | null;
+  /** "קופה 2". */
+  label: string | null;
+  paperWidth: number | null;
+  /** False: its build cannot print it yet — shown, not offered ("נדרש עדכון גרסה"). */
+  available: boolean;
+  why: 'needs_update' | null;
+}
+
+export interface BillChoices {
+  printers: BillPrinterOption[];
+  remotePrint: BillRemotePrint | null;
+}
+
 export interface TableWaiter {
   posUserId: string;
   name: string | null;
@@ -264,6 +293,8 @@ export interface TableActionBody {
   text?: string | null;
   machineId?: string;
   printerId?: string | null;
+  /** print-bill on another till: the till whose printer prints it. */
+  printOn?: string;
 }
 
 /** 200 (the cloud's tables, done here) or 202 (sent to a till, followed by `fetchTableCommand`). */
@@ -276,6 +307,8 @@ export type TableActionResult =
       hostName: string | null;
       timeoutSeconds: number;
       expiresAt: string | null;
+      /** print-bill on another till: where it is to print. */
+      printOnName?: string | null;
     };
 
 /** The dashboard's cancel: the order, and how the kitchen was told. */
@@ -516,7 +549,9 @@ export const fetchTableCard = (tableId: string) =>
   api.get<TableCard>(`/tables/tables/${tableId}/card`).then((r) => r.data);
 
 export const fetchBillPrinters = (tableId: string) =>
-  api.get<{ printers: BillPrinterOption[] }>(`/tables/tables/${tableId}/bill-printers`).then((r) => r.data.printers);
+  api
+    .get<BillChoices>(`/tables/tables/${tableId}/bill-printers`)
+    .then((r) => ({ printers: r.data.printers ?? [], remotePrint: r.data.remotePrint ?? null }));
 
 export const fetchTableWaiters = (shopId: string) =>
   api.get<{ waiters: TableWaiter[] }>('/tables/waiters', { params: { shopId } }).then((r) => r.data.waiters);

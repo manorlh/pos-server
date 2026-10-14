@@ -200,6 +200,8 @@ PRINTERS_PAGE_KEYS = (
     "receiptPrinterAddress",
     "receiptPrinterModel",
     "cashDrawer",
+    "cashDrawerAskTimeoutSec",
+    "cashDrawerAskDefault",
     "askBeforePrint",
     "kitchenTicketsOnSale",
     "kitchenTicketsOnTill",
@@ -383,6 +385,23 @@ CASH_DRAWER_KEY = "cashDrawer"
 CASH_DRAWER_OFF = "כבוי"
 CASH_DRAWER_ON_CASH = "בתשלום מזומן"
 CASH_DRAWER_WITH_BUTTON = "בתשלום מזומן + כפתור פתיחה"
+#: "לשאול לפני פתיחה" (P:/specs/bill-print-other-till.md §9א): at the end of a cash payment the till asks
+#: "לפתוח מגירה?" ("פתח" / "לא"); unanswered for `cashDrawerAskTimeoutSec` it does `cashDrawerAskDefault`.
+#: A "לא" is logged at the till, no exception. Existing databases: alembic e7b2d9f4a6c3 adds the option.
+CASH_DRAWER_ASK = "בתשלום מזומן — לשאול"
+CASH_DRAWER_OPTIONS = (CASH_DRAWER_OFF, CASH_DRAWER_ON_CASH, CASH_DRAWER_ASK, CASH_DRAWER_WITH_BUTTON)
+CASH_DRAWER_ASK_TIMEOUT_KEY = "cashDrawerAskTimeoutSec"
+CASH_DRAWER_ASK_TIMEOUT_DEFAULT = 8
+CASH_DRAWER_ASK_TIMEOUT_MIN = 3
+CASH_DRAWER_ASK_TIMEOUT_MAX = 60
+CASH_DRAWER_ASK_DEFAULT_KEY = "cashDrawerAskDefault"
+CASH_DRAWER_ASK_OPEN = "open"
+CASH_DRAWER_ASK_SKIP = "skip"
+CASH_DRAWER_ASK_DEFAULTS = (CASH_DRAWER_ASK_OPEN, CASH_DRAWER_ASK_SKIP)
+CASH_DRAWER_ASK_DEFAULT_LABELS = {
+    CASH_DRAWER_ASK_OPEN: "לפתוח (ברירת מחדל)",
+    CASH_DRAWER_ASK_SKIP: "לא לפתוח",
+}
 #: Where a value came from when it is a device's default, not the parameter's (the dashboard).
 DEVICE_DEFAULT_SOURCE = "device_default"
 
@@ -1006,16 +1025,44 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         key="cashDrawer",
         label="פתיחת מגירה",
         value_type="enum",
-        enum_options=("כבוי", "בתשלום מזומן", "בתשלום מזומן + כפתור פתיחה"),
+        enum_options=CASH_DRAWER_OPTIONS,
         default_value="כבוי",
         description=(
             "מגירת כסף שמחוברת למדפסת החשבוניות (שקע RJ-11). «בתשלום מזומן» — נפתחת אוטומטית בכל "
-            "תשלום שבו עבר מזומן (כולל עודף והחזר כספי). «+ כפתור פתיחה» — בנוסף, \"פתיחת מגירה\" "
+            "תשלום שבו עבר מזומן (כולל עודף והחזר כספי). «בתשלום מזומן — לשאול» — בסיום תשלום שעבר בו "
+            "מזומן הקופה שואלת \"לפתוח מגירה?\" (\"פתח\" / \"לא\"); בלי תשובה — לפי \"מגירה — מה לעשות "
+            "כשלא ענו\". «+ כפתור פתיחה» — בנוסף, \"פתיחת מגירה\" "
             "בתפריט הקופה; כל פתיחה ידנית נרשמת בענן כחריגה \"מגירה נפתחה ללא מכירה\". "
             "חל על מדפסת החשבוניות שבפרמטר; מגירה של מדפסת חשבוניות מדף \"מדפסות\" נפתחת תמיד בתשלום מזומן "
             "ויש לה כפתור — וכשיש לקופה כמה מגירות, היא שואלת איזו לפתוח. "
             "ברירת מחדל לפי המכשיר: בקופה שהמגירה מחוברת אליה ישירות (שקע מגירה במכשיר — SUNMI / iMin "
             "שולחניות) — «בתשלום מזומן + כפתור פתיחה»; בכל מכשיר אחר — «כבוי». ערך שנקבע בכל רמה גובר."
+        ),
+    ),
+    # "לשאול לפני פתיחה" (P:/specs/bill-print-other-till.md §9א): with `cashDrawer` «בתשלום מזומן — לשאול».
+    BuiltinParameter(
+        key=CASH_DRAWER_ASK_TIMEOUT_KEY,
+        label="מגירה — זמן לשאלה \"לפתוח מגירה?\" (שניות)",
+        value_type="integer",
+        default_value=CASH_DRAWER_ASK_TIMEOUT_DEFAULT,
+        description=(
+            f"כש\"פתיחת מגירה\" היא «{CASH_DRAWER_ASK}»: כמה שניות השאלה \"לפתוח מגירה?\" מחכה לתשובה "
+            f"({CASH_DRAWER_ASK_TIMEOUT_MIN}–{CASH_DRAWER_ASK_TIMEOUT_MAX}, ברירת מחדל {CASH_DRAWER_ASK_TIMEOUT_DEFAULT}). "
+            "אחרי זה הקופה פועלת לפי \"מגירה — מה לעשות כשלא ענו\". ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=CASH_DRAWER_ASK_DEFAULT_KEY,
+        label="מגירה — מה לעשות כשלא ענו",
+        value_type="enum",
+        enum_options=CASH_DRAWER_ASK_DEFAULTS,
+        enum_labels=CASH_DRAWER_ASK_DEFAULT_LABELS,
+        default_value=CASH_DRAWER_ASK_OPEN,
+        description=(
+            f"כש\"פתיחת מגירה\" היא «{CASH_DRAWER_ASK}» ואף אחד לא ענה על \"לפתוח מגירה?\" בזמן: "
+            f"«{CASH_DRAWER_ASK_DEFAULT_LABELS[CASH_DRAWER_ASK_OPEN]}» — המגירה נפתחת כמו היום; "
+            f"«{CASH_DRAWER_ASK_DEFAULT_LABELS[CASH_DRAWER_ASK_SKIP]}» — לא נפתחת. \"לא\" נרשם ביומן הקופה ואינו "
+            "חריגה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     BuiltinParameter(
@@ -2092,6 +2139,14 @@ from app.services.product_tile_text import PARAMETER_SPECS as _PRODUCT_TILE_TEXT
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _PRODUCT_TILE_TEXT_SPECS)
 
+# "הדפסה בקופה אחרת" (P:/specs/bill-print-other-till.md §7א, app/services/remote_print.py): a bill or a receipt
+# printed on another till's printer — on / off, which documents, what when it did not print, how long to wait, the
+# sender's notice, which tills, and the dashboard's choice. Read by the till; the cloud holds a relayed document to
+# them. Defaults change nothing. On the parameters page (every level) and the printers page (shop, point of sale, till).
+from app.services.remote_print import PARAMETER_SPECS as _REMOTE_PRINT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_PRINT_SPECS)
+
 # "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
 # a device online but not up to date is a problem on "בעיות". Read by the cloud only.
 SYNC_STALE_MINUTES_KEY = "syncStaleMinutes"
@@ -2250,6 +2305,24 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in kitchen_ticket_style.VALIDATED_KEYS and value is not None:
         try:
             return kitchen_ticket_style.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "לשאול לפני פתיחה" of the drawer (bill-print-other-till §9א): the seconds 3–60, open / skip.
+    if key == CASH_DRAWER_ASK_TIMEOUT_KEY and value is not None and not (
+        isinstance(value, int) and not isinstance(value, bool)
+        and CASH_DRAWER_ASK_TIMEOUT_MIN <= value <= CASH_DRAWER_ASK_TIMEOUT_MAX
+    ):
+        raise TillParameterValueError(
+            f"{CASH_DRAWER_ASK_TIMEOUT_KEY} must be {CASH_DRAWER_ASK_TIMEOUT_MIN}–{CASH_DRAWER_ASK_TIMEOUT_MAX} seconds"
+        )
+    if key == CASH_DRAWER_ASK_DEFAULT_KEY and value is not None and value not in CASH_DRAWER_ASK_DEFAULTS:
+        raise TillParameterValueError(f"{CASH_DRAWER_ASK_DEFAULT_KEY} must be one of {', '.join(CASH_DRAWER_ASK_DEFAULTS)}")
+    # "הדפסה בקופה אחרת": the codes the till knows, the seconds 5–120, the tills as canonical ids.
+    from app.services import remote_print
+
+    if key in remote_print.VALIDATED_KEYS and value is not None:
+        try:
+            return remote_print.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

@@ -20,7 +20,10 @@ Three tables:
   `purpose`: a kitchen printer ("מדפסת בונים": tickets, by the routing) or a receipt
   printer ("מדפסת חשבוניות": bills and receipts the tills send it, never a ticket). A
   receipt printer is reached directly (network, Bluetooth, USB) and may have the cash
-  drawer on its port (`cash_drawer`).
+  drawer on its port (`cash_drawer`) — or through another till (`cloud`: "המדפסת של <קופה>",
+  P:/specs/bill-print-other-till.md): the sending till renders the document and relays it to
+  `host_machine_id` (LAN first, else the cloud relay below, as a `document` job). Its drawer
+  (`cash_drawer`: on the host's printer) opens only by a `drawer` job, as its §9 lets it.
 
 * `kitchen_printer_routes` — what prints where, per shop. A row routes a category or a
   product (`target_type`, `target_id`) to a printer. Several rows for one target print
@@ -31,7 +34,10 @@ Three tables:
   sold it (`source_machine_id`) or from the dashboard (a test print), waiting for the till
   that prints it (`target_machine_id`: a `cloud` printer's host, or the shop's print
   server). pending → printing → done | failed, or expired when nobody printed it in time.
-  The ticket is sent structured (`payload`), the printing till renders it.
+  The ticket is sent structured (`payload`), the printing till renders it. A `document`
+  (a bill or a receipt printed on another till, P:/specs/bill-print-other-till.md) is sent
+  rendered: the sending till's image, which the host prints as it is. A `drawer` opens the
+  drawer on that till's printer (§9 there): who asked, who approved.
 
 * `kitchen_no_ticket_products` — "ללא בון" on the product itself: no kitchen ticket for it
   in any shop, whatever its category or its shops' rows say.
@@ -81,7 +87,9 @@ PRINTER_HOST_CONNECTIONS = ("till", "network", "bluetooth", "usb")
 PRINTER_PAPER_WIDTHS = (58, 80)
 ROUTE_TARGET_TYPES = ("category", "product")
 PRINT_JOB_STATUSES = ("pending", "printing", "done", "failed", "expired")
-PRINT_JOB_KINDS = ("ticket", "test")
+#: `document`: a bill / receipt rendered by the sending till, printed by another (bill-print-other-till);
+#: `drawer`: open the drawer on another till's printer (its §9).
+PRINT_JOB_KINDS = ("ticket", "test", "document", "drawer")
 #: "עיצוב בון" templates (app/services/kitchen_ticket_style.py `TEMPLATES`).
 TICKET_TEMPLATES = ("classic", "classic_legacy", "large", "compact", "courses", "modern")
 TICKET_FONT_SCALE_RANGE = (80, 150)
@@ -267,7 +275,7 @@ class KitchenPrintJob(Base):
             "status IN ('pending', 'printing', 'done', 'failed', 'expired')",
             name="ck_kitchen_print_jobs_status",
         ),
-        CheckConstraint("kind IN ('ticket', 'test')", name="ck_kitchen_print_jobs_kind"),
+        CheckConstraint("kind IN ('ticket', 'test', 'document', 'drawer')", name="ck_kitchen_print_jobs_kind"),
         Index("ix_kitchen_print_jobs_target_status", "target_machine_id", "status"),
         Index("ix_kitchen_print_jobs_source", "source_machine_id", "created_at"),
         Index("ix_kitchen_print_jobs_printer", "printer_id", "created_at"),
@@ -293,7 +301,9 @@ class KitchenPrintJob(Base):
     )
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     status = Column(String(16), nullable=False, default="pending", server_default="pending")
-    #: The ticket, structured (see `app.schemas.printers.KitchenTicketPayload`).
+    #: The ticket, structured (see `app.schemas.printers.KitchenTicketPayload`); a `document`'s
+    #: reference and its image (`app.schemas.kitchen_printers.DocumentIn`) — the image dropped
+    #: once the job is over (app/services/remote_print.py `drop_image`).
     payload = Column(JSON, nullable=False)
     #: How many times it was handed to the printing till.
     deliveries = Column(Integer, nullable=False, default=0, server_default="0")

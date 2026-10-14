@@ -276,6 +276,8 @@ export interface ActionStatus {
   result?: Record<string, unknown> | null;
   hostName: string | null;
   tableLabel: string | null;
+  /** "הדפס חשבון" on another till (bill-print-other-till §7): where it was to print. */
+  printOnName?: string | null;
 }
 
 export type ActionPhase = 'sending' | 'done' | 'refused' | 'timeout' | 'failed';
@@ -305,10 +307,20 @@ export const ACTION_REFUSALS = [
   'source_not_open',
   'merge_basket_discount',
   'printer_not_found',
+  // "הדפס חשבון" on another till (bill-print-other-till §7): it did not print there, nor anywhere.
+  'print_target_unavailable',
 ] as const;
 
 /** The 409s of a direct action besides the refusals (the cloud's own). */
-export const DIRECT_ERRORS = ['table_busy', 'remote_action_blocked', 'table_order_not_open'] as const;
+export const DIRECT_ERRORS = [
+  'table_busy',
+  'remote_action_blocked',
+  'table_order_not_open',
+  // "הדפס חשבון" on another till: off for the till that holds the table, a till not offered, an older build.
+  'remote_print_off',
+  'print_target_not_found',
+  'print_target_needs_update',
+] as const;
 
 /** Past the timeout by this much with no word from the cloud either: "לא זמינה" all the same. */
 export const ACTION_GRACE_MS = 15_000;

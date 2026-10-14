@@ -832,3 +832,6 @@ class TableActionIn(_Camel):
     #: print-bill: the till, and its receipt printer (none: the till's own).
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     printer_id: Optional[uuid.UUID] = Field(None, alias="printerId")
+    #: print-bill on another till (P:/specs/bill-print-other-till.md §7): the till that holds the table
+    #: reckons it and relays it to this one, which prints it on its own receipt printer.
+    print_on: Optional[uuid.UUID] = Field(None, alias="printOn")

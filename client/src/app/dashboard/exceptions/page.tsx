@@ -144,6 +144,8 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   table_restored: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
   // "תמיכה מרחוק": QuickSupport signed by another certificate.
   quicksupport_signer_mismatch: 'bg-violet-200 text-violet-950 dark:bg-violet-900 dark:text-violet-100',
+  // "הדפסה בקופה אחרת": a bill that did not print on another till — the printers' family.
+  document_unprinted: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

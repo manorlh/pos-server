@@ -32,7 +32,7 @@ DEVICE_ACTIONS = (
     "cancel_table",     # "ביטול שולחן מהדשבורד": the host cancels it as at a till, within its timeout
     # "כרטיס שולחן" from the dashboard (P:/specs/live-tables-cloud.md §6, app/services/table_actions.py):
     # the LAN host or the single till does it as at a till, within the same timeout; the bill, any till.
-    "table_print_bill",  # "הדפס חשבון" (params {printerId})
+    "table_print_bill",  # "הדפס חשבון" (params {printerId, printOn — another till prints it})
     "table_reprint",    # "הדפסה חוזרת למטבח" (params {scope, roundId, picks, seed})
     "table_fire",       # "הוצא שלב" (params {courseId, courseName, seed})
     "table_hold",       # "השהה שלב" (params {courseId, courseName, hold})

@@ -155,7 +155,7 @@ export interface PrinterSettingDef {
   description?: string | null;
   valueType: TillParameterValueType;
   enumOptions?: string[] | null;
-  /** The Hebrew of each option when the options are codes. */
+  /** The Hebrew of each option when the options are codes (`remotePrintDocuments`, the ticket design's). */
   enumLabels?: Record<string, string> | null;
   defaultValue?: PrinterSettingValue | null;
 }
@@ -190,7 +190,14 @@ export interface KitchenPrintersPage {
   canEdit: boolean;
   printers: KitchenPrinter[];
   areas: { id: string; name: string }[];
-  machines: { id: string; name: string; areaId: string | null; hasPrinter: boolean }[];
+  machines: {
+    id: string;
+    name: string;
+    areaId: string | null;
+    hasPrinter: boolean;
+    /** Its build prints relayed documents (`document_relay_v1`): it may host "המדפסת של <קופה>". */
+    documentRelay?: boolean;
+  }[];
   options: KitchenOptions;
   /** The shop's print server ("שרת הדפסות", till parameter printHostTill), or null. */
   printHost: PrintHost | null;
@@ -223,7 +230,8 @@ export interface PrintJob {
   id: string;
   printerId: string | null;
   printerName: string | null;
-  kind: 'ticket' | 'test';
+  /** `document`: a bill / receipt another till relayed (bill-print-other-till). */
+  kind: 'ticket' | 'test' | 'document';
   status: PrintJobStatus;
   error: string | null;
   targetMachineId: string | null;

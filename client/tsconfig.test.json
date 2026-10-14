@@ -350,6 +350,8 @@
     "src/lib/kitchenTicketStyle.ts",
     "src/lib/kitchenTicketStyle.test.ts",
     "src/lib/productTileText.ts",
-    "src/lib/productTileText.test.ts"
+    "src/lib/productTileText.test.ts",
+    "src/lib/remotePrint.ts",
+    "src/lib/remotePrint.test.ts"
   ]
 }

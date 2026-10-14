@@ -4,7 +4,9 @@
  * Add / edit one printer of the shop: a kitchen printer ("מדפסת בונים": network, Bluetooth,
  * through the cloud via a host till, the till's own) or a receipt printer ("מדפסת
  * חשבוניות": network, Bluetooth, or one till's USB — with the cash drawer on its port or
- * not); where it applies (the whole shop, one point of sale, one till), and how it prints.
+ * not — or another till's printer, "ענן": its host and how the host reaches it, and whether that
+ * printer has the drawer, which opens there only as §9 of P:/specs/bill-print-other-till.md lets
+ * it); where it applies (the whole shop, one point of sale, one till), and how it prints.
  */
 
 import { useState } from 'react';
@@ -20,6 +22,7 @@ import type {
   PrinterTicketFields,
 } from '@/lib/kitchenPrintersApi';
 import { PRINTER_TICKET_KEYS, PRINT_WIDTHS } from '@/lib/kitchenPrintersApi';
+import { hostOffered } from '@/lib/remotePrint';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,6 +48,8 @@ const MAC_RE = /^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/;
 export interface Option {
   value: string;
   label: string;
+  /** Listed, not chosen ("נדרש עדכון גרסה"). */
+  disabled?: boolean;
 }
 
 /** The one select shape this page needs: string values, labelled. */
@@ -73,7 +78,7 @@ export function SimpleSelect({
       </SelectTrigger>
       <SelectContent>
         {options.map((o) => (
-          <SelectItem key={o.value} value={o.value} label={o.label}>
+          <SelectItem key={o.value} value={o.value} label={o.label} disabled={o.disabled}>
             {o.label}
           </SelectItem>
         ))}
@@ -190,13 +195,17 @@ export function PrinterDialog({
   const hosted = form.connectionType === 'cloud';
   const reach = hosted ? form.hostConnection : form.connectionType;
   const receipt = form.purpose === 'receipt';
+  // "המדפסת של <קופה>": a receipt printer another till prints on — its drawer (if the printer there has one)
+  // opens only as `remotePrintDrawer` / CASH_DRAWER.OPEN_REMOTE let it (bill-print-other-till §9).
+  const remoteReceipt = receipt && hosted;
 
-  // A receipt printer is reached directly by the till that prints on it.
+  // A receipt printer is reached directly by the till that prints on it, or through another till.
   const typeOptions: Option[] = receipt
     ? [
         { value: 'network', label: t('types.network') },
         { value: 'bluetooth', label: t('types.bluetooth') },
         { value: 'usb', label: t('types.usb') },
+        { value: 'cloud', label: t('types.cloudReceipt') },
       ]
     : [
         { value: 'network', label: t('types.network') },
@@ -209,12 +218,15 @@ export function PrinterDialog({
       purpose: next,
       cashDrawer: next === 'receipt' ? form.cashDrawer : false,
       connectionType:
-        next === 'receipt' && (form.connectionType === 'cloud' || form.connectionType === 'till')
+        next === 'receipt' && form.connectionType === 'till'
           ? 'network'
           : next === 'kitchen' && form.connectionType === 'usb'
             ? 'network'
             : form.connectionType,
     });
+  // Another till's printer starts without the drawer: it is said on purpose, never carried over.
+  const setConnection = (next: PrinterConnectionType) =>
+    set({ connectionType: next, cashDrawer: receipt && next === 'cloud' && !hosted ? false : form.cashDrawer });
   const hostConnectionOptions: Option[] = [
     { value: 'till', label: t('hostConnections.till') },
     { value: 'network', label: t('hostConnections.network') },
@@ -227,9 +239,14 @@ export function PrinterDialog({
     ...page.areas.map((a) => ({ value: `area:${a.id}`, label: t('scopeArea', { name: a.name }) })),
     ...page.machines.map((m) => ({ value: `machine:${m.id}`, label: t('scopeMachine', { name: m.name }) })),
   ];
+  // A receipt printer of another till: only a till whose build prints relayed documents may host it; the
+  // others are listed, not offered. The host it already has stays choosable (an older build then).
   const hostOptions: Option[] = [
     { value: NONE, label: t('chooseHost') },
-    ...page.machines.map((m) => ({ value: m.id, label: m.name })),
+    ...page.machines.map((m) => {
+      const blocked = receipt && !hostOffered(m) && m.id !== printer?.hostMachineId;
+      return { value: m.id, label: blocked ? t('hostNeedsUpdate', { name: m.name }) : m.name, disabled: blocked };
+    }),
   ];
 
   const submit = () => {
@@ -237,6 +254,9 @@ export function PrinterDialog({
     const name = form.name.trim();
     if (!name) return setError(t('errors.name'));
     if (hosted && form.hostMachineId === NONE) return setError(t('errors.host'));
+    if (remoteReceipt && hostOptions.find((o) => o.value === form.hostMachineId)?.disabled) {
+      return setError(t('errors.hostNeedsUpdate'));
+    }
     const port = Number(form.port || '9100');
     if (reach === 'network') {
       if (!form.host.trim()) return setError(t('errors.address'));
@@ -313,14 +333,14 @@ export function PrinterDialog({
             <Label>{t('fields.connection')}</Label>
             <SimpleSelect
               value={form.connectionType}
-              onChange={(v) => set({ connectionType: v as PrinterConnectionType })}
+              onChange={(v) => setConnection(v as PrinterConnectionType)}
               options={typeOptions}
               ariaLabel={t('fields.connection')}
             />
             <p className="text-xs text-muted-foreground">
               {form.connectionType === 'network' && t('typeHints.network')}
               {form.connectionType === 'bluetooth' && t('typeHints.bluetooth')}
-              {form.connectionType === 'cloud' && t('typeHints.cloud')}
+              {form.connectionType === 'cloud' && (receipt ? t('typeHints.cloudReceipt') : t('typeHints.cloud'))}
               {form.connectionType === 'till' && t('typeHints.till')}
               {form.connectionType === 'usb' && t('typeHints.usb')}
             </p>
@@ -476,7 +496,7 @@ export function PrinterDialog({
             {receipt ? (
               <label className="flex items-center gap-2 text-sm">
                 <Switch checked={form.cashDrawer} onCheckedChange={(v) => set({ cashDrawer: v })} />
-                {t('fields.cashDrawer')}
+                {remoteReceipt ? t('fields.cashDrawerRemote') : t('fields.cashDrawer')}
               </label>
             ) : (
               <label className="flex items-center gap-2 text-sm">
@@ -490,7 +510,14 @@ export function PrinterDialog({
             </label>
           </div>
 
-          {receipt && form.cashDrawer && <p className="text-xs text-muted-foreground">{t('cashDrawerHint')}</p>}
+          {receipt && !remoteReceipt && form.cashDrawer && (
+            <p className="text-xs text-muted-foreground">{t('cashDrawerHint')}</p>
+          )}
+          {remoteReceipt && (
+            <p className="text-xs text-muted-foreground">
+              {form.cashDrawer ? t('remoteReceiptDrawerHint') : t('remoteReceiptHint')}
+            </p>
+          )}
           {!receipt ? (
             <TicketDesignSection
               page={page}
