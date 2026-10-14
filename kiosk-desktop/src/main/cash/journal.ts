@@ -64,9 +64,9 @@ export class CashJournal {
 
   saveTx(t: CashTx): void {
     this.db.run(
-      `INSERT INTO cash_tx (tx_id, station_id, client_id, state, json, created_at, updated_at, seq)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(tx_id) DO UPDATE SET state = excluded.state, json = excluded.json, updated_at = excluded.updated_at, seq = excluded.seq`,
+      `INSERT INTO cash_tx (tx_id, station_id, client_id, state, json, created_at, updated_at, seq, acked)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tx_id) DO UPDATE SET state = excluded.state, json = excluded.json, updated_at = excluded.updated_at, seq = excluded.seq, acked = excluded.acked`,
       t.txId,
       t.stationId,
       t.clientId,
@@ -75,6 +75,7 @@ export class CashJournal {
       t.createdAt,
       t.updatedAt,
       t.seq,
+      t.acked ? 1 : 0,
     );
   }
 
@@ -94,9 +95,8 @@ export class CashJournal {
   /** Final transactions the client has not acknowledged. */
   unacked(stationId: string): CashTx[] {
     return this.db
-      .all<{ json: string }>("SELECT json FROM cash_tx WHERE station_id = ? AND state IN ('DONE','HELD') ORDER BY created_at", stationId)
-      .map((r) => JSON.parse(r.json) as CashTx)
-      .filter((t) => !t.acked);
+      .all<{ json: string }>("SELECT json FROM cash_tx WHERE station_id = ? AND acked = 0 AND state IN ('DONE', 'HELD') ORDER BY created_at", stationId)
+      .map((r) => JSON.parse(r.json) as CashTx);
   }
 
   byState(stationId: string, state: TxState, limit = 100): CashTx[] {

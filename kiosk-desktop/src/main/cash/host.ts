@@ -144,6 +144,7 @@ export class CashHost implements CashLanHost {
   private lastPullAt: number | null = null;
   private readonly fetchFn: typeof fetch;
   private commandsRunning = false;
+  private prunedAt = 0;
 
   constructor(private readonly d: CashHostDeps) {
     this.cfg = d.kv.getJson<HostConfig>(K.config) ?? { ...EMPTY_HOST_CONFIG };
@@ -352,6 +353,11 @@ export class CashHost implements CashLanHost {
 
   /** The journal to the cloud: final transactions (and their acknowledgements), then the movements. */
   async upload(): Promise<void> {
+    // The command log (the counters before every command) is kept 120 days; the transactions keep their summary.
+    if (this.d.now() - this.prunedAt > 3_600_000) {
+      this.prunedAt = this.d.now();
+      this.d.journal.pruneCommands(this.d.now() - 120 * 86_400_000);
+    }
     const m = this.d.machineId();
     if (!m || this.uploading) return;
     this.uploading = true;

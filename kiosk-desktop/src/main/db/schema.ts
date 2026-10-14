@@ -123,9 +123,13 @@ const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     seq INTEGER NOT NULL,
-    uploaded_seq INTEGER NOT NULL DEFAULT 0
+    uploaded_seq INTEGER NOT NULL DEFAULT 0,
+    acked INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS ix_cash_tx_station_state ON cash_tx(station_id, state);
+  CREATE INDEX IF NOT EXISTS ix_cash_tx_unacked ON cash_tx(station_id, created_at) WHERE acked = 0 AND state IN ('DONE', 'HELD');
+  CREATE INDEX IF NOT EXISTS ix_cash_tx_upload ON cash_tx(updated_at) WHERE seq > uploaded_seq;
+  CREATE INDEX IF NOT EXISTS ix_cash_tx_recent ON cash_tx(station_id, created_at);
   CREATE TABLE IF NOT EXISTS cash_cmd_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     station_id TEXT NOT NULL,
