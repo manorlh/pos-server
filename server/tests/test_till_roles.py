@@ -244,8 +244,9 @@ class TestLegacy:
         # from the phone ("רשאי לאשר מרחוק", APPROVE_REMOTE.<type>), which is approving others too.
         # MULTI_DEVICE_LOGIN ("עבודה בכמה מכשירים במקביל", exclusive login v2 §1): "עובד מחובר בקופה אחת
         # בלבד" bound every till user before it existed — denied is today's behaviour.
+        # TERMINAL_OFFLINE_ALL ("מצב לא מקוון לכל המסופונים", P:/specs/nayax-deferred-all.md §8.1): never a cashier's.
         assert {c for c, s in eff.states.items() if s == D} == {
-            "CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE", "MULTI_DEVICE_LOGIN",
+            "CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE", "MULTI_DEVICE_LOGIN", "TERMINAL_OFFLINE_ALL",
         } | TP.REMOTE_APPROVAL_CODES
         assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
 

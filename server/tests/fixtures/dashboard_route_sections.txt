@@ -358,6 +358,8 @@ PUT /machines/{machine_id} -> devices:edit
 GET /machines/{machine_id}/catalog -> products:view
 PUT /machines/{machine_id}/catalog -> products:edit
 POST /machines/{machine_id}/close-shift -> z:edit
+GET /machines/{machine_id}/deferred-settings -> devices|terminals_offline:view
+PUT /machines/{machine_id}/deferred-settings -> devices|terminals_offline:edit
 PUT /machines/{machine_id}/device-profile -> devices:edit
 GET /machines/{machine_id}/document-prefix -> devices|reports:view
 POST /machines/{machine_id}/document-prefix/assign-free -> devices:edit

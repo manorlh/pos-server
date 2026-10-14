@@ -722,6 +722,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines/{}/local-server", S("devices", "device_control", level=VIEW)),
     ("POST", "/machines/{}/local-server/commands", S("devices", "device_control")),
     ("POST", "/machines/{}/transmit", S("z")),
+    # "מצב לא מקוון" on the device page (P:/specs/nayax-deferred-all.md §10): the till's own auto-on values —
+    # with the devices or with "מסופונים — מצב לא מקוון".
+    (_GET, "/machines/{}/deferred-settings", S("devices", "terminals_offline", level=VIEW)),
+    ("PUT", "/machines/{}/deferred-settings", S("devices", "terminals_offline", level=EDIT)),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──
     (_ALL, "/shops/{}/kitchen-stations/*", S("printers")),

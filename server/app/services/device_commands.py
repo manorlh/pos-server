@@ -84,6 +84,7 @@ REFUSAL_REASONS = (
     "print_target_unavailable",
     # `terminal_offline` (app/services/deferred_control.py REFUSALS; `not_eligible:<reason>` as the till says it).
     "not_eligible", "stale", "expired", "bad_request", "timeout_busy", "superseded", "interrupted", "not_active",
+    "conflict", "no_line",
 )
 
 

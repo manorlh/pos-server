@@ -68,7 +68,8 @@ class DeviceCommand(Base):
     status = Column(String(16), nullable=False, default="pending", server_default="pending")
     #: What the device said (a refusal's reason: "sale_in_progress", "no_update"…).
     detail = Column(String(300), nullable=True)
-    #: "dashboard" | "till" (a manager code on the till).
+    #: "dashboard" | "till" (a manager code on the till) | "auto" (`terminal_offline` after a till went
+    #: offline by itself, app/services/deferred_control.py `on_till_event`).
     source = Column(String(16), nullable=False, default="dashboard", server_default="dashboard")
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by_name = Column(String(200), nullable=True)

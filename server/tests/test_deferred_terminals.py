@@ -140,9 +140,28 @@ def row_of(out, machine):
 
 
 class TestParameters:
-    def test_six_built_ins_with_the_contracts_defaults(self, w):
+    def test_fifteen_built_ins_with_the_contracts_defaults(self, w):
         rows = {p.key: p for p in w.db.query(TillParameter).filter(TillParameter.key.in_(D.KEYS)).all()}
-        assert set(rows) == set(D.KEYS)
+        assert set(rows) == set(D.KEYS) and len(D.KEYS) == 15
+        # §12, §13: the extra no-line words, the notice to the cashier (exactly the owner's words), the customer's.
+        assert (rows["deferredNoLineWords"].value_type, rows["deferredNoLineWords"].default_value) in (("string", ""), ("string", None))
+        assert rows["deferredCardNotice"].default_value == (
+            "⚠ מצב לא מקוון: כרטיסי תייר (חו״ל), כרטיסי דיירקט וכרטיסי דביט לא יעברו. בקשו כרטיס אשראי רגיל או אמצעי "
+            "תשלום אחר."
+        )
+        assert (rows["deferredCustomerNotice"].value_type, rows["deferredCustomerNotice"].default_value) == ("boolean", True)
+        assert "כבוי עד שמפעילים" in rows["deferredAutoOn"].description
+        # §8.6 "מעבר אוטומטי" and §8.7 "סתירות".
+        assert rows["deferredAutoOn"].value_type == "enum" and rows["deferredAutoOn"].default_value == "offer"
+        assert list(rows["deferredAutoOn"].enum_options) == ["offer", "auto", "off"]
+        assert TP.enum_labels("deferredAutoOn") == {
+            "offer": "הקופה מציעה, מנהל מאשר (כמו היום)", "auto": "מעבר אוטומטי", "off": "ללא הצעה וללא מעבר",
+        }
+        assert (rows["deferredAutoOnFailures"].value_type, rows["deferredAutoOnFailures"].default_value) == ("integer", 2)
+        assert (rows["deferredAutoOnSeconds"].value_type, rows["deferredAutoOnSeconds"].default_value) == ("integer", 60)
+        assert (rows["deferredAutoOnAll"].value_type, rows["deferredAutoOnAll"].default_value) == ("boolean", False)
+        assert (rows["deferredConflictWindowSec"].value_type, rows["deferredConflictWindowSec"].default_value) == ("integer", 120)
+        assert (rows["deferredOnlineRequiresLine"].value_type, rows["deferredOnlineRequiresLine"].default_value) == ("boolean", True)
         assert rows["deferredControlTills"].value_type == "string" and rows["deferredControlTills"].default_value in ("", None)
         assert (rows["deferredControlIncludeKiosks"].value_type, rows["deferredControlIncludeKiosks"].default_value) == ("boolean", False)
         assert rows["deferredAutoOff"].value_type == "enum" and rows["deferredAutoOff"].default_value == "ask"
@@ -167,6 +186,9 @@ class TestParameters:
     @pytest.mark.parametrize("key,good,bad", [
         ("deferredAutoOffMinutes", (1, 120), (0, 121, True, "5")),
         ("deferredCommandTtlMin", (5, 1440), (4, 1441, False, 60.5)),
+        ("deferredAutoOnFailures", (1, 10), (0, 11, True)),
+        ("deferredAutoOnSeconds", (10, 600), (9, 601)),
+        ("deferredConflictWindowSec", (0, 3600), (-1, 3601)),
     ])
     def test_the_minutes_ranges(self, key, good, bad):
         for value in good:
@@ -175,10 +197,26 @@ class TestParameters:
             with pytest.raises(TP.TillParameterValueError):
                 TP.validate_keyed_value(key, value)
 
-    def test_auto_off_is_one_of_three(self):
+    def test_the_no_line_words_and_the_notice(self):
+        assert TP.validate_keyed_value("deferredNoLineWords", " חייב לעלות לאישור ,online authorization required,\n,אין קו ,אין קו") == (
+            "חייב לעלות לאישור,online authorization required,אין קו"
+        )
+        assert TP.validate_keyed_value("deferredNoLineWords", "") == ""
+        with pytest.raises(TP.TillParameterValueError):
+            TP.validate_keyed_value("deferredNoLineWords", "x" * 81)
+        with pytest.raises(TP.TillParameterValueError):
+            TP.validate_keyed_value("deferredNoLineWords", ",".join(f"w{i}" for i in range(51)))
+        assert TP.validate_keyed_value("deferredCardNotice", "  שימו לב  ") == "שימו לב"
+        with pytest.raises(TP.TillParameterValueError):
+            TP.validate_keyed_value("deferredCardNotice", "א" * 301)
+
+    def test_auto_off_and_auto_on_are_one_of_three(self):
         assert TP.validate_keyed_value("deferredAutoOff", "never") == "never"
         with pytest.raises(TP.TillParameterValueError):
             TP.validate_keyed_value("deferredAutoOff", "sometimes")
+        assert TP.validate_keyed_value("deferredAutoOn", "auto") == "auto"
+        with pytest.raises(TP.TillParameterValueError):
+            TP.validate_keyed_value("deferredAutoOn", "ask")
 
     def test_resolved_per_till_most_specific_first(self, w):
         set_param(w, "deferredControlTills", "shop", w.shop.id, f"{w.t1.id}")
@@ -361,7 +399,9 @@ class TestDashboard:
         w.db.commit()
         out = view(w)
         assert out["settings"] == {"includeKiosks": False, "autoOff": "ask", "autoOffMinutes": 5,
-                                   "allowUnknownNayax": False, "ttlMinutes": 120}
+                                   "allowUnknownNayax": False, "ttlMinutes": 120, "autoOn": "offer", "autoOnFailures": 2,
+                                   "autoOnSeconds": 60, "autoOnAll": False, "conflictWindowSec": 120,
+                                   "onlineRequiresLine": True}
         assert out["canSwitch"] is True and out["open"] is False and out["controllers"] == []
         one, two = row_of(out, w.t1), row_of(out, w.t2)
         assert (one["kind"], one["model"], one["eligible"], one["reason"], one["mode"]) == ("nayax_lan", "C4", True, None, "offline")
@@ -523,7 +563,33 @@ def _till(w, name, *, capabilities, lan_ip=None):
 class TestControllerList:
     def test_not_a_controller_gets_nothing(self, w):
         out = R.till_deferred_control(str(w.t1.id), machine=w.t1, db=w.db)
-        assert out["controller"] is False and out["tills"] == [] and out["settings"]["autoOff"] == "ask"
+        assert out["controller"] is False and out["tills"] == [] and out["controllers"] == []
+        assert out["settings"] == {
+            "includeKiosks": False, "autoOff": "ask", "autoOffMinutes": 5, "allowUnknownNayax": False, "ttlMinutes": 120,
+            "autoOn": "offer", "autoOnFailures": 2, "autoOnSeconds": 60, "autoOnAll": False,
+            "conflictWindowSec": 120, "onlineRequiresLine": True,
+        }
+
+    def test_every_till_learns_the_shops_other_controllers(self, w):
+        """§8.6: a till that went offline by itself tells the controllers — so every till gets them."""
+        third = _till(w, "Third", capabilities=list(CAP), lan_ip="192.168.1.33")
+        remote = _till(w, "Remote", capabilities=list(CAP), lan_ip="10.0.0.5")
+        LZ.set_remote_till_ids(w.shop, [remote.id])
+        w.db.add(KitchenPrintHost(machine_id=w.t1.id, shop_id=w.shop.id, lan_address="192.168.1.21", port=None))
+        set_param(w, "deferredControlTills", "shop", w.shop.id, f"{w.t1.id},{third.id},{remote.id}")
+        set_param(w, "deferredAutoOn", "machine", w.t2.id, "auto")
+        out = R.till_deferred_control(str(w.t2.id), machine=w.t2, db=w.db)
+        assert out["controller"] is False and out["tills"] == [] and out["settings"]["autoOn"] == "auto"
+        got = {c["machineId"]: (c["name"], c["lanAddress"], c["lanPort"]) for c in out["controllers"]}
+        # Never the controller off the shop's LAN.
+        assert got == {str(w.t1.id): ("Till 1", "192.168.1.21", 8399), str(third.id): ("Third", "192.168.1.33", 8399)}
+        # A controller sees the others, never itself.
+        mine = R.till_deferred_control(str(w.t1.id), machine=w.t1, db=w.db)
+        assert mine["controller"] is True and [c["machineId"] for c in mine["controllers"]] == [str(third.id)]
+        # A till off the shop's LAN: nobody to tell there.
+        assert R.till_deferred_control(str(remote.id), machine=remote, db=w.db)["controllers"] == []
+        # Another shop's till: none of these.
+        assert R.till_deferred_control(str(w.other_till.id), machine=w.other_till, db=w.db)["controllers"] == []
 
     def test_a_controller_gets_the_shops_tills_with_their_addresses(self, w):
         set_param(w, "deferredControlTills", "shop", w.shop.id, f"{w.t1.id}")
@@ -600,8 +666,198 @@ class TestHeartbeat:
         beat(w, w.t1, {"deferredTerminal": REPORT})
         assert w.t1.device_info["platform"] == "android" and w.t1.device_info["model"] == "F20"
 
+    def test_the_last_applied_order_is_kept_and_listed(self, w):
+        """§8.7: `lastApplied` — the order the till last carried out, whoever sent it."""
+        applied = {"requestId": "r9", "on": True, "source": "lan", "from": "קופה 1",
+                   "by": {"id": "u1", "name": "דנה", "role": "x"}, "issuedAt": "2026-10-14T20:14:00Z",
+                   "doneAt": "2026-10-14T20:14:03Z", "secret": "s"}
+        beat(w, w.t1, {"capabilities": CAP, "deferredTerminal": {**REPORT, "lastApplied": applied}})
+        kept = w.t1.device_info["deferredTerminal"]["lastApplied"]
+        assert kept == {"requestId": "r9", "on": True, "source": "lan", "from": "קופה 1",
+                        "by": {"id": "u1", "name": "דנה"}, "issuedAt": "2026-10-14T20:14:00Z",
+                        "doneAt": "2026-10-14T20:14:03Z"}
+        assert row_of(view(w), w.t1)["lastApplied"] == kept
+        assert row_of(view(w), w.t2)["lastApplied"] is None
+
+
+class TestConflicts:
+    """§8.7: what the till answers when another order won, or nothing had to change."""
+
+    def test_a_refusal_keeps_who_won(self, w):
+        cid = switch(w, True, [w.t1.id])["created"][0]["commandId"]
+        DC.pull(w.db, w.t1)
+        winner = {"requestId": "r1", "on": False, "source": "lan", "from": {"machineId": str(w.t2.id), "name": "קופה 2"},
+                  "by": "דנה", "issuedAt": "2026-10-14T20:14:00Z", "doneAt": "x", "pin": "1234"}
+        out = ack(w, w.t1, cid, "refused", "conflict", {"supersededBy": winner, "working": False})
+        assert (out["status"], out["detail"]) == ("refused", "conflict")
+        assert out["result"]["supersededBy"] == {
+            "requestId": "r1", "on": False, "source": "lan", "from": {"machineId": str(w.t2.id), "name": "קופה 2"},
+            "by": "דנה", "issuedAt": "2026-10-14T20:14:00Z",
+        }
+        last = row_of(view(w), w.t1)["lastCommand"]
+        assert last["state"] == "failed" and last["detail"] == "conflict" and last["result"]["supersededBy"]["source"] == "lan"
+
+    @pytest.mark.parametrize("detail", ["stale", "superseded", "no_line"])
+    def test_the_other_refusals(self, w, detail):
+        cid = switch(w, False, [w.t1.id])["created"][0]["commandId"]
+        DC.pull(w.db, w.t1)
+        out = ack(w, w.t1, cid, "refused", detail, {"supersededBy": None})
+        assert (out["status"], out["detail"]) == ("refused", detail) and out["result"]["supersededBy"] is None
+
+    def test_already_in_that_mode(self, w):
+        cid = switch(w, True, [w.t1.id])["created"][0]["commandId"]
+        DC.pull(w.db, w.t1)
+        out = ack(w, w.t1, cid, "done", None, {"unchanged": True, "working": True})
+        assert out["status"] == "done" and out["result"]["unchanged"] is True
+        assert row_of(view(w), w.t1)["lastCommand"]["result"]["unchanged"] is True
+
+    def test_issued_at_is_the_servers_clock(self, w):
+        before = datetime.now(timezone.utc)
+        switch(w, True, [w.t1.id])
+        issued = datetime.fromisoformat(w.db.query(DeviceCommand).one().params["issuedAt"])
+        assert before - timedelta(seconds=1) <= issued <= datetime.now(timezone.utc) + timedelta(seconds=1)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# "מעבר אוטומטי" of the whole shop through the cloud (§8.6)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def auto_event(w, till, *, source="auto", trigger="auto_on", kind="deferred_mode_on", ident=None):
+    body = TillEventIn.model_validate({
+        "id": str(ident or uuid.uuid4()), "type": kind, "occurredAt": "2026-10-14T20:14:00Z",
+        "details": {"requestId": "a1", "source": source, "trigger": trigger, "failures": 2, "seconds": 0,
+                    "kind": "nayax_lan", "model": "C4"},
+    })
+    return ER.post_till_event(str(till.id), body, Response(), machine=till, db=w.db), body
+
+
+class TestAutoAll:
+    def test_a_till_that_went_by_itself_takes_the_shop_along(self, w):
+        set_param(w, "deferredAutoOnAll", "shop", w.shop.id, True)
+        old = _till(w, "Old", capabilities=[])
+        w.db.commit()
+        w.woken.clear()
+        out, body = auto_event(w, w.t1)
+        assert out.status == "accepted"
+        rows = w.db.query(DeviceCommand).all()
+        # Every OTHER till that is included and can take it — never the one that went, never an old build.
+        assert [str(r.machine_id) for r in rows] == [str(w.t2.id)] and w.woken == [str(w.t2.id)]
+        p = rows[0].params
+        assert p["on"] is True and p["source"] == "cloud" and p["requestId"] == str(rows[0].id)
+        assert p["by"] == {"id": None, "name": "אוטומטי"} and p["requestedBy"] == p["by"]
+        assert p["from"] == {"machineId": str(w.t1.id), "name": "Till 1"}
+        assert (rows[0].source, rows[0].created_by_name, rows[0].created_by_user_id) == ("auto", "אוטומטי", None)
+        # The details as the till sent them (trigger, failures, seconds) — nothing stripped.
+        assert w.db.get(TillEvent, body.id).details["trigger"] == "auto_on"
+        assert w.db.get(TillEvent, body.id).details["failures"] == 2
+        # The same event again: nothing new.
+        again = ER.post_till_event(str(w.t1.id), body, Response(), machine=w.t1, db=w.db)
+        assert again.status == "duplicate" and w.db.query(DeviceCommand).count() == 1
+        assert old is not None
+
+    @pytest.mark.parametrize("source,trigger,kind", [
+        ("cloud", "auto_on", "deferred_mode_on"),   # a till switched by these commands: no chain
+        ("lan", None, "deferred_mode_on"),
+        ("auto", None, "deferred_mode_on"),
+        ("auto", "auto_off", "deferred_mode_off"),
+    ])
+    def test_never_from_any_other_event(self, w, source, trigger, kind):
+        set_param(w, "deferredAutoOnAll", "shop", w.shop.id, True)
+        auto_event(w, w.t1, source=source, trigger=trigger, kind=kind)
+        assert w.db.query(DeviceCommand).count() == 0
+
+    def test_only_with_auto_on_all(self, w):
+        auto_event(w, w.t1)
+        assert w.db.query(DeviceCommand).count() == 0
+        # The till's own value decides (set on another till: not this one's).
+        set_param(w, "deferredAutoOnAll", "machine", w.t2.id, True)
+        auto_event(w, w.t1)
+        assert w.db.query(DeviceCommand).count() == 0
+        auto_event(w, w.t2)
+        assert [str(r.machine_id) for r in w.db.query(DeviceCommand).all()] == [str(w.t1.id)]
+
+    def test_the_dashboard_rules_kiosks_and_ineligible_tills(self, w):
+        set_param(w, "deferredAutoOnAll", "shop", w.shop.id, True)
+        w.t2.settings = {"paymentIntegration": "zcredit"}
+        kiosk = _till(w, "Kiosk", capabilities=list(CAP))
+        w.db.add(KioskDevice(machine_id=kiosk.id, tenant_id=w.tenant.id, shop_id=w.shop.id, name="K", enabled=True))
+        w.db.commit()
+        auto_event(w, w.t1)
+        assert w.db.query(DeviceCommand).count() == 0
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The device page's card (§10)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestDeviceCard:
+    def card(self, w, machine, user=None):
+        return R.get_device_deferred_settings(machine.id, current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db)
+
+    def put(self, w, machine, values, user=None):
+        return R.put_device_deferred_settings(machine.id, R.DeviceValuesIn(values=values), current_user=user or w.admin,
+                                              active_tenant_id=w.tenant.id, db=w.db)
+
+    def test_own_inherited_and_effective(self, w):
+        set_param(w, "deferredAutoOnFailures", "shop", w.shop.id, 3)
+        out = self.card(w, w.t1)
+        keys = {k["key"]: k for k in out["keys"]}
+        assert list(keys) == ["deferredAutoOn", "deferredAutoOnFailures", "deferredAutoOnSeconds", "deferredAutoOnAll"]
+        assert (keys["deferredAutoOn"]["own"], keys["deferredAutoOn"]["effective"]) == (None, "offer")
+        assert keys["deferredAutoOn"]["enumLabels"]["auto"] == "מעבר אוטומטי"
+        assert (keys["deferredAutoOnFailures"]["inherited"], keys["deferredAutoOnFailures"]["min"], keys["deferredAutoOnFailures"]["max"]) == (3, 1, 10)
+        assert out["isController"] is False and out["canEdit"] is True and out["canEditController"] is True
+        out = self.put(w, w.t1, {"deferredAutoOn": "auto", "deferredAutoOnFailures": 4})
+        assert sorted(out["changed"]) == ["deferredAutoOn", "deferredAutoOnFailures"]
+        keys = {k["key"]: k for k in out["keys"]}
+        assert (keys["deferredAutoOn"]["own"], keys["deferredAutoOn"]["effective"]) == ("auto", "auto")
+        assert (keys["deferredAutoOnFailures"]["own"], keys["deferredAutoOnFailures"]["inherited"]) == (4, 3)
+        assert D.machine_settings(w.db, w.t1).auto_on == "auto" and D.machine_settings(w.db, w.t2).auto_on == "offer"
+        assert w.db.query(TillParameterChange).count() == 2
+        # null: the till inherits again.
+        out = self.put(w, w.t1, {"deferredAutoOnFailures": None})
+        assert {k["key"]: k for k in out["keys"]}["deferredAutoOnFailures"]["effective"] == 3
+
+    @pytest.mark.parametrize("values", [
+        {"deferredAutoOn": "sometimes"}, {"deferredAutoOnSeconds": 5}, {"deferredAutoOnAll": "yes"},
+        {"deferredControlTills": ""}, {"somethingElse": 1},
+    ])
+    def test_a_bad_value_is_422_and_writes_nothing(self, w, values):
+        with pytest.raises(HTTPException) as refused:
+            self.put(w, w.t1, values)
+        assert refused.value.status_code == 422
+        assert w.db.query(TillParameterValue).count() == 0
+
+    def test_who_may(self, w):
+        assert self.card(w, w.t1, user=w.manager)["canEdit"] is True
+        with pytest.raises(HTTPException):
+            self.card(w, w.t1, user=w.other_manager)
+        devices_only = w.user("dev", UserRole.SHOP_MANAGER, shop=w.shop, full=False, sections={"devices": "edit"})
+        out = self.card(w, w.t1, user=devices_only)
+        assert out["canEdit"] is True and out["canEditController"] is False
+        viewer = w.user("v2", UserRole.SHOP_MANAGER, shop=w.shop, full=False, sections={"devices": "view"})
+        with pytest.raises(HTTPException) as refused:
+            self.put(w, w.t1, {"deferredAutoOn": "auto"}, user=viewer)
+        assert refused.value.status_code == 403
+        for method, level in (("GET", DS.VIEW), ("PUT", DS.EDIT)):
+            rule = DS.rule_for(method, "/machines/{machine_id}/deferred-settings")
+            assert set(rule.sections) == {"devices", "terminals_offline"} and rule.needed_level(method) == level
+
 
 class TestTillEvents:
+    def test_card_failure_verdict_is_recorded(self, w):
+        assert "card_failure_verdict" in TILL_EVENT_TYPES
+        details = {"statusCode": 993, "statusMessage": "חייב לעלות לאישור", "outcome": "failed", "kind": "agamento",
+                   "model": None, "verdict": "no_line", "why": "words", "deviceOnline": False, "cloudOnline": False,
+                   "autoOn": "offer", "streak": 2}
+        body = TillEventIn.model_validate({"id": str(uuid.uuid4()), "type": "card_failure_verdict",
+                                           "occurredAt": "2026-10-14T20:14:00Z", "details": details})
+        assert ER.post_till_event(str(w.t1.id), body, Response(), machine=w.t1, db=w.db).status == "accepted"
+        assert w.db.get(TillEvent, body.id).details == details
+        assert w.db.query(DeviceCommand).count() == 0
+
     @pytest.mark.parametrize("kind", ["deferred_mode_on", "deferred_mode_off"])
     def test_recorded_feeding_no_rule(self, w, kind):
         assert kind in TILL_EVENT_TYPES

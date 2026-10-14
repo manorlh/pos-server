@@ -24,8 +24,16 @@ refusals — kept the one source for the till's side).
   command in the dashboard's words (`state`: pending | received | done | failed | cancelled), and one
   switch for all or per till (app/routers/deferred_terminals.py, section `terminals_offline`).
 * **The controller's list** (§8.4): `GET /sync/{m}/deferred-control` — whether this till controls,
-  the settings, and the shop's tills with where each listens on the LAN (its print-host report, else
-  its `lanIp` on 8399), kept by the till for working without the internet.
+  the settings, the shop's other controllers, and (a controller only) the shop's tills with where each
+  listens on the LAN (its print-host report, else its `lanIp` on 8399), kept by the till for working
+  without the internet.
+* **"מעבר אוטומטי"** (§10, §8.6): `deferredAutoOn` offer | auto | off with its failures / seconds, per
+  level and on the device page's card; with `deferredAutoOnAll`, a till's `deferred_mode_on` of
+  `source: "auto"`, `trigger: "auto_on"` switches the shop's other tills through the cloud
+  (`on_till_event`) — never from any other event, so nothing chains.
+* **Conflicts** (§11, §8.7): `deferredConflictWindowSec`, `deferredOnlineRequiresLine` (read by the
+  till); a refusal's `supersededBy` and a done's `unchanged` kept in the command's result; the
+  report's `lastApplied` shown beside each till's mode.
 """
 from __future__ import annotations
 
@@ -99,9 +107,61 @@ TTL_DEFAULT, TTL_MIN, TTL_MAX = 120, 5, 1440
 #: The longest list of controlling tills a level names.
 TILLS_MAX = 50
 
-KEYS: Tuple[str, ...] = (TILLS_KEY, INCLUDE_KIOSKS_KEY, AUTO_OFF_KEY, AUTO_OFF_MINUTES_KEY, ALLOW_UNKNOWN_KEY, TTL_KEY)
+# "מעבר אוטומטי למצב לא מקוון" (§10, §8.6): what a till does by itself when its terminal has no line.
+AUTO_ON_KEY = "deferredAutoOn"
+AUTO_ON_FAILURES_KEY = "deferredAutoOnFailures"
+AUTO_ON_SECONDS_KEY = "deferredAutoOnSeconds"
+AUTO_ON_ALL_KEY = "deferredAutoOnAll"
+AUTO_ON_OFFER = "offer"
+AUTO_ON_AUTO = "auto"
+AUTO_ON_OFF = "off"
+AUTO_ON_OPTIONS = (AUTO_ON_OFFER, AUTO_ON_AUTO, AUTO_ON_OFF)
+AUTO_ON_LABELS = {
+    AUTO_ON_OFFER: "הקופה מציעה, מנהל מאשר (כמו היום)",
+    AUTO_ON_AUTO: "מעבר אוטומטי",
+    AUTO_ON_OFF: "ללא הצעה וללא מעבר",
+}
+AUTO_ON_FAILURES_DEFAULT, AUTO_ON_FAILURES_MIN, AUTO_ON_FAILURES_MAX = 2, 1, 10
+AUTO_ON_SECONDS_DEFAULT, AUTO_ON_SECONDS_MIN, AUTO_ON_SECONDS_MAX = 60, 10, 600
+#: The four of §10 — also on the device page's card (a till's own level).
+AUTO_ON_KEYS: Tuple[str, ...] = (AUTO_ON_KEY, AUTO_ON_FAILURES_KEY, AUTO_ON_SECONDS_KEY, AUTO_ON_ALL_KEY)
+
+# "סתירה בין פקודות" (§11, §8.7): opposite orders from the place and the cloud within the window — the
+# place wins; "back online" with no line stays offline.
+CONFLICT_WINDOW_KEY = "deferredConflictWindowSec"
+ONLINE_REQUIRES_LINE_KEY = "deferredOnlineRequiresLine"
+CONFLICT_WINDOW_DEFAULT, CONFLICT_WINDOW_MIN, CONFLICT_WINDOW_MAX = 120, 0, 3600
+
+# "זיהוי אין קו" and "הודעה לעובד במצב לא מקוון" (§12, §13): read by the till only.
+NO_LINE_WORDS_KEY = "deferredNoLineWords"
+CARD_NOTICE_KEY = "deferredCardNotice"
+CUSTOMER_NOTICE_KEY = "deferredCustomerNotice"
+CARD_NOTICE_DEFAULT = (
+    "⚠ מצב לא מקוון: כרטיסי תייר (חו״ל), כרטיסי דיירקט וכרטיסי דביט לא יעברו. "
+    "בקשו כרטיס אשראי רגיל או אמצעי תשלום אחר."
+)
+CUSTOMER_NOTICE_TEXT = "בתשלום באשראי: לא ניתן לשלם בכרטיס דביט / דיירקט / כרטיס זר כרגע"
+NO_LINE_WORD_MAX = 80
+NO_LINE_WORDS_MAX = 50
+CARD_NOTICE_MAX = 300
+
+KEYS: Tuple[str, ...] = (
+    TILLS_KEY, INCLUDE_KIOSKS_KEY, AUTO_OFF_KEY, AUTO_OFF_MINUTES_KEY, ALLOW_UNKNOWN_KEY, TTL_KEY, *AUTO_ON_KEYS,
+    CONFLICT_WINDOW_KEY, ONLINE_REQUIRES_LINE_KEY, NO_LINE_WORDS_KEY, CARD_NOTICE_KEY, CUSTOMER_NOTICE_KEY,
+)
 #: Checked beyond their type on every write (app/services/till_parameters.py `validate_keyed_value`).
-VALIDATED_KEYS = frozenset({TILLS_KEY, AUTO_OFF_KEY, AUTO_OFF_MINUTES_KEY, TTL_KEY})
+VALIDATED_KEYS = frozenset({
+    TILLS_KEY, AUTO_OFF_KEY, AUTO_OFF_MINUTES_KEY, TTL_KEY, AUTO_ON_KEY, AUTO_ON_FAILURES_KEY, AUTO_ON_SECONDS_KEY,
+    CONFLICT_WINDOW_KEY, NO_LINE_WORDS_KEY, CARD_NOTICE_KEY,
+})
+#: The whole numbers and their ranges (key → (low, high, unit)).
+RANGES: Dict[str, Tuple[int, int, str]] = {
+    AUTO_OFF_MINUTES_KEY: (AUTO_OFF_MINUTES_MIN, AUTO_OFF_MINUTES_MAX, "minutes"),
+    TTL_KEY: (TTL_MIN, TTL_MAX, "minutes"),
+    AUTO_ON_FAILURES_KEY: (AUTO_ON_FAILURES_MIN, AUTO_ON_FAILURES_MAX, "failures"),
+    AUTO_ON_SECONDS_KEY: (AUTO_ON_SECONDS_MIN, AUTO_ON_SECONDS_MAX, "seconds"),
+    CONFLICT_WINDOW_KEY: (CONFLICT_WINDOW_MIN, CONFLICT_WINDOW_MAX, "seconds"),
+}
 
 _LEVELS = "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
 _WHERE = (
@@ -182,6 +242,114 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
             f"({TTL_MIN}–{TTL_MAX}, ברירת מחדל {TTL_DEFAULT}). {_LEVELS}"
         ),
     ),
+    # "מעבר אוטומטי למצב לא מקוון" (§10, §8.6) — per level, and on the device page's card.
+    dict(
+        key=AUTO_ON_KEY,
+        label="מסופון — מעבר אוטומטי למצב לא מקוון",
+        value_type="enum",
+        enum_options=AUTO_ON_OPTIONS,
+        enum_labels=AUTO_ON_LABELS,
+        default_value=AUTO_ON_OFFER,
+        description=(
+            "מה הקופה עושה כשאין קו לחברת האשראי (רק במסופון שתומך במצב לא מקוון: Agamento, Nayax C4 / T50). "
+            f"«{AUTO_ON_LABELS[AUTO_ON_OFFER]}» — ברירת מחדל: הקופה מציעה \"להעביר למצב לא מקוון?\" ומנהל מאשר "
+            "(המעבר האוטומטי זמין, אבל כבוי עד שמפעילים אותו כאן או בהגדרות המכשיר). "
+            f"«{AUTO_ON_LABELS[AUTO_ON_AUTO]}» — אחרי מספר הכשלים ברצף שבפרמטר \"כשלים לפני מעבר\", או אחרי מספר "
+            "השניות בלי קו שבפרמטר \"שניות בלי קו\", הקופה מעבירה לבד את המסופון שלה למצב לא מקוון, והעסקה "
+            f"שנכשלה מנוסה שוב באישור הקופאי. «{AUTO_ON_LABELS[AUTO_ON_OFF]}» — אין הצעה ואין מעבר. החזרה "
+            "למקוון — לפי \"חזרה למקוון כשהחיבור חוזר\". ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה — "
+            "וגם בכרטיס הקופה בדשבורד."
+        ),
+    ),
+    dict(
+        key=AUTO_ON_FAILURES_KEY,
+        label="מסופון — כשלים ברצף לפני מעבר אוטומטי",
+        value_type="integer",
+        default_value=AUTO_ON_FAILURES_DEFAULT,
+        description=(
+            "במעבר אוטומטי: כמה כשלי \"אין קו לחברת האשראי\" ברצף מעבירים את המסופון למצב לא מקוון "
+            f"({AUTO_ON_FAILURES_MIN}–{AUTO_ON_FAILURES_MAX}, ברירת מחדל {AUTO_ON_FAILURES_DEFAULT}). {_LEVELS}"
+        ),
+    ),
+    dict(
+        key=AUTO_ON_SECONDS_KEY,
+        label="מסופון — שניות בלי קו לפני מעבר אוטומטי",
+        value_type="integer",
+        default_value=AUTO_ON_SECONDS_DEFAULT,
+        description=(
+            "במעבר אוטומטי: כמה שניות מהכשל הראשון ברצף (בלי עסקה שאושרה אחריו) לפני שהמסופון עובר למצב לא "
+            "מקוון — ורק אם גם הקופה עצמה בלי חיבור יציב באותו רגע; אחרת היא מחכה למספר הכשלים "
+            f"({AUTO_ON_SECONDS_MIN}–{AUTO_ON_SECONDS_MAX}, ברירת מחדל {AUTO_ON_SECONDS_DEFAULT}). {_LEVELS}"
+        ),
+    ),
+    dict(
+        key=AUTO_ON_ALL_KEY,
+        label="מסופון — מעבר אוטומטי מעביר את כל הסניף",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, קופה שעברה אוטומטית למצב לא מקוון מעבירה גם את כל הקופות הזכאיות בסניף: דרך הקופה "
+            "המנהלת ברשת, ודרך הענן כשיש חיבור. כבוי (ברירת מחדל) — רק הקופה עצמה, והקופה המנהלת מקבלת "
+            f"הודעה. {_LEVELS}"
+        ),
+    ),
+    # "סתירה בין פקודות" (§11, §8.7).
+    dict(
+        key=CONFLICT_WINDOW_KEY,
+        label="מסופונים ברשת — חלון סתירה בין פקודות (שניות)",
+        value_type="integer",
+        default_value=CONFLICT_WINDOW_DEFAULT,
+        description=(
+            "שתי פקודות הפוכות (מצב לא מקוון / חזרה למקוון) ממקורות שונים בהפרש של עד מספר השניות הזה: הפקודה "
+            "מהמקום (הקופה המנהלת, מנהל בקופה או מעבר אוטומטי) גוברת על פקודת הדשבורד, ובדשבורד מוצג \"בוטל "
+            f"ע״י ...\" ({CONFLICT_WINDOW_MIN}–{CONFLICT_WINDOW_MAX}, ברירת מחדל {CONFLICT_WINDOW_DEFAULT}; 0 — "
+            f"האחרונה בזמן תמיד גוברת). {_LEVELS}"
+        ),
+    ),
+    dict(
+        key=ONLINE_REQUIRES_LINE_KEY,
+        label="מסופונים ברשת — חזרה למקוון רק כשיש קו",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת מחדל), קופה שמקבלת \"חזרה למקוון\" בזמן שאין לה קו (אינטרנט מאומת, או תשובה מהענן "
+            "ב-3 הדקות האחרונות) נשארת במצב לא מקוון ועונה \"אין קו — נשאר לא מקוון\" — אחרת המכירות באשראי "
+            f"ייכשלו. כבוי — חוזרת למקוון בכל מקרה. {_LEVELS}"
+        ),
+    ),
+    # "זיהוי אין קו" (§12) and "הודעה לעובד במצב לא מקוון" (§13).
+    dict(
+        key=NO_LINE_WORDS_KEY,
+        label="מסופון — מילים שמסמנות \"אין קו לחברת האשראי\"",
+        value_type="string",
+        default_value="",
+        description=(
+            "מילים או צירופים נוספים (מופרדים בפסיקים) שכשהם מופיעים בהודעת הכשל של המסוף, הכשל נחשב \"אין קו "
+            "לחברת האשראי\" — בנוסף לרשימה המובנית בקופה (timeout, \"תקשורת\", \"אין קו\", \"אין חיבור\", "
+            "\"שב\"א לא זמין\", \"חייב לעלות לאישור\" ועוד). נקרא בהצעה \"להעביר למצב לא מקוון?\" ובמעבר "
+            f"האוטומטי. סירוב כרטיס, כרטיס חסום או \"התקשר לחברת האשראי\" לעולם לא נחשבים אין קו. {_LEVELS}"
+        ),
+    ),
+    dict(
+        key=CARD_NOTICE_KEY,
+        label="מסופון — הודעה לעובד במצב לא מקוון",
+        value_type="string",
+        default_value=CARD_NOTICE_DEFAULT,
+        description=(
+            "הטקסט שמוצג לעובד במסך התשלום, כשבוחרים אשראי, כל עוד המסוף של הקופה במצב לא מקוון (וגם בקיוסק, "
+            f"לפני שהלקוח מעביר כרטיס). עד {CARD_NOTICE_MAX} תווים. {_LEVELS}"
+        ),
+    ),
+    dict(
+        key=CUSTOMER_NOTICE_KEY,
+        label="מסופון — הודעה במסך הלקוח במצב לא מקוון",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            f"כשמופעל (ברירת מחדל) ויש מסך לקוח, כל עוד המסוף במצב לא מקוון מוצג בו \"{CUSTOMER_NOTICE_TEXT}\". "
+            f"כבוי — לא מוצג. {_LEVELS}"
+        ),
+    ),
 )
 
 
@@ -209,10 +377,34 @@ def clean_value(key: str, value: Any) -> Any:
         return value
     if key == AUTO_OFF_KEY and value not in AUTO_OFF_OPTIONS:
         raise ValueError(f"{AUTO_OFF_KEY} must be one of {', '.join(AUTO_OFF_OPTIONS)}")
-    if key == AUTO_OFF_MINUTES_KEY and not _whole(value, AUTO_OFF_MINUTES_MIN, AUTO_OFF_MINUTES_MAX):
-        raise ValueError(f"{AUTO_OFF_MINUTES_KEY} must be {AUTO_OFF_MINUTES_MIN}–{AUTO_OFF_MINUTES_MAX} minutes")
-    if key == TTL_KEY and not _whole(value, TTL_MIN, TTL_MAX):
-        raise ValueError(f"{TTL_KEY} must be {TTL_MIN}–{TTL_MAX} minutes")
+    if key == AUTO_ON_KEY and value not in AUTO_ON_OPTIONS:
+        raise ValueError(f"{AUTO_ON_KEY} must be one of {', '.join(AUTO_ON_OPTIONS)}")
+    if key in RANGES:
+        low, high, unit = RANGES[key]
+        if not _whole(value, low, high):
+            raise ValueError(f"{key} must be {low}–{high} {unit}")
+    if key == NO_LINE_WORDS_KEY:
+        if not isinstance(value, str):
+            raise ValueError(f"{NO_LINE_WORDS_KEY} must be text")
+        words: List[str] = []
+        for part in value.replace("\n", ",").split(","):
+            word = part.strip()
+            if not word:
+                continue
+            if len(word) > NO_LINE_WORD_MAX:
+                raise ValueError(f"{NO_LINE_WORDS_KEY}: a word is at most {NO_LINE_WORD_MAX} characters")
+            if word not in words:
+                words.append(word)
+        if len(words) > NO_LINE_WORDS_MAX:
+            raise ValueError(f"{NO_LINE_WORDS_KEY}: at most {NO_LINE_WORDS_MAX} words")
+        return ",".join(words)
+    if key == CARD_NOTICE_KEY:
+        if not isinstance(value, str):
+            raise ValueError(f"{CARD_NOTICE_KEY} must be text")
+        text = value.strip()
+        if len(text) > CARD_NOTICE_MAX:
+            raise ValueError(f"{CARD_NOTICE_KEY} is at most {CARD_NOTICE_MAX} characters")
+        return text
     if key == TILLS_KEY:
         if not isinstance(value, str):
             raise ValueError(f"{TILLS_KEY} must be text")
@@ -241,18 +433,30 @@ class Settings:
     auto_off_minutes: int = AUTO_OFF_MINUTES_DEFAULT
     allow_unknown_nayax: bool = False
     ttl_minutes: int = TTL_DEFAULT
+    auto_on: str = AUTO_ON_OFFER
+    auto_on_failures: int = AUTO_ON_FAILURES_DEFAULT
+    auto_on_seconds: int = AUTO_ON_SECONDS_DEFAULT
+    auto_on_all: bool = False
+    conflict_window_sec: int = CONFLICT_WINDOW_DEFAULT
+    online_requires_line: bool = True
 
     def controls(self, machine_id: Any) -> bool:
         return str(machine_id).lower() in self.till_ids
 
     def out(self) -> Dict[str, Any]:
-        """§8.4 `settings`."""
+        """§8.4 `settings` (and §8.6's four)."""
         return {
             "includeKiosks": self.include_kiosks,
             "autoOff": self.auto_off,
             "autoOffMinutes": self.auto_off_minutes,
             "allowUnknownNayax": self.allow_unknown_nayax,
             "ttlMinutes": self.ttl_minutes,
+            "autoOn": self.auto_on,
+            "autoOnFailures": self.auto_on_failures,
+            "autoOnSeconds": self.auto_on_seconds,
+            "autoOnAll": self.auto_on_all,
+            "conflictWindowSec": self.conflict_window_sec,
+            "onlineRequiresLine": self.online_requires_line,
         }
 
 
@@ -268,6 +472,7 @@ def settings_of(params: Dict[str, Any]) -> Settings:
         return value if _whole(value, low, high) else default
 
     auto_off = params.get(AUTO_OFF_KEY)
+    auto_on = params.get(AUTO_ON_KEY)
     return Settings(
         till_ids=tuple(parse_tills(params.get(TILLS_KEY))),
         include_kiosks=flag(INCLUDE_KIOSKS_KEY, False),
@@ -275,6 +480,12 @@ def settings_of(params: Dict[str, Any]) -> Settings:
         auto_off_minutes=minutes(AUTO_OFF_MINUTES_KEY, AUTO_OFF_MINUTES_DEFAULT, AUTO_OFF_MINUTES_MIN, AUTO_OFF_MINUTES_MAX),
         allow_unknown_nayax=flag(ALLOW_UNKNOWN_KEY, False),
         ttl_minutes=minutes(TTL_KEY, TTL_DEFAULT, TTL_MIN, TTL_MAX),
+        auto_on=auto_on if auto_on in AUTO_ON_OPTIONS else AUTO_ON_OFFER,
+        auto_on_failures=minutes(AUTO_ON_FAILURES_KEY, AUTO_ON_FAILURES_DEFAULT, AUTO_ON_FAILURES_MIN, AUTO_ON_FAILURES_MAX),
+        auto_on_seconds=minutes(AUTO_ON_SECONDS_KEY, AUTO_ON_SECONDS_DEFAULT, AUTO_ON_SECONDS_MIN, AUTO_ON_SECONDS_MAX),
+        auto_on_all=flag(AUTO_ON_ALL_KEY, False),
+        conflict_window_sec=minutes(CONFLICT_WINDOW_KEY, CONFLICT_WINDOW_DEFAULT, CONFLICT_WINDOW_MIN, CONFLICT_WINDOW_MAX),
+        online_requires_line=flag(ONLINE_REQUIRES_LINE_KEY, True),
     )
 
 
@@ -504,6 +715,32 @@ def _pick(src: Dict[str, Any], cleaners: Dict[str, Any]) -> Dict[str, Any]:
     return {key: clean(src[key]) for key, clean in cleaners.items() if key in src}
 
 
+def _party(value: Any) -> Any:
+    """`by` / `from` as the till wrote it: a name ("קופה 1"), or `{id | machineId, name}` (the switch's body)."""
+    if isinstance(value, dict):
+        out = {k: _text(value.get(k), 64) for k in ("id", "machineId") if k in value}
+        if "name" in value:
+            out["name"] = _text(value.get("name"), 100)
+        return out or None
+    return _text(value, 100)
+
+
+#: An order as the till names one (§8.7 `supersededBy`, `lastApplied`).
+_ORDER = {
+    "requestId": lambda v: _text(v, 64),
+    "on": _flag,
+    "source": lambda v: _text(v, 16),
+    "from": _party,
+    "by": _party,
+    "issuedAt": lambda v: _text(v, 40),
+    "doneAt": lambda v: _text(v, 40),
+}
+
+
+def _order(value: Any) -> Optional[Dict[str, Any]]:
+    return _pick(value, _ORDER) if isinstance(value, dict) else None
+
+
 _PINPAD = {
     "host": lambda v: _text(v, 253),
     "port": _port,
@@ -529,10 +766,10 @@ _OFFLINE = {
 }
 _CONTROL = {
     "on": _flag,
-    "by": lambda v: _text(v, 100),
+    "by": _party,
     "byId": lambda v: _text(v, 64),
-    "requestedBy": lambda v: _text(v, 100),
-    "from": lambda v: _text(v, 100),
+    "requestedBy": _party,
+    "from": _party,
     "fromId": lambda v: _text(v, 64),
     "at": lambda v: _text(v, 40),
     "source": lambda v: _text(v, 16),
@@ -542,6 +779,8 @@ _REPORT = {
     "terminal": lambda v: _pick(v, _TERMINAL) if isinstance(v, dict) else None,
     "offline": lambda v: _pick(v, _OFFLINE) if isinstance(v, dict) else None,
     "control": lambda v: _pick(v, _CONTROL) if isinstance(v, dict) else None,
+    # §8.7: the last order the till carried out — {requestId, on, source, from, by, issuedAt, doneAt}.
+    "lastApplied": _order,
     "kiosk": _flag,
     "at": lambda v: _text(v, 40),
 }
@@ -604,6 +843,7 @@ RECEIVED = "received"
 #: What a till refuses or fails with (§8.3), kept as it says it — `not_eligible:<reason>` included.
 REFUSALS = (
     "not_eligible", "stale", "expired", "bad_request", "timeout_busy", "superseded", "interrupted", "not_active",
+    "conflict", "no_line",
 )
 #: The dashboard's words for a command (§8.5 "מצב בדשבורד").
 STATE_PENDING, STATE_RECEIVED, STATE_DONE, STATE_FAILED, STATE_CANCELLED = (
@@ -619,25 +859,36 @@ def who(user: Any) -> Optional[str]:
     return name or getattr(user, "username", None) or getattr(user, "email", None)
 
 
-def switch_params(*, on: bool, user: Any, now: datetime) -> Dict[str, Any]:
-    """The LAN switch's body (§8.3) as the cloud sends it; `requestId` is each command's own id."""
-    person = {"id": str(getattr(user, "id", "")) or None, "name": who(user)}
+#: Who an automatic switch is by (§8.6: `by` "אוטומטי").
+AUTO_NAME = "אוטומטי"
+
+
+def switch_params(
+    *, on: bool, user: Any, now: datetime, by: Optional[Dict[str, Any]] = None, origin: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    The LAN switch's body (§8.3) as the cloud sends it; `requestId` is each command's own id. [by]:
+    someone other than the dashboard's user (`{"id": None, "name": "אוטומטי"}`); [origin]: `from`
+    other than the dashboard (the till that went over by itself).
+    """
+    person = by if by is not None else {"id": str(getattr(user, "id", "")) or None, "name": who(user)}
     return {
         "on": bool(on),
         "issuedAt": _aware(now).isoformat(timespec="milliseconds"),
         "by": dict(person),
         "requestedBy": dict(person),
-        "from": {"machineId": None, "name": DASHBOARD_NAME},
+        "from": dict(origin) if origin is not None else {"machineId": None, "name": DASHBOARD_NAME},
         "source": SOURCE_CLOUD,
     }
 
 
 def clean_answer(ack_status: str, detail: Optional[str], raw: Any) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """
-    The till's final answer as kept (§8.3): `detail` as it said it (a reason, `not_eligible:<reason>`,
-    or a terminal's error), clipped — never refused for a word the cloud does not know; `result` only
-    its known fields: {working, pending, authorization {ok, statusCode, approved, declined,
-    approvedAmount}, error}.
+    The till's final answer as kept (§8.3, §8.7): `detail` as it said it (a reason —
+    `not_eligible:<reason>`, `conflict`, `stale`, `superseded`, `no_line` — or a terminal's error),
+    clipped — never refused for a word the cloud does not know; `result` only its known fields:
+    {working, pending, authorization {ok, statusCode, approved, declined, approvedAmount}, error,
+    supersededBy {requestId, on, source, from, by, issuedAt}, unchanged}.
     """
     text = detail.strip()[:DETAIL_MAX] if isinstance(detail, str) and detail.strip() else None
     raw = raw if isinstance(raw, dict) else {}
@@ -660,6 +911,12 @@ def clean_answer(ack_status: str, detail: Optional[str], raw: Any) -> Tuple[Opti
         )
     if "error" in raw:
         out["error"] = _text(raw.get("error"), DETAIL_MAX)
+    if "supersededBy" in raw:
+        out["supersededBy"] = _order(raw.get("supersededBy"))
+        if out["supersededBy"] is not None:
+            out["supersededBy"].pop("doneAt", None)
+    if "unchanged" in raw:
+        out["unchanged"] = _flag(raw.get("unchanged"))
     return text, (out or None)
 
 
@@ -721,20 +978,23 @@ def is_open(view: Optional[Dict[str, Any]]) -> bool:
 
 def create_commands(
     db: Session, machines: Sequence[Any], *, on: bool, user: Any, now: Optional[datetime] = None,
+    by: Optional[Dict[str, Any]] = None, origin: Optional[Dict[str, Any]] = None, source: str = "dashboard",
 ) -> List[Any]:
     """
     One `terminal_offline` per till, one batch (the caller commits, then wakes them): the §8.3 body,
     `requestId` = the command's id, each living its till's `deferredCommandTtlMin`. Creating one
-    cancels the till's open ones (`superseded`, app/services/device_commands.py `create`).
+    cancels the till's open ones (`superseded`, app/services/device_commands.py `create`). [source]:
+    the row's own ("dashboard"; "auto" — §8.6's switch of the whole shop after a till went by itself).
     """
     from app.services import device_commands as DC
 
     now = now or _now()
     if not machines:
         return []
-    base = switch_params(on=on, user=user, now=now)
+    base = switch_params(on=on, user=user, now=now, by=by, origin=origin)
     ttl = resolve_for_machines(db, machines)
-    rows = DC.create(db, machines, ACTION, user=user, by_name=who(user), params=base, now=now)
+    name = (by or {}).get("name") if by is not None else who(user)
+    rows = DC.create(db, machines, ACTION, user=user, by_name=name, params=base, now=now, source=source)
     for row in rows:
         settings = ttl.get(row.machine_id, Settings())
         row.params = {"requestId": str(row.id), **base}
@@ -873,6 +1133,8 @@ def row_out(row: TillRow, *, now: datetime, last_view: Optional[Dict[str, Any]])
         "txLimit": offline.get("txLimit"),
         "txLeft": offline.get("txLeft"),
         "control": (report or {}).get("control") if isinstance((report or {}).get("control"), dict) else None,
+        # §8.7: the last order the till carried out, whoever sent it (the LAN, the cloud, by itself).
+        "lastApplied": _part(report, "lastApplied") or None,
         "reportedAt": (report or {}).get("reportedAt"),
         "terminal": report,
         "lastCommand": last_view,
@@ -960,18 +1222,34 @@ def lan_address(db: Session, machine: Any) -> Tuple[Optional[str], Optional[int]
 
 def control_view(db: Session, machine: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     """
-    `GET /sync/{m}/deferred-control` (§8.4): whether this till controls (its id in its resolved
-    `deferredControlTills`), the settings, and — for a controller only — the shop's tills: never one
-    "מרוחקת בזד הסניפי" (off the shop's LAN), never a kiosk while kiosks are not included.
+    `GET /sync/{m}/deferred-control` (§8.4), for every till: whether it controls (its id in its
+    resolved `deferredControlTills`), the settings, the shop's OTHER controlling tills with where they
+    listen (§8.6: a till that went offline by itself tells them — `POST /deferred/v1/notice`), and — for
+    a controller only — the shop's tills. Never a till "מרוחקת בזד הסניפי" (off the shop's LAN; such a
+    till itself gets no controllers either), never a kiosk while kiosks are not included.
     """
     from app.services.local_shop_z import is_remote_participant
 
     now = now or _now()
-    settings = machine_settings(db, machine)
+    machines = shop_tills(db, machine.shop_id) if machine.shop_id is not None else []
+    if machine not in machines:
+        machines = [*machines, machine]
+    per_till = resolve_for_machines(db, machines)
+    settings = per_till.get(machine.id, Settings())
     controller = machine.shop_id is not None and settings.controls(machine.id)
+    off_lan = machine.shop_id is None or is_remote_participant(machine)
+    controllers: List[Dict[str, Any]] = []
+    if not off_lan:
+        for m in machines:
+            if m.id == machine.id or not per_till.get(m.id, Settings()).controls(m.id) or is_remote_participant(m):
+                continue
+            address, port = lan_address(db, m)
+            controllers.append({
+                "machineId": str(m.id), "name": m.name, "posNumber": m.pos_number, "label": label_of(m),
+                "lanAddress": address, "lanPort": port,
+            })
     tills: List[Dict[str, Any]] = []
     if controller:
-        machines = shop_tills(db, machine.shop_id)
         kiosks = kiosk_ids(db, [m.id for m in machines])
         for m in machines:
             is_self = m.id == machine.id
@@ -998,6 +1276,7 @@ def control_view(db: Session, machine: Any, *, now: Optional[datetime] = None) -
     return {
         "controller": bool(controller),
         "settings": settings.out(),
+        "controllers": controllers,
         "tills": tills,
         "serverTime": now.isoformat(),
     }
@@ -1054,3 +1333,140 @@ def set_controller(
     if value is not None:
         value = clean_value(TILLS_KEY, value)
     return TP.write_value(db, parameter, "shop", shop.id, value, user=user, now=now)
+
+
+# ── The device page's card: the till's own §10 values ─────────────────────────
+
+
+def _definitions(db: Session, keys: Sequence[str]) -> Dict[str, Any]:
+    from app.models.till_parameter import TillParameter
+    from app.services import till_parameters as TP
+
+    rows = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(list(keys))).all()}
+    if len(rows) < len(keys):
+        TP.ensure_builtin_parameters(db)
+        rows = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(list(keys))).all()}
+    return rows
+
+
+def device_view(db: Session, machine: Any, *, can_edit: bool, can_edit_controller: bool) -> Dict[str, Any]:
+    """
+    "מצב לא מקוון" on the device page: whether the till controls ("קופה מנהלת מצב לא מקוון", kept at the
+    shop's level), and the four of §10 — each with the till's own value (or none), what it inherits
+    from its point of sale / shop / company / default, and what applies.
+    """
+    from app.models.till_parameter import TillParameterValue
+    from app.services import till_parameters as TP
+
+    rows = _definitions(db, AUTO_ON_KEYS)
+    chain = TP.scope_chain_for_machine(db, machine)
+    above = TP.TillScopeChain(machine_id=None, area_id=chain.area_id, shop_id=chain.shop_id, company_id=chain.company_id)
+    values = (
+        db.query(TillParameterValue)
+        .filter(TillParameterValue.parameter_id.in_([p.id for p in rows.values()]))
+        .all()
+        if rows else []
+    )
+    effective = TP.resolve_till_parameters(list(rows.values()), values, chain).parameters
+    inherited = TP.resolve_till_parameters(list(rows.values()), values, above).parameters
+    own = {
+        p.key: v.value for p in rows.values() for v in values
+        if v.parameter_id == p.id and v.scope_type == "machine" and TP.as_uuid(v.scope_id) == TP.as_uuid(machine.id)
+    }
+    settings = machine_settings(db, machine)
+    keys = []
+    for key in AUTO_ON_KEYS:
+        p = rows.get(key)
+        if p is None:
+            continue
+        low, high, _unit = RANGES.get(key, (None, None, None))
+        keys.append({
+            "key": key,
+            "label": p.label,
+            "description": p.description,
+            "valueType": p.value_type,
+            "enumOptions": list(p.enum_options or []) or None,
+            "enumLabels": TP.enum_labels(key),
+            "min": low,
+            "max": high,
+            "own": own.get(key),
+            "inherited": inherited.get(key),
+            "effective": effective.get(key),
+        })
+    report = report_of(machine)
+    return {
+        "machineId": str(machine.id),
+        "shopId": str(machine.shop_id) if machine.shop_id else None,
+        "isController": settings.controls(machine.id),
+        "capable": capable(machine),
+        "canEdit": can_edit,
+        "canEditController": can_edit_controller,
+        "terminal": report,
+        "keys": keys,
+    }
+
+
+def set_device_values(db: Session, machine: Any, values: Dict[str, Any], *, user: Any, now: Optional[datetime] = None) -> List[str]:
+    """
+    The till's own values of the four (§10) — null clears one (the till inherits again) — validated as
+    the parameters page validates and written with its change log. The keys changed; the caller
+    commits and tells the till. `TillParameterValueError` for an unknown key or a bad value.
+    """
+    from app.services import till_parameters as TP
+
+    now = now or _now()
+    unknown = [k for k in values if k not in AUTO_ON_KEYS]
+    if unknown:
+        raise TP.TillParameterValueError(f"unknown parameter {unknown[0]}")
+    rows = _definitions(db, AUTO_ON_KEYS)
+    cleaned: Dict[str, Any] = {}
+    for key, value in values.items():
+        p = rows[key]
+        if value is not None:
+            value = TP.validate_value(p.value_type, value, p.enum_options)
+            value = TP.validate_keyed_value(key, value)
+        cleaned[key] = value
+    changed = []
+    for key, value in cleaned.items():
+        if TP.write_value(db, rows[key], "machine", machine.id, value, user=user, now=now):
+            changed.append(key)
+    return changed
+
+
+# ── "מעבר אוטומטי" of the whole shop through the cloud (§8.6) ───────────────────
+
+TRIGGER_AUTO_ON = "auto_on"
+SOURCE_AUTO = "auto"
+
+
+def on_till_event(db: Session, machine: Any, event: Any, *, now: Optional[datetime] = None) -> List[Any]:
+    """
+    A till went offline by itself (`deferred_mode_on`, details `source: "auto"`, `trigger: "auto_on"`) and
+    its `deferredAutoOnAll` is on: every OTHER till of its shop that is included and can take it gets
+    `terminal_offline` (`on`, by "אוטומטי", from that till) — the dashboard switch's rules. Only for such an
+    event, once (the caller passes a NEW event only): the tills switched by these commands report
+    `source: "cloud"`, so nothing chains. The commands (the caller commits and wakes their tills).
+    """
+    details = getattr(event, "details", None) or {}
+    if getattr(event, "event_type", None) != EVENT_ON or not isinstance(details, dict):
+        return []
+    if details.get("source") != SOURCE_AUTO or details.get("trigger") != TRIGGER_AUTO_ON:
+        return []
+    if machine.shop_id is None or getattr(event, "training", False):
+        return []
+    if not machine_settings(db, machine).auto_on_all:
+        return []
+    from app.models.shop import Shop
+
+    shop = db.get(Shop, machine.shop_id)
+    if shop is None:
+        return []
+    others = [m for m in shop_tills(db, shop.id) if m.id != machine.id]
+    targets, _skipped = plan_switch(db, shop, others)
+    if not targets:
+        return []
+    return create_commands(
+        db, targets, on=True, user=None, now=now,
+        by={"id": None, "name": AUTO_NAME}, origin={"machineId": str(machine.id), "name": machine.name},
+        source=SOURCE_AUTO,
+    )

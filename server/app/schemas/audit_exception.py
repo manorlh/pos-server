@@ -43,7 +43,11 @@ class TillEventIn(BaseModel):
                   # to deferred / back (details: requestId, source lan | cloud | direct | auto | local, by, byId,
                   # requestedBy, from, fromId, issuedAt, kind, model, pending; off: approved, declined,
                   # approvedAmount, authorizationOk; error; direct: targetMachineId, targetName). No rule.
-                  "deferred_mode_on", "deferred_mode_off"]
+                  "deferred_mode_on", "deferred_mode_off",
+                  # "זיהוי אין קו" (§12 "למידה"): a card failure and the till's verdict (details: statusCode,
+                  # statusMessage, outcome, kind, model, verdict no_line | other, why, deviceOnline,
+                  # cloudOnline, autoOn, streak). No rule.
+                  "card_failure_verdict"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

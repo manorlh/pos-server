@@ -12,10 +12,19 @@ POST /shops/{shop_id}/deferred-terminals/switch      {on, machineIds?} (absent: 
 PUT  /shops/{shop_id}/deferred-terminals/controllers {machineId, on} — "קופה מנהלת מצב לא מקוון" on the
                                                      device page: the till in / out of the SHOP's own
                                                      `deferredControlTills` → the shop's view
+GET  /machines/{machine_id}/deferred-settings        → the device page's card: isController, and the till's
+                                                     own `deferredAutoOn*` (own / inherited / effective)
+PUT  /machines/{machine_id}/deferred-settings        {values: {key: value | null}} (sections devices or
+                                                     terminals_offline at edit)
 
 Till (machine token, like the other /sync routes):
 
-GET  /sync/{machine_id}/deferred-control             → {controller, settings, tills, serverTime} (§8.4)
+GET  /sync/{machine_id}/deferred-control             → {controller, settings, controllers, tills, serverTime}
+                                                     (§8.4, §8.6: every till gets the shop's other controllers)
+
+A till event `deferred_mode_on` with `source: "auto"`, `trigger: "auto_on"` of a till whose
+`deferredAutoOnAll` is on switches the shop's other tills through the cloud (app/routers/exceptions.py,
+`deferred_control.on_till_event`).
 
 The commands are device commands (`terminal_offline`); their rows are the audit — who asked, when,
 what each till did (app/services/device_commands.py).
@@ -23,7 +32,7 @@ what each till did (app/services/device_commands.py).
 from __future__ import annotations
 
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -176,6 +185,78 @@ def put_deferred_controller(
         TP.publish_parameters_notify(TP.notify_targets_for_scope(db, "shop", shop.id))
     out = DCtl.shop_view(db, shop, machines, can_switch=True)
     db.commit()
+    return {**out, "changed": changed}
+
+
+# ── The device page's card (§10) ─────────────────────────────────────────────
+
+
+class DeviceValuesIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: The till's own values of `deferredAutoOn`, `deferredAutoOnFailures`, `deferredAutoOnSeconds`,
+    #: `deferredAutoOnAll` — null clears one (the till inherits again); a key left out is left as it is.
+    values: Dict[str, Any] = Field(default_factory=dict)
+
+
+def _device(db: Session, user: User, tenant_id, machine_id: uuid.UUID) -> POSMachine:
+    """A till or kiosk of a shop this user switches (the page's own rule)."""
+    machine = db.get(POSMachine, machine_id)
+    if machine is None or machine.shop_id is None or (tenant_id is not None and str(machine.tenant_id) != str(tenant_id)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "machine_not_found"})
+    shop = _shop(db, user, tenant_id, machine.shop_id)
+    if all(m.id != machine.id for m in _tills(db, user, shop)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "machine_not_found"})
+    return machine
+
+
+def _can_edit_device(db: Session, user: User) -> bool:
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+
+    access = DA.effective_access(db, user)
+    return access.allows("devices", DS.EDIT) or access.allows(DCtl.SECTION, DS.EDIT)
+
+
+@router.get("/machines/{machine_id}/deferred-settings")
+def get_device_deferred_settings(
+    machine_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"מצב לא מקוון" on the device page: "קופה מנהלת" and the till's own auto-on values, with what it inherits."""
+    machine = _device(db, current_user, active_tenant_id, machine_id)
+    out = DCtl.device_view(
+        db, machine, can_edit=_can_edit_device(db, current_user), can_edit_controller=_can_edit(db, current_user),
+    )
+    db.commit()  # built-in definitions created on the way, if missing
+    return out
+
+
+@router.put("/machines/{machine_id}/deferred-settings")
+def put_device_deferred_settings(
+    machine_id: uuid.UUID,
+    body: DeviceValuesIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The till's own auto-on values (§10), written with the parameters' change log; the till is told."""
+    from app.services import till_parameters as TP
+
+    machine = _device(db, current_user, active_tenant_id, machine_id)
+    if not _can_edit_device(db, current_user):
+        raise _forbidden("section_forbidden")
+    try:
+        changed = DCtl.set_device_values(db, machine, body.values, user=current_user)
+    except TP.TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail={"code": "invalid_value", "message": str(exc)}) from exc
+    db.commit()
+    if changed:
+        TP.publish_parameters_notify(TP.notify_targets_for_scope(db, "machine", machine.id))
+    out = DCtl.device_view(db, machine, can_edit=True, can_edit_controller=_can_edit(db, current_user))
     return {**out, "changed": changed}
 
 
