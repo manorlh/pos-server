@@ -845,6 +845,12 @@ def post_my_heartbeat(
     # `device_info["autostart"]`; absent leaves it as it was. Never fails a beat.
     if body is not None and body.autostart is not None:
         autostart.apply_heartbeat(machine, body.autostart)
+    # "תמיכה מרחוק": QuickSupport on the device, the first signer pin or a mismatch's alert
+    # (app/services/remote_support.py); absent leaves it as it was, and it never fails a beat.
+    if body is not None and body.remote_support is not None:
+        from app.services import remote_support
+
+        remote_support.apply_heartbeat(db, machine, body.remote_support)
     # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
     if body is not None and body.capabilities is not None:
         from app.services import device_logs

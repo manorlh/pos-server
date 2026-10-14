@@ -317,6 +317,12 @@ RULES = RULES + (
     RuleSpec("table_restored", True, (), "medium", "till_event"),
 )
 
+# "תמיכה מרחוק" (app/services/remote_support.py): a till's QuickSupport signed by a certificate other than
+# the pinned one. A security reading: always recorded; only "שלח התראה לטלפון" (off by default) is offered.
+RULES = RULES + (
+    RuleSpec("quicksupport_signer_mismatch", True, (), "medium", "machine_status", push_default=False, push_only=True),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 

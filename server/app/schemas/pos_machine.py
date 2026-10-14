@@ -248,6 +248,10 @@ class MachineHeartbeatBody(BaseModel):
     #: The device's LAN identity for discovery (§11.6): `{publicKey, alg: "ES256"}`, an EC P-256 key;
     #: one that is not is dropped. Absent: as it was.
     lan_identity: Optional[Dict[str, Any]] = Field(None, alias="lanIdentity")
+    #: "תמיכה מרחוק" (app/services/remote_support.py): `{installed, package, signerSha256: [..],
+    #: installedFrom}` — TeamViewer QuickSupport on the device, kept in `device_info["remoteSupport"]`,
+    #: cleaned key by key in `remote_support.clean_report` (never a 422). Absent: as it was.
+    remote_support: Optional[Dict[str, Any]] = Field(None, alias="remoteSupport")
 
     model_config = ConfigDict(populate_by_name=True)
 

@@ -38,6 +38,7 @@ from app.schemas.till_parameter import (
     TillParameterValueIn,
     TillParameterValueOut,
 )
+from app.services import remote_support as RS
 from app.services import terminal_check_bypass as TCB
 from app.services import till_parameter_audit as AUDIT
 from app.services import till_parameters as TP
@@ -235,9 +236,11 @@ def create_till_parameter(
 ):
     """`409 till_parameter_key_taken` when the key exists in any case."""
     _refuse_taken_key(db, body.key)
-    if body.default_value is not None and TP.image_kind(body.key, body.value_type):
+    if body.default_value is not None:
         try:
-            body.default_value = TP.validate_image_url(body.default_value)
+            if TP.image_kind(body.key, body.value_type):
+                body.default_value = TP.validate_image_url(body.default_value)
+            body.default_value = TP.validate_keyed_value(body.key, body.default_value)
         except TP.TillParameterValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"defaultValue: {exc}"
@@ -308,6 +311,10 @@ def update_till_parameter(
             default_value = TP.validate_value(value_type, default_value, enum_options)
             if TP.image_kind(key, value_type):
                 default_value = TP.validate_image_url(default_value)
+            # A new default is held to what its key needs, like a level's value ("תמיכה מרחוק": https://
+            # only, SHA-256 fingerprints) — the default is what every till gets.
+            if default_value != parameter.default_value:
+                default_value = TP.validate_keyed_value(key, default_value)
     except TP.TillParameterValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
@@ -327,6 +334,9 @@ def update_till_parameter(
             db, parameter=parameter, scope_type=AUDIT.DEFINITION_SCOPE, scope_id=None,
             action=AUDIT.DEFAULT, old_value=parameter.default_value, new_value=default_value, user=_admin,
         )
+        if key == RS.SIGNER_KEY:
+            # Set by hand now: no longer "נקבע אוטומטית מהתקנה ראשונה" (app/services/remote_support.py).
+            RS.note_manual_pin(db, default_value, _admin)
     if bool(is_active) != bool(parameter.is_active):
         AUDIT.record_change(
             db, parameter=parameter, scope_type=AUDIT.DEFINITION_SCOPE, scope_id=None,

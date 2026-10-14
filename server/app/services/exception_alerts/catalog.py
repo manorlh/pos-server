@@ -226,3 +226,14 @@ _APPROVAL_KINDS = (
 KINDS = KINDS + _APPROVAL_KINDS
 KINDS_BY_KEY.update({k.key: k for k in _APPROVAL_KINDS})
 OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _APPROVAL_KINDS)
+
+# "תמיכה מרחוק" (app/services/remote_support.py, P:/specs/quicksupport-autoinstall.md §2א): a till's
+# QuickSupport signed by a certificate other than the pinned one — "חתימת QuickSupport לא תואמת בקופה X".
+# Written as `audit_exceptions` on the till's heartbeat, closed by itself once its report matches again.
+# Texted only by an SMS rule that names it.
+_REMOTE_SUPPORT_KINDS = (
+    Kind("quicksupport_signer_mismatch", "חתימת QuickSupport לא תואמת", "medium", "audit_exception"),
+)
+KINDS = KINDS + _REMOTE_SUPPORT_KINDS
+KINDS_BY_KEY.update({k.key: k for k in _REMOTE_SUPPORT_KINDS})
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _REMOTE_SUPPORT_KINDS)

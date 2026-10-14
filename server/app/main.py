@@ -233,6 +233,10 @@ app.include_router(windows_bridge_router.router, prefix=_prefix)
 from app.routers import device_management as device_management_router  # noqa: E402
 
 app.include_router(device_management_router.router, prefix=_prefix)
+# "תמיכה מרחוק" (app/routers/remote_support.py): the QuickSupport signer pin — confirm, replace.
+from app.routers import remote_support as remote_support_router  # noqa: E402
+
+app.include_router(remote_support_router.router, prefix=_prefix)
 app.include_router(accounting_router.router, prefix=_prefix)
 app.include_router(sales_reports_router.router, prefix=_prefix)
 app.include_router(till_messages_router.router, prefix=_prefix)

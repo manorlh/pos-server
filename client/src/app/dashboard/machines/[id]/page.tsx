@@ -68,6 +68,7 @@ import { CloseFromCloudButton } from '@/components/dashboard/machines/close-from
 import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
+import { RemoteSupportCard } from '@/components/dashboard/machines/remote-support-card';
 import { DeviceLogsCard } from '@/components/dashboard/machines/device-logs';
 import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
 import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
@@ -646,6 +647,10 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
       {/* "עדכון שקט": device owner / silent updates, how to turn it on (adb or QR), "הפעל מחדש". */}
       <DeviceManagementCard machine={machine} />
+
+      {/* "תמיכה מרחוק (QuickSupport)": installed or not, its package and signer, against the allowed
+          fingerprint; a super admin's "השתמש כטביעת האצבע המותרת", "אשר", "החלף". */}
+      {!display ? <RemoteSupportCard machine={machine} /> : null}
 
       {/* "לוגים": what the device sent to support, and "בקש לוגים" (fire-and-forget). Hidden for
           a user who may neither read nor request (the server decides). */}
