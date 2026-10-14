@@ -301,6 +301,9 @@ FISCAL_ROUTES = {
     ("POST", "/sync/{machine_id}/shop-z/local"),
     ("POST", "/sync/{machine_id}/shop-z/remote-close"),
     ("POST", "/sync/{machine_id}/shop-z/remote-part"),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md): a till's report with its shop Z siblings — its refresh sends
+    # "שלח עכשיו" to the shop's tills; a display device never does.
+    ("POST", "/sync/{machine_id}/shop-x"),
     ("POST", "/sync/{machine_id}/kiosk/orders"),
     ("POST", "/sync/{machine_id}/kiosk/pickup-number"),
     ("POST", "/sync/{machine_id}/kiosks/{kiosk_machine_id}/commands"),
@@ -341,6 +344,11 @@ OPEN_WRITES = {
     ("POST", "/sync/{machine_id}/user-session/claim"),
     ("POST", "/sync/{machine_id}/user-session/heartbeat"),
     ("POST", "/sync/{machine_id}/user-session/release"),
+    # "עובדים מחוברים" (exclusive login v2 §8א): a manager releases a signed-in employee from any device —
+    # a staff session, as its siblings above; no fiscal effect.
+    ("POST", "/sync/{machine_id}/user-sessions/{session_id}/release"),
+    # "הסבר לעובד: שלבי הגשה" (P:/specs/fire-restaurant-flow.md): the employee's "אל תציג שוב" — staff, no fiscal effect.
+    ("POST", "/sync/{machine_id}/pos-users/{pos_user_id}/hints"),
     ("POST", "/sync/{machine_id}/print-host"),
     ("POST", "/sync/{machine_id}/print-jobs"),
     ("POST", "/sync/{machine_id}/print-jobs/{job_id}/ack"),

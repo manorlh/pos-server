@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import (
     ELEVATION_HEADER,
+    FISCAL_SYNC_PATH,
     POS_USER_HEADER,
     _checked_grant,
     _elevation_401,
@@ -130,7 +131,8 @@ def till_shop_x(
     return _answer(db, machine, shop, settings, who, None, who.get("name"))
 
 
-@router.post("/sync/{machine_id}/shop-x")
+#: A till's, as the shop Z's: a display device never asks the shop's tills for "שלח עכשיו" (403 `device_not_fiscal`).
+@router.post("/sync/{machine_id}/shop-x", dependencies=FISCAL_SYNC_PATH)
 def till_shop_x_refresh(
     machine_id: str,
     body: Any = Body(None),
