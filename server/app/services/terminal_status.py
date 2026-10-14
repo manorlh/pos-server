@@ -104,7 +104,7 @@ def card_lock_of(
     inherited; unset → "not_configured", unreported → "unknown", another number → "mismatch". The
     built-in terminal (agamento — on a SynqPay terminal, SynqPay's own): the effective number,
     inherited included; locked only on another number with no forced setup on its way. Z-Credit
-    and others: not this rule (None).
+    and others: not this rule (None) — nor "ללא אשראי" (`none`), which has no terminal to lock.
     """
     want = normalize_terminal_number(expected)
     have = normalize_terminal_number(reported) if reported_at is not None else None
@@ -250,9 +250,17 @@ def terminal_settings_for(db: Session, machines: List["POSMachine"]) -> Dict[Any
 
 def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -> Dict[str, Any]:
     """The terminal fields of a machine's list/detail response."""
+    from app.services.payment_integration import no_card
+
+    integration = getattr(settings.integration, "integration", None)
     # A Nayax C4 on the till's USB (`nayax_usb`) is on the cable: no network address to ask for.
-    on_usb = getattr(settings.integration, "integration", None) == "nayax_usb"
-    required = pinpad_required(machine.has_builtin_terminal, settings.pinpad_enabled) and not on_usb
+    # "ללא אשראי" (`none`) charges on no terminal: no address, no number, no lock to tell of.
+    without_card = no_card(settings.integration)
+    required = (
+        pinpad_required(machine.has_builtin_terminal, settings.pinpad_enabled)
+        and integration != "nayax_usb"
+        and not without_card
+    )
     return {
         "terminalNumber": machine.terminal_number,
         "terminalClearingServer": machine.terminal_clearing_server,
@@ -264,7 +272,7 @@ def machine_terminal_fields(machine: "POSMachine", settings: TerminalSettings) -
         "expectedTerminalNumber": settings.expected,
         "forceTerminalNumber": settings.force,
         "forceTerminalNumberSource": settings.force_source,
-        "terminalStatus": terminal_status(
+        "terminalStatus": NOT_REQUIRED if without_card else terminal_status(
             machine.terminal_number, machine.terminal_reported_at, settings.expected
         ),
         # "תנעל את האשראי, לא את הקופה" (docs/SPEC_KIOSK.md §20): whether the till locks card

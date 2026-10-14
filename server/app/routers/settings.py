@@ -367,6 +367,17 @@ def _check_leaves_a_payment_option(
         )
 
 
+def _kiosk_warnings(db: Session, patch: Dict[str, Any], machines) -> List[Dict[str, Any]]:
+    """
+    "לקיוסק לא יישאר אמצעי תשלום" after a save that set (or reset) the integration type: the
+    kiosks of `machines()` "ללא אשראי" with no "תשלום בקופה". A warning in the answer, never a
+    refusal (app/services/payment_integration.py `kiosk_warnings`).
+    """
+    if payment_integration.KEY not in patch:
+        return []
+    return payment_integration.kiosk_warnings(db, machines())
+
+
 def _tenant_of(company: Company, db: Session):
     if not company.tenant_id:
         return None
@@ -477,6 +488,9 @@ def patch_tenant_settings(
     return EntitySettingsResponse(
         settings=tenant.settings or {},
         settings_updated_at=tenant.settings_updated_at,
+        warnings=_kiosk_warnings(
+            db, patch, lambda: [m for m in _tenant_tills(db, tenant.id) if m.is_active]
+        ),
     )
 
 
@@ -552,6 +566,7 @@ def patch_company_settings(
     return EntitySettingsResponse(
         settings=company.settings or {},
         settings_updated_at=company.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: _machines_under(db, "company", company.id)),
     )
 
 
@@ -637,6 +652,7 @@ def patch_shop_settings(
     return ShopSettingsResponse(
         settings=shop.settings or {},
         settings_updated_at=shop.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: _machines_under(db, "shop", shop.id)),
     )
 
 
@@ -735,6 +751,7 @@ def patch_area_settings(
     return AreaSettingsResponse(
         settings=area.settings or {},
         settings_updated_at=area.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: _machines_under(db, "area", area.id)),
     )
 
 
@@ -832,6 +849,7 @@ def patch_machine_settings(
     return MachineSettingsResponse(
         settings=machine.settings or {},
         settings_updated_at=machine.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: [machine]),
     )
 
 

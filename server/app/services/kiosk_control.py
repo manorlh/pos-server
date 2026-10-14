@@ -376,8 +376,12 @@ def _terminal_identity(machine: POSMachine, settings: Any, lock_of: Any) -> Dict
     """
     "אל תאפשר לקיוסק לעבוד עם מסוף לא תואם": the terminal set for the kiosk (counted only when
     set on the kiosk itself) and the one it last reported, with the card lock that follows.
+    `noCard`: the kiosk is "ללא אשראי" (`paymentIntegration` = `none`) — no terminal, no lock.
     """
+    from app.services.payment_integration import no_card
+
     return {
+        "noCard": no_card(getattr(settings, "integration", None)),
         "expected": settings.expected,
         "expectedSource": settings.expected_source,
         "reportedNumber": machine.terminal_number,

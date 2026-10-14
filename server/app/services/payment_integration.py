@@ -24,6 +24,13 @@ tills and one till (a tablet) can be set apart. The values:
   model, connection USB/LAN and its parameters) and the write-only `synqpayApiKey` — which
   the till normally gets itself, by pairing with the terminal (§2.2), so it is not required.
 * `tap_to_pay` — "Tap to Pay במכשיר (iPOSpays)": reserved, refused on write for now.
+* `none` — "ללא אשראי (מזומן ואמצעים אחרים)" (P:/specs/payment-integration-none.md): the till
+  takes no card at all — cash and the other methods only. Any till may be set so, one with a
+  terminal of its own too. Nothing is required, and nothing about a terminal is asked or
+  warned of: no missing fields, no pinpad address, no terminal number, no card lock, no
+  kiosk terminal alerts. Its sync carries the three card switches off whatever the layers say
+  (`CARD_OFF`), so an older till that reads `none` as `auto` still shows no card; the stored
+  switches are untouched, and back on `auto` they apply again.
 
 `auto` is never stored: written, it removes the layer's own value (inherit again), so a
 shop left on "אוטומטי" never hides its company's choice. Resolving walks the layers from
@@ -37,6 +44,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.services.payment_options import PAYMENT_OPTIONS
 from app.services.payment_secrets import SYNQPAY_API_KEY, ZCREDIT_KEY, ZCREDIT_PASSWORD
 from app.services.payment_terminal import PinpadAddressError, clean_pinpad_host, merged_pinpad_host
 
@@ -49,8 +57,9 @@ NAYAX_USB = "nayax_usb"
 ZCREDIT = "zcredit"
 SYNQPAY = "synqpay"
 TAP_TO_PAY = "tap_to_pay"
+NONE = "none"
 
-INTEGRATIONS: Tuple[str, ...] = (AUTO, AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, TAP_TO_PAY)
+INTEGRATIONS: Tuple[str, ...] = (AUTO, AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, TAP_TO_PAY, NONE)
 #: Shown as "בקרוב" and refused on write.
 RESERVED: Tuple[str, ...] = (TAP_TO_PAY,)
 #: Integrations that charge on a terminal outside the till: the only ones a till without
@@ -65,6 +74,7 @@ LABELS_HE: Dict[str, str] = {
     ZCREDIT: "Z-Credit — מסופון חיצוני",
     SYNQPAY: "SynqPay — מסוף חיצוני",
     TAP_TO_PAY: "Tap to Pay במכשיר (iPOSpays)",
+    NONE: "ללא אשראי (מזומן ואמצעים אחרים)",
 }
 #: "מובנה" on a SynqPay terminal: the till charges on SynqPay on the device (SPEC_SYNQPAY.md §1.5).
 BUILTIN_SYNQPAY_LABEL_HE = "מובנה — SynqPay במכשיר"
@@ -165,7 +175,21 @@ REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     # "not paired", shown beside the form, not a field missing from it.
     SYNQPAY: (SYNQPAY_DEVICE_MODEL, SYNQPAY_CONNECTION, SYNQPAY_HOST),
     TAP_TO_PAY: (),
+    # No terminal: nothing to ask for, so nothing is ever "חסר".
+    NONE: (),
 }
+
+#: "ללא אשראי": the payment options' card switches (app/services/payment_options.py:
+#: `payFastCardEnabled`, `payCardEnabled`, `payManualCardEnabled`) as the till's sync sends
+#: them for `none`, over whatever the layers store.
+CARD_OFF: Dict[str, bool] = {o.allowed_key: False for o in PAYMENT_OPTIONS if o.tender == "card"}
+
+#: "לקיוסק לא יישאר אמצעי תשלום": a kiosk on `none` takes payment only at the till ("תשלום
+#: בקופה", `cash_at_till` in its `payment.methods`). Without it the save says so — a warning
+#: beside the saved answer, never a refusal (`kiosk_warnings`).
+KIOSK_PAY_AT_TILL = "cash_at_till"
+KIOSK_NO_PAYMENT_CODE = "kiosk_no_payment_method"
+KIOSK_NO_PAYMENT_HE = "לקיוסק לא יישאר אמצעי תשלום"
 
 FIELD_LABELS_HE: Dict[str, str] = {
     "nayaxDeviceHost": "כתובת IP של המסופון",
@@ -394,7 +418,7 @@ def check_machine_choice(machine: Any, patch: Dict[str, Any]) -> None:
 class Resolution:
     """What a till charges on, and why."""
 
-    #: One of AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY; never AUTO.
+    #: One of AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, NONE; never AUTO.
     integration: str
     #: The level the explicit choice comes from ("tenant" … "machine"); None = automatic.
     source: Optional[str] = None
@@ -407,6 +431,14 @@ class Resolution:
     def explicit(self) -> Optional[str]:
         """The value the till is sent as `paymentIntegration`; None leaves it automatic."""
         return None if self.automatic else self.integration
+
+
+def no_card(res: Any) -> bool:
+    """
+    [res] (a Resolution, or None for unknown) is "ללא אשראי": the till takes no card, and has
+    no terminal to watch or warn about.
+    """
+    return getattr(res, "integration", None) == NONE
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:
@@ -492,6 +524,21 @@ def settings_layers(tenant: Any, company: Any, shop: Any, area: Any, machine: An
     return out
 
 
+def resolve_machine(db: Any, machine: Any) -> Resolution:
+    """
+    What [machine] charges on over its stored layers — for a check that needs only the type
+    ("ללא אשראי" or not): `missing` is worked out without the secrets.
+    """
+    from app.routers.settings import _machine_parents
+
+    area, shop, company, tenant = _machine_parents(db, machine)
+    return resolve(
+        settings_layers(tenant, company, shop, area, machine),
+        bool(getattr(machine, "has_builtin_terminal", True)),
+        synqpay_device=is_synqpay_device(machine),
+    )
+
+
 def till_sync_fields(db: Any, machine: Any, tenant: Any, company: Any, shop: Any, area: Any) -> Dict[str, Any]:
     """
     What the till's settings sync says about its card integration, over the merged
@@ -515,6 +562,55 @@ def till_sync_fields(db: Any, machine: Any, tenant: Any, company: Any, shop: Any
         hit = merged_secrets.get(key) if res.integration == TILL_SECRET_INTEGRATION[key] else None
         out[key] = payment_secrets.decrypt(hit[1].ciphertext) if hit else None
     return out
+
+
+def without_card(merged: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    [merged] as a till "ללא אשראי" reads its payment options: the card switches off (CARD_OFF),
+    and so no tip asked on them. A view for the sync, never written back to a layer.
+    """
+    return {**merged, **CARD_OFF}
+
+
+def kiosk_pays_at_till(cfg: Any) -> bool:
+    """A kiosk config that takes payment with no card: "תשלום בקופה" (`cash_at_till`) is on."""
+    payment = cfg.get("payment") if isinstance(cfg, dict) else None
+    methods = payment.get("methods") if isinstance(payment, dict) else None
+    return isinstance(methods, list) and KIOSK_PAY_AT_TILL in methods
+
+
+def kiosk_warnings(db: Any, machines: Sequence[Any]) -> List[Dict[str, Any]]:
+    """
+    "לקיוסק לא יישאר אמצעי תשלום": of [machines], the kiosks "ללא אשראי" whose config does not
+    take payment at the till. One warning naming them (`{code, message, machineIds, names}`), or
+    none. For a save's answer: shown beside it, never a refusal (the owner, 14.10.2026).
+    """
+    from app.models.kiosk import KioskDevice
+    from app.services import kiosk_config
+
+    ids = [m.id for m in machines if getattr(m, "id", None) is not None]
+    if not ids:
+        return []
+    devices = {
+        d.machine_id: d
+        for d in db.query(KioskDevice).filter(KioskDevice.machine_id.in_(ids), KioskDevice.home_role.is_(None)).all()
+    }
+    found: List[Tuple[str, str]] = []
+    for machine in machines:
+        device = devices.get(machine.id)
+        if device is None or not no_card(resolve_machine(db, machine)):
+            continue
+        if kiosk_pays_at_till(kiosk_config.effective_config(db, machine)):
+            continue
+        found.append((str(machine.id), device.name or machine.name or ""))
+    if not found:
+        return []
+    return [{
+        "code": KIOSK_NO_PAYMENT_CODE,
+        "message": KIOSK_NO_PAYMENT_HE,
+        "machineIds": [mid for mid, _ in found],
+        "names": [name for _, name in found],
+    }]
 
 
 def machine_fields(res: Optional[Resolution]) -> Dict[str, Any]:

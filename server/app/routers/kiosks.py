@@ -344,7 +344,15 @@ def put_settings(
     except cfgsvc.KioskConfigInvalid as invalid:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=invalid.detail())
-    return svc.settings_view(db, scope)
+    # "לקיוסק לא יישאר אמצעי תשלום": a kiosk "ללא אשראי" this layer leaves with no "תשלום בקופה" —
+    # said beside the saved layer, never refused (app/services/payment_integration.py).
+    from app.routers.settings import _machines_under
+    from app.services import payment_integration
+
+    return {
+        **svc.settings_view(db, scope),
+        "warnings": payment_integration.kiosk_warnings(db, _machines_under(db, scope.level, scope.entity_id)),
+    }
 
 
 @router.post("/media", status_code=status.HTTP_201_CREATED)
