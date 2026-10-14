@@ -7,6 +7,7 @@
 
 import type { CSSProperties } from 'react';
 import { categoryIconOf, iconPaths, kioskIcon, photoTileGradient, FALLBACK_ICON, type KioskIconStyle } from '@/lib/kioskIcons';
+import { readableTextOn } from '@/lib/categoryLook';
 import type { LayoutCategoryIcons } from '@/lib/kioskLayout';
 import type { PCategory, PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 
@@ -62,8 +63,21 @@ export function CategoryVisual({ m, cat, mode, size, on = false, style }: {
       // eslint-disable-next-line @next/next/no-img-element
       return <img src={cat.imageUrl} alt="" draggable={false} className="shrink-0 object-cover" style={{ width: size, height: size, borderRadius: radius, ...style }} />;
     }
+    // "תמונת מחלקה מהקטלוג": the initial on the category's own colour when the catalog has one.
+    const own = cat.color ? readableTextOn(cat.color) : null;
     return (
-      <span className="flex shrink-0 items-center justify-center font-bold" style={{ width: size, height: size, borderRadius: radius, background: m.c.primary, color: m.c.buttonText, fontSize: size * 0.42, ...style }}>
+      <span
+        className="flex shrink-0 items-center justify-center font-bold"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: radius,
+          background: own && cat.color ? cat.color : m.c.primary,
+          color: own ?? m.c.buttonText,
+          fontSize: size * 0.42,
+          ...style,
+        }}
+      >
         {cat.name.trim().charAt(0)}
       </span>
     );

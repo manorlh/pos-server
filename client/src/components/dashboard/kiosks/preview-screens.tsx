@@ -96,6 +96,7 @@ import {
   railMotionColors,
 } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
+import { categoryInitial, readableTextOn } from '@/lib/categoryLook';
 import type { ResolvedMotionEngine } from '@/lib/kioskMotionEngine';
 import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
@@ -149,6 +150,11 @@ export interface PCategory {
   name: string;
   /** The rail / strip picture (`categoryRailImage`), or null for an initial. */
   imageUrl: string | null;
+  /**
+   * The catalog's colour for its initial when it has no picture (`categoryRailColor`, "תמונת מחלקה
+   * מהקטלוג"); null / absent — the theme colour, as before.
+   */
+  color?: string | null;
   products: PProduct[];
 }
 
@@ -704,10 +710,18 @@ export function ProductImage({ m, p, className, style }: { m: PreviewModel; p: P
   );
 }
 
-/** A category's picture, or its initial on the theme colour. */
+/** A category's picture, or its initial on its catalog colour (`cat.color`), else on the theme colour. */
 export function CategoryImage({ m, cat, size, radius }: { m: PreviewModel; cat: PCategory; size: number; radius: number }) {
   const box: CSSProperties = { width: size, height: size, borderRadius: radius };
   if (cat.imageUrl) return <Img src={cat.imageUrl} className="shrink-0 object-cover" style={box} />;
+  const own = cat.color ? readableTextOn(cat.color) : null;
+  if (cat.color && own) {
+    return (
+      <span className="flex shrink-0 items-center justify-center font-bold" style={{ ...box, background: cat.color, color: own, fontSize: size * 0.42 }}>
+        {categoryInitial(cat.name)}
+      </span>
+    );
+  }
   // A style with an outline (tech): the initial in the accent on an outlined panel, not a block of it.
   const outline = chromeOf(m).outline;
   return (

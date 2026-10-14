@@ -183,6 +183,7 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
 
   const ctx: TillEditorValue = {
     level,
+    targetId,
     draft,
     inherited,
     canEdit,

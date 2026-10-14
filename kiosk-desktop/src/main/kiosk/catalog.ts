@@ -61,6 +61,8 @@ export interface KCategory {
   name: string;
   /** The catalog's own picture (local), or null. */
   imageUrl: string | null;
+  /** The catalog's colour (`categories.color`, "צבע ותמונה למחלקה"): the initial of a category with no picture. */
+  color?: string | null;
 }
 
 export interface KOption {
@@ -215,7 +217,7 @@ export function buildKioskCatalog(
         (num(a.sortOrder) ?? 0) - (num(b.sortOrder) ?? 0) ||
         String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'),
     )
-    .map((c) => ({ id: String(c.id), name: String(c.name ?? ''), imageUrl: localImage(str(c.imageUrl), 'card') }));
+    .map((c) => ({ id: String(c.id), name: String(c.name ?? ''), imageUrl: localImage(str(c.imageUrl), 'card'), color: str(c.color) }));
 
   const mealIds = new Set(Object.keys(((catalog.menu ?? {}) as { meals?: Record<string, unknown> }).meals ?? {}));
   const inActiveCategory = (p: Row) => typeof p.categoryId === 'string' && catIds.has(p.categoryId);

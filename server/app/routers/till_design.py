@@ -20,6 +20,13 @@ GET  /till-design/targets?shopId=       the shop's points of sale and tills, for
                                         (each till's version and whether it shows phase 2)
 GET  /till-design/settings?level=company|shop|area|machine&id=
 PUT  /till-design/settings?level=&id=   `{overrides}` — replaces that level's partial layer
+GET  /till-design/category-display?level=&id=
+PUT  /till-design/category-display?level=&id=   `{values: {categoryColors?, categoryImages?,
+                                        categoryImageSize?}}` (null inherits) — "צבע ותמונה
+                                        למחלקה": three till parameters at that level
+                                        (app/services/category_display.py), with the same
+                                        access as the design; the tills get them with their
+                                        parameters (Ably `till_parameters_updated`)
 """
 from __future__ import annotations
 
@@ -63,6 +70,12 @@ class TillDesignSettingsIn(BaseModel):
     """`PUT /till-design/settings`: the whole partial layer of that level (replaces the stored one)."""
 
     overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CategoryDisplayIn(BaseModel):
+    """`PUT /till-design/category-display`: key → code, null to inherit; a key left out stays as it is."""
+
+    values: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── The till ─────────────────────────────────────────────────────────────────
@@ -358,3 +371,69 @@ def put_settings(
     if background_tasks is not None:
         background_tasks.add_task(publish_design_notify, notify_targets(db, scope))
     return settings_view(db, scope)
+
+
+# ── "צבע ותמונה למחלקה": three till parameters, edited with the design ─────────
+
+#: Who may write a level here — the design's own writers (`get_current_machine_admin`).
+_DESIGN_WRITERS = ("super_admin", "distributor", "company_manager", "shop_manager")
+
+
+def category_display_view(db: Session, user: User, scope: Scope) -> Dict[str, Any]:
+    from app.services import category_display
+
+    view = category_display.level_view(db, scope.level, scope.entity_id)
+    role = getattr(getattr(user, "role", None), "value", getattr(user, "role", None))
+    return {"level": scope.level, "id": str(scope.entity_id), "canEdit": role in _DESIGN_WRITERS, **view}
+
+
+@router.get("/category-display")
+def get_category_display(
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
+    scope_id: uuid.UUID = Query(..., alias="id"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    `categoryColors`, `categoryImages` and `categoryImageSize` at one level: what it sets itself
+    (`own`), what it inherits (`inherited`: the levels above, else the default), the definitions with
+    each code's Hebrew (`enumLabels`), and `canEdit`. The same access as `GET /till-design/settings`.
+    """
+    scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
+    return category_display_view(db, current_user, scope)
+
+
+@router.put("/category-display")
+def put_category_display(
+    body: CategoryDisplayIn,
+    background_tasks: BackgroundTasks,
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
+    scope_id: uuid.UUID = Query(..., alias="id"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Set (or, with null, clear) this level's own values — each change in `till_parameter_changes`, as on
+    the parameters page. 422 `{"detail": {"code": "invalid_category_display", "message"}}` on a key
+    that is not one of the three or a code the till does not know; nothing is written then. Each till
+    the level reaches gets an Ably `settings` notify (`till_parameters_updated`) and pulls its
+    parameters. The same access as `PUT /till-design/settings`.
+    """
+    from app.services import category_display
+    from app.services.till_parameters import TillParameterValueError, publish_parameters_notify
+
+    scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
+    try:
+        targets = category_display.save_values(db, scope.level, scope.entity_id, body.values, user=current_user)
+    except TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_category_display", "message": str(exc)},
+        )
+    db.commit()
+    if background_tasks is not None and targets:
+        background_tasks.add_task(publish_parameters_notify, targets)
+    return category_display_view(db, current_user, scope)

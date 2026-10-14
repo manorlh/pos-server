@@ -149,7 +149,9 @@ export function CatalogSection() {
             const c = row.category;
             const expanded = open === c.id;
             const kioskImage: MediaRef | undefined = cat.categoryImages[c.id];
-            const imageUrl = kioskImage?.url ?? ed.categoryImageUrls[c.id];
+            // "תמונת מחלקה מהקטלוג": the catalog's picture under the kiosk's own, unless switched off.
+            const catalogImage = cat.categoryImagesFromCatalog !== false ? ed.categoryImageUrls[c.id] : undefined;
+            const imageUrl = kioskImage?.url ?? catalogImage;
             const ids = categoryProductIds(products, c.id, cat.productOrder);
             return (
               <li
@@ -203,7 +205,7 @@ export function CatalogSection() {
                         thumbClassName="h-16 w-24"
                         onChange={(ref) => ed.set(`catalog.categoryImages.${c.id}`, ref ?? undefined)}
                       />
-                      {!kioskImage && ed.categoryImageUrls[c.id] ? (
+                      {!kioskImage && catalogImage ? (
                         <p className="text-xs text-muted-foreground">{t('tillImage')}</p>
                       ) : null}
                     </div>
@@ -261,6 +263,10 @@ export function CatalogSection() {
           })}
         </ol>
         {view.categories.length === 0 ? <p className="text-sm text-muted-foreground">{ts('noProducts')}</p> : null}
+      </SectionCard>
+
+      <SectionCard title={t('fromCatalogTitle')} paths={['catalog.categoryImagesFromCatalog']}>
+        <SwitchField path="catalog.categoryImagesFromCatalog" label={t('fromCatalog')} hint={t('fromCatalogHint')} />
       </SectionCard>
 
       <SectionCard title={t('menuModeTitle')} paths={['catalog.oneCategory']}>

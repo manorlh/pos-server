@@ -1,6 +1,7 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, File, HTTPException, status, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
@@ -36,6 +37,9 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 #: From the shared grid — see `app/services/permission_matrix.py`. This used to
 #: be a tuple retyped in five routers, each one an edit away from disagreeing.
 _CATALOG_ROLES = roles_for(Resource.CATALOG, Action.WRITE)
+#: A category's picture is uploaded and removed by whoever may upload a product's
+#: (no shop manager: "a photograph is chain artwork") — on a category they may edit.
+_IMAGE_ROLES = roles_for(Resource.IMAGE, Action.WRITE)
 
 
 def _check_access(user: User, category: Category, db: Session):
@@ -372,6 +376,101 @@ def update_category(
     db.refresh(category)
     _trigger_catalog_notify(db, category)
     return category
+
+
+# ── "תמונת מחלקה" (P:/specs/category-color-image.md §1, §4) ─────────────────────
+
+
+def _editable_category_for_image(db: Session, category_id: str, current_user: User, active_tenant_id) -> Category:
+    """The category whose picture the caller may change: 403 for a role that may not upload pictures, 404, 403."""
+    if current_user.role not in _IMAGE_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    try:
+        ident = uuid.UUID(str(category_id))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    category = db.query(Category).filter(Category.id == ident).first()
+    if not category:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    ensure_same_tenant(category.tenant_id, active_tenant_id)
+    _check_access(current_user, category, db)
+    return category
+
+
+@router.post("/{category_id}/image")
+async def upload_category_image(
+    category_id: str,
+    file: UploadFile = File(...),
+    keep_background: bool = Query(False, alias="keepBackground"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    A category's picture, uploaded from its dialog (multipart `file`): checked like a product's
+    (415 type — JPEG / PNG / WebP / GIF; 413 over 5 MB, or over 50 megapixels; 400 bytes that are
+    no picture), turned upright and shrunk to the product pictures' cap
+    (app/services/category_image.py), stored like a product's — its background cut out unless
+    `keepBackground`, the upload kept beside it — and set on the category (`imageUrl`), which the
+    tills then pull with the catalog.
+
+    `{"id", "imageUrl", "originalUrl", "backgroundRemoved", "processed", "width", "height"}`.
+    Who: the roles that upload product pictures, on a category they may edit (403); another
+    tenant's category 403 (`tenant_forbidden`), an unknown one 404.
+    """
+    from app.routers import images
+    from app.services import category_image
+
+    category = _editable_category_for_image(db, category_id, current_user, active_tenant_id)
+    contents = await images.read_checked_upload(file)
+    if not contents:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+    try:
+        prepared = await run_in_threadpool(category_image.prepare, contents)
+    except category_image.CategoryImageTooLarge:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image exceeds 50 megapixels")
+    except category_image.CategoryImageInvalid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a readable image")
+    # Called directly (a test), the Query default is not a bool: the product form's default, off.
+    keep = keep_background if isinstance(keep_background, bool) else False
+    stored = await images.store_upload(
+        prepared.data, category.tenant_id or active_tenant_id, "categories", keep, as_product=True,
+    )
+    category.image_url = stored.url
+    db.commit()
+    db.refresh(category)
+    _trigger_catalog_notify(db, category)
+    return {
+        "id": str(category.id),
+        "imageUrl": category.image_url,
+        "originalUrl": stored.original_url,
+        "backgroundRemoved": stored.background_removed,
+        "processed": stored.processed or prepared.changed,
+        "width": prepared.width,
+        "height": prepared.height,
+    }
+
+
+@router.delete("/{category_id}/image")
+def remove_category_image(
+    category_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "הסר תמונה": the category goes back to no picture (the till shows its name — or, on the
+    categories' landing page, its first letter on its colour). The stored file is left where it
+    is (a URL a till cached never breaks). Removing a picture the category does not have is a
+    no-op that still answers 200. The same access as the upload.
+    """
+    category = _editable_category_for_image(db, category_id, current_user, active_tenant_id)
+    if category.image_url is not None:
+        category.image_url = None
+        db.commit()
+        db.refresh(category)
+        _trigger_catalog_notify(db, category)
+    return {"id": str(category.id), "imageUrl": None}
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)

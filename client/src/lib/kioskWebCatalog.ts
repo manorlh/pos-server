@@ -61,6 +61,8 @@ export interface WebCategory {
   id: string;
   name: string;
   imageUrl: string | null;
+  /** The catalog's colour (`categories.color`, "צבע ותמונה למחלקה"); null — none. */
+  color?: string | null;
 }
 
 export interface WebOption {
@@ -226,7 +228,7 @@ export function buildWebCatalog(
         (num(a.sortOrder) ?? 0) - (num(b.sortOrder) ?? 0) ||
         String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'),
     )
-    .map((c) => ({ id: String(c.id), name: String(c.name ?? ''), imageUrl: sizedImage(str(c.imageUrl), 480) }));
+    .map((c) => ({ id: String(c.id), name: String(c.name ?? ''), imageUrl: sizedImage(str(c.imageUrl), 480), color: str(c.color) }));
 
   const menu = catalog.menu ?? {};
   const mealIds = new Set(Object.keys(((menu as { meals?: Record<string, unknown> }).meals ?? {}) as Record<string, unknown>));
