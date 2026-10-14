@@ -146,6 +146,10 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   quicksupport_signer_mismatch: 'bg-violet-200 text-violet-950 dark:bg-violet-900 dark:text-violet-100',
   // "הדפסה בקופה אחרת": a bill that did not print on another till — the printers' family.
   document_unprinted: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
+  // "סגירת משמרת אוטומטית גם עם עגלה פתוחה": a basket voided (the cancels' family) or parked, held sales cancelled.
+  auto_close_cart_discarded: 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200',
+  auto_close_cart_held: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  auto_close_held_sales_cancelled: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

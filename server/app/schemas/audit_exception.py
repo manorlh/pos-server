@@ -38,7 +38,13 @@ class TillEventIn(BaseModel):
                   "course_auto_fired",
                   # "דוח X סניפי" (P:/specs/shop-x-report.md §4): a run, by whom and from which till (details: by,
                   # posNumber, refreshed; `source` "lan" when the host built it). Kept for the record, no rule.
-                  "shop_x_report"]
+                  "shop_x_report",
+                  # "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): a basket the
+                  # automatic close held or discarded (details: action, at, itemCount, items, total, heldSaleId,
+                  # paymentAbandoned), the held sales it cancelled (details: at, count, total, heldSales) — each an
+                  # exception — and its journal line `shift_auto_closed` (details: at, line, cart, lines…), no rule.
+                  "auto_close_cart_held", "auto_close_cart_discarded", "auto_close_held_sales_cancelled",
+                  "shift_auto_closed"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

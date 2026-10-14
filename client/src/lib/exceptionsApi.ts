@@ -117,6 +117,12 @@ export const EXCEPTION_TYPES = [
   // that failed, expired or was taken back there (details: summary, jobId, status, error, host, source,
   // document {category, type, number, copy, title}, resolvedAt — closed when it prints after all).
   'document_unprinted',
+  // "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (pos-server app/services/auto_close_cart.py): a basket the
+  // automatic close voided or parked (details: action, at, itemCount, items, total, heldSaleId,
+  // paymentAbandoned, summary) and the held sales it cancelled (details: at, count, total, heldSales, summary).
+  'auto_close_cart_discarded',
+  'auto_close_cart_held',
+  'auto_close_held_sales_cancelled',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

@@ -36,6 +36,7 @@ from app.models.till_parameter import (
 )
 from app.services.ably_notify import publish_settings_notify
 from app.services.areas import as_utc
+from app.services.auto_close_cart import PARAMETER_SPECS as _AUTO_CLOSE_SPECS
 
 #: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): above this sale amount before VAT the
 #: till requires the buyer's name and ח.פ. / ע.מ.; and how many days back an invoice may be
@@ -1098,10 +1099,15 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         default_value=None,
         description=(
             "שעה בפורמט HH:MM (למשל 23:30). בשעה הזו הקופה סוגרת לבד את המשמרת — רק אם יש משמרת פתוחה, "
-            "ולא באמצע עסקה או תשלום (אז מיד אחריהם). המזומן נספר לפי הצפוי במערכת, והסגירה נרשמת כאוטומטית. "
+            "ולא באמצע תשלום (אז מיד אחריו, או אחרי \"המתנה מקסימלית לתשלום\"). מה נעשה בעגלה עם פריטים, "
+            "בעסקאות מושהות ובשולחנות פתוחים — לפי הפרמטרים \"סגירת משמרת אוטומטית — …\" שאחריו. "
+            "המזומן נספר לפי הצפוי במערכת, והסגירה נרשמת כאוטומטית (\"נסגרה אוטומטית ב-HH:MM\" ביומן ובדוח המשמרת). "
             "ריק — כבוי. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): the basket, the held
+    # sales, the payment's wait, the open tables — read by the till at its automatic close.
+    *tuple(BuiltinParameter(**spec) for spec in _AUTO_CLOSE_SPECS),
     # Table management ("ניהול שולחנות") — app/services/tables.py reads these keys.
     BuiltinParameter(
         key="tablesMode",
@@ -2488,6 +2494,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in remote_print.VALIDATED_KEYS and value is not None:
         try:
             return remote_print.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "סגירת משמרת אוטומטית — …": the codes the till knows, the minutes 0–240.
+    from app.services import auto_close_cart
+
+    if key in auto_close_cart.VALIDATED_KEYS and value is not None:
+        try:
+            return auto_close_cart.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     # "שיוך שולחנות למלצרים" / "שולחן תפוס": the codes the till knows, whatever the options were re-edited to.

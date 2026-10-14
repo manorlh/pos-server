@@ -75,6 +75,11 @@ KINDS: Tuple[Kind, ...] = (
     Kind("z_forced_open_shifts", "Z סניפי הופק בכפייה בלי קופות שלא נסגרו", "high", "audit_exception", link="z"),
     Kind("z_forced_pending_cloud_refund", "Z הופק בכפייה לפני שזיכוי אשראי מהענן הופק", "high", "audit_exception", amount=True, link="z"),
     Kind("close_keep_held_sales", "סגירה מרחוק עם מכירות מושהות", "medium", "audit_exception"),
+    # "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py).
+    Kind("auto_close_cart_discarded", "עגלה בוטלה בסגירה אוטומטית", "medium", "audit_exception", amount=True, link="shift"),
+    Kind("auto_close_cart_held", "עגלה הושהתה בסגירה אוטומטית", "low", "audit_exception", amount=True, link="shift"),
+    Kind("auto_close_held_sales_cancelled", "עסקאות מושהות בוטלו בסגירה אוטומטית", "medium", "audit_exception",
+         amount=True, link="shift"),
     Kind("support_z_produced", "Z הופק מהענן ע״י התמיכה", "high", "audit_exception", link="z"),
     Kind("till_reset", "איפוס נתוני קופה ע״י התמיכה", "high", "audit_exception"),
     Kind("card_decision_override", "הכרעת אשראי בניגוד לבדיקה במסוף", "high", "audit_exception", amount=True),
