@@ -303,3 +303,6 @@ from app.models import business_card as _business_card  # noqa: F401,E402
 from app.models.report_export_default import ReportExportDefault, ReportExportDefaultAudit  # noqa: F401,E402
 # "בקשת אישור ממנהל מהנייד": requests, the per-level policy and "עובד מקושר" (app/services/remote_approvals).
 from app.models.remote_approval import ApprovalPolicyValue, ApprovalRequest, DashboardUserEmployee  # noqa: F401,E402
+# "עמדת מזומן" (P:/specs/cash-paylink.md §11, §12): PayLink units run by a cash host, their journal,
+# drawer movements and the dashboard's commands (app/services/cash_stations.py).
+from app.models.cash_station import CashHostCommand, CashStation, CashStationMovement, CashStationTx  # noqa: F401,E402

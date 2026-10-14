@@ -303,6 +303,41 @@ HOST_SYNC_PATH = [Depends(require_host_machine)]
 HOST_MACHINE_TOKEN = [Depends(require_host_machine_token)]
 
 
+# ── "שרת מזומן" (P:/specs/cash-paylink.md §11.2, §11.9) ─────────────────────────────────────
+# A cash host is not a till (403 `cash_host_not_a_till` on every fiscal endpoint above), and no other
+# device may write in its name: its journal and its commands' acknowledgements admit a cash host only
+# (403 `cash_host_only` — a till, a kiosk, a screen alike).
+
+
+def _refuse_unless_cash_host(machine: POSMachine) -> POSMachine:
+    from app.services.cash_host import ONLY_A_CASH_HOST, ONLY_A_CASH_HOST_MESSAGE, is_cash_host
+
+    if not is_cash_host(machine):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": ONLY_A_CASH_HOST, "message": ONLY_A_CASH_HOST_MESSAGE},
+        )
+    return machine
+
+
+def require_cash_host(machine: POSMachine = Depends(get_pos_machine_for_sync_path)) -> POSMachine:
+    """`get_pos_machine_for_sync_path`: a cash host only."""
+    return _refuse_unless_cash_host(machine)
+
+
+def require_cash_host_token(
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+) -> POSMachine:
+    """`get_pos_machine_from_sync_machine_token`: a cash host only (its own machine token)."""
+    return _refuse_unless_cash_host(machine)
+
+
+#: A cash host's endpoint whose machine comes from `get_pos_machine_for_sync_path`.
+CASH_HOST_SYNC_PATH = [Depends(require_cash_host)]
+#: A cash host's endpoint whose machine comes from `get_pos_machine_from_sync_machine_token`.
+CASH_HOST_MACHINE_TOKEN = [Depends(require_cash_host_token)]
+
+
 def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
     """Shared user resolution for Clerk and legacy username tokens (raises on failure)."""
     clerk_user_id = verify_clerk_token(token)

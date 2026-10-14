@@ -938,6 +938,16 @@ def post_my_heartbeat(
             local_server_device.apply_heartbeat(machine, body.local_server, body.lan_identity)
         except Exception:  # noqa: BLE001 - a report never fails a heartbeat
             logger.exception("local server report failed for %s", machine.id)
+    # "שרת מזומן" (P:/specs/cash-paylink.md §11.9): the cash host's LAN address and its stations' state — and
+    # their alerts opened / closed by it. Never fails a beat.
+    if body is not None and body.cash is not None:
+        from app.services import cash_stations
+
+        try:
+            with db.begin_nested():
+                cash_stations.apply_heartbeat(db, machine, body.cash)
+        except Exception:  # noqa: BLE001 - a report never fails a heartbeat
+            logger.exception("cash host report failed for %s", machine.id)
     # Local shop Zs of this shop still waiting for their tills' shifts and documents
     # (docs/SPEC_INDEPENDENT_TILL.md §8.12): what arrived is linked, and a Z is verified once
     # everything it names is here. Never fails a heartbeat.
@@ -1053,6 +1063,17 @@ def post_my_heartbeat(
         response["pendingCardCommands"] = pending_card_commands
     if pending_approvals:
         response["pendingApprovals"] = pending_approvals
+    # "עודף חייב" (P:/specs/cash-paylink.md §11.8): a till some cash station alerts hears how many it has to pay
+    # and a tag — a new tag, it pulls `GET /sync/{m}/cash/owed`. Never fails a beat.
+    try:
+        from app.services.cash_stations import heartbeat_owed
+
+        owed = heartbeat_owed(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("cash owed hand-over failed for %s", machine.id)
+        owed = None
+    if owed is not None:
+        response["cashOwed"] = owed
     return response
 
 

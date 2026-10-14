@@ -159,9 +159,22 @@ class TransactionPaymentIn(BaseModel):
     #: A `production_voucher` leg names the goods hold it pays (the production vouchers contract
     #: §4.2): the document confirms it. Optional; an unreadable id is a warning, never a refusal.
     reservation_id: Optional[str] = Field(None, alias="reservationId", max_length=100)
+    #: "מזומן" at the kiosk's cash station (P:/specs/cash-paylink.md §11.7): `{txId, stationId, hostId,
+    #: receivedAgorot, changeAgorot, changeOwedAgorot, roundingAgorot, slipCode}` on a `cash` leg. No column of
+    #: its own: kept in the leg's `nayax_meta` as `cashDevice` — the leg stays `cash` in every tender, X and Z.
+    #: Cleaned field by field (app/services/cash_stations.py `clean_cash_device`); unreadable — dropped, never a
+    #: rejected document.
+    cash_device: Optional[dict] = Field(None, alias="cashDevice")
 
     class Config:
         populate_by_name = True
+
+    @field_validator("cash_device", mode="before")
+    @classmethod
+    def _cash_device(cls, value):
+        from app.services.cash_stations import clean_cash_device
+
+        return clean_cash_device(value)
 
     @field_validator("card_brand", "card_acquirer", "card_issuer", mode="before")
     @classmethod

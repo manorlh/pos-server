@@ -190,6 +190,15 @@ CATEGORIES = CATEGORIES + (
              "תשלום שזוכה או בוטל מתוך שולחן (מזומן, אשראי, שובר, חיצוני), ושולחן סגור ששוחזר.",
              ("payment_reversed", "table_restored")),
 )
+# "מכשיר מזומן" (app/services/cash_alerts.py, P:/specs/cash-paylink.md §9א — the owner: "תודיע למנהל"): every cash
+# station alert, naming the station. On by default: a new user has every type, and a saved preference that holds
+# every type the phone alerts started with gets it too (the data step of alembic c4f1a9d7e2b6, `CASH_CATEGORY_KEYS`).
+CATEGORIES = CATEGORIES + (
+    Category("cash", "מכשיר מזומן",
+             "עמדת מזומן של הקיוסקים: שרת המזומן מנותק, דרייבר או מכשיר בתקלה, תקיעה, ניסיון הונאה, קופסה מלאה או "
+             "הוסרה, עודף נמוך או אזל, דלת פתוחה, זיכוי מוחזק ועודף חייב ללקוח.",
+             ("cash_unit",)),
+)
 #: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
 #: super admin receives it — from every organization, past the organizations' scoping (a super
 #: admin is not a member of each); a company never does, and cannot switch it off for them. Its
@@ -218,6 +227,9 @@ PUSH_MORE_CATEGORY_KEYS = (
 #: Added with push-more §C (the detectors), the same way (the data migration 396f22daf19c). Each
 #: detector is off until a level switches it on. `payment_reversals` stays opt-in (no migration).
 DETECTOR_CATEGORY_KEYS = ("shop_open", "sales_pace", "daily_summary")
+#: Added with the kiosk cash stations (P:/specs/cash-paylink.md §9א), the same way (the data step of alembic
+#: c4f1a9d7e2b6): on for a user whose saved types hold every one the phone alerts started with.
+CASH_CATEGORY_KEYS = ("cash",)
 _CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in (*CATEGORIES, INTEGRITY) for kind in c.kinds}
 
 DEFAULT_MIN_AMOUNT = Decimal("200.00")

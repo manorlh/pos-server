@@ -629,6 +629,15 @@ def offline_alerts_for_till(db: Session, till: POSMachine, *, now: Optional[date
         out.extend(battery_alerts.alerts_for_till(db, till, now=now))
     except Exception:  # noqa: BLE001 - an alert never fails the till's fetch
         logger.exception("battery alerts failed for till %s", till.id)
+    # "מכשיר מזומן" (app/services/cash_alerts.py, P:/specs/cash-paylink.md §11.8): the cash stations' alerts, to
+    # the tills of their `cashAlertTills` (none set: the main till) — ids `cash:`, kind "cash".
+    try:
+        from app.services import cash_alerts
+
+        with db.no_autoflush:
+            out.extend(cash_alerts.alerts_for_till(db, till, now=now))
+    except Exception:  # noqa: BLE001 - an alert never fails the till's fetch
+        logger.exception("cash alerts failed for till %s", till.id)
     return out
 
 
@@ -649,6 +658,11 @@ def acknowledge(
         from app.services import battery_alerts
 
         return battery_alerts.acknowledge(db, till, str(alert_id), pos_user_name=pos_user_name, now=now)
+    if str(alert_id).startswith("cash:"):
+        # "מכשיר מזומן" (app/services/cash_alerts.py): "הבנתי" marks it; it clears when the unit recovers.
+        from app.services import cash_alerts
+
+        return cash_alerts.acknowledge(db, till, str(alert_id), pos_user_name=pos_user_name, now=now)
     try:
         aid = uuid.UUID(str(alert_id))
     except ValueError:

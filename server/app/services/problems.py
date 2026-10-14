@@ -95,6 +95,8 @@ KIND_GROUP: Dict[str, str] = {
     # "הדפסה בקופה אחרת" (app/services/remote_print.py): a bill relayed to another till's printer that
     # did not print there ("חשבון לא הודפס בקופה X").
     "document_unprinted": "devices",
+    # "מכשיר מזומן" (app/services/cash_alerts.py): a kiosk cash station's alert, naming the station.
+    "cash_unit": "devices",
     # ── Z and shifts ──
     "z_missing": "z_shift",
     "shift_open_overdue": "z_shift",

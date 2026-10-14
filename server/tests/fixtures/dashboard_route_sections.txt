@@ -71,6 +71,17 @@ GET /business-cards/{card_id}/stats -> business_cards:view
 GET /cash-drawer/events -> reports:view
 GET /cash-drawer/movements -> reports:view
 GET /cash-drawer/shifts/{shift_id}/timeline -> reports|z:view
+GET /cash-stations -> devices|kiosks:view
+POST /cash-stations -> devices:edit
+DELETE /cash-stations/{station_id} -> devices:edit
+GET /cash-stations/{station_id} -> devices|kiosks:view
+PUT /cash-stations/{station_id} -> devices:edit
+POST /cash-stations/{station_id}/commands -> devices|device_control:edit
+GET /cash-stations/{station_id}/drawer -> devices|kiosks:view
+GET /cash-stations/{station_id}/journal -> devices|kiosks:view
+GET /cash-stations/{station_id}/movements -> devices|kiosks:view
+GET /cash-stations/{station_id}/owed -> devices|kiosks:view
+POST /cash-stations/{station_id}/owed/{tx_id}/resolve -> devices:edit
 POST /catalog-import/commit -> products:edit
 POST /catalog-import/preview -> products:edit
 POST /catalog-import/share-link -> products:edit
@@ -786,6 +797,8 @@ GET /sync/{machine_id}/app-update -> till
 POST /sync/{machine_id}/app-update/status -> till
 GET /sync/{machine_id}/app-update/{release_id}/apk -> till
 GET /sync/{machine_id}/app-update/{release_id}/file -> till
+GET /sync/{machine_id}/cash -> till
+GET /sync/{machine_id}/cash/owed -> till
 GET /sync/{machine_id}/catalog -> till
 POST /sync/{machine_id}/catalog -> till
 POST /sync/{machine_id}/categories -> till

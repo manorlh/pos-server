@@ -92,6 +92,15 @@ def generate_pairing_code(
     server_refused = local_server_device.platform_refusal(body.platform, device_role)
     if server_refused is not None:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=server_refused)
+    # "שרת מזומן" (P:/specs/cash-paylink.md §2, §11): the Windows app in its cash host role — Windows only;
+    # a code that names no platform is a Windows one.
+    from app.services import cash_host
+
+    cash_refused = cash_host.platform_refusal(body.platform, device_role)
+    if cash_refused is not None:
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=cash_refused)
+    if device_role == display_devices.ROLE_CASH_HOST and body.platform is None:
+        body = body.model_copy(update={"platform": display_devices.PLATFORM_WINDOWS})
     # "דפדפן (Web)": the browser kiosk at `/k` (docs/SPEC_KIOSK.md §27), the KDS at `/kds` and the
     # board at `/board` (docs/SPEC_KDS.md §13) — never a till.
     web_refused = display_devices.web_platform_refusal(body.platform, device_role)
@@ -100,13 +109,14 @@ def generate_pairing_code(
     # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): Windows and the browser have no training mode — no
     # code for one into a shop in it (409 `shop_in_training_device_unsupported`), said while the
     # dialog is open. An Android device is let in (its first heartbeat says what its build can do).
-    if shop_id is not None and not TM.platform_supported(body.platform):
+    # A cash host sells nothing: training mode has nothing to say about it.
+    if shop_id is not None and not TM.platform_supported(body.platform) and device_role != display_devices.ROLE_CASH_HOST:
         try:
             TM.check_device_fits(db.get(Shop, shop_id), body.platform, device_role)
         except TM.DeviceUnsupported as refused:
             return JSONResponse(status_code=refused.status_code, content=refused.body)
     kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
-    if device_role == display_devices.ROLE_LOCAL_SERVER and body.name:
+    if device_role in (display_devices.ROLE_LOCAL_SERVER, display_devices.ROLE_CASH_HOST) and body.name:
         # "שם המכשיר": a server's typed name is kept with its options (it has no register number).
         kds_options = {**(kds_options or {}), "name": body.name}
     # "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): checked now, as for a new device of that

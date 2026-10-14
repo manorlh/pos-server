@@ -34,6 +34,7 @@ is drawn. Its shifts stay closed and in no Z; a later Z with activity takes them
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -769,6 +770,20 @@ def build_z(
     for section, part in zip(sections, till_table_reversals):
         if part is not None:
             section[table_restore.Z_KEY] = part
+    # "עמדות מזומן" (app/services/cash_station_drawer.py, P:/specs/cash-paylink.md §11.9): a shop Z takes the
+    # kiosk cash stations' transactions and movements not yet in a Z — per station its drawer and the
+    # reconciliation against this Z's kiosk documents. Only a shop with stations; presentation only, and never a
+    # condition on the Z: a failure leaves the block out.
+    cash_part = None
+    if not till_z:
+        from app.services import cash_station_drawer
+
+        try:
+            with db.begin_nested():
+                cash_part = cash_station_drawer.z_part(db, shop_id=shop_id, shift_ids=[s.id for s in all_shifts], now=now)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("cash stations block of the Z of shop %s failed", shop_id)
+            cash_part = None
 
     # 4. Number, write, claim.
     if business_date is None:
@@ -861,6 +876,11 @@ def build_z(
         # "זיכויים וביטולי תשלום בשולחנות" — only when there were any.
         if table_reversals is not None:
             z.header = {**z.header, table_restore.Z_KEY: table_reversals}
+        # "עמדות מזומן" — only in a shop with cash stations.
+        if cash_part is not None and cash_part.block is not None:
+            from app.services.cash_station_drawer import Z_KEY as CASH_Z_KEY
+
+            z.header = {**z.header, CASH_Z_KEY: cash_part.block}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
         # "טיפ באשראי משולם מהמזומן": the card tips the tills paid out of their drawers (already
@@ -912,6 +932,9 @@ def build_z(
     db.flush()
     for shift in all_shifts:
         shift.z_report_id = z.id
+    if cash_part is not None:
+        # Each station transaction and movement in exactly one shop Z.
+        cash_part.claim(z.id)
     db.flush()
     # "פתיחת פריטים אוטומטית אחרי Z" (docs/SPEC_AVAILABILITY.md): own savepoint, never raises.
     from app.services.availability_reopen import after_z

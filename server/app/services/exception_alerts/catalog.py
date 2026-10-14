@@ -247,3 +247,14 @@ _REMOTE_PRINT_KINDS = (
 KINDS = KINDS + _REMOTE_PRINT_KINDS
 KINDS_BY_KEY.update({k.key: k for k in _REMOTE_PRINT_KINDS})
 OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _REMOTE_PRINT_KINDS)
+
+# "מכשיר מזומן" (app/services/cash_alerts.py, P:/specs/cash-paylink.md §9א, §11.9): a kiosk cash station's alert,
+# naming the station — written as `audit_exceptions` by the host's heartbeat, its journal and the offline watch,
+# closed by itself. Its phone alerts are their own type (`cash`, on by default); texted only by an SMS rule that
+# names it.
+_CASH_KINDS = (
+    Kind("cash_unit", "מכשיר מזומן", "high", "audit_exception", amount=True),
+)
+KINDS = KINDS + _CASH_KINDS
+KINDS_BY_KEY.update({k.key: k for k in _CASH_KINDS})
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _CASH_KINDS)

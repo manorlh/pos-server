@@ -228,6 +228,24 @@ def _table_reversal_sections(z) -> List[dict]:
     return [section(table_restore.Z_LABEL, [row("פעולות · סכום", value)])]
 
 
+def _cash_station_sections(z) -> List[dict]:
+    """
+    "עמדות מזומן" (P:/specs/cash-paylink.md §11.9): per kiosk cash station, its drawer as the Z froze it —
+    accepted, change, refunds, net, float and refills, collections, expected, held, change owed — and the
+    kiosks' cash against it. Only a Z of a shop with cash stations has them.
+    """
+    from app.services import cash_station_drawer as CSD
+
+    block = (getattr(z, "header", None) or {}).get(CSD.Z_KEY)
+    if not isinstance(block, dict):
+        return []
+    out = []
+    for station in block.get("stations") or []:
+        title = f"{CSD.Z_TITLE}: {station.get('name') or ''}".strip()
+        out.append(section(title, [row(label, money(value)) for label, value in CSD.print_rows(station)]))
+    return out
+
+
 def _vat_rows(z: ZReport, dealer_type: Optional[str] = None) -> List[Optional[dict]]:
     vat = _dec(z.vat_total)
     sales = _dec(z.total_sales)
@@ -812,6 +830,7 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
             row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
         ])
         sections += _acquirer_section(z)
+        sections += _cash_station_sections(z)
         offline = _offline_section(z)
         if offline is not None:
             sections.append(offline)
@@ -853,6 +872,7 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
         section("קופה", _cash_rows(z)),
     ]
     sections += _card_brand_sections(z)
+    sections += _cash_station_sections(z)
     transmission = _transmission_section(z, tzinfo)
     if transmission is not None:
         sections.append(transmission)

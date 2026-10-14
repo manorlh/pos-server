@@ -503,6 +503,7 @@ _KIND_NAMES = {
     "kds": "מסך מטבח (KDS)",
     "order_status_board": "מסך מוכן / לא מוכן",
     "customer_display": "מסך לקוח",
+    "cash_host": "שרת מזומן",
 }
 
 

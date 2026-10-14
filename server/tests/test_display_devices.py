@@ -255,6 +255,9 @@ def _machine_routes():
         auth.require_host_machine, auth.require_host_machine_token,
         # A till write with no machine id in its path ("בקשות אישור", /approvals).
         auth.require_fiscal_machine_from_token,
+        # "שרת מזומן" (P:/specs/cash-paylink.md §11.9): the cash host's journal and command acks admit a cash host
+        # only — a display device (and a till) refused too.
+        auth.require_cash_host, auth.require_cash_host_token,
     }
 
     def calls(dependant, out):
@@ -315,6 +318,8 @@ FISCAL_ROUTES = {
     ("POST", "/sync/{machine_id}/tables/{table_id}/pay-part"),
     ("POST", "/sync/{machine_id}/tables/{table_id}/save"),
     ("POST", "/sync/{machine_id}/tables/take-over"),
+    # "שולם ללקוח" (P:/specs/cash-paylink.md §11.8): cash out of the till's drawer for a cash station's debt.
+    ("POST", "/sync/{machine_id}/cash/owed/{owed_id}/pay"),
 }
 
 #: Till writes a display device may make — none of them fiscal: its heartbeat, the KDS
