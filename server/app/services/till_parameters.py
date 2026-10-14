@@ -2422,6 +2422,14 @@ from app.services.receipt_table_info import PARAMETER_SPECS as _RECEIPT_TABLE_SP
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _RECEIPT_TABLE_SPECS)
 
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1, §8.1, app/services/deferred_control.py):
+# `deferredControlTills` (which tills show the screen; empty — off in the whole shop), kiosks, the return to
+# online when the connection is back, unknown Nayax models and the commands' life. Read by the till and the
+# cloud (the dashboard's "מסופונים — מצב לא מקוון", `GET /sync/{m}/deferred-control`). Defaults change nothing.
+from app.services.deferred_control import PARAMETER_SPECS as _DEFERRED_CONTROL_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _DEFERRED_CONTROL_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2601,6 +2609,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in receipt_table_info.VALIDATED_KEYS and value is not None:
         try:
             return receipt_table_info.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מצב לא מקוון לכל המסופונים": the tills as canonical ids, ask / auto / never, the minutes' ranges.
+    from app.services import deferred_control
+
+    if key in deferred_control.VALIDATED_KEYS and value is not None:
+        try:
+            return deferred_control.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

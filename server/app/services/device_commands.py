@@ -25,6 +25,13 @@ acknowledgement.
   (P:/specs/live-tables-cloud.md §6, app/services/table_actions.py): the LAN host or the single till does
   them as at a till; the bill, the till that prints it. Made by the tables' actions only, with the same
   deadline as `cancel_table`.
+* `terminal_offline` — "מצב לא מקוון לכל המסופונים" from the dashboard (P:/specs/nayax-deferred-all.md
+  §8.5, app/services/deferred_control.py): the till's card terminal to deferred or back, once it is
+  free. Made by `POST /shops/{id}/deferred-terminals/switch` only. Its deadline is its own
+  `deferredCommandTtlMin`, delivered or not: a late pull never gets it. The latest wins — a new one
+  cancels the till's open ones (`superseded`). The till says `received` at once (not final: it stays
+  `delivered`, with `result.receivedAt`), then `done` / `failed` / `refused` — kept even after the
+  deadline once it was received (the till did it while the cloud could not hear it).
 
 **Delivery** — every command wakes its device at once (Ably event `device-command`, then the till
 pulls `GET /sync/{m}/device-commands`); without realtime the till's heartbeat pulls it (≤ 2 min).
@@ -64,6 +71,8 @@ NOTIFY_EVENT = "device-command"
 DEFAULT_LOCK_MESSAGE = "הקופה נעולה — פנו למנהל"
 #: The answers a device may give.
 ACK_STATUSES = ("done", "refused", "failed")
+#: A till's "received" — not an answer: `terminal_offline` only (app/services/deferred_control.py).
+RECEIVED = "received"
 #: Refusal reasons a till sends (shown in Hebrew by the dashboard).
 REFUSAL_REASONS = (
     "sale_in_progress", "payment_in_progress", "no_update", "not_supported", "kiosk",
@@ -73,6 +82,9 @@ REFUSAL_REASONS = (
     "table_in_use", "course_not_held", "course_already_out", "nothing_sent", "waiter_not_found",
     "target_not_free", "target_not_found", "source_not_open", "merge_basket_discount", "printer_not_found",
     "print_target_unavailable",
+    # `terminal_offline` (app/services/deferred_control.py REFUSALS; `not_eligible:<reason>` as the till says it).
+    "not_eligible", "stale", "expired", "bad_request", "timeout_busy", "superseded", "interrupted", "not_active",
+    "conflict", "no_line",
 )
 
 
@@ -284,6 +296,20 @@ def create(
                 old.detail = "superseded"
                 old.updated_at = now
             _set_lock(db, machine, action == "lock", message=message, by=who, now=now)
+        if action == "terminal_offline":
+            # "הוראה אחרונה גוברת" (P:/specs/nayax-deferred-all.md §8.5): this one overtakes those still open.
+            for old in (
+                db.query(DeviceCommand)
+                .filter(
+                    DeviceCommand.machine_id == machine.id,
+                    DeviceCommand.action == action,
+                    DeviceCommand.status.in_(OPEN_STATUSES),
+                )
+                .all()
+            ):
+                old.status = "cancelled"
+                old.detail = "superseded"
+                old.updated_at = now
         row = DeviceCommand(
             id=uuid.uuid4(),
             tenant_id=machine.tenant_id,
@@ -333,6 +359,8 @@ DEADLINE_ACTIONS = (
     # The table card's actions (P:/specs/live-tables-cloud.md §6.2): the same timeout, the same rule.
     "table_print_bill", "table_reprint", "table_fire", "table_hold", "table_rush", "table_set_waiter",
     "table_move", "table_merge", "table_note",
+    # "מצב לא מקוון לכל המסופונים" (§8.5): `deferredCommandTtlMin`, delivered or not.
+    "terminal_offline",
 )
 
 
@@ -452,9 +480,11 @@ def ack(
     """The device's answer. A final command keeps its first answer (a resend is harmless).
     [result]: what the answer carried (`upload_logs` → {"log_id"}), kept with the first one.
     [raw_result]: the answer's `result` as sent, read by the actions that carry their own
-    (`cancel_table` → {voidedPrinters, kds} / {reason}; the `table_*` actions, table_actions.clean_answer)."""
+    (`cancel_table` → {voidedPrinters, kds} / {reason}; the `table_*` actions, table_actions.clean_answer;
+    `terminal_offline`, deferred_control.clean_answer). `received` — `terminal_offline` only — is no
+    answer: the command stays open (`deferred_control.note_received`)."""
     now = now or utc_now()
-    if ack_status not in ACK_STATUSES:
+    if ack_status not in ACK_STATUSES and ack_status != RECEIVED:
         raise _bad("invalid_status", "invalid status")
     try:
         ident = uuid.UUID(str(command_id))
@@ -463,7 +493,26 @@ def ack(
     row = db.get(DeviceCommand, ident)
     if row is None or row.machine_id != machine.id:
         raise _bad("command_not_found", "command not found", status.HTTP_404_NOT_FOUND)
-    if row.action == "cancel_table":
+    late_ok = False
+    if row.action == "terminal_offline":
+        from app.services import deferred_control
+
+        if ack_status == RECEIVED:
+            deferred_control.note_received(row, now)
+            db.flush()
+            return row
+        detail, result = deferred_control.clean_answer(ack_status, detail, raw_result)
+        # Taken before its end and answered after it: the till did it while it could not be heard (§9).
+        late_ok = row.status == "expired" and row.delivered_at is not None
+        if row.status == "cancelled" and not (row.result or {}).get("answer"):
+            # Overtaken by a newer one after the till had it: what the till did with it, for the record.
+            row.result = {**(row.result or {}), "answer": {"status": ack_status, "detail": detail, **(result or {})}}
+            row.updated_at = now
+            db.flush()
+            return row
+    elif ack_status == RECEIVED:
+        raise _bad("invalid_status", "invalid status")
+    elif row.action == "cancel_table":
         from app.services import remote_table_cancel
 
         detail, result = remote_table_cancel.clean_answer(ack_status, detail, raw_result)
@@ -471,7 +520,9 @@ def ack(
         from app.services import table_actions
 
         detail, result = table_actions.clean_answer(row.action, ack_status, detail, raw_result)
-    if row.status == "expired" and _aware(row.updated_at) is not None and now - _aware(row.updated_at) <= ANSWER_GRACE:
+    if late_ok or (
+        row.status == "expired" and _aware(row.updated_at) is not None and now - _aware(row.updated_at) <= ANSWER_GRACE
+    ):
         # The device did it and its answer came just after the cloud gave up waiting: what happened.
         pass
     elif row.status in FINAL_STATUSES:

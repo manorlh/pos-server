@@ -378,6 +378,14 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("shop_x_report",)
 #: (`shift_auto_closed`, recorded, feeds no rule).
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("auto_close_cart_held", "auto_close_cart_discarded",
                                        "auto_close_held_sales_cancelled", "shift_auto_closed")
+#: "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §3 "רישום", §8.5 "יומן"): a till's terminal
+#: switched to deferred / back — who, from which till, by which way (lan / cloud / direct / auto / local), and
+#: on the way back how many were approved and declined. Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("deferred_mode_on", "deferred_mode_off")
+#: "זיהוי אין קו" (P:/specs/nayax-deferred-all.md §12 "למידה"): a card failure and whether the till read it as
+#: "no line to the card company" — its code and raw message, for completing the words from the field.
+#: Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("card_failure_verdict",)
 
 
 class RuleValueError(ValueError):

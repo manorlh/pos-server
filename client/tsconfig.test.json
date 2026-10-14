@@ -369,6 +369,8 @@
     "src/lib/reportPages.test.ts",
     "src/lib/daySummaryV2.ts",
     "src/lib/productsByDay.ts",
-    "src/lib/daySummaryV2.test.ts"
+    "src/lib/daySummaryV2.test.ts",
+    "src/lib/deferredTerminals.ts",
+    "src/lib/deferredTerminals.test.ts"
   ]
 }

@@ -63,9 +63,11 @@ def test_the_area_manager_template_is_the_same_for_an_area():
     spec = DS.BUILTIN_TEMPLATES[DS.AREA_MANAGER_TEMPLATE]
     # No area scope yet: the label says so, and it is not offered (`hidden`).
     assert spec["label"] == "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)" and spec["hidden"] is True
-    # The same, less "שחרור עובד מחובר במכשיר" (exclusive login v2 §2: off for the area manager).
+    # The same, less "שחרור עובד מחובר במכשיר" (exclusive login v2 §2: off for the area manager) and
+    # "מסופונים — מצב לא מקוון" (the whole shop's terminals, nayax-deferred-all §9).
     branch = dict(DS.BUILTIN_TEMPLATES[DS.BRANCH_MANAGER_TEMPLATE]["sections"])
     assert branch.pop("user_sessions_release") == DS.EDIT
+    assert branch.pop("terminals_offline") == DS.EDIT
     assert spec["sections"] == branch
     assert set(DS.MANAGER_TEMPLATES) == {"branch_manager", "area_manager"}
 

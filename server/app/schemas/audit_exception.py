@@ -44,7 +44,16 @@ class TillEventIn(BaseModel):
                   # paymentAbandoned), the held sales it cancelled (details: at, count, total, heldSales) — each an
                   # exception — and its journal line `shift_auto_closed` (details: at, line, cart, lines…), no rule.
                   "auto_close_cart_held", "auto_close_cart_discarded", "auto_close_held_sales_cancelled",
-                  "shift_auto_closed"]
+                  "shift_auto_closed",
+                  # "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §8.5 "יומן"): the till's terminal
+                  # to deferred / back (details: requestId, source lan | cloud | direct | auto | local, by, byId,
+                  # requestedBy, from, fromId, issuedAt, kind, model, pending; off: approved, declined,
+                  # approvedAmount, authorizationOk; error; direct: targetMachineId, targetName). No rule.
+                  "deferred_mode_on", "deferred_mode_off",
+                  # "זיהוי אין קו" (§12 "למידה"): a card failure and the till's verdict (details: statusCode,
+                  # statusMessage, outcome, kind, model, verdict no_line | other, why, deviceOnline,
+                  # cloudOnline, autoOn, streak). No rule.
+                  "card_failure_verdict"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

@@ -41,6 +41,9 @@ DEVICE_ACTIONS = (
     "table_move",       # "העבר לשולחן אחר" (params {targetTableId, targetLabel})
     "table_merge",      # "אחד שולחנות" (params {sources: [{tableId, orderId, orderVersion, tableLabel}]})
     "table_note",       # "הערה לשולחן" (params {text})
+    # "מצב לא מקוון לכל המסופונים" from the dashboard (P:/specs/nayax-deferred-all.md §8.5,
+    # app/services/deferred_control.py): the till's card terminal to deferred / back, once it is free.
+    "terminal_offline",  # (params = the LAN switch's body: {requestId, on, issuedAt, by, requestedBy, from, source})
 )
 OPEN_STATUSES = ("pending", "delivered")
 FINAL_STATUSES = ("done", "refused", "failed", "cancelled", "expired")
@@ -65,7 +68,8 @@ class DeviceCommand(Base):
     status = Column(String(16), nullable=False, default="pending", server_default="pending")
     #: What the device said (a refusal's reason: "sale_in_progress", "no_update"…).
     detail = Column(String(300), nullable=True)
-    #: "dashboard" | "till" (a manager code on the till).
+    #: "dashboard" | "till" (a manager code on the till) | "auto" (`terminal_offline` after a till went
+    #: offline by itself, app/services/deferred_control.py `on_till_event`).
     source = Column(String(16), nullable=False, default="dashboard", server_default="dashboard")
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by_name = Column(String(200), nullable=True)
@@ -80,11 +84,13 @@ class DeviceCommand(Base):
     #: The action's parameters: `upload_logs` → {"minutes": 15–1440}; a local server's `print_test_page`
     #: → {"printerId"}, `clear_print_queue` → {"printerId" | null, "scope": "failed" | "all"};
     #: `cancel_table` → {orderId, tableId, tableLabel, orderVersion, reason, requestedBy, voidJobKey…};
-    #: the `table_*` actions → {orderId, tableId, tableLabel, orderVersion, requestId, requestedBy, mode, …}.
+    #: the `table_*` actions → {orderId, tableId, tableLabel, orderVersion, requestId, requestedBy, mode, …};
+    #: `terminal_offline` → {requestId, on, issuedAt, by, requestedBy, from, source: "cloud"}.
     params = Column(JSONB, nullable=True)
     #: What the device's answer carried: `upload_logs` → {"log_id": …} (app/services/device_logs.py);
     #: `cancel_table` → {voidedPrinters, kds} / {reason}, and {retargetedTo} when sent on to the new host;
-    #: the `table_*` actions → their own (P:/specs/live-tables-cloud.md §6.7) / {reason, heldBy}.
+    #: the `table_*` actions → their own (P:/specs/live-tables-cloud.md §6.7) / {reason, heldBy};
+    #: `terminal_offline` → {receivedAt, working, pending, authorization, error} (deferred_control.clean_answer).
     result = Column(JSONB, nullable=True)
 
 

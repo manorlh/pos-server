@@ -358,6 +358,8 @@ PUT /machines/{machine_id} -> devices:edit
 GET /machines/{machine_id}/catalog -> products:view
 PUT /machines/{machine_id}/catalog -> products:edit
 POST /machines/{machine_id}/close-shift -> z:edit
+GET /machines/{machine_id}/deferred-settings -> devices|terminals_offline:view
+PUT /machines/{machine_id}/deferred-settings -> devices|terminals_offline:edit
 PUT /machines/{machine_id}/device-profile -> devices:edit
 GET /machines/{machine_id}/document-prefix -> devices|reports:view
 POST /machines/{machine_id}/document-prefix/assign-free -> devices:edit
@@ -690,6 +692,9 @@ PUT /shops/{shop_id} -> organization:edit
 GET /shops/{shop_id}/active-log -> organization:view
 GET /shops/{shop_id}/areas -> reference
 POST /shops/{shop_id}/areas -> organization:edit
+GET /shops/{shop_id}/deferred-terminals -> terminals_offline:view
+PUT /shops/{shop_id}/deferred-terminals/controllers -> terminals_offline:edit
+POST /shops/{shop_id}/deferred-terminals/switch -> terminals_offline:edit
 PUT /shops/{shop_id}/kitchen-stations/{station_id}/printers -> printers:edit
 PUT /shops/{shop_id}/local-network -> devices:edit
 GET /shops/{shop_id}/local-server -> devices|local_server_switch:view
@@ -802,6 +807,7 @@ GET /sync/{machine_id}/customer-display -> till
 PUT /sync/{machine_id}/customer-display/lan -> till
 GET /sync/{machine_id}/customer-display/state -> till
 PUT /sync/{machine_id}/customer-display/state -> till
+GET /sync/{machine_id}/deferred-control -> till
 GET /sync/{machine_id}/device-commands -> till
 POST /sync/{machine_id}/device-commands/unlocked -> till
 POST /sync/{machine_id}/device-commands/{command_id}/ack -> till
