@@ -1726,7 +1726,8 @@ class TestSendSelectedAndStay:
         assert [p["key"] for p in view["parameters"] if p["group"] == "send"] == list(self.KEYS)
         after = next(p for p in view["parameters"] if p["key"] == "tablesAfterSend")
         assert after["enumLabels"] == {"leave": "חזרה למסך השולחנות", "stay": "נשארים בשולחן"}
-        assert [g["key"] for g in view["groups"]][-2:] == ["send", "courses"]
+        # Just before the courses' auto-fire; "מתי עיקריות?" (fire-restaurant-flow, `fireFlow`) comes last.
+        assert [g["key"] for g in view["groups"]][-3:] == ["send", "courses", "fireFlow"]
 
     def test_send_and_stay_keeps_the_lock_and_counts_the_send(self, w):
         assert TableSaveIn.model_validate({"orderId": str(uuid.uuid4()), "cartJson": "{}", "stay": True}).stay is True
