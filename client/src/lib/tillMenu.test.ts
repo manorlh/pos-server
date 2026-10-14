@@ -171,7 +171,7 @@ describe('the preview', () => {
 
   it('the folder keeps what is left of the reports, and goes with the last of them', () => {
     const some = shown(menuPreview(['recent', 'tips']));
-    assert.ok(some.includes('folder:shift_history+till_z_history+product_sales+workers+tables_reports+z_reports'));
+    assert.ok(some.includes('folder:shift_history+till_z_history+product_sales+workers+tables_reports+z_reports+shop_x'));
     const none = shown(menuPreview(REPORTS));
     assert.ok(!none.some((k) => k.startsWith('folder:')));
     assert.ok(none.includes('history'));

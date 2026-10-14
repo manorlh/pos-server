@@ -690,8 +690,11 @@ def _pos_order(machine: POSMachine):
 
 
 def tender_buckets(breakdown: Dict[str, Any]) -> Dict[str, str]:
-    """Cash / card / voucher / till-account / other, as §1 lists them (z_print's buckets, plus the till account)."""
-    out = {"cash": ZERO, "card": ZERO, "voucher": ZERO, "account": ZERO, "other": ZERO}
+    """
+    Cash / card / voucher / "תשלום בקופה" / other, as §1 lists them — z_print's buckets, plus `atTill`: a
+    leg recorded as paid at the till for a kiosk order (`cash_at_till`); the exchange offset is in none.
+    """
+    out = {"cash": ZERO, "card": ZERO, "voucher": ZERO, "atTill": ZERO, "other": ZERO}
     for method, amount in (breakdown or {}).items():
         value = Decimal(str(amount or 0))
         m = (method or "").strip().lower()
@@ -701,8 +704,8 @@ def tender_buckets(breakdown: Dict[str, Any]) -> Dict[str, str]:
             out["card"] += value
         elif m in ("voucher", "vouchers", "production_voucher", "prepaid_voucher"):
             out["voucher"] += value
-        elif m in ("account", "till_account", "house_account", "charge", "credit_account"):
-            out["account"] += value
+        elif m in ("cash_at_till", "pay_at_till"):
+            out["atTill"] += value
         elif m == "exchange":
             continue
         else:

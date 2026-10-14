@@ -38,6 +38,7 @@ import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboar
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
 import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
+import { ShopXReportCard } from '@/components/dashboard/shop-x/shop-x-report';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -292,6 +293,10 @@ export default function DaySummaryPage() {
     };
   }, [filters.applied, scopeMachineId, scopeShopId]);
 
+  // One shop in view (the scope's, or the only one chosen): its interim X ("דוח X סניפי").
+  const appliedShops = filters.applied ? ids(filters.applied.extras.shops) : [];
+  const xShopId = scopeShopId ?? (appliedShops.length === 1 ? appliedShops[0] : null);
+
   const query = useQuery<DaySummaryReport>({
     queryKey: ['report-day-summary', params],
     queryFn: () => fetchDaySummaryReport(params!),
@@ -475,6 +480,8 @@ export default function DaySummaryPage() {
       prompt={t('selectFilters')}
       export={data ? { tables: [days, zs] as ReportTableSpec<unknown>[], from: data.window.from, to: data.window.to } : null}
     >
+      {/* "דוח X סניפי" (P:/specs/shop-x-report.md §3): the open period of one shop, beside its closed days. */}
+      {xShopId ? <ShopXReportCard shopId={xShopId} /> : null}
       {data ? (
         <>
           <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
