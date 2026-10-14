@@ -3,26 +3,27 @@
  * app/services/product_tile_text.py): how a till writes a product's name and price on its button, and
  * when the "i" badge that opens the item's full description shows.
  *
- * - The four settings — till parameters, and the same four as `productText.<key>` of "עיצוב קופה"
- *   (the design wins over the parameter; "params", null or an unknown value follow the parameter):
- *   `productNameFit` fit | wrap | clip (fit), `productNameMaxLines` 1–4 (3), `productNameMinTextSize`
- *   s | m | l (s), `productInfoBadge` auto | always | off (auto).
- * - `fitName` — the name on a tile of a given width (and height):
- *     fit   the largest size between the tile's own and the floor (`MIN_TEXT_SP`) at which the whole
- *           name, wrapped at words, takes at most `productNameMaxLines` lines and the box's height;
- *           "…" only when not even the floor holds it;
- *     wrap  the tile's own size, at most `productNameMaxLines` lines, the tile as tall as that needs;
- *     clip  as today: the tile's own size, at most `productNameMaxLines` lines (and what the box
- *           holds), "…".
- * - `fitPrice` — the price is never cut: its size shrinks to `PRICE_MIN_SP`, then a trailing ".00"
- *   goes; the amount is always written whole.
+ * - The four settings — till parameters, and the same four as `look.<key>` of "עיצוב קופה" (the design
+ *   wins over the parameter; absent, null, "base" or a value not of the vocabulary leave the
+ *   parameter's): `productNameFit` fit | wrap | clip (fit), `productNameMaxLines` 1–4 (3),
+ *   `productNameMinTextSize` s | m | l (s: 10, m: 12, l: 14), `productInfoBadge` auto | always | off.
+ * - `fitName` — the name on a tile of a given width (and height), from the tile's own size and its own
+ *   lines (`tileLines`, what the template drew before):
+ *     fit   first the size steps down (1 at a time) from the tile's own to the floor on the tile's own
+ *           lines (no more than `productNameMaxLines`); if it still does not fit, the floor takes up to
+ *           `productNameMaxLines` lines (as many as the box holds); "…" only past those;
+ *     wrap  the tile's own size, up to `productNameMaxLines` lines, the tile as tall as that needs;
+ *     clip  as before: the tile's own size and lines, "…".
+ * - `fitPrice` — the price is never cut: smaller to `PRICE_MIN_SP`, then without its ".00", then — the
+ *   number still whole — smaller still, to `PRICE_FLOOR_SP`.
  * - `showInfoBadge` — auto: a description, or a name that did not fit whole; always; off; never while
  *   the screen is being arranged.
  * - `TileTextCache` — worked out once per product and tile width, never per frame (the J1900 tills).
  *
- * The reference implementation: the dashboard's preview runs it, and the web till / the Windows till
- * import it (`@dash-lib/productTileText`); the Android till mirrors it. Pure, no React: run by
- * `npm test` (tsconfig.test.json).
+ * The same rules, step for step, as the APK (pos-android domain/ProductTileText.kt `fitProductName`,
+ * `fitPrice`, `productInfoBadgeShown`) — the web till matches the APK; the dashboard's preview runs
+ * them, and the web till / the Windows till import them (`@dash-lib/productTileText`). Pure, no React:
+ * run by `npm test` (tsconfig.test.json).
  */
 
 /* ------------------------------------------------------------ the settings */
@@ -41,16 +42,20 @@ export const NAME_MAX_LINES_MAX = 4;
 export const NAME_MAX_LINES_CHOICES = [1, 2, 3, 4] as const;
 export const MIN_TEXT_SIZES = ['s', 'm', 'l'] as const;
 export type MinTextSize = (typeof MIN_TEXT_SIZES)[number];
-/** The floor of the shrink (sp; CSS px on the web): the server's MIN_TEXT_SP. */
-export const MIN_TEXT_SP: Record<MinTextSize, number> = { s: 11, m: 13, l: 15 };
-/** The price's floor (§2, no setting). */
-export const PRICE_MIN_SP = 11;
+/** The floor of the shrink (sp; CSS px on the web): the server's MIN_TEXT_SP, the APK's ProductNameMinTextSize. */
+export const MIN_TEXT_SP: Record<MinTextSize, number> = { s: 10, m: 12, l: 14 };
+/** The step `fit` takes down from the tile's own size. */
+export const NAME_FIT_STEP = 1;
+/** The readable minimum a price steps down to before it drops its ".00" (§2, no setting). */
+export const PRICE_MIN_SP = 10;
+/** Past every other step, the price shrinks on toward this rather than lose a digit. */
+export const PRICE_FLOOR_SP = 6;
 export const INFO_BADGES = ['auto', 'always', 'off'] as const;
 export type InfoBadge = (typeof INFO_BADGES)[number];
 /** The badge's touch target (dp / px), whatever the size of its icon. */
 export const INFO_BADGE_TOUCH = 32;
-/** The design's "לפי פרמטרי הקופה" over a value a level above set (as "base" / "brand" elsewhere). */
-export const PRODUCT_TEXT_PARAMS = 'params';
+/** The design's section (`look.<key>`). */
+export const PRODUCT_TEXT_SECTION = 'look';
 
 export interface ProductTextSettings {
   productNameFit: NameFit;
@@ -59,7 +64,7 @@ export interface ProductTextSettings {
   productInfoBadge: InfoBadge;
 }
 
-/** The design's section as stored: each key a code, "params" or absent. */
+/** The design's `look` as stored: each key a code, "base" (the parameter's, over a level above) or absent. */
 export type ProductTextDesign = Partial<Record<ProductTextKey, string | number | null>>;
 
 export const PRODUCT_TEXT_DEFAULTS: ProductTextSettings = {
@@ -98,7 +103,7 @@ export function productTextFromParameters(parameters: object | null | undefined)
   };
 }
 
-/** What a till uses: the design's value when it is a code, else the parameter's, else the default (§5). */
+/** What a till uses: the design's value when it is one of the codes, else the parameter's, else the default (§5). */
 export function resolveProductText(design: ProductTextDesign | null | undefined, parameters: object | null | undefined): ProductTextSettings {
   const own = design ?? {};
   const params = productTextFromParameters(parameters);
@@ -163,7 +168,6 @@ export function canvasMeasure(fontFamily: string, weight: number | string = 700)
 /** A hair under the box: a line measured at exactly its width must not be cut by rounding. */
 const EPS = 0.5;
 const ELLIPSIS = '…';
-const STEP = 0.5;
 
 /** A word wider than the line, cut into pieces that each fit (the last piece may be short). */
 function splitLongWord(word: string, width: number, size: number, measure: MeasureText): string[] {
@@ -227,6 +231,8 @@ export interface NameFitRequest {
   height?: number;
   /** The tile's own type size. */
   size: number;
+  /** The tile's own lines — what the template drew before (clip keeps them; fit tries them first). */
+  tileLines: number;
   settings: Pick<ProductTextSettings, 'productNameFit' | 'productNameMaxLines' | 'productNameMinTextSize'>;
   /** Line height as a multiple of the size (the tile's own). */
   lineHeight?: number;
@@ -248,10 +254,29 @@ function clampLines(all: string[], allowed: number, width: number, size: number,
   return { lines: [...keep, ellipsize(rest, width, size, measure)].filter(Boolean), cut: true };
 }
 
-/** The lines a name may take in a box: the setting, and (with a height) what the box holds — at least one. */
-function allowedLines(maxLines: number, height: number | undefined, size: number, lineHeight: number): number {
-  if (!height || height <= 0) return maxLines;
-  return Math.max(1, Math.min(maxLines, Math.floor((height + EPS) / (size * lineHeight))));
+/** The sizes from `base` down to `min`, `step` apart, `min` always the last; `base` alone when not above `min`. */
+export function fitSizes(base: number, min: number, step = NAME_FIT_STEP): number[] {
+  if (base <= min || step <= 0) return [base];
+  const out: number[] = [];
+  for (let s = base; s > min + 0.001; s = Math.round((s - step) * 1000) / 1000) out.push(s);
+  out.push(min);
+  return out;
+}
+
+/** The index of the first of `sizes` (largest first) that fits, by halves (it fits from some size down); -1 when none. */
+function largestFitting(sizes: readonly number[], fits: (i: number) => boolean): number {
+  if (sizes.length === 0) return -1;
+  if (fits(0)) return 0;
+  const last = sizes.length - 1;
+  if (last === 0 || !fits(last)) return -1;
+  let lo = 1;
+  let hi = last;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (fits(mid)) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 /** The name on a tile (see the module's head). Pure; cache it per product and tile width (`TileTextCache`). */
@@ -259,28 +284,29 @@ export function fitName(req: NameFitRequest, measure: MeasureText): NameFitResul
   const name = req.name.replace(/\s+/g, ' ').trim();
   const width = Math.max(1, req.width - EPS);
   const lineHeight = req.lineHeight ?? 1.2;
-  const maxLines = Math.max(NAME_MAX_LINES_MIN, Math.min(NAME_MAX_LINES_MAX, Math.round(req.settings.productNameMaxLines) || PRODUCT_TEXT_DEFAULTS.productNameMaxLines));
+  const most = Math.max(NAME_MAX_LINES_MIN, Math.min(NAME_MAX_LINES_MAX, Math.round(req.settings.productNameMaxLines) || PRODUCT_TEXT_DEFAULTS.productNameMaxLines));
+  const own = Math.max(1, Math.round(req.tileLines) || 1);
   const size = req.size;
   if (!name) return { size, lines: [], cut: false };
+  /** How many lines the box has the height for at a size (no height: no limit). */
+  const room = (s: number) => (req.height && req.height > 0 ? Math.max(1, Math.floor((req.height + EPS) / (s * lineHeight))) : Number.POSITIVE_INFINITY);
+  const draw = (s: number, all: string[], allowed: number): NameFitResult => {
+    const { lines, cut } = clampLines(all, Math.max(1, allowed), width, s, measure);
+    return { size: s, lines, cut };
+  };
   const mode = req.settings.productNameFit;
-  if (mode === 'wrap' || mode === 'clip') {
-    const allowed = mode === 'wrap' ? maxLines : allowedLines(maxLines, req.height, size, lineHeight);
-    const { lines, cut } = clampLines(wrapWords(name, width, size, measure), allowed, width, size, measure);
-    return { size, lines, cut };
-  }
-  const floor = Math.min(size, MIN_TEXT_SP[req.settings.productNameMinTextSize] ?? MIN_TEXT_SP.s);
-  for (let s = size; s >= floor - 1e-9; s = Math.round((s - STEP) * 10) / 10) {
-    const lines = wrapWords(name, width, s, measure);
-    const allowed = allowedLines(maxLines, req.height, s, lineHeight);
-    // A word cut inside (wider than the line) is not "fits": smaller, while there is room to go.
-    const whole = lines.length <= allowed && lines.join(' ').length === name.length;
-    if (whole) return { size: s, lines, cut: false };
-  }
-  // At the floor a word wider than the line is broken inside (every letter still shown); past the
-  // lines it may take, "…".
-  const allowed = allowedLines(maxLines, req.height, floor, lineHeight);
-  const { lines, cut } = clampLines(wrapWords(name, width, floor, measure), allowed, width, floor, measure);
-  return { size: floor, lines, cut };
+  if (mode === 'clip') return draw(size, wrapWords(name, width, size, measure), Math.min(own, room(size)));
+  if (mode === 'wrap') return draw(size, wrapWords(name, width, size, measure), Math.min(most, room(size)));
+  // fit: the tile's own size first, then down to the floor on the tile's own lines, then more lines.
+  const first = Math.min(own, most);
+  const floor = Math.min(MIN_TEXT_SP[req.settings.productNameMinTextSize] ?? MIN_TEXT_SP.s, size);
+  const sizes = fitSizes(size, floor);
+  const seen: Array<string[] | undefined> = [];
+  const at = (i: number): string[] => (seen[i] ??= wrapWords(name, width, sizes[i], measure));
+  const found = largestFitting(sizes, (i) => at(i).length <= Math.min(first, room(sizes[i])));
+  if (found >= 0) return { size: sizes[found], lines: at(found), cut: false };
+  const last = sizes.length - 1;
+  return draw(sizes[last], at(last), Math.min(most, room(sizes[last])));
 }
 
 /** The height (px / dp) the name's lines take: `wrap` grows its tile by it. */
@@ -290,9 +316,9 @@ export function nameHeight(fit: Pick<NameFitResult, 'size' | 'lines'>, lineHeigh
 
 /* ------------------------------------------------------------ the price */
 
-/** "₪168.00" → "₪168", "168.00 ₪" → "168 ₪"; any other amount as it is (agorot are never dropped). */
+/** "₪168.00" → "₪168", "₪24.00 לק"ג" → "₪24 לק"ג"; ₪168.50 keeps its agorot (dropping them would change the amount). */
 export function dropZeroAgorot(text: string): string {
-  return text.replace(/([0-9])[.,]00(?=[^0-9]*$)/, '$1');
+  return text.replace(/(\d)\.00(?!\d)/g, '$1');
 }
 
 export interface PriceFitResult {
@@ -300,20 +326,32 @@ export interface PriceFitResult {
   size: number;
   /** ".00" went. */
   dropped: boolean;
-  /** Not even the floor and no ".00" made it fit: written whole all the same, over the edge. */
+  /** Not even `PRICE_FLOOR_SP` made it fit: written whole all the same, over the edge. */
   overflow: boolean;
 }
 
-/** The price on a tile: never cut (§2) — smaller to `minSize`, then without ".00", else whole over the edge. */
+/**
+ * The price on a tile, never cut (§2): `text` at the largest size from the tile's own down to the
+ * readable minimum (`minSize`, or the tile's size when that is smaller); else without its ".00" at the
+ * largest such size; else — the number still whole — smaller still, down to `PRICE_FLOOR_SP`.
+ */
 export function fitPrice(text: string, width: number, size: number, measure: MeasureText, minSize = PRICE_MIN_SP): PriceFitResult {
   const room = Math.max(1, width - EPS);
-  const floor = Math.min(size, minSize);
-  for (let s = size; s >= floor - 1e-9; s = Math.round((s - STEP) * 10) / 10) {
-    if (measure(text, s) <= room) return { text, size: s, dropped: false, overflow: false };
-  }
+  const fits = (t: string, s: number) => measure(t, s) <= room;
+  const minSp = Math.min(minSize, size);
+  const sizes = fitSizes(size, minSp);
+  let i = largestFitting(sizes, (k) => fits(text, sizes[k]));
+  if (i >= 0) return { text, size: sizes[i], dropped: false, overflow: false };
   const short = dropZeroAgorot(text);
-  if (short !== text && measure(short, floor) <= room) return { text: short, size: floor, dropped: true, overflow: false };
-  return { text: short, size: floor, dropped: short !== text, overflow: true };
+  const dropped = short !== text;
+  if (dropped) {
+    i = largestFitting(sizes, (k) => fits(short, sizes[k]));
+    if (i >= 0) return { text: short, size: sizes[i], dropped, overflow: false };
+  }
+  if (minSp <= PRICE_FLOOR_SP) return { text: short, size: minSp, dropped, overflow: !fits(short, minSp) };
+  const below = fitSizes(minSp, PRICE_FLOOR_SP).slice(1);
+  i = largestFitting(below, (k) => fits(short, below[k]));
+  return { text: short, size: i >= 0 ? below[i] : PRICE_FLOOR_SP, dropped, overflow: i < 0 };
 }
 
 /* ------------------------------------------------------------ the badge */
@@ -394,7 +432,7 @@ export class TileTextCache {
 
   name(req: NameFitRequest): NameFitResult {
     const s = req.settings;
-    const key = [s.productNameFit, s.productNameMaxLines, s.productNameMinTextSize, req.size, req.lineHeight ?? 1.2, Math.round(req.width), Math.round(req.height ?? 0), req.name].join('|');
+    const key = [s.productNameFit, s.productNameMaxLines, s.productNameMinTextSize, req.size, req.tileLines, req.lineHeight ?? 1.2, Math.round(req.width), Math.round(req.height ?? 0), req.name].join('|');
     let hit = this.names.get(key);
     if (!hit) {
       if (this.names.size >= this.max) this.names.clear();

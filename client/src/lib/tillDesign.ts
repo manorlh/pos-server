@@ -21,9 +21,10 @@
  * (lib/kioskMotionEngine.ts, surface "till"), every key optional (nothing set: "legacy", today's
  * screens), merged per event and parameter; checked by the engine's own tables, as the server does.
  *
- * "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5): `productText` — the four till parameters of
+ * "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5): `look` — the four till parameters of
  * lib/productTileText.ts as the design's own fields under "מראה", every key optional (absent: the till
- * parameters'); a code wins over the parameter, "params" undoes a level above's value.
+ * parameters'); a code wins over the parameter, "base" undoes a level above's value (pos-android
+ * domain/TillDesignLook.kt reads the same).
  */
 
 import {
@@ -46,7 +47,6 @@ import {
   NAME_MAX_LINES_MAX,
   NAME_MAX_LINES_MIN,
   PRODUCT_TEXT_DEFAULTS,
-  PRODUCT_TEXT_PARAMS,
   isProductTextCode,
   type ProductTextDesign,
   type ProductTextKey,
@@ -286,8 +286,8 @@ export interface TillDesignConfig {
   orderNumber: { atOpen: boolean; prefix: string };
   /** "הנפשות": the Motion Engine's `motion` (absent: nothing set at any level — "legacy", today's screens). */
   motion?: MotionEngineSettings;
-  /** "שם פריט מלא ותג i": the design's own four (absent / "params": the till parameters'). */
-  productText?: ProductTextDesign;
+  /** "מראה" — "שם פריט מלא ותג i": the design's own four (absent / "base": the till parameters'). */
+  look?: ProductTextDesign;
 }
 
 /** A partial layer as stored / sent (`{overrides}`). */
@@ -1120,15 +1120,15 @@ const MOTION_NODE = new PartialObjNode({
 SCHEMA.fields.motion = MOTION_NODE;
 SCHEMA.fill.motion = {};
 
-/** "שם פריט מלא ותג i" (the server's `PRODUCT_TEXT`): each key its codes, or "params". */
-const PRODUCT_TEXT_NODE = new PartialObjNode({
-  productNameFit: new OrLiteralNode(new EnumNode(NAME_FITS), PRODUCT_TEXT_PARAMS),
-  productNameMaxLines: new OrLiteralNode(new IntNode(NAME_MAX_LINES_MIN, NAME_MAX_LINES_MAX), PRODUCT_TEXT_PARAMS),
-  productNameMinTextSize: new OrLiteralNode(new EnumNode(MIN_TEXT_SIZES), PRODUCT_TEXT_PARAMS),
-  productInfoBadge: new OrLiteralNode(new EnumNode(INFO_BADGES), PRODUCT_TEXT_PARAMS),
+/** "מראה" — "שם פריט מלא ותג i" (the server's `LOOK`): each key its codes, or "base". */
+const LOOK_NODE = new PartialObjNode({
+  productNameFit: asBase(new EnumNode(NAME_FITS)),
+  productNameMaxLines: asBase(new IntNode(NAME_MAX_LINES_MIN, NAME_MAX_LINES_MAX)),
+  productNameMinTextSize: asBase(new EnumNode(MIN_TEXT_SIZES)),
+  productInfoBadge: asBase(new EnumNode(INFO_BADGES)),
 });
-SCHEMA.fields.productText = PRODUCT_TEXT_NODE;
-SCHEMA.fill.productText = {};
+SCHEMA.fields.look = LOOK_NODE;
+SCHEMA.fill.look = {};
 
 /* --------------------------------------------------------------- validation */
 
@@ -1331,25 +1331,25 @@ export function pruneEmptyMotion<T>(cfg: T): T {
 }
 
 /**
- * The config without a `productText` an edit left empty or with keys cleared to inherit (`{}` sets
- * nothing — the server prunes it), so a field set and set back is no change.
+ * The config without a `look` an edit left empty or with keys cleared to inherit (`{}` sets nothing —
+ * the server prunes it), so a field set and set back is no change.
  */
-export function pruneEmptyProductText<T>(cfg: T): T {
-  if (!isDict(cfg) || !('productText' in cfg)) return cfg;
-  const own = isDict(cfg.productText) ? cfg.productText : {};
+export function pruneEmptyLook<T>(cfg: T): T {
+  if (!isDict(cfg) || !('look' in cfg)) return cfg;
+  const own = isDict(cfg.look) ? cfg.look : {};
   const kept = Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined && v !== null));
   const out: Dict = { ...cfg };
-  if (Object.keys(kept).length === 0) delete out.productText;
-  else out.productText = kept;
+  if (Object.keys(kept).length === 0) delete out.look;
+  else out.look = kept;
   return out as T;
 }
 
 /**
- * What "לפי פרמטרי הקופה" saves at this level for a `productText` key: "params" when the level above set
- * a value itself (so it is undone), else nothing (inherit — the parameters already).
+ * What "לפי פרמטרי הקופה" saves at this level for a `look` key: "base" when the level above set a value
+ * itself (so it is undone, as "כמו הבסיס"), else nothing (inherit — the parameters already).
  */
-export function productTextParamsValue(key: ProductTextKey, inherited: unknown): typeof PRODUCT_TEXT_PARAMS | undefined {
-  return isProductTextCode(key, inherited) ? PRODUCT_TEXT_PARAMS : undefined;
+export function lookBaseValue(key: ProductTextKey, inherited: unknown): AsBase | undefined {
+  return isProductTextCode(key, inherited) ? AS_BASE : undefined;
 }
 
 export interface ConfigChange {
@@ -1360,7 +1360,7 @@ export interface ConfigChange {
 
 /**
  * Every leaf (scalar or list) that differs between two configs, by dotted path. A section one side
- * does not have at all (an optional one — `motion`, `productText` — or any section of an empty layer)
+ * does not have at all (an optional one — `motion`, `look` — or any section of an empty layer)
  * is compared as an empty one, leaf by leaf.
  */
 export function diffConfigs(before: unknown, after: unknown, prefix = ''): ConfigChange[] {

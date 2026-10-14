@@ -437,7 +437,7 @@ export interface PreviewModel {
   dietaryShown: boolean;
   /** Whether the products are the owner's sample (no photos there). */
   sample: boolean;
-  /** "שם פריט מלא ותג i": the design's `productText` over the till parameters' (legacy). */
+  /** "שם פריט מלא ותג i": the design's `look` over the till parameters' (legacy). */
   productText: ProductTextSettings;
   /** "תג i": the product whose sheet is open, and the name of its category. */
   infoProduct: PProduct | null;
@@ -656,7 +656,7 @@ export function buildPreviewModel(opts: BuildOptions): PreviewModel {
     due,
     dietaryShown: cfg.visual?.dietary === 'show' || (cfg.visual?.dietary !== 'hide' && !!legacy?.showDietaryMarks),
     sample: isSample,
-    productText: resolveProductText(cfg.productText, legacy?.productText ?? null),
+    productText: resolveProductText(cfg.look, legacy?.productText ?? null),
     infoProduct,
     infoCategory: infoProduct?.categoryId ? (baseCategories.find((c) => c.id === infoProduct.categoryId)?.name ?? null) : null,
   };

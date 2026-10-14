@@ -619,7 +619,14 @@ function DishCard({ m, p, d, photoArea, h }: { m: PreviewModel; p: PProduct; d: 
         )
       ) : null}
       <div style={{ flex: '1 1 auto', minHeight: 0, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <TileName m={m} p={p} d={d} size={m.fs(18)} style={{ flex: '0 1 auto', height: Math.ceil(m.fs(18) * 1.2 * nameLines) }} />
+        <TileName
+          m={m}
+          p={p}
+          d={d}
+          size={m.fs(18)}
+          tileLines={p.description && lines > 0 ? 1 : 2}
+          style={{ flex: '0 1 auto', height: Math.ceil(m.fs(18) * 1.2 * nameLines) }}
+        />
         {p.description && lines > 0 ? <span style={{ fontSize: m.fs(13), color: t.ink2, lineHeight: 1.35, ...ellipsis(lines) }}>{p.description}</span> : null}
         <DietaryWords m={m} p={p} />
         <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -649,7 +656,7 @@ function DishRow({ m, p, d, photoArea }: { m: PreviewModel; p: PProduct; d: D; p
         )
       ) : null}
       <span style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <TileName m={m} p={p} d={d} size={m.fs(16)} style={{ height: Math.ceil(m.fs(16) * 1.2 * Math.min(2, m.productText.productNameMaxLines)) }} />
+        <TileName m={m} p={p} d={d} size={m.fs(16)} tileLines={1} style={{ height: Math.ceil(m.fs(16) * 1.2 * Math.min(2, m.productText.productNameMaxLines)) }} />
         {p.description && (m.cfg.visual?.descriptionLines ?? 2) > 0 ? <span style={{ fontSize: m.fs(13), color: t.ink2, ...ellipsis(1) }}>{p.description}</span> : null}
         <span style={{ display: 'flex' }}>
           <TilePrice agorot={p.price} size={m.fs(15)} weight={600} />

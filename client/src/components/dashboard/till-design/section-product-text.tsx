@@ -2,8 +2,8 @@
 
 /**
  * "שם הפריט על הכפתור ותג i" under "מראה" (P:/specs/product-tile-text.md §5): the design's own
- * `productText` — the four till parameters as fields of the design, which win over the parameters.
- * Each field: "לפי פרמטרי הקופה" (nothing set here; "params" when the level above set a value, so it is
+ * `look` — the four till parameters as fields of the design, which win over the parameters. Each
+ * field: "לפי פרמטרי הקופה" (nothing set here; "base" when the level above set a value, so it is
  * undone — as "כמו הבסיס" elsewhere) or one of the codes, with what the parameters say at this level.
  * The preview shows every one of them live: the names on the tiles, the price, the "i" badge — and
  * "פתיחת חלון הפרטים" opens the item's sheet there, on the longest name; the sample menu's long names
@@ -23,7 +23,7 @@ import {
   isProductTextCode,
   type ProductTextKey,
 } from '@/lib/productTileText';
-import { productTextParamsValue } from '@/lib/tillDesign';
+import { lookBaseValue } from '@/lib/tillDesign';
 import { useTillEditor, useTillField } from './editor-context';
 import { AutoHint, FieldShell, SectionCard, Segmented, type SegmentOption } from './fields';
 
@@ -33,7 +33,7 @@ const PARAMS = '';
 function ProductTextField({ k, label, hint, options }: { k: ProductTextKey; label: string; hint: string; options: SegmentOption<string>[] }) {
   const t = useTranslations('tillDesign.productText');
   const ed = useTillEditor();
-  const path = `productText.${k}`;
+  const path = `look.${k}`;
   const f = useTillField<string | number | null | undefined>(path);
   const own = isProductTextCode(k, f.value) ? String(f.value) : PARAMS;
   const over = isProductTextCode(k, f.inheritedValue);
@@ -48,7 +48,7 @@ function ProductTextField({ k, label, hint, options }: { k: ProductTextKey; labe
         <Segmented
           value={own}
           options={[{ value: PARAMS, label: over ? t('paramsOver') : t('params') }, ...options]}
-          onChange={(v) => f.set(v === PARAMS ? productTextParamsValue(k, f.inheritedValue) : k === 'productNameMaxLines' ? Number(v) : v)}
+          onChange={(v) => f.set(v === PARAMS ? lookBaseValue(k, f.inheritedValue) : k === 'productNameMaxLines' ? Number(v) : v)}
           disabled={f.disabled}
           ariaLabel={label}
         />
@@ -67,7 +67,7 @@ export function ProductTextCard() {
   const tb = useTranslations('tillDesign.productText.badge');
   const ed = useTillEditor();
   return (
-    <SectionCard title={t('title')} description={t('description')} paths={['productText']}>
+    <SectionCard title={t('title')} description={t('description')} paths={['look']}>
       <ProductTextField
         k="productNameFit"
         label={tn('productNameFit')}

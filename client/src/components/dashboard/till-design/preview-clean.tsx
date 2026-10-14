@@ -212,6 +212,7 @@ function DishCard({ m, p, w, compact, d }: { m: PreviewModel; p: PProduct; w: nu
               p={p}
               d={d}
               size={faceSp(m, p.name, w)}
+              tileLines={3}
               lineHeight={1.15}
               color={faceInk(m)}
               align="center"
@@ -401,6 +402,7 @@ function ProductTileToday({ m, p, w, h, d }: { m: PreviewModel; p: PProduct; w: 
             p={p}
             d={d}
             size={Math.min(faceSp(m, p.name, w), compact ? 15 : 22)}
+            tileLines={3}
             lineHeight={1.15}
             color={faceInk(m)}
             align="center"

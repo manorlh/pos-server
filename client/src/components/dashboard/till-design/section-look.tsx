@@ -4,7 +4,7 @@
  * "מראה": one accent colour (null = the brand colour the till uses today; "brand" = the
  * brand colour over an accent the level above set, phase 2 §3.10) and light / dark / as today; every screen text the business may reword, its default as the placeholder
  * (empty = the default). Then the category's colour and picture (till parameters, saved on their own) and
- * "שם הפריט על הכפתור ותג i" (`productText`, P:/specs/product-tile-text.md §5).
+ * "שם הפריט על הכפתור ותג i" (`look`, P:/specs/product-tile-text.md §5).
  */
 
 import { useTranslations } from 'next-intl';

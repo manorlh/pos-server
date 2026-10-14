@@ -5,9 +5,10 @@
   `productNameMinTextSize` (s / m / l, s), `productInfoBadge` (auto / always / off, auto) — built-ins
   with their Hebrew, set per company → shop → point of sale → till (the most specific wins), pulled with
   the others, a value the till does not know refused.
-* "עיצוב קופה": the same four as `productText.<key>` of the design (§5), which wins over the parameter;
-  "params" undoes a level above's value; nothing set is no `productText` at all (the sync bytes of a till
-  with nothing set do not move); the editor's `legacy` carries the parameters' four.
+* "עיצוב קופה": the same four as `look.<key>` of the design (§5), which wins over the parameter; "base"
+  undoes a level above's value; nothing set is no `look` at all (the sync bytes of a till with nothing set
+  do not move); the editor's `legacy` carries the parameters' four. The section and the floors are the
+  APK's (pos-android domain/TillDesignLook.kt, ProductTileText.kt).
 * The catalogs carry what the item's sheet shows (§4): the till's sync rows (description, picture,
   dietary tags, allergens, blocks) and the dashboard's till catalog the preview reads.
 
@@ -166,13 +167,18 @@ def test_the_hebrew_of_each_code_and_the_descriptions_say_where_and_how():
         description = _spec(key).description
         assert "חברה, סניף, נקודת מכירה או קופה" in description
         assert "עיצוב קופה" in description and "מראה" in description and "גובר על הפרמטר" in description
-    assert "1–4" in _spec("productNameMaxLines").description
+    lines = _spec("productNameMaxLines").description
+    assert "1–4" in lines and "כמו היום" in lines
 
 
 def test_the_floors_and_the_badges_touch_target():
-    assert PT.MIN_TEXT_SP == {"s": 11, "m": 13, "l": 15}
-    assert PT.PRICE_MIN_SP == PT.MIN_TEXT_SP["s"]
+    # The APK's (domain/ProductTileText.kt ProductNameMinTextSize, PRICE_MIN_SP, PRICE_FLOOR_SP, NAME_FIT_STEP_SP).
+    assert PT.MIN_TEXT_SP == {"s": 10, "m": 12, "l": 14}
+    assert (PT.PRICE_MIN_SP, PT.PRICE_FLOOR_SP, PT.NAME_FIT_STEP_SP) == (10, 6, 1)
     assert PT.INFO_BADGE_TOUCH_DP >= 32
+    assert (PT.DESIGN_SECTION, PT.DESIGN_AS_BASE) == ("look", "base")
+    for size, sp in PT.MIN_TEXT_SP.items():
+        assert f"{sp})" in _spec("productNameMinTextSize").description, size
 
 
 def test_they_are_created_with_the_others_and_left_alone_afterwards(tw):
@@ -271,56 +277,58 @@ def test_resolve_the_design_wins_params_and_unknown_follow_the_parameter():
     assert PT.resolve(None, {}) == DEFAULTS
     assert PT.resolve({}, params) == params
     assert PT.resolve({"productNameFit": "wrap", "productNameMaxLines": 4}, params) == {**params, "productNameFit": "wrap", "productNameMaxLines": 4}
-    # "params", null, an unknown code, a bool for the lines: the parameter.
-    design = {"productNameFit": "params", "productNameMaxLines": True, "productNameMinTextSize": None, "productInfoBadge": "hover"}
+    # "base", null, an unknown code, a bool for the lines: the parameter.
+    design = {"productNameFit": "base", "productNameMaxLines": True, "productNameMinTextSize": None, "productInfoBadge": "hover"}
     assert PT.resolve(design, params) == params
     # A parameter the till does not know is its default.
     assert PT.resolve({}, {"productNameFit": "shrink", "productNameMaxLines": 9}) == DEFAULTS
 
 
 def test_the_design_section_validates_codes_and_params():
-    layer = {"productText": {"productNameFit": "wrap", "productNameMaxLines": 4, "productNameMinTextSize": "l", "productInfoBadge": "always"}}
+    layer = {"look": {"productNameFit": "wrap", "productNameMaxLines": 4, "productNameMinTextSize": "l", "productInfoBadge": "always"}}
     cleaned, errors = T.validate_layer(layer)
     assert errors == [] and cleaned == layer
-    cleaned, errors = T.validate_layer({"productText": {k: "params" for k in KEYS}})
-    assert errors == [] and cleaned == {"productText": {k: "params" for k in KEYS}}
+    cleaned, errors = T.validate_layer({"look": {k: "base" for k in KEYS}})
+    assert errors == [] and cleaned == {"look": {k: "base" for k in KEYS}}
+    # "params" is not the design's word for it.
+    assert [e.code for e in T.validate_layer({"look": {"productNameFit": "params"}})[1]] == ["invalid_value"]
     # Nulls inherit and an emptied section is no section.
-    assert T.validate_layer({"productText": {"productNameFit": None}}) == ({}, [])
-    bad = {"productText": {
+    assert T.validate_layer({"look": {"productNameFit": None}}) == ({}, [])
+    bad = {"look": {
         "productNameFit": "shrink", "productNameMaxLines": 5, "productNameMinTextSize": "xl", "productInfoBadge": True, "size": 3,
     }}
     _cleaned, errors = T.validate_layer(bad)
     assert sorted((e.path, e.code) for e in errors) == [
-        ("productText.productInfoBadge", "invalid_value"),
-        ("productText.productNameFit", "invalid_value"),
-        ("productText.productNameMaxLines", "out_of_range"),
-        ("productText.productNameMinTextSize", "invalid_value"),
-        ("productText.size", "unknown_key"),
+        ("look.productInfoBadge", "invalid_value"),
+        ("look.productNameFit", "invalid_value"),
+        ("look.productNameMaxLines", "out_of_range"),
+        ("look.productNameMinTextSize", "invalid_value"),
+        ("look.size", "unknown_key"),
     ]
-    assert [e.code for e in T.validate_layer({"productText": {"productNameMaxLines": "3"}})[1]] == ["invalid_type"]
+    assert [e.code for e in T.validate_layer({"look": {"productNameMaxLines": "3"}})[1]] == ["invalid_type"]
 
 
 def test_nothing_set_is_no_section_and_todays_sync_bytes():
     cfg = T.default_config()
-    assert "productText" not in cfg
+    assert "look" not in cfg
     assert T.validate_config(cfg) == []
     assert T.resolve({}, {}, {}, {}) == cfg
-    resolved = T.resolve({"productText": {"productNameFit": "wrap"}})
-    assert resolved["productText"] == {"productNameFit": "wrap"}
+    resolved = T.resolve({"look": {"productNameFit": "wrap"}})
+    assert resolved["look"] == {"productNameFit": "wrap"}
     assert T.validate_config(resolved) == []
     # The section never changes what a profile shows.
     for profile in T.PROFILES:
         assert T.for_profile(resolved, profile) == T.for_profile(cfg, profile)
 
 
-def test_levels_merge_key_by_key_and_params_undoes_a_level_above():
-    company = {"productText": {"productNameFit": "wrap", "productInfoBadge": "off"}}
-    shop = {"productText": {"productNameMaxLines": 2}}
-    till = {"productText": {"productNameFit": "params"}}
+def test_levels_merge_key_by_key_and_base_undoes_a_level_above():
+    company = {"look": {"productNameFit": "wrap", "productInfoBadge": "off"}}
+    shop = {"look": {"productNameMaxLines": 2}}
+    till = {"look": {"productNameFit": "base"}}
     eff = T.resolve(company, shop, {}, till)
-    assert eff["productText"] == {"productNameFit": "params", "productInfoBadge": "off", "productNameMaxLines": 2}
+    assert eff["look"] == {"productNameFit": "base", "productInfoBadge": "off", "productNameMaxLines": 2}
     params = {"productNameFit": "clip"}
-    assert PT.resolve(eff["productText"], params) == {
+    assert PT.resolve(eff["look"], params) == {
         "productNameFit": "clip", "productNameMaxLines": 2, "productNameMinTextSize": "s", "productInfoBadge": "off",
     }
 
@@ -331,33 +339,33 @@ def test_through_the_router_the_till_gets_the_section_and_legacy_the_parameters(
     _set(tw, "productNameMaxLines", "area", tw.area.id, 4)
     _set(tw, "productInfoBadge", "company", tw.company.id, "always")
     before = _design_sync(tw, t_shop)
-    assert "productText" not in before["config"]
+    assert "look" not in before["config"]
 
-    view = _design_put(tw, "shop", tw.shop.id, {"productText": {"productNameFit": "wrap", "productNameMinTextSize": "m"}})
-    assert view["overrides"] == {"productText": {"productNameFit": "wrap", "productNameMinTextSize": "m"}}
+    view = _design_put(tw, "shop", tw.shop.id, {"look": {"productNameFit": "wrap", "productNameMinTextSize": "m"}})
+    assert view["overrides"] == {"look": {"productNameFit": "wrap", "productNameMinTextSize": "m"}}
     assert view["legacy"]["productText"] == {**DEFAULTS, "productNameFit": "clip", "productInfoBadge": "always"}
     after = _design_sync(tw, t_shop)
-    assert after["config"]["productText"] == {"productNameFit": "wrap", "productNameMinTextSize": "m"}
+    assert after["config"]["look"] == {"productNameFit": "wrap", "productNameMinTextSize": "m"}
     assert after["configVersion"] != before["configVersion"]
 
-    # The point of sale's till: "params" over the shop's fit, the area's 4 lines from the parameters.
-    _design_put(tw, "area", tw.area.id, {"productText": {"productNameFit": "params"}})
+    # The point of sale's till: "base" over the shop's fit, the area's 4 lines from the parameters.
+    _design_put(tw, "area", tw.area.id, {"look": {"productNameFit": "base"}})
     cfg = _design_sync(tw, t_area)["config"]
-    assert cfg["productText"] == {"productNameFit": "params", "productNameMinTextSize": "m"}
+    assert cfg["look"] == {"productNameFit": "base", "productNameMinTextSize": "m"}
     area_legacy = _design_get(tw, "area", tw.area.id)["legacy"]["productText"]
     assert area_legacy == {**DEFAULTS, "productNameFit": "clip", "productNameMaxLines": 4, "productInfoBadge": "always"}
-    assert PT.resolve(cfg["productText"], _pulled(tw, t_area)) == {
+    assert PT.resolve(cfg["look"], _pulled(tw, t_area)) == {
         "productNameFit": "clip", "productNameMaxLines": 4, "productNameMinTextSize": "m", "productInfoBadge": "always",
     }
 
     with pytest.raises(HTTPException) as exc:
-        _design_put(tw, "shop", tw.shop.id, {"productText": {"productInfoBadge": "sometimes"}})
+        _design_put(tw, "shop", tw.shop.id, {"look": {"productInfoBadge": "sometimes"}})
     assert exc.value.status_code == 422
-    assert ("productText.productInfoBadge", "invalid_value") in {(e["path"], e["code"]) for e in exc.value.detail["errors"]}
+    assert ("look.productInfoBadge", "invalid_value") in {(e["path"], e["code"]) for e in exc.value.detail["errors"]}
 
 
 def test_legacy_reads_the_four_parameters():
-    assert "productText" not in T.catalog()["legacyMap"]
+    assert "look" not in T.catalog()["legacyMap"]
     for key in KEYS:
         assert key in T.legacy_parameter_keys()
     assert T.legacy_view({})["productText"] == DEFAULTS

@@ -31,7 +31,7 @@ import {
   imageCoverage,
   jsonEqual,
   pruneEmptyMotion,
-  pruneEmptyProductText,
+  pruneEmptyLook,
   pruneOverrides,
   setPath,
   templatesInUse,
@@ -75,7 +75,7 @@ const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'layout', paths: ['layout', 'profiles'] },
   { key: 'menu', paths: ['menu', 'bar.favorites'] },
   { key: 'actions', paths: ['actionBar', 'quickCash', 'bar.quantityPresets', 'bar.repeatRound'] },
-  { key: 'look', paths: ['colors', 'texts', 'productText'] },
+  { key: 'look', paths: ['colors', 'texts', 'look'] },
   { key: 'fields', paths: ['fields', 'tables', 'behavior', 'orderNumber'] },
   // "הנפשות" (P:/specs/till-motion.md): the kiosk's Motion Engine on the till.
   { key: 'motion', paths: ['motion'] },
@@ -207,12 +207,12 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
     setMode,
     errors,
     serverErrors,
-    // A `motion` or `productText` edit may leave empty objects behind (back to nothing): pruned, as the server does.
+    // A `motion` or `look` edit may leave empty objects behind (back to nothing): pruned, as the server does.
     set: (path, value) => {
-      setDraft((d) => pruneEmptyProductText(pruneEmptyMotion(setPath(d, path, value))));
+      setDraft((d) => pruneEmptyLook(pruneEmptyMotion(setPath(d, path, value))));
       setServerErrors((list) => (list.length ? list.filter((e) => !hits([path], e.path)) : list));
     },
-    reset: (path) => setDraft((d) => pruneEmptyProductText(pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path)))))),
+    reset: (path) => setDraft((d) => pruneEmptyLook(pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path)))))),
     showProductInfo: () => {
       setShowPreview(true);
       setInfoNonce((n) => n + 1);

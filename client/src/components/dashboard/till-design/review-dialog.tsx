@@ -31,7 +31,6 @@ import {
   type TillDesignLayer,
 } from '@/lib/tillDesign';
 import { fetchTillDesignSettings, shownVersion, type TillDesignLevel, type TillDesignTargets } from '@/lib/tillDesignApi';
-import { PRODUCT_TEXT_PARAMS } from '@/lib/productTileText';
 
 const MAX_TILLS = 12;
 
@@ -95,9 +94,9 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
   const tpt = useTranslations('tillDesign.productText');
   const parts = path.split('.');
   const last = parts[parts.length - 1];
-  // "שם פריט מלא ותג i": nothing / "params" = the till parameters'; a code in its words.
-  if (parts[0] === 'productText') {
-    if (value === null || value === undefined || value === PRODUCT_TEXT_PARAMS) return <span className="text-muted-foreground">{tpt('params')}</span>;
+  // "מראה" — "שם פריט מלא ותג i": nothing / "base" = the till parameters'; a code in its words.
+  if (parts[0] === 'look') {
+    if (value === null || value === undefined || value === AS_BASE) return <span className="text-muted-foreground">{tpt('params')}</span>;
     const group = last === 'productNameFit' ? 'fit' : last === 'productNameMinTextSize' ? 'minSizes' : last === 'productInfoBadge' ? 'badge' : null;
     if (group && typeof value === 'string' && tpt.has(`${group}.${value}`)) return <span>{tpt(`${group}.${value}`)}</span>;
   }

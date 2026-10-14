@@ -153,6 +153,8 @@ export interface TileNameProps {
   d: D;
   /** The tile's own type size (`m.fs` applied). */
   size: number;
+  /** The tile's own lines — what the template drew before (clip keeps them; fit tries them first). */
+  tileLines: number;
   weight?: number;
   lineHeight?: number;
   color?: string;
@@ -168,14 +170,14 @@ export interface TileNameProps {
 }
 
 /** The name and badge of one tile, from its box (null until the box is measured). */
-function useTileText(m: PreviewModel, p: PProduct, size: number, weight: number, lineHeight: number, room: number, axis: 'width' | 'height') {
+function useTileText(m: PreviewModel, p: PProduct, size: number, tileLines: number, weight: number, lineHeight: number, room: number, axis: 'width' | 'height') {
   const [ref, box] = useBoxSize<HTMLDivElement>();
   const wrap = m.productText.productNameFit === 'wrap';
   const layout: TileTextLayout | null =
     box.w > 0
       ? layoutTileText(
           (req) => tileCache(weight).name(req),
-          { name: p.name, width: box.w, height: wrap ? 0 : box.h, size, settings: m.productText, lineHeight },
+          { name: p.name, width: box.w, height: wrap ? 0 : box.h, size, tileLines, settings: m.productText, lineHeight },
           { mode: m.productText.productInfoBadge, description: p.description },
           room,
           axis,
@@ -188,8 +190,8 @@ function useTileText(m: PreviewModel, p: PProduct, size: number, weight: number,
  * A tile's name in its box, as the till writes it (see the module's head), with the "i" badge at the
  * box's top-end corner. Before the box is measured: the name in up to its lines, as CSS cuts it.
  */
-export function TileName({ m, p, d, size, weight = 700, lineHeight = 1.2, color, align = 'start', style, badgeRoom = BADGE_ROOM, badgeAxis = 'width', badgeStyle }: TileNameProps) {
-  const { ref, layout } = useTileText(m, p, size, weight, lineHeight, badgeRoom, badgeAxis);
+export function TileName({ m, p, d, size, tileLines, weight = 700, lineHeight = 1.2, color, align = 'start', style, badgeRoom = BADGE_ROOM, badgeAxis = 'width', badgeStyle }: TileNameProps) {
+  const { ref, layout } = useTileText(m, p, size, tileLines, weight, lineHeight, badgeRoom, badgeAxis);
   const badge = !!layout?.badge;
   const text: CSSProperties = { fontWeight: weight, lineHeight, color, textAlign: align, fontFamily: FONT };
   // "wrap": the box is as tall as its lines (the tile grows); otherwise the tile gives it its height.
@@ -225,7 +227,7 @@ export function TileName({ m, p, d, size, weight = 700, lineHeight = 1.2, color,
           ))}
         </span>
       ) : (
-        <span style={{ ...text, fontSize: size, ...ellipsis(m.productText.productNameMaxLines) }}>{p.name}</span>
+        <span style={{ ...text, fontSize: size, ...ellipsis(tileLines) }}>{p.name}</span>
       )}
       {badge ? <InfoBadge m={m} p={p} d={d} style={badgeStyle} /> : null}
     </div>

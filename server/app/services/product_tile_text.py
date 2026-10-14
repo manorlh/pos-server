@@ -5,38 +5,40 @@ and price on its button, and the "i" badge that opens the item's full descriptio
 Four till parameters — company → shop → point of sale → till like every till parameter, the most
 specific wins (registered in app/services/till_parameters.py), sent with the others in
 `GET /sync/{machine_id}/parameters` — and the same four as fields of "עיצוב קופה" under "מראה"
-(`productText.<key>` of the design, app/services/till_design.py), where the design wins over the
+(`look.<key>` of the design, app/services/till_design.py), where the design wins over the
 parameter (§5):
 
     productNameFit          fit | wrap | clip       fit   — §3
     productNameMaxLines     1–4                     3
-    productNameMinTextSize  s | m | l               s     — the floor of the shrink
+    productNameMinTextSize  s | m | l               s     — the floor of the shrink: 10 / 12 / 14 sp
     productInfoBadge        auto | always | off     auto  — §4
 
 Read by the till (pos-android), the web till and the Windows till — on every order screen and in
 every template, the table's order, the favourites and the categories' landing (its category names);
 never the kiosk, which has a description view of its own.
 
-**The rules** (one for every surface; the dashboard's lib/productTileText.ts is the reference
-implementation the preview runs, and the tills mirror it):
+**The rules** (one for every surface, step for step: pos-android domain/ProductTileText.kt and the
+dashboard's lib/productTileText.ts, which the preview, the web till and the Windows till run):
 
-* `fit` — the largest type size between the tile's own and the floor (`MIN_TEXT_SP`) at which the
-  whole name, wrapped at words, takes at most `productNameMaxLines` lines and the tile's height;
-  "…" only when not even the floor holds it. `wrap` — the tile's own size, the name wrapped to at
-  most `productNameMaxLines` lines, the tile as tall as that needs (a row of tiles takes its
-  tallest). `clip` — as today: the tile's own size, at most `productNameMaxLines` lines, "…".
+* `fit` — first the size steps down (1 sp at a time) from the tile's own to the floor
+  (`MIN_TEXT_SP`) on the tile's own lines (no more than `productNameMaxLines`); if the name still
+  does not fit, the floor takes up to `productNameMaxLines` lines (as many as the tile holds); "…"
+  only past those. `wrap` — the tile's own size, up to `productNameMaxLines` lines, the tile as tall
+  as that needs (a row of tiles takes its tallest). `clip` — as before: the tile's own size and
+  lines, "…".
 * Worked out once per product and tile width (and kept), never per frame.
-* The price is never cut (§2, no setting): its size shrinks to `PRICE_MIN_SP`; if it still does not
-  fit, a trailing ".00" goes; the amount itself is always written whole.
+* The price is never cut (§2, no setting): smaller to `PRICE_MIN_SP`; then without its ".00"; then —
+  the number still whole — smaller still, to `PRICE_FLOOR_SP`.
 * The "i" badge: `auto` — on a product with a description, or whose name did not fit whole;
   `always` — on every product; `off` — never. Top-left corner of the tile (the right one holds the
   count), a touch target of at least 32 dp; a tap opens the item's sheet and adds nothing; not shown
   while the screen is being arranged ("עריכת מסך"). A long press stays as today.
 
 **In the design** a field set to one of the codes wins over the parameter; absent (nothing set at any
-level), null or `"params"` — "לפי פרמטרי הקופה", which undoes a value a level above set — leaves the
-parameter's value (`resolve`). A till reading the design treats anything that is not one of the
-codes as not set, so an older till simply follows the parameters.
+level), null or `"base"` — "לפי פרמטרי הקופה", which undoes a value a level above set, as "כמו הבסיס"
+does elsewhere in the design — leaves the parameter's value (`resolve`). A till reading the design
+treats anything that is not one of the codes as not set, so an older till simply follows the
+parameters.
 """
 from __future__ import annotations
 
@@ -65,9 +67,13 @@ SIZE_L = "l"
 MIN_TEXT_SIZES = (SIZE_S, SIZE_M, SIZE_L)
 MIN_TEXT_SIZE_LABELS = {SIZE_S: "קטן", SIZE_M: "בינוני", SIZE_L: "גדול"}
 #: The floor of the shrink, in sp (CSS px on the web): a size below it is not "readable".
-MIN_TEXT_SP: Dict[str, int] = {SIZE_S: 11, SIZE_M: 13, SIZE_L: 15}
-#: The price's floor (§2, no setting): the same as the smallest name floor.
-PRICE_MIN_SP = 11
+MIN_TEXT_SP: Dict[str, int] = {SIZE_S: 10, SIZE_M: 12, SIZE_L: 14}
+#: `fit`'s step down from the tile's own size, in sp.
+NAME_FIT_STEP_SP = 1
+#: The price (§2, no setting): the readable minimum it steps down to before it drops its ".00", and
+#: past that the size it shrinks on toward rather than lose a digit.
+PRICE_MIN_SP = 10
+PRICE_FLOOR_SP = 6
 
 INFO_BADGE_KEY = "productInfoBadge"
 BADGE_AUTO = "auto"
@@ -97,9 +103,9 @@ DEFAULTS: Dict[str, Any] = {
     INFO_BADGE_KEY: BADGE_AUTO,
 }
 
-#: The design's section (`productText.<key>`) and its "לפי פרמטרי הקופה" over a level above's value.
-DESIGN_SECTION = "productText"
-DESIGN_PARAMS = "params"
+#: The design's section (`look.<key>`) and its "לפי פרמטרי הקופה" over a level above's value ("כמו הבסיס").
+DESIGN_SECTION = "look"
+DESIGN_AS_BASE = "base"
 
 _LEVELS = (
     "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה, וגם בכרטיס \"עיצוב קופה\" תחת \"מראה\" — "
@@ -137,8 +143,9 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         default_value=MAX_LINES_DEFAULT,
         description=(
             "עד כמה שורות שם הפריט נשבר על הכפתור "
-            f"({MAX_LINES_MIN}–{MAX_LINES_MAX}, ברירת מחדל {MAX_LINES_DEFAULT}). "
-            f"חל על כל שלושת המצבים של \"שם הפריט על הכפתור\". {_LEVELS}"
+            f"({MAX_LINES_MIN}–{MAX_LINES_MAX}, ברירת מחדל {MAX_LINES_DEFAULT}), במצבים "
+            f"«{NAME_FIT_LABELS[FIT]}» ו«{NAME_FIT_LABELS[WRAP]}» של \"שם הפריט על הכפתור\"; "
+            f"ב«{NAME_FIT_LABELS[CLIP]}» הכפתור שומר על מספר השורות שלו, כמו היום. {_LEVELS}"
         ),
     ),
     dict(
@@ -209,7 +216,7 @@ def from_parameters(parameters: Mapping[str, Any]) -> Dict[str, Any]:
 def resolve(design: Optional[Mapping[str, Any]], parameters: Mapping[str, Any]) -> Dict[str, Any]:
     """
     What a till uses (§5 "העיצוב גובר על הפרמטר"): the design's `productText.<key>` when it is one of
-    the codes, else the parameter's value, else the default. `"params"`, null or absent: the parameter.
+    the codes, else the parameter's value, else the default. `"base"`, null or absent: the parameter.
     """
     own = design if isinstance(design, Mapping) else {}
     params = from_parameters(parameters)

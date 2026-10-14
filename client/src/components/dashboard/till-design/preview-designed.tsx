@@ -495,7 +495,7 @@ function CardTile({ m, p, h, d }: { m: PreviewModel; p: PProduct; h: number; d: 
         {photo ? <Photo url={photo} height={Math.round(h * 0.42)} /> : null}
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 4, padding: inner, minHeight: 0 }}>
           <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 8 }}>
-            <TileName m={m} p={p} d={d} size={m.fs(small ? 15 : 16)} weight={600} lineHeight={1.25} style={{ flex: '1 1 0' }} />
+            <TileName m={m} p={p} d={d} size={m.fs(small ? 15 : 16)} tileLines={small || photo ? 1 : 2} weight={600} lineHeight={1.25} style={{ flex: '1 1 0' }} />
             {photo ? null : <PlusSquare m={m} size={small ? 24 : 28} />}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flex: '0 0 auto' }}>
@@ -517,7 +517,7 @@ function PhotoTile({ m, p, h, d }: { m: PreviewModel; p: PProduct; h: number; d:
         {photo ? <Photo url={photo} height="auto" /> : null}
         <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 6, padding: 14, minHeight: 0 }}>
           <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 8 }}>
-            <TileName m={m} p={p} d={d} size={m.fs(photo ? 18 : 20)} style={{ flex: '1 1 0' }} />
+            <TileName m={m} p={p} d={d} size={m.fs(photo ? 18 : 20)} tileLines={2} style={{ flex: '1 1 0' }} />
             <span style={{ flex: '0 0 auto', alignSelf: 'flex-start' }}>{p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flex: '0 0 auto' }}>
@@ -535,7 +535,7 @@ function KeyTile({ m, p, h, d }: { m: PreviewModel; p: PProduct; h: number; d: D
   return (
     <button type="button" onClick={() => d({ type: 'add', product: p })} style={tileBase(m, p, h)} aria-label={p.name}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 2, padding: h < 66 ? '6px 10px' : '9px 10px', opacity: p.available ? 1 : 0.45 }}>
-        <TileName m={m} p={p} d={d} size={m.fs(16)} style={{ flex: '1 1 0' }} />
+        <TileName m={m} p={p} d={d} size={m.fs(16)} tileLines={h < 70 ? 1 : 2} style={{ flex: '1 1 0' }} />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flex: '0 0 auto' }}>
           <TilePrice agorot={p.price} size={m.fs(13)} weight={600} color={m.t.accent} />
           {p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}
@@ -575,6 +575,7 @@ function RowItem({ m, p, h, last, d }: { m: PreviewModel; p: PProduct; h: number
           p={p}
           d={d}
           size={m.fs(16)}
+          tileLines={1}
           weight={500}
           style={{ flex: '1 1 0', height: Math.max(20, h - 8), justifyContent: 'center' }}
           badgeStyle={{ top: '50%', transform: 'translateY(-50%)' }}
