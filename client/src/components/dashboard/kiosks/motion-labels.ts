@@ -7,7 +7,9 @@
 
 import { useTranslations } from 'next-intl';
 import {
+  Armchair,
   ArrowLeftRight,
+  ArrowRightLeft,
   ChevronsDown,
   CircleArrowLeft,
   CircleCheckBig,
@@ -44,6 +46,7 @@ import type {
   MotionGlobalSpeed,
   MotionParam,
   MotionPreset,
+  MotionSurface,
   MotionType,
 } from '@/lib/kioskMotionEngine';
 import type { MotionEventGroup } from '@/lib/kioskMotionEditor';
@@ -76,6 +79,8 @@ export const MOTION_EVENT_ICONS: Record<MotionEventKey, LucideIcon> = {
   loading: Loader,
   scrollHint: ChevronsDown,
   homeReturn: House,
+  tableOpen: Armchair,
+  tabSwitch: ArrowRightLeft,
 };
 
 export const MOTION_GROUP_ICONS: Record<MotionEventGroup, LucideIcon> = {
@@ -99,14 +104,29 @@ export function formatMultiplier(k: number): string {
   return k.toFixed(2);
 }
 
-/** The Motion Engine's words. */
-export function useMotionText() {
-  const t = useTranslations('kiosks.motion');
+/** A translator of the motion screen's keys (`kiosks.motion.*`, the till's `tillDesign.motion.*` over them). */
+export type MotionT = ((key: string, values?: Record<string, string | number>) => string) & { has: (key: string) => boolean };
+
+/**
+ * The Motion Engine's words. On the till (`surface: 'till'`) its own words come first — "עיצוב קופה" →
+ * "הנפשות" (he.json `tillDesign.motion.*`): its screen's title and hints, its events' descriptions where they
+ * mean a till's (payment: the payment screen rising), its presets ("legacy" is today's till), its stage.
+ */
+export function useMotionText(surface: MotionSurface = 'kiosk') {
+  const k = useTranslations('kiosks.motion');
+  const till = useTranslations('tillDesign.motion');
+  const own = surface === 'till';
+  /** A key of the screen: the till's own wording when it has one, else the kiosk's. */
+  const t: MotionT = Object.assign(
+    (key: string, values?: Record<string, string | number>) => (own && till.has(key) ? till(key, values) : k(key, values)),
+    { has: (key: string) => (own && till.has(key)) || k.has(key) },
+  );
   return {
     t,
+    surface,
     eventName: (e: MotionEventKey) => t(`events.${e}.name`),
     eventDesc: (e: MotionEventKey) => t(`events.${e}.desc`),
-    kind: (k: MotionType) => t(`kinds.${k}`),
+    kind: (kind: MotionType) => t(`kinds.${kind}`),
     param: (p: MotionParam) => t(`params.${p}`),
     direction: (d: MotionDirection) => t(`directions.${d}`),
     easing: (e: MotionEasing) => t(`easings.${e}`),

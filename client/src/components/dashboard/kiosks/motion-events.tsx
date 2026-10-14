@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * "הנפשות" → "אירועים" (spec §9): every event of the kiosk in four groups, each with its switch,
+ * "הנפשות" → "אירועים" (spec §9): every event of the kiosk in four groups (of the till, in its three), each with its switch,
  * its kind (only the kinds it may play), duration, delay, direction, intensity, curve and repeats,
  * and under "מתקדם" the scales, the distance, the gaps, the hold, the stagger, the auto-advance and
  * the reduced-motion fallback. Every control writes `motion.events.<event>.<param>` (the five older
  * transitions' kinds also their older key), shows the value as resolved, where it comes from (this
  * level, above, the preset) and a reset; "הצג" plays the event on a sample stage, "לפני / אחרי"
- * beside what this level inherits; "העתק הגדרה" copies its values to another event.
+ * beside what this level inherits; "העתק הגדרה" copies its values to another event. Reads and writes
+ * through its host (motion-host.tsx): the kiosk's settings editor or the till design's.
  */
 
 import { useRef, useState, type ReactNode, type RefObject } from 'react';
-import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import {
   ArrowDown,
@@ -39,76 +39,68 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import { kioskRenderProfile } from '@/lib/kioskConfig';
 import {
   MOTION_DIRECTIONS,
   MOTION_EASINGS,
   MOTION_EASING_CURVES,
-  MOTION_EVENT_TYPES,
   MOTION_FALLBACKS,
   MOTION_PARAMS,
   globalMultiplier,
+  motionEventTypesOf,
   motionParamRange,
   resolveMotionEvent,
   type MotionDirection,
   type MotionEasing,
-  type MotionEngineSettings,
   type MotionEventKey,
   type MotionFallback,
   type MotionParam,
   type MotionType,
 } from '@/lib/kioskMotionEngine';
+import { motionSceneOf } from '@/lib/kioskMotionPreview';
 import {
   MOTION_ADVANCED_PARAMS,
-  MOTION_EVENT_GROUPS,
   eventLayer,
   motionCopyEdits,
   motionDurationView,
   motionEventResetEdits,
   motionEventSource,
+  motionEventGroupsOf,
   motionEventView,
   motionParamEdits,
   motionParamSource,
   type MotionEdit,
   type MotionValueSource,
 } from '@/lib/kioskMotionEditor';
-import { useFieldErrors, useKioskEditor } from './editor-context';
-import { FieldErrors, OptionSelect, SectionCard, Segmented } from './fields';
-import { LIVE_PREVIEW_DEMOS, MOTION_EVENT_ICONS, MOTION_GROUP_ICONS, formatMultiplier, useMotionText } from './motion-labels';
+import { OptionSelect, Segmented } from './fields';
+import { MotionCard, MotionErrors, useMotionHost } from './motion-host';
+import { MOTION_EVENT_ICONS, MOTION_GROUP_ICONS, formatMultiplier, useMotionText } from './motion-labels';
 import { MotionStage, MotionStageCaption, type MotionStageHandle } from './motion-preview-stage';
 
 /* --------------------------------------------------------------- shared */
 
-/** Applies the helpers' edits to the draft: a value, or back to what this level inherits. */
-export function useApplyMotionEdits() {
-  const ed = useKioskEditor();
-  return (edits: readonly MotionEdit[]) => {
-    for (const e of edits) {
-      if (e.reset) ed.reset(e.path);
-      else ed.set(e.path, e.value);
-    }
-  };
+/** Applies the helpers' edits to the host's draft: a value, or back to what this level inherits. */
+export function useApplyMotionEdits(): (edits: readonly MotionEdit[]) => void {
+  return useMotionHost().apply;
 }
 
 /** Where a value comes from: "set here" with a reset, "inherited from above", or nothing (the preset's). */
 export function SourceMark({ source, onReset, compact = false }: { source: MotionValueSource; onReset?: () => void; compact?: boolean }) {
-  const ts = useTranslations('kiosks.settings');
-  const tx = useMotionText();
-  const ed = useKioskEditor();
+  const host = useMotionHost();
+  const tx = useMotionText(host.surface);
   if (source === 'preset') return null;
   if (source === 'parent') {
     return (
-      <span className="text-[11px] text-muted-foreground" title={ts(`inheritFrom.${ed.level}`)}>
-        {tx.t('sourceParent', { from: ts(`inheritFrom.${ed.level}`) })}
+      <span className="text-[11px] text-muted-foreground" title={host.labels.inheritFrom}>
+        {tx.t('sourceParent', { from: host.labels.inheritFrom })}
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-0.5">
       <Badge variant="secondary" className={cn('bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200', compact && 'h-4 px-1.5 text-[10px]')}>
-        {ts(`overridden.${ed.level}`)}
+        {host.labels.overridden}
       </Badge>
-      {onReset && ed.canEdit ? (
+      {onReset && host.canEdit ? (
         <Button type="button" size="icon-xs" variant="ghost" title={tx.t('resetParam')} aria-label={tx.t('resetParam')} onClick={onReset}>
           <RotateCcw />
         </Button>
@@ -208,30 +200,33 @@ function ParamField({
   hint?: ReactNode;
   className?: string;
 }) {
-  const ed = useKioskEditor();
-  const tx = useMotionText();
-  const apply = useApplyMotionEdits();
-  const source = motionParamSource(ed.draft.motion, ed.inherited.motion, event, param);
+  const host = useMotionHost();
+  const tx = useMotionText(host.surface);
+  const source = motionParamSource(host.draft, host.inherited, event, param);
   return (
     <div className={cn('min-w-0 space-y-1.5', className)}>
       <div className="flex min-h-5 flex-wrap items-center gap-1.5">
         <span className="text-xs font-medium">{tx.param(param)}</span>
-        <SourceMark source={source} compact onReset={() => apply(motionParamEdits(ed.draft.motion, ed.inherited.motion, event, param, undefined))} />
+        <SourceMark
+          source={source}
+          compact
+          onReset={() => host.apply(motionParamEdits(host.draft, host.inherited, event, param, undefined, host.surface))}
+        />
       </div>
       {children}
       {hint ? <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
-      <FieldErrors path={`motion.events.${event}.${param}`} />
+      <MotionErrors path={`motion.events.${event}.${param}`} />
     </div>
   );
 }
 
 function CopyMenu({ event }: { event: MotionEventKey }) {
-  const ed = useKioskEditor();
-  const tx = useMotionText();
-  const apply = useApplyMotionEdits();
-  const own = Object.keys(eventLayer(ed.draft.motion, event)).length > 0;
+  const host = useMotionHost();
+  const tx = useMotionText(host.surface);
+  const apply = host.apply;
+  const own = Object.keys(eventLayer(host.draft, event)).length > 0;
   const copyTo = (target: MotionEventKey) => {
-    const c = motionCopyEdits(ed.draft.motion, event, target);
+    const c = motionCopyEdits(host.draft, event, target, host.surface);
     const name = tx.eventName(target);
     if (c.copied.length === 0) {
       toast.error(tx.t('copyNone', { target: name }));
@@ -244,7 +239,7 @@ function CopyMenu({ event }: { event: MotionEventKey }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        disabled={!ed.canEdit || !own}
+        disabled={!host.canEdit || !own}
         render={
           <Button type="button" size="sm" variant="outline" title={own ? undefined : tx.t('copyNothing')}>
             <Copy /> {tx.t('copyTo')}
@@ -252,7 +247,7 @@ function CopyMenu({ event }: { event: MotionEventKey }) {
         }
       />
       <DropdownMenuContent className="max-h-80 w-60" align="start">
-        {MOTION_EVENT_GROUPS.map((g) => (
+        {motionEventGroupsOf(host.surface).map((g) => (
           <DropdownMenuGroup key={g.key}>
             <DropdownMenuLabel>{tx.group(g.key)}</DropdownMenuLabel>
             {g.events
@@ -278,32 +273,30 @@ function EventBody({ event, stageRef, beforeRef, playBoth }: {
   beforeRef: RefObject<MotionStageHandle | null>;
   playBoth: () => void;
 }) {
-  const ed = useKioskEditor();
-  const tx = useMotionText();
-  const apply = useApplyMotionEdits();
+  const host = useMotionHost();
+  const { surface } = host;
+  const tx = useMotionText(surface);
+  const apply = host.apply;
   const [compare, setCompare] = useState(false);
   const [advanced, setAdvanced] = useState(false);
-  const draft = ed.draft.motion as MotionEngineSettings;
-  const inherited = ed.inherited.motion as MotionEngineSettings;
-  const view = motionEventView(draft, event);
+  const draft = host.draft;
+  const inherited = host.inherited;
+  const view = motionEventView(draft, event, surface);
   const k = globalMultiplier(draft);
-  const duration = motionDurationView(draft, event);
-  const disabled = !ed.canEdit;
-  const set = (param: MotionParam, value: unknown) => apply(motionParamEdits(draft, inherited, event, param, value));
+  const duration = motionDurationView(draft, event, 'full', surface);
+  const disabled = !host.canEdit;
+  const set = (param: MotionParam, value: unknown) => apply(motionParamEdits(draft, inherited, event, param, value, surface));
   const range = (param: MotionParam) => motionParamRange(event, param) ?? { min: 0, max: 0 };
   const isNum = (param: MotionParam) => MOTION_PARAMS[param].kind === 'num';
   const timingHint = (param: MotionParam) =>
     k !== 1 && motionParamSource(draft, inherited, event, param) === 'preset' ? tx.t('paramHints.timing') : undefined;
 
   // As played: the draft's reduce-motion and render profile ("לפני": the inherited config's own).
-  const after = resolveMotionEvent(draft, event, { reduceMotion: !!ed.draft.general.reduceMotion, profile: kioskRenderProfile(draft.effects) });
-  const before = resolveMotionEvent(inherited, event, {
-    reduceMotion: !!ed.inherited.general?.reduceMotion,
-    profile: kioskRenderProfile(inherited?.effects),
-  });
-  const afterLight = kioskRenderProfile(draft.effects) === 'light';
-  const beforeLight = kioskRenderProfile(inherited?.effects) === 'light';
-  const demo = LIVE_PREVIEW_DEMOS[event];
+  const after = resolveMotionEvent(draft, event, { reduceMotion: host.reduceMotion.draft, profile: host.profile.draft, surface });
+  const before = resolveMotionEvent(inherited, event, { reduceMotion: host.reduceMotion.inherited, profile: host.profile.inherited, surface });
+  const afterLight = host.profile.draft === 'light';
+  const beforeLight = host.profile.inherited === 'light';
+  const scene = motionSceneOf(event, surface);
 
   const numberField = (param: MotionParam, opts: { hint?: ReactNode; slider?: { step: number; max?: number } } = {}) => {
     const r = range(param);
@@ -340,7 +333,7 @@ function EventBody({ event, stageRef, beforeRef, playBoth }: {
     );
   };
 
-  const kindOptions = MOTION_EVENT_TYPES[event].map((kind) => ({ value: kind, label: tx.kind(kind) }));
+  const kindOptions = motionEventTypesOf(event, surface).map((kind) => ({ value: kind, label: tx.kind(kind) }));
 
   return (
     <div className="space-y-4 border-t bg-muted/15 px-3 pt-4 pb-3 animate-in fade-in slide-in-from-top-1 duration-200">
@@ -348,17 +341,17 @@ function EventBody({ event, stageRef, beforeRef, playBoth }: {
         {compare ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <MotionStage spec={before} handle={beforeRef} />
+              <MotionStage spec={before} handle={beforeRef} scene={scene} surface={surface} />
               <MotionStageCaption spec={before} label={tx.t('before')} light={beforeLight} />
             </div>
             <div className="space-y-1.5">
-              <MotionStage spec={after} handle={stageRef} className="ring-1 ring-primary/40" />
+              <MotionStage spec={after} handle={stageRef} scene={scene} surface={surface} className="ring-1 ring-primary/40" />
               <MotionStageCaption spec={after} label={tx.t('after')} light={afterLight} />
             </div>
           </div>
         ) : (
           <div className="space-y-1.5">
-            <MotionStage spec={after} handle={stageRef} />
+            <MotionStage spec={after} handle={stageRef} scene={scene} surface={surface} />
             <MotionStageCaption spec={after} light={afterLight} />
           </div>
         )}
@@ -369,8 +362,8 @@ function EventBody({ event, stageRef, beforeRef, playBoth }: {
           <Button type="button" size="sm" variant={compare ? 'secondary' : 'outline'} aria-pressed={compare} onClick={() => setCompare((v) => !v)}>
             <Columns2 /> {tx.t('compare')}
           </Button>
-          {demo ? (
-            <Button type="button" size="sm" variant="ghost" onClick={() => ed.playMotion(demo)}>
+          {host.canPlayLive(event) ? (
+            <Button type="button" size="sm" variant="ghost" onClick={() => host.playLive?.(event)}>
               <MonitorPlay /> {tx.t('inLivePreview')}
             </Button>
           ) : null}
@@ -494,8 +487,8 @@ function EventBody({ event, stageRef, beforeRef, playBoth }: {
           size="sm"
           variant="ghost"
           title={tx.t('resetEventHint')}
-          disabled={disabled || motionEventSource(draft, inherited, event) !== 'here'}
-          onClick={() => apply(motionEventResetEdits(event))}
+          disabled={disabled || motionEventSource(draft, inherited, event, surface) !== 'here'}
+          onClick={() => apply(motionEventResetEdits(event, surface))}
         >
           <RotateCcw /> {tx.t('resetEvent')}
         </Button>
@@ -505,16 +498,17 @@ function EventBody({ event, stageRef, beforeRef, playBoth }: {
 }
 
 function EventRow({ event, open, onOpen }: { event: MotionEventKey; open: boolean; onOpen: (open: boolean) => void }) {
-  const ed = useKioskEditor();
-  const tx = useMotionText();
-  const apply = useApplyMotionEdits();
+  const host = useMotionHost();
+  const { surface } = host;
+  const tx = useMotionText(surface);
+  const apply = host.apply;
   const stageRef = useRef<MotionStageHandle>(null);
   const beforeRef = useRef<MotionStageHandle>(null);
-  const draft = ed.draft.motion as MotionEngineSettings;
-  const inherited = ed.inherited.motion as MotionEngineSettings;
-  const view = motionEventView(draft, event);
-  const source = motionEventSource(draft, inherited, event);
-  const errors = useFieldErrors(`motion.events.${event}`);
+  const draft = host.draft;
+  const inherited = host.inherited;
+  const view = motionEventView(draft, event, surface);
+  const source = motionEventSource(draft, inherited, event, surface);
+  const errors = host.errorsAt(`motion.events.${event}`);
   const Icon = MOTION_EVENT_ICONS[event];
   const playing = view.enabled && view.animationType !== 'none';
 
@@ -562,9 +556,9 @@ function EventRow({ event, open, onOpen }: { event: MotionEventKey; open: boolea
         </span>
         <Switch
           checked={view.enabled}
-          disabled={!ed.canEdit}
+          disabled={!host.canEdit}
           aria-label={`${tx.param('enabled')} — ${tx.eventName(event)}`}
-          onCheckedChange={(v) => apply(motionParamEdits(draft, inherited, event, 'enabled', !!v))}
+          onCheckedChange={(v) => apply(motionParamEdits(draft, inherited, event, 'enabled', !!v, surface))}
         />
         <Button type="button" size="icon-sm" variant="ghost" title={tx.t('playHint')} aria-label={`${tx.t('play')} — ${tx.eventName(event)}`} onClick={play}>
           <Play />
@@ -582,15 +576,18 @@ type EventFilter = 'all' | 'custom' | 'off';
 
 /** "אירועים": the four groups, a filter (all · changed · off), each event's row. */
 export function MotionEventsCard() {
-  const ed = useKioskEditor();
-  const tx = useMotionText();
+  const host = useMotionHost();
+  const { surface } = host;
+  const tx = useMotionText(surface);
   const [filter, setFilter] = useState<EventFilter>('all');
   const [open, setOpen] = useState<ReadonlySet<MotionEventKey>>(() => new Set());
-  const draft = ed.draft.motion as MotionEngineSettings;
-  const inherited = ed.inherited.motion as MotionEngineSettings;
+  const draft = host.draft;
+  const inherited = host.inherited;
   const shown = (e: MotionEventKey) =>
-    filter === 'all' ? true : filter === 'off' ? !motionEventView(draft, e).enabled : motionEventSource(draft, inherited, e) !== 'preset';
-  const groups = MOTION_EVENT_GROUPS.map((g) => ({ ...g, events: g.events.filter(shown) })).filter((g) => g.events.length > 0);
+    filter === 'all' ? true : filter === 'off' ? !motionEventView(draft, e, surface).enabled : motionEventSource(draft, inherited, e, surface) !== 'preset';
+  const groups = motionEventGroupsOf(surface)
+    .map((g) => ({ ...g, events: g.events.filter(shown) }))
+    .filter((g) => g.events.length > 0);
   const toggle = (e: MotionEventKey, on: boolean) =>
     setOpen((s) => {
       const next = new Set(s);
@@ -600,7 +597,7 @@ export function MotionEventsCard() {
     });
 
   return (
-    <SectionCard
+    <MotionCard
       title={tx.t('eventsTitle')}
       description={tx.t('eventsHint')}
       action={
@@ -629,6 +626,6 @@ export function MotionEventsCard() {
           </section>
         );
       })}
-    </SectionCard>
+    </MotionCard>
   );
 }

@@ -31,6 +31,11 @@ tests/fixtures/kiosk_motion_engine.json, byte-identical in pos-android):
      reduced motion (`general.reduceMotion`) — each event's `reducedMotionFallback` (fade /
      highlight / colour / none), never a big movement.
 
+The till plays the same engine (P:/specs/till-motion.md "תיקון 14.10", `surface="till"`): its own
+subset of the events (TILL_EVENTS, two of them its own — `tableOpen`, `tabSwitch`), its presets
+("legacy" = today's till, the default; "none" = every event off) and the payment screen rising as its
+`payment` — see "Surfaces" below. Its `motion` lives in the till design (app/services/till_design.py).
+
 Pure: no database, no imports from kiosk_config (which builds its schema from these tables).
 """
 from __future__ import annotations
@@ -66,15 +71,22 @@ EVENTS: Tuple[str, ...] = (
     "loading",
     "scrollHint",
     "homeReturn",
+    # The till's own (P:/specs/till-motion.md "תיקון 14.10"): in the shared catalogue, never played by a kiosk.
+    "tableOpen",
+    "tabSwitch",
 )
 
-#: The animation library (spec §3): 35 kinds, and "none".
+#: The animation library (spec §3): 40 kinds, and "none". The last five are the till's screen-to-screen
+#: kinds of opening a table (`tableOpen`): the table's tile grows into the order (zoom), the order comes
+#: in from the side in the reading direction (slide), up from the bottom (rise), a fade, or grows from
+#: the middle of the screen (scale) — and "flip", the library's own.
 TYPES: Tuple[str, ...] = (
     "scalePress", "bounce", "pulse", "flyToCart", "slideIn", "slideOut", "fadeIn", "fadeOut",
     "fadeScale", "expand", "collapse", "morph", "flip", "countUp", "countDown", "shake", "wiggle",
     "drawCheck", "progressFill", "highlight", "ripple", "floating", "swipeTransition", "staggeredEntry",
     "parallaxLight", "confetti", "skeletonShimmer", "attentionArrow", "cartBadgePop", "priceHighlight",
-    "buttonFill", "successZoom", "cardLift", "crossfade", "reorderShift", "none",
+    "buttonFill", "successZoom", "cardLift", "crossfade", "reorderShift",
+    "zoom", "slide", "rise", "fade", "scale", "none",
 )
 
 #: The kinds each event can play (the renderers draw every one of them); "none" always.
@@ -105,13 +117,21 @@ EVENT_TYPES: Dict[str, Tuple[str, ...]] = {
     "loading": ("skeletonShimmer", "pulse", "none"),
     "scrollHint": ("attentionArrow", "wiggle", "pulse", "none"),
     "homeReturn": ("crossfade", "fadeIn", "fadeScale", "slideIn", "none"),
+    # The till: a table picked on the map opens its order (and leaving it plays the same, reversed);
+    # the order and the tables side by side (the bottom bar).
+    "tableOpen": ("zoom", "slide", "rise", "fade", "flip", "scale", "none"),
+    "tabSwitch": ("crossfade", "fadeIn", "slideIn", "swipeTransition", "none"),
 }
 
 #: "auto": the natural way for the event (the reading order for screens); otherwise where it moves to.
 DIRECTIONS: Tuple[str, ...] = ("auto", "left", "right", "up", "down")
 
 #: The curves by name (CSS cubic-bezier x1, y1, x2, y2); "auto" is each kind's own.
-EASINGS: Tuple[str, ...] = ("auto", "standard", "decelerate", "accelerate", "emphasized", "easeInOut", "overshoot", "linear")
+#: "ios": the till's screens before the engine (pos-android ui/common/IosTransitions.kt, IosMotionSpec.Easing) —
+#: off quickly, then a long soft landing.
+EASINGS: Tuple[str, ...] = (
+    "auto", "standard", "decelerate", "accelerate", "emphasized", "easeInOut", "overshoot", "linear", "ios",
+)
 EASING_CURVES: Dict[str, Tuple[float, float, float, float]] = {
     "standard": (0.3, 0.0, 0.2, 1.0),
     "decelerate": (0.2, 0.7, 0.2, 1.0),
@@ -120,6 +140,7 @@ EASING_CURVES: Dict[str, Tuple[float, float, float, float]] = {
     "easeInOut": (0.45, 0.0, 0.55, 1.0),
     "overshoot": (0.34, 1.56, 0.64, 1.0),
     "linear": (0.0, 0.0, 1.0, 1.0),
+    "ios": (0.32, 0.72, 0.0, 1.0),
 }
 
 #: Reduced motion (spec §14): the feedback stays — a fade, a highlight, a colour change — or none.
@@ -216,6 +237,9 @@ STANDARD: Dict[str, Dict[str, Any]] = {
     "scrollHint": _ev("attentionArrow", 1500, delay=800, direction="down", distance=12, easing="easeInOut",
                       repeat=3, repeat_delay=400),
     "homeReturn": _ev("crossfade", 700),
+    # The till's (a kiosk never plays them): the table's tile grows into its order; order ↔ tables.
+    "tableOpen": _ev("zoom", 650),
+    "tabSwitch": _ev("crossfade", 450),
 }
 
 #: Each preset as its difference from Standard: "Runner Slow" — extra clear (×≈1.3); "Runner Fast" —
@@ -237,6 +261,7 @@ PRESET_DELTAS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "paymentProgress": {"durationMs": 1500}, "success": {"durationMs": 1300}, "idle": {"durationMs": 3400},
         "timeout": {"durationMs": 750}, "soldOut": {"durationMs": 750}, "loading": {"durationMs": 2000},
         "scrollHint": {"durationMs": 1800}, "homeReturn": {"durationMs": 900},
+        "tableOpen": {"durationMs": 800}, "tabSwitch": {"durationMs": 600},
     },
     "fast": {
         "productPress": {"durationMs": 350}, "addToCart": {"durationMs": 550, "holdMs": 800},
@@ -250,6 +275,7 @@ PRESET_DELTAS: Dict[str, Dict[str, Dict[str, Any]]] = {
         "paymentProgress": {"durationMs": 1000}, "success": {"durationMs": 800}, "idle": {"durationMs": 2400},
         "timeout": {"durationMs": 450}, "soldOut": {"durationMs": 450}, "loading": {"durationMs": 1400},
         "scrollHint": {"durationMs": 1200}, "homeReturn": {"durationMs": 550},
+        "tableOpen": {"durationMs": 450}, "tabSwitch": {"durationMs": 300},
     },
     "legacy": {
         # The springy press, the ~0.56 s pop-and-fly and its badge, the card's ✓ for 0.6 s.
@@ -356,6 +382,112 @@ LIGHT_SCREEN_MIN_MS = 400
 LEAVING_EVENTS: Tuple[str, ...] = ("remove", "soldOut")
 
 
+# ── Surfaces: the kiosk, and the till ("עיצוב קופה" → "הנפשות") ──────────────────
+#
+# The till (P:/specs/till-motion.md "תיקון 14.10") plays the same engine — the same MotionConfig
+# shape, the same parameters and rules — over its own subset of the events, stored in the till
+# design's `motion` (app/services/till_design.py). What differs there, and only that:
+#
+# * its events (TILL_EVENTS): the kiosk's a till has, and its own two (TILL_ONLY_EVENTS), which a
+#   kiosk never plays and its config refuses;
+# * `payment` is the payment screen rising over the order, not the pay button filling
+#   (TILL_EVENT_TYPES, TILL_STANDARD);
+# * its presets (TILL_PRESETS): "legacy" is the default — today's till (TILL_LEGACY: a push / pop of
+#   300 ms, payment and the windows rising in 330 ms, the tabs cross-fading in 140 ms, on the iOS
+#   curve; nothing else moves) with a table opening in a zoom from its tile (the owner's default) —
+#   and "none" switches every event off, whatever the levels set;
+# * no older per-transition keys (a till's design never had them): no LEGACY_KINDS, no
+#   LEGACY_DURATIONS by kind, the plain stagger cap;
+# * the light profile keeps opening a table and the payment screen seen (TILL_LIGHT).
+
+SURFACES: Tuple[str, ...] = ("kiosk", "till")
+#: The till's own events: in the shared catalogue, never played by a kiosk.
+TILL_ONLY_EVENTS: Tuple[str, ...] = ("tableOpen", "tabSwitch")
+KIOSK_EVENTS: Tuple[str, ...] = tuple(e for e in EVENTS if e not in TILL_ONLY_EVENTS)
+#: The till's events, in the dashboard's order (products, navigation, payment).
+TILL_EVENTS: Tuple[str, ...] = (
+    "productPress", "addToCart", "cartBadge", "quantityChange", "remove", "soldOut",
+    "categorySwitch", "itemsEnter", "pageTransition", "modalOpen", "tableOpen", "tabSwitch",
+    "payment", "success", "error", "toast",
+)
+SURFACE_EVENTS: Dict[str, Tuple[str, ...]] = {"kiosk": KIOSK_EVENTS, "till": TILL_EVENTS}
+
+#: "ללא הנפשות": every event off, whatever a level set for it (the till only).
+NONE_PRESET = "none"
+TILL_PRESETS: Tuple[str, ...] = ("legacy", "standard", "slow", "fast", "custom", NONE_PRESET)
+#: No `motion` at any level: today's till.
+TILL_DEFAULT_PRESET = "legacy"
+SURFACE_PRESETS: Dict[str, Tuple[str, ...]] = {"kiosk": PRESETS, "till": TILL_PRESETS}
+SURFACE_DEFAULT_PRESETS: Dict[str, str] = {"kiosk": DEFAULT_PRESET, "till": TILL_DEFAULT_PRESET}
+
+#: The till's `payment`: the payment screen rising over the order (the pay button's lock is the till's own).
+TILL_EVENT_TYPES: Dict[str, Tuple[str, ...]] = {
+    "payment": ("slideIn", "fadeIn", "fadeScale", "none"),
+}
+TILL_STANDARD: Dict[str, Dict[str, Any]] = {
+    "payment": _ev("slideIn", 650, direction="up"),
+}
+
+#: The till's "legacy" over its Standard: today's screens (pos-android IosTransitions.kt — PUSH_MS 300,
+#: PRESENT_MS 330, FADE_MS 140, the iOS curve; reduced motion: none at all), and no motion inside a
+#: screen — each of those events off, at the fast pace when a level switches it on. Opening a table zooms
+#: from its tile into the order, as a screen change (300 ms, the iOS curve), and leaving it plays the zoom
+#: back — the owner, 14.10.2026: zoom is the default, also with nothing set.
+TILL_LEGACY: Dict[str, Dict[str, Any]] = {
+    "productPress": {"enabled": False, "durationMs": 350},
+    "addToCart": {"enabled": False, "durationMs": 550, "holdMs": 800},
+    "cartBadge": {"enabled": False, "durationMs": 450},
+    "quantityChange": {"enabled": False, "durationMs": 400},
+    "remove": {"enabled": False, "durationMs": 500, "holdMs": 3500},
+    "soldOut": {"enabled": False, "durationMs": 450},
+    "categorySwitch": {"enabled": False, "durationMs": 450},
+    "itemsEnter": {"enabled": False, "durationMs": 350, "staggerMs": 45},
+    "pageTransition": {"animationType": "slideIn", "durationMs": 300, "easing": "ios", "reducedMotionFallback": "none"},
+    "modalOpen": {"animationType": "slideIn", "direction": "up", "durationMs": 330, "easing": "ios",
+                  "reducedMotionFallback": "none"},
+    "tableOpen": {"durationMs": 300, "easing": "ios", "reducedMotionFallback": "none"},
+    "tabSwitch": {"durationMs": 140, "reducedMotionFallback": "none"},
+    "payment": {"durationMs": 330, "easing": "ios", "reducedMotionFallback": "none"},
+    "success": {"enabled": False, "durationMs": 800},
+    "error": {"enabled": False, "durationMs": 450},
+    "toast": {"enabled": False, "durationMs": 350, "holdMs": 1600},
+}
+
+#: The till's light profile, beside the kiosk's: opening a table and the payment screen stay seen
+#: (a short slide or a fade, no shorter than LIGHT_SCREEN_MIN_MS); a table opens with its own fade.
+TILL_LIGHT: Dict[str, Any] = {
+    "fadeEvents": ("tableOpen",),
+    "screenEvents": ("tableOpen", "payment"),
+    "fadeKinds": {"tableOpen": "fade"},
+}
+
+
+def surface_of(surface: Any) -> str:
+    return surface if surface in SURFACES else "kiosk"
+
+
+def surface_events(surface: str = "kiosk") -> Tuple[str, ...]:
+    return SURFACE_EVENTS[surface_of(surface)]
+
+
+def presets_of(surface: str = "kiosk") -> Tuple[str, ...]:
+    return SURFACE_PRESETS[surface_of(surface)]
+
+
+def event_types(event: str, surface: str = "kiosk") -> Tuple[str, ...]:
+    """The kinds an event plays on that surface ("none" always)."""
+    if surface_of(surface) == "till" and event in TILL_EVENT_TYPES:
+        return TILL_EVENT_TYPES[event]
+    return EVENT_TYPES[event]
+
+
+def standard_values(event: str, surface: str = "kiosk") -> Dict[str, Any]:
+    """Runner Standard's values of an event on that surface."""
+    if surface_of(surface) == "till" and event in TILL_STANDARD:
+        return dict(TILL_STANDARD[event])
+    return dict(STANDARD[event])
+
+
 def round_half_up(x: float) -> int:
     """Rounding as every renderer does it (Kotlin roundToInt, JS Math.round): halves up."""
     return int(math.floor(x + 0.5))
@@ -372,9 +504,11 @@ def resolve_duration(global_multiplier: float, event_default: int, override: Opt
     return round_half_up(event_default * global_multiplier)
 
 
-def preset_of(motion: Optional[Mapping[str, Any]]) -> str:
+def preset_of(motion: Optional[Mapping[str, Any]], surface: str = "kiosk") -> str:
+    """The config's preset, or the surface's default ("standard" for a kiosk, "legacy" for a till)."""
+    surface = surface_of(surface)
     p = (motion or {}).get("preset")
-    return p if p in PRESETS else DEFAULT_PRESET
+    return p if p in SURFACE_PRESETS[surface] else SURFACE_DEFAULT_PRESETS[surface]
 
 
 def global_multiplier(motion: Optional[Mapping[str, Any]], profile: str = "full") -> float:
@@ -398,20 +532,23 @@ def global_multiplier(motion: Optional[Mapping[str, Any]], profile: str = "full"
     return k
 
 
-def preset_values(preset: str, event: str) -> Dict[str, Any]:
+def preset_values(preset: str, event: str, surface: str = "kiosk") -> Dict[str, Any]:
     """The preset's own values of the event (before the older choices and the overrides)."""
-    out = dict(STANDARD[event])
-    out.update(PRESET_DELTAS.get(preset, {}).get(event, {}))
+    out = standard_values(event, surface)
+    if surface_of(surface) == "till" and preset == "legacy":
+        out.update(TILL_LEGACY.get(event, {}))
+    else:
+        out.update(PRESET_DELTAS.get(preset, {}).get(event, {}))
     return out
 
 
-def _param_ok(event: str, name: str, value: Any) -> bool:
+def _param_ok(event: str, name: str, value: Any, surface: str = "kiosk") -> bool:
     kind, lo, hi = PARAMS[name]
     lo, hi = EVENT_PARAM_RANGES.get(event, {}).get(name, (lo, hi))
     if kind == "bool":
         return isinstance(value, bool)
     if kind == "type":
-        return value in EVENT_TYPES[event]
+        return value in event_types(event, surface)
     if kind == "enum":
         return value in lo
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -421,12 +558,12 @@ def _param_ok(event: str, name: str, value: Any) -> bool:
     return lo <= value <= hi
 
 
-def explicit_of(motion: Optional[Mapping[str, Any]], event: str) -> Dict[str, Any]:
+def explicit_of(motion: Optional[Mapping[str, Any]], event: str, surface: str = "kiosk") -> Dict[str, Any]:
     """The event's own values (`motion.events.<event>`) that are valid; the rest is ignored."""
     raw = ((motion or {}).get("events") or {}).get(event)
     if not isinstance(raw, Mapping):
         return {}
-    return {k: v for k, v in raw.items() if k in PARAMS and v is not None and _param_ok(event, k, v)}
+    return {k: v for k, v in raw.items() if k in PARAMS and v is not None and _param_ok(event, k, v, surface)}
 
 
 def resolve_event(
@@ -435,39 +572,48 @@ def resolve_event(
     *,
     reduce_motion: bool = False,
     profile: str = "full",
+    surface: str = "kiosk",
 ) -> Dict[str, Any]:
-    """One event as the kiosk plays it (the module docstring's five steps)."""
+    """One event as the kiosk (or the till, `surface="till"`) plays it (the module docstring's five steps)."""
+    surface = surface_of(surface)
+    kiosk = surface == "kiosk"
     m = motion or {}
-    preset = preset_of(m)
-    base = preset_values(preset, event)
-    kinds = LEGACY_KINDS.get(event) or (LEGACY_ONLY_KINDS.get(event) if preset == "legacy" else None)
+    preset = preset_of(m, surface)
+    base = preset_values(preset, event, surface)
+    kinds = (LEGACY_KINDS.get(event) or (LEGACY_ONLY_KINDS.get(event) if preset == "legacy" else None)) if kiosk else None
     if kinds is not None:
         key, table = kinds
         old = m.get(key)
         if old in table:
             base.update(table[old])
-    explicit = explicit_of(m, event)
+    explicit = explicit_of(m, event, surface)
     p = {**base, **explicit}
-    kind = p["animationType"] if p["animationType"] in EVENT_TYPES[event] else STANDARD[event]["animationType"]
+    if preset == NONE_PRESET:
+        # "ללא הנפשות": nothing plays, whatever a level set for the event.
+        p["enabled"] = False
+    types = event_types(event, surface)
+    kind = p["animationType"] if p["animationType"] in types else standard_values(event, surface)["animationType"]
     if not p["enabled"]:
         kind = "none"
     k = global_multiplier(m, profile)
     distance = int(p["distancePx"])
-    light_screen = profile == "light" and not reduce_motion and kind != "none" and event in LIGHT_SCREEN_EVENTS
+    screen_events = LIGHT_SCREEN_EVENTS if kiosk else LIGHT_SCREEN_EVENTS + TILL_LIGHT["screenEvents"]
+    fade_events = LIGHT_FADE_EVENTS if kiosk else LIGHT_FADE_EVENTS + TILL_LIGHT["fadeEvents"]
+    light_screen = profile == "light" and not reduce_motion and kind != "none" and event in screen_events
     if profile == "light" and not reduce_motion and kind != "none":
         if event in LIGHT_NONE_EVENTS:
             kind = "none"
         elif light_screen and kind in LIGHT_SLIDE_KINDS:
             kind = "slideIn"
             distance = distance if 0 < distance <= LIGHT_SCREEN_SHIFT_PX else LIGHT_SCREEN_SHIFT_PX
-        elif event in LIGHT_FADE_EVENTS:
-            kind = "fadeIn"
+        elif event in fade_events:
+            kind = "fadeIn" if kiosk else TILL_LIGHT["fadeKinds"].get(event, "fadeIn")
         else:
             kind = LIGHT_REPLACE.get(kind, kind)
-            if kind not in EVENT_TYPES[event]:
+            if kind not in types:
                 kind = "none"
     base_ms = base["durationMs"]
-    if preset == "legacy" and event in LEGACY_DURATIONS:
+    if kiosk and preset == "legacy" and event in LEGACY_DURATIONS:
         base_ms = LEGACY_DURATIONS[event].get(kind, base_ms)
     duration = resolve_duration(k, base_ms, explicit.get("durationMs"))
     if light_screen and "durationMs" not in explicit:
@@ -500,7 +646,8 @@ def resolve_event(
     if event == "remove":
         out["holdMs"] = max(out["holdMs"], REMOVE_MIN_HOLD_MS)
     if event == "itemsEnter" and kind != "none":
-        out["staggerCapMs"] = round_half_up(LEGACY_STAGGER_CAP_MS * k) if preset == "legacy" else out["staggerMs"] * STAGGER_CAP_STEPS
+        legacy_cap = kiosk and preset == "legacy"
+        out["staggerCapMs"] = round_half_up(LEGACY_STAGGER_CAP_MS * k) if legacy_cap else out["staggerMs"] * STAGGER_CAP_STEPS
     if kind == "none":
         out["durationMs"] = 0
     if reduce_motion and kind != "none":
@@ -523,9 +670,18 @@ def _reduced(spec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def resolve_all(motion: Optional[Mapping[str, Any]], *, reduce_motion: bool = False, profile: str = "full") -> Dict[str, Dict[str, Any]]:
-    """Every event as the kiosk plays it."""
-    return {e: resolve_event(motion, e, reduce_motion=reduce_motion, profile=profile) for e in EVENTS}
+def resolve_all(
+    motion: Optional[Mapping[str, Any]],
+    *,
+    reduce_motion: bool = False,
+    profile: str = "full",
+    surface: str = "kiosk",
+) -> Dict[str, Dict[str, Any]]:
+    """Every event of the surface as it plays it (the kiosk: KIOSK_EVENTS; the till: TILL_EVENTS)."""
+    return {
+        e: resolve_event(motion, e, reduce_motion=reduce_motion, profile=profile, surface=surface)
+        for e in surface_events(surface)
+    }
 
 
 def speed_of_global(global_speed: Optional[str], multiplier: Any = None) -> str:

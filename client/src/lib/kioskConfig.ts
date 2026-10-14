@@ -24,7 +24,7 @@ import {
 import { validateKioskTexts, isKioskTextKey, type KioskTextsByLang } from './kioskTexts';
 import { validateCategoryIconIds } from './kioskIcons';
 import {
-  MOTION_EVENTS,
+  KIOSK_MOTION_EVENTS,
   MOTION_GLOBAL_SPEEDS,
   MOTION_MULTIPLIER_MAX,
   MOTION_MULTIPLIER_MIN,
@@ -3372,7 +3372,8 @@ function validateMotionEngine(e: KioskValidationError[], mo: Record<string, unkn
   }
   for (const [event, values] of Object.entries(mo.events)) {
     const p = `motion.events.${event}`;
-    if (!(MOTION_EVENTS as readonly string[]).includes(event)) {
+    // The kiosk's events: the till's own (`tableOpen`, `tabSwitch`) are refused, as on the server.
+    if (!(KIOSK_MOTION_EVENTS as readonly string[]).includes(event)) {
       e.push({ path: p, code: 'unknownKey' });
       continue;
     }

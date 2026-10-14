@@ -52,6 +52,7 @@ from app.services.kiosk_config import (
     Map,
     Node,
     Obj,
+    PartialObj,
     Str,
     UList,
     _INVALID,
@@ -59,6 +60,7 @@ from app.services.kiosk_config import (
     _fail,
     _is_int,
     _merge_node,
+    motion_engine_fields,
 )
 
 SCHEMA_VERSION = 1
@@ -572,7 +574,13 @@ SCHEMA = Obj({
         "atOpen": Bool(),
         "prefix": Str(ORDER_PREFIX_MAX, pattern=_ORDER_PREFIX, pattern_message="letters and digits only"),
     }),
-})
+    # "הנפשות" (P:/specs/till-motion.md "תיקון 14.10"): the kiosk's Motion Engine on the till — the
+    # same MotionConfig (`preset`, `globalSpeed`, `speedMultiplier`, `events.<event>`) under the same
+    # rules (app/services/kiosk_motion.py, surface "till": its events, its presets, its kinds), merged
+    # per event and parameter level by level. Every key optional: nothing set is the "legacy" preset —
+    # today's till (a push / pop of 300 ms, payment and the windows 330 ms, the tabs 140 ms).
+    "motion": PartialObj(motion_engine_fields("till")),
+}, fill={"motion": {}})
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schemaVersion": SCHEMA_VERSION,
