@@ -563,6 +563,10 @@ class BusinessInfoSync(BaseModel):
 class EntitySettingsResponse(BaseModel):
     settings: Dict[str, Any]
     settings_updated_at: datetime = Field(..., alias="settingsUpdatedAt")
+    #: On a save: what it leaves that someone should know of, never a refusal — a kiosk
+    #: "ללא אשראי" with no "תשלום בקופה" (`{code, message, machineIds, names}`,
+    #: app/services/payment_integration.py `kiosk_warnings`). Empty otherwise.
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True
@@ -583,6 +587,8 @@ class MachineSettingsResponse(BaseModel):
     effective: Optional[Dict[str, Any]] = None
     #: As on `ShopSettingsResponse`.
     effective_sources: Optional[Dict[str, str]] = Field(None, alias="effectiveSources")
+    #: As on `EntitySettingsResponse`.
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         populate_by_name = True

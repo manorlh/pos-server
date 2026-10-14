@@ -2,8 +2,11 @@
  * "תפריט הקופה" — the server's routes (pos-server app/routers/till_menu.py). One value
  * (`hiddenMenuItems`), two ways in with their own writers:
  *
- * * `device` — `/till-menu-hide`: the device page's card; the super admin and the company managers.
- * * `design` — `/till-design/menu-hide`: "עיצוב קופה"'s card; whoever edits the till design.
+ * * `device` — `/till-menu-hide`: the device page's card.
+ * * `design` — `/till-design/menu-hide`: "עיצוב קופה"'s card (read with the design's access).
+ *
+ * Both written by the same people: the super admin, a distributor and a company manager within their
+ * scope — never a shop manager (read-only there).
  *
  * The rules and the Hebrew: lib/tillMenu.ts.
  */

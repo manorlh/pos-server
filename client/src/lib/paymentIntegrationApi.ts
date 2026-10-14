@@ -41,6 +41,11 @@ export interface PaymentIntegrationContext {
   } | null;
   requiredFields: Partial<Record<Exclude<PaymentIntegration, 'auto'>, PaymentFieldKey[]>>;
   fieldLabels: Partial<Record<PaymentFieldKey, string>>;
+  /**
+   * A kiosk: whether its config takes payment at the till ("תשלום בקופה") — on "ללא אשראי"
+   * without it, "לקיוסק לא יישאר אמצעי תשלום". Null (or absent: an older server) otherwise.
+   */
+  kioskPaysAtTill?: boolean | null;
 }
 
 export const paymentIntegrationContextKey = (level: SettingsLevelName, targetId: string) =>

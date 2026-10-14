@@ -7,7 +7,16 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { KIOSK_SYNC_MS, WebKioskService, usableMethods, webSells, type WebKioskDeps } from './kioskWebService';
+import {
+  KIOSK_SYNC_MS,
+  WEB_NO_CARD_TEXT,
+  WebKioskService,
+  usableMethods,
+  webNoCard,
+  webPayMethods,
+  webSells,
+  type WebKioskDeps,
+} from './kioskWebService';
 import { KV, LocalStore, MemoryStore, openKioskStore, type StorageLike } from './kioskWebStore';
 import { apiBase, describeBrowser, detailOf, messageOf, normalizePairingCode, webDeviceInfo, type FetchFn } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage } from './kioskWebCatalog';
@@ -228,6 +237,36 @@ describe('the honest pay methods', () => {
     assert.deepEqual(svc.view().pay.methods, ['card', 'voucher']);
     assert.ok(!svc.view().pay.usable.includes('voucher'));
     assert.ok(!svc.view().pay.usable.includes('split_card'));
+    assert.equal(svc.view().state.noPayment, true);
+  });
+
+  it('"ללא אשראי" (paymentIntegration none): no card tile at all, the till and the voucher stay', async () => {
+    assert.equal(webNoCard({ paymentIntegration: 'none' }), true);
+    assert.equal(webNoCard({ paymentIntegration: 'nayax_lan' }), false);
+    assert.equal(webNoCard({}), false);
+    assert.equal(webNoCard(null), false);
+    assert.deepEqual(webPayMethods(['card', 'voucher', 'cash_at_till'], true), ['voucher', 'cash_at_till']);
+    assert.deepEqual(webPayMethods(['card', 'voucher', 'cash_at_till'], false), ['card', 'voucher', 'cash_at_till']);
+
+    const { cloud, svc } = await paired();
+    assert.ok(svc.view().pay.methods.includes('card'));
+    cloud.handlers['GET sync/m1/settings'] = () => ({
+      status: 200,
+      body: { syncType: 'full', settings: { paymentIntegration: 'none' }, businessInfo: null, settingsUpdatedAt: '2026-10-14T00:00:00Z' },
+    });
+    await svc.syncNow();
+    const view = svc.view();
+    assert.deepEqual(view.pay.methods, ['voucher', 'cash_at_till']);
+    assert.deepEqual(view.pay.usable, ['voucher', 'cash_at_till']);
+    assert.equal(view.pay.cardOff, WEB_NO_CARD_TEXT);
+    assert.equal(view.state.noPayment, false);
+    // Card only: nothing left to take — "התשלום אינו זמין" (the dashboard warned on save).
+    cloud.handlers['POST sync/m1/kiosk/sync'] = () => ({
+      status: 200,
+      body: { kiosk: true, configVersion: 'v9', config: { payment: { methods: ['card'] } }, state: {} },
+    });
+    await svc.kioskSync();
+    assert.deepEqual(svc.view().pay.methods, []);
     assert.equal(svc.view().state.noPayment, true);
   });
 

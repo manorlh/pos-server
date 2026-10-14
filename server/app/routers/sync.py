@@ -2467,13 +2467,26 @@ def get_settings_sync(
         )
 
     effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
+    # "סוג אינטגרציית אשראי": the explicit choice down the layers (absent = automatic),
+    # and Z-Credit's password for a till that charges there — its only way out of the
+    # server (app/services/payment_integration.py). Applied below; read here for "ללא אשראי".
+    from app.services import payment_integration
+
+    integration_fields = payment_integration.till_sync_fields(db, machine, tenant, company, shop, area_layer)
     # The payment option keys always go out, resolved, so the till never has to
     # guess what an absent key means. The legacy pair is overwritten with values
     # derived from them: a till still on an APK that predates the per-option keys
     # reads only tipsEnabled/cashTipsEnabled, and should still ask for a tip where
     # the merchant turned one on through the new keys alone. View only — nothing
-    # here is written back to any layer's stored settings.
-    payment_options = resolve_payment_options(all_settings)
+    # here is written back to any layer's stored settings. A till "ללא אשראי"
+    # (`paymentIntegration` = `none`) gets the card switches off whatever the layers
+    # store, so an older till that reads `none` as `auto` shows no card either.
+    option_settings = (
+        payment_integration.without_card(all_settings)
+        if integration_fields.get(payment_integration.KEY) == payment_integration.NONE
+        else all_settings
+    )
+    payment_options = resolve_payment_options(option_settings)
     effective.update(payment_options)
     effective.update(legacy_tip_flags(payment_options))
     # The production voucher's two switches, scanned and typed by hand ("שובר ידני"),
@@ -2542,14 +2555,8 @@ def get_settings_sync(
     from app.services import desktop_idle_return
 
     effective[desktop_idle_return.KEY] = desktop_idle_return.resolve(all_settings)
-    # "סוג אינטגרציית אשראי": the explicit choice down the layers (absent = automatic),
-    # and Z-Credit's password for a till that charges there — its only way out of the
-    # server (app/services/payment_integration.py).
-    from app.services import payment_integration
-
-    for key, value in payment_integration.till_sync_fields(
-        db, machine, tenant, company, shop, area_layer
-    ).items():
+    # "סוג אינטגרציית אשראי" (read above).
+    for key, value in integration_fields.items():
         if value is None:
             effective.pop(key, None)
         else:

@@ -9,6 +9,7 @@ and a code the dashboard words:
   closed, setting up, no payment; the config it runs vs the current one; its version;
 * **terminal** — the card terminal: ready / not answering / not ready / not set; the card lock
   (the pinpad connected is not the one set, docs/SPEC_KIOSK.md §20); a card result left for staff;
+  none at all for a kiosk "ללא אשראי" (`off`, `no_card`);
 * **printer** — ok / no paper / offline / error, and bons that did not print;
 * **tillLink** — the kiosk's link to the till it prints on or hands orders to (LAN host / cloud);
 * **kds** — in KDS mode: the shop's KDS screens seen lately and the kiosk's own link;
@@ -202,6 +203,12 @@ def terminal_part(summary: Dict[str, Any], health: Dict[str, Any]) -> Dict[str, 
                   # "בדיקת מספר מסוף מושבתת" (docs/SPEC_KIOSK.md §20.1): shown beside whatever the part says.
                   numberCheckBypass=True if identity.get("numberCheckBypass") else None)
     open_codes = {a.get("key"): a for a in _alerts_of(summary, "terminal")}
+    if identity.get("noCard"):
+        # "ללא אשראי": no terminal to watch, whatever an older kiosk build still reports of one.
+        # Only a card left undecided from before needs someone.
+        if "terminal:card" in open_codes:
+            return _part("terminal", "error", "card_unknown", **common)
+        return _part("terminal", "off", "no_card", **common)
     if lock:
         return _part("terminal", "error", "card_lock", lock=lock, **common)
     if "terminal:card" in open_codes:

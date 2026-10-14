@@ -18,7 +18,9 @@
  * Saving PATCHes that level's settings with only what changed, under the same server
  * rules as the settings dialogs: company managers and up for a company, shop managers
  * for their shop, its points of sale and tills; never every method blocked (every cash and
- * card method blocked with the voucher on is fine: a voucher-only till).
+ * card method blocked with the voucher on is fine: a voucher-only till). A till set to
+ * "ללא אשראי" (`paymentIntegration` = `none`) gets every card method off whatever is set here —
+ * the note under the level says so; its stored values are kept for when it is set back.
  *
  * Under the voucher's two switches, "תצורת עבודה עם שובר" (components/dashboard/vouchers/
  * voucher-work-settings.tsx, lib/voucherWorkSettings.ts — the owner, 13.10.2026: "תארגן מחדש את הגדרות
@@ -73,6 +75,7 @@ import type {
   SettingsLevel,
   VoucherSettingKey,
 } from '@/lib/types';
+import { PI_TEXT } from '@/lib/paymentIntegration';
 import { VOUCHER_STATION_TITLE_KEY, voucherStationTitlePatch, voucherStationTitleTooLong } from '@/lib/voucherTillSettings';
 import { VOUCHER_WORK_KEYS, isVoucherWorkKey, isVoucherWorkValue, type VoucherWorkKey } from '@/lib/voucherWorkSettings';
 import { VoucherWorkSettings } from '@/components/dashboard/vouchers/voucher-work-settings';
@@ -355,6 +358,8 @@ function MethodsEditor({
         {!canWrite ? (
           <p className="text-amber-600 dark:text-amber-400 text-xs mt-1">{t('readOnly')}</p>
         ) : null}
+        {/* "ללא אשראי" (paymentIntegration `none`) turns card off at the till whatever is set here. */}
+        <p className="text-muted-foreground text-xs mt-1">{PI_TEXT.paymentMethodsNote}</p>
       </div>
 
       {/* "קופה 1 אשראי בלבד" in one tap at the level chosen; then save. */}
