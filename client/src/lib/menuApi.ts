@@ -165,6 +165,8 @@ export interface ProductMenu {
   productId: string;
   allergens: Allergen[];
   courseId: string | null;
+  /** "יוצא בלי בון": its lines are marked sent on "שלח", with no ticket and no KDS. Null: the category's. */
+  sendSilently: boolean | null;
   links: LinksState;
   notes: NotesState;
   meal: { slots: MealSlot[] };
@@ -179,6 +181,9 @@ export interface ProductMenuInput {
   allergens?: Allergen[];
   courseId?: string | null;
   setCourse?: boolean;
+  /** Sent only together with `setSendSilently: true` (null: inherit). */
+  sendSilently?: boolean | null;
+  setSendSilently?: boolean;
   links?: { mode: LinksMode; groupIds: string[] };
   notes?: { mode: 'inherit' | 'own'; notes: NoteInput[] };
   meal?: {
@@ -212,12 +217,16 @@ export async function saveProductMenu(productId: string, body: ProductMenuInput)
 export interface CategoryMenu {
   categoryId: string;
   courseId: string | null;
+  /** "יוצא בלי בון". Null: the parent category's (at the top level: off). */
+  sendSilently: boolean | null;
   links: LinksState;
   notes: NotesState;
   canEdit: boolean;
 }
 
-export type CategoryMenuInput = Pick<ProductMenuInput, 'courseId' | 'setCourse' | 'links' | 'notes'>;
+export type CategoryMenuInput = Pick<
+  ProductMenuInput, 'courseId' | 'setCourse' | 'sendSilently' | 'setSendSilently' | 'links' | 'notes'
+>;
 
 export async function fetchCategoryMenu(categoryId: string): Promise<CategoryMenu> {
   return (await api.get<CategoryMenu>(`/menu/categories/${categoryId}`)).data;
@@ -289,6 +298,12 @@ export interface Course {
   sortOrder: number;
   isActive: boolean;
   companyId: string | null;
+  /**
+   * Minutes after the previous course went out until this one goes out by itself, when the till parameter
+   * `autoFire` is "after_minutes" (or "after_ready" with no KDS). Integer 1–180, default 15;
+   * the till parameter `autoFireMinutesOverride` replaces it.
+   */
+  autoFireMinutes: number;
 }
 
 export interface CourseList {
@@ -302,7 +317,8 @@ export async function fetchCourses(): Promise<CourseList> {
 
 export async function saveCourses(
   companyId: string | null,
-  courses: { id?: string; name: string; isActive: boolean }[],
+  /** `autoFireMinutes` absent: the stored value (15 for a new course). */
+  courses: { id?: string; name: string; isActive: boolean; autoFireMinutes?: number }[],
 ): Promise<CourseList> {
   return (await api.put<CourseList>('/menu/courses', { companyId, courses })).data;
 }

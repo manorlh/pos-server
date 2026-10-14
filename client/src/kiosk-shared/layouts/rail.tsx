@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import { basketDocked, basketKindOf, catalogContinuous, layoutOf, productColumns, railCircles, railEmphasisOf, railFollows, railMeasures, type LayoutCategoryIcons } from '@/lib/kioskLayout';
 import { railMotionColors, type RailMotionColors } from '@/lib/kioskConfig';
 import { kioskIcon } from '@/lib/kioskIcons';
+import { readableTextOn } from '@/lib/categoryLook';
 import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
 import { CartPanel, CatalogHeader, textSize, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
@@ -37,9 +38,12 @@ function RailCircle({ m, cat, mode, size, fill, rc }: {
   fill: boolean;
   rc: RailMotionColors;
 }) {
-  const bg = fill ? rc.railSelectedBg : rc.railCircleBg;
-  const fg = fill ? rc.railIconOn : rc.railIcon;
   const id = categoryIconId(m, cat);
+  // "תמונת מחלקה מהקטלוג": an initial (no picture, no icon) on the category's own colour while not chosen.
+  const initialOnly = mode === null && !cat.imageUrl;
+  const own = initialOnly && !fill && cat.color ? readableTextOn(cat.color) : null;
+  const bg = own && cat.color ? cat.color : fill ? rc.railSelectedBg : rc.railCircleBg;
+  const fg = own ?? (fill ? rc.railIconOn : rc.railIcon);
   let inner;
   if ((mode === 'photo' || mode === null) && cat.imageUrl) {
     // eslint-disable-next-line @next/next/no-img-element

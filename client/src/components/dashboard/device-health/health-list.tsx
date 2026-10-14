@@ -3,7 +3,7 @@
 /**
  * "תקינות מכשירים": the summary chips (one per overall state — each a filter too) and the
  * kiosks as cards: name, shop, platform and version, connection, the screen it is on, its
- * paused / closed state, one pill per part, its open alerts and today's orders.
+ * paused / closed state, "פתיחה אוטומטית", one pill per part, its open alerts and today's orders.
  */
 
 import { useTranslations } from 'next-intl';
@@ -11,6 +11,7 @@ import { AlertTriangle, BellRing, ChevronLeft, EthernetPort, PauseCircle, Signal
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
 import { OVERALL_STATES, batteryNotWatched, orderedParts, overallTone, type HealthOverall, type KioskHealthRow } from '@/lib/kioskInsights';
+import { AutoStartLine } from '@/components/dashboard/machines/auto-start';
 import { OverallBadge, PartPill, TONE, ToneIcon, agoText, detailLines, type HealthLabels } from './health-ui';
 
 export function HealthSummaryChips({
@@ -133,6 +134,7 @@ export function KioskHealthCard({
         ) : null}
         {row.online && row.screen ? <span className="text-muted-foreground">{t('screen', { screen: L.screen(row.screen) })}</span> : null}
         {!row.enabled ? <span className="rounded-full bg-muted px-2 py-0.5 font-medium">{t('disabled')}</span> : null}
+        <AutoStartLine status={row.autoStart} />
         {row.paused ? (
           <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium', TONE.warn.pill)}>
             <PauseCircle className="h-3.5 w-3.5" aria-hidden /> {t('paused')}

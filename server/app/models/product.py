@@ -121,6 +121,9 @@ class Product(Base):
     # app/services/dietary.py. Null: none.
     dietary_tags = Column(JSON, nullable=True)
     course_id = Column(UUID(as_uuid=True), nullable=True)
+    #: "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): its table lines are marked sent at "שלח", with
+    #: no kitchen ticket and no KDS (bread, water). Null inherits the category's; the product wins.
+    send_silently = Column(Boolean, nullable=True)
     #: At most this many in one order (a promotional item limited to 1); null: no limit.
     max_per_order = Column(Integer, nullable=True)
     #: Refills at no charge ("כוס נוספת") — `max_refills` per line, null = unlimited.

@@ -10,6 +10,7 @@ import { Check, Plus, Sparkles } from 'lucide-react';
 import { HERO_TURN_MS, layoutOf, shelfCardDp } from '@/lib/kioskLayout';
 import { ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { DP_PER_PX, cartCounts, kt, unitOf, useTapDish, widthDpOf } from './parts';
+import { DishCountBadge } from './count-badge';
 
 export function HeroBanner({ m }: { m: PreviewModel }) {
   const stripRef = useRef<HTMLDivElement>(null);
@@ -73,6 +74,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
     >
       <div data-pic className="absolute inset-0">
         <ProductImage m={m} p={p} className="h-full w-full" />
+        <DishCountBadge m={m} inCart={inCart} size={Math.round(30 * u)} className="end-2.5 top-2.5" />
       </div>
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 px-3 py-2" style={{ background: 'rgba(17,17,17,0.8)', color: '#fff' }}>
         <span className="min-w-0 flex-1">
@@ -91,9 +93,9 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
             tap(p, true, e.currentTarget.closest('[data-dish]')?.querySelector('[data-pic]')?.getBoundingClientRect() ?? null);
           }}
           className="flex shrink-0 items-center justify-center rounded-full font-bold shadow-md"
-          style={{ width: 38 * u, height: 38 * u, background: inCart > 0 && !added ? m.c.primary : added ? m.c.accent : m.c.button, color: m.c.buttonText }}
+          style={{ width: 38 * u, height: 38 * u, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         >
-          {added ? <Check className="h-1/2 w-1/2" /> : inCart > 0 ? inCart : <Plus className="h-1/2 w-1/2" />}
+          {added ? <Check className="h-1/2 w-1/2" /> : <Plus className="h-1/2 w-1/2" />}
         </span>
       </div>
     </button>

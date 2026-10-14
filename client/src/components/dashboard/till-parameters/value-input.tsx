@@ -13,6 +13,10 @@
  * An image parameter (`widget: 'image'` — a string holding an image URL, such as
  * `receiptLogoUrl`) is edited with the branding image picker instead: upload through
  * `POST /images/branding` for its kind (same limits and processing), preview, clear.
+ *
+ * "תפריט הקופה" (`widget: 'menu_items'` — `hiddenMenuItems`, comma-separated menu keys) is edited
+ * with the till's menu items as checkboxes, the warnings and a preview (lib/tillMenu.ts); the draft's
+ * text is the value as the server stores it.
  */
 
 import { useState } from 'react';
@@ -26,6 +30,8 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { MenuItemsField } from '@/components/dashboard/till-menu/menu-items-field';
+import { HIDDEN_MENU_ITEMS_KEY, hiddenSummary, parseHidden, serializeHidden } from '@/lib/tillMenu';
 
 export interface ValueDraft {
   text: string;
@@ -103,6 +109,8 @@ export function useFormatParameterValue() {
     enumLabels?: Record<string, string> | null,
   ): string => {
     if (value === null || value === undefined) return '—';
+    // "תפריט הקופה": the hidden items by name ("ניהול קטלוג · הפק Z"), or that everything shows.
+    if (key === HIDDEN_MENU_ITEMS_KEY && typeof value === 'string') return hiddenSummary(parseHidden(value));
     if (typeof value === 'boolean') return value ? tc('yes') : tc('no');
     return typeof value === 'string' ? enumLabel(key, value, enumLabels) : String(value);
   };
@@ -129,6 +137,7 @@ export function ParameterValueInput({
   enumLabels,
   parameterKey,
   imageKind,
+  widget,
   draft,
   onChange,
   id,
@@ -142,6 +151,8 @@ export function ParameterValueInput({
   parameterKey?: string;
   /** Set for an image parameter: its branding upload kind. */
   imageKind?: BrandingImageKind | 'media' | null;
+  /** `'menu_items'`: the till's menu items as checkboxes (`hiddenMenuItems`). */
+  widget?: 'image' | 'menu_items' | null;
   draft: ValueDraft;
   onChange: (draft: ValueDraft) => void;
   id?: string;
@@ -151,6 +162,17 @@ export function ParameterValueInput({
   const tc = useTranslations('common');
   const tb = useTranslations('branding');
   const enumLabel = useEnumLabel();
+
+  if (widget === 'menu_items' && type === 'string') {
+    return (
+      <MenuItemsField
+        hidden={parseHidden(draft.text)}
+        onChange={(keys) => onChange({ ...draft, text: serializeHidden(keys) })}
+        disabled={disabled}
+        idPrefix={id ?? 'till-parameter-menu'}
+      />
+    );
+  }
 
   if (imageKind === 'media') {
     return <MediaField value={draft.text} onChange={(url) => onChange({ ...draft, text: url })} disabled={disabled} />;

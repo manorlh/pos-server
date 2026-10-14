@@ -11,7 +11,10 @@
  *    browser always reads through the cloud; an Android display reads the LAN first;
  *  - a heartbeat every 30 s; a revoked token (401) goes back to pairing;
  *  - "סניף לא פעיל" (lib/shopActive.ts): `shopActive` from the heartbeat, kept — the screen shows
- *    "הסניף אינו פעיל — פנו לתמיכה" at once, and is released on the beat after the shop is on again.
+ *    "הסניף אינו פעיל — פנו לתמיכה" at once, and is released on the beat after the shop is on again;
+ *  - the slideshow's files kept in the browser (lib/customerDisplayMediaCache.ts, `deps.mediaCache`)
+ *    after every configuration, and reported in the heartbeat by hash (`customerDisplayMedia`,
+ *    P:/specs/customer-display-transitions.md §5.4).
  *
  * Pure of React and of the DOM (the browser's facts come in through `deps`), so the node tests
  * drive it with a fake fetch and a memory store. No `@/` imports.
@@ -38,7 +41,7 @@ export const OFFLINE_AFTER_MS = 15_000;
 export interface DisplayConfigPayload {
   config: CdConfig;
   branding: { shopName: string; logoUrl: string; primaryColor: string | null };
-  media: { url: string; kind: string; bytes: number | null }[];
+  media: { url: string; kind: string; bytes: number | null; sha256?: string | null; onServer?: boolean }[];
   poll: { configSec: number; relayMs: number; lanMs: number };
   role: 'till' | 'display';
   till?: { machineId: string; name: string } | null;
@@ -69,6 +72,8 @@ export interface DisplayWebDeps {
   now?: () => number;
   timers?: { set: (fn: () => void, ms: number) => unknown; clear: (id: unknown) => void };
   log?: (msg: string) => void;
+  /** The slideshow's files kept in the browser, and their hashes for the heartbeat. */
+  mediaCache?: { sync: (entries: DisplayConfigPayload['media']) => Promise<void>; heldHashes: () => string[] };
 }
 
 export type DisplayPairOutcome = { ok: true } | { ok: false; error: string };
@@ -132,6 +137,7 @@ export class CustomerDisplayWebService {
     this.payload = parseConfigPayload(await this.deps.store.get<unknown>(KEYS.config));
     this.shopActive = shopActiveKept(await this.deps.store.get<unknown>(KEYS.shopActive));
     if (this.creds) this.api.setBase(this.creds.serverUrl);
+    if (this.creds && this.payload) this.keepMedia(this.payload);
     this.loaded = true;
     if (this.creds) this.start();
     this.changed();
@@ -265,6 +271,14 @@ export class CustomerDisplayWebService {
     this.payload = parsed;
     this.wrongRole = parsed.role === 'display' ? null : 'הקוד שהוקלד אינו של מסך לקוח. צרו בדשבורד קוד "מסך לקוח".';
     await this.deps.store.set(KEYS.config, r.body);
+    this.keepMedia(parsed);
+  }
+
+  /** The configuration's files kept in the browser (in the background; never fails a round). */
+  private keepMedia(payload: DisplayConfigPayload) {
+    const cache = this.deps.mediaCache;
+    if (!cache || payload.role !== 'display') return;
+    cache.sync(payload.media).catch((e) => this.deps.log?.(`media cache: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   async pullState(): Promise<void> {
@@ -280,7 +294,10 @@ export class CustomerDisplayWebService {
   private async heartbeat() {
     if (!this.creds) return;
     this.lastBeatAt = this.now();
-    const r = await this.seen(await this.api.post('machines/me/heartbeat', { appVersion: this.deps.appVersion, pendingCount: 0, realtimeConnected: false }, { timeoutMs: 15_000 }));
+    const body: Record<string, unknown> = { appVersion: this.deps.appVersion, pendingCount: 0, realtimeConnected: false };
+    // The slideshow's files this browser holds, by hash (§5.4): what the cloud's retention waits for.
+    if (this.deps.mediaCache) body.customerDisplayMedia = { screen: true, held: this.deps.mediaCache.heldHashes() };
+    const r = await this.seen(await this.api.post('machines/me/heartbeat', body, { timeoutMs: 15_000 }));
     if (r.kind !== 'ok') return;
     const next = shopActiveAfter(this.shopActive, shopActiveSaid(r.body));
     if (next === this.shopActive) return;

@@ -24,7 +24,7 @@ import {
 import { validateKioskTexts, isKioskTextKey, type KioskTextsByLang } from './kioskTexts';
 import { validateCategoryIconIds } from './kioskIcons';
 import {
-  MOTION_EVENTS,
+  KIOSK_MOTION_EVENTS,
   MOTION_GLOBAL_SPEEDS,
   MOTION_MULTIPLIER_MAX,
   MOTION_MULTIPLIER_MIN,
@@ -477,6 +477,12 @@ export interface KioskCatalog {
   oneCategory: boolean;
   /** A category's icon from the built-in set (kioskIcons.ts), by category id; none — suggested by its name. */
   categoryIconIds: Record<string, string>;
+  /**
+   * "תמונת מחלקה מהקטלוג" (P:/specs/category-color-image.md §3): a category with no picture in
+   * `categoryImages` shows the catalog's own, and with none there its initial on the catalog's colour.
+   * On by default; off — the kiosk's own pictures only, the initial on the theme colour.
+   */
+  categoryImagesFromCatalog: boolean;
 }
 
 export type MessageKind = 'banner' | 'notice' | 'closed';
@@ -1038,6 +1044,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     featuredProductIds: [],
     oneCategory: true,
     categoryIconIds: {},
+    categoryImagesFromCatalog: true,
   },
   messages: [],
   hours: {
@@ -1899,6 +1906,7 @@ export function validateKioskConfig(
   }
   if (!uniq(c.featuredProductIds)) e.push({ path: 'catalog.featuredProductIds', code: 'duplicate' });
   if (typeof c.oneCategory !== 'boolean') e.push({ path: 'catalog.oneCategory', code: 'enum' });
+  if (typeof c.categoryImagesFromCatalog !== 'boolean') e.push({ path: 'catalog.categoryImagesFromCatalog', code: 'enum' });
   for (const [catId, ref] of Object.entries(c.categoryImages ?? {})) {
     checkMedia(e, `catalog.categoryImages.${catId}`, ref, ['image'], false);
   }
@@ -3044,16 +3052,38 @@ export function typeWeights(weight: TypeWeight): TypeWeights {
 }
 
 /**
- * The picture of a category in the rail / strip: the kiosk's own category image, else the
- * catalog's (the till's) category image, else null (the kiosk draws its initial on the
- * theme colour).
+ * The picture of a category in the rail / strip: the kiosk's own category image, else — with
+ * `catalog.categoryImagesFromCatalog` on (the default; P:/specs/category-color-image.md §3) — the
+ * catalog's category image (the dashboard's category dialog), else null (the kiosk draws its
+ * initial: `categoryRailColor`, else the theme colour).
  */
 export function categoryRailImage(
   categoryId: string,
-  catalog: Pick<KioskCatalog, 'categoryImages'>,
+  catalog: Pick<KioskCatalog, 'categoryImages'> & Partial<Pick<KioskCatalog, 'categoryImagesFromCatalog'>>,
   catalogImageUrls: Record<string, string | null | undefined>,
 ): string | null {
-  return catalog.categoryImages?.[categoryId]?.url || catalogImageUrls[categoryId] || null;
+  const own = catalog.categoryImages?.[categoryId]?.url;
+  if (own) return own;
+  if (catalog.categoryImagesFromCatalog === false) return null;
+  return catalogImageUrls[categoryId] || null;
+}
+
+const RAIL_HEX = /^#[0-9A-Fa-f]{6}$/;
+
+/**
+ * The colour a category's initial is drawn on when it has no picture: the catalog's category colour
+ * (`#RRGGBB`, the dashboard's category dialog) with `catalog.categoryImagesFromCatalog` on, else null
+ * (the theme colour, as before). A kiosk's own picture leaves no initial to colour.
+ */
+export function categoryRailColor(
+  categoryId: string,
+  catalog: Partial<Pick<KioskCatalog, 'categoryImagesFromCatalog'>>,
+  catalogColors: Record<string, string | null | undefined>,
+): string | null {
+  if (catalog.categoryImagesFromCatalog === false) return null;
+  const raw = (catalogColors[categoryId] ?? '').trim();
+  const hex = /^#[0-9A-Fa-f]{3}$/.test(raw) ? `#${raw.slice(1).split('').map((c) => c + c).join('')}` : raw;
+  return RAIL_HEX.test(hex) ? hex.toUpperCase() : null;
 }
 
 export type MessagePlacement = 'inline-center' | 'overlay-center' | 'none';
@@ -3342,7 +3372,8 @@ function validateMotionEngine(e: KioskValidationError[], mo: Record<string, unkn
   }
   for (const [event, values] of Object.entries(mo.events)) {
     const p = `motion.events.${event}`;
-    if (!(MOTION_EVENTS as readonly string[]).includes(event)) {
+    // The kiosk's events: the till's own (`tableOpen`, `tabSwitch`) are refused, as on the server.
+    if (!(KIOSK_MOTION_EVENTS as readonly string[]).includes(event)) {
       e.push({ path: p, code: 'unknownKey' });
       continue;
     }

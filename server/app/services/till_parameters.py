@@ -239,6 +239,8 @@ IMAGE_PARAMETER_KEYS: Dict[str, str] = {
 }
 
 WIDGET_IMAGE = "image"
+#: `hiddenMenuItems` (app/services/till_menu.py): checkboxes of the till's menu items, not a text field.
+WIDGET_MENU_ITEMS = "menu_items"
 
 
 def image_kind(key: str, value_type: str) -> Optional[str]:
@@ -250,6 +252,8 @@ def image_kind(key: str, value_type: str) -> Optional[str]:
 
 def parameter_widget(key: str, value_type: str) -> Optional[str]:
     """How the dashboard edits the parameter, when not by its type alone."""
+    if key == "hiddenMenuItems" and value_type == "string":
+        return WIDGET_MENU_ITEMS
     return WIDGET_IMAGE if image_kind(key, value_type) else None
 
 
@@ -567,6 +571,49 @@ QUICK_PAY_FAST_CARD = "אשראי מהיר"
 QUICK_PAY_CASH_WITH_CHANGE = "מזומן עם עודף"
 QUICK_PAY_FAST_CASH = "מזומן מהיר"
 QUICK_PAY_CHOICES = (QUICK_PAY_FAST_CARD, QUICK_PAY_CASH_WITH_CHANGE, QUICK_PAY_FAST_CASH)
+
+#: "עובד במכשיר אחד בלבד" v2 (P:/specs/exclusive-login-v2.md §3, §4; app/services/user_sessions.py reads
+#: all three for the till that asks, and returns them in every claim / heartbeat answer).
+EXCLUSIVE_AUTO_RELEASE_KEY = "exclusiveUserLoginAutoRelease"
+EXCLUSIVE_AUTO_RELEASE_OFF = "off"
+EXCLUSIVE_AUTO_RELEASE_MINUTES = "minutes"
+EXCLUSIVE_AUTO_RELEASE_LABELS = {
+    EXCLUSIVE_AUTO_RELEASE_OFF: "כבוי — רק מנהל משחרר (ברירת מחדל)",
+    EXCLUSIVE_AUTO_RELEASE_MINUTES: "אחרי הדקות שנקבעו",
+}
+EXCLUSIVE_OFFLINE_KEY = "exclusiveUserLoginOffline"
+EXCLUSIVE_OFFLINE_ALLOW = "allow"
+EXCLUSIVE_OFFLINE_LAN = "lan"
+EXCLUSIVE_OFFLINE_MANAGER = "manager"
+EXCLUSIVE_OFFLINE_LABELS = {
+    EXCLUSIVE_OFFLINE_ALLOW: "מותרת, נבדק כשהחיבור חוזר (ברירת מחדל)",
+    EXCLUSIVE_OFFLINE_LAN: "המארח המקומי מכריע",
+    EXCLUSIVE_OFFLINE_MANAGER: "דורשת קוד מנהל",
+}
+EXCLUSIVE_DUPLICATE_KEY = "exclusiveUserLoginDuplicate"
+EXCLUSIVE_DUPLICATE_WARN = "warn"
+EXCLUSIVE_DUPLICATE_SIGNOUT = "signout"
+EXCLUSIVE_DUPLICATE_LABELS = {
+    EXCLUSIVE_DUPLICATE_WARN: "פס אזהרה (ברירת מחדל)",
+    EXCLUSIVE_DUPLICATE_SIGNOUT: "ניתוק במכשיר שהתחבר אחרון",
+}
+
+EXCLUSIVE_LOGIN_DESCRIPTION = (
+    "כשמופעל: עובד/מלצר שמחובר במכשיר אחד (קופה, מכשיר נייד, טלפון או קופת Windows) לא יכול להתחבר "
+    "במכשיר אחר עד שיתנתק בו. חל רק על מי שאין לו את ההרשאה \"עבודה בכמה מכשירים במקביל\" (בתפקידים: "
+    "אסור למלצר ולקופאי, מותר לאחמ\"ש ולמנהל). בכניסה במכשיר אחר מוצגת הודעה איפה הוא מחובר ומאז מתי, "
+    "ו\"לא מדווח מאז…\" כשהמכשיר ההוא הפסיק לדווח. משחרר רק מנהל שמותר לו: בקוד שלו (\"שחרור באישור "
+    "מנהל\"), מהנייד (\"בקשת שחרור ממנהל\", כשבקשות האישור מהנייד מופעלות) או מהדשבורד, וכל שחרור "
+    "נרשם בחריגות. התנתקות, החלפת עובד, נעילה בחוסר שימוש וניתוק המכשיר מהענן משחררים תמיד. "
+    "שחרור אוטומטי, כניסה בלי אינטרנט ועובד שמחובר בשני מכשירים: בפרמטרים \"עובד בקופה אחת — …\". "
+    "את המחוברים כעת רואים (ומשחררים) בדשבורד ובנייד: \"מחוברים כעת במכשירים\"."
+)
+EXCLUSIVE_STALE_MINUTES_DESCRIPTION = (
+    "רק כש\"עובד בקופה אחת — שחרור אוטומטי\" הוא «אחרי הדקות שנקבעו»: מכשיר שמחובר בו עובד ולא דיווח "
+    "לענן (נפל, כבוי, בלי רשת) במשך מספר הדקות הזה — הכניסה הבאה של העובד במכשיר אחר משחררת את החיבור "
+    "הישן (2–720; ברירת מחדל 15). כשהשחרור האוטומטי כבוי, החיבור נשאר עד שמנהל משחרר. מכשיר פעיל "
+    "מדווח כל דקה."
+)
 
 #: "התקבל מזומן" (the cash box on the tablet's order panel) is gone; its switch with it.
 #: Not a built-in any more — alembic 3f8b6d2a9c41 retires an existing definition.
@@ -1444,30 +1491,71 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "את השלבים מגדירים בדשבורד תחת \"תוספות ושינויים\"."
         ),
     ),
-    # "עובד מחובר בקופה אחת בלבד" — app/services/user_sessions.py reads both, and the till.
+    # "עובד מחובר בקופה אחת בלבד" (v2: P:/specs/exclusive-login-v2.md, docs/SPEC_EXCLUSIVE_LOGIN.md) —
+    # app/services/user_sessions.py reads all five for the till that asks, and the till. An existing
+    # definition keeps its saved text: alembic 7c4e2a9d1b6f rewords the first two while still the old text.
     BuiltinParameter(
         key="exclusiveUserLogin",
         label="עובד מחובר בקופה אחת בלבד",
         value_type="boolean",
         default_value=False,
-        description=(
-            "כשמופעל: עובד/מלצר שמחובר בקופה אחת לא יכול להתחבר בקופה אחרת עד שיתנתק בה. "
-            "בכניסה בקופה אחרת מוצגת הודעה איפה הוא מחובר ומאז מתי, ואפשר \"שחרור באישור מנהל\" "
-            "(קוד מנהל; נרשם בחריגות). התנתקות, החלפת עובד ונעילה בחוסר שימוש משחררות. "
-            "קופה בלי אינטרנט לא נחסמת: הכניסה מותרת והבדיקה נעשית כשהחיבור חוזר. "
-            "קופה שהפסיקה לדווח משתחררת לבד אחרי \"עובד בקופה אחת — שחרור אוטומטי אחרי (דקות)\". "
-            "את המחוברים כעת רואים (ומשחררים) בדשבורד בדף \"קופאים (POS)\"."
-        ),
+        description=EXCLUSIVE_LOGIN_DESCRIPTION,
     ),
     BuiltinParameter(
         key="exclusiveUserLoginStaleMinutes",
         label="עובד בקופה אחת — שחרור אוטומטי אחרי (דקות)",
         value_type="integer",
         default_value=15,
+        description=EXCLUSIVE_STALE_MINUTES_DESCRIPTION,
+    ),
+    BuiltinParameter(
+        key=EXCLUSIVE_AUTO_RELEASE_KEY,
+        label="עובד בקופה אחת — שחרור אוטומטי",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_AUTO_RELEASE_OFF, EXCLUSIVE_AUTO_RELEASE_MINUTES),
+        enum_labels=EXCLUSIVE_AUTO_RELEASE_LABELS,
+        default_value=EXCLUSIVE_AUTO_RELEASE_OFF,
         description=(
-            "קופה שמחובר בה עובד ולא דיווחה לענן (נפלה, כבויה, בלי רשת) במשך מספר הדקות הזה — "
-            "החיבור שלו בה משתחרר לבד, כך שקופה תקועה לא נועלת עובד לתמיד (2–720; ברירת מחדל 15). "
-            "קופה פעילה מדווחת כל דקה."
+            "האם מכשיר שהפסיק לדווח לענן (נפל, כבוי, בלי רשת) משחרר לבד את העובד שמחובר בו. "
+            f"«{EXCLUSIVE_AUTO_RELEASE_LABELS[EXCLUSIVE_AUTO_RELEASE_OFF]}» — החיבור נשאר עד שמנהל משחרר; "
+            "בחלון החסימה במכשיר החדש כתוב \"המכשיר הקודם לא מדווח מאז…\", כדי שהמנהל יידע שבטוח לשחרר. "
+            f"«{EXCLUSIVE_AUTO_RELEASE_LABELS[EXCLUSIVE_AUTO_RELEASE_MINUTES]}» — אחרי \"עובד בקופה אחת — שחרור "
+            "אוטומטי אחרי (דקות)\", הכניסה הבאה של העובד במכשיר אחר משחררת את החיבור הישן. "
+            "התנתקות מרצון, החלפת עובד, נעילה בחוסר שימוש וניתוק המכשיר מהענן משחררים תמיד. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=EXCLUSIVE_OFFLINE_KEY,
+        label="עובד בקופה אחת — כניסה בלי אינטרנט",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_OFFLINE_ALLOW, EXCLUSIVE_OFFLINE_LAN, EXCLUSIVE_OFFLINE_MANAGER),
+        enum_labels=EXCLUSIVE_OFFLINE_LABELS,
+        default_value=EXCLUSIVE_OFFLINE_ALLOW,
+        description=(
+            "כניסת עובד כשאין תשובה מהענן. "
+            f"«{EXCLUSIVE_OFFLINE_LABELS[EXCLUSIVE_OFFLINE_ALLOW]}» — הכניסה מותרת, והבדיקה נעשית כשהחיבור "
+            "חוזר. "
+            f"«{EXCLUSIVE_OFFLINE_LABELS[EXCLUSIVE_OFFLINE_LAN]}» — ברשת מקומית, הקופה המארחת (שרת השולחנות) "
+            "מחזיקה גם את רשימת המחוברים ומכריעה בלי ענן; בלי מארח — כמו «מותרת». "
+            f"«{EXCLUSIVE_OFFLINE_LABELS[EXCLUSIVE_OFFLINE_MANAGER]}» — בלי תשובה מהענן או מהמארח, הכניסה "
+            "דורשת קוד של מנהל שמותר לו לשחרר עובד. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=EXCLUSIVE_DUPLICATE_KEY,
+        label="עובד בקופה אחת — מחובר בשני מכשירים",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_DUPLICATE_WARN, EXCLUSIVE_DUPLICATE_SIGNOUT),
+        enum_labels=EXCLUSIVE_DUPLICATE_LABELS,
+        default_value=EXCLUSIVE_DUPLICATE_WARN,
+        description=(
+            "עובד שהתברר, אחרי כניסה בלי אינטרנט, שהוא מחובר בשני מכשירים. "
+            f"«{EXCLUSIVE_DUPLICATE_LABELS[EXCLUSIVE_DUPLICATE_WARN]}» — פס כתום במכשיר, והעבודה ממשיכה. "
+            f"«{EXCLUSIVE_DUPLICATE_LABELS[EXCLUSIVE_DUPLICATE_SIGNOUT]}» — המכשיר שהתחבר אחרון מנתק את העובד "
+            "בסיום הפעולה (לא באמצע תשלום ולא כששולחן פתוח), באותם תנאים כמו אחרי שחרור של מנהל. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     # "נוכחות עובדים" (app/services/attendance.py, docs/SPEC_ATTENDANCE.md) — read by the
@@ -1762,6 +1850,12 @@ from app.services.local_server_switch import PARAMETER_SPECS as _LOCAL_SERVER_SP
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _LOCAL_SERVER_SPECS)
 
+# "הסתרת פריטים מתפריט הקופה" (app/services/till_menu.py, P:/specs/till-menu-hide.md): `hiddenMenuItems`, the
+# menu keys a till hides from everyone, whatever their permissions. Empty by default: the menu as today.
+from app.services.till_menu import PARAMETER_SPECS as _TILL_MENU_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILL_MENU_SPECS)
+
 # "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
 # what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
 # מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).
@@ -1828,18 +1922,21 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
 )
 
 # "לשונית 'הכל' בקטלוג ההזמנה" (the owner, 13.10.2026): where the till's category bar puts "הכל"
-# (every product) — first as today, last, or not at all (the order opens on the first category;
-# search still covers every product). Read by the till only, on every order screen with a
-# category bar: phone, tablet, a table's order and the designed templates (till-design).
+# (every product) — first, last, or not at all (the order opens on the first category; search
+# still covers every product). Hidden by default for every customer (the owner, 14.10.2026);
+# whoever wants "הכל" sets first or last at a level. Read by the till only, on every order
+# screen with a category bar: phone, tablet, a table's order and the designed templates
+# (till-design). Existing databases: alembic 5d1f8b3e7a92 moves the saved default.
 SELL_ALL_TAB_KEY = "sellAllTab"
 SELL_ALL_TAB_FIRST = "first"
 SELL_ALL_TAB_LAST = "last"
 SELL_ALL_TAB_HIDDEN = "hidden"
 SELL_ALL_TAB_OPTIONS = (SELL_ALL_TAB_FIRST, SELL_ALL_TAB_LAST, SELL_ALL_TAB_HIDDEN)
+SELL_ALL_TAB_DEFAULT = SELL_ALL_TAB_HIDDEN
 SELL_ALL_TAB_LABELS = {
-    SELL_ALL_TAB_FIRST: "ראשונה — כמו היום",
+    SELL_ALL_TAB_FIRST: "ראשונה",
     SELL_ALL_TAB_LAST: "אחרונה",
-    SELL_ALL_TAB_HIDDEN: "מוסתרת — נפתחת המחלקה הראשונה",
+    SELL_ALL_TAB_HIDDEN: "מוסתרת — נפתחת המחלקה הראשונה (ברירת מחדל)",
 }
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
@@ -1849,14 +1946,14 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
         value_type="enum",
         enum_options=SELL_ALL_TAB_OPTIONS,
         enum_labels=SELL_ALL_TAB_LABELS,
-        default_value=SELL_ALL_TAB_FIRST,
+        default_value=SELL_ALL_TAB_DEFAULT,
         description=(
             "איפה מופיעה לשונית \"הכל\" (כל הפריטים) בסרגל המחלקות של ההזמנה בקופה — בטלפון, בטאבלט, "
             "בהזמנת שולחן ובתבניות המעוצבות (\"עיצוב קופה\"). "
-            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_FIRST]}» (ברירת מחדל) — \"הכל\" לפני כל המחלקות. "
-            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_LAST]}» — \"הכל\" אחרי המחלקה האחרונה. "
             f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_HIDDEN]}» — אין לשונית \"הכל\", וההזמנה נפתחת על המחלקה "
             "הראשונה; החיפוש עדיין מחפש בכל המוצרים. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_FIRST]}» — \"הכל\" לפני כל המחלקות. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_LAST]}» — \"הכל\" אחרי המחלקה האחרונה. "
             "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
@@ -1922,6 +2019,72 @@ from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  #
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
 
+# "הפעלה אוטומטית כשהמכשיר נדלק" (P:/specs/autostart-default.md §1, app/services/autostart.py):
+# `autoStartOnBoot`, on by default; the till reports whether it can (§3) on its heartbeat.
+from app.services.autostart import PARAMETER_SPECS as _AUTOSTART_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _AUTOSTART_SPECS)
+
+# "צבע ותמונה למחלקה" (P:/specs/category-color-image.md §2, app/services/category_display.py): how the
+# order screens show a category's colour and picture — `categoryColors` (off / chip / accent),
+# `categoryImages` (off / bar / landing), `categoryImageSize` (s / m / l). Off, off, m: today's screens.
+# Edited on the parameters page and in "עיצוב קופה" (`/till-design/category-display`).
+from app.services.category_display import PARAMETER_SPECS as _CATEGORY_DISPLAY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CATEGORY_DISPLAY_SPECS)
+
+# "מקרא ותצוגה" of the tables map (P:/specs/table-map-decor-v3.md §3, app/services/table_map_display.py):
+# `mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale` — read by the till only. Edited on the
+# dashboard's tables page too (app/services/table_restore.py `page_keys`, group `mapDisplay`).
+from app.services.table_map_display import PARAMETER_SPECS as _MAP_DISPLAY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _MAP_DISPLAY_SPECS)
+
+# "תמיכה מרחוק" (app/services/remote_support.py, P:/specs/quicksupport-autoinstall.md §2, §2א): the till
+# installs TeamViewer QuickSupport by itself — on by default after pairing (`remoteSupportAutoInstall`),
+# from `remoteSupportApkUrl` (the official download by default), only an allowed package
+# (`remoteSupportPackages`) signed by a pinned certificate (`remoteSupportSignerSha256`; empty: the
+# first install from the official host pins it). Read by the till; checked on write (`validate_keyed_value`).
+from app.services.remote_support import PARAMETER_SPECS as _REMOTE_SUPPORT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_SUPPORT_SPECS)
+
+# "הוצאה אוטומטית של השלב הבא" (P:/specs/courses-fire-v2.md §1, app/services/course_auto_fire.py): `autoFire`
+# (off / after_minutes / after_ready) and `autoFireMinutesOverride` (none: each course's own minutes). Read by
+# the till (one till, the LAN host) and by the cloud's pass for its own tables. Edited on the tables page too.
+from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
+
+# "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
+# a device online but not up to date is a problem on "בעיות". Read by the cloud only.
+SYNC_STALE_MINUTES_KEY = "syncStaleMinutes"
+SYNC_STALE_MINUTES_DEFAULT = 30
+SYNC_STALE_MINUTES_MIN = 5
+SYNC_STALE_MINUTES_MAX = 1440
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=SYNC_STALE_MINUTES_KEY,
+        label="סנכרון: מכשיר לא מעודכן אחרי (דקות)",
+        value_type="integer",
+        default_value=SYNC_STALE_MINUTES_DEFAULT,
+        description=(
+            "אחרי כמה דקות מכשיר מחובר שלא קיבל את מה שהשתנה בענן (קטלוג, פרמטרים, הגדרות, עובדים, "
+            "שולחנות, תוספות, מבצעים, שוברים, מדיה), או שהמשיכה שלו נכשלת, מופיע במסך «בעיות» "
+            f"({SYNC_STALE_MINUTES_MIN}–{SYNC_STALE_MINUTES_MAX}, ברירת מחדל {SYNC_STALE_MINUTES_DEFAULT}). "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
+# "עיצוב השולחנות" (P:/specs/till-design-tables.md §5, app/services/table_tile_look.py): `tableTileStyle`,
+# `tableTileInfo`, `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize` — read by the till only.
+# Edited in "עיצוב קופה → שולחנות ומפה" (app/routers/till_design.py `/till-design/table-display`).
+from app.services.table_tile_look import PARAMETER_SPECS as _TILE_LOOK_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILE_LOOK_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1940,6 +2103,14 @@ def enum_labels(key: str) -> Optional[Dict[str, str]]:
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
     from app.services import kiosk_technician, kiosk_till_mode
+    from app.services import till_menu
+
+    # "הסתרת פריטים מתפריט הקופה": the known menu keys only, in the menu's order; unknown ones dropped.
+    if key == till_menu.KEY and value is not None:
+        try:
+            return till_menu.clean_value(value)
+        except till_menu.MenuKeysError as exc:
+            raise TillParameterValueError(str(exc)) from exc
 
     if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY):
         try:
@@ -1974,12 +2145,52 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         raise TillParameterValueError(
             f"{REMOTE_CANCEL_TIMEOUT_KEY} must be {REMOTE_CANCEL_TIMEOUT_MIN}–{REMOTE_CANCEL_TIMEOUT_MAX} seconds"
         )
+    # "צבע ותמונה למחלקה": the codes the till knows (off / chip / accent, off / bar / landing, s / m / l).
+    from app.services import category_display
+
+    if key in category_display.CODES and value is not None:
+        try:
+            return category_display.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "הוצאה אוטומטית של השלב הבא": the codes and the minutes the till and the cloud's pass read.
+    from app.services import course_auto_fire
+
+    if key in course_auto_fire.VALIDATED_KEYS and value is not None:
+        try:
+            return course_auto_fire.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
     from app.services import table_restore
 
     if key in table_restore.VALIDATED_KEYS and value is not None:
         try:
             return table_restore.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מקרא ותצוגה" of the tables map: the codes the till parses, the symbols' size 70–150.
+    from app.services import table_map_display
+
+    if key in table_map_display.VALIDATED_KEYS and value is not None:
+        try:
+            return table_map_display.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "תמיכה מרחוק": https:// only, SHA-256 fingerprints, package names — stored canonical.
+    from app.services import remote_support
+
+    if key in remote_support.VALIDATED_KEYS and value is not None:
+        try:
+            return remote_support.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "עיצוב השולחנות": the codes, the info list, the colours (#RRGGBB per state), 5–600 minutes.
+    from app.services import table_tile_look
+
+    if key in table_tile_look.VALIDATED_KEYS and value is not None:
+        try:
+            return table_tile_look.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

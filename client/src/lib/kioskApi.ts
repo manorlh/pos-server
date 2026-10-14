@@ -492,25 +492,40 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
   };
 }
 
-/** The till's own category images (`GET /categories`), by category id. */
-export async function fetchCategoryImageUrls(): Promise<Record<string, string>> {
-  const { data } = await api.get<unknown>('/categories');
+/** The catalog's own category pictures and colours (`GET /categories`), by category id. */
+export interface CatalogCategoryLooks {
+  images: Record<string, string>;
+  colors: Record<string, string>;
+}
+
+/**
+ * The catalog's category pictures and colours (the dashboard's category dialog, P:/specs/category-color-image.md):
+ * what a kiosk shows for a category with no picture of its own (`catalog.categoryImagesFromCatalog`).
+ */
+export async function fetchCatalogCategoryLooks(): Promise<CatalogCategoryLooks> {
+  const { data } = await api.get<unknown>('/categories', { params: { limit: 200 } });
   const rows = Array.isArray(data)
     ? data
     : data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)
       ? (data as { items: unknown[] }).items
       : [];
-  const out: Record<string, string> = {};
+  const out: CatalogCategoryLooks = { images: {}, colors: {} };
   const walk = (list: unknown[]) => {
     for (const row of list) {
       if (!row || typeof row !== 'object') continue;
-      const r = row as { id?: unknown; imageUrl?: unknown; children?: unknown };
-      if (r.id && typeof r.imageUrl === 'string' && r.imageUrl) out[String(r.id)] = r.imageUrl;
+      const r = row as { id?: unknown; imageUrl?: unknown; color?: unknown; children?: unknown };
+      if (r.id && typeof r.imageUrl === 'string' && r.imageUrl) out.images[String(r.id)] = r.imageUrl;
+      if (r.id && typeof r.color === 'string' && r.color) out.colors[String(r.id)] = r.color;
       if (Array.isArray(r.children)) walk(r.children);
     }
   };
   walk(rows);
   return out;
+}
+
+/** The catalog's own category images (`GET /categories`), by category id. */
+export async function fetchCategoryImageUrls(): Promise<Record<string, string>> {
+  return (await fetchCatalogCategoryLooks()).images;
 }
 
 /* ------------------------------------------------------------------ media */

@@ -19,7 +19,9 @@ FIX = Path(__file__).parent / "fixtures"
 BASELINE = json.loads((FIX / "kiosk_resolve_baseline_1013.json").read_bytes().decode("utf-8"))["cases"]
 
 NEW_LAYOUT_KEYS = ("railStyle", "railEmphasis", "catalogScroll", "railFollow", "pricePill", "sheetMotion", "topBar", "helpButton",
-                   "doneScreen", "payMethodView")
+                   "doneScreen", "payMethodView",
+                   # Added after the baseline (14.10, "תג כמות" — tests/test_kiosk_count_badge.py), on by default.
+                   "cartCountBadge")
 
 
 def _without_new_keys(cfg):
@@ -29,6 +31,8 @@ def _without_new_keys(cfg):
     for k in C.RAIL_MOTION_COLOR_KEYS:
         out["theme"].pop(k)
     out["payment"].pop("paymentChooserSkip")
+    # "תמונת מחלקה מהקטלוג" (P:/specs/category-color-image.md §3), added after the baseline: on.
+    out["catalog"].pop("categoryImagesFromCatalog")
     return out
 
 
@@ -42,6 +46,7 @@ def test_every_existing_template_and_style_resolves_as_before(case):
     assert {k: cfg["layout"][k] for k in NEW_LAYOUT_KEYS} == {k: L.LAYOUT_DEFAULTS[k] for k in NEW_LAYOUT_KEYS}
     assert all(cfg["theme"][k] is None for k in C.RAIL_MOTION_COLOR_KEYS)
     assert cfg["payment"]["paymentChooserSkip"] == "auto"
+    assert cfg["catalog"]["categoryImagesFromCatalog"] is True
 
 
 def test_the_baseline_covers_every_older_template_in_every_style():

@@ -5,6 +5,8 @@
  *   &reach=low                                       the accessible mode (layout.reach)
  *   &toggle=1                                        the ♿ button (layout.reachToggle)
  *   &topbar=all                                      every top-bar button (layout.topBar; club, search, two languages)
+ *   &quickadd=off|no_required|always                 "הוספה מהירה" (layout.quickAdd)
+ *   &badge=0                                         no count badge on the dishes (layout.cartCountBadge)
  *   &welcome=top|middle|bottom[&align=center]        "ברוכים הבאים" (attract.welcome)
  *   &rich=0                                          the small menu of before
  *
@@ -27,6 +29,9 @@ export function demoLayoutLayer(q: URLSearchParams): Record<string, unknown> {
   if (q.get('reach') === 'low') layout.reach = 'low';
   if (q.get('toggle') === '1') layout.reachToggle = true;
   if (q.get('topbar') === 'all') layout.topBar = ['club', 'cancel', 'search', 'lang'];
+  const quick = q.get('quickadd');
+  if (quick === 'off' || quick === 'no_required' || quick === 'always') layout.quickAdd = quick;
+  if (q.get('badge') === '0') layout.cartCountBadge = false;
   if (Object.keys(layout).length > 0) out.layout = layout;
   const w = q.get('welcome');
   if (w === 'top' || w === 'middle' || w === 'bottom') {

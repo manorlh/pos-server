@@ -76,6 +76,13 @@ TERMINAL_REASONS = {
 QUIET_REASONS = ("moved",)
 #: The card lock (docs/SPEC_KIOSK.md §20): the pinpad connected is not the one set for the kiosk.
 IDENTITY_REASONS = ("terminal_mismatch", "terminal_not_configured", "terminal_unknown")
+#: The terminal's own alerts, which a kiosk "ללא אשראי" (`paymentIntegration` = `none`) never
+#: raises: it has no terminal (an older kiosk build that reads `none` as `auto` still reports
+#: them — they are dropped here, and an open one clears as "no_card"). A card result left
+#: undecided from before (`card_unknown`) and the kiosk's internet stay staff's business.
+NO_CARD_DROPPED_REASONS = ("unreachable", "not_ready", "not_configured", "moved") + IDENTITY_REASONS
+#: `kiosk_alerts.clear_reason` of an alert cleared so; its exceptions-log entry closes with it.
+CLEAR_NO_CARD = "no_card"
 
 
 def _identity(number: Any, merchant: Any) -> Optional[str]:
@@ -372,20 +379,38 @@ def _expire_help(db: Session, rows: Iterable[KioskAlert], cfg_of, now: datetime)
             row.clear_reason = "expired"
 
 
+def _no_card_drops(alert: Dict[str, Any]) -> bool:
+    return alert["kind"] == "terminal" and alert["reason"] in NO_CARD_DROPPED_REASONS
+
+
 def reconcile(
     db: Session, kiosk: POSMachine, device: KioskDevice, cfg: Dict[str, Any], raw_alerts: Any,
-    *, now: Optional[datetime] = None,
+    *, now: Optional[datetime] = None, no_card: bool = False,
 ) -> None:
-    """The kiosk's alerts as it reports them now: raised, updated, re-pinged, cleared. The caller commits."""
+    """
+    The kiosk's alerts as it reports them now: raised, updated, re-pinged, cleared. [no_card]: the
+    kiosk is "ללא אשראי" — its terminal's alerts are dropped (NO_CARD_DROPPED_REASONS). The caller
+    commits.
+    """
     now = _now(now)
     reported = _clean_reported(raw_alerts)
+    if no_card:
+        reported = [a for a in reported if not _no_card_drops(a)]
     open_rows = _open_alerts(db, kiosk.id)
     _expire_help(db, open_rows.values(), lambda _r: cfg, now)
     open_rows = {k: r for k, r in open_rows.items() if r.cleared_at is None}
     keys = {a["key"] for a in reported}
     cleared: List[KioskAlert] = []
     raised: List[KioskAlert] = []
-    for key, row in open_rows.items():
+    for key, row in list(open_rows.items()):
+        if no_card and row.kind == "terminal" and row.reason in NO_CARD_DROPPED_REASONS:
+            # Set to "ללא אשראי" since: the alert is over, whatever the kiosk still reports (another
+            # reason under its key, "offline", is a new alert).
+            row.cleared_at = now
+            row.clear_reason = CLEAR_NO_CARD
+            cleared.append(row)
+            del open_rows[key]
+            continue
         if key not in keys:
             row.cleared_at = now
             row.clear_reason = "reset" if row.kind == "help" else "recovered"
@@ -977,7 +1002,10 @@ def on_kiosk_sync(
         with db.begin_nested():
             if isinstance(raw_status, dict):
                 if "alerts" in raw_status:
-                    reconcile(db, kiosk, device, cfg, raw_status.get("alerts"), now=now)
+                    from app.services import payment_integration
+
+                    no_card = payment_integration.no_card(payment_integration.resolve_machine(db, kiosk))
+                    reconcile(db, kiosk, device, cfg, raw_status.get("alerts"), now=now, no_card=no_card)
                 if raw_status.get("closeResult") is not None:
                     apply_close_result(db, kiosk, raw_status.get("closeResult"), now=now)
                 if raw_status.get("commandsDone") is not None:

@@ -41,7 +41,7 @@ import {
   TicketCheck,
 } from 'lucide-react';
 import { QuickMessageSheet, QuickPromoSheet } from '@/components/dashboard/insights-actions';
-import { LIVE_CONTROL_GATES, MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, type CockpitGate } from '@/lib/cockpitGates';
+import { LIVE_CONTROL_GATES, MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, USER_SESSIONS_GATES, type CockpitGate } from '@/lib/cockpitGates';
 import { ForecastSlotCard, LiveEventSlot, useAlertAttentionItems } from './event-live-slots';
 import { EventTillsQuickAction } from '@/components/dashboard/event-live';
 import { EVENT_TILLS_GATE } from '@/components/dashboard/events/event-tills-access';
@@ -52,6 +52,7 @@ import { useFailedPaymentItems, useNoItems, useTillAlertItems } from './provider
 import { FailedPaymentsSheet } from './sheets/failed-payments-sheet';
 import { TillMessageSheet } from './sheets/till-message-sheet';
 import { useZCreditReconItems } from './zcredit-recon-slot';
+import { SignedInNowSlot } from './signed-in-now-slot';
 import type { AttentionProvider, CockpitAction, CockpitCard } from './types';
 
 export type {
@@ -207,6 +208,11 @@ export const COCKPIT_CARDS: CockpitCard[] = [
   { id: 'slowItems', gate: { sections: ['reports'], level: 'view' }, Card: null },
   /** "תחזית ואיוש" — feat/event-live (`ForecastCard`, `GET /insights/staffing`: `reports` at view). */
   { id: 'forecast', gate: { sections: ['reports'], level: 'view' }, Card: ForecastSlotCard },
+  /**
+   * "מחוברים כעת במכשירים" (exclusive login v2 §6: the card on the phone too) — the scope's shop; its
+   * "שחרור" button only for whoever holds "שחרור עובד מחובר במכשיר" (the server says `canRelease`).
+   */
+  { id: 'signedInNow', gate: USER_SESSIONS_GATES.see, Card: SignedInNowSlot },
 ];
 
 /** An action by id (an attention item's button). */

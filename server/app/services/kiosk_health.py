@@ -9,11 +9,16 @@ and a code the dashboard words:
   closed, setting up, no payment; the config it runs vs the current one; its version;
 * **terminal** — the card terminal: ready / not answering / not ready / not set; the card lock
   (the pinpad connected is not the one set, docs/SPEC_KIOSK.md §20); a card result left for staff;
+  none at all for a kiosk "ללא אשראי" (`off`, `no_card`);
 * **printer** — ok / no paper / offline / error, and bons that did not print;
 * **tillLink** — the kiosk's link to the till it prints on or hands orders to (LAN host / cloud);
 * **kds** — in KDS mode: the shop's KDS screens seen lately and the kiosk's own link;
 * **media** — the downloaded pictures and videos (missing ones);
 * **uploads** — what waits on the kiosk to reach the cloud (orders, documents, funnel events).
+
+Beside the parts, each kiosk and device says `autoStart` — "פתיחה אוטומטית" on boot, as its last
+heartbeat reported it (app/services/autostart.py): ready (and how), missing, off, or null when it
+never reported. It is not a part: it does not move the overall state.
 
 The kiosk reports what only it can see as `status.health` on its `kiosk/sync` (cleaned here,
 `clean_health`); the rest is the cloud's own (heartbeat, alerts, KDS screens, card lock).
@@ -37,6 +42,7 @@ from sqlalchemy.orm import Session
 from app.models.kiosk import KioskDevice
 from app.models.kiosk_ops import KioskAlert
 from app.models.pos_machine import POSMachine
+from app.services import autostart
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +203,12 @@ def terminal_part(summary: Dict[str, Any], health: Dict[str, Any]) -> Dict[str, 
                   # "בדיקת מספר מסוף מושבתת" (docs/SPEC_KIOSK.md §20.1): shown beside whatever the part says.
                   numberCheckBypass=True if identity.get("numberCheckBypass") else None)
     open_codes = {a.get("key"): a for a in _alerts_of(summary, "terminal")}
+    if identity.get("noCard"):
+        # "ללא אשראי": no terminal to watch, whatever an older kiosk build still reports of one.
+        # Only a card left undecided from before needs someone.
+        if "terminal:card" in open_codes:
+            return _part("terminal", "error", "card_unknown", **common)
+        return _part("terminal", "off", "no_card", **common)
     if lock:
         return _part("terminal", "error", "card_lock", lock=lock, **common)
     if "terminal:card" in open_codes:
@@ -421,6 +433,8 @@ def _row(db: Session, summary: Dict[str, Any], device: KioskDevice, machine: POS
         "kdsScreens": screens if summary.get("fulfillmentMode") == "KDS" else [],
         "battery": battery,
         "batteryMonitored": battery_monitoring is None,
+        # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off; null — never reported.
+        "autoStart": autostart.status_of_machine(machine),
         "ordersToday": summary.get("ordersToday"),
         "salesTodayAgorot": summary.get("salesTodayAgorot"),
         "lastOrderAt": summary.get("lastOrderAt"),
@@ -519,6 +533,8 @@ def devices_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None,
             "battery": battery,
             "batteryPart": part,
             "batteryMonitored": monitoring is None,
+            # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off; null — never reported.
+            "autoStart": autostart.status_of_machine(m),
             "overall": "offline" if not online else ("error" if part["level"] == "error" else "warn" if part["level"] == "warn" else "ok"),
         })
     out.sort(key=lambda d: (d["shopName"] or "", d["name"] or ""))

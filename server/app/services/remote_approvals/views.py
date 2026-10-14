@@ -79,6 +79,8 @@ def card_out(req: ApprovalRequest, user: User, names, now: datetime) -> Dict[str
         "reasonText": req.reason_text,
         "note": req.note,
         "tableLabel": S.table_label(req.payload),
+        # A line the cloud wrote for the approver (`user_release`: who is signed in where, since when).
+        "summary": req.payload.get("summary") if isinstance(req.payload, dict) else None,
         "createdAt": _iso(req.created_at),
         "expiresAt": _iso(req.expires_at),
         "decidedAt": _iso(req.decided_at),

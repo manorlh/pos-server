@@ -20,12 +20,16 @@
  * The number field is deliberately gone from the edit dialog. Keeping both would
  * have left two controls for one value that can disagree with each other; the
  * table shows the resulting position instead, so the value is still visible.
+ *
+ * "צבע ותמונה למחלקה" (P:/specs/category-color-image.md §1): the dialog's colour has a ready palette,
+ * its picture is uploaded, cropped and removed here (`POST` / `DELETE /categories/{id}/image`, the
+ * product pipeline), with a preview of the till's button; the table shows both.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, reorderCategories } from '@/lib/api';
+import { api, reorderCategories, uploadCategoryImage } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -46,6 +50,9 @@ import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banne
 import { RestrictedBadge, RestrictedSwitch } from '@/components/dashboard/products/restricted-item';
 import { categoryRestrictionOf, restrictedCategoryIds } from '@/lib/restrictedItems';
 import { categoryPath, parentOptions, wouldCycle } from '@/lib/categoryTree';
+import { CategoryColorField } from '@/components/dashboard/categories/category-color-field';
+import { CategoryChipPreview } from '@/components/dashboard/categories/category-chip-preview';
+import { CategoryImageField, type PendingCategoryImage } from '@/components/dashboard/categories/category-image-field';
 
 const EMPTY: Partial<Category> = { name: '', description: '', color: '#6366f1', catalogLevel: 'global' };
 
@@ -76,6 +83,19 @@ export default function CategoriesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Category>>(EMPTY);
   const isNew = !editing.id;
+  // A new category's picture, cropped and waiting for the category's id (uploaded right after the create).
+  const [pendingImage, setPendingImage] = useState<PendingCategoryImage | null>(null);
+  const dropPending = () => {
+    setPendingImage((p) => {
+      if (p) URL.revokeObjectURL(p.preview);
+      return null;
+    });
+  };
+  const openDialog = (c: Partial<Category>) => {
+    dropPending();
+    setEditing(c);
+    setOpen(true);
+  };
 
   const { data: categories = [], isLoading } = useQuery<Category[]>({
     queryKey: ['categories'],
@@ -150,14 +170,26 @@ export default function CategoriesPage() {
   });
 
   const save = useMutation({
-    mutationFn: (c: Partial<Category>) => {
-      // Send voucherId and parentId explicitly (null when cleared) so the API can unset them.
-      const payload = { ...c, voucherId: c.voucherId ?? null, parentId: c.parentId ?? null, ticketMode: c.ticketMode ?? 'off' };
-      return c.id ? api.put(`/categories/${c.id}`, payload) : api.post('/categories', payload);
+    mutationFn: async (c: Partial<Category>) => {
+      // Send voucherId and parentId explicitly (null when cleared) so the API can unset them; a colour
+      // cleared ("ללא צבע") is null too.
+      const payload = { ...c, voucherId: c.voucherId ?? null, parentId: c.parentId ?? null, ticketMode: c.ticketMode ?? 'off', color: c.color ?? null };
+      if (c.id) return api.put(`/categories/${c.id}`, payload);
+      const created = await api.post<Category>('/categories', payload);
+      // The picture chosen before the category had an id.
+      if (pendingImage && created.data?.id) {
+        try {
+          await uploadCategoryImage(created.data.id, pendingImage.file, { keepBackground: pendingImage.keepBackground });
+        } catch (err: unknown) {
+          toast.error(axiosErrorToToastMessage(err, t('look.uploadError')));
+        }
+      }
+      return created;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['categories'] });
       toast.success(isNew ? t('created') : t('updated'));
+      dropPending();
       setOpen(false);
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
@@ -187,7 +219,7 @@ export default function CategoriesPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        <Button onClick={() => { setEditing(EMPTY); setOpen(true); }} size="sm">
+        <Button onClick={() => openDialog(EMPTY)} size="sm">
           <Plus className="h-4 w-4 ms-1" /> {t('add')}
         </Button>
       </div>
@@ -238,6 +270,7 @@ export default function CategoriesPage() {
             <TableRow>
               <TableHead className="w-24">{tr('position')}</TableHead>
               <TableHead className="w-14">{t('color')}</TableHead>
+              <TableHead className="w-16">{t('look.imageColumn')}</TableHead>
               <TableHead>{t('name')}</TableHead>
               <TableHead>{t('level')}</TableHead>
               <TableHead>{tt('column')}</TableHead>
@@ -249,14 +282,14 @@ export default function CategoriesPage() {
             {isLoading ? (
               Array.from({ length: 4 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 8 }).map((_, j) => (
                     <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                   ))}
                 </TableRow>
               ))
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
                   {tr('empty')}
                 </TableCell>
               </TableRow>
@@ -310,8 +343,17 @@ export default function CategoriesPage() {
                   <TableCell>
                     <span
                       className="inline-block h-5 w-5 rounded-full border"
+                      title={c.color ?? t('look.noColor')}
                       style={{ background: c.color ?? '#e5e7eb' }}
                     />
+                  </TableCell>
+                  <TableCell>
+                    {c.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={c.imageUrl} alt="" loading="lazy" className="h-8 w-8 rounded-md border object-cover" />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="font-medium">
                     {c.name}
@@ -367,7 +409,7 @@ export default function CategoriesPage() {
                         variant="ghost"
                         size="icon"
                         title={tc('edit')}
-                        onClick={() => { setEditing(c); setOpen(true); }}
+                        onClick={() => openDialog(c)}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -389,8 +431,14 @@ export default function CategoriesPage() {
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) dropPending();
+        }}
+      >
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
           </DialogHeader>
@@ -405,12 +453,30 @@ export default function CategoriesPage() {
             </div>
             <div className="space-y-1">
               <Label>{t('color')}</Label>
-              <div className="flex items-center gap-2">
-                <input type="color" value={editing.color ?? '#6366f1'}
-                  onChange={(e) => setEditing((c) => ({ ...c, color: e.target.value }))}
-                  className="h-9 w-9 cursor-pointer rounded border p-0.5" />
-                <Input value={editing.color ?? ''} onChange={(e) => setEditing((c) => ({ ...c, color: e.target.value }))} className="flex-1" />
-              </div>
+              <CategoryColorField
+                value={editing.color}
+                onChange={(color) => setEditing((c) => ({ ...c, color: color ?? undefined }))}
+              />
+              <p className="text-xs text-muted-foreground">{t('look.colorHint')}</p>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('look.image')}</Label>
+              <CategoryImageField
+                categoryId={editing.id}
+                value={editing.imageUrl}
+                pending={pendingImage}
+                onPending={setPendingImage}
+                onUploaded={(url) => {
+                  setEditing((c) => ({ ...c, imageUrl: url ?? undefined }));
+                  qc.invalidateQueries({ queryKey: ['categories'] });
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>{t('look.preview.title')}</Label>
+              <CategoryChipPreview
+                category={{ name: editing.name ?? '', color: editing.color, imageUrl: pendingImage?.preview ?? editing.imageUrl }}
+              />
             </div>
             <div className="space-y-1">
               <Label>{t('parent')}</Label>

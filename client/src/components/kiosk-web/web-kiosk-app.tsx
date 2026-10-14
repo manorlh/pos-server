@@ -25,6 +25,7 @@ import {
   aspectRatioCss,
   buttonRadius,
   cartPanelShown,
+  categoryRailColor,
   categoryRailImage,
   checkoutStepsNow,
   ctaBox,
@@ -339,6 +340,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     [view.catalog.groups],
   );
   const catalogImages = useMemo(() => Object.fromEntries(view.catalog.categories.map((c) => [c.id, c.imageUrl])), [view.catalog.categories]);
+  const catalogColors = useMemo(() => Object.fromEntries(view.catalog.categories.map((c) => [c.id, c.color ?? null])), [view.catalog.categories]);
+  // "תמונת מחלקה מהקטלוג" (catalog.categoryImagesFromCatalog, on unless the config turns it off).
+  const fromCatalog = cfg.catalog.categoryImagesFromCatalog !== false;
   const categories: PCategory[] = useMemo(
     () =>
       view2.categories.map((row) => ({
@@ -346,12 +350,16 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         name: row.category.name,
         imageUrl: categoryRailImage(
           row.category.id,
-          { categoryImages: Object.fromEntries(Object.entries(view.catalog.categoryImages).map(([k, url]) => [k, { url, kind: 'image' as const, sha256: null, bytes: null }])) },
+          {
+            categoryImages: Object.fromEntries(Object.entries(view.catalog.categoryImages).map(([k, url]) => [k, { url, kind: 'image' as const, sha256: null, bytes: null }])),
+            categoryImagesFromCatalog: fromCatalog,
+          },
           catalogImages,
         ),
+        color: categoryRailColor(row.category.id, { categoryImagesFromCatalog: fromCatalog }, catalogColors),
         products: row.products.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))),
       })),
-    [view2, view.catalog.categoryImages, catalogImages, required, answered],
+    [view2, view.catalog.categoryImages, catalogImages, catalogColors, fromCatalog, required, answered],
   );
   const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))), [view2, required, answered]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);

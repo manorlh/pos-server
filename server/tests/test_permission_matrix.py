@@ -113,3 +113,26 @@ class TestTheRoutersUseTheGrid:
 
         mod = importlib.import_module(module)
         assert set(getattr(mod, name)) == set(roles_for(*expected))
+
+
+class TestReleasingASignedInEmployee:
+    """"שחרור עובד מחובר במכשיר" (P:/specs/exclusive-login-v2.md §2) — a set of its own, not the staffing one."""
+
+    ALLOWED = {UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER}
+
+    def test_the_managers(self):
+        assert set(roles_for(Resource.USER_SESSION, Action.WRITE)) == self.ALLOWED
+
+    def test_nobody_else(self):
+        for role in ALL_ROLES - self.ALLOWED:
+            assert may(role, Resource.USER_SESSION, Action.WRITE) is False, role
+
+    def test_the_dashboard_reads_the_grid(self):
+        from types import SimpleNamespace
+
+        from app.services.user_sessions import may_release_from_dashboard
+
+        # A stand-in session has no dashboard profiles: the role alone decides.
+        for role in ALL_ROLES:
+            user = SimpleNamespace(id=None, role=role)
+            assert may_release_from_dashboard(object(), user) is (role in self.ALLOWED), role

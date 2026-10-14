@@ -110,6 +110,9 @@ export const EXCEPTION_TYPES = [
   // invoice and credit numbers, summary) and a closed table restored (details: restoredAs, restoredBy, …).
   'payment_reversed',
   'table_restored',
+  // "תמיכה מרחוק" (pos-server app/services/remote_support.py): a till's QuickSupport signed by a certificate
+  // other than the allowed one (details: summary, till, package, reported, pinned, resolvedAt).
+  'quicksupport_signer_mismatch',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

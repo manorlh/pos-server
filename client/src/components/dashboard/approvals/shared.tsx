@@ -80,6 +80,7 @@ export function PendingApprovalCard({ card }: { card: ApprovalCard }) {
         <div className="min-w-0 space-y-1">
           <p className="font-semibold leading-tight">{card.typeLabel}</p>
           {measure ? <p className="text-xl font-bold tabular-nums">{measure}</p> : null}
+          {card.summary ? <p className="text-sm">{card.summary}</p> : null}
         </div>
         <Countdown expiresAt={card.expiresAt} className="mt-0.5" />
       </div>

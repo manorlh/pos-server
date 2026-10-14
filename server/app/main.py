@@ -148,6 +148,12 @@ app.include_router(areas_router.router, prefix=_prefix)
 from app.routers import machine_search as machine_search_router  # noqa: E402
 
 app.include_router(machine_search_router.router, prefix=_prefix)
+# "מצב סנכרון של מכשיר" (app/routers/sync_status.py): before the machines router too
+# (`/machines/sync-status`), and the till's `POST /sync/{m}/sync-state`.
+from app.routers import sync_status as sync_status_router  # noqa: E402
+
+app.include_router(sync_status_router.router, prefix=_prefix)
+app.include_router(sync_status_router.till_router, prefix=_prefix)
 app.include_router(machines.router, prefix=_prefix)
 app.include_router(close_day.router, prefix=_prefix)
 app.include_router(pairing.router, prefix=_prefix)
@@ -233,6 +239,10 @@ app.include_router(windows_bridge_router.router, prefix=_prefix)
 from app.routers import device_management as device_management_router  # noqa: E402
 
 app.include_router(device_management_router.router, prefix=_prefix)
+# "תמיכה מרחוק" (app/routers/remote_support.py): the QuickSupport signer pin — confirm, replace.
+from app.routers import remote_support as remote_support_router  # noqa: E402
+
+app.include_router(remote_support_router.router, prefix=_prefix)
 app.include_router(accounting_router.router, prefix=_prefix)
 app.include_router(sales_reports_router.router, prefix=_prefix)
 app.include_router(till_messages_router.router, prefix=_prefix)
@@ -387,6 +397,18 @@ def start_sales_targets_worker():
 
 
 @app.on_event("startup")
+def start_course_auto_fire_worker():
+    """
+    "הוצאה אוטומטית של השלב הבא" in the cloud's tables, every 15 s (app/services/course_auto_fire_worker.py);
+    it fires only where a till parameter `autoFire` is on. COURSE_AUTO_FIRE_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.course_auto_fire_worker import start_background_worker as start_fire_worker
+
+    start_fire_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_zcredit_reconcile_worker():
     """
     "התאמת אשראי מול Z-Credit" nightly per terminal (app/services/zcredit_reconcile_worker.py);
@@ -428,6 +450,19 @@ def start_device_logs_retention_worker():
     from app.services.device_logs_retention import start_background_worker as start_logs_retention
 
     start_logs_retention(SessionLocal)
+
+
+@app.on_event("startup")
+def start_customer_display_media_worker():
+    """
+    "מסך לקוח": the slideshow's uploads compressed in the background, and the files the retention
+    policy lets go deleted hourly (app/services/customer_display_media.py);
+    CUSTOMER_DISPLAY_MEDIA_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.customer_display_media import start_background_worker as start_cd_media_worker
+
+    start_cd_media_worker(SessionLocal)
 # KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
 from app.routers import kds as kds_router  # noqa: E402
 
@@ -561,6 +596,13 @@ app.include_router(report_pdf_router.router, prefix=_prefix)
 from app.routers import table_restore as table_restore_router  # noqa: E402
 
 app.include_router(table_restore_router.router, prefix=_prefix)
+
+# "תפריט הקופה" (P:/specs/till-menu-hide.md §3, app/routers/till_menu.py): `hiddenMenuItems` at one level —
+# the device page's card and "עיצוב קופה"'s, besides the parameters page.
+from app.routers import till_menu as till_menu_router  # noqa: E402
+
+app.include_router(till_menu_router.router, prefix=_prefix)
+app.include_router(till_menu_router.design_router, prefix=_prefix)
 
 
 @app.on_event("startup")

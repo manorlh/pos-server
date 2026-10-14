@@ -5,7 +5,9 @@ Products: POST /upload (server-side proxy) — the server cuts the background ou
 (app/services/product_image_processing.py) before storing, so it has to see the
 bytes. The untouched upload is kept next to it as `<public_id>_orig`.
 Categories: GET /upload-params → client signed direct upload to Cloudinary
-(POST /upload also still accepts them, stored as uploaded).
+(POST /upload also still accepts them, stored as uploaded). A category's own picture is
+`POST /categories/{id}/image` (app/routers/categories.py): through `store_upload` like a
+product's (`as_product`), and set on the category.
 Branding: POST /branding (server-side proxy — the size/dimension limits below
 have to be enforced somewhere the browser cannot skip, so white-label images do
 not use the signed direct-upload path). Never background-removed.
@@ -174,12 +176,15 @@ async def read_checked_upload(file: UploadFile) -> bytes:
 
 async def store_upload(
     contents: bytes, active_tenant_id, resource: str, keep_background: bool, enhance: bool = False,
+    *, as_product: Optional[bool] = None,
 ) -> "ImageUploadResponse":
     """
     Store an image that passed the type and size checks: a product's with its background
     cut out (unless `keep_background` or PRODUCT_IMAGE_BG_REMOVAL is off) and/or enhanced
     (`enhance`: the till's uploads, "שפר תמונה"), the upload kept beside it; anything else as
     it came. Shared by the dashboard's upload and the till's (`POST /sync/{m}/products/{id}/image`).
+    `as_product`: whatever the folder, processed as a product's picture is (a category's own
+    picture, `POST /categories/{id}/image`); by default only the products folder is.
     """
     use_cloudinary = cloudinary_configured()
     if use_cloudinary:
@@ -188,8 +193,9 @@ async def store_upload(
     folder = upload_folder(active_tenant_id, resource)
 
     processed = None
-    remove_background = resource == "products" and get_settings().product_image_bg_removal and not keep_background
-    if resource == "products" and (remove_background or enhance):
+    product_like = resource == "products" if as_product is None else bool(as_product)
+    remove_background = product_like and get_settings().product_image_bg_removal and not keep_background
+    if product_like and (remove_background or enhance):
         # Seconds of CPU on a model — never on the event loop.
         processed = await run_in_threadpool(
             process_product_image, contents, remove_background=remove_background, enhance=enhance,

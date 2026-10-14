@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  actionLabel,
   BLOCK_CHANNELS,
   blockSummary,
   CHANNEL_LABELS,
@@ -183,6 +184,12 @@ describe('commands', () => {
     assert.equal(commandStatusLabel('expired', 'not_answered'), 'נמסר ולא נענה (פג תוקף)');
     assert.equal(commandStatusLabel('refused', 'sale_in_progress'), 'נדחה: באמצע מכירה');
     assert.equal(commandStatusLabel('refused', 'no_update'), 'נדחה: אין עדכון מוכן');
+  });
+
+  it("names the table card's commands (P:/specs/live-tables-cloud.md §6) and their refusals", () => {
+    assert.equal(actionLabel('table_fire'), 'הוצאת שלב מהדשבורד');
+    assert.equal(actionLabel('table_print_bill'), 'הדפסת חשבון מהדשבורד');
+    assert.equal(commandStatusLabel('refused', 'table_in_use'), 'נדחה: קופה בתוך השולחן');
   });
 });
 

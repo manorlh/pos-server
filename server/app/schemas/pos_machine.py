@@ -191,6 +191,10 @@ class MachineHeartbeatBody(BaseModel):
     #: Device owner and silent updates (pos-android system/DeviceManagement.kt), cleaned key by
     #: key in `device_management.clean_block` — never a 422.
     device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
+    #: "הפעלה אוטומטית כשהמכשיר נדלק" (P:/specs/autostart-default.md §3): `{enabled, granted, homeApp,
+    #: deviceOwner, ready}`, cleaned key by key in `autostart.clean_report` and kept in
+    #: `device_info["autostart"]` — never a 422. Absent (an older build): as it was.
+    autostart: Optional[Dict[str, Any]] = None
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -244,6 +248,21 @@ class MachineHeartbeatBody(BaseModel):
     #: The device's LAN identity for discovery (§11.6): `{publicKey, alg: "ES256"}`, an EC P-256 key;
     #: one that is not is dropped. Absent: as it was.
     lan_identity: Optional[Dict[str, Any]] = Field(None, alias="lanIdentity")
+    #: "תמיכה מרחוק" (app/services/remote_support.py): `{installed, package, signerSha256: [..],
+    #: installedFrom}` — TeamViewer QuickSupport on the device, kept in `device_info["remoteSupport"]`,
+    #: cleaned key by key in `remote_support.clean_report` (never a 422). Absent: as it was.
+    remote_support: Optional[Dict[str, Any]] = Field(None, alias="remoteSupport")
+    #: "מסך לקוח" (P:/specs/customer-display-transitions.md §5.4): the slideshow files this device
+    #: holds, `{screen: bool, held: [sha256…]}` — cleaned in app/services/customer_display_media.py
+    #: `apply_report` (never a 422). Absent (an older build): as it was.
+    customer_display_media: Optional[Dict[str, Any]] = Field(None, alias="customerDisplayMedia")
+    #: "מצב סנכרון" (P:/specs/device-sync-status.md §5.3): per sync key `{version, pulledAt, ok,
+    #: error?, errorSince?}`, cleaned value by value in app/services/sync_status.py — never a 422.
+    #: Absent: as it was.
+    sync_state: Optional[Any] = Field(None, alias="syncState")
+    #: What the device holds and has not uploaded yet: `{documents, events, attendance, refunds,
+    #: oldestAt}` (§5.3), cleaned the same way. Absent: as it was.
+    outbox: Optional[Any] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -419,6 +438,9 @@ class POSMachineResponse(POSMachineBase):
     device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
     device_management_reported_at: Optional[datetime] = Field(None, alias="deviceManagementReportedAt")
     reboot_request: Optional[Dict[str, Any]] = Field(None, alias="rebootRequest")
+    #: "פתיחה אוטומטית" (app/services/autostart.py `status_of`): `{state: ready | missing | off, via:
+    #: lock | home | permission | null, reportedAt}` — null while the device has not reported (no indicator).
+    auto_start: Optional[Dict[str, Any]] = Field(None, alias="autoStart")
     # Null means "the device could not read it", never "flat". The dashboard must
     # render it as unknown rather than as 0%.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")

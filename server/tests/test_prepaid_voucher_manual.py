@@ -509,12 +509,15 @@ class TestMigration:
         # The release of 13.10.2026 joins this head with its sibling PRs' in one merge revision
         # (78c88a7afc4f); the release of 14.10.2026 joins the two heads built on that one
         # (8d4f2a6c1e93, a7c3e9f1d2b4) in 9f55dd368692, 396f22daf19c chains on it, and ba584f6fb704
-        # joins that with table-restore's a7d3e1c9b5f2. This migration stays on test mode, on the
-        # single head's line; later ones chain on top.
+        # joins that with table-restore's a7d3e1c9b5f2; release 14.10b joins e3b9d7a41c62 (tables_layout,
+        # on b637e9784d58 courses FIRE v2), 5d1f8b3e7a92 (the "הכל" tab) and e4b7c2d9a6f1 (customer
+        # display media) in bb6205ba290c. This migration stays on test mode, on the single head's line;
+        # later ones chain on top.
         heads = script.get_heads()
         assert len(heads) == 1
         line = {r.revision for r in script.walk_revisions("base", heads[0])}
-        assert {"ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
+        assert {"bb6205ba290c", "ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
+        assert set(script.get_revision("bb6205ba290c").down_revision) == {"e3b9d7a41c62", "5d1f8b3e7a92", "e4b7c2d9a6f1"}
         assert set(script.get_revision("ba584f6fb704").down_revision) == {"396f22daf19c", "a7d3e1c9b5f2"}
         assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"
         assert set(script.get_revision("9f55dd368692").down_revision) == {"8d4f2a6c1e93", "a7c3e9f1d2b4"}

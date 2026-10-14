@@ -49,6 +49,8 @@ import {
   type ValueDraft,
 } from './value-input';
 import { useTillParameterErrorText } from './errors';
+import { GlobalSignerPin } from '../remote-support/signer-pin';
+import { SIGNER_KEY as REMOTE_SUPPORT_SIGNER_KEY } from '@/lib/remoteSupport';
 import { useShopAreas } from '../areas/use-shop-areas';
 
 export const SCOPES: TillParameterScope[] = ['company', 'shop', 'area', 'machine'];
@@ -259,6 +261,8 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
         {!parameter.isActive ? (
           <p className="text-sm text-amber-600 dark:text-amber-400">{tv('inactiveNote')}</p>
         ) : null}
+        {/* "תמיכה מרחוק": "נקבע אוטומטית מהתקנה ראשונה (קופה X, תאריך)" with "אשר" / "החלף". */}
+        {parameter.key === REMOTE_SUPPORT_SIGNER_KEY ? <GlobalSignerPin defaultValue={parameter.defaultValue} /> : null}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-lg border overflow-hidden">
@@ -447,6 +451,7 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
                 enumLabels={parameter.enumLabels}
                 parameterKey={parameter.key}
                 imageKind={imageKind}
+                widget={parameter.widget}
                 draft={draft}
                 onChange={setDraft}
                 disabled={save.isPending}

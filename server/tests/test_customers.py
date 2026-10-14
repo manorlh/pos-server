@@ -120,9 +120,12 @@ def test_a_customer_change_moves_the_catalog_watermark() -> None:
     # Customers ride the catalog payload, so a customer edit has to make the till's
     # last pull look stale — otherwise the new customer does not reach the counter
     # until something unrelated changes.
-    source = inspect.getsource(S.get_catalog_change_watermark_for_machine)
+    # The watermark is the newest of every named point (`catalog_change_points`, also the sync
+    # status's catalog version); customers are one, read before the shop / no-shop branches.
+    source = inspect.getsource(S.catalog_change_points)
     assert "Customer.updated_at" in source
-    assert source.count("customer_max") >= 3  # defined, and used in both branches
+    assert source.index('points["customers"]') < source.index("if machine.shop_id:")
+    assert "catalog_change_points" in inspect.getsource(S.get_catalog_change_watermark_for_machine)
 
 
 # ── Linking a document to a customer ─────────────────────────────────────────

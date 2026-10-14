@@ -31,7 +31,11 @@ class TillEventIn(BaseModel):
                   # action, tip, partial, original/credit transaction ids and numbers, requestedBy, approvedBy,
                   # performedBy, approvalStyle, note) and a closed table restored (details: orderId,
                   # newOrderId, tableNumber, restoredAs, transactionIds, requestedBy / restoredBy, approvedBy).
-                  "payment_reversed", "table_restored"]
+                  "payment_reversed", "table_restored",
+                  # "הוצאה אוטומטית של השלב הבא" (app/services/course_auto_fire.py): a course that went by
+                  # itself, by the till that fired it (details: orderId, tableNumber, tableName, courseId,
+                  # courseName, trigger after_minutes | after_ready, minutes). Kept for the record, no rule.
+                  "course_auto_fired"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

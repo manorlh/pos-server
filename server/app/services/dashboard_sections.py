@@ -203,7 +203,30 @@ SECTIONS: Tuple[Section, ...] = (
         "וסגירת המשמרת שלו מהענן. עריכה: מעביר. רק מנהל-על מעניק, וגישה מלאה לא כוללת אותה.",
         (),
     ),
-    Section("tables", "שולחנות", "אזורים, שולחנות, הזמנות ודוח שולחנות.", ("/dashboard/tables",)),
+    Section(
+        "tables", "שולחנות",
+        "השולחנות הפתוחים וכרטיס שולחן, הזמנות, דוחות וסיבות ביטול. עריכה: פעולות מהכרטיס — הדפסת "
+        "חשבון, הדפסה חוזרת, הוצא / השהה שלב, זרז, העברה, איחוד, הערה ושחרור נעילה. עריכת המפה עצמה "
+        "היא \"עריכת מפה ושולחנות\".",
+        ("/dashboard/tables",),
+    ),
+    # "ביטול והחלפת מלצר" from the table card (P:/specs/live-tables-cloud.md §2 "הרשאות"): besides
+    # `tables` at edit — the actions a manager answers for. No page of its own.
+    Section(
+        "tables_manage", "ניהול שולחנות פתוחים",
+        "ביטול שולחן פתוח והחלפת המלצר שלו מהדשבורד (בנוסף לעריכה ב\"שולחנות\").",
+        (),
+    ),
+    # "עריכת מפה ושולחנות" (the owner, 14.10.2026: "אפשר לתת למנהל לערוך מפה ואפשר גם לא — דינמי"): the
+    # floor itself — zones, tables, the map's sketch and positions, table types — in "ניהול שולחנות → מפה
+    # ושולחנות", and the till design's "שולחנות ומפה" tab (its routes take `TABLES_LAYOUT_SECTION`). No
+    # page of its own: the tables page shows its editor to whoever holds it.
+    Section(
+        "tables_layout", "עריכת מפה ושולחנות",
+        "אזורים, שולחנות, סקיצת המפה ומיקום השולחנות, וסוגי שולחנות — בדף השולחנות ובלשונית \"שולחנות ומפה\" "
+        "בעיצוב קופה. צפייה במפה פתוחה גם עם \"שולחנות\".",
+        (),
+    ),
     Section("kiosks", "קיוסקים", "קיוסקים, הגדרותיהם ותקינות מכשירים.", ("/dashboard/kiosks", "/dashboard/kiosks/health")),
     Section("till_design", "עיצוב קופה", "מסכי ההזמנה של הקופות.", ("/dashboard/till-design",)),
     Section("kds", "KDS ותצורת עבודה", "מסכי מטבח ותצורת עבודה לעמדה.", ("/dashboard/kds", "/dashboard/workflow")),
@@ -217,6 +240,16 @@ SECTIONS: Tuple[Section, ...] = (
     Section(
         "pos_users", "קופאים (POS)", "עובדי הקופה, קודי PIN, מי מחובר איפה ותפקידים והרשאות בקופה.",
         ("/dashboard/pos-users", "/dashboard/till-roles"),
+    ),
+    # "עובד במכשיר אחד בלבד" v2 (P:/specs/exclusive-login-v2.md §2, §6): "מחוברים כעת במכשירים" — on the
+    # employees page and on the phone's home ("הניהול שלי"): view sees who is signed in where, edit releases
+    # one (with a manager's role: app/services/user_sessions.py `may_release_from_dashboard`).
+    Section(
+        "user_sessions_release", "שחרור עובד מחובר במכשיר",
+        "\"מחוברים כעת במכשירים\" בדף הקופאים ובמסך הניהול בנייד: מי מחובר באיזה מכשיר ומאז מתי. עריכה: "
+        "שחרור עובד שמחובר במכשיר (נרשם בחריגות), ואישור \"בקשת שחרור ממנהל\" שנשלחה מהקופה (יחד עם "
+        "\"בקשות אישור\"). רק למנהל-על, מפיץ, מנהל חברה ומנהל סניף.",
+        (),
     ),
     Section("attendance", "נוכחות עובדים", "מי במשמרת, דוח נוכחות ותיקונים.", ("/dashboard/attendance",)),
     Section("users", "משתמשי דשבורד", "משתמשי הענן של הארגון.", ("/dashboard/users",)),
@@ -240,6 +273,8 @@ SECTIONS: Tuple[Section, ...] = (
 )
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
+#: The floor's editing (zones, tables, sketch, types) — for the routes of any page that edits it.
+TABLES_LAYOUT_SECTION = "tables_layout"
 SECTION_BY_ID: Dict[str, Section] = {s.id: s for s in SECTIONS}
 
 #: Permissions only the super admin grants, each held only where a profile names it — never by
@@ -260,7 +295,8 @@ FULL_LABEL = "גישה מלאה לפי תפקיד"
 
 #: "מנהל סניף / אירוע" — runs a shop or an event from the cockpit: sees its reports, Zs, the live
 #: event, the alerts, the vouchers and the promotions; acts through the quick actions, blocks and
-#: sold-outs, remote control, till messages, kiosks and stock. Never users, accounting, branding,
+#: sold-outs, remote control, till messages, kiosks, stock and the open tables (their card's actions,
+#: the cancel and "החלף מלצר" — `tables_manage`). Never users, accounting, branding,
 #: till settings, organization or till users.
 BRANCH_MANAGER_TEMPLATE = "branch_manager"
 BRANCH_MANAGER_LABEL = "מנהל סניף / אירוע"
@@ -281,13 +317,24 @@ BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
     # Pausing a kiosk and its messages come through `device_control`.
     "kiosks": VIEW,
     "stock": EDIT,
+    # The floor's open tables (P:/specs/live-tables-cloud.md §2): the card's actions, the cancel and
+    # "החלף מלצר" — they run the place. Not the map itself (`tables_layout`): the owner opens it per
+    # manager or template ("אפשר לתת למנהל לערוך מפה ואפשר גם לא — דינמי").
+    "tables": EDIT,
+    "tables_manage": EDIT,
+    # "מחוברים כעת במכשירים" and its release (exclusive login v2 §2) — on for a shop's manager, off for
+    # the area manager (below).
+    "user_sessions_release": EDIT,
 }
 #: "מנהל אזור" — the same, meant for a user scoped to a point of sale. Dashboard users cannot be
 #: scoped to one yet (Saturday): until then the label says so and the template is `hidden` — not
 #: offered where admins assign templates.
 AREA_MANAGER_TEMPLATE = "area_manager"
 AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)"
-AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
+#: Less one: "שחרור עובד מחובר במכשיר" is off for the area manager (P:/specs/exclusive-login-v2.md §2).
+AREA_MANAGER_SECTIONS: Dict[str, str] = {
+    k: v for k, v in BRANCH_MANAGER_SECTIONS.items() if k != "user_sessions_release"
+}
 #: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
 MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
 #: "מאשר" (P:/specs/manager-approval-mobile.md §0, §4): only the approval requests — to see and decide.
@@ -624,6 +671,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/item-blocks/control*", S("item_blocks", "stock")),
     (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
+    # "תפריט הקופה" (app/routers/till_menu.py): the device page's card — a till setting of the device.
+    (_ALL, "/till-menu-hide", S("devices", "till_settings")),
     # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.
     (_ALL, "/customer-display/*", S("till_settings", "devices")),
     # ── Devices ──
@@ -681,7 +730,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),
     (_GET, "/shops/{}/next-register-number", S("devices", "organization", level=VIEW)),
     (_ALL, "/shops/{}/pos-users*", S("pos_users")),
-    (_ALL, "/shops/{}/user-sessions*", S("pos_users")),
+    # "מחוברים כעת במכשירים": read with the employees page or the release permission; the release itself is
+    # the permission's alone (no longer "edit the employees" — exclusive login v2 §2).
+    (_GET, "/shops/{}/user-sessions", S("pos_users", "user_sessions_release", level=VIEW)),
+    ("POST", "/shops/{}/user-sessions/{}/release", S("user_sessions_release", level=EDIT)),
     (_ALL, "/shops/{}/printer-routing/products/*", S("products", "printers")),
     (_ALL, "/shops/{}/printer-routing/categories*", S("products", "printers")),
     (_ALL, "/shops/{}/printer-scan", S("printers", "products")),
@@ -712,7 +764,24 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/z-participation", S("z")),
     (_ALL, "/shops*", S("organization")),
     # ── Tables ──
+    # "עריכת מפה ושולחנות" (`tables_layout`): every write to the floor itself — zones (their sketch,
+    # positions, bulk tables), tables, table types. Reading it: whoever reads the tables, or edits the map.
+    ("POST", "/tables/zones", S(TABLES_LAYOUT_SECTION)),
+    ("PATCH", "/tables/zones/{}", S(TABLES_LAYOUT_SECTION)),
+    ("POST", "/tables/zones/{}/archive", S(TABLES_LAYOUT_SECTION)),
+    ("POST", "/tables/zones/{}/bulk", S(TABLES_LAYOUT_SECTION)),
+    ("PUT", "/tables/zones/{}/positions", S(TABLES_LAYOUT_SECTION)),
+    ("POST", "/tables/tables", S(TABLES_LAYOUT_SECTION)),
+    ("PATCH", "/tables/tables/{}", S(TABLES_LAYOUT_SECTION)),
+    ("POST", "/tables/tables/{}/archive", S(TABLES_LAYOUT_SECTION)),
+    ("POST", "/tables/types", S(TABLES_LAYOUT_SECTION)),
+    ("PATCH", "/tables/types/{}", S(TABLES_LAYOUT_SECTION)),
+    ("POST", "/tables/types/{}/archive", S(TABLES_LAYOUT_SECTION)),
+    (_GET, "/tables/layout", S("tables", TABLES_LAYOUT_SECTION, level=VIEW)),
+    (_GET, "/tables/types", S("tables", TABLES_LAYOUT_SECTION, level=VIEW)),
     (_GET, "/tables/live", S("tables", "reports", level=VIEW)),
+    # The live view's realtime (P:/specs/live-tables-cloud.md §6.8): whoever reads the live view.
+    (_GET, "/tables/live/push", S("tables", "reports", level=VIEW)),
     (_GET, "/tables/report", S("tables", "reports", level=VIEW)),
     (_GET, "/tables/meals-report", S("tables", "reports", level=VIEW)),
     (_ALL, "/tables/*", S("tables")),

@@ -467,7 +467,8 @@ export type HealthOverall = (typeof OVERALL_STATES)[number];
 /** Each part's codes (kiosk_health.*_part); anything else is shown as sent. */
 export const PART_CODES: Record<HealthPartKey, readonly string[]> = {
   app: ['disabled', 'offline', 'paused', 'till_mode', 'closed', 'setup', 'no_payment', 'config_pending', 'running'],
-  terminal: ['card_lock', 'card_unknown', 'ready', 'busy', 'unreachable', 'not_ready', 'not_configured', 'none', 'not_reported'],
+  // `no_card`: a kiosk "ללא אשראי" (paymentIntegration `none`) — no terminal, level `off`.
+  terminal: ['card_lock', 'card_unknown', 'ready', 'busy', 'unreachable', 'not_ready', 'not_configured', 'none', 'no_card', 'not_reported'],
   printer: ['no_paper', 'offline', 'unavailable', 'error', 'usb_detached', 'usb_permission', 'usb_several', 'overheated', 'unprinted', 'ok', 'none', 'not_reported'],
   tillLink: ['not_reported', 'none', 'down', 'lan', 'cloud', 'ok'],
   kds: ['bon', 'no_screens', 'screens_offline', 'down', 'ok'],
@@ -536,6 +537,16 @@ export interface HealthBattery {
   stale: boolean;
 }
 
+/**
+ * "פתיחה אוטומטית" as the server sends it (kiosk_health / autostart.status_of): ready (and how), missing,
+ * off. The same shape as lib/autoStart.ts `AutoStartStatus`, written out here to keep this file import-free.
+ */
+export interface HealthAutoStart {
+  state: string;
+  via?: string | null;
+  reportedAt?: string | null;
+}
+
 export interface KioskHealthRow {
   machineId: string;
   name: string;
@@ -569,6 +580,8 @@ export interface KioskHealthRow {
   battery?: HealthBattery | null;
   /** "ניטור סוללה": false on a kiosk on mains (or set off) — no battery, no history, the part says why. */
   batteryMonitored?: boolean;
+  /** "פתיחה אוטומטית" (lib/autoStart.ts); null: never reported — no indicator. Not a part: no effect on `overall`. */
+  autoStart?: HealthAutoStart | null;
 }
 
 /** The battery part of a device whose battery is not watched ("ללא סוללה" / "ניטור סוללה כבוי"). */
@@ -593,6 +606,8 @@ export interface HealthDevice {
   batteryPart: HealthPart;
   /** "ניטור סוללה": false on a till on mains (or set off) — `battery` is null, the part says why. */
   batteryMonitored?: boolean;
+  /** "פתיחה אוטומטית" (lib/autoStart.ts); null: never reported — no indicator. */
+  autoStart?: HealthAutoStart | null;
   overall: 'ok' | 'warn' | 'error' | 'offline';
 }
 

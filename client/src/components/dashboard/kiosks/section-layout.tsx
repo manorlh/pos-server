@@ -2,7 +2,8 @@
 
 /**
  * "מבנה הקיוסק" (config `layout`, docs/SPEC_KIOSK_LAYOUTS.md) beside "סגנון ממשק": the template
- * picker with a thumbnail per template, the accessibility mode, every key one by one under
+ * picker with a thumbnail per template, the accessibility mode, "התנהגות" (the quick add and the
+ * dish's count badge, P:/specs/kiosk-tap-add-count-badge.md), every other key one by one under
  * "מתקדם", and the category icons (catalog.categoryIconIds). Picking a template moves every value
  * that followed the old one; a value chosen explicitly (here or above) stays — as the style does.
  */
@@ -16,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   RAIL_MOTION_COLOR_KEYS,
+  contrastText,
   railMotionColors,
   railMotionContrastIssues,
   resolveThemeColors,
@@ -325,6 +327,46 @@ function LayoutChoice<K extends keyof KioskLayout>({
   );
 }
 
+/* ------------------------------------------------------------ "התנהגות" (P:/specs/kiosk-tap-add-count-badge.md) */
+
+/** "תג כמות על המנה" (layout.cartCountBadge): on unless a level turned it off (a config from before the key is on). */
+function CartCountBadgeField() {
+  const t = useTranslations('kiosks.layouts');
+  const ed = useKioskEditor();
+  const f = useKioskField<boolean | undefined>('layout.cartCountBadge');
+  const on = f.value !== false;
+  return (
+    <FieldShell path="layout.cartCountBadge" label={t('keys.cartCountBadge')} hint={t('cartCountBadgeHint')}>
+      <div className="flex items-center justify-between gap-4">
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={on} disabled={f.disabled} aria-label={t('keys.cartCountBadge')} onCheckedChange={(v) => f.set(!!v)} />
+          {on ? t('cartCountBadgeOn') : t('cartCountBadgeOff')}
+        </label>
+        <CountBadgeSample on={on} c={resolveThemeColors(ed.draft.theme)} />
+      </div>
+    </FieldShell>
+  );
+}
+
+/** The badge on a dish's card in the draft's colours: "2" in the primary colour at the card's top corner, as the kiosk draws it. */
+function CountBadgeSample({ on, c }: { on: boolean; c: ResolvedThemeColors }) {
+  return (
+    <div aria-hidden className="relative h-16 w-14 shrink-0 overflow-hidden rounded-lg border" style={{ background: c.surface }}>
+      <div className="h-9 w-full" style={{ background: `${c.primary}26` }} />
+      <div className="mx-1.5 mt-1.5 h-1.5 w-8 rounded-full" style={{ background: `${c.text}33` }} />
+      <div className="mx-1.5 mt-1 h-1.5 w-5 rounded-full" style={{ background: `${c.primary}88` }} />
+      {on ? (
+        <span
+          className="absolute end-1 top-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-extrabold tabular-nums animate-in zoom-in-50 duration-300"
+          style={{ background: c.primary, color: contrastText(c.primary) }}
+        >
+          2
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------ the card */
 
 export function LayoutSection() {
@@ -344,6 +386,13 @@ export function LayoutSection() {
         {/* "גודל מוצרים": the dishes' cards in every catalog (lib/kioskLayout productColumns), the preview beside. */}
         <div className="space-y-3 rounded-2xl border bg-muted/30 p-3">
           <LayoutChoice name="productSize" hint={t('productSizeHint')} />
+        </div>
+        {/* "התנהגות" (P:/specs/kiosk-tap-add-count-badge.md): a tap that puts a dish in, its count on it — the preview beside. */}
+        <div className="space-y-3 rounded-2xl border bg-muted/30 p-3" data-behaviour>
+          <div className="text-sm font-semibold">{t('behaviourTitle')}</div>
+          <LayoutChoice name="quickAdd" hint={t('quickAddHint')} />
+          <CartCountBadgeField />
+          <p className="text-xs text-muted-foreground">{t('behaviourPreviewHint')}</p>
         </div>
         <div className="rounded-2xl border">
           <button
@@ -372,7 +421,6 @@ export function LayoutSection() {
               <LayoutChoice name="card" nullable />
               <LayoutChoice name="flow" hint={t('flowHint')} />
               <LayoutChoice name="itemView" />
-              <LayoutChoice name="quickAdd" hint={t('quickAddHint')} />
               <LayoutChoice name="mealUpsell" hint={t('mealUpsellHint')} />
               <LayoutChoice name="mealView" />
               <LayoutChoice name="basket" nullable />

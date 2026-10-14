@@ -16,6 +16,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ValueView } from '@/components/dashboard/kiosks/review-dialog';
+import { useMotionText } from '@/components/dashboard/kiosks/motion-labels';
+import { isMotionEvent, type MotionDirection, type MotionEasing, type MotionFallback, type MotionGlobalSpeed, type MotionParam, type MotionPreset, type MotionType } from '@/lib/kioskMotionEngine';
 import {
   ACCENT_BRAND,
   AS_BASE,
@@ -55,8 +57,20 @@ export function useTillPathLabel() {
   const tp = useTranslations('tillDesign.profiles');
   const tl = useTranslations('tillDesign.layout');
   const tx = useTranslations('tillDesign.texts');
+  const tm = useMotionText('till');
   return (path: string): string => {
     const parts = path.split('.');
+    // "הנפשות": the screen's words — "הנפשות · פתיחת שולחן · סוג הנפשה".
+    if (parts[0] === 'motion') {
+      if (parts[1] === 'events') {
+        const event = parts[2];
+        const words = [t('motion.events')];
+        if (event) words.push(isMotionEvent(event) ? tm.eventName(event) : event);
+        if (parts[3]) words.push(tm.t.has(`params.${parts[3]}`) ? tm.param(parts[3] as MotionParam) : parts[3]);
+        return words.join(' · ');
+      }
+      return parts[1] && t.has(`motion.${parts[1]}`) ? t(`motion.${parts[1]}`) : t('motion.events');
+    }
     if (parts[0] === 'profiles' && parts.length >= 3) {
       const key = parts[2];
       const where = tp.has(parts[1]) ? tp(parts[1]) : parts[1];
@@ -76,9 +90,30 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
   const tt = useTranslations('tillDesign.templates');
   const tf = useTranslations('tillDesign.values.fieldMode');
   const tr = useTranslations('tillDesign.review');
+  const tm = useMotionText('till');
   const parts = path.split('.');
   const last = parts[parts.length - 1];
   if (value === null || value === undefined) return <span className="text-muted-foreground">{tr('asBase')}</span>;
+  if (parts[0] === 'motion') {
+    // "הנפשות": a preset, a speed, a kind, a curve, a direction, a fallback, on / off — in words.
+    const word =
+      path === 'motion.preset' && typeof value === 'string'
+        ? tm.presetName(value as MotionPreset)
+        : path === 'motion.globalSpeed' && typeof value === 'string'
+          ? tm.globalSpeed(value as MotionGlobalSpeed)
+          : typeof value === 'boolean'
+            ? tm.t(value ? 'on' : 'off')
+            : typeof value === 'string' && last === 'animationType'
+              ? tm.kind(value as MotionType)
+              : typeof value === 'string' && last === 'easing'
+                ? tm.easing(value as MotionEasing)
+                : typeof value === 'string' && last === 'direction'
+                  ? tm.direction(value as MotionDirection)
+                  : typeof value === 'string' && last === 'reducedMotionFallback'
+                    ? tm.fallback(value as MotionFallback)
+                    : null;
+    if (word !== null) return <span>{word}</span>;
+  }
   // "כמו הבסיס" / "צבע המותג" over a value the level above set (phase 2 §3.10).
   if (value === AS_BASE && parts[0] === 'profiles') return <span className="text-muted-foreground">{tr('asBaseOver')}</span>;
   if (value === ACCENT_BRAND && path === 'colors.accent') return <span className="text-muted-foreground">{tr('brand')}</span>;

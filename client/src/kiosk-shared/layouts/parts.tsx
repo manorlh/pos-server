@@ -10,7 +10,7 @@ import { Check, Plus, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { contrastText } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
-import { cardKindOf, guidedBar, layoutOf, pricePillOn, productColumns, tapPathOf, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
+import { cardKindOf, dishCartCounts, guidedBar, layoutOf, pricePillOn, productColumns, tapPathOf, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
 import {
   CartTarget,
   CountUp,
@@ -26,6 +26,7 @@ import {
   type PreviewModel,
 } from '@/components/dashboard/kiosks/preview-screens';
 import { badgePop } from '@/components/dashboard/kiosks/preview-feedback';
+import { DishCountBadge } from './count-badge';
 
 /** A layout's word: the registry's text (as the business set it, in the screen's language), placeholders filled. */
 export function kt(m: PreviewModel, key: string, values?: Record<string, string | number>): string {
@@ -102,7 +103,8 @@ export function SectionTitle({ m, title, count }: { m: PreviewModel; title: stri
 /**
  * A dish in the layout's card ([kind]): tile (today's look), row (a line with its picture — the guided
  * flow), plate (a big picture on its plate — fast food). A tap opens it (or adds it), its "+" adds what
- * needs no choice, with the pop-and-fly.
+ * needs no choice, with the pop-and-fly; `inCart` — how many of it the basket holds, its count badge
+ * at the card's top corner ("תג כמות", layout.cartCountBadge).
  */
 export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p: PProduct; kind?: 'tile' | 'row' | 'plate'; inCart?: number }) {
   const tap = useTapDish(m);
@@ -161,20 +163,8 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           ) : null}
           {priced}
         </div>
-        {inCart > 0 && !added ? (
-          <span
-            className="flex shrink-0 items-center justify-center kt-15 font-bold"
-            style={{ width: 40 * u, height: 40 * u, borderRadius: 999, background: m.c.primary, color: contrastText(m.c.primary) }}
-            onClick={(e) => {
-              e.stopPropagation();
-              tap(p, true, null);
-            }}
-          >
-            {inCart}
-          </span>
-        ) : (
-          plus(40 * u)
-        )}
+        {plus(40 * u)}
+        <DishCountBadge m={m} inCart={inCart} size={Math.round(24 * u)} />
       </button>
     );
   }
@@ -195,6 +185,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           </div>
           {soldTag}
           {plus(42 * u, 'absolute bottom-0 end-0')}
+          <DishCountBadge m={m} inCart={inCart} size={Math.round(28 * u)} className="end-0 top-0" />
         </div>
         <div className="mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
           {p.name}
@@ -216,6 +207,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {soldTag}
         {plus(34 * u, 'absolute bottom-2 end-2')}
+        <DishCountBadge m={m} inCart={inCart} size={Math.round(26 * u)} className="end-2 top-2" />
       </div>
       <div className="space-y-0.5 p-2.5">
         <div className="line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>
@@ -233,11 +225,9 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
   );
 }
 
-/** How many of each dish the basket holds (the row card's badge). */
+/** How many of each dish the basket holds, every variant counted (the cards' count badge, DishCountBadge). */
 export function cartCounts(m: PreviewModel): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const l of m.cart) out[l.product.id] = (out[l.product.id] ?? 0) + l.qty;
-  return out;
+  return dishCartCounts(m.cart);
 }
 
 /**

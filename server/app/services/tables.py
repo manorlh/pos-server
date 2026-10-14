@@ -58,7 +58,17 @@ from app.models.tables import (
     TableZone,
 )
 from app.models.user import User
-from app.schemas.tables import SKETCH_KIND_SINCE, SKETCH_SCHEMA, SKETCH_VARIANT_SINCE, SKETCH_VARIANTS
+from app.schemas.tables import (
+    SKETCH_AREA_FILL_DEFAULT,
+    SKETCH_AREA_OPACITY_DEFAULT,
+    SKETCH_BG_OPACITY_DEFAULT,
+    SKETCH_FIELD_SINCE,
+    SKETCH_KIND_SINCE,
+    SKETCH_LOGO_OPACITY_MAX,
+    SKETCH_SCHEMA,
+    SKETCH_VARIANT_SINCE,
+    SKETCH_VARIANTS,
+)
 from app.services.areas import as_utc
 
 logger = logging.getLogger(__name__)
@@ -2095,7 +2105,8 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["variant"] = e.variant or "straight"
             out["stools"] = e.stools
         elif e.kind in SKETCH_VARIANTS and e.variant:
-            # Restrooms (men / women / accessible) and a plain exit; none — the default.
+            # Restrooms (men / women / accessible), a plain exit, a bar's drink, which
+            # entrance, a plant's size; none — the default.
             out["variant"] = e.variant
         if e.points:
             out["points"] = e.points
@@ -2105,8 +2116,36 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["stroke"] = e.stroke
         if e.filled is not None:
             out["filled"] = e.filled
-        if e.kind == "logo" and getattr(e, "src", None):
-            out["src"] = e.src
+        if e.kind == "logo":
+            # §8: the business's logo or the uploaded picture; how opaque; stretched or fitted.
+            source = getattr(e, "source", None)
+            if source:
+                out["source"] = source
+            if getattr(e, "src", None) and source != "business":
+                out["src"] = e.src
+            opacity = getattr(e, "opacity", None)
+            if opacity is not None and opacity != SKETCH_LOGO_OPACITY_MAX:
+                out["opacity"] = opacity
+            if getattr(e, "keep_aspect", None) is False:
+                out["keepAspect"] = False
+        if e.kind == "label":
+            # §8: only what differs from a plain text (fitted to its box, regular, no chip, centred).
+            if getattr(e, "font_size", None) is not None:
+                out["fontSize"] = e.font_size
+            if getattr(e, "bold", None):
+                out["bold"] = True
+            if getattr(e, "bg", None):
+                out["bg"] = e.bg.lower()
+                bg_opacity = getattr(e, "bg_opacity", None)
+                out["bgOpacity"] = SKETCH_BG_OPACITY_DEFAULT if bg_opacity is None else bg_opacity
+            if getattr(e, "align", None) in ("left", "right"):
+                out["align"] = e.align
+        if e.kind == "area":
+            # Always stored, so the till never guesses: the fill and its opacity (percent).
+            fill = getattr(e, "fill", None)
+            opacity = getattr(e, "opacity", None)
+            out["fill"] = (fill or SKETCH_AREA_FILL_DEFAULT).lower()
+            out["opacity"] = SKETCH_AREA_OPACITY_DEFAULT if opacity is None else opacity
         return out
 
     return {
@@ -2513,12 +2552,15 @@ def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: 
     A plan saved by a till whose map designer speaks an older sketch schema than this
     server ([till_schema]; a till that sends no `sketchSchema` speaks 1): what that till
     could not know is kept from the plan as it was. Its designer drops shapes of kinds it
-    does not know (a DJ booth) and turns variants it does not know into its own (a U bar
-    into a straight one, restrooms for men / women / accessible into the plain sign, a
-    plain exit into the emergency one) — the till never showed them, so it cannot have
-    meant to change them. Kept: every such shape it left out (after its own, in their
-    order), and such a variant on a shape it kept. A plan it cleared (null) stays cleared
-    — "ניקוי הסקיצה" is meant whole.
+    does not know (a DJ booth; with schema 3, a coffee station, a tree, an area…) and turns
+    variants it does not know into its own (a U bar into a straight one, restrooms for men /
+    women / accessible into the plain sign, a plain exit into the emergency one; a cocktail
+    bar into a plain one, the main entrance into "כניסה", a large plant into the usual pot)
+    — the till never showed them, so it cannot have meant to change them. Kept: every such
+    shape it left out (after its own, in their order), and such a variant on a shape it
+    kept; with schema 4, a text's and a logo's style (SKETCH_FIELD_SINCE: size, bold, chip,
+    alignment; source, opacity, stretch) on one it kept and sent without them. A plan it
+    cleared (null) stays cleared — "ניקוי הסקיצה" is meant whole.
     """
     if saved is None or not isinstance(before, dict):
         return saved
@@ -2540,6 +2582,10 @@ def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: 
             coerced = "straight" if kind == "counter" else None
             if mine.get("variant") == coerced:
                 mine["variant"] = variant
+        if mine.get("kind") == kind:
+            for field, since in SKETCH_FIELD_SINCE.get(kind, {}).items():
+                if since > till_schema and field in o and field not in mine:
+                    mine[field] = o[field]
     return {**saved, "elements": elements}
 
 
@@ -2556,7 +2602,7 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
     "שמור" in a till's edit mode: zones and tables added, changed and removed — all of it,
     or (on any refusal) none of it. A zone may carry its whole floor plan (`sketch`, from
     the till's map designer — the dashboard's shape and validation; from a till that sends
-    no `sketchSchema` ≥ 2, the decor symbols it cannot know are kept,
+    a `sketchSchema` under the server's (or none), the decor symbols it cannot know are kept,
     keep_decor_unknown_to_till). Only the zones and tables this till sees. Refused:
     a table someone is at that would move, change its number or go (409 `table_in_use`);
     a number another live table of the shop has once the batch is applied (409
@@ -2774,6 +2820,12 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
     from app.services import remote_table_cancel as RTC
 
     routes = RTC.routes_for(db, shop, orders.values()) if orders else {}
+    # The card's other actions (app/services/table_actions.py, P:/specs/live-tables-cloud.md §6.1): who does them.
+    from app.services import table_actions as TA
+    from app.services import table_card as TC
+
+    action_routes = TA.routes_for(db, shop, orders.values()) if orders else {}
+    fire_cache: Dict[Any, Any] = {}
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now)
@@ -2781,6 +2833,15 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
         row["zoneName"] = zone_names.get(table.zone_id)
         row["order"] = order_summary(order) if order is not None else None
         row["cancel"] = RTC.route_out(routes[order.id]) if order is not None and order.id in routes else None
+        row["actions"] = TA.route_out(action_routes[order.id]) if order is not None and order.id in action_routes else None
+        # "עיקריות בעוד 6 ד׳" (#96): the next course and when it goes by itself.
+        row["nextCourse"] = None
+        if order is not None and order.cart_json and '"course"' in order.cart_json:
+            try:
+                row["nextCourse"] = TC.next_course(db, order, table, now, fire_cache)
+            except Exception:  # noqa: BLE001 - the floor is shown without it
+                logger.exception("next course of table order %s not read", order.id)
+        row["heldBy"] = TA.holder_text(lock)
         row["lock"] = lock
         # From the dashboard every live lock is "another till's": red, with its name.
         row["state"] = table_state(order, lock)
@@ -2799,13 +2860,33 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
     except Exception:  # noqa: BLE001 - the floor is shown without them
         logger.exception("void tickets of shop %s not read", shop.id)
         void_tickets = []
+    # The till's seated-time marks ("tablesWarnMinutes" amber, "tablesAlertMinutes" red — overdue).
+    from app.services import till_parameters as TP
+
+    try:
+        params = TP.resolve_for_shop(db, shop)
+    except Exception:  # noqa: BLE001 - the floor is shown with the defaults
+        params = {}
+    warn = _minutes(params.get("tablesWarnMinutes"), 60)
+    alert = max(_minutes(params.get("tablesAlertMinutes"), 90), warn)
     return {
         "serverTime": now.isoformat(),
         "zones": [zone_out(z) for z in zones],
         "tables": rows,
         "summary": {"openTables": open_count, "openTotal": float(open_total), "guests": guests},
         "voidTickets": void_tickets,
+        "thresholds": {"warnMinutes": warn, "alertMinutes": alert},
     }
+
+
+def _minutes(value: Any, default: int) -> int:
+    """A till parameter of minutes as the till reads it (TablesConfig: 1 – a day)."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(min(max(int(float(value)), 1), 24 * 60))
+    except (TypeError, ValueError):
+        return default
 
 
 def _check_shown(order: TableOrder, body) -> None:
@@ -2865,7 +2946,10 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
         command = RTC.request(db, user, table, order, reason, body.reason_text, route, now=now)
         return RTC.requested_out(command, route)
     if lock_live(table, now):
-        raise _locked(db, table, now)
+        # A till inside the table (P:/specs/live-tables-cloud.md §4): refused with who is there.
+        from app.services.table_actions import in_use
+
+        raise in_use(db, table, now)
     name = user.username or user.email
     # The till that last worked it: the void tickets follow its view of the printers.
     worked_by = order.updated_machine_id

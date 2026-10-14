@@ -419,6 +419,14 @@ class TestSeparation:
         from app.models.pos_user_session import PosUserSession
 
         session = w.db.query(PosUserSession).filter(PosUserSession.pos_user_id == w.dana.id).one()
+        # The release is "שחרור עובד מחובר במכשיר" (exclusive login v2): a manager whose dashboard
+        # permissions hold it ("גישה מלאה לפי תפקיד").
+        from app.models.dashboard_access import DashboardAccessProfile
+        from app.services import dashboard_access as DA
+
+        w.db.add(DashboardAccessProfile(user_id=w.manager.id, full_access=True, sections={}))
+        w.db.commit()
+        DA.forget(w.db)
         US.release_user_session_from_dashboard(shop_id=str(w.shop.id), session_id=session.id, current_user=w.manager,
                                                active_tenant_id=w.tenant.id, db=w.db)
         assert shift_row(w, sid).clock_out_at is None

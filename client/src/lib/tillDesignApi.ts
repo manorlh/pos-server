@@ -8,6 +8,8 @@
 import { api } from './api';
 import { dietaryTagsOf } from './kioskConfig';
 import type { KioskSourceCatalog, KioskSourceCategory } from './kioskApi';
+import type { CategoryDisplayKey } from './categoryLook';
+import type { RestoreLevelView } from './tableRestore';
 import type { TillDesignConfig, TillDesignIssue, TillDesignLayer, TillDesignLegacy } from './tillDesign';
 
 export type TillDesignLevel = 'company' | 'shop' | 'area' | 'machine';
@@ -73,6 +75,64 @@ export async function fetchTillDesignSettings(level: TillDesignLevel, id: string
 /** Replaces the level's layer with `overrides` (the minimal one: what differs from what it inherits). */
 export async function saveTillDesignSettings(level: TillDesignLevel, id: string, overrides: TillDesignLayer): Promise<TillDesignSettings> {
   const { data } = await api.put<TillDesignSettings>('/till-design/settings', { overrides }, { params: { level, id } });
+  return data;
+}
+
+/** One of "צבע ותמונה למחלקה"'s three till parameters, as the card shows it. */
+export interface CategoryDisplayParam {
+  key: CategoryDisplayKey;
+  label: string;
+  description: string | null;
+  valueType: string;
+  enumOptions: string[];
+  /** Each code's Hebrew. */
+  enumLabels: Record<string, string> | null;
+  defaultValue: string | null;
+}
+
+/**
+ * `GET / PUT /till-design/category-display?level=&id=` (pos-server app/services/category_display.py): the
+ * three till parameters at one level — what it sets itself, what it inherits, and whether the caller
+ * may write it (the design's own access).
+ */
+export interface CategoryDisplayView {
+  level: TillDesignLevel;
+  id: string;
+  canEdit: boolean;
+  own: Partial<Record<CategoryDisplayKey, string>>;
+  inherited: Partial<Record<CategoryDisplayKey, string>>;
+  parameters: CategoryDisplayParam[];
+}
+
+export async function fetchCategoryDisplay(level: TillDesignLevel, id: string): Promise<CategoryDisplayView> {
+  const { data } = await api.get<CategoryDisplayView>('/till-design/category-display', { params: { level, id } });
+  return data;
+}
+
+/** Writes the changed keys at the level (a code, or null to inherit); a key left out stays. */
+export async function saveCategoryDisplay(
+  level: TillDesignLevel,
+  id: string,
+  values: Partial<Record<CategoryDisplayKey, string | null>>,
+): Promise<CategoryDisplayView> {
+  const { data } = await api.put<CategoryDisplayView>('/till-design/category-display', { values }, { params: { level, id } });
+  return data;
+}
+
+/**
+ * "שולחנות ומפה" (P:/specs/till-design-tables.md §5): the tables' look and the map's display — till
+ * parameters at one level, as the tables page's card reads them (lib/tableRestore.ts RestoreLevelView).
+ */
+export type TableDisplayView = RestoreLevelView;
+
+export async function fetchTableDisplay(level: TillDesignLevel, id: string): Promise<TableDisplayView> {
+  const { data } = await api.get<TableDisplayView>('/till-design/table-display', { params: { level, id } });
+  return data;
+}
+
+/** key → value; null — the level inherits it again. */
+export async function saveTableDisplay(level: TillDesignLevel, id: string, values: Record<string, unknown>): Promise<TableDisplayView> {
+  const { data } = await api.put<TableDisplayView>('/till-design/table-display', { values }, { params: { level, id } });
   return data;
 }
 

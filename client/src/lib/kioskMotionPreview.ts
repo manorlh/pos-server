@@ -7,6 +7,10 @@
  * without making an order. The stage (motion-preview-stage.tsx) renders an element per role of its
  * scene (`data-role`) and calls `element.animate(frames, timing)` for every track.
  *
+ * The till's "הנפשות" plays on the same stages, its own events too: opening a table (`tableOpen`) on a
+ * small tables map whose tile grows / slides / rises / fades / flips / scales into the table's order — and
+ * back, the same kind reversed (`reverse`) — and its payment as the payment screen rising over the order.
+ *
  * Pure and self-contained (relative imports only).
  */
 
@@ -15,6 +19,7 @@ import {
   motionCurve,
   type MotionDirection,
   type MotionEventKey,
+  type MotionSurface,
   type MotionType,
   type ResolvedMotion,
 } from './kioskMotionEngine';
@@ -40,7 +45,8 @@ export type MotionScene =
   | 'check'
   | 'attract'
   | 'skeleton'
-  | 'scroll';
+  | 'scroll'
+  | 'tables';
 
 export const MOTION_SCENES: Record<MotionEventKey, MotionScene> = {
   productPress: 'card',
@@ -69,7 +75,15 @@ export const MOTION_SCENES: Record<MotionEventKey, MotionScene> = {
   loading: 'skeleton',
   scrollHint: 'scroll',
   homeReturn: 'screen',
+  tableOpen: 'tables',
+  tabSwitch: 'screen',
 };
+
+/** The stage of an event on a surface: the till's payment is the payment screen rising over the order. */
+export function motionSceneOf(event: MotionEventKey, surface: MotionSurface = 'kiosk'): MotionScene {
+  if (surface === 'till' && event === 'payment') return 'screen';
+  return MOTION_SCENES[event];
+}
 
 export const CONFETTI_PIECES = 14;
 const CONFETTI_ROLES = Array.from({ length: CONFETTI_PIECES }, (_, i) => `confetti-${i}`);
@@ -96,6 +110,7 @@ export const SCENE_ROLES: Record<MotionScene, readonly string[]> = {
   attract: ['layerBack', 'layerMid', 'target'],
   skeleton: ['target', 'shimmer'],
   scroll: ['target'],
+  tables: ['map', 'tile', 'order'],
 };
 
 /** The numbers a scene counts between (countUp, countDown): its "before" and "after". */
@@ -157,10 +172,27 @@ export interface MotionPlan {
   swapAtMs: number;
 }
 
-/** Measured on the stage before playing: the fly from the dish to the basket. */
+/** A tile on the tables map, as fractions of the stage (physical left / top, width, height). */
+export interface StageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** Measured on the stage before playing: the fly from the dish to the basket; the table picked on the map. */
 export interface MotionStageGeometry {
   flyDx: number;
   flyDy: number;
+  tile?: StageRect;
+}
+
+/** The table the "tables" stage opens when none was measured: the middle one of its top row. */
+export const DEFAULT_TABLE_TILE: StageRect = { left: 0.38, top: 0.16, width: 0.24, height: 0.3 };
+
+export interface MotionPreviewOptions {
+  /** Play it backwards: leaving the table's order back to the map (`tableOpen`). */
+  reverse?: boolean;
 }
 
 const STANDARD = 'cubic-bezier(.3,0,.2,1)';
@@ -206,6 +238,8 @@ const AUTO_DIRECTION: Partial<Record<MotionEventKey, Exclude<MotionDirection, 'a
   categorySwitch: 'right',
   pageTransition: 'right',
   homeReturn: 'right',
+  tabSwitch: 'right',
+  tableOpen: 'right',
   remove: 'left',
   error: 'left',
   scrollHint: 'down',
@@ -257,6 +291,100 @@ interface Built {
 
 const GRID = [0, 1, 2];
 
+/** A percentage with at most two decimals. */
+function pct(n: number): string {
+  return `${r(n * 100)}%`;
+}
+
+/**
+ * Opening a table (`tableOpen`) on the "tables" stage: the map (`map`), the table picked on it (`tile`) and
+ * its order (`order`, hidden at rest). Each kind takes the event's direction ("auto": a slide in the reading
+ * direction, a rise from the bottom) and intensity (how far the map moves, how small the order starts).
+ */
+function buildTables(spec: ResolvedMotion, geo: MotionStageGeometry): Built {
+  const k = Math.max(0, spec.intensity) / 100;
+  const amp = (s: number) => 1 + (s - 1) * k;
+  const tile = geo.tile ?? DEFAULT_TABLE_TILE;
+  const shown = (extra: MotionFrame): MotionFrame => ({ opacity: 1, ...extra });
+  switch (spec.animationType) {
+    case 'zoom': {
+      const inset = `inset(${pct(tile.top)} ${pct(1 - tile.left - tile.width)} ${pct(1 - tile.top - tile.height)} ${pct(tile.left)} round 12px)`;
+      return {
+        parts: [
+          { role: 'order', frames: [shown({ clipPath: inset }), shown({ clipPath: 'inset(0% 0% 0% 0% round 0px)' })] },
+          { role: 'map', frames: [{ transform: sc(1), opacity: 1 }, { transform: sc(amp(1.08)), opacity: r(Math.max(0.2, 1 - 0.4 * k)) }] },
+          { role: 'tile', frames: [{ transform: sc(1) }, { transform: sc(amp(1.06)) }], span: [0, 0.4] },
+        ],
+        counters: [],
+      };
+    }
+    case 'slide':
+    case 'rise': {
+      const d = spec.direction !== 'auto' ? spec.direction : spec.animationType === 'rise' ? 'up' : (AUTO_DIRECTION.tableOpen ?? 'right');
+      const [vx, vy] = vectorOf(d);
+      const map: MotionFrame[] =
+        spec.animationType === 'slide'
+          ? [{ transform: tr(0, 0, '%'), opacity: 1 }, { transform: tr(vx * 30 * k, vy * 30 * k, '%'), opacity: r(Math.max(0.2, 1 - 0.4 * k)) }]
+          : [{ opacity: 1 }, { opacity: r(Math.max(0.2, 1 - 0.3 * k)) }];
+      return {
+        parts: [
+          { role: 'order', frames: [shown({ transform: tr(-vx * 100, -vy * 100, '%') }), shown({ transform: tr(0, 0, '%') })] },
+          { role: 'map', frames: map },
+        ],
+        counters: [],
+      };
+    }
+    case 'fade':
+      return {
+        parts: [
+          { role: 'order', frames: [{ opacity: 0 }, { opacity: 1 }] },
+          { role: 'map', frames: [{ opacity: 1 }, { opacity: 0 }] },
+        ],
+        counters: [],
+      };
+    case 'flip': {
+      const d = spec.direction === 'auto' ? 'right' : spec.direction;
+      const axis = d === 'left' || d === 'right' ? 'rotateY' : 'rotateX';
+      const sign = d === 'up' || d === 'left' ? 1 : -1;
+      const persp = `perspective(${Math.round(900 / Math.max(0.5, Math.min(k, 2)))}px)`;
+      return {
+        parts: [
+          { role: 'map', frames: [{ transform: `${persp} ${axis}(0deg)`, opacity: 1 }, { transform: `${persp} ${axis}(${sign * 90}deg)`, opacity: 1 }], span: [0, 0.5] },
+          { role: 'order', frames: [shown({ transform: `${persp} ${axis}(${-sign * 90}deg)` }), shown({ transform: `${persp} ${axis}(0deg)` })], span: [0.5, 1] },
+        ],
+        counters: [],
+      };
+    }
+    case 'scale':
+      return {
+        parts: [
+          { role: 'order', frames: [{ opacity: 0, transform: sc(amp(0.6)) }, { opacity: 1, transform: sc(1) }] },
+          { role: 'map', frames: [{ opacity: 1, transform: sc(1) }, { opacity: r(Math.max(0.2, 1 - 0.5 * k)), transform: sc(amp(0.96)) }] },
+        ],
+        counters: [],
+      };
+    case 'highlight':
+      // Reduced motion's highlight: the table lights, then its order is simply there.
+      return {
+        parts: [
+          { role: 'tile', frames: [{ boxShadow: '0 0 0 0px rgba(245,158,11,0)' }, { boxShadow: '0 0 0 4px rgba(245,158,11,0.55)', offset: 0.5 }, { boxShadow: '0 0 0 0px rgba(245,158,11,0)' }] },
+          { role: 'order', frames: [{ opacity: 0 }, { opacity: 0, offset: 0.98 }, { opacity: 1 }] },
+        ],
+        counters: [],
+      };
+    default:
+      // fadeIn (reduced motion's fade) and anything else: the order fades in over the map.
+      return { parts: [{ role: 'order', frames: [{ opacity: 0 }, { opacity: 1 }] }], counters: [] };
+  }
+}
+
+/** A part played backwards: its frames in reverse order (offsets mirrored) over the mirrored share of the time. */
+function reversed(p: Part): Part {
+  const frames = [...p.frames].reverse().map((f) => (typeof f.offset === 'number' ? { ...f, offset: r(1 - f.offset, 4) } : f));
+  const [a, b] = p.span ?? [0, 1];
+  return { ...p, frames, span: [r(1 - b, 4), r(1 - a, 4)] };
+}
+
 function forCards(frames: MotionFrame[]): Part[] {
   return GRID.map((i) => ({ role: `card-${i}`, frames, index: i }));
 }
@@ -268,6 +396,7 @@ function rand(i: number): number {
 }
 
 function build(spec: ResolvedMotion, scene: MotionScene, geo: MotionStageGeometry): Built {
+  if (scene === 'tables') return buildTables(spec, geo);
   const kind = spec.animationType;
   const k = Math.max(0, spec.intensity) / 100;
   const dir = directionOf(spec);
@@ -850,6 +979,7 @@ export function planMotionPreview(
   spec: ResolvedMotion,
   scene: MotionScene = MOTION_SCENES[spec.event],
   geo: MotionStageGeometry = { flyDx: -120, flyDy: -48 },
+  opts: MotionPreviewOptions = {},
 ): MotionPlan {
   const empty: MotionPlan = { tracks: [], counters: [], endMs: 0, holdMs: 0, cycles: 0, loop: false, truncated: false, swapAtMs: 0 };
   if (spec.animationType === 'none' || spec.durationMs <= 0 || !spec.enabled) return empty;
@@ -857,7 +987,11 @@ export function planMotionPreview(
   const loop = spec.repeat === 0;
   const cycles = loop ? LOOP_PREVIEW_CYCLES : Math.max(1, Math.min(spec.repeat, MAX_PREVIEW_CYCLES));
   const hold = Math.min(MAX_PREVIEW_HOLD_MS, Math.max(spec.holdMs, LEAVING_KINDS.includes(spec.animationType) ? 900 : 450));
-  const built = build(spec, scene, geo);
+  const forward = build(spec, scene, geo);
+  // Backwards (leaving a table's order): every part reversed; the content swaps back at the end.
+  const built: Built = opts.reverse
+    ? { ...forward, parts: forward.parts.map((p) => (p.after ? p : reversed(p))), swapAt: forward.swapAt === undefined ? undefined : 1 - forward.swapAt }
+    : forward;
   if (built.parts.length === 0 && built.counters.length === 0) return empty;
   const curve = motionCurve(spec.easing, KIND_CURVES[spec.animationType] ?? STANDARD);
   const cap = spec.staggerCapMs > 0 ? spec.staggerCapMs : Number.POSITIVE_INFINITY;

@@ -20,6 +20,11 @@ acknowledgement.
   app/services/remote_table_cancel.py): the shop's tables host cancels the order as at a till. Made
   by the tables' cancel only, never by `POST /device-commands`. Its deadline is its own short
   timeout (`remoteCancelTimeoutSeconds`), delivered or not: a late pull never gets it.
+* `table_print_bill`, `table_reprint`, `table_fire`, `table_hold`, `table_rush`, `table_set_waiter`,
+  `table_move`, `table_merge`, `table_note` — the table card's actions from the dashboard
+  (P:/specs/live-tables-cloud.md §6, app/services/table_actions.py): the LAN host or the single till does
+  them as at a till; the bill, the till that prints it. Made by the tables' actions only, with the same
+  deadline as `cancel_table`.
 
 **Delivery** — every command wakes its device at once (Ably event `device-command`, then the till
 pulls `GET /sync/{m}/device-commands`); without realtime the till's heartbeat pulls it (≤ 2 min).
@@ -64,6 +69,9 @@ REFUSAL_REASONS = (
     "sale_in_progress", "payment_in_progress", "no_update", "not_supported", "kiosk",
     # `cancel_table` (app/services/remote_table_cancel.py REFUSALS).
     "table_not_open", "not_host", "order_changed",
+    # The table card's actions (app/services/table_actions.py REFUSALS).
+    "table_in_use", "course_not_held", "course_already_out", "nothing_sent", "waiter_not_found",
+    "target_not_free", "target_not_found", "source_not_open", "merge_basket_discount", "printer_not_found",
 )
 
 
@@ -319,7 +327,12 @@ def answer_window(action: str) -> timedelta:
 
 #: Actions answered by their own `expires_at` or not at all, taken or not: a dashboard's remote table
 #: cancel waits its timeout (`remoteCancelTimeoutSeconds`), then says "בטלו בקופה".
-DEADLINE_ACTIONS = ("cancel_table",)
+DEADLINE_ACTIONS = (
+    "cancel_table",
+    # The table card's actions (P:/specs/live-tables-cloud.md §6.2): the same timeout, the same rule.
+    "table_print_bill", "table_reprint", "table_fire", "table_hold", "table_rush", "table_set_waiter",
+    "table_move", "table_merge", "table_note",
+)
 
 
 def answer_deadline(row: DeviceCommand) -> Optional[datetime]:
@@ -438,7 +451,7 @@ def ack(
     """The device's answer. A final command keeps its first answer (a resend is harmless).
     [result]: what the answer carried (`upload_logs` → {"log_id"}), kept with the first one.
     [raw_result]: the answer's `result` as sent, read by the actions that carry their own
-    (`cancel_table` → {voidedPrinters, kds} / {reason})."""
+    (`cancel_table` → {voidedPrinters, kds} / {reason}; the `table_*` actions, table_actions.clean_answer)."""
     now = now or utc_now()
     if ack_status not in ACK_STATUSES:
         raise _bad("invalid_status", "invalid status")
@@ -453,6 +466,10 @@ def ack(
         from app.services import remote_table_cancel
 
         detail, result = remote_table_cancel.clean_answer(ack_status, detail, raw_result)
+    elif row.action in DEADLINE_ACTIONS:
+        from app.services import table_actions
+
+        detail, result = table_actions.clean_answer(row.action, ack_status, detail, raw_result)
     if row.status == "expired" and _aware(row.updated_at) is not None and now - _aware(row.updated_at) <= ANSWER_GRACE:
         # The device did it and its answer came just after the cloud gave up waiting: what happened.
         pass

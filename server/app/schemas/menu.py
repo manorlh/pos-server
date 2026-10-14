@@ -278,6 +278,10 @@ class ProductMenuIn(_Body):
     course_id: Optional[uuid.UUID] = Field(None, alias="courseId")
     #: True: `courseId` is meant (null clears it); absent / false: the course is left alone.
     set_course: bool = Field(False, alias="setCourse")
+    #: "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): null inherits the category's. Applied when
+    #: `setSendSilently` is true; else left alone.
+    send_silently: Optional[bool] = Field(None, alias="sendSilently")
+    set_send_silently: bool = Field(False, alias="setSendSilently")
     links: Optional[LinksIn] = None
     notes: Optional[NotesIn] = None
     meal: Optional[MealIn] = None
@@ -296,6 +300,9 @@ class ProductMenuIn(_Body):
 class CategoryMenuIn(_Body):
     course_id: Optional[uuid.UUID] = Field(None, alias="courseId")
     set_course: bool = Field(False, alias="setCourse")
+    #: "יוצא בלי בון": null inherits the parent category's (none at the top: off).
+    send_silently: Optional[bool] = Field(None, alias="sendSilently")
+    set_send_silently: bool = Field(False, alias="setSendSilently")
     links: Optional[LinksIn] = None
     notes: Optional[NotesIn] = None
 
@@ -465,10 +472,20 @@ class UpsellIn(_Body):
         return self
 
 
+#: "הוצאה אוטומטית" (P:/specs/courses-fire-v2.md §1): a course's minutes after the one before it.
+AUTO_FIRE_MINUTES_MIN = 1
+AUTO_FIRE_MINUTES_MAX = 180
+AUTO_FIRE_MINUTES_DEFAULT = 15
+
+
 class CourseIn(_Body):
     id: Optional[uuid.UUID] = None
     name: str = Field(min_length=1, max_length=60)
     is_active: bool = Field(True, alias="isActive")
+    #: Absent: the course keeps its minutes (a new one gets `AUTO_FIRE_MINUTES_DEFAULT`).
+    auto_fire_minutes: Optional[int] = Field(
+        None, alias="autoFireMinutes", ge=AUTO_FIRE_MINUTES_MIN, le=AUTO_FIRE_MINUTES_MAX,
+    )
 
     @field_validator("name", mode="before")
     @classmethod

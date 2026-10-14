@@ -142,6 +142,8 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   // A table's payments (table-restore-payments): the refunds' family.
   payment_reversed: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
   table_restored: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
+  // "תמיכה מרחוק": QuickSupport signed by another certificate.
+  quicksupport_signer_mismatch: 'bg-violet-200 text-violet-950 dark:bg-violet-900 dark:text-violet-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

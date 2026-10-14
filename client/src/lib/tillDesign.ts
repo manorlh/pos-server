@@ -16,7 +16,25 @@
  * Phase 2 (P:\specs\till-design-phase2.md §6, approved: "windows לא כעת, כל השאר"): the four
  * templates that were "בקרוב", a profile's own action bar, "כמו הבסיס" over a parent's value
  * ("base" / "brand"), the new templates' sections, "הוצא הבא" and the table's tenders.
+ *
+ * "הנפשות" (P:/specs/till-motion.md "תיקון 14.10"): `motion` — the kiosk's Motion Engine on the till
+ * (lib/kioskMotionEngine.ts, surface "till"), every key optional (nothing set: "legacy", today's
+ * screens), merged per event and parameter; checked by the engine's own tables, as the server does.
  */
+
+import {
+  MOTION_GLOBAL_SPEEDS,
+  MOTION_MULTIPLIER_MAX,
+  MOTION_MULTIPLIER_MIN,
+  MOTION_PARAMS,
+  TILL_MOTION_EVENTS,
+  TILL_MOTION_PRESETS,
+  motionEventTypesOf,
+  motionParamRange,
+  type MotionEngineSettings,
+  type MotionEventKey,
+  type MotionParam,
+} from './kioskMotionEngine';
 
 /* ------------------------------------------------------------ vocabularies */
 
@@ -249,6 +267,8 @@ export interface TillDesignConfig {
   visual: { descriptionLines: number; dietary: DietaryMode };
   professional: { keyboard: boolean; fKeys: boolean };
   orderNumber: { atOpen: boolean; prefix: string };
+  /** "הנפשות": the Motion Engine's `motion` (absent: nothing set at any level — "legacy", today's screens). */
+  motion?: MotionEngineSettings;
 }
 
 /** A partial layer as stored / sent (`{overrides}`). */
@@ -872,6 +892,51 @@ class ObjNode extends SchemaNode {
   }
 }
 
+/** A number (never a bool) in [lo, hi] (`motion.speedMultiplier`, an event's scales). */
+class NumNode extends SchemaNode {
+  constructor(
+    readonly lo: number,
+    readonly hi: number,
+  ) {
+    super();
+  }
+  check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return fail(errors, path, 'invalid_type', 'must be a number');
+    if (value < this.lo || value > this.hi) return fail(errors, path, 'out_of_range', `must be between ${this.lo} and ${this.hi}`);
+    return value;
+  }
+}
+
+/** An object whose layer drops a child object it leaves empty (`{"events": {"addToCart": {}}}` sets nothing). */
+class PrunedObjNode extends ObjNode {
+  checkLayer(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    const out = super.checkLayer(value, path, errors);
+    if (!isDict(out)) return out;
+    return Object.fromEntries(Object.entries(out).filter(([k, v]) => !(isDict(v) && Object.keys(v).length === 0 && this.fields[k] instanceof ObjNode)));
+  }
+}
+
+/** An object every key of which is optional, also when complete (`motion`, an event's own values). */
+class PartialObjNode extends PrunedObjNode {
+  check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    if (!isDict(value)) return fail(errors, path, 'invalid_type', 'must be an object');
+    const before = errors.length;
+    const out: Dict = {};
+    for (const [key, raw] of Object.entries(value)) {
+      const node = this.fields[key];
+      if (!node) {
+        fail(errors, join(path, key), 'unknown_key', 'unknown key');
+        continue;
+      }
+      if (raw === null || raw === undefined) continue;
+      const cleaned = node.check(raw, join(path, key), errors);
+      if (cleaned !== INVALID) out[key] = cleaned;
+    }
+    if (errors.length > before) return INVALID;
+    return out;
+  }
+}
+
 /** An id-keyed object with fixed keys (`texts`). */
 class MapNode extends SchemaNode {
   constructor(
@@ -1008,6 +1073,33 @@ const SCHEMA = new ObjNode({
     prefix: new StrNode(ORDER_PREFIX_MAX, 0, ORDER_PREFIX, 'letters and digits only'),
   }),
 });
+
+/** `motion.events.<event>` on the till: the engine's parameters, the event's own kinds and ranges. */
+function motionEventNode(event: MotionEventKey): PartialObjNode {
+  const fields: Record<string, SchemaNode> = {};
+  for (const [name, spec] of Object.entries(MOTION_PARAMS)) {
+    const range = motionParamRange(event, name as MotionParam);
+    if (spec.kind === 'bool') fields[name] = new BoolNode();
+    else if (spec.kind === 'type') fields[name] = new EnumNode(motionEventTypesOf(event, 'till'));
+    else if (spec.kind === 'enum') fields[name] = new EnumNode(spec.values ?? []);
+    else if (spec.kind === 'int') fields[name] = new IntNode(range?.min ?? 0, range?.max ?? 0);
+    else fields[name] = new NumNode(range?.min ?? 0, range?.max ?? 0);
+  }
+  return new PartialObjNode(fields);
+}
+
+/** "הנפשות" (the server's `motion_engine_fields("till")`): the till's presets, events and kinds. */
+const MOTION_NODE = new PartialObjNode({
+  preset: new EnumNode(TILL_MOTION_PRESETS),
+  globalSpeed: new EnumNode(MOTION_GLOBAL_SPEEDS, true),
+  speedMultiplier: new NumNode(MOTION_MULTIPLIER_MIN, MOTION_MULTIPLIER_MAX),
+  events: new PrunedObjNode(
+    Object.fromEntries(TILL_MOTION_EVENTS.map((e) => [e, motionEventNode(e)])),
+    Object.fromEntries(TILL_MOTION_EVENTS.map((e) => [e, {}])),
+  ),
+});
+SCHEMA.fields.motion = MOTION_NODE;
+SCHEMA.fill.motion = {};
 
 /* --------------------------------------------------------------- validation */
 
@@ -1188,6 +1280,25 @@ export function pruneOverrides(parent: unknown, edited: unknown): TillDesignLaye
     out[key] = cloneJson(value);
   }
   return out;
+}
+
+/**
+ * The config without the empty objects an edit of `motion` leaves behind (an event reset where nothing is
+ * inherited, its last value cleared): `{"motion": {"events": {}}}` is no motion at all, as the server prunes it.
+ */
+export function pruneEmptyMotion<T>(cfg: T): T {
+  if (!isDict(cfg) || !isDict(cfg.motion)) return cfg;
+  const motion: Dict = {};
+  for (const [k, v] of Object.entries(cfg.motion)) if (v !== undefined) motion[k] = v;
+  if (isDict(motion.events)) {
+    const events = Object.fromEntries(Object.entries(motion.events).filter(([, v]) => v !== undefined && !(isDict(v) && Object.keys(v).length === 0)));
+    if (Object.keys(events).length === 0) delete motion.events;
+    else motion.events = events;
+  }
+  const out: Dict = { ...cfg };
+  if (Object.keys(motion).length === 0) delete out.motion;
+  else out.motion = motion;
+  return out as T;
 }
 
 export interface ConfigChange {

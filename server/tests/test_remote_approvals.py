@@ -630,7 +630,9 @@ class TestCreate:
 
     def test_cancel(self, w):
         _on(w)
-        req, _ = S.create(w.db, w.machine, _body(), now=NOW)
+        # Built at the real now (as `_pending`): the route cancels on the wall clock, and a request built
+        # at the fixed NOW reads "expired" once its timeout has passed in real time.
+        req, _ = S.create(w.db, w.machine, _body(), now=S.utcnow())
         w.db.commit()
         r = w.client.delete(f"/api/v1/approvals/{req.id}", headers=_till(w))
         assert r.status_code == 200 and r.json()["status"] == "cancelled"
@@ -1309,3 +1311,167 @@ def test_the_catalogue_has_a_remote_approval_permission_per_type():
     assert TP.DEFAULTS[TP.LEGACY_MANAGER]["APPROVE_REMOTE.refund"] == TP.ALLOW
     # A legacy manager still reads as a shop manager to an older till.
     assert TP.legacy_role_for(TP.DEFAULTS[TP.LEGACY_MANAGER]) == "shop_manager"
+
+
+# ── "שחרור עובד מחובר" (exclusive login v2 §2): the phone releases a blocked sign-in ────────────
+
+
+def _exclusive_on(w):
+    """"עובד מחובר בקופה אחת בלבד" on for the shop (the built-in parameters created first)."""
+    from app.models.till_parameter import TillParameter, TillParameterValue
+    from app.services import till_parameters as TPARAMS
+
+    TPARAMS.ensure_builtin_parameters(w.db)
+    w.db.flush()
+    parameter = w.db.query(TillParameter).filter(TillParameter.key == "exclusiveUserLogin").one()
+    w.db.add(TillParameterValue(
+        id=uuid.uuid4(), parameter_id=parameter.id, scope_type="shop", scope_id=w.shop.id, value=True,
+    ))
+    w.db.commit()
+
+
+def _claim(w, machine, pu, *, grant=None):
+    headers = dict(_till(w, machine))
+    body = {"posUserId": str(pu.id)}
+    if grant is not None:
+        headers["X-Elevation-Token"] = grant
+        body["force"] = True
+    return w.client.post(f"/api/v1/sync/{machine.id}/user-session/claim", headers=headers, json=body)
+
+
+def _release_request(w, pu, **kw):
+    """Dana is signed in at קופה 3 and blocked at קופה 2: the till asks the phone."""
+    _on(w, "user_release", **kw.pop("policy", {}))
+    body = _body(
+        type="user_release", percent=None, reason_code=None, note=None,
+        requester_pos_user_id=pu.id, payload={"posUserId": str(pu.id)}, **kw,
+    )
+    req, _ = S.create(w.db, w.machine, body, now=S.utcnow())
+    w.db.commit()
+    return req
+
+
+class TestUserRelease:
+    def _blocked(self, w):
+        _exclusive_on(w)
+        r = _claim(w, w.machine2, w.dana)
+        assert r.status_code == 200 and r.json()["status"] == "claimed", r.text
+        r = _claim(w, w.machine, w.dana)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "user_signed_in_elsewhere"
+
+    def test_the_type_keeps_its_wire_key_and_names_the_right_it_needs(self):
+        t = C.TYPES_BY_KEY["user_release"]
+        assert t.label == "שחרור עובד מחובר" and t.scopes == ("user-session:release",) and t.phase == 1
+        assert t.approver_code == "USER_SESSION_RELEASE" and t.approver_section == "user_sessions_release"
+        assert TP.PERMISSIONS_BY_CODE["APPROVE_REMOTE.user_release"].label == "רשאי לאשר מרחוק — שחרור עובד מחובר"
+
+    def test_only_who_may_release_is_offered(self, w):
+        self._blocked(w)
+        _on(w, "user_release")
+        names = _names(S.approvers_for_till(w.db, w.machine, "user_release", requester_pos_user_id=w.dana.id))
+        # Ron through his till manager role; the company and shop managers through the dashboard's
+        # "שחרור עובד מחובר במכשיר" (full access holds it).
+        assert names == {"ron.d", "cm", "sm"}
+
+    def test_a_dashboard_approver_without_the_release_permission_is_not_one(self, w):
+        approver = _user(w.db, "appr", UserRole.SHOP_MANAGER, w.tenant, company=w.company, shop=w.shop)
+        _profile(w.db, approver, sections={"approvals": "edit"})
+        _device(w.db, approver)
+        w.db.commit()
+        _on(w, "user_release")
+        assert "appr" not in _names(evaluate(w.db, w.machine, _ask("user_release"), _tp(w, "user_release")))
+        _profile_sections(w, approver, {"approvals": "edit", "user_sessions_release": "edit"})
+        assert "appr" in _names(evaluate(w.db, w.machine, _ask("user_release"), _tp(w, "user_release")))
+        # The same user approves a discount: the gate is this type's alone.
+        _on(w, "discount_basket")
+        assert "appr" in _names(evaluate(w.db, w.machine, _ask(percent=10), _tp(w)))
+
+    def test_a_till_approver_must_hold_the_release_itself(self, w):
+        _on(w, "user_release", approverRoles=["till:supervisor"], onShiftOnly={"till:supervisor": False})
+        assert _names(evaluate(w.db, w.machine, _ask("user_release"), _tp(w, "user_release"))) == {"avi.d"}
+        # "רשאי לאשר מרחוק" still allowed, the release itself not: no longer an approver.
+        w.avi_pu.permission_overrides = {"states": {"USER_SESSION_RELEASE": "deny"}}
+        w.db.commit()
+        assert TP.DEFAULTS[TP.SUPERVISOR]["APPROVE_REMOTE.user_release"] == TP.ALLOW
+        assert _names(evaluate(w.db, w.machine, _ask("user_release"), _tp(w, "user_release"))) == set()
+
+    def test_the_request_says_who_is_signed_in_where_and_the_push_asks(self, w):
+        self._blocked(w)
+        req = _release_request(w, w.dana, approver_ids=[str(w.ron.id)])
+        assert req.payload["posUserId"] == str(w.dana.id)
+        assert req.payload["holder"]["machineName"] == "קופה 3"
+        assert req.payload["summary"].startswith("Dana מנסה להתחבר בקופה 2, ומחובר/ת בקופה 3 מאז ")
+        payload = S.push_payload(w.db, req, _tp(w, "user_release"))
+        assert payload["title"] == "בקשת שחרור עובד מחובר"
+        assert payload["body"].startswith(req.payload["summary"]) and "לשחרר?" in payload["body"]
+        # Only to the approver the till chose.
+        assert _dispatches(w, w.ron) and not _dispatches(w, w.cm) and not _dispatches(w, w.sm)
+        # The dashboard's card shows the same line.
+        r = w.client.get(f"/api/v1/approvals/{req.id}", headers=_dash(w, w.ron))
+        assert r.status_code == 200 and r.json()["summary"] == req.payload["summary"]
+
+    def test_approved_the_waiting_tills_claim_goes_through_as_a_managers_release(self, w):
+        from app.models.audit_exception import AuditException, TillEvent
+
+        self._blocked(w)
+        req = _release_request(w, w.dana, approver_ids=[str(w.ron.id)])
+        S.decide(w.db, req.id, w.ron, tenant_id=w.tenant.id, decision="approve")
+        w.db.commit()
+        grant = S.grant_token(req.id)
+        r = _claim(w, w.machine, w.dana, grant=grant)
+        assert r.status_code == 200, r.text
+        out = r.json()
+        assert out["status"] == "claimed" and out["tookOver"]["releasedBy"] == "manager"
+        assert out["tookOver"]["approvedBy"] == "Ron" and out["tookOver"]["via"] == "remote"
+        # Recorded as an exception, with the request it came from.
+        event = w.db.query(TillEvent).filter(TillEvent.event_type == "user_session_release").one()
+        assert str(event.machine_id) == str(w.machine.id) and event.pos_user_id == str(w.dana.id)
+        assert event.details["via"] == "remote" and event.details["approvalRequestId"] == str(req.id)
+        assert event.details["approvedByUserId"] == str(w.ron.id)
+        assert event.details["approvedByPosUserId"] == str(w.ron_pu.id)
+        found = w.db.query(AuditException).filter(AuditException.exception_type == "user_session_release").one()
+        assert "באישור מהנייד" in found.details["summary"]
+        # The till that held her hears it on its next heartbeat and signs her out.
+        r = w.client.post(f"/api/v1/sync/{w.machine2.id}/user-session/heartbeat", headers=_till(w, w.machine2),
+                          json={"posUserId": str(w.dana.id)})
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "user_session_released"
+        assert r.json()["detail"]["releasedByName"] == "Ron"
+        # One approval, one release: spent.
+        assert S.heartbeat_items(w.db, w.machine) == []
+        w.client.post(f"/api/v1/sync/{w.machine.id}/user-session/release", headers=_till(w),
+                      json={"posUserId": str(w.dana.id)})
+        assert _claim(w, w.machine2, w.dana).json()["status"] == "claimed"
+        r = _claim(w, w.machine, w.dana, grant=grant)
+        assert r.status_code == 401 and r.json()["detail"] == "elevation_already_used"
+
+    def test_the_grant_is_for_the_employee_it_was_asked_for(self, w):
+        self._blocked(w)
+        req = _release_request(w, w.dana, approver_ids=[str(w.ron.id)])
+        S.decide(w.db, req.id, w.ron, tenant_id=w.tenant.id, decision="approve")
+        w.db.commit()
+        r = _claim(w, w.machine, w.avi_pu, grant=S.grant_token(req.id))
+        assert r.status_code == 403 and r.json()["detail"] == "elevation_wrong_user"
+        # Refused before anything happened: still good for Dana.
+        r = _claim(w, w.machine, w.dana, grant=S.grant_token(req.id))
+        assert r.status_code == 200 and r.json()["tookOver"]["via"] == "remote"
+
+    def test_rejected_nothing_is_released(self, w):
+        self._blocked(w)
+        req = _release_request(w, w.dana, approver_ids=[str(w.ron.id)])
+        S.decide(w.db, req.id, w.ron, tenant_id=w.tenant.id, decision="reject")
+        w.db.commit()
+        assert S.till_out(w.db, req)["grantId"] is None
+        assert _claim(w, w.machine, w.dana).status_code == 409
+
+    def test_only_while_the_phone_approvals_are_on(self, w):
+        self._blocked(w)
+        with pytest.raises(HTTPException) as e:
+            S.approvers_for_till(w.db, w.machine, "user_release")
+        assert e.value.status_code == 409 and e.value.detail == "remote_disabled"
+
+
+def _profile_sections(w, user, sections):
+    row = w.db.get(DashboardAccessProfile, user.id)
+    row.sections = dict(sections)
+    w.db.commit()
+    DA.forget(w.db)

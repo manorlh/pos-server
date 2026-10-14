@@ -3,6 +3,7 @@ import type { DealerType, DealerTypeChange } from './dealerType';
 import type { TillDataState } from './zDataState';
 import type { AutoReopenMode } from './availabilityReopen';
 import { DEVICE_MODEL_IDS } from './deviceProfile';
+import type { AutoStartStatus } from './autoStart';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -239,9 +240,9 @@ export interface PosSettingsV1 {
   /**
    * "סוג אינטגרציית אשראי" (lib/paymentIntegration.ts). Unset = automatic: a till with a
    * terminal of its own charges on Agamento (or Nayax when `nayaxEnabled`), a tablet on
-   * an external one. `auto` is never stored.
+   * an external one. `auto` is never stored. `none` = "ללא אשראי" (no card at all).
    */
-  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay';
+  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay' | 'none';
   /** `nayax_usb`: the C4's USB ids "VVVV:PPPP" (hex); unset = the first CDC-ACM device on the till. */
   nayaxUsbDevice?: string;
   /** Z-Credit: the terminal number, digits with leading zeros kept. */
@@ -837,6 +838,8 @@ export interface PosMachine {
   licenseExpiresOn?: string | null;
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;
+  /** "פתיחה אוטומטית" (lib/autoStart.ts): ready / missing / off; null — never reported (no indicator). */
+  autoStart?: AutoStartStatus | null;
   isActive: boolean;
   lastHeartbeatAt?: string;
   mqttConnected?: boolean | null;
@@ -1008,8 +1011,8 @@ export interface PosMachine {
   pinpadRequired?: boolean;
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
-  /** "סוג אינטגרציית אשראי" the till charges on; null on an older server. */
-  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | null;
+  /** "סוג אינטגרציית אשראי" the till charges on (`none`: "ללא אשראי"); null on an older server. */
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'none' | null;
   /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
   paymentIntegrationSource?: SettingsLevel | null;
   paymentIntegrationAutomatic?: boolean | null;
@@ -3271,9 +3274,10 @@ export interface TillParameter {
   valueCount: number;
   /**
    * How it is edited beyond its type: `'image'` = a string holding an image URL, picked
-   * by upload (the server's `IMAGE_PARAMETER_KEYS`, e.g. `receiptLogoUrl`); null = by type.
+   * by upload (the server's `IMAGE_PARAMETER_KEYS`, e.g. `receiptLogoUrl`); `'menu_items'` =
+   * the till's menu items as checkboxes (`hiddenMenuItems`, lib/tillMenu.ts); null = by type.
    */
-  widget?: 'image' | null;
+  widget?: 'image' | 'menu_items' | null;
   /** For `widget: 'image'`: the branding upload kind its images go through. */
   imageKind?: BrandingImageKind | 'media' | null;
   /** The dashboard tab that edits it instead of this page (`'printers'`), or null. */

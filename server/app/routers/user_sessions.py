@@ -1,28 +1,34 @@
 """
 "עובד מחובר בקופה אחת בלבד" — see app/services/user_sessions.py and
-docs/SPEC_EXCLUSIVE_LOGIN.md.
+docs/SPEC_EXCLUSIVE_LOGIN.md (v2: P:/specs/exclusive-login-v2.md).
 
 Till (machine JWT only):
 
-POST /sync/{machine_id}/user-session/claim      {posUserId, force?} → 200 claimed | held | off;
-                                                 409 `user_signed_in_elsewhere` (where, since)
-POST /sync/{machine_id}/user-session/heartbeat  {posUserId} → 200 held | claimed | off;
+POST /sync/{machine_id}/user-session/claim      {posUserId, force?} → 200 claimed | held | off | exempt;
+                                                 409 `user_signed_in_elsewhere` (where, since, holderSilentSince)
+POST /sync/{machine_id}/user-session/heartbeat  {posUserId, signedInAt?} → 200 held | claimed | off | exempt;
                                                  409 `user_signed_in_elsewhere` / `user_session_released`
 POST /sync/{machine_id}/user-session/release    {posUserId} → 200 released | not_held
 
+Every claim / heartbeat answer, 200 or 409, carries the policy the till follows: `exclusive`,
+`staleMinutes`, `autoRelease` (off | minutes), `offline` (allow | lan | manager) and
+`duplicate` (warn | signout).
+
 `force: true` releases the session at the other till, with a manager's approval: a grant
-for `user-session:release` in `X-Elevation-Token` (a manager's PIN at the till), or the
+for `user-session:release` in `X-Elevation-Token` (a manager's PIN at the till, or the grant
+of a phone's approval of "שחרור עובד מחובר" — remote-approval type `user_release`), or the
 signed-in operator named by `X-Pos-User-Id` when their own role holds the scope — the
-same two ways as a table's forced release. Recorded as an exception.
+same ways as a table's forced release. Recorded as an exception.
 
 Dashboard (Clerk):
 
-GET  /shops/{shop_id}/user-sessions                         → who is signed in where
-POST /shops/{shop_id}/user-sessions/{session_id}/release    → a manager releases one
+GET  /shops/{shop_id}/user-sessions                         → who is signed in where (+ `canRelease`)
+POST /shops/{shop_id}/user-sessions/{session_id}/release    → a manager releases one (`user_sessions_release`)
 """
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -46,7 +52,7 @@ from app.models.pos_machine import POSMachine
 from app.models.pos_user import PosUser
 from app.models.pos_user_session import PosUserSession
 from app.models.user import User
-from app.routers.pos_users import _check_read, _check_write, _get_shop_or_404
+from app.routers.pos_users import _check_read, _get_shop_or_404
 from app.services import user_sessions as svc
 from app.services.elevation import consume_per_action_use
 from app.services.permissions import Scope, requires_per_action_reauth
@@ -70,6 +76,12 @@ class UserSessionClaimIn(UserSessionIn):
     force: bool = False
 
 
+class UserSessionHeartbeatIn(UserSessionIn):
+    #: When the till let the employee in, by its own clock: which of two devices signed in last
+    #: (`exclusiveUserLoginDuplicate = signout`), and that a sign-in after a release is a new one.
+    signed_in_at: Optional[datetime] = Field(None, alias="signedInAt")
+
+
 # ── The till's side ───────────────────────────────────────────────────────────
 
 
@@ -90,15 +102,45 @@ def _pos_user(db: Session, machine: POSMachine, pos_user_id: uuid.UUID) -> PosUs
     return pos_user
 
 
+def _remote_approval(db: Session, grant: ElevatedSession, pos_user: PosUser) -> svc.Approval:
+    """
+    A phone's approval of "שחרור עובד מחובר" (`user_release`): good for the employee it was asked
+    for only (403 `elevation_wrong_user`), and named as the approver who decided it.
+    """
+    from app.models.remote_approval import ApprovalRequest
+
+    wanted = svc.remote_grant_user(db, grant.approval_request_id)
+    if wanted is not None and wanted != str(pos_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="elevation_wrong_user")
+    req = db.get(ApprovalRequest, grant.approval_request_id)
+    name = (req.decided_by_name if req is not None else None) or (
+        svc.dashboard_user_name(db.get(User, grant.user_id)) if grant.user_id else None
+    )
+    decided_by = req.decided_by_pos_user_id if req is not None else None
+    return svc.Approval(
+        name=name,
+        user_id=grant.user_id,
+        pos_user_id=str(decided_by) if decided_by else None,
+        via=svc.VIA_REMOTE,
+        approval_request_id=str(grant.approval_request_id),
+    )
+
+
 def _force_approval(
     db: Session,
     machine: POSMachine,
+    pos_user: PosUser,
     elevation_token: Optional[str],
     operator_id: Optional[str],
 ) -> tuple[svc.Approval, Optional[ElevatedSession]]:
-    """A grant for `user-session:release` at this till, or an operator whose role holds it."""
+    """
+    A grant for `user-session:release` at this till — a code typed there, or a phone's approval —
+    or the signed-in operator whose own role holds it.
+    """
     if elevation_token:
         grant = _checked_grant(db, machine, elevation_token, SCOPE)
+        if isinstance(getattr(grant, "approval_request_id", None), uuid.UUID):
+            return _remote_approval(db, grant, pos_user), grant
         pos_user_id = str(grant.pos_user_id) if grant.pos_user_id else None
         if grant.pos_user_id is not None:
             name = svc.pos_user_name(db.get(PosUser, grant.pos_user_id))
@@ -126,20 +168,21 @@ def claim_user_session(
 ):
     """
     Before the till lets an employee in. 200 when the employee is free here, already this
-    till's, or held by a till gone silent; 409 `user_signed_in_elsewhere` with where and
-    since when otherwise. `force` with a manager's approval releases the other till's.
+    till's, held by a till gone silent (auto release on), or not bound by the rule (`exempt`);
+    409 `user_signed_in_elsewhere` with where, since when and whether that device still
+    reports otherwise. `force` with a manager's approval releases the other till's.
     """
     _assigned(machine)
     pos_user = _pos_user(db, machine, body.pos_user_id)
     approval, grant = (None, None)
     if body.force:
-        approval, grant = _force_approval(db, machine, elevation_token, operator_id)
+        approval, grant = _force_approval(db, machine, pos_user, elevation_token, operator_id)
     try:
         result = svc.claim(db, machine, pos_user, approval=approval)
     except svc.SignedInElsewhere as conflict:
         # What the claim tidied on the way (a stale or a leftover session) is kept.
         db.commit()
-        raise _conflict("user_signed_in_elsewhere", conflict.info)
+        raise _conflict("user_signed_in_elsewhere", conflict.detail())
     if result.forced:
         if grant is not None and requires_per_action_reauth(SCOPE) and not consume_per_action_use(db, grant):
             raise _elevation_401("elevation_already_used")
@@ -151,7 +194,7 @@ def claim_user_session(
 @till_router.post("/{machine_id}/user-session/heartbeat")
 def heartbeat_user_session(
     machine_id: str,
-    body: UserSessionIn,
+    body: UserSessionHeartbeatIn,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
@@ -159,13 +202,14 @@ def heartbeat_user_session(
     _assigned(machine)
     pos_user = _pos_user(db, machine, body.pos_user_id)
     try:
-        result = svc.heartbeat(db, machine, pos_user)
+        # (A caller that builds the body itself may hand the plain `UserSessionIn`: no sign-in time.)
+        result = svc.heartbeat(db, machine, pos_user, signed_in_at=getattr(body, "signed_in_at", None))
     except svc.SessionReleased as released:
         db.commit()
-        raise _conflict("user_session_released", released.info)
+        raise _conflict("user_session_released", released.detail())
     except svc.SignedInElsewhere as conflict:
         db.commit()
-        raise _conflict("user_signed_in_elsewhere", conflict.info)
+        raise _conflict("user_signed_in_elsewhere", conflict.detail())
     db.commit()
     return result.out()
 
@@ -193,7 +237,10 @@ def list_user_sessions(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Who is signed in at which till of the shop now. `stale`: its till has gone silent."""
+    """
+    Who is signed in at which device of the shop now. `silent`: that device stopped reporting;
+    `canRelease`: this user may release one ("שחרור עובד מחובר במכשיר").
+    """
     shop = _get_shop_or_404(db, shop_id)
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_read(current_user, shop, db)
@@ -202,7 +249,18 @@ def list_user_sessions(
     return {
         "exclusive": svc.enabled_of(resolve_for_shop(db, shop).get(svc.PARAM_ENABLED)),
         "sessions": svc.active_sessions_for_shop(db, shop.id),
+        "canRelease": svc.may_release_from_dashboard(db, current_user),
     }
+
+
+def _check_release(user: User, shop, db: Session) -> None:
+    """"שחרור עובד מחובר במכשיר": the role and the dashboard permission, over this shop."""
+    if not svc.may_release_from_dashboard(db, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "section_forbidden", "section": svc.RELEASE_SECTION, "level": "edit"},
+        )
+    _check_read(user, shop, db)
 
 
 @router.post("/{shop_id}/user-sessions/{session_id}/release")
@@ -213,10 +271,13 @@ def release_user_session_from_dashboard(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """A manager frees an employee (a till that went down); that till signs them out if it is up."""
+    """
+    A manager frees an employee (a device that went down, or one they left signed in); that
+    device signs them out if it is up. Recorded as an exception. Already released: `not_held`.
+    """
     shop = _get_shop_or_404(db, shop_id)
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
-    _check_write(current_user, shop, db)
+    _check_release(current_user, shop, db)
     row = (
         db.query(PosUserSession)
         .filter(PosUserSession.id == session_id, PosUserSession.shop_id == shop.id)
@@ -224,6 +285,6 @@ def release_user_session_from_dashboard(
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    svc.release_by_dashboard(db, row, current_user)
+    released = svc.release_by_dashboard(db, row, current_user)
     db.commit()
-    return {"status": "released"}
+    return {"status": "released" if released else "not_held"}

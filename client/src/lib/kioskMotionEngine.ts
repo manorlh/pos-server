@@ -46,16 +46,24 @@ export const MOTION_EVENTS = [
   'loading',
   'scrollHint',
   'homeReturn',
+  // The till's own (P:/specs/till-motion.md "תיקון 14.10"): in the shared catalogue, never played by a kiosk.
+  'tableOpen',
+  'tabSwitch',
 ] as const;
 export type MotionEventKey = (typeof MOTION_EVENTS)[number];
 
-/** The animation library (spec §3): 35 kinds, and "none". */
+/**
+ * The animation library (spec §3): 40 kinds, and "none". The last five are the till's ways of opening a
+ * table (`tableOpen`): the tile grows into the order (zoom), the order comes in from the side in the
+ * reading direction (slide), up from the bottom (rise), a fade, from the middle of the screen (scale).
+ */
 export const MOTION_TYPES = [
   'scalePress', 'bounce', 'pulse', 'flyToCart', 'slideIn', 'slideOut', 'fadeIn', 'fadeOut',
   'fadeScale', 'expand', 'collapse', 'morph', 'flip', 'countUp', 'countDown', 'shake', 'wiggle',
   'drawCheck', 'progressFill', 'highlight', 'ripple', 'floating', 'swipeTransition', 'staggeredEntry',
   'parallaxLight', 'confetti', 'skeletonShimmer', 'attentionArrow', 'cartBadgePop', 'priceHighlight',
-  'buttonFill', 'successZoom', 'cardLift', 'crossfade', 'reorderShift', 'none',
+  'buttonFill', 'successZoom', 'cardLift', 'crossfade', 'reorderShift',
+  'zoom', 'slide', 'rise', 'fade', 'scale', 'none',
 ] as const;
 export type MotionType = (typeof MOTION_TYPES)[number];
 
@@ -87,12 +95,16 @@ export const MOTION_EVENT_TYPES: Record<MotionEventKey, readonly MotionType[]> =
   loading: ['skeletonShimmer', 'pulse', 'none'],
   scrollHint: ['attentionArrow', 'wiggle', 'pulse', 'none'],
   homeReturn: ['crossfade', 'fadeIn', 'fadeScale', 'slideIn', 'none'],
+  // The till: a table picked on the map opens its order (leaving it plays the same, reversed); order ↔ tables.
+  tableOpen: ['zoom', 'slide', 'rise', 'fade', 'flip', 'scale', 'none'],
+  tabSwitch: ['crossfade', 'fadeIn', 'slideIn', 'swipeTransition', 'none'],
 };
 
 export const MOTION_DIRECTIONS = ['auto', 'left', 'right', 'up', 'down'] as const;
 export type MotionDirection = (typeof MOTION_DIRECTIONS)[number];
 
-export const MOTION_EASINGS = ['auto', 'standard', 'decelerate', 'accelerate', 'emphasized', 'easeInOut', 'overshoot', 'linear'] as const;
+/** "ios": the till's screens before the engine (pos-android IosTransitions.kt) — off quickly, a long soft landing. */
+export const MOTION_EASINGS = ['auto', 'standard', 'decelerate', 'accelerate', 'emphasized', 'easeInOut', 'overshoot', 'linear', 'ios'] as const;
 export type MotionEasing = (typeof MOTION_EASINGS)[number];
 /** The named curves (CSS cubic-bezier x1, y1, x2, y2); "auto" is each kind's own. */
 export const MOTION_EASING_CURVES: Record<Exclude<MotionEasing, 'auto'>, readonly [number, number, number, number]> = {
@@ -103,13 +115,18 @@ export const MOTION_EASING_CURVES: Record<Exclude<MotionEasing, 'auto'>, readonl
   easeInOut: [0.45, 0, 0.55, 1],
   overshoot: [0.34, 1.56, 0.64, 1],
   linear: [0, 0, 1, 1],
+  ios: [0.32, 0.72, 0, 1],
 };
 
 export const MOTION_FALLBACKS = ['fade', 'highlight', 'color', 'none'] as const;
 export type MotionFallback = (typeof MOTION_FALLBACKS)[number];
 
+/** The kiosk's presets; the till adds "none" (TILL_MOTION_PRESETS). */
 export const MOTION_PRESETS = ['standard', 'slow', 'fast', 'custom', 'legacy'] as const;
-export type MotionPreset = (typeof MOTION_PRESETS)[number];
+export type KioskMotionPreset = (typeof MOTION_PRESETS)[number];
+/** "ללא הנפשות": every event off, whatever a level set (the till only). */
+export const NONE_MOTION_PRESET = 'none';
+export type MotionPreset = KioskMotionPreset | typeof NONE_MOTION_PRESET;
 export const DEFAULT_MOTION_PRESET: MotionPreset = 'standard';
 
 export const MOTION_GLOBAL_SPEEDS = ['slow', 'normal', 'fast', 'custom'] as const;
@@ -249,13 +266,16 @@ export const MOTION_STANDARD: Record<MotionEventKey, MotionEventValues> = {
   loading: { enabled: true, animationType: 'skeletonShimmer', durationMs: 1600, delayMs: 0, direction: 'auto', intensity: 100, scaleFrom: 1, scaleTo: 1, distancePx: 0, easing: 'linear', repeat: 0, repeatDelayMs: 0, holdMs: 0, staggerMs: 0, autoAdvanceDelayMs: 0, reducedMotionFallback: 'none' },
   scrollHint: { enabled: true, animationType: 'attentionArrow', durationMs: 1500, delayMs: 800, direction: 'down', intensity: 100, scaleFrom: 1, scaleTo: 1, distancePx: 12, easing: 'easeInOut', repeat: 3, repeatDelayMs: 400, holdMs: 0, staggerMs: 0, autoAdvanceDelayMs: 0, reducedMotionFallback: 'fade' },
   homeReturn: { enabled: true, animationType: 'crossfade', durationMs: 700, delayMs: 0, direction: 'auto', intensity: 100, scaleFrom: 1, scaleTo: 1, distancePx: 0, easing: 'auto', repeat: 1, repeatDelayMs: 0, holdMs: 0, staggerMs: 0, autoAdvanceDelayMs: 0, reducedMotionFallback: 'fade' },
+  // The till's (a kiosk never plays them): the table's tile grows into its order; order ↔ tables.
+  tableOpen: { enabled: true, animationType: 'zoom', durationMs: 650, delayMs: 0, direction: 'auto', intensity: 100, scaleFrom: 1, scaleTo: 1, distancePx: 0, easing: 'auto', repeat: 1, repeatDelayMs: 0, holdMs: 0, staggerMs: 0, autoAdvanceDelayMs: 0, reducedMotionFallback: 'fade' },
+  tabSwitch: { enabled: true, animationType: 'crossfade', durationMs: 450, delayMs: 0, direction: 'auto', intensity: 100, scaleFrom: 1, scaleTo: 1, distancePx: 0, easing: 'auto', repeat: 1, repeatDelayMs: 0, holdMs: 0, staggerMs: 0, autoAdvanceDelayMs: 0, reducedMotionFallback: 'fade' },
 };
 
 /**
  * Each preset as its difference from Standard: Slow — extra clear (×≈1.3), Fast — quick but readable
  * (×≈0.75), custom — Standard set event by event, legacy — the kiosks' pace before the engine.
  */
-export const MOTION_PRESET_DELTAS: Record<MotionPreset, Partial<Record<MotionEventKey, Partial<MotionEventValues>>>> = {
+export const MOTION_PRESET_DELTAS: Record<KioskMotionPreset, Partial<Record<MotionEventKey, Partial<MotionEventValues>>>> = {
   standard: {},
   custom: {},
   slow: {
@@ -285,6 +305,8 @@ export const MOTION_PRESET_DELTAS: Record<MotionPreset, Partial<Record<MotionEve
     loading: { durationMs: 2000 },
     scrollHint: { durationMs: 1800 },
     homeReturn: { durationMs: 900 },
+    tableOpen: { durationMs: 800 },
+    tabSwitch: { durationMs: 600 },
   },
   fast: {
     productPress: { durationMs: 350 },
@@ -313,6 +335,8 @@ export const MOTION_PRESET_DELTAS: Record<MotionPreset, Partial<Record<MotionEve
     loading: { durationMs: 1400 },
     scrollHint: { durationMs: 1200 },
     homeReturn: { durationMs: 550 },
+    tableOpen: { durationMs: 450 },
+    tabSwitch: { durationMs: 300 },
   },
   legacy: {
     productPress: { durationMs: 250, scaleTo: 0.97 },
@@ -427,6 +451,110 @@ export const MOTION_LIGHT = {
 /** Reduced motion's fade for the events that take something away. */
 export const MOTION_LEAVING_EVENTS: readonly MotionEventKey[] = ['remove', 'soldOut'];
 
+/* ------------------------------------------- surfaces: the kiosk, and the till */
+
+/**
+ * The till plays the same engine (P:/specs/till-motion.md "תיקון 14.10", the till design's `motion`):
+ * its own subset of the events (two of them its own), its presets ("legacy" = today's till, the default;
+ * "none" = every event off), `payment` as the payment screen rising, its "legacy" values, its light
+ * profile; no older per-transition keys. The server's kiosk_motion.py "Surfaces" — pinned by the
+ * golden's `till` section.
+ */
+export type MotionSurface = 'kiosk' | 'till';
+export const MOTION_SURFACES: readonly MotionSurface[] = ['kiosk', 'till'];
+
+/** The till's own events: in the catalogue, never played by a kiosk (its config refuses them). */
+export const TILL_ONLY_MOTION_EVENTS = ['tableOpen', 'tabSwitch'] as const;
+export type TillOnlyMotionEventKey = (typeof TILL_ONLY_MOTION_EVENTS)[number];
+export type KioskMotionEventKey = Exclude<MotionEventKey, TillOnlyMotionEventKey>;
+export const KIOSK_MOTION_EVENTS: readonly KioskMotionEventKey[] = MOTION_EVENTS.filter(
+  (e): e is KioskMotionEventKey => !(TILL_ONLY_MOTION_EVENTS as readonly string[]).includes(e),
+);
+
+/** The till's events, in the dashboard's order (products, navigation, payment). */
+export const TILL_MOTION_EVENTS = [
+  'productPress',
+  'addToCart',
+  'cartBadge',
+  'quantityChange',
+  'remove',
+  'soldOut',
+  'categorySwitch',
+  'itemsEnter',
+  'pageTransition',
+  'modalOpen',
+  'tableOpen',
+  'tabSwitch',
+  'payment',
+  'success',
+  'error',
+  'toast',
+] as const satisfies readonly MotionEventKey[];
+export type TillMotionEventKey = (typeof TILL_MOTION_EVENTS)[number];
+
+export const TILL_MOTION_PRESETS = ['legacy', 'standard', 'slow', 'fast', 'custom', 'none'] as const satisfies readonly MotionPreset[];
+/** No `motion` at any level: today's till. */
+export const TILL_DEFAULT_MOTION_PRESET: MotionPreset = 'legacy';
+
+/** The till's `payment`: the payment screen rising over the order. */
+export const TILL_MOTION_EVENT_TYPES: Partial<Record<MotionEventKey, readonly MotionType[]>> = {
+  payment: ['slideIn', 'fadeIn', 'fadeScale', 'none'],
+};
+export const TILL_MOTION_STANDARD: Partial<Record<MotionEventKey, MotionEventValues>> = {
+  payment: { enabled: true, animationType: 'slideIn', durationMs: 650, delayMs: 0, direction: 'up', intensity: 100, scaleFrom: 1, scaleTo: 1, distancePx: 0, easing: 'auto', repeat: 1, repeatDelayMs: 0, holdMs: 0, staggerMs: 0, autoAdvanceDelayMs: 0, reducedMotionFallback: 'fade' },
+};
+
+/**
+ * The till's "legacy" over its Standard: today's screens (IosTransitions.kt — a push / pop 300, payment and
+ * the windows rising 330, the tabs 140, the iOS curve; reduced motion: none at all), and nothing moving
+ * inside a screen — each of those events off, at the fast pace when a level switches it on. Opening a
+ * table zooms from its tile into the order, as a screen change (300 ms, the iOS curve), and leaving it plays
+ * the zoom back — the owner, 14.10.2026: zoom is the default, also with nothing set.
+ */
+export const TILL_MOTION_LEGACY: Partial<Record<MotionEventKey, Partial<MotionEventValues>>> = {
+  productPress: { enabled: false, durationMs: 350 },
+  addToCart: { enabled: false, durationMs: 550, holdMs: 800 },
+  cartBadge: { enabled: false, durationMs: 450 },
+  quantityChange: { enabled: false, durationMs: 400 },
+  remove: { enabled: false, durationMs: 500, holdMs: 3500 },
+  soldOut: { enabled: false, durationMs: 450 },
+  categorySwitch: { enabled: false, durationMs: 450 },
+  itemsEnter: { enabled: false, durationMs: 350, staggerMs: 45 },
+  pageTransition: { animationType: 'slideIn', durationMs: 300, easing: 'ios', reducedMotionFallback: 'none' },
+  modalOpen: { animationType: 'slideIn', direction: 'up', durationMs: 330, easing: 'ios', reducedMotionFallback: 'none' },
+  tableOpen: { durationMs: 300, easing: 'ios', reducedMotionFallback: 'none' },
+  tabSwitch: { durationMs: 140, reducedMotionFallback: 'none' },
+  payment: { durationMs: 330, easing: 'ios', reducedMotionFallback: 'none' },
+  success: { enabled: false, durationMs: 800 },
+  error: { enabled: false, durationMs: 450 },
+  toast: { enabled: false, durationMs: 350, holdMs: 1600 },
+};
+
+/** The till's light profile, beside the kiosk's: opening a table and the payment screen stay seen. */
+export const TILL_MOTION_LIGHT = {
+  fadeEvents: ['tableOpen'] as readonly MotionEventKey[],
+  screenEvents: ['tableOpen', 'payment'] as readonly MotionEventKey[],
+  fadeKinds: { tableOpen: 'fade' } as Partial<Record<MotionEventKey, MotionType>>,
+};
+
+export function motionSurfaceEvents(surface: MotionSurface = 'kiosk'): readonly MotionEventKey[] {
+  return surface === 'till' ? TILL_MOTION_EVENTS : KIOSK_MOTION_EVENTS;
+}
+
+export function motionPresetsOf(surface: MotionSurface = 'kiosk'): readonly MotionPreset[] {
+  return surface === 'till' ? TILL_MOTION_PRESETS : MOTION_PRESETS;
+}
+
+/** The kinds an event plays on that surface ("none" always). */
+export function motionEventTypesOf(event: MotionEventKey, surface: MotionSurface = 'kiosk'): readonly MotionType[] {
+  return (surface === 'till' ? TILL_MOTION_EVENT_TYPES[event] : undefined) ?? MOTION_EVENT_TYPES[event];
+}
+
+/** Runner Standard's values of an event on that surface. */
+export function standardValuesOf(event: MotionEventKey, surface: MotionSurface = 'kiosk'): MotionEventValues {
+  return { ...((surface === 'till' ? TILL_MOTION_STANDARD[event] : undefined) ?? MOTION_STANDARD[event]) };
+}
+
 /** One event as the kiosk plays it. */
 export interface ResolvedMotion extends MotionEventValues {
   event: MotionEventKey;
@@ -435,7 +563,10 @@ export interface ResolvedMotion extends MotionEventValues {
   /** Reduced motion's fallback was applied. */
   reduced: boolean;
 }
-export type ResolvedMotionEngine = Record<MotionEventKey, ResolvedMotion>;
+/** The kiosk's events as it plays them (the till's own two are not among them). */
+export type ResolvedMotionEngine = Record<KioskMotionEventKey, ResolvedMotion>;
+/** The till's events as it plays them. */
+export type ResolvedTillMotion = Record<TillMotionEventKey, ResolvedMotion>;
 export type MotionProfile = 'full' | 'light';
 
 /** Rounding as every renderer does it: halves up. */
@@ -461,9 +592,12 @@ export function isMotionEvent(v: unknown): v is MotionEventKey {
   return typeof v === 'string' && (MOTION_EVENTS as readonly string[]).includes(v);
 }
 
-export function motionPresetOf(motion: MotionEngineSettings | null | undefined): MotionPreset {
+/** The config's preset, or the surface's default ("standard" for a kiosk, "legacy" for a till). */
+export function motionPresetOf(motion: MotionEngineSettings | null | undefined, surface: MotionSurface = 'kiosk'): MotionPreset {
   const p = motion?.preset;
-  return typeof p === 'string' && (MOTION_PRESETS as readonly string[]).includes(p) ? (p as MotionPreset) : DEFAULT_MOTION_PRESET;
+  const presets = motionPresetsOf(surface) as readonly string[];
+  if (typeof p === 'string' && presets.includes(p)) return p as MotionPreset;
+  return surface === 'till' ? TILL_DEFAULT_MOTION_PRESET : DEFAULT_MOTION_PRESET;
 }
 
 /** The global speed (slow 1.3 / normal 1 / fast 0.75 / custom), else the older `speed`; light caps it at fast. */
@@ -483,8 +617,9 @@ export function globalMultiplier(motion: MotionEngineSettings | null | undefined
 }
 
 /** The preset's own values of an event (before the older choices and the overrides). */
-export function presetValues(preset: MotionPreset, event: MotionEventKey): MotionEventValues {
-  return { ...MOTION_STANDARD[event], ...(MOTION_PRESET_DELTAS[preset]?.[event] ?? {}) };
+export function presetValues(preset: MotionPreset, event: MotionEventKey, surface: MotionSurface = 'kiosk'): MotionEventValues {
+  const delta = surface === 'till' && preset === 'legacy' ? TILL_MOTION_LEGACY[event] : MOTION_PRESET_DELTAS[preset as KioskMotionPreset]?.[event];
+  return { ...standardValuesOf(event, surface), ...(delta ?? {}) };
 }
 
 /** A parameter's range for an event (its own, narrower, when it has one). */
@@ -495,15 +630,15 @@ export function motionParamRange(event: MotionEventKey, param: MotionParam): { m
   return spec.min !== undefined && spec.max !== undefined ? { min: spec.min, max: spec.max } : null;
 }
 
-/** Whether `value` is a valid value of `param` for `event` (the server's validation, the same rule). */
-export function motionParamOk(event: MotionEventKey, param: MotionParam, value: unknown): boolean {
+/** Whether `value` is a valid value of `param` for `event` on that surface (the server's validation, the same rule). */
+export function motionParamOk(event: MotionEventKey, param: MotionParam, value: unknown, surface: MotionSurface = 'kiosk'): boolean {
   const spec = MOTION_PARAMS[param];
   if (!spec) return false;
   switch (spec.kind) {
     case 'bool':
       return typeof value === 'boolean';
     case 'type':
-      return typeof value === 'string' && (MOTION_EVENT_TYPES[event] as readonly string[]).includes(value);
+      return typeof value === 'string' && (motionEventTypesOf(event, surface) as readonly string[]).includes(value);
     case 'enum':
       return typeof value === 'string' && (spec.values ?? []).includes(value);
     default: {
@@ -516,14 +651,14 @@ export function motionParamOk(event: MotionEventKey, param: MotionParam, value: 
 }
 
 /** The event's own values (`motion.events.<event>`) that are valid; the rest is ignored. */
-export function explicitOf(motion: MotionEngineSettings | null | undefined, event: MotionEventKey): MotionEventOverrides {
+export function explicitOf(motion: MotionEngineSettings | null | undefined, event: MotionEventKey, surface: MotionSurface = 'kiosk'): MotionEventOverrides {
   const events = motion?.events;
   const raw = isDict(events) ? events[event] : undefined;
   if (!isDict(raw)) return {};
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (v === null || v === undefined || !(k in MOTION_PARAMS)) continue;
-    if (motionParamOk(event, k as MotionParam, v)) out[k] = v;
+    if (motionParamOk(event, k as MotionParam, v, surface)) out[k] = v;
   }
   return out as MotionEventOverrides;
 }
@@ -531,9 +666,11 @@ export function explicitOf(motion: MotionEngineSettings | null | undefined, even
 export interface MotionResolveOptions {
   reduceMotion?: boolean;
   profile?: MotionProfile;
+  /** The kiosk (default) or the till. */
+  surface?: MotionSurface;
 }
 
-/** One event as the kiosk plays it (the module's five steps). */
+/** One event as the kiosk (or the till, `surface: 'till'`) plays it (the module's five steps). */
 export function resolveMotionEvent(
   motion: MotionEngineSettings | null | undefined,
   event: MotionEventKey,
@@ -542,35 +679,40 @@ export function resolveMotionEvent(
   const m: MotionEngineSettings = motion ?? {};
   const profile = opts.profile ?? 'full';
   const reduce = !!opts.reduceMotion;
-  const preset = motionPresetOf(m);
-  const base: MotionEventValues = presetValues(preset, event);
-  const kinds = MOTION_LEGACY_KINDS[event] ?? (preset === 'legacy' ? MOTION_LEGACY_ONLY_KINDS[event] : undefined);
+  const surface: MotionSurface = opts.surface === 'till' ? 'till' : 'kiosk';
+  const kiosk = surface === 'kiosk';
+  const preset = motionPresetOf(m, surface);
+  const base: MotionEventValues = presetValues(preset, event, surface);
+  const kinds = kiosk ? (MOTION_LEGACY_KINDS[event] ?? (preset === 'legacy' ? MOTION_LEGACY_ONLY_KINDS[event] : undefined)) : undefined;
   if (kinds) {
     const old = (m as Record<string, unknown>)[kinds.key];
     if (typeof old === 'string' && Object.prototype.hasOwnProperty.call(kinds.map, old)) Object.assign(base, kinds.map[old]);
   }
-  const explicit = explicitOf(m, event);
+  const explicit = explicitOf(m, event, surface);
   const p: MotionEventValues = { ...base, ...explicit };
-  let kind: MotionType = (MOTION_EVENT_TYPES[event] as readonly string[]).includes(p.animationType)
-    ? p.animationType
-    : MOTION_STANDARD[event].animationType;
+  // "ללא הנפשות": nothing plays, whatever a level set for the event.
+  if (preset === NONE_MOTION_PRESET) p.enabled = false;
+  const types = motionEventTypesOf(event, surface);
+  let kind: MotionType = (types as readonly string[]).includes(p.animationType) ? p.animationType : standardValuesOf(event, surface).animationType;
   if (!p.enabled) kind = 'none';
   const k = globalMultiplier(m, profile);
   let distance = Math.trunc(p.distancePx);
-  const lightScreen = profile === 'light' && !reduce && kind !== 'none' && MOTION_LIGHT.screenEvents.includes(event);
+  const screenEvents = kiosk ? MOTION_LIGHT.screenEvents : [...MOTION_LIGHT.screenEvents, ...TILL_MOTION_LIGHT.screenEvents];
+  const fadeEvents = kiosk ? MOTION_LIGHT.fadeEvents : [...MOTION_LIGHT.fadeEvents, ...TILL_MOTION_LIGHT.fadeEvents];
+  const lightScreen = profile === 'light' && !reduce && kind !== 'none' && screenEvents.includes(event);
   if (profile === 'light' && !reduce && kind !== 'none') {
     if (MOTION_LIGHT.noneEvents.includes(event)) kind = 'none';
     else if (lightScreen && MOTION_LIGHT.slideKinds.includes(kind)) {
       kind = 'slideIn';
       if (!(distance > 0 && distance <= MOTION_LIGHT.screenShiftPx)) distance = MOTION_LIGHT.screenShiftPx;
-    } else if (MOTION_LIGHT.fadeEvents.includes(event)) kind = 'fadeIn';
+    } else if (fadeEvents.includes(event)) kind = kiosk ? 'fadeIn' : (TILL_MOTION_LIGHT.fadeKinds[event] ?? 'fadeIn');
     else {
       kind = MOTION_LIGHT.replace[kind] ?? kind;
-      if (!(MOTION_EVENT_TYPES[event] as readonly string[]).includes(kind)) kind = 'none';
+      if (!(types as readonly string[]).includes(kind)) kind = 'none';
     }
   }
   let baseMs = base.durationMs;
-  if (preset === 'legacy') baseMs = MOTION_LEGACY_DURATIONS[event]?.[kind] ?? baseMs;
+  if (kiosk && preset === 'legacy') baseMs = MOTION_LEGACY_DURATIONS[event]?.[kind] ?? baseMs;
   let duration = resolveDuration(k, baseMs, explicit.durationMs);
   if (lightScreen && explicit.durationMs === undefined) duration = Math.max(duration, MOTION_LIGHT.screenMinMs);
   let staggerBase = base.staggerMs;
@@ -599,7 +741,7 @@ export function resolveMotionEvent(
   };
   if (event === 'remove') out.holdMs = Math.max(out.holdMs, REMOVE_MIN_HOLD_MS);
   if (event === 'itemsEnter' && kind !== 'none') {
-    out.staggerCapMs = preset === 'legacy' ? roundHalfUp(LEGACY_STAGGER_CAP_MS * k) : out.staggerMs * STAGGER_CAP_STEPS;
+    out.staggerCapMs = kiosk && preset === 'legacy' ? roundHalfUp(LEGACY_STAGGER_CAP_MS * k) : out.staggerMs * STAGGER_CAP_STEPS;
   }
   if (kind === 'none') out.durationMs = 0;
   if (reduce && kind !== 'none') out = reducedOf(out);
@@ -629,13 +771,19 @@ function reducedOf(spec: ResolvedMotion): ResolvedMotion {
   return out;
 }
 
-/** Every event as the kiosk plays it. */
-export function resolveMotionEngine(motion: MotionEngineSettings | null | undefined, opts: MotionResolveOptions = {}): ResolvedMotionEngine {
+/** Every event of the kiosk as it plays it. */
+export function resolveMotionEngine(motion: MotionEngineSettings | null | undefined, opts: Omit<MotionResolveOptions, 'surface'> = {}): ResolvedMotionEngine {
   const out = {} as ResolvedMotionEngine;
-  for (const e of MOTION_EVENTS) out[e] = resolveMotionEvent(motion, e, opts);
+  for (const e of KIOSK_MOTION_EVENTS) out[e] = resolveMotionEvent(motion, e, { ...opts, surface: 'kiosk' });
   return out;
 }
 
+/** Every event of the till as it plays it (the till design's `motion`). */
+export function resolveTillMotion(motion: MotionEngineSettings | null | undefined, opts: Omit<MotionResolveOptions, 'surface'> = {}): ResolvedTillMotion {
+  const out = {} as ResolvedTillMotion;
+  for (const e of TILL_MOTION_EVENTS) out[e] = resolveMotionEvent(motion, e, { ...opts, surface: 'till' });
+  return out;
+}
 /** Whether an event plays at all (enabled, a kind, and time to play it). */
 export function motionActive(spec: Pick<ResolvedMotion, 'animationType' | 'durationMs'>): boolean {
   return spec.animationType !== 'none' && spec.durationMs > 0;
@@ -702,11 +850,62 @@ export function motionCurve(easing: MotionEasing | string, fallback: string): st
 /** The CSS custom properties of an event, for the web kiosks' keyframes (`--m-<event>-ms` …). */
 export function motionCssVars(engine: ResolvedMotionEngine): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const e of MOTION_EVENTS) {
+  for (const e of KIOSK_MOTION_EVENTS) {
     const s = engine[e];
     out[`--m-${e}-ms`] = `${motionActive(s) ? s.durationMs : 0}ms`;
     out[`--m-${e}-delay`] = `${s.delayMs}ms`;
     out[`--m-${e}-k`] = String(s.intensity / 100);
   }
   return out;
+}
+
+/** A `motion` section's problem: its path, and `enum` (not one of the values), `range` or `unknownKey`. */
+export interface MotionConfigIssue {
+  path: string;
+  code: 'enum' | 'range' | 'unknownKey';
+  params?: { min: number; max: number };
+}
+
+/**
+ * The engine's keys of a `motion` section (`preset`, `globalSpeed`, `speedMultiplier`, `events.<event>`) as
+ * the server checks them for that surface (kiosk_config.motion_engine_fields): the surface's presets and
+ * events, each event's kinds, every parameter's range. `prefix` is the section's path ("motion"). Other
+ * keys of the section are the caller's (the kiosk's older per-transition choices).
+ */
+export function motionConfigIssues(mo: Record<string, unknown>, surface: MotionSurface = 'kiosk', prefix = 'motion'): MotionConfigIssue[] {
+  const e: MotionConfigIssue[] = [];
+  const preset = mo.preset;
+  if (preset !== undefined && preset !== null && !(motionPresetsOf(surface) as readonly unknown[]).includes(preset)) e.push({ path: `${prefix}.preset`, code: 'enum' });
+  const gs = mo.globalSpeed;
+  if (gs !== undefined && gs !== null && !(MOTION_GLOBAL_SPEEDS as readonly unknown[]).includes(gs)) e.push({ path: `${prefix}.globalSpeed`, code: 'enum' });
+  const k = mo.speedMultiplier;
+  if (k !== undefined && k !== null && (typeof k !== 'number' || !Number.isFinite(k) || k < MOTION_MULTIPLIER_MIN || k > MOTION_MULTIPLIER_MAX)) {
+    e.push({ path: `${prefix}.speedMultiplier`, code: 'range', params: { min: MOTION_MULTIPLIER_MIN, max: MOTION_MULTIPLIER_MAX } });
+  }
+  if (mo.events === undefined || mo.events === null) return e;
+  if (!isDict(mo.events)) return [...e, { path: `${prefix}.events`, code: 'enum' }];
+  const events = motionSurfaceEvents(surface) as readonly string[];
+  for (const [event, values] of Object.entries(mo.events)) {
+    const p = `${prefix}.events.${event}`;
+    if (!events.includes(event)) {
+      e.push({ path: p, code: 'unknownKey' });
+      continue;
+    }
+    if (values === null || values === undefined) continue;
+    if (!isDict(values)) {
+      e.push({ path: p, code: 'enum' });
+      continue;
+    }
+    for (const [param, v] of Object.entries(values)) {
+      if (v === null || v === undefined) continue;
+      if (!(param in MOTION_PARAMS)) {
+        e.push({ path: `${p}.${param}`, code: 'unknownKey' });
+        continue;
+      }
+      if (motionParamOk(event as MotionEventKey, param as MotionParam, v, surface)) continue;
+      const range = motionParamRange(event as MotionEventKey, param as MotionParam);
+      e.push(range && typeof v === 'number' ? { path: `${p}.${param}`, code: 'range', params: range } : { path: `${p}.${param}`, code: 'enum' });
+    }
+  }
+  return e;
 }

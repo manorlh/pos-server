@@ -362,6 +362,16 @@ export const DEVICE_ACTIONS: { action: DeviceAction; label: string; hint: string
 /** Commands the panel lists but never sends itself (made elsewhere: the tables' remote cancel). */
 const OTHER_ACTION_LABELS: Record<string, string> = {
   cancel_table: 'ביטול שולחן מהדשבורד',
+  // "כרטיס שולחן" (P:/specs/live-tables-cloud.md §6): sent from the open tables' card.
+  table_print_bill: 'הדפסת חשבון מהדשבורד',
+  table_reprint: 'הדפסה חוזרת למטבח מהדשבורד',
+  table_fire: 'הוצאת שלב מהדשבורד',
+  table_hold: 'השהיית שלב מהדשבורד',
+  table_rush: 'זרז למטבח מהדשבורד',
+  table_set_waiter: 'החלפת מלצר מהדשבורד',
+  table_move: 'העברת שולחן מהדשבורד',
+  table_merge: 'איחוד שולחנות מהדשבורד',
+  table_note: 'הערה לשולחן מהדשבורד',
 };
 
 export function actionLabel(action: string): string {
@@ -373,6 +383,17 @@ const REFUSALS: Record<string, string> = {
   table_not_open: 'השולחן כבר נסגר או שולם',
   not_host: 'הקופה כבר אינה המארחת',
   order_changed: 'השולחן השתנה בינתיים',
+  // The table card's actions (P:/specs/live-tables-cloud.md §6.7).
+  table_in_use: 'קופה בתוך השולחן',
+  course_not_held: 'השלב כבר יצא',
+  course_already_out: 'השלב כבר נשלח למטבח',
+  nothing_sent: 'עוד לא נשלח דבר למטבח',
+  waiter_not_found: 'העובד לא נמצא',
+  target_not_free: 'השולחן שנבחר תפוס',
+  target_not_found: 'השולחן שנבחר לא נמצא',
+  source_not_open: 'השולחן השני כבר נסגר',
+  merge_basket_discount: 'בשולחן השני יש הנחת חשבון',
+  printer_not_found: 'המדפסת לא נמצאה',
   sale_in_progress: 'באמצע מכירה',
   payment_in_progress: 'באמצע תשלום',
   no_update: 'אין עדכון מוכן',

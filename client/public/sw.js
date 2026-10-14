@@ -96,6 +96,8 @@ const PROBLEM_KINDS = new Set([
   // feat/push-detectors' watches (a till not selling; a table open too long, a late KDS ticket; a
   // shop not opened by its hour).
   'till_idle', 'table_open_long', 'kds_ticket_late', 'shop_not_opened',
+  // "תמיכה מרחוק": a till's QuickSupport signed by a certificate other than the allowed one.
+  'quicksupport_signer_mismatch',
   'document_refused', 'document_number_conflict', 'z_totals_mismatch', 'shift_totals_mismatch',
   'local_shop_z_mismatch', 'offline_z_gap', 'offline_z_conflict',
 ]);

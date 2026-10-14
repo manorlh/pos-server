@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { MemoryStore } from './kioskWebStore';
 import { CustomerDisplayWebService, KEYS, parseConfigPayload } from './customerDisplayWeb';
 
-type Call = { method: string; url: string; headers: Record<string, string> };
+type Call = { method: string; url: string; headers: Record<string, string>; body?: string };
 
 function fakeCloud(script: (call: Call) => { status: number; body?: unknown; etag?: string }) {
   const calls: Call[] = [];
-  const fetchFn = async (url: string, init: { method: string; headers: Record<string, string> }) => {
-    const call = { method: init.method, url, headers: init.headers };
+  const fetchFn = async (url: string, init: { method: string; headers: Record<string, string>; body?: unknown }) => {
+    const call = { method: init.method, url, headers: init.headers, body: typeof init.body === 'string' ? init.body : undefined };
     calls.push(call);
     const r = script(call);
     const text = r.body === undefined ? '' : JSON.stringify(r.body);
@@ -160,3 +160,34 @@ test('"סניף לא פעיל": the heartbeat locks the display at once, kept ac
   assert.equal(again.view().shopActive, true);
   again.stop();
 });
+
+test('the slideshow files are kept after each configuration and reported by hash in the heartbeat (§5.4)', async () => {
+  const now = { t: 1_000_000 };
+  const sha = 'a'.repeat(64);
+  const media = [
+    { url: 'https://x/logo.png', kind: 'image', bytes: null, onServer: true },
+    { url: 'https://x/a.webp', kind: 'image', bytes: 10, sha256: sha, onServer: true },
+  ];
+  const cloud = fakeCloud((c) => {
+    if (c.url.endsWith('/pairing/validate')) return { status: 200, body: { accessToken: 'tok', machineId: 'd1' } };
+    if (c.url.endsWith('/sync/d1/customer-display')) return { status: 200, body: { ...CONFIG, media } };
+    if (c.url.includes('/sync/d1/customer-display/state')) return { status: 204 };
+    if (c.url.endsWith('/machines/me/heartbeat')) return { status: 200, body: {} };
+    return { status: 404 };
+  });
+  const synced: unknown[] = [];
+  const svc = new CustomerDisplayWebService({
+    store: new MemoryStore(), fetchFn: cloud.fetchFn, defaultServer: 'https://api.example', appVersion: 'test',
+    deviceInfo: () => ({}), now: () => now.t, timers: { set: () => 0, clear: () => undefined },
+    mediaCache: { sync: async (entries) => void synced.push(entries), heldHashes: () => [sha] },
+  });
+  await svc.init();
+  await svc.pair({ code: 'ABC123', machineName: '' });
+  await svc.tick();
+  assert.deepEqual(synced, [media]);
+  const beat = cloud.calls.find((c) => c.url.endsWith('/machines/me/heartbeat'));
+  assert.ok(beat?.body);
+  assert.deepEqual(JSON.parse(beat.body).customerDisplayMedia, { screen: true, held: [sha] });
+  assert.equal(parseConfigPayload({ ...CONFIG, media })?.media[1].sha256, sha);
+});
+

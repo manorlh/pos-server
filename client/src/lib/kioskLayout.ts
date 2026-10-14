@@ -141,6 +141,8 @@ export interface KioskLayout {
   itemView: LayoutItemView;
   /** A tap on a dish with nothing required adds it (wall: always). */
   quickAdd: LayoutQuickAdd;
+  /** "תג כמות": how many of the dish the basket holds, a circle on its card in every template (on by default). */
+  cartCountBadge: boolean;
   /** A meal: its steps in the sheet (today), or a tray filling up. */
   mealView: LayoutMealView;
   /** "רוצים להפוך לארוחה?" before the customisation (first), after it (after), or not. */
@@ -194,6 +196,7 @@ export const KIOSK_LAYOUT_DEFAULTS: KioskLayout = {
   flow: 'free',
   itemView: 'sheet',
   quickAdd: 'off',
+  cartCountBadge: true,
   mealView: 'sheet',
   mealUpsell: 'off',
   basket: null,
@@ -558,6 +561,8 @@ export function validateLayout(cfg: Pick<KioskConfig, 'layout' | 'attract'>): La
       for (const k of ['landingShowCounts', 'magazineFeed', 'reachToggle'] as const) {
         if (typeof l[k] !== 'boolean') out.push({ path: p(k), code: 'enum' });
       }
+      // "תג כמות": absent (a draft from before it) is on; a value must be true or false.
+      if (l.cartCountBadge !== undefined && typeof l.cartCountBadge !== 'boolean') out.push({ path: p('cartCountBadge'), code: 'enum' });
       const avatars = l.nameAvatars;
       if (!Array.isArray(avatars) || avatars.some((a) => typeof a !== 'string' || a.trim() === '')) out.push({ path: p('nameAvatars'), code: 'enum' });
       else if (avatars.length > LAYOUT_LIMITS.nameAvatarsMax) out.push({ path: p('nameAvatars'), code: 'tooMany', params: { max: LAYOUT_LIMITS.nameAvatarsMax } });
@@ -716,6 +721,36 @@ export function tapPathOf(
   if (p.soldOut || p.addPath === 'none') return 'none';
   if (!plus && quickAdd === 'off') return 'sheet';
   return addPathOnTap(p.addPath ?? 'sheet', quickAdd, meal, p.defaultsAnswer === true);
+}
+
+/* ------------------------------------------------------------ "תג כמות" (P:/specs/kiosk-tap-add-count-badge.md) */
+
+/** The dish's count badge is drawn (layout.cartCountBadge): on unless a level turned it off — a config from before the key too. */
+export function cartCountBadgeOn(cfg: Pick<KioskConfig, 'layout'> | null | undefined): boolean {
+  return layoutOf(cfg).cartCountBadge !== false;
+}
+
+/**
+ * How many of each dish the basket holds, by the dish's id: every line of it counted, whatever its
+ * options, add-ons or note (its variants); a meal counts on the meal's own card.
+ */
+export function dishCartCounts(lines: ReadonlyArray<{ product: { id: string }; qty: number }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const l of lines) {
+    if (!(l.qty > 0)) continue;
+    out[l.product.id] = (out[l.product.id] ?? 0) + l.qty;
+  }
+  return out;
+}
+
+/** The number on a dish's badge (`inCart`: how many of it the basket holds); null — no badge (turned off, or none of it). */
+export function dishBadgeCount(cfg: Pick<KioskConfig, 'layout'> | null | undefined, inCart: number): number | null {
+  return inCart > 0 && cartCountBadgeOn(cfg) ? inCart : null;
+}
+
+/** The badge's text: up to 99, then "99+" (a circle stays a circle). */
+export function dishBadgeText(n: number): string {
+  return n > 99 ? '99+' : String(n);
 }
 
 /** shelves: a card's width (dp) so a shelf shows about 2.4 of them at "m" — the till's KioskLayouts.shelfCardDp. */

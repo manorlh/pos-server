@@ -5,7 +5,9 @@
 
 * `devices` — a till offline (with unsent sales), unsent sales on a till that is online, the
   till's printer (no paper, overheated, error), a kiosk's health (offline, card terminal,
-  printer, KDS, its link to the till), a low battery and a till not selling while the others do;
+  printer, KDS, its link to the till), a low battery, a till not selling while the others do, a
+  device that will not open by itself on boot ("פתיחה אוטומטית לא מוכנה"), and a device online
+  that has not taken the cloud's changes (`device_sync_stale`);
 * `z_shift` — a Z not done, a shift open past its date or too long, closed shifts awaiting a Z,
   a forced Z, a shop not opened by its hour;
 * `card` — card transmission late or failed, a terminal not answering, a card payment left
@@ -23,6 +25,7 @@ Nothing is worked out again here — every problem is a reading an existing scre
   list feeds it, minus the catalog watermark no problem reads);
 * the kiosks' health (app/services/kiosk_health.py, `GET /kiosks/health`'s own view);
 * open low-battery alerts (app/services/battery_alerts.py);
+* the devices' last `autostart` report against `autoStartOnBoot` (app/services/autostart.py);
 * card payments still "לא הוכרע" (app/services/failed_payments.py);
 * Z-Credit reconciliation gaps still open in the latest runs (`/zcredit-reconciliation/attention`).
 
@@ -87,6 +90,8 @@ KIND_GROUP: Dict[str, str] = {
     "kiosk_terminal": "devices",
     "device_battery": "devices",
     "till_idle": "devices",
+    # "תמיכה מרחוק" (app/services/remote_support.py): QuickSupport signed by another certificate.
+    "quicksupport_signer_mismatch": "devices",
     # ── Z and shifts ──
     "z_missing": "z_shift",
     "shift_open_overdue": "z_shift",
@@ -572,6 +577,92 @@ def _battery_items(db: Session, machines: List[POSMachine]) -> List[Tuple[Item, 
     return out
 
 
+# ── "פתיחה אוטומטית" ─────────────────────────────────────────────────────────
+
+
+def _autostart_items(db: Session, machines: List[POSMachine]) -> List[Tuple[Item, Optional[str]]]:
+    """
+    "פתיחה אוטומטית לא מוכנה" (P:/specs/autostart-default.md §3, app/services/autostart.py): the
+    parameter on and the last heartbeat says `ready: false`. Low — the device works, it just will not
+    open by itself after a power cut. Never for a device that has not reported (an older APK).
+    """
+    from app.services import autostart
+
+    out: List[Tuple[Item, Optional[str]]] = []
+    try:
+        listed = autostart.not_ready(db, machines)
+    except Exception:  # noqa: BLE001 - an optional reading never fails the screen
+        logger.exception("autostart problems failed")
+        return out
+    for m in listed:
+        report = autostart.report_of(m) or {}
+        out.append((Item(
+            id=f"autostart:{m.id}", kind=autostart.PROBLEM_KIND, group="devices", severity="low",
+            since=_parse(report.get("reportedAt")), title=autostart.PROBLEM_TITLE, detail=autostart.PROBLEM_DETAIL,
+            link=f"/dashboard/machines/{m.id}", shop_id=m.shop_id, machine_id=m.id,
+        ), None))
+    return out
+
+
+# ── Customer display files missing on a device ───────────────────────────────
+
+
+def _customer_display_media_items(db: Session, machines: List[POSMachine]) -> List[Tuple[Item, Optional[str]]]:
+    """
+    "מסך לקוח" (P:/specs/customer-display-transitions.md §3א): a file of the slideshow the server
+    deleted by its retention policy, that a device using it reported it lacks — "העלה מחדש" on the
+    customer display page. Low: the device skips that slide, the rest plays.
+    """
+    from app.services import customer_display_media as CDM
+
+    try:
+        with db.begin_nested():
+            found = CDM.missing_on_devices(db, machines)
+    except Exception:  # noqa: BLE001 - one reading never fails the screen
+        logger.exception("problems: customer display media")
+        return []
+    out: List[Tuple[Item, Optional[str]]] = []
+    for machine, files in found:
+        n = len(files)
+        out.append((Item(
+            id=f"cd-media:{machine.id}", kind="customer_display_media_missing", group="devices", severity="low",
+            since=_utc(max((_utc(f.deleted_at) for f in files if f.deleted_at is not None), default=None)),
+            title="קובץ מצגת חסר במסך הלקוח" if n == 1 else f"{n} קובצי מצגת חסרים במסך הלקוח",
+            detail="נמחק מהשרת והמכשיר לא הוריד אותו. העלו אותו מחדש בעמוד מסך לקוח.",
+            link=f"/dashboard/customer-display?scopeType=machine&scopeId={machine.id}",
+            shop_id=machine.shop_id, machine_id=machine.id,
+        ), None))
+    return out
+
+
+# ── A device not up to date with the cloud ───────────────────────────────────
+
+
+def _sync_items(db: Session, machines: List[POSMachine], now: datetime) -> List[Tuple[Item, Optional[str]]]:
+    """
+    "מכשיר לא מעודכן" (P:/specs/device-sync-status.md §5.6): a device online whose report shows a
+    domain pending or failing for longer than its `syncStaleMinutes` (app/services/sync_status.py).
+    Never fails the screen.
+    """
+    from app.services import sync_status
+
+    try:
+        stale = sync_status.stale_devices(db, machines, now=now)
+    except Exception:  # noqa: BLE001
+        logger.exception("sync status items failed")
+        return []
+    out: List[Tuple[Item, Optional[str]]] = []
+    for m, result in stale:
+        out.append((Item(
+            id=f"sync:{m.id}", kind="device_sync_stale", group="devices",
+            severity=sync_status.severity_of(result, now), since=_parse(result.get("staleSince")),
+            title="המכשיר לא קיבל את העדכונים מהענן",
+            detail=sync_status.problem_detail(result) or None,
+            link=f"/dashboard/machines/{m.id}#sync", shop_id=m.shop_id, machine_id=m.id,
+        ), None))
+    return out
+
+
 # ── Card payments still undecided ────────────────────────────────────────────
 
 
@@ -770,6 +861,9 @@ def build(db: Session, user: User, tenant_id: Any, *, hidden: Sequence[str] = ()
     fresh(_till_items(db, tills, now))
     fresh(_kiosk_items(db, user, tenant_id, now, company_id=company_id if shop_id is None else None, shop_id=shop_id))
     fresh(_battery_items(db, machines))
+    fresh(_autostart_items(db, machines))
+    fresh(_customer_display_media_items(db, machines))
+    fresh(_sync_items(db, machines, now))
     # 3. Card payments and Z-Credit.
     items.extend(_payment_items(db, reach, now, logged, company_ids=company_ids, shop_id=shop_id))
     items.extend(_zcredit_items(db, reach, machines, now, logged))

@@ -5,13 +5,15 @@
  * button, a price, a screen, depending on the event — that plays the event as the kiosk resolves it
  * (lib/kioskMotionPreview.ts plans the tracks; the Web Animations API plays them). No order is made.
  * The stage draws an element per role of its scene (`data-role`); "before / after" puts two stages
- * side by side and plays them together.
+ * side by side and plays them together. The till's stages (`surface: 'till'`): a tables map whose table
+ * opens into its order (`tableOpen`), the order and the tables side by side (`tabSwitch`), the payment
+ * screen rising over the order (its `payment`).
  */
 
 import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Check, ChevronsDown, CreditCard, Lock, Minus, Plus, ShoppingBag, ShoppingCart, Trash2, Undo2, Utensils } from 'lucide-react';
+import { ArrowRight, Check, ChevronsDown, CreditCard, Lock, Minus, Plus, ShoppingBag, ShoppingCart, Trash2, Undo2, Utensils } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ResolvedMotion } from '@/lib/kioskMotionEngine';
+import type { MotionSurface, ResolvedMotion } from '@/lib/kioskMotionEngine';
 import {
   CONFETTI_PIECES,
   MOTION_SCENES,
@@ -22,31 +24,42 @@ import {
   type MotionPlan,
   type MotionScene,
   type MotionStageGeometry,
+  type StageRect,
 } from '@/lib/kioskMotionPreview';
-import { useMotionText } from './motion-labels';
+import { useMotionText, type MotionT } from './motion-labels';
 
 export interface MotionStageHandle {
   play: () => void;
 }
 
-interface PlayHooks {
+export interface PlayHooks {
   onSwap: () => void;
   onCount: (role: string, text: string) => void;
   onDone: () => void;
 }
 
-/** The fly from the dish's picture to the basket, measured before playing. */
-function measure(root: HTMLElement): MotionStageGeometry | undefined {
-  const ghost = root.querySelector<HTMLElement>('[data-role="ghost"]');
-  const cart = root.querySelector<HTMLElement>('[data-role="cart"]');
-  if (!ghost || !cart) return undefined;
-  const a = ghost.getBoundingClientRect();
-  const b = cart.getBoundingClientRect();
-  return { flyDx: b.left + b.width / 2 - (a.left + a.width / 2), flyDy: b.top + b.height / 2 - (a.top + a.height / 2) };
+/** `el`'s box as fractions of `root`'s (physical left / top). */
+export function rectWithin(root: HTMLElement, el: HTMLElement): StageRect | undefined {
+  const a = root.getBoundingClientRect();
+  const b = el.getBoundingClientRect();
+  if (a.width <= 0 || a.height <= 0) return undefined;
+  return { left: (b.left - a.left) / a.width, top: (b.top - a.top) / a.height, width: b.width / a.width, height: b.height / a.height };
 }
 
-/** Plays a plan on the stage's elements; returns its stop. */
-function playPlan(root: HTMLElement, plan: MotionPlan, hooks: PlayHooks): () => void {
+/** The fly from the dish's picture to the basket, and the table picked on the map, measured before playing. */
+function measure(root: HTMLElement): MotionStageGeometry | undefined {
+  const tileEl = root.querySelector<HTMLElement>('[data-role="tile"]');
+  const tile = tileEl ? rectWithin(root, tileEl) : undefined;
+  const ghost = root.querySelector<HTMLElement>('[data-role="ghost"]');
+  const cart = root.querySelector<HTMLElement>('[data-role="cart"]');
+  if (!ghost || !cart) return tile ? { flyDx: -120, flyDy: -48, tile } : undefined;
+  const a = ghost.getBoundingClientRect();
+  const b = cart.getBoundingClientRect();
+  return { flyDx: b.left + b.width / 2 - (a.left + a.width / 2), flyDy: b.top + b.height / 2 - (a.top + a.height / 2), tile };
+}
+
+/** Plays a plan on the stage's elements; returns its stop. `keep`: no reset at the end (the till's tables demo). */
+export function playPlan(root: HTMLElement, plan: MotionPlan, hooks: PlayHooks, keep = false): () => void {
   const anims: Animation[] = [];
   const timers: number[] = [];
   let raf = 0;
@@ -85,12 +98,15 @@ function playPlan(root: HTMLElement, plan: MotionPlan, hooks: PlayHooks): () => 
   };
   timers.push(window.setTimeout(hooks.onSwap, plan.swapAtMs));
   timers.push(
-    window.setTimeout(() => {
-      stop();
-      hooks.onDone();
-      // Back to rest softly.
-      if (canAnimate) root.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
-    }, plan.endMs + plan.holdMs),
+    window.setTimeout(
+      () => {
+        stop();
+        hooks.onDone();
+        // Back to rest softly.
+        if (canAnimate && !keep) root.animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' });
+      },
+      keep ? plan.endMs : plan.endMs + plan.holdMs,
+    ),
   );
   return stop;
 }
@@ -124,12 +140,92 @@ interface SceneProps {
   scene: MotionScene;
   after: boolean;
   counts: Record<string, string>;
+  surface: MotionSurface;
 }
 
-function Scene({ event, scene, after, counts }: SceneProps) {
-  const { t } = useMotionText();
+const TABLE_TONES = ['bg-emerald-500/15 border-emerald-500/40', 'bg-amber-500/15 border-amber-500/40', 'bg-muted border-border'];
+
+/** The till's tables map: six tables; `picked` is the one that opens (`data-role="tile"`). */
+export function MiniTablesMap({ t, picked = 1, onPick, className }: { t: MotionT; picked?: number | null; onPick?: (i: number, el: HTMLElement) => void; className?: string }) {
+  return (
+    <div className={cn('grid h-full grid-cols-3 grid-rows-2 gap-2 p-3', className)}>
+      {Array.from({ length: 6 }, (_, i) => {
+        const label = t('stage.tableN', { n: i + 1 });
+        const cls = cn(
+          'flex flex-col items-center justify-center gap-0.5 rounded-xl border text-[11px] font-semibold text-foreground shadow-xs',
+          TABLE_TONES[i % TABLE_TONES.length],
+          onPick && 'cursor-pointer transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        );
+        const body = (
+          <>
+            <span>{label}</span>
+            <span className="text-[9px] font-normal text-muted-foreground">{i % 3 === 2 ? t('stage.tableFree') : t('stage.tableBusy')}</span>
+          </>
+        );
+        return onPick ? (
+          <button key={i} type="button" data-role={i === picked ? 'tile' : undefined} className={cls} onClick={(e) => onPick(i, e.currentTarget)} aria-label={label}>
+            {body}
+          </button>
+        ) : (
+          <div key={i} data-role={i === picked ? 'tile' : undefined} className={cls}>
+            {body}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The till's order screen in small: a header (the table, a way back), the categories, the dishes, the total. */
+export function MiniOrderScreen({ t, title, onBack }: { t: MotionT; title: string; onBack?: () => void }) {
+  return (
+    <div className="flex h-full flex-col gap-2 bg-background p-3">
+      <div className="flex items-center justify-between gap-2">
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ArrowRight className="h-3 w-3" /> {t('stage.backToTables')}
+          </button>
+        ) : (
+          <span className="h-2 w-10 rounded-full bg-muted-foreground/20" />
+        )}
+        <span className="text-[11px] font-semibold">{title}</span>
+      </div>
+      <div className="flex gap-1.5">
+        {['mains', 'drinks'].map((k, i) => (
+          <span key={k} className={cn('rounded-full px-2 py-0.5 text-[10px]', i === 0 ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
+            {t(`stage.${k}`)}
+          </span>
+        ))}
+      </div>
+      <MiniTiles count={6} className="flex-1" />
+      <div className="flex h-6 items-center justify-between rounded-md bg-primary px-2 text-[10px] font-semibold text-primary-foreground">
+        <span>{t('stage.pay')}</span>
+        <span dir="ltr">₪86.70</span>
+      </div>
+    </div>
+  );
+}
+
+function Scene({ event, scene, after, counts, surface }: SceneProps) {
+  const { t } = useMotionText(surface);
   const s = (key: string) => t(`stage.${key}`);
   switch (scene) {
+    case 'tables':
+      return (
+        <div className="relative h-full">
+          <div data-role="map" className="absolute inset-0 bg-muted/40 [backface-visibility:hidden]">
+            <MiniTablesMap t={t} picked={1} />
+          </div>
+          <div data-role="order" className="absolute inset-0 opacity-0 [backface-visibility:hidden]">
+            <MiniOrderScreen t={t} title={t('stage.tableN', { n: 2 })} />
+          </div>
+        </div>
+      );
+
     case 'card':
       return (
         <div className="flex h-full items-center justify-center">
@@ -396,6 +492,31 @@ function Scene({ event, scene, after, counts }: SceneProps) {
       if (event === 'categorySwitch') {
         a = menu(s('mains'), GRID_TONES);
         b = menu(s('drinks'), COOL_TONES);
+      } else if (event === 'tabSwitch') {
+        // The till's bottom bar: the order ↔ the tables.
+        a = menu(s('order'), GRID_TONES);
+        b = <MiniTablesMap t={t} picked={null} />;
+      } else if (event === 'payment') {
+        // The till's payment: the payment screen rises over the order.
+        a = menu(s('order'), GRID_TONES);
+        b = (
+          <div className="flex h-full flex-col gap-2 p-3">
+            {header(s('payTitle'))}
+            <div className="flex flex-1 flex-col items-center justify-center gap-1">
+              <span className="text-[10px] text-muted-foreground">{s('total')}</span>
+              <span dir="ltr" className="text-lg font-bold tabular-nums">
+                ₪86.70
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {['payCash', 'payCard', 'payOther'].map((k) => (
+                <span key={k} className="flex h-7 items-center justify-center rounded-md border bg-background text-[10px] font-medium">
+                  {s(k)}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
       } else if (event === 'homeReturn') {
         a = (
           <div className="flex h-full flex-col items-center justify-center gap-1.5">
@@ -588,17 +709,22 @@ export function MotionStage({
   spec,
   handle,
   className,
+  scene: sceneOverride,
+  surface = 'kiosk',
 }: {
   spec: ResolvedMotion;
   handle?: RefObject<MotionStageHandle | null>;
   className?: string;
+  /** The stage when the surface plays the event on another (the till's payment: the screen rising). */
+  scene?: MotionScene;
+  surface?: MotionSurface;
 }) {
-  const { t } = useMotionText();
+  const { t } = useMotionText(surface);
   const rootRef = useRef<HTMLDivElement>(null);
   const stopRef = useRef<(() => void) | null>(null);
   const [after, setAfter] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
-  const scene = MOTION_SCENES[spec.event];
+  const scene = sceneOverride ?? MOTION_SCENES[spec.event];
 
   const play = () => {
     const root = rootRef.current;
@@ -635,7 +761,7 @@ export function MotionStage({
       }}
       aria-hidden
     >
-      <Scene event={spec.event} scene={scene} after={after} counts={counts} />
+      <Scene event={spec.event} scene={scene} after={after} counts={counts} surface={surface} />
       {silent ? (
         <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
           <span className="rounded-full border bg-background px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">{silent}</span>
@@ -646,8 +772,8 @@ export function MotionStage({
 }
 
 /** The caption under a stage: the kind as played, its time, delay and repeats, the reduced fallback. */
-export function MotionStageCaption({ spec, label, light }: { spec: ResolvedMotion; label?: ReactNode; light?: boolean }) {
-  const tx = useMotionText();
+export function MotionStageCaption({ spec, label, light, surface = 'kiosk' }: { spec: ResolvedMotion; label?: ReactNode; light?: boolean; surface?: MotionSurface }) {
+  const tx = useMotionText(surface);
   const plan = planMotionPreview(spec);
   const playing = spec.enabled && spec.animationType !== 'none' && spec.durationMs > 0;
   return (

@@ -23,6 +23,10 @@ dashboard section `approvals`), their scope covers the till's shop, and:
   bound by it (§4). The employee card's "רשאי לאשר גם כשאינו במשמרת" lifts it.
 * **"לא מקבל בקשות"** on any linked employee (for this type or all): never.
 * **`selfApprove`** off: never the person who asked (their linked employee is the requester).
+* **The type's own right** (`approver_code` / `approver_section`, catalog.py): a type whose
+  approver must be allowed to do the thing itself — "שחרור עובד מחובר" (`user_release`): the
+  linked employee's role allows USER_SESSION_RELEASE; a dashboard role holds
+  `user_sessions_release` (app/services/user_sessions.py `may_release_from_dashboard`).
 
 `hasDevice` (an active push subscription) is a flag, not a rule — except when no eligible
 approver has one at all: then nobody can be reached and the list is empty (`422 no_approvers`).
@@ -199,6 +203,32 @@ def _may_decide_in_dashboard(db: Session, user: User) -> bool:
     return dashboard_access.effective_access(db, user).allows(SECTION, "edit")
 
 
+def _may_release_sessions(db: Session, user: User) -> bool:
+    from app.services.user_sessions import may_release_from_dashboard
+
+    return may_release_from_dashboard(db, user)
+
+
+#: A type's `approver_section` → who holds it as a dashboard approver: the section at edit and the
+#: role its own routes ask for. A section with no entry here: the section at edit alone.
+DASH_GATES = {
+    "user_sessions_release": _may_release_sessions,
+}
+
+
+def _dash_gate_allows(db: Session, user: User, rtype: C.RequestType) -> bool:
+    """A dashboard-role approver of a type that names a dashboard permission must hold it."""
+    section = rtype.approver_section
+    if not section:
+        return True
+    gate = DASH_GATES.get(section)
+    if gate is not None:
+        return gate(db, user)
+    from app.services import dashboard_access
+
+    return dashboard_access.effective_access(db, user).allows(section, "edit")
+
+
 def _dash_scope_covers(db: Session, user: User, machine: POSMachine) -> bool:
     from app.services.company_hierarchy import user_may_use_machine
 
@@ -280,6 +310,9 @@ def evaluate(
             key = C.till_role_key(eff.role_key, eff.role_id)
             if key is None or key not in approver_roles or not eff.allows(code):
                 continue
+            # A type whose approver must be allowed to do the thing itself (`user_release`).
+            if rtype.approver_code and not eff.allows(rtype.approver_code):
+                continue
             ov = OV.for_type(pu, ask.type_key)
             personal = _personal_limit(ov)
             explicit = personal or policy_limits.get(key) or eff.limits.get(code)
@@ -304,7 +337,7 @@ def evaluate(
             break
 
         # ── Through the dashboard role ──
-        if best is None and dash_scope:
+        if best is None and dash_scope and _dash_gate_allows(db, user, rtype):
             key = C.dash_role_key(user.role)
             if key in approver_roles:
                 limit = policy_limits.get(key)

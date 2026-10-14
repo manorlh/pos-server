@@ -8,7 +8,8 @@
  *
  * * **Every row says its serial** — monospaced, with a copy button and where it came from
  *   ("SUNMI", "Feitian SDK"), or "לא דווח" — and its model, role, platform and app version
- *   ("ישנה" when below the newest in view on its platform).
+ *   ("ישנה" when below the newest in view on its platform), and "פתיחה אוטומטית" when it reported
+ *   it (components/dashboard/machines/auto-start.tsx; nothing for an older APK).
  * * **Sorted by shop (the default), the rows sit under their shop's header** — company ▸ shop, the
  *   tills' count and status dots, "הוסף מכשיר" and the shop's terminal number — collapsible, the
  *   collapse remembered per shop in localStorage (wrapped: private browsing refuses storage, and a
@@ -54,7 +55,10 @@ import { IndependentTillBadge } from '@/components/dashboard/independent-till-ba
 import { ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
 import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
+import { SyncCell } from '@/components/dashboard/machines/sync-status';
+import type { DeviceSyncStatus } from '@/lib/syncStatus';
 import { DevicePlatformBadge, DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
+import { AutoStartBadge } from '@/components/dashboard/machines/auto-start';
 import {
   MachineGroupHeader,
   type MachineStatusValue,
@@ -99,6 +103,10 @@ export interface DevicesListProps {
     selected: ReadonlySet<string>;
     onToggle: (ids: string[], on: boolean) => void;
   };
+  /** "סנכרון" (P:/specs/device-sync-status.md §3): each device's sync state, by id — read apart. */
+  syncByMachine?: ReadonlyMap<string, DeviceSyncStatus>;
+  /** "סנכרן את כל הסניף" on the shop's header; absent where not allowed. */
+  onSyncShop?: (shop: Shop) => void;
 }
 
 interface DeviceGroup {
@@ -452,6 +460,8 @@ export function DevicesList({
   onAddMachineToShop,
   onTerminalNumberForShop,
   selection,
+  syncByMachine,
+  onSyncShop,
 }: DevicesListProps) {
   const t = useTranslations('machines');
   const tv = useTranslations('machines.devicesView');
@@ -514,6 +524,7 @@ export function DevicesList({
       onTerminalNumber={
         group.shop && onTerminalNumberForShop ? () => onTerminalNumberForShop(group.shop!) : undefined
       }
+      onSyncShop={group.shop && onSyncShop && group.tills.length > 0 ? () => onSyncShop(group.shop!) : undefined}
     />
   );
 
@@ -594,6 +605,18 @@ export function DevicesList({
               <dd className="min-w-0">
                 <LastSeen m={m} />
               </dd>
+              {m.autoStart ? (
+                <>
+                  <dt className="text-muted-foreground">{tv('columns.autoStart')}</dt>
+                  <dd className="min-w-0">
+                    <AutoStartBadge status={m.autoStart} />
+                  </dd>
+                </>
+              ) : null}
+              <dt className="text-muted-foreground">סנכרון</dt>
+              <dd className="min-w-0">
+                <SyncCell status={syncByMachine?.get(m.id)} />
+              </dd>
             </dl>
             <DeviceCodeLine m={m} />
             <div className="flex flex-wrap items-center gap-1">
@@ -637,7 +660,7 @@ export function DevicesList({
 
   // ── Table ──
   const pickable = machines.filter(selectable);
-  const colCount = (selection ? 1 : 0) + (showPlace ? 1 : 0) + 9;
+  const colCount = (selection ? 1 : 0) + (showPlace ? 1 : 0) + 10;
 
   const sortHeader = (key: SortKey, label: string, className = '') => {
     const active = sort.key === key;
@@ -713,6 +736,9 @@ export function DevicesList({
           <td className="px-2 py-2">
             <DeviceVersion m={m} newest={newest} />
           </td>
+          <td className="px-2 py-2">
+            <AutoStartBadge status={m.autoStart} />
+          </td>
           <td className="min-w-[7rem] px-2 py-2">
             <MachineAlerts
               m={m}
@@ -720,6 +746,9 @@ export function DevicesList({
                 permissions.canProduceZ && actions.onEditSettings && m.shopId ? actions.onEditSettings : undefined
               }
             />
+          </td>
+          <td className="px-2 py-2">
+            <SyncCell status={syncByMachine?.get(m.id)} />
           </td>
           <td className="px-2 py-2">
             <LastSeen m={m} />
@@ -772,8 +801,14 @@ export function DevicesList({
             {sortHeader('model', tv('columns.model'))}
             {sortHeader('serial', tv('columns.serial'))}
             {sortHeader('version', tv('columns.version'))}
+            <th scope="col" className="px-2 py-2 text-start font-medium whitespace-nowrap">
+              {tv('columns.autoStart')}
+            </th>
             <th scope="col" className="px-2 py-2 text-start font-medium">
               {tv('columns.alerts')}
+            </th>
+            <th scope="col" className="px-2 py-2 text-start font-medium">
+              סנכרון
             </th>
             {sortHeader('lastSeen', tv('columns.lastSeen'))}
             <th scope="col" className="px-2 py-2 text-end font-medium">

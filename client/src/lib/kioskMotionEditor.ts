@@ -5,6 +5,10 @@
  * key an older kiosk app follows, copying an event's values to another, the global speed as the keys
  * both app generations read, and the duration's arithmetic (resolveDuration) shown beside it.
  *
+ * The till's "הנפשות" ("עיצוב קופה", P:/specs/till-motion.md) is the same screen over the same engine:
+ * every helper takes the surface (`'kiosk'` by default; `'till'`: the till's events in their groups, its
+ * presets and kinds, and no older keys to write beside the engine's).
+ *
  * Pure and self-contained (relative imports only), like the engine it reads (lib/kioskMotionEngine.ts).
  */
 
@@ -25,6 +29,7 @@ import {
   resolveMotionEvent,
   speedOfGlobal,
   type MotionEngineSettings,
+  type MotionSurface,
   type MotionEventKey,
   type MotionEventValues,
   type MotionGlobalSpeed,
@@ -59,6 +64,17 @@ export const MOTION_EVENT_GROUPS: readonly { key: MotionEventGroup; events: read
   { key: 'waiting', events: ['idle', 'timeout', 'loading'] },
 ];
 
+/** The till's events as its screen lists them: every till event exactly once. */
+export const TILL_MOTION_EVENT_GROUPS: readonly { key: MotionEventGroup; events: readonly MotionEventKey[] }[] = [
+  { key: 'products', events: ['productPress', 'addToCart', 'cartBadge', 'quantityChange', 'remove', 'soldOut'] },
+  { key: 'navigation', events: ['tableOpen', 'tabSwitch', 'pageTransition', 'modalOpen', 'categorySwitch', 'itemsEnter'] },
+  { key: 'payment', events: ['payment', 'success', 'error', 'toast'] },
+];
+
+export function motionEventGroupsOf(surface: MotionSurface = 'kiosk'): readonly { key: MotionEventGroup; events: readonly MotionEventKey[] }[] {
+  return surface === 'till' ? TILL_MOTION_EVENT_GROUPS : MOTION_EVENT_GROUPS;
+}
+
 /** The basic parameters every event row shows; the rest sit under "מתקדם". */
 export const MOTION_BASIC_PARAMS: readonly MotionParam[] = ['animationType', 'durationMs', 'delayMs', 'direction', 'intensity', 'easing', 'repeat'];
 export const MOTION_ADVANCED_PARAMS: readonly MotionParam[] = [
@@ -76,10 +92,19 @@ export const MOTION_ADVANCED_PARAMS: readonly MotionParam[] = [
 export const PRESET_EXAMPLE_EVENTS = ['productPress', 'addToCart', 'pageTransition', 'success'] as const;
 export type PresetExampleEvent = (typeof PRESET_EXAMPLE_EVENTS)[number];
 
-/** A preset's own pace at normal speed: what its card shows. */
-export function presetExample(preset: MotionPreset): Record<PresetExampleEvent, number> {
-  const out = {} as Record<PresetExampleEvent, number>;
-  for (const e of PRESET_EXAMPLE_EVENTS) out[e] = resolveMotionEvent({ preset, globalSpeed: 'normal' }, e).durationMs;
+/** The till's card: its screens first — a screen, opening a table, the payment — and the add. */
+export const TILL_PRESET_EXAMPLE_EVENTS = ['pageTransition', 'tableOpen', 'payment', 'addToCart'] as const;
+
+export function presetExampleEventsOf(surface: MotionSurface = 'kiosk'): readonly MotionEventKey[] {
+  return surface === 'till' ? TILL_PRESET_EXAMPLE_EVENTS : PRESET_EXAMPLE_EVENTS;
+}
+
+/** A preset's own pace at normal speed: what its card shows (0: the event does not play in it). */
+export function presetExample(preset: MotionPreset): Record<PresetExampleEvent, number>;
+export function presetExample(preset: MotionPreset, surface: MotionSurface): Partial<Record<MotionEventKey, number>>;
+export function presetExample(preset: MotionPreset, surface: MotionSurface = 'kiosk'): Partial<Record<MotionEventKey, number>> {
+  const out: Partial<Record<MotionEventKey, number>> = {};
+  for (const e of presetExampleEventsOf(surface)) out[e] = resolveMotionEvent({ preset, globalSpeed: 'normal' }, e, { surface }).durationMs;
   return out;
 }
 
@@ -95,9 +120,9 @@ export function eventLayer(motion: MotionEngineSettings | null | undefined, even
   return isDict(raw) ? raw : {};
 }
 
-/** The older per-transition key an event's kind follows (and writes too), or null. */
-export function legacyKeyOf(event: MotionEventKey): string | null {
-  return MOTION_LEGACY_KINDS[event]?.key ?? null;
+/** The older per-transition key an event's kind follows (and writes too), or null (always, on the till). */
+export function legacyKeyOf(event: MotionEventKey, surface: MotionSurface = 'kiosk'): string | null {
+  return surface === 'till' ? null : (MOTION_LEGACY_KINDS[event]?.key ?? null);
 }
 
 /** One parameter of an event: this level's own value, a level above's, or the preset's. */
@@ -119,6 +144,7 @@ export function motionEventSource(
   draft: MotionEngineSettings | null | undefined,
   inherited: MotionEngineSettings | null | undefined,
   event: MotionEventKey,
+  surface: MotionSurface = 'kiosk',
 ): MotionValueSource {
   const mine = eventLayer(draft, event);
   const theirs = eventLayer(inherited, event);
@@ -127,7 +153,7 @@ export function motionEventSource(
     if (present(mine[key]) && mine[key] !== theirs[key]) return 'here';
     if (present(theirs[key])) parent = true;
   }
-  const lk = legacyKeyOf(event);
+  const lk = legacyKeyOf(event, surface);
   if (lk) {
     const a = (draft as Dict | null | undefined)?.[lk];
     const b = (inherited as Dict | null | undefined)?.[lk];
@@ -137,14 +163,14 @@ export function motionEventSource(
 }
 
 /** How many events have values of their own (valid ones), and how many are switched off. */
-export function motionEventCounts(motion: MotionEngineSettings | null | undefined): { custom: number; off: number } {
+export function motionEventCounts(motion: MotionEngineSettings | null | undefined, surface: MotionSurface = 'kiosk'): { custom: number; off: number } {
   let custom = 0;
   let off = 0;
   const events = isDict(motion?.events) ? (motion?.events as Dict) : {};
   for (const key of Object.keys(events)) {
     if (!isMotionEvent(key)) continue;
-    if (Object.keys(explicitOf(motion, key)).length > 0) custom += 1;
-    if (!resolveMotionEvent(motion, key).enabled) off += 1;
+    if (Object.keys(explicitOf(motion, key, surface)).length > 0) custom += 1;
+    if (!resolveMotionEvent(motion, key, { surface }).enabled) off += 1;
   }
   return { custom, off };
 }
@@ -168,15 +194,22 @@ function withEventLayer(motion: MotionEngineSettings | null | undefined, event: 
 }
 
 /** The duration's arithmetic (spec §7): "700ms × 1.30 = 910ms", or the override as is. */
-export function motionDurationView(motion: MotionEngineSettings | null | undefined, event: MotionEventKey, profile: MotionProfile = 'full'): MotionDurationView {
+export function motionDurationView(
+  motion: MotionEngineSettings | null | undefined,
+  event: MotionEventKey,
+  profile: MotionProfile = 'full',
+  surface: MotionSurface = 'kiosk',
+): MotionDurationView {
   const k = globalMultiplier(motion, profile);
-  const own = explicitOf(motion, event).durationMs;
+  const own = explicitOf(motion, event, surface).durationMs;
   if (own !== undefined) return { baseMs: own, multiplier: k, ms: own, explicit: true };
-  // The event switched on at the normal pace, its own duration left out: the base.
+  // The event switched on at the normal pace, its own duration left out: the base ("ללא הנפשות" aside).
   const layer: Dict = { ...eventLayer(motion, event), enabled: true };
   delete layer.durationMs;
-  const atNormal = resolveMotionEvent({ ...withEventLayer(motion, event, layer), globalSpeed: 'normal' }, event);
-  const baseMs = atNormal.animationType !== 'none' ? atNormal.durationMs : presetValues(motionPresetOf(motion), event).durationMs;
+  const preset = motionPresetOf(motion, surface);
+  const playing: MotionEngineSettings = { ...withEventLayer(motion, event, layer), globalSpeed: 'normal', ...(preset === 'none' ? { preset: 'standard' } : {}) };
+  const atNormal = resolveMotionEvent(playing, event, { surface });
+  const baseMs = atNormal.animationType !== 'none' ? atNormal.durationMs : presetValues(preset, event, surface).durationMs;
   return { baseMs, multiplier: k, ms: resolveDuration(k, baseMs), explicit: false };
 }
 
@@ -185,15 +218,21 @@ export function motionDurationView(motion: MotionEngineSettings | null | undefin
  * speed in the timings), the kind even while the event is switched off, no reduced motion, the
  * full profile — and a kind of "ללא" still shows the time it would take.
  */
-export function motionEventView(motion: MotionEngineSettings | null | undefined, event: MotionEventKey): MotionEventValues {
-  const on = resolveMotionEvent(withEventLayer(motion, event, { ...eventLayer(motion, event), enabled: true }), event);
+export function motionEventView(motion: MotionEngineSettings | null | undefined, event: MotionEventKey, surface: MotionSurface = 'kiosk'): MotionEventValues {
+  const preset = motionPresetOf(motion, surface);
+  // "ללא הנפשות" switches every event off; its controls still show what it would play (Standard's).
+  const shown: MotionEngineSettings = {
+    ...withEventLayer(motion, event, { ...eventLayer(motion, event), enabled: true }),
+    ...(preset === 'none' ? { preset: 'standard' } : {}),
+  };
+  const on = resolveMotionEvent(shown, event, { surface });
   const k = globalMultiplier(motion);
-  const own = explicitOf(motion, event);
-  const base = presetValues(motionPresetOf(motion), event);
+  const own = explicitOf(motion, event, surface);
+  const base = presetValues(preset, event, surface);
   const values: MotionEventValues = {
-    enabled: resolveMotionEvent(motion, event).enabled,
+    enabled: resolveMotionEvent(motion, event, { surface }).enabled,
     animationType: on.animationType,
-    durationMs: motionDurationView(motion, event).ms,
+    durationMs: motionDurationView(motion, event, 'full', surface).ms,
     delayMs: on.delayMs,
     direction: on.direction,
     intensity: on.intensity,
@@ -241,9 +280,9 @@ export function withEventParam(
   return Object.keys(next).length === 0 && Object.keys(inheritedLayer).length === 0 ? undefined : next;
 }
 
-/** The older key a layer's kind writes (an older kiosk app keeps the kind), or its reset. */
-function legacyEdits(draft: MotionEngineSettings | null | undefined, event: MotionEventKey, layer: Dict | undefined): MotionEdit[] {
-  const lk = legacyKeyOf(event);
+/** The older key a layer's kind writes (an older kiosk app keeps the kind), or its reset; none on the till. */
+function legacyEdits(draft: MotionEngineSettings | null | undefined, event: MotionEventKey, layer: Dict | undefined, surface: MotionSurface = 'kiosk'): MotionEdit[] {
+  const lk = legacyKeyOf(event, surface);
   if (!lk) return [];
   const kind = layer?.animationType;
   if (typeof kind !== 'string' || !motionParamOk(event, 'animationType', kind)) return [{ path: `motion.${lk}`, reset: true }];
@@ -263,26 +302,27 @@ export function motionParamEdits(
   event: MotionEventKey,
   param: MotionParam,
   value: unknown,
+  surface: MotionSurface = 'kiosk',
 ): MotionEdit[] {
   let v = value;
   if (param === 'enabled' && v !== undefined) {
     const inh = eventLayer(inherited, event).enabled;
-    const fallback = typeof inh === 'boolean' ? inh : presetValues(motionPresetOf(draft), event).enabled;
+    const fallback = typeof inh === 'boolean' ? inh : presetValues(motionPresetOf(draft, surface), event, surface).enabled;
     if (v === fallback) v = undefined;
   }
   const layer = withEventParam(draft, inherited, event, param, v);
   const edits: MotionEdit[] = [{ path: `motion.events.${event}`, value: layer }];
   // pageTransition's scale tells the older "fade" from "zoom".
   if (param === 'animationType' || (param === 'scaleFrom' && event === 'pageTransition' && present(layer?.animationType))) {
-    edits.push(...legacyEdits(draft, event, layer));
+    edits.push(...legacyEdits(draft, event, layer, surface));
   }
   return edits;
 }
 
 /** "אפס לברירת מחדל" of one event: its layer, and its older kind key, back to what this level inherits. */
-export function motionEventResetEdits(event: MotionEventKey): MotionEdit[] {
+export function motionEventResetEdits(event: MotionEventKey, surface: MotionSurface = 'kiosk'): MotionEdit[] {
   const out: MotionEdit[] = [{ path: `motion.events.${event}`, reset: true }];
-  const lk = legacyKeyOf(event);
+  const lk = legacyKeyOf(event, surface);
   if (lk) out.push({ path: `motion.${lk}`, reset: true });
   return out;
 }
@@ -298,21 +338,26 @@ export interface MotionCopy {
  * "העתק הגדרה": the source event's own values onto the target — only those valid for the target
  * (motionParamOk: its kinds, its ranges), over the target's own.
  */
-export function motionCopyEdits(draft: MotionEngineSettings | null | undefined, from: MotionEventKey, to: MotionEventKey): MotionCopy {
+export function motionCopyEdits(
+  draft: MotionEngineSettings | null | undefined,
+  from: MotionEventKey,
+  to: MotionEventKey,
+  surface: MotionSurface = 'kiosk',
+): MotionCopy {
   const copied: MotionParam[] = [];
   const skipped: MotionParam[] = [];
   const next: Dict = { ...eventLayer(draft, to) };
   for (const [key, value] of Object.entries(eventLayer(draft, from))) {
     if (!(key in MOTION_PARAMS) || !present(value)) continue;
     const param = key as MotionParam;
-    if (motionParamOk(to, param, value)) {
+    if (motionParamOk(to, param, value, surface)) {
       next[param] = value;
       copied.push(param);
     } else skipped.push(param);
   }
   if (copied.length === 0) return { edits: [], copied, skipped };
   const edits: MotionEdit[] = [{ path: `motion.events.${to}`, value: next }];
-  if (copied.includes('animationType')) edits.push(...legacyEdits(draft, to, next));
+  if (copied.includes('animationType')) edits.push(...legacyEdits(draft, to, next, surface));
   return { edits, copied, skipped };
 }
 
@@ -325,21 +370,20 @@ export function clampMultiplier(k: number): number {
 
 /**
  * A global speed as the three keys: `globalSpeed`, the custom `speedMultiplier`, and the older
- * `speed` closest to it (speedOfGlobal), so a kiosk with an older app keeps the pace.
+ * `speed` closest to it (speedOfGlobal), so a kiosk with an older app keeps the pace. The till has no
+ * older `speed`: the first two only.
  */
-export function globalSpeedEdits(speed: MotionGlobalSpeed, multiplier?: number): MotionEdit[] {
+export function globalSpeedEdits(speed: MotionGlobalSpeed, multiplier?: number, surface: MotionSurface = 'kiosk'): MotionEdit[] {
+  const older = surface === 'kiosk';
   if (speed === 'custom') {
     const k = clampMultiplier(multiplier ?? 1);
     return [
       { path: 'motion.globalSpeed', value: 'custom' },
       { path: 'motion.speedMultiplier', value: k },
-      { path: 'motion.speed', value: speedOfGlobal('custom', k) },
+      ...(older ? [{ path: 'motion.speed', value: speedOfGlobal('custom', k) }] : []),
     ];
   }
-  return [
-    { path: 'motion.globalSpeed', value: speed },
-    { path: 'motion.speed', value: speedOfGlobal(speed) },
-  ];
+  return [{ path: 'motion.globalSpeed', value: speed }, ...(older ? [{ path: 'motion.speed', value: speedOfGlobal(speed) }] : [])];
 }
 
 /** The global speed back to what this level inherits (with the older `speed` beside it). */
@@ -348,6 +392,19 @@ export const GLOBAL_SPEED_RESET: readonly MotionEdit[] = [
   { path: 'motion.speedMultiplier', reset: true },
   { path: 'motion.speed', reset: true },
 ];
+
+/** The global speed back to what this level inherits, for that surface (the till has no older `speed`). */
+export function globalSpeedResetEdits(surface: MotionSurface = 'kiosk'): readonly MotionEdit[] {
+  return surface === 'till' ? GLOBAL_SPEED_RESET.filter((e) => e.path !== 'motion.speed') : GLOBAL_SPEED_RESET;
+}
+
+/**
+ * "ללא הנפשות" (the till's one button): the preset "none" — every event off, whatever a level set — or,
+ * pressed again, back to what this level inherits (the preset above, else today's "legacy").
+ */
+export function noMotionEdits(on: boolean): MotionEdit[] {
+  return on ? [{ path: 'motion.preset', value: 'none' }] : [{ path: 'motion.preset', reset: true }];
+}
 
 /** The speed the editor shows: the chosen one, or (none chosen) the older `speed`'s, marked as such. */
 export function globalSpeedView(motion: MotionEngineSettings | null | undefined): { speed: MotionGlobalSpeed; multiplier: number; fromOlder: boolean } {

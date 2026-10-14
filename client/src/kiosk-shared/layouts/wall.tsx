@@ -3,7 +3,7 @@
  * layouts/KioskLayoutWall.kt: every dish a big button — its name and price, no picture — three across
  * on a portrait kiosk ("גודל מוצרים" makes them more or fewer), a strip of its category's colour along
  * its top; one tap adds it (layout.quickAdd), one with a choice to make opens the compact window
- * (itemView popover); ✓ on the button for a moment, the count in the basket on its corner. The
+ * (itemView popover); ✓ on the button for a moment, the count in the basket on its corner ("תג כמות"). The
  * categories as chips with their emoji; one category at a time (catalog.oneCategory) or one wall.
  */
 
@@ -18,6 +18,7 @@ import { cardStyle, textSize, type PCategory, type PProduct, type PreviewModel }
 import { categoryIconId } from './icons';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { Empty, SectionTitle, cartCounts, unitOf, useTapDish, widthDpOf } from './parts';
+import { DishCountBadge } from './count-badge';
 
 /** A category's colour on the wall: its icon's hue (else the brand colour). */
 function tintOf(m: PreviewModel, cat: PCategory): string {
@@ -118,12 +119,8 @@ function WallButton({ m, p, tint, inCart }: { m: PreviewModel; p: PProduct; tint
       <span className="mt-1 kt-15 font-extrabold tabular-nums" style={{ color: added ? ink : m.c.primary, ...textSize(m, 'productPrice', 15) }}>
         {p.soldOut ? m.t('soldOut') : m.money(p.price)}
       </span>
-      {inCart > 0 && !added ? (
-        <span className="absolute start-1.5 top-2.5 flex items-center justify-center rounded-full kt-11 font-bold" style={{ width: 22 * u, height: 22 * u, background: m.c.primary, color: contrastText(m.c.primary) }}>
-          {inCart}
-        </span>
-      ) : null}
-      {added ? <Check className="absolute end-1.5 top-2.5 h-5 w-5" /> : null}
+      {added ? <Check className="absolute start-1.5 top-2.5 h-5 w-5" /> : null}
+      <DishCountBadge m={m} inCart={inCart} size={Math.round(22 * u)} className="end-1.5 top-2.5" />
     </button>
   );
 }

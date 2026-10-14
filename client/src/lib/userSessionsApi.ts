@@ -1,6 +1,8 @@
 /**
- * "עובד מחובר בקופה אחת בלבד" — who is signed in at which till of a shop, and a manager's
- * release (server: app/routers/user_sessions.py, docs/SPEC_EXCLUSIVE_LOGIN.md).
+ * "עובד מחובר בקופה אחת בלבד" — who is signed in at which device of a shop, and a manager's
+ * release (server: app/routers/user_sessions.py, docs/SPEC_EXCLUSIVE_LOGIN.md; v2:
+ * P:/specs/exclusive-login-v2.md). The release needs the dashboard permission
+ * "שחרור עובד מחובר במכשיר" (`user_sessions_release`): the server says `canRelease`.
  */
 import { api } from './api';
 
@@ -14,8 +16,13 @@ export interface UserSession {
   posNumber?: string | null;
   startedAt?: string | null;
   lastSeenAt?: string | null;
-  /** Its till has not been heard from for the stale minutes: the next claim elsewhere takes it. */
+  /** Its device stopped reporting (three missed heartbeats): "לא מדווח", safe to release. */
+  silent?: boolean;
+  silentSince?: string | null;
+  /** Auto release is on there and the stale minutes passed: the next claim elsewhere takes it. */
   stale: boolean;
+  /** `exclusiveUserLoginAutoRelease` for that device: off (only a manager releases) | minutes. */
+  autoRelease?: 'off' | 'minutes';
   staleMinutes: number;
 }
 
@@ -23,6 +30,8 @@ export interface UserSessionsResponse {
   /** `exclusiveUserLogin` as it stands for the shop itself. */
   exclusive: boolean;
   sessions: UserSession[];
+  /** This user may release one ("שחרור עובד מחובר במכשיר"). An older server says nothing: no button. */
+  canRelease?: boolean;
 }
 
 export async function fetchUserSessions(shopId: string): Promise<UserSessionsResponse> {
@@ -30,6 +39,7 @@ export async function fetchUserSessions(shopId: string): Promise<UserSessionsRes
   return data;
 }
 
-export async function releaseUserSession(shopId: string, sessionId: string): Promise<void> {
-  await api.post(`/shops/${shopId}/user-sessions/${sessionId}/release`);
+export async function releaseUserSession(shopId: string, sessionId: string): Promise<{ status: 'released' | 'not_held' }> {
+  const { data } = await api.post<{ status: 'released' | 'not_held' }>(`/shops/${shopId}/user-sessions/${sessionId}/release`);
+  return data;
 }

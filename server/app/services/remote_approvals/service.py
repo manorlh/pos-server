@@ -61,6 +61,8 @@ _TOLERANCE = Decimal("0.005")
 PENDING, APPROVED, REJECTED, EXPIRED, CANCELLED = "pending", "approved", "rejected", "expired", "cancelled"
 ABLY_EVENT = "approval.decided"
 AUDIT_SOURCE = "approval_request"
+#: "שחרור עובד מחובר" — the cloud fills in its payload (app/services/user_sessions.py `approval_payload`).
+USER_RELEASE_TYPE = "user_release"
 
 
 def utcnow() -> datetime:
@@ -395,6 +397,11 @@ def push_payload(db: Session, req: ApprovalRequest, type_policy: Dict[str, Any])
         req.requester_name,
         f"״{reason}״" if reason else None,
     ]
+    summary = req.payload.get("summary") if isinstance(req.payload, dict) else None
+    if req.type == USER_RELEASE_TYPE and summary:
+        # "דנה מנסה להתחבר בקופה 3, ומחובר/ת בקופה 1 מאז 14:05. לשחרר?" (exclusive login v2 §2): the
+        # line already names the employee and both devices.
+        parts = [f"{summary}. לשחרר?", f"״{reason}״" if reason else None]
     if type_policy.get("detailsInPush", True):
         if req.note:
             parts.append(req.note)
@@ -553,6 +560,11 @@ def create(db: Session, machine: POSMachine, body: Any, *, now: Optional[datetim
         raise _fail(status.HTTP_422_UNPROCESSABLE_ENTITY, "approver_required")
 
     payload = body.payload if isinstance(body.payload, dict) else None
+    if body.type == USER_RELEASE_TYPE:
+        # Who is signed in where, and the approver's line — the cloud's word, not the till's.
+        from app.services import user_sessions as US
+
+        payload = US.approval_payload(db, machine, requester, payload, now=now)
     ask = Ask(
         type_key=body.type, amount=_num(body.amount), percent=_num(body.percent),
         count=_count(payload),

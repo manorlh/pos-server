@@ -36,6 +36,9 @@ class Category(Base):
     # The course its products' table lines are fired in by default (docs/SPEC_MENU_MODIFIERS.md
     # §8); null inherits the parent's. Not a key: a deleted course reads as none.
     course_id = Column(UUID(as_uuid=True), nullable=True)
+    # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2) for its products' table lines; null inherits the
+    # parent's (none at the top: off).
+    send_silently = Column(Boolean, nullable=True)
     # "מחייב אישור מנהל במכירה": every product here and in every category beneath it needs a
     # manager's code at the till, and none of them is on a kiosk (app/services/restricted_items.py).
     requires_manager_approval = Column(Boolean, default=False, nullable=False, server_default="false")

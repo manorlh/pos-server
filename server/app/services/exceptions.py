@@ -317,6 +317,12 @@ RULES = RULES + (
     RuleSpec("table_restored", True, (), "medium", "till_event"),
 )
 
+# "תמיכה מרחוק" (app/services/remote_support.py): a till's QuickSupport signed by a certificate other than
+# the pinned one. A security reading: always recorded; only "שלח התראה לטלפון" (off by default) is offered.
+RULES = RULES + (
+    RuleSpec("quicksupport_signer_mismatch", True, (), "medium", "machine_status", push_default=False, push_only=True),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
@@ -343,6 +349,10 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
 #: "שחזור שולחן עם התשלומים שלו" (app/services/table_restore.py): a payment reversed inside a table
 #: (`transactionId` = its credit note) and a closed table restored — each feeds its own rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("payment_reversed", "table_restored")
+#: "הוצאה אוטומטית של השלב הבא" (P:/specs/courses-fire-v2.md §1 "יומן"): a course that went by itself —
+#: reported by the till that fired it (one till, the LAN host), written by the cloud for its own tables
+#: (app/services/course_auto_fire.py). Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
 
 
 class RuleValueError(ValueError):

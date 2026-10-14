@@ -56,9 +56,13 @@ def test_the_golden_is_the_engines_own_tables():
         "screenShiftPx": M.LIGHT_SCREEN_SHIFT_PX, "screenMinMs": M.LIGHT_SCREEN_MIN_MS,
     }
     assert (GOLD["lightMaxMultiplier"], GOLD["reducedFactor"], GOLD["removeMinHoldMs"]) == (0.75, 0.5, 3000)
+    # The kiosk resolves its own events: the till's (`tableOpen`, `tabSwitch`) are in the catalogue only.
+    assert tuple(GOLD["kioskEvents"]) == M.KIOSK_EVENTS == M.surface_events("kiosk")
+    assert set(M.EVENTS) - set(M.KIOSK_EVENTS) == set(M.TILL_ONLY_EVENTS) == {"tableOpen", "tabSwitch"}
     for case in GOLD["cases"]:
         got = M.resolve_all(case["motion"], reduce_motion=case["reduceMotion"], profile=case["profile"])
         assert got == case["expect"], case["name"]
+        assert tuple(got) == M.KIOSK_EVENTS, case["name"]
         assert M.global_multiplier(case["motion"], case["profile"]) == case["multiplier"], case["name"]
 
 
@@ -119,7 +123,7 @@ def test_runner_standard_keeps_the_specs_ranges():
 
 def test_every_presets_values_are_valid_event_values():
     for preset in M.PRESETS:
-        for e in M.EVENTS:
+        for e in M.KIOSK_EVENTS:
             values = M.preset_values(preset, e)
             assert set(values) == set(M.PARAMS), (preset, e)
             cleaned, errors = C.validate_layer({"motion": {"events": {e: values}}})
@@ -282,7 +286,8 @@ def test_the_dashboard_gets_the_engines_vocabulary():
     assert lim["enums"]["motionPreset"] == list(M.PRESETS)
     assert lim["enums"]["motionGlobalSpeed"] == ["slow", "normal", "fast", "custom"]
     eng = lim["motionEngine"]
-    assert eng["events"] == list(M.EVENTS) and eng["eventTypes"]["addToCart"] == list(M.EVENT_TYPES["addToCart"])
+    assert eng["events"] == list(M.KIOSK_EVENTS) and eng["eventTypes"]["addToCart"] == list(M.EVENT_TYPES["addToCart"])
+    assert "tableOpen" not in eng["eventTypes"]
     assert eng["params"]["durationMs"] == {"min": 0, "max": 5000}
     assert eng["eventParams"]["remove"]["holdMs"]["min"] == 3000
     assert eng["speedFactors"] == {"slow": 1.3, "normal": 1.0, "fast": 0.75}

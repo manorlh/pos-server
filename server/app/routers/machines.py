@@ -14,6 +14,7 @@ from app.services import device_profile
 from app.services import display_devices
 from app.services import device_identity
 from app.services import device_management
+from app.services import autostart
 from app.services import device_commands
 from app.services import document_prefix
 from app.services import lan_server
@@ -141,6 +142,13 @@ def _tenant_timezones(db: Session, machines: List[POSMachine]) -> Dict[Any, Opti
     }
 
 
+def _device_info_out(info: Any) -> Any:
+    """`device_info` as the machines list shows it: the sync report left out (it has its own read)."""
+    if not isinstance(info, dict) or not ("syncState" in info or "outbox" in info):
+        return info
+    return {k: v for k, v in info.items() if k not in ("syncState", "outbox")}
+
+
 def _enrich_machine_status(
     machine: POSMachine,
     db: Session,
@@ -225,7 +233,8 @@ def _enrich_machine_status(
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
-        "deviceInfo": machine.device_info,
+        # Without the sync report ("מצב סנכרון"): `GET /machines/{id}/sync-status` reads it, compared.
+        "deviceInfo": _device_info_out(machine.device_info),
         "deviceModel": machine.device_model,
         "hasPrinter": machine.has_printer,
         # False for a P18: it charges on a Nayax pinpad on the network (`pinpad*` below).
@@ -304,6 +313,8 @@ def _enrich_machine_status(
     result.update(device_identity.machine_fields(machine))
     # "עדכון שקט": device owner, update path, kiosk lock; the "הפעל מחדש" request.
     result.update(device_management.machine_fields(machine))
+    # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off from its last report; null: unknown.
+    result.update(autostart.machine_fields(machine))
     # The card terminal: what Agamento reports beside the number the settings expect.
     if terminal_settings is None:
         terminal_settings = terminal_settings_for(db, [machine])
@@ -836,8 +847,34 @@ def post_my_heartbeat(
         _apply_bypass(machine, body.terminal_number_check_bypass)
     # The serial's source, the SIMs and the address the beat came from (device search).
     device_identity.apply_heartbeat(machine, body, request)
+    # "מסך לקוח": the slideshow files this device holds, by hash (customer-display-transitions §5.4).
+    # Never fails a beat.
+    if body is not None and body.customer_display_media is not None:
+        try:
+            from app.services import customer_display_media
+
+            with db.begin_nested():
+                customer_display_media.apply_report(db, machine, body.customer_display_media)
+        except Exception:  # noqa: BLE001
+            logger.exception("customer display media report failed for %s", machine.id)
+    # "מצב סנכרון" (P:/specs/device-sync-status.md §5.3): what the device holds of each sync key and
+    # what it has not uploaded — replaced whole when the beat carries it; never fails a beat.
+    if body is not None and (body.sync_state is not None or body.outbox is not None):
+        from app.services import sync_status
+
+        sync_status.apply_report(machine, body.sync_state, body.outbox)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
+    # "הפעלה אוטומטית" (app/services/autostart.py): whether the device opens by itself on boot, kept in
+    # `device_info["autostart"]`; absent leaves it as it was. Never fails a beat.
+    if body is not None and body.autostart is not None:
+        autostart.apply_heartbeat(machine, body.autostart)
+    # "תמיכה מרחוק": QuickSupport on the device, the first signer pin or a mismatch's alert
+    # (app/services/remote_support.py); absent leaves it as it was, and it never fails a beat.
+    if body is not None and body.remote_support is not None:
+        from app.services import remote_support
+
+        remote_support.apply_heartbeat(db, machine, body.remote_support)
     # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
     if body is not None and body.capabilities is not None:
         from app.services import device_logs

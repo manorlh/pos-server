@@ -1,6 +1,6 @@
 /** "מסך לקוח": the dashboard's calls (pos-server app/routers/customer_display.py). */
 import { api } from '@/lib/api';
-import type { CdDisplayRow, CdDisplaysView, CdLayer, CdLayerView, CdLevel } from '@/lib/customerDisplay';
+import type { CdDisplayRow, CdDisplaysView, CdLayer, CdLayerView, CdLevel, CdMediaFile, CdPresenceFile } from '@/lib/customerDisplay';
 import { layerBody } from '@/lib/customerDisplay';
 
 export async function getCustomerDisplayLayer(level: CdLevel, entityId: string): Promise<CdLayerView> {
@@ -26,6 +26,50 @@ export async function bindCustomerDisplay(machineId: string, tillMachineId: stri
     tillMachineId,
   });
   return data;
+}
+
+/**
+ * A slideshow file for the layer being edited (P:/specs/customer-display-transitions.md §3א): answered
+ * at once with `status: "processing"`; compressed in the background (videos at [videoQuality]).
+ */
+export async function uploadCustomerDisplayMedia(level: CdLevel, entityId: string, file: File, videoQuality?: string): Promise<CdMediaFile> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<CdMediaFile>('/customer-display/media', form, {
+    params: { level, entityId, ...(videoQuality ? { videoQuality } : {}) },
+    headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+/** The files' state (polled while one is "בעיבוד…"). */
+export async function getCustomerDisplayMedia(ids: readonly string[]): Promise<CdMediaFile[]> {
+  if (!ids.length) return [];
+  const { data } = await api.get<{ files: CdMediaFile[] }>('/customer-display/media', { params: { ids: ids.join(',') } });
+  return data.files;
+}
+
+/** "העלה מחדש": the file again, for one the server deleted; its playlists follow once it is ready. */
+export async function reuploadCustomerDisplayMedia(
+  mediaId: string,
+  level: CdLevel,
+  entityId: string,
+  file: File,
+  videoQuality?: string,
+): Promise<CdMediaFile> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<CdMediaFile>(`/customer-display/media/${encodeURIComponent(mediaId)}/reupload`, form, {
+    params: { level, entityId, ...(videoQuality ? { videoQuality } : {}) },
+    headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+/** Per file of the layer's playlist: "קיים ב-X מתוך Y מכשירים", and who lacks it. */
+export async function getCustomerDisplayMediaPresence(level: CdLevel, entityId: string): Promise<CdPresenceFile[]> {
+  const { data } = await api.get<{ files: CdPresenceFile[] }>(`/customer-display/media-presence/${level}/${encodeURIComponent(entityId)}`);
+  return data.files;
 }
 
 /** The server's Hebrew `message` of a refusal (`{"detail": {"code", "message"}}`), else null. */

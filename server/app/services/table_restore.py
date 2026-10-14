@@ -178,27 +178,37 @@ SCOPE_TYPES = ("company", "shop", "area", "machine")
 VALIDATED_KEYS = frozenset({PREFIX_KEY, WINDOW_KEY, PRINT_CREDIT_KEY, METHODS_KEY, TIP_BASE_KEY})
 
 #: The tables page's level card ("הגדרות שולחנות"): its groups, in the order it shows them — the staff /
-#: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), then these.
+#: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), these, then the
+#: map's legend and display (app/services/table_map_display.py, P:/specs/table-map-decor-v3.md §3), and
+#: last the courses' auto-fire.
 STAFF_TABLES_GROUP = "staffTables"
 RESTORE_GROUP = "restore"
+MAP_DISPLAY_GROUP = "mapDisplay"
+#: "הוצאה אוטומטית של השלב הבא" (app/services/course_auto_fire.py, P:/specs/courses-fire-v2.md §1).
+COURSES_GROUP = "courses"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
-    from app.services import table_policies
+    from app.services import course_auto_fire, table_map_display, table_policies
 
     return (
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
+        (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
+        (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
     )
 
 
-def page_keys() -> Tuple[str, ...]:
-    """Every key the tables page's level card edits, in its order."""
-    return tuple(key for _group, _label, keys in _page_groups() for key in keys)
+Groups = Tuple[Tuple[str, str, Tuple[str, ...]], ...]
 
 
-def _group_of(key: str) -> Optional[str]:
-    return next((group for group, _label, keys in _page_groups() if key in keys), None)
+def page_keys(groups: Optional[Groups] = None) -> Tuple[str, ...]:
+    """Every key the tables page's level card edits (or `groups`' keys), in its order."""
+    return tuple(key for _group, _label, keys in (groups or _page_groups()) for key in keys)
+
+
+def _group_of(key: str, groups: Optional[Groups] = None) -> Optional[str]:
+    return next((group for group, _label, keys in (groups or _page_groups()) if key in keys), None)
 
 
 def parse_methods(value: Any) -> List[str]:
@@ -263,11 +273,13 @@ def _uuid(value: Any) -> Optional[uuid.UUID]:
         return None
 
 
-def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
+def level_view(db, scope_type: str, scope_id: Any, groups: Optional[Groups] = None) -> Dict[str, Any]:
     """
     What one level sets itself (`own`), what it inherits from the levels above or the default
     (`inherited`), and the definitions — the tables page's "הגדרות שולחנות" card: the staff / managers'
-    tables' `staffTableDiscountCheck` and the eight of restoring and reversing, each with its `group`.
+    tables' `staffTableDiscountCheck`, the eight of restoring and reversing, and the map's four of legend
+    and display (`mapDecor`…), each with its `group`. `groups` (key, label, keys): another card's — the
+    till design's "שולחנות ומפה" (app/routers/till_design.py `/till-design/table-display`).
     """
     from sqlalchemy import and_, or_
 
@@ -276,7 +288,7 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
     from app.services.till_parameters import enum_labels, ensure_builtin_parameters, resolve_till_parameters
 
     ensure_builtin_parameters(db)
-    keys = page_keys()
+    keys = page_keys(groups)
     params = db.query(TillParameter).filter(TillParameter.key.in_(keys)).all()
     by_key = {p.key: p for p in params}
     by_id = {p.id: p for p in params}
@@ -316,21 +328,24 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
                 "enumOptions": by_key[key].enum_options,
                 "enumLabels": enum_labels(key),
                 "defaultValue": by_key[key].default_value,
-                "group": _group_of(key),
+                "group": _group_of(key, groups),
             }
             for key in keys
             if key in by_key and by_key[key].is_active
         ],
-        "groups": [{"key": group, "label": label} for group, label, _keys in _page_groups()],
+        "groups": [{"key": group, "label": label} for group, label, _keys in (groups or _page_groups())],
         "methods": [{"key": m, "label": METHOD_LABELS[m]} for m in METHODS],
     }
 
 
-def save_values(db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, user: Any) -> list:
+def save_values(
+    db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, user: Any, groups: Optional[Groups] = None,
+) -> list:
     """
     Write `values` (key → value; None clears the level's own value) at one level, each with its
     row in the change log (`till_parameter_changes`), in the caller's transaction. Returns the
-    tills to notify. Raises `TillParameterValueError` on a value its definition refuses.
+    tills to notify. Raises `TillParameterValueError` on a value its definition refuses, or on a
+    key outside the card (`groups`, else the tables page's).
     """
     from app.models.till_parameter import TillParameter
     from app.services.till_parameters import (
@@ -342,7 +357,7 @@ def save_values(db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, u
         write_value,
     )
 
-    keys = page_keys()
+    keys = page_keys(groups)
     unknown = [k for k in values if k not in keys]
     if unknown:
         raise TillParameterValueError(f"unknown parameter {unknown[0]}")

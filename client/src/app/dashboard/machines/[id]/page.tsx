@@ -68,10 +68,13 @@ import { CloseFromCloudButton } from '@/components/dashboard/machines/close-from
 import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
+import { RemoteSupportCard } from '@/components/dashboard/machines/remote-support-card';
 import { DeviceLogsCard } from '@/components/dashboard/machines/device-logs';
+import { SyncStatusCard } from '@/components/dashboard/machines/sync-status';
 import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
 import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
 import { ItemBlockRoleCard } from '@/components/dashboard/machines/item-block-role-card';
+import { TillMenuCard } from '@/components/dashboard/machines/till-menu-card';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
@@ -643,8 +646,18 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         </CardContent>
       </Card>
 
+      {/* "סנכרון" (P:/specs/device-sync-status.md §3): per domain ✓ / ⏳ / ✗ with the last pull, what
+          the device has not uploaded, and "סנכרן עכשיו" until everything arrived (or 60 seconds). */}
+      {!removed && machine.shopId ? (
+        <SyncStatusCard machineId={machine.id} machineName={registerLabel ?? machine.name} />
+      ) : null}
+
       {/* "עדכון שקט": device owner / silent updates, how to turn it on (adb or QR), "הפעל מחדש". */}
       <DeviceManagementCard machine={machine} />
+
+      {/* "תמיכה מרחוק (QuickSupport)": installed or not, its package and signer, against the allowed
+          fingerprint; a super admin's "השתמש כטביעת האצבע המותרת", "אשר", "החלף". */}
+      {!display ? <RemoteSupportCard machine={machine} /> : null}
 
       {/* "לוגים": what the device sent to support, and "בקש לוגים" (fire-and-forget). Hidden for
           a user who may neither read nor request (the server decides). */}
@@ -664,6 +677,10 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       {machine.shopId && !isLocalServer(machine) && !display && !removed && machine.deviceRole !== 'kiosk' ? (
         <ItemBlockRoleCard machineId={machine.id} />
       ) : null}
+
+      {/* "תפריט הקופה" (P:/specs/till-menu-hide.md §3): the menu items this till hides from everyone,
+          whatever their permissions. A kiosk too — it shows the till's menu in "מצב קופה". */}
+      {machine.shopId && !isLocalServer(machine) && !display && !removed ? <TillMenuCard machineId={machine.id} /> : null}
 
       {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
       {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}

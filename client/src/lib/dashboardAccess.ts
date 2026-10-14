@@ -41,12 +41,15 @@ export type SectionId =
   | 'devices'
   | 'local_server_switch'
   | 'tables'
+  | 'tables_manage'
+  | 'tables_layout'
   | 'kiosks'
   | 'till_design'
   | 'kds'
   | 'printers'
   | 'till_settings'
   | 'pos_users'
+  | 'user_sessions_release'
   | 'attendance'
   | 'users'
   | 'branding'
@@ -131,12 +134,20 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   // super admin grants it, and full access does not include it (the server says `canSwitch`).
   { id: 'local_server_switch', pages: [] },
   { id: 'tables', pages: ['/dashboard/tables'] },
+  // "ביטול והחלפת מלצר" in the table card (P:/specs/live-tables-cloud.md §2): besides `tables` at edit. No page of its own.
+  { id: 'tables_manage', pages: [] },
+  // "עריכת מפה ושולחנות": zones, tables, the sketch, table types — the tables page's editor, and the till
+  // design's "שולחנות ומפה" tab (TABLES_LAYOUT_SECTION). No page of its own; viewing stays `tables`.
+  { id: 'tables_layout', pages: [] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },
   { id: 'kds', pages: ['/dashboard/kds', '/dashboard/workflow'] },
   { id: 'printers', pages: ['/dashboard/kitchen-printers'] },
   { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings', '/dashboard/customer-display'] },
   { id: 'pos_users', pages: ['/dashboard/pos-users', '/dashboard/till-roles'] },
+  // "שחרור עובד מחובר במכשיר" (exclusive login v2 §2): "מחוברים כעת במכשירים" on the employees page and the
+  // cockpit (the phone) — view sees it, edit releases. No page of its own (lib/userSessions.ts).
+  { id: 'user_sessions_release', pages: [] },
   { id: 'attendance', pages: ['/dashboard/attendance'] },
   { id: 'users', pages: ['/dashboard/users'] },
   { id: 'branding', pages: ['/dashboard/branding'] },
@@ -148,6 +159,14 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
 ];
 
 export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);
+
+/** The floor's editing (pos-server `TABLES_LAYOUT_SECTION`): what any page that edits the map checks. */
+export const TABLES_LAYOUT_SECTION: SectionId = 'tables_layout';
+
+/** May edit the map and the tables (zones, tables, sketch, types): `tables_layout` at edit. */
+export function canEditTablesLayout(access: DashboardAccess): boolean {
+  return canAccess(access, TABLES_LAYOUT_SECTION, 'edit');
+}
 
 /**
  * Pages another section opens too, besides the one they sit under: "חסימה מהירה" is a stock page and
