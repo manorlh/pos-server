@@ -467,7 +467,8 @@ export type HealthOverall = (typeof OVERALL_STATES)[number];
 /** Each part's codes (kiosk_health.*_part); anything else is shown as sent. */
 export const PART_CODES: Record<HealthPartKey, readonly string[]> = {
   app: ['disabled', 'offline', 'paused', 'till_mode', 'closed', 'setup', 'no_payment', 'config_pending', 'running'],
-  terminal: ['card_lock', 'card_unknown', 'ready', 'busy', 'unreachable', 'not_ready', 'not_configured', 'none', 'not_reported'],
+  // `no_card`: a kiosk "ללא אשראי" (paymentIntegration `none`) — no terminal, level `off`.
+  terminal: ['card_lock', 'card_unknown', 'ready', 'busy', 'unreachable', 'not_ready', 'not_configured', 'none', 'no_card', 'not_reported'],
   printer: ['no_paper', 'offline', 'unavailable', 'error', 'usb_detached', 'usb_permission', 'usb_several', 'overheated', 'unprinted', 'ok', 'none', 'not_reported'],
   tillLink: ['not_reported', 'none', 'down', 'lan', 'cloud', 'ok'],
   kds: ['bon', 'no_screens', 'screens_offline', 'down', 'ok'],

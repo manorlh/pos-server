@@ -239,9 +239,9 @@ export interface PosSettingsV1 {
   /**
    * "סוג אינטגרציית אשראי" (lib/paymentIntegration.ts). Unset = automatic: a till with a
    * terminal of its own charges on Agamento (or Nayax when `nayaxEnabled`), a tablet on
-   * an external one. `auto` is never stored.
+   * an external one. `auto` is never stored. `none` = "ללא אשראי" (no card at all).
    */
-  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay';
+  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay' | 'none';
   /** `nayax_usb`: the C4's USB ids "VVVV:PPPP" (hex); unset = the first CDC-ACM device on the till. */
   nayaxUsbDevice?: string;
   /** Z-Credit: the terminal number, digits with leading zeros kept. */
@@ -1008,8 +1008,8 @@ export interface PosMachine {
   pinpadRequired?: boolean;
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
-  /** "סוג אינטגרציית אשראי" the till charges on; null on an older server. */
-  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | null;
+  /** "סוג אינטגרציית אשראי" the till charges on (`none`: "ללא אשראי"); null on an older server. */
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'none' | null;
   /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
   paymentIntegrationSource?: SettingsLevel | null;
   paymentIntegrationAutomatic?: boolean | null;

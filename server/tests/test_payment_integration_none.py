@@ -369,6 +369,22 @@ def test_saving_none_on_a_kiosk_without_pay_at_till_warns_and_saves(k):
     assert put["overrides"]["payment"]["methods"] == ["card"]
 
 
+def test_the_context_tells_a_kiosks_form_whether_it_is_paid_at_the_till(k):
+    w = k
+
+    def context(machine):
+        with patch("app.routers.machines._machine_for_read", return_value=machine):
+            return pi_router.get_payment_integration_context(
+                level="machine", target_id=str(machine.id), current_user=w.admin,
+                active_tenant_id=w.tenant.id, db=w.db,
+            )
+
+    assert context(w.kiosk)["kioskPaysAtTill"] is False
+    _put_kiosk(w, {"payment": {"methods": ["cash_at_till"]}})
+    assert context(w.kiosk)["kioskPaysAtTill"] is True
+    assert context(w.main)["kioskPaysAtTill"] is None  # a till
+
+
 def test_no_warning_for_a_till_or_another_type(k):
     w = k
     assert _patch_machine(w, w.main, paymentIntegration="none").warnings == []

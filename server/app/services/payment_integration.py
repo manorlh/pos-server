@@ -214,7 +214,8 @@ FIELD_LABELS_HE: Dict[str, str] = {
 NEEDS_BUILTIN_DETAIL = {
     "code": "agamento_needs_builtin_terminal",
     "msg": "לקופה הזו אין מסוף מובנה (למשל טאבלט P18): ניתן לבחור רק אינטגרציה חיצונית — "
-    "Nayax מסופון ברשת, Nayax מסופון בחיבור USB, Z-Credit מסופון חיצוני או SynqPay מסוף חיצוני.",
+    "Nayax מסופון ברשת, Nayax מסופון בחיבור USB, Z-Credit מסופון חיצוני או SynqPay מסוף חיצוני — "
+    "או ללא אשראי.",
 }
 
 #: One USB terminal per till (the owner, 08.10.2026): a till on `nayax_usb` may not also charge

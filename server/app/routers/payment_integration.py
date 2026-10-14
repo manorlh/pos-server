@@ -98,6 +98,15 @@ def _options(machine: Any) -> List[Dict[str, Any]]:
     return out
 
 
+def _kiosk_pays_at_till(db: Session, machine: Any) -> Optional[bool]:
+    """For a kiosk, whether its effective config has "תשלום בקופה"; None for a till, or no machine."""
+    if machine is None or not getattr(machine, "is_kiosk", False):
+        return None
+    from app.services import kiosk_config
+
+    return PI.kiosk_pays_at_till(kiosk_config.effective_config(db, machine))
+
+
 @router.get("/context")
 def get_payment_integration_context(
     level: str = Query(...),
@@ -137,6 +146,9 @@ def get_payment_integration_context(
             "missing": res.missing,
         }
     return {
+        # A kiosk: whether its config takes payment at the till ("תשלום בקופה"), so its form can
+        # say "לקיוסק לא יישאר אמצעי תשלום" before a save on "ללא אשראי"; null for anything else.
+        "kioskPaysAtTill": _kiosk_pays_at_till(db, machine),
         "level": level,
         "targetId": target_id,
         "hasBuiltinTerminal": None if machine is None else bool(machine.has_builtin_terminal),
