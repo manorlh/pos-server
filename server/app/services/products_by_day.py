@@ -396,7 +396,7 @@ def document(data: Dict[str, Any], *, title: str = "מכירות מוצרים ל
     amounts = data["options"]["amounts"]
     w = data["window"]
     tz = w.get("timezone") or "Asia/Jerusalem"
-    f, t = date.fromisoformat(w["fromDate"]), date.fromisoformat(w["toDate"])
+    f, t = date.fromisoformat(w["from"]), date.fromisoformat(w["to"])
     kpis = [D.Kpi(key=k["key"], label=k["label"], value=k["value"], kind=k["kind"], icon=D.icon_of(k["key"]))
             for k in data["kpis"]]
     for k in kpis:

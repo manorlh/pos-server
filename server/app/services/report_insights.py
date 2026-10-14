@@ -53,9 +53,12 @@ FAMILY_OF: Dict[str, str] = {
     "hourly-sales": HOURLY,
     "day-summary": TIMELINE, "z-reports": TIMELINE, "z-report": TIMELINE, "shift": TIMELINE, "shifts": TIMELINE,
     "compare": TIMELINE, "all-in-one": TIMELINE, "insights": TIMELINE, "kiosk-insights": TIMELINE,
+    "accounting-export": TIMELINE,
     "cash-variance": RISK, "cash-drawer": RISK, "exceptions": RISK, "approvals": RISK, "transmissions": RISK,
     "reconciliation": RISK, "document-sequence": RISK, "offline-transactions": RISK, "transactions": RISK,
-    "tables": RISK,
+    "tables": RISK, "failed-payments": RISK, "problems": RISK, "alerts": RISK, "device-logs": RISK,
+    "device-health": RISK,
+    "vouchers": RANKING,
     "generic": GENERIC,
 }
 ALIASES: Dict[str, str] = {
@@ -65,6 +68,12 @@ ALIASES: Dict[str, str] = {
     "prepaid vouchers": "prepaid-vouchers", "menu": "menus", "event": "events", "payments": "sales-by-payment",
     "payment-methods": "sales-by-payment", "products": "product-sales", "departments": "department-sales",
     "cashiers": "cashier-sales", "hourly": "hourly-sales", "areas": "area-sales", "sales-by-area": "area-sales",
+    # The dashboard's export keys (client/src/lib/reportPages.ts) that are not a type themselves.
+    "home-board": "compare", "board": "compare", "event-report": "events", "live-event": "events",
+    "producer-event": "events", "menu-sales": "menus", "oth-club": "promotions", "tables-report": "tables",
+    "meals-report": "tables", "card-transmission": "transmissions", "prepaid-batch-groups": "prepaid-vouchers",
+    "prepaid-settlement": "prepaid-vouchers", "day-summary-day": "day-summary",
+    "product-sales-by-day": "products-by-day",
 }
 
 #: Type → (the rows, plural; what is measured) for the sentences.
@@ -76,6 +85,7 @@ NOUNS: Dict[str, Tuple[str, str]] = {
     "department-sales": ("המחלקות", "המכירות"), "area-sales": ("נקודות המכירה", "המכירות"),
     "card-brands": ("המותגים", "הסכום"), "sales-by-payment": ("אמצעי התשלום", "הסכום"),
     "cashier-sales": ("העובדים", "המכירות"), "tips": ("העובדים", "הטיפים"), "attendance": ("העובדים", "השעות"),
+    "hourly-sales": ("השעות", "המכירות"), "day-summary": ("הימים", "המכירות"), "z-reports": ("הימים", "המכירות"),
 }
 
 _TOKEN = re.compile(r"[^a-z0-9]+")

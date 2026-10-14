@@ -553,7 +553,7 @@ def get_products_by_day_pdf(
     branding = _report_branding(db, current_user, active_tenant_id, scope)
     pdf = products_by_day.render_pdf(data, branding=branding, user_name=getattr(current_user, "username", "") or "")
     w = data["window"]
-    return pdf_response(pdf, f"מכירות מוצרים לפי ימים {w['fromDate']}–{w['toDate']}")
+    return pdf_response(pdf, f"מכירות מוצרים לפי ימים {w['from']}–{w['to']}")
 
 
 @router.get(
