@@ -3,7 +3,7 @@
 /**
  * Open tables now ("שולחנות פתוחים — חי", P:/specs/live-tables-cloud.md §1): the till's floor. Each zone
  * as the till draws it — the zone's sketch (walls, symbols, areas, greenery: the shared drawing code,
- * map-editor.tsx `SketchShape` over lib/tableSketch.ts; a kind this build does not know is a labelled
+ * sketch-shapes.tsx `SketchShape` over lib/tableSketch.ts; a kind this build does not know is a labelled
  * box), the tables in their shape and place in the till's state colours (lib/liveTables.ts: free,
  * occupied blue, the kitchen orange, to pay amber, at another till violet, overdue red), each with its
  * number, guests, time seated, total and waiter, the next course's countdown ("עיקריות בעוד 6 ד׳") and
@@ -50,7 +50,7 @@ import { CHAIR_LOOK, PLAIN, SKETCH_STYLE, TABLE_LOOK, backgroundOf, chairLayout,
 import { fetchTablesLive, fetchTablesLivePush, type LiveTable, type TableZone } from '@/lib/tablesApi';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { FloorDefs, SketchShape } from './map-editor';
+import { FloorDefs, SketchShape } from './sketch-shapes';
 import { TableCardSheet, useNow } from './table-card';
 
 /** A table on the floor, as drawn: its colour word and whether a filter steps it back. */
