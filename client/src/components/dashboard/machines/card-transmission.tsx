@@ -16,7 +16,7 @@
  * presented as live.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
@@ -36,7 +36,12 @@ import { trackCommand } from '@/lib/deviceCommandsStore';
 import type { ExcelSheet } from '@/lib/excelExport';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatCurrency, formatDateTime } from '@/lib/format';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  sheetAsTable,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import type {
   CardTransmission,
   PeriodTransmission,
@@ -44,6 +49,7 @@ import type {
   TransmissionStatus as ReportStatus,
   TransmitRequest,
   TransmitRequestStatus,
+  UntransmittedCardSale,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -549,65 +555,70 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
   const data = list.data;
   const items = data?.items ?? [];
 
-  // The untransmitted list (all of it — the endpoint is not paged) and the whole batch
-  // history, page after page at the endpoint's largest limit (the screen shows the last 50).
-  const getSheets = async (): Promise<ExcelSheet[]> => {
-    const history = await fetchAllPages(
-      (page, pageSize) => fetchMachineTransmissions(m.id, { limit: pageSize, offset: (page - 1) * pageSize }),
-      { pageSize: 200 },
-    );
-    return [
-      {
-        name: tr('untransmittedTitle'),
-        columns: [
-          { header: t('col.date'), kind: 'datetime' },
-          { header: t('col.document'), width: 16 },
-          { header: t('col.amount'), kind: 'money' },
-          { header: t('col.approval'), width: 14 },
-          { header: t('col.terminalId'), width: 20 },
-          { header: t('col.card'), width: 10 },
-          { header: t('col.payments'), kind: 'number' },
-        ],
-        rows: items.map((i) => [
-          i.createdAt,
-          i.documentNumber ?? i.transactionNumber,
-          i.amount,
-          i.approvalNumber ?? null,
-          i.terminalTransactionId ?? null,
-          i.cardLast4 ? `****${i.cardLast4}` : null,
-          i.creditPayments ?? null,
-        ]),
-        totals: [tc('total'), String(data?.count ?? items.length), data?.amount ?? null, null, null, null, null],
-      },
-      {
-        name: tr('historyTitle'),
-        columns: [
-          { header: tr('col.startedAt'), kind: 'datetime' },
-          { header: tr('export.finishedAt'), kind: 'datetime' },
-          { header: tr('col.trigger'), width: 12 },
-          { header: tr('col.status'), width: 10 },
-          { header: tr('export.message'), width: 28 },
-          { header: tr('col.batch'), width: 12 },
-          { header: tr('col.count'), kind: 'number' },
-          { header: tr('col.amount'), kind: 'money' },
-          { header: tr('col.matched'), kind: 'number' },
-          { header: tr('export.terminalCount'), kind: 'number' },
-        ],
-        rows: history.map((r) => [
-          r.startedAt,
-          r.finishedAt ?? null,
-          tr(`trigger.${r.trigger}`),
-          tr(`reportStatus.${r.status}`),
-          r.error ?? r.statusMessage ?? null,
-          r.batchNumber ?? null,
-          r.transactionCount ?? null,
-          r.amount ?? null,
-          r.legsMatched,
-          r.terminalTransactionCount,
-        ]),
-      },
-    ];
-  };
+  // The untransmitted list (all of it — the endpoint is not paged) is the report's table; the
+  // whole batch history beside it, page after page at the endpoint's largest limit on the
+  // click (the screen shows the last 50).
+  const exportTables = useMemo(() => {
+    const main: ReportTableSpec<UntransmittedCardSale> = {
+      id: 'main',
+      title: tr('untransmittedTitle'),
+      columns: [
+        { key: 'date', header: t('col.date'), kind: 'datetime', value: (i) => i.createdAt, required: true },
+        { key: 'document', header: t('col.document'), width: 16, value: (i) => i.documentNumber ?? i.transactionNumber, total: String(data?.count ?? 0) },
+        { key: 'amount', header: t('col.amount'), kind: 'money', value: (i) => i.amount, total: data?.amount ?? null },
+        { key: 'approval', header: t('col.approval'), width: 14, value: (i) => i.approvalNumber ?? null },
+        { key: 'terminalId', header: t('col.terminalId'), width: 20, value: (i) => i.terminalTransactionId ?? null },
+        { key: 'card', header: t('col.card'), width: 10, value: (i) => (i.cardLast4 ? `****${i.cardLast4}` : null) },
+        { key: 'payments', header: t('col.payments'), kind: 'number', value: (i) => i.creditPayments ?? null },
+      ],
+      rows: data?.items ?? [],
+      rowKey: (i) => i.legId,
+      totalsLabel: tc('total'),
+    };
+    const historySheet = (history: CardTransmission[]): ExcelSheet => ({
+      name: tr('historyTitle'),
+      columns: [
+        { key: 'startedAt', header: tr('col.startedAt'), kind: 'datetime' },
+        { key: 'finishedAt', header: tr('export.finishedAt'), kind: 'datetime' },
+        { key: 'trigger', header: tr('col.trigger'), width: 12 },
+        { key: 'status', header: tr('col.status'), width: 10 },
+        { key: 'message', header: tr('export.message'), width: 28 },
+        { key: 'batch', header: tr('col.batch'), width: 12 },
+        { key: 'count', header: tr('col.count'), kind: 'number' },
+        { key: 'amount', header: tr('col.amount'), kind: 'money' },
+        { key: 'matched', header: tr('col.matched'), kind: 'number' },
+        { key: 'terminalCount', header: tr('export.terminalCount'), kind: 'number' },
+      ],
+      rows: history.map((r) => [
+        r.startedAt,
+        r.finishedAt ?? null,
+        tr(`trigger.${r.trigger}`),
+        tr(`reportStatus.${r.status}`),
+        r.error ?? r.statusMessage ?? null,
+        r.batchNumber ?? null,
+        r.transactionCount ?? null,
+        r.amount ?? null,
+        r.legsMatched,
+        r.terminalTransactionCount,
+      ]),
+    });
+    const history = sheetAsTable(historySheet([]), 'history', {
+      full: async () =>
+        historySheet(
+          await fetchAllPages(
+            (page, pageSize) => fetchMachineTransmissions(m.id, { limit: pageSize, offset: (page - 1) * pageSize }),
+            { pageSize: 200 },
+          ),
+        ),
+    });
+    return [main, history] as ReportTableSpec<unknown>[];
+  }, [data, m.id, t, tc, tr]);
+  const exportKpis: ReportKpi[] = data
+    ? [
+        { key: 'untransmitted', label: t('kpiCount'), value: data.count, kind: 'count', icon: 'card' },
+        { key: 'untransmittedAmount', label: t('kpiAmount'), value: data.amount, kind: 'money', icon: 'card' },
+      ]
+    : [];
 
   return (
     <div className="space-y-2">
@@ -617,11 +628,16 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
             ? t('summary', { count: data.count, amount: formatCurrency(data.amount) })
             : t('untracked')}
         </span>
-        <ReportExportToolbar
+        {/* A list of card sales: no chart. */}
+        <StandaloneExportBar
+          reportKey="card-transmission"
+          reportType="transmissions.card"
           title={tr('title')}
-          scopeLabel={m.name}
+          tables={exportTables}
+          place={m.name}
           disabled={!data}
-          getSheets={getSheets}
+          kpis={exportKpis}
+          chart={null}
         />
       </div>
       <Table>

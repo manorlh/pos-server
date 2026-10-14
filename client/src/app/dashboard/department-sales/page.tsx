@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import { fetchDepartmentReport, type DepartmentReport, type DepartmentRow } from '@/lib/salesReportsApi';
 import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import {
@@ -32,6 +33,11 @@ const SPEC: ReportFilterSpec = {
   filters: ['hours', 'area', 'cashier', 'search'],
   clientFilters: ['search'],
 };
+
+/** The totals row as the designed PDF's cards (and the period before's), by KPI key. */
+function totalsFigures(tot: DepartmentRow): Record<string, number> {
+  return { net: tot.net, gross: tot.gross, items: tot.units, discounts: tot.discounts, refunds: tot.refunds };
+}
 
 export default function DepartmentSalesPage() {
   const t = useTranslations('departmentReport');
@@ -102,6 +108,25 @@ export default function DepartmentSalesPage() {
     };
   }, [data, t]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals as cards, a bar per
+  // department, and the departments of the period before.
+  const figures = data ? totalsFigures(data.totals) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'net', label: t('col.net'), value: figures.net, kind: 'money', icon: 'sales' },
+        { key: 'gross', label: t('col.gross'), value: figures.gross, kind: 'money' },
+        { key: 'items', label: t('col.units'), value: figures.items, kind: 'number', icon: 'items' },
+        { key: 'discounts', label: t('col.discounts'), value: figures.discounts, kind: 'money', icon: 'discount' },
+        { key: 'refunds', label: t('col.refunds'), value: figures.refunds, kind: 'money', icon: 'refund' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchDepartmentReport({ ...params, ...w });
+    return { rows: before.rows, kpis: totalsFigures(before.totals), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="department-sales"
@@ -113,7 +138,19 @@ export default function DepartmentSalesPage() {
       query={reportQueryState(query)}
       prompt={t('selectFilters')}
       loading="table"
-      export={data ? { tables: [table], from: data.window.from, to: data.window.to } : null}
+      export={
+        data
+          ? {
+              tables: [table],
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'department-sales',
+              kpis,
+              chartFrom: { label: 'department', value: 'net', type: 'hbar' },
+              previous,
+            }
+          : null
+      }
     >
       {data ? (
         <>

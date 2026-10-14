@@ -23,6 +23,7 @@ import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatDate, formatDateTime, formatQuantity } from '@/lib/format';
 import type { ReportFilterSpec } from '@/lib/reportFilters';
 import type { ReportFilterLine } from '@/lib/reportExport';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import {
   RECONCILIATION_CHECKS,
   fetchReconciliation,
@@ -69,6 +70,14 @@ const SCREEN_ROWS = 300;
 const COUNT_CHECKS: ReadonlySet<string> = new Set(['document_numbers', 'z_numbers']);
 
 type CheckRow = Reconciliation['checks'][number];
+
+/** The statuses' counts as the designed PDF's cards (and the period before's), by KPI key. */
+function statusFigures(r: Reconciliation): Record<string, number> {
+  return Object.fromEntries(RECONCILIATION_STATUSES.map((s) => [s, r.totals[s] ?? 0]));
+}
+
+/** What is not "תואם": the chart's series. */
+const PROBLEM_STATUSES = RECONCILIATION_STATUSES.filter((s) => s !== 'match');
 
 export default function ReconciliationPage() {
   const t = useTranslations('reportCenter.reconciliation');
@@ -280,6 +289,39 @@ export default function ReconciliationPage() {
     return [summary, allRows, ...perCheck] as ReportTableSpec<unknown>[];
   }, [allRows, data, summary]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the statuses' counts as cards, what
+  // is off per check as bars, and every row of the period before.
+  const figures = data ? statusFigures(data) : null;
+  const kpis: ReportKpi[] = figures
+    ? RECONCILIATION_STATUSES.map(
+        (s): ReportKpi => ({
+          key: s,
+          label: tr(`status.${s}`),
+          value: figures[s],
+          kind: 'count',
+          ...(s === 'match' ? { icon: 'star' as const } : { better: 'down' as const, icon: 'alert' as const }),
+        }),
+      )
+    : [];
+  const chart: ReportChart | null = data
+    ? {
+        type: 'hbar',
+        title: tc('sheetSummary'),
+        labels: data.checks.map((c) => c.label),
+        series: PROBLEM_STATUSES.map((s) => ({
+          name: tr(`status.${s}`),
+          values: data.checks.map((c) => data.summary[c.key]?.[s] ?? 0),
+        })),
+        kind: 'number',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchReconciliation({ ...params, ...w });
+    return { rows: before.rows, kpis: statusFigures(before), ...w };
+  };
+
   const scopeLines = useCenterScopeLines(applied?.extras, effective, scope);
   const runChecks = checkList(applied?.extras.checks);
   const filterLines: ReportFilterLine[] = [
@@ -315,7 +357,19 @@ export default function ReconciliationPage() {
       loading="table"
       export={
         data
-          ? { tables: exportTables, pdfTableId: 'main', filterLines, from: data.window.from, to: data.window.to }
+          ? {
+              tables: exportTables,
+              pdfTableId: 'main',
+              filterLines,
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'reconciliation',
+              kpis,
+              chart,
+              insightKeys: { label: 'check', value: 'difference', count: 'count' },
+              groupBy: ['shop', 'till'],
+              previous,
+            }
           : null
       }
     >

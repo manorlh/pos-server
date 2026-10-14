@@ -24,7 +24,12 @@ import {
   type SettlementCounts,
 } from '@/lib/prepaidVoucherExtrasApi';
 import { gapState, shekelsOf } from '@/lib/prepaidVoucherExtras';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  sheetAsTable,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -368,34 +373,37 @@ function CorrectionsSection({ a }: { a: SettlementAgreement }) {
   );
 }
 
-/** Excel / print / PDF of the settlement: the summary, per type, per batch, the invoices, the corrections. */
+/**
+ * The settlement's export: per batch is the report's table (the designed PDF's), per type, the
+ * invoices and the corrections beside it; the summary of terms and figures is a sheet of its own
+ * before them, and its main figures the KPIs.
+ */
 function SettlementExport({ a }: { a: SettlementAgreement }) {
   const t = useTranslations('prepaidVouchers.settlement');
   const scopeText = useScopeText();
   const periodText = usePeriodText();
+  const tt = a.totals;
   const countColumns = [
-    { header: t('issued'), kind: 'number' as const },
-    { header: t('delivered'), kind: 'number' as const },
-    { header: t('redeemed'), kind: 'number' as const },
-    { header: t('cancelled'), kind: 'number' as const },
-    { header: t('replacements'), kind: 'number' as const },
-    { header: t('chargeable'), kind: 'number' as const },
-    { header: t('productionPrice'), kind: 'money' as const },
-    { header: t('amount'), kind: 'money' as const },
-    { header: t('invoiced'), kind: 'number' as const },
-    { header: t('uninvoiced'), kind: 'number' as const },
-    { header: t('tillValueShort'), kind: 'money' as const },
+    { key: 'issued', header: t('issued'), kind: 'number' as const },
+    { key: 'delivered', header: t('delivered'), kind: 'number' as const },
+    { key: 'redeemed', header: t('redeemed'), kind: 'number' as const },
+    { key: 'cancelled', header: t('cancelled'), kind: 'number' as const },
+    { key: 'replacements', header: t('replacements'), kind: 'number' as const },
+    { key: 'chargeable', header: t('chargeable'), kind: 'number' as const },
+    { key: 'productionPrice', header: t('productionPrice'), kind: 'money' as const },
+    { key: 'amount', header: t('amount'), kind: 'money' as const },
+    { key: 'invoiced', header: t('invoiced'), kind: 'number' as const },
+    { key: 'uninvoiced', header: t('uninvoiced'), kind: 'number' as const },
+    { key: 'tillValue', header: t('tillValueShort'), kind: 'money' as const },
   ];
   const countCells = (c: SettlementCounts, price: number | null) => [
     c.issued, c.delivered, c.redeemed, c.cancelled, c.replacements, c.chargeable, shekelsOf(price), shekelsOf(c.amountAgorot),
     c.invoiced, c.uninvoiced, shekelsOf(c.tillValueAgorot),
   ];
-  const getSheets = (): ExcelSheet[] => {
-    const tt = a.totals;
-    const heading = [a.name, scopeText(a), `${t('period')}: ${periodText(a.periodFrom, a.periodTo)}`, t(`basis.${a.billingBasis}`), ...a.rules.filter(Boolean), t('tillValueHint')];
-    const summary: ExcelSheet = {
+  const summarySheet = (): ExcelSheet[] => [
+    {
       name: t('sheet.summary'),
-      heading,
+      heading: [a.name, scopeText(a), `${t('period')}: ${periodText(a.periodFrom, a.periodTo)}`, t(`basis.${a.billingBasis}`), ...a.rules.filter(Boolean), t('tillValueHint')],
       columns: [{ header: t('sheet.item'), width: 34 }, { header: t('sheet.value'), width: 18 }],
       rows: [
         [t('chargeable'), tt.chargeable],
@@ -413,51 +421,80 @@ function SettlementExport({ a }: { a: SettlementAgreement }) {
         [t('tillValue'), shekelsOf(tt.tillValueAgorot)],
       ],
       autoFilter: false,
-    };
-    const types: ExcelSheet = {
-      name: t('byType'),
-      columns: [{ header: t('type'), width: 28 }, { header: t('batchesCol'), kind: 'number' }, ...countColumns],
-      rows: a.types.map((r) => [r.typeName ?? t('noType'), r.batches, ...countCells(r, r.productionPriceAgorot)]),
-      totals: [t('total'), a.batches.length, ...countCells(tt, null)],
-    };
-    const batches: ExcelSheet = {
-      name: t('byBatch'),
-      columns: [{ header: t('batch'), width: 28 }, { header: t('type'), width: 20 }, ...countColumns],
-      rows: a.batches.map((r) => [r.batchName, r.typeName ?? '', ...countCells(r, r.productionPriceAgorot)]),
-      totals: [t('total'), '', ...countCells(tt, null)],
-    };
-    const invoices: ExcelSheet = {
-      name: t('invoices.title'),
-      columns: [
-        { header: t('invoices.number') }, { header: t('invoices.date'), kind: 'date' }, { header: t('invoices.system') },
-        { header: t('invoices.amount'), kind: 'money' }, { header: t('invoices.quantity'), kind: 'number' },
-        { header: t('invoices.linesAmount'), kind: 'money' }, { header: t('gap.gap'), kind: 'money' },
-        { header: t('invoices.status') }, { header: t('invoices.note'), width: 30 }, { header: t('invoices.gapNote'), width: 30 },
-      ],
-      rows: a.invoices.map((i) => [
-        i.number, i.invoiceDate, i.system ?? '', shekelsOf(i.amountAgorot), i.quantity, shekelsOf(i.linesAmountAgorot),
-        shekelsOf(i.gapAgorot), i.voided ? t('invoices.voided') : t('invoices.live'), i.note ?? '', i.gapNote ?? '',
-      ]),
-    };
-    const sheets = [summary, types, batches, invoices];
-    if (a.corrections.length) {
-      sheets.push({
-        name: t('corrections.title'),
-        columns: [{ header: t('corrections.title'), width: 80 }],
-        rows: a.corrections.map((c) => [
-          c.kind === 'over_invoiced'
-            ? t('corrections.over_invoiced', { batch: c.batchName, n: c.quantity })
-            : c.kind === 'cancelled_after_invoice'
-              ? t('corrections.cancelled_after_invoice', { batch: c.batchName, serial: c.serial, at: whenText(c.cancelledAt) })
-              : t('corrections.invoice_voided', { number: c.number, at: whenText(c.voidedAt), reason: c.reason ? ` — ${c.reason}` : '' }),
-        ]),
-      });
-    }
-    return sheets;
+    },
+  ];
+  const types: ExcelSheet = {
+    name: t('byType'),
+    columns: [{ key: 'type', header: t('type'), width: 28 }, { key: 'batches', header: t('batchesCol'), kind: 'number' }, ...countColumns],
+    rows: a.types.map((r) => [r.typeName ?? t('noType'), r.batches, ...countCells(r, r.productionPriceAgorot)]),
+    totals: [t('total'), a.batches.length, ...countCells(tt, null)],
   };
+  const batches: ExcelSheet = {
+    name: t('byBatch'),
+    columns: [{ key: 'batch', header: t('batch'), width: 28 }, { key: 'type', header: t('type'), width: 20 }, ...countColumns],
+    rows: a.batches.map((r) => [r.batchName, r.typeName ?? '', ...countCells(r, r.productionPriceAgorot)]),
+    totals: [t('total'), '', ...countCells(tt, null)],
+  };
+  const invoices: ExcelSheet = {
+    name: t('invoices.title'),
+    columns: [
+      { key: 'number', header: t('invoices.number') }, { key: 'date', header: t('invoices.date'), kind: 'date' },
+      { key: 'system', header: t('invoices.system') }, { key: 'amount', header: t('invoices.amount'), kind: 'money' },
+      { key: 'quantity', header: t('invoices.quantity'), kind: 'number' },
+      { key: 'linesAmount', header: t('invoices.linesAmount'), kind: 'money' }, { key: 'gap', header: t('gap.gap'), kind: 'money' },
+      { key: 'status', header: t('invoices.status') }, { key: 'note', header: t('invoices.note'), width: 30 },
+      { key: 'gapNote', header: t('invoices.gapNote'), width: 30 },
+    ],
+    rows: a.invoices.map((i) => [
+      i.number, i.invoiceDate, i.system ?? '', shekelsOf(i.amountAgorot), i.quantity, shekelsOf(i.linesAmountAgorot),
+      shekelsOf(i.gapAgorot), i.voided ? t('invoices.voided') : t('invoices.live'), i.note ?? '', i.gapNote ?? '',
+    ]),
+  };
+  const corrections: ExcelSheet = {
+    name: t('corrections.title'),
+    columns: [{ key: 'correction', header: t('corrections.title'), width: 80 }],
+    rows: a.corrections.map((c) => [
+      c.kind === 'over_invoiced'
+        ? t('corrections.over_invoiced', { batch: c.batchName, n: c.quantity })
+        : c.kind === 'cancelled_after_invoice'
+          ? t('corrections.cancelled_after_invoice', { batch: c.batchName, serial: c.serial, at: whenText(c.cancelledAt) })
+          : t('corrections.invoice_voided', { number: c.number, at: whenText(c.voidedAt), reason: c.reason ? ` — ${c.reason}` : '' }),
+    ]),
+  };
+  const tables = [
+    sheetAsTable(types, 'types'),
+    sheetAsTable(batches, 'main'),
+    sheetAsTable(invoices, 'invoices'),
+    ...(a.corrections.length ? [sheetAsTable(corrections, 'corrections')] : []),
+  ] as ReportTableSpec<unknown>[];
+  // The stat tiles' main figures, and the gap between the invoices and the report.
+  const kpis: ReportKpi[] = [
+    { key: 'chargeable', label: t('chargeable'), value: tt.chargeable, kind: 'count', icon: 'voucher' },
+    { key: 'amount', label: t('amount'), value: shekelsOf(tt.amountAgorot), kind: 'money', icon: 'sales' },
+    { key: 'invoiced', label: t('invoiced'), value: tt.invoiced, kind: 'count', icon: 'receipt' },
+    { key: 'uninvoiced', label: t('uninvoiced'), value: tt.uninvoiced, kind: 'count', icon: 'alert', better: 'down' },
+    { key: 'redeemed', label: t('redeemed'), value: tt.redeemed, kind: 'count', icon: 'items' },
+    { key: 'gap', label: t('gap.gap'), value: shekelsOf(tt.gapAgorot), kind: 'money', icon: 'alert' },
+  ];
   return (
-    <ReportExportToolbar title={`${t('title')} — ${a.name}`} from={a.periodFrom ?? undefined} to={a.periodTo ?? undefined}
-      scopeLabel={scopeText(a)} getSheets={getSheets} />
+    <StandaloneExportBar
+      reportKey="prepaid-settlement"
+      reportType="prepaid-vouchers.settlement"
+      title={`${t('title')} — ${a.name}`}
+      tables={tables}
+      pdfTableId="main"
+      extraSheets={summarySheet}
+      extraSheetsFirst
+      from={a.periodFrom}
+      to={a.periodTo}
+      place={scopeText(a)}
+      kpis={kpis}
+      chartFrom={
+        a.pricesVisible
+          ? { label: 'batch', value: 'amount' }
+          : { label: 'batch', value: 'chargeable', kind: 'number' }
+      }
+    />
   );
 }
 

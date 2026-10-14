@@ -39,6 +39,7 @@ import {
 } from '@/lib/reportFilters';
 import type { ReportFilterLine } from '@/lib/reportExport';
 import type { ExcelSheet } from '@/lib/excelExport';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import {
   DRAWER_EVENT_TYPES,
   DRAWER_EXTRAS,
@@ -52,6 +53,7 @@ import {
   type DrawerEventRow,
   type DrawerEventsPage,
   type DrawerExtraKey,
+  type DrawerKpis,
   type MovementRow,
   type MovementsPage,
   type ShiftTimeline,
@@ -100,6 +102,29 @@ function money(v: number | null | undefined): string {
 
 function isTab(v: string | null): v is Tab {
   return v === 'events' || v === 'movements' || v === 'timeline';
+}
+
+/** The openings' tiles the designed PDF shows and compares with the period before, by KPI key. */
+function openingFigures(k: DrawerKpis): Record<string, number> {
+  return {
+    openings: k.openings,
+    manualOpenings: k.manualOpenings,
+    cashIn: k.cashIn,
+    cashOut: k.cashOut,
+    countVariances: k.countVariances,
+    exceptions: k.exceptions,
+  };
+}
+
+/** The movements' tiles, by KPI key. */
+function movementFigures(totals: MovementsPage['totals']): Record<string, number> {
+  return {
+    cashIn: totals.cash_in?.amount ?? 0,
+    cashOut: totals.cash_out?.amount ?? 0,
+    deposits: totals.deposit?.amount ?? 0,
+    counts: totals.count?.count ?? 0,
+    countVariance: totals.count?.variance ?? 0,
+  };
 }
 
 export default function CashDrawerPage() {
@@ -680,6 +705,59 @@ function DrawerLists({
   const exportTable = (tab === 'events' ? eventsTable : movementsTable) as ReportTableSpec<unknown>;
   const served = data?.window;
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the tab's tiles as cards, against the
+  // same filters on the period before (one page of it: only its tiles are compared — a list of
+  // openings has no row to set against another). One shift's rows have no period before.
+  const designed = (() => {
+    if (tab === 'events') {
+      if (!k) return null;
+      const f = openingFigures(k);
+      const kpis: ReportKpi[] = [
+        { key: 'openings', label: t('kpi.openings'), value: f.openings, kind: 'count', icon: 'cash' },
+        { key: 'manualOpenings', label: t('kpi.manualOpenings'), value: f.manualOpenings, kind: 'count', better: 'down' },
+        { key: 'cashIn', label: t('kpi.cashIn'), value: f.cashIn, kind: 'money' },
+        { key: 'cashOut', label: t('kpi.cashOut'), value: f.cashOut, kind: 'money' },
+        { key: 'countVariances', label: t('kpi.variances'), value: f.countVariances, kind: 'count', better: 'down', icon: 'alert' },
+        { key: 'exceptions', label: t('kpi.exceptions'), value: f.exceptions, kind: 'count', better: 'down', icon: 'alert' },
+      ];
+      return {
+        kpis,
+        chart: null,
+        // The tiles only: a page of one row carries them.
+        figures: async (w: { from: string; to: string }) =>
+          openingFigures((await fetchDrawerEvents({ ...listFilters, ...w }, 1, 1)).kpis),
+      };
+    }
+    if (!movements) return null;
+    const f = movementFigures(movements.totals);
+    const kpis: ReportKpi[] = [
+      { key: 'cashIn', label: t('movement.cash_in'), value: f.cashIn, kind: 'money', icon: 'cash' },
+      { key: 'cashOut', label: t('movement.cash_out'), value: f.cashOut, kind: 'money', icon: 'cash' },
+      { key: 'deposits', label: t('movement.deposit'), value: f.deposits, kind: 'money' },
+      { key: 'counts', label: t('movement.count'), value: f.counts, kind: 'count' },
+      { key: 'countVariance', label: t('col.variance'), value: f.countVariance, kind: 'money', icon: 'alert' },
+    ];
+    const types = MOVEMENT_TYPES.filter((type) => type !== 'count');
+    const chart: ReportChart = {
+      type: 'hbar',
+      title: t('tabs.movements'),
+      labels: types.map((type) => t(`movement.${type}`)),
+      series: [{ name: t('col.amount'), values: types.map((type) => movements.totals[type]?.amount ?? 0) }],
+      kind: 'money',
+    };
+    return {
+      kpis,
+      chart,
+      figures: async (w: { from: string; to: string }) =>
+        movementFigures((await fetchCashMovements({ ...listFilters, ...w }, 1, 1)).totals),
+    };
+  })();
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = shiftFiltered ? null : previousWindow(served?.from ?? String(range.from), served?.to ?? String(range.to));
+    if (!designed || !w) return null;
+    return { kpis: await designed.figures(w), ...w };
+  };
+
   return (
     <ReportPage
       reportKey={tab === 'events' ? 'cash-drawer' : 'cash-drawer-movements'}
@@ -702,6 +780,12 @@ function DrawerLists({
               to: shiftFiltered ? '' : (served?.to ?? String(range.to)),
               filterLines,
               disabled: data.total === 0,
+              reportType: tab === 'events' ? 'cash-drawer' : 'cash-drawer-movements',
+              kpis: designed?.kpis,
+              chart: designed?.chart,
+              insightKeys: { label: tab === 'events' ? 'type' : 'movement', value: 'amount', employee: 'employee' },
+              groupBy: ['shop', 'till'],
+              previous,
             }
           : null
       }
@@ -953,6 +1037,17 @@ function TimelineTab({
               place={place}
               filterLines={[{ label: t('filters.shift'), value: shiftLabel }]}
               disabled={data.items.length === 0}
+              // The designed PDF (P:\specs\reports-designed-pdf.md §7): the shift's tiles as cards.
+              // One shift: no period before it.
+              reportType="cash-drawer-timeline"
+              kpis={[
+                { key: 'opening', label: t('timeline.opening'), value: shift.openingCash, kind: 'money', icon: 'cash' },
+                { key: 'cashIn', label: t('kpi.cashIn'), value: shift.cashIn, kind: 'money' },
+                { key: 'cashOut', label: t('kpi.cashOut'), value: shift.cashOut, kind: 'money' },
+                { key: 'expected', label: t('timeline.expected'), value: shift.expectedCash, kind: 'money' },
+                { key: 'counted', label: t('timeline.counted'), value: shift.countedCash, kind: 'money' },
+                { key: 'discrepancy', label: t('timeline.discrepancy'), value: shift.discrepancy, kind: 'money', icon: 'alert' },
+              ]}
             />
             <div className="flex flex-wrap gap-3 text-sm print:hidden">
               <button type="button" className="text-primary hover:underline" onClick={() => onList('events', shift.id)}>

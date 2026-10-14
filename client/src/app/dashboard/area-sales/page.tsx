@@ -17,14 +17,13 @@
 import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { Download } from 'lucide-react';
 import { fetchSalesByArea } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { downloadCsv, toCsv } from '@/lib/csv';
+import { kpiNumber, previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import type { ReportFilterSpec } from '@/lib/reportFilters';
-import type { SalesByAreaReport, SalesByAreaRow } from '@/lib/types';
+import type { SalesByAreaReport, SalesByAreaRow, SalesByAreaTotals } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import {
   ReportPage,
   ReportTable,
@@ -44,6 +43,18 @@ const SPEC: ReportFilterSpec = {
   filters: ['hours', 'search'],
   clientFilters: ['search'],
 };
+
+/** The totals the designed PDF's cards show and compare with the previous period, by KPI key. */
+function totalsFigures(tot: SalesByAreaTotals): Record<string, number | null> {
+  return {
+    net: kpiNumber(tot.net),
+    gross: kpiNumber(tot.gross),
+    transactions: tot.transactionsCount,
+    discounts: kpiNumber(tot.discounts),
+    refunds: kpiNumber(tot.refunds),
+    tips: kpiNumber(tot.tips),
+  };
+}
 
 export default function SalesByAreaPage() {
   const t = useTranslations('areaSales');
@@ -138,6 +149,26 @@ export default function SalesByAreaPage() {
     downloadCsv(`sales-by-area_${safeShop}_${params.dateFrom}_${params.dateTo}.csv`, toCsv(header, rows));
   };
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals row as cards, the areas
+  // as bars, and the same shop's areas in the period before.
+  const figures = data ? totalsFigures(data.totals) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'net', label: t('col.net'), value: figures.net, kind: 'money', icon: 'sales' },
+        { key: 'gross', label: t('col.gross'), value: figures.gross, kind: 'money' },
+        { key: 'transactions', label: t('col.transactions'), value: figures.transactions, kind: 'count', icon: 'receipt' },
+        { key: 'discounts', label: t('col.discounts'), value: figures.discounts, kind: 'money', icon: 'discount' },
+        { key: 'refunds', label: t('col.refunds'), value: figures.refunds, kind: 'money', icon: 'refund' },
+        { key: 'tips', label: t('col.tips'), value: figures.tips, kind: 'money', icon: 'tip' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(params?.dateFrom, params?.dateTo);
+    if (!params || !w) return null;
+    const before = await fetchSalesByArea({ ...params, dateFrom: w.from, dateTo: w.to });
+    return { rows: before.rows, kpis: totalsFigures(before.totals), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="area-sales"
@@ -149,19 +180,24 @@ export default function SalesByAreaPage() {
       query={reportQueryState(query)}
       prompt={t('selectFilters')}
       loading="table"
-      export={data && params ? { tables: [table], from: params.dateFrom, to: params.dateTo, place: shopName } : null}
+      export={
+        data && params
+          ? {
+              tables: [table],
+              from: params.dateFrom,
+              to: params.dateTo,
+              place: shopName,
+              reportType: 'area-sales',
+              kpis,
+              chartFrom: { label: 'area', value: 'net', type: 'hbar' },
+              previous,
+              // The CSV the page always offered, now the export's.
+              csv: exportCsv,
+            }
+          : null
+      }
     >
-      {data ? (
-        <ReportTable
-          table={table}
-          actions={
-            <Button variant="outline" size="sm" onClick={exportCsv}>
-              <Download className="h-4 w-4" aria-hidden />
-              {t('exportCsv')}
-            </Button>
-          }
-        />
-      ) : null}
+      {data ? <ReportTable table={table} /> : null}
     </ReportPage>
   );
 }

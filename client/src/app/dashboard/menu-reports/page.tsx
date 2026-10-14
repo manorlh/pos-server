@@ -26,6 +26,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatQuantity } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import {
   fetchMealSalesReport,
   fetchModifierSalesReport,
@@ -58,6 +59,7 @@ import {
   ReportTable,
   reportQueryState,
   useReportFilters,
+  type ReportExportConfig,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 
@@ -65,6 +67,32 @@ import {
 const SPEC: ReportFilterSpec = { filters: ['hours'] };
 
 type MealRow = MealLine<MealSalesRow, MealComponentRow>;
+
+/** The designed PDF's parts of one tab (P:\specs\reports-designed-pdf.md §7). */
+type Designed = Pick<ReportExportConfig, 'kpis' | 'chart' | 'chartFrom'>;
+
+/** Bars for the meals that brought in the most. */
+const CHART_MEALS = 10;
+
+/** Each tab's totals as the designed PDF's cards (and the period before's), by KPI key. */
+const modifierFigures = (tot: ModifierSalesReport['totals']): Record<string, number> => ({
+  net: tot.net,
+  revenue: tot.revenue,
+  items: tot.units,
+  refunds: tot.refunds,
+});
+const mealFigures = (tot: MealSalesReport['totals']): Record<string, number> => ({
+  net: tot.net,
+  gross: tot.gross,
+  items: tot.units,
+  discounts: tot.discounts,
+});
+const upsellFigures = (tot: UpsellReport['totals']): Record<string, number | null> => ({
+  shown: tot.shown,
+  accepted: tot.accepted,
+  rate: ratePercent(tot.acceptanceRate),
+  revenue: tot.revenue,
+});
 
 export default function MenuReportsPage() {
   const t = useTranslations('menuReports');
@@ -332,6 +360,73 @@ export default function MenuReportsPage() {
   const current = tabs[tab];
   const data = current.query.data;
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the tab's totals as cards, its
+  // leaders as bars, and the same tab for the period before.
+  const designed = ((): Designed => {
+    if (tab === 'modifiers') {
+      const tot = modifiers.data?.totals;
+      if (!tot) return {};
+      const f = modifierFigures(tot);
+      return {
+        kpis: [
+          { key: 'net', label: t('col.net'), value: f.net, kind: 'money', icon: 'sales' },
+          { key: 'revenue', label: t('col.revenue'), value: f.revenue, kind: 'money' },
+          { key: 'items', label: t('col.units'), value: f.items, kind: 'number', icon: 'items' },
+          { key: 'refunds', label: t('col.refunds'), value: f.refunds, kind: 'money', icon: 'refund' },
+        ],
+        chartFrom: { label: 'option', value: 'net', type: 'hbar' },
+      };
+    }
+    if (tab === 'meals') {
+      const report = meals.data;
+      if (!report) return {};
+      const f = mealFigures(report.totals);
+      // The meals themselves (the table's lines include their components).
+      const top = [...report.rows].sort((a, b) => b.net - a.net).slice(0, CHART_MEALS);
+      const chart: ReportChart = {
+        type: 'hbar',
+        title: t('mealsTitle'),
+        labels: top.map((m) => m.name ?? '—'),
+        series: [{ name: t('col.net'), values: top.map((m) => m.net) }],
+        kind: 'money',
+      };
+      const kpis: ReportKpi[] = [
+        { key: 'net', label: t('col.net'), value: f.net, kind: 'money', icon: 'sales' },
+        { key: 'gross', label: t('col.gross'), value: f.gross, kind: 'money' },
+        { key: 'items', label: t('col.units'), value: f.items, kind: 'number', icon: 'items' },
+        { key: 'discounts', label: t('col.discounts'), value: f.discounts, kind: 'money', icon: 'discount' },
+      ];
+      return { kpis, chart };
+    }
+    const tot = upsells.data?.totals;
+    if (!tot) return {};
+    const f = upsellFigures(tot);
+    return {
+      kpis: [
+        { key: 'shown', label: t('col.shown'), value: f.shown, kind: 'number' },
+        { key: 'accepted', label: t('col.accepted'), value: f.accepted, kind: 'number', icon: 'star' },
+        { key: 'rate', label: t('col.rate'), value: f.rate, kind: 'percent', icon: 'percent' },
+        { key: 'revenue', label: t('col.revenue'), value: f.revenue, kind: 'money', icon: 'sales' },
+      ],
+      chartFrom: { label: 'rule', value: 'revenue', type: 'hbar' },
+    };
+  })();
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const p = { ...params, ...w };
+    if (tab === 'modifiers') {
+      const before = await fetchModifierSalesReport(p);
+      return { rows: before.rows, kpis: modifierFigures(before.totals), ...w };
+    }
+    if (tab === 'meals') {
+      const before = await fetchMealSalesReport(p);
+      return { rows: mealLines(before.rows), kpis: mealFigures(before.totals), ...w };
+    }
+    const before = await fetchUpsellReport(p);
+    return { rows: before.rows, kpis: upsellFigures(before.totals), ...w };
+  };
+
   return (
     <ReportPage
       reportKey={MENU_REPORT_KEYS[tab]}
@@ -355,7 +450,20 @@ export default function MenuReportsPage() {
       query={reportQueryState(current.query)}
       prompt={t('selectFilters')}
       loading="table"
-      export={data ? { title: current.title, tables: [current.table], from: data.window.from, to: data.window.to } : null}
+      export={
+        data
+          ? {
+              title: current.title,
+              tables: [current.table],
+              from: data.window.from,
+              to: data.window.to,
+              // `menu-reports.<tab>`: the server reads it by its prefix.
+              reportType: MENU_REPORT_KEYS[tab],
+              ...designed,
+              previous,
+            }
+          : null
+      }
     >
       {data ? (
         <>

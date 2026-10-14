@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -19,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { StandaloneExportBar, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 const EMPTY: Partial<Voucher> = {
   name: '',
@@ -49,7 +49,37 @@ export default function VouchersPage() {
     queryFn: () => api.get('/vouchers', { params: { page: 1, pageSize: 200 } }).then((r) => r.data),
   });
 
-  const vouchers = data?.items ?? [];
+  const vouchers = useMemo(() => data?.items ?? [], [data]);
+
+  // The list as the export writes it: every voucher, past the 200 the list loads (the endpoint's largest page).
+  const exportTable = useMemo<ReportTableSpec<Voucher>>(
+    () => ({
+      id: 'main',
+      title: tn('vouchers'),
+      columns: [
+        { key: 'name', header: t('name'), value: (v) => v.name, width: 26, required: true },
+        { key: 'title', header: t('title'), value: (v) => v.title ?? v.name, width: 26 },
+        { key: 'valueMode', header: t('valueMode'), value: (v) => t(`valueMode_${v.valueDisplayMode}`), width: 16 },
+        { key: 'status', header: tc('status'), value: (v) => (v.isActive ? tc('active') : tc('inactive')), width: 10 },
+      ],
+      rows: vouchers,
+      rowKey: (v) => v.id,
+      exportRows: () =>
+        fetchAllPages<Voucher>(
+          (page, pageSize) => api.get('/vouchers', { params: { page, pageSize } }).then((r) => r.data),
+          { pageSize: 200 },
+        ),
+    }),
+    [t, tc, tn, vouchers],
+  );
+  const total = data?.total ?? vouchers.length;
+  // The active ones only when the list holds every voucher.
+  const exportKpis: ReportKpi[] = [
+    { key: 'count', label: tn('vouchers'), value: total, kind: 'count', icon: 'voucher' },
+    ...(vouchers.length >= total
+      ? [{ key: 'active', label: t('export.active'), value: vouchers.filter((v) => v.isActive).length, kind: 'count' as const, icon: 'voucher' as const }]
+      : []),
+  ];
 
   const save = useMutation({
     mutationFn: (v: Partial<Voucher>) =>
@@ -87,27 +117,16 @@ export default function VouchersPage() {
         <ScopeIgnoredNote maxLevel={resolution.maxLevel} />
       ) : null}
 
-      <ReportExportToolbar
+      {/* Tenant-level templates: no shop or till under the title (the scope does not narrow them). */}
+      <StandaloneExportBar
         title={tn('vouchers')}
+        reportKey="vouchers"
+        reportType="promotions.vouchers"
+        tables={[exportTable as ReportTableSpec<unknown>]}
+        kpis={exportKpis}
+        chart={null}
+        place={null}
         disabled={vouchers.length === 0}
-        // Every voucher, past the 200 the list loads (the endpoint's largest page).
-        getSheets={async () => ({
-          name: tn('vouchers'),
-          columns: [
-            { header: t('name'), width: 26 },
-            { header: t('title'), width: 26 },
-            { header: t('valueMode'), width: 16 },
-            { header: tc('status'), width: 10 },
-          ],
-          rows: (
-            await fetchAllPages<Voucher>(
-              (page, pageSize) => api.get('/vouchers', { params: { page, pageSize } }).then((r) => r.data),
-              { pageSize: 200 },
-            )
-          ).map((v) => [
-            v.name, v.title ?? v.name, t(`valueMode_${v.valueDisplayMode}`), v.isActive ? tc('active') : tc('inactive'),
-          ]),
-        })}
       />
       <div className="rounded-lg border bg-card overflow-hidden">
         <Table>

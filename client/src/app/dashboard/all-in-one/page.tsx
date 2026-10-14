@@ -23,6 +23,7 @@ import { formatCurrency, formatDate, formatDateTime, formatHour, formatQuantity 
 import { useCardBrandLabels } from '@/lib/cardBrands';
 import type { ReportFilterSpec } from '@/lib/reportFilters';
 import type { ReportFilterLine } from '@/lib/reportExport';
+import { previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import { fetchAllInOne, type AllInOneReport } from '@/lib/reportCenterApi';
 import { allInOneSheets } from '@/lib/reportSheets';
 import { keyedSheets, type KeyedSheet } from '@/lib/reportCenterView';
@@ -88,6 +89,19 @@ type Vat = NonNullable<R['vat']>['rows'][number];
 type Z = NonNullable<R['zs']>['zs'][number];
 type TxTill = NonNullable<R['transmissions']>['byTill'][number];
 type MealKind = { kind: 'staff' | 'managers'; count: number; before: number; discount: number; paid: number };
+type Summary = NonNullable<R['summary']>;
+
+/** The cards' figures the designed PDF compares with the previous period, by its KPI keys. */
+function summaryFigures(s: Summary): Record<string, number> {
+  return {
+    net: s.net,
+    gross: s.gross,
+    transactions: s.documents,
+    avgTicket: s.averageBasket,
+    discounts: s.discounts,
+    refunds: s.refunds,
+  };
+}
 
 export default function AllInOnePage() {
   const t = useTranslations('reportCenter.allInOne');
@@ -257,6 +271,34 @@ export default function AllInOnePage() {
   const s = data?.summary;
   const exportTables = tables?.workbook ?? [];
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the cards as on screen, the tills
+  // (the main table) against the same report for the period before.
+  const kpis: ReportKpi[] = s
+    ? [
+        { key: 'net', label: tc('net'), value: s.net, kind: 'money', icon: 'sales' },
+        { key: 'gross', label: tc('gross'), value: s.gross, kind: 'money' },
+        { key: 'transactions', label: tc('documents'), value: s.documents, kind: 'count', icon: 'receipt' },
+        { key: 'avgTicket', label: tc('averageBasket'), value: s.averageBasket, kind: 'money', icon: 'basket' },
+        { key: 'discounts', label: tc('discounts'), value: s.discounts, kind: 'money', icon: 'discount' },
+        { key: 'refunds', label: tc('refunds'), value: s.refunds, kind: 'money', icon: 'refund' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchAllInOne({ ...params, ...w });
+    // The tills sheet as the page builds it: its columns are fixed, so its rows line up with the main table's.
+    const tills = keyedSheets(
+      allInOneSheets(before, KEY, METHOD_KEY, KEY),
+      allInOneSheets(before, tc, labels.method, labels.brand),
+    ).find((k) => SHEET_IDS[k.key] === 'main');
+    return {
+      rows: tills ? sheetTable<Till>(tills, { id: 'main', src: before.byTill ?? [] }).rows : [],
+      kpis: before.summary ? summaryFigures(before.summary) : undefined,
+      ...w,
+    };
+  };
+
   return (
     <ReportPage
       reportKey="all-in-one"
@@ -294,7 +336,18 @@ export default function AllInOnePage() {
       prompt={tr('selectFilters')}
       export={
         data && exportTables.length
-          ? { tables: exportTables, pdfTableId: 'main', filterLines, from: data.window.from, to: data.window.to }
+          ? {
+              tables: exportTables,
+              pdfTableId: 'main',
+              filterLines,
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'all-in-one',
+              kpis,
+              chartFrom: { label: 'till', value: 'net', type: 'hbar' },
+              groupBy: ['shop'],
+              previous,
+            }
           : null
       }
     >

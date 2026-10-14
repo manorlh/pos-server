@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { isUuid, promotionChoices } from '@/lib/auditReports';
+import { previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import {
   fetchPromotions,
   fetchPromotionsReport,
@@ -44,6 +45,11 @@ type ByPromotion = PromotionsReport['byPromotion'][number];
 type ByShop = PromotionsReport['byShop'][number];
 type ByTill = PromotionsReport['byTill'][number];
 type ByDay = PromotionsReport['byDay'][number];
+
+/** The totals row as the designed PDF's cards (and the period before's), by KPI key. */
+function totalsFigures(tot: PromotionsReport['totals']): Record<string, number> {
+  return { discounts: tot.discount, applications: tot.applications, transactions: tot.documents };
+}
 
 export default function PromotionsReportPage() {
   const t = useTranslations('promotionsReport');
@@ -184,6 +190,23 @@ export default function PromotionsReportPage() {
 
   const exportTables = [tables.byPromotion, tables.byShop, tables.byTill, tables.byDay] as ReportTableSpec<unknown>[];
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals as cards, a bar per
+  // promotion, and the promotions of the period before.
+  const figures = data ? totalsFigures(data.totals) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'discounts', label: t('col.discount'), value: figures.discounts, kind: 'money', icon: 'discount' },
+        { key: 'applications', label: t('col.applications'), value: figures.applications, kind: 'count', icon: 'star' },
+        { key: 'transactions', label: t('col.documents'), value: figures.transactions, kind: 'count', icon: 'receipt' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchPromotionsReport({ ...params, ...w });
+    return { rows: before.byPromotion, kpis: totalsFigures(before.totals), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="promotions-report"
@@ -214,7 +237,18 @@ export default function PromotionsReportPage() {
       prompt={t('selectFilters')}
       loading="table"
       export={
-        data ? { tables: exportTables, from: data.window.from, to: data.window.to, filterLines: promotionLine } : null
+        data
+          ? {
+              tables: exportTables,
+              from: data.window.from,
+              to: data.window.to,
+              filterLines: promotionLine,
+              reportType: 'promotions-report',
+              kpis,
+              chartFrom: { label: 'promotion', value: 'discount', type: 'hbar' },
+              previous,
+            }
+          : null
       }
     >
       {data ? (

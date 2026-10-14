@@ -8,7 +8,7 @@
  * also add a whole missing shift ("משמרת חסרה") for an employee who never clocked in.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
@@ -23,7 +23,12 @@ import {
   type AttendanceAdjustment,
 } from '@/lib/attendance';
 import { formatDateTime } from '@/lib/format';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  type ReportChart,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -55,7 +60,71 @@ export function Corrections() {
     queryFn: () => fetchAdjustments({ ...scopeParams(scope), posUserId: scope.posUserId || null, status: status || undefined }),
   });
   const canManage = query.data?.canManage === true;
-  const rows = query.data?.adjustments ?? [];
+  const rows = useMemo(() => query.data?.adjustments ?? [], [query.data]);
+
+  // Every correction the filters match (the endpoint is not paged), times as date cells.
+  const exportTable = useMemo<ReportTableSpec<AttendanceAdjustment>>(
+    () => ({
+      id: 'main',
+      title: t('tabs.corrections'),
+      columns: [
+        { key: 'employee', header: t('col.employee'), value: (a) => a.posUserName, required: true },
+        { key: 'shop', header: t('col.shop'), value: (a) => a.shopName },
+        { key: 'kind', header: t('corrections.export.kind'), width: 16, value: (a) => t(`kind.${a.kind}`) },
+        { key: 'field', header: t('corrections.export.field'), width: 12, value: (a) => (a.field ? t(`field.${a.field}`) : null) },
+        { key: 'status', header: t('corrections.status'), width: 14, value: (a) => t(`adjStatus.${a.status}`) },
+        { key: 'before', header: t('corrections.export.before'), kind: 'datetime', value: (a) => adjustmentTimes(a).before },
+        { key: 'after', header: t('corrections.export.after'), kind: 'datetime', value: (a) => adjustmentTimes(a).after },
+        {
+          key: 'endTime',
+          header: t('corrections.export.endTime'),
+          kind: 'datetime',
+          value: (a) => (a.requestedEndTime ? (a.approvedEndTime ?? a.requestedEndTime) : null),
+        },
+        { key: 'reason', header: t('corrections.export.reason'), width: 30, value: (a) => a.reason },
+        { key: 'source', header: t('corrections.export.source'), width: 12, value: (a) => t(`source.${a.source}`) },
+        { key: 'requestedBy', header: t('corrections.export.requestedBy'), value: (a) => a.requestedByName },
+        { key: 'requestedAt', header: t('corrections.export.requestedAt'), kind: 'datetime', value: (a) => a.requestedAt },
+        { key: 'decidedBy', header: t('corrections.export.decidedBy'), value: (a) => a.decidedByName },
+        { key: 'decidedAt', header: t('corrections.export.decidedAt'), kind: 'datetime', value: (a) => a.decidedAt },
+        { key: 'note', header: t('corrections.note'), width: 30, value: (a) => a.decisionNote },
+      ],
+      rows,
+      rowKey: (a) => a.id,
+    }),
+    [rows, t],
+  );
+  // The count, and per status when the list is not of one status.
+  const statusIcon = { pending: 'alert', approved: 'user', rejected: 'void' } as const;
+  const exportKpis: ReportKpi[] = [
+    { key: 'corrections', label: t('tabs.corrections'), value: rows.length, kind: 'count', icon: 'clock' },
+    ...(status
+      ? []
+      : STATUSES.map((s) => ({
+          key: s,
+          label: t(`adjStatus.${s}`),
+          value: rows.filter((a) => a.status === s).length,
+          kind: 'count' as const,
+          icon: statusIcon[s],
+        }))),
+  ];
+  // Corrections per employee (the most first).
+  const perEmployee = new Map<string, number>();
+  for (const a of rows) {
+    const name = a.posUserName ?? '—';
+    perEmployee.set(name, (perEmployee.get(name) ?? 0) + 1);
+  }
+  const top = [...perEmployee.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const exportChart: ReportChart | null =
+    top.length > 1
+      ? {
+          type: 'hbar',
+          title: t('corrections.export.byEmployee'),
+          labels: top.map(([name]) => name),
+          series: [{ name: t('tabs.corrections'), values: top.map(([, n]) => n) }],
+          kind: 'number',
+        }
+      : null;
 
   const quick = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'approve' | 'reject' }) => decideAdjustment(id, { decision }),
@@ -90,39 +159,18 @@ export function Corrections() {
           </div>
         </CardContent>
       </Card>
-      {/* Every correction the filters match (the endpoint is not paged), times as date cells. */}
-      <ReportExportToolbar
+      <StandaloneExportBar
+        reportKey="attendance-corrections"
+        reportType="attendance.corrections"
         title={t('tabs.corrections')}
+        tables={[exportTable as ReportTableSpec<unknown>]}
+        filterLines={[
+          { label: t('corrections.status'), value: status ? t(`adjStatus.${status}`) : t('corrections.allStatuses') },
+        ]}
         disabled={rows.length === 0}
-        getSheets={() => ({
-          name: t('tabs.corrections'),
-          columns: [
-            { header: t('col.employee') },
-            { header: t('col.shop') },
-            { header: t('corrections.export.kind'), width: 16 },
-            { header: t('corrections.export.field'), width: 12 },
-            { header: t('corrections.status'), width: 14 },
-            { header: t('corrections.export.before'), kind: 'datetime' },
-            { header: t('corrections.export.after'), kind: 'datetime' },
-            { header: t('corrections.export.endTime'), kind: 'datetime' },
-            { header: t('corrections.export.reason'), width: 30 },
-            { header: t('corrections.export.source'), width: 12 },
-            { header: t('corrections.export.requestedBy') },
-            { header: t('corrections.export.requestedAt'), kind: 'datetime' },
-            { header: t('corrections.export.decidedBy') },
-            { header: t('corrections.export.decidedAt'), kind: 'datetime' },
-            { header: t('corrections.note'), width: 30 },
-          ],
-          rows: rows.map((a) => {
-            const times = adjustmentTimes(a);
-            return [
-              a.posUserName, a.shopName, t(`kind.${a.kind}`), a.field ? t(`field.${a.field}`) : null,
-              t(`adjStatus.${a.status}`), times.before, times.after,
-              a.requestedEndTime ? (a.approvedEndTime ?? a.requestedEndTime) : null, a.reason,
-              t(`source.${a.source}`), a.requestedByName, a.requestedAt, a.decidedByName, a.decidedAt, a.decisionNote,
-            ];
-          }),
-        })}
+        kpis={exportKpis}
+        chart={exportChart}
+        insightKeys={{ label: 'employee', employee: 'employee' }}
       />
 
       {query.isLoading ? (

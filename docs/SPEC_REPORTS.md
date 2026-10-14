@@ -3,7 +3,7 @@
 > מקור: בקשת הבעלים (07.10.2026): "תשדרג את חיפוש עסקאות בענן לפי קופה גם · בכל דוח תאפשר לייצא לאקסל · תאפשר לייצא טבלת זדים בצורה מרוכזת · תאפשר לסנן זדים לפי סוג, זד סניפי, עצמאי · דוח שמכיל הכל · תכין דוח גם שמבצע התאמה בין העסקאות לבין הזדים ולבין השידורים · תוודא שאתה מקבל את השידורים".
 >
 > קוד בענן: `server/app/routers/transactions.py` (חיפוש + `/transactions/export`), `server/app/services/transactions_export.py`, `server/app/services/z_table.py`, `server/app/services/all_in_one.py`, `server/app/services/reconciliation.py`, `server/app/routers/report_center.py`, `server/app/routers/z_reports.py` (`zTypes`, `zType`), `server/app/services/transmissions.py` (`assume_unnamed`), מיגרציה `b5e1c7a3d9f4`.
-> דשבורד: `client/src/lib/excelExport.ts`, `client/src/components/dashboard/report-export-toolbar.tsx`, `client/src/lib/fetchAllPages.ts`, `client/src/lib/reportCenterApi.ts` + `reportCenterTypes.ts`, `client/src/lib/reportSheets.ts`, `client/src/components/dashboard/report-center/`, הדפים `transactions`, `z-reports`, `all-in-one`, `reconciliation`, `transmissions`.
+> דשבורד: `client/src/lib/excelExport.ts`, `client/src/components/dashboard/report-framework/report-export-bar.tsx`, `client/src/lib/fetchAllPages.ts`, `client/src/lib/reportCenterApi.ts` + `reportCenterTypes.ts`, `client/src/lib/reportSheets.ts`, `client/src/components/dashboard/report-center/`, הדפים `transactions`, `z-reports`, `all-in-one`, `reconciliation`, `transmissions`.
 > קופה: `domain/Transmission.kt` (`terminalUidOf`), `data/remote/Dtos.kt` (`assumedTerminalTransactionIds`), `data/local/Daos.kt` (`assumedLegMetas`), `data/sync/OutboxSync.kt`.
 > בדיקות: `server/tests/test_transactions_search_export.py`, `test_report_center.py`, `test_transmission_assumed.py`; `client/src/lib/excelExport.test.ts`, `fetchAllPages.test.ts`, `reportSheets.test.ts`; `app/src/test/.../TransmissionAssumedWireTest.kt`.
 > קשור: [SHIFTS_API.md](SHIFTS_API.md) §4 (שידור עסקאות), [SPEC_INDEPENDENT_TILL.md](SPEC_INDEPENDENT_TILL.md), [SPEC_KIOSK.md](SPEC_KIOSK.md) §25, [SPEC_DOCUMENT_PREFIX.md](SPEC_DOCUMENT_PREFIX.md), [SPEC_FAILED_PAYMENTS.md](SPEC_FAILED_PAYMENTS.md), [ACCOUNTING_EXPORT_AND_REPORTS.md](ACCOUNTING_EXPORT_AND_REPORTS.md).
@@ -33,7 +33,7 @@
 
 ## 2. ייצוא לאקסל — מסלול אחד לכל הדוחות
 
-**ספרייה אחת:** `exceljs` בדפדפן (כבר ב-`package.json`), דרך `lib/excelExport.ts` והסרגל `ReportExportToolbar` (אקסל · הדפסה · PDF). לא נוספה ספרייה. (ייצוא האירועים נשאר בשרת ב-openpyxl כפי שהיה.)
+**ספרייה אחת:** `exceljs` בדפדפן (כבר ב-`package.json`), דרך `lib/excelExport.ts` והסרגל `ReportExportBar` („ייצוא”: PDF מעוצב · אקסל · CSV · הדפסה). לא נוספה ספרייה. (ייצוא האירועים נשאר בשרת ב-openpyxl כפי שהיה.)
 
 **הפורמט של כל גיליון:**
 - גיליון מימין לשמאל, שורת כותרת מוקפאת, **סינון אוטומטי** (autofilter) על הכותרת והנתונים — לא על שורת הסה״כ;

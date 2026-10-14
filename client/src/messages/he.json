@@ -2369,7 +2369,8 @@
     "printQr": "הדפס QR",
     "created": "השובר נוצר בהצלחה",
     "updated": "השובר עודכן בהצלחה",
-    "deleted": "השובר נמחק"
+    "deleted": "השובר נמחק",
+    "export": {"active": "פעילים"}
   },
   "machineGroups": {
     "devicesTab": "מכשירים",
@@ -5870,7 +5871,9 @@
         "terminalId": "מזהה עסקה במסוף",
         "card": "כרטיס",
         "payments": "תשלומים"
-      }
+      },
+      "kpiCount": "עסקאות שלא שודרו",
+      "kpiAmount": "סכום שלא שודר"
     },
     "period": {
       "noCardSales": "אין עסקאות אשראי במשמרת",
@@ -6751,7 +6754,8 @@
         "requestedBy": "ביקש/ה",
         "requestedAt": "מועד הבקשה",
         "decidedBy": "החליט/ה",
-        "decidedAt": "מועד ההחלטה"
+        "decidedAt": "מועד ההחלטה",
+        "byEmployee": "תיקונים לפי עובד"
       }
     },
     "roles": {
@@ -8331,7 +8335,8 @@
         "used": "מומשו",
         "cancelled": "בוטלו",
         "redeemed": "שיעור מימוש"
-      }
+      },
+      "kpiTotal": "שוברים"
     },
     "events": {
       "title": "יומן פעולות",
@@ -9686,7 +9691,8 @@
       "320": "חשבונית מס קבלה",
       "330": "חשבונית זיכוי",
       "400": "קבלה"
-    }
+    },
+    "brokenSequences": "רצפים עם חוסרים"
   },
   "cashVarianceReport": {
     "title": "הפרשי קופה",
@@ -9718,7 +9724,8 @@
       "countedCash": "נספר",
       "variance": "הפרש",
       "countStatus": "ספירה"
-    }
+    },
+    "uncountedShifts": "משמרות שלא נספרו"
   },
   "accounting": {
     "settingsTitle": "הגדרות הנהלת חשבונות",
@@ -11073,7 +11080,8 @@
         "till": "קופה",
         "day": "יום"
       }
-    }
+    },
+    "kpi": {"othValue": "שווי OTH", "othLines": "פריטי OTH", "clubSales": "עסקאות בהנחת מועדון", "voucherDiscount": "הנחת שוברים", "voucherUses": "שימושי שוברים"}
   },
   "insights": {
     "title": "תובנות",
@@ -20632,7 +20640,8 @@
         "error": "שגיאה",
         "shop": "סניף"
       }
-    }
+    },
+    "kpiOpenErrors": "שגיאות פתוחות"
   },
   "businessCards": {
     "title": "כרטיסי ביקור",
