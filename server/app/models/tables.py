@@ -167,6 +167,9 @@ class DiningTable(Base):
     #: "לניקוי": since when the table waits to be cleared — set when its order is paid,
     #: cleared when someone marks it clean or a new order opens on it.
     cleaning_since = Column(DateTime(timezone=True), nullable=True)
+    #: Shown by its name alone ("ש-12"), never "9012 · ש-12": a restored table made beside its taken
+    #: original (P:/specs/table-restore-payments.md §1); its number is the cloud's own. `labelOnly`.
+    label_only = Column(Boolean, nullable=False, default=False, server_default="false")
     archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

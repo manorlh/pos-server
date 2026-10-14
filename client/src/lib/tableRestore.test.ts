@@ -16,6 +16,7 @@ import {
   ownKeys,
   parseMethods,
   parseWindow,
+  tableDisplay,
   textOf,
   toggleMethod,
   valueOf,
@@ -81,5 +82,15 @@ describe('edits', () => {
     );
     assert.deepEqual(ownKeys({ ...own, other: 1, printCreditNote: null }), ['restoreWindow', 'reverseMethods', 'billShowPaidItems']);
     assert.equal(RESTORE_KEYS.length, 8);
+  });
+});
+
+describe('a table on the floor', () => {
+  it('by its number and name, or a restored one by its label alone', () => {
+    assert.deepEqual(tableDisplay({ number: 12, name: null }), { main: '12', sub: null, text: '12' });
+    assert.deepEqual(tableDisplay({ number: 12, name: ' VIP ' }), { main: '12', sub: 'VIP', text: '12 · VIP' });
+    assert.deepEqual(tableDisplay({ number: 9012, name: 'ש-12', labelOnly: true }), { main: 'ש-12', sub: null, text: 'ש-12' });
+    // A label-only table whose name was cleared reads by its number.
+    assert.deepEqual(tableDisplay({ number: 9012, name: '', labelOnly: true }), { main: '9012', sub: null, text: '9012' });
   });
 });

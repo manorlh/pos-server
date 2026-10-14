@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatTime } from '@/lib/format';
 import { todayIso } from '@/lib/reportWindow';
+import { tableDisplay } from '@/lib/tableRestore';
 import {
   createReservation,
   fetchReservations,
@@ -295,7 +296,7 @@ function ReservationForm({
               <option value="">{t('noTable')}</option>
               {tables.map((tb) => (
                 <option key={tb.id} value={tb.id}>
-                  {tb.name ? `${tb.number} · ${tb.name}` : tb.number}
+                  {tableDisplay(tb).text}
                 </option>
               ))}
             </select>

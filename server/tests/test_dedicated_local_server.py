@@ -880,6 +880,10 @@ class TestMigration:
         script = ScriptDirectory.from_config(config)
         # The release of 13.10.2026 joins this branch's head with its sibling PRs' in one merge
         # revision (78c88a7afc4f); this migration stays on that single head's line.
-        assert script.get_heads() == ["78c88a7afc4f"]
+        # A later migration (a7d3e1c9b5f2, dining_tables.label_only) sits on top of it: still one head,
+        # with the merge revision on its line.
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "78c88a7afc4f" in {r.revision for r in script.walk_revisions("base", heads[0])}
         assert "e4a7c2d9b1f3" in script.get_revision("78c88a7afc4f").down_revision
         assert "e4a7c2d9b1f3" in {r.revision for r in script.walk_revisions("base", "78c88a7afc4f")}

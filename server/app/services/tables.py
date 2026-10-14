@@ -406,6 +406,8 @@ def table_out(table: DiningTable, types: Optional[Dict[Any, Any]] = None) -> dic
         "height": table.height,
         "rotation": table.rotation,
         "cleaningSince": _iso(table.cleaning_since),
+        # Shown by its name alone ("ש-12"), not "9012 · ש-12": a restored table beside its taken original.
+        "labelOnly": bool(getattr(table, "label_only", False)) and bool((table.name or "").strip()),
         **policy_fields(table, types),
     }
 
@@ -2185,6 +2187,120 @@ def _next_slot(zone: TableZone, index: int, width: float, height: float) -> Tupl
 
 #: The zone a till's tables opened by number land in when they are on no map.
 ADHOC_ZONE_NAME = "שולחנות מזדמנים"
+
+
+def restored_table_numbers(original: Optional[int], taken: set, count: int = 20) -> List[int]:
+    """
+    The numbers a restored table may get, best first — as the till asks them (pos-android
+    domain/TablePayments.kt `adhocNumbersFor`): 9000 + the original's (9012 for 12), 8000 +, 7000 +,
+    then down from 9999 — none taken. Never shown: the table reads by its label (`labelOnly`).
+    """
+    out: List[int] = []
+    if original is not None and 1 <= original <= 999:
+        out += [base + original for base in (9000, 8000, 7000) if base + original not in taken]
+    n = 9999
+    while len(out) < count and n > 1000:
+        if n not in taken and n not in out:
+            out.append(n)
+        n -= 1
+    return out[:count]
+
+
+def _beside(zone: TableZone, near: DiningTable, width: float, height: float) -> Tuple[float, float]:
+    """Where a table goes beside `near` on its zone's canvas: to its side, else below it."""
+    gap = 12.0
+    x, y = near.x + near.width + gap, near.y
+    if x + width > zone.canvas_width:
+        x, y = near.x, near.y + near.height + gap
+    return max(0.0, min(x, max(zone.canvas_width - width, 0))), max(0.0, min(y, max(zone.canvas_height - height, 0)))
+
+
+def labelled_adhoc_table(
+    db: Session,
+    machine: POSMachine,
+    *,
+    name: str,
+    number: Optional[int] = None,
+    zone_id: Any = None,
+    near_table_id: Any = None,
+) -> dict:
+    """
+    "שחזור שולחן" onto a taken number (P:/specs/table-restore-payments.md §1): a table labelled `name`
+    ("ש-12"), shown by its label alone (`label_only`), beside `near_table_id` (the original, in its
+    zone) or in `zone_id` — else in "שולחנות מזדמנים" like a table by number. Its number is the
+    one asked, else the first free of `restored_table_numbers`. A free label-only table of that label
+    already in that zone (a retried request, an earlier restore's) is it (`created` false).
+    404 `table_not_found` / `zone_not_found` for a place this till does not see; 409
+    `table_number_taken` for an asked number held by another table.
+    """
+    if machine.shop_id is None:
+        raise _not_found("table_not_found")
+    zones = zones_for(db, machine.shop_id, machine.area_id)
+    seen = {z.id: z for z in zones}
+    near = None
+    zone = None
+    if near_table_id is not None:
+        near = db.get(DiningTable, _uuid(near_table_id))
+        if near is None or near.shop_id != machine.shop_id or near.archived_at is not None or near.zone_id not in seen:
+            raise _not_found("table_not_found")
+        zone = seen[near.zone_id]
+    elif zone_id is not None:
+        zone = seen.get(_uuid(zone_id))
+        if zone is None:
+            raise _not_found("zone_not_found")
+    if zone is None:
+        zone = next(
+            (z for z in zones if z.name == ADHOC_ZONE_NAME and str(z.area_id or "") == str(machine.area_id or "")),
+            None,
+        )
+    if zone is not None:
+        again = next(
+            (
+                t for t in tables_in(db, [zone.id])
+                if t.label_only and (t.name or "").strip() == name and (number is None or t.number == number)
+                and open_order(db, t.id) is None
+            ),
+            None,
+        )
+        if again is not None:
+            return {"table": table_out(again), "created": False, "labelled": True}
+    if zone is None:
+        zone = TableZone(
+            id=uuid.uuid4(), tenant_id=machine.tenant_id, shop_id=machine.shop_id, area_id=machine.area_id,
+            name=ADHOC_ZONE_NAME, layout="grid", canvas_width=1000, canvas_height=700,
+            sort_order=len(zones_for(db, machine.shop_id, all_areas=True)),
+        )
+        db.add(zone)
+        db.flush()
+    if number is not None:
+        candidates = [number]
+    else:
+        taken = {
+            row[0] for row in db.query(DiningTable.number)
+            .filter(DiningTable.shop_id == machine.shop_id, DiningTable.archived_at.is_(None))
+            .all()
+        }
+        candidates = restored_table_numbers(near.number if near is not None else None, taken)
+    width, height = (near.width, near.height) if near is not None else default_table_size(zone, "square")
+    if near is not None:
+        x, y = _beside(zone, near, width, height)
+    else:
+        x, y = _next_slot(zone, len(tables_in(db, [zone.id])), width, height)
+    for candidate in candidates:
+        table = DiningTable(
+            id=uuid.uuid4(), tenant_id=zone.tenant_id, shop_id=zone.shop_id, zone_id=zone.id, number=candidate,
+            name=name, label_only=True, seats=near.seats if near is not None else 4,
+            shape=near.shape if near is not None else "square", x=x, y=y, width=width, height=height,
+            rotation=near.rotation if near is not None else 0,
+        )
+        try:
+            with db.begin_nested():
+                db.add(table)
+                db.flush()
+        except IntegrityError:
+            continue
+        return {"table": table_out(table), "created": True, "labelled": True}
+    raise _conflict("table_number_taken", number=number)
 
 
 def adhoc_table(db: Session, machine: POSMachine, number: int) -> dict:

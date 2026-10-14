@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime } from '@/lib/format';
+import { tableDisplay } from '@/lib/tableRestore';
 import {
   cancelOpenTable,
   fetchCancelReasons,
@@ -147,8 +148,10 @@ export function TablesLive({ shopId }: { shopId: string }) {
               className={`relative flex min-h-24 flex-col items-center justify-center overflow-hidden rounded-lg border p-2 text-center ${STATE_CLASSES[tb.state]}`}
             >
               <span className={`absolute inset-y-0 start-0 w-1 ${STATE_ACCENT[tb.state]}`} />
-              <span className="text-2xl font-semibold tabular-nums leading-tight">{tb.number}</span>
-              {tb.name ? <span className="max-w-full truncate text-xs text-muted-foreground">{tb.name}</span> : null}
+              <span className="text-2xl font-semibold tabular-nums leading-tight">{tableDisplay(tb).main}</span>
+              {tableDisplay(tb).sub ? (
+                <span className="max-w-full truncate text-xs text-muted-foreground">{tableDisplay(tb).sub}</span>
+              ) : null}
               {tb.order ? (
                 <>
                   <span className="text-sm font-medium tabular-nums">{formatCurrency(tb.order.total)}</span>

@@ -62,6 +62,7 @@ from app.services.reports import (
     ReportWindow,
     _is_refund_condition,
     _load_zoneinfo,
+    _signed_tip,
     _to_float,
     build_scoped_transaction_query,
     hour_window_predicate,
@@ -145,7 +146,8 @@ def build_payment_methods_report(
         tx_q.with_entities(
             Transaction.tip_payment_method, Transaction.payment_method, func.count(Transaction.id)
         )
-        .filter(Transaction.tip_amount > 0)
+        # Sales that carried a tip: a credit note's tip is one given back (table-restore-payments §3).
+        .filter(Transaction.tip_amount > 0, ~_is_refund_condition())
         .group_by(Transaction.tip_payment_method, Transaction.payment_method)
         .all()
     )
@@ -366,7 +368,7 @@ def build_hourly_report(
                 func.coalesce(func.sum(net), 0).label("net"),
                 func.count(Transaction.id).label("documents"),
                 func.coalesce(func.sum(is_sale), 0).label("sales"),
-                func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
+                func.coalesce(func.sum(_signed_tip()), 0).label("tips"),
             )
             .group_by(*keys)
             .all()

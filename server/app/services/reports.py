@@ -328,6 +328,19 @@ def _is_refund_condition():
     return refund_condition()
 
 
+def _signed_tip():
+    """
+    A document's tip as the tips add up: a credit note's negative — it went back with its payment (a
+    table's payment reversed, P:/specs/table-restore-payments.md §3), as the Z's sections count it.
+    """
+    return case((_is_refund_condition(), -func.abs(Transaction.tip_amount)), else_=Transaction.tip_amount)
+
+
+def _tipped_sale():
+    """A sale that carried a tip: what "documents with a tip" counts (a credit's tip is a return)."""
+    return case((and_(Transaction.tip_amount > 0, ~_is_refund_condition()), 1), else_=0)
+
+
 def _to_float(value) -> float:
     if value is None:
         return 0.0
@@ -419,8 +432,8 @@ def tips_by_bucket(tx_q: Query, key) -> Dict[object, Dict[str, float]]:
             key.label("bucket_key"),
             Transaction.tip_payment_method.label("tip_method"),
             Transaction.payment_method.label("payment_method"),
-            func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
-            func.coalesce(func.sum(case((Transaction.tip_amount > 0, 1), else_=0)), 0).label("tipped"),
+            func.coalesce(func.sum(_signed_tip()), 0).label("tips"),
+            func.coalesce(func.sum(_tipped_sale()), 0).label("tipped"),
         )
         .filter(Transaction.tip_amount != 0)
         .group_by(key, Transaction.tip_payment_method, Transaction.payment_method)
@@ -786,7 +799,7 @@ def _sales_buckets(tx_q: Query, key, *, joins=(), tip_split: bool = False) -> Di
             # A memo document (production vouchers' ₪0 lines only) is no sale (§4.3, review 09.10).
             func.coalesce(func.sum(case((refund_cond, 0), (Transaction.voucher_memo.is_(True), 0), else_=1)), 0).label("sales_count"),
             func.coalesce(func.sum(case((refund_cond, 1), else_=0)), 0).label("refunds_count"),
-            func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
+            func.coalesce(func.sum(_signed_tip()), 0).label("tips"),
         )
         .group_by(key)
         .all()
@@ -1065,8 +1078,8 @@ def _tip_rollup(tx_q: Query, *keys) -> Dict[tuple, Dict[str, float]]:
             *[k.label(f"k{i}") for i, k in enumerate(keys)],
             Transaction.tip_payment_method.label("tip_method"),
             Transaction.payment_method.label("payment_method"),
-            func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
-            func.coalesce(func.sum(case((Transaction.tip_amount > 0, 1), else_=0)), 0).label("tipped"),
+            func.coalesce(func.sum(_signed_tip()), 0).label("tips"),
+            func.coalesce(func.sum(_tipped_sale()), 0).label("tipped"),
             # Net takings alongside the tips, so the UI can show tips as a share of
             # sales without a second round trip.
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_net)), 0).label("sales_net"),
@@ -1157,7 +1170,7 @@ def build_tips_range_report(
             Transaction.payment_method.label("payment_method"),
             func.count(Transaction.id).label("documents"),
         )
-        .filter(Transaction.tip_amount > 0)
+        .filter(Transaction.tip_amount > 0, ~_is_refund_condition())
         .group_by(Transaction.tip_payment_method, Transaction.payment_method)
         .all()
     )

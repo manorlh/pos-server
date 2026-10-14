@@ -43,6 +43,7 @@ from app.routers import z_reports as ZRR
 from app.schemas.audit_exception import TillEventIn
 from app.schemas.tables import TablePartPayIn, TableRestoreIn
 from app.services import table_restore as TR
+from app.services import tables as T
 from app.services import till_parameters as TPAR
 from app.services import till_permissions as TP
 from app.services.exception_alerts import catalog as CAT
@@ -542,3 +543,86 @@ class TestClosedOrdersCarryTheirPaymentsState:
         assert shift.z_report_id == z.id
         rows = {r["orderId"]: r for r in R.get_closed_tables(str(till.id), machine=till, db=w.db)["orders"]}
         assert rows[str(oid)]["zClosed"] is True and rows[str(oid)]["paymentShiftsOpen"] is False
+
+
+# ── The restored table's label: "ש-12", beside the original (§1) ─────────────
+
+
+def adhoc(w, *, by=None, **fields):
+    from app.schemas.tables import TableAdhocIn
+
+    body = TableAdhocIn.model_validate({"posUserName": "דנה", **fields})
+    return R.adhoc_table(
+        str(w.a.id), body, BackgroundTasks(), machine=w.a,
+        operator_id=str(by.id) if by is not None else None, db=w.db,
+    )
+
+
+class TestRestoredTableLabel:
+    def test_made_beside_the_original_labelled_and_shown_by_its_label_alone(self, w):
+        from app.models.tables import DiningTable
+
+        original = w.t[12]
+        out = adhoc(w, by=w.manager, name="ש-12", nearTableId=str(original.id))
+        made = out["table"]
+        assert out["created"] is True and out["labelled"] is True
+        assert (made["name"], made["labelOnly"], made["number"]) == ("ש-12", True, 9012)
+        # In the original's zone, beside it — not in "שולחנות מזדמנים".
+        assert made["zoneId"] == str(original.zone_id)
+        assert made["x"] == original.x + original.width + 12 or made["y"] > original.y
+        # Every till sees it so.
+        tiles = {t["id"]: t for t in R.get_tables_state(str(w.b.id), machine=w.b, db=w.db)["tables"]}
+        assert tiles[made["id"]]["labelOnly"] is True and tiles[made["id"]]["name"] == "ש-12"
+        assert tiles[str(original.id)]["labelOnly"] is False
+        # Asked again (a lost answer): the same table.
+        again = adhoc(w, by=w.manager, name="ש-12", nearTableId=str(original.id))
+        assert (again["created"], again["table"]["id"]) == (False, made["id"])
+        # 9012 taken now: the next restore of the same original gets 8012.
+        enter(w, w.a, w.db.get(DiningTable, uuid.UUID(made["id"])))
+        save(w, w.a, w.db.get(DiningTable, uuid.UUID(made["id"])), uuid.uuid4(), None)
+        second = adhoc(w, by=w.manager, name="ש-12 (2)", nearTableId=str(original.id))
+        assert second["table"]["number"] == 8012 and second["table"]["labelOnly"] is True
+
+    def test_on_table_restore_authority_not_catalog_edit(self, w):
+        from app.services import till_roles as S
+
+        assert S.pos_user_allows(w.manager, "TABLE_RESTORE")
+        assert not S.pos_user_allows(w.cashier, "TABLE_RESTORE")  # approval, not alone
+        e = refused(adhoc, w, by=w.cashier, name="ש-12", nearTableId=str(w.t[12].id))
+        assert e.status_code == 401 and e.detail == "elevation_required"
+        e = refused(adhoc, w, by=type("U", (), {"id": uuid.uuid4()})(), name="ש-12", nearTableId=str(w.t[12].id))
+        assert e.status_code == 401
+
+    def test_a_zone_or_the_adhoc_zone_and_a_number_asked(self, w):
+        out = adhoc(w, by=w.manager, name="ש-1", zoneId=str(w.hall.id), number=9001)
+        assert (out["table"]["zoneId"], out["table"]["number"], out["table"]["labelOnly"]) == (str(w.hall.id), 9001, True)
+        # The asked number held by another table: 409, the till asks the next one.
+        e = refused(adhoc, w, by=w.manager, name="ש-2", zoneId=str(w.hall.id), number=12)
+        assert e.status_code == 409 and e.detail["code"] == "table_number_taken"
+        # A place this till does not see.
+        assert refused(adhoc, w, by=w.manager, name="ש-2", zoneId=str(uuid.uuid4())).status_code == 404
+        assert refused(adhoc, w, by=w.manager, name="ש-2", nearTableId=str(uuid.uuid4())).status_code == 404
+        # A label alone: "שולחנות מזדמנים", labelled.
+        out = adhoc(w, by=w.manager, name="ש-3")
+        from app.models.tables import TableZone
+
+        assert w.db.get(TableZone, uuid.UUID(out["table"]["zoneId"])).name == T.ADHOC_ZONE_NAME
+        assert out["table"]["labelOnly"] is True and out["table"]["number"] == 9999
+
+    def test_a_till_from_before_gets_the_table_by_its_number_as_ever(self, w):
+        # No X-Pos-User-Id: the name and the place are not taken; the number is, unlabelled.
+        out = adhoc(w, number=9012, name="ש-12", nearTableId=str(w.t[12].id))
+        assert out["created"] is True and out["labelled"] is False
+        assert (out["table"]["number"], out["table"]["name"], out["table"]["labelOnly"]) == (9012, None, False)
+        from app.models.tables import TableZone
+
+        assert w.db.get(TableZone, uuid.UUID(out["table"]["zoneId"])).name == T.ADHOC_ZONE_NAME
+        # A plain number: as ever, with `labelled` false.
+        assert adhoc(w, number=2)["table"]["id"] == str(w.t[2].id)
+        with pytest.raises(ValueError):
+            adhoc(w)  # neither a number nor a name
+
+    def test_the_numbers_a_restored_table_may_get(self):
+        assert T.restored_table_numbers(12, set(), count=4) == [9012, 8012, 7012, 9999]
+        assert T.restored_table_numbers(12, {9012, 9999}, count=3) == [8012, 7012, 9998]
+        assert T.restored_table_numbers(None, {9999}, count=2) == [9998, 9997]
