@@ -220,6 +220,19 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
     golden('transaction_card_sale_320', { transactions: [wire] });
   });
 
+  it('a 320 paid at the cash station: a `cash` leg = goods, its `cashDevice` (P:/specs/cash-paylink.md §11.7)', () => {
+    const d = draft('completed');
+    const wire = documentWire({
+      ...d,
+      card: null,
+      cash: { txId: '7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b', stationId: 'st-1', hostId: 'a1b2c3d4-0000-4000-8000-0000000000aa', receivedAgorot: 10000, changeAgorot: 1100, changeOwedAgorot: 0, roundingAgorot: 0, slipCode: null },
+    });
+    expect(wire.paymentMethod).toBe('cash');
+    const leg = (wire.payments as Array<Record<string, unknown>>)[0];
+    expect(leg).toMatchObject({ method: 'cash', amount: 89, cashDevice: { stationId: 'st-1', receivedAgorot: 10000, changeAgorot: 1100 } });
+    golden('transaction_cash_device_sale_320', { transactions: [wire] });
+  });
+
   it('a declined sale: cancelled, its number kept, no tender', () => {
     const wire = documentWire(draft('cancelled'));
     expect(wire.status).toBe('cancelled');
