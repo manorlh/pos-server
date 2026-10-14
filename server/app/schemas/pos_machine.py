@@ -191,6 +191,10 @@ class MachineHeartbeatBody(BaseModel):
     #: Device owner and silent updates (pos-android system/DeviceManagement.kt), cleaned key by
     #: key in `device_management.clean_block` — never a 422.
     device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
+    #: "הפעלה אוטומטית כשהמכשיר נדלק" (P:/specs/autostart-default.md §3): `{enabled, granted, homeApp,
+    #: deviceOwner, ready}`, cleaned key by key in `autostart.clean_report` and kept in
+    #: `device_info["autostart"]` — never a 422. Absent (an older build): as it was.
+    autostart: Optional[Dict[str, Any]] = None
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -419,6 +423,9 @@ class POSMachineResponse(POSMachineBase):
     device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
     device_management_reported_at: Optional[datetime] = Field(None, alias="deviceManagementReportedAt")
     reboot_request: Optional[Dict[str, Any]] = Field(None, alias="rebootRequest")
+    #: "פתיחה אוטומטית" (app/services/autostart.py `status_of`): `{state: ready | missing | off, via:
+    #: lock | home | permission | null, reportedAt}` — null while the device has not reported (no indicator).
+    auto_start: Optional[Dict[str, Any]] = Field(None, alias="autoStart")
     # Null means "the device could not read it", never "flat". The dashboard must
     # render it as unknown rather than as 0%.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")

@@ -46,6 +46,8 @@ import {
   type WithDeviceManagement,
 } from '@/lib/deviceManagement';
 import { deviceTypeOptions } from '@/lib/deviceModelSearch';
+import type { WithAutoStart } from '@/lib/autoStart';
+import { AutoStartBadge } from '@/components/dashboard/machines/auto-start';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Combobox } from '@/components/ui/combobox';
@@ -62,7 +64,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
 /** What the components read off a machine (the page) or a rollout row. */
-export type DeviceManagementTarget = WithDeviceManagement & {
+export type DeviceManagementTarget = WithDeviceManagement & WithAutoStart & {
   id: string;
   name?: string | null;
   shopId?: string | null;
@@ -442,6 +444,11 @@ export function DeviceManagementCard({ machine }: { machine: DeviceManagementTar
         <Row label="עדכון שקט">
           <SilentUpdateBadge dm={dm} />
         </Row>
+        {machine.autoStart ? (
+          <Row label="פתיחה אוטומטית">
+            <AutoStartBadge status={machine.autoStart} />
+          </Row>
+        ) : null}
         {dm ? (
           <>
             <Row label="בעלות מכשיר">

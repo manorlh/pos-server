@@ -3,6 +3,7 @@ import type { DealerType, DealerTypeChange } from './dealerType';
 import type { TillDataState } from './zDataState';
 import type { AutoReopenMode } from './availabilityReopen';
 import { DEVICE_MODEL_IDS } from './deviceProfile';
+import type { AutoStartStatus } from './autoStart';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -837,6 +838,8 @@ export interface PosMachine {
   licenseExpiresOn?: string | null;
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;
+  /** "פתיחה אוטומטית" (lib/autoStart.ts): ready / missing / off; null — never reported (no indicator). */
+  autoStart?: AutoStartStatus | null;
   isActive: boolean;
   lastHeartbeatAt?: string;
   mqttConnected?: boolean | null;

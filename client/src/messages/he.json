@@ -2420,6 +2420,7 @@
         "model": "דגם",
         "serial": "סיריאלי",
         "version": "גרסה",
+        "autoStart": "פתיחה אוטומטית",
         "alerts": "התראות",
         "lastSeen": "נראה לאחרונה",
         "actions": "פעולות"

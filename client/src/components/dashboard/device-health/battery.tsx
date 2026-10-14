@@ -2,8 +2,8 @@
 
 /**
  * "סוללה חלשה" in "תקינות מכשירים" (pos-server app/services/battery_alerts.py): every other
- * device of the scope (tills, handhelds, tablets) with its battery, the low-battery history,
- * and where the thresholds, the alarm and the routing are set.
+ * device of the scope (tills, handhelds, tablets) with its battery (and its "פתיחה אוטומטית"), the
+ * low-battery history, and where the thresholds, the alarm and the routing are set.
  */
 
 import Link from 'next/link';
@@ -11,6 +11,7 @@ import { useTranslations } from 'next-intl';
 import { Battery, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, BellRing, Plug, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { batteryNotWatched, deviceKind, levelTone, type BatteryEvent, type BatteryEventRow, type HealthBattery, type HealthDevice, type HealthLevel } from '@/lib/kioskInsights';
+import { AutoStartLine } from '@/components/dashboard/machines/auto-start';
 import { OverallBadge, TONE, agoText, type HealthLabels } from './health-ui';
 
 /** A battery icon that shows the charge (and charging), coloured by the part's level, and its percent. */
@@ -102,6 +103,7 @@ export function DeviceBatteryCard({
           {t('asOf', { ago: agoText(device.battery.reportedAt, nowMs) ?? '' })}
         </p>
       ) : null}
+      <AutoStartLine status={device.autoStart} />
       {alertOpen ? (
         <p className={cn('flex items-start gap-1.5 rounded-lg px-2 py-1 text-xs', TONE[tone].pill)}>
           <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

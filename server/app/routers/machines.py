@@ -14,6 +14,7 @@ from app.services import device_profile
 from app.services import display_devices
 from app.services import device_identity
 from app.services import device_management
+from app.services import autostart
 from app.services import device_commands
 from app.services import document_prefix
 from app.services import lan_server
@@ -304,6 +305,8 @@ def _enrich_machine_status(
     result.update(device_identity.machine_fields(machine))
     # "עדכון שקט": device owner, update path, kiosk lock; the "הפעל מחדש" request.
     result.update(device_management.machine_fields(machine))
+    # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off from its last report; null: unknown.
+    result.update(autostart.machine_fields(machine))
     # The card terminal: what Agamento reports beside the number the settings expect.
     if terminal_settings is None:
         terminal_settings = terminal_settings_for(db, [machine])
@@ -838,6 +841,10 @@ def post_my_heartbeat(
     device_identity.apply_heartbeat(machine, body, request)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
+    # "הפעלה אוטומטית" (app/services/autostart.py): whether the device opens by itself on boot, kept in
+    # `device_info["autostart"]`; absent leaves it as it was. Never fails a beat.
+    if body is not None and body.autostart is not None:
+        autostart.apply_heartbeat(machine, body.autostart)
     # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
     if body is not None and body.capabilities is not None:
         from app.services import device_logs

@@ -536,6 +536,16 @@ export interface HealthBattery {
   stale: boolean;
 }
 
+/**
+ * "פתיחה אוטומטית" as the server sends it (kiosk_health / autostart.status_of): ready (and how), missing,
+ * off. The same shape as lib/autoStart.ts `AutoStartStatus`, written out here to keep this file import-free.
+ */
+export interface HealthAutoStart {
+  state: string;
+  via?: string | null;
+  reportedAt?: string | null;
+}
+
 export interface KioskHealthRow {
   machineId: string;
   name: string;
@@ -569,6 +579,8 @@ export interface KioskHealthRow {
   battery?: HealthBattery | null;
   /** "ניטור סוללה": false on a kiosk on mains (or set off) — no battery, no history, the part says why. */
   batteryMonitored?: boolean;
+  /** "פתיחה אוטומטית" (lib/autoStart.ts); null: never reported — no indicator. Not a part: no effect on `overall`. */
+  autoStart?: HealthAutoStart | null;
 }
 
 /** The battery part of a device whose battery is not watched ("ללא סוללה" / "ניטור סוללה כבוי"). */
@@ -593,6 +605,8 @@ export interface HealthDevice {
   batteryPart: HealthPart;
   /** "ניטור סוללה": false on a till on mains (or set off) — `battery` is null, the part says why. */
   batteryMonitored?: boolean;
+  /** "פתיחה אוטומטית" (lib/autoStart.ts); null: never reported — no indicator. */
+  autoStart?: HealthAutoStart | null;
   overall: 'ok' | 'warn' | 'error' | 'offline';
 }
 
