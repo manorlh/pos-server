@@ -230,6 +230,23 @@ export function usableMethods(methods: readonly PaymentMethod[], online: boolean
   return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online && voucherCanFinish(methods, cardReady)) || (m === 'card' && cardReady));
 }
 
+/** Why the card is off on a kiosk set "ללא אשראי" (the Windows kiosk's words). */
+export const WEB_NO_CARD_TEXT = 'הקיוסק מוגדר ללא אשראי';
+
+/**
+ * "ללא אשראי" (pos-server P:/specs/payment-integration-none.md): the cloud's settings say
+ * `paymentIntegration` = `none` — the kiosk takes no card, not even through a bridge.
+ */
+export function webNoCard(settings: Record<string, unknown> | null | undefined): boolean {
+  const v = settings?.paymentIntegration;
+  return typeof v === 'string' && v.trim().toLowerCase() === 'none';
+}
+
+/** The methods the screens offer: as configured, without the card on a kiosk "ללא אשראי" (not even shown off). */
+export function webPayMethods(methods: readonly PaymentMethod[], noCard: boolean): PaymentMethod[] {
+  return noCard ? methods.filter((m) => m !== 'card' && m !== 'split_card') : [...methods];
+}
+
 /** The browser kiosk sells when its customers can pay at the till, or by card through the bridge (a voucher never pays it all for sure). */
 export function webSells(methods: readonly PaymentMethod[], cardReady = false): boolean {
   return methods.includes('cash_at_till') || (cardReady && methods.includes('card'));
@@ -342,8 +359,14 @@ export class WebKioskService {
   }
 
   private cardReady(): boolean {
+    if (this.noCard()) return false;
     const s = this.bridgeState();
     return !!s && bridgeCardReady(s, this.creds?.machineId ?? null);
+  }
+
+  /** "ללא אשראי" (`paymentIntegration` = `none` in the cloud's settings): no card at all, a bridge's neither. */
+  private noCard(): boolean {
+    return webNoCard(this.settings.settings);
   }
 
   private now(): number {
@@ -499,7 +522,8 @@ export class WebKioskService {
       }
     }
     // One card per document here (and through the bridge): never "split_card" (singleCardPayMethods).
-    const methods = cfg ? tsKioskPayMethods(cfg.payment.methods) : (['card'] as PaymentMethod[]);
+    // "ללא אשראי": no card tile at all — the till and the voucher stay (webPayMethods).
+    const methods = webPayMethods(cfg ? tsKioskPayMethods(cfg.payment.methods) : (['card'] as PaymentMethod[]), this.noCard());
     const bs = this.bridgeState();
     const cardReady = this.cardReady();
     const paused = this.pausedState();
@@ -538,7 +562,11 @@ export class WebKioskService {
       pay: {
         methods,
         usable: cfg && kioskOfflineBlocks(cfg.general, this.offline) ? [] : usableMethods(methods, !this.offline, cardReady),
-        cardOff: cardReady ? null : ((bs ? bridgeCardReason(bs, creds?.machineId ?? null) : null) ?? 'browser'),
+        cardOff: cardReady
+          ? null
+          : this.noCard()
+            ? WEB_NO_CARD_TEXT
+            : ((bs ? bridgeCardReason(bs, creds?.machineId ?? null) : null) ?? 'browser'),
       },
       bridge: bs
         ? {

@@ -339,6 +339,8 @@ describe('device health', () => {
     assert.equal(partCode({ key: 'printer', code: 'no_paper' }), 'no_paper');
     assert.equal(partCode({ key: 'printer', code: 'jammed' }), null);
     assert.equal(partCode({ key: 'terminal', code: 'no_paper' }), null);
+    // A kiosk "ללא אשראי": no terminal (pos-server kiosk_health.terminal_part).
+    assert.equal(partCode({ key: 'terminal', code: 'no_card' }), 'no_card');
   });
 
   it('cardLockKey reads both the bare and the alert form', () => {

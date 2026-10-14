@@ -18,8 +18,10 @@ import {
   inheritanceText,
   inheritedFromText,
   isDirty,
+  NO_WAY_TO_SELL,
   menuPreview,
   menuWarnings,
+  noWayToSell,
   parseHidden,
   sameHidden,
   savePayload,
@@ -57,9 +59,10 @@ describe('the items', () => {
     );
   });
 
-  it('three critical, 39 in all, each key once, every group in use', () => {
-    assert.equal(TILL_MENU_ITEMS.length, 39);
-    assert.equal(new Set(TILL_MENU_ITEMS.map((i) => i.key)).size, 39);
+  it('three critical, 40 in all, each key once, every group in use', () => {
+    assert.equal(TILL_MENU_ITEMS.length, 40);
+    assert.equal(new Set(TILL_MENU_ITEMS.map((i) => i.key)).size, 40);
+    assert.deepEqual(TILL_MENU_ITEMS.slice(-2).map((i) => i.key), ['training', 'quick_order']);
     assert.deepEqual(TILL_MENU_ITEMS.filter((i) => i.critical).map((i) => i.key), ['shift_close', 'till_z', 'settings']);
     assert.deepEqual(TILL_MENU_ITEMS.filter((i) => i.report).map((i) => i.key), REPORTS);
     for (const g of MENU_GROUPS) assert.ok(TILL_MENU_ITEMS.some((i) => i.group === g.id), g.id);
@@ -155,7 +158,7 @@ describe('the preview', () => {
     assert.deepEqual(groups.map((g) => g.id), MENU_GROUPS.map((g) => g.id));
     const keys = shown(groups);
     assert.ok(keys.includes(`folder:${REPORTS.join('+')}`));
-    assert.equal(keys.filter((k) => !k.startsWith('folder:')).length, 39 - REPORTS.length);
+    assert.equal(keys.filter((k) => !k.startsWith('folder:')).length, 40 - REPORTS.length);
     assert.equal(keys.indexOf('history') + 1, keys.indexOf(`folder:${REPORTS.join('+')}`));
   });
 
@@ -181,5 +184,35 @@ describe('the preview', () => {
     assert.ok(diag && diag.kind === 'item' && diag.note);
     assert.ok(!shown(groups).includes('settings'));
     assert.ok(!shown(menuPreview(['diagnostics'])).includes('diagnostics'));
+  });
+});
+
+describe('a tables-only device ("quick_order", §5א)', () => {
+  it('no way to sell when "שולחנות" is hidden too or the tables are off — a warning, not a block', () => {
+    assert.equal(noWayToSell(['quick_order'], true), 'tablesOff');
+    assert.equal(noWayToSell(['quick_order', 'tables'], false), 'tablesHidden');
+    assert.equal(noWayToSell(['quick_order'], false), null);
+    assert.equal(noWayToSell(['quick_order'], undefined), null);
+    assert.equal(noWayToSell(['tables'], true), null);
+
+    const off = menuWarnings(['quick_order'], true);
+    assert.deepEqual(off.map((w) => [w.key, w.tone]), [['quick_order', 'critical']]);
+    assert.ok(off[0].text.startsWith(NO_WAY_TO_SELL));
+    assert.equal(NO_WAY_TO_SELL, 'בקופה הזו לא תישאר דרך למכור');
+    assert.match(menuWarnings(['quick_order', 'tables'])[0].text, /גם "שולחנות" מוסתר/);
+  });
+
+  it('with tables on, or not known, a note about opening on the tables', () => {
+    assert.deepEqual(menuWarnings(['quick_order'], false).map((w) => [w.key, w.tone]), [['quick_order', 'note']]);
+    assert.match(menuWarnings(['quick_order'])[0].text, /אם השולחנות כבויים/);
+  });
+
+  it('the preview drops it, unless the till will ignore it for want of tables', () => {
+    assert.ok(!shown(menuPreview(['quick_order'], false)).includes('quick_order'));
+    const kept = menuPreview(['quick_order'], true).find((g) => g.id === 'outside')!;
+    const row = kept.rows.find((r) => r.kind === 'item' && r.item.key === 'quick_order');
+    assert.ok(row && row.kind === 'item' && row.note);
+    assert.ok(shown(menuPreview(['quick_order', 'tables'])).includes('quick_order'));
+    assert.ok(!shown(menuPreview(['quick_order', 'tables'])).includes('tables'));
   });
 });

@@ -5,7 +5,8 @@
  * being edited — company, shop, point of sale or a single till — for everyone, whatever their
  * permissions. The till parameter `hiddenMenuItems`, not part of the design's layer: saved here at once
  * (`PUT /till-design/menu-hide`), the same value the parameters page and the device page edit, each
- * change in the parameters' log. Written by whoever writes the design at that level.
+ * change in the parameters' log. Written by a company manager and up only (the owner, 14.10): a shop
+ * manager, who edits the rest of the design, sees this card read-only.
  */
 
 import { TillMenuLevelEditor } from '@/components/dashboard/till-menu/till-menu-level-editor';

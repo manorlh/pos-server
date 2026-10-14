@@ -5,7 +5,8 @@
  * list or inherits one (and from where), the checkboxes, the warnings and the preview, saved at once
  * (`PUT /till-menu-hide` or `PUT /till-design/menu-hide`, lib/tillMenuApi.ts) — each change in the
  * parameters' log, and the tills under the level pull it with their parameters. The device page's card
- * and "עיצוב קופה" both use it; the server says who may write (`canEdit`).
+ * and "עיצוב קופה" both use it; the server says who may write (`canEdit`: a company manager and up —
+ * a shop manager sees it read-only, "רק מנהל חברה ומעלה").
  */
 
 import { useState } from 'react';
@@ -66,6 +67,9 @@ function LevelEditor({ route, level, id, editable = true }: Props) {
       toast.success('תפריט הקופה נשמר. הקופות יתעדכנו בסנכרון הבא.');
       const ignored = ignoredText(next.ignored ?? []);
       if (ignored) toast.warning(ignored);
+      // §5א: saved, but the till will have no way to sell — said, never refused.
+      const selling = next.warnings?.find((w) => w.key === 'quick_order');
+      if (selling) toast.warning(selling.warning);
     },
     onError: (err) => toast.error(axiosErrorToToastMessage(err, 'שמירת תפריט הקופה נכשלה')),
   });
@@ -117,12 +121,17 @@ function LevelEditor({ route, level, id, editable = true }: Props) {
         onChange={(keys) => setDraft(keys)}
         disabled={!canEdit || mode === 'inherit' || save.isPending}
         idPrefix={`menu-${route}-${level}-${id}`}
+        tablesOff={data.tablesOff}
       />
 
       {canEdit && mode === 'inherit' ? (
         <p className="text-xs text-muted-foreground">כדי לשנות את הרשימה ברמה הזו, בחרו &quot;קביעה&quot; למעלה.</p>
       ) : null}
-      {!canEdit ? <p className="text-xs text-muted-foreground">צפייה בלבד: אין לך הרשאה לשנות את תפריט הקופה ברמה הזו.</p> : null}
+      {!canEdit ? (
+        <p className="text-xs text-muted-foreground">
+          {data.canEdit ? 'צפייה בלבד.' : 'צפייה בלבד: רק מנהל חברה ומעלה משנה את תפריט הקופה.'}
+        </p>
+      ) : null}
 
       {canEdit && dirty ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-background p-2">

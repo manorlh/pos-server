@@ -389,6 +389,9 @@ def _kiosk_alert(ctx: Ctx, ka) -> Optional[EntrySpec]:
     detail = ka.detail if isinstance(ka.detail, dict) else {}
     agorot = detail.get("amountAgorot")
     amount = Decimal(int(agorot)) / 100 if isinstance(agorot, (int, float)) and not isinstance(agorot, bool) else None
+    # A terminal alert over because the kiosk was set "ללא אשראי" (kiosk_ops.CLEAR_NO_CARD): its
+    # entry closes by itself — there is no terminal left to fix. Any other stays for "טופל".
+    no_card_note = "נסגר אוטומטית: הקיוסק הוגדר ללא אשראי" if ka.clear_reason == "no_card" and ka.cleared_at else None
     return EntrySpec(
         source="kiosk_alert",
         source_id=str(ka.id),
@@ -406,6 +409,8 @@ def _kiosk_alert(ctx: Ctx, ka) -> Optional[EntrySpec]:
         details={"reason": ka.reason, "key": ka.key, "detail": detail or None,
                  "clearedAt": aware(ka.cleared_at).isoformat() if ka.cleared_at else None,
                  "clearReason": ka.clear_reason},
+        close_only=no_card_note is not None,
+        ack=(aware(ka.cleared_at), None, no_card_note) if no_card_note else None,
     )
 
 

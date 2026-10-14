@@ -34,6 +34,7 @@ import {
   type UiStyle,
 } from '@/lib/kioskConfig';
 import { rebaseLayout, switchLayoutTemplate, type LayoutTemplate } from '@/lib/kioskLayout';
+import { saveWarningMessages } from '@/lib/paymentIntegration';
 import {
   fetchCatalogCategoryLooks,
   fetchKioskDefaults,
@@ -209,6 +210,8 @@ function EditorBody({
     mutationFn: () => saveKioskSettings(level, targetId, layer, settings.menuVersion),
     onSuccess: (next) => {
       toast.success(t('saved'));
+      // Saved, and a kiosk "ללא אשראי" left without "תשלום בקופה" is said so (never refused).
+      for (const warning of saveWarningMessages(next)) toast.warning(warning);
       setReviewOpen(false);
       setServerErrors([]);
       qc.setQueryData(['kiosk-settings', level, targetId], next);

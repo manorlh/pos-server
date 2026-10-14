@@ -310,5 +310,13 @@
     "critical": false,
     "warning": null,
     "report": false
+  },
+  {
+    "key": "quick_order",
+    "label": "הזמנה מהירה (בסרגל, לא בתפריט)",
+    "also": "הקופה נפתחת על מסך השולחנות; הלשונית \"הזמנה מהירה\", כל מעבר למסך המכירה שלא דרך שולחן, \"מכירה מהירה\" במסך השולחנות ו\"החזר הזמנה\"",
+    "critical": false,
+    "warning": null,
+    "report": false
   }
 ]

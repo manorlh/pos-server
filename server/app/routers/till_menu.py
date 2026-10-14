@@ -15,12 +15,10 @@ levels above hide; null = the level's own list removed (it inherits again). Each
 `settings`, `till_parameters_updated`). The super admin also edits it on "פרמטרים לקופות".
 
 Who — reading for whoever reads the level in "עיצוב קופה" (app/routers/till_design.py `resolve_scope`:
-a super admin, a distributor's own tills, a company manager's tree, a shop manager's shop):
-
-* `/till-menu-hide` (spec §3): written by the super admin and the company managers over the level —
-  the company's settings writers (`settingsWrite`), so a distributor too; never a shop manager.
-* `/till-design/menu-hide`: written by whoever writes the till design at the level, as its category
-  display card (a shop manager too, for their shop, its points of sale and tills).
+a super admin, a distributor's own tills, a company manager's tree, a shop manager's shop). Writing, on
+both routes alike (spec §3; the owner, 14.10 — hiding Z, the shift close or the settings is not a shop
+manager's call): the super admin, a distributor and a company manager over the level — the company's
+settings writers (`settingsWrite`). A shop manager sees the card read-only (`canEdit` false, 403 on a PUT).
 """
 from __future__ import annotations
 
@@ -41,10 +39,9 @@ router = APIRouter(tags=["till-menu-hide"])
 
 Level = Literal["company", "shop", "area", "machine"]
 
-#: `PUT /till-menu-hide`: the settings writers above a shop (spec §3, `_check_company_settings_write`).
+#: Who writes `hiddenMenuItems` on either route: the settings writers above a shop (spec §3,
+#: `_check_company_settings_write`), each within their scope (`resolve_scope`). Never a shop manager.
 SETTINGS_WRITERS = (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER)
-#: `PUT /till-design/menu-hide`: the till design's writers (`get_current_machine_admin`).
-DESIGN_WRITERS = (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER, UserRole.SHOP_MANAGER)
 
 
 class MenuHideIn(BaseModel):
@@ -62,6 +59,11 @@ def _view(db: Session, scope: Scope, can_edit: bool, ignored=()) -> Dict[str, An
     view["ignored"] = list(ignored)
     db.commit()  # `ensure_builtin_parameters` may have created the definition
     return view
+
+
+def _refuse_non_writer(user: User) -> None:
+    if _role(user) not in SETTINGS_WRITERS:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
 
 def _save(db: Session, background_tasks: Optional[BackgroundTasks], scope: Scope, body: MenuHideIn, user: User):
@@ -107,8 +109,7 @@ def put_till_menu_hide(
     db: Session = Depends(get_db),
 ):
     """403 for a shop manager (the spec's writers are the super admin and the company managers)."""
-    if _role(current_user) not in SETTINGS_WRITERS:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    _refuse_non_writer(current_user)
     scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
     saved = _save(db, background_tasks, scope, body, current_user)
     return _view(db, scope, True, saved.ignored)
@@ -127,9 +128,9 @@ def get_design_menu_hide(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The same access as `GET /till-design/settings`."""
+    """Read with the same access as `GET /till-design/settings`; `canEdit` for the settings writers only."""
     scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
-    return _view(db, scope, _role(current_user) in DESIGN_WRITERS)
+    return _view(db, scope, _role(current_user) in SETTINGS_WRITERS)
 
 
 @design_router.put("/menu-hide")
@@ -142,7 +143,11 @@ def put_design_menu_hide(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The same access as `PUT /till-design/settings`; 422 `invalid_menu_keys` for what is not a key list."""
+    """
+    The design's scope (`resolve_scope`), written by the settings writers only — 403 for a shop manager, who
+    may write the rest of the design. 422 `invalid_menu_keys` for what is not a key list.
+    """
+    _refuse_non_writer(current_user)
     scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
     saved = _save(db, background_tasks, scope, body, current_user)
     return _view(db, scope, True, saved.ignored)
