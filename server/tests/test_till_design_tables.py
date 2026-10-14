@@ -263,7 +263,9 @@ def test_the_card_lists_the_look_then_the_map_s_display(w):
 
 
 def test_the_tables_page_card_is_unchanged(w):
-    assert [g for g, _l, _k in TR._page_groups()] == ["staffTables", "restore", "mapDisplay"]
+    # Its own groups (whatever other groups it has): never the tables' look, which is the till design's.
+    groups = [g for g, _l, _k in TR._page_groups()]
+    assert groups[:3] == ["staffTables", "restore", "mapDisplay"] and TL.TILE_LOOK_GROUP not in groups
     assert not set(TL.LEVEL_KEYS) & set(TR.page_keys())
 
 
