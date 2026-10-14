@@ -2738,6 +2738,15 @@ export class KioskService extends EventEmitter {
       desktopExit: this.adminExitUser()
         ? { allowed: true, reason: null }
         : { allowed: false, reason: this.adminUserId ? `אין לך הרשאה: ${PERMISSION_LABEL}` : `נדרש מנהל עם הרשאת "${PERMISSION_LABEL}"` },
+      cash: this.cashPay.configured() || this.cashPay.pending().length > 0
+        ? {
+            station: this.cashPay.station()?.name ?? null,
+            address: this.cashPay.station()?.lanAddress ? `${this.cashPay.station()!.lanAddress}:${this.cashPay.station()!.port}` : null,
+            usable: this.cashPay.usable(),
+            reason: this.cashPay.offReason(),
+            pending: this.cashPay.pending().map((p) => ({ txShort: shortTx(p.txId), amountAgorot: p.amountAgorot, startedAt: p.startedAt, final: p.finalState })),
+          }
+        : null,
     };
   }
 
@@ -2766,6 +2775,10 @@ export class KioskService extends EventEmitter {
       case 'retryPrints':
         this.printQueue.retryFailed();
         return { ok: true };
+      case 'cashRecheck':
+        await this.cashPay.refreshStatus();
+        await this.settleCash();
+        return { ok: this.cashPay.pending().length === 0, message: this.cashPay.pending().length === 0 ? 'אין תשלומי מזומן פתוחים' : 'מכשיר המזומן לא ענה — ננסה שוב' };
       case 'checkTerminal':
         if (this.pay.noCard) return { ok: false, message: NO_CARD_TEXT };
         await this.pay.monitorTick({ busy: this.flow.busy, screen: this.flow.screen }, true);

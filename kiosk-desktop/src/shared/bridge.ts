@@ -306,6 +306,14 @@ export interface AdminInfo {
    * DESKTOP_EXIT (else why not, Hebrew). Absent from a service that predates it.
    */
   desktopExit?: { allowed: boolean; reason: string | null };
+  /** "מכשיר מזומן" (P:/specs/cash-paylink.md §11.6): the station, its state, payments still to settle. */
+  cash?: {
+    station: string | null;
+    address: string | null;
+    usable: boolean;
+    reason: string | null;
+    pending: Array<{ txShort: string; amountAgorot: number; startedAt: number; final: string | null }>;
+  } | null;
 }
 
 export interface TechnicianInfo {
@@ -410,7 +418,9 @@ export type AdminAction =
   /** The 6 digits from the terminal's screen. */
   | { type: 'synqpayCode'; otp: string }
   /** The paired key to the cloud again. */
-  | { type: 'synqpayRetryUpload' };
+  | { type: 'synqpayRetryUpload' }
+  /** "מכשיר מזומן": ask the cash station again about payments it has not finished telling (settleCash). */
+  | { type: 'cashRecheck' };
 
 export interface AdminActionResult {
   ok: boolean;
