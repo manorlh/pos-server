@@ -241,6 +241,15 @@ SECTIONS: Tuple[Section, ...] = (
         "pos_users", "קופאים (POS)", "עובדי הקופה, קודי PIN, מי מחובר איפה ותפקידים והרשאות בקופה.",
         ("/dashboard/pos-users", "/dashboard/till-roles"),
     ),
+    # "עובד במכשיר אחד בלבד" v2 (P:/specs/exclusive-login-v2.md §2, §6): "מחוברים כעת במכשירים" — on the
+    # employees page and on the phone's home ("הניהול שלי"): view sees who is signed in where, edit releases
+    # one (with a manager's role: app/services/user_sessions.py `may_release_from_dashboard`).
+    Section(
+        "user_sessions_release", "שחרור עובד מחובר במכשיר",
+        "\"מחוברים כעת במכשירים\" בדף הקופאים ובמסך הניהול בנייד: מי מחובר באיזה מכשיר ומאז מתי. עריכה: "
+        "שחרור עובד שמחובר במכשיר (נרשם בחריגות), ואישור \"בקשת שחרור ממנהל\" שנשלחה מהקופה.",
+        (),
+    ),
     Section("attendance", "נוכחות עובדים", "מי במשמרת, דוח נוכחות ותיקונים.", ("/dashboard/attendance",)),
     Section("users", "משתמשי דשבורד", "משתמשי הענן של הארגון.", ("/dashboard/users",)),
     Section("branding", "מיתוג", "לוגו, צבעים וכותרת קבלה.", ("/dashboard/branding",)),
@@ -312,13 +321,19 @@ BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
     # manager or template ("אפשר לתת למנהל לערוך מפה ואפשר גם לא — דינמי").
     "tables": EDIT,
     "tables_manage": EDIT,
+    # "מחוברים כעת במכשירים" and its release (exclusive login v2 §2) — on for a shop's manager, off for
+    # the area manager (below).
+    "user_sessions_release": EDIT,
 }
 #: "מנהל אזור" — the same, meant for a user scoped to a point of sale. Dashboard users cannot be
 #: scoped to one yet (Saturday): until then the label says so and the template is `hidden` — not
 #: offered where admins assign templates.
 AREA_MANAGER_TEMPLATE = "area_manager"
 AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)"
-AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
+#: Less one: "שחרור עובד מחובר במכשיר" is off for the area manager (P:/specs/exclusive-login-v2.md §2).
+AREA_MANAGER_SECTIONS: Dict[str, str] = {
+    k: v for k, v in BRANCH_MANAGER_SECTIONS.items() if k != "user_sessions_release"
+}
 #: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
 MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
 #: "מאשר" (P:/specs/manager-approval-mobile.md §0, §4): only the approval requests — to see and decide.
@@ -714,7 +729,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),
     (_GET, "/shops/{}/next-register-number", S("devices", "organization", level=VIEW)),
     (_ALL, "/shops/{}/pos-users*", S("pos_users")),
-    (_ALL, "/shops/{}/user-sessions*", S("pos_users")),
+    # "מחוברים כעת במכשירים": read with the employees page or the release permission; the release itself is
+    # the permission's alone (no longer "edit the employees" — exclusive login v2 §2).
+    (_GET, "/shops/{}/user-sessions", S("pos_users", "user_sessions_release", level=VIEW)),
+    ("POST", "/shops/{}/user-sessions/{}/release", S("user_sessions_release", level=EDIT)),
     (_ALL, "/shops/{}/printer-routing/products/*", S("products", "printers")),
     (_ALL, "/shops/{}/printer-routing/categories*", S("products", "printers")),
     (_ALL, "/shops/{}/printer-scan", S("printers", "products")),

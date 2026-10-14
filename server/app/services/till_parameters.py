@@ -572,6 +572,49 @@ QUICK_PAY_CASH_WITH_CHANGE = "מזומן עם עודף"
 QUICK_PAY_FAST_CASH = "מזומן מהיר"
 QUICK_PAY_CHOICES = (QUICK_PAY_FAST_CARD, QUICK_PAY_CASH_WITH_CHANGE, QUICK_PAY_FAST_CASH)
 
+#: "עובד במכשיר אחד בלבד" v2 (P:/specs/exclusive-login-v2.md §3, §4; app/services/user_sessions.py reads
+#: all three for the till that asks, and returns them in every claim / heartbeat answer).
+EXCLUSIVE_AUTO_RELEASE_KEY = "exclusiveUserLoginAutoRelease"
+EXCLUSIVE_AUTO_RELEASE_OFF = "off"
+EXCLUSIVE_AUTO_RELEASE_MINUTES = "minutes"
+EXCLUSIVE_AUTO_RELEASE_LABELS = {
+    EXCLUSIVE_AUTO_RELEASE_OFF: "כבוי — רק מנהל משחרר (ברירת מחדל)",
+    EXCLUSIVE_AUTO_RELEASE_MINUTES: "אחרי הדקות שנקבעו",
+}
+EXCLUSIVE_OFFLINE_KEY = "exclusiveUserLoginOffline"
+EXCLUSIVE_OFFLINE_ALLOW = "allow"
+EXCLUSIVE_OFFLINE_LAN = "lan"
+EXCLUSIVE_OFFLINE_MANAGER = "manager"
+EXCLUSIVE_OFFLINE_LABELS = {
+    EXCLUSIVE_OFFLINE_ALLOW: "מותרת, נבדק כשהחיבור חוזר (ברירת מחדל)",
+    EXCLUSIVE_OFFLINE_LAN: "המארח המקומי מכריע",
+    EXCLUSIVE_OFFLINE_MANAGER: "דורשת קוד מנהל",
+}
+EXCLUSIVE_DUPLICATE_KEY = "exclusiveUserLoginDuplicate"
+EXCLUSIVE_DUPLICATE_WARN = "warn"
+EXCLUSIVE_DUPLICATE_SIGNOUT = "signout"
+EXCLUSIVE_DUPLICATE_LABELS = {
+    EXCLUSIVE_DUPLICATE_WARN: "פס אזהרה (ברירת מחדל)",
+    EXCLUSIVE_DUPLICATE_SIGNOUT: "ניתוק במכשיר שהתחבר אחרון",
+}
+
+EXCLUSIVE_LOGIN_DESCRIPTION = (
+    "כשמופעל: עובד/מלצר שמחובר במכשיר אחד (קופה, מכשיר נייד, טלפון או קופת Windows) לא יכול להתחבר "
+    "במכשיר אחר עד שיתנתק בו. חל רק על מי שאין לו את ההרשאה \"עבודה בכמה מכשירים במקביל\" (בתפקידים: "
+    "אסור למלצר ולקופאי, מותר לאחמ\"ש ולמנהל). בכניסה במכשיר אחר מוצגת הודעה איפה הוא מחובר ומאז מתי, "
+    "ו\"לא מדווח מאז…\" כשהמכשיר ההוא הפסיק לדווח. משחרר רק מנהל שמותר לו: בקוד שלו (\"שחרור באישור "
+    "מנהל\"), מהנייד (\"בקשת שחרור ממנהל\", כשבקשות האישור מהנייד מופעלות) או מהדשבורד, וכל שחרור "
+    "נרשם בחריגות. התנתקות, החלפת עובד, נעילה בחוסר שימוש וניתוק המכשיר מהענן משחררים תמיד. "
+    "שחרור אוטומטי, כניסה בלי אינטרנט ועובד שמחובר בשני מכשירים: בפרמטרים \"עובד בקופה אחת — …\". "
+    "את המחוברים כעת רואים (ומשחררים) בדשבורד ובנייד: \"מחוברים כעת במכשירים\"."
+)
+EXCLUSIVE_STALE_MINUTES_DESCRIPTION = (
+    "רק כש\"עובד בקופה אחת — שחרור אוטומטי\" הוא «אחרי הדקות שנקבעו»: מכשיר שמחובר בו עובד ולא דיווח "
+    "לענן (נפל, כבוי, בלי רשת) במשך מספר הדקות הזה — הכניסה הבאה של העובד במכשיר אחר משחררת את החיבור "
+    "הישן (2–720; ברירת מחדל 15). כשהשחרור האוטומטי כבוי, החיבור נשאר עד שמנהל משחרר. מכשיר פעיל "
+    "מדווח כל דקה."
+)
+
 #: "התקבל מזומן" (the cash box on the tablet's order panel) is gone; its switch with it.
 #: Not a built-in any more — alembic 3f8b6d2a9c41 retires an existing definition.
 RETIRED_CASH_CHANGE_IN_PANEL_KEY = "cashChangeInPanel"
@@ -1448,30 +1491,71 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "את השלבים מגדירים בדשבורד תחת \"תוספות ושינויים\"."
         ),
     ),
-    # "עובד מחובר בקופה אחת בלבד" — app/services/user_sessions.py reads both, and the till.
+    # "עובד מחובר בקופה אחת בלבד" (v2: P:/specs/exclusive-login-v2.md, docs/SPEC_EXCLUSIVE_LOGIN.md) —
+    # app/services/user_sessions.py reads all five for the till that asks, and the till. An existing
+    # definition keeps its saved text: alembic 7c4e2a9d1b6f rewords the first two while still the old text.
     BuiltinParameter(
         key="exclusiveUserLogin",
         label="עובד מחובר בקופה אחת בלבד",
         value_type="boolean",
         default_value=False,
-        description=(
-            "כשמופעל: עובד/מלצר שמחובר בקופה אחת לא יכול להתחבר בקופה אחרת עד שיתנתק בה. "
-            "בכניסה בקופה אחרת מוצגת הודעה איפה הוא מחובר ומאז מתי, ואפשר \"שחרור באישור מנהל\" "
-            "(קוד מנהל; נרשם בחריגות). התנתקות, החלפת עובד ונעילה בחוסר שימוש משחררות. "
-            "קופה בלי אינטרנט לא נחסמת: הכניסה מותרת והבדיקה נעשית כשהחיבור חוזר. "
-            "קופה שהפסיקה לדווח משתחררת לבד אחרי \"עובד בקופה אחת — שחרור אוטומטי אחרי (דקות)\". "
-            "את המחוברים כעת רואים (ומשחררים) בדשבורד בדף \"קופאים (POS)\"."
-        ),
+        description=EXCLUSIVE_LOGIN_DESCRIPTION,
     ),
     BuiltinParameter(
         key="exclusiveUserLoginStaleMinutes",
         label="עובד בקופה אחת — שחרור אוטומטי אחרי (דקות)",
         value_type="integer",
         default_value=15,
+        description=EXCLUSIVE_STALE_MINUTES_DESCRIPTION,
+    ),
+    BuiltinParameter(
+        key=EXCLUSIVE_AUTO_RELEASE_KEY,
+        label="עובד בקופה אחת — שחרור אוטומטי",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_AUTO_RELEASE_OFF, EXCLUSIVE_AUTO_RELEASE_MINUTES),
+        enum_labels=EXCLUSIVE_AUTO_RELEASE_LABELS,
+        default_value=EXCLUSIVE_AUTO_RELEASE_OFF,
         description=(
-            "קופה שמחובר בה עובד ולא דיווחה לענן (נפלה, כבויה, בלי רשת) במשך מספר הדקות הזה — "
-            "החיבור שלו בה משתחרר לבד, כך שקופה תקועה לא נועלת עובד לתמיד (2–720; ברירת מחדל 15). "
-            "קופה פעילה מדווחת כל דקה."
+            "האם מכשיר שהפסיק לדווח לענן (נפל, כבוי, בלי רשת) משחרר לבד את העובד שמחובר בו. "
+            f"«{EXCLUSIVE_AUTO_RELEASE_LABELS[EXCLUSIVE_AUTO_RELEASE_OFF]}» — החיבור נשאר עד שמנהל משחרר; "
+            "בחלון החסימה במכשיר החדש כתוב \"המכשיר הקודם לא מדווח מאז…\", כדי שהמנהל יידע שבטוח לשחרר. "
+            f"«{EXCLUSIVE_AUTO_RELEASE_LABELS[EXCLUSIVE_AUTO_RELEASE_MINUTES]}» — אחרי \"עובד בקופה אחת — שחרור "
+            "אוטומטי אחרי (דקות)\", הכניסה הבאה של העובד במכשיר אחר משחררת את החיבור הישן. "
+            "התנתקות מרצון, החלפת עובד, נעילה בחוסר שימוש וניתוק המכשיר מהענן משחררים תמיד. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=EXCLUSIVE_OFFLINE_KEY,
+        label="עובד בקופה אחת — כניסה בלי אינטרנט",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_OFFLINE_ALLOW, EXCLUSIVE_OFFLINE_LAN, EXCLUSIVE_OFFLINE_MANAGER),
+        enum_labels=EXCLUSIVE_OFFLINE_LABELS,
+        default_value=EXCLUSIVE_OFFLINE_ALLOW,
+        description=(
+            "כניסת עובד כשאין תשובה מהענן. "
+            f"«{EXCLUSIVE_OFFLINE_LABELS[EXCLUSIVE_OFFLINE_ALLOW]}» — הכניסה מותרת, והבדיקה נעשית כשהחיבור "
+            "חוזר. "
+            f"«{EXCLUSIVE_OFFLINE_LABELS[EXCLUSIVE_OFFLINE_LAN]}» — ברשת מקומית, הקופה המארחת (שרת השולחנות) "
+            "מחזיקה גם את רשימת המחוברים ומכריעה בלי ענן; בלי מארח — כמו «מותרת». "
+            f"«{EXCLUSIVE_OFFLINE_LABELS[EXCLUSIVE_OFFLINE_MANAGER]}» — בלי תשובה מהענן או מהמארח, הכניסה "
+            "דורשת קוד של מנהל שמותר לו לשחרר עובד. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=EXCLUSIVE_DUPLICATE_KEY,
+        label="עובד בקופה אחת — מחובר בשני מכשירים",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_DUPLICATE_WARN, EXCLUSIVE_DUPLICATE_SIGNOUT),
+        enum_labels=EXCLUSIVE_DUPLICATE_LABELS,
+        default_value=EXCLUSIVE_DUPLICATE_WARN,
+        description=(
+            "עובד שהתברר, אחרי כניסה בלי אינטרנט, שהוא מחובר בשני מכשירים. "
+            f"«{EXCLUSIVE_DUPLICATE_LABELS[EXCLUSIVE_DUPLICATE_WARN]}» — פס כתום במכשיר, והעבודה ממשיכה. "
+            f"«{EXCLUSIVE_DUPLICATE_LABELS[EXCLUSIVE_DUPLICATE_SIGNOUT]}» — המכשיר שהתחבר אחרון מנתק את העובד "
+            "בסיום הפעולה (לא באמצע תשלום ולא כששולחן פתוח), באותם תנאים כמו אחרי שחרור של מנהל. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     # "נוכחות עובדים" (app/services/attendance.py, docs/SPEC_ATTENDANCE.md) — read by the
