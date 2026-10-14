@@ -343,6 +343,10 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
 #: "שחזור שולחן עם התשלומים שלו" (app/services/table_restore.py): a payment reversed inside a table
 #: (`transactionId` = its credit note) and a closed table restored — each feeds its own rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("payment_reversed", "table_restored")
+#: "הוצאה אוטומטית של השלב הבא" (P:/specs/courses-fire-v2.md §1 "יומן"): a course that went by itself —
+#: reported by the till that fired it (one till, the LAN host), written by the cloud for its own tables
+#: (app/services/course_auto_fire.py). Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
 
 
 class RuleValueError(ValueError):

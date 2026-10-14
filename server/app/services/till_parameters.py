@@ -1922,6 +1922,13 @@ from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  #
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
 
+# "הוצאה אוטומטית של השלב הבא" (P:/specs/courses-fire-v2.md §1, app/services/course_auto_fire.py): `autoFire`
+# (off / after_minutes / after_ready) and `autoFireMinutesOverride` (none: each course's own minutes). Read by
+# the till (one till, the LAN host) and by the cloud's pass for its own tables. Edited on the tables page too.
+from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1974,6 +1981,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         raise TillParameterValueError(
             f"{REMOTE_CANCEL_TIMEOUT_KEY} must be {REMOTE_CANCEL_TIMEOUT_MIN}–{REMOTE_CANCEL_TIMEOUT_MAX} seconds"
         )
+    # "הוצאה אוטומטית של השלב הבא": the codes and the minutes the till and the cloud's pass read.
+    from app.services import course_auto_fire
+
+    if key in course_auto_fire.VALIDATED_KEYS and value is not None:
+        try:
+            return course_auto_fire.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
     from app.services import table_restore
 

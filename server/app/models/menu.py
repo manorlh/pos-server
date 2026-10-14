@@ -345,6 +345,10 @@ class MenuCourse(Base):
     name = Column(String(60), nullable=False)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: "הוצאה אוטומטית" (P:/specs/courses-fire-v2.md §1): with the till parameter `autoFire` on
+    #: `after_minutes`, this course goes by itself so many minutes after the course before it went out
+    #: (`autoFireMinutesOverride` replaces it at a level). Shipped as `autoFireMinutes` in the menu block.
+    auto_fire_minutes = Column(Integer, nullable=False, default=15, server_default="15")
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 

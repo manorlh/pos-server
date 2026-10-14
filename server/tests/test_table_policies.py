@@ -357,9 +357,11 @@ class TestStaffTableDiscountCheck:
 
         got = RR.get_table_restore_params(str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w))
         keys = [p["key"] for p in got["parameters"]]
-        assert keys[0] == self.KEY and len(keys) == 9
+        # Its own, the restore's eight, then the courses' auto-fire two (P:/specs/courses-fire-v2.md §1).
+        assert keys[0] == self.KEY and len(keys) == 11
         first = got["parameters"][0]
         assert (first["valueType"], first["defaultValue"], first["group"]) == ("boolean", False, "staffTables")
-        assert {p["group"] for p in got["parameters"][1:]} == {"restore"}
-        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore"]
+        assert {p["group"] for p in got["parameters"][1:9]} == {"restore"}
+        assert {p["group"] for p in got["parameters"][9:]} == {"courses"}
+        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "courses"]
         assert got["groups"][0]["label"] == "שולחן עובדים / מנהלים"

@@ -387,6 +387,18 @@ def start_sales_targets_worker():
 
 
 @app.on_event("startup")
+def start_course_auto_fire_worker():
+    """
+    "הוצאה אוטומטית של השלב הבא" in the cloud's tables, every 15 s (app/services/course_auto_fire_worker.py);
+    it fires only where a till parameter `autoFire` is on. COURSE_AUTO_FIRE_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.course_auto_fire_worker import start_background_worker as start_fire_worker
+
+    start_fire_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_zcredit_reconcile_worker():
     """
     "התאמת אשראי מול Z-Credit" nightly per terminal (app/services/zcredit_reconcile_worker.py);

@@ -181,14 +181,17 @@ VALIDATED_KEYS = frozenset({PREFIX_KEY, WINDOW_KEY, PRINT_CREDIT_KEY, METHODS_KE
 #: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), then these.
 STAFF_TABLES_GROUP = "staffTables"
 RESTORE_GROUP = "restore"
+#: "הוצאה אוטומטית של השלב הבא" (app/services/course_auto_fire.py, P:/specs/courses-fire-v2.md §1).
+COURSES_GROUP = "courses"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
-    from app.services import table_policies
+    from app.services import course_auto_fire, table_policies
 
     return (
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
+        (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
     )
 
 

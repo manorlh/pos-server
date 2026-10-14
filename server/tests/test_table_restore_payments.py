@@ -183,7 +183,10 @@ class TestParameters:
         assert got["canEdit"] is False and got["inherited"]["reverseAllButton"] is False
         # The card's restore group (after the staff tables' `staffTableDiscountCheck`, owner-decisions-1410 §1).
         assert [p["key"] for p in got["parameters"] if p["group"] == "restore"] == list(DEFAULTS)
-        assert [p["key"] for p in got["parameters"]] == ["staffTableDiscountCheck", *DEFAULTS]
+        # Then the courses' auto-fire (P:/specs/courses-fire-v2.md §1), a group of its own.
+        assert [p["key"] for p in got["parameters"]] == [
+            "staffTableDiscountCheck", *DEFAULTS, "autoFire", "autoFireMinutesOverride",
+        ]
         assert {m["key"] for m in got["methods"]} == {"cash", "card", "voucher", "external"}
         assert refused(put, w, "shop", w.shop.id, {"reverseAllButton": True}, supervisor).status_code == 403
         assert refused(put, w, "company", w.company.id, {"tablesMode": "x"}).status_code == 422
