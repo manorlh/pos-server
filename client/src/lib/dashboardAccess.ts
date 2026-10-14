@@ -21,6 +21,7 @@ export type SectionId =
   | 'quick_actions'
   | 'item_blocks'
   | 'device_control'
+  | 'terminals_offline'
   | 'live_event'
   | 'alerts'
   | 'stock'
@@ -106,6 +107,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'item_blocks', pages: [] },
   // "שליטה מרחוק בקופות וקיוסקים": tabs of the machines and kiosks pages, the cockpit's sheet.
   { id: 'device_control', pages: [] },
+  // "מסופונים — מצב לא מקוון" (P:/specs/nayax-deferred-all.md §9): the shop's card terminals to deferred and back.
+  { id: 'terminals_offline', pages: ['/dashboard/deferred-terminals'] },
   // "מצב אירוע חי" and "התראות" (the phone alerts' history) — their pages are feat/event-live's.
   { id: 'live_event', pages: ['/dashboard/live-event'] },
   { id: 'alerts', pages: ['/dashboard/alerts'] },

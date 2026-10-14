@@ -339,6 +339,19 @@ PERMISSIONS = PERMISSIONS + (
 )
 # fmt: on
 
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1, §8.1, app/services/deferred_control.py): the
+# screen "מסופונים ברשת — מצב לא מקוון" on a controlling till (`deferredControlTills`) — every terminal of the
+# shop to deferred and back. Checked at the till (offline too, against the roster); no elevation scope. Its
+# phone approval is `APPROVE_REMOTE.terminal_offline_all` (remote_approvals/catalog.py).
+# fmt: off
+PERMISSIONS = PERMISSIONS + (
+    PermissionSpec("TERMINAL_OFFLINE_ALL", "מצב לא מקוון לכל המסופונים", "shift",
+                   "המסך \"מסופונים ברשת — מצב לא מקוון\" בהגדרות הקופה (רק בקופות שבפרמטר \"מסופונים ברשת — "
+                   "קופות מנהלות\"): העברת המסופונים של כל הקופות בסניף למצב לא מקוון והחזרתם למקוון — הכל או "
+                   "קופה אחת. העסקאות מאושרות רק כשהחיבור חוזר. כל שינוי נרשם ביומן של כל קופה."),
+)
+# fmt: on
+
 PERMISSIONS_BY_CODE: Dict[str, PermissionSpec] = {p.code: p for p in PERMISSIONS}
 CODES: Tuple[str, ...] = tuple(PERMISSIONS_BY_CODE)
 
@@ -424,6 +437,9 @@ LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "
 LEGACY_CASHIER_DENIED = LEGACY_CASHIER_DENIED | {"MULTI_DEVICE_LOGIN"}
 #: A payment reversed inside a table hands money back, as a refund did: a legacy cashier asks a manager.
 LEGACY_APPROVAL_CODES = LEGACY_APPROVAL_CODES | TABLE_PAYMENT_REVERSE_CODES
+#: "מצב לא מקוון לכל המסופונים" (nayax-deferred-all §8.1): never a legacy cashier's; a legacy shop manager's
+#: (everything allowed).
+LEGACY_CASHIER_DENIED = LEGACY_CASHIER_DENIED | {"TERMINAL_OFFLINE_ALL"}
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -522,6 +538,11 @@ _SPEC_MATRIX.update({
     "PAYMENT_REVERSE_CASH":              (D, P, A, A),
     "PAYMENT_REVERSE_CARD":              (D, P, A, A),
     "PAYMENT_REVERSE_OTHER":             (D, P, A, A),
+})
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1): the manager alone, a shift supervisor with a
+# manager's code (or a phone approval), a waiter and a cashier never.
+_SPEC_MATRIX.update({
+    "TERMINAL_OFFLINE_ALL":              (D, D, P, A),
 })
 
 #: The spec's example (§7): a supervisor takes cash out up to ₪200 alone (and approves it

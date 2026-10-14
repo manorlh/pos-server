@@ -364,6 +364,10 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
 #: written by the cloud for its runs (app/services/shop_x.py), reported by a till that built it on the LAN.
 #: Recorded, feeds no rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("shop_x_report",)
+#: "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §3 "רישום", §8.5 "יומן"): a till's terminal
+#: switched to deferred / back — who, from which till, by which way (lan / cloud / direct / auto / local), and
+#: on the way back how many were approved and declined. Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("deferred_mode_on", "deferred_mode_off")
 
 
 class RuleValueError(ValueError):

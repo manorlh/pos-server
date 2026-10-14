@@ -112,6 +112,14 @@ TYPES: Tuple[RequestType, ...] = (
                 scopes=("user-session:release",), approver_code="USER_SESSION_RELEASE",
                 approver_section="user_sessions_release"),
     RequestType("z_close", "הפקת Z", 1, None, "קופה, משמרות פתוחות", scopes=("day:close",)),
+    # "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1, §8.1): from the controlling till, only
+    # while it is connected (offline — a manager's code, checked at the till). The approver must be allowed
+    # to do it (TERMINAL_OFFLINE_ALL; a dashboard role: `terminals_offline` at edit). Nothing in the cloud
+    # is gated by it — no scopes.
+    RequestType("terminal_offline_all", "מצב לא מקוון לכל המסופונים", 1, None,
+                "הקופה המנהלת, הפעלה או כיבוי, כמה קופות",
+                base_code="TERMINAL_OFFLINE_ALL", approver_code="TERMINAL_OFFLINE_ALL",
+                approver_section="terminals_offline"),
     # ── §3ב: phase 2 ──
     RequestType("refund_no_receipt", "זיכוי בלי מסמך מקורי", 2, _A, "סכום, שורות",
                 base_code="REFUND", scopes=("refund",), reasons=REFUND_REASONS, reason_required=True,

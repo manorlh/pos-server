@@ -38,7 +38,12 @@ class TillEventIn(BaseModel):
                   "course_auto_fired",
                   # "דוח X סניפי" (P:/specs/shop-x-report.md §4): a run, by whom and from which till (details: by,
                   # posNumber, refreshed; `source` "lan" when the host built it). Kept for the record, no rule.
-                  "shop_x_report"]
+                  "shop_x_report",
+                  # "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §8.5 "יומן"): the till's terminal
+                  # to deferred / back (details: requestId, source lan | cloud | direct | auto | local, by, byId,
+                  # requestedBy, from, fromId, issuedAt, kind, model, pending; off: approved, declined,
+                  # approvedAmount, authorizationOk; error; direct: targetMachineId, targetName). No rule.
+                  "deferred_mode_on", "deferred_mode_off"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

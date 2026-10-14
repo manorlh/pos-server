@@ -74,6 +74,7 @@
     "APPROVE_REMOTE.card_unresolved",
     "APPROVE_REMOTE.user_release",
     "APPROVE_REMOTE.z_close",
+    "APPROVE_REMOTE.terminal_offline_all",
     "APPROVE_REMOTE.refund_no_receipt",
     "APPROVE_REMOTE.refund_cash",
     "APPROVE_REMOTE.below_cost",
@@ -93,7 +94,8 @@
     "APPROVE_REMOTE.attendance_fix",
     "PAYMENT_REVERSE_CASH",
     "PAYMENT_REVERSE_CARD",
-    "PAYMENT_REVERSE_OTHER"
+    "PAYMENT_REVERSE_OTHER",
+    "TERMINAL_OFFLINE_ALL"
   ],
   "scopes": {
     "attendance:manage": "ATTENDANCE_MANAGE",
@@ -199,6 +201,7 @@
         "APPROVE_REMOTE.card_unresolved": "deny",
         "APPROVE_REMOTE.user_release": "deny",
         "APPROVE_REMOTE.z_close": "deny",
+        "APPROVE_REMOTE.terminal_offline_all": "deny",
         "APPROVE_REMOTE.refund_no_receipt": "deny",
         "APPROVE_REMOTE.refund_cash": "deny",
         "APPROVE_REMOTE.below_cost": "deny",
@@ -218,7 +221,8 @@
         "APPROVE_REMOTE.attendance_fix": "deny",
         "PAYMENT_REVERSE_CASH": "deny",
         "PAYMENT_REVERSE_CARD": "deny",
-        "PAYMENT_REVERSE_OTHER": "deny"
+        "PAYMENT_REVERSE_OTHER": "deny",
+        "TERMINAL_OFFLINE_ALL": "deny"
       },
       "limits": {}
     },
@@ -297,6 +301,7 @@
         "APPROVE_REMOTE.card_unresolved": "deny",
         "APPROVE_REMOTE.user_release": "deny",
         "APPROVE_REMOTE.z_close": "deny",
+        "APPROVE_REMOTE.terminal_offline_all": "deny",
         "APPROVE_REMOTE.refund_no_receipt": "deny",
         "APPROVE_REMOTE.refund_cash": "deny",
         "APPROVE_REMOTE.below_cost": "deny",
@@ -316,7 +321,8 @@
         "APPROVE_REMOTE.attendance_fix": "deny",
         "PAYMENT_REVERSE_CASH": "approval",
         "PAYMENT_REVERSE_CARD": "approval",
-        "PAYMENT_REVERSE_OTHER": "approval"
+        "PAYMENT_REVERSE_OTHER": "approval",
+        "TERMINAL_OFFLINE_ALL": "deny"
       },
       "limits": {}
     },
@@ -395,6 +401,7 @@
         "APPROVE_REMOTE.card_unresolved": "allow",
         "APPROVE_REMOTE.user_release": "allow",
         "APPROVE_REMOTE.z_close": "allow",
+        "APPROVE_REMOTE.terminal_offline_all": "allow",
         "APPROVE_REMOTE.refund_no_receipt": "allow",
         "APPROVE_REMOTE.refund_cash": "allow",
         "APPROVE_REMOTE.below_cost": "allow",
@@ -414,7 +421,8 @@
         "APPROVE_REMOTE.attendance_fix": "allow",
         "PAYMENT_REVERSE_CASH": "allow",
         "PAYMENT_REVERSE_CARD": "allow",
-        "PAYMENT_REVERSE_OTHER": "allow"
+        "PAYMENT_REVERSE_OTHER": "allow",
+        "TERMINAL_OFFLINE_ALL": "approval"
       },
       "limits": {
         "CASH_DRAWER.CASH_OUT": {
@@ -509,6 +517,7 @@
         "APPROVE_REMOTE.card_unresolved": "allow",
         "APPROVE_REMOTE.user_release": "allow",
         "APPROVE_REMOTE.z_close": "allow",
+        "APPROVE_REMOTE.terminal_offline_all": "allow",
         "APPROVE_REMOTE.refund_no_receipt": "allow",
         "APPROVE_REMOTE.refund_cash": "allow",
         "APPROVE_REMOTE.below_cost": "allow",
@@ -528,7 +537,8 @@
         "APPROVE_REMOTE.attendance_fix": "allow",
         "PAYMENT_REVERSE_CASH": "allow",
         "PAYMENT_REVERSE_CARD": "allow",
-        "PAYMENT_REVERSE_OTHER": "allow"
+        "PAYMENT_REVERSE_OTHER": "allow",
+        "TERMINAL_OFFLINE_ALL": "allow"
       },
       "limits": {}
     },
@@ -607,6 +617,7 @@
         "APPROVE_REMOTE.card_unresolved": "deny",
         "APPROVE_REMOTE.user_release": "deny",
         "APPROVE_REMOTE.z_close": "deny",
+        "APPROVE_REMOTE.terminal_offline_all": "deny",
         "APPROVE_REMOTE.refund_no_receipt": "deny",
         "APPROVE_REMOTE.refund_cash": "deny",
         "APPROVE_REMOTE.below_cost": "deny",
@@ -626,7 +637,8 @@
         "APPROVE_REMOTE.attendance_fix": "deny",
         "PAYMENT_REVERSE_CASH": "approval",
         "PAYMENT_REVERSE_CARD": "approval",
-        "PAYMENT_REVERSE_OTHER": "approval"
+        "PAYMENT_REVERSE_OTHER": "approval",
+        "TERMINAL_OFFLINE_ALL": "deny"
       },
       "limits": {}
     },
@@ -705,6 +717,7 @@
         "APPROVE_REMOTE.card_unresolved": "allow",
         "APPROVE_REMOTE.user_release": "allow",
         "APPROVE_REMOTE.z_close": "allow",
+        "APPROVE_REMOTE.terminal_offline_all": "allow",
         "APPROVE_REMOTE.refund_no_receipt": "allow",
         "APPROVE_REMOTE.refund_cash": "allow",
         "APPROVE_REMOTE.below_cost": "allow",
@@ -724,7 +737,8 @@
         "APPROVE_REMOTE.attendance_fix": "allow",
         "PAYMENT_REVERSE_CASH": "allow",
         "PAYMENT_REVERSE_CARD": "allow",
-        "PAYMENT_REVERSE_OTHER": "allow"
+        "PAYMENT_REVERSE_OTHER": "allow",
+        "TERMINAL_OFFLINE_ALL": "allow"
       },
       "limits": {}
     }

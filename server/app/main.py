@@ -620,6 +620,13 @@ from app.routers import till_menu as till_menu_router  # noqa: E402
 app.include_router(till_menu_router.router, prefix=_prefix)
 app.include_router(till_menu_router.design_router, prefix=_prefix)
 
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §8.4, §9, app/routers/deferred_terminals.py): the
+# dashboard's "מסופונים — מצב לא מקוון" and the controlling till's list of the shop's tills.
+from app.routers import deferred_terminals as deferred_terminals_router  # noqa: E402
+
+app.include_router(deferred_terminals_router.router, prefix=_prefix)
+app.include_router(deferred_terminals_router.till_router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def start_whatsapp_distribution_worker():
