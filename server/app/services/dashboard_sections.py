@@ -631,6 +631,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/workflow/config/preview", S("kds", level=VIEW)),
     (_ALL, "/workflow/*", S("kds")),
     (_ALL, "/kitchen-station*", S("printers", "kds")),
+    # "עיצוב בון" (app/routers/printers.py): a company's ticket designs, with its printers.
+    (_ALL, "/kitchen-ticket-designs*", S("printers")),
     (_ALL, "/printers/*", S("printers")),
     # "שליטה מרחוק": the kiosks' live actions (pause / resume, the banner, quick hides) — the kiosks
     # section as before, or remote control (app/routers/kiosk_live.py, app/routers/kiosks.py).

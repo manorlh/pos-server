@@ -2001,6 +2001,13 @@ from app.services.table_tile_look import PARAMETER_SPECS as _TILE_LOOK_SPECS  # 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILE_LOOK_SPECS)
 
+# "עיצוב בון" (P:/specs/kitchen-ticket-designs.md §2, §6ב, §8; app/services/kitchen_ticket_style.py):
+# `kitchenTicketDesign` (a template or a named design), `kitchenTicketInkSaver` (on), and the options a
+# level may lay over a template — read by the cloud, which resolves each printer's `ticketStyle`.
+from app.services.kitchen_ticket_style import PARAMETER_SPECS as _TICKET_STYLE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TICKET_STYLE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2107,6 +2114,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_tile_look.VALIDATED_KEYS and value is not None:
         try:
             return table_tile_look.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "עיצוב בון": a template or a design's id, 80–150 %, the info list in its order.
+    from app.services import kitchen_ticket_style
+
+    if key in kitchen_ticket_style.VALIDATED_KEYS and value is not None:
+        try:
+            return kitchen_ticket_style.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

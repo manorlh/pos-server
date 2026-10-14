@@ -58,6 +58,7 @@ from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.user import User, UserRole
 from app.config import get_settings
 from app.schemas.kitchen_printers import (
+    PRINTER_TICKET_FIELDS,
     PRODUCT_WIDE_MODES,
     CategoryRoutesIn,
     KitchenOptionsIn,
@@ -66,9 +67,17 @@ from app.schemas.kitchen_printers import (
     PrintJobAckIn,
     PrintJobIn,
     ProductRouteIn,
+    TestPrintIn,
 )
 from app.services.areas import as_utc
 from app.services.company_hierarchy import user_covers_shop
+from app.services.kitchen_ticket_designs import (
+    TillTicketSettings,
+    check_parameter_design,
+    check_printer_design,
+    printer_ticket_fields,
+    styles_for,
+)
 
 #: The till parameters this module reads (and lets a shop's managers set).
 ON_SALE_KEY = "kitchenTicketsOnSale"
@@ -86,6 +95,26 @@ SETTING_KEYS = (
     ON_TILL_KEY,
     # "מדפסת חלופית": ask the employee for another printer when one is not available.
     "printerFailoverPrompt",
+)
+#: "עיצוב בון" (app/services/kitchen_ticket_style.py): the shop's default design and its options, by
+#: shop → point of sale → till on the printers page's own card (`/shops/{id}/printer-options/ticket`)
+#: — and, unlike `SETTING_KEYS`, on the till parameters page too (by company as well).
+TICKET_SETTING_KEYS = (
+    "kitchenTicketDesign",
+    "kitchenTicketInkSaver",
+    "kitchenTicketFontScale",
+    "kitchenTicketHeader",
+    "kitchenTicketCheckboxes",
+    "kitchenTicketElapsed",
+    "kitchenTicketFit",
+    "kitchenTicketMinTextSize",
+    "kitchenTicketMaxTextSize",
+    "kitchenTicketHeaderSize",
+    "kitchenTicketInlineMods",
+    "kitchenTicketOrder",
+    "kitchenTicketOrderList",
+    "kitchenTicketGroupHeaders",
+    "kitchenTicketNoCourse",
 )
 
 #: A relayed ticket no till took by then is failed for its sender.
@@ -235,6 +264,8 @@ def printer_out(printer: KitchenPrinter, machines: Dict[uuid.UUID, POSMachine] |
         "beep": bool(printer.beep),
         "isActive": bool(printer.is_active),
         "sortOrder": printer.sort_order,
+        # "עיצוב בון": the printer's own (null = by the till parameters).
+        **printer_ticket_fields(printer),
         "updatedAt": _iso(printer.updated_at),
     }
 
@@ -277,8 +308,40 @@ def apply_printer(db: Session, shop: Shop, printer: KitchenPrinter, body: Printe
     printer.beep = body.beep
     printer.is_active = body.is_active
     printer.sort_order = body.sort_order
+    _apply_ticket_fields(db, shop, printer, body)
     printer.updated_at = _now()
     return printer
+
+
+def _apply_ticket_fields(db: Session, shop: Shop, printer: KitchenPrinter, body: PrinterIn) -> None:
+    """
+    "עיצוב בון": only what the body sends (an older dashboard's replace leaves them). A template
+    clears a named design and a named design clears a template — one of them, or neither (inherit).
+    """
+    sent = body.model_fields_set
+    if "ticket_design_id" in sent:
+        check_printer_design(db, shop, body.ticket_design_id)
+        printer.ticket_design_id = body.ticket_design_id
+        if body.ticket_design_id is not None:
+            printer.ticket_design = None
+    if "ticket_design" in sent:
+        printer.ticket_design = body.ticket_design
+        if body.ticket_design is not None:
+            printer.ticket_design_id = None
+    if "ticket_font_scale" in sent:
+        printer.ticket_font_scale = body.ticket_font_scale
+    if "ticket_header" in sent:
+        printer.ticket_header = body.ticket_header
+    if "ticket_checkboxes" in sent:
+        printer.ticket_checkboxes = body.ticket_checkboxes
+    if "ticket_elapsed" in sent:
+        printer.ticket_elapsed = body.ticket_elapsed
+    for field in (
+        "ticket_fit", "ticket_min_text_size", "ticket_max_text_size", "ticket_header_size", "ticket_inline_mods",
+        "ticket_order", "ticket_order_list", "ticket_group_headers", "ticket_no_course",
+    ):
+        if field in sent:
+            setattr(printer, field, getattr(body, field))
 
 
 def create_printer(db: Session, shop: Shop, body: PrinterIn) -> KitchenPrinter:
@@ -1044,15 +1107,15 @@ def product_state(
 # ── Printing settings (till parameters, by shop → point of sale → till) ────────
 
 
-def _option_parameters(db: Session) -> Dict[str, TillParameter]:
+def _option_parameters(db: Session, keys: Sequence[str] = SETTING_KEYS) -> Dict[str, TillParameter]:
     from app.services.till_parameters import ensure_builtin_parameters
 
     ensure_builtin_parameters(db)
-    rows = db.query(TillParameter).filter(TillParameter.key.in_(SETTING_KEYS)).all()
+    rows = db.query(TillParameter).filter(TillParameter.key.in_(list(keys))).all()
     return {row.key: row for row in rows}
 
 
-def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
+def options_out(db: Session, shop: Shop, keys: Sequence[str] = SETTING_KEYS) -> Dict[str, Any]:
     """
     The printing settings as this page edits them: each parameter's definition, what the
     shop inherits from above it (`inherited`: the company's value, else the default), and
@@ -1062,7 +1125,7 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
     """
     from app.services.till_parameters import DEVICE_DEFAULT_SOURCE, device_default
 
-    parameters = _option_parameters(db)
+    parameters = _option_parameters(db, keys)
     by_id = {p.id: key for key, p in parameters.items()}
     machines = shop_machines(db, shop.id)
     scope_ids = [shop.id] + [a.id for a in shop_areas(db, shop.id)] + [m.id for m in machines]
@@ -1084,7 +1147,7 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
             continue
         levels[row.scope_type].setdefault(str(row.scope_id), {})[by_id[row.parameter_id]] = row.value
     company = levels["company"].get(str(shop.company_id), {}) if shop.company_id is not None else {}
-    ordered = [parameters[key] for key in SETTING_KEYS if key in parameters]
+    ordered = [parameters[key] for key in keys if key in parameters]
     shop_values = levels["shop"].get(str(shop.id), {})
     # A device's own default in place of the parameter's ("פתיחת מגירה" on a till with a drawer port).
     device_defaults: Dict[str, Dict[str, Any]] = {}
@@ -1114,6 +1177,7 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
                 "description": p.description,
                 "valueType": p.value_type,
                 "enumOptions": p.enum_options,
+                "enumLabels": _enum_labels(p.key),
                 "defaultValue": p.default_value,
             }
             for p in ordered
@@ -1131,7 +1195,13 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
     }
 
 
-def _wanted_settings(body: KitchenOptionsIn) -> Dict[str, Any]:
+def _enum_labels(key: str) -> Optional[Dict[str, str]]:
+    from app.services.till_parameters import enum_labels
+
+    return enum_labels(key)
+
+
+def _wanted_settings(body: KitchenOptionsIn, keys: Sequence[str] = SETTING_KEYS) -> Dict[str, Any]:
     """`key → value or None (remove)` for what the body sets; unknown keys are refused."""
     sent = body.model_fields_set
     wanted: Dict[str, Any] = {}
@@ -1140,14 +1210,16 @@ def _wanted_settings(body: KitchenOptionsIn) -> Dict[str, Any]:
     if "kitchen_tickets_on_till" in sent:
         wanted[ON_TILL_KEY] = body.kitchen_tickets_on_till
     for key, value in (body.values or {}).items():
-        if key not in SETTING_KEYS:
+        if key not in keys:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"unknown_setting:{key}")
         wanted[key] = value
     return wanted
 
 
-def set_options(db: Session, shop: Shop, body: KitchenOptionsIn) -> List[NotifyTarget]:
-    """Upsert / remove printing settings at one level of the shop; the tills to tell."""
+def set_options(
+    db: Session, shop: Shop, body: KitchenOptionsIn, keys: Sequence[str] = SETTING_KEYS
+) -> List[NotifyTarget]:
+    """Upsert / remove printing settings (`keys`) at one level of the shop; the tills to tell."""
     if body.scope_type == "shop":
         if str(body.scope_id) != str(shop.id):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="scope_not_in_shop")
@@ -1165,18 +1237,22 @@ def set_options(db: Session, shop: Shop, body: KitchenOptionsIn) -> List[NotifyT
 
     from app.services.till_parameters import TillParameterValueError, validate_value
 
-    parameters = _option_parameters(db)
-    wanted = _wanted_settings(body)
+    parameters = _option_parameters(db, keys)
+    wanted = _wanted_settings(body, keys)
+    from app.services.till_parameters import validate_keyed_value
+
     for key, value in list(wanted.items()):
         if value is None or key not in parameters:
             continue
         parameter = parameters[key]
         try:
-            wanted[key] = validate_value(parameter.value_type, value, parameter.enum_options)
+            wanted[key] = validate_keyed_value(key, validate_value(parameter.value_type, value, parameter.enum_options))
         except TillParameterValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid_value:{key}: {exc}"
             ) from exc
+    # "עיצוב בון": a design named here must be one this shop may use.
+    check_parameter_design(db, shop, wanted.get("kitchenTicketDesign"))
     now = _now()
     for key, value in wanted.items():
         if key not in parameters:
@@ -1291,6 +1367,9 @@ def printer_for_till(
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
+        # "עיצוב בון": the printer's own choices (null = by the till parameters); `ticketStyle`, the
+        # whole look the till draws by, is added by `sync_payload` (a receipt printer's is null).
+        **printer_ticket_fields(printer),
     }
 
 
@@ -1494,6 +1573,13 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
             if str(printer.id) not in listed:
                 printers.append(printer_for_till(printer, machine, False, serves, hosts))
 
+    # "עיצוב בון": each kitchen printer's whole look on this till (kitchen_ticket_designs.styles_for).
+    by_id = {str(p.id): p for p in all_printers}
+    kitchen_listed = [by_id[p["id"]] for p in printers if p["id"] in by_id and is_kitchen(by_id[p["id"]])]
+    styles = styles_for(db, machine, kitchen_listed)
+    for p in printers:
+        p["ticketStyle"] = styles.get(p["id"])
+
     category_routes: Dict[str, List[str]] = {}
     product_routes: Dict[str, List[str]] = {}
     if machine.shop_id is not None:
@@ -1625,8 +1711,13 @@ def job_out(job: KitchenPrintJob, machines: Dict[uuid.UUID, POSMachine] | None =
     }
 
 
-def _job_printer_block(printer: Optional[KitchenPrinter]) -> Optional[Dict[str, Any]]:
-    """How the host reaches the printer, so it can print a job for a printer it never pulled."""
+def _job_printer_block(
+    printer: Optional[KitchenPrinter], ticket_style: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    How the host reaches the printer, so it can print a job for a printer it never pulled — and
+    its `ticketStyle` on that host ("עיצוב בון").
+    """
     if printer is None:
         return None
     reach = printer.host_connection if printer.connection_type in HOSTED_TYPES else printer.connection_type
@@ -1644,6 +1735,7 @@ def _job_printer_block(printer: Optional[KitchenPrinter]) -> Optional[Dict[str, 
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
+        "ticketStyle": ticket_style,
     }
 
 
@@ -1710,10 +1802,17 @@ def create_job(db: Session, machine: POSMachine, body: PrintJobIn) -> Tuple[Kitc
     return job, True
 
 
-def create_test_jobs(db: Session, user: User, printer: KitchenPrinter) -> List[KitchenPrintJob]:
+def create_test_jobs(
+    db: Session, user: User, printer: KitchenPrinter, design: Optional[TestPrintIn] = None
+) -> List[KitchenPrintJob]:
     """
     A test ticket for each till that would print on `printer`: its host for a cloud
     printer, otherwise every active till it applies to.
+
+    `design` ("הדפסת ניסיון בעיצוב הזה", P:/specs/kitchen-ticket-designs.md §4, §8ד): the shared
+    sample ticket instead, marked "הדפסת ניסיון — לא להכנה", in the look the dashboard shows — saved
+    or not — resolved for each printing till (`style` on the ticket, `ticketStyle` on the job). A
+    till that predates it prints the sample in its own look, the test band at its head.
     """
     served_by = print_host_of_shop(db, printer.shop_id) if is_served(printer) else None
     if printer.connection_type in HOSTED_TYPES:
@@ -1733,6 +1832,23 @@ def create_test_jobs(db: Session, user: User, printer: KitchenPrinter) -> List[K
     who = (user.username or user.email or "").strip() or None
     jobs = []
     for till in targets:
+        payload: Dict[str, Any] = {
+            "source": "test",
+            "tableName": None,
+            "zoneName": None,
+            "guests": None,
+            "waiterName": who,
+            "createdAt": now.isoformat(),
+            "isAddition": False,
+            "lines": [],
+            "orderRef": None,
+            "sourceName": machine_label(till),
+        }
+        if design is not None:
+            from app.services import kitchen_ticket_style as KTS
+
+            payload = KTS.test_print_ticket(now, waiter=who, till=machine_label(till))
+            payload["style"] = test_print_style(db, till, printer, design)
         job = KitchenPrintJob(
             id=uuid.uuid4(),
             tenant_id=printer.tenant_id,
@@ -1744,18 +1860,7 @@ def create_test_jobs(db: Session, user: User, printer: KitchenPrinter) -> List[K
             source_machine_id=None,
             created_by_user_id=user.id,
             status="pending",
-            payload={
-                "source": "test",
-                "tableName": None,
-                "zoneName": None,
-                "guests": None,
-                "waiterName": who,
-                "createdAt": now.isoformat(),
-                "isAddition": False,
-                "lines": [],
-                "orderRef": None,
-                "sourceName": machine_label(till),
-            },
+            payload=payload,
             created_at=now,
             expires_at=now + JOB_TTL,
         )
@@ -1763,6 +1868,52 @@ def create_test_jobs(db: Session, user: User, printer: KitchenPrinter) -> List[K
         jobs.append(job)
     db.flush()
     return jobs
+
+
+class _DraftPrinter:
+    """A printer's "עיצוב בון" fields as the dashboard has them now, unsaved (a test print's)."""
+
+    def __init__(self, printer: KitchenPrinter):
+        self.id = printer.id
+        self.shop_id = printer.shop_id
+        for field in PRINTER_TICKET_FIELDS:
+            setattr(self, field, getattr(printer, field))
+
+
+def test_print_style(db: Session, till: POSMachine, printer: KitchenPrinter, design: TestPrintIn) -> Dict[str, Any]:
+    """
+    The look of a design test print on `till`: the printer as the dashboard has it now (its unsaved
+    choices laid over its saved ones), or a design being edited (`template` / `overrides`, with
+    `ticketDesignId` for its name and, without `template`, its template).
+    """
+    from app.models.printers import KitchenTicketDesign
+    from app.services import kitchen_ticket_designs as KD
+
+    shop = db.get(Shop, printer.shop_id)
+    sent = design.model_fields_set
+    draft = _DraftPrinter(printer)
+    for field in PRINTER_TICKET_FIELDS:
+        if field in sent:
+            setattr(draft, field, getattr(design, field))
+    if "ticket_design" in sent and design.ticket_design is not None and "ticket_design_id" not in sent:
+        draft.ticket_design_id = None
+    if "ticket_design_id" in sent and design.ticket_design_id is not None and "ticket_design" not in sent:
+        draft.ticket_design = None
+    named = None
+    if draft.ticket_design_id is not None:
+        check_printer_design(db, shop, draft.ticket_design_id)
+        named = db.query(KitchenTicketDesign).filter(KitchenTicketDesign.id == draft.ticket_design_id).first()
+    settings = TillTicketSettings(db, till)
+    if design.template is not None or design.overrides is not None:
+        overrides = KD.clean_overrides_or_422(design.overrides) if design.overrides is not None else None
+        template = design.template or (named.template if named is not None else None)
+        if named is not None and overrides is None:
+            overrides = KD.stored_overrides(named)
+        style = settings.style(draft, template=template or KD.S.DEFAULT_TEMPLATE, overrides=overrides)
+        if named is not None:
+            style["designId"], style["designName"] = str(named.id), named.name
+        return style
+    return settings.style(draft)
 
 
 def test_jobs(db: Session, printer: KitchenPrinter) -> List[KitchenPrintJob]:
@@ -1835,6 +1986,8 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
     )
     expire_jobs(db, rows, now)
     printers = {}
+    styles: Dict[Any, Optional[Dict[str, Any]]] = {}
+    settings: Optional[TillTicketSettings] = None
     out: List[Dict[str, Any]] = []
     for job in rows:
         if len(out) >= PENDING_BATCH:
@@ -1848,12 +2001,18 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
         job.deliveries = (job.deliveries or 0) + 1
         if job.printer_id is not None and job.printer_id not in printers:
             printers[job.printer_id] = db.query(KitchenPrinter).filter(KitchenPrinter.id == job.printer_id).first()
+            # "עיצוב בון": the printer's look on this host, for a host that never pulled the printer.
+            if printers[job.printer_id] is not None and is_kitchen(printers[job.printer_id]):
+                settings = settings or TillTicketSettings(db, machine)
+                styles[job.printer_id] = settings.style(printers[job.printer_id])
         out.append({
             "id": str(job.id),
             "kind": job.kind,
             "printerId": str(job.printer_id) if job.printer_id else None,
-            "printer": _job_printer_block(printers.get(job.printer_id)),
+            "printer": _job_printer_block(printers.get(job.printer_id), styles.get(job.printer_id)),
             "ticket": job.payload,
+            # A design test print: the look it prints in, over the printer's (the ticket is the sample).
+            "ticketStyle": (job.payload or {}).get("style") if job.kind == "test" else None,
             "createdAt": _iso(job.created_at),
             "expiresAt": _iso(job.expires_at),
             # Moved here from a print host that went silent holding it: maybe on paper there already.

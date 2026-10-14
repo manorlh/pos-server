@@ -335,6 +335,11 @@ GET /kitchen-stations -> printers|kds:view
 POST /kitchen-stations -> printers|kds:edit
 DELETE /kitchen-stations/{station_id} -> printers|kds:edit
 PUT /kitchen-stations/{station_id} -> printers|kds:edit
+GET /kitchen-ticket-designs -> printers:view
+POST /kitchen-ticket-designs -> printers:edit
+GET /kitchen-ticket-designs/catalog -> printers:view
+DELETE /kitchen-ticket-designs/{design_id} -> printers:edit
+PUT /kitchen-ticket-designs/{design_id} -> printers:edit
 GET /machine-groups -> devices|products:view
 POST /machine-groups -> devices|products:edit
 DELETE /machine-groups/{group_id} -> devices|products:edit
@@ -714,6 +719,7 @@ PUT /shops/{shop_id}/pos-users/{pos_user_id}/till-role -> pos_users:edit
 PUT /shops/{shop_id}/print-host -> printers:edit
 GET /shops/{shop_id}/print-redirects -> printers:view
 PUT /shops/{shop_id}/printer-options -> printers:edit
+PUT /shops/{shop_id}/printer-options/ticket -> printers:edit
 GET /shops/{shop_id}/printer-routing -> printers:view
 PUT /shops/{shop_id}/printer-routing/categories -> products|printers:edit
 GET /shops/{shop_id}/printer-routing/categories/{category_id} -> products|printers:view
