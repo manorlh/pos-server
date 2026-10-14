@@ -6,6 +6,7 @@
  * Pure: the Hebrew words come in through `words`, so node tests need no translator.
  */
 import { selectSheetColumns, type ExcelCellKind, type ExcelSheet, type ExcelValue } from './excelExport';
+import type { ReportChart, ReportKpi } from './designedReport';
 
 export interface ReportFilterLine {
   /** "קופאי", "אמצעי תשלום"… */
@@ -124,6 +125,17 @@ export interface ReportPdfBody {
   orientation?: 'portrait' | 'landscape' | 'auto';
   companyId?: string;
   fileName?: string;
+  // The designed report (P:\specs\reports-designed-pdf.md §6), all optional (an older server ignores them):
+  /** The server's `reportInsights.<type>`; absent: a general designed report. */
+  reportType?: string;
+  kpis?: ReportKpi[];
+  chart?: ReportChart;
+  /** The previous period's rows, in `columns`' order (the insights' "what changed"). */
+  previousRows?: (string | number | null)[][];
+  /** Column keys of the subtotals, outermost first (shop → point of sale → till). */
+  groupBy?: string[];
+  /** What the KPIs are compared with ("מול 01.10–07.10"). */
+  compareLabel?: string;
 }
 
 /** A report table as the exports see it: keyed columns, plain values, a totals row. */

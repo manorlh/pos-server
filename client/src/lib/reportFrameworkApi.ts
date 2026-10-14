@@ -16,6 +16,7 @@ import {
   type ColumnPrefs,
   type ReportColumnPrefsState,
 } from './reportColumns';
+import type { ReportInsight } from './designedReport';
 import type { ReportPdfBody } from './reportExport';
 
 export type { ReportColumnPrefsState, ReportPdfBody };
@@ -168,5 +169,24 @@ export async function fetchReportPdf(body: ReportPdfBody): Promise<Blob | null> 
       }
     }
     throw err;
+  }
+}
+
+// ── Insights (P:\specs\reports-designed-pdf.md §1.3, §6) ────────────────────────
+
+/**
+ * The server's insight sentences for a report (the same rules the designed PDF prints), for
+ * the Excel's "סיכום ותובנות". A server without them, or any failure: none — the export goes on.
+ */
+export async function fetchReportInsights(body: ReportPdfBody): Promise<ReportInsight[]> {
+  try {
+    const { data } = await api.post<{ insights?: unknown }>('/reports/insights', body);
+    const list = Array.isArray(data?.insights) ? data.insights : [];
+    return list
+      .map((x) => (typeof x === 'string' ? { kind: 'tip', text: x } : (x as Partial<ReportInsight>)))
+      .filter((x): x is ReportInsight => !!x && typeof x.text === 'string' && x.text.trim() !== '')
+      .map((x) => ({ kind: typeof x.kind === 'string' ? x.kind : 'tip', text: x.text }));
+  } catch {
+    return [];
   }
 }

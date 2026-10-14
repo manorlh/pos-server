@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ReportContext } from './report-context';
-import { ReportExportBar } from './report-export-bar';
+import { ReportExportBar, type ReportExportBarProps } from './report-export-bar';
 import { ReportFilterBar, type ReportFilterBarProps } from './report-filter-bar';
 import { useFilterDescription } from './use-filter-options';
 import type { ReportFiltersController } from './use-report-filters';
@@ -75,6 +75,19 @@ export interface ReportExportConfig {
   filterLines?: ReportFilterLine[];
   /** No rows yet: the buttons wait. */
   disabled?: boolean;
+  /**
+   * The designed PDF (P:\specs\reports-designed-pdf.md §6): the server's report type, the KPI
+   * cards, the chart (or `chartFrom` the main table), the subtotal grouping and the previous
+   * period (fetched on the click). See `ReportExportBarProps`.
+   */
+  reportType?: ReportExportBarProps['reportType'];
+  kpis?: ReportExportBarProps['kpis'];
+  chart?: ReportExportBarProps['chart'];
+  chartFrom?: ReportExportBarProps['chartFrom'];
+  groupBy?: ReportExportBarProps['groupBy'];
+  previous?: ReportExportBarProps['previous'];
+  /** The page's own CSV instead of the main table's. */
+  csv?: ReportExportBarProps['csv'];
 }
 
 export interface ReportPageProps {
@@ -239,6 +252,13 @@ export function ReportPage({
                   companyName={companyName}
                   excelOnly={exportConfig.excelOnly}
                   disabled={exportConfig.disabled}
+                  reportType={exportConfig.reportType}
+                  kpis={exportConfig.kpis}
+                  chart={exportConfig.chart}
+                  chartFrom={exportConfig.chartFrom}
+                  groupBy={exportConfig.groupBy}
+                  previous={exportConfig.previous}
+                  csv={exportConfig.csv}
                 />
               ) : null}
               {children}
