@@ -525,26 +525,58 @@ def test_the_design_card_writes_the_same_parameter(w):
     assert [c.action for c in _changes(w)][-3:] == ["set", "set", "clear"]
 
 
-def test_the_design_card_has_the_designs_access(w):
-    # A shop manager: their shop, its points of sale and tills — not another shop, not the company.
-    assert _design_get(w, "shop", w.shop.id, user=w.manager)["canEdit"] is True
-    for level, ident in (("shop", w.shop.id), ("area", w.area.id), ("machine", w.counter_till.id)):
-        assert _design_put(w, level, ident, ["catalog_admin"], user=w.manager)["own"] == ["catalog_admin"]
-    for level, ident in (("shop", w.other_shop.id), ("machine", w.other_till.id), ("company", w.company.id)):
-        assert _refused(_design_put, w, level, ident, ["till_z"], user=w.manager).status_code == 403
-    assert _refused(_design_get, w, "shop", w.shop.id, user=w.north_manager).status_code == 403
-    # A company manager: the company tree, not another company's.
-    assert _design_put(w, "company", w.company.id, ["support"], user=w.company_manager)["own"] == ["support"]
+def test_the_design_card_is_written_by_a_company_manager_and_up_only(w):
+    # A company manager: any level of the company tree, not another company's.
+    for level, ident in (("company", w.company.id), ("shop", w.shop.id), ("area", w.area.id), ("machine", w.counter_till.id)):
+        assert _design_put(w, level, ident, ["catalog_admin"], user=w.company_manager)["own"] == ["catalog_admin"]
+    assert _design_get(w, "machine", w.counter_till.id, user=w.company_manager)["canEdit"] is True
     assert _refused(_design_put, w, "company", w.company.id, ["lock"], user=w.far_manager).status_code == 403
+    assert _refused(_design_put, w, "shop", w.shop.id, ["lock"], user=w.far_manager).status_code == 403
+
+    # A shop manager edits the rest of the design, but sees this card read-only — at every level of
+    # their shop (hiding Z, the shift close or the settings is not theirs to decide).
+    for level, ident in (("shop", w.shop.id), ("area", w.area.id), ("machine", w.counter_till.id)):
+        view = _design_get(w, level, ident, user=w.manager)
+        assert view["canEdit"] is False and view["own"] == ["catalog_admin"]
+        assert _refused(_design_put, w, level, ident, ["till_z"], user=w.manager).status_code == 403
+        assert _refused(_design_put, w, level, ident, None, user=w.manager).status_code == 403
+    assert _refused(_design_put, w, "machine", w.other_till.id, ["till_z"], user=w.manager).status_code == 403
+    assert _refused(_design_get, w, "shop", w.shop.id, user=w.north_manager).status_code == 403
+    # …while the design itself stays theirs (PUT /till-design/settings).
+    from app.routers import till_design as D
+
+    D.put_settings(
+        body=D.TillDesignSettingsIn(overrides={}), background_tasks=BackgroundTasks(), level="shop",
+        scope_id=w.shop.id, current_user=w.manager, active_tenant_id=w.tenant.id, db=w.db,
+    )
+
     # A cashier: neither reads nor writes the design.
     assert _refused(_design_get, w, "shop", w.shop.id, user=w.cashier).status_code == 403
     assert _refused(_design_put, w, "shop", w.shop.id, ["lock"], user=w.cashier).status_code == 403
+    # What they could not write is not there.
     assert _stored(w) == {
+        ("company", str(w.company.id)): "catalog_admin",
         ("shop", str(w.shop.id)): "catalog_admin",
         ("area", str(w.area.id)): "catalog_admin",
         ("machine", str(w.counter_till.id)): "catalog_admin",
-        ("company", str(w.company.id)): "support",
     }
+    assert w.notified and all(reason == TP.NOTIFY_REASON for _, reason in w.notified)
+
+
+def test_both_cards_have_the_same_writers():
+    assert set(M.SETTINGS_WRITERS) == {UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER}
+    assert not hasattr(M, "DESIGN_WRITERS")
+
+
+def test_a_distributor_writes_its_own_tills_on_both_cards(w):
+    distributor = _user(w, "dist", UserRole.DISTRIBUTOR)
+    w.bar_till.distributor_id = distributor.id
+    w.db.commit()
+    assert _device_put(w, "machine", w.bar_till.id, ["lock"], user=distributor)["own"] == ["lock"]
+    assert _design_get(w, "machine", w.bar_till.id, user=distributor)["canEdit"] is True
+    assert _design_put(w, "machine", w.bar_till.id, ["support"], user=distributor)["own"] == ["support"]
+    # Not a till of another distributor's.
+    assert _refused(_design_put, w, "machine", w.counter_till.id, ["lock"], user=distributor).status_code == 403
 
 
 def test_the_design_card_refuses_what_is_not_a_key_list(w):
