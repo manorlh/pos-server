@@ -87,6 +87,9 @@ def _row(cashier_id: uuid.UUID, tip: str, sales: str, payment: str = "cash") -> 
     tx.total_amount = Decimal(sales)
     tx.tip_payment_method = payment
     tx.payment_method = payment
+    # A sale: the report subtracts a credit note's tip and total (table-restore-payments §3).
+    tx.document_type = 320
+    tx.refund_of_transaction_id = None
     return tx
 
 

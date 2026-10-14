@@ -66,6 +66,7 @@ import {
   uniqueElements,
 } from '@/lib/tableSketch';
 import { policyBadge } from '@/lib/tablePolicy';
+import { tableDisplay } from '@/lib/tableRestore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -907,18 +908,18 @@ export function MapEditor({
                     />
                     <text
                       x={cx}
-                      y={tb.name && p.height > fs * 2.2 ? cy - fs * 0.25 : cy}
+                      y={tableDisplay(tb).sub && p.height > fs * 2.2 ? cy - fs * 0.25 : cy}
                       textAnchor="middle"
                       dominantBaseline="central"
-                      fontSize={fs}
+                      fontSize={tb.labelOnly ? fs * 0.7 : fs}
                       fontWeight={700}
                       fill={TABLE_LOOK.number}
                     >
-                      {tb.number}
+                      {tableDisplay(tb).main}
                     </text>
-                    {tb.name && p.height > fs * 2.2 ? (
+                    {tableDisplay(tb).sub && p.height > fs * 2.2 ? (
                       <text x={cx} y={cy + fs * 0.75} textAnchor="middle" dominantBaseline="central" fontSize={fs * 0.42} fill="#78716c">
-                        {tb.name}
+                        {tableDisplay(tb).sub}
                       </text>
                     ) : null}
                   </g>

@@ -173,9 +173,35 @@ class ReservationStatusIn(PosUserRef):
 
 
 class TableAdhocIn(PosUserRef):
-    """"פתיחת שולחן לפי מספר": the table of this number, made when it is on no map."""
+    """
+    "פתיחת שולחן לפי מספר": the table of this number, made when it is on no map.
 
-    number: int = Field(..., ge=1, le=9999)
+    "שחזור שולחן" onto a taken number (P:/specs/table-restore-payments.md §1): with `name` (the label,
+    "ש-12") and where it goes — `nearTableId` (beside the original, in its zone) or `zoneId` — the
+    table is made there, shown by its label alone (`labelOnly`), on TABLE_RESTORE's authority
+    (`X-Pos-User-Id`). `number` may then be left out: the cloud picks one (9012 for 12, …).
+    """
+
+    number: Optional[int] = Field(None, ge=1, le=9999)
+    name: Optional[str] = Field(None, max_length=60)
+    zone_id: Optional[uuid.UUID] = Field(None, alias="zoneId")
+    near_table_id: Optional[uuid.UUID] = Field(None, alias="nearTableId")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, 60)
+
+    @model_validator(mode="after")
+    def _number_or_name(self):
+        if self.number is None and not self.name:
+            raise ValueError("number or name is required")
+        return self
+
+    @property
+    def labelled(self) -> bool:
+        """A restored table's label or place: the restore's request, not "a table by number"."""
+        return bool(self.name) or self.zone_id is not None or self.near_table_id is not None
 
 
 class TableReleaseIn(PosUserRef):

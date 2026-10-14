@@ -31,6 +31,7 @@ import {
   type ZoneLayout,
 } from '@/lib/tablesApi';
 import { defaultTableSize } from '@/lib/tableSketch';
+import { tableDisplay } from '@/lib/tableRestore';
 import { draftOf, policyBadge, policyBody, validatePolicyDraft, type PolicyDraft } from '@/lib/tablePolicy';
 import { PolicyFields, TableTypesDialog } from '@/components/dashboard/tables/table-types';
 import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
@@ -322,8 +323,10 @@ export function TablesEditor({ shopId }: { shopId: string }) {
                   onClick={() => openTable('edit', tb)}
                   className="aspect-square rounded-lg border bg-card hover:bg-accent flex flex-col items-center justify-center"
                 >
-                  <span className="text-xl font-bold">{tb.number}</span>
-                  {tb.name ? <span className="text-xs text-muted-foreground truncate max-w-full px-1">{tb.name}</span> : null}
+                  <span className="text-xl font-bold">{tableDisplay(tb).main}</span>
+                  {tableDisplay(tb).sub ? (
+                    <span className="text-xs text-muted-foreground truncate max-w-full px-1">{tableDisplay(tb).sub}</span>
+                  ) : null}
                   <span className="text-xs text-muted-foreground">{t('seatsShort', { seats: tb.seats })}</span>
                   <GridBadge badge={policyBadge(tb.policy)} kindLabel={(k) => t(`policy.badge.${k}`)} />
                 </button>

@@ -147,3 +147,18 @@ export function changedValues(
 export function ownKeys(own: Record<string, unknown>): string[] {
   return RESTORE_KEYS.filter((k) => own[k] !== undefined && own[k] !== null);
 }
+
+/**
+ * How a table reads on the floor: its number, big, and its name under it — or, for a restored table
+ * made beside its taken original (`labelOnly`, pos-server app/services/tables.py), its label alone
+ * ("ש-12"), never "9012 · ש-12". `text` is the one-line form ("12 · VIP", "ש-12").
+ */
+export function tableDisplay(t: { number: number; name?: string | null; labelOnly?: boolean | null }): {
+  main: string;
+  sub: string | null;
+  text: string;
+} {
+  const name = (t.name ?? '').trim();
+  if (t.labelOnly && name) return { main: name, sub: null, text: name };
+  return { main: String(t.number), sub: name || null, text: name ? `${t.number} · ${name}` : String(t.number) };
+}

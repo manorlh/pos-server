@@ -17,6 +17,7 @@ from app.models.transaction import Transaction
 from app.schemas.tips import TipCashierRow, TipsReportResponse
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.settings_merge import merge_all_settings_layers
+from app.services.tenders import is_refund_document
 
 
 def _decimal(v) -> Decimal:
@@ -75,8 +76,14 @@ def build_tips_report(
 
     for tx in rows:
         cid = tx.cashier_id or "__unknown__"
-        tip = _decimal(tx.tip_amount)
-        sales = _decimal(tx.total_amount)
+        # A credit note takes its tip back with its payment (a table's payment reversed,
+        # P:/specs/table-restore-payments.md §3) and its sale off the sales — negative, as the Z
+        # counts refunds (`shift_totals`, `z_sections`); a sale as before.
+        sign = Decimal("-1") if is_refund_document(
+            document_type=tx.document_type, refund_of_transaction_id=tx.refund_of_transaction_id,
+        ) else Decimal("1")
+        tip = sign * abs(_decimal(tx.tip_amount))
+        sales = sign * abs(_decimal(tx.total_amount))
         by_cashier[cid]["tips_collected"] += tip
         by_cashier[cid]["sales_total"] += sales
         by_cashier[cid]["transaction_count"] += 1
@@ -85,7 +92,7 @@ def build_tips_report(
             by_cashier[cid]["cash_tips"] += tip
         elif method == "card":
             by_cashier[cid]["card_tips"] += tip
-        elif tip > 0:
+        elif tip != 0:
             # Fallback: attribute to payment method of sale
             if (tx.payment_method or "").lower() == "cash":
                 by_cashier[cid]["cash_tips"] += tip

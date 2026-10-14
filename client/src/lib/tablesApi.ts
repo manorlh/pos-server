@@ -42,6 +42,11 @@ export interface DiningTable {
   rotation: number;
   /** "לניקוי": paid, and not marked clean since (ISO); null when laid. */
   cleaningSince?: string | null;
+  /**
+   * A restored table made beside its taken original ("שחזור שולחן", P:/specs/table-restore-payments.md §1):
+   * shown by its name alone ("ש-12") — its number is the cloud's own (lib/tableRestore.ts `tableDisplay`).
+   */
+  labelOnly?: boolean;
   /** "סוג שולחן" (lib/tablePolicy.ts): its own kind and discount, or a type — and what the till applies. */
   kind?: TableKind;
   discountPercent?: number | null;
