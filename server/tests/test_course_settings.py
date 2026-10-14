@@ -104,7 +104,8 @@ class TestParameters:
         courses = [p for p in got["parameters"] if p["group"] == "courses"]
         assert [p["key"] for p in courses] == ["autoFire", "autoFireMinutesOverride"]
         assert courses[0]["enumLabels"]["after_minutes"] == "אחרי מספר דקות"
-        assert got["groups"][-1] == {"key": "courses", "label": "שלבי הגשה: הוצאה אוטומטית"}
+        # Then "מתי עיקריות?", scheduled items and the hints (P:/specs/fire-restaurant-flow.md §8.1).
+        assert got["groups"][-2] == {"key": "courses", "label": "שלבי הגשה: הוצאה אוטומטית"}
         out = put_level(w, "shop", w.shop.id, {"autoFire": "after_minutes", "autoFireMinutesOverride": 5})
         assert out["own"] == {"autoFire": "after_minutes", "autoFireMinutesOverride": 5}
 

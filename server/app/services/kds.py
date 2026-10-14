@@ -1308,9 +1308,6 @@ def task_out(task: KitchenTask) -> Dict[str, Any]:
         "preparedQty": _num(task.prepared_qty),
         "activeQty": _num(active_qty(task)),
         "release": task.release_state,
-        # Held until its own time (fire-restaurant-flow.md §8.4): drawn greyed, "מתוזמן 20:30".
-        "scheduledAt": _iso(getattr(task, "scheduled_at", None)),
-        "scheduledNote": getattr(task, "scheduled_note", None),
         "state": task.prep_state,
         "fallbackPrinted": bool(task.fallback_printed),
         "fallbackResolved": task.fallback_resolved_at is not None,
@@ -1321,7 +1318,17 @@ def task_out(task: KitchenTask) -> Dict[str, Any]:
         "releasedAt": _iso(task.released_at),
         "startedAt": _iso(task.started_at),
         "readyAt": _iso(task.ready_at),
+        # Held until its own time (fire-restaurant-flow.md §8.4): drawn greyed, "מתוזמן 20:30". Only when set —
+        # every other task (and the shared golden boards) as before.
+        **_scheduled_out(task),
     }
+
+
+def _scheduled_out(task: KitchenTask) -> Dict[str, Any]:
+    at, note = getattr(task, "scheduled_at", None), getattr(task, "scheduled_note", None)
+    if at is None and not note:
+        return {}
+    return {"scheduledAt": _iso(at), "scheduledNote": note}
 
 
 def change_out(change: KitchenChange) -> Dict[str, Any]:

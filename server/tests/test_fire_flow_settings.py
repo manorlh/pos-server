@@ -182,3 +182,43 @@ def test_the_migration_is_the_single_head_on_the_release():
     assert "c5e8a2f19d47" in {r.revision for r in script.walk_revisions("base", heads[0])}
     # On release 14.10d's merge (4ff6c2ab6d7c), nothing else.
     assert script.get_revision("c5e8a2f19d47").down_revision == "4ff6c2ab6d7c"
+
+
+def _render(*args) -> str:
+    """`alembic upgrade --sql` from this checkout's own path — `absolute()`, never `resolve()` (a subst drive such
+    as P: resolves to the long path, where Windows cannot open the revisions)."""
+    import io
+    import logging
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    here = Path(__file__).absolute().parents[1]
+    buf = io.StringIO()
+    cfg = Config(str(here / "alembic.ini"), output_buffer=buf)
+    cfg.set_main_option("script_location", str(here / "alembic"))
+    root = logging.getLogger()
+    saved = {n: lg.disabled for n, lg in logging.Logger.manager.loggerDict.items() if isinstance(lg, logging.Logger)}
+    handlers, level = list(root.handlers), root.level
+    try:
+        command.upgrade(cfg, *args, sql=True)
+    finally:
+        for n, disabled in saved.items():
+            logging.getLogger(n).disabled = disabled
+        root.handlers[:] = handlers
+        root.setLevel(level)
+    return " ".join(buf.getvalue().split())
+
+
+def test_the_migration_adds_nullable_columns_only():
+    """Offline (from the short path P:): five nullable columns and the two on kds_tasks / pos_users, nothing else."""
+    sql = _render("4ff6c2ab6d7c:c5e8a2f19d47")
+    for table in ("products", "categories"):
+        assert f"ALTER TABLE {table} ADD COLUMN schedule_after_minutes INTEGER" in sql
+        assert f"ALTER TABLE {table} ADD COLUMN schedule_after_course_ready UUID" in sql
+    assert "ALTER TABLE kds_tasks ADD COLUMN scheduled_at TIMESTAMP WITH TIME ZONE" in sql
+    assert "ALTER TABLE kds_tasks ADD COLUMN scheduled_note VARCHAR(60)" in sql
+    assert "ALTER TABLE pos_users ADD COLUMN hints_dismissed JSONB" in sql
+    assert "NOT NULL" not in sql.split("4ff6c2ab6d7c", 1)[-1].replace("version_num VARCHAR(32) NOT NULL", "")
+    assert "DROP" not in sql
