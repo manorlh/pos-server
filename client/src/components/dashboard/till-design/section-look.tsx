@@ -15,6 +15,7 @@ import { ACCENT_BRAND, COLOR_MODES, TEXT_DEFAULTS, TEXT_KEYS, TEXT_MAX } from '@
 import { useTillField } from './editor-context';
 import { FieldShell, SectionCard, SegmentField } from './fields';
 import { DEFAULT_ACCENT } from './preview-model';
+import { CategoryDisplayCard } from './section-category-display';
 
 /** A few calm accents (one is picked; the till draws everything else in neutrals). */
 const SWATCHES = ['#007AFF', '#1663D6', '#0E7C66', '#15803D', '#6D28D9', '#B45309', '#BE123C', '#0F172A'];
@@ -106,6 +107,8 @@ export function LookSection() {
         <AccentField />
         <SegmentField path="colors.mode" label={t('mode')} hint={t('modeHint')} options={COLOR_MODES.map((v) => ({ value: v, label: tv(`colorMode.${v}`) }))} />
       </SectionCard>
+      {/* "צבע ותמונה למחלקה": three till parameters, saved on their own (P:/specs/category-color-image.md §2). */}
+      <CategoryDisplayCard />
       <SectionCard title={tt('title')} description={tt('description')} paths={['texts']}>
         <div className="grid gap-4 md:grid-cols-2">
           {TEXT_KEYS.map((k) => (

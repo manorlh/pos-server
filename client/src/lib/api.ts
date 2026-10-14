@@ -354,6 +354,43 @@ export async function reorderCategories(
   return data;
 }
 
+/** What `POST /categories/{id}/image` answers: the category's new picture. */
+export type CategoryImageResult = {
+  id: string;
+  imageUrl: string;
+  /** The picture as uploaded, when the server cut its background out (to put back with a category update). */
+  originalUrl?: string | null;
+  backgroundRemoved?: boolean;
+  processed?: boolean;
+  width?: number;
+  height?: number;
+};
+
+/**
+ * "תמונת מחלקה" (P:/specs/category-color-image.md §4): upload a category's picture — stored like a
+ * product's (background cut unless `keepBackground`, shrunk to the product cap) and set on the category.
+ */
+export async function uploadCategoryImage(
+  categoryId: string,
+  file: File,
+  options: { keepBackground?: boolean } = {},
+): Promise<CategoryImageResult> {
+  validateImageFile(file);
+  const body = new FormData();
+  body.append('file', file);
+  const { data } = await api.post<CategoryImageResult>(`/categories/${categoryId}/image`, body, {
+    params: { keepBackground: options.keepBackground ?? false },
+    // Let the browser set multipart/form-data with its own boundary.
+    headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+/** "הסר תמונה": the category back to no picture. */
+export async function removeCategoryImage(categoryId: string): Promise<void> {
+  await api.delete(`/categories/${categoryId}/image`);
+}
+
 export async function fetchTenantSettings(tenantId: string): Promise<EntitySettingsResponse> {
   const { data } = await api.get<EntitySettingsResponse>(`/tenants/${tenantId}/settings`);
   return data;

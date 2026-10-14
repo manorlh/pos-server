@@ -422,6 +422,9 @@ describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additi
       }
       assert.equal(cfg.payment.paymentChooserSkip, 'auto');
       delete cfg.payment.paymentChooserSkip;
+      // "תמונת מחלקה מהקטלוג" (P:/specs/category-color-image.md §3), added after the baseline: on.
+      assert.equal(cfg.catalog.categoryImagesFromCatalog, true);
+      delete cfg.catalog.categoryImagesFromCatalog;
       assert.deepEqual(cfg, c.resolved);
     });
   }

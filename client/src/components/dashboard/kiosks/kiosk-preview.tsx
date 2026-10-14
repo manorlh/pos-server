@@ -21,6 +21,7 @@ import {
   aspectRatioCss,
   buttonRadius,
   cartPanelShown,
+  categoryRailColor,
   categoryRailImage,
   checkoutStepsNow,
   ctaBox,
@@ -237,6 +238,7 @@ export function KioskPreview({
   config,
   catalog,
   categoryImageUrls,
+  categoryColors = {},
   fonts,
   screen,
   onScreen,
@@ -249,6 +251,8 @@ export function KioskPreview({
   config: KioskConfig;
   catalog: KioskSourceCatalog | null;
   categoryImageUrls: Record<string, string>;
+  /** The catalog's category colours (`categoryRailColor`): the initial of a category with no picture. */
+  categoryColors?: Record<string, string>;
   fonts: KioskFont[];
   screen: PreviewScreen;
   onScreen: (s: PreviewScreen) => void;
@@ -328,9 +332,10 @@ export function KioskPreview({
         id: row.category.id,
         name: row.category.name,
         imageUrl: categoryRailImage(row.category.id, config.catalog, categoryImageUrls),
+        color: categoryRailColor(row.category.id, config.catalog, categoryColors),
         products: row.products.map((x) => ({ ...x.product, soldOut: x.soldOut })),
       })),
-    [view, config.catalog, categoryImageUrls],
+    [view, config.catalog, categoryImageUrls, categoryColors],
   );
   const featured = useMemo(() => view.featured.map((x) => ({ ...x.product, soldOut: x.soldOut })), [view]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);

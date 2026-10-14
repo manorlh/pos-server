@@ -59,6 +59,7 @@ import {
   KIOSK_UI_PRESETS,
   PRESET_THEME_KEYS,
   UI_STYLES,
+  categoryRailColor,
   categoryRailImage,
   dietaryTagsOf,
   messagePlacement,
@@ -677,6 +678,30 @@ describe('preview rules', () => {
     assert.equal(categoryRailImage('b', cat, tillImages), 'https://t/b.png');
     assert.equal(categoryRailImage('c', cat, tillImages), null);
     assert.equal(categoryRailImage('c', { categoryImages: {} }, { c: '' }), null);
+  });
+
+  it('"תמונת מחלקה מהקטלוג" (catalog.categoryImagesFromCatalog): on by default; off — the kiosk\'s own pictures only', () => {
+    assert.equal(KIOSK_DEFAULTS.catalog.categoryImagesFromCatalog, true);
+    const tillImages = { a: 'https://t/a.png', b: 'https://t/b.png' };
+    const on = { categoryImages: { a: ref('https://k/a.png') }, categoryImagesFromCatalog: true };
+    const off = { ...on, categoryImagesFromCatalog: false };
+    assert.equal(categoryRailImage('b', on, tillImages), 'https://t/b.png');
+    assert.equal(categoryRailImage('b', off, tillImages), null);
+    // The kiosk's own picture wins either way.
+    assert.equal(categoryRailImage('a', off, tillImages), 'https://k/a.png');
+    // Only a boolean.
+    const bad = validateKioskConfig({ ...KIOSK_DEFAULTS, catalog: { ...KIOSK_DEFAULTS.catalog, categoryImagesFromCatalog: 'yes' as never } });
+    assert.deepEqual(bad.map((e) => e.path), ['catalog.categoryImagesFromCatalog']);
+  });
+
+  it('colours the initial with the catalog\'s colour, unless the kiosk turned the catalog off', () => {
+    const colors = { a: '#2563eb', b: '#0f0', c: 'blue', d: '' };
+    assert.equal(categoryRailColor('a', {}, colors), '#2563EB');
+    assert.equal(categoryRailColor('b', { categoryImagesFromCatalog: true }, colors), '#00FF00');
+    assert.equal(categoryRailColor('c', {}, colors), null);
+    assert.equal(categoryRailColor('d', {}, colors), null);
+    assert.equal(categoryRailColor('x', {}, colors), null);
+    assert.equal(categoryRailColor('a', { categoryImagesFromCatalog: false }, colors), null);
   });
 
   it('places messages centred: inline on the calm screens, an overlay while ordering, never on pay', () => {

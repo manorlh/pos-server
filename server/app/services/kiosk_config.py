@@ -468,6 +468,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "oneCategory": True,
         # A category's icon from the built-in set, by category id; none — suggested by its name.
         "categoryIconIds": {},
+        # "תמונת מחלקה מהקטלוג" (P:/specs/category-color-image.md §3): a category with no picture in
+        # `categoryImages` shows the catalog's own (`categories.image_url`, the dashboard's category
+        # dialog), and with none there its initial on the catalog's colour (`categories.color`) rather
+        # than the theme's. The kiosk's own pictures always win. Off: the kiosk's own pictures only,
+        # the initial on the theme colour.
+        "categoryImagesFromCatalog": True,
     },
     "messages": [],
     "hours": {
@@ -1331,6 +1337,7 @@ SCHEMA = Obj({
         "featuredProductIds": UList(ID, max_len=FEATURED_MAX, unique=True),
         "oneCategory": Bool(),
         "categoryIconIds": Map(Enum(layouts.category_icon_ids() or ("dine",))),
+        "categoryImagesFromCatalog": Bool(),
     }),
     "messages": UList(MESSAGE, max_len=MESSAGES_MAX),
     "hours": Obj({

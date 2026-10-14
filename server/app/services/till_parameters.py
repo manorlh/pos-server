@@ -1922,6 +1922,14 @@ from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  #
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
 
+# "צבע ותמונה למחלקה" (P:/specs/category-color-image.md §2, app/services/category_display.py): how the
+# order screens show a category's colour and picture — `categoryColors` (off / chip / accent),
+# `categoryImages` (off / bar / landing), `categoryImageSize` (s / m / l). Off, off, m: today's screens.
+# Edited on the parameters page and in "עיצוב קופה" (`/till-design/category-display`).
+from app.services.category_display import PARAMETER_SPECS as _CATEGORY_DISPLAY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CATEGORY_DISPLAY_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1974,6 +1982,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         raise TillParameterValueError(
             f"{REMOTE_CANCEL_TIMEOUT_KEY} must be {REMOTE_CANCEL_TIMEOUT_MIN}–{REMOTE_CANCEL_TIMEOUT_MAX} seconds"
         )
+    # "צבע ותמונה למחלקה": the codes the till knows (off / chip / accent, off / bar / landing, s / m / l).
+    from app.services import category_display
+
+    if key in category_display.CODES and value is not None:
+        try:
+            return category_display.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
     from app.services import table_restore
 

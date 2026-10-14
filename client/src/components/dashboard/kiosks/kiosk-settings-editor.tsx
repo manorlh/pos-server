@@ -35,7 +35,7 @@ import {
 } from '@/lib/kioskConfig';
 import { rebaseLayout, switchLayoutTemplate, type LayoutTemplate } from '@/lib/kioskLayout';
 import {
-  fetchCategoryImageUrls,
+  fetchCatalogCategoryLooks,
   fetchKioskDefaults,
   fetchKioskSettings,
   fetchKioskSourceCatalog,
@@ -199,8 +199,8 @@ function EditorBody({
     retry: false,
   });
   const imagesQuery = useQuery({
-    queryKey: ['kiosk-category-images'],
-    queryFn: fetchCategoryImageUrls,
+    queryKey: ['kiosk-category-looks'],
+    queryFn: fetchCatalogCategoryLooks,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -252,7 +252,7 @@ function EditorBody({
     shopId,
     catalog: catalogQuery.data ?? null,
     catalogLoading: !!catalogMachineId && catalogQuery.isLoading,
-    categoryImageUrls: imagesQuery.data ?? {},
+    categoryImageUrls: imagesQuery.data?.images ?? {},
     errors,
     serverErrors,
     set: (path, value) => {
@@ -425,7 +425,8 @@ function EditorBody({
                 config={draft}
                 previewLang={section === 'texts' ? previewLang : (draft.general.languages?.[0] ?? 'he')}
                 catalog={catalogQuery.data ?? null}
-                categoryImageUrls={imagesQuery.data ?? {}}
+                categoryImageUrls={imagesQuery.data?.images ?? {}}
+                categoryColors={imagesQuery.data?.colors ?? {}}
                 fonts={fonts}
                 screen={screen}
                 onScreen={setScreen}

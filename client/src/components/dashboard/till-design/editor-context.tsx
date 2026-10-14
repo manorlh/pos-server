@@ -23,6 +23,8 @@ import type { TillDesignLevel } from '@/lib/tillDesignApi';
 
 export interface TillEditorValue {
   level: TillDesignLevel;
+  /** The company, shop, point of sale or till being edited (its id). */
+  targetId: string;
   draft: TillDesignConfig;
   inherited: TillDesignConfig;
   canEdit: boolean;

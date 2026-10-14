@@ -101,6 +101,8 @@
     "src/lib/vouchersPageTitle.test.ts",
     "src/lib/categoryTree.ts",
     "src/lib/categoryTree.test.ts",
+    "src/lib/categoryLook.ts",
+    "src/lib/categoryLook.test.ts",
     "src/lib/upsellFilters.ts",
     "src/lib/upsellFilters.test.ts",
     "src/lib/deviceSearch.ts",
