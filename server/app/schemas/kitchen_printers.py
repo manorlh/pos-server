@@ -111,11 +111,16 @@ class PrinterIn(BaseModel):
         """Keep only what the connection type uses, and require what it needs."""
         kind = self.connection_type
         if self.purpose == "receipt":
-            # Printed by the till that sends it, directly: no relay, no "this till's printer".
-            if kind not in ("network", "bluetooth", "usb"):
-                raise ValueError("a receipt printer is reached by network, bluetooth or usb")
+            # Printed by the till that sends it, directly — or by another till ("המדפסת של <קופה>",
+            # P:/specs/bill-print-other-till.md): `cloud`, its host and how the host reaches it.
+            # Never "this till's printer" (that is the till's own receipt setting).
+            if kind not in ("network", "bluetooth", "usb", "cloud"):
+                raise ValueError("a receipt printer is reached by network, bluetooth, usb or through another till (cloud)")
             if kind == "usb" and self.machine_id is None:
                 raise ValueError("a USB printer hangs on one till: machineId is required")
+            if kind == "cloud" and self.cash_drawer:
+                # §5: the drawer never opens remotely — the cash stays at the sending till.
+                raise ValueError("a receipt printer of another till has no cash drawer: the drawer never opens remotely")
         else:
             if kind == "usb":
                 raise ValueError("usb is for receipt printers")
@@ -203,13 +208,81 @@ class TicketIn(BaseModel):
     training: Optional[bool] = None
 
 
+DOCUMENT_TEXT_MAX = 120
+
+
+class DocumentIn(BaseModel):
+    """
+    A bill / receipt printed on another till (P:/specs/bill-print-other-till.md §4): rendered by the
+    sending till at the host's paper width, one colour, compressed; the host prints the image as it is
+    and never reads the document. The reference (`category`, `type`, `number`, `copy`, `title`) is for
+    the messages and "בעיות" only — the document is the sending till's, its number its own (§5).
+    The image's size is checked by app/services/remote_print.py (`413 document_too_large`).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: The `remotePrintDocuments` class it falls in: `bill` (a table's bill, an interim bill),
+    #: `receipt` (receipts and invoices), `other` (copies, credit notes, X / Z).
+    category: Literal["bill", "receipt", "other"] = "bill"
+    #: The till's own code for the document ("bill", "320", "330", "400", "x", "z"…).
+    doc_type: str = Field(alias="type", min_length=1, max_length=16)
+    number: Optional[str] = Field(None, max_length=40)
+    #: Printed "העתק" (a reprint), as at the till.
+    is_copy: bool = Field(False, alias="copy")
+    #: "חשבון — שולחן 12", for the messages.
+    title: Optional[str] = Field(None, max_length=DOCUMENT_TEXT_MAX)
+    paper_width: Literal[58, 80] = Field(alias="paperWidth")
+    width_dots: int = Field(alias="widthDots", ge=8, le=1024)
+    height_dots: int = Field(alias="heightDots", ge=1, le=30_000)
+    #: `png` — a PNG (one bit or grey; dark = print); `raster_gzip` — rows of `ceil(widthDots / 8)`
+    #: bytes, the leftmost dot in the high bit, 1 = print, gzip.
+    encoding: Literal["png", "raster_gzip"] = "png"
+    #: The image, base64.
+    image: str
+
+    @field_validator("number", "title", mode="before")
+    @classmethod
+    def _text(cls, value):
+        if value is None:
+            return None
+        cleaned = " ".join(str(value).split())
+        return cleaned or None
+
+
 class PrintJobIn(BaseModel):
+    """
+    `ticket` (the default): a kitchen ticket for `printerId`. `document`: a rendered bill / receipt for
+    another till — a receipt printer of type cloud (`printerId`, its host prints it) or a till of the
+    shop by itself (`targetMachineId`, on its own receipt printer).
+    """
+
     model_config = ConfigDict(populate_by_name=True)
 
     #: Chosen by the till, so a retried upload is the same job.
     id: uuid.UUID
-    printer_id: uuid.UUID = Field(alias="printerId")
-    ticket: TicketIn
+    kind: Optional[Literal["ticket", "document"]] = None
+    printer_id: Optional[uuid.UUID] = Field(None, alias="printerId")
+    target_machine_id: Optional[uuid.UUID] = Field(None, alias="targetMachineId")
+    ticket: Optional[TicketIn] = None
+    document: Optional[DocumentIn] = None
+
+    @model_validator(mode="after")
+    def _kind(self):
+        if self.kind is None:
+            self.kind = "document" if self.document is not None and self.ticket is None else "ticket"
+        if self.kind == "ticket":
+            if self.ticket is None or self.printer_id is None:
+                raise ValueError("a ticket needs printerId and ticket")
+            self.document = None
+            self.target_machine_id = None
+        else:
+            if self.document is None:
+                raise ValueError("a document job needs document")
+            if self.printer_id is None and self.target_machine_id is None:
+                raise ValueError("a document job needs printerId or targetMachineId")
+            self.ticket = None
+        return self
 
 
 class PrintJobAckIn(BaseModel):
@@ -375,6 +448,7 @@ __all__ = [
     "PrinterIn",
     "TicketIn",
     "TicketLineIn",
+    "DocumentIn",
     "PrintJobIn",
     "PrintJobAckIn",
     "TillLocalPrinterIn",

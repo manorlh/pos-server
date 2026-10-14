@@ -92,6 +92,9 @@ KIND_GROUP: Dict[str, str] = {
     "till_idle": "devices",
     # "תמיכה מרחוק" (app/services/remote_support.py): QuickSupport signed by another certificate.
     "quicksupport_signer_mismatch": "devices",
+    # "הדפסה בקופה אחרת" (app/services/remote_print.py): a bill relayed to another till's printer that
+    # did not print there ("חשבון לא הודפס בקופה X").
+    "document_unprinted": "devices",
     # ── Z and shifts ──
     "z_missing": "z_shift",
     "shift_open_overdue": "z_shift",

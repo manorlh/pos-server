@@ -323,6 +323,13 @@ RULES = RULES + (
     RuleSpec("quicksupport_signer_mismatch", True, (), "medium", "machine_status", push_default=False, push_only=True),
 )
 
+# "הדפסה בקופה אחרת" (P:/specs/bill-print-other-till.md §6, app/services/remote_print.py): a bill or a receipt
+# relayed to another till that failed or expired there — "חשבון לא הודפס בקופה X" on "בעיות". Read at the
+# host's levels; on by default, switched off here like any rule. Closed by itself when it prints after all.
+RULES = RULES + (
+    RuleSpec("document_unprinted", True, (), "medium", "print_relay", push_default=False),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 

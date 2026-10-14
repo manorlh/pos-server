@@ -1032,13 +1032,24 @@ def get_bill_printers(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """"הדפס חשבון": the tills and receipt printers the bill may print on (§6.4)."""
+    """
+    "הדפס חשבון": the tills and receipt printers the bill may print on (§6.4), and `remotePrint` — another
+    till to print it on (P:/specs/bill-print-other-till.md §7): `{ownerMachineId, ownerName, available, why,
+    targets: [{machineId, tillName, label, paperWidth, available, why}]}` (`why`: off | owner_needs_update |
+    no_owner; a target's: needs_update — "נדרש עדכון גרסה").
+    """
     from app.services import table_actions as TA
 
     table = T._live_table(db, table_id, active_tenant_id)
     shop = _readable_shop(db, table.shop_id, current_user, active_tenant_id)
     order = TA.open_order_of(db, table)
-    return {"printers": TA.bill_printers(db, shop, table, order) if order is not None else []}
+    if order is None:
+        return {"printers": [], "remotePrint": None}
+    route = TA.route_for(db, shop, order)
+    return {
+        "printers": TA.bill_printers(db, shop, table, order, route),
+        "remotePrint": TA.bill_targets(db, shop, table, order, route),
+    }
 
 
 @router.post("/tables/tables/{table_id}/actions/{action}")

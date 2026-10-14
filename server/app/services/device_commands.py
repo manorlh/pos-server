@@ -72,6 +72,7 @@ REFUSAL_REASONS = (
     # The table card's actions (app/services/table_actions.py REFUSALS).
     "table_in_use", "course_not_held", "course_already_out", "nothing_sent", "waiter_not_found",
     "target_not_free", "target_not_found", "source_not_open", "merge_basket_discount", "printer_not_found",
+    "print_target_unavailable",
 )
 
 

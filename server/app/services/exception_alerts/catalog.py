@@ -237,3 +237,13 @@ _REMOTE_SUPPORT_KINDS = (
 KINDS = KINDS + _REMOTE_SUPPORT_KINDS
 KINDS_BY_KEY.update({k.key: k for k in _REMOTE_SUPPORT_KINDS})
 OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _REMOTE_SUPPORT_KINDS)
+
+# "הדפסה בקופה אחרת" (app/services/remote_print.py, P:/specs/bill-print-other-till.md §6): a bill or a receipt
+# relayed to another till that failed or expired there — "חשבון לא הודפס בקופה X". Written as `audit_exceptions`
+# when the relay gives it up, closed by itself if it prints after all. Texted only by an SMS rule that names it.
+_REMOTE_PRINT_KINDS = (
+    Kind("document_unprinted", "חשבון לא הודפס בקופה אחרת", "medium", "audit_exception"),
+)
+KINDS = KINDS + _REMOTE_PRINT_KINDS
+KINDS_BY_KEY.update({k.key: k for k in _REMOTE_PRINT_KINDS})
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _REMOTE_PRINT_KINDS)

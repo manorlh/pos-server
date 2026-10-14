@@ -52,9 +52,11 @@ GET    /sync/{m}/categories/{id}/kitchen-printers  through the till's product / 
 POST   /sync/{m}/print-host                      → the shop's print server: where it listens
                                                     on the LAN (heartbeat cadence)
 POST   /sync/{m}/print-jobs                      → relay a ticket to a cloud printer's host,
-                                                    or to the shop's print server
+                                                    or to the shop's print server; or (`kind:
+                                                    document`) a rendered bill / receipt to
+                                                    another till (app/services/remote_print.py)
 GET    /sync/{m}/print-jobs/pending              → jobs this till prints (handed out)
-POST   /sync/{m}/print-jobs/{id}/ack             → done / failed
+POST   /sync/{m}/print-jobs/{id}/ack             → done / failed (a document's sender is woken)
 POST   /sync/{m}/print-jobs/{id}/cancel          → the sender takes back a job no till took yet
 GET    /sync/{m}/print-jobs/status?ids=a,b       → the sender's view of its jobs
 POST   /sync/{m}/kitchen/bon-alerts              → the till's tickets that did not print (and
@@ -100,6 +102,7 @@ from app.schemas.kitchen_printers import (
     TillLocalPrinterIn,
 )
 from app.services import printers as K
+from app.services import remote_print as RP
 
 router = APIRouter(tags=["printers"])
 
@@ -144,6 +147,9 @@ def _page(db: Session, user: User, shop: Shop) -> dict:
                 "name": K.machine_label(m),
                 "areaId": str(m.area_id) if m.area_id else None,
                 "hasPrinter": bool(m.has_printer),
+                # Its build prints relayed documents (`document_relay_v1`): it may host a receipt
+                # printer of type cloud ("המדפסת של <קופה>"); else "נדרש עדכון גרסה".
+                "documentRelay": RP.relays_documents(m),
             }
             for m in machines
         ],
@@ -628,10 +634,15 @@ def post_print_job(
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    """Idempotent by `id`. `422 printer_not_relayed`, `409 printer_has_no_host`."""
+    """
+    Idempotent by `id`. `422 printer_not_relayed`, `409 printer_has_no_host`. A document
+    (`kind: document`): `413 document_too_large`, `422 document_image_invalid`, `404 host_not_found`,
+    `409 printer_not_document` / `remote_print_off` / `document_not_remote` / `host_not_allowed` /
+    `host_needs_update` (app/services/remote_print.py).
+    """
     job, created = K.create_job(db, machine, body)
     targets = K.job_targets(db, [job]) if created else []
-    out = K.job_out(job)
+    out = K.job_out(job, db=db)
     db.commit()
     if targets:
         background_tasks.add_task(K.publish_job_notify, targets)
@@ -647,7 +658,9 @@ def get_pending_print_jobs(
     """
     `{"jobs": [{id, kind, printerId, printer: {connection…}, ticket, createdAt, expiresAt}],
     "scan": {id, requestedAt, expiresAt} | null}` — `scan`: the dashboard asked this till to
-    scan its LAN for printers (app/services/printer_discovery.py), handed out now.
+    scan its LAN for printers (app/services/printer_discovery.py), handed out now. A `document`
+    job has `ticket: null` and `document` (the image to print as it is), to a `document_relay_v1`
+    build only.
     """
     from app.services.printer_discovery import take_scan_request
 
@@ -664,10 +677,15 @@ def ack_print_job(
     body: PrintJobAckIn,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
 ):
     job = K.ack_job(db, machine, job_id, body)
-    out = K.job_out(job)
+    out = K.job_out(job, db=db)
+    # A document's sender hears its answer at once (`print-job` with `jobId`, `status`).
+    senders = K.document_answer_targets(db, job)
     db.commit()
+    if senders and background_tasks is not None:
+        background_tasks.add_task(K.publish_document_answer, senders, out["id"], out["status"])
     return out
 
 

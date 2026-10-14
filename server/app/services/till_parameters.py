@@ -1972,6 +1972,14 @@ from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
 
+# "הדפסה בקופה אחרת" (P:/specs/bill-print-other-till.md §7א, app/services/remote_print.py): a bill or a receipt
+# printed on another till's printer — on / off, which documents, what when it did not print, how long to wait, the
+# sender's notice, which tills, and the dashboard's choice. Read by the till; the cloud holds a relayed document to
+# them. Defaults change nothing. On the parameters page (every level) and the printers page (shop, point of sale, till).
+from app.services.remote_print import PARAMETER_SPECS as _REMOTE_PRINT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_PRINT_SPECS)
+
 # "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
 # a device online but not up to date is a problem on "בעיות". Read by the cloud only.
 SYNC_STALE_MINUTES_KEY = "syncStaleMinutes"
@@ -2092,6 +2100,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in remote_support.VALIDATED_KEYS and value is not None:
         try:
             return remote_support.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "הדפסה בקופה אחרת": the codes the till knows, the seconds 5–120, the tills as canonical ids.
+    from app.services import remote_print
+
+    if key in remote_print.VALIDATED_KEYS and value is not None:
+        try:
+            return remote_print.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

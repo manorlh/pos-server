@@ -130,8 +130,9 @@ CATEGORIES: Tuple[Category, ...] = (
              "התאמת האשראי הלילית מול Z-Credit: חיוב במסוף בלי מסמך שלנו, או מסמך שלנו בלי עסקה במסוף.",
              ("zcredit_recon",)),
     Category("bon_unprinted", "בון לא הודפס",
-             "בון שלא הודפס במדפסת מטבח / בר, או שלא התקבל במסך המטבח — מכל קופה וקיוסק.",
-             ("bon_unprinted",)),
+             "בון שלא הודפס במדפסת מטבח / בר, או שלא התקבל במסך המטבח — מכל קופה וקיוסק; וחשבון שנשלח "
+             "להדפסה בקופה אחרת ולא הודפס שם.",
+             ("bon_unprinted", "document_unprinted")),
     # The board's lights as alerts (status_watch.py, P:/specs/manager-problems.md §2); each kind can
     # be switched off per company / shop / till in "הגדרות חריגות".
     Category("z_shift", "Z / משמרת",
