@@ -517,8 +517,10 @@ class TestMigration:
         heads = script.get_heads()
         assert len(heads) == 1
         line = {r.revision for r in script.walk_revisions("base", heads[0])}
-        assert {"6af69aa646d1", "bb6205ba290c", "ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
+        assert {"4ff6c2ab6d7c", "6af69aa646d1", "bb6205ba290c", "ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
         assert set(script.get_revision("6af69aa646d1").down_revision) == {"7c4e2a9d1b6f", "d8a3f1c6e2b7"}
+        # 4ff6c2ab6d7c (14.10d) joins that with bill-on-another-till's e7b2d9f4a6c3 (on c4d8e2f6a1b9).
+        assert set(script.get_revision("4ff6c2ab6d7c").down_revision) == {"6af69aa646d1", "e7b2d9f4a6c3"}
         assert set(script.get_revision("bb6205ba290c").down_revision) == {"e3b9d7a41c62", "5d1f8b3e7a92", "e4b7c2d9a6f1"}
         assert set(script.get_revision("ba584f6fb704").down_revision) == {"396f22daf19c", "a7d3e1c9b5f2"}
         assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"
