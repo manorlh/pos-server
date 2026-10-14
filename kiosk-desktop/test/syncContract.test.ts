@@ -25,6 +25,11 @@ import { openDb } from '../src/main/db/sqlite';
 import { migrate } from '../src/main/db/schema';
 import type { Api } from '../src/main/sync/api';
 import type { Transport } from '../src/main/printer/transports';
+import { Kv } from '../src/main/db/schema';
+import { CashJournal, type CashMove } from '../src/main/cash/journal';
+import { CashHost, journalMoveEntry, journalTxEntry } from '../src/main/cash/host';
+import { SimulatedPaylink } from '../src/main/cash/simulator';
+import type { CashTx } from '../src/core/cash/tx';
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const RECORDED = path.join(here, 'fixtures', 'recorded');
@@ -371,6 +376,146 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
     });
     expect(body.id).toBe(saleDispatchId(doc.id));
     golden('kds_release', body);
+  });
+});
+
+/* ------------------------------------------------------------ the cash host (P:/specs/cash-paylink.md §11.9) */
+
+const CASH_STATION = '5a7c0000-0000-4000-8000-0000000000c1';
+const CASH_HOST = 'a1b2c3d4-0000-4000-8000-0000000000aa';
+const CASH_KIOSK = '549e903c-4aba-4528-bc4a-c61b4019a64e';
+const CASH_T0 = 1_791_010_800_000; // 2026-10-03T07:00:00Z
+
+function cashTx(over: Partial<CashTx>): CashTx {
+  const counters = { at: CASH_T0, currentValueAgorot: 100_000, currentPaidAgorot: 20_000, coins: {}, dispensers: {}, escrowThroughputAgorot: 0 };
+  return {
+    txId: '7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b',
+    stationId: CASH_STATION,
+    hostId: CASH_HOST,
+    clientId: CASH_KIOSK,
+    clientName: 'קיוסק Windows',
+    leaseId: 'lease-1',
+    kind: 'sale',
+    orderRef: 'order-1',
+    orderLabel: 'K-57',
+    amountAgorot: 5735,
+    dueAgorot: 5740,
+    roundingAgorot: 5,
+    state: 'DONE',
+    outcome: 'paid',
+    start: counters,
+    insertedAgorot: 7000,
+    inserted: [
+      { valueAgorot: 5000, kind: 'note', count: 1 },
+      { valueAgorot: 1000, kind: 'coin', count: 2 },
+    ],
+    escrowAgorot: 0,
+    changeDueAgorot: 1260,
+    changePaidAgorot: 1000,
+    changeOwedAgorot: 260,
+    refundDueAgorot: 0,
+    refundPaidAgorot: 0,
+    heldAgorot: 0,
+    heldReason: null,
+    paidOut: [{ valueAgorot: 1000, kind: 'coin', count: 1 }],
+    cancelReason: null,
+    accepting: { coins: [], notes: [] },
+    exactOnly: false,
+    payout: null,
+    extEscrow: null,
+    step: null,
+    escrowSeen: 0,
+    closedForGrace: false,
+    error: { code: 'change_short', message: 'עודף חייב 2.6 ₪' },
+    message: 'עודף חייב 2.6 ₪ — הפתק יודפס',
+    owedId: '7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b',
+    slipCode: 'C-K7Q3MX',
+    acked: true,
+    documentId: 'c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77',
+    documentNumber: '457',
+    createdAt: CASH_T0,
+    updatedAt: CASH_T0 + 21_000,
+    deadlineAt: CASH_T0 + 180_000,
+    idleDeadlineAt: CASH_T0 + 60_000,
+    lastInsertAt: CASH_T0 + 9_000,
+    settleUntil: null,
+    graceUntil: null,
+    doneAt: CASH_T0 + 20_000,
+    seq: 9,
+    uploadedSeq: 0,
+    ...over,
+  };
+}
+
+describe('what the cash host sends (golden, applied by the server: tests/test_cash_contract.py)', () => {
+  it('the journal: a paid transaction with change owed, a held one, a refill', () => {
+    const held = cashTx({
+      txId: '8d1f6b2c-3e4a-4d6f-9b0c-1d2e3f4a5b6c',
+      state: 'HELD',
+      outcome: null,
+      orderLabel: null,
+      insertedAgorot: 2000,
+      inserted: [{ valueAgorot: 2000, kind: 'note', count: 1 }],
+      changeDueAgorot: 0,
+      changePaidAgorot: 0,
+      changeOwedAgorot: 0,
+      heldAgorot: 2000,
+      heldReason: 'power_loss',
+      paidOut: [],
+      error: { code: 'device', message: 'זיכוי מוחזק — יש לפנות לצוות' },
+      message: 'תקלה — פנה לצוות',
+      owedId: '8d1f6b2c-3e4a-4d6f-9b0c-1d2e3f4a5b6c',
+      slipCode: 'C-3TQWEA',
+      acked: true,
+      documentId: null,
+      documentNumber: null,
+      seq: 4,
+    });
+    const refill: CashMove = {
+      id: '9e2a7c3d-4f5b-4e7a-8c1d-2e3f4a5b6c7d',
+      stationId: CASH_STATION,
+      kind: 'refill',
+      amountAgorot: 20000,
+      pieces: [{ valueAgorot: 100, kind: 'coin', count: 200 }],
+      expectedAgorot: null,
+      countedAgorot: null,
+      by: { userId: null, name: 'דנה' },
+      note: null,
+      at: CASH_T0 - 3_600_000,
+      commandId: null,
+    };
+    golden('cash_journal', { entries: [journalTxEntry(cashTx({}), 'SIM00001'), journalTxEntry(held, 'SIM00001'), journalMoveEntry(refill)] });
+  });
+
+  it('the heartbeat’s `cash` block: a station read from its device', async () => {
+    const db = openDb(':memory:');
+    migrate(db);
+    const now = () => CASH_T0;
+    const device = new SimulatedPaylink({ notes: { values: [2000, 5000], escrow: true }, hoppers: [{ valueAgorot: 1000, count: 20 }, { valueAgorot: 100, count: 3 }] }, now);
+    const host = new CashHost({
+      api: {} as Api,
+      kv: new Kv(db),
+      journal: new CashJournal(db),
+      machineId: () => CASH_HOST,
+      appVersion: '0.5.0',
+      now,
+      newId: () => 'id',
+      log: () => undefined,
+      lanAddress: () => '192.168.1.40',
+      cloudOnline: () => true,
+      createDevice: () => ({ device, driverInstalled: () => true }),
+      port: 47630,
+      manualTimers: true,
+    });
+    host.apply({
+      hostSecret: 'x'.repeat(64),
+      stations: [{ stationId: CASH_STATION, name: 'עמדת מזומן 2', location: 'ליד קיוסק 3', serial: 'AE000001', simulator: true, settings: { cashFloatLevels: { '100': { target: 200, low: 30 } } }, clients: [{ machineId: CASH_KIOSK, name: 'קיוסק Windows', kind: 'kiosk' }] }],
+      commands: [],
+      settings: {},
+      lanAlertTargets: [],
+    });
+    for (let i = 0; i < 3; i++) await host.tick();
+    golden('cash_heartbeat', { cash: host.heartbeatBlock() });
   });
 });
 

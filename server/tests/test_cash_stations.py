@@ -1157,3 +1157,48 @@ class TestMigration:
         assert len(heads) == 1
         assert "c4f1a9d7e2b6" in {r.revision for r in script.walk_revisions("base", heads[0])}
         assert script.get_revision("c4f1a9d7e2b6").down_revision == "4ff6c2ab6d7c"
+
+
+# ── What kiosk-desktop's cash host really sends (its golden fixtures, the same bytes) ──────────
+
+
+KIOSK_DESKTOP = Path(__file__).parent / "fixtures" / "kiosk_desktop"
+FIXTURE_STATION = "5a7c0000-0000-4000-8000-0000000000c1"
+FIXTURE_HOST = "a1b2c3d4-0000-4000-8000-0000000000aa"
+FIXTURE_KIOSK = "549e903c-4aba-4528-bc4a-c61b4019a64e"
+
+
+def _as_world(w, value):
+    """The fixture's ids made the world's (the station, the host, the kiosk)."""
+    text = json.dumps(value)
+    for old, new in ((FIXTURE_STATION, w.station.id), (FIXTURE_HOST, w.host.id), (FIXTURE_KIOSK, w.kiosk.id)):
+        text = text.replace(old, str(new))
+    return json.loads(text)
+
+
+class TestTheKioskDesktopHost:
+    def test_its_journal_is_taken_whole(self, w):
+        body = _as_world(w, json.loads((KIOSK_DESKTOP / "cash_journal.json").read_text(encoding="utf-8")))
+        out = journal(w, *body["entries"])
+        assert out["rejected"] == []
+        assert len(out["accepted"]) == 3
+        paid = w.db.get(CashStationTx, uuid.UUID("7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b"))
+        assert (paid.state, paid.outcome, paid.change_owed_agorot, paid.slip_code, paid.order_label) == ("DONE", "paid", 260, "C-K7Q3MX", "K-57")
+        assert (paid.owed_status, paid.owed_kind, paid.owed_agorot) == ("open", "change_owed", 260)
+        assert paid.document_number == "457"
+        held = w.db.get(CashStationTx, uuid.UUID("8d1f6b2c-3e4a-4d6f-9b0c-1d2e3f4a5b6c"))
+        assert (held.state, held.held_agorot, held.held_reason, held.owed_kind) == ("HELD", 2000, "power_loss", "held_credit")
+        (move,) = w.db.query(CashStationMovement).all()
+        assert (move.kind, move.amount_agorot) == ("refill", 20000)
+
+    def test_its_heartbeat_block_is_kept_and_its_alerts_open(self, w):
+        body = _as_world(w, json.loads((KIOSK_DESKTOP / "cash_heartbeat.json").read_text(encoding="utf-8")))
+        w.host.last_heartbeat_at = now()
+        machines_router.post_my_heartbeat(MachineHeartbeatBody.model_validate(body), machine=w.host, db=w.db)
+        w.db.commit()
+        status = w.host.cash_status
+        assert (status["lanAddress"], status["port"]) == ("192.168.1.40", 47630)
+        (station,) = status["stations"]
+        assert (station["state"], station["changeAvailableAgorot"]) == ("ready", 20300)
+        assert [d["valueAgorot"] for d in station["denominations"]] == [100, 1000]
+        assert [r.details.get("code") for r in cash_rows(w)] == ["hopper_low"]

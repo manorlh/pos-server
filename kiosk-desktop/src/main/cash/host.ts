@@ -17,7 +17,7 @@ import type { Kv } from '../db/schema';
 import type { CashDevice } from '../../core/cash/device';
 import { CASH_API, CASH_PORT, type CashEvent, type CashHealth, type CashRoute } from '../../core/cash/lanProtocol';
 import { cashSettingsOf, type CashSettings } from '../../core/cash/settings';
-import { txView } from '../../core/cash/tx';
+import { txView, type CashTx } from '../../core/cash/tx';
 import type { CashJournal, CashMove } from './journal';
 import { CashLanServer, type CashLanHost } from './lanServer';
 import { CashStation, type Reply, type StationConfig } from './station';
@@ -124,6 +124,25 @@ export function hostConfigOf(body: unknown): HostConfig | null {
     settings: b.settings && typeof b.settings === 'object' ? (b.settings as Record<string, unknown>) : {},
     lanAlertTargets: targets,
   };
+}
+
+/** A transaction as the journal upload carries it (contract §11.9): the LAN view and what staff need besides. */
+export function journalTxEntry(t: CashTx, deviceSerial: string | null): Record<string, unknown> {
+  return {
+    type: 'tx',
+    id: t.txId,
+    ...txView(t),
+    orderRef: t.orderRef,
+    orderLabel: t.orderLabel,
+    clientName: t.clientName,
+    deviceSerial,
+    doneAt: t.doneAt,
+  };
+}
+
+/** A drawer movement as the journal upload carries it. */
+export function journalMoveEntry(m: CashMove): Record<string, unknown> {
+  return { type: 'movement', ...m };
 }
 
 interface RunningStation {
@@ -365,19 +384,7 @@ export class CashHost implements CashLanHost {
       const txs = this.d.journal.toUpload(50);
       const moves = this.d.journal.movesToUpload(50);
       if (txs.length + moves.length === 0) return;
-      const entries = [
-        ...txs.map((t) => ({
-          type: 'tx',
-          id: t.txId,
-          ...txView(t),
-          orderRef: t.orderRef,
-          orderLabel: t.orderLabel,
-          clientName: t.clientName,
-          deviceSerial: this.station(t.stationId)?.snapshot()?.serial ?? null,
-          doneAt: t.doneAt,
-        })),
-        ...moves.map((mv) => ({ type: 'movement', ...mv })),
-      ];
+      const entries = [...txs.map((t) => journalTxEntry(t, this.station(t.stationId)?.snapshot()?.serial ?? null)), ...moves.map(journalMoveEntry)];
       const reply = await this.d.api.post<{ accepted?: string[]; rejected?: Array<{ id: string; error: string }> }>(`sync/${m}/cash/journal`, { entries }, { timeoutMs: 30_000 });
       if (reply.kind !== 'ok') {
         this.lastUploadError = reply.kind === 'offline' ? reply.reason : `HTTP ${reply.status}`;
