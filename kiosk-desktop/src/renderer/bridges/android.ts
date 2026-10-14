@@ -44,6 +44,7 @@ import type {
   VoucherApplyIn,
 } from '../../shared/bridge';
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
+import { configOfflineBlockScope, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
 import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
 export { ANDROID_BRIDGE_API, ANDROID_CALLS, ANDROID_EVENTS, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, ANDROID_SENDS, ANDROID_WIRE_API } from './androidWire';
@@ -194,14 +195,17 @@ export function normalizeView(view: KioskView, opts: { payAtTill?: boolean } = {
   // holds it (voucherApply) and the payment books it. With the card alone: no "איך תרצו לשלם?".
   // Cash at the till: where the APK places orders for the till ([payAtTill], bridgeApi 2) — else its own screens'.
   const configured: readonly unknown[] = Array.isArray(resolved.payment?.methods) ? resolved.payment.methods : [];
-  const pay =
-    view.pay ??
-    (opts.payAtTill
-      ? tillPay(configured, androidNoCard(view), kioskOfflineBlocks(resolved.general, view.state?.offline === true))
-      : androidNoCard(view)
-        ? noCardPay(configured)
-        : cardPay(configured));
-  return { ...view, pay, config: localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown> };
+  const config = localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown>;
+  if (view.pay) return { ...view, config };
+  // "חסימת הזמנות כשאין אינטרנט", offline: what it blocks is "קיוסק — מה נחסם כשאין אינטרנט" (core/offlineBlock.ts) —
+  // the cloud puts a scope other than the default in the config as it sends it (`general.offlineBlockScope`).
+  const blocked = kioskOfflineBlocks(resolved.general, view.state?.offline === true);
+  const scope = offlineBlockScopeOf(configOfflineBlockScope(view.config));
+  const base = opts.payAtTill ? tillPay(configured, androidNoCard(view), blocked) : androidNoCard(view) ? noCardPay(configured) : cardPay(configured);
+  const pay = { ...base, usable: offlineUsable(base.usable, blocked, scope) };
+  // Resting for it: the "offline" screen's words (the Windows kiosk's noPaymentReason), not the terminal's.
+  const state = view.state && offlineRests(blocked, scope, pay.usable) ? { ...view.state, noPayment: true, noPaymentReason: 'offline' as const } : view.state;
+  return { ...view, state, pay, config };
 }
 
 /** "ללא אשראי" as the card's tile says it (the Windows kiosk's and the browser kiosk's words). */
@@ -238,8 +242,9 @@ function noCardPay(configured: readonly unknown[]): KioskView['pay'] {
  * An APK that places orders for the till (bridgeApi 2, "placeOpenOrder"): the Windows kiosk's "איך תרצו לשלם?"
  * (main/service.ts payView) — the methods configured as a one-card kiosk takes them (tsKioskPayMethods, in their
  * order); "ללא אשראי" ([noCard]) without the card (no tile; its line says why); cash at the till usable unless
- * "חסימת הזמנות כשאין אינטרנט" holds the kiosk ([offlineBlocked]); a voucher where its order can be finished — by
- * the card or at the till. The card is as on API 1: the APK checks its terminal on the press.
+ * "חסימת הזמנות כשאין אינטרנט" holds the kiosk ([offlineBlocked], whatever it blocks — with `all` [normalizeView]
+ * then takes the rest too); a voucher where its order can be finished — by the card or at the till. The card is as
+ * on API 1: the APK checks its terminal on the press.
  */
 function tillPay(configured: readonly unknown[], noCard: boolean, offlineBlocked: boolean): KioskView['pay'] {
   const set = tsKioskPayMethods(configured).filter((m) => m === 'card' || m === 'voucher' || m === 'cash_at_till');

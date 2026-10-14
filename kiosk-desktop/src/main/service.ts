@@ -18,6 +18,7 @@ import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
+import { OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
@@ -618,6 +619,10 @@ export class KioskService extends EventEmitter {
     const paused = this.pausedState();
     const media = this.media.getStatus();
     const today = this.orders.todays();
+    const pay = this.payView(phase === 'kiosk');
+    // "חסימת הזמנות כשאין אינטרנט": the "offline" rest — always with `kioskOfflineBlockScope` = all, with
+    // pay_at_till only when the till was all there was (core/offlineBlock.ts).
+    const offlineRest = offlineRests(this.offlineBlocked(cfg), this.offlineScope(), pay.usable);
     this.viewCache = {
       phase,
       appVersion: this.opts.appVersion,
@@ -644,8 +649,8 @@ export class KioskService extends EventEmitter {
         // No terminal set up at all (a health check that did not answer is tried on the press), or offline with
         // "חסימת הזמנות כשאין אינטרנט" on (kioskOfflineBlocks — the Android kiosk's KioskPayBlock.OFFLINE).
         // "ללא אשראי" is no terminal fault: the kiosk takes what it is set to besides the card (`pay.usable`).
-        noPayment: (!this.pay.configured && !this.pay.noCard) || this.offlineBlocked(cfg),
-        noPaymentReason: this.offlineBlocked(cfg) ? 'offline' : !this.pay.configured && !this.pay.noCard ? 'terminal' : null,
+        noPayment: (!this.pay.configured && !this.pay.noCard) || offlineRest,
+        noPaymentReason: offlineRest ? 'offline' : !this.pay.configured && !this.pay.noCard ? 'terminal' : null,
         terminal: this.pay.monitor.state,
         offline: this.offlineNow,
         offlineSince: this.offline.since,
@@ -657,7 +662,7 @@ export class KioskService extends EventEmitter {
         pendingUploads: this.outbox.count() + this.payAtTill.pending(),
         mediaMissing: media.missing,
       },
-      pay: this.payView(phase === 'kiosk'),
+      pay,
       // "סניף לא פעיל" (client lib/shopActive.ts): the screens lock once the customer is done; the
       // lock offers the kiosk's own close of the day ("סגירת משמרת ו-Z", shopLockCloseDay).
       shopActive: this.cloud.shopActive(),
@@ -1532,9 +1537,14 @@ export class KioskService extends EventEmitter {
    * document here (DocDraft.card): "פיצול תשלום בכרטיסים" (split_card) is never offered
    * (singleCardPayMethods) — and never usable.
    */
-  /** Offline with "חסימת הזמנות כשאין אינטרנט" on: no orders at all. */
+  /** Offline with "חסימת הזמנות כשאין אינטרנט" on: what it blocks is [offlineScope]'s. */
   private offlineBlocked(cfg: { general?: { blockWhenOffline?: boolean } } | null): boolean {
     return !!cfg && kioskOfflineBlocks(cfg.general, this.offlineNow);
+  }
+
+  /** "קיוסק — מה נחסם כשאין אינטרנט" (`kioskOfflineBlockScope`): the parameter, else the config's, else `all`. */
+  private offlineScope(): OfflineBlockScope {
+    return offlineBlockScopeOf(this.cloud.parameters()[OFFLINE_BLOCK_SCOPE_KEY], configOfflineBlockScope(this.snapshot()?.config));
   }
 
   private payView(kiosk: boolean): KioskView['pay'] {
@@ -1558,8 +1568,9 @@ export class KioskService extends EventEmitter {
       // (voucherCanFinish) — never a dead end.
       m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow && voucherCanFinish(methods, this.fiscalRole && cardOff === null) : m === 'cash_at_till' ? this.fiscalRole : false,
     );
-    // Offline with "חסימת הזמנות כשאין אינטרנט" on: nothing to take (the rest screen says why).
-    return { methods, usable: kiosk && this.offlineBlocked(this.config()) ? [] : usable, cardOff };
+    // Offline with "חסימת הזמנות כשאין אינטרנט" on: nothing to take (the rest screen says why), or — with
+    // `kioskOfflineBlockScope` = pay_at_till — everything but the till.
+    return { methods, usable: kiosk ? offlineUsable(usable, this.offlineBlocked(this.config()), this.offlineScope()) : usable, cardOff };
   }
 
   /** The basket priced here (priceBasket) as the till's held sale carries it (client lib/kioskWebOrders.ts WebOrderLine). */

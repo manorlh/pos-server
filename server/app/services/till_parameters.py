@@ -2114,6 +2114,86 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "חסימת הזמנות כשאין אינטרנט" on a kiosk (the kiosk setting `general.blockWhenOffline`): what it blocks while
+# the kiosk is offline. `all` — every way to pay, the kiosk rests on its "offline" screen (the Windows kiosk as
+# it was); `pay_at_till` — only "תשלום בקופה" (the Android web kiosk as it was). Read by kiosk-desktop (the
+# Windows kiosk from `GET /sync/{m}/parameters`; the Android web bundle from its kiosk config, where
+# `kiosk_offline_block_overlay` puts a value other than the default as `general.offlineBlockScope`).
+KIOSK_OFFLINE_BLOCK_SCOPE_KEY = "kioskOfflineBlockScope"
+KIOSK_OFFLINE_BLOCK_ALL = "all"
+KIOSK_OFFLINE_BLOCK_PAY_AT_TILL = "pay_at_till"
+KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS = (KIOSK_OFFLINE_BLOCK_ALL, KIOSK_OFFLINE_BLOCK_PAY_AT_TILL)
+KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT = KIOSK_OFFLINE_BLOCK_ALL
+KIOSK_OFFLINE_BLOCK_SCOPE_LABELS = {
+    KIOSK_OFFLINE_BLOCK_ALL: "כל אמצעי התשלום (ברירת מחדל)",
+    KIOSK_OFFLINE_BLOCK_PAY_AT_TILL: "תשלום בקופה בלבד",
+}
+#: Where the kiosk's config carries a scope other than the default (`general.offlineBlockScope`).
+KIOSK_OFFLINE_BLOCK_CONFIG_FIELD = "offlineBlockScope"
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=KIOSK_OFFLINE_BLOCK_SCOPE_KEY,
+        label="קיוסק — מה נחסם כשאין אינטרנט",
+        value_type="enum",
+        enum_options=KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS,
+        enum_labels=KIOSK_OFFLINE_BLOCK_SCOPE_LABELS,
+        default_value=KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT,
+        description=(
+            "בקיוסק שמוגדרת בו \"חסימת הזמנות כשאין אינטרנט\": מה נחסם כל עוד הקיוסק לא מחובר לאינטרנט. "
+            f"«{KIOSK_OFFLINE_BLOCK_SCOPE_LABELS[KIOSK_OFFLINE_BLOCK_ALL]}» — הקיוסק לא מקבל הזמנות בכלל "
+            "(לא באשראי, לא בשובר ולא בתשלום בקופה) ומציג את מסך \"אין חיבור לאינטרנט\" עד שהחיבור חוזר. "
+            f"«{KIOSK_OFFLINE_BLOCK_SCOPE_LABELS[KIOSK_OFFLINE_BLOCK_PAY_AT_TILL]}» — רק \"תשלום בקופה\" נחסם; "
+            "אמצעי תשלום אחרים נשארים פתוחים. "
+            "בלי \"חסימת הזמנות כשאין אינטרנט\" הפרמטר לא משפיע. חל על קיוסק Windows ועל מסכי הקיוסק "
+            "באנדרואיד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
+
+def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
+    """
+    `kioskOfflineBlockScope` as it resolves for this kiosk (till → area → shop → company → default).
+    A missing or inactive definition, or a value that is not an option: the default (`all`).
+    """
+    parameter = db.query(TillParameter).filter(TillParameter.key == KIOSK_OFFLINE_BLOCK_SCOPE_KEY).first()
+    if parameter is None or not parameter.is_active:
+        return KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT
+    chain = scope_chain_for_machine(db, machine)
+    scopes = chain.scopes()
+    values = (
+        db.query(TillParameterValue)
+        .filter(
+            TillParameterValue.parameter_id == parameter.id,
+            or_(*[and_(TillParameterValue.scope_type == k, TillParameterValue.scope_id == i) for k, i in scopes]),
+        )
+        .all()
+        if scopes
+        else []
+    )
+    value = resolve_till_parameters([parameter], values, chain).parameters.get(KIOSK_OFFLINE_BLOCK_SCOPE_KEY)
+    return value if value in KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS else KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT
+
+
+def kiosk_offline_block_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The kiosk's effective config with `general.offlineBlockScope` when `kioskOfflineBlockScope` resolves to
+    something other than the default (a new dict) — the Android web kiosk reads it there (its APK hands the
+    screens the config, not the parameters). At the default the config is left exactly as it was.
+    """
+    try:
+        scope = kiosk_offline_block_scope(db, machine)
+    except Exception:  # noqa: BLE001 - a missing table (an older test world) changes nothing
+        return cfg
+    if scope == KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT:
+        return cfg
+    out = dict(cfg)
+    general = dict(out.get("general") or {})
+    general[KIOSK_OFFLINE_BLOCK_CONFIG_FIELD] = scope
+    out["general"] = general
+    return out
+
 # "עיצוב השולחנות" (P:/specs/till-design-tables.md §5, app/services/table_tile_look.py): `tableTileStyle`,
 # `tableTileInfo`, `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize` — read by the till only.
 # Edited in "עיצוב קופה → שולחנות ומפה" (app/routers/till_design.py `/till-design/table-display`).
