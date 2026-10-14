@@ -93,6 +93,8 @@ export interface ReportExportConfig {
   csv?: ReportExportBarProps['csv'];
   /** A designed PDF the server builds whole (instead of the main table's). */
   pdf?: ReportExportBarProps['pdf'];
+  /** The server's insights the page already has (the Excel's summary sheet uses them). */
+  insights?: ReportExportBarProps['insights'];
 }
 
 export interface ReportPageProps {
@@ -267,6 +269,7 @@ export function ReportPage({
                   previous={exportConfig.previous}
                   csv={exportConfig.csv}
                   pdf={exportConfig.pdf}
+                  insights={exportConfig.insights}
                 />
               ) : null}
               {children}

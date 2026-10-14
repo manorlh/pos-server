@@ -38,6 +38,7 @@ import {
   type PreviousPeriod,
   type ReportChart,
   type ReportChartType,
+  type ReportInsight,
   type ReportKpi,
 } from '@/lib/designedReport';
 import { downloadBlob, downloadExcel, type ExcelSheet } from '@/lib/excelExport';
@@ -130,6 +131,11 @@ export interface ReportExportBarProps {
    * §7.6 "לפי ימים"), instead of `POST /reports/pdf` with the main table.
    */
   pdf?: () => Promise<void>;
+  /**
+   * The insights the page already has from the server (a report whose JSON carries them, §7.3,
+   * §7.6): the Excel's "סיכום ותובנות" takes these instead of asking `POST /reports/insights`.
+   */
+  insights?: ReportInsight[];
 }
 
 export type { PreviousPeriod, ReportChart, ReportKpi };
@@ -214,6 +220,7 @@ export function ReportExportBar({
   previous,
   csv,
   pdf,
+  insights,
 }: ReportExportBarProps) {
   const t = useTranslations('reportFramework.export');
   const ctx = useReportContext();
@@ -365,31 +372,28 @@ export function ReportExportBar({
       const extra = (await extraSheets?.()) ?? [];
       // "סיכום ותובנות" first (§1): the KPIs and the server's sentences about this report.
       const mainPrepared = prepared.find((x) => x.r === main)?.p ?? null;
+      const words = {
+        sheetName: t('summarySheet'),
+        kpiHeader: t('summaryKpi'),
+        valueHeader: t('summaryValue'),
+        previousHeader: t('summaryPrevious'),
+        changeHeader: t('summaryChange'),
+        insightsHeading: t('summaryInsights'),
+      };
       let summary: ExcelSheet | null = null;
-      if (main && mainPrepared) {
+      if (insights) {
+        // The page has the server's sentences already (a report that carries them).
+        summary = summarySheet(cleanKpis(kpis ?? []), insights, words);
+      } else if (main && mainPrepared) {
         const body = {
           ...exportTablePdfBody(mainPrepared.table, mainPrepared.keys, pdfHeader(main), orientation),
           ...(await designed(mainPrepared, main)),
         };
         // The server's sentences, and its KPIs with the comparison worked out (§7.2).
         const answer = body.rows.length <= PDF_MAX_ROWS ? await fetchReportInsights(body) : null;
-        summary = summarySheet(answer?.kpis.length ? answer.kpis : (body.kpis ?? []), answer?.insights ?? [], {
-          sheetName: t('summarySheet'),
-          kpiHeader: t('summaryKpi'),
-          valueHeader: t('summaryValue'),
-          previousHeader: t('summaryPrevious'),
-          changeHeader: t('summaryChange'),
-          insightsHeading: t('summaryInsights'),
-        });
+        summary = summarySheet(answer?.kpis.length ? answer.kpis : (body.kpis ?? []), answer?.insights ?? [], words);
       } else if (kpis?.length) {
-        summary = summarySheet(cleanKpis(kpis), [], {
-          sheetName: t('summarySheet'),
-          kpiHeader: t('summaryKpi'),
-          valueHeader: t('summaryValue'),
-          previousHeader: t('summaryPrevious'),
-          changeHeader: t('summaryChange'),
-          insightsHeading: t('summaryInsights'),
-        });
+        summary = summarySheet(cleanKpis(kpis), [], words);
       }
       const body = extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra];
       await downloadExcel(summary ? [summary, ...body] : body, fileName, {

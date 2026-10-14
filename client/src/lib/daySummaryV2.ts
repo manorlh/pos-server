@@ -138,6 +138,13 @@ export interface DayRisks {
   exceptions: { type: string; label: string; count: number }[];
 }
 
+export interface DayKioskRow {
+  machineId: string;
+  name: string;
+  net: number;
+  documents: number;
+}
+
 export interface DayKiosks {
   orders: number;
   net: number;
@@ -145,7 +152,7 @@ export interface DayKiosks {
   sessions: number;
   abandoned: number;
   medianOrderSec: number | null;
-  byKiosk: { machineId: string; name: string; net: number; documents: number }[];
+  byKiosk: DayKioskRow[];
 }
 
 export interface DaySummaryV2 {
