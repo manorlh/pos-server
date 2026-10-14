@@ -749,8 +749,8 @@ POST /shops/{shop_id}/training-mode/disable -> till_settings:edit
 GET /shops/{shop_id}/training-mode/disable-preview -> till_settings:view
 POST /shops/{shop_id}/training-mode/enable -> till_settings:edit
 GET /shops/{shop_id}/training-mode/report -> till_settings:view
-GET /shops/{shop_id}/user-sessions -> pos_users:view
-POST /shops/{shop_id}/user-sessions/{session_id}/release -> pos_users:edit
+GET /shops/{shop_id}/user-sessions -> pos_users|user_sessions_release:view
+POST /shops/{shop_id}/user-sessions/{session_id}/release -> user_sessions_release:edit
 GET /shops/{shop_id}/work-config -> devices:view
 GET /shops/{shop_id}/work-profile -> organization|devices:view
 PUT /shops/{shop_id}/work-profile -> organization:edit

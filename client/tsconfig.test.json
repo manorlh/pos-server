@@ -344,6 +344,8 @@
     "src/lib/syncStatus.ts",
     "src/lib/syncStatus.test.ts",
     "src/lib/tableTileLook.ts",
-    "src/lib/tableTileLook.test.ts"
+    "src/lib/tableTileLook.test.ts",
+    "src/lib/exclusiveLogin.ts",
+    "src/lib/exclusiveLogin.test.ts"
   ]
 }

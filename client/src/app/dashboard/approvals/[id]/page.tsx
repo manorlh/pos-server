@@ -216,6 +216,7 @@ function RequestView({ data, quickAsked }: { data: ApprovalDetail; quickAsked: b
           </div>
         </div>
         {measure ? <p className="text-3xl font-bold tabular-nums">{measure}</p> : null}
+        {data.summary ? <p className="text-base font-medium">{data.summary}</p> : null}
         {table ? <p className="text-base font-medium">{ta('table', { table })}</p> : null}
         {reason ? <p className="text-base">“{reason}”</p> : null}
         {data.note ? (

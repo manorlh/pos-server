@@ -62,7 +62,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("reprint", "הדפסה חוזרת", "medium", "audit_exception", link="document"),
     Kind("long_order", "זמן ממושך על הזמנה", "low", "audit_exception", amount=True, link="document"),
     Kind("table_cancelled", "ביטול שולחן", "high", "audit_exception", amount=True),
-    Kind("user_session_release", "שחרור עובד מקופה אחרת", "medium", "audit_exception"),
+    Kind("user_session_release", "שחרור עובד מחובר", "medium", "audit_exception"),
     Kind("attendance_manual", "שינוי נוכחות ידני", "medium", "audit_exception"),
     Kind("forced_z_close", "סגירת Z כפויה", "high", "audit_exception", link="z"),
     # ── audit_exceptions: Z ──

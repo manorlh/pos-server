@@ -239,8 +239,10 @@ class TestLegacy:
         # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a
         # manager's alone (the kiosk's admin opened for a manager's code only) — and approving a request
         # from the phone ("רשאי לאשר מרחוק", APPROVE_REMOTE.<type>), which is approving others too.
+        # MULTI_DEVICE_LOGIN ("עבודה בכמה מכשירים במקביל", exclusive login v2 §1): "עובד מחובר בקופה אחת
+        # בלבד" bound every till user before it existed — denied is today's behaviour.
         assert {c for c, s in eff.states.items() if s == D} == {
-            "CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE",
+            "CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE", "MULTI_DEVICE_LOGIN",
         } | TP.REMOTE_APPROVAL_CODES
         assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
 
