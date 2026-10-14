@@ -6,7 +6,7 @@
  * Pure: the Hebrew words come in through `words`, so node tests need no translator.
  */
 import { selectSheetColumns, type ExcelCellKind, type ExcelSheet, type ExcelValue } from './excelExport';
-import type { ReportChart, ReportKpi } from './designedReport';
+import type { InsightKeys, ReportChart, ReportInsight, ReportKpi } from './designedReport';
 
 export interface ReportFilterLine {
   /** "קופאי", "אמצעי תשלום"… */
@@ -113,7 +113,7 @@ export function pdfOrientation(columnCount: number, choice: 'auto' | 'portrait' 
 // ── One table → an Excel sheet / a PDF body ──
 
 /** A PDF cell's kind (`POST /reports/pdf`, P:\specs\reports-upgrade.md §4.5). */
-export type PdfCellKind = 'text' | 'money' | 'number' | 'percent' | 'date';
+export type PdfCellKind = 'text' | 'money' | 'number' | 'percent' | 'date' | 'datetime' | 'trend';
 
 export interface ReportPdfBody {
   title: string;
@@ -126,16 +126,27 @@ export interface ReportPdfBody {
   companyId?: string;
   fileName?: string;
   // The designed report (P:\specs\reports-designed-pdf.md §6), all optional (an older server ignores them):
-  /** The server's `reportInsights.<type>`; absent: a general designed report. */
+  /** The server's `reportInsights.<type>` (§7.4; `<type>.<sub>` matches its type); absent: generic. */
   reportType?: string;
+  /** The header band's period line ("01.10.2026 – 13.10.2026"). */
+  period?: string;
+  /** The header band's scope line ("Acme › סניף מרכז › קופה 2"). */
+  scope?: string;
   kpis?: ReportKpi[];
-  chart?: ReportChart;
-  /** The previous period's rows, in `columns`' order (the insights' "what changed"). */
+  /** Absent: the server draws its type's default chart; `null`: no chart. */
+  chart?: ReportChart | null;
+  /** The previous period's rows, in `columns`' order (the insights' "what changed", the trend column). */
   previousRows?: (string | number | null)[][];
-  /** Column keys of the subtotals, outermost first (shop → point of sale → till). */
+  /** What the previous period is ("מול 01.10–07.10"). */
+  previousLabel?: string;
+  /** Column keys of the subtotals, outermost first (shop → point of sale → till), ≤ 3. */
   groupBy?: string[];
-  /** What the KPIs are compared with ("מול 01.10–07.10"). */
-  compareLabel?: string;
+  /** Which columns the insight rules read. */
+  insightKeys?: InsightKeys;
+  /** Sentences of the page's own, after the server's (≤ 5). */
+  insights?: ReportInsight[];
+  noInsights?: boolean;
+  cover?: 'auto' | 'always' | 'never';
 }
 
 /** A report table as the exports see it: keyed columns, plain values, a totals row. */
@@ -171,13 +182,14 @@ export function exportTableSheet(table: ExportTable, keys: readonly string[] | n
   );
 }
 
-const PDF_KIND: Record<ExcelCellKind, 'text' | 'money' | 'number' | 'percent' | 'date'> = {
+const PDF_KIND: Record<ExcelCellKind, PdfCellKind> = {
   text: 'text',
   money: 'money',
   number: 'number',
   percent: 'percent',
   date: 'date',
-  datetime: 'date',
+  // The server writes a date and its time since §7.1.
+  datetime: 'datetime',
 };
 
 /** `POST /reports/pdf`'s body (§4.5) for one table, cut to `keys`. */

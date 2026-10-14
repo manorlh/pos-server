@@ -1,33 +1,51 @@
 /**
- * The designed report (P:\specs\reports-designed-pdf.md §1, §2, §6): what every export sends
+ * The designed report (P:\specs\reports-designed-pdf.md §1, §2, §6, §7): what every export sends
  * besides its table — the report's type, its KPI cards with their comparison, a chart of the
  * main figure, the previous period's rows and the subtotal grouping — and what the client
  * builds from it: the Excel's first sheet "סיכום ותובנות" and the CSV.
  *
- * The insights themselves are written by the server, per report type (`reportInsights.<type>`);
- * the client never words one.
+ * The insights themselves are written by the server, per report type (§7.4: the type picks a
+ * family — ranking, mix, people, hourly, timeline, risk); the client never words one.
  *
  * Pure: no React, no path aliases — `npm test` compiles this file on its own.
  */
 import type { ExcelSheet, ExcelValue } from './excelExport';
 import { toCsv, type CsvCell } from './csv';
 
-// ── The contract (§6) ────────────────────────────────────────────────────────
+// ── The contract (§7.1) ──────────────────────────────────────────────────────
 
-/** How a KPI's value is written. */
-export type KpiKind = 'money' | 'number' | 'percent' | 'count' | 'minutes' | 'text';
+/**
+ * How a KPI's value is written. The server's are money · number · percent · text · duration
+ * (seconds); `count` is sent as number and `minutes` as duration.
+ */
+export type KpiKind = 'money' | 'number' | 'percent' | 'text' | 'duration' | 'count' | 'minutes';
 
-/** A KPI against the previous period (or the same weekday last week). */
-export interface KpiCompare {
-  /** The previous period's value. */
-  previous: number | null;
-  /** Change in percent; null when the previous value is 0 (or unknown). */
-  pct?: number | null;
-  /** `true`: a rise is bad news (refunds, discounts) — the tag turns red when it goes up. */
-  invert?: boolean;
-  /** What it is compared with ("מול 01.10–07.10"). */
-  label?: string;
-}
+/** The KPI card's icon (§7.5); default by key. */
+export type KpiIcon =
+  | 'sales'
+  | 'receipt'
+  | 'basket'
+  | 'items'
+  | 'users'
+  | 'user'
+  | 'refund'
+  | 'void'
+  | 'discount'
+  | 'gift'
+  | 'tip'
+  | 'clock'
+  | 'card'
+  | 'cash'
+  | 'table'
+  | 'alert'
+  | 'star'
+  | 'box'
+  | 'chart'
+  | 'percent'
+  | 'kiosk'
+  | 'voucher'
+  | 'target'
+  | 'calendar';
 
 export interface ReportKpi {
   /** Stable, `[A-Za-z0-9_.-]`: the server's insight rules read KPIs by key. */
@@ -35,9 +53,15 @@ export interface ReportKpi {
   label: string;
   value: number | string | null;
   kind: KpiKind;
-  compare?: KpiCompare;
-  /** The last days' values, oldest first (the card's sparkline). */
+  /** The previous period's value, or `{value, label}`. */
+  compare?: number | null | { value: number | null; label?: string };
+  /** What it is compared with (default "תקופה קודמת"). */
+  compareLabel?: string;
+  /** The last days' values, oldest first (the card's sparkline, ≤ 31). */
   spark?: number[];
+  /** Which way is good news; default by key (refund*, void*, discount*… → down). */
+  better?: 'up' | 'down';
+  icon?: KpiIcon;
 }
 
 export type ReportChartType = 'bar' | 'hbar' | 'donut' | 'line';
@@ -50,40 +74,53 @@ export interface ReportChartSeries {
 export interface ReportChart {
   type: ReportChartType;
   title?: string;
+  /** ≤ 48 (a donut / hbar: the server groups past 12 into "אחר"). */
   labels: string[];
+  /** ≤ 3. */
   series: ReportChartSeries[];
-  /** How the values are written (default money). */
-  kind?: KpiKind;
+  /** How the values are labelled (default money). */
+  kind?: 'money' | 'number' | 'percent';
 }
 
-/** One insight sentence, as the server words it. */
+/** One insight sentence, as the server words it (§7.2). */
 export interface ReportInsight {
-  /** 🏆 leader · 📈 up · 📉 down · ⚠ anomaly · 💡 tip (§5). */
-  kind: 'leader' | 'up' | 'down' | 'anomaly' | 'tip' | string;
+  /** 🏆 leader · 📈 up · 📉 down · ⚠ alert · 💡 tip (§5). */
+  type: 'leader' | 'up' | 'down' | 'alert' | 'tip' | string;
   text: string;
 }
 
-/** What a page gives its export besides the tables. */
-export interface DesignedReportInput {
-  /** The server's `reportInsights.<type>`; absent: a general designed report. */
-  reportType?: string;
-  kpis?: ReportKpi[];
-  chart?: ReportChart | null;
-  /** The main table's column keys the subtotals group by (shop → point of sale → till). */
-  groupBy?: string[];
-  /**
-   * The same report for the previous period, fetched on the click (where the page can):
-   * its rows in the main table's shape, and its KPI values by key.
-   */
-  previous?: () => Promise<PreviousPeriod | null>;
+/** A KPI as `POST /reports/insights` returns it (§7.2): its comparison worked out. */
+export interface ServerKpi {
+  key: string;
+  label: string;
+  kind: string;
+  value: number | string | null;
+  display?: string;
+  compare?: number | null;
+  compareDisplay?: string;
+  compareLabel?: string;
+  changePct?: number | null;
+  direction?: 'up' | 'down' | 'flat' | null;
+  good?: boolean | null;
+}
+
+/** Hints for the insight rules: which columns are the label, the figure, the count… (§7.1). */
+export interface InsightKeys {
+  label?: string;
+  value?: string;
+  count?: string;
+  hour?: string;
+  employee?: string;
+  id?: string;
 }
 
 export interface PreviousPeriod {
   rows?: unknown[];
   kpis?: Record<string, number | null | undefined>;
-  /** What the period is ("01.10–07.10"); default: the range of `from`/`to`. */
+  /** The period's days (the label "מול 01.10–07.10" is made from them). */
   from?: string | null;
   to?: string | null;
+  /** What the period is, when not its days ("שבוע שעבר"). */
   label?: string;
 }
 
@@ -133,16 +170,19 @@ export function changePct(value: number, previous: number): number | null {
 }
 
 /** A number out of a KPI value (the API's decimal strings too); null when it is not one. */
-export function kpiNumber(value: number | string | null | undefined): number | null {
+export function kpiNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-/** Figures where a rise is bad news, by key. */
-const INVERTED = /(refund|cancel|void|discount|oth|variance|declined|untransmitted|failed|abandon|error|problem|exception)/i;
+/** The KPI's previous value, whichever form `compare` took. */
+export function compareValue(k: Pick<ReportKpi, 'compare'>): number | null {
+  if (k.compare === undefined || k.compare === null) return null;
+  return typeof k.compare === 'number' ? k.compare : kpiNumber(k.compare.value);
+}
 
-/** The KPIs with their comparison to the previous period's values (by key). */
+/** The KPIs with the previous period's values (by key) as their comparison. */
 export function withCompare(
   kpis: readonly ReportKpi[],
   previous: Record<string, number | null | undefined> | null | undefined,
@@ -150,50 +190,58 @@ export function withCompare(
 ): ReportKpi[] {
   if (!previous) return [...kpis];
   return kpis.map((k) => {
-    if (k.compare || !(k.key in previous)) return k;
-    const now = kpiNumber(k.value);
-    const before = kpiNumber(previous[k.key] ?? null);
-    if (now === null || before === null) return k;
-    return {
-      ...k,
-      compare: {
-        previous: before,
-        pct: changePct(now, before),
-        ...(INVERTED.test(k.key) ? { invert: true } : {}),
-        ...(label ? { label } : {}),
-      },
-    };
+    if (k.compare !== undefined || !(k.key in previous)) return k;
+    const before = kpiNumber(previous[k.key]);
+    if (before === null || kpiNumber(k.value) === null) return k;
+    return { ...k, compare: before, ...(label && !k.compareLabel ? { compareLabel: label } : {}) };
   });
 }
 
-/** KPIs as the server takes them: 6 at most, keys unique, values plain. */
+/** Up to 8 KPIs as the server takes them (§7.1): keys unique and safe, kinds the server's. */
 export function cleanKpis(kpis: readonly ReportKpi[] | undefined): ReportKpi[] {
   const seen = new Set<string>();
   const out: ReportKpi[] = [];
   for (const k of kpis ?? []) {
-    if (!k || !k.key || seen.has(k.key)) continue;
-    seen.add(k.key);
-    const value = k.kind === 'text' ? (k.value ?? null) : kpiNumber(k.value);
+    if (!k || !k.key) continue;
+    const key = k.key.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 64);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Minutes go as seconds (`duration`); a count is a number.
+    const factor = k.kind === 'minutes' ? 60 : 1;
+    const kind = k.kind === 'minutes' ? 'duration' : k.kind === 'count' ? 'number' : k.kind;
+    const scale = (n: number | null) => (n === null ? null : Math.round(n * factor * 100) / 100);
+    const value = kind === 'text' ? (k.value === null ? null : String(k.value)) : scale(kpiNumber(k.value));
+    const before = compareValue(k);
+    const compare =
+      k.compare === undefined || before === null
+        ? undefined
+        : typeof k.compare === 'object' && k.compare?.label
+          ? { value: scale(before), label: k.compare.label }
+          : scale(before);
     out.push({
-      key: k.key.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 64),
+      key,
       label: k.label.slice(0, 120),
       value,
-      kind: k.kind,
-      ...(k.compare ? { compare: k.compare } : {}),
-      ...(k.spark?.length ? { spark: k.spark.slice(-31).map((n) => (Number.isFinite(n) ? n : 0)) } : {}),
+      kind,
+      ...(compare !== undefined && compare !== null ? { compare } : {}),
+      ...(k.compareLabel ? { compareLabel: k.compareLabel.slice(0, 80) } : {}),
+      ...(k.spark?.length ? { spark: k.spark.slice(-31).map((n) => scale(Number.isFinite(n) ? n : 0) ?? 0) } : {}),
+      ...(k.better ? { better: k.better } : {}),
+      ...(k.icon ? { icon: k.icon } : {}),
     });
-    if (out.length === 6) break;
+    if (out.length === 8) break;
   }
   return out;
 }
 
-/** A chart as the server takes it: labels and every series cut to the same 40 points. */
+/** A chart as the server takes it: ≤ 48 labels, ≤ 3 series of the same length; null-free numbers. */
 export function cleanChart(chart: ReportChart | null | undefined): ReportChart | undefined {
   if (!chart || !chart.labels.length || !chart.series.length) return undefined;
-  const n = Math.min(chart.labels.length, chart.type === 'donut' ? 12 : 40);
-  const series = chart.series
-    .slice(0, 4)
-    .map((s) => ({ name: s.name.slice(0, 80), values: s.values.slice(0, n).map((v) => (v === null || Number.isFinite(v) ? v : null)) }));
+  const n = Math.min(chart.labels.length, 48);
+  const series = chart.series.slice(0, 3).map((s) => ({
+    name: s.name.slice(0, 80),
+    values: s.values.slice(0, n).map((v) => (v === null || !Number.isFinite(v) ? null : v)),
+  }));
   if (!series.some((s) => s.values.some((v) => v !== null && v !== 0))) return undefined;
   return {
     type: chart.type,
@@ -213,17 +261,17 @@ export function chartFromTable(
   table: { columns: { key: string; header: string }[]; rows: ExcelValue[][] },
   labelKey: string,
   valueKey: string,
-  options: { type?: ReportChartType; top?: number; title?: string; kind?: KpiKind } = {},
+  options: { type?: ReportChartType; top?: number; title?: string; kind?: ReportChart['kind'] } = {},
 ): ReportChart | undefined {
   const li = table.columns.findIndex((c) => c.key === labelKey);
   const vi = table.columns.findIndex((c) => c.key === valueKey);
   if (li < 0 || vi < 0) return undefined;
   const points = table.rows
-    .map((r) => ({ label: String(r[li] ?? ''), value: kpiNumber(r[vi] as number | string | null) }))
+    .map((r) => ({ label: String(r[li] ?? ''), value: kpiNumber(r[vi]) }))
     .filter((p): p is { label: string; value: number } => p.label !== '' && p.value !== null);
   const type = options.type ?? 'hbar';
   if (type !== 'line') points.sort((a, b) => b.value - a.value);
-  const top = points.slice(0, options.top ?? (type === 'donut' ? 6 : 10));
+  const top = points.slice(0, options.top ?? (type === 'line' || type === 'bar' ? 48 : 12));
   if (!top.length) return undefined;
   return {
     type,
@@ -234,7 +282,7 @@ export function chartFromTable(
   };
 }
 
-// ── The Excel's first sheet (§1, §6) ─────────────────────────────────────────
+// ── The Excel's first sheet (§1, §7.2) ──────────────────────────────────────
 
 export interface SummarySheetWords {
   /** The sheet's name: "סיכום ותובנות". */
@@ -244,13 +292,31 @@ export interface SummarySheetWords {
   previousHeader: string;
   changeHeader: string;
   insightsHeading: string;
-  /** "▲ / ▼" with the change as the sheet shows it. */
 }
 
-/** A KPI value as the sheet holds it (a number stays a number; Excel formats it by kind). */
-function kpiCell(k: ReportKpi): ExcelValue {
-  if (k.kind === 'text') return k.value === null ? null : String(k.value);
-  return kpiNumber(k.value);
+/** A KPI row of the summary sheet: as the server worked it out, or as the page gave it. */
+interface SummaryKpi {
+  label: string;
+  value: ExcelValue;
+  previous: number | null;
+  pct: number | null;
+}
+
+function summaryKpis(kpis: readonly (ReportKpi | ServerKpi)[]): SummaryKpi[] {
+  return kpis.map((k) => {
+    const isText = k.kind === 'text';
+    // The server's display ("₪ 12,345.50", "12:30") for what a number cell cannot say.
+    const display = 'display' in k ? k.display : undefined;
+    const value: ExcelValue = isText ? (k.value === null ? null : String(k.value)) : (kpiNumber(k.value) ?? display ?? null);
+    const previous = typeof k.compare === 'number' ? k.compare : k.compare ? kpiNumber(k.compare.value) : null;
+    const pct =
+      'changePct' in k && k.changePct !== undefined
+        ? (k.changePct ?? null)
+        : previous !== null && typeof value === 'number'
+          ? changePct(value, previous)
+          : null;
+    return { label: k.label, value, previous, pct };
+  });
 }
 
 /**
@@ -258,23 +324,20 @@ function kpiCell(k: ReportKpi): ExcelValue {
  * sentences, one per row. Null when there is nothing to say (no KPI and no insight).
  */
 export function summarySheet(
-  kpis: readonly ReportKpi[],
+  kpis: readonly (ReportKpi | ServerKpi)[],
   insights: readonly ReportInsight[],
   words: SummarySheetWords,
 ): ExcelSheet | null {
   if (!kpis.length && !insights.length) return null;
-  const hasCompare = kpis.some((k) => k.compare);
-  const rows: ExcelValue[][] = kpis.map((k) => [
-    k.label,
-    kpiCell(k),
-    ...(hasCompare ? [k.compare?.previous ?? null, k.compare?.pct ?? null] : []),
-  ]);
+  const list = summaryKpis(kpis);
+  const hasCompare = list.some((k) => k.previous !== null);
+  const rows: ExcelValue[][] = list.map((k) => [k.label, k.value, ...(hasCompare ? [k.previous, k.pct] : [])]);
   const width = hasCompare ? 4 : 2;
   const pad = (cells: ExcelValue[]) => [...cells, ...Array.from({ length: width - cells.length }, () => null)];
   if (insights.length) {
     if (rows.length) rows.push(pad([]));
     rows.push(pad([words.insightsHeading]));
-    for (const i of insights) rows.push(pad([`${insightMark(i.kind)} ${i.text}`.trim()]));
+    for (const i of insights) rows.push(pad([`${insightMark(i.type)} ${i.text}`.trim()]));
   }
   // One kind per column: a money KPI and a count share the value column, so it is "number".
   return {
@@ -295,16 +358,16 @@ export function summarySheet(
 }
 
 /** The insight's sign, as the PDF's card shows it (§5); readable without colour. */
-export function insightMark(kind: string): string {
-  switch (kind) {
+export function insightMark(type: string): string {
+  switch (type) {
     case 'leader':
       return '🏆';
     case 'up':
       return '📈';
     case 'down':
       return '📉';
+    case 'alert':
     case 'anomaly':
-    case 'risk':
       return '⚠';
     case 'tip':
       return '💡';

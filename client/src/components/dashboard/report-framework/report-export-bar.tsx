@@ -34,7 +34,7 @@ import {
   summarySheet,
   tableCsv,
   withCompare,
-  type KpiKind,
+  type InsightKeys,
   type PreviousPeriod,
   type ReportChart,
   type ReportChartType,
@@ -116,7 +116,9 @@ export interface ReportExportBarProps {
   /** The main figure's chart. */
   chart?: ReportChart | null;
   /** No `chart`: one built from the exported main table (the top rows by `value`). */
-  chartFrom?: { label: string; value: string; type?: ReportChartType; top?: number; kind?: KpiKind; title?: string };
+  chartFrom?: { label: string; value: string; type?: ReportChartType; top?: number; kind?: ReportChart['kind']; title?: string };
+  /** Which columns the server's insight rules read (§7.1); default: `chartFrom`'s, else the server guesses. */
+  insightKeys?: InsightKeys;
   /** The main table's column keys the PDF's subtotals group by (shop → point of sale → till). */
   groupBy?: string[];
   /** The same report for the previous period, fetched on the click (KPI comparison, previous rows). */
@@ -202,6 +204,7 @@ export function ReportExportBar({
   kpis,
   chart,
   chartFrom,
+  insightKeys,
   groupBy,
   previous,
   csv,
@@ -292,8 +295,8 @@ export function ReportExportBar({
       }
     }
     const beforeRange = before ? rangeText(before.from, before.to) : '';
-    const compareLabel = before?.label ?? (beforeRange ? t('compareWith', { range: beforeRange }) : undefined);
-    const cards = cleanKpis(withCompare(kpis ?? [], before?.kpis ?? null, compareLabel));
+    const previousLabel = before?.label ?? (beforeRange ? t('compareWith', { range: beforeRange }) : undefined);
+    const cards = cleanKpis(withCompare(kpis ?? [], before?.kpis ?? null, previousLabel));
     let previousRows: (string | number | null)[][] | undefined;
     if (main && r && before?.rows) {
       const x = expandExportColumns(r.table, before.rows, r.keys);
@@ -315,14 +318,23 @@ export function ReportExportBar({
           )
         : undefined);
     const chosen = new Set(main?.keys ?? []);
-    const groups = (groupBy ?? []).filter((k) => chosen.has(k));
+    const groups = (groupBy ?? []).filter((k) => chosen.has(k)).slice(0, 3);
+    const keys = insightKeys ?? (chartFrom ? { label: chartFrom.label, value: chartFrom.value } : undefined);
+    const hints = keys
+      ? Object.fromEntries(Object.entries(keys).filter(([, v]) => typeof v === 'string' && chosen.has(v)))
+      : {};
     return {
       ...(reportType ? { reportType } : {}),
-      kpis: cards,
+      // The header band's two lines (§7.1): the period, then business › place.
+      ...(range ? { period: range } : {}),
+      ...(business || place ? { scope: [business, place].filter((x) => x && x.trim()).join(' › ') } : {}),
+      ...(cards.length ? { kpis: cards } : {}),
+      // No chart from the page: the server draws its type's default (§7.4).
       ...(drawn ? { chart: drawn } : {}),
       ...(previousRows ? { previousRows } : {}),
+      ...(previousLabel && before ? { previousLabel } : {}),
       ...(groups.length ? { groupBy: groups } : {}),
-      ...(compareLabel && before ? { compareLabel } : {}),
+      ...(Object.keys(hints).length ? { insightKeys: hints } : {}),
     };
   };
 
@@ -353,8 +365,9 @@ export function ReportExportBar({
           ...exportTablePdfBody(mainPrepared.table, mainPrepared.keys, pdfHeader(main), orientation),
           ...(await designed(mainPrepared, main)),
         };
-        const insights = body.rows.length <= PDF_MAX_ROWS ? await fetchReportInsights(body) : [];
-        summary = summarySheet(body.kpis ?? [], insights, {
+        // The server's sentences, and its KPIs with the comparison worked out (§7.2).
+        const answer = body.rows.length <= PDF_MAX_ROWS ? await fetchReportInsights(body) : null;
+        summary = summarySheet(answer?.kpis.length ? answer.kpis : (body.kpis ?? []), answer?.insights ?? [], {
           sheetName: t('summarySheet'),
           kpiHeader: t('summaryKpi'),
           valueHeader: t('summaryValue'),

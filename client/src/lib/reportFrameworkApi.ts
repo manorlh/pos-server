@@ -16,7 +16,7 @@ import {
   type ColumnPrefs,
   type ReportColumnPrefsState,
 } from './reportColumns';
-import type { ReportInsight } from './designedReport';
+import type { ReportInsight, ServerKpi } from './designedReport';
 import type { ReportPdfBody } from './reportExport';
 
 export type { ReportColumnPrefsState, ReportPdfBody };
@@ -172,21 +172,31 @@ export async function fetchReportPdf(body: ReportPdfBody): Promise<Blob | null> 
   }
 }
 
-// ── Insights (P:\specs\reports-designed-pdf.md §1.3, §6) ────────────────────────
+// ── Insights (P:\specs\reports-designed-pdf.md §7.2) ─────────────────────────────
+
+export interface ReportInsightsAnswer {
+  insights: ReportInsight[];
+  /** The KPIs with their comparison worked out (display, changePct, direction). */
+  kpis: ServerKpi[];
+}
 
 /**
- * The server's insight sentences for a report (the same rules the designed PDF prints), for
- * the Excel's "סיכום ותובנות". A server without them, or any failure: none — the export goes on.
+ * `POST /reports/insights` (the PDF's body, JSON back): the server's insight sentences for the
+ * report and its KPIs worked out, for the Excel's "סיכום ותובנות". A server without the route,
+ * or any failure: null — the export goes on without them.
  */
-export async function fetchReportInsights(body: ReportPdfBody): Promise<ReportInsight[]> {
+export async function fetchReportInsights(body: ReportPdfBody): Promise<ReportInsightsAnswer | null> {
   try {
-    const { data } = await api.post<{ insights?: unknown }>('/reports/insights', body);
-    const list = Array.isArray(data?.insights) ? data.insights : [];
-    return list
-      .map((x) => (typeof x === 'string' ? { kind: 'tip', text: x } : (x as Partial<ReportInsight>)))
+    const { data } = await api.post<{ insights?: unknown; kpis?: unknown }>('/reports/insights', body);
+    const insights = (Array.isArray(data?.insights) ? data.insights : [])
+      .map((x) => x as Partial<ReportInsight>)
       .filter((x): x is ReportInsight => !!x && typeof x.text === 'string' && x.text.trim() !== '')
-      .map((x) => ({ kind: typeof x.kind === 'string' ? x.kind : 'tip', text: x.text }));
+      .map((x) => ({ type: typeof x.type === 'string' ? x.type : 'tip', text: x.text }));
+    const kpis = (Array.isArray(data?.kpis) ? data.kpis : []).filter(
+      (k): k is ServerKpi => !!k && typeof (k as ServerKpi).key === 'string' && typeof (k as ServerKpi).label === 'string',
+    );
+    return { insights, kpis };
   } catch {
-    return [];
+    return null;
   }
 }

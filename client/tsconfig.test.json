@@ -356,6 +356,11 @@
     "src/lib/remotePrint.ts",
     "src/lib/remotePrint.test.ts",
     "src/lib/tableAssignment.ts",
-    "src/lib/tableAssignment.test.ts"
+    "src/lib/tableAssignment.test.ts",
+    "src/lib/csv.ts",
+    "src/lib/designedReport.ts",
+    "src/lib/designedReport.test.ts",
+    "src/lib/reportPages.ts",
+    "src/lib/reportPages.test.ts"
   ]
 }
