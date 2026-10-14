@@ -63,10 +63,11 @@ import { LookSection } from './section-look';
 import { MenuSection } from './section-menu';
 import { TillMotionSection, TillTablesDemo } from './section-motion';
 import { TemplateSection } from './section-template';
+import { TillMenuSection } from './section-till-menu';
 import { CoursesOffNote, CoverageSummary } from './section-template-options';
 import { TillPreview } from './till-preview';
 
-type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion';
+type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion' | 'tillMenu';
 
 const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'template', paths: ['template', 'profiles', 'courses', 'payDock', 'night', 'visual', 'professional', 'bar.openTabs'] },
@@ -77,6 +78,8 @@ const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'fields', paths: ['fields', 'tables', 'behavior', 'orderNumber'] },
   // "הנפשות" (P:/specs/till-motion.md): the kiosk's Motion Engine on the till.
   { key: 'motion', paths: ['motion'] },
+  // "תפריט הקופה": a till parameter of its own (`hiddenMenuItems`), saved apart from the layer.
+  { key: 'tillMenu', paths: [] },
 ];
 
 /** Who may write a level (the server's machine-admin set, then its scope check). */
@@ -319,6 +322,8 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
               <LookSection />
             ) : section === 'motion' ? (
               <TillMotionSection />
+            ) : section === 'tillMenu' ? (
+              <TillMenuSection />
             ) : (
               <FieldsSection />
             )}

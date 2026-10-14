@@ -562,6 +562,13 @@ from app.routers import table_restore as table_restore_router  # noqa: E402
 
 app.include_router(table_restore_router.router, prefix=_prefix)
 
+# "תפריט הקופה" (P:/specs/till-menu-hide.md §3, app/routers/till_menu.py): `hiddenMenuItems` at one level —
+# the device page's card and "עיצוב קופה"'s, besides the parameters page.
+from app.routers import till_menu as till_menu_router  # noqa: E402
+
+app.include_router(till_menu_router.router, prefix=_prefix)
+app.include_router(till_menu_router.design_router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def start_whatsapp_distribution_worker():

@@ -3274,9 +3274,10 @@ export interface TillParameter {
   valueCount: number;
   /**
    * How it is edited beyond its type: `'image'` = a string holding an image URL, picked
-   * by upload (the server's `IMAGE_PARAMETER_KEYS`, e.g. `receiptLogoUrl`); null = by type.
+   * by upload (the server's `IMAGE_PARAMETER_KEYS`, e.g. `receiptLogoUrl`); `'menu_items'` =
+   * the till's menu items as checkboxes (`hiddenMenuItems`, lib/tillMenu.ts); null = by type.
    */
-  widget?: 'image' | null;
+  widget?: 'image' | 'menu_items' | null;
   /** For `widget: 'image'`: the branding upload kind its images go through. */
   imageKind?: BrandingImageKind | 'media' | null;
   /** The dashboard tab that edits it instead of this page (`'printers'`), or null. */

@@ -447,6 +447,7 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
                 enumLabels={parameter.enumLabels}
                 parameterKey={parameter.key}
                 imageKind={imageKind}
+                widget={parameter.widget}
                 draft={draft}
                 onChange={setDraft}
                 disabled={save.isPending}

@@ -239,6 +239,8 @@ IMAGE_PARAMETER_KEYS: Dict[str, str] = {
 }
 
 WIDGET_IMAGE = "image"
+#: `hiddenMenuItems` (app/services/till_menu.py): checkboxes of the till's menu items, not a text field.
+WIDGET_MENU_ITEMS = "menu_items"
 
 
 def image_kind(key: str, value_type: str) -> Optional[str]:
@@ -250,6 +252,8 @@ def image_kind(key: str, value_type: str) -> Optional[str]:
 
 def parameter_widget(key: str, value_type: str) -> Optional[str]:
     """How the dashboard edits the parameter, when not by its type alone."""
+    if key == "hiddenMenuItems" and value_type == "string":
+        return WIDGET_MENU_ITEMS
     return WIDGET_IMAGE if image_kind(key, value_type) else None
 
 
@@ -1762,6 +1766,12 @@ from app.services.local_server_switch import PARAMETER_SPECS as _LOCAL_SERVER_SP
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _LOCAL_SERVER_SPECS)
 
+# "הסתרת פריטים מתפריט הקופה" (app/services/till_menu.py, P:/specs/till-menu-hide.md): `hiddenMenuItems`, the
+# menu keys a till hides from everyone, whatever their permissions. Empty by default: the menu as today.
+from app.services.till_menu import PARAMETER_SPECS as _TILL_MENU_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILL_MENU_SPECS)
+
 # "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
 # what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
 # מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).
@@ -1964,6 +1974,14 @@ def enum_labels(key: str) -> Optional[Dict[str, str]]:
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
     from app.services import kiosk_technician, kiosk_till_mode
+    from app.services import till_menu
+
+    # "הסתרת פריטים מתפריט הקופה": the known menu keys only, in the menu's order; unknown ones dropped.
+    if key == till_menu.KEY and value is not None:
+        try:
+            return till_menu.clean_value(value)
+        except till_menu.MenuKeysError as exc:
+            raise TillParameterValueError(str(exc)) from exc
 
     if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY):
         try:
