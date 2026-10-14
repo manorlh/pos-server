@@ -142,6 +142,13 @@ def _tenant_timezones(db: Session, machines: List[POSMachine]) -> Dict[Any, Opti
     }
 
 
+def _device_info_out(info: Any) -> Any:
+    """`device_info` as the machines list shows it: the sync report left out (it has its own read)."""
+    if not isinstance(info, dict) or not ("syncState" in info or "outbox" in info):
+        return info
+    return {k: v for k, v in info.items() if k not in ("syncState", "outbox")}
+
+
 def _enrich_machine_status(
     machine: POSMachine,
     db: Session,
@@ -226,7 +233,8 @@ def _enrich_machine_status(
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
-        "deviceInfo": machine.device_info,
+        # Without the sync report ("מצב סנכרון"): `GET /machines/{id}/sync-status` reads it, compared.
+        "deviceInfo": _device_info_out(machine.device_info),
         "deviceModel": machine.device_model,
         "hasPrinter": machine.has_printer,
         # False for a P18: it charges on a Nayax pinpad on the network (`pinpad*` below).
@@ -849,6 +857,12 @@ def post_my_heartbeat(
                 customer_display_media.apply_report(db, machine, body.customer_display_media)
         except Exception:  # noqa: BLE001
             logger.exception("customer display media report failed for %s", machine.id)
+    # "מצב סנכרון" (P:/specs/device-sync-status.md §5.3): what the device holds of each sync key and
+    # what it has not uploaded — replaced whole when the beat carries it; never fails a beat.
+    if body is not None and (body.sync_state is not None or body.outbox is not None):
+        from app.services import sync_status
+
+        sync_status.apply_report(machine, body.sync_state, body.outbox)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
     # "הפעלה אוטומטית" (app/services/autostart.py): whether the device opens by itself on boot, kept in

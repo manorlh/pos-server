@@ -83,6 +83,10 @@ import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
 import { CustomerDisplayPairingFields, CustomerDisplayWebLink } from '@/components/dashboard/customer-display/customer-display-devices';
 import { WorkConfigStep } from '@/components/dashboard/machines/work-config';
 import { useEventTillSelection } from '@/components/dashboard/events/assign-to-event';
+import { ShopSyncDialog } from '@/components/dashboard/machines/sync-status';
+import { fetchSyncStatuses } from '@/lib/syncStatusApi';
+
+const EMPTY_NAMES: ReadonlyMap<string, string> = new Map();
 import {
   EMPTY_DRAFT as EMPTY_WORK_CONFIG,
   draftError as workConfigDraftError,
@@ -366,6 +370,33 @@ export default function MachinesPage() {
     [filterResult, onlyTerminalMismatch, sort, viewContext],
   );
   const filterOptions = useDeviceFilterOptions({ rows: visibleMachines, result: filterResult, shops });
+
+  /**
+   * "סנכרון" (P:/specs/device-sync-status.md §3): each shown device's sync state — read apart from the
+   * list (it compares with the cloud's versions), every minute; the column fills in when it arrives.
+   */
+  const syncIds = useMemo(
+    () => shownMachines.filter((m) => m.shopId && m.isActive !== false).map((m) => m.id).sort(),
+    [shownMachines],
+  );
+  const syncStatuses = useQuery({
+    queryKey: ['machines-sync-status', syncIds.join(',')],
+    queryFn: () => fetchSyncStatuses(syncIds),
+    enabled: syncIds.length > 0,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const syncByMachine = useMemo(
+    () => new Map((syncStatuses.data ?? []).map((s) => [s.machineId, s] as const)),
+    [syncStatuses.data],
+  );
+  /** "סנכרן את כל הסניף": the shop, and its devices' names as they were when it was asked. */
+  const [syncShop, setSyncShop] = useState<{ shop: Shop; names: ReadonlyMap<string, string> } | null>(null);
+  const openSyncShop = (shop: Shop) =>
+    setSyncShop({
+      shop,
+      names: new Map(machines.filter((m) => sameId(m.shopId, shop.id)).map((m) => [m.id, m.name] as const)),
+    });
 
   const resetPairDialog = () => {
     setPairName('');
@@ -927,12 +958,26 @@ export default function MachinesPage() {
             onAddMachineToShop={openPairForShop}
             onTerminalNumberForShop={canProduceZ ? openTerminalForShop : undefined}
             selection={pageTab === 'devices' ? eventAssign.selection : undefined}
+            syncByMachine={syncByMachine}
+            onSyncShop={openSyncShop}
           />
         )}
         </>
       )}
       </ScopeGate>
       {eventAssign.ui}
+      <ShopSyncDialog
+        shopId={syncShop?.shop.id ?? null}
+        shopName={syncShop?.shop.name ?? ''}
+        names={syncShop?.names ?? EMPTY_NAMES}
+        open={syncShop !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSyncShop(null);
+            qc.invalidateQueries({ queryKey: ['machines-sync-status'] });
+          }
+        }}
+      />
       </>
       )}
 

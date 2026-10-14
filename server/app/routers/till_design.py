@@ -93,11 +93,15 @@ def get_till_design_sync(
     today's screens). Pulled with the parameters (start, sync cycle, heartbeat, an Ably
     `settings` notify with reason `till_design_updated`); a bare 304 when unchanged.
     """
+    from app.services import sync_versions
+
     bundle = design.sync_bundle(db, machine)
     etag = design.bundle_etag(bundle)
+    # "מצב סנכרון" (app/services/sync_versions.py): the same ETag, as the `settings.design` key.
+    headers = {"ETag": etag, sync_versions.HEADER: sync_versions.header_value({"settings.design": etag})}
     if request is not None and request.headers.get("if-none-match") == etag:
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
-    return JSONResponse(content=bundle, headers={"ETag": etag})
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return JSONResponse(content=bundle, headers=headers)
 
 
 # ── Dashboard scope ──────────────────────────────────────────────────────────

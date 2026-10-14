@@ -19,7 +19,7 @@
  */
 
 import { useTranslations } from 'next-intl';
-import { ChevronDown, CreditCard, Plus } from 'lucide-react';
+import { ChevronDown, CreditCard, Plus, RefreshCw } from 'lucide-react';
 import type { PosMachine } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { MachineStatusDot } from '@/components/dashboard/machine-status';
@@ -45,6 +45,8 @@ export interface MachineGroupHeaderProps {
   onAddMachine?: () => void;
   /** The shop's terminal number for all its tills at once; absent where not allowed. */
   onTerminalNumber?: () => void;
+  /** "סנכרן את כל הסניף" (P:/specs/device-sync-status.md §3): `sync_now` to every device, a summary each. */
+  onSyncShop?: () => void;
 }
 
 export function MachineGroupHeader({
@@ -59,6 +61,7 @@ export function MachineGroupHeader({
   onToggle,
   onAddMachine,
   onTerminalNumber,
+  onSyncShop,
 }: MachineGroupHeaderProps) {
   const t = useTranslations('machines');
   const tTerminal = useTranslations('cardTerminal');
@@ -126,6 +129,18 @@ export function MachineGroupHeader({
             title={tTerminal('actionShopTitle', { shop: shopName })}
           >
             <CreditCard className="h-3.5 w-3.5 ms-1" aria-hidden /> {tTerminal('action')}
+          </Button>
+        ) : null}
+
+        {onSyncShop ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={onSyncShop}
+            title={`סנכרן את כל המכשירים של ${shopName} ובדוק שהכל התקבל`}
+          >
+            <RefreshCw className="h-3.5 w-3.5 ms-1" aria-hidden /> סנכרן את כל הסניף
           </Button>
         ) : null}
 

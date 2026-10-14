@@ -256,6 +256,13 @@ class MachineHeartbeatBody(BaseModel):
     #: holds, `{screen: bool, held: [sha256…]}` — cleaned in app/services/customer_display_media.py
     #: `apply_report` (never a 422). Absent (an older build): as it was.
     customer_display_media: Optional[Dict[str, Any]] = Field(None, alias="customerDisplayMedia")
+    #: "מצב סנכרון" (P:/specs/device-sync-status.md §5.3): per sync key `{version, pulledAt, ok,
+    #: error?, errorSince?}`, cleaned value by value in app/services/sync_status.py — never a 422.
+    #: Absent: as it was.
+    sync_state: Optional[Any] = Field(None, alias="syncState")
+    #: What the device holds and has not uploaded yet: `{documents, events, attendance, refunds,
+    #: oldestAt}` (§5.3), cleaned the same way. Absent: as it was.
+    outbox: Optional[Any] = None
 
     model_config = ConfigDict(populate_by_name=True)
 

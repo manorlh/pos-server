@@ -148,6 +148,12 @@ app.include_router(areas_router.router, prefix=_prefix)
 from app.routers import machine_search as machine_search_router  # noqa: E402
 
 app.include_router(machine_search_router.router, prefix=_prefix)
+# "מצב סנכרון של מכשיר" (app/routers/sync_status.py): before the machines router too
+# (`/machines/sync-status`), and the till's `POST /sync/{m}/sync-state`.
+from app.routers import sync_status as sync_status_router  # noqa: E402
+
+app.include_router(sync_status_router.router, prefix=_prefix)
+app.include_router(sync_status_router.till_router, prefix=_prefix)
 app.include_router(machines.router, prefix=_prefix)
 app.include_router(close_day.router, prefix=_prefix)
 app.include_router(pairing.router, prefix=_prefix)
