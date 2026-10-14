@@ -83,7 +83,13 @@ export default function KitchenPrintersPage() {
       qc.invalidateQueries({ queryKey: ['printer-scan', shopId] });
       qc.invalidateQueries({ queryKey: ['printer-zone-redirects', shopId] });
     },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+    onError: (err: unknown) => {
+      // "המדפסת של <קופה>": the host chosen runs a build that cannot print relayed documents yet.
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      toast.error(
+        detail === 'host_needs_update' ? t('errors.hostNeedsUpdate') : axiosErrorToToastMessage(err, tc('error')),
+      );
+    },
   });
 
   const remove = useMutation({
@@ -143,6 +149,10 @@ export default function KitchenPrintersPage() {
           : reach === 'usb'
             ? t('connection.usb')
             : t('connection.till');
+    if (p.connectionType === 'cloud' && p.purpose === 'receipt') {
+      // "המדפסת של <קופה>": the bills of the tills it applies to, printed by that till.
+      return t('connection.cloudReceipt', { host: p.hostMachineName ?? '?', how });
+    }
     return p.connectionType === 'cloud'
       ? t('connection.cloud', { host: p.hostMachineName ?? '?', how })
       : how;

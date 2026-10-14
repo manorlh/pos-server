@@ -113,6 +113,10 @@ export const EXCEPTION_TYPES = [
   // "תמיכה מרחוק" (pos-server app/services/remote_support.py): a till's QuickSupport signed by a certificate
   // other than the allowed one (details: summary, till, package, reported, pinned, resolvedAt).
   'quicksupport_signer_mismatch',
+  // "הדפסה בקופה אחרת" (pos-server app/services/remote_print.py): a bill relayed to another till's printer
+  // that failed, expired or was taken back there (details: summary, jobId, status, error, host, source,
+  // document {category, type, number, copy, title}, resolvedAt — closed when it prints after all).
+  'document_unprinted',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];
