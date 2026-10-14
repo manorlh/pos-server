@@ -9,20 +9,21 @@ describe('the search box read as a table (same rules as the server and the till)
       const q = parseTableQuery(typed);
       assert.equal(q?.number, 12);
       assert.equal(q?.explicit, true);
+      assert.equal(q?.nameWhole, true);
       assert.equal(q?.name, typed.trim().split(/\s+/).join(' '));
     });
   }
 
   it('text with a letter may be a table name; digits alone are not a table without the chip', () => {
-    assert.deepEqual(parseTableQuery('VIP 1'), { number: null, name: 'VIP 1', explicit: false });
-    assert.deepEqual(parseTableQuery('בר 3'), { number: null, name: 'בר 3', explicit: false });
+    assert.deepEqual(parseTableQuery('VIP 1'), { number: null, name: 'VIP 1', explicit: false, nameWhole: false });
+    assert.deepEqual(parseTableQuery('בר 3'), { number: null, name: 'בר 3', explicit: false, nameWhole: false });
     for (const typed of ['', '  ', '12', '20000057', '17.50', null, undefined]) assert.equal(parseTableQuery(typed), null);
   });
 
   it('with the "שולחן" chip digits are a table number and other text a name', () => {
-    assert.deepEqual(parseTableQuery('12', true), { number: 12, name: null, explicit: true });
-    assert.deepEqual(parseTableQuery('VIP 1', true), { number: null, name: 'VIP 1', explicit: true });
-    assert.deepEqual(parseTableQuery('ש-12', true), { number: 12, name: 'ש-12', explicit: true });
+    assert.deepEqual(parseTableQuery('12', true), { number: 12, name: null, explicit: true, nameWhole: false });
+    assert.deepEqual(parseTableQuery('VIP 1', true), { number: null, name: 'VIP 1', explicit: true, nameWhole: false });
+    assert.deepEqual(parseTableQuery('ש-12', true), { number: 12, name: 'ש-12', explicit: true, nameWhole: true });
     assert.equal(parseTableQuery('', true), null);
   });
 
@@ -31,6 +32,17 @@ describe('the search box read as a table (same rules as the server and the till)
     assert.ok(!tableMatches(parseTableQuery('ש12')!, 9012, 'ש-12'));
     assert.ok(tableMatches(parseTableQuery('vip')!, 31, 'VIP 1'));
     assert.ok(!tableMatches(parseTableQuery('ש12')!, 112, null));
+  });
+
+  it('the explicit form matches a name as a whole; any other name search is a substring', () => {
+    const q = parseTableQuery('ש-12')!;
+    assert.ok(tableMatches(q, 9012, 'ש-12') && tableMatches(q, 9112, 'ש-12 (2)') && tableMatches(q, 9013, '  ש-12  '));
+    assert.ok(!tableMatches(q, 9120, 'ש-120'));
+    assert.ok(!tableMatches(q, 9200, 'גן ש-12'));
+    assert.ok(!tableMatches(parseTableQuery('שולחן 1')!, 10, 'שולחן 10'));
+    assert.ok(tableMatches(parseTableQuery('שולחן 10')!, null, 'שולחן 10'));
+    assert.ok(tableMatches(parseTableQuery('vip', true)!, 31, 'the VIP 1'));
+    assert.ok(tableMatches(parseTableQuery('VIP 1')!, 31, 'VIP 10'));
   });
 });
 

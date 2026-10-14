@@ -39,14 +39,14 @@ from shift_world import accept_str_uuids, make_world
 ])
 def test_the_explicit_forms_ask_for_table_12_only(typed):
     tq = T.parse_table_query(typed)
-    assert (tq.number, tq.explicit) == (12, True)
+    assert (tq.number, tq.explicit, tq.name_whole) == (12, True, True)
     assert tq.name == " ".join(typed.split())      # "ש-12" is also a restored table's name
 
 
 @pytest.mark.parametrize("typed", ["VIP 1", "בר 3", "vip", "המבורגר"])
 def test_text_with_a_letter_may_be_a_tables_name(typed):
     tq = T.parse_table_query(typed)
-    assert (tq.number, tq.name, tq.explicit) == (None, typed, False)
+    assert (tq.number, tq.name, tq.explicit, tq.name_whole) == (None, typed, False, False)
 
 
 @pytest.mark.parametrize("typed", ["", "   ", "12", "20000057", "17.50", None])
@@ -58,7 +58,7 @@ def test_with_the_chip_digits_are_a_table_number_and_text_a_name():
     assert T.parse_table_query("12", chip=True) == T.TableQuery(number=12, name=None, explicit=True)
     assert T.parse_table_query(" 12 ", chip=True).number == 12
     assert T.parse_table_query("VIP 1", chip=True) == T.TableQuery(number=None, name="VIP 1", explicit=True)
-    assert T.parse_table_query("ש-12", chip=True) == T.TableQuery(number=12, name="ש-12", explicit=True)
+    assert T.parse_table_query("ש-12", chip=True) == T.TableQuery(number=12, name="ש-12", explicit=True, name_whole=True)
     assert T.parse_table_query("123456", chip=True) == T.TableQuery(number=None, name="123456", explicit=True)
     assert T.parse_table_query("", chip=True) is None
 
@@ -71,6 +71,19 @@ def test_an_order_matches_by_number_or_by_name():
     assert T.parse_table_query("vip").matches(31, "VIP 1")
     assert T.parse_table_query("בר 3").matches(3, "בר 3")
     assert not T.parse_table_query("בר 3").matches(3, None)
+
+
+def test_the_explicit_form_matches_a_name_as_a_whole():
+    """It starts the name and does not go on with a digit; any other name search is a substring."""
+    q = T.parse_table_query("ש-12")
+    assert q.matches(9012, "ש-12") and q.matches(9112, "ש-12 (2)") and q.matches(9013, "  ש-12  ")
+    assert not q.matches(9120, "ש-120")
+    assert not q.matches(9200, "גן ש-12")                      # inside the name: not the explicit form
+    assert not T.parse_table_query("שולחן 1").matches(10, "שולחן 10")
+    assert T.parse_table_query("שולחן 10").matches(None, "שולחן 10")
+    assert T.parse_table_query("t1").matches(None, "T1 bar")
+    assert T.parse_table_query("vip", chip=True).matches(31, "the VIP 1")   # the chip's text: a substring
+    assert T.parse_table_query("VIP 1").matches(31, "VIP 10")               # a letter search: a substring
 
 
 # ── The shop's day ───────────────────────────────────────────────────────────
@@ -145,7 +158,7 @@ def day(monkeypatch):
     doc("112", t1, "12.00", 5)                                    # a counter sale numbered 112
     order(w.other_shop, 12, None, 100, doc("107", w.other_till, "50.00", 70))
     w.db.commit()
-    w.now = now
+    w.now, w.add_doc, w.add_order = now, doc, order
     return w
 
 
@@ -205,6 +218,16 @@ class TestTheTillsShopList:
         rows = _shop(day, q="112")
         assert set(rows) == {"112"} and rows["112"].matched_by == ["document"]
 
+    def test_the_explicit_form_finds_a_name_as_a_whole(self, day):
+        day.add_order(day.shop, 9112, "ש-12 (2)", 30, day.add_doc("120", day.tills[0], "7.00", 8))
+        day.add_order(day.shop, 9120, "ש-120", 30, day.add_doc("121", day.tills[0], "8.00", 7))
+        day.add_order(day.shop, 10, "שולחן 10", 30, day.add_doc("122", day.tills[0], "9.00", 6))
+        day.db.commit()
+        assert set(_shop(day, q="ש-12")) == {"100", "101", "102", "103", "108", "104", "120"}   # not ש-120's
+        assert set(_shop(day, table="ש-12")) == {"100", "101", "102", "103", "108", "104", "120"}
+        assert "122" not in _shop(day, q="שולחן 1")
+        assert set(_shop(day, q="שולחן 10")) == {"122"}
+
     def test_the_chip_and_the_search_together(self, day):
         assert set(_shop(day, table="12", q="103")) == {"103"}
 
@@ -232,6 +255,16 @@ class TestTheDashboardsList:
         rows = self._list(day, q="VIP 1")
         assert set(rows) == {"105"} and rows["105"].matched_by == ["table"]
         assert set(self._list(day, q="112")) == {"112"}
+
+    def test_the_explicit_form_finds_a_name_as_a_whole(self, day):
+        day.add_order(day.shop, 9112, "ש-12 (2)", 30, day.add_doc("120", day.tills[0], "7.00", 8))
+        day.add_order(day.shop, 9120, "ש-120", 30, day.add_doc("121", day.tills[0], "8.00", 7))
+        day.add_order(day.shop, 10, "שולחן 10", 30, day.add_doc("122", day.tills[0], "9.00", 6))
+        day.db.commit()
+        found = self._list(day, q="ש-12", shop_id=day.shop.id)
+        assert "120" in found and "121" not in found
+        assert "122" not in self._list(day, q="שולחן 1", shop_id=day.shop.id)
+        assert set(self._list(day, table="שולחן 10", shop_id=day.shop.id)) == {"122"}
 
     def test_every_row_says_its_table(self, day):
         rows = self._list(day)

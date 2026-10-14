@@ -18,6 +18,8 @@ label ("ש-12", whose number is e.g. 9012) is found by that name. The waiters' p
 filter) the digits alone ("12") are a table number, never a document number or an amount, and
 any other text a table name. Without the chip, text with a letter ("VIP 1", "בר 3") may also
 be a table's name, alongside the usual search; digits alone stay the document / amount search.
+The explicit form matches a name as a whole (it starts with the text and does not go on with a
+digit: "ש-12" finds "ש-12 (2)", not "ש-120"); any other name search is a substring.
 The same rules on the till (pos-android, the history search) and in the dashboard (client
 lib/tableSearch.ts) — keep them identical.
 """
@@ -30,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.tables import TableOrder
@@ -165,6 +167,8 @@ def tables_by_transaction_any_shop(db: Session, rows: List[Any]) -> Dict[str, Di
 #: The explicit form: a table word, an optional dash / "#" / maqaf, the number.
 _EXPLICIT = re.compile(r"^(?:שולחן|ש|table|t)\s*[-#\u05be]?\s*(\d{1,5})$", re.IGNORECASE | re.ASCII)
 _DIGITS = re.compile(r"^\d{1,5}$", re.ASCII)
+#: What may not follow a whole name ("ש-12" is not "ש-120"). Not "": a name may end there.
+_ASCII_DIGITS = frozenset("0123456789")
 
 
 @dataclass(frozen=True)
@@ -173,16 +177,26 @@ class TableQuery:
     A search read as a table: `number` — the table's number, `name` — text its name contains
     (the explicit form's own text too: "ש-12" is also a restored table's name), `explicit` — the
     search asks for a table and nothing else (the explicit form, or the table filter).
+
+    `name_whole` (the explicit form only): the name must START with the text and not go on with
+    a digit — "ש-12" finds "ש-12" and "ש-12 (2)", not "ש-120"; "שולחן 1" is not "שולחן 10".
+    Any other name search is a substring ("VIP" finds "VIP 1").
     """
 
     number: Optional[int]
     name: Optional[str]
     explicit: bool
+    name_whole: bool = False
 
     def matches(self, number: Optional[int], name: Optional[str]) -> bool:
         if self.number is not None and number is not None and int(number) == self.number:
             return True
-        return bool(self.name) and self.name.casefold() in (name or "").casefold()
+        if not self.name:
+            return False
+        wanted, have = self.name.casefold(), (name or "").strip().casefold()
+        if not self.name_whole:
+            return wanted in have
+        return have.startswith(wanted) and have[len(wanted):len(wanted) + 1] not in _ASCII_DIGITS
 
 
 def parse_table_query(text: Optional[str], *, chip: bool = False) -> Optional[TableQuery]:
@@ -194,7 +208,7 @@ def parse_table_query(text: Optional[str], *, chip: bool = False) -> Optional[Ta
         return None
     m = _EXPLICIT.match(t)
     if m:
-        return TableQuery(number=int(m.group(1)), name=t, explicit=True)
+        return TableQuery(number=int(m.group(1)), name=t, explicit=True, name_whole=True)
     if chip:
         if _DIGITS.match(t):
             return TableQuery(number=int(t), name=None, explicit=True)
@@ -204,8 +218,8 @@ def parse_table_query(text: Optional[str], *, chip: bool = False) -> Optional[Ta
     return None
 
 
-def _like(text: str) -> str:
-    return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+def _escape_like(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def order_match_clause(tq: TableQuery):
@@ -213,8 +227,11 @@ def order_match_clause(tq: TableQuery):
     clauses = []
     if tq.number is not None:
         clauses.append(TableOrder.table_number == tq.number)
-    if tq.name:
-        clauses.append(TableOrder.table_name.ilike(_like(tq.name), escape="\\"))
+    if tq.name and tq.name_whole:
+        # Starts with it; `matches` then refuses a name that goes on with a digit ("ש-120").
+        clauses.append(func.trim(TableOrder.table_name).ilike(_escape_like(tq.name) + "%", escape="\\"))
+    elif tq.name:
+        clauses.append(TableOrder.table_name.ilike("%" + _escape_like(tq.name) + "%", escape="\\"))
     return or_(*clauses)
 
 
