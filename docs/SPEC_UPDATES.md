@@ -278,7 +278,9 @@ owner לא עובר בממשק הזה בכלל (המערכת מתקינה ישי
 ← `Cart` של הקופה — `KioskWebCart.kt` — ← `KioskViewModel.webCheckout` ← אותו `startPayment` של המסכים המובנים: בדיקת הסל מול
 הענן, משמרת, הזמנה, מסופון, מסמכים, בון, KDS), `cancelPayment`, `receiptChoice`, `helpRequest` (התראה לקופות), `reportFlow` (הזרימה
 של המסכים משתקפת בזרימה ה-native: סגירה אוטומטית / Z, סטטוס בענן, שערי הצוות), `funnel` (ביצועי קיוסקים — לאותו מאגר), ומהאפליקציה
-למסכים: `view` (כל שינוי), `pay` (התקדמות התשלום), `scan` (קוד מהסורק), `shell`. כל השמות נעוצים ב-fixture משותף:
+למסכים: `view` (כל שינוי), `pay` (התקדמות התשלום), `scan` (קוד מהסורק), `shell`. **bridgeApi 2** מוסיף את `placeOpenOrder`
+("תשלום בקופה" — אותה קריאה של קיוסק Windows: בדיקת הסל ← `KioskViewModel.webPayAtTill` ← מסלול התשלום בקופה המובנה). המסכים
+מציעים אותו רק כש-`R2MAndroid.bridgeApi()` ≥ 2 ותשלום בקופה מוגדר — כולל קיוסק "ללא אשראי"; מול APK של 1 — כמו קודם. כל השמות נעוצים ב-fixture משותף:
 `kiosk-desktop/test/fixtures/android_bridge_api.json` = `pos-android/app/src/test/resources/kiosk_web_bridge_api.json` (אותם בייטים).
 
 **כלל המחיר:** לעולם לא יותר ממה שהלקוח ראה. מחיר יחידה גבוה ממה שהמסך הציג (או מוצר שירד) — "הסל השתנה" עם הסכום החדש, לפני
@@ -340,7 +342,8 @@ APK אחר, או כשהבעלים מעביר את המתג ל-native ובחזר�
 ### 8.6 bridgeApi — גרסאות הגשר
 
 - `bridgeApi` הוא החוזה בין המסכים לאפליקציה (שמות הקריאות, האירועים והשדות). החבילה מצהירה מה היא צריכה; ה-APK מדבר טווח
-  (`KioskWebProtocol.MIN_BRIDGE_API..BRIDGE_API`, היום 1..1).
+  (`KioskWebProtocol.MIN_BRIDGE_API..BRIDGE_API`, היום 1..2). החבילה עדיין מצהירה 1 (`ANDROID_BRIDGE_API`) ומזהה את 2 בזמן ריצה
+  (`ANDROID_WIRE_API`, `apkPlacesOpenOrders`), כך שאותה חבילה רצה גם על APK של 1.
 - שינוי **מוסיף** (שדה אופציונלי חדש, אירוע שחבילה ישנה מתעלמת ממנו) — בלי העלאה. חבילה שצריכה יכולת native חדשה — מעלים את
   `ANDROID_BRIDGE_API` (`kiosk-desktop/src/renderer/bridges/androidWire.ts`), משחררים קודם APK שמדבר אותו, ורק אחריו את החבילה.
   APK חדש ממשיך לענות לחבילות ישנות (טווח), כדי שהחזרה לחבילה קודמת תמיד תעבוד.

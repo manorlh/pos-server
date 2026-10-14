@@ -7,10 +7,15 @@ import {
   ANDROID_EVENTS,
   ANDROID_NO_CARD_TEXT,
   ANDROID_ORIGIN,
+  ANDROID_PLACE_OPEN_ORDER_API,
   ANDROID_SENDS,
+  ANDROID_WIRE_API,
+  CALL_TIMEOUT_MS,
   NATIVE_STAFF,
   PAY_NO_ANSWER,
+  PLACE_NO_ANSWER,
   androidNoCard,
+  apkPlacesOpenOrders,
   apkSupports,
   createAndroidBridges,
   errorText,
@@ -19,6 +24,7 @@ import {
   injectScan,
   localMediaOnly,
   normalizeView,
+  placeAnswerOf,
   scanKeys,
   voucherAnswerOf,
   type AndroidNative,
@@ -26,7 +32,7 @@ import {
 } from '../src/renderer/bridges/android';
 import { ScanKeyReader } from '../src/core/kioskScan';
 import { KIOSK_DEFAULTS, kioskPayChooser, type KioskConfig } from '@dash-lib/kioskConfig';
-import type { KioskView, PayProgress, StartPaymentIn, StartPaymentOut, VoucherAnswer, VoucherApplyIn } from '../src/shared/bridge';
+import type { KioskView, PayProgress, PlaceOrderIn, StartPaymentIn, StartPaymentOut, VoucherAnswer, VoucherApplyIn } from '../src/shared/bridge';
 import { INITIAL_FLOW, reduce, restingScreen, type KioskEvent, type KioskFlowRules } from '../src/core/kioskFlow';
 
 const fixture = JSON.parse(readFileSync(path.join(__dirname, 'fixtures/android_bridge_api.json'), 'utf8')) as {
@@ -42,6 +48,9 @@ const fixture = JSON.parse(readFileSync(path.join(__dirname, 'fixtures/android_b
     voucherApply: VoucherApplyIn;
     voucherRemove: { serial: number };
     voucherAnswer: VoucherAnswer;
+    placeOpenOrder: PlaceOrderIn;
+    placeOpenOrderOk: Record<string, unknown>;
+    placeOpenOrderRefused: { ok: false; reason: string; message: string };
   };
 };
 
@@ -61,12 +70,21 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('the Android bridge speaks the pinned wire (bridgeApi 1)', () => {
+describe('the Android bridge speaks the pinned wire (bridgeApi 2, runs on 1)', () => {
   it('every name is the fixture shared with pos-android', () => {
-    expect(ANDROID_BRIDGE_API).toBe(fixture.bridgeApi);
+    expect(ANDROID_WIRE_API).toBe(fixture.bridgeApi);
     expect([...ANDROID_CALLS]).toEqual(fixture.calls);
     expect([...ANDROID_SENDS]).toEqual(fixture.sends);
     expect([...ANDROID_EVENTS]).toEqual(fixture.events);
+    expect(ANDROID_CALLS).toContain('placeOpenOrder');
+    expect(ANDROID_PLACE_OPEN_ORDER_API).toBe(2);
+    // Every call has its own wait.
+    for (const c of ANDROID_CALLS) expect(CALL_TIMEOUT_MS[c]).toBeGreaterThan(0);
+  });
+
+  it('the bundle still needs only API 1 (its manifest): an APK of API 1 keeps running it, without the till', () => {
+    expect(ANDROID_BRIDGE_API).toBe(1);
+    expect(ANDROID_BRIDGE_API).toBeLessThan(ANDROID_WIRE_API);
   });
 
   it('an APK that speaks less is refused', () => {
@@ -294,6 +312,198 @@ describe('production vouchers: the APK holds them ("שוברי הפקה")', () =
     const b = createAndroidBridges(native);
     b.kiosk.reportFlow({ flowState: 'ordering', screen: run(...toPayMethod).screen, busy: false, idle: false });
     expect(sends).toEqual([{ method: 'reportFlow', payload: { flowState: 'ordering', screen: 'details', busy: false, idle: false } }]);
+  });
+});
+
+describe('"תשלום בקופה" through the APK (bridgeApi 2: placeOpenOrder)', () => {
+  const NO_CARD_STATE = { paused: false, pausedMessage: null, pausedUntil: null, noPayment: true, terminal: 'no_card', offline: false, offlineSince: null, cardBlocked: false };
+  /** The APK's view (pos-android KioskWebSnapshot): "ללא אשראי" sends the config's methods without the card. */
+  const apkView = (methods: string[], state: Record<string, unknown> = NO_CARD_STATE, general: Record<string, unknown> = {}) =>
+    ({ phase: 'kiosk', config: { payment: { methods }, general }, state }) as unknown as KioskView;
+  const cfgOf = (methods: string[]) => ({ ...KIOSK_DEFAULTS, payment: { ...KIOSK_DEFAULTS.payment, methods } }) as KioskConfig;
+  /** Where the screens rest with this view's ways to pay (KioskApp: it sells while one of them can take the money). */
+  const restsOn = (pay: KioskView['pay'], methods: string[]) => {
+    const rules: KioskFlowRules = { services: ['take_away'], skipCart: 'off', asksDetails: () => false, cartEmpty: true, detailsStep: 'before_pay', asksPayMethod: false };
+    let s = reduce(INITIAL_FLOW, { type: 'ready', ready: true }, rules);
+    s = reduce(s, { type: 'terminal', canCharge: kioskPayChooser(cfgOf(methods), pay.methods, pay.usable).fallback !== null }, rules);
+    return restingScreen(s);
+  };
+  /** The view as the bridge over an APK of [api] hands it to the screens (bootstrap). */
+  const bootView = async (api: number, view: KioskView) => {
+    const { native, calls } = fakeNative(api);
+    const b = createAndroidBridges(native);
+    const p = b.kiosk.bootstrap();
+    b.inbox.reply(calls[0].id, true, JSON.stringify(view));
+    return { view: await p, bridges: b };
+  };
+
+  it('feature detection: `R2MAndroid.bridgeApi()` of 2 or more, nothing else', () => {
+    expect(apkPlacesOpenOrders(fakeNative(2).native)).toBe(true);
+    expect(apkPlacesOpenOrders(fakeNative(3).native)).toBe(true);
+    expect(apkPlacesOpenOrders(fakeNative(1).native)).toBe(false);
+    expect(apkPlacesOpenOrders({})).toBe(false);
+    expect(apkPlacesOpenOrders({ bridgeApi: 2 })).toBe(false);
+    expect(apkPlacesOpenOrders({ bridgeApi: () => '2' })).toBe(false);
+    expect(apkPlacesOpenOrders({ bridgeApi: () => Number.NaN })).toBe(false);
+    expect(
+      apkPlacesOpenOrders({
+        bridgeApi: () => {
+          throw new Error('gone');
+        },
+      }),
+    ).toBe(false);
+    expect(apkPlacesOpenOrders(null)).toBe(false);
+    // The call is there only where the APK speaks it: the screens offer the till only then (KioskApp reads `placeOpenOrder`).
+    expect(createAndroidBridges(fakeNative(2).native).kiosk.placeOpenOrder).toBeTypeOf('function');
+    expect(createAndroidBridges(fakeNative(1).native).kiosk.placeOpenOrder).toBeUndefined();
+    const { native } = fakeNative(1);
+    expect(createAndroidBridges({ call: native.call, send: native.send } as unknown as AndroidNative).kiosk.placeOpenOrder).toBeUndefined();
+  });
+
+  it('placed: the screens\' order as the fixture sends it; the answer is the Windows kiosk\'s PlaceOrder result', async () => {
+    const { native, calls } = fakeNative(2);
+    const b = createAndroidBridges(native);
+    const p = b.kiosk.placeOpenOrder!(fixture.samples.placeOpenOrder);
+    expect(calls.map((c) => [c.method, c.args])).toEqual([['placeOpenOrder', fixture.samples.placeOpenOrder]]);
+    b.inbox.reply(calls[0].id, true, JSON.stringify(fixture.samples.placeOpenOrderOk));
+    // What KioskApp's success ("גשו לקופה לתשלום") reads: the number, what the till collects, the code, the vouchers.
+    await expect(p).resolves.toEqual({ ok: true, localId: 'order-2', pickupLabel: 'A18', vouchers: [], dueAgorot: 5200, pending: false, code: 'KO:order-2' });
+    expect(b.pending()).toBe(0);
+    // No vouchers / discounts given: sent as empty lists, as the contract has them.
+    const bare = { ...fixture.samples.placeOpenOrder } as Partial<PlaceOrderIn>;
+    delete bare.vouchers;
+    delete bare.discounts;
+    void b.kiosk.placeOpenOrder!(bare as PlaceOrderIn);
+    expect(calls[1].args).toEqual(fixture.samples.placeOpenOrder);
+  });
+
+  it('placed: the vouchers the APK took with it, its number, waiting for the tills', () => {
+    expect(
+      placeAnswerOf({
+        ok: true,
+        localId: 'order-3',
+        orderNumber: 'A19',
+        vouchers: [{ redemptionId: 'r-1', serial: 8, amountAgorot: 4000 }, { serial: 'x' }],
+        dueAgorot: 1000,
+        pending: true,
+        code: 'KO:order-3',
+      }),
+    ).toEqual({
+      ok: true,
+      localId: 'order-3',
+      pickupLabel: 'A19',
+      vouchers: [{ redemptionId: 'r-1', serial: 8, amountAgorot: 4000, eventName: null, redeemed: [] }],
+      dueAgorot: 1000,
+      pending: true,
+      code: 'KO:order-3',
+    });
+    // "ok" with no order in it is not placed (the customer is told; nothing claims a number).
+    expect(placeAnswerOf({ ok: true, dueAgorot: 100 })).toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    expect(placeAnswerOf({ ok: true, localId: 'order-4' })).toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    expect(placeAnswerOf({ ok: true, localId: 'order-4', dueAgorot: 0 })).toMatchObject({ ok: true, pickupLabel: '', code: 'KO:order-4' });
+  });
+
+  it('changed: the basket\'s changes and the total now, as startPayment\'s (the screens confirm before anything goes)', async () => {
+    const { native, calls } = fakeNative(2);
+    const b = createAndroidBridges(native);
+    const p = b.kiosk.placeOpenOrder!(fixture.samples.placeOpenOrder);
+    b.inbox.reply(calls[0].id, true, JSON.stringify(fixture.samples.startPaymentChanged));
+    await expect(p).resolves.toEqual(fixture.samples.startPaymentChanged);
+    // A price that only went up (no line changed): the new total alone.
+    expect(placeAnswerOf({ ok: false, reason: 'changed', changes: [], totalAgorot: 5400 })).toEqual({ ok: false, reason: 'changed', changes: [], totalAgorot: 5400 });
+    // A broken change is dropped, never shown broken.
+    expect(placeAnswerOf({ ok: false, reason: 'changed', changes: [{ kind: 'repriced', productId: 'p' }, null] })).toEqual({ ok: false, reason: 'changed', changes: [] });
+  });
+
+  it('refused: the APK\'s words; no answer, a refusal of the call or a broken APK is "not placed" — never a rejection', async () => {
+    vi.useFakeTimers();
+    const { native, calls } = fakeNative(2);
+    const b = createAndroidBridges(native, { timeouts: { placeOpenOrder: 1000 } });
+    const refused = b.kiosk.placeOpenOrder!(fixture.samples.placeOpenOrder);
+    b.inbox.reply(calls[0].id, true, JSON.stringify(fixture.samples.placeOpenOrderRefused));
+    await expect(refused).resolves.toEqual({ ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' });
+    for (const reason of ['empty', 'rejected'] as const) {
+      expect(placeAnswerOf({ ok: false, reason, message: 'x' })).toEqual({ ok: false, reason, message: 'x' });
+    }
+    expect(placeAnswerOf({ ok: false, reason: 'something_new' })).toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    expect(placeAnswerOf(null)).toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    const silent = b.kiosk.placeOpenOrder!(fixture.samples.placeOpenOrder);
+    vi.advanceTimersByTime(1001);
+    await expect(silent).resolves.toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    const unknown = b.kiosk.placeOpenOrder!(fixture.samples.placeOpenOrder);
+    b.inbox.reply(calls[2].id, false, '"unknown call placeOpenOrder"');
+    await expect(unknown).resolves.toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    const broken = createAndroidBridges({
+      ...native,
+      call: () => {
+        throw new Error('gone');
+      },
+    });
+    await expect(broken.kiosk.placeOpenOrder!(fixture.samples.placeOpenOrder)).resolves.toEqual({ ok: false, reason: 'error', message: PLACE_NO_ANSWER });
+    expect(b.pending()).toBe(0);
+  });
+
+  it('"ללא אשראי" with pay at the till offered: "תשלום בקופה" is the way to pay, and the kiosk sells', async () => {
+    const { view, bridges } = await bootView(2, apkView(['cash_at_till']));
+    expect(view.pay).toEqual({ methods: ['cash_at_till'], usable: ['cash_at_till'], cardOff: ANDROID_NO_CARD_TEXT });
+    expect(kioskPayChooser(cfgOf(['cash_at_till']), view.pay.methods, view.pay.usable).fallback).toBe('cash_at_till');
+    expect(restsOn(view.pay, ['cash_at_till'])).toBe('attract');
+    // With a voucher: it can be finished at the till now — both offered, never the card.
+    const both = (await bootView(2, apkView(['cash_at_till', 'voucher']))).view.pay;
+    expect(both).toEqual({ methods: ['cash_at_till', 'voucher'], usable: ['cash_at_till', 'voucher'], cardOff: ANDROID_NO_CARD_TEXT });
+    // The APK's later views too.
+    const seen: KioskView[] = [];
+    bridges.kiosk.on('view', (v) => seen.push(v));
+    bridges.inbox.event('view', JSON.stringify(apkView(['voucher', 'cash_at_till'])));
+    expect(seen[0].pay).toEqual({ methods: ['voucher', 'cash_at_till'], usable: ['voucher', 'cash_at_till'], cardOff: ANDROID_NO_CARD_TEXT });
+    // Not offered (no "cash_at_till" configured): as before — nothing to sell by, the "no payment" rest.
+    const none = (await bootView(2, apkView(['voucher']))).view.pay;
+    expect(none).toEqual({ methods: ['voucher'], usable: [], cardOff: ANDROID_NO_CARD_TEXT });
+    expect(restsOn(none, ['voucher'])).toBe('no_payment');
+    // "חסימת הזמנות כשאין אינטרנט", offline: no order to the till either.
+    const blocked = (await bootView(2, apkView(['cash_at_till', 'voucher'], { ...NO_CARD_STATE, offline: true }, { blockWhenOffline: true }))).view.pay;
+    expect(blocked.usable).toEqual([]);
+    expect(restsOn(blocked, ['cash_at_till', 'voucher'])).toBe('no_payment');
+    // Offline without the block: the till still takes it.
+    expect((await bootView(2, apkView(['cash_at_till'], { ...NO_CARD_STATE, offline: true }))).view.pay.usable).toEqual(['cash_at_till']);
+  });
+
+  it('a card kiosk on API 2: the till beside the card, in the configured order, as on Windows', async () => {
+    const READY = { ...NO_CARD_STATE, noPayment: false, terminal: 'ready' };
+    expect((await bootView(2, apkView(['card', 'cash_at_till'], READY))).view.pay).toEqual({ methods: ['card', 'cash_at_till'], usable: ['card', 'cash_at_till'], cardOff: null });
+    expect((await bootView(2, apkView(['voucher', 'cash_at_till', 'card'], READY))).view.pay).toEqual({
+      methods: ['voucher', 'cash_at_till', 'card'],
+      usable: ['voucher', 'cash_at_till', 'card'],
+      cardOff: null,
+    });
+    // Without the till configured: exactly as on API 1.
+    expect((await bootView(2, apkView(['card', 'voucher'], READY))).view.pay).toEqual({ methods: ['card', 'voucher'], usable: ['card', 'voucher'], cardOff: null });
+    expect((await bootView(2, apkView(['card'], READY))).view.pay).toEqual({ methods: ['card'], usable: ['card'], cardOff: null });
+  });
+
+  it('an APK of API 1: today\'s behaviour — no till, a "ללא אשראי" kiosk rests on "no payment"', async () => {
+    const { view, bridges } = await bootView(1, apkView(['cash_at_till', 'voucher']));
+    expect(bridges.kiosk.placeOpenOrder).toBeUndefined();
+    expect(view.pay).toEqual({ methods: ['voucher'], usable: [], cardOff: ANDROID_NO_CARD_TEXT });
+    expect(restsOn(view.pay, ['cash_at_till', 'voucher'])).toBe('no_payment');
+    const READY = { ...NO_CARD_STATE, noPayment: false, terminal: 'ready' };
+    expect((await bootView(1, apkView(['card', 'cash_at_till'], READY))).view.pay).toEqual({ methods: ['card'], usable: ['card'], cardOff: null });
+    // A view that already carries its own ways to pay is kept, whichever the API.
+    const own = { methods: ['card'], usable: [], cardOff: 'x' };
+    expect((await bootView(2, { ...apkView(['cash_at_till']), pay: own } as unknown as KioskView)).view.pay).toEqual(own);
+  });
+
+  it('the checkout with the till: details → "לתשלום" → placed is the success; refused or changed is back on the payment', () => {
+    // KioskApp's startPayment on "cash_at_till": paymentStarted, then placeOpenOrder's answer — placed → paymentApproved
+    // (the success shows the number), anything else → paymentDeclined (the message, or the basket's changes).
+    const rules: KioskFlowRules = { services: ['take_away'], skipCart: 'off', asksDetails: () => false, cartEmpty: false, detailsStep: 'before_pay', asksPayMethod: true };
+    const run = (...events: KioskEvent[]) => events.reduce((s, e) => reduce(s, e, rules), INITIAL_FLOW);
+    const toPay: KioskEvent[] = [{ type: 'start' }, { type: 'openCart' }, { type: 'checkout' }, { type: 'detailsDone' }, { type: 'paymentStarted' }];
+    expect(run(...toPay)).toMatchObject({ screen: 'pay', pay: 'starting' });
+    expect(run(...toPay, { type: 'paymentApproved' })).toMatchObject({ screen: 'success', pay: 'approved' });
+    expect(run(...toPay, { type: 'paymentDeclined' })).toMatchObject({ screen: 'pay', pay: 'declined' });
+    // Back to the start once the success is done: the APK clears its own success on "attract".
+    expect(run(...toPay, { type: 'paymentApproved' }, { type: 'successDone' })).toMatchObject({ screen: 'attract', pay: 'idle' });
   });
 });
 
