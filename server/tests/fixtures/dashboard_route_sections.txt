@@ -344,6 +344,7 @@ GET /machines -> reference
 POST /machines/close-day -> z:edit
 GET /machines/document-prefix-conflicts -> devices|reports:view
 GET /machines/search -> reference
+GET /machines/sync-status -> devices:view
 POST /machines/terminal-number/force -> till_settings|devices:edit
 GET /machines/unassigned -> devices:view
 DELETE /machines/{machine_id} -> devices:edit
@@ -371,6 +372,7 @@ POST /machines/{machine_id}/shifts/{shift_id}/administrative-close -> z:edit
 GET /machines/{machine_id}/support-z -> z:view
 POST /machines/{machine_id}/support-z -> z:edit
 POST /machines/{machine_id}/sync -> devices|device_control:edit
+GET /machines/{machine_id}/sync-status -> devices:view
 GET /machines/{machine_id}/till-reset -> devices:view
 POST /machines/{machine_id}/till-reset -> devices:edit
 POST /machines/{machine_id}/till-z -> z:edit
