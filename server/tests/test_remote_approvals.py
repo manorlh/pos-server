@@ -630,7 +630,9 @@ class TestCreate:
 
     def test_cancel(self, w):
         _on(w)
-        req, _ = S.create(w.db, w.machine, _body(), now=NOW)
+        # Built at the real now (as `_pending`): the route cancels on the wall clock, and a request built
+        # at the fixed NOW reads "expired" once its timeout has passed in real time.
+        req, _ = S.create(w.db, w.machine, _body(), now=S.utcnow())
         w.db.commit()
         r = w.client.delete(f"/api/v1/approvals/{req.id}", headers=_till(w))
         assert r.status_code == 200 and r.json()["status"] == "cancelled"
