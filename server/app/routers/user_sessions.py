@@ -202,7 +202,8 @@ def heartbeat_user_session(
     _assigned(machine)
     pos_user = _pos_user(db, machine, body.pos_user_id)
     try:
-        result = svc.heartbeat(db, machine, pos_user, signed_in_at=body.signed_in_at)
+        # (A caller that builds the body itself may hand the plain `UserSessionIn`: no sign-in time.)
+        result = svc.heartbeat(db, machine, pos_user, signed_in_at=getattr(body, "signed_in_at", None))
     except svc.SessionReleased as released:
         db.commit()
         raise _conflict("user_session_released", released.detail())
