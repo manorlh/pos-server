@@ -138,6 +138,7 @@ export class CashStation {
   private openFailures = 0;
   private nextOpenAt = 0;
   private openError: string | null = null;
+  private openCode: number | null = null;
   private recovered = false;
   private ticking = false;
   private maintenance: { by: string | null; since: number } | null = null;
@@ -261,6 +262,7 @@ export class CashStation {
       this.opened = true;
       this.openFailures = 0;
       this.openError = null;
+      this.openCode = null;
       this.lastAcceptance = '';
       this.escrowEnabled = false;
       this.d.log(`[cash ${this.cfg.name}] open`);
@@ -276,6 +278,7 @@ export class CashStation {
     }
     this.openFailures++;
     this.openError = r.message;
+    this.openCode = r.code;
     this.nextOpenAt = now + OPEN_BACKOFF_MS[Math.min(OPEN_BACKOFF_MS.length - 1, this.openFailures - 1)];
     if (this.openFailures === 1 || this.openFailures % 10 === 0) this.d.log(`[cash ${this.cfg.name}] open failed (${r.code ?? '-'}): ${r.message}`);
   }
@@ -1346,6 +1349,16 @@ export class CashStation {
 
   get isOpen(): boolean {
     return this.opened;
+  }
+
+  /** "מילוי דרך המקבל" runs. */
+  get refillActive(): boolean {
+    return this.st.refillVia !== null;
+  }
+
+  /** OpenMHE's last failure code (31: the driver does not run), for the driver's supervisor. */
+  get openErrorCode(): number | null {
+    return this.opened ? null : this.openCode;
   }
 
   /** Unit tests: the device's status update acknowledged (count updated / dump finished). */

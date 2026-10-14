@@ -1,6 +1,7 @@
 /**
  * Bundles the main process and the preload (esbuild → CommonJS for Electron), and the smoke
- * tool. Only `electron` and `sharp` (native) stay outside the bundle.
+ * tool, and the PayLink utility process (the cash host's vendor DLL, main/cash/paylinkWorker.ts).
+ * Only `electron`, `sharp` and `koffi` (native) stay outside the bundle.
  *
  *   node scripts/build-main.mjs           production build
  *   node scripts/build-main.mjs --dev     with source maps
@@ -33,7 +34,7 @@ const common = {
     '@kiosk-shared': path.join(client, 'kiosk-shared'),
   },
   define: { 'process.env.KIOSK_VERSION': JSON.stringify(pkg.version) },
-  external: ['electron', 'sharp'],
+  external: ['electron', 'sharp', 'koffi'],
 };
 
 if (smoke) {
@@ -41,4 +42,5 @@ if (smoke) {
 } else {
   await build({ ...common, entryPoints: [path.join(root, 'src/main/index.ts')], outfile: path.join(root, 'dist/main/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/index.ts')], outfile: path.join(root, 'dist/preload/index.js') });
+  await build({ ...common, entryPoints: [path.join(root, 'src/main/cash/paylinkWorker.ts')], outfile: path.join(root, 'dist/main/paylinkWorker.js') });
 }

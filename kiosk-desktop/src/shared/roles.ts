@@ -8,8 +8,12 @@
  * pairing (core/roles.ts).
  */
 
-/** What this Windows device is. `till` and `customer_display` are scaffolding (not built yet). */
-export type AppRole = 'kiosk' | 'till' | 'kds' | 'order_status_board' | 'customer_display';
+/**
+ * What this Windows device is. `till` and `customer_display` are scaffolding (not built yet);
+ * `cash_host` runs the cash stations for the shop's kiosks (P:/specs/cash-paylink.md) — headless,
+ * its screen only the staff's.
+ */
+export type AppRole = 'kiosk' | 'till' | 'kds' | 'order_status_board' | 'customer_display' | 'cash_host';
 
 export type UpdatePhase = 'idle' | 'checking' | 'up_to_date' | 'downloading' | 'ready' | 'installing' | 'failed';
 
@@ -53,6 +57,7 @@ export interface ShellView {
 // The role screens' data is shared with the browser screens at `/kds` and `/board` on the
 // dashboard's site: the types live in client/src/lib/kdsScreenTypes.ts (the cloud's shapes).
 import type { BoardView, KdsActionInput, KdsView } from '@dash-lib/kdsScreenTypes';
+import type { CashHostView, CashStaffAction, CashStaffResult } from './cash';
 
 export type {
   BoardDisplay,
@@ -77,6 +82,8 @@ export interface ShellEvents {
   view: ShellView;
   board: BoardView;
   kds: KdsView;
+  /** The cash host's staff screen (shared/cash.ts). */
+  cash: CashHostView;
 }
 
 /**
@@ -106,5 +113,9 @@ export interface ShellBridge {
   becomeBridge?(): Promise<{ ok: boolean; message?: string }>;
   /** "יציאה לשולחן העבודה": a manager's PIN (DESKTOP_EXIT, checked offline) → out of full screen. */
   desktopExit?(pin: string): Promise<DesktopExitResult>;
+  /** The cash host's staff screen: its view, a manager's code, an action. */
+  cash?(): Promise<CashHostView | null>;
+  cashUnlock?(pin: string): Promise<{ ok: boolean; name?: string; message?: string }>;
+  cashAction?(a: CashStaffAction): Promise<CashStaffResult>;
   on<K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void): () => void;
 }

@@ -245,6 +245,8 @@ export class KioskService extends EventEmitter {
   /** The main till's local shop Z asks for this kiosk's part (heartbeat `pendingShopZPart`), until answered. */
   private shopZPart: (LanCloseRequest & { payingSinceMs: number | null }) | null = null;
   private shopZPartBusy = false;
+  /** Role modules' own heartbeat blocks (the cash host's `cash`, contract §11.9). */
+  private readonly heartbeatParts = new Map<string, () => Record<string, unknown>>();
 
   constructor(private readonly opts: ServiceOptions) {
     super();
@@ -313,6 +315,31 @@ export class KioskService extends EventEmitter {
 
   get machineId(): string | null {
     return this.cloud.credentials()?.machineId ?? null;
+  }
+
+  /** A role module's block on every heartbeat (null removes it). */
+  setHeartbeatPart(key: string, part: (() => Record<string, unknown>) | null): void {
+    if (part) this.heartbeatParts.set(key, part);
+    else this.heartbeatParts.delete(key);
+  }
+
+  /** The cloud answered a heartbeat lately (90 s). */
+  cloudOnline(): boolean {
+    const at = this.sync.status.lastBeatOkAt;
+    return at !== null && Date.now() - at < 90_000;
+  }
+
+  /** This PC's IPv4 addresses on its networks (the platform's; none in tools). */
+  lanInterfaces(): Array<{ name: string; address: string }> {
+    return this.platform.interfaces();
+  }
+
+  get dataDir(): string {
+    return this.opts.dataDir;
+  }
+
+  get appVersion(): string {
+    return this.opts.appVersion;
   }
 
   /** The kiosk's Nayax LAN pinpad as the cloud settings place it; null on any other terminal. */
@@ -727,6 +754,7 @@ export class KioskService extends EventEmitter {
             ? { batteryPercent: this.batteryNow.percent, batteryStatus: this.batteryNow.charging ? 'charging' : 'discharging' }
             : {}),
           ...(this.fiscalRole ? { offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch } } : {}),
+          ...Object.fromEntries([...this.heartbeatParts].map(([key, part]) => [key, part()])),
           printer: {
             status: health === 'no_paper' ? 'no_paper' : health === 'ok' ? 'ok' : health === 'unknown' ? 'unknown' : health === 'unavailable' ? 'unavailable' : 'error',
             ...(failure ? { message: failure.error, at: new Date(failure.at).toISOString() } : {}),

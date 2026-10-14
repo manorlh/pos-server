@@ -16,7 +16,7 @@
 
 import type { AppRole } from '../shared/roles';
 
-export const ROLES: readonly AppRole[] = ['kiosk', 'till', 'kds', 'order_status_board', 'customer_display'];
+export const ROLES: readonly AppRole[] = ['kiosk', 'till', 'kds', 'order_status_board', 'customer_display', 'cash_host'];
 
 export interface RoleInfo {
   /** Hebrew, as the dashboard names it. */
@@ -33,6 +33,8 @@ export const ROLE_INFO: Record<AppRole, RoleInfo> = {
   kds: { label: 'מסך מטבח (KDS)', fiscal: false, ready: true },
   order_status_board: { label: 'מסך מוכן / לא מוכן', fiscal: false, ready: true },
   customer_display: { label: 'מסך לקוח', fiscal: false, ready: false },
+  // "שרת מזומן" (P:/specs/cash-paylink.md): the cash stations' box — never sells, never a document.
+  cash_host: { label: 'שרת מזומן', fiscal: false, ready: true },
 };
 
 /** The cloud's word for a role (`machines/me` deviceRole), tolerant of older / other spellings. */
@@ -44,6 +46,7 @@ export function normalizeRole(raw: unknown): AppRole | null {
   if (r === 'kds' || r === 'kitchen' || r === 'kitchen_display') return 'kds';
   if (r === 'order_status_board' || r === 'status_board' || r === 'pickup' || r === 'pickup_board' || r === 'ready_board') return 'order_status_board';
   if (r === 'customer_display') return 'customer_display';
+  if (r === 'cash_host' || r === 'cash_server' || r === 'cash') return 'cash_host';
   return null;
 }
 
@@ -60,8 +63,10 @@ export interface RoleFacts {
 /** The role to open in; null = not known yet (the "waiting" screen). */
 export function resolveRole(f: RoleFacts): AppRole | null {
   if (!f.paired) return null;
-  if (f.kioskActive) return 'kiosk';
   const cloud = normalizeRole(f.deviceRole);
+  // A cash host is paired as one and is never a kiosk (it has no customer screen).
+  if (cloud === 'cash_host') return 'cash_host';
+  if (f.kioskActive) return 'kiosk';
   const kds = f.kdsDevice && f.kdsDevice.isActive !== false ? f.kdsDevice : null;
   const kdsRole: AppRole | null = kds ? (kds.role === 'pickup' ? 'order_status_board' : 'kds') : null;
   if (cloud === 'order_status_board') return 'order_status_board';

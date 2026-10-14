@@ -126,14 +126,17 @@ export const CHECKOUT_STEPS: CheckoutStep[] = ['tip', 'details', 'payMethod'];
  * "איך תרצו לשלם?" (docs/SPEC_KIOSK.md §23): the card on the external pinpad; a prepaid voucher
  * (redeemed online, the rest by another method); cash at the till (no document on the kiosk — a
  * slip, and a till takes the money). Bare "cash" is refused (`cash_not_supported`).
+ * "cash_device" — "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6): paid into a PayLink unit
+ * run by a cash host on the LAN; shown only while `GET /sync/{m}/cash` gives a ready station. It pays the whole
+ * sale, or what a voucher leaves (the server's kiosk_config.py lists the same).
  * "split_card" — "פיצול תשלום בכרטיסים" (§23.7): the order on several cards, each its own charge on
  * the terminal, one sale with several card tenders (`payment.splitCard`). The Android kiosk only:
  * the Windows and browser kiosks hold one card per document and never offer it (`singleCardPayMethods`).
  */
-export type PaymentMethod = 'card' | 'voucher' | 'cash_at_till' | 'split_card';
-export const PAYMENT_METHODS: PaymentMethod[] = ['card', 'voucher', 'cash_at_till', 'split_card'];
+export type PaymentMethod = 'card' | 'voucher' | 'cash_at_till' | 'cash_device' | 'split_card';
+export const PAYMENT_METHODS: PaymentMethod[] = ['card', 'voucher', 'cash_at_till', 'cash_device', 'split_card'];
 /** What can pay what a voucher leaves: a voucher is never the only method. */
-export const REMAINDER_METHODS: PaymentMethod[] = ['card', 'cash_at_till', 'split_card'];
+export const REMAINDER_METHODS: PaymentMethod[] = ['card', 'cash_at_till', 'cash_device', 'split_card'];
 /** The methods only a kiosk that holds several card legs on one document takes (the Android kiosk). */
 export const MULTI_CARD_METHODS: PaymentMethod[] = ['split_card'];
 /** "פיצול תשלום בכרטיסים": the numbers of equal cards it may offer; the least per card (agorot, ₪1–₪1000). */

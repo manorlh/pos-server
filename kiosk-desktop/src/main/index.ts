@@ -17,7 +17,7 @@
  */
 
 import { windowsDisplayReport } from './displayReport';
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray, utilityProcess } from 'electron';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -36,6 +36,9 @@ import { DesktopMode } from './shell/desktopMode';
 import { parseWindow } from '../core/updatePolicy';
 import type { PrintDoc } from '../core/printDocs';
 import type { KdsActionInput } from '../shared/roles';
+import type { CashStaffAction } from '../shared/cash';
+import type { WorkerLink } from './cash/paylinkDevice';
+import type { WorkerReply } from './cash/paylinkCore';
 
 const isDev = process.argv.includes('--dev');
 const windowedArg = process.argv.includes('--windowed') || isDev;
@@ -149,6 +152,8 @@ function installConfig(): {
    * cloud's setting "חזרה אוטומטית לקיוסק" (`desktopIdleReturnMinutes`) has not reached the device.
    */
   desktopIdleReturnMinutes?: number;
+  /** "שרת מזומן": the LAN API's port (default 47630, core/cash/lanProtocol.ts). */
+  cashPort?: number;
 } {
   try {
     return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
@@ -312,6 +317,10 @@ function bridge(svc: KioskService) {
   ipcMain.handle('shell:kds', () => roles?.kdsView());
   ipcMain.handle('shell:kdsAction', (_e, a: KdsActionInput) => roles?.kdsAction(a) ?? { ok: false });
   ipcMain.on('shell:activity', () => roles?.touch());
+  // "שרת מזומן": the staff screen (shared/cash.ts) — its view, a manager's code, an action.
+  ipcMain.handle('shell:cash', () => roles?.cashView() ?? null);
+  ipcMain.handle('shell:cashUnlock', (_e, pin: unknown) => roles?.cashUnlock(typeof pin === 'string' ? pin.slice(0, 12) : '') ?? { ok: false });
+  ipcMain.handle('shell:cashAction', (_e, a: CashStaffAction) => roles?.cashAction(a) ?? { ok: false, message: 'אין שרת מזומן' });
   // "יציאה לשולחן העבודה": the PIN and the rules in the service (core/desktopExit.ts), the window in shell/desktopMode.ts.
   ipcMain.handle('shell:desktopExit', (_e, pin: unknown) => svc.desktopExit(typeof pin === 'string' ? pin : '', roles?.activity() ?? svc.activity()));
   // "הפעלה כגשר לדפדפן" on the pairing screen (an unpaired device only): the marker, then a restart in bridge mode.
@@ -353,6 +362,17 @@ function registerKioskProtocol() {
     }
     return new Response('not found', { status: 404 });
   });
+}
+
+/** One PayLink unit's utility process (the vendor's DLL never loads in the main process). */
+function paylinkWorker(): WorkerLink {
+  const child = utilityProcess.fork(path.join(__dirname, 'paylinkWorker.js'), [], { serviceName: 'R2M PayLink', stdio: 'ignore' });
+  return {
+    post: (msg) => child.postMessage(msg),
+    onMessage: (fn) => child.on('message', (m: WorkerReply) => fn(m)),
+    onExit: (fn) => child.on('exit', (code) => fn(code)),
+    kill: () => void child.kill(),
+  };
 }
 
 function deviceInfoOf(model: string): Record<string, string> {
@@ -467,7 +487,11 @@ void app.whenReady().then(async () => {
     quit: () => app.quit(),
     log: (m) => console.log(`[update] ${m}`),
   });
-  roles = new RoleManager(svc, () => updater!.view(), (m) => console.log(`[shell] ${m}`));
+  roles = new RoleManager(svc, () => updater!.view(), (m) => console.log(`[shell] ${m}`), {
+    // "שרת מזומן": the vendor's DLL in a utility process per PayLink unit (main/cash/paylinkWorker.ts).
+    spawnWorker: paylinkWorker,
+    port: typeof install.cashPort === 'number' ? install.cashPort : undefined,
+  });
   updater.onChange(() => roles?.emitView());
   const sendShell = (channel: string, payload: unknown) => {
     if (main && !main.isDestroyed()) main.webContents.send(channel, payload);
@@ -475,6 +499,7 @@ void app.whenReady().then(async () => {
   roles.on('view', (v) => sendShell('shell:view', v));
   roles.on('board', (v) => sendShell('shell:board', v));
   roles.on('kds', (v) => sendShell('shell:kds', v));
+  roles.on('cash', (v) => sendShell('shell:cash', v));
 
   registerKioskProtocol();
 

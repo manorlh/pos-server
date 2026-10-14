@@ -72,6 +72,8 @@
     "asarUnpack": [
       "node_modules/sharp/**",
       "node_modules/@img/**",
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**",
       "**/*.node"
     ],
     "win": {
