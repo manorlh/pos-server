@@ -128,6 +128,20 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   drawer_open_near_variance: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   drawer_open_no_reason: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200',
   drawer_open_denied: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
+  // "מדיניות התראות": the board's lights as alerts.
+  z_missing: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
+  shift_open_overdue: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  card_transmission_overdue: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
+  till_printer: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
+  // "זיהויים חדשים" (P:/specs/push-more.md §C, §B2).
+  shop_not_opened: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
+  sales_pace_low: 'bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-100',
+  table_open_long: 'bg-sky-200 text-sky-950 dark:bg-sky-900 dark:text-sky-100',
+  kds_ticket_late: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
+  till_idle: 'bg-teal-200 text-teal-950 dark:bg-teal-900 dark:text-teal-100',
+  // A table's payments (table-restore-payments): the refunds' family.
+  payment_reversed: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
+  table_restored: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
@@ -751,8 +765,12 @@ function useMeasure() {
         switch (row.type) {
           case 'discount':
           case 'high_tip':
+          case 'sales_pace_low':
             return t('measure.percent', { value: row.value, threshold: row.threshold ?? 0 });
           case 'long_order':
+          case 'table_open_long':
+          case 'kds_ticket_late':
+          case 'till_idle':
             return t('measure.minutes', { value: Math.round(row.value), threshold: row.threshold ?? 0 });
           case 'after_hours': {
             const local = typeof row.details?.localTime === 'string' ? row.details.localTime : String(row.value);

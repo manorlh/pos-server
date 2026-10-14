@@ -406,6 +406,8 @@ def table_out(table: DiningTable, types: Optional[Dict[Any, Any]] = None) -> dic
         "height": table.height,
         "rotation": table.rotation,
         "cleaningSince": _iso(table.cleaning_since),
+        # Shown by its name alone ("ש-12"), not "9012 · ש-12": a restored table beside its taken original.
+        "labelOnly": bool(getattr(table, "label_only", False)) and bool((table.name or "").strip()),
         **policy_fields(table, types),
     }
 
@@ -2187,6 +2189,120 @@ def _next_slot(zone: TableZone, index: int, width: float, height: float) -> Tupl
 ADHOC_ZONE_NAME = "שולחנות מזדמנים"
 
 
+def restored_table_numbers(original: Optional[int], taken: set, count: int = 20) -> List[int]:
+    """
+    The numbers a restored table may get, best first — as the till asks them (pos-android
+    domain/TablePayments.kt `adhocNumbersFor`): 9000 + the original's (9012 for 12), 8000 +, 7000 +,
+    then down from 9999 — none taken. Never shown: the table reads by its label (`labelOnly`).
+    """
+    out: List[int] = []
+    if original is not None and 1 <= original <= 999:
+        out += [base + original for base in (9000, 8000, 7000) if base + original not in taken]
+    n = 9999
+    while len(out) < count and n > 1000:
+        if n not in taken and n not in out:
+            out.append(n)
+        n -= 1
+    return out[:count]
+
+
+def _beside(zone: TableZone, near: DiningTable, width: float, height: float) -> Tuple[float, float]:
+    """Where a table goes beside `near` on its zone's canvas: to its side, else below it."""
+    gap = 12.0
+    x, y = near.x + near.width + gap, near.y
+    if x + width > zone.canvas_width:
+        x, y = near.x, near.y + near.height + gap
+    return max(0.0, min(x, max(zone.canvas_width - width, 0))), max(0.0, min(y, max(zone.canvas_height - height, 0)))
+
+
+def labelled_adhoc_table(
+    db: Session,
+    machine: POSMachine,
+    *,
+    name: str,
+    number: Optional[int] = None,
+    zone_id: Any = None,
+    near_table_id: Any = None,
+) -> dict:
+    """
+    "שחזור שולחן" onto a taken number (P:/specs/table-restore-payments.md §1): a table labelled `name`
+    ("ש-12"), shown by its label alone (`label_only`), beside `near_table_id` (the original, in its
+    zone) or in `zone_id` — else in "שולחנות מזדמנים" like a table by number. Its number is the
+    one asked, else the first free of `restored_table_numbers`. A free label-only table of that label
+    already in that zone (a retried request, an earlier restore's) is it (`created` false).
+    404 `table_not_found` / `zone_not_found` for a place this till does not see; 409
+    `table_number_taken` for an asked number held by another table.
+    """
+    if machine.shop_id is None:
+        raise _not_found("table_not_found")
+    zones = zones_for(db, machine.shop_id, machine.area_id)
+    seen = {z.id: z for z in zones}
+    near = None
+    zone = None
+    if near_table_id is not None:
+        near = db.get(DiningTable, _uuid(near_table_id))
+        if near is None or near.shop_id != machine.shop_id or near.archived_at is not None or near.zone_id not in seen:
+            raise _not_found("table_not_found")
+        zone = seen[near.zone_id]
+    elif zone_id is not None:
+        zone = seen.get(_uuid(zone_id))
+        if zone is None:
+            raise _not_found("zone_not_found")
+    if zone is None:
+        zone = next(
+            (z for z in zones if z.name == ADHOC_ZONE_NAME and str(z.area_id or "") == str(machine.area_id or "")),
+            None,
+        )
+    if zone is not None:
+        again = next(
+            (
+                t for t in tables_in(db, [zone.id])
+                if t.label_only and (t.name or "").strip() == name and (number is None or t.number == number)
+                and open_order(db, t.id) is None
+            ),
+            None,
+        )
+        if again is not None:
+            return {"table": table_out(again), "created": False, "labelled": True}
+    if zone is None:
+        zone = TableZone(
+            id=uuid.uuid4(), tenant_id=machine.tenant_id, shop_id=machine.shop_id, area_id=machine.area_id,
+            name=ADHOC_ZONE_NAME, layout="grid", canvas_width=1000, canvas_height=700,
+            sort_order=len(zones_for(db, machine.shop_id, all_areas=True)),
+        )
+        db.add(zone)
+        db.flush()
+    if number is not None:
+        candidates = [number]
+    else:
+        taken = {
+            row[0] for row in db.query(DiningTable.number)
+            .filter(DiningTable.shop_id == machine.shop_id, DiningTable.archived_at.is_(None))
+            .all()
+        }
+        candidates = restored_table_numbers(near.number if near is not None else None, taken)
+    width, height = (near.width, near.height) if near is not None else default_table_size(zone, "square")
+    if near is not None:
+        x, y = _beside(zone, near, width, height)
+    else:
+        x, y = _next_slot(zone, len(tables_in(db, [zone.id])), width, height)
+    for candidate in candidates:
+        table = DiningTable(
+            id=uuid.uuid4(), tenant_id=zone.tenant_id, shop_id=zone.shop_id, zone_id=zone.id, number=candidate,
+            name=name, label_only=True, seats=near.seats if near is not None else 4,
+            shape=near.shape if near is not None else "square", x=x, y=y, width=width, height=height,
+            rotation=near.rotation if near is not None else 0,
+        )
+        try:
+            with db.begin_nested():
+                db.add(table)
+                db.flush()
+        except IntegrityError:
+            continue
+        return {"table": table_out(table), "created": True, "labelled": True}
+    raise _conflict("table_number_taken", number=number)
+
+
 def adhoc_table(db: Session, machine: POSMachine, number: int) -> dict:
     """
     "פתיחת שולחן לפי מספר": a waiter keys a table number. The table of that number the till
@@ -2653,12 +2769,18 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
     from app.services.table_policies import types_by_id
 
     types = types_by_id(db, shop.id) if tables else {}
+    # How the dashboard may cancel each order: direct, through the LAN host, or not at all
+    # (app/services/remote_table_cancel.py) — the shop's host read once.
+    from app.services import remote_table_cancel as RTC
+
+    routes = RTC.routes_for(db, shop, orders.values()) if orders else {}
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now)
         row = table_out(table, types)
         row["zoneName"] = zone_names.get(table.zone_id)
         row["order"] = order_summary(order) if order is not None else None
+        row["cancel"] = RTC.route_out(routes[order.id]) if order is not None and order.id in routes else None
         row["lock"] = lock
         # From the dashboard every live lock is "another till's": red, with its name.
         row["state"] = table_state(order, lock)
@@ -2669,18 +2791,47 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
             opened = as_utc(order.opened_at)
             row["minutesOpen"] = int((now - opened).total_seconds() // 60) if opened else None
         rows.append(row)
+    # Void tickets of tables cancelled here that are not on paper yet ("בון ביטול ממתין למדפסת").
+    from app.services import table_void_tickets as VT
+
+    try:
+        void_tickets = VT.shop_void_tickets(db, shop.id, now)
+    except Exception:  # noqa: BLE001 - the floor is shown without them
+        logger.exception("void tickets of shop %s not read", shop.id)
+        void_tickets = []
     return {
         "serverTime": now.isoformat(),
         "zones": [zone_out(z) for z in zones],
         "tables": rows,
         "summary": {"openTables": open_count, "openTotal": float(open_total), "guests": guests},
+        "voidTickets": void_tickets,
     }
+
+
+def _check_shown(order: TableOrder, body) -> None:
+    """The order the dashboard showed is the one open now, at the version it showed: else 409 `order_changed`."""
+    shown_id = getattr(body, "order_id", None)
+    shown_version = getattr(body, "expected_version", None)
+    if (shown_id is not None and str(shown_id) != str(order.id)) or (
+        shown_version is not None and shown_version != (order.version or 0)
+    ):
+        raise _conflict("order_changed", order=order_summary(order))
 
 
 def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, body, *, now: Optional[datetime] = None) -> dict:
     """
     A manager cancels a stuck open order from the dashboard (a till gone, a mode
-    switched off with tables open). Recorded like a till's cancel, the user as approver.
+    switched off with tables open). By the tables mode (app/services/remote_table_cancel.py,
+    P:/specs/remote-table-cancel.md):
+
+    * direct (the cloud's tables; a LAN copy no host serves) — recorded like a till's cancel, the
+      user as approver; the kitchen is told as after a till's cancel: a void ticket of what it had,
+      once, and its screens' tasks cancelled (app/services/table_void_tickets.py). `mode` "direct",
+      `voidTickets` says which tickets wait for their printer.
+    * via_till (the LAN mode, a host serving the floor) — nothing changes here: a `cancel_table`
+      command for the host, which cancels it as at a till. `mode` "via_till" and `commandId` (the
+      route answers 202); the dashboard follows it (`GET /device-commands/{id}`).
+    * blocked — 409 `remote_cancel_blocked` (`why`: "setting" | "no_capability"): cancel at a till.
     """
     now = now or _now()
     reason = active_reason(db, shop.tenant_id, body.reason_id)
@@ -2695,9 +2846,29 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
         )
     if order is None:
         raise _conflict("table_order_not_open")
+    # Two cancels at once (a double click, a retry): the row is held to the end of the request and
+    # read again — the second finds it closed, and the kitchen is told once.
+    order = (
+        db.query(TableOrder).filter(TableOrder.id == order.id).with_for_update().populate_existing().one()
+    )
+    if order.status != "open":
+        raise _conflict("table_order_not_open")
+    _check_shown(order, body)
+    from app.services import remote_table_cancel as RTC
+    from app.services.printers import machine_label
+
+    route = RTC.route_for(db, shop, order)
+    if route.mode == RTC.BLOCKED:
+        raise _conflict("remote_cancel_blocked", why=route.why, host=machine_label(route.host))
+    if route.mode == RTC.VIA_TILL:
+        # The host's floor is the truth: it cancels, prints and mirrors it back. Never here too.
+        command = RTC.request(db, user, table, order, reason, body.reason_text, route, now=now)
+        return RTC.requested_out(command, route)
     if lock_live(table, now):
         raise _locked(db, table, now)
     name = user.username or user.email
+    # The till that last worked it: the void tickets follow its view of the printers.
+    worked_by = order.updated_machine_id
     order.version = (order.version or 0) + 1
     order.status = "cancelled"
     order.closed_at = now
@@ -2719,7 +2890,12 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
     machine = db.get(POSMachine, order.opened_machine_id) if order.opened_machine_id else None
     if machine is not None:
         record_cancel_exception(db, machine, order, reason_name=reason.name)
-    return order_summary(order)
+    from app.services import table_void_tickets as VT
+
+    out = order_summary(order)
+    out["mode"] = RTC.DIRECT
+    out.update(VT.on_dashboard_cancel(db, order, table, user_id=user.id, by_name=name, worked_by=worked_by, now=now))
+    return out
 
 
 def dashboard_force_release(db: Session, user: User, table: DiningTable, *, now: Optional[datetime] = None) -> dict:
@@ -2824,8 +3000,14 @@ def closed_orders(
     # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till restores the tables
     # of its point of sale's zones and of the shop-wide ones, like the tables it sees.
     rows = _area_locked_orders(db, machine, rows, {z.id: z.area_id for z in zones})
+    # "מתי מותר לשחזר" (`restoreWindow`, app/services/table_restore.py): where each order's payment
+    # documents stand — in a Z, their shifts still open — which the till cannot know of another till's sale.
+    from app.services.table_restore import payment_state
+
+    states = payment_state(db, rows, _transaction_ids)
     return [
         {
+            **states.get(str(o.id), {}),
             "orderId": str(o.id),
             "tableId": str(o.table_id),
             "tableNumber": o.table_number,
@@ -2906,6 +3088,12 @@ def mark_restored(
         details={"status": order.status, "approvedBy": approved_by, "transactionIds": _transaction_ids(order)},
     )
     db.flush()
+    # "יומן חריגים" (P:/specs/table-restore-payments.md §3): `table_restored` — never fails the restore.
+    from app.services.table_restore import record_restore_exception
+
+    record_restore_exception(
+        db, machine, order, restored_by=actor.pos_user_name, approved_by=approved_by, restored_by_id=actor.pos_user_id,
+    )
     return order
 
 

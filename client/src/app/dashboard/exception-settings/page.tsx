@@ -7,6 +7,13 @@
  * what it is and which level above decided it (else the built-in default). The most
  * specific level wins, field by field. Saved rules apply to what is detected from then
  * on, and to a rescan on the exceptions page.
+ *
+ * "מדיניות התראות" (P:/specs/manager-problems.md §2) comes first, under its own heading: the board's
+ * lights as alerts (Z not made, a shift open too long, card transmission late, the till's printer),
+ * which are exception rules like the others — on by default, off = neither logged nor sent.
+ *
+ * A param is a number (a threshold) or a switch (`boolean`: on / off / inherit — "משמרת פתוחה":
+ * `alertPastDate`, P:/specs/owner-decisions-1410.md §3).
  */
 
 import { useMemo, useState } from 'react';
@@ -15,12 +22,15 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { offersPushSwitch, paramInvalid, paramText, paramValue, splitPolicyRules } from '@/lib/alertPolicy';
 import {
   fetchExceptionRules,
   saveExceptionRules,
   type ExceptionRule,
   type RuleInput,
   type RuleLevel,
+  type RuleParam,
+  type RuleParamValue,
   type RulesResponse,
 } from '@/lib/exceptionsApi';
 import {
@@ -39,6 +49,8 @@ interface DraftRule {
   enabled: boolean | null;
   /** Text as typed; '' = inherit. */
   params: Record<string, string>;
+  /** "שלח התראה לטלפון" at this level; null = inherit. */
+  push: boolean | null;
 }
 type Draft = Record<string, DraftRule>;
 
@@ -47,21 +59,15 @@ function draftOf(data: RulesResponse): Draft {
   for (const r of data.rules) {
     out[r.type] = {
       enabled: r.ownEnabled,
-      params: Object.fromEntries(
-        r.params.map((p) => [p.key, r.ownParams[p.key] != null ? String(r.ownParams[p.key]) : '']),
-      ),
+      params: Object.fromEntries(r.params.map((p) => [p.key, paramText(r.ownParams[p.key])])),
+      push: r.ownPush ?? null,
     };
   }
   return out;
 }
 
 function paramError(rule: ExceptionRule, key: string, text: string): boolean {
-  if (text.trim() === '') return false;
-  const spec = rule.params.find((p) => p.key === key);
-  const n = Number(text);
-  if (!spec || !Number.isFinite(n)) return true;
-  if (n < spec.min || n > spec.max) return true;
-  return spec.integer && !Number.isInteger(n);
+  return paramInvalid(rule.params.find((p) => p.key === key), text);
 }
 
 export default function ExceptionSettingsPage() {
@@ -131,12 +137,14 @@ function RulesEditor({ data }: { data: RulesResponse }) {
     mutationFn: () => {
       const rules: RuleInput[] = dirtyTypes.map((type) => {
         const d = draft[type];
+        const specs = data.rules.find((r) => r.type === type)?.params ?? [];
         return {
           type,
           enabled: d.enabled,
           params: Object.fromEntries(
-            Object.entries(d.params).map(([k, v]) => [k, v.trim() === '' ? null : Number(v)]),
+            Object.entries(d.params).map(([k, v]) => [k, paramValue(specs.find((p) => p.key === k), v)]),
           ),
+          push: d.push,
         };
       });
       return saveExceptionRules(data.level, data.id, rules);
@@ -149,8 +157,157 @@ function RulesEditor({ data }: { data: RulesResponse }) {
   });
 
   const levelName = (l: string | null | undefined) => (l ? t(`levels.${l}`) : t('defaultSource'));
+  /** How an inherited / default value reads: a switch on / off, a number as it is. */
+  const shownValue = (p: RuleParam, value: RuleParamValue | undefined) => {
+    const v = value ?? p.default;
+    return typeof v === 'boolean' ? (v ? t('on') : t('off')) : v;
+  };
   const set = (type: string, next: Partial<DraftRule>) =>
     setDraft((d) => ({ ...d, [type]: { ...d[type], ...next } }));
+  const { policy, others } = splitPolicyRules(data.rules);
+
+  const renderRule = (rule: ExceptionRule) => {
+    const d = draft[rule.type];
+    const effectiveOn = d.enabled ?? rule.inheritedEnabled;
+    const disabled = !data.canWrite || !rule.available;
+    return (
+      <li
+        key={rule.type}
+        className={cn(
+          'grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_15rem_minmax(0,18rem)] md:items-start md:gap-4',
+          !rule.available && 'opacity-60',
+        )}
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{te(`types.${rule.type}`)}</span>
+            {rule.available ? (
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-xs font-medium',
+                  effectiveOn
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {effectiveOn ? t('on') : t('off')}
+              </span>
+            ) : (
+              <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs">
+                {t('future')}
+              </span>
+            )}
+          </div>
+          <p className="text-muted-foreground mt-0.5 text-xs">{t(`desc.${rule.type}`)}</p>
+        </div>
+
+        <div className="space-y-3">
+          {rule.pushOnly ? (
+            <p className="text-muted-foreground text-xs">{t('alwaysLogged')}</p>
+          ) : (
+            <div className="space-y-1">
+              <TriState
+                value={d.enabled}
+                disabled={disabled}
+                onChange={(v) => set(rule.type, { enabled: v })}
+                labels={[t('on'), t('off'), t('inherit')]}
+              />
+              {d.enabled === null ? (
+                <p className="text-muted-foreground text-xs">
+                  {t('inheritNote', {
+                    state: rule.inheritedEnabled ? t('on') : t('off'),
+                    source: levelName(rule.inheritedSources.enabled),
+                  })}
+                </p>
+              ) : null}
+            </div>
+          )}
+          {offersPushSwitch(rule) ? (
+            <div className="space-y-1">
+              <p className="text-xs font-medium">{t('push')}</p>
+              <TriState
+                value={d.push}
+                disabled={!data.canWrite || !rule.available}
+                onChange={(v) => set(rule.type, { push: v })}
+                labels={[t('on'), t('off'), t('inherit')]}
+              />
+              {d.push === null ? (
+                <p className="text-muted-foreground text-xs">
+                  {t('inheritNote', {
+                    state: rule.inheritedPush ? t('on') : t('off'),
+                    source: levelName(rule.inheritedPushSource),
+                  })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="space-y-2">
+          {rule.params.length === 0 ? (
+            <p className="text-muted-foreground text-xs">{t('noThreshold')}</p>
+          ) : (
+            rule.params.map((p) => {
+              const text = d.params[p.key] ?? '';
+              const bad = paramError(rule, p.key, text);
+              if (p.boolean) {
+                return (
+                  <div key={p.key} className="space-y-1">
+                    <p className="text-xs font-medium">{t(`params.${p.key}`)}</p>
+                    <TriState
+                      value={text === '' ? null : text === 'true'}
+                      disabled={disabled}
+                      onChange={(v) => set(rule.type, { params: { ...d.params, [p.key]: paramText(v) } })}
+                      labels={[t('on'), t('off'), t('inherit')]}
+                    />
+                    {text === '' ? (
+                      <p className="text-muted-foreground text-xs">
+                        {t('inheritNote', {
+                          state: shownValue(p, rule.inheritedParams[p.key]),
+                          source: levelName(rule.inheritedSources[p.key]),
+                        })}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              }
+              return (
+                <div key={p.key} className="space-y-0.5">
+                  <label className="text-xs font-medium" htmlFor={`${rule.type}-${p.key}`}>
+                    {t(`params.${p.key}`)}
+                  </label>
+                  <Input
+                    id={`${rule.type}-${p.key}`}
+                    inputMode="decimal"
+                    value={text}
+                    disabled={disabled}
+                    aria-invalid={bad}
+                    className={cn(bad && 'border-destructive')}
+                    placeholder={String(shownValue(p, rule.inheritedParams[p.key]))}
+                    onChange={(e) =>
+                      set(rule.type, { params: { ...d.params, [p.key]: e.target.value } })
+                    }
+                  />
+                  {text.trim() === '' ? (
+                    <p className="text-muted-foreground text-xs">
+                      {t('inheritValue', {
+                        value: shownValue(p, rule.inheritedParams[p.key]),
+                        source: levelName(rule.inheritedSources[p.key]),
+                      })}
+                    </p>
+                  ) : bad ? (
+                    <p className="text-destructive text-xs">
+                      {t('range', { min: p.min, max: p.max })}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </li>
+    );
+  };
 
   return (
     <>
@@ -159,106 +316,24 @@ function RulesEditor({ data }: { data: RulesResponse }) {
         {!data.canWrite ? <p className="text-amber-600 dark:text-amber-400 mt-1 text-xs">{t('readOnly')}</p> : null}
       </div>
 
-      <Card className="gap-0 overflow-hidden py-0">
-        <ul className="divide-y">
-          {data.rules.map((rule) => {
-            const d = draft[rule.type];
-            const effectiveOn = d.enabled ?? rule.inheritedEnabled;
-            const disabled = !data.canWrite || !rule.available;
-            return (
-              <li
-                key={rule.type}
-                className={cn(
-                  'grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_15rem_minmax(0,18rem)] md:items-start md:gap-4',
-                  !rule.available && 'opacity-60',
-                )}
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{te(`types.${rule.type}`)}</span>
-                    {rule.available ? (
-                      <span
-                        className={cn(
-                          'rounded-full px-2 py-0.5 text-xs font-medium',
-                          effectiveOn
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : 'bg-muted text-muted-foreground',
-                        )}
-                      >
-                        {effectiveOn ? t('on') : t('off')}
-                      </span>
-                    ) : (
-                      <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs">
-                        {t('future')}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-muted-foreground mt-0.5 text-xs">{t(`desc.${rule.type}`)}</p>
-                </div>
+      {policy.length ? (
+        <section className="space-y-2" aria-labelledby="alert-policy-title">
+          <div>
+            <h2 id="alert-policy-title" className="text-lg font-semibold">{t('policyTitle')}</h2>
+            <p className="text-muted-foreground text-xs">{t('policyHint')}</p>
+          </div>
+          <Card className="gap-0 overflow-hidden py-0">
+            <ul className="divide-y">{policy.map(renderRule)}</ul>
+          </Card>
+        </section>
+      ) : null}
 
-                <div className="space-y-1">
-                  <TriState
-                    value={d.enabled}
-                    disabled={disabled}
-                    onChange={(v) => set(rule.type, { enabled: v })}
-                    labels={[t('on'), t('off'), t('inherit')]}
-                  />
-                  {d.enabled === null ? (
-                    <p className="text-muted-foreground text-xs">
-                      {t('inheritNote', {
-                        state: rule.inheritedEnabled ? t('on') : t('off'),
-                        source: levelName(rule.inheritedSources.enabled),
-                      })}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2">
-                  {rule.params.length === 0 ? (
-                    <p className="text-muted-foreground text-xs">{t('noThreshold')}</p>
-                  ) : (
-                    rule.params.map((p) => {
-                      const text = d.params[p.key] ?? '';
-                      const bad = paramError(rule, p.key, text);
-                      return (
-                        <div key={p.key} className="space-y-0.5">
-                          <label className="text-xs font-medium" htmlFor={`${rule.type}-${p.key}`}>
-                            {t(`params.${p.key}`)}
-                          </label>
-                          <Input
-                            id={`${rule.type}-${p.key}`}
-                            inputMode="decimal"
-                            value={text}
-                            disabled={disabled}
-                            aria-invalid={bad}
-                            className={cn(bad && 'border-destructive')}
-                            placeholder={String(rule.inheritedParams[p.key] ?? p.default)}
-                            onChange={(e) =>
-                              set(rule.type, { params: { ...d.params, [p.key]: e.target.value } })
-                            }
-                          />
-                          {text.trim() === '' ? (
-                            <p className="text-muted-foreground text-xs">
-                              {t('inheritValue', {
-                                value: rule.inheritedParams[p.key] ?? p.default,
-                                source: levelName(rule.inheritedSources[p.key]),
-                              })}
-                            </p>
-                          ) : bad ? (
-                            <p className="text-destructive text-xs">
-                              {t('range', { min: p.min, max: p.max })}
-                            </p>
-                          ) : null}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
+      <section className="space-y-2">
+        {policy.length ? <h2 className="text-lg font-semibold">{t('othersTitle')}</h2> : null}
+        <Card className="gap-0 overflow-hidden py-0">
+          <ul className="divide-y">{others.map(renderRule)}</ul>
+        </Card>
+      </section>
 
       <div className="flex gap-2">
         <Button

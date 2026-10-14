@@ -3,8 +3,10 @@
 /**
  * Table management ("ניהול שולחנות") for one shop: the floor editor (zones, map or grid,
  * tables, their types — staff / managers / a discount), the open tables now, the tables
- * report, the staff and managers' meals, and the cancellation reasons. Whether a till uses
- * tables, and how, is its till parameter "ניהול שולחנות" (`tablesMode`).
+ * report, the staff and managers' meals, the cancellation reasons, and "הגדרות שולחנות" — the staff /
+ * managers' tables' discount check, restoring a closed table with its payments, reversing payments
+ * inside a table, the bill with a balance (till parameters per level). Whether a till uses tables, and how, is its till parameter "ניהול שולחנות"
+ * (`tablesMode`).
  */
 
 import { useState } from 'react';
@@ -18,14 +20,16 @@ import { TablesReportView } from '@/components/dashboard/tables/tables-report';
 import { CancelReasons } from '@/components/dashboard/tables/cancel-reasons';
 import { TableReservations } from '@/components/dashboard/tables/reservations';
 import { MealsReportView } from '@/components/dashboard/tables/meals-report';
+import { RestoreSettings } from '@/components/dashboard/tables/restore-settings';
 
-type Section = 'editor' | 'live' | 'reservations' | 'report' | 'meals' | 'reasons';
+type Section = 'editor' | 'live' | 'reservations' | 'report' | 'meals' | 'reasons' | 'restore';
 
 export default function TablesPage() {
   const t = useTranslations('tables');
   // Tables belong to one shop: the page asks for one.
   const { resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'shop' });
   const shopId = effective.shopId ?? '';
+  const companyId = effective.companyId ?? '';
   const [section, setSection] = useState<Section>('editor');
 
   return (
@@ -57,6 +61,9 @@ export default function TablesPage() {
         <Button size="sm" variant={section === 'reasons' ? 'default' : 'outline'} onClick={() => setSection('reasons')}>
           {t('sectionReasons')}
         </Button>
+        <Button size="sm" variant={section === 'restore' ? 'default' : 'outline'} onClick={() => setSection('restore')}>
+          {t('sectionRestore')}
+        </Button>
       </div>
       {section === 'reasons' ? (
         <CancelReasons />
@@ -71,6 +78,8 @@ export default function TablesPage() {
               <TableReservations shopId={shopId} />
             ) : section === 'meals' ? (
               <MealsReportView shopId={shopId} />
+            ) : section === 'restore' ? (
+              <RestoreSettings companyId={companyId} shopId={shopId} />
             ) : (
               <TablesReportView shopId={shopId} />
             )

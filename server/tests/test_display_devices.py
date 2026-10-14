@@ -253,6 +253,8 @@ def _machine_routes():
     fiscal_deps = {
         auth.require_fiscal_machine, auth.require_fiscal_machine_token,
         auth.require_host_machine, auth.require_host_machine_token,
+        # A till write with no machine id in its path ("בקשות אישור", /approvals).
+        auth.require_fiscal_machine_from_token,
     }
 
     def calls(dependant, out):

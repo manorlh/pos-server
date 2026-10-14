@@ -25,6 +25,12 @@ import { TillPinDialog } from '@/components/dashboard/till-pin-dialog';
 import { UserAccessDialog } from '@/components/dashboard/access/user-access-dialog';
 import { AccessTemplatesDialog } from '@/components/dashboard/access/access-templates-dialog';
 import { fetchAccessSummaries, type UserAccessSummary } from '@/lib/dashboardAccessApi';
+import { PushHealthCell, UserPushRequiredField } from '@/components/dashboard/push-policy/user-push-fields';
+import { saveUserPushPolicy } from '@/lib/pushPolicyApi';
+import { PUSH_MODES, type PushHealth, type PushMode } from '@/lib/pushPolicy';
+import { LinkedEmployeesField } from '@/components/dashboard/approvals/linked-employees-field';
+import { saveLinkedEmployees } from '@/lib/approvalsApi';
+import type { LinkedEmployee } from '@/lib/approvals';
 
 // A shift supervisor belongs to one shop, exactly like the cashiers they cover
 // for: leave it off these lists and the dialog hides both pickers, so the user is
@@ -49,7 +55,13 @@ interface UserForm {
    * with the default sections — reports, products, Z ("הרשאות דשבורד").
    */
   orgManager?: boolean;
+  /** "התראות בנייד": the user's own level (null = inherit) and what it was when opened. */
+  pushRequired?: PushMode | null;
+  pushRequiredWas?: PushMode | null;
 }
+
+/** A list row: the user, and "התראות בנייד" (pos-server app/services/push_policy.py). */
+type UserRow = User & { pushHealth?: PushHealth | null; pushRequired?: PushMode | null };
 
 /** The role picker's value for "מנהל ארגון" — not a server role, see `UserForm.orgManager`. */
 const ORG_MANAGER = 'org_manager';
@@ -67,12 +79,15 @@ const EMPTY: UserForm = {
  * is precisely the signal this page now hangs on. Normalise on the way in, the
  * same way `lib/auth` already does for `/users/me`.
  */
-function normalizeUser(row: Record<string, unknown>): User {
+function normalizeUser(row: Record<string, unknown>): UserRow {
   const str = (camel: string, snake: string): string | undefined => {
     const v = row[camel] ?? row[snake];
     return v == null ? undefined : String(v);
   };
+  const required = row.pushRequired ?? row.push_required;
   return {
+    pushHealth: (row.pushHealth ?? row.push_health ?? null) as PushHealth | null,
+    pushRequired: (PUSH_MODES as unknown[]).includes(required) ? (required as PushMode) : null,
     id: String(row.id),
     email: String(row.email ?? ''),
     username: String(row.username ?? ''),
@@ -95,6 +110,8 @@ export default function UsersPage() {
   const tc = useTranslations('common');
   const tp = useTranslations('tillPin');
   const ta = useTranslations('dashboardAccess');
+  const th = useTranslations('pushGate.health');
+  const tl = useTranslations('approvals.linked');
   const [pinTarget, setPinTarget] = useState<User | null>(null);
   // "הרשאות דשבורד" — the super admin's, per user and as templates.
   const [accessTarget, setAccessTarget] = useState<User | null>(null);
@@ -107,6 +124,8 @@ export default function UsersPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserForm>(EMPTY);
+  // "עובד מקושר" (remote approvals): null = untouched; saved with the user.
+  const [linked, setLinked] = useState<LinkedEmployee[] | null>(null);
   const isNew = !editing.id;
 
   // Straight from GET /users/me. Nothing here re-derives who may do what: that
@@ -124,7 +143,7 @@ export default function UsersPage() {
     isLoading,
     isError,
     error,
-  } = useQuery<User[]>({
+  } = useQuery<UserRow[]>({
     queryKey: ['users'],
     queryFn: () => api.get('/users').then((r) => (r.data as unknown[]).map((row) => normalizeUser(row as Record<string, unknown>))),
     enabled: canRead,
@@ -157,8 +176,19 @@ export default function UsersPage() {
     ? shops.filter((s) => s.companyId === editing.companyId)
     : shops;
 
+  /** The linked employees, when touched — the user itself is saved either way. */
+  const saveLinked = async (userId: string) => {
+    if (linked === null) return;
+    try {
+      await saveLinkedEmployees(userId, linked.map((e) => e.posUserId));
+      qc.invalidateQueries({ queryKey: ['approvals', 'linked-employees', userId] });
+    } catch (err) {
+      toast.error(axiosErrorToToastMessage(err, tl('saveFailed')));
+    }
+  };
+
   const save = useMutation({
-    mutationFn: (u: UserForm) => {
+    mutationFn: async (u: UserForm) => {
       // `originalRole` is local bookkeeping for the role picker, never a field.
       const payload: Record<string, unknown> = {
         email: u.email,
@@ -177,14 +207,24 @@ export default function UsersPage() {
       if (u.id) {
         // Update: only send password if changed
         if (u.password) payload.password = u.password;
-        return api.put(`/users/${u.id}`, payload);
+        const id = u.id;
+        const pushChanged = (u.pushRequired ?? null) !== (u.pushRequiredWas ?? null);
+        const res = await api.put(`/users/${id}`, payload);
+        // "התראות בנייד": the user's own level, its own route (never the user for themselves).
+        if (pushChanged) await saveUserPushPolicy(id, { required: u.pushRequired ?? null });
+        await saveLinked(id);
+        return res;
       }
       payload.password = u.password;
-      return api.post('/users', payload);
+      const res = await api.post('/users', payload);
+      const createdId = (res.data as { id?: unknown } | null)?.id;
+      if (createdId) await saveLinked(String(createdId));
+      return res;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] });
       qc.invalidateQueries({ queryKey: ['dashboard-access', 'summaries'] });
+      qc.invalidateQueries({ queryKey: ['push-policy', 'user'] });
       toast.success(isNew ? t('created') : t('updated'));
       setOpen(false);
     },
@@ -221,12 +261,13 @@ export default function UsersPage() {
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
 
-  const openEdit = (u: User) => {
+  const openEdit = (u: UserRow) => {
     setEditing({
       id: u.id, email: u.email, username: u.username, password: '',
       role: u.role, originalRole: u.role, companyId: u.companyId,
-      shopId: u.shopId,
+      shopId: u.shopId, pushRequired: u.pushRequired ?? null, pushRequiredWas: u.pushRequired ?? null,
     });
+    setLinked(null);
     setOpen(true);
   };
 
@@ -239,6 +280,7 @@ export default function UsersPage() {
         ? { ...EMPTY, role: 'company_manager', orgManager: true }
         : { ...EMPTY, role: creatableRoles[creatableRoles.length - 1] ?? 'cashier' },
     );
+    setLinked(null);
     setOpen(true);
   };
 
@@ -356,6 +398,7 @@ export default function UsersPage() {
               <TableHead>{t('scope')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
               <TableHead>{tp('column')}</TableHead>
+              <TableHead>{th('column')}</TableHead>
               {canRead && <TableHead>{ta('button')}</TableHead>}
               {canManage && <TableHead className="w-40" />}
             </TableRow>
@@ -364,7 +407,7 @@ export default function UsersPage() {
             {listLoading
               ? Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: (canManage ? 7 : 6) + (canRead ? 1 : 0) }).map((_, j) => (
+                    {Array.from({ length: (canManage ? 8 : 7) + (canRead ? 1 : 0) }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
@@ -372,7 +415,7 @@ export default function UsersPage() {
               : users.length === 0
               ? (
                   <TableRow>
-                    <TableCell colSpan={(canManage ? 7 : 6) + (canRead ? 1 : 0)} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={(canManage ? 8 : 7) + (canRead ? 1 : 0)} className="text-center text-muted-foreground py-8">
                       {t('noUsers')}
                     </TableCell>
                   </TableRow>
@@ -402,6 +445,9 @@ export default function UsersPage() {
                       ) : (
                         <span className="text-muted-foreground text-xs">{tp('stateNone')}</span>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <PushHealthCell health={u.pushHealth} />
                     </TableCell>
                     {canRead && <TableCell>{accessBadge(u)}</TableCell>}
                     {canManage && (
@@ -576,6 +622,26 @@ export default function UsersPage() {
               it silently did nothing. Activation now has one control that works:
               the row's Deactivate/Activate switch.
             */}
+            {!isNew && editing.id && canManage && (
+              <UserPushRequiredField
+                key={editing.id}
+                userId={editing.id}
+                value={editing.pushRequired ?? null}
+                isSelf={me?.id === editing.id && !isSuperAdmin}
+                onChange={(m) => setEditing((u) => ({ ...u, pushRequired: m }))}
+              />
+            )}
+
+            {editing.role !== 'super_admin' && (
+              <LinkedEmployeesField
+                key={editing.id ?? 'new'}
+                userId={editing.id ?? null}
+                shopId={editing.shopId ?? null}
+                value={linked}
+                onChange={setLinked}
+              />
+            )}
+
             {isNew && editing.role !== 'super_admin' && (
               <p className="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">{ta('newUserDefaultNote')}</p>
             )}

@@ -91,6 +91,25 @@ export const EXCEPTION_TYPES = [
   'drawer_open_near_variance',
   'drawer_open_no_reason',
   'drawer_open_denied',
+  // "מדיניות התראות" (P:/specs/manager-problems.md §2): the board's lights as alerts, closed by the
+  // cloud when the light goes out (details: summary, resolvedAt, and per kind businessDate / scope,
+  // reason, level / pendingCount / oldestPendingAt, printerStatus / since).
+  'z_missing',
+  'shift_open_overdue',
+  'card_transmission_overdue',
+  'till_printer',
+  // "זיהויים חדשים" (P:/specs/push-more.md §C, §B2): the exception alerts' background watches, each
+  // closed by itself when the case is over (details: summary, resolvedAt; value = minutes or %).
+  'shop_not_opened',
+  'sales_pace_low',
+  'table_open_long',
+  'kds_ticket_late',
+  'till_idle',
+  // "שחזור שולחן עם התשלומים שלו" (pos-server app/services/table_restore.py): a payment reversed inside a
+  // table (details: tableNumber, tender, action, amount, tip, requestedBy, approvedBy, performedBy, the
+  // invoice and credit numbers, summary) and a closed table restored (details: restoredAs, restoredBy, …).
+  'payment_reversed',
+  'table_restored',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];
@@ -231,26 +250,46 @@ export async function rescanExceptions(
 
 export interface RuleParam {
   key: string;
-  default: number;
+  /** A number — or true / false for a switch (`boolean`). */
+  default: number | boolean;
   min: number;
   max: number;
   integer: boolean;
+  /** A switch, not a threshold (`shift_open_overdue.alertPastDate`). Absent on an older server. */
+  boolean?: boolean;
 }
 
+/** A rule param's value: a number, or true / false for a switch. */
+export type RuleParamValue = number | boolean;
+
 export interface ExceptionRule {
-  type: ExceptionType;
+  /** An exception type — or a kind detected elsewhere that has only the push switch (`pushOnly`). */
+  type: ExceptionType | string;
   available: boolean;
-  source: 'document' | 'shift' | 'till_event';
+  source: string;
   severity: string;
   defaultEnabled: boolean;
   params: RuleParam[];
   ownEnabled: boolean | null;
-  ownParams: Record<string, number>;
+  ownParams: Record<string, RuleParamValue>;
   inheritedEnabled: boolean;
-  inheritedParams: Record<string, number>;
+  inheritedParams: Record<string, RuleParamValue>;
   inheritedSources: Record<string, RuleLevel | null>;
   effectiveEnabled: boolean;
-  effectiveParams: Record<string, number>;
+  effectiveParams: Record<string, RuleParamValue>;
+  /**
+   * "שלח התראה לטלפון" (pos-server P:/specs/push-more.md §0): the default, this level's own (null =
+   * inherits), what applies from above and where it was set, and here. Absent on an older server.
+   */
+  pushDefault?: boolean;
+  ownPush?: boolean | null;
+  inheritedPush?: boolean;
+  inheritedPushSource?: RuleLevel | null;
+  effectivePush?: boolean;
+  /** Detected elsewhere and always recorded: only the push switch applies. */
+  pushOnly?: boolean;
+  /** The phone-alert type it is sent as; null = none. "integrity" is the super admins' (no switch). */
+  pushCategory?: string | null;
 }
 
 export interface RulesResponse {
@@ -261,9 +300,11 @@ export interface RulesResponse {
 }
 
 export interface RuleInput {
-  type: ExceptionType;
+  type: ExceptionType | string;
   enabled: boolean | null;
-  params: Record<string, number | null>;
+  params: Record<string, RuleParamValue | null>;
+  /** "שלח התראה לטלפון" at this level; null = inherit. */
+  push?: boolean | null;
 }
 
 export async function fetchExceptionRules(level: RuleLevel, id: string | null): Promise<RulesResponse> {

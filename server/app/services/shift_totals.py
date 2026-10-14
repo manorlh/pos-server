@@ -591,7 +591,10 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
                 totals.payment_breakdown.get(method, ZERO) + sign * collected
             )
 
-        tip = _dec(doc.tip_amount)
+        # A credit note's tip went back with its payment (a table's payment reversed,
+        # P:/specs/table-restore-payments.md §3): negative, as the till's X and the Z's sections
+        # (`z_sections`, tipCashRefunds / tipCardRefunds) take it.
+        tip = sign * abs(_dec(doc.tip_amount))
         if tip:
             totals.total_tips += tip
             if tip_goes_to_cash(doc.tip_payment_method, doc.payment_method):

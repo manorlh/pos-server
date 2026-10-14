@@ -16,6 +16,10 @@ acknowledgement.
   any time (mid-sale too — it never disturbs the work); the device collects, compresses and uploads
   in the background (`POST /sync/{m}/device-logs` with `command_id`), and the command's `result` is
   {"log_id": …} (app/services/device_logs.py).
+* `cancel_table` — "ביטול שולחן מהדשבורד" in the LAN mode (P:/specs/remote-table-cancel.md,
+  app/services/remote_table_cancel.py): the shop's tables host cancels the order as at a till. Made
+  by the tables' cancel only, never by `POST /device-commands`. Its deadline is its own short
+  timeout (`remoteCancelTimeoutSeconds`), delivered or not: a late pull never gets it.
 
 **Delivery** — every command wakes its device at once (Ably event `device-command`, then the till
 pulls `GET /sync/{m}/device-commands`); without realtime the till's heartbeat pulls it (≤ 2 min).
@@ -56,7 +60,11 @@ DEFAULT_LOCK_MESSAGE = "הקופה נעולה — פנו למנהל"
 #: The answers a device may give.
 ACK_STATUSES = ("done", "refused", "failed")
 #: Refusal reasons a till sends (shown in Hebrew by the dashboard).
-REFUSAL_REASONS = ("sale_in_progress", "payment_in_progress", "no_update", "not_supported", "kiosk")
+REFUSAL_REASONS = (
+    "sale_in_progress", "payment_in_progress", "no_update", "not_supported", "kiosk",
+    # `cancel_table` (app/services/remote_table_cancel.py REFUSALS).
+    "table_not_open", "not_host", "order_changed",
+)
 
 
 def utc_now() -> datetime:
@@ -225,9 +233,11 @@ def create(
     source: str = "dashboard",
     now: Optional[datetime] = None,
     params: Optional[Dict[str, Any]] = None,
+    expires_in: Optional[timedelta] = None,
 ) -> List[DeviceCommand]:
     """One command per device, one batch (the caller commits, then `wake`s them). [params]: the
-    action's own (`upload_logs` → {"minutes"}), checked by the caller."""
+    action's own (`upload_logs` → {"minutes"}), checked by the caller. [expires_in]: its own
+    deadline instead of `EXPIRES_AFTER` (`cancel_table`'s timeout)."""
     if action not in DEVICE_ACTIONS:
         raise _bad("invalid_action", "פעולה לא מוכרת")
     if not machines:
@@ -280,7 +290,7 @@ def create(
             created_by_user_id=getattr(user, "id", None),
             created_by_name=(who or None) and who[:200],
             created_at=now,
-            expires_at=now + EXPIRES_AFTER,
+            expires_at=now + (expires_in if expires_in is not None else EXPIRES_AFTER),
             updated_at=now,
         )
         db.add(row)
@@ -307,6 +317,34 @@ def answer_window(action: str) -> timedelta:
     return ANSWER_WITHIN.get(action, EXPIRES_AFTER)
 
 
+#: Actions answered by their own `expires_at` or not at all, taken or not: a dashboard's remote table
+#: cancel waits its timeout (`remoteCancelTimeoutSeconds`), then says "בטלו בקופה".
+DEADLINE_ACTIONS = ("cancel_table",)
+
+
+def answer_deadline(row: DeviceCommand) -> Optional[datetime]:
+    """When a delivered command lapses unanswered; None when it was not delivered."""
+    if row.delivered_at is None:
+        return None
+    if row.action in DEADLINE_ACTIONS and row.expires_at is not None:
+        return _aware(row.expires_at)
+    return _aware(row.delivered_at) + answer_window(row.action)
+
+
+def as_of(row: DeviceCommand, now: datetime) -> Dict[str, Any]:
+    """
+    The command as it stands at [now], computed without writing: one past its end reads `expired`
+    (`not_answered` when delivered), as `expire_old` would make it.
+    """
+    out = command_out(row)
+    if row.status == "pending" and row.expires_at is not None and _aware(row.expires_at) <= now:
+        out["status"] = "expired"
+    elif row.status == "delivered" and row.delivered_at is not None and answer_deadline(row) <= now:
+        out["status"] = "expired"
+        out["detail"] = out["detail"] or "not_answered"
+    return out
+
+
 def expire_old(db: Session, *, machine_id: Any = None, now: Optional[datetime] = None) -> None:
     """Pending past their end, and delivered but unanswered past their action's window: expired."""
     now = now or utc_now()
@@ -323,10 +361,20 @@ def expire_old(db: Session, *, machine_id: Any = None, now: Optional[datetime] =
         DeviceCommand.status == "delivered", DeviceCommand.delivered_at.isnot(None),
         DeviceCommand.delivered_at <= now - shortest,
     )
+    # Those answered by their own deadline (seconds, not minutes).
+    deadline_q = db.query(DeviceCommand).filter(
+        DeviceCommand.status == "delivered", DeviceCommand.action.in_(DEADLINE_ACTIONS),
+        DeviceCommand.expires_at.isnot(None), DeviceCommand.expires_at <= now,
+    )
     if machine_id is not None:
         dq = dq.filter(DeviceCommand.machine_id == machine_id)
-    for row in dq.all():
-        if _aware(row.delivered_at) + answer_window(row.action) <= now:
+        deadline_q = deadline_q.filter(DeviceCommand.machine_id == machine_id)
+    seen = set()
+    for row in [*dq.all(), *deadline_q.all()]:
+        if row.id in seen:
+            continue
+        seen.add(row.id)
+        if answer_deadline(row) <= now:
             row.status = "expired"
             row.detail = row.detail or "not_answered"
             row.updated_at = now
@@ -385,10 +433,12 @@ def pull(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) ->
 
 def ack(
     db: Session, machine: POSMachine, command_id: Any, ack_status: str, detail: Optional[str], *, now: Optional[datetime] = None,
-    result: Optional[Dict[str, Any]] = None,
+    result: Optional[Dict[str, Any]] = None, raw_result: Optional[Dict[str, Any]] = None,
 ) -> DeviceCommand:
     """The device's answer. A final command keeps its first answer (a resend is harmless).
-    [result]: what the answer carried (`upload_logs` → {"log_id"}), kept with the first one."""
+    [result]: what the answer carried (`upload_logs` → {"log_id"}), kept with the first one.
+    [raw_result]: the answer's `result` as sent, read by the actions that carry their own
+    (`cancel_table` → {voidedPrinters, kds} / {reason})."""
     now = now or utc_now()
     if ack_status not in ACK_STATUSES:
         raise _bad("invalid_status", "invalid status")
@@ -399,6 +449,10 @@ def ack(
     row = db.get(DeviceCommand, ident)
     if row is None or row.machine_id != machine.id:
         raise _bad("command_not_found", "command not found", status.HTTP_404_NOT_FOUND)
+    if row.action == "cancel_table":
+        from app.services import remote_table_cancel
+
+        detail, result = remote_table_cancel.clean_answer(ack_status, detail, raw_result)
     if row.status == "expired" and _aware(row.updated_at) is not None and now - _aware(row.updated_at) <= ANSWER_GRACE:
         # The device did it and its answer came just after the cloud gave up waiting: what happened.
         pass

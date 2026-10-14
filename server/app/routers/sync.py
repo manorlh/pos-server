@@ -2396,6 +2396,14 @@ def get_settings_sync(
         batches_stamp = voucher_balance.batches_changed_at(db, machine.tenant_id, shop.company_id, server_time)
         if batches_stamp is not None:
             stamps.append(batches_stamp)
+    # "בקשות אישור" (P:/specs/manager-approval-mobile.md §7): a level's change moves the watermark too.
+    from app.services.remote_approvals import policy as approval_policy
+
+    # ("סגנון האישור" too, which every till reads — not only one with the capability.)
+    approval_capable = approval_policy.capable(machine)
+    approvals_stamp, approval_effective = approval_policy.for_settings_sync(db, machine)
+    if approvals_stamp is not None:
+        stamps.append(as_utc(approvals_stamp))
     watermark = max(stamps)
     since_dt: Optional[datetime] = None
     if since:
@@ -2451,13 +2459,16 @@ def get_settings_sync(
     # voucher fast mode with its station (`voucherFastMode` unset = "station", `voucherFastAutoClose`
     # "on", `voucherStationCamera` "tap", `voucherStationCameraFacing` "back", `voucherVibrate` "both",
     # `voucherSoundBoost` "on", `voucherStationCatalogSwitch` "manager", `voucherStationHeader` "logo",
-    # `voucherStationTitle` "עמדת מימוש שוברים" — P:/specs/voucher-fast-mode.md §0): always sent
+    # `voucherStationTitle` "עמדת מימוש שוברים" — P:/specs/voucher-fast-mode.md §0), and the "בחר פריט
+    # לשובר" order screen (`voucherGuide` true, `voucherPickFilter` "eligible", `voucherAutoPickSingle`
+    # true — P:/specs/voucher-station-fast-flows.md §4): always sent
     # resolved (app/services/voucher_station_settings.py).
     from app.services.voucher_station_settings import (
         resolve_auto_apply,
         resolve_show_entitlement,
         resolve_station_paid_items,
         resolve_voucher_fast_mode,
+        resolve_voucher_pick,
         resolve_voucher_sounds,
         resolve_voucher_station,
         resolve_voucher_success,
@@ -2472,6 +2483,7 @@ def get_settings_sync(
     effective.update(resolve_voucher_success_dismiss(all_settings))
     effective.update(resolve_voucher_sounds(all_settings))
     effective.update(resolve_voucher_fast_mode(all_settings))
+    effective.update(resolve_voucher_pick(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))
@@ -2517,6 +2529,13 @@ def get_settings_sync(
     # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): the shop's flag likewise — false
     # locks the device; only the super admin turning the shop back on releases it.
     effective["shopActive"] = shop_active.is_active(shop)
+    # "בקשת אישור ממנהל מהנייד" (§7): the effective approval settings, only to a till whose build
+    # said `remote_approval_v1` — an older till never sees `approvalRequests.enabled`.
+    if approval_capable:
+        effective["approvalRequests"] = approval_policy.till_block(approval_effective)
+    # "סגנון האישור" (P:/specs/table-restore-payments.md §4): per till permission, approve | takeover |
+    # both — to every till (an older build ignores the key).
+    effective["approvalStyle"] = approval_policy.till_styles(approval_effective)
     business_info = build_business_info(company, shop, all_settings)
     # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
     # beside the identity. The till picks its document type and VAT by it.
@@ -2641,9 +2660,17 @@ def get_till_parameters_sync(
     """
     from app.services.catalog_admin import view_for_machine
 
+    from app.services import item_block_control
+
     resolved = till_parameters_for_machine(db, machine)
+    # "חסימות מהקופה" (P:/specs/item-block-control.md §6): the till's role and caps, worked out here —
+    # the one object in the map (the till keeps it as JSON, as it keeps `catalogAdminView`).
+    parameters = {
+        **resolved.parameters,
+        item_block_control.SETTINGS_KEY: item_block_control.till_out(db, machine, resolved.parameters),
+    }
     body = TillParametersSyncResponse(
-        parameters=resolved.parameters,
+        parameters=parameters,
         updated_at=resolved.updated_at,
         # "ניהול קטלוג מהקופה": what the till's catalog screen shows (specs/till-catalog-management.md §6.1).
         catalog_admin_view=view_for_machine(db, machine, resolved.parameters),

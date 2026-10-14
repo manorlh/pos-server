@@ -97,6 +97,9 @@ class EntrySpec:
     #: None = open. `mirror_ack=False`: the source has no review state of its own.
     ack: Optional[Tuple[Optional[datetime], Any, Optional[str]]] = None
     mirror_ack: bool = False
+    #: The source only ever closes its entry (a battery that charged): `ack` marks it handled unless
+    #: someone already did; no `ack` leaves the entry as it is (never reopens a manager's "טופל").
+    close_only: bool = False
     #: Fields refreshed on an existing, still-open entry.
     refresh: Tuple[str, ...] = field(default=("amount", "value", "threshold", "summary", "details", "severity",
                                               "pos_user_id", "pos_user_name", "transaction_id", "shift_id",
@@ -135,6 +138,14 @@ def find(db: Session, dedupe_key: str) -> Optional[ExceptionLogEntry]:
 
 
 def _mirror_ack(entry: ExceptionLogEntry, spec: EntrySpec) -> bool:
+    if spec.close_only:
+        if spec.ack is None or entry.acknowledged_at is not None:
+            return False
+        at, user_id, note = spec.ack
+        entry.acknowledged_at = aware(at) or utcnow()
+        entry.acknowledged_by_user_id = as_uuid(user_id)
+        entry.note = note
+        return True
     if not spec.mirror_ack:
         return False
     at, user_id, note = spec.ack if spec.ack is not None else (None, None, None)
@@ -167,7 +178,7 @@ def record(db: Session, spec: EntrySpec, *, backfilled: bool = False, now: Optio
             backfilled=backfilled,
             **values,
         )
-        if spec.mirror_ack:
+        if spec.mirror_ack or spec.close_only:
             _mirror_ack(row, spec)
         try:
             with db.begin_nested():

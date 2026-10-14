@@ -90,6 +90,15 @@ def scoped(db: Session, user: User, tenant_id: Any) -> Optional[OrmQuery]:
     return None
 
 
+def _with_integrity_anywhere(db: Session, tenant_id: Any) -> OrmQuery:
+    """A super admin: the active organization's entries, and "שלמות נתונים" of every organization."""
+    from app.services.exception_alerts.push import INTEGRITY_KINDS
+
+    return db.query(ExceptionLogEntry).filter(or_(
+        ExceptionLogEntry.tenant_id == tenant_id, ExceptionLogEntry.kind.in_(INTEGRITY_KINDS),
+    ))
+
+
 def true_if(flag: bool):
     from sqlalchemy import true
 
@@ -124,7 +133,10 @@ def filtered(
     if q is None:
         return None
     if code:
-        # An SMS link names one entry, whatever its date.
+        # An SMS link names one entry, whatever its date. A super admin's "שלמות נתונים" phone alert
+        # comes from any organization: its link opens it whichever one is active.
+        if user.role == UserRole.SUPER_ADMIN:
+            q = _with_integrity_anywhere(db, tenant_id)
         return q.filter(ExceptionLogEntry.short_code == code.strip().lower()[:16])
     window = resolve_report_window(db, tenant_id, from_date=from_date, to_date=to_date)
     q = q.filter(ExceptionLogEntry.occurred_at >= window.start, ExceptionLogEntry.occurred_at < window.end)
@@ -268,6 +280,8 @@ def entry_json(r: ExceptionLogEntry, labels: Dict[str, Dict[Any, Any]]) -> Dict[
         "acknowledgedBy": labels["users"].get(r.acknowledged_by_user_id),
         "note": r.note,
         "sms": sms,
+        # Information (a daily summary), not a problem: kept out of the problem counts.
+        "info": C.is_info(r.kind),
     }
 
 
@@ -353,7 +367,11 @@ def log_summary(
     empty = {"total": 0, "open": 0, "acknowledged": 0, "byKind": [], "byEmployee": [], "bySeverity": []}
     if q is None:
         return empty
-    is_open = func.sum(case((ExceptionLogEntry.acknowledged_at.is_(None), 1), else_=0))
+    # "סיכום יום" and the like inform; they are never an open problem (catalog.INFO_KINDS).
+    is_open = func.sum(case(
+        (and_(ExceptionLogEntry.acknowledged_at.is_(None), ExceptionLogEntry.kind.notin_(list(C.INFO_KINDS))), 1),
+        else_=0,
+    ))
     amount = func.coalesce(func.sum(func.abs(ExceptionLogEntry.amount)), 0)
     by_kind = q.with_entities(ExceptionLogEntry.kind, func.count(), is_open, amount).group_by(ExceptionLogEntry.kind).all()
     by_employee = (
@@ -408,6 +426,8 @@ def acknowledge_entry(
     if current_user.role in NO_ACK_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     q = scoped(db, current_user, active_tenant_id)
+    if current_user.role == UserRole.SUPER_ADMIN:
+        q = _with_integrity_anywhere(db, active_tenant_id)  # opened from its phone alert
     row = q.filter(ExceptionLogEntry.id == entry_id).first() if q is not None else None
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found")

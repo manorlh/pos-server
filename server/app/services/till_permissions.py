@@ -62,6 +62,8 @@ GROUPS: Tuple[Tuple[str, str], ...] = (
     ("shift", "משמרת, Z ודוחות"),
     ("drawer", "מגירת מזומן ותנועות מזומן"),
     ("admin", "ניהול בקופה"),
+    # "בקשת אישור ממנהל מהנייד" (P:/specs/manager-approval-mobile.md §0, §4).
+    ("approvals", "אישור מרחוק (מהנייד)"),
 )
 
 
@@ -117,9 +119,16 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("HELD_SALE_CANCEL", "ביטול מכירה מושהית", "sale",
                    "ביטול מכירה מושהית בקופה (למשל בסגירת משמרת או Z), עם סיבה. אינה מסמך — נרשם "
                    "כאירוע קופה: מי, מתי, הפריטים והסכום."),
+    # The owner (14.10.2026, P:/specs/owner-decisions-1410.md §2): "דינמי, ברירת מחדל ללא הגבלה" — an
+    # amount ceiling per role (`maxAmount`, the full price of the lines marked), none for every role by
+    # default. Above it the till asks for an approver whose ceiling covers the amount ("מנהל מבצע" still
+    # offered); the cloud holds the PIN to it (`POST /elevation/sessions` with `scopes: ["oth"]` and
+    # `amount` — `limit_covers`, 403 `limit_exceeded`).
     PermissionSpec("OTH", "על חשבון הבית (OTH)", "sale",
                    "מתן פריט על חשבון הבית, עם סיבה. כשהפרמטר \"OTH — באישור מנהל\" כבוי, \"דורש אישור\" "
-                   "נחשב \"מותר\" (כמו היום)."),
+                   "נחשב \"מותר\" (כמו היום). תקרת סכום (המחיר המלא של הפריטים שמסומנים): ריק — ללא הגבלה "
+                   "(ברירת המחדל); מעל התקרה נדרש אישור של מי שהתקרה שלו מכסה את הסכום.",
+                   limits=(_MAX_AMOUNT,), scope="oth"),
     PermissionSpec("REFUND", "זיכוי / החזר", "sale",
                    "זיכוי מסמך או החזר בסל (כולל החזר מזומן). מעל הסכום שהוגדר נדרש אישור.",
                    limits=(_MAX_AMOUNT,), scope="refund"),
@@ -144,7 +153,8 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("TABLE_VOID", "ביטול פריט שנשלח למטבח", "tables",
                    "הורדת פריטים שכבר נשלחו למטבח.", scope="table:void"),
     PermissionSpec("TABLE_RESTORE", "שחזור שולחן", "tables",
-                   "החזרת שולחן שנסגר / בוטל.", scope="table:restore"),
+                   "החזרת שולחן שנסגר / בוטל מרשימת \"נסגרו\" — עם התשלומים שלו, לאותו מספר או עם קידומת "
+                   "(\"ש-12\") כשהוא תפוס.", scope="table:restore"),
     PermissionSpec("TABLE_UNLOCK", "שחרור נעילת שולחן", "tables",
                    "שחרור שולחן שקופה אחרת נעלה, או השתלטות על קופה מארחת.", scope="table:unlock"),
     # ── משמרת ודוחות ──
@@ -214,6 +224,11 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("ITEM_BLOCK", "חסימת פריט / אזל", "admin",
                    "חסימה או סימון \"אזל\" של פריט או מחלקה — לקופות, לקיוסקים או לשניהם, בסניף, "
                    "בנקודת המכירה או במכשיר — וביטול חסימה, מהקופה ומהקיוסק."),
+    # P:\specs\item-block-control.md §2: on top of ITEM_BLOCK, for what goes past the till's own
+    # reach — checked by the cloud against the approver (app/services/item_block_control.py).
+    PermissionSpec("ITEM_BLOCK_WIDE", "חסימה מעבר לקופה", "admin",
+                   "חסימה או \"אזל\" מעבר לקופה: בקיוסק, בהזמנות אונליין או בתפריט הדיגיטלי, או בהיקף רחב "
+                   "יותר מנקודת המכירה — ושחרור של חסימה כזו. רק בקופה שתפקידה בחסימות מתיר זאת."),
     PermissionSpec("ATTENDANCE_MANAGE", "נוכחות — אישור מנהל", "admin",
                    "יציאה ממשמרת עם שולחנות פתוחים / סיום משמרת שדורש אישור מנהל.",
                    scope="attendance:manage"),
@@ -238,6 +253,61 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "בניהול הקיוסק: מעבר המכשיר ל\"מצב עבודה: קופה\" (כשהבעלים אפשר זאת — kioskTillModeEnabled). "
                    "המסמכים נרשמים על שם העובד שנכנס; אותה מכונה, אותה סדרה ואותם חוקי Z. לא באמצע הזמנה או תשלום.",
                    devices=(DEVICE_TILL, DEVICE_TABLET, DEVICE_WINDOWS)),
+)
+# fmt: on
+
+
+def _remote_approval_permissions() -> Tuple[PermissionSpec, ...]:
+    """
+    "רשאי לאשר מרחוק" — one permission per request type (P:/specs/manager-approval-mobile.md §0,
+    §3, §4): `APPROVE_REMOTE.<type>`, with the type's ceiling ("תקרת אישור"), edited in the same
+    roles editor. A remote approver needs it at `allow`; the ceiling, when set, bounds what they
+    approve (else the role's existing limit on the underlying permission —
+    app/services/remote_approvals/eligibility.py).
+    """
+    from app.services.remote_approvals.catalog import TYPES, UNIT_AMOUNT, UNIT_COUNT, UNIT_PERCENT
+
+    limit_of = {
+        UNIT_AMOUNT: (LimitSpec("maxAmount", "תקרת אישור (₪)", "amount", 0, 1_000_000),),
+        UNIT_PERCENT: (LimitSpec("maxPercent", "תקרת אישור (%)", "percent", 0, 100),),
+        UNIT_COUNT: (LimitSpec("maxCount", "תקרת אישור (מספר תשלומים)", "count", 0, 99),),
+    }
+    return tuple(
+        PermissionSpec(
+            t.permission_code, f"רשאי לאשר מרחוק — {t.label}", "approvals",
+            f"אישור מהנייד של בקשת \"{t.label}\" שנשלחה מהקופה (המאשר רואה: {t.sees}).",
+            devices=_ALL + (DEVICE_WINDOWS,), limits=limit_of.get(t.unit, ()),
+        )
+        for t in TYPES
+    )
+
+
+#: The `APPROVE_REMOTE.<type>` codes ("רשאי לאשר מרחוק").
+REMOTE_APPROVAL_PERMISSIONS: Tuple[PermissionSpec, ...] = _remote_approval_permissions()
+REMOTE_APPROVAL_CODES: FrozenSet[str] = frozenset(p.code for p in REMOTE_APPROVAL_PERMISSIONS)
+PERMISSIONS = PERMISSIONS + REMOTE_APPROVAL_PERMISSIONS
+
+# "שחזור שולחן עם התשלומים שלו, וזיכוי או ביטול תשלומים בתוך השולחן" (P:/specs/table-restore-payments.md
+# §4, app/services/table_restore.py): reversing one payment of a table from inside it — cash and card up
+# to an amount (above it an `allow` asks a manager whose own limit covers it), voucher / external alone.
+# Restoring the table itself stays TABLE_RESTORE. Till-only scopes: nothing in the cloud elevates to them.
+TABLE_PAYMENT_REVERSE_CODES: FrozenSet[str] = frozenset({
+    "PAYMENT_REVERSE_CASH", "PAYMENT_REVERSE_CARD", "PAYMENT_REVERSE_OTHER",
+})
+# fmt: off
+PERMISSIONS = PERMISSIONS + (
+    PermissionSpec("PAYMENT_REVERSE_CASH", "זיכוי מזומן בשולחן", "tables",
+                   "\"זכה מזומן\" לתשלום במזומן בתוך שולחן (משוחזר, או ששולם בו תשלום חלקי): המגירה נפתחת "
+                   "להחזרת הסכום, ונוצרת חשבונית זיכוי בשולחן. מעל הסכום שהוגדר נדרש אישור.",
+                   limits=(_MAX_AMOUNT,), scope="payment:reverse-cash"),
+    PermissionSpec("PAYMENT_REVERSE_CARD", "זיכוי או ביטול אשראי בשולחן", "tables",
+                   "\"בטל עסקה\" לאשראי שעוד לא שודר, או \"זכה לכרטיס\" לאשראי ששודר, בתוך שולחן — דרך המסוף, "
+                   "עם חשבונית זיכוי בשולחן. מעל הסכום שהוגדר נדרש אישור.",
+                   limits=(_MAX_AMOUNT,), scope="payment:reverse-card"),
+    PermissionSpec("PAYMENT_REVERSE_OTHER", "החזר לשובר / אמצעי חיצוני בשולחן", "tables",
+                   "\"החזר לשובר\" (שובר או תשלום מראש — היתרה חוזרת לשובר) ו\"סמן כמוחזר\" לאמצעי חיצוני בלי "
+                   "חיבור (עם הערה), בתוך שולחן.",
+                   scope="payment:reverse-other"),
 )
 # fmt: on
 
@@ -307,12 +377,15 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "SELL_RESTRICTED_ITEMS",
     "HELD_SALE_CANCEL",
     "ITEM_BLOCK",
+    "ITEM_BLOCK_WIDE",
     # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
     "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
-LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"})
+LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"}) | REMOTE_APPROVAL_CODES
+#: A payment reversed inside a table hands money back, as a refund did: a legacy cashier asks a manager.
+LEGACY_APPROVAL_CODES = LEGACY_APPROVAL_CODES | TABLE_PAYMENT_REVERSE_CODES
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -376,6 +449,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CATALOG_CREATE":                    (D, D, P, A),
     # "חסימת פריט / אזל": the shift supervisor and the manager alone; a cashier on a manager's code.
     "ITEM_BLOCK":                        (D, P, A, A),
+    # "חסימה מעבר לקופה" (P:\specs\item-block-control.md §2): the same people; a waiter never.
+    "ITEM_BLOCK_WIDE":                   (D, P, A, A),
     "ATTENDANCE_MANAGE":                 (P, P, A, A),
     "USER_SESSION_RELEASE":              (P, P, A, A),
     "CARD_UNRESOLVED":                   (P, P, A, A),
@@ -386,8 +461,19 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "DESKTOP_EXIT":                      (D, D, D, A),
     # The owner (09.10.2026): a manager switches a kiosk to the till ("מצב עבודה"); the others never.
     "KIOSK_TILL_MODE":                   (D, D, D, A),
+    # "רשאי לאשר מרחוק" (every request type): the supervisor and the manager; who actually receives
+    # requests is the policy's `approverRoles` (app/services/remote_approvals/catalog.py).
+    **{code: (D, D, A, A) for code in sorted(REMOTE_APPROVAL_CODES)},
 }
 # fmt: on
+
+# "זיכוי או ביטול תשלומים בתוך השולחן" (P:/specs/table-restore-payments.md §4): a manager alone, a shift
+# supervisor alone up to a limit (`_SPEC_LIMITS`), a cashier with approval, a waiter never.
+_SPEC_MATRIX.update({
+    "PAYMENT_REVERSE_CASH":              (D, P, A, A),
+    "PAYMENT_REVERSE_CARD":              (D, P, A, A),
+    "PAYMENT_REVERSE_OTHER":             (D, P, A, A),
+})
 
 #: The spec's example (§7): a supervisor takes cash out up to ₪200 alone (and approves it
 #: for others up to that); above it, a manager.
@@ -401,6 +487,13 @@ _SPEC_LIMITS: Dict[str, Dict[str, Dict[str, float]]] = {
     },
     MANAGER: {},
 }
+#: A shift supervisor reverses a table's cash or card payment alone up to ₪500 (and approves it for
+#: others up to that); above it, a manager (P:/specs/table-restore-payments.md §4 "מותר עד תקרה").
+TABLE_PAYMENT_REVERSE_SUPERVISOR_LIMIT = 500
+_SPEC_LIMITS[SUPERVISOR].update({
+    "PAYMENT_REVERSE_CASH": {"maxAmount": TABLE_PAYMENT_REVERSE_SUPERVISOR_LIMIT},
+    "PAYMENT_REVERSE_CARD": {"maxAmount": TABLE_PAYMENT_REVERSE_SUPERVISOR_LIMIT},
+})
 
 
 def _legacy_cashier_states() -> Dict[str, str]:
@@ -604,8 +697,13 @@ def _role_value(role: Any) -> str:
 #: there — the direction to fail in.
 #: Not grown with codes added after roles (SELL_RESTRICTED_ITEMS): an older till never asks for
 #: them, and a custom role must not read as a cashier there because of one it cannot use.
-#: Nor the catalog's four writes (§6.2): an older till asks for `catalog:write` only.
-LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"} - CATALOG_FINE_CODES
+#: Nor the catalog's four writes (§6.2): an older till asks for `catalog:write` only. Nor
+#: ITEM_BLOCK_WIDE: an older till never asks for it.
+LEGACY_SENIOR_CODES: FrozenSet[str] = (
+    LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS", "ITEM_BLOCK_WIDE"} - CATALOG_FINE_CODES
+)
+#: Nor the table's payment reversals (an older till never asks for them).
+LEGACY_SENIOR_CODES = LEGACY_SENIOR_CODES - TABLE_PAYMENT_REVERSE_CODES
 
 
 def legacy_role_for(states: Mapping[str, str]) -> str:

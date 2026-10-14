@@ -185,6 +185,7 @@ export function TableTypesDialog({
         {editing === null ? (
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">{t('policy.typesHint')}</p>
+            <p className="text-xs text-muted-foreground">{t('policy.discountCheckHint')}</p>
             {types.length === 0 ? <p className="text-sm text-muted-foreground">{t('policy.noTypes')}</p> : null}
             <ul className="divide-y rounded-md border">
               {types.map((ty) => (

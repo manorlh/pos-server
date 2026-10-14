@@ -630,17 +630,55 @@ def adhoc_table(
     body: TableAdhocIn,
     background_tasks: BackgroundTasks,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
     db: Session = Depends(get_db),
 ):
     """
     "פתיחת שולחן לפי מספר": the table of that number, made in "שולחנות מזדמנים" when it is
     on no map. Any waiter's — it adds a table to sit at, not a layout edit.
+
+    "שחזור שולחן" onto a taken number (P:/specs/table-restore-payments.md §1): with a `name` ("ש-12")
+    and `nearTableId` / `zoneId`, the table is made beside the original, shown by its label alone
+    (`labelOnly`) — on TABLE_RESTORE's authority: `X-Pos-User-Id` names a till user of this shop
+    who may restore alone (the manager who approved, else the operator); 401 `elevation_required`
+    for one who may not. Without the header (a till from before it): the table by its number, as
+    ever, unlabelled (`labelled` false).
     """
-    out = T.adhoc_table(db, machine, body.number)
+    # `isinstance`: called directly (the tests), the default is the Header object itself.
+    if body.labelled and isinstance(operator_id, str) and operator_id.strip():
+        _restore_authority(db, machine, operator_id)
+        out = T.labelled_adhoc_table(
+            db, machine, name=body.name or "", number=body.number, zone_id=body.zone_id,
+            near_table_id=body.near_table_id,
+        ) if body.name else None
+        if out is None:
+            raise HTTPException(status_code=422, detail="name_required")
+    else:
+        if body.number is None:
+            raise HTTPException(status_code=422, detail="number_required")
+        out = {**T.adhoc_table(db, machine, body.number), "labelled": False}
     db.commit()
     if out["created"]:
         _wake_all(db, machine)
     return out
+
+
+def _restore_authority(db: Session, machine: POSMachine, operator_id: str) -> PosUser:
+    """The till user `operator_id` names, when they may restore a table alone (TABLE_RESTORE); else 401."""
+    from app.services.till_roles import pos_user_allows
+
+    try:
+        ident = uuid.UUID(str(operator_id).strip())
+    except ValueError:
+        raise _elevation_401("elevation_required")
+    operator = (
+        db.query(PosUser)
+        .filter(PosUser.id == ident, PosUser.shop_id == machine.shop_id, PosUser.is_active.is_(True))
+        .first()
+    )
+    if operator is None or not pos_user_allows(operator, "TABLE_RESTORE"):
+        raise _elevation_401("elevation_required")
+    return operator
 
 
 @router.post("/sync/{machine_id}/tables/layout", dependencies=FISCAL_SYNC_PATH)
@@ -885,13 +923,40 @@ def dashboard_cancel_table(
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
 ):
-    """A manager cancels a stuck open table (409 `table_locked` while a till is inside)."""
+    """
+    A manager cancels a stuck open table, by the tables mode (P:/specs/remote-table-cancel.md):
+
+    * the cloud's tables (and a LAN copy no host serves): 200, cancelled here; the kitchen gets a
+      void ticket of what it had, through the relay (`voidTickets`). 409 `table_locked` while a till
+      is inside.
+    * the LAN mode with a host: 202 `{commandId}` — the host cancels it as at a till; follow it with
+      `GET /device-commands/{commandId}` (the outcome, or "timeout" after `remoteCancelTimeoutSeconds`).
+    * 409 `remote_cancel_blocked` (the LAN mode, `dashboardTableCancel` blocked or a host build that
+      cannot), 409 `order_changed` (the dashboard showed another order or version).
+    """
+    from app.services import device_commands as DC
+    from app.services import printers as K
+    from app.services import remote_table_cancel as RTC
+    from app.services import table_void_tickets as VT
+
     table = T._live_table(db, table_id, active_tenant_id)
     shop = _writable_shop(db, table.shop_id, current_user, active_tenant_id)
     out = T.dashboard_cancel(db, current_user, shop, table, body)
+    if out.get("mode") == RTC.VIA_TILL:
+        db.commit()
+        host = db.get(POSMachine, uuid.UUID(out["hostMachineId"]))
+        background_tasks.add_task(DC.wake, [host])
+        if response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return out
+    printing = VT.notify_targets(db, out.get("voidTickets") or [])
     db.commit()
     _wake_shop(background_tasks, db, shop.id)
+    if printing:
+        # The tills that print the void tickets: woken now (they also look on their heartbeat).
+        background_tasks.add_task(K.publish_job_notify, printing)
     return out
 
 

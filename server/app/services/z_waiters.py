@@ -197,7 +197,8 @@ def waiter_breakdown(db: Session, shift_ids: Iterable[uuid.UUID], shop_id: Any) 
                 else "productionVoucher" if is_production_voucher(method) else "other"
             )
             r[bucket] += sign * amount
-        tip = _dec(doc.tip_amount)
+        # A credit note's tip went back with its payment (table-restore-payments §3): negative.
+        tip = sign * abs(_dec(doc.tip_amount))
         if tip:
             r["tips"] += tip
 

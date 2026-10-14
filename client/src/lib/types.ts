@@ -385,6 +385,16 @@ export interface PosSettingsV1 {
   /** "כיתוב בראש עמדת שובר": up to 40 characters (unset — "עמדת מימוש שוברים"). */
   voucherStationTitle?: string;
   /**
+   * "בחר פריט לשובר" (13.10.2026, P:/specs/voucher-station-fast-flows.md §4; lib/voucherTillSettings.ts):
+   * the order screen a scanned voucher that needs items opens. In `effective` always resolved.
+   * "הסבר לעובד מה לבחור": a guide strip with what the voucher allows and how many are left (unset — true).
+   */
+  voucherGuide?: boolean;
+  /** "אחרי סריקת שובר שדורש פריטים": eligible (unset — only the eligible items) or all (the whole menu, tagged). */
+  voucherPickFilter?: VoucherPickFilter;
+  /** "כשיש רק פריט מתאים אחד — בחר אותו אוטומטית" (unset — true). */
+  voucherAutoPickSingle?: boolean;
+  /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
    */
@@ -489,6 +499,9 @@ export type VoucherVibrate = 'off' | 'approve' | 'reject' | 'both';
 export type VoucherStationCatalogSwitch = 'off' | 'manager' | 'free';
 export type VoucherStationHeader = 'logo' | 'text' | 'both' | 'none';
 
+/** `voucherPickFilter` (P:/specs/voucher-station-fast-flows.md §4) — server/app/services/voucher_station_settings.py. */
+export type VoucherPickFilter = 'eligible' | 'all';
+
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey =
   | PaymentOptionSettingKey
@@ -549,6 +562,9 @@ export type PosSettingsPatch = Partial<
     | 'voucherStationCatalogSwitch'
     | 'voucherStationHeader'
     | 'voucherStationTitle'
+    | 'voucherGuide'
+    | 'voucherPickFilter'
+    | 'voucherAutoPickSingle'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -588,6 +604,10 @@ export type PosSettingsPatch = Partial<
   voucherStationCatalogSwitch?: VoucherStationCatalogSwitch | null;
   voucherStationHeader?: VoucherStationHeader | null;
   voucherStationTitle?: string | null;
+  /** `null` = inherit the "בחר פריט לשובר" settings from the level above again. */
+  voucherGuide?: boolean | null;
+  voucherPickFilter?: VoucherPickFilter | null;
+  voucherAutoPickSingle?: boolean | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;
@@ -2439,6 +2459,8 @@ export interface ZReportMachineSection {
   betweenShiftAdjustments?: Money | null;
   /** Card tips this till paid out of the drawer (Σ of its closes'); absent without the parameter. */
   cardTipsFromDrawer?: Money | null;
+  /** "זיכויים וביטולי תשלום בשולחנות" of this till — absent when it had none. */
+  tablePaymentReversals?: TablePaymentReversals | null;
   /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
   drawerCash?: Money | null;
   /** This till's Cash In / Cash Out / deposits inside expectedCash; absent when the parameter was off for it. */
@@ -2518,6 +2540,18 @@ export interface ZReportDetail extends ZReport {
    */
   reportSections?: import('./zReportSections').ZReportSections | null;
   reportSectionsSource?: 'stored' | 'documents' | null;
+  /** "זיכויים וביטולי תשלום בשולחנות" (as frozen, else read from its documents); null when none. */
+  tablePaymentReversals?: TablePaymentReversals | null;
+}
+
+/**
+ * "זיכויים וביטולי תשלום בשולחנות: N · ₪" (pos-server app/services/table_restore.py,
+ * P:/specs/table-restore-payments.md §3): the payments reversed inside tables whose credit notes are
+ * the Z's documents. Already inside the refunds and the tenders — a count, never subtracted again.
+ */
+export interface TablePaymentReversals {
+  count: number;
+  amount: Money;
 }
 
 /** One waiter's row of a Z (money as decimal strings). `waiter` null: no one on the documents. */

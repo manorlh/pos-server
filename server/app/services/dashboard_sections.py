@@ -51,7 +51,7 @@ class Section:
 SECTIONS: Tuple[Section, ...] = (
     Section(
         "reports", "דוחות",
-        "סקירה, דוחות מכירות, עסקאות, תובנות, התאמות, שידורים, אירועים, חריגים, יומן חריגות, מגירת "
+        "סקירה, בעיות, דוחות מכירות, עסקאות, תובנות, התאמות, שידורים, אירועים, חריגים, יומן חריגות, מגירת "
         "מזומן ודוח למס הכנסה. עריכה: אירועים, סקירת חריגים וטיפול ביומן, עלויות מוצרים, זיכוי מרחוק וזיכוי "
         "באשראי מהענן.",
         (
@@ -64,6 +64,8 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
             "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports", "/dashboard/targets",
+            # "בעיות" (P:/specs/manager-problems.md §3): the open problems of every kind, one screen.
+            "/dashboard/problems",
         ),
     ),
     Section(
@@ -223,6 +225,18 @@ SECTIONS: Tuple[Section, ...] = (
         "accounting", "הנהלת חשבונות", "ייצוא להנהלת חשבונות ומיפוי חשבונות.",
         ("/dashboard/accounting-export", "/dashboard/accounting-settings"),
     ),
+    # "בקשת אישור ממנהל מהנייד" (P:/specs/manager-approval-mobile.md §4, §6): see the requests
+    # (view) and decide them (edit); the settings ("בקשות אישור") are their own section.
+    Section(
+        "approvals", "בקשות אישור",
+        "בקשות אישור מהקופות: ממתינות בזמן אמת והיסטוריה. עריכה: לאשר או לדחות בקשה שנשלחה אליך.",
+        ("/dashboard/approvals",),
+    ),
+    Section(
+        "approval_settings", "הגדרות בקשות אישור",
+        "הגדרות בקשות האישור לפי רמה (חברה, סניף, נקודת מכירה, קופה): סוגים, מאשרים, תקרות, סיבות וזמנים.",
+        ("/dashboard/approval-settings",),
+    ),
 )
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
@@ -276,6 +290,10 @@ AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מ�
 AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
 #: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
 MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
+#: "מאשר" (P:/specs/manager-approval-mobile.md §0, §4): only the approval requests — to see and decide.
+APPROVER_TEMPLATE = "approver"
+APPROVER_LABEL = "מאשר"
+APPROVER_SECTIONS: Dict[str, str] = {"approvals": EDIT}
 
 BUILTIN_TEMPLATES = {
     ORG_MANAGER_TEMPLATE: {"label": ORG_MANAGER_LABEL, "sections": ORG_MANAGER_SECTIONS, "fullAccess": False},
@@ -284,6 +302,7 @@ BUILTIN_TEMPLATES = {
     AREA_MANAGER_TEMPLATE: {
         "label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False, "hidden": True,
     },
+    APPROVER_TEMPLATE: {"label": APPROVER_LABEL, "sections": APPROVER_SECTIONS, "fullAccess": False},
 }
 
 
@@ -499,6 +518,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/companies/{}/till-roles*", S("pos_users")),
     (_GET, "/companies/{}/till-drawer-params", S("till_settings", "pos_users", level=VIEW)),
     (_ALL, "/companies/{}/till-drawer-params", S("till_settings")),
+    # "התראות בנייד" for the company's users (app/routers/push_policy.py): a users' requirement.
+    (_ALL, "/companies/{}/push-policy", S("users", "organization")),
+    # "שחזור שולחן ותשלומים" (app/routers/table_restore.py): till parameters edited on the tables page.
+    (_GET, "/companies/{}/table-restore-params", S("tables", "till_settings", level=VIEW)),
+    (_ALL, "/companies/{}/table-restore-params", S("tables", "till_settings")),
     (_ALL, "/companies*", S("organization")),
     # ── Reports ──
     (_GET, "/dashboard/*", S("reports")),
@@ -518,6 +542,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/push/alerts*", S("alerts")),
     (_GET, "/push/history", S("alerts")),
     (_ALL, "/push/*", SELF),
+    # "בעיות": the problems screen is a report (its "טופל" goes through the log's / the alerts' own
+    # routes); the groups I hid are mine.
+    (_ALL, "/problems/preferences", SELF),
+    (_GET, "/problems", S("reports")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion
@@ -579,7 +607,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/kiosks/{}/commands", S("kiosks", "device_control")),
     (_ALL, "/kiosks/{}/banner", S("kiosks", "device_control")),
     (_ALL, "/kiosks*", S("kiosks")),
-    # Remote control of tills and kiosks (app/routers/device_commands.py).
+    # Remote control of tills and kiosks (app/routers/device_commands.py). One command's status is
+    # also the tables page's: a table cancelled through the LAN host (`cancel_table`) is followed there
+    # by whoever reads the shop's tables (the route checks which: its own scope per action).
+    (_GET, "/device-commands/{}", S("device_control", "tables", level=VIEW)),
     (_ALL, "/device-commands*", S("device_control")),
     # "שליחת לוגים לענן" (app/routers/device_logs.py): the device page's "לוגים" and the super
     # admin's "לוגים ממכשירים". Any of the two at view lets the route's own rule run: the content
@@ -588,6 +619,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/device-logs*", S("devices", "device_control", level=VIEW)),
     # "חסימות ואזל" (app/routers/item_blocks.py).
     ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
+    # "חסימה מהירה" and "חסימות מהקופה" (P:/specs/item-block-control.md §4, §5): the stock pages too.
+    (_ALL, "/item-blocks/quick", S("item_blocks", "stock")),
+    (_ALL, "/item-blocks/control*", S("item_blocks", "stock")),
     (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
     # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.
@@ -685,6 +719,13 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # ── Organizations (tenants) ──
     (_ALL, "/tenants/{}/settings", S("till_settings")),
     (_ALL, "/tenants*", S("organization")),
+    # ── "בקשות אישור" (P:/specs/manager-approval-mobile.md) — the till's own routes under /approvals
+    # take a machine token (never a dashboard user); these are the dashboard's ──
+    (_ALL, "/approvals/policy", S("approval_settings")),
+    (_GET, "/approvals/policy/approvers", S("approval_settings", level=VIEW)),
+    (_GET, "/approvals/catalog", S("approval_settings", "approvals", "pos_users", level=VIEW)),
+    ("POST", "/approvals/{}/decide", S("approvals", level=EDIT)),
+    (_ALL, "/approvals*", S("approvals")),
     # ── Dashboard users ──
     (_ALL, "/users*", S("users")),
 ]

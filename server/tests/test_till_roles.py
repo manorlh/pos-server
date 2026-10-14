@@ -229,15 +229,19 @@ class TestLegacy:
         eff = TP.legacy_effective("cashier")
         # Plus what was added after roles and asks a manager of a cashier (SELL_RESTRICTED_ITEMS:
         # "מחייב אישור מנהל במכירה", HELD_SALE_CANCEL: "ביטול מכירה מושהית" — neither existed before roles).
-        # ITEM_BLOCK: "חסימת פריט / אזל" (specs/item-blocks-targets.md) — a cashier on a manager's code.
+        # ITEM_BLOCK: "חסימת פריט / אזל" (specs/item-blocks-targets.md) — a cashier on a manager's code;
+        # ITEM_BLOCK_WIDE: "חסימה מעבר לקופה" (P:/specs/item-block-control.md §2) — the same.
         # "ניהול קטלוג" (specs/till-catalog-management.md §6.2): the four writes, as CATALOG_WRITE was.
-        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK"} | {
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK", "ITEM_BLOCK_WIDE"} | {
             "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
-        }
+        } | TP.TABLE_PAYMENT_REVERSE_CODES  # a table's payment reversed: as a refund was (table-restore-payments §4)
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a
-        # manager's alone (the kiosk's admin opened for a manager's code only).
-        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"}
+        # manager's alone (the kiosk's admin opened for a manager's code only) — and approving a request
+        # from the phone ("רשאי לאשר מרחוק", APPROVE_REMOTE.<type>), which is approving others too.
+        assert {c for c, s in eff.states.items() if s == D} == {
+            "CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE",
+        } | TP.REMOTE_APPROVAL_CODES
         assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
 
     def test_a_legacy_shop_manager_may_do_everything(self):

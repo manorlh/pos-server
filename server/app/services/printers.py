@@ -1579,6 +1579,11 @@ def was_taken(job: KitchenPrintJob) -> bool:
     return bool(job.deliveries) or job.delivered_at is not None
 
 
+def is_dashboard_void(job: KitchenPrintJob) -> bool:
+    """A table's void ticket made from the dashboard (a ticket no till sent, a user made)."""
+    return job.kind == "ticket" and job.source_machine_id is None and job.created_by_user_id is not None
+
+
 def expire_jobs(db: Session, jobs: Iterable[KitchenPrintJob], now: Optional[datetime] = None) -> None:
     """
     Jobs past their time and not finished become `expired` (in place): one no till took, at
@@ -1662,6 +1667,13 @@ def create_job(db: Session, machine: POSMachine, body: PrintJobIn) -> Tuple[Kitc
     """
     existing = db.query(KitchenPrintJob).filter(KitchenPrintJob.id == body.id).first()
     if existing is not None:
+        if is_dashboard_void(existing) and str(existing.shop_id) == str(machine.shop_id) \
+                and str(existing.printer_id) == str(body.printer_id):
+            # The same cancel's void, made from the dashboard under the till's own id for it
+            # (app/services/table_void_tickets.py): one job — this till follows it as its own.
+            existing.source_machine_id = machine.id
+            db.flush()
+            return existing, False
         if str(existing.source_machine_id) != str(machine.id):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="print_job_id_taken")
         return existing, False

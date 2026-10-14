@@ -1,8 +1,8 @@
 /**
  * "תצורת עבודה של הסניף" (spec: shop-work-config.md §2, §7ב): how a whole shop works with its
  * tills — the Z, a local server (the main till), tables, the kitchen, the customer display,
- * attendance, tips and vouchers — chosen when the shop is created (a step of "הקמת סניף") and
- * edited on the shop page's "תצורת עבודה" section.
+ * attendance, tips, vouchers and "חסימות פריטים" (which tills manage the item blocks) — chosen when
+ * the shop is created (a step of "הקמת סניף") and edited on the shop page's "תצורת עבודה" section.
  *
  * Stored by the server as `shops.settings.workProfile`. What needs no till is applied at once;
  * the Z type, the main till and the LAN wait for the first till ("⏳"), which the add-device
@@ -26,6 +26,22 @@ export type ProfileTipDistribution = 'direct' | 'equal_pool' | 'by_sales';
 export type BalanceCheck = 'auto' | 'on' | 'off';
 /** "שרת מקומי": the main till (a till that sells too), or a dedicated device (P:/specs/dedicated-local-server.md). */
 export type LocalServerDevice = 'main_till' | 'dedicated';
+/** "חסימות פריטים" — which tills are "קופה מנהלת" (P:/specs/item-block-control.md §2, §5). */
+export type ItemBlocksManaging = 'main_till' | 'all' | 'none';
+/** How far a regular till blocks: itself, its point of sale, the whole shop. */
+export type ItemBlocksScope = 'machine' | 'area' | 'shop';
+
+/**
+ * "חסימות פריטים": the shop's own POS setting `itemBlocks` in three choices (the server maps them:
+ * main_till — no `role` of the shop's own; all — `role: managing`; none — `role: local`;
+ * `localScope` → `localMaxLevel`; `localWide` → `localChannels` all four, or the tills only).
+ */
+export interface ProfileItemBlocks {
+  managing: ItemBlocksManaging;
+  localScope: ItemBlocksScope;
+  /** A regular till blocks the kiosk, the online orders and the digital menu too. */
+  localWide: boolean;
+}
 
 export type TemplateId =
   | 'restaurant_tables'
@@ -49,6 +65,11 @@ export interface WorkProfile {
   attendance: boolean;
   tips: { enabled: boolean; distribution: ProfileTipDistribution };
   vouchers: { station: boolean; balanceCheck: BalanceCheck };
+  /**
+   * "חסימות פריטים". Never in the server's templates (their golden file is pinned) — a template gets
+   * the defaults, as it does every field; an older server says nothing of it (read as the defaults).
+   */
+  itemBlocks: ProfileItemBlocks;
 }
 
 /** The profile's fields — the keys of `status` and `canEdit`. */
@@ -65,6 +86,7 @@ export const WORK_PROFILE_FIELDS: readonly WorkProfileField[] = [
   'attendance',
   'tips',
   'vouchers',
+  'itemBlocks',
 ];
 
 export interface WorkProfileTemplate {
@@ -110,6 +132,9 @@ export interface Refusal {
 
 // ── Values, labels, hints ────────────────────────────────────────────────────
 
+/** The main till manages; a regular till blocks its point of sale, on the tills only. */
+export const DEFAULT_ITEM_BLOCKS: ProfileItemBlocks = { managing: 'main_till', localScope: 'area', localWide: false };
+
 export const DEFAULT_PROFILE: WorkProfile = {
   templateId: null,
   zType: 'shop_cloud',
@@ -122,6 +147,7 @@ export const DEFAULT_PROFILE: WorkProfile = {
   attendance: false,
   tips: { enabled: false, distribution: 'direct' },
   vouchers: { station: false, balanceCheck: 'auto' },
+  itemBlocks: DEFAULT_ITEM_BLOCKS,
 };
 
 export interface Choice<V extends string> {
@@ -184,6 +210,33 @@ export const LOCAL_SERVER_DEVICE_CHOICES: readonly Choice<LocalServerDevice>[] =
   },
 ];
 
+export const ITEM_BLOCKS_MANAGING_CHOICES: readonly Choice<ItemBlocksManaging>[] = [
+  {
+    value: 'main_till',
+    label: 'הקופה הראשית',
+    hint: 'הקופה הראשית של הסניף חוסמת בכל ערוץ ובכל היקף; שאר הקופות רגילות. כל עוד אין קופה ראשית, אף קופה אינה מנהלת.',
+  },
+  { value: 'all', label: 'כל הקופות', hint: 'כל קופה בסניף חוסמת בכל ערוץ ובכל היקף, בגבולות הרשאת העובד.' },
+  {
+    value: 'none',
+    label: 'אף קופה (מסמנים בהגדרות ניהול המלאי)',
+    hint: 'כל הקופות רגילות. את הקופה המנהלת (או כמה) מסמנים אחר כך בהגדרות ניהול המלאי ← "חסימות מהקופה".',
+  },
+];
+
+export const ITEM_BLOCKS_SCOPE_CHOICES: readonly Choice<ItemBlocksScope>[] = [
+  { value: 'machine', label: 'רק הקופה', hint: 'קופה רגילה חוסמת רק לעצמה.' },
+  {
+    value: 'area',
+    label: 'נקודת המכירה',
+    hint: 'קופה רגילה חוסמת לנקודת המכירה שלה (קופה בלי נקודת מכירה — רק לעצמה).',
+  },
+  { value: 'shop', label: 'כל הסניף', hint: 'קופה רגילה חוסמת לכל הסניף.' },
+];
+
+/** The switch of `localWide`. */
+export const ITEM_BLOCKS_WIDE_LABEL = 'קופות רגילות חוסמות גם קיוסק, הזמנות ותפריט';
+
 export const FIELD_LABELS: Record<WorkProfileField, string> = {
   zType: 'סוג Z',
   shopZFrom: 'מי מפיק Z סניפי',
@@ -195,6 +248,7 @@ export const FIELD_LABELS: Record<WorkProfileField, string> = {
   attendance: 'נוכחות עובדים',
   tips: 'טיפים',
   vouchers: 'שוברי הפקה',
+  itemBlocks: 'חסימות פריטים',
 };
 
 /** One line under each field: what it decides. */
@@ -211,6 +265,8 @@ export const FIELD_HINTS: Record<WorkProfileField, string> = {
   attendance: 'כניסה ויציאה של עובדים בקופה, ודוח נוכחות בדשבורד.',
   tips: 'הוספת טיפ בתשלום, ואיך מחלקים את הטיפים בין הקופאים.',
   vouchers: 'עמדת שובר (מסך סריקה בלבד) ובירור יתרת שובר בקופה.',
+  itemBlocks:
+    'מי חוסם פריטים מהקופה ("חסום / אזל"): הקופה המנהלת חוסמת בכל ערוץ ובכל היקף, קופה רגילה רק בהיקף שנבחר כאן. אפשר לשנות אחר כך בהגדרות ניהול המלאי, גם לכל נקודת מכירה וקופה.',
 };
 
 /** The groups the editor shows, in order. */
@@ -218,6 +274,7 @@ export const FIELD_GROUPS: readonly { id: string; title: string; fields: readonl
   { id: 'z', title: 'Z ושרת מקומי', fields: ['zType', 'shopZFrom', 'localServer', 'localServerDevice'] },
   { id: 'service', title: 'שולחנות ומטבח', fields: ['tablesMode', 'kitchen'] },
   { id: 'extras', title: 'בקופה', fields: ['customerDisplay', 'attendance', 'tips', 'vouchers'] },
+  { id: 'blocks', title: 'חסימות פריטים', fields: ['itemBlocks'] },
 ];
 
 /** Shown on a field the current user may not change (`canEdit` false). */
@@ -249,6 +306,11 @@ export function fieldValueText(field: WorkProfileField, p: WorkProfile): string 
       return p.tips.enabled ? `דלוק · חלוקה ${labelOf(TIP_DISTRIBUTION_CHOICES, p.tips.distribution)}` : 'כבוי';
     case 'vouchers':
       return `עמדת שובר ${p.vouchers.station ? 'דלוקה' : 'כבויה'} · בירור יתרה ${labelOf(BALANCE_CHECK_CHOICES, p.vouchers.balanceCheck)}`;
+    case 'itemBlocks':
+      return `קופה מנהלת: ${labelOf(ITEM_BLOCKS_MANAGING_CHOICES, p.itemBlocks.managing)} · קופות רגילות: ${labelOf(
+        ITEM_BLOCKS_SCOPE_CHOICES,
+        p.itemBlocks.localScope,
+      )}${p.itemBlocks.localWide ? ', גם קיוסק, הזמנות ותפריט' : ''}`;
   }
 }
 
@@ -261,6 +323,8 @@ function profileOf(templateId: TemplateId, over: Partial<WorkProfile>): WorkProf
     templateId,
     tips: { ...DEFAULT_PROFILE.tips, ...(over.tips ?? {}) },
     vouchers: { ...DEFAULT_PROFILE.vouchers, ...(over.vouchers ?? {}) },
+    // Not in the server's templates: a template gets the defaults.
+    itemBlocks: { ...DEFAULT_ITEM_BLOCKS },
   };
 }
 
@@ -335,6 +399,7 @@ export function normalizeProfile(raw: unknown, base: WorkProfile = DEFAULT_PROFI
   const r = isObject(raw) ? raw : {};
   const tips = isObject(r.tips) ? r.tips : {};
   const vouchers = isObject(r.vouchers) ? r.vouchers : {};
+  const blocks = isObject(r.itemBlocks) ? r.itemBlocks : {};
   const templateId = typeof r.templateId === 'string' && r.templateId ? r.templateId : r.templateId === null ? null : base.templateId;
   return {
     templateId,
@@ -354,6 +419,12 @@ export function normalizeProfile(raw: unknown, base: WorkProfile = DEFAULT_PROFI
     vouchers: {
       station: bool(vouchers.station, base.vouchers.station),
       balanceCheck: pick(BALANCE_CHECK_CHOICES, vouchers.balanceCheck, base.vouchers.balanceCheck),
+    },
+    // An older server (or a template) says nothing of it: `base`'s.
+    itemBlocks: {
+      managing: pick(ITEM_BLOCKS_MANAGING_CHOICES, blocks.managing, base.itemBlocks.managing),
+      localScope: pick(ITEM_BLOCKS_SCOPE_CHOICES, blocks.localScope, base.itemBlocks.localScope),
+      localWide: bool(blocks.localWide, base.itemBlocks.localWide),
     },
   };
 }
@@ -664,7 +735,19 @@ export function creationSummary(p: WorkProfile): { now: SummaryLine[]; waiting: 
   now.push(line('tablesMode', p.tablesMode === 'lan' ? 'נקבע עכשיו; עובד דרך הקופה הראשית כשתצומד.' : null));
   now.push(line('kitchen', p.kitchen === 'printer' ? null : 'את מסכי המטבח מצמידים ומגדירים בדף "מסכי מטבח".'));
   now.push(line('customerDisplay'), line('attendance'), line('tips'), line('vouchers'));
+  now.push(line('itemBlocks', itemBlocksNote(p)));
   return { now, waiting };
+}
+
+/** "חסימות פריטים" in the summary: which till will be the managing one, when it is not plain. */
+function itemBlocksNote(p: WorkProfile): string | null {
+  if (p.itemBlocks.managing === 'none') return 'את הקופה המנהלת מסמנים אחר כך בהגדרות ניהול המלאי ← "חסימות מהקופה".';
+  if (p.itemBlocks.managing !== 'main_till') return null;
+  if (p.localServer && p.localServerDevice === 'dedicated') {
+    return 'הקופה הראשית כאן היא השרת המקומי הייעודי, שאינו מוכר — סמנו קופה מנהלת בהגדרות ניהול המלאי, או בחרו "כל הקופות".';
+  }
+  if (p.localServer) return 'הקופה הראשונה שתצומד תהיה הקופה הראשית, ולכן גם הקופה המנהלת.';
+  return 'הקופה הראשית תהיה הקופה המנהלת. כל עוד אין קופה ראשית, אף קופה אינה מנהלת.';
 }
 
 // ── The server's view: status and permissions ────────────────────────────────

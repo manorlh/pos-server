@@ -251,15 +251,13 @@ def _primary(data: StatusInput, *, online: bool, undelivered: int) -> str:
 def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
     flags: List[str] = []
 
-    today = local_today(data.timezone_name, now=now)
     # A shift still open on a date that has passed. This is what a dead terminal leaves
     # behind — nothing can close it, and today it is visible only to someone who goes
     # looking for it.
-    if data.shift_open and data.business_date is not None:
-        if data.business_date < today:
-            flags.append(MachineFlag.SHIFT_OPEN_PAST_ITS_DATE)
+    if data.shift_open and date_has_passed(data.business_date, data.timezone_name, now=now):
+        flags.append(MachineFlag.SHIFT_OPEN_PAST_ITS_DATE)
     # A shop that forgot its Z: closed shifts from an earlier date that no Z has taken.
-    if data.oldest_awaiting_z_date is not None and data.oldest_awaiting_z_date < today:
+    if date_has_passed(data.oldest_awaiting_z_date, data.timezone_name, now=now):
         flags.append(MachineFlag.CLOSED_SHIFTS_AWAITING_Z)
 
     if data.catalog_pull_stale:
@@ -274,9 +272,24 @@ def _flags(data: StatusInput, *, now: Optional[datetime]) -> List[str]:
         flags.append(MachineFlag.REALTIME_DOWN)
 
     flags.extend(transmission_flags(data, now=now))
-    if data.printer_status in PRINTER_PROBLEM_STATUSES:
+    if printer_problem(data.printer_status):
         flags.append(MachineFlag.PRINTER_PROBLEM)
     return flags
+
+
+# The flags' own tests, one per condition, for whatever else reads the same lights — the
+# exception alerts' status watch (app/services/exception_alerts/status_watch.py) turns them
+# into log entries and phone alerts, and must never decide them differently.
+
+
+def date_has_passed(business_date: Optional[date], timezone_name: Optional[str], *, now: Optional[datetime] = None) -> bool:
+    """A business date before today where the shop is (`shift_open_past_its_date`, `closed_shifts_awaiting_z`)."""
+    return business_date is not None and business_date < local_today(timezone_name, now=now)
+
+
+def printer_problem(printer_status: Optional[str]) -> bool:
+    """`printer_problem`: no paper, overheated or an error (never `unavailable` / `unknown`)."""
+    return printer_status in PRINTER_PROBLEM_STATUSES
 
 
 def _aware(moment: Optional[datetime]) -> Optional[datetime]:
@@ -285,7 +298,13 @@ def _aware(moment: Optional[datetime]) -> Optional[datetime]:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
 
 
-def transmission_flags(data: StatusInput, *, now: Optional[datetime] = None) -> List[str]:
+def transmission_flags(
+    data: StatusInput,
+    *,
+    now: Optional[datetime] = None,
+    overdue_after: timedelta = TRANSMISSION_OVERDUE_AFTER,
+    critical_after: timedelta = TRANSMISSION_CRITICAL_AFTER,
+) -> List[str]:
     """
     `transmission_overdue` and `transmission_critical` (docs/SHIFTS_API.md §4.6).
 
@@ -293,6 +312,9 @@ def transmission_flags(data: StatusInput, *, now: Optional[datetime] = None) -> 
     there has been no successful transmission for 24 h (from the tracking start when there
     never was one). Critical: the oldest pending sale is over 4 days old — or, when its
     time is unknown, the last success is. A critical till carries both.
+
+    The board always reads 24 h / 4 days; the status watch passes the alert rule's own
+    `warnHours` / `criticalDays` (exception rule `card_transmission_overdue`).
     """
     if not data.transmission_pending:
         return []
@@ -305,9 +327,9 @@ def transmission_flags(data: StatusInput, *, now: Optional[datetime] = None) -> 
     oldest_age = reference - oldest if oldest is not None else None
 
     critical_age = oldest_age if oldest_age is not None else since_success
-    critical = critical_age is not None and critical_age > TRANSMISSION_CRITICAL_AFTER
+    critical = critical_age is not None and critical_age > critical_after
     overdue = critical or any(
-        age is not None and age > TRANSMISSION_OVERDUE_AFTER for age in (oldest_age, since_success)
+        age is not None and age > overdue_after for age in (oldest_age, since_success)
     )
     flags: List[str] = []
     if overdue:

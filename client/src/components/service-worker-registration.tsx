@@ -1,6 +1,11 @@
 'use client';
 
 import { useEffect } from 'react';
+import { captureInstallPrompt } from '@/lib/installPrompt';
+
+// "התקן את R2M כאפליקציה" (components/dashboard/push-gate): the browser's install offer comes
+// once, early — caught from the first page on, not only once the dashboard has mounted.
+captureInstallPrompt();
 
 /**
  * Registers public/sw.js — in a production build only. Under `next dev` a worker would

@@ -694,7 +694,12 @@ def dev(b):
 
     # till_parameters / values: a controlling till is checked against areaScopeLock (feat/area-lock, merged
     # beside this branch at the integration; app/services/area_lock.py reads the parameter).
-    for name in ("employee_roles", "till_roles", "pos_users", "till_parameters", "till_parameter_values"):
+    # kds_devices…: a till's role in blocks follows the shop's main till (P:/specs/item-block-control.md),
+    # whose rule reads the shop's LAN devices (app/services/main_till.py).
+    for name in (
+        "employee_roles", "till_roles", "pos_users", "till_parameters", "till_parameter_values",
+        "kds_devices", "customer_displays", "local_server_devices",
+    ):
         if name in Base.metadata.tables and not b.db.get_bind().dialect.has_table(b.db.connection(), name):
             Base.metadata.tables[name].create(b.db.get_bind())
     b.mgr = PosUser(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, username="mgr", first_name="Dana",
@@ -723,6 +728,8 @@ def _refusal(out):
 
 class TestDevices:
     def test_a_till_blocks_for_its_own_point_of_sale_by_default(self, dev):
+        # A till that predates "חסימות מהקופה" (no `item_block_control_v1`): all four channels, as ever —
+        # a till that knows the roles: tests/test_item_block_control.py.
         out = _dev_block(dev, dev.h1, dev.mgr, kind="blocked", note="נגמר")
         block = out["block"]
         assert (block["level"], block["scopeId"], block["target"], block["origin"]) == ("area", str(dev.bar.id), "all", "till")

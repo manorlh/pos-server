@@ -515,6 +515,15 @@ app.include_router(event_live_router.router, prefix=_prefix)
 from app.routers import push_alerts as push_alerts_router  # noqa: E402
 
 app.include_router(push_alerts_router.router, prefix=_prefix)
+# "התראות בנייד שחובה להפעיל": the dashboard's check on every open and the policy per level
+# (app/services/push_policy.py).
+from app.routers import push_policy as push_policy_router  # noqa: E402
+
+app.include_router(push_policy_router.router, prefix=_prefix)
+# "בעיות": every open problem in one call, and the groups each user hid (app/services/problems.py).
+from app.routers import problems as problems_router  # noqa: E402
+
+app.include_router(problems_router.router, prefix=_prefix)
 # "עמדת מפיק": the producer's read-only portal, and the owner's side on the event.
 from app.routers import event_producers as event_producers_router, producer as producer_router  # noqa: E402
 
@@ -546,6 +555,12 @@ from app.routers import report_pdf as report_pdf_router  # noqa: E402
 
 app.include_router(report_export_defaults_router.router, prefix=_prefix)
 app.include_router(report_pdf_router.router, prefix=_prefix)
+
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §5): its till parameters per level,
+# edited on the dashboard's tables page.
+from app.routers import table_restore as table_restore_router  # noqa: E402
+
+app.include_router(table_restore_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")
@@ -607,3 +622,23 @@ def readiness_check():
         logger.warning("readiness: database unreachable", exc_info=True)
         return JSONResponse(status_code=503, content={"status": "unavailable", "database": False})
     return {"status": "ready", "database": True}
+
+
+# "בקשת אישור ממנהל מהנייד" (P:/specs/manager-approval-mobile.md): the till's and the dashboard's
+# routes, "עובד מקושר" and the employee card's overrides — and the sweep that expires and escalates.
+from app.routers import remote_approvals as remote_approvals_router  # noqa: E402
+
+app.include_router(remote_approvals_router.router, prefix=_prefix)
+app.include_router(remote_approvals_router.users_router, prefix=_prefix)
+app.include_router(remote_approvals_router.shops_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_remote_approvals_worker():
+    """Expire and escalate pending approval requests every few seconds (app/services/remote_approvals/worker.py)."""
+    if not getattr(settings, "remote_approvals_worker_enabled", True):
+        return
+    from app.database import SessionLocal
+    from app.services.remote_approvals.worker import start_background_worker as start_approvals_worker
+
+    start_approvals_worker(SessionLocal)

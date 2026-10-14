@@ -78,6 +78,10 @@ class PosSettingsV1Patch(BaseModel):
     #: "אזל אוטומטי": a product that tracks stock is blocked "אזל" by itself when the stock its
     #: devices sell from reaches 0 (app/services/sold_out.py). Unset = on.
     auto_sold_out_at_zero: Optional[bool] = Field(None, alias="autoSoldOutAtZero")
+    #: "חסימות מהקופה" (P:/specs/item-block-control.md, app/services/item_block_control.py): the
+    #: level's own `{role, localMaxLevel, localChannels, managingMaxLevel, releaseMode, localRelease,
+    #: quickDefaults}` — the whole object; `null` = inherit again.
+    item_blocks: Optional[Dict[str, Any]] = Field(None, alias="itemBlocks")
     # Legacy tip switches. Still accepted and stored: layers already hold them, and
     # they are the fallback for any option whose own tips key below is unset
     # (see app/services/payment_options.py).
@@ -176,6 +180,16 @@ class PosSettingsV1Patch(BaseModel):
     #: "כיתוב בראש עמדת שובר": free text, whitespace collapsed and trimmed; over 40 characters is a 422
     #: with a Hebrew message (`voucher_station_title_too_long`); blank = `null`, the layer inherits.
     voucher_station_title: Optional[str] = Field(None, alias="voucherStationTitle")
+    # ── "בחר פריט לשובר", 13.10.2026 (P:/specs/voucher-station-fast-flows.md §4; resolved in
+    # app/services/voucher_station_settings.py). `null` in a PATCH resets the layer to inherit.
+    #: "הסבר לעובד מה לבחור": a guide strip on the order screen (unset — true). A bool, like
+    #: voucherShowUnavailable.
+    voucher_guide: Optional[bool] = Field(None, alias="voucherGuide")
+    #: "אחרי סריקת שובר שדורש פריטים": "eligible" (unset — only the items the voucher applies to) or
+    #: "all" (the whole menu, the eligible items tagged). Anything else is a 422.
+    voucher_pick_filter: Optional[Literal["eligible", "all"]] = Field(None, alias="voucherPickFilter")
+    #: "כשיש רק פריט מתאים אחד — בחר אותו אוטומטית" (unset — true). A bool.
+    voucher_auto_pick_single: Optional[bool] = Field(None, alias="voucherAutoPickSingle")
 
     @field_validator("voucher_station_title")
     @classmethod
@@ -470,6 +484,13 @@ class PosSettingsV1Patch(BaseModel):
         from app.services.payment_integration import validate_synqpay_serial
 
         return validate_synqpay_serial(v)
+
+    @field_validator("item_blocks")
+    @classmethod
+    def _check_item_blocks(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        from app.services.item_block_control import clean
+
+        return clean(v)
 
     # The secrets are checked in the router (payment_secrets.secret_patch), not here: a
     # validation error would echo the value back in its `input`, and into the error log.

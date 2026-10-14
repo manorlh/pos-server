@@ -115,6 +115,7 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 /** Sales from gross to net, in the order they are computed (see the Z page's SalesRows). */
 function SalesRows({ x, dealerType }: { x: ZReportDetail | ZReportMachineSection; dealerType?: string | null }) {
   const t = useTranslations('zReports.print');
+  const tz = useTranslations('zReports');
   const tb = useTranslations('businessType');
   // An exempt dealer's Z has no VAT to split (docs/SPEC_BUSINESS_TYPE.md).
   const exempt = zShowsExempt(dealerType, x.vatTotal);
@@ -131,6 +132,16 @@ function SalesRows({ x, dealerType }: { x: ZReportDetail | ZReportMachineSection
       <Row label={t('totalSales')} value={formatCurrency(x.totalSales)} />
       {!hasGross ? <Row label={t('discountsDeducted')} value={formatCurrency(x.discountsTotal)} /> : null}
       <Row label={t('refunds')} value={formatCurrency(x.totalRefunds)} />
+      {/* "זיכויים וביטולי תשלום בשולחנות" — already inside the refunds; only when there were any. */}
+      {(x.tablePaymentReversals?.count ?? 0) > 0 ? (
+        <Row
+          label={tz('tablePaymentReversals')}
+          value={tz('tablePaymentReversalsValue', {
+            count: x.tablePaymentReversals?.count ?? 0,
+            amount: formatCurrency(x.tablePaymentReversals?.amount),
+          })}
+        />
+      ) : null}
       {x.netSales != null ? <Row label={t('netSales')} value={formatCurrency(x.netSales)} /> : null}
       <Row
         label={t('vat')}

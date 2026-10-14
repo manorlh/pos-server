@@ -180,6 +180,7 @@ def _preferences_out(prefs: dict) -> UserPreferencesResponse:
         simple_mode=prefs[user_preferences.SIMPLE_MODE_KEY],
         simple_mode_default=prefs["simpleModeDefault"],
         report_columns=prefs[user_preferences.REPORT_COLUMNS_KEY],
+        approvals_in_quiet_hours=prefs[user_preferences.APPROVALS_QUIET_KEY],
     )
 
 
@@ -343,7 +344,12 @@ def list_users(
     if role:
         query = query.filter(User.role == role)
 
-    return query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+    rows = query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+    # "התראות בנייד": who can receive phone notifications (app/services/push_policy.py).
+    from app.services import push_policy
+
+    push_policy.attach_to_users(db, rows, active_tenant_id)
+    return rows
 
 
 def _derive_username(db: Session, email: str) -> str:

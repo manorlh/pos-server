@@ -879,7 +879,17 @@ class TestMigration:
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
         # The release of 13.10.2026 joins this branch's head with its sibling PRs' in one merge
-        # revision (78c88a7afc4f); this migration stays on that single head's line.
-        assert script.get_heads() == ["78c88a7afc4f"]
+        # revision (78c88a7afc4f); the release of 14.10.2026 joins the two heads built on that one
+        # (8d4f2a6c1e93 the phone-alert types, a7c3e9f1d2b4 remote approvals) in 9f55dd368692, the
+        # detectors' push types (396f22daf19c) chain on it, and ba584f6fb704 joins that with
+        # table-restore's a7d3e1c9b5f2 (dining_tables.label_only). This migration stays on the single
+        # head's line; later ones chain on top.
+        heads = script.get_heads()
+        assert len(heads) == 1
+        line = {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert {"ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
+        assert set(script.get_revision("ba584f6fb704").down_revision) == {"396f22daf19c", "a7d3e1c9b5f2"}
+        assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"
+        assert set(script.get_revision("9f55dd368692").down_revision) == {"8d4f2a6c1e93", "a7c3e9f1d2b4"}
         assert "e4a7c2d9b1f3" in script.get_revision("78c88a7afc4f").down_revision
         assert "e4a7c2d9b1f3" in {r.revision for r in script.walk_revisions("base", "78c88a7afc4f")}

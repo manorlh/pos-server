@@ -6,6 +6,7 @@
 import { api } from './api';
 import type { Sketch } from './tableSketch';
 import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
+import type { RemoteCancelRequested, RemoteCancelStatus, TableCancelRoute } from './remoteTableCancel';
 
 export type ZoneLayout = 'map' | 'grid';
 export type TableShape = 'round' | 'square' | 'rect';
@@ -41,6 +42,11 @@ export interface DiningTable {
   rotation: number;
   /** "לניקוי": paid, and not marked clean since (ISO); null when laid. */
   cleaningSince?: string | null;
+  /**
+   * A restored table made beside its taken original ("שחזור שולחן", P:/specs/table-restore-payments.md §1):
+   * shown by its name alone ("ש-12") — its number is the cloud's own (lib/tableRestore.ts `tableDisplay`).
+   */
+  labelOnly?: boolean;
   /** "סוג שולחן" (lib/tablePolicy.ts): its own kind and discount, or a type — and what the till applies. */
   kind?: TableKind;
   discountPercent?: number | null;
@@ -89,9 +95,29 @@ export interface TableLock {
 export interface LiveTable extends DiningTable {
   zoneName: string | null;
   order: TableOrderSummary | null;
+  /** How the dashboard may cancel its order: direct, through the LAN host, or not here at all. */
+  cancel?: TableCancelRoute | null;
   lock: TableLock | null;
   state: TableStateCode;
   minutesOpen?: number | null;
+}
+
+/**
+ * A kitchen void ticket of a table cancelled from the dashboard ("בון ביטול"), relayed to the till
+ * that prints its printer: `waiting` until that till prints it, `failed` once the relay gave it up.
+ */
+export interface VoidTicket {
+  id: string;
+  tableName: string | null;
+  orderRef: string | null;
+  printerId: string | null;
+  printerName: string | null;
+  targetMachineId: string | null;
+  targetMachineName: string | null;
+  state: 'waiting' | 'printed' | 'failed';
+  taken: boolean;
+  error: string | null;
+  createdAt: string | null;
 }
 
 export interface TablesLive {
@@ -99,6 +125,19 @@ export interface TablesLive {
   zones: TableZone[];
   tables: LiveTable[];
   summary: { openTables: number; openTotal: number; guests: number };
+  /** Void tickets of tables cancelled here that are not on paper yet. */
+  voidTickets?: VoidTicket[];
+}
+
+/** The dashboard's cancel: the order, and how the kitchen was told. */
+export interface DashboardCancelResult extends TableOrderSummary {
+  mode: 'direct';
+  voidTickets: VoidTicket[];
+  /** Tasks taken off the kitchen screens; null when they never had the order. */
+  kdsCancelled: number | null;
+  /** The void tickets could not be queued: the kitchen must be told by a person. */
+  voidTicketsError?: boolean;
+  kdsError?: boolean;
 }
 
 export interface CancelReason {
@@ -283,8 +322,21 @@ export const fetchMealsReport = (shopId: string, from: string, to: string, emplo
 
 export const archiveTable = (tableId: string) => api.post(`/tables/tables/${tableId}/archive`).then((r) => r.data);
 
-export const cancelOpenTable = (tableId: string, body: { reasonId: string; reasonText?: string | null }) =>
-  api.post(`/tables/tables/${tableId}/cancel`, body).then((r) => r.data);
+/**
+ * The cloud's tables: cancelled here (200). The LAN mode with a host: a command to it (202), followed
+ * by `fetchRemoteCancel`. `orderId` / `expectedVersion`: as shown — another now is 409 `order_changed`.
+ */
+export const cancelOpenTable = (
+  tableId: string,
+  body: { reasonId: string; reasonText?: string | null; orderId?: string; expectedVersion?: number },
+) =>
+  api
+    .post<DashboardCancelResult | RemoteCancelRequested>(`/tables/tables/${tableId}/cancel`, body)
+    .then((r) => r.data);
+
+/** A table's cancel sent to the LAN host, as it stands (followed to the host it went on to). */
+export const fetchRemoteCancel = (commandId: string) =>
+  api.get<RemoteCancelStatus>(`/device-commands/${commandId}`).then((r) => r.data);
 
 export const forceReleaseTable = (tableId: string) =>
   api.post(`/tables/tables/${tableId}/force-release`).then((r) => r.data);

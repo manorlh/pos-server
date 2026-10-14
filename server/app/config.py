@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     exception_alerts_link_base_url: str = ""
     # The background digest pass (rate-limited / quiet-hours alerts summed up afterwards).
     exception_alerts_worker_enabled: bool = True
+    # "בקשת אישור ממנהל מהנייד": the sweep that expires / escalates pending requests every 5 s.
+    remote_approvals_worker_enabled: bool = True
 
     # "שליחת לוגים לענן" (app/services/device_logs.py): uploaded device logs older than this many
     # days are deleted by the nightly pass. 0 = kept for ever.

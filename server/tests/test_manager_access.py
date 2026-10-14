@@ -70,7 +70,8 @@ def test_the_area_manager_template_is_the_same_for_an_area():
 def test_the_templates_are_offered_where_admins_assign_them():
     ids = [t["id"] for t in DA.builtin_templates_out()]
     # "מנהל אזור" is kept out of the assign UI until dashboard users can be scoped to an area.
-    assert ids == ["org_manager", "full", "branch_manager"]
+    # "מאשר" (P:/specs/manager-approval-mobile.md §4): the approval requests alone.
+    assert ids == ["org_manager", "full", "branch_manager", "approver"]
 
 
 @pytest.mark.parametrize(

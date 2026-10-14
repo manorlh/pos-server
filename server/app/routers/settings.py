@@ -172,6 +172,7 @@ def _voucher_flow_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
         *voucher_station.VOUCHER_SUCCESS_DISMISS_SETTING_KEYS,
         *voucher_station.VOUCHER_SOUND_SETTING_KEYS,
         *voucher_station.VOUCHER_FAST_MODE_SETTING_KEYS,
+        *voucher_station.VOUCHER_PICK_SETTING_KEYS,
     )
     return {key: raw[key] for key in keys if key in raw}
 
@@ -213,6 +214,13 @@ def _tip_settings_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     """Tip keys the caller explicitly sent, keeping an explicit `null` (reset)."""
     raw = data.model_dump(exclude_unset=True, by_alias=True)
     return {key: raw[key] for key in TIP_RESETTABLE_KEYS if key in raw}
+
+
+def _item_blocks_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """"חסימות מהקופה" (`itemBlocks`): an explicit `null` (or `{}`) clears the layer's own."""
+    if "item_blocks" not in data.model_fields_set:
+        return {}
+    return {"itemBlocks": data.item_blocks}
 
 
 def _refuse_tenant_only_keys(data: PosSettingsV1Patch) -> None:
@@ -287,6 +295,7 @@ def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
         **_refund_settings_patch(data),
         **_voucher_flow_patch(data),
         **_tip_settings_patch(data),
+        **_item_blocks_patch(data),
         # The integration type and Z-Credit's fields: `null` resets, "auto" is not stored.
         **payment_integration.resettable_patch(data),
     })
@@ -395,6 +404,7 @@ def _inherited_preview(layers: List[Any]):
     effective.update(voucher_station.resolve_voucher_success_dismiss(effective))
     effective.update(voucher_station.resolve_voucher_sounds(effective))
     effective.update(voucher_station.resolve_voucher_fast_mode(effective))
+    effective.update(voucher_station.resolve_voucher_pick(effective))
     effective.update(resolve_sell_screen(effective))
     effective.update(resolve_refund_settings(effective))
     # The inherited payment order completed (every method, the unlisted ones after);

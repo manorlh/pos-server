@@ -197,7 +197,11 @@ def test_the_parameters_pull_carries_the_view_and_its_etag_follows_it(mw):
     body = json.loads(first.body)
     assert body["catalogAdminView"] == {"scope": "shop", "label": "קטלוג הסניף"}
     assert body["parameters"]["catalogAdminScope"] == "auto"
-    assert all(not isinstance(v, (dict, list)) for v in body["parameters"].values())
+    # Scalars — but "חסימות מהקופה"'s one computed object (P:/specs/item-block-control.md §6).
+    assert all(not isinstance(v, (dict, list)) for k, v in body["parameters"].items() if k != "itemBlocks")
+    assert set(body["parameters"]["itemBlocks"]) == {
+        "role", "localMaxLevel", "localChannels", "managingMaxLevel", "releaseMode", "localRelease",
+    }
     etag = first.headers["etag"]
     bar_menu = create(mw, name="בר")
     assign(mw, "area", mw.bar, bar_menu)

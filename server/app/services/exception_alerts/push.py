@@ -22,9 +22,25 @@ What a user receives (`entry_matches`):
   * `till_low_sales` — a till barely selling against its peers (the insights' anomaly rules
     report it through external.py);
   * `target_reached` — a sales target reached ("יעדים ותחרות", an event's target included);
+  * `z_shift`, `card_transmission`, `till_printer` — the board's lights as alerts (a Z not made,
+    a shift open too long, card sales not transmitted, the till's printer; status_watch.py);
+  * `payment_reversals` — a payment reversed inside a table, and a closed table restored
+    (P:/specs/table-restore-payments.md);
 * only from what the user may see in the exceptions log (the same scoping), and only with the
   dashboard sections "alerts" / "reports" / "exception_alerts" — a producer never;
 * narrowed to the chosen shops and / or events (an event = its tills inside its window).
+
+Two gates (P:/specs/push-more.md §0): the organization's — each kind's exception rule says
+"שלח התראה לטלפון" (`push`) where it happened, per tenant / company / shop / point of sale / till,
+and its amount floor (`minAmount` / `amount`) — then the user's own preferences above (types,
+places, their personal `min_amount` floor on top of the rule's, quiet hours). A kind with no rule
+is the user's alone. Urgent alerts (`integrity`, a critical battery) skip the rate limit and the
+digest; quiet hours still hold them, and they go one by one once the quiet hours end.
+
+`integrity` ("שלמות נתונים": a refused document, a numbering conflict, Z / shift totals that
+differ, offline Z gaps and conflicts) is apart: super admins only, from every organization,
+never by a tenant's rules (`integrity_recipients`); their own switch, companies and muted devices
+live in their user preferences (`integrity_prefs`).
 
 Delivery: the dispatch row is written first (unique per entry, rule and device), then the
 message is encrypted and posted by a background sender thread (webpush.py), which records
@@ -97,13 +113,17 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("card_terminal", "מסוף אשראי לא עונה / נכשל",
              "המסוף לא ענה או החזיר שגיאה בעסקה, תקלת מסוף בקיוסק, שידור אשראי שנכשל ב-Z.",
              ("failed_payment", "kiosk_terminal", "terminal_mismatch", "card_unresolved", "z_transmission_failed")),
-    Category("large_void", "ביטול / זיכוי גדול", "זיכוי, ביטול עסקה או שורה, ביטול שולחן — מעל הסכום שבחרת.",
+    Category("large_void", "ביטול / זיכוי גדול",
+             "זיכוי, ביטול עסקה או שורה, ביטול שולחן — מעל הסכום של חוק החריגה ומעל הסכום שבחרת. עם העובד, המאשר והסיבה.",
              ("refund", "basket_cancel", "line_void", "table_cancelled", "over_credited"), amount=True),
-    Category("drawer_no_sale", "מגירה נפתחה ללא מכירה", "פתיחת מגירה ללא מכירה, אחרי סגירה, או ריבוי פתיחות ידניות.",
+    Category("drawer_no_sale", "מגירה נפתחה ללא מכירה",
+             "פתיחת מגירה ללא מכירה, אחרי סגירה, ריבוי פתיחות ידניות, ניסיון פתיחה שנחסם, הוצאת מזומן מעל הסף ופער בספירה.",
              ("drawer_open", "drawer_after_close", "drawer_manual_burst", "drawer_manual_over_max",
-              "drawer_open_near_variance", "drawer_open_no_reason")),
-    Category("till_low_sales", "קופה כמעט לא מוכרת", "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות).",
-             ("till_low_sales",)),
+              "drawer_open_near_variance", "drawer_open_no_reason", "drawer_open_denied", "cash_out_over_threshold",
+              "drawer_count_variance")),
+    Category("till_low_sales", "קופה כמעט לא מוכרת",
+             "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות), או שלא מכרה זמן רב בזמן שהאחרות מוכרות.",
+             ("till_low_sales", "till_idle")),
     Category("target_reached", "יעד הושג", "יעד מכירות שהושג — של אירוע, של הסניף, של נקודת מכירה או של עובד.",
              ("target_reached",)),
     Category("card_reconcile", "אי-התאמה מול Z-Credit",
@@ -112,10 +132,91 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("bon_unprinted", "בון לא הודפס",
              "בון שלא הודפס במדפסת מטבח / בר, או שלא התקבל במסך המטבח — מכל קופה וקיוסק.",
              ("bon_unprinted",)),
+    # The board's lights as alerts (status_watch.py, P:/specs/manager-problems.md §2); each kind can
+    # be switched off per company / shop / till in "הגדרות חריגות".
+    Category("z_shift", "Z / משמרת",
+             "Z שלא בוצע אחרי סוף יום העסקים, ומשמרת שפתוחה יותר מדי שעות או מעבר לתאריך שלה.",
+             ("z_missing", "shift_open_overdue")),
+    Category("card_transmission", "שידור אשראי באיחור",
+             "עסקאות אשראי שלא שודרו בזמן: בינונית אחרי השעות שנקבעו, גבוהה כשמתקרבים לסירוב חברות האשראי.",
+             ("card_transmission_overdue",)),
+    Category("till_printer", "מדפסת קופה",
+             "בקופה עם משמרת פתוחה: אין נייר, התחממות או שגיאת מדפסת יותר מכמה דקות.",
+             ("till_printer",)),
+    # P:/specs/push-more.md §A: a device's battery (on: the rule's push switch is on by default).
+    Category("device_battery", "סוללה חלשה",
+             "מסופון, טאבלט, קיוסק או מסך מטבח עם סוללה שירדו מתחת לסף; הסף הקריטי באדום. נסגרת בטעינה.",
+             ("device_battery",)),
+    # §B: kinds the log always had; sent only where a level turns "שלח התראה לטלפון" on.
+    Category("discounts", "הנחות, מחירים ועל חשבון הבית", "הנחה ידנית, שינוי מחיר ועל חשבון הבית — מעל הסף של חוק החריגה.",
+             ("discount", "price_override", "oth"), amount=True),
+    Category("cash_difference", "הפרש בספירת קופה", "הפרש בספירת המזומן בסגירת משמרת, מעל הסכום של חוק החריגה.",
+             ("cash_difference",), amount=True),
+    Category("high_tip", "טיפ גבוה", "טיפ מעל האחוז שבחוק החריגה.", ("high_tip",)),
+    Category("high_sale", "עסקה גדולה", "עסקה מעל הסכום שבחוק החריגה.", ("high_amount",), amount=True),
+    Category("after_hours", "מכירה מחוץ לשעות", "מכירה בשעות שבחוק החריגה.", ("after_hours",)),
+    Category("sensitive_actions", "פעולות רגישות",
+             "הכרעת אשראי ידנית, עקיפת בדיקת מסוף, איפוס או החלפת קופה, Z בכפייה או מהתמיכה, מצב הדרכה.",
+             ("card_decision_override", "terminal_check_bypass", "till_reset", "till_replaced", "forced_z_close",
+              "support_z_produced", "z_forced_open_shifts", "z_forced_pending_cloud_refund", "shop_z_producer_forced",
+              "training_mode", "training_dropped")),
+    Category("staff_actions", "עובדים ונוכחות",
+             "שינוי נוכחות ידני, שחרור עובד מקופה אחרת, הדפסה חוזרת וסגירה עם מכירות מושהות.",
+             ("attendance_manual", "user_session_release", "reprint", "close_keep_held_sales")),
+    Category("stock", "מלאי", "מוצר שהמלאי שלו נמוך או אזל, לפי הספים של המלאי.", ("stock_low", "stock_out")),
+    # One "הזמנה ארוכה": an order longer than its exception rule (long_order, push-more §B — sent where
+    # a level turns its "שלח התראה לטלפון" on), a table open too long and a late KDS ticket (§C).
+    Category("slow_order", "הזמנה ארוכה",
+             "הזמנה שלקחה יותר מהדקות שבחוק החריגה, שולחן פתוח זמן רב בלי תשלום, או הזמנה במסך המטבח שלא סומנה כמוכנה בזמן.",
+             ("long_order", "table_open_long", "kds_ticket_late")),
+    # "זיהויים חדשים" (P:/specs/push-more.md §C).
+    Category("shop_open", "הסניף לא פתח",
+             "עד השעה שנקבעה ביום עבודה אין משמרת פתוחה ואין מכירה בסניף.",
+             ("shop_not_opened",)),
+    Category("sales_pace", "קצב מכירות נמוך",
+             "מכירות הסניף מתחילת היום נמוכות מהממוצע של אותו יום בשבוע, עד אותה שעה.",
+             ("sales_pace_low",)),
+    Category("daily_summary", "סיכום יום",
+             "אחרי Z של הסניף (או בשעה שנקבעה): מכירות, עסקאות, ממוצע, מול שבוע שעבר, זיכויים, הנחות והפרשי קופה.",
+             ("daily_summary",)),
 )
-CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in CATEGORIES}
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §3): every payment reversed inside a
+# table and every table restored — its own type, so a preference saved before it does not start
+# receiving them (opt in). No amount floor: each one is a manager's business.
+CATEGORIES = CATEGORIES + (
+    Category("payment_reversals", "זיכוי / ביטול תשלום בשולחן",
+             "תשלום שזוכה או בוטל מתוך שולחן (מזומן, אשראי, שובר, חיצוני), ושולחן סגור ששוחזר.",
+             ("payment_reversed", "table_restored")),
+)
+#: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
+#: super admin receives it — from every organization, past the organizations' scoping (a super
+#: admin is not a member of each); a company never does, and cannot switch it off for them. Its
+#: switch, companies and devices are the super admin's own (`integrity_prefs`), the quiet hours
+#: and the rate limit those of their preferences (`governing_rule`).
+INTEGRITY_KINDS = (
+    "document_refused", "document_number_conflict", "z_totals_mismatch", "shift_totals_mismatch",
+    "local_shop_z_mismatch", "offline_z_gap", "offline_z_conflict",
+)
+INTEGRITY = Category("integrity", "שלמות נתונים",
+                     "מסמך שנדחה בענן, מספור כפול, פער בסכומי Z או משמרת, חור או התנגשות במספור Z אופליין — מכל הארגונים. למנהל-על בלבד.",
+                     INTEGRITY_KINDS)
+CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in (*CATEGORIES, INTEGRITY)}
+#: What any user may choose (and what "everything" means for a new user). Not `integrity`.
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)
-_CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in CATEGORIES for kind in c.kinds}
+#: Added with manager-problems §2: on for a user whose saved types hold every one the phone alerts
+#: started with (the data migration 3c9e5a7b1d24 adds them), off for one who had left some out; on
+#: for a new user (no preferences = every type).
+NEW_CATEGORY_KEYS = ("z_shift", "card_transmission", "till_printer")
+#: Added with push-more §A / §B, the same way (the data migration 8d4f2a6c1e93). Their kinds are
+#: sent only where the organization's rule says "שלח התראה לטלפון" (off by default but the battery).
+PUSH_MORE_CATEGORY_KEYS = (
+    "device_battery", "discounts", "cash_difference", "high_tip", "high_sale", "after_hours",
+    "sensitive_actions", "staff_actions", "stock", "slow_order",
+)
+#: Added with push-more §C (the detectors), the same way (the data migration 396f22daf19c). Each
+#: detector is off until a level switches it on. `payment_reversals` stays opt-in (no migration).
+DETECTOR_CATEGORY_KEYS = ("shop_open", "sales_pace", "daily_summary")
+_CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in (*CATEGORIES, INTEGRITY) for kind in c.kinds}
 
 DEFAULT_MIN_AMOUNT = Decimal("200.00")
 DEFAULT_RATE_LIMIT = 2
@@ -141,8 +242,59 @@ def category_of(entry: ExceptionLogEntry) -> Optional[str]:
     return key
 
 
-def categories_json() -> List[Dict[str, Any]]:
-    return [{"key": c.key, "label": c.label, "hint": c.hint, "amount": c.amount} for c in CATEGORIES]
+def is_super_admin(user: Any) -> bool:
+    from app.models.user import UserRole
+
+    return user is not None and getattr(user, "role", None) == UserRole.SUPER_ADMIN
+
+
+def categories_for(user: Any = None) -> Tuple[Category, ...]:
+    """The alert types this user may choose: every type, and "שלמות נתונים" for a super admin."""
+    return (*CATEGORIES, INTEGRITY) if is_super_admin(user) else CATEGORIES
+
+
+def categories_json(user: Any = None) -> List[Dict[str, Any]]:
+    return [{"key": c.key, "label": c.label, "hint": c.hint, "amount": c.amount} for c in categories_for(user)]
+
+
+# ── "שלמות נתונים": the super admin's own switch ──────────────────────────────
+
+#: In `users.preferences` (the user's own settings, app/services/user_preferences.py keeps any key it
+#: does not know): `{"enabled": bool, "companyIds": [..] | absent, "mutedDeviceIds": [..]}`. Absent = on,
+#: every company, every device.
+INTEGRITY_PREFS_KEY = "pushIntegrity"
+
+
+def integrity_prefs(user: Any) -> Dict[str, Any]:
+    raw = getattr(user, "preferences", None)
+    stored = raw.get(INTEGRITY_PREFS_KEY) if isinstance(raw, dict) else None
+    stored = stored if isinstance(stored, dict) else {}
+    companies = stored.get("companyIds")
+    muted = stored.get("mutedDeviceIds")
+    return {
+        "enabled": stored.get("enabled", True) is not False,
+        "companyIds": [str(c) for c in companies] if isinstance(companies, list) and companies else None,
+        "mutedDeviceIds": [str(d) for d in muted] if isinstance(muted, list) else [],
+    }
+
+
+def save_integrity_prefs(user: Any, patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge `enabled` / `companyIds` / `mutedDeviceIds` (validated) into the user's own preferences. The caller commits."""
+    current = integrity_prefs(user)
+    if "enabled" in patch:
+        current["enabled"] = patch["enabled"] is not False
+    if "companyIds" in patch:
+        current["companyIds"] = _ids(patch["companyIds"], "integrity.companyIds")
+    if "mutedDeviceIds" in patch:
+        current["mutedDeviceIds"] = _ids(patch["mutedDeviceIds"], "integrity.mutedDeviceIds") or []
+    stored = {"enabled": current["enabled"], "mutedDeviceIds": current["mutedDeviceIds"]}
+    if current["companyIds"]:
+        stored["companyIds"] = current["companyIds"]
+    raw = getattr(user, "preferences", None)
+    prefs = dict(raw) if isinstance(raw, dict) else {}
+    prefs[INTEGRITY_PREFS_KEY] = stored
+    user.preferences = prefs  # a new dict: the JSON column is seen as changed
+    return current
 
 
 # ── Preferences (the push rule) ──────────────────────────────────────────────
@@ -250,10 +402,50 @@ def rule_for_user(db: Session, user_id: Any, tenant_id: Any) -> Optional[Excepti
     )
 
 
+def _split_integrity(user: Any, body: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    The body's "שלמות נתונים" part (a super admin's own switch, not the tenant's rule): `integrity`
+    in `categories` turns it on, `categories` without it off; `integrity: {companyIds, mutedDeviceIds}`.
+    Anyone else naming it is refused.
+    """
+    body = dict(body or {})
+    patch: Dict[str, Any] = {}
+    cats = body.get("categories")
+    extra = body.pop("integrity", None)
+    if not is_super_admin(user):
+        if extra is not None or (isinstance(cats, list) and INTEGRITY.key in cats):
+            raise RuleError("category_unknown", "categories", INTEGRITY.key)
+        return body, patch
+    if isinstance(cats, list):
+        patch["enabled"] = INTEGRITY.key in cats
+        body["categories"] = [c for c in cats if c != INTEGRITY.key]
+    if extra is not None:
+        if not isinstance(extra, dict):
+            raise RuleError("integrity_invalid", "integrity")
+        for key in ("companyIds", "mutedDeviceIds"):
+            if key in extra:
+                patch[key] = extra[key]
+    return body, patch
+
+
+def preferences_json(db: Session, user: Any, tenant_id: Any) -> Dict[str, Any]:
+    """The preferences on the wire; a super admin's carry "שלמות נתונים" (in `categories`, and `integrity`)."""
+    out = as_json(rule_for_user(db, user.id, tenant_id))
+    if is_super_admin(user):
+        own = integrity_prefs(user)
+        if own["enabled"]:
+            out["categories"] = [*out["categories"], INTEGRITY.key]
+        out["integrity"] = {"companyIds": own["companyIds"], "mutedDeviceIds": own["mutedDeviceIds"]}
+    return out
+
+
 def save_preferences(db: Session, user: Any, tenant_id: Any, body: Dict[str, Any]) -> ExceptionAlertRule:
     """Create or update the user's push rule in this tenant (validated). The caller commits."""
+    body, integrity_patch = _split_integrity(user, body)
     rule = rule_for_user(db, user.id, tenant_id)
     fields = clean(body, partial_of=as_json(rule) if rule is not None else None)
+    if integrity_patch:
+        save_integrity_prefs(user, integrity_patch)
     if rule is None:
         rule = ExceptionAlertRule(
             id=uuid.uuid4(), tenant_id=tenant_id, company_id=None, shop_id=None, channel=CHANNEL_PUSH,
@@ -359,12 +551,103 @@ def place_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntr
     return bool(events) and _event_covers(db, events, entry)
 
 
-def entry_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntry, owner: Any = None) -> bool:
-    category = category_of(entry)
-    if category is None or category not in (rule.categories or []):
+@dataclass(frozen=True)
+class OrgGate:
+    """The organization's word on one entry: sent at all, and the amount floor of its kind's rule."""
+
+    allowed: bool
+    floor: Decimal = Decimal("0")
+
+
+#: The threshold a kind's rule sets on its amount (the first of these its rule has).
+AMOUNT_PARAMS = ("minAmount", "amount")
+
+
+def org_gate(db: Session, entry: ExceptionLogEntry) -> OrgGate:
+    """
+    "שלח התראה לטלפון" of the entry's kind where it happened (push-more §0) — its till's rule, else its
+    shop's — and that rule's amount floor. "שלמות נתונים" is the super admins' alone: no company
+    switches it off. A kind with no rule: always (the user's preferences decide). A battery also
+    by its device's `batteryPushLevel` (all / critical / off).
+    """
+    from app.services import exceptions as EX
+
+    spec = EX.RULES_BY_TYPE.get(entry.kind)
+    if spec is None or category_of(entry) == INTEGRITY.key:
+        return OrgGate(True)
+    try:
+        rules = EX.rules_where(db, tenant_id=entry.tenant_id, company_id=entry.company_id, shop_id=entry.shop_id,
+                               area_id=entry.area_id, machine_id=entry.machine_id)
+    except Exception:  # noqa: BLE001 - a rule that cannot be read: the defaults
+        logger.exception("push: the rules of entry %s could not be read", entry.id)
+        return OrgGate(spec.push_default)
+    rule = rules.get(entry.kind)
+    if rule is None or not rule.push:
+        return OrgGate(False)
+    if entry.kind == "device_battery" and not _battery_level_allows(db, entry):
+        return OrgGate(False)
+    floor = next((rule.params[k] for k in AMOUNT_PARAMS if rule.params.get(k) is not None), 0)
+    return OrgGate(True, Decimal(str(floor or 0)))
+
+
+def gated_kind(kind: str) -> bool:
+    """A kind that is an alert only where a level turns its "שלח התראה לטלפון" on (off by default)."""
+    from app.services import exceptions as EX
+
+    spec = EX.RULES_BY_TYPE.get(kind)
+    return spec is not None and not spec.push_default
+
+
+class GateCache:
+    """`org_gate`'s push switch for many entries at once (the alerts feed): the rules per place, read once."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self._rules: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+
+    def allows(self, entry: ExceptionLogEntry) -> bool:
+        from app.services import exceptions as EX
+
+        key = (entry.tenant_id, entry.company_id, entry.shop_id, entry.area_id, entry.machine_id)
+        if key not in self._rules:
+            self._rules[key] = EX.rules_where(self.db, tenant_id=entry.tenant_id, company_id=entry.company_id,
+                                              shop_id=entry.shop_id, area_id=entry.area_id, machine_id=entry.machine_id)
+        rule = self._rules[key].get(entry.kind)
+        return rule is not None and rule.push
+
+
+def _battery_level_allows(db: Session, entry: ExceptionLogEntry) -> bool:
+    from app.models.pos_machine import POSMachine
+    from app.services import battery_alerts as BA
+
+    machine = db.get(POSMachine, entry.machine_id) if entry.machine_id else None
+    level = BA.push_level_of(db, machine) if machine is not None else BA.PUSH_ALL
+    if level == BA.PUSH_OFF:
         return False
-    if CATEGORY_BY_KEY[category].amount and rule.min_amount is not None:
-        if entry.amount is None or abs(Decimal(str(entry.amount))) < Decimal(str(rule.min_amount)):
+    return level != BA.PUSH_CRITICAL or _battery_critical(entry)
+
+
+def _battery_critical(entry: ExceptionLogEntry) -> bool:
+    details = entry.details if isinstance(entry.details, dict) else {}
+    return entry.kind == "device_battery" and details.get("severity") == "critical"
+
+
+def is_urgent(entry: ExceptionLogEntry) -> bool:
+    """Past the shared rate limit and the digest (push-more §B2): "שלמות נתונים", a critical battery."""
+    return category_of(entry) == INTEGRITY.key or _battery_critical(entry)
+
+
+def entry_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntry, owner: Any = None,
+                  gate: Optional[OrgGate] = None) -> bool:
+    category = category_of(entry)
+    if category is None or category == INTEGRITY.key or category not in (rule.categories or []):
+        return False  # "שלמות נתונים" never goes by a tenant's rules (`integrity_recipients`)
+    if CATEGORY_BY_KEY[category].amount:
+        # The rule's floor where it happened, and the user's own above it (push-more §B, §B2).
+        floor = gate.floor if gate is not None else Decimal("0")
+        if rule.min_amount is not None:
+            floor = max(floor, Decimal(str(rule.min_amount)))
+        if entry.amount is None or abs(Decimal(str(entry.amount))) < floor:
             return False
     if not place_matches(db, rule, entry):
         return False
@@ -382,6 +665,71 @@ def devices_of(db: Session, user_id: Any) -> List[PushSubscription]:
         .order_by(PushSubscription.created_at)
         .all()
     )
+
+
+def governing_rule(db: Session, user: Any, tenant_id: Any) -> Optional[ExceptionAlertRule]:
+    """
+    The preferences a super admin's "שלמות נתונים" alert from `tenant_id` goes by (the on / off of
+    all their phone alerts, the quiet hours, the rate limit, the digest): theirs in that
+    organization, else their home ones — of their own organization, else the first they made.
+    """
+    rule = rule_for_user(db, user.id, tenant_id)
+    if rule is not None:
+        return rule
+    rows = (
+        db.query(ExceptionAlertRule)
+        .filter(
+            ExceptionAlertRule.channel == CHANNEL_PUSH,
+            ExceptionAlertRule.owner_user_id == user.id,
+            ExceptionAlertRule.deleted_at.is_(None),
+        )
+        .order_by(ExceptionAlertRule.created_at, ExceptionAlertRule.id)
+        .all()
+    )
+    home = [r for r in rows if getattr(user, "tenant_id", None) is not None and r.tenant_id == user.tenant_id]
+    return (home or rows or [None])[0]
+
+
+def _company_chosen(db: Session, company_id: Any, chosen: Sequence[str]) -> bool:
+    """The entry's company, or a company above it, is one of the chosen ones."""
+    from app.services.company_hierarchy import ancestor_company_ids
+
+    if company_id is None:
+        return False
+    line = [company_id, *ancestor_company_ids(db, company_id)]
+    return any(str(c) in set(chosen) for c in line)
+
+
+def integrity_recipients(db: Session, entry: ExceptionLogEntry) -> List[Tuple[Any, ExceptionAlertRule, List[PushSubscription]]]:
+    """
+    Who receives a "שלמות נתונים" alert: every active super admin — whatever organization it came
+    from, none of them a member there — whose own switch is on, whose companies (if chosen) include
+    its company, with their devices but the ones they muted for it, under their governing rule.
+    Never anyone else.
+    """
+    from app.models.user import User, UserRole
+
+    out: List[Tuple[Any, ExceptionAlertRule, List[PushSubscription]]] = []
+    admins = (
+        db.query(User)
+        .filter(User.role == UserRole.SUPER_ADMIN, User.is_active.is_(True))
+        .order_by(User.created_at, User.id)
+        .all()
+    )
+    for admin in admins:
+        own = integrity_prefs(admin)
+        if not own["enabled"]:
+            continue
+        if own["companyIds"] and not _company_chosen(db, entry.company_id, own["companyIds"]):
+            continue
+        devices = [d for d in devices_of(db, admin.id) if str(d.id) not in set(own["mutedDeviceIds"])]
+        if not devices:
+            continue
+        rule = governing_rule(db, admin, entry.tenant_id)
+        if rule is None:
+            continue
+        out.append((admin, rule, devices))
+    return out
 
 
 # ── The message ──────────────────────────────────────────────────────────────
@@ -405,8 +753,71 @@ def home_url(db: Session, user: Any) -> str:
     return "/dashboard/alerts" if may_open_alerts(db, user) else "/dashboard"
 
 
-#: Kinds that describe a state of a till: a newer alert replaces the older one on the phone.
-STATE_KINDS = frozenset({"till_offline", "kiosk_offline"})
+#: Kinds that describe a state of a till: a newer alert replaces the older one on the phone (a late
+#: transmission turning high replaces its medium one).
+STATE_KINDS = frozenset({"till_offline", "kiosk_offline", "card_transmission_overdue", "till_printer"})
+
+
+#: Alert types whose message names the employee, the approver, the reason and the document.
+WHO_WHY_CATEGORIES = frozenset({
+    "large_void", "discounts", "cash_difference", "high_tip", "high_sale", "after_hours", "sensitive_actions",
+    "staff_actions", "slow_order", "drawer_no_sale",
+})
+
+
+def _looks_like_id(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def who_why(db: Session, entry: ExceptionLogEntry) -> List[str]:
+    """"עובד: דנה", "אישר: יוסי", "סיבה: …", "מסמך 1007" — what the entry knows of them."""
+    details = entry.details if isinstance(entry.details, dict) else {}
+    parts: List[str] = []
+    if entry.pos_user_name:
+        parts.append(f"עובד: {entry.pos_user_name}")
+    approver = details.get("approverName") or details.get("approvedByName")
+    raw = details.get("approvedBy") or details.get("forcedBy")
+    if not approver and raw:
+        if _looks_like_id(raw):
+            from app.services.exceptions import Detector
+
+            approver = Detector(db).approver_name(str(raw))
+        else:
+            approver = str(raw)
+    if approver and approver != entry.pos_user_name:
+        parts.append(f"אישר: {approver}")
+    reason = details.get("reasonText") or details.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        parts.append(f"סיבה: {' '.join(reason.split())[:60]}")
+    number = details.get("transactionNumber") or details.get("documentNumber")
+    if number and (not entry.summary or str(number) not in entry.summary):
+        parts.append(f"מסמך {number}")
+    return parts
+
+
+def _battery_line(db: Session, entry: ExceptionLogEntry, shop: Optional[str], till: Optional[str]) -> str:
+    """"המסופון קופה 2, סניף X: סוללה 10%" (push-more §A)."""
+    from app.models.pos_machine import POSMachine
+    from app.services import battery_alerts as BA
+
+    details = entry.details if isinstance(entry.details, dict) else {}
+    machine = db.get(POSMachine, entry.machine_id) if entry.machine_id else None
+    label = " ".join(p for p in (BA.device_label(db, machine) if machine is not None else "מכשיר", till) if p)
+    percent = details.get("percent") if details.get("percent") is not None else entry.value
+    where = f"{label}, {shop}" if shop else label
+    text = f"{where}: סוללה {int(Decimal(str(percent)))}%" if percent is not None else f"{where}: סוללה חלשה"
+    return text + (" (קריטי)" if _battery_critical(entry) else "")
+
+
+def _company_name(db: Session, company_id: Any) -> Optional[str]:
+    from app.models.company import Company
+
+    company = db.get(Company, company_id) if company_id else None
+    return company.name if company is not None else None
 
 
 def may_open_log(db: Session, user: Any) -> bool:
@@ -428,7 +839,19 @@ def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool
     what = M.what_of(label_of(entry.kind), entry.kind, entry.amount, None, False)
     summary = entry.summary if entry.summary and entry.kind not in ("refund", "line_void") else None
     title = " · ".join(p for p in (CATEGORY_BY_KEY[category].label if category else label_of(entry.kind), till) if p)
-    body = " · ".join(p for p in (shop, summary or what, local.strftime("%H:%M")) if p)
+    if category == INTEGRITY.key:
+        # From any organization: which company, what (its document / Z number is in the summary),
+        # the amount or the gap.
+        money = M.money(entry.amount) if entry.amount is not None and Decimal(str(entry.amount)) != 0 else None
+        detail = f"{summary} ({money})" if summary and money else (summary or what)
+        body = " · ".join(p for p in (_company_name(db, entry.company_id), shop, detail, local.strftime("%H:%M")) if p)
+    elif entry.kind == "device_battery":
+        body = " · ".join(p for p in (_battery_line(db, entry, shop, till), local.strftime("%H:%M")) if p)
+    elif category in WHO_WHY_CATEGORIES:
+        # Who did it, who approved, why, which document (push-more §B, §B2) — what the SMS says too.
+        body = " · ".join(p for p in (shop, summary or what, *who_why(db, entry), local.strftime("%H:%M")) if p)
+    else:
+        body = " · ".join(p for p in (shop, summary or what, local.strftime("%H:%M")) if p)
     details = entry.details if isinstance(entry.details, dict) else {}
     if entry.kind == "target_reached" and details.get("eventId"):
         url = f"/dashboard/live-event/{details['eventId']}"
@@ -613,6 +1036,11 @@ def _deliver(
     digest_count: Optional[int] = None,
 ) -> List[ExceptionAlertDispatch]:
     """One row per device, claimed before anything is sent; `status` given = held back."""
+    # "התראות בנייד": the recipient's behaviour for the category (stays on screen, vibration).
+    if status is None:
+        from app.services.push_policy import decorate
+
+        payload = decorate(db, rule.owner_user_id, payload, entry)
     out: List[ExceptionAlertDispatch] = []
     jobs: List[Dict[str, Any]] = []
     for device in devices:
@@ -658,15 +1086,25 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
     from app.services.exception_alerts import engine as E
 
     out: List[ExceptionAlertDispatch] = []
-    if entry.backfilled or category_of(entry) is None:
+    category = category_of(entry)
+    if entry.backfilled or category is None:
         return out
-    for candidate in push_rules_for(db, entry):
-        owner = db.get(User, candidate.owner_user_id)
-        if not entry_matches(db, candidate, entry, owner):
-            continue
-        devices = devices_of(db, candidate.owner_user_id)
-        if not devices:
-            continue
+    if category == INTEGRITY.key:
+        # Super admins only, from every organization (never by a tenant's rules).
+        recipients = integrity_recipients(db, entry)
+    else:
+        gate = org_gate(db, entry)
+        if not gate.allowed:
+            return out  # logged; the organization does not send this kind from there
+        recipients = []
+        for candidate in push_rules_for(db, entry):
+            owner = db.get(User, candidate.owner_user_id)
+            if not entry_matches(db, candidate, entry, owner, gate):
+                continue
+            devices = devices_of(db, candidate.owner_user_id)
+            if devices:
+                recipients.append((owner, candidate, devices))
+    for owner, candidate, devices in recipients:
         rule = (
             db.query(ExceptionAlertRule)
             .filter(ExceptionAlertRule.id == candidate.id)
@@ -682,7 +1120,7 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
             status, reason = ST_SUPPRESSED_STALE, "occurred_long_ago"
         elif E.in_quiet_hours(rule, now.astimezone(tzinfo)):
             status, reason = ST_SUPPRESSED_QUIET, f"{rule.quiet_from}-{rule.quiet_to}"
-        elif E.rate_limited(db, rule, now):
+        elif not is_urgent(entry) and E.rate_limited(db, rule, now):
             status, reason = ST_SUPPRESSED_RATE, f"{rule.rate_limit_minutes}m"
         out.extend(_deliver(
             db, rule=rule, kind=DISPATCH_ALERT, devices=devices,
@@ -697,21 +1135,20 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
     from app.services.exception_alerts import engine as E
 
     tzinfo = E.tz_for(db, rule.tenant_id)
-    if E.in_quiet_hours(rule, now.astimezone(tzinfo)) or E.rate_limited(db, rule, now):
+    if E.in_quiet_hours(rule, now.astimezone(tzinfo)):
         return 0
-    pending = (
-        db.query(ExceptionAlertDispatch)
-        .filter(
-            ExceptionAlertDispatch.rule_id == rule.id,
-            ExceptionAlertDispatch.kind == DISPATCH_ALERT,
-            ExceptionAlertDispatch.status.in_(SUPPRESSED_STATUSES),
-            ExceptionAlertDispatch.digest_id.is_(None),
-        )
-        .order_by(ExceptionAlertDispatch.created_at, ExceptionAlertDispatch.id)
-        .all()
-    )
+    made_urgent = _flush_urgent(db, rule, now, tzinfo)
+    if not rule.digest_enabled:
+        # No digest: what was held back stays unsent (as before), closed so it is not looked at again.
+        for d in _held(db, rule):
+            d.digest_id = d.id
+        db.flush()
+        return made_urgent
+    if E.rate_limited(db, rule, now):
+        return made_urgent
+    pending = _held(db, rule)
     if not pending:
-        return 0
+        return made_urgent
     entry_ids = list(dict.fromkeys(d.entry_id for d in pending if d.entry_id is not None))
     entries = db.query(ExceptionLogEntry).filter(ExceptionLogEntry.id.in_(entry_ids)).all() if entry_ids else []
     entries.sort(key=lambda e: aware(e.occurred_at))
@@ -720,7 +1157,7 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
         for d in pending:
             d.digest_id = d.id
         db.flush()
-        return 0
+        return made_urgent
     from app.models.user import User
 
     owner = db.get(User, rule.owner_user_id)
@@ -742,7 +1179,55 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
     for d in pending:
         d.digest_id = digest_id
     db.flush()
-    return len(made)
+    return len(made) + made_urgent
+
+
+def _held(db: Session, rule: ExceptionAlertRule) -> List[ExceptionAlertDispatch]:
+    return (
+        db.query(ExceptionAlertDispatch)
+        .filter(
+            ExceptionAlertDispatch.rule_id == rule.id,
+            ExceptionAlertDispatch.kind == DISPATCH_ALERT,
+            ExceptionAlertDispatch.status.in_(SUPPRESSED_STATUSES),
+            ExceptionAlertDispatch.digest_id.is_(None),
+        )
+        .order_by(ExceptionAlertDispatch.created_at, ExceptionAlertDispatch.id)
+        .all()
+    )
+
+
+def _flush_urgent(db: Session, rule: ExceptionAlertRule, now: datetime, tzinfo) -> int:
+    """
+    Urgent alerts the quiet hours held back (push-more §B2): each on its own, now — never folded into
+    a digest, never waiting for the rate limit. Their held rows are closed on the message sent.
+    """
+    from app.models.user import User
+
+    held = [d for d in _held(db, rule) if d.entry_id is not None]
+    entries = {e.id: e for e in db.query(ExceptionLogEntry).filter(
+        ExceptionLogEntry.id.in_(list({d.entry_id for d in held}))).all()} if held else {}
+    urgent = [d for d in held if entries.get(d.entry_id) is not None and is_urgent(entries[d.entry_id])]
+    if not urgent:
+        return 0
+    owner = db.get(User, rule.owner_user_id)
+    by_entry: Dict[Any, List[ExceptionAlertDispatch]] = {}
+    for d in urgent:
+        by_entry.setdefault(d.entry_id, []).append(d)
+    devices = {d.id: d for d in devices_of(db, rule.owner_user_id)}
+    made = 0
+    for entry_id, rows in by_entry.items():
+        entry = entries[entry_id]
+        targets = [devices[r.subscription_id] for r in rows if r.subscription_id in devices]
+        sent = _deliver(
+            db, rule=rule, kind=DISPATCH_ALERT, devices=targets,
+            payload=payload_for(db, entry, tzinfo, open_log=may_open_log(db, owner), fallback_url=home_url(db, owner)),
+            status=None, reason=None, dedupe_prefix=f"late:{entry.id}:{rule.id}", now=now, entry=entry,
+        )
+        for r in rows:
+            r.digest_id = sent[0].id if sent else r.id
+        made += len(sent)
+    db.flush()
+    return made
 
 
 def send_test(db: Session, user: Any, tenant_id: Any, *, now: Optional[datetime] = None) -> List[ExceptionAlertDispatch]:
@@ -884,12 +1369,12 @@ def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: 
     return row
 
 
-def device_json(row: PushSubscription) -> Dict[str, Any]:
+def device_json(row: PushSubscription, user: Any = None) -> Dict[str, Any]:
     def iso(v):
         v = aware(v)
         return v.isoformat() if v else None
 
-    return {
+    out = {
         "id": str(row.id),
         "label": row.label,
         "endpointHash": row.endpoint_hash,
@@ -899,10 +1384,129 @@ def device_json(row: PushSubscription) -> Dict[str, Any]:
         "lastError": row.last_error,
         "active": row.disabled_at is None,
     }
+    if is_super_admin(user):
+        # "שלמות נתונים" on this device (a super admin may mute it on one of their devices).
+        out["integrity"] = str(row.id) not in set(integrity_prefs(user)["mutedDeviceIds"])
+    return out
+
+
+def set_device_integrity(user: Any, device: PushSubscription, on: bool) -> None:
+    """A super admin's "שלמות נתונים" on one of their devices, on or off. The caller commits."""
+    muted = [d for d in integrity_prefs(user)["mutedDeviceIds"] if d != str(device.id)]
+    if not on:
+        muted.append(str(device.id))
+    save_integrity_prefs(user, {"mutedDeviceIds": muted})
 
 
 __all__ = [
-    "CATEGORIES", "CATEGORY_KEYS", "category_of", "clean", "as_json", "save_preferences", "rule_for_user",
-    "entry_matches", "process_entry", "flush_rule", "send_test", "retry_stale", "subscribe", "device_label",
-    "payload_for",
+    "CATEGORIES", "CATEGORY_KEYS", "INTEGRITY", "category_of", "categories_for", "clean", "as_json",
+    "preferences_json", "save_preferences", "rule_for_user", "entry_matches", "integrity_recipients",
+    "process_entry", "flush_rule", "send_test", "retry_stale", "subscribe", "device_label", "payload_for",
 ]
+
+
+# ── "בקשות אישור" (P:/specs/manager-approval-mobile.md §6) ────────────────────
+#
+# A request from a till goes to the approvers chosen for it — never to "everyone whose rule
+# matches": the approvals call `deliver_to_user` for each of them (app/services/remote_approvals).
+# No rate limit and no digest (a request waits for an answer now); quiet hours apply unless the
+# user chose "בקשות אישור גם בשעות שקטות" (`approvalsInQuietHours`, their preferences). The
+# category is listed so the preferences show it; no exception kind maps to it, so the rule engine
+# (`process_entry`) never sends one.
+
+APPROVALS_CATEGORY = Category(
+    "approvals", "בקשות אישור",
+    "בקשות אישור מהקופות שנשלחו אליך: נשלחות רק למאשרים שנבחרו, בלי מגבלת קצב ובלי סיכום מרוכז.",
+    (),
+)
+CATEGORIES = CATEGORIES + (APPROVALS_CATEGORY,)
+CATEGORY_BY_KEY[APPROVALS_CATEGORY.key] = APPROVALS_CATEGORY
+CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)
+
+
+def approvals_in_quiet_hours(user: Any) -> bool:
+    prefs = getattr(user, "preferences", None)
+    return isinstance(prefs, dict) and prefs.get("approvalsInQuietHours") is True
+
+
+def decorate_for_user(
+    db: Session, user_id: Any, payload: Dict[str, Any], entry: Optional[ExceptionLogEntry] = None,
+) -> Dict[str, Any]:
+    """
+    The recipient's behaviour for the payload's category (stays on screen, vibration): "התראות
+    בנייד" (`push_policy.decorate`), as every alert gets it in `_deliver` — the one seam. An
+    approval request ("approvals") stays on screen and vibrates "urgent" unless a level says otherwise.
+    """
+    from app.services.push_policy import decorate
+
+    return decorate(db, user_id, payload, entry)
+
+
+def deliver_to_user(
+    db: Session,
+    *,
+    tenant_id: Any,
+    user: Any,
+    payload: Dict[str, Any],
+    dedupe: str,
+    now: Optional[datetime] = None,
+    entry: Optional[ExceptionLogEntry] = None,
+    respect_quiet: bool = True,
+) -> List[ExceptionAlertDispatch]:
+    """
+    One message to every device of one user, outside the rules: the approvals' own sends.
+    The user's push rule (if any) still says whether they take phone alerts at all and when
+    their quiet hours are; a dispatch row per device records every attempt, as for alerts.
+    """
+    from app.services.exception_alerts import engine as E
+
+    now = now or utcnow()
+    user_id = getattr(user, "id", None)
+    devices = devices_of(db, user_id)
+    if not devices:
+        return []
+    payload = decorate_for_user(db, user_id, payload, entry)
+    rule = rule_for_user(db, user_id, tenant_id)
+    if rule is not None and not rule.enabled:
+        return []
+    status, reason = None, None
+    if respect_quiet and rule is not None and not approvals_in_quiet_hours(user):
+        tzinfo = E.tz_for(db, tenant_id)
+        if E.in_quiet_hours(rule, now.astimezone(tzinfo)):
+            status, reason = ST_SUPPRESSED_QUIET, f"{rule.quiet_from}-{rule.quiet_to}"
+    out: List[ExceptionAlertDispatch] = []
+    jobs: List[Dict[str, Any]] = []
+    for device in devices:
+        row = ExceptionAlertDispatch(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            rule_id=rule.id if rule is not None else None,
+            entry_id=entry.id if entry is not None else None,
+            channel=CHANNEL_PUSH,
+            user_id=user_id,
+            subscription_id=device.id,
+            kind=DISPATCH_ALERT,
+            status=status or ST_QUEUED,
+            reason=reason,
+            provider="webpush",
+            recipient_hash=device.endpoint_hash,
+            recipient_masked=(device.label or "מכשיר")[:32],
+            recipient_label=device.label,
+            text=f"{payload.get('title')}\n{payload.get('body')}"[:1000],
+            dedupe_key=f"push:{dedupe}:{device.endpoint_hash[:16]}"[:200],
+            created_by=None,
+            created_at=now,
+        )
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError:
+            continue  # already sent to this device
+        out.append(row)
+        if status is None:
+            jobs.append(_job(row, device, payload))
+    db.flush()
+    for job in jobs:
+        _submit(db, job)
+    return out

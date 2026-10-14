@@ -87,6 +87,12 @@ KINDS: Tuple[Kind, ...] = (
     Kind("kiosk_offline", "קיוסק לא מחובר", "high", "audit_exception"),
     Kind("till_offline", "קופה לא מחוברת", "high", "audit_exception"),
     Kind("zcredit_recon", "אי-התאמה מול Z-Credit (חיוב בלי מסמך / מסמך בלי חיוב)", "high", "audit_exception", amount=True),
+    # The board's lights as alerts (app/services/exception_alerts/status_watch.py, P:/specs/manager-problems.md
+    # §2): written as `audit_exceptions`, closed by the watch itself when the light goes out.
+    Kind("z_missing", "Z לא בוצע", "high", "audit_exception"),
+    Kind("shift_open_overdue", "משמרת פתוחה מעבר לזמן", "medium", "audit_exception", link="shift"),
+    Kind("card_transmission_overdue", "שידור אשראי באיחור", "medium", "audit_exception", amount=True),
+    Kind("till_printer", "תקלת מדפסת בקופה", "medium", "audit_exception"),
     # Listed by the exception rules as planned; nothing reports them yet.
     Kind("price_override", "שינוי מחיר ידני", "medium", "audit_exception", amount=True, link="document"),
     Kind("card_failures", "כשלי חיוב באשראי", "medium", "audit_exception"),
@@ -118,6 +124,16 @@ KINDS: Tuple[Kind, ...] = (
     # (app/services/sales_targets.py, source `sales_target`: once per target and period). An event's
     # target is its shop target there — the live screen writes it there too — so it is never alerted twice.
     Kind("target_reached", "יעד מכירות הושג", "low", "sales_target", amount=True),
+    # "זיהויים חדשים" (P:/specs/push-more.md §C, §B2) — the background watches
+    # (app/services/exception_alerts/shop_watch.py, service_watch.py, till_activity.py) write them as
+    # `audit_exceptions` rows, closed by themselves when the case is over; "סיכום יום" goes straight
+    # to the log (daily_summary.py) and is information, not a problem (`INFO_KINDS`).
+    Kind("shop_not_opened", "הסניף לא נפתח", "medium", "audit_exception"),
+    Kind("sales_pace_low", "קצב מכירות נמוך", "medium", "audit_exception", percent=True),
+    Kind("table_open_long", "שולחן פתוח זמן רב", "low", "audit_exception"),
+    Kind("kds_ticket_late", "הזמנה במטבח לא מוכנה בזמן", "medium", "audit_exception"),
+    Kind("daily_summary", "סיכום יום", "low", "daily_summary", link="z"),
+    Kind("till_idle", "קופה לא מוכרת כשהאחרות מוכרות", "medium", "audit_exception"),
 )
 
 # "מגירת מזומן" (the drawer spec §10–§11, app/services/cash_drawer_exceptions.py): opening after
@@ -131,11 +147,25 @@ KINDS = KINDS + tuple(
     Kind(k.key, k.label, k.severity, "audit_exception", amount=k.amount, link=k.link) for k in _DRAWER_KINDS
 )
 
+# "שחזור שולחן עם התשלומים שלו" (P:/specs/table-restore-payments.md §3, app/services/table_restore.py):
+# a payment reversed inside a table (cash, card void / refund, voucher, external) and a closed table
+# restored — from the till's events, and the restore also from the cloud's claim of the order.
+KINDS = KINDS + (
+    Kind("payment_reversed", "זיכוי / ביטול תשלום בשולחן", "medium", "audit_exception", amount=True, link="document"),
+    Kind("table_restored", "שחזור שולחן", "medium", "audit_exception", amount=True),
+)
+
 KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
 #: Kinds an SMS rule fires on only when it names them — an "every kind" rule written before they
 #: existed does not start texting them (feat/event-live: a till outage, a till barely selling,
-#: a target reached; the phone alerts carry them).
-OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted"})
+#: a target reached; the phone alerts carry them; the board's lights as alerts, manager-problems §2).
+OPT_IN_KINDS = frozenset({
+    "till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted",
+    "z_missing", "shift_open_overdue", "card_transmission_overdue", "till_printer",
+})
+#: A table's payment reversals and restores: texted only by a rule that names them (the phone alerts
+#: have their own type, `payment_reversals`).
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset({"payment_reversed", "table_restored"})
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 SEVERITY_LABELS = {"low": "נמוכה", "medium": "בינונית", "high": "גבוהה"}
 COUNT_SCOPES = ("machine", "employee", "shop")
@@ -162,3 +192,37 @@ def as_json() -> list:
         }
         for k in KINDS
     ]
+
+
+# ── "זיהויים חדשים" (P:/specs/push-more.md §C, §B2) ──────────────────────────
+
+#: Information, not a problem: never in the problems screen nor in any count of open problems
+#: ("סיכום יום" — a shop's day in figures after its Z).
+INFO_KINDS = frozenset({"daily_summary"})
+
+#: Not texted by an "every kind" SMS rule written before they existed (they reach the phone
+#: through the push categories; an SMS rule that names them sends them).
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset({
+    "shop_not_opened", "sales_pace_low", "table_open_long", "kds_ticket_late", "daily_summary", "till_idle",
+})
+
+
+def is_info(kind: Optional[str]) -> bool:
+    """An entry that informs (a daily summary) rather than reports a problem."""
+    return kind in INFO_KINDS
+
+
+# "בקשת אישור ממנהל מהנייד" (app/services/remote_approvals): every request, decision, expiry and
+# cancel, for the audit — who asked, of whom, who decided, from which device, why. Recorded by the
+# approvals themselves (source `approval_request`); the phone alerts of a request go to its chosen
+# approvers only (push.py `deliver_to_user`), never through the SMS / push rules — opt-in for SMS.
+_APPROVAL_KINDS = (
+    Kind("approval_requested", "בקשת אישור נשלחה", "low", "approval_request", amount=True, percent=True),
+    Kind("approval_approved", "בקשת אישור אושרה", "medium", "approval_request", amount=True, percent=True),
+    Kind("approval_rejected", "בקשת אישור נדחתה", "low", "approval_request", amount=True, percent=True),
+    Kind("approval_expired", "בקשת אישור פגה", "low", "approval_request", amount=True, percent=True),
+    Kind("approval_cancelled", "בקשת אישור בוטלה", "low", "approval_request", amount=True, percent=True),
+)
+KINDS = KINDS + _APPROVAL_KINDS
+KINDS_BY_KEY.update({k.key: k for k in _APPROVAL_KINDS})
+OPT_IN_KINDS = OPT_IN_KINDS | frozenset(k.key for k in _APPROVAL_KINDS)

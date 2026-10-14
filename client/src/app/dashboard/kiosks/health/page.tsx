@@ -8,8 +8,10 @@
  * filter), a shop filter and a search; a kiosk opens a drawer with its details, last events
  * and sessions, and from there the kiosks page's own actions dialog.
  *
- * Scoped like the kiosks page (company or shop); read by every dashboard role but the
- * till-side ones, acted on by the machine-admin roles.
+ * Scoped like the kiosks page (company or shop). Opened by exactly who sees it in the menu
+ * (P:/specs/manager-problems.md §5): the machine-admin roles (lib/navigation.ts `settingsWrite`,
+ * the server's KIOSK_ROLES) with the "קיוסקים" section (the layout's guard); anyone else gets
+ * "no permission". They also act on the kiosks.
  */
 
 import { useMemo, useState } from 'react';
@@ -47,10 +49,11 @@ import { agoText, useHealthLabels, useNowMs } from '@/components/dashboard/devic
 import { BatteryHistoryTable, BatterySettingsNote, DeviceBatteryCard } from '@/components/dashboard/device-health/battery';
 
 const REFRESH_MS = 15_000;
-/** The machine-admin roles: they act on kiosks (the server checks each one's scope). */
+/**
+ * The machine-admin roles: the menu entry's gate (`settingsWrite`) and the server's KIOSK_ROLES —
+ * they open the page and act on kiosks (the server checks each one's scope).
+ */
 const WRITE_ROLES = ['super_admin', 'distributor', 'company_manager', 'shop_manager'];
-/** Read: any dashboard role but the till-side ones. */
-const READ_DENIED = ['cashier', 'shift_supervisor'];
 const ALL = '__all__';
 
 export default function DeviceHealthPage() {
@@ -73,8 +76,9 @@ export default function DeviceHealthPage() {
   const shop = scope.shops.find((s) => s.id === shopId) ?? null;
   const companyId = shop?.companyId ?? effective.companyId ?? null;
 
-  const canRead = authHydrated && !!role && !READ_DENIED.includes(role);
-  const canWrite = !!role && WRITE_ROLES.includes(role);
+  // Whoever sees the menu entry may open the page (the entry's own rule), nobody else.
+  const canRead = authHydrated && !!role && WRITE_ROLES.includes(role);
+  const canWrite = canRead;
 
   const health = useQuery({
     queryKey: ['kiosks-health', companyId, shopId],

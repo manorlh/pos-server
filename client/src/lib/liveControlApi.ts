@@ -13,6 +13,7 @@ import type {
   ItemBlock,
   KioskDisplay,
 } from '@/lib/liveControl';
+import type { QuickDefaults } from '@/lib/itemBlockControl';
 
 export interface BlockTargets {
   company: { id: string; name: string } | null;
@@ -28,6 +29,8 @@ export interface BlockTargets {
   businessDayStart: string;
   presets: number[];
   extendBy: number[];
+  /** The shop's "חסימה מהירה" defaults — the full form starts from them (P:/specs/item-block-control.md §4). */
+  quickDefaults?: QuickDefaults;
 }
 
 export interface BlockScopeIds {

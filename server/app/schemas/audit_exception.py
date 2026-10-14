@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -25,7 +25,13 @@ class TillEventIn(BaseModel):
     #: Kept for the record, no exception rule.
     type: Literal["drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close", "desktop_exit",
                   "restricted_item", "held_sale_cancelled", "held_sale_parked", "kiosk_till_mode",
-                  "document_customer_details"]
+                  "document_customer_details",
+                  # "שחזור שולחן עם התשלומים שלו" (app/services/table_restore.py): a payment reversed inside a
+                  # table (`transactionId` = its credit note; details: orderId, tableNumber, tableName, tender,
+                  # action, tip, partial, original/credit transaction ids and numbers, requestedBy, approvedBy,
+                  # performedBy, approvalStyle, note) and a closed table restored (details: orderId,
+                  # newOrderId, tableNumber, restoredAs, transactionIds, requestedBy / restoredBy, approvedBy).
+                  "payment_reversed", "table_restored"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
@@ -49,12 +55,18 @@ class TillEventOut(BaseModel):
     status: Literal["accepted", "duplicate"]
 
 
+#: A rule's param value: a number (a threshold) or true / false (a switch — `ParamSpec.boolean`).
+ParamValue = Union[float, bool]
+
+
 class RuleParamOut(BaseModel):
     key: str
-    default: float
+    default: ParamValue
     min: float
     max: float
     integer: bool
+    #: A switch (true / false), not a number (`shift_open_overdue.alertPastDate`).
+    boolean: bool = False
 
 
 class RuleOut(BaseModel):
@@ -66,14 +78,26 @@ class RuleOut(BaseModel):
     params: List[RuleParamOut]
     #: This level's own values; null = inherits.
     own_enabled: Optional[bool] = Field(None, alias="ownEnabled")
-    own_params: Dict[str, float] = Field(default_factory=dict, alias="ownParams")
+    own_params: Dict[str, ParamValue] = Field(default_factory=dict, alias="ownParams")
     #: What applies at this level, from the levels above (this level's own values ignored).
     inherited_enabled: bool = Field(..., alias="inheritedEnabled")
-    inherited_params: Dict[str, float] = Field(..., alias="inheritedParams")
+    inherited_params: Dict[str, ParamValue] = Field(..., alias="inheritedParams")
     inherited_sources: Dict[str, Optional[str]] = Field(..., alias="inheritedSources")
     #: What applies at this level, own values included.
     effective_enabled: bool = Field(..., alias="effectiveEnabled")
-    effective_params: Dict[str, float] = Field(..., alias="effectiveParams")
+    effective_params: Dict[str, ParamValue] = Field(..., alias="effectiveParams")
+    #: "שלח התראה לטלפון" (P:/specs/push-more.md §0): the default, this level's own (null = inherits),
+    #: from above (its level in `inheritedSources.push`), and what applies here.
+    push_default: bool = Field(True, alias="pushDefault")
+    own_push: Optional[bool] = Field(None, alias="ownPush")
+    inherited_push: bool = Field(True, alias="inheritedPush")
+    inherited_push_source: Optional[str] = Field(None, alias="inheritedPushSource")
+    effective_push: bool = Field(True, alias="effectivePush")
+    #: Detected elsewhere and always recorded: only the push switch applies.
+    push_only: bool = Field(False, alias="pushOnly")
+    #: The phone-alert type it is sent as (null: none — the switch does nothing; "integrity": the
+    #: super admins', never switched off by a level).
+    push_category: Optional[str] = Field(None, alias="pushCategory")
 
     class Config:
         populate_by_name = True
@@ -93,8 +117,10 @@ class RuleIn(BaseModel):
     type: str
     #: null = inherit.
     enabled: Optional[bool] = None
-    #: Thresholds this level sets; a key left out or null inherits.
-    params: Optional[Dict[str, Optional[float]]] = None
+    #: Thresholds this level sets (true / false for a switch); a key left out or null inherits.
+    params: Optional[Dict[str, Optional[ParamValue]]] = None
+    #: "שלח התראה לטלפון" at this level; null = inherit.
+    push: Optional[bool] = None
 
 
 class RulesPut(BaseModel):
