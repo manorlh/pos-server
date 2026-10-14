@@ -1915,6 +1915,13 @@ from app.services.table_restore import PARAMETER_SPECS as _TABLE_RESTORE_SPECS  
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_RESTORE_SPECS)
 
+# "שולחן עובדים / מנהלים עם הנחה" (P:/specs/owner-decisions-1410.md §1, app/services/table_policies.py):
+# `staffTableDiscountCheck` — the table's discount percent held to the approver's ceiling. Off by default.
+# Edited on the dashboard's tables page too (app/services/table_restore.py `page_keys`).
+from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 

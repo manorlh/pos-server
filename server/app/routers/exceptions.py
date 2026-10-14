@@ -536,7 +536,9 @@ def _rules_response(db: Session, level: str, chain, can_write: bool) -> RulesRes
             severity=spec.severity,
             default_enabled=spec.default_enabled,
             params=[
-                RuleParamOut(key=p.key, default=p.default, min=p.minimum, max=p.maximum, integer=p.integer)
+                RuleParamOut(
+                    key=p.key, default=p.default, min=p.minimum, max=p.maximum, integer=p.integer, boolean=p.boolean,
+                )
                 for p in spec.params
             ],
             own_enabled=row.enabled if row is not None else None,

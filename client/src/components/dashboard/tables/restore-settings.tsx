@@ -1,11 +1,13 @@
 'use client';
 
 /**
- * "שחזור ותשלומים" (pos-server app/services/table_restore.py, P:/specs/table-restore-payments.md §3, §5):
+ * "הגדרות שולחנות" (pos-server app/services/table_restore.py, P:/specs/table-restore-payments.md §3, §5):
  * the eight till parameters of restoring a closed table with its payments, reversing payments inside a
- * table and the bill with a balance — at one level: company, shop, point of sale or till. A level shows
- * what it inherits and what it sets itself; "ירושה" inherits. Stored as till parameters: the till gets
- * the resolved value with the rest of its parameters. Who restores and reverses is the roles editor's.
+ * table and the bill with a balance — and, in a group of its own first, the staff / managers' tables'
+ * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1) — at one level: company, shop, point of
+ * sale or till. A level shows what it inherits and what it sets itself; "ירושה" inherits. Stored as till
+ * parameters: the till gets the resolved value with the rest of its parameters. Who restores and
+ * reverses, and each role's discount ceiling, is the roles editor's.
  */
 
 import { useMemo, useState } from 'react';
@@ -24,10 +26,12 @@ import {
   changedValues,
   editError,
   formatWindow,
+  groupParams,
   parseMethods,
   parseWindow,
   textOf,
   toggleMethod,
+  type ParamGroup,
   type RestoreLevel,
   type RestoreLevelView,
   type RestoreParam,
@@ -161,41 +165,47 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
     .filter((p) => p.key in edits && editError(p.key, edits[p.key]))
     .map((p) => t('invalid', { label: name(p) }));
   const dirty = Object.keys(changedValues(data.own, edits, {})).length > 0;
+  const groupName = (g: ParamGroup) => (t.has(`groups.${g.key}`) ? t(`groups.${g.key}`) : g.label);
+  const row = (p: RestoreParam) => {
+    const inherited = data.inherited[p.key] ?? p.defaultValue;
+    const text = shown(p.key);
+    const own = data.own[p.key] !== undefined && data.own[p.key] !== null;
+    return (
+      <div key={p.key} className="flex flex-wrap items-start gap-3 p-3">
+        <div className="min-w-[16rem] flex-1 space-y-0.5">
+          <div className="text-sm font-medium">
+            {name(p)}
+            {own ? <span className="ms-2 text-xs font-normal text-primary">{t('own')}</span> : null}
+          </div>
+          <div className="text-xs text-muted-foreground">{t.has(`hints.${p.key}`) ? t(`hints.${p.key}`) : p.description}</div>
+          <div className="text-xs text-muted-foreground">{t('inherited', { value: describe(p, inherited) })}</div>
+        </div>
+        <div className="w-64 space-y-2">
+          <Editor
+            p={p}
+            text={text}
+            inherited={inherited}
+            disabled={!canEdit}
+            onChange={(v) => set(p.key, v)}
+            optionLabel={(v) => optionLabel(p, v)}
+            methodLabel={methodLabel}
+            describe={(v) => describe(p, v)}
+          />
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-2">
       {!canEdit ? <p className="text-xs text-muted-foreground">{t('readOnly')}</p> : null}
-      <div className="divide-y rounded-lg border bg-card">
-        {data.parameters.map((p) => {
-          const inherited = data.inherited[p.key] ?? p.defaultValue;
-          const text = shown(p.key);
-          const own = data.own[p.key] !== undefined && data.own[p.key] !== null;
-          return (
-            <div key={p.key} className="flex flex-wrap items-start gap-3 p-3">
-              <div className="min-w-[16rem] flex-1 space-y-0.5">
-                <div className="text-sm font-medium">
-                  {name(p)}
-                  {own ? <span className="ms-2 text-xs font-normal text-primary">{t('own')}</span> : null}
-                </div>
-                <div className="text-xs text-muted-foreground">{t.has(`hints.${p.key}`) ? t(`hints.${p.key}`) : p.description}</div>
-                <div className="text-xs text-muted-foreground">{t('inherited', { value: describe(p, inherited) })}</div>
-              </div>
-              <div className="w-64 space-y-2">
-                <Editor
-                  p={p}
-                  text={text}
-                  inherited={inherited}
-                  disabled={!canEdit}
-                  onChange={(v) => set(p.key, v)}
-                  optionLabel={(v) => optionLabel(p, v)}
-                  methodLabel={methodLabel}
-                  describe={(v) => describe(p, v)}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* The staff / managers' tables, then restoring and the payments (a group per heading). */}
+      {groupParams(data.parameters, data.groups).map(({ group, parameters }) => (
+        <section key={group?.key ?? '_'} className="space-y-1.5">
+          {group ? <h3 className="pt-1 text-sm font-semibold">{groupName(group)}</h3> : null}
+          <div className="divide-y rounded-lg border bg-card">{parameters.map(row)}</div>
+        </section>
+      ))}
       {errors.length ? (
         <ul className="text-sm text-destructive">
           {errors.map((e) => (

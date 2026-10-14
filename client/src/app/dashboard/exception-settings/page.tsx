@@ -11,6 +11,9 @@
  * "מדיניות התראות" (P:/specs/manager-problems.md §2) comes first, under its own heading: the board's
  * lights as alerts (Z not made, a shift open too long, card transmission late, the till's printer),
  * which are exception rules like the others — on by default, off = neither logged nor sent.
+ *
+ * A param is a number (a threshold) or a switch (`boolean`: on / off / inherit — "משמרת פתוחה":
+ * `alertPastDate`, P:/specs/owner-decisions-1410.md §3).
  */
 
 import { useMemo, useState } from 'react';
@@ -19,13 +22,15 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { offersPushSwitch, splitPolicyRules } from '@/lib/alertPolicy';
+import { offersPushSwitch, paramInvalid, paramText, paramValue, splitPolicyRules } from '@/lib/alertPolicy';
 import {
   fetchExceptionRules,
   saveExceptionRules,
   type ExceptionRule,
   type RuleInput,
   type RuleLevel,
+  type RuleParam,
+  type RuleParamValue,
   type RulesResponse,
 } from '@/lib/exceptionsApi';
 import {
@@ -54,9 +59,7 @@ function draftOf(data: RulesResponse): Draft {
   for (const r of data.rules) {
     out[r.type] = {
       enabled: r.ownEnabled,
-      params: Object.fromEntries(
-        r.params.map((p) => [p.key, r.ownParams[p.key] != null ? String(r.ownParams[p.key]) : '']),
-      ),
+      params: Object.fromEntries(r.params.map((p) => [p.key, paramText(r.ownParams[p.key])])),
       push: r.ownPush ?? null,
     };
   }
@@ -64,12 +67,7 @@ function draftOf(data: RulesResponse): Draft {
 }
 
 function paramError(rule: ExceptionRule, key: string, text: string): boolean {
-  if (text.trim() === '') return false;
-  const spec = rule.params.find((p) => p.key === key);
-  const n = Number(text);
-  if (!spec || !Number.isFinite(n)) return true;
-  if (n < spec.min || n > spec.max) return true;
-  return spec.integer && !Number.isInteger(n);
+  return paramInvalid(rule.params.find((p) => p.key === key), text);
 }
 
 export default function ExceptionSettingsPage() {
@@ -139,11 +137,12 @@ function RulesEditor({ data }: { data: RulesResponse }) {
     mutationFn: () => {
       const rules: RuleInput[] = dirtyTypes.map((type) => {
         const d = draft[type];
+        const specs = data.rules.find((r) => r.type === type)?.params ?? [];
         return {
           type,
           enabled: d.enabled,
           params: Object.fromEntries(
-            Object.entries(d.params).map(([k, v]) => [k, v.trim() === '' ? null : Number(v)]),
+            Object.entries(d.params).map(([k, v]) => [k, paramValue(specs.find((p) => p.key === k), v)]),
           ),
           push: d.push,
         };
@@ -158,6 +157,11 @@ function RulesEditor({ data }: { data: RulesResponse }) {
   });
 
   const levelName = (l: string | null | undefined) => (l ? t(`levels.${l}`) : t('defaultSource'));
+  /** How an inherited / default value reads: a switch on / off, a number as it is. */
+  const shownValue = (p: RuleParam, value: RuleParamValue | undefined) => {
+    const v = value ?? p.default;
+    return typeof v === 'boolean' ? (v ? t('on') : t('off')) : v;
+  };
   const set = (type: string, next: Partial<DraftRule>) =>
     setDraft((d) => ({ ...d, [type]: { ...d[type], ...next } }));
   const { policy, others } = splitPolicyRules(data.rules);
@@ -246,6 +250,27 @@ function RulesEditor({ data }: { data: RulesResponse }) {
             rule.params.map((p) => {
               const text = d.params[p.key] ?? '';
               const bad = paramError(rule, p.key, text);
+              if (p.boolean) {
+                return (
+                  <div key={p.key} className="space-y-1">
+                    <p className="text-xs font-medium">{t(`params.${p.key}`)}</p>
+                    <TriState
+                      value={text === '' ? null : text === 'true'}
+                      disabled={disabled}
+                      onChange={(v) => set(rule.type, { params: { ...d.params, [p.key]: paramText(v) } })}
+                      labels={[t('on'), t('off'), t('inherit')]}
+                    />
+                    {text === '' ? (
+                      <p className="text-muted-foreground text-xs">
+                        {t('inheritNote', {
+                          state: shownValue(p, rule.inheritedParams[p.key]),
+                          source: levelName(rule.inheritedSources[p.key]),
+                        })}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              }
               return (
                 <div key={p.key} className="space-y-0.5">
                   <label className="text-xs font-medium" htmlFor={`${rule.type}-${p.key}`}>
@@ -258,7 +283,7 @@ function RulesEditor({ data }: { data: RulesResponse }) {
                     disabled={disabled}
                     aria-invalid={bad}
                     className={cn(bad && 'border-destructive')}
-                    placeholder={String(rule.inheritedParams[p.key] ?? p.default)}
+                    placeholder={String(shownValue(p, rule.inheritedParams[p.key]))}
                     onChange={(e) =>
                       set(rule.type, { params: { ...d.params, [p.key]: e.target.value } })
                     }
@@ -266,7 +291,7 @@ function RulesEditor({ data }: { data: RulesResponse }) {
                   {text.trim() === '' ? (
                     <p className="text-muted-foreground text-xs">
                       {t('inheritValue', {
-                        value: rule.inheritedParams[p.key] ?? p.default,
+                        value: shownValue(p, rule.inheritedParams[p.key]),
                         source: levelName(rule.inheritedSources[p.key]),
                       })}
                     </p>

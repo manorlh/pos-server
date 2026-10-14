@@ -29,6 +29,14 @@ export interface RestoreParam {
   enumOptions: string[] | null;
   enumLabels: Record<string, string> | null;
   defaultValue: unknown;
+  /** The card's group (`staffTables` | `restore`). Absent on an older server. */
+  group?: string | null;
+}
+
+/** A group of the card ("הגדרות שולחנות"), in the order it shows them. */
+export interface ParamGroup {
+  key: string;
+  label: string;
 }
 
 /** `GET /companies/{id}/table-restore-params` — one level. */
@@ -40,8 +48,31 @@ export interface RestoreLevelView {
   /** What it gets from the levels above (or the default). */
   inherited: Record<string, unknown>;
   parameters: RestoreParam[];
+  /**
+   * The staff / managers' tables (`staffTableDiscountCheck`, P:/specs/owner-decisions-1410.md §1), then
+   * the restore and payments. Absent on an older server: one list.
+   */
+  groups?: ParamGroup[];
   methods: { key: string; label: string }[];
   canEdit: boolean;
+}
+
+/**
+ * The card's parameters by group, in the groups' order (a group with none left out); a parameter of
+ * no known group goes last, under no heading (`group: null`). No groups at all: one list, no heading.
+ */
+export function groupParams<P extends { group?: string | null }>(
+  parameters: readonly P[],
+  groups: readonly ParamGroup[] | undefined,
+): { group: ParamGroup | null; parameters: P[] }[] {
+  if (!groups || groups.length === 0) return parameters.length ? [{ group: null, parameters: [...parameters] }] : [];
+  const known = new Set(groups.map((g) => g.key));
+  const out: { group: ParamGroup | null; parameters: P[] }[] = groups
+    .map((g) => ({ group: g, parameters: parameters.filter((p) => p.group === g.key) }))
+    .filter((g) => g.parameters.length > 0);
+  const rest = parameters.filter((p) => !p.group || !known.has(p.group));
+  if (rest.length) out.push({ group: null, parameters: rest });
+  return out;
 }
 
 export const PREFIX_MAX = 10;

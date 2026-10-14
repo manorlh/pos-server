@@ -177,6 +177,29 @@ SCOPE_TYPES = ("company", "shop", "area", "machine")
 #: The keys whose value is checked beyond its type (`clean_value`).
 VALIDATED_KEYS = frozenset({PREFIX_KEY, WINDOW_KEY, PRINT_CREDIT_KEY, METHODS_KEY, TIP_BASE_KEY})
 
+#: The tables page's level card ("הגדרות שולחנות"): its groups, in the order it shows them — the staff /
+#: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), then these.
+STAFF_TABLES_GROUP = "staffTables"
+RESTORE_GROUP = "restore"
+
+
+def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
+    from app.services import table_policies
+
+    return (
+        (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
+        (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
+    )
+
+
+def page_keys() -> Tuple[str, ...]:
+    """Every key the tables page's level card edits, in its order."""
+    return tuple(key for _group, _label, keys in _page_groups() for key in keys)
+
+
+def _group_of(key: str) -> Optional[str]:
+    return next((group for group, _label, keys in _page_groups() if key in keys), None)
+
 
 def parse_methods(value: Any) -> List[str]:
     """`"card,cash"` → the methods in the catalogue's order; ValueError on an unknown or repeated one."""
@@ -243,7 +266,8 @@ def _uuid(value: Any) -> Optional[uuid.UUID]:
 def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
     """
     What one level sets itself (`own`), what it inherits from the levels above or the default
-    (`inherited`), and the definitions — the tables page's "שחזור שולחן ותשלומים" card.
+    (`inherited`), and the definitions — the tables page's "הגדרות שולחנות" card: the staff / managers'
+    tables' `staffTableDiscountCheck` and the eight of restoring and reversing, each with its `group`.
     """
     from sqlalchemy import and_, or_
 
@@ -252,7 +276,8 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
     from app.services.till_parameters import enum_labels, ensure_builtin_parameters, resolve_till_parameters
 
     ensure_builtin_parameters(db)
-    params = db.query(TillParameter).filter(TillParameter.key.in_(LEVEL_KEYS)).all()
+    keys = page_keys()
+    params = db.query(TillParameter).filter(TillParameter.key.in_(keys)).all()
     by_key = {p.key: p for p in params}
     by_id = {p.id: p for p in params}
     ident = _uuid(scope_id)
@@ -291,10 +316,12 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
                 "enumOptions": by_key[key].enum_options,
                 "enumLabels": enum_labels(key),
                 "defaultValue": by_key[key].default_value,
+                "group": _group_of(key),
             }
-            for key in LEVEL_KEYS
+            for key in keys
             if key in by_key and by_key[key].is_active
         ],
+        "groups": [{"key": group, "label": label} for group, label, _keys in _page_groups()],
         "methods": [{"key": m, "label": METHOD_LABELS[m]} for m in METHODS],
     }
 
@@ -315,11 +342,12 @@ def save_values(db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, u
         write_value,
     )
 
-    unknown = [k for k in values if k not in LEVEL_KEYS]
+    keys = page_keys()
+    unknown = [k for k in values if k not in keys]
     if unknown:
         raise TillParameterValueError(f"unknown parameter {unknown[0]}")
     ensure_builtin_parameters(db)
-    params = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(LEVEL_KEYS)).all()}
+    params = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(keys)).all()}
     ident = _uuid(scope_id)
     now = datetime.now(timezone.utc)
     for key, value in values.items():

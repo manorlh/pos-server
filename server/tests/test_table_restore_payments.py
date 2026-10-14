@@ -181,7 +181,9 @@ class TestParameters:
             str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w, supervisor),
         )
         assert got["canEdit"] is False and got["inherited"]["reverseAllButton"] is False
-        assert [p["key"] for p in got["parameters"]] == list(DEFAULTS)
+        # The card's restore group (after the staff tables' `staffTableDiscountCheck`, owner-decisions-1410 §1).
+        assert [p["key"] for p in got["parameters"] if p["group"] == "restore"] == list(DEFAULTS)
+        assert [p["key"] for p in got["parameters"]] == ["staffTableDiscountCheck", *DEFAULTS]
         assert {m["key"] for m in got["methods"]} == {"cash", "card", "voucher", "external"}
         assert refused(put, w, "shop", w.shop.id, {"reverseAllButton": True}, supervisor).status_code == 403
         assert refused(put, w, "company", w.company.id, {"tablesMode": "x"}).status_code == 422

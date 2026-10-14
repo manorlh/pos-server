@@ -3,9 +3,9 @@
 /**
  * Table management ("ניהול שולחנות") for one shop: the floor editor (zones, map or grid,
  * tables, their types — staff / managers / a discount), the open tables now, the tables
- * report, the staff and managers' meals, the cancellation reasons, and "שחזור ותשלומים" — restoring a
- * closed table with its payments, reversing payments inside a table, the bill with a balance (till
- * parameters per level). Whether a till uses tables, and how, is its till parameter "ניהול שולחנות"
+ * report, the staff and managers' meals, the cancellation reasons, and "הגדרות שולחנות" — the staff /
+ * managers' tables' discount check, restoring a closed table with its payments, reversing payments
+ * inside a table, the bill with a balance (till parameters per level). Whether a till uses tables, and how, is its till parameter "ניהול שולחנות"
  * (`tablesMode`).
  */
 

@@ -18,8 +18,10 @@ Each case is ONE `audit_exceptions` row (the ORM hooks carry it to the log and t
   document on the cloud, `hoursAfterDayEnd` hours after the day ended — the later of the local
   midnight after the date and the last of those shifts' closes — and no shift of that date or
   before still open there. Key `z_missing:<till|shop>:<id>:<date>`.
-* `shift_open_overdue` — an open shift open more than `hours`, or past its business date (the
-  board's `shift_open_past_its_date`). Key `shift_open_overdue:<shift>`.
+* `shift_open_overdue` — an open shift open more than `hours`; and, when the rule's `alertPastDate` is
+  on, also past its business date (the board's `shift_open_past_its_date`). Off by default (the owner,
+  14.10.2026 — P:/specs/owner-decisions-1410.md §3): no alert at midnight, only the hours; the board's
+  light is unchanged either way. Key `shift_open_overdue:<shift>`.
 * `card_transmission_overdue` — medium past `warnHours`, high past `criticalDays` (the board's
   `transmission_overdue` / `transmission_critical` with the rule's thresholds), once per till
   and level for one run since the last successful transmission. The high row closes the
@@ -247,7 +249,10 @@ def scan_shifts(db: Session, rules: _Rules, world: _World, now: datetime) -> int
         hours = int(rule.params.get("hours") or 16)
         opened = _utc(shift.opened_at)
         zone = world.zone_of(machine.tenant_id)
-        past_date = MS.date_has_passed(shift.business_date, zone, now=now)
+        # "התראה גם כשהמשמרת עוברת את התאריך שלה": off by default — the hours alone.
+        past_date = rule.params.get("alertPastDate") is True and MS.date_has_passed(
+            shift.business_date, zone, now=now
+        )
         too_long = opened is not None and now - opened > timedelta(hours=hours)
         if not (past_date or too_long):
             continue
