@@ -12,18 +12,24 @@ import {
   DEFAULT_POLICY,
   TEXTS,
   UserSessionGuard,
+  asksAboutTables,
   blockedText,
   heartbeatDecision,
   holderOf,
   policyOf,
   readAnswer,
+  releaseOutcomeLines,
+  releaseOutcomeOf,
+  sessionOf,
   shouldClaim,
   signInDecision,
   signedOutText,
   signingOutText,
   silentText,
   sinceText,
+  tablesQuestion,
   tillName,
+  transfersTo,
   warnText,
   type HeartbeatDecision,
   type PendingStore,
@@ -260,5 +266,97 @@ describe('the guard', () => {
     await g.operatorChanged('yossi', 'yossi');
     await g.operatorChanged(null, 'dana');
     assert.deepEqual(sent.map((s) => s.body), [{ posUserId: 'dana' }]);
+  });
+});
+
+describe('"עובדים מחוברים" (§8): the list, the tables question, the release', () => {
+  const row = {
+    id: 's-1', posUserId: 'dana', posUserName: 'דנה', machineName: 'בר', posNumber: '3', startedAt: TODAY_1405,
+    silent: true, silentSince: TODAY_1420, openTables: 2, releaseTables: 'ask', here: false,
+    tables: [
+      { orderId: 'o-12', tableId: 't-12', number: 12, name: null, total: 120 },
+      { orderId: 'o-14', tableId: 't-14', number: 14, name: null, total: 80 },
+    ],
+  };
+
+  it('reads a row as the till and the dashboard get it', () => {
+    const s = sessionOf(row);
+    assert.equal(s.openTables, 2);
+    assert.equal(s.silent, true);
+    assert.equal(s.releaseTables, 'ask');
+    assert.deepEqual(s.tables.map((t) => t.number), [12, 14]);
+    assert.equal(sessionOf({ ...row, releaseTables: 'whatever' }).releaseTables, 'keep');
+  });
+
+  it('asks about the tables only where the policy asks and there are some', () => {
+    assert.equal(asksAboutTables(sessionOf(row)), true);
+    assert.equal(asksAboutTables(sessionOf({ ...row, releaseTables: 'keep' })), false);
+    assert.equal(asksAboutTables(sessionOf({ ...row, openTables: 0, tables: [] })), false);
+    assert.equal(tablesQuestion('דנה', 3), 'לדנה 3 שולחנות פתוחים');
+    assert.equal(tablesQuestion('דנה', 1), 'לדנה שולחן פתוח אחד');
+  });
+
+  it('"להעביר ל…": every table to the one waiter; none chosen, none handed on', () => {
+    assert.deepEqual(transfersTo(sessionOf(row), 'yossi'), [
+      { orderId: 'o-12', toPosUserId: 'yossi' },
+      { orderId: 'o-14', toPosUserId: 'yossi' },
+    ]);
+    assert.deepEqual(transfersTo(sessionOf(row), null), []);
+  });
+
+  it('what the manager is told: the hand-over, what stayed and why, the warnings', () => {
+    const out = releaseOutcomeOf({
+      status: 'released', openTables: 3,
+      tablesUnlocked: [{ orderId: 'o-12', number: 12 }],
+      tablesTransferred: [{ orderId: 'o-12', number: 12, toPosUserId: 'yossi', toName: 'יוסי' }],
+      tablesNotTransferred: [{ orderId: 'o-20', number: 20, why: 'lan' }],
+      warnings: ['שולחן 12 נפתח במכשיר שלא מדווח מאז 20:14. שינויים שלא נשמרו שם לא יופיעו.'],
+    });
+    assert.deepEqual(releaseOutcomeLines(out), [
+      'הועברו 1 שולחנות: שולחן 12 ליוסי.',
+      'שולחן 20 לא הועבר: ברשת מקומית — מעבירים בקופה המארחת.',
+      'שולחן 12 נפתח במכשיר שלא מדווח מאז 20:14. שינויים שלא נשמרו שם לא יופיעו.',
+    ]);
+    assert.equal(releaseOutcomeOf({ status: 'not_held' }).status, 'not_held');
+  });
+
+  it('the guard reads the list and releases with the approval and the hand-over', async () => {
+    const sent: { method: string; path: string; body?: unknown; headers: Record<string, string> }[] = [];
+    const api: SessionTransport = {
+      async get(path, opts) {
+        sent.push({ method: 'GET', path, headers: opts?.headers ?? {} });
+        return ok({ ...POLICY, releaseTables: 'ask', sessions: [row], waiters: [{ posUserId: 'yossi', name: 'יוסי' }] });
+      },
+      async post(path, body, opts) {
+        sent.push({ method: 'POST', path, body, headers: opts?.headers ?? {} });
+        return ok({ status: 'released', openTables: 2, tablesTransferred: [], tablesNotTransferred: [], tablesUnlocked: [], warnings: [] });
+      },
+    };
+    const g = new UserSessionGuard('m-1', api);
+    const list = await g.signedIn();
+    assert.equal(list?.sessions[0].posUserName, 'דנה');
+    assert.deepEqual(list?.waiters, [{ posUserId: 'yossi', name: 'יוסי' }]);
+    const r = await g.releaseSession('s-1', { operatorId: 'boss' }, transfersTo(sessionOf(row), 'yossi'));
+    assert.equal(r.kind, 'ok');
+    assert.deepEqual(sent[1], {
+      method: 'POST', path: 'sync/m-1/user-sessions/s-1/release',
+      body: { transfers: [{ orderId: 'o-12', toPosUserId: 'yossi' }, { orderId: 'o-14', toPosUserId: 'yossi' }] },
+      headers: { 'X-Pos-User-Id': 'boss' },
+    });
+  });
+
+  it('a release refused: the code again, not this approval, the tables stay', async () => {
+    const answers: ApiReply[] = [
+      refused(401, { detail: 'elevation_already_used' }, 'elevation_already_used'),
+      refused(403, { detail: 'elevation_wrong_user' }, 'elevation_wrong_user'),
+      refused(409, { detail: { code: 'release_tables_keep' } }, 'release_tables_keep'),
+      offline,
+    ];
+    const api: SessionTransport = { post: async () => answers.shift()! };
+    const g = new UserSessionGuard('m-1', api);
+    assert.deepEqual(await g.releaseSession('s', { elevationToken: 'x' }), { kind: 'needsManager', code: 'elevation_already_used' });
+    assert.deepEqual(await g.releaseSession('s', { elevationToken: 'x' }), { kind: 'forbidden', code: 'elevation_wrong_user' });
+    assert.deepEqual(await g.releaseSession('s', { elevationToken: 'x' }), { kind: 'refused', status: 409, code: 'release_tables_keep' });
+    assert.deepEqual(await g.releaseSession('s', { elevationToken: 'x' }), { kind: 'unreachable' });
   });
 });

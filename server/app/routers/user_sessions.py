@@ -10,6 +10,12 @@ POST /sync/{machine_id}/user-session/heartbeat  {posUserId, signedInAt?} → 200
                                                  409 `user_signed_in_elsewhere` / `user_session_released`
 POST /sync/{machine_id}/user-session/release    {posUserId} → 200 released | not_held
 
+"עובדים מחוברים" (§8א of v2 — a manager releases from any till, handheld or phone of the shop):
+
+GET  /sync/{machine_id}/user-sessions                         → the shop's live sessions (device, since,
+                                                                 silent, open tables) + the policy
+POST /sync/{machine_id}/user-sessions/{session_id}/release    {transfers?} + a manager's approval
+
 Every claim / heartbeat answer, 200 or 409, carries the policy the till follows: `exclusive`,
 `staleMinutes`, `autoRelease` (off | minutes), `offline` (allow | lan | manager) and
 `duplicate` (warn | signout).
@@ -29,7 +35,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,6 +80,21 @@ class UserSessionIn(_Camel):
 class UserSessionClaimIn(UserSessionIn):
     #: Release the session at another till (needs a manager's approval).
     force: bool = False
+
+
+class TableTransferIn(_Camel):
+    """One table handed on at a release ("החלפת מלצר", §8ב)."""
+
+    order_id: uuid.UUID = Field(alias="orderId")
+    to_pos_user_id: uuid.UUID = Field(alias="toPosUserId")
+
+
+class UserSessionReleaseIn(_Camel):
+    #: `exclusiveReleaseTables = ask`: the employee's tables to hand on, each to a waiter. Empty: they stay.
+    transfers: List[TableTransferIn] = Field(default_factory=list, max_length=200)
+
+    def transfer_list(self) -> list:
+        return [{"orderId": str(t.order_id), "toPosUserId": str(t.to_pos_user_id)} for t in self.transfers]
 
 
 class UserSessionHeartbeatIn(UserSessionIn):
@@ -227,6 +248,91 @@ def release_user_session(
     return {"status": "released" if released else "not_held"}
 
 
+# ── "עובדים מחוברים" at any till (§8א) ──────────────────────────────────────
+
+
+def _tables_keep() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "release_tables_keep"})
+
+
+def _wake_tables(db: Session, out: dict, shop_id, tenant_id) -> None:
+    """After the commit: a silent device's tables freed, or tables handed on — the tills redraw them."""
+    if out.pop("tablesChanged", False):
+        from app.services import tables as T
+
+        T.tables_changed(db, shop_id, tenant_id=tenant_id)
+
+
+@till_router.get("/{machine_id}/user-sessions")
+def list_user_sessions_at_till(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "עובדים מחוברים": who is signed in at which device of this till's shop — since when, whether that
+    device still reports, their open tables — and this till's policy (`releaseTables`: what a release
+    does with them; `waiters`: whom to hand them to, when it asks). The till shows the screen only to
+    someone holding USER_SESSION_RELEASE (or after a manager's code); any till of the shop may read it.
+    """
+    from app.models.shop import Shop
+
+    _assigned(machine)
+    sessions = svc.live_sessions(db, machine.shop_id, here=machine)
+    shop = db.get(Shop, machine.shop_id)
+    return {
+        **svc.policy_for_machine(db, machine).out(),
+        "sessions": sessions,
+        "waiters": svc.transfer_candidates(db, shop, sessions) if shop is not None else None,
+    }
+
+
+@till_router.post("/{machine_id}/user-sessions/{session_id}/release")
+def release_user_session_at_till(
+    machine_id: str,
+    session_id: uuid.UUID,
+    body: Optional[UserSessionReleaseIn] = None,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    elevation_token: Optional[str] = Header(None, alias=ELEVATION_HEADER),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    db: Session = Depends(get_db),
+):
+    """
+    A manager releases a signed-in employee from this till, whatever device holds them: a code typed
+    here (`X-Elevation-Token`, scope `user-session:release` — one code, one release), a phone's approval
+    of "שחרור עובד מחובר" for that employee, or the signed-in manager (`X-Pos-User-Id`) whose own role
+    holds it. A silent device's tables are freed in the same action (`warnings` says what that means);
+    `transfers` hands tables on where `exclusiveReleaseTables = ask` (else 409 `release_tables_keep`).
+    Recorded as an exception at this till. Already released: `not_held` (the code is not spent).
+    """
+    _assigned(machine)
+    row = (
+        db.query(PosUserSession)
+        .filter(PosUserSession.id == session_id, PosUserSession.shop_id == machine.shop_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="session_not_found")
+    pos_user = db.get(PosUser, row.pos_user_id)
+    if pos_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pos_user_not_found")
+    approval, grant = _force_approval(db, machine, pos_user, elevation_token, operator_id)
+    try:
+        out = svc.manager_release(
+            db, row, approval, at_machine=machine, transfers=body.transfer_list() if body is not None else None,
+        )
+    except svc.TablesKeep:
+        db.rollback()
+        raise _tables_keep()
+    if out["status"] == "released" and grant is not None and requires_per_action_reauth(SCOPE):
+        if not consume_per_action_use(db, grant):
+            db.rollback()
+            raise _elevation_401("elevation_already_used")
+    db.commit()
+    _wake_tables(db, out, machine.shop_id, machine.tenant_id)
+    return out
+
+
 # ── The dashboard's side ──────────────────────────────────────────────────────
 
 
@@ -246,10 +352,14 @@ def list_user_sessions(
     _check_read(current_user, shop, db)
     from app.services.till_parameters import resolve_for_shop
 
+    params = resolve_for_shop(db, shop)
+    sessions = svc.active_sessions_for_shop(db, shop.id)
     return {
-        "exclusive": svc.enabled_of(resolve_for_shop(db, shop).get(svc.PARAM_ENABLED)),
-        "sessions": svc.active_sessions_for_shop(db, shop.id),
+        "exclusive": svc.enabled_of(params.get(svc.PARAM_ENABLED)),
+        "releaseTables": svc.policy_of(params).release_tables,
+        "sessions": sessions,
         "canRelease": svc.may_release_from_dashboard(db, current_user),
+        "waiters": svc.transfer_candidates(db, shop, sessions),
     }
 
 
@@ -267,6 +377,7 @@ def _check_release(user: User, shop, db: Session) -> None:
 def release_user_session_from_dashboard(
     shop_id: str,
     session_id: uuid.UUID,
+    body: Optional[UserSessionReleaseIn] = None,
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -274,6 +385,7 @@ def release_user_session_from_dashboard(
     """
     A manager frees an employee (a device that went down, or one they left signed in); that
     device signs them out if it is up. Recorded as an exception. Already released: `not_held`.
+    As at a till (§8ב): a silent device's tables freed (`warnings`), `transfers` where the policy asks.
     """
     shop = _get_shop_or_404(db, shop_id)
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
@@ -285,6 +397,13 @@ def release_user_session_from_dashboard(
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    released = svc.release_by_dashboard(db, row, current_user)
+    try:
+        out = svc.release_by_dashboard(
+            db, row, current_user, transfers=body.transfer_list() if body is not None else None,
+        )
+    except svc.TablesKeep:
+        db.rollback()
+        raise _tables_keep()
     db.commit()
-    return {"status": "released" if released else "not_held"}
+    _wake_tables(db, out, shop.id, shop.tenant_id)
+    return out

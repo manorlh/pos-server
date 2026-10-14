@@ -318,5 +318,13 @@
     "critical": false,
     "warning": null,
     "report": false
+  },
+  {
+    "key": "signed_in_users",
+    "label": "עובדים מחוברים",
+    "also": "המסך שממנו מנהל משחרר עובד מחובר; \"שחרור באישור מנהל\" במסך הכניסה נשאר",
+    "critical": false,
+    "warning": null,
+    "report": false
   }
 ]

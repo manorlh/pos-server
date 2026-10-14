@@ -67,14 +67,50 @@
 | `via` | מאיפה | הקופה של החריגה |
 |---|---|---|
 | `till` | קוד מנהל בקופה, או מנהל שמתחבר ומשחרר את עצמו | הקופה שאליה העובד עבר |
+| `till` | המסך "עובדים מחוברים" בכל קופה, מכשיר נייד או טלפון (§8) | הקופה שממנה המנהל שחרר |
 | `remote` | אישור מהנייד (+`approvalRequestId`) | הקופה שאליה העובד עבר |
 | `dashboard` | הדשבורד או הכרטיס בנייד | הקופה שממנה שוחרר |
 
 שחרור אוטומטי (`stale`), התנתקות וניתוק של מכשיר כפול (`duplicate`) אינם חריגה.
 
+החריגה רושמת גם את השולחנות (§8): `openTables` (כמה היו על העובד), `tablesUnlocked` (נעילות של מכשיר שלא מדווח ששוחררו), `tablesTransferred` (שולחנות שהועברו) ו-`warnings`.
+
+## שחרור מכל מכשיר, ומה קורה לשולחנות (אפיון §8)
+
+בעלים, 14.10: "מי יכול לשחרר עובד אם יש עליו שולחנות? תוודא שזה מכל מכשיר המנהל יכול".
+
+### מכל מכשיר: "עובדים מחוברים"
+
+- **מי:** אותה הרשאה, עם שולחנות או בלי: `USER_SESSION_RELEASE` בקופה, `user_sessions_release` בדשבורד.
+- **מאיפה:** בקופה שבה העובד מנסה להתחבר (קיים); בכל קופה, מכשיר נייד או טלפון, במסך "עובדים מחוברים"; מהנייד (אישור בקשה, או הכרטיס בדשבורד); בדשבורד במחשב.
+- **המסך בקופה** מציג: עובד, מכשיר, מאז, "לא מדווח", ומספר השולחנות הפתוחים, ו"שחרור" ליד כל שורה. הוא מופיע רק לבעל ההרשאה, או אחרי קוד מנהל. בהסתרת התפריט המפתח שלו הוא `signed_in_users` (`app/services/till_menu.py`, אחרי `quick_order`, וב-`tests/fixtures/till_menu_items_golden.json`).
+- **נקודות הקצה** (טוקן קופה):
+  - `GET /sync/{machine_id}/user-sessions` — `{…מדיניות של הקופה, sessions, waiters}`. לכל שורה: `id, posUserId, posUserName, machineId, machineName, posNumber, startedAt, lastSeenAt, silent, silentSince, stale, autoRelease, staleMinutes, releaseTables, openTables, tables[{orderId, tableId, number, name, total, openedAt}], here`. `waiters` (המלצרים במשמרת או המחוברים, כמו "החלף מלצר") מגיע רק כשיש שורה שהשחרור שלה ישאל על שולחנות, ואחרת `null`. כל קופה של הסניף קוראת.
+  - `POST /sync/{machine_id}/user-sessions/{session_id}/release` — `{transfers?: [{orderId, toPosUserId}]}`, עם אישור כמו `force` ב-claim: `X-Elevation-Token` (קוד מנהל — שחרור אחד לקוד; או אישור מהנייד לאותו עובד), או `X-Pos-User-Id` של מנהל מחובר שמותר לו. התשובה: `{status: released | not_held, posUserId, posUserName, holderSilentSince, openTables, tablesUnlocked, tablesTransferred, tablesNotTransferred, warnings}`. בלי אישור 401, אישור לא מתאים 403, שורה מסניף אחר 404 `session_not_found`, העברה כשהשולחנות נשארים 409 `release_tables_keep`.
+- **בדשבורד:** `GET /shops/{id}/user-sessions` מוסיף לכל שורה את אותם שדות שולחנות, ולתשובה `releaseTables` ו-`waiters`. `POST …/release` מקבל את אותו `transfers`, ומחזיר את אותה תשובה.
+- המכשיר שהעובד שוחרר ממנו שומע זאת ב-heartbeat הבא (409 `user_session_released`) ומנתק בסיום הפעולה.
+
+### מה קורה לשולחנות
+
+- **השולחנות נשארים של העובד** (`exclusiveReleaseTables = keep`, ברירת מחדל). כשהוא מתחבר במכשיר חדש, הוא ממשיך אותם.
+- **מכשיר ישן שמדווח** שומר את השולחן שהוא בתוכו, יוצא ממנו בסוף הפעולה, ורק אז מנתק (קיים).
+- **מכשיר ישן שלא מדווח:** השחרור משחרר גם את נעילות השולחן שהמכשיר הזה מחזיק עבור העובד (`user_sessions.free_silent_tables`).
+  - זה כמו `TABLE_UNLOCK`, באותה פעולה ובאותו אישור.
+  - כל שולחן נרשם בהיסטוריה שלו (`table_events.kind = force_release`, `details.from = user_session_release`).
+  - הקופות מתעדכנות (אות "tables").
+  - חל על כל דרך שחרור, גם על "שחרור באישור מנהל" בכניסה (`tookOver.tablesUnlocked`, `tookOver.warnings`).
+  - נעילה של המכשיר הזה עבור עובד אחר לא משתחררת.
+  - המנהל מקבל את ההודעה (`warnings`): "שולחן 12 נפתח במכשיר שלא מדווח מאז 20:14. שינויים שלא נשמרו שם לא יופיעו."
+- **`exclusiveReleaseTables = ask`:** במסך "עובדים מחוברים" ובדשבורד נשאלת שאלה: "לדנה 3 שולחנות פתוחים: להשאיר אצלה / להעביר ל…" (מלצר, או המנהל עצמו).
+  - ההעברה היא "החלפת מלצר" לכל שולחן, ונרשמת בהיסטוריה (`waiter`, `from = user_session_release`).
+  - **רק שולחנות הענן מועברים.** עותק של מארח ברשת מקומית (`lan`) או של קופה בודדת (`single`) מעבירים במארח או בקופה.
+  - **לא מועברים:** שולחן שאינו של העובד (`not_theirs`), שולחן שמכשיר אחר בתוכו (`table_in_use`), ושולחן שנשמר ברגע זה (`table_busy`).
+  - מה שלא הועבר חוזר ב-`tablesNotTransferred`, עם הסיבה.
+- **"שחרור באישור מנהל" במסך הכניסה** לא מעביר שולחנות: העובד ממשיך אותם במכשיר שאליו הוא נכנס.
+
 ## הפרמטרים
 
-חמישה פרמטרים מובנים (`BuiltinParameter` ב-`app/services/till_parameters.py`). הם נוצרים פעם אחת בעליית השרת, ומנהל מערכת יכול לשנות להם ניסוח וברירת מחדל.
+שישה פרמטרים מובנים (`BuiltinParameter` ב-`app/services/till_parameters.py`). הם נוצרים פעם אחת בעליית השרת, ומנהל מערכת יכול לשנות להם ניסוח וברירת מחדל.
 
 | מפתח | סוג | ברירת מחדל | משמעות |
 |---|---|---|---|
@@ -83,6 +119,7 @@
 | `exclusiveUserLoginStaleMinutes` | מספר שלם | 15 | הדקות של `minutes` (2–720; ערך לא תקין = 15). בלי `minutes` — אין לו השפעה |
 | `exclusiveUserLoginOffline` | `allow` / `lan` / `manager` | `allow` | "עובד בקופה אחת — כניסה בלי אינטרנט" |
 | `exclusiveUserLoginDuplicate` | `warn` / `signout` | `warn` | "עובד בקופה אחת — מחובר בשני מכשירים" |
+| `exclusiveReleaseTables` | `keep` / `ask` | `keep` | "עובד בקופה אחת — שולחנות בשחרור" (§8) |
 
 - הענן קורא את כולם לפי **הקופה שמבקשת** (הרמה הספציפית ביותר גוברת), ומחזיר אותם בכל תשובה של claim ו-heartbeat.
 - הקופה קוראת את `exclusiveUserLogin` כדי לדעת אם לפנות לענן בכלל. את השאר היא לוקחת מהתשובה האחרונה, ובלי תשובה — ברירות המחדל.
@@ -144,7 +181,7 @@
 
 **כל תשובה** של claim ו-heartbeat, גם 200 וגם 409, כוללת את המדיניות:
 
-`exclusive`, `staleMinutes`, `autoRelease` (`off`/`minutes`), `offline` (`allow`/`lan`/`manager`), `duplicate` (`warn`/`signout`)
+`exclusive`, `staleMinutes`, `autoRelease` (`off`/`minutes`), `offline` (`allow`/`lan`/`manager`), `duplicate` (`warn`/`signout`), `releaseTables` (`keep`/`ask`)
 
 **`POST claim`** — `{posUserId, force?}`. הקופה שולחת לפני שהיא מכניסה עובד.
 
@@ -288,7 +325,8 @@
   - `duplicate`: `warn`, `signout` לשני הכיוונים, שעון שרץ קדימה, קופה ישנה;
   - הרשאת הדשבורד (תבניות, תפקידים, היקף, כללי הנתיבים) והרשימה;
   - כל שחרור נרשם בחריגות (`till`, `dashboard`), ולא שחרור אוטומטי או התנתקות;
-  - ה-payload של בקשת השחרור; מיגרציית הניסוח.
+  - ה-payload של בקשת השחרור; מיגרציית הניסוח;
+  - §8: "עובדים מחוברים" מכל קופה (רשימה, מנהל מחובר, קוד אחד לשחרור אחד, בלי מנהל, סניף אחר); השולחנות — מכשיר שמדווח שומר, מכשיר שלא מדווח משחרר (גם בכניסה ובדשבורד), `keep` מסרב להעברה, `ask` מעביר (ולא מעביר עותק LAN, קופה בודדת, שולחן של אחר או שולחן שמכשיר בתוכו).
 - **אישורים מהנייד**, `tests/test_remote_approvals.py` `TestUserRelease`:
   - המאשרים (הרשאת השחרור בקופה ובדשבורד);
   - הבקשה והפוש;

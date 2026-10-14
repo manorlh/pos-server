@@ -2,9 +2,12 @@
  * "עובד מחובר בקופה אחת בלבד" — who is signed in at which device of a shop, and a manager's
  * release (server: app/routers/user_sessions.py, docs/SPEC_EXCLUSIVE_LOGIN.md; v2:
  * P:/specs/exclusive-login-v2.md). The release needs the dashboard permission
- * "שחרור עובד מחובר במכשיר" (`user_sessions_release`): the server says `canRelease`.
+ * "שחרור עובד מחובר במכשיר" (`user_sessions_release`): the server says `canRelease`. §8: each row
+ * carries the employee's open tables, and a release may hand them on (`exclusiveReleaseTables = ask`).
  */
 import { api } from './api';
+import type { OpenTable, ReleaseOutcome, ReleaseTables, TableTransfer } from './exclusiveLogin';
+import { releaseOutcomeOf } from './exclusiveLogin';
 
 export interface UserSession {
   id: string;
@@ -24,6 +27,10 @@ export interface UserSession {
   /** `exclusiveUserLoginAutoRelease` for that device: off (only a manager releases) | minutes. */
   autoRelease?: 'off' | 'minutes';
   staleMinutes: number;
+  /** §8: the employee's open tables, and what a release does with them (the holder device's parameter). */
+  openTables?: number;
+  tables?: OpenTable[];
+  releaseTables?: ReleaseTables;
 }
 
 export interface UserSessionsResponse {
@@ -32,6 +39,8 @@ export interface UserSessionsResponse {
   sessions: UserSession[];
   /** This user may release one ("שחרור עובד מחובר במכשיר"). An older server says nothing: no button. */
   canRelease?: boolean;
+  /** Whom to hand tables to, when a release would ask (else null). */
+  waiters?: { posUserId: string; name: string | null; onShift?: boolean }[] | null;
 }
 
 export async function fetchUserSessions(shopId: string): Promise<UserSessionsResponse> {
@@ -39,7 +48,7 @@ export async function fetchUserSessions(shopId: string): Promise<UserSessionsRes
   return data;
 }
 
-export async function releaseUserSession(shopId: string, sessionId: string): Promise<{ status: 'released' | 'not_held' }> {
-  const { data } = await api.post<{ status: 'released' | 'not_held' }>(`/shops/${shopId}/user-sessions/${sessionId}/release`);
-  return data;
+export async function releaseUserSession(shopId: string, sessionId: string, transfers: TableTransfer[] = []): Promise<ReleaseOutcome> {
+  const { data } = await api.post(`/shops/${shopId}/user-sessions/${sessionId}/release`, { transfers });
+  return releaseOutcomeOf(data);
 }
