@@ -187,7 +187,7 @@ def add_base(w) -> None:
     sale(w, till1, at(d - timedelta(days=7), 11, 0), [(w.coffee, 4, "0")], cashier=w.dana)                # 48
     sale(w, north, at(d - timedelta(days=7), 12, 0), [(w.croissant, 1, "0")], cashier=w.michal)          # 14
     sale(w, till1, at(d - timedelta(days=14), 11, 0), [(w.coffee, 5, "20")], cashier=w.dana)              # 40 (60 − 20)
-    sale(w, till1, at(d - timedelta(days=14), 12, 0), [(w.juice, 5, "0")], cashier=w.dana)                # 80 → 120 net? see tests
+    sale(w, till1, at(d - timedelta(days=14), 12, 0), [(w.juice, 5, "0")], cashier=w.dana)                # 80: that day 120 net
     sale(w, till1, at(d - timedelta(days=21), 11, 0), [(w.coffee, 5, "0"), (w.juice, 1, "4")], cashier=w.dana)  # 72
     sale(w, till1, at(d - timedelta(days=28), 11, 0), [(w.croissant, 10, "0")], cashier=w.dana)            # 140
     # Till events: a voided line on till 2, a drawer opened with no sale on till 1.

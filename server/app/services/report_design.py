@@ -1365,10 +1365,16 @@ class _Layout:
             if bars[i] and not totals:
                 v = _float(text)
                 if v is not None and v > 0:
+                    # A short bar under the figure, from the side the figure stands on.
                     frac = min(1.0, v / 100.0)
+                    bw = min(room, 64.0)
+                    bx = left if anchors[i] == "left" else (right - bw if anchors[i] == "right" else (left + right - bw) / 2)
                     by = y + row_h - 3.2
-                    c.rect(left, by, room, 1.8, LINE)
-                    c.rect(right - room * frac, by, room * frac, 1.8, self.accent)
+                    c.rect(bx, by, bw, 1.8, LINE)
+                    if anchors[i] == "left":
+                        c.rect(bx, by, bw * frac, 1.8, self.accent)
+                    else:
+                        c.rect(bx + bw - bw * frac, by, bw * frac, 1.8, self.accent)
 
     # The cover
 

@@ -320,7 +320,10 @@ class TestInsights:
     def test_concentration_of_the_top_fifth(self):
         rows = [["א", 1, 800]] + [[f"פריט {i}", 1, 25] for i in range(8)]
         texts = [i.text for i in I.table_insights("product-sales", PRODUCTS, rows)]
-        assert any(t.startswith("ריכוזיות: 2 מתוך 9 הפריטים (20% המובילים) מביאים 82% מהמכירות") for t in texts)
+        assert any(t.startswith("ריכוזיות: 2 מתוך 9 הפריטים מביאים 82% מהמכירות") for t in texts)
+        rows = [["א", 1, 800], ["ב", 1, 700]] + [[f"פריט {i}", 1, 25] for i in range(8)]
+        texts = [i.text for i in I.table_insights("product-sales", PRODUCTS, rows)]
+        assert any(t.startswith("ריכוזיות: 2 מתוך 10 הפריטים (20% המובילים) מביאים 88% מהמכירות") for t in texts)
 
     def test_risers_fallers_and_the_total_against_the_previous_period(self):
         rows = [["קפה", 10, 600], ["תה", 5, 100], ["מאפה", 2, 300]]

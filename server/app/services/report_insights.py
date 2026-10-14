@@ -379,8 +379,9 @@ def _table_findings(rtype: str, family: str, columns: Sequence[P.Column], rows: 
         ordered = sorted((v for _l, v, _r in positive), reverse=True)
         k = max(1, math.ceil(len(ordered) * 0.2))
         share = _pct(sum(ordered[:k]), total)
-        if share >= 35:
-            text = f"ריכוזיות: {k} מתוך {len(ordered)} {noun} (20% המובילים) מביאים {_p(share)} מ{measure}"
+        if share >= (50 if family == PEOPLE else 35):
+            fifth = " (20% המובילים)" if len(ordered) >= 10 else ""
+            text = f"ריכוזיות: {k} מתוך {len(ordered)} {noun}{fifth} מביאים {_p(share)} מ{measure}"
             if family == RANKING and share >= 60:
                 _say(out, 66, "tip", text + " — כדאי לוודא שהם תמיד זמינים")
             else:
