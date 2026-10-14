@@ -360,7 +360,10 @@ function ChangeLine({
   const show = (value: unknown): string => {
     if (value === null || value === undefined) {
       if (catalogMenu && change.field === 'price') return t('values.catalogPrice');
-      return change.field === 'groups' || change.field === 'notes' || change.field === 'fallback' ? t('values.inherit') : '—';
+      // "יוצא בלי בון" null: by the category (a category's: by its parent).
+      return change.field === 'groups' || change.field === 'notes' || change.field === 'fallback' || change.field === 'sendSilently'
+        ? t('values.inherit')
+        : '—';
     }
     if (typeof value === 'string' && CODED_FIELDS.has(change.field) && t.has(`values.${change.field}_${value}`)) {
       return t(`values.${change.field}_${value}`);

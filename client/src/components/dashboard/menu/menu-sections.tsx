@@ -5,7 +5,8 @@
  * form's "תוספות והערות" (docs/SPEC_MENU_MODIFIERS.md §12).
  *
  * A product's own groups (or note chips) replace its category's; "לפי הקטגוריה" shows
- * by name what it would inherit, and "ללא" is an explicit nothing. The section saves on
+ * by name what it would inherit, and "ללא" is an explicit nothing. The course and "יוצא בלי
+ * בון" (P:/specs/courses-fire-v2.md §2) inherit the same way when left empty. The section saves on
  * its own button, like the availability and printers sections beside it.
  */
 
@@ -317,6 +318,39 @@ function CourseSelect({
   );
 }
 
+/**
+ * "יוצא בלי בון" (`sendSilently`, P:/specs/courses-fire-v2.md §2): on "שלח" the lines are marked sent,
+ * with no ticket and no KDS. Null inherits (product → its category → the parent category → off).
+ */
+function SendSilentlySelect({
+  value,
+  onChange,
+  inheritLabel,
+  yesLabel,
+  disabled,
+}: {
+  value: boolean | null;
+  onChange: (v: boolean | null) => void;
+  inheritLabel: string;
+  yesLabel: string;
+  disabled?: boolean;
+}) {
+  const t = useTranslations('menu.section');
+  return (
+    <select
+      value={value === null ? '' : value ? 'true' : 'false'}
+      disabled={disabled}
+      aria-label={t('sendSilently')}
+      onChange={(e) => onChange(e.target.value === '' ? null : e.target.value === 'true')}
+      className="h-9 w-full rounded-xl border bg-background px-2 text-[14px]"
+    >
+      <option value="">{inheritLabel}</option>
+      <option value="true">{yesLabel}</option>
+      <option value="false">{t('sendSilentlyNo')}</option>
+    </select>
+  );
+}
+
 interface SlotDraft {
   id?: string;
   name: string;
@@ -566,13 +600,23 @@ interface LimitsDraft {
 interface ProductDraft {
   allergens: Allergen[] | null;
   courseId: string | null | undefined;
+  /** "יוצא בלי בון": undefined = untouched, null = by the category. */
+  sendSilently: boolean | null | undefined;
   links: LinksDraft | null;
   notes: NoteDraft[] | null | undefined;
   meal: SlotDraft[] | null;
   limits: LimitsDraft | null;
 }
 
-const NO_EDIT: ProductDraft = { allergens: null, courseId: undefined, links: null, notes: undefined, meal: null, limits: null };
+const NO_EDIT: ProductDraft = {
+  allergens: null,
+  courseId: undefined,
+  sendSilently: undefined,
+  links: null,
+  notes: undefined,
+  meal: null,
+  limits: null,
+};
 
 export function ProductMenuSection({ productId }: { productId: string }) {
   const t = useTranslations('menu.section');
@@ -591,6 +635,7 @@ export function ProductMenuSection({ productId }: { productId: string }) {
 
   const allergens = draft.allergens ?? data?.allergens ?? [];
   const courseId = draft.courseId !== undefined ? draft.courseId : (data?.courseId ?? null);
+  const sendSilently = draft.sendSilently !== undefined ? draft.sendSilently : (data?.sendSilently ?? null);
   const links: LinksDraft = draft.links ?? { mode: data?.links.mode ?? 'inherit', groupIds: data?.links.groupIds ?? [] };
   const ownNotes =
     draft.notes !== undefined
@@ -618,6 +663,10 @@ export function ProductMenuSection({ productId }: { productId: string }) {
       if (draft.courseId !== undefined) {
         body.setCourse = true;
         body.courseId = draft.courseId;
+      }
+      if (draft.sendSilently !== undefined) {
+        body.setSendSilently = true;
+        body.sendSilently = draft.sendSilently;
       }
       if (draft.links) body.links = draft.links;
       if (draft.notes !== undefined) body.notes = { mode: draft.notes ? 'own' : 'inherit', notes: draft.notes ?? [] };
@@ -677,6 +726,15 @@ export function ProductMenuSection({ productId }: { productId: string }) {
       <Block title={t('course')} hint={t('courseHint')}>
         <CourseSelect value={courseId} onChange={(v) => patch({ courseId: v })} inheritLabel={t('courseInherit')} disabled={disabled} />
       </Block>
+      <Block title={t('sendSilently')} hint={t('sendSilentlyHint')}>
+        <SendSilentlySelect
+          value={sendSilently}
+          onChange={(v) => patch({ sendSilently: v })}
+          inheritLabel={t('sendSilentlyInherit')}
+          yesLabel={t('sendSilentlyYes')}
+          disabled={disabled}
+        />
+      </Block>
       <Block title={t('limits')} hint={t('limitsHint')}>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
           <label className="flex items-center gap-1">
@@ -735,11 +793,13 @@ export function ProductMenuSection({ productId }: { productId: string }) {
 
 interface CategoryDraft {
   courseId: string | null | undefined;
+  /** "יוצא בלי בון": undefined = untouched, null = by the parent category (top level: off). */
+  sendSilently: boolean | null | undefined;
   links: LinksDraft | null;
   notes: NoteDraft[] | null | undefined;
 }
 
-const NO_CATEGORY_EDIT: CategoryDraft = { courseId: undefined, links: null, notes: undefined };
+const NO_CATEGORY_EDIT: CategoryDraft = { courseId: undefined, sendSilently: undefined, links: null, notes: undefined };
 
 export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
   const t = useTranslations('menu.section');
@@ -757,6 +817,7 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
   const groupNames = new Map((groups.data?.items ?? []).map((g) => [g.id, g.name]));
 
   const courseId = draft.courseId !== undefined ? draft.courseId : (data?.courseId ?? null);
+  const sendSilently = draft.sendSilently !== undefined ? draft.sendSilently : (data?.sendSilently ?? null);
   const links: LinksDraft = draft.links ?? { mode: data?.links.mode ?? 'inherit', groupIds: data?.links.groupIds ?? [] };
   const ownNotes =
     draft.notes !== undefined
@@ -771,6 +832,10 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
       if (draft.courseId !== undefined) {
         body.setCourse = true;
         body.courseId = draft.courseId;
+      }
+      if (draft.sendSilently !== undefined) {
+        body.setSendSilently = true;
+        body.sendSilently = draft.sendSilently;
       }
       if (draft.links) body.links = draft.links;
       if (draft.notes !== undefined) body.notes = { mode: draft.notes ? 'own' : 'inherit', notes: draft.notes ?? [] };
@@ -814,6 +879,15 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
       </Block>
       <Block title={t('course')} hint={t('courseHint')}>
         <CourseSelect value={courseId} onChange={(v) => patch({ courseId: v })} inheritLabel={t('courseInheritParent')} disabled={disabled} />
+      </Block>
+      <Block title={t('sendSilently')} hint={t('sendSilentlyHint')}>
+        <SendSilentlySelect
+          value={sendSilently}
+          onChange={(v) => patch({ sendSilently: v })}
+          inheritLabel={t('sendSilentlyInheritParent')}
+          yesLabel={t('sendSilentlyYesShort')}
+          disabled={disabled}
+        />
       </Block>
       {!disabled ? (
         <div className="flex justify-end">
