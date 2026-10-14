@@ -654,7 +654,7 @@ class OpenCard:
 
 def _till_label_he(machine: Any) -> str:
     number = (getattr(machine, "pos_number", None) or "").strip()
-    return f"קופה {number}" if number else (getattr(machine, "name", None) or "הקופה")
+    return f"קופה {number}" if number else (getattr(machine, "name", None) or "קופה")
 
 
 def open_card_line_he(open_card: OpenCard) -> str:

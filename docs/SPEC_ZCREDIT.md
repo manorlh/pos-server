@@ -20,7 +20,7 @@
 | `nayax_usb` | Nayax — מסופון בחיבור USB | מסופון Nayax C4 בכבל USB לקופה (פורט CDC-ACM משלו; אותן מסגרות TweezerComm כמו ברשת, במסגור לקו). אין כתובת. `nayaxUsbDevice` הרשות מזהה את ה-C4. מסוף אחד לקופה (ראו "מסוף USB אחד לקופה"). |
 | `zcredit` | Z-Credit — מסופון חיצוני | השדות `zcreditTerminalNumber`, `zcreditPinpadId`, `zcreditMode` והסיסמה (ראו "סודות"). |
 | `tap_to_pay` | Tap to Pay במכשיר (iPOSpays) | שמור לעתיד: מוצג "בקרוב", השרת דוחה כתיבה שלו, והקופה קוראת אותו כ-`auto`. |
-| `none` | ללא אשראי (מזומן ואמצעים אחרים) | הקופה לא מקבלת אשראי (P:/specs/payment-integration-none.md). מותר לכל מכשיר. אין שדות חובה ואין התראות מסופון. ה-sync שולח `payFastCardEnabled` / `payCardEnabled` / `payManualCardEnabled` = false בלי לגעת בשכבות. קיוסק בלי "תשלום בקופה" מקבל אזהרה בשמירה. |
+| `none` | ללא אשראי (מזומן ואמצעים אחרים) | הקופה לא מקבלת אשראי (P:/specs/payment-integration-none.md). מותר לכל מכשיר. אין שדות חובה ואין התראות מסופון. ה-sync שולח `payFastCardEnabled` / `payCardEnabled` / `payManualCardEnabled` = false בלי לגעת בשכבות. קיוסק בלי "תשלום בקופה" מקבל אזהרה בשמירה. שמירה שמעבירה ל-`none` קופה עם עסקאות אשראי פתוחות (לא ב-Z, לא שודרו, לא מוכרעות) נדחית: 409 `payment_integration_open_card` עם הקופות והספירות, בלי עקיפה. |
 
 - **הגדרה מנוהלת על השכבות:**
   - הסדר הוא tenant ← company ← shop ← area ← machine, והקופה גוברת.

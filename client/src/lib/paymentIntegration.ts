@@ -323,6 +323,7 @@ export const PI_TEXT = {
   kioskNoPayment: 'לקיוסק לא יישאר אמצעי תשלום',
   kioskNoPaymentHint: 'קיוסק ללא אשראי מקבל תשלום רק בקופה: יש להפעיל "תשלום בקופה" בהגדרות הקיוסק.',
   paymentMethodsNote: 'האשראי כבוי בקופות שמוגדרות ללא אשראי',
+  openCardTail: "יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'",
   needsNfc: 'למכשיר אין NFC',
   replace: 'החלף',
   cancelReplace: 'ביטול',
@@ -962,7 +963,8 @@ export function missingFieldsLabel(missing: readonly string[] | null | undefined
 /**
  * The Hebrew the server sent with a payment-integration refusal (422
  * `{detail: {code, msg}}`: `agamento_needs_builtin_terminal`, `secret_invalid`,
- * `usb_terminal_second` — one USB terminal per till), or null for any other error.
+ * `usb_terminal_second` — one USB terminal per till; 409 `payment_integration_open_card` —
+ * "ללא אשראי" over open card sales, worded from its `tills`), or null for any other error.
  */
 export function paymentIntegrationErrorMessage(err: unknown): string | null {
   const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response?.data
@@ -973,8 +975,89 @@ export function paymentIntegrationErrorMessage(err: unknown): string | null {
     return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.agamentoNeedsBuiltin;
   }
   if (code === 'usb_terminal_second') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.oneUsbTerminal;
+  if (code === OPEN_CARD_CODE) {
+    // "ללא אשראי" over open card sales (409): the tills and their counts, worded here.
+    const tills = openCardTills((detail as { tills?: unknown }).tills);
+    if (tills.length > 0) return openCardMessage(tills);
+    return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.openCardTail;
+  }
   if (code === 'secret_invalid') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.secretInvalid;
   return null;
+}
+
+// ── No "ללא אשראי" over open card sales (spec §6) ─────────────────────────────
+
+/** The server's 409 when a save would move a till with open card sales to `none`. */
+export const OPEN_CARD_CODE = 'payment_integration_open_card';
+
+/** A till that holds the save back, with its counts (`detail.tills` of the 409). */
+export interface OpenCardTill {
+  machineId: string;
+  name: string | null;
+  posNumber: string | null;
+  /** Card documents in shifts no Z has taken yet. */
+  cardSales: number;
+  /** Card transactions not transmitted. */
+  untransmitted: number;
+  /** Card payments "לא הוכרע". */
+  unresolved: number;
+}
+
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/** `detail.tills` read safely; rows with nothing open are left out. */
+export function openCardTills(raw: unknown): OpenCardTill[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OpenCardTill[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const row: OpenCardTill = {
+      machineId: typeof r.machineId === 'string' ? r.machineId : '',
+      name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : null,
+      posNumber: typeof r.posNumber === 'string' && r.posNumber.trim() ? r.posNumber.trim() : null,
+      cardSales: count(r.cardSales),
+      untransmitted: count(r.untransmitted),
+      unresolved: count(r.unresolved),
+    };
+    if (row.cardSales || row.untransmitted || row.unresolved) out.push(row);
+  }
+  return out;
+}
+
+/** "בקופה 3 יש 12 עסקאות אשראי שלא נסגרו ב-Z (2 לא שודרו, 1 לא מוכרעת)" — as the server words it. */
+export function openCardLine(t: OpenCardTill): string {
+  const where = `ב${t.posNumber ? `קופה ${t.posNumber}` : (t.name ?? 'קופה')} יש`;
+  const untransmitted = t.untransmitted
+    ? t.untransmitted === 1
+      ? '1 לא שודרה'
+      : `${t.untransmitted} לא שודרו`
+    : null;
+  const unresolved = t.unresolved ? (t.unresolved === 1 ? '1 לא מוכרעת' : `${t.unresolved} לא מוכרעות`) : null;
+  if (t.cardSales) {
+    const sales = t.cardSales === 1 ? 'עסקת אשראי אחת שלא נסגרה ב-Z' : `${t.cardSales} עסקאות אשראי שלא נסגרו ב-Z`;
+    const extra = [untransmitted, unresolved].filter(Boolean).join(', ');
+    return `${where} ${sales}${extra ? ` (${extra})` : ''}`;
+  }
+  const parts: string[] = [];
+  if (t.untransmitted) {
+    parts.push(t.untransmitted === 1 ? 'עסקת אשראי אחת שלא שודרה' : `${t.untransmitted} עסקאות אשראי שלא שודרו`);
+  }
+  if (t.unresolved) parts.push(t.unresolved === 1 ? 'תשלום אשראי אחד לא מוכרע' : `${t.unresolved} תשלומי אשראי לא מוכרעים`);
+  return `${where} ${parts.join(', ')}`;
+}
+
+/** Every till's line, then what to do: "… . יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'". */
+export function openCardMessage(tills: readonly OpenCardTill[]): string {
+  return `${tills.map(openCardLine).join('; ')}. ${PI_TEXT.openCardTail}`;
+}
+
+/** The server refused "ללא אשראי" over open card sales (the dialog keeps its toast up longer). */
+export function isOpenCardError(err: unknown): boolean {
+  const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+  return !!detail && typeof detail === 'object' && (detail as { code?: unknown }).code === OPEN_CARD_CODE;
 }
 
 // ── A kiosk "ללא אשראי" ──────────────────────────────────────────────────────
