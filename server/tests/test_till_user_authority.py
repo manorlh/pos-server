@@ -229,6 +229,8 @@ class TestTillRoleMap:
             Scope.OTH,
             # "ניהול קטלוג" (specs/till-catalog-management.md §6.2).
             Scope.CATALOG_AVAILABILITY, Scope.CATALOG_PRICE, Scope.CATALOG_EDIT, Scope.CATALOG_CREATE,
+            # "דוח X סניפי" (P:/specs/shop-x-report.md §3).
+            Scope.SHOP_X_REPORT,
         }
 
     def test_a_till_shop_manager_matches_a_cloud_shop_manager(self):
