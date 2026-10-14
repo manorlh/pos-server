@@ -342,14 +342,14 @@ export function ReportExportBar({
     return {
       ...(reportType ? { reportType } : {}),
       // The header band's two lines (§7.1): the period, then business › place.
-      ...(range ? { period: range } : {}),
-      ...(business || place ? { scope: [business, place].filter((x) => x && x.trim()).join(' › ') } : {}),
+      ...(range ? { period: range.slice(0, 200) } : {}),
+      ...(business || place ? { scope: [business, place].filter((x) => x && x.trim()).join(' › ').slice(0, 300) } : {}),
       ...(cards.length ? { kpis: cards } : {}),
       // No chart from the page: the server draws its type's default (§7.4); `null`: no chart at
       // all (a list of single records has nothing to plot).
       ...(chart === null ? { chart: null } : drawn ? { chart: drawn } : {}),
       ...(previousRows ? { previousRows } : {}),
-      ...(previousLabel && before ? { previousLabel } : {}),
+      ...(previousLabel && before ? { previousLabel: previousLabel.slice(0, 80) } : {}),
       ...(groups.length ? { groupBy: groups } : {}),
       ...(Object.keys(hints).length ? { insightKeys: hints } : {}),
     };

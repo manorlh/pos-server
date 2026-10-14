@@ -216,15 +216,16 @@ export function cleanKpis(kpis: readonly ReportKpi[] | undefined): ReportKpi[] {
       k.compare === undefined || before === null
         ? undefined
         : typeof k.compare === 'object' && k.compare?.label
-          ? { value: scale(before), label: k.compare.label }
+          ? { value: scale(before), label: k.compare.label.slice(0, 60) }
           : scale(before);
     out.push({
       key,
-      label: k.label.slice(0, 120),
+      // The server's limits (§7.1 / report_pdf.py): a label 80, a comparison's label 60, an icon 20.
+      label: k.label.slice(0, 80),
       value,
       kind,
       ...(compare !== undefined && compare !== null ? { compare } : {}),
-      ...(k.compareLabel ? { compareLabel: k.compareLabel.slice(0, 80) } : {}),
+      ...(k.compareLabel ? { compareLabel: k.compareLabel.slice(0, 60) } : {}),
       ...(k.spark?.length ? { spark: k.spark.slice(-31).map((n) => scale(Number.isFinite(n) ? n : 0) ?? 0) } : {}),
       ...(k.better ? { better: k.better } : {}),
       ...(k.icon ? { icon: k.icon } : {}),
@@ -239,7 +240,7 @@ export function cleanChart(chart: ReportChart | null | undefined): ReportChart |
   if (!chart || !chart.labels.length || !chart.series.length) return undefined;
   const n = Math.min(chart.labels.length, 48);
   const series = chart.series.slice(0, 3).map((s) => ({
-    name: s.name.slice(0, 80),
+    name: s.name.slice(0, 40),
     values: s.values.slice(0, n).map((v) => (v === null || !Number.isFinite(v) ? null : v)),
   }));
   if (!series.some((s) => s.values.some((v) => v !== null && v !== 0))) return undefined;
