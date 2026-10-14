@@ -346,6 +346,8 @@
     "src/lib/tableTileLook.ts",
     "src/lib/tableTileLook.test.ts",
     "src/lib/exclusiveLogin.ts",
-    "src/lib/exclusiveLogin.test.ts"
+    "src/lib/exclusiveLogin.test.ts",
+    "src/lib/kitchenTicketStyle.ts",
+    "src/lib/kitchenTicketStyle.test.ts"
   ]
 }

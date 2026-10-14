@@ -36,6 +36,15 @@ Three tables:
 * `kitchen_no_ticket_products` — "ללא בון" on the product itself: no kitchen ticket for it
   in any shop, whatever its category or its shops' rows say.
 
+* `kitchen_ticket_designs` — "עיצוב בון": a named look of the kitchen ticket, per company — a
+  template and per-element overrides (P:/specs/kitchen-ticket-designs.md §6ג, §8). A printer may
+  name one (`ticket_design_id`) or a bare template (`ticket_design`); neither — the till parameter
+  `kitchenTicketDesign`. Its own `ticket_font_scale`, `ticket_header`, `ticket_checkboxes`,
+  `ticket_elapsed`, `ticket_fit`, `ticket_min_text_size`, `ticket_max_text_size`,
+  `ticket_header_size`, `ticket_inline_mods`, `ticket_order`, `ticket_order_list`,
+  `ticket_group_headers`, `ticket_no_course` (null = inherit) lay over the design
+  (app/services/kitchen_ticket_style.py).
+
 * `kitchen_print_hosts` — where the shop's print server ("שרת הדפסות", the till whose
   till parameter `printHostTill` is on) listens on the shop's LAN, as it last reported:
   the other tills send it their tickets there, and through the cloud relay when it does
@@ -73,6 +82,9 @@ PRINTER_PAPER_WIDTHS = (58, 80)
 ROUTE_TARGET_TYPES = ("category", "product")
 PRINT_JOB_STATUSES = ("pending", "printing", "done", "failed", "expired")
 PRINT_JOB_KINDS = ("ticket", "test")
+#: "עיצוב בון" templates (app/services/kitchen_ticket_style.py `TEMPLATES`).
+TICKET_TEMPLATES = ("classic", "classic_legacy", "large", "compact", "courses", "modern")
+TICKET_FONT_SCALE_RANGE = (80, 150)
 
 
 class KitchenPrinter(Base):
@@ -88,6 +100,31 @@ class KitchenPrinter(Base):
             name="ck_kitchen_printers_host_connection",
         ),
         CheckConstraint("paper_width IN (58, 80)", name="ck_kitchen_printers_paper_width"),
+        CheckConstraint(
+            "ticket_design IS NULL OR ticket_design IN "
+            "('classic', 'classic_legacy', 'large', 'compact', 'courses', 'modern')",
+            name="ck_kitchen_printers_ticket_design",
+        ),
+        CheckConstraint(
+            "ticket_design IS NULL OR ticket_design_id IS NULL", name="ck_kitchen_printers_ticket_design_one",
+        ),
+        CheckConstraint(
+            "ticket_font_scale IS NULL OR (ticket_font_scale >= 80 AND ticket_font_scale <= 150)",
+            name="ck_kitchen_printers_ticket_font_scale",
+        ),
+        CheckConstraint(
+            "(ticket_fit IS NULL OR ticket_fit IN ('fit', 'wrap'))"
+            " AND (ticket_min_text_size IS NULL OR ticket_min_text_size IN ('xs', 's', 'm'))"
+            " AND (ticket_max_text_size IS NULL OR ticket_max_text_size IN ('s', 'm', 'l'))"
+            " AND (ticket_header_size IS NULL OR ticket_header_size IN ('s', 'm', 'l'))",
+            name="ck_kitchen_printers_ticket_text",
+        ),
+        CheckConstraint(
+            "(ticket_order IS NULL OR ticket_order IN ('added', 'course', 'category', 'custom'))"
+            " AND (ticket_group_headers IS NULL OR ticket_group_headers IN ('auto', 'on', 'off'))"
+            " AND (ticket_no_course IS NULL OR ticket_no_course IN ('first', 'last'))",
+            name="ck_kitchen_printers_ticket_order",
+        ),
         Index("ix_kitchen_printers_shop", "shop_id"),
     )
 
@@ -124,8 +161,60 @@ class KitchenPrinter(Base):
     beep = Column(Boolean, nullable=False, default=False, server_default="false")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    #: "עיצוב בון" of this printer (it wins over the till parameter `kitchenTicketDesign`): a bare
+    #: template, or a named design (`ticket_design_id`) — at most one; both null — inherit.
+    ticket_design = Column(String(24), nullable=True)
+    ticket_design_id = Column(
+        UUID(as_uuid=True), ForeignKey("kitchen_ticket_designs.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Its own options over the design (null = inherit): font 80–150 %, the info fields (a list of
+    #: table / guests / waiter / time / till / order / customer), ☐ per line, "פתוח X דק'".
+    ticket_font_scale = Column(Integer, nullable=True)
+    ticket_header = Column(JSON, nullable=True)
+    ticket_checkboxes = Column(Boolean, nullable=True)
+    ticket_elapsed = Column(Boolean, nullable=True)
+    #: §8 "שורה אחת, לא ענק": fit | wrap; the item's smallest (xs / s / m) and largest (s / m / l)
+    #: size; the table's size (s / m / l); choices on the item's line when they fit.
+    ticket_fit = Column(String(8), nullable=True)
+    ticket_min_text_size = Column(String(4), nullable=True)
+    ticket_max_text_size = Column(String(4), nullable=True)
+    ticket_header_size = Column(String(4), nullable=True)
+    ticket_inline_mods = Column(Boolean, nullable=True)
+    #: §9 "מה להציג קודם": added | course | category | custom; custom's list `[{kind, id}]`; a heading
+    #: per group (auto | on | off); an item with no course first | last.
+    ticket_order = Column(String(10), nullable=True)
+    ticket_order_list = Column(JSON, nullable=True)
+    ticket_group_headers = Column(String(4), nullable=True)
+    ticket_no_course = Column(String(6), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class KitchenTicketDesign(Base):
+    """
+    "עיצוב בון": a company's named kitchen ticket look — one of the templates and the elements it
+    changes (a partial `ticketStyle`, camelCase as on the wire, checked by
+    `kitchen_ticket_style.clean_overrides`). Shops of the company and of its sub-companies use it.
+    """
+
+    __tablename__ = "kitchen_ticket_designs"
+    __table_args__ = (
+        CheckConstraint(
+            "template IN ('classic', 'classic_legacy', 'large', 'compact', 'courses', 'modern')",
+            name="ck_kitchen_ticket_designs_template",
+        ),
+        Index("uq_kitchen_ticket_designs_company_name", "company_id", "name", unique=True),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(60), nullable=False)
+    template = Column(String(24), nullable=False, default="classic", server_default="classic")
+    overrides = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class KitchenPrinterRoute(Base):

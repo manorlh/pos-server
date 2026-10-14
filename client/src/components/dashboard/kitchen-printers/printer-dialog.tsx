@@ -11,14 +11,15 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import type {
   KitchenPrinter,
-  KitchenPrinterInput,
+  KitchenPrinterWrite,
   KitchenPrintersPage,
   PrinterConnectionType,
   PrinterHostConnection,
   PrinterPurpose,
   PrintWidthDots,
+  PrinterTicketFields,
 } from '@/lib/kitchenPrintersApi';
-import { PRINT_WIDTHS } from '@/lib/kitchenPrintersApi';
+import { PRINTER_TICKET_KEYS, PRINT_WIDTHS } from '@/lib/kitchenPrintersApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -34,6 +35,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Radar } from 'lucide-react';
 import { NetworkScanDialog } from './network-scan';
+import { TicketDesignSection } from './ticket-design-section';
+import { useTicketOrderData } from './ticket-order-data';
 
 const NONE = 'none';
 const AUTO_WIDTH = 'auto';
@@ -167,13 +170,18 @@ export function PrinterDialog({
   page: KitchenPrintersPage;
   saving: boolean;
   onClose: () => void;
-  onSave: (body: KitchenPrinterInput) => void;
+  onSave: (body: KitchenPrinterWrite) => void;
   /** A new printer found by the network scan. */
   prefill?: PrinterPrefill | null;
 }) {
   const t = useTranslations('kitchenPrinters');
   const tc = useTranslations('common');
   const [form, setForm] = useState<FormState>(() => initial(printer, purpose, prefill));
+  // "עיצוב בון": the printer's own choices (null — by the till parameters), saved with it.
+  const [ticket, setTicket] = useState<PrinterTicketFields>(() =>
+    Object.fromEntries(PRINTER_TICKET_KEYS.map((k) => [k, printer?.[k] ?? null])) as PrinterTicketFields,
+  );
+  const orderData = useTicketOrderData(page.shopId, page.companyId);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
@@ -262,12 +270,14 @@ export function PrinterDialog({
       beep: form.beep,
       isActive: form.isActive,
       sortOrder: printer?.sortOrder ?? 0,
+      // A receipt printer prints no ticket: its design fields stay as they are.
+      ...(receipt ? {} : ticket),
     });
   };
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className={receipt ? 'max-h-[90vh] overflow-y-auto sm:max-w-lg' : 'max-h-[90vh] overflow-y-auto sm:max-w-3xl'}>
         <DialogHeader>
           <DialogTitle>{printer ? t('editTitle') : t('addTitle')}</DialogTitle>
           <DialogDescription>{t('dialogHint')}</DialogDescription>
@@ -481,6 +491,18 @@ export function PrinterDialog({
           </div>
 
           {receipt && form.cashDrawer && <p className="text-xs text-muted-foreground">{t('cashDrawerHint')}</p>}
+          {!receipt ? (
+            <TicketDesignSection
+              page={page}
+              printer={printer}
+              value={ticket}
+              onChange={setTicket}
+              paperWidth={form.paperWidth === '58' ? 58 : 80}
+              printerName={form.name.trim()}
+              courses={orderData.courses}
+              categories={orderData.categories}
+            />
+          ) : null}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 

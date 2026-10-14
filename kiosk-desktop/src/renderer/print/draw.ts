@@ -13,6 +13,7 @@
  */
 
 import type { BonDoc, PrintDoc, ReceiptDoc, SlipDoc, TicketDoc, ZDoc } from '../../core/printDocs';
+import { layoutTicket } from '../../core/kitchenTicketStyle';
 
 const FONT = '"Roboto", "Noto Sans Hebrew", Arial, sans-serif';
 const W = 384;
@@ -482,6 +483,49 @@ function drawBon(doc: BonDoc, w: number): HTMLCanvasElement {
   return c;
 }
 
+/**
+ * The bon in its "עיצוב בון" look (core/kitchenTicketStyle.ts — the dashboard's preview engine, here
+ * with the canvas's own text widths): its draw operations painted at 80 mm. Grey ("ממתין ל-FIRE")
+ * prints black — a thermal head has no grey; the dashed frame says it.
+ */
+function drawStyledBon(doc: BonDoc): HTMLCanvasElement {
+  const probe = canvas(10, 10).ctx;
+  const measure = (text: string, size: number, bold: boolean) => {
+    font(probe, size, bold ? 'bold' : 'normal');
+    return probe.measureText(text).width;
+  };
+  const layout = layoutTicket(doc.ticket!, doc.style!, { paper: 80, printerName: doc.printerName ?? '', measure });
+  const { c, ctx } = canvas(layout.width, layout.height);
+  for (const op of layout.ops) {
+    if (op.type === 'rect') {
+      ctx.setLineDash(op.dashed ? [8, 6] : []);
+      ctx.beginPath();
+      if (op.rounded && typeof ctx.roundRect === 'function') ctx.roundRect(op.x, op.y, op.w, op.h, Math.min(op.h / 2, 24));
+      else ctx.rect(op.x, op.y, op.w, op.h);
+      if (op.fill) ctx.fill();
+      else {
+        ctx.lineWidth = op.stroke;
+        ctx.stroke();
+      }
+    } else if (op.type === 'line') {
+      ctx.setLineDash(op.dashed ? [8, 6] : []);
+      ctx.lineWidth = op.stroke;
+      ctx.beginPath();
+      ctx.moveTo(op.x1, op.y1);
+      ctx.lineTo(op.x2, op.y2);
+      ctx.stroke();
+    } else {
+      font(ctx, op.size, op.bold ? 'bold' : 'normal');
+      ctx.textAlign = op.align === 'center' ? 'center' : 'right';
+      ctx.fillStyle = op.white ? '#FFFFFF' : '#000000';
+      ctx.fillText(op.text, op.x, op.y);
+      ctx.fillStyle = '#000000';
+    }
+  }
+  ctx.setLineDash([]);
+  return c;
+}
+
 /* ------------------------------------------------------------- the entry */
 
 function scaled(src: HTMLCanvasElement, width: number): HTMLCanvasElement {
@@ -512,7 +556,7 @@ export function loadFonts(): Promise<unknown> {
 export async function renderDoc(doc: PrintDoc, widthDots: number): Promise<{ width: number; height: number; rgba: Uint8Array }> {
   await loadFonts();
   let page: HTMLCanvasElement;
-  if (doc.kind === 'bon') page = drawBon(doc, widthDots);
+  if (doc.kind === 'bon') page = doc.ticket && doc.style ? scaled(drawStyledBon(doc), widthDots) : drawBon(doc, widthDots);
   else if (doc.kind === 'receipt') page = scaled(await drawReceiptAt384(doc), widthDots);
   else if (doc.kind === 'slip') page = scaled(drawSlipAt384(doc), widthDots);
   else if (doc.kind === 'ticket') page = scaled(drawTicketAt384(doc), widthDots);

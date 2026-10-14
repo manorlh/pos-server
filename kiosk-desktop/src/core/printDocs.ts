@@ -10,6 +10,7 @@
 
 import { BRAND_LABEL_HE, type CardBrand } from './nayax';
 import { formatAgorot, formatShekelSign, ltr } from './money';
+import { isTemplate, resolveStyle, type KitchenTicket, type TicketStyle } from './kitchenTicketStyle';
 
 /* ---------------------------------------------------------- the receipt */
 
@@ -254,6 +255,13 @@ export interface BonDoc {
   lines: Array<{ qty: number; name: string; detail: string | null; mods: string[]; removals: string[]; notes: string | null }>;
   foot: string[];
   printerName: string | null;
+  /**
+   * "עיצוב בון" (pos-server P:/specs/kitchen-ticket-designs.md §10): the bon as the till's ticket and
+   * the look it prints in (core/kitchenTicketStyle.ts — the dashboard's preview engine, byte for
+   * byte); absent — the cloud predates the designs: drawn as before.
+   */
+  ticket?: KitchenTicket;
+  style?: TicketStyle;
 }
 
 export interface BonInput {
@@ -274,7 +282,68 @@ export interface BonInput {
   sub?: string | null;
 }
 
-export function bonDoc(b: BonInput): BonDoc {
+/** The till parameters' defaults: a value equal to one is not taken as set (the kiosk gets resolved values). */
+const TICKET_PARAM_DEFAULTS: Record<string, unknown> = {
+  kitchenTicketFontScale: 100,
+  kitchenTicketHeader: 'table,guests,waiter,time,till,order,customer',
+  kitchenTicketCheckboxes: false,
+  kitchenTicketElapsed: false,
+  kitchenTicketFit: 'fit',
+  kitchenTicketMinTextSize: 's',
+  kitchenTicketMaxTextSize: 'm',
+  kitchenTicketHeaderSize: 'm',
+  kitchenTicketInlineMods: true,
+  kitchenTicketOrder: 'added',
+  kitchenTicketOrderList: '',
+  kitchenTicketGroupHeaders: 'auto',
+  kitchenTicketNoCourse: 'last',
+};
+
+/**
+ * The kiosk bon's look from the kiosk's till parameters (`kitchenTicketDesign` and its options). Its
+ * own printer is no kitchen printer of the shop, so the parameters alone decide: a template (a named
+ * design's id — the kiosk has no designs — prints `classic`), the options that differ from their
+ * defaults, the ink saver (on unless off). Null — a cloud that predates the designs, or the ticket of
+ * before with the ink saver off: drawn exactly as before.
+ */
+export function kioskBonStyle(params: Record<string, unknown>): TicketStyle | null {
+  const design = params.kitchenTicketDesign;
+  if (design === undefined || design === null) return null;
+  const template = isTemplate(design) ? design : 'classic';
+  const ink = params.kitchenTicketInkSaver !== false;
+  if (template === 'classic_legacy' && !ink) return null;
+  const set: Record<string, unknown> = { kitchenTicketInkSaver: ink };
+  for (const [key, def] of Object.entries(TICKET_PARAM_DEFAULTS)) {
+    if (params[key] !== undefined && params[key] !== null && params[key] !== def) set[key] = params[key];
+  }
+  return resolveStyle(template, { params: set });
+}
+
+/** The bon as the till's ticket (KioskBonService's): the order's label as its headline. */
+export function bonTicket(b: BonInput): KitchenTicket {
+  const title = [`הזמנה ${b.pickupLabel}`, nonBlank(b.customerName), nonBlank(b.tableRef) ? `שולחן ${b.tableRef!.trim()}` : null].filter(Boolean).join(' · ');
+  const source = [b.posNumber, b.machineName].filter((x) => x && String(x).trim()).join(' · ');
+  return {
+    source: 'sale',
+    customerName: title,
+    orderRef: b.sub ? null : nonBlank(b.documentNumber),
+    waiterName: b.kioskName,
+    createdAt: b.createdAt.toISOString(),
+    sourceName: source || null,
+    dining: b.service,
+    // "ממתין לתשלום בקופה", "הדפסה חוזרת", "עותק 2": each in its band.
+    notice: [nonBlank(b.sub ?? null), b.reprint ? 'הדפסה חוזרת' : null, b.copy > 1 ? `עותק ${b.copy}` : null].filter(Boolean).join(' · ') || null,
+    lines: b.lines.map((l) => ({
+      name: l.name,
+      quantity: l.qty,
+      mods: l.options.filter((o) => !o.startsWith('בלי ')).map((o) => `+ ${o}`),
+      removals: l.options.filter((o) => o.startsWith('בלי ')),
+      notes: nonBlank(l.notes),
+    })),
+  };
+}
+
+export function bonDoc(b: BonInput, style: TicketStyle | null = null): BonDoc {
   const title = [`הזמנה ${b.pickupLabel}`, nonBlank(b.customerName), nonBlank(b.tableRef) ? `שולחן ${b.tableRef!.trim()}` : null].filter(Boolean).join(' · ');
   const notice = [b.reprint ? 'הדפסה חוזרת' : null, b.copy > 1 ? `עותק ${b.copy}` : null].filter(Boolean).join(' · ') || null;
   const source = [b.posNumber, b.machineName].filter((x) => x && String(x).trim()).join(' · ');
@@ -294,6 +363,7 @@ export function bonDoc(b: BonInput): BonDoc {
     })),
     foot: [ltr(stamp(b.createdAt)), `מלצר/קופאי: ${b.kioskName}`, ...(source ? [`קופה: ${source}`] : [])],
     printerName: b.printerName,
+    ...(style ? { ticket: bonTicket(b), style } : {}),
   };
 }
 

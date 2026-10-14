@@ -4,6 +4,20 @@
  */
 import { api } from './api';
 import type { BonTillLocalPrinter, LocalConnection } from './kioskBonPrinters';
+import type {
+  Fit,
+  GroupHeaders,
+  HeaderSize,
+  InfoField,
+  MaxTextSize,
+  MinTextSize,
+  NoCourse,
+  OrderBy,
+  OrderEntry,
+  Overrides,
+  TemplateKey,
+  TicketStyle,
+} from './kitchenTicketStyle';
 import type { TillParameterValueType } from './types';
 
 export type PrinterConnectionType = 'network' | 'bluetooth' | 'cloud' | 'till' | 'usb';
@@ -12,7 +26,7 @@ export type PrinterPurpose = 'kitchen' | 'receipt';
 /** How a cloud printer's host till reaches it: its own head, a network / Bluetooth printer, or its own USB port. */
 export type PrinterHostConnection = 'till' | 'network' | 'bluetooth' | 'usb';
 
-export interface KitchenPrinter {
+export interface KitchenPrinter extends PrinterTicketFields {
   id: string;
   shopId: string;
   name: string;
@@ -42,6 +56,65 @@ export interface KitchenPrinter {
   updatedAt: string | null;
 }
 
+/**
+ * "עיצוב בון" of one printer (P:/specs/kitchen-ticket-designs.md §3, §10ה): a bare template or a
+ * named design (never both), and its own options over the design. null — by the till parameters.
+ */
+export interface PrinterTicketFields {
+  ticketDesign?: TemplateKey | null;
+  ticketDesignId?: string | null;
+  ticketFontScale?: number | null;
+  ticketHeader?: InfoField[] | null;
+  ticketCheckboxes?: boolean | null;
+  ticketElapsed?: boolean | null;
+  ticketFit?: Fit | null;
+  ticketMinTextSize?: MinTextSize | null;
+  ticketMaxTextSize?: MaxTextSize | null;
+  ticketHeaderSize?: HeaderSize | null;
+  ticketInlineMods?: boolean | null;
+  ticketOrder?: OrderBy | null;
+  ticketOrderList?: OrderEntry[] | null;
+  ticketGroupHeaders?: GroupHeaders | null;
+  ticketNoCourse?: NoCourse | null;
+}
+
+export const PRINTER_TICKET_KEYS: Array<keyof PrinterTicketFields> = [
+  'ticketDesign', 'ticketDesignId', 'ticketFontScale', 'ticketHeader', 'ticketCheckboxes', 'ticketElapsed',
+  'ticketFit', 'ticketMinTextSize', 'ticketMaxTextSize', 'ticketHeaderSize', 'ticketInlineMods',
+  'ticketOrder', 'ticketOrderList', 'ticketGroupHeaders', 'ticketNoCourse',
+];
+
+/** A company's named "עיצוב בון": a template and the elements it changes. */
+export interface TicketDesign {
+  id: string;
+  companyId: string;
+  companyName?: string | null;
+  name: string;
+  template: TemplateKey;
+  overrides: Overrides;
+  /** Its look with nothing else set (the card's thumbnail). */
+  style: TicketStyle;
+  updatedAt: string | null;
+  usage?: { printers: { id: string; name: string; shopId: string; shopName: string | null }[]; parameterValues: { scopeType: string; scopeId: string }[] };
+  canEdit?: boolean;
+}
+
+export interface TicketDesignsPage {
+  companyId: string;
+  canEdit: boolean;
+  designs: TicketDesign[];
+}
+
+export interface TicketDesignInput {
+  companyId?: string;
+  name?: string;
+  template?: TemplateKey;
+  overrides?: Overrides;
+}
+
+/** "הדפסת ניסיון בעיצוב הזה": the printer's unsaved choices, or a design being edited. */
+export type TestPrintDesign = PrinterTicketFields & { template?: TemplateKey; overrides?: Overrides };
+
 /** How many dots wide the printer's head prints; a narrower head than the ticket skews it. */
 export type PrintWidthDots = 576 | 512 | 432 | 384;
 export const PRINT_WIDTHS: PrintWidthDots[] = [576, 512, 432, 384];
@@ -68,6 +141,8 @@ export interface KitchenPrinterInput {
   sortOrder?: number;
 }
 
+export type KitchenPrinterWrite = KitchenPrinterInput & PrinterTicketFields;
+
 /** A printing setting's value (a till parameter: text, number or on/off). */
 export type PrinterSettingValue = string | number | boolean;
 /** The values set at one level, by parameter key; a key left out inherits. */
@@ -80,6 +155,8 @@ export interface PrinterSettingDef {
   description?: string | null;
   valueType: TillParameterValueType;
   enumOptions?: string[] | null;
+  /** The Hebrew of each option when the options are codes. */
+  enumLabels?: Record<string, string> | null;
   defaultValue?: PrinterSettingValue | null;
 }
 
@@ -117,6 +194,12 @@ export interface KitchenPrintersPage {
   options: KitchenOptions;
   /** The shop's print server ("שרת הדפסות", till parameter printHostTill), or null. */
   printHost: PrintHost | null;
+  /** The shop's company: its "עיצוב בון" designs are edited per company. */
+  companyId?: string | null;
+  /** The designs this shop's printers may name (its company's and those above it). */
+  ticketDesigns?: TicketDesign[];
+  /** The design's till parameters (`kitchenTicket*`) by shop → point of sale → till. */
+  ticketOptions?: KitchenOptions;
 }
 
 export interface PrintHost {
@@ -275,12 +358,12 @@ export async function ensureTillLocalPrinter(
   return data;
 }
 
-export async function createKitchenPrinter(shopId: string, body: KitchenPrinterInput): Promise<KitchenPrinter> {
+export async function createKitchenPrinter(shopId: string, body: KitchenPrinterWrite): Promise<KitchenPrinter> {
   const { data } = await api.post<KitchenPrinter>(`/shops/${shopId}/printers`, body);
   return data;
 }
 
-export async function updateKitchenPrinter(id: string, body: KitchenPrinterInput): Promise<KitchenPrinter> {
+export async function updateKitchenPrinter(id: string, body: KitchenPrinterWrite): Promise<KitchenPrinter> {
   const { data } = await api.put<KitchenPrinter>(`/printers/${id}`, body);
   return data;
 }
@@ -294,13 +377,50 @@ export async function deleteKitchenPrinter(id: string): Promise<void> {
  * the POST carries an `Idempotency-Key` (lib/deviceCommandsStore.ts `idempotencyHeaders`): a
  * retry with the same key never makes a second test.
  */
-export async function testKitchenPrinter(id: string, idempotencyKey?: string): Promise<PrintJob[]> {
+export async function testKitchenPrinter(
+  id: string,
+  idempotencyKey?: string,
+  design?: TestPrintDesign,
+): Promise<PrintJob[]> {
+  // No body: the plain test page. A body: the sample ticket in that design ("הדפסת ניסיון בעיצוב הזה").
   const { data } = await api.post<{ jobs: PrintJob[] }>(
     `/printers/${id}/test`,
-    {},
+    design ?? undefined,
     idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
   );
   return data.jobs ?? [];
+}
+
+// ── "עיצוב בון" ────────────────────────────────────────────────────────────────
+
+export async function fetchTicketDesigns(companyId: string): Promise<TicketDesignsPage> {
+  const { data } = await api.get<TicketDesignsPage>('/kitchen-ticket-designs', { params: { companyId } });
+  return data;
+}
+
+export async function createTicketDesign(body: TicketDesignInput): Promise<TicketDesign> {
+  const { data } = await api.post<TicketDesign>('/kitchen-ticket-designs', body);
+  return data;
+}
+
+export async function updateTicketDesign(id: string, body: TicketDesignInput): Promise<TicketDesign> {
+  const { data } = await api.put<TicketDesign>(`/kitchen-ticket-designs/${id}`, body);
+  return data;
+}
+
+export async function deleteTicketDesign(id: string): Promise<void> {
+  await api.delete(`/kitchen-ticket-designs/${id}`);
+}
+
+/** The design's till parameters at one level of the shop (null removes the level's value). */
+export async function saveTicketOptions(
+  shopId: string,
+  scopeType: 'shop' | 'area' | 'machine',
+  scopeId: string,
+  values: Record<string, PrinterSettingValue | null>,
+): Promise<KitchenOptions> {
+  const { data } = await api.put<KitchenOptions>(`/shops/${shopId}/printer-options/ticket`, { scopeType, scopeId, values });
+  return data;
 }
 
 export async function fetchPrinterTestJobs(id: string): Promise<PrintJob[]> {

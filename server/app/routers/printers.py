@@ -9,7 +9,9 @@ POST   /shops/{shop_id}/printers                 → create
 PUT    /printers/{id}                            → replace
 DELETE /printers/{id}                            → delete (its routes go with it)
 POST   /printers/{id}/test                       → a test ticket for its host, or for every
-                                                    till it applies to; the jobs
+                                                    till it applies to; the jobs. With a body
+                                                    (`TestPrintIn`): the sample ticket in a design
+                                                    ("הדפסת ניסיון בעיצוב הזה")
 GET    /printers/{id}/test-jobs                  → the last 15 minutes' test jobs, statuses
 GET    /shops/{shop_id}/printer-routing          → categories, their own and effective
                                                     printers, product overrides
@@ -20,11 +22,24 @@ GET|PUT /shops/{shop_id}/printer-routing/categories/{category} → one category,
 PUT    /shops/{shop_id}/print-host               → the shop's print server: a till, or none
 PUT    /shops/{shop_id}/printer-options          → `kitchenTicketsOnSale` /
                                                     `kitchenTicketsOnTill` at one level
+PUT    /shops/{shop_id}/printer-options/ticket   → "עיצוב בון": the default design and its options
+                                                    (`kitchenTicket*`) at one level of the shop
 GET    /shops/{shop_id}/till-local-printers      → the printers attached to the shop's tills
                                                     (built-in head, USB, Bluetooth), by name —
                                                     the kiosk's "מדפסת בונים" (SPEC_KIOSK §16.9)
 POST   /shops/{shop_id}/till-local-printers      → {machineId, connection}: the hosted printer
                                                     behind one, made or reused
+
+Kitchen ticket designs ("עיצוב בון" — per company; super admin, distributor, the company's manager;
+app/services/kitchen_ticket_designs.py, the look app/services/kitchen_ticket_style.py):
+
+GET    /kitchen-ticket-designs?companyId=        → the company's designs (and those above it), where
+                                                    each is used, the templates' catalog
+GET    /kitchen-ticket-designs/catalog           → the templates, their looks, the vocabulary, the sample
+POST   /kitchen-ticket-designs                   → {companyId, name, template, overrides}
+PUT|DELETE /kitchen-ticket-designs/{id}           → change (name / template / overrides) / delete
+                                                    (409 design_in_use while a printer or a till
+                                                    parameter names it)
 
 Kitchen stations ("תחנות" — network-wide; super admin, distributor, company manager):
 
@@ -97,8 +112,11 @@ from app.schemas.kitchen_printers import (
     PrintJobAckIn,
     PrintJobIn,
     ProductRouteIn,
+    TestPrintIn,
+    TicketDesignIn,
     TillLocalPrinterIn,
 )
+from app.services import kitchen_ticket_designs as KD
 from app.services import printers as K
 
 router = APIRouter(tags=["printers"])
@@ -149,6 +167,11 @@ def _page(db: Session, user: User, shop: Shop) -> dict:
         ],
         "options": K.options_out(db, shop),
         "printHost": K.print_host_out(db, shop),
+        # "עיצוב בון": the designs this shop's printers may name (its company's and those above it).
+        "companyId": str(shop.company_id) if shop.company_id else None,
+        "ticketDesigns": [KD.design_out(d) for d in KD.designs_for_shop(db, shop)],
+        # The design's till parameters by shop → point of sale → till, in `options`' shape.
+        "ticketOptions": K.options_out(db, shop, K.TICKET_SETTING_KEYS),
     }
 
 
@@ -229,20 +252,25 @@ def test_printer(
     db: Session = Depends(get_db),
     response: Response = None,
     idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
+    body: Optional[TestPrintIn] = None,
 ):
     """
     `409 printer_has_no_till` when no till would print it (no host / no till in scope).
     Fire-and-forget: the jobs are queued and the tills print them on their wake-up
     (`GET /printers/{id}/test-jobs` reads their status). `Idempotency-Key`: a retry never
-    prints a second test page.
+    prints a second test page. A body (`TestPrintIn`): "הדפסת ניסיון בעיצוב הזה" — the sample
+    ticket in that look; without one, the plain test page as before.
     """
     from app.services import command_idempotency as idem
 
     printer, shop = _printer_and_shop(db, printer_id, current_user, active_tenant_id)
     made: dict = {}
+    request = {"printerId": str(printer_id)}
+    if body is not None:
+        request["design"] = body.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
     def run():
-        jobs = K.create_test_jobs(db, current_user, printer)
+        jobs = K.create_test_jobs(db, current_user, printer, body)
         made["targets"] = K.job_targets(db, jobs)
         machines = {m.id: m for m in db.query(POSMachine).filter(
             POSMachine.id.in_([j.target_machine_id for j in jobs])
@@ -251,7 +279,7 @@ def test_printer(
 
     out, replayed = idem.once(
         db, tenant_id=active_tenant_id, kind="printer_test", key=idempotency_key, user=current_user,
-        request={"printerId": str(printer_id)}, run=run,
+        request=request, run=run,
         after_commit=lambda _out: background_tasks.add_task(K.publish_job_notify, made["targets"]),
         refresh=lambda first: _reread_jobs(db, first),
     )
@@ -511,6 +539,26 @@ def put_options(
     return K.options_out(db, shop)
 
 
+@router.put("/shops/{shop_id}/printer-options/ticket")
+def put_ticket_options(
+    shop_id: uuid.UUID,
+    body: KitchenOptionsIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "עיצוב בון" by shop → point of sale → till: `values` of `kitchenTicket*` (null removes the
+    level's value). A design named in `kitchenTicketDesign` must be one the shop may use (422).
+    """
+    shop = _shop(db, shop_id, active_tenant_id)
+    K.check_edit(db, current_user, shop)
+    targets = K.set_options(db, shop, body, K.TICKET_SETTING_KEYS)
+    _config_changed(db, shop, background_tasks, targets)
+    return K.options_out(db, shop, K.TICKET_SETTING_KEYS)
+
+
 @router.get("/shops/{shop_id}/till-local-printers")
 def list_till_local_printers(
     shop_id: uuid.UUID,
@@ -742,6 +790,84 @@ class StationTargetIn(BaseModel):
 
 def _stations_changed(db: Session, tenant_id, background_tasks: BackgroundTasks) -> None:
     targets = K.tenant_targets(db, tenant_id)
+    db.commit()
+    background_tasks.add_task(K.publish_config_notify, targets)
+
+
+# ── Kitchen ticket designs ("עיצוב בון") ──────────────────────────────────────
+
+
+def _designs_changed(db: Session, design, background_tasks: BackgroundTasks) -> None:
+    targets = KD.targets_of(db, design)
+    db.commit()
+    background_tasks.add_task(K.publish_config_notify, targets)
+
+
+@router.get("/kitchen-ticket-designs/catalog")
+def ticket_design_catalog(current_user: User = Depends(get_current_user)):
+    """The templates with their looks, the vocabulary and the sample ticket (static)."""
+    from app.services import kitchen_ticket_style as KTS
+
+    return KTS.catalog()
+
+
+@router.get("/kitchen-ticket-designs")
+def list_ticket_designs(
+    company_id: uuid.UUID = Query(..., alias="companyId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    company = KD.get_company(db, active_tenant_id, company_id)
+    KD.check_edit_company(db, current_user, company)
+    return KD.list_out(db, current_user, active_tenant_id, company)
+
+
+@router.post("/kitchen-ticket-designs", status_code=status.HTTP_201_CREATED)
+def create_ticket_design(
+    body: TicketDesignIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    if body.company_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="company_required")
+    company = KD.get_company(db, active_tenant_id, body.company_id)
+    design = KD.create_design(db, current_user, company, body.name, body.template or "classic", body.overrides)
+    _designs_changed(db, design, background_tasks)
+    db.refresh(design)
+    return KD.design_out(design, company.name, KD.usage_of(db, design), can_edit=True)
+
+
+@router.put("/kitchen-ticket-designs/{design_id}")
+def update_ticket_design(
+    design_id: uuid.UUID,
+    body: TicketDesignIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    design = KD.get_design(db, active_tenant_id, design_id)
+    fields = {key: getattr(body, key) for key in ("name", "template", "overrides") if key in body.model_fields_set}
+    KD.update_design(db, current_user, design, fields)
+    _designs_changed(db, design, background_tasks)
+    db.refresh(design)
+    return KD.design_out(design, None, KD.usage_of(db, design), can_edit=True)
+
+
+@router.delete("/kitchen-ticket-designs/{design_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_ticket_design(
+    design_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    design = KD.get_design(db, active_tenant_id, design_id)
+    targets = KD.targets_of(db, design)
+    KD.delete_design(db, current_user, design)
     db.commit()
     background_tasks.add_task(K.publish_config_notify, targets)
 

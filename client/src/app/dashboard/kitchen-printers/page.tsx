@@ -23,7 +23,7 @@ import {
   testKitchenPrinter,
   updateKitchenPrinter,
   type KitchenPrinter,
-  type KitchenPrinterInput,
+  type KitchenPrinterWrite,
   type PrinterPurpose,
 } from '@/lib/kitchenPrintersApi';
 import { Badge } from '@/components/ui/badge';
@@ -40,6 +40,7 @@ import { keyRing } from '@/lib/deviceCommands';
 import { trackCommand } from '@/lib/deviceCommandsStore';
 import { RoutingEditor } from '@/components/dashboard/kitchen-printers/routing-editor';
 import { OptionsCard } from '@/components/dashboard/kitchen-printers/options-card';
+import { TicketDesignsCard } from '@/components/dashboard/kitchen-printers/ticket-designs-card';
 import { StationsCard } from '@/components/dashboard/kitchen-printers/stations-card';
 import { PrintServerCard } from '@/components/dashboard/kitchen-printers/print-server-card';
 
@@ -73,7 +74,7 @@ export default function KitchenPrintersPage() {
   };
 
   const save = useMutation({
-    mutationFn: (v: { id: string | null; body: KitchenPrinterInput }) =>
+    mutationFn: (v: { id: string | null; body: KitchenPrinterWrite }) =>
       v.id ? updateKitchenPrinter(v.id, v.body) : createKitchenPrinter(shopId, v.body),
     onSuccess: (_, v) => {
       toast.success(v.id ? t('updated') : t('created'));
@@ -294,6 +295,8 @@ export default function KitchenPrintersPage() {
             />
 
             <OptionsCard page={page} />
+            <OptionsCard page={page} variant="ticket" />
+            <TicketDesignsCard page={page} />
             <PrintServerCard page={page} />
             <RoutingEditor shopId={shopId} printers={kitchen} canEdit={canEdit} />
             <StationsCard shopId={shopId} printers={kitchen} canEditShop={canEdit} />

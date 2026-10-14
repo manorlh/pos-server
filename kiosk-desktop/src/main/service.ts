@@ -19,7 +19,7 @@ import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promoti
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { bonDoc, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
+import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
@@ -1727,7 +1727,7 @@ export class KioskService extends EventEmitter {
           reprint: false,
           copy: 1,
           printerName: null,
-        }),
+        }, kioskBonStyle(this.cloud.parameters())),
       );
     }
     if (cfg.printing.pickupSlip) {
@@ -2149,7 +2149,7 @@ export class KioskService extends EventEmitter {
             reprint,
             copy: c,
             printerName: null,
-          }),
+          }, kioskBonStyle(this.cloud.parameters())),
         ),
       );
     }
