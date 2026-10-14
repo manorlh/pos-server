@@ -243,6 +243,14 @@ class TestWhoGetsIt:
         [p] = [p for p in pull(d, t1)["printers"] if p["id"] == d.receipt["id"]]
         assert p["hostDocumentRelay"] is False
 
+    def test_an_older_sender_never_gets_it(self, d):
+        t1, _ = d.tills
+        t1.capabilities = ["remote_close_v2"]
+        d.db.commit()
+        # It could pick it as its receipt destination and print nothing.
+        assert all(p["id"] != d.receipt["id"] for p in pull(d, t1)["printers"])
+        assert pull(d, t1)["drawerHosts"] == []
+
 
 # ── The job ──────────────────────────────────────────────────────────────────
 

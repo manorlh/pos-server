@@ -1499,9 +1499,12 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
     serves = bool(print_host and print_host["isSelf"])
     all_printers = shop_printers(db, machine.shop_id) if machine.shop_id is not None else []
     hosts = hosted_by_tills(db, machine, all_printers)
+    # A build that does not relay documents knows no receipt printer of type cloud: never offered one
+    # (it could pick it as its receipt destination and print nothing).
+    relays = RP.relays_documents(machine)
     if machine.shop_id is not None:
         for printer in all_printers:
-            applies = printer_applies_to(printer, machine)
+            applies = printer_applies_to(printer, machine) and (relays or not RP.is_document_printer(printer))
             hosting = printer.is_active and (
                 is_hosted_by(printer, machine)
                 # The print server prints every network / Bluetooth kitchen printer of the shop.
