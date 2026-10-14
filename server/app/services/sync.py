@@ -974,45 +974,70 @@ def update_machine_heartbeat_timestamp(db: Session, machine_id: str) -> None:
     update_machine_heartbeat(db, machine_id)
 
 
-def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -> Optional[datetime]:
+def _memo(memo: Optional[Dict[Any, Any]], key: Any, read):
+    """`read()` once per `key` within one request's `memo` (None: no sharing)."""
+    if memo is None:
+        return read()
+    if key not in memo:
+        memo[key] = read()
+    return memo[key]
+
+
+#: The watermark's points that ride the catalog pull but are sync keys of their own
+#: ("מצב סנכרון", app/services/sync_versions.py): the voucher definitions and the menu blocks.
+VOUCHER_POINTS = ("vouchers",)
+MENU_POINTS = ("menu", "catalog_menus")
+
+
+def catalog_change_points(
+    db: Session, machine: POSMachine, memo: Optional[Dict[Any, Any]] = None
+) -> Dict[str, Optional[datetime]]:
     """
-    Best-effort watermark for the newest cloud-side catalog change that should be visible to this machine.
-    Used to compute whether the machine's latest pull may be stale.
+    Every named point of the catalog watermark (`get_catalog_change_watermark_for_machine`):
+    the newest change of each kind of row that can change what this machine's catalog pull
+    returns. {} when the machine has no tenant. A `memo` dict shares the tenant- and
+    shop-level reads between the machines of one request (the devices' sync status).
     """
     tid = _resolve_tenant_id_for_machine(db, machine)
     if not tid:
-        return None
+        return {}
 
     tid_uuid = uuid_mod.UUID(str(tid)) if isinstance(tid, str) else tid
-    points: List[datetime] = []
+    points: Dict[str, Optional[datetime]] = {}
 
     # Customers ride the catalog payload, so a customer edit has to move the
     # watermark too — otherwise the till's last pull keeps looking fresh and the new
     # customer does not reach the counter until something unrelated changes.
-    customer_max = (
+    points["customers"] = _memo(memo, ("customers", tid_uuid), lambda: (
         db.query(func.max(Customer.updated_at))
         .filter(Customer.tenant_id == tid_uuid)
         .scalar()
-    )
+    ))
+    points["vouchers"] = _memo(memo, ("vouchers", tid_uuid), lambda: (
+        db.query(func.max(Voucher.updated_at))
+        .filter(Voucher.tenant_id == tid_uuid)
+        .scalar()
+    ))
 
     if machine.shop_id:
-        product_max = (
+        shop_id = machine.shop_id
+        points["products"] = _memo(memo, ("products", tid_uuid, shop_id), lambda: (
             db.query(func.max(Product.updated_at))
             .join(ShopProductOverride, ShopProductOverride.global_product_id == Product.id)
             .filter(
-                ShopProductOverride.shop_id == machine.shop_id,
+                ShopProductOverride.shop_id == shop_id,
                 Product.tenant_id == tid_uuid,
                 Product.catalog_level == CatalogLevel.GLOBAL,
                 Product.pos_machine_id.is_(None),
             )
             .scalar()
-        )
-        override_max = (
+        ))
+        points["shop_overrides"] = _memo(memo, ("shop_overrides", shop_id), lambda: (
             db.query(func.max(ShopProductOverride.updated_at))
-            .filter(ShopProductOverride.shop_id == machine.shop_id)
+            .filter(ShopProductOverride.shop_id == shop_id)
             .scalar()
-        )
-        category_max = (
+        ))
+        points["categories"] = _memo(memo, ("categories", tid_uuid), lambda: (
             db.query(func.max(Category.updated_at))
             .filter(
                 Category.tenant_id == tid_uuid,
@@ -1020,13 +1045,8 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
                 Category.pos_machine_id.is_(None),
             )
             .scalar()
-        )
-        voucher_max = (
-            db.query(func.max(Voucher.updated_at))
-            .filter(Voucher.tenant_id == tid_uuid)
-            .scalar()
-        )
-        local_product_max = (
+        ))
+        points["local_products"] = (
             db.query(func.max(Product.updated_at))
             .filter(Product.pos_machine_id == machine.id)
             .scalar()
@@ -1034,14 +1054,14 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
         # Availability set for the shop's own company, on products this shop sells —
         # the same company `_products_merged_for_shop_machine` reads, and only the rows
         # that can change what this till is sent.
-        shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
-        company_availability_max = (
+        shop = _memo(memo, ("shop", shop_id), lambda: db.query(Shop).filter(Shop.id == shop_id).first())
+        points["company_availability"] = _memo(memo, ("company_availability", shop_id), lambda: (
             db.query(func.max(CompanyProductOverride.updated_at))
             .join(
                 ShopProductOverride,
                 and_(
                     ShopProductOverride.global_product_id == CompanyProductOverride.product_id,
-                    ShopProductOverride.shop_id == machine.shop_id,
+                    ShopProductOverride.shop_id == shop_id,
                 ),
             )
             .filter(
@@ -1049,75 +1069,67 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
                 == availability.company_level_company_id(shop)
             )
             .scalar()
-        )
-        machine_availability_max = (
+        ))
+        points["machine_availability"] = (
             db.query(func.max(MachineProductOverride.updated_at))
             .filter(MachineProductOverride.machine_id == machine.id)
             .scalar()
         )
         # The area the till stands in, and when it moved there: either changes its
         # area level. No query for a till in no area.
-        area_availability_max = None
         area_id = getattr(machine, "area_id", None)
-        if area_id is not None:
-            area_availability_max = (
-                db.query(func.max(AreaProductOverride.updated_at))
-                .filter(AreaProductOverride.area_id == area_id)
-                .scalar()
-            )
+        points["area_availability"] = _memo(memo, ("area_availability", area_id), lambda: (
+            db.query(func.max(AreaProductOverride.updated_at))
+            .filter(AreaProductOverride.area_id == area_id)
+            .scalar()
+        )) if area_id is not None else None
         moved = getattr(machine, "area_changed_at", None)
+        points["area_moved"] = moved if isinstance(moved, datetime) else None
         # Category activity for this till's shop, area and itself.
-        category_availability_max = category_availability.last_change(db, machine)
+        points["category_availability"] = category_availability.last_change(db, machine)
         # The till's own list and mode: a change to either changes what it shows.
-        machine_catalog_max = machine_catalog.last_change(db, machine)
+        points["machine_catalog"] = machine_catalog.last_change(db, machine)
         # "אזל" / "חסום" anywhere in the shop or its company (app/services/sold_out.py).
         from app.models.sold_out import SoldOutMark
 
-        blocks_max = (
+        company_id = shop.company_id if shop else None
+        points["blocks"] = _memo(memo, ("blocks", shop_id), lambda: (
             db.query(func.max(SoldOutMark.updated_at))
             .filter(
-                (SoldOutMark.shop_id == machine.shop_id)
-                | ((SoldOutMark.scope == "company") & (SoldOutMark.company_id == (shop.company_id if shop else None)))
+                (SoldOutMark.shop_id == shop_id)
+                | ((SoldOutMark.scope == "company") & (SoldOutMark.company_id == company_id))
             )
             .scalar()
-        ) if sold_out.tables_ready(db) else None
-        points.append(blocks_max)
-        points.extend([
-            product_max, override_max, category_max, voucher_max,
-            local_product_max, customer_max,
-            company_availability_max, area_availability_max, machine_availability_max,
-            category_availability_max,
-            moved if isinstance(moved, datetime) else None,
-            machine_catalog_max,
-        ])
+        ) if sold_out.tables_ready(db) else None)
     else:
-        local_product_max = (
+        points["local_products"] = (
             db.query(func.max(Product.updated_at))
             .filter(Product.pos_machine_id == machine.id)
             .scalar()
         )
-        local_category_max = (
+        points["local_categories"] = (
             db.query(func.max(Category.updated_at))
             .filter(Category.pos_machine_id == machine.id)
             .scalar()
         )
-        voucher_max = (
-            db.query(func.max(Voucher.updated_at))
-            .filter(Voucher.tenant_id == tid_uuid)
-            .scalar()
-        )
-        points.extend([local_product_max, local_category_max, voucher_max, customer_max])
 
     # The menu block rides the catalog pull too (docs/SPEC_MENU_MODIFIERS.md §10.1).
     from app.services.menu import menu_changed_at
 
-    points.append(menu_changed_at(db, tid_uuid))
+    points["menu"] = _memo(memo, ("menu", tid_uuid), lambda: menu_changed_at(db, tid_uuid))
     # And the "תפריטים" block (docs/SPEC_MENUS.md).
     from app.services.catalog_menus import changed_at as catalog_menus_changed_at
 
-    points.append(catalog_menus_changed_at(db, tid_uuid))
+    points["catalog_menus"] = _memo(memo, ("catalog_menus", tid_uuid), lambda: catalog_menus_changed_at(db, tid_uuid))
+    return points
 
-    points = [p for p in points if p is not None]
+
+def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -> Optional[datetime]:
+    """
+    Best-effort watermark for the newest cloud-side catalog change that should be visible to this machine.
+    Used to compute whether the machine's latest pull may be stale.
+    """
+    points = [p for p in catalog_change_points(db, machine).values() if p is not None]
     if not points:
         return None
-    return max(_aware_utc(p) for p in points if p is not None)
+    return max(_aware_utc(p) for p in points)

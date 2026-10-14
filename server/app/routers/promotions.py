@@ -32,7 +32,7 @@ from datetime import date
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -220,11 +220,17 @@ def get_own_promotions(
     etag: Optional[str] = Query(None),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    response: Response = None,
 ):
     """
     `{"syncType": "full"|"unchanged", "etag", "serverTime", "promotions": [...]}`. Each
     promotion: `id`, `name`, `type`, `priority`, `validFrom`/`validTo` (local dates),
     `weekdays` (0 = Sunday), `startTime`/`endTime` ("HH:MM", may cross midnight),
     `maxApplications`, and `config` with category ids already including sub-categories.
+    `X-Sync-Version: promotions=<etag>` ("מצב סנכרון", app/services/sync_versions.py).
     """
-    return P.sync_response(db, machine, etag)
+    from app.services import sync_versions
+
+    out = P.sync_response(db, machine, etag)
+    sync_versions.set_header(response, {"promotions": out.get("etag")})
+    return out

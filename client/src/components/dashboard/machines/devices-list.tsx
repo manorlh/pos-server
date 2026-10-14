@@ -54,6 +54,8 @@ import { IndependentTillBadge } from '@/components/dashboard/independent-till-ba
 import { ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
 import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
+import { SyncCell } from '@/components/dashboard/machines/sync-status';
+import type { DeviceSyncStatus } from '@/lib/syncStatus';
 import { DevicePlatformBadge, DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
 import {
   MachineGroupHeader,
@@ -99,6 +101,10 @@ export interface DevicesListProps {
     selected: ReadonlySet<string>;
     onToggle: (ids: string[], on: boolean) => void;
   };
+  /** "סנכרון" (P:/specs/device-sync-status.md §3): each device's sync state, by id — read apart. */
+  syncByMachine?: ReadonlyMap<string, DeviceSyncStatus>;
+  /** "סנכרן את כל הסניף" on the shop's header; absent where not allowed. */
+  onSyncShop?: (shop: Shop) => void;
 }
 
 interface DeviceGroup {
@@ -452,6 +458,8 @@ export function DevicesList({
   onAddMachineToShop,
   onTerminalNumberForShop,
   selection,
+  syncByMachine,
+  onSyncShop,
 }: DevicesListProps) {
   const t = useTranslations('machines');
   const tv = useTranslations('machines.devicesView');
@@ -514,6 +522,7 @@ export function DevicesList({
       onTerminalNumber={
         group.shop && onTerminalNumberForShop ? () => onTerminalNumberForShop(group.shop!) : undefined
       }
+      onSyncShop={group.shop && onSyncShop && group.tills.length > 0 ? () => onSyncShop(group.shop!) : undefined}
     />
   );
 
@@ -594,6 +603,10 @@ export function DevicesList({
               <dd className="min-w-0">
                 <LastSeen m={m} />
               </dd>
+              <dt className="text-muted-foreground">סנכרון</dt>
+              <dd className="min-w-0">
+                <SyncCell status={syncByMachine?.get(m.id)} />
+              </dd>
             </dl>
             <DeviceCodeLine m={m} />
             <div className="flex flex-wrap items-center gap-1">
@@ -637,7 +650,7 @@ export function DevicesList({
 
   // ── Table ──
   const pickable = machines.filter(selectable);
-  const colCount = (selection ? 1 : 0) + (showPlace ? 1 : 0) + 9;
+  const colCount = (selection ? 1 : 0) + (showPlace ? 1 : 0) + 10;
 
   const sortHeader = (key: SortKey, label: string, className = '') => {
     const active = sort.key === key;
@@ -722,6 +735,9 @@ export function DevicesList({
             />
           </td>
           <td className="px-2 py-2">
+            <SyncCell status={syncByMachine?.get(m.id)} />
+          </td>
+          <td className="px-2 py-2">
             <LastSeen m={m} />
           </td>
           <td className="px-1 py-1">
@@ -774,6 +790,9 @@ export function DevicesList({
             {sortHeader('version', tv('columns.version'))}
             <th scope="col" className="px-2 py-2 text-start font-medium">
               {tv('columns.alerts')}
+            </th>
+            <th scope="col" className="px-2 py-2 text-start font-medium">
+              סנכרון
             </th>
             {sortHeader('lastSeen', tv('columns.lastSeen'))}
             <th scope="col" className="px-2 py-2 text-end font-medium">

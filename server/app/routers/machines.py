@@ -141,6 +141,13 @@ def _tenant_timezones(db: Session, machines: List[POSMachine]) -> Dict[Any, Opti
     }
 
 
+def _device_info_out(info: Any) -> Any:
+    """`device_info` as the machines list shows it: the sync report left out (it has its own read)."""
+    if not isinstance(info, dict) or not ("syncState" in info or "outbox" in info):
+        return info
+    return {k: v for k, v in info.items() if k not in ("syncState", "outbox")}
+
+
 def _enrich_machine_status(
     machine: POSMachine,
     db: Session,
@@ -225,7 +232,8 @@ def _enrich_machine_status(
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
-        "deviceInfo": machine.device_info,
+        # Without the sync report ("מצב סנכרון"): `GET /machines/{id}/sync-status` reads it, compared.
+        "deviceInfo": _device_info_out(machine.device_info),
         "deviceModel": machine.device_model,
         "hasPrinter": machine.has_printer,
         # False for a P18: it charges on a Nayax pinpad on the network (`pinpad*` below).
@@ -836,6 +844,12 @@ def post_my_heartbeat(
         _apply_bypass(machine, body.terminal_number_check_bypass)
     # The serial's source, the SIMs and the address the beat came from (device search).
     device_identity.apply_heartbeat(machine, body, request)
+    # "מצב סנכרון" (P:/specs/device-sync-status.md §5.3): what the device holds of each sync key and
+    # what it has not uploaded — replaced whole when the beat carries it; never fails a beat.
+    if body is not None and (body.sync_state is not None or body.outbox is not None):
+        from app.services import sync_status
+
+        sync_status.apply_report(machine, body.sync_state, body.outbox)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
     # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.

@@ -244,6 +244,13 @@ class MachineHeartbeatBody(BaseModel):
     #: The device's LAN identity for discovery (§11.6): `{publicKey, alg: "ES256"}`, an EC P-256 key;
     #: one that is not is dropped. Absent: as it was.
     lan_identity: Optional[Dict[str, Any]] = Field(None, alias="lanIdentity")
+    #: "מצב סנכרון" (P:/specs/device-sync-status.md §5.3): per sync key `{version, pulledAt, ok,
+    #: error?, errorSince?}`, cleaned value by value in app/services/sync_status.py — never a 422.
+    #: Absent: as it was.
+    sync_state: Optional[Any] = Field(None, alias="syncState")
+    #: What the device holds and has not uploaded yet: `{documents, events, attendance, refunds,
+    #: oldestAt}` (§5.3), cleaned the same way. Absent: as it was.
+    outbox: Optional[Any] = None
 
     model_config = ConfigDict(populate_by_name=True)
 

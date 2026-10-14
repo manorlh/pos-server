@@ -1922,6 +1922,28 @@ from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  #
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
 
+# "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
+# a device online but not up to date is a problem on "בעיות". Read by the cloud only.
+SYNC_STALE_MINUTES_KEY = "syncStaleMinutes"
+SYNC_STALE_MINUTES_DEFAULT = 30
+SYNC_STALE_MINUTES_MIN = 5
+SYNC_STALE_MINUTES_MAX = 1440
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=SYNC_STALE_MINUTES_KEY,
+        label="סנכרון: מכשיר לא מעודכן אחרי (דקות)",
+        value_type="integer",
+        default_value=SYNC_STALE_MINUTES_DEFAULT,
+        description=(
+            "אחרי כמה דקות מכשיר מחובר שלא קיבל את מה שהשתנה בענן (קטלוג, פרמטרים, הגדרות, עובדים, "
+            "שולחנות, תוספות, מבצעים, שוברים, מדיה), או שהמשיכה שלו נכשלת, מופיע במסך «בעיות» "
+            f"({SYNC_STALE_MINUTES_MIN}–{SYNC_STALE_MINUTES_MAX}, ברירת מחדל {SYNC_STALE_MINUTES_DEFAULT}). "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 

@@ -5,7 +5,8 @@
 
 * `devices` — a till offline (with unsent sales), unsent sales on a till that is online, the
   till's printer (no paper, overheated, error), a kiosk's health (offline, card terminal,
-  printer, KDS, its link to the till), a low battery and a till not selling while the others do;
+  printer, KDS, its link to the till), a low battery, a till not selling while the others do,
+  and a device online that has not taken the cloud's changes (`device_sync_stale`);
 * `z_shift` — a Z not done, a shift open past its date or too long, closed shifts awaiting a Z,
   a forced Z, a shop not opened by its hour;
 * `card` — card transmission late or failed, a terminal not answering, a card payment left
@@ -572,6 +573,31 @@ def _battery_items(db: Session, machines: List[POSMachine]) -> List[Tuple[Item, 
     return out
 
 
+def _sync_items(db: Session, machines: List[POSMachine], now: datetime) -> List[Tuple[Item, Optional[str]]]:
+    """
+    "מכשיר לא מעודכן" (P:/specs/device-sync-status.md §5.6): a device online whose report shows a
+    domain pending or failing for longer than its `syncStaleMinutes` (app/services/sync_status.py).
+    Never fails the screen.
+    """
+    from app.services import sync_status
+
+    try:
+        stale = sync_status.stale_devices(db, machines, now=now)
+    except Exception:  # noqa: BLE001
+        logger.exception("sync status items failed")
+        return []
+    out: List[Tuple[Item, Optional[str]]] = []
+    for m, result in stale:
+        out.append((Item(
+            id=f"sync:{m.id}", kind="device_sync_stale", group="devices",
+            severity=sync_status.severity_of(result, now), since=_parse(result.get("staleSince")),
+            title="המכשיר לא קיבל את העדכונים מהענן",
+            detail=sync_status.problem_detail(result) or None,
+            link=f"/dashboard/machines/{m.id}#sync", shop_id=m.shop_id, machine_id=m.id,
+        ), None))
+    return out
+
+
 # ── Card payments still undecided ────────────────────────────────────────────
 
 
@@ -770,6 +796,7 @@ def build(db: Session, user: User, tenant_id: Any, *, hidden: Sequence[str] = ()
     fresh(_till_items(db, tills, now))
     fresh(_kiosk_items(db, user, tenant_id, now, company_id=company_id if shop_id is None else None, shop_id=shop_id))
     fresh(_battery_items(db, machines))
+    fresh(_sync_items(db, machines, now))
     # 3. Card payments and Z-Credit.
     items.extend(_payment_items(db, reach, now, logged, company_ids=company_ids, shop_id=shop_id))
     items.extend(_zcredit_items(db, reach, machines, now, logged))

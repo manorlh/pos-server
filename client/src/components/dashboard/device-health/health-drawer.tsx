@@ -21,6 +21,7 @@ import {
   Loader2,
   PauseCircle,
   Play,
+  RefreshCw,
   Settings2,
   SlidersHorizontal,
   Terminal,
@@ -36,6 +37,7 @@ import { batteryNotWatched, durationText, levelTone, orderedParts, type KioskHea
 import { fetchKioskHealth } from '@/lib/kioskInsightsApi';
 import { OverallBadge, PART_ICON, TONE, ToneIcon, agoText, detailLines, type HealthLabels } from './health-ui';
 import { BatteryGauge, BatteryHistoryTable, BatteryNotWatched, BatterySettingsNote } from './battery';
+import { SyncStatusCard } from '@/components/dashboard/machines/sync-status';
 
 function Section({ title, icon, children, trailing }: { title: string; icon?: React.ReactNode; children: React.ReactNode; trailing?: React.ReactNode }) {
   return (
@@ -210,6 +212,11 @@ export function KioskHealthDrawer({
                       );
                     })}
                   </ul>
+                </Section>
+
+                {/* "סנכרון" (P:/specs/device-sync-status.md §3): what it holds of the cloud, "סנכרן עכשיו" */}
+                <Section title="סנכרון" icon={<RefreshCw className="h-4 w-4" aria-hidden />}>
+                  <SyncStatusCard machineId={kiosk.machineId} embedded />
                 </Section>
 
                 {/* Open alerts, and where they go */}

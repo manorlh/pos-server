@@ -206,23 +206,32 @@ def get_tables_state(
     `?since=` (`{"syncType": "unchanged", ...}`) — while nothing changed gets no state at all:
     nothing is built (app/services/tables_state.py). Without either, the full state as always.
     """
+    from app.services import sync_versions
     from app.services import tables_state as TS
 
     since = since.strip() if isinstance(since, str) and since.strip() else None
     version = TS.current_version(db, machine.shop_id)
     now = T._now()
+    # "מצב סנכרון" (app/services/sync_versions.py): `tables` — the floor plan's hash, never the
+    # orders; kept per shop and tables version, so an unchanged answer costs no more than before.
+    plan = {"tables": sync_versions.tables_version(db, machine, version)}
     if since is not None and TS.tag_matches(since, machine, version, now):
+        sync_versions.set_header(response, plan)
         return {"syncType": "unchanged", "stateVersion": version, "stateTag": since}
     held = TS.parse_tags(request.headers.get("if-none-match")) if request is not None else []
     for tag in held:
         if TS.tag_matches(tag, machine, version, now):
-            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": f'"{tag}"'})
+            return Response(
+                status_code=status.HTTP_304_NOT_MODIFIED,
+                headers={"ETag": f'"{tag}"', sync_versions.HEADER: sync_versions.header_value(plan)},
+            )
     out, tag = T.till_state_cached(db, machine, version=version, now=now)
     db.commit()  # the default reasons, the first time a tenant's are read
     out["stateVersion"] = version
     out["stateTag"] = tag
     if response is not None:
         response.headers["ETag"] = f'"{tag}"'
+    sync_versions.set_header(response, plan)
     return out
 
 

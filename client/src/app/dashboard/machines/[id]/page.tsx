@@ -69,6 +69,7 @@ import { TillResetButton } from '@/components/dashboard/machines/till-reset-dial
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
 import { DeviceLogsCard } from '@/components/dashboard/machines/device-logs';
+import { SyncStatusCard } from '@/components/dashboard/machines/sync-status';
 import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
 import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
 import { ItemBlockRoleCard } from '@/components/dashboard/machines/item-block-role-card';
@@ -642,6 +643,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           <MachineHealthPanel machine={machine} />
         </CardContent>
       </Card>
+
+      {/* "סנכרון" (P:/specs/device-sync-status.md §3): per domain ✓ / ⏳ / ✗ with the last pull, what
+          the device has not uploaded, and "סנכרן עכשיו" until everything arrived (or 60 seconds). */}
+      {!removed && machine.shopId ? (
+        <SyncStatusCard machineId={machine.id} machineName={registerLabel ?? machine.name} />
+      ) : null}
 
       {/* "עדכון שקט": device owner / silent updates, how to turn it on (adb or QR), "הפעל מחדש". */}
       <DeviceManagementCard machine={machine} />

@@ -268,11 +268,18 @@ def get_device_config(
     keep on its disk, and its part (a till: its LAN token and whether a paired display mirrors
     it; a display: the till it mirrors and where). A bare 304 when it holds the same (ETag).
     """
+    from app.services import sync_versions
+
     payload = CD.device_payload(db, machine)
     etag = CD.etag_of(payload)
+    # "מצב סנכרון" (app/services/sync_versions.py): `settings.display` (this ETag) and `media` (its files).
+    headers = {
+        "ETag": etag,
+        sync_versions.HEADER: sync_versions.header_value(sync_versions.display_versions(db, machine, payload)),
+    }
     if request.headers.get("if-none-match") == etag:
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
-    return JSONResponse(content=json.loads(json.dumps(payload, default=str)), headers={"ETag": etag})
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return JSONResponse(content=json.loads(json.dumps(payload, default=str)), headers=headers)
 
 
 @till_router.put("/{machine_id}/customer-display/state", dependencies=FISCAL_SYNC_PATH)

@@ -23,8 +23,9 @@ import os
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -146,6 +147,7 @@ from app.schemas.app_release import AppUpdateOffer, AppUpdateStatusIn, AppUpdate
 from app.services import app_updates
 from app.schemas.till_z import TillZAckIn, TillZIn
 from app.services import till_z
+from app.services import sync_versions
 from app.routers.z_reports import z_detail_out
 
 logger = logging.getLogger(__name__)
@@ -247,11 +249,15 @@ def get_catalog_sync(
     since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    response: Response = None,
 ):
     """
     Return the full or delta catalog for a machine.
     POS calls this after MQTT catalog/notify (or on connect). Pass `since` for delta sync.
     Authenticate with machine JWT or dashboard user JWT.
+
+    `X-Sync-Version: catalog=…, menu=…, vouchers=…` ("מצב סנכרון", app/services/sync_versions.py):
+    the version of all this till holds after the pull, delta or full — read before the body.
     """
 
     since_dt: Optional[datetime] = None
@@ -267,6 +273,7 @@ def get_catalog_sync(
     mqid = str(machine.id)
 
     _ensure_shop_general_item(db, machine)
+    sync_versions.set_header(response, sync_versions.catalog_versions(db, machine))
     # "סקירת שינויים לפני שידור לקופות" (docs/SPEC_MENU_BROADCAST_REVIEW.md): a shop in
     # review mode (tables on) is served the menu of its latest broadcast, not the live
     # catalog tables (the draft); what is the till's own stays live. Any other shop: as
@@ -2270,14 +2277,16 @@ def get_pos_users_sync(
     since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    response: Response = None,
 ):
     """
     Return active POS users for this machine's shop. Each row carries the bcrypt PIN
     hash so POS-desktop can authenticate cashiers fully offline.
 
     `since` enables delta sync. Soft-deleted (is_active=false) users are still returned
-    so POS can disable them locally.
+    so POS can disable them locally. `X-Sync-Version: users=…` (app/services/sync_versions.py).
     """
+    sync_versions.set_header(response, {"users": sync_versions.users_version(db, machine)})
     if not machine.shop_id:
         return PosUsersSyncResponse(
             sync_type="full",
@@ -2323,55 +2332,43 @@ def get_pos_users_sync(
 
 # ── Settings (server → POS) ───────────────────────────────────────────────────
 
-@router.get(
-    "/{machine_id}/settings",
-    response_model=SettingsSyncResponse,
-    response_model_by_alias=True,
-)
-def get_settings_sync(
-    machine_id: str,
-    since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
-    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    db: Session = Depends(get_db),
-):
+@dataclass
+class SettingsBasis:
     """
-    Return merged POS settings for this machine's shop → company hierarchy.
-    POS applies to local SQLite; cloud is source of truth for managed keys.
+    What `GET /sync/{m}/settings` starts from: the till's area, its shop's layers merged,
+    and the watermark — the newest change to anything the answer is built from. `shop` is
+    None for a till with no shop (or a shop / company that is gone): an empty answer.
     """
-    server_time = datetime.now(timezone.utc)
+
+    area: Any = None
+    shop: Any = None
+    company: Any = None
+    tenant: Any = None
+    area_layer: Any = None
+    all_settings: Dict[str, Any] = field(default_factory=dict)
+    approval_capable: bool = False
+    approval_effective: Any = None
+    watermark: Optional[datetime] = None
+
+
+def settings_basis(db: Session, machine: POSMachine, server_time: datetime) -> SettingsBasis:
+    """
+    The settings pull's basis (`SettingsBasis`). Also the `settings` sync key's version
+    ("מצב סנכרון", app/services/sync_versions.py): its watermark, read the same way.
+    """
     area, area_stamps = machine_area_for_sync(db, machine)
+    basis = SettingsBasis(area=area)
 
     if not machine.shop_id:
-        return SettingsSyncResponse(
-            sync_type="full",
-            server_time=server_time,
-            settings_updated_at=server_time,
-            settings={},
-            business_info=None,
-            area=area,
-        )
+        return basis
 
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     if not shop:
-        return SettingsSyncResponse(
-            sync_type="full",
-            server_time=server_time,
-            settings_updated_at=server_time,
-            settings={},
-            business_info=None,
-            area=area,
-        )
+        return basis
 
     company = db.query(Company).filter(Company.id == shop.company_id).first()
     if not company:
-        return SettingsSyncResponse(
-            sync_type="full",
-            server_time=server_time,
-            settings_updated_at=server_time,
-            settings={},
-            business_info=None,
-            area=area,
-        )
+        return basis
 
     tenant = None
     if company.tenant_id:
@@ -2404,7 +2401,52 @@ def get_settings_sync(
     approvals_stamp, approval_effective = approval_policy.for_settings_sync(db, machine)
     if approvals_stamp is not None:
         stamps.append(as_utc(approvals_stamp))
-    watermark = max(stamps)
+    basis.shop, basis.company, basis.tenant, basis.area_layer = shop, company, tenant, area_layer
+    basis.all_settings = all_settings
+    basis.approval_capable, basis.approval_effective = approval_capable, approval_effective
+    basis.watermark = max(stamps)
+    return basis
+
+
+@router.get(
+    "/{machine_id}/settings",
+    response_model=SettingsSyncResponse,
+    response_model_by_alias=True,
+)
+def get_settings_sync(
+    machine_id: str,
+    since: Optional[str] = Query(None, description="ISO-8601 timestamp for delta sync"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+    response: Response = None,
+):
+    """
+    Return merged POS settings for this machine's shop → company hierarchy.
+    POS applies to local SQLite; cloud is source of truth for managed keys.
+    `X-Sync-Version: settings=…` — the watermark (app/services/sync_versions.py).
+    """
+    server_time = datetime.now(timezone.utc)
+    basis = settings_basis(db, machine, server_time)
+    area = basis.area
+    sync_versions.set_header(response, {
+        "settings": sync_versions.stamp(basis.watermark) if basis.shop is not None else sync_versions.NONE,
+    })
+    if basis.shop is None:
+        return SettingsSyncResponse(
+            sync_type="full",
+            server_time=server_time,
+            settings_updated_at=server_time,
+            settings={},
+            business_info=None,
+            area=area,
+        )
+    from app.services import voucher_balance_check as voucher_balance
+    from app.services.remote_approvals import policy as approval_policy
+
+    shop, company, tenant, area_layer = basis.shop, basis.company, basis.tenant, basis.area_layer
+    all_settings = basis.all_settings
+    approval_capable, approval_effective = basis.approval_capable, basis.approval_effective
+    watermark = basis.watermark
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -2658,43 +2700,17 @@ def get_till_parameters_sync(
     `{"parameters": {key: value}, "updatedAt": ISO-8601 | null}`. Pulled on start and
     on an Ably `settings` notify with reason `till_parameters_updated`.
     """
-    from app.services.catalog_admin import view_for_machine
-
-    from app.services import item_block_control
-
-    resolved = till_parameters_for_machine(db, machine)
-    # "חסימות מהקופה" (P:/specs/item-block-control.md §6): the till's role and caps, worked out here —
-    # the one object in the map (the till keeps it as JSON, as it keeps `catalogAdminView`).
-    parameters = {
-        **resolved.parameters,
-        item_block_control.SETTINGS_KEY: item_block_control.till_out(db, machine, resolved.parameters),
-    }
-    body = TillParametersSyncResponse(
-        parameters=parameters,
-        updated_at=resolved.updated_at,
-        # "ניהול קטלוג מהקופה": what the till's catalog screen shows (specs/till-catalog-management.md §6.1).
-        catalog_admin_view=view_for_machine(db, machine, resolved.parameters),
-    )
+    body, payload, etag = sync_versions.parameters_answer(db, machine, till_parameters_for_machine)
     # Only changes cross the wire: the till pulls this on every heartbeat, so an answer
-    # identical to the one it holds is a bare 304. The ETag is a hash of the resolved
-    # map itself — a deleted value or a deactivated parameter changes it too, which a
-    # timestamp watermark would miss.
+    # identical to the one it holds is a bare 304 (the ETag: app/services/sync_versions.py).
     if request is None:  # called directly, not over HTTP
         return body
-    import hashlib
-    import json as _json
+    from fastapi.responses import Response as _Response
 
-    from fastapi.responses import JSONResponse, Response as _Response
-
-    payload = body.model_dump(mode="json", by_alias=True)
-    # The catalog view too: a menu assigned or cleared changes it with no parameter changing.
-    hashed = {"parameters": payload["parameters"], "catalogAdminView": payload.get("catalogAdminView")}
-    etag = '"' + hashlib.sha1(
-        _json.dumps(hashed, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
-    ).hexdigest() + '"'
-    if request is not None and request.headers.get("if-none-match") == etag:
-        return _Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
-    return JSONResponse(content=payload, headers={"ETag": etag})
+    headers = {"ETag": etag, sync_versions.HEADER: sync_versions.header_value({"parameters": etag})}
+    if request.headers.get("if-none-match") == etag:
+        return _Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    return JSONResponse(content=payload, headers=headers)
 
 
 # ── App updates ("עדכון קופות", server → POS) ────────────────────────────────
