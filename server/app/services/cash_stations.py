@@ -465,6 +465,16 @@ def client_ref(db: Session, machine: POSMachine) -> Dict[str, Any]:
 # ── GET /sync/{m}/cash (§11.2) ─────────────────────────────────────────────────
 
 
+def station_of_client(db: Session, machine: POSMachine) -> Optional[CashStation]:
+    """The station a kiosk / till takes cash at (its resolved `cashEnabled` + `cashStation`), or None."""
+    if machine.shop_id is None:
+        return None
+    params = machine_params(db, machine)
+    if params.get(CP.ENABLED_KEY) is not True:
+        return None
+    return resolve_station(stations_of_shop(db, machine.shop_id), params.get(CP.STATION_KEY))
+
+
 def client_view(db: Session, machine: POSMachine) -> Dict[str, Any]:
     """A kiosk's / a till's answer (`role: "client"`)."""
     params = machine_params(db, machine) if machine.shop_id is not None else {}

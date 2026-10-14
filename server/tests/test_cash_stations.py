@@ -779,6 +779,48 @@ class TestHeartbeatAndAlerts:
             OPS.acknowledge(w.db, w.till2, item["id"])
         assert e.value.status_code == 404
 
+    def test_a_kiosks_own_cash_alert_is_its_stations_cash_alert(self, w):
+        # The Android / Windows kiosk's own "cash station unreachable" (status.alerts kind "cash", §11.8): taken
+        # (it was dropped — only printer/terminal/help were), and routed as the station's cash alert.
+        device = w.db.get(KioskDevice, w.kiosk.id)
+        reported = [{"kind": "cash", "key": "cash:unreachable", "reason": "unreachable", "text": "אין קשר לעמדת המזומן",
+                     "detail": {"stationId": str(w.station.id), "stationName": "עמדת מזומן 2"}}]
+        OPS.reconcile(w.db, w.kiosk, device, {}, reported)
+        w.db.commit()
+        (row,) = cash_rows(w, "unreachable")
+        assert row.exception_type == "cash_unit" and row.severity == "high" and row.status == "new"
+        assert row.details["summary"] == "עמדת מזומן 2 (ליד קיוסק 3): קיוסק 3 — אין קשר לעמדת המזומן"
+        assert (row.details["source"], row.details["unit"]) == ("kiosk", f"kiosk:{w.kiosk.id}")
+        assert row.details["kioskName"] == "קיוסק 3" and row.details["stationId"] == str(w.station.id)
+        assert (w.till1.id, "cash_alert") in w.woken
+        # On the tills once — the station's cash alert (`cashAlertTills`, '' = the main till), never a kiosk row too.
+        items = OPS.alerts_for_till(w.db, w.till1)
+        assert [(a["kind"], a["reason"]) for a in items] == [("cash", "unreachable")]
+        assert items[0]["id"].startswith("cash:") and items[0]["kioskName"] == "עמדת מזומן 2"
+        assert OPS.alerts_for_till(w.db, w.till2) == []
+        # Still reported: nothing new. The kiosk reaches it again: closed.
+        OPS.reconcile(w.db, w.kiosk, device, {}, reported)
+        w.db.commit()
+        assert len(cash_rows(w, "unreachable", open_only=False)) == 1
+        OPS.reconcile(w.db, w.kiosk, device, {}, [])
+        w.db.commit()
+        assert cash_rows(w, "unreachable") == []
+        assert cash_rows(w, "unreachable", open_only=False)[0].details["resolvedAt"]
+        # A station id that is not one of its shop's: the kiosk's own station (cashEnabled + cashStation); none, none.
+        stray = [dict(reported[0], key="cash:x", detail={"stationId": str(uuid.uuid4())})]
+        OPS.reconcile(w.db, w.kiosk, device, {}, stray)
+        w.db.commit()
+        assert cash_rows(w, "unreachable") == []
+        OPS.reconcile(w.db, w.kiosk, device, {}, [])
+        enable_kiosk(w, w.station.id)
+        OPS.reconcile(w.db, w.kiosk, device, {}, stray)
+        w.db.commit()
+        assert len(cash_rows(w, "unreachable")) == 1
+        # An unknown kind is still dropped.
+        OPS.reconcile(w.db, w.kiosk, device, {}, stray + [{"kind": "toaster", "key": "t", "reason": "hot"}])
+        assert {r["kind"] for r in OPS._clean_reported(stray + [{"kind": "toaster", "key": "t", "reason": "hot"}])} \
+            == {"cash"}
+
     def test_the_kind_its_rule_its_phone_type_and_its_group(self):
         from types import SimpleNamespace
 

@@ -51,6 +51,9 @@ LOOKBACK = timedelta(days=1)
 SOURCE_HEARTBEAT = "heartbeat"
 SOURCE_JOURNAL = "journal"
 SOURCE_WATCH = "watch"
+#: A kiosk reported it (kiosk/sync `status.alerts` kind "cash"): one per (station, kiosk), closed when it stops.
+SOURCE_KIOSK = "kiosk"
+KIOSK_CODE = "unreachable"
 #: Their source is the journal (one per transaction), never the host's own report.
 JOURNAL_CODES = ("change_owed", "held_credit")
 
@@ -75,13 +78,15 @@ CODE_LABELS: Dict[str, str] = {
     "held_credit": "זיכוי מוחזק",
     "change_owed": "עודף חייב ללקוח",
     "unacked": "עסקה ששולמה ולא אושרה",
+    # A kiosk's own report (kiosk/sync `status.alerts`, kind "cash"): it cannot reach its station on the LAN.
+    "unreachable": "הקיוסק לא מגיע לעמדת המזומן",
 }
 SEVERITIES: Dict[str, str] = {
     "offline": "high", "driver_missing": "high", "driver_down": "high", "device_offline": "high",
     "consistency": "high", "jam": "high", "fraud": "high", "stacker_full": "high", "cashbox_removed": "high",
     "hopper_empty": "high", "des_lock": "high", "held_credit": "high",
     "door_open": "medium", "change_owed": "medium", "unacked": "medium", "hopper_low": "medium",
-    "change_low": "medium", "bills_pending": "medium", "cashbox_near_full": "low",
+    "change_low": "medium", "bills_pending": "medium", "cashbox_near_full": "low", "unreachable": "high",
 }
 
 
@@ -321,6 +326,53 @@ def reconcile_heartbeat(db: Session, host: POSMachine, report: Dict[str, Any], *
         for key, row in held.items():
             if key not in reported:
                 resolve(row, now, "שרת המזומן דיווח שהתקלה עברה")
+
+
+# ── A kiosk's own report ───────────────────────────────────────────────────────
+
+
+def _kiosk_station(db: Session, kiosk: POSMachine, detail: Dict[str, Any]) -> Any:
+    """The station the kiosk names (an active station of its shop), else the one it resolves to."""
+    from app.services.cash_stations import _uuid, get_station, station_of_client
+
+    station_id = _uuid(detail.get("stationId"))
+    named = get_station(db, station_id) if station_id is not None else None
+    if named is not None and named.is_active and named.shop_id == kiosk.shop_id:
+        return named
+    return station_of_client(db, kiosk)
+
+
+def open_kiosk_alert(db: Session, kiosk: POSMachine, kiosk_name: str, alert: Any, *, now: Optional[datetime] = None) -> Optional[AuditException]:
+    """
+    A kiosk says it cannot reach its cash station (the Android / Windows kiosk's own alert, kind "cash"): a
+    `cash_unit` alert of that station — the manager (push + problems) and the station's alert tills, as every
+    cash alert (§9א). One per (station, kiosk) while it lasts. The caller commits.
+    """
+    detail = alert.detail if isinstance(getattr(alert, "detail", None), dict) else {}
+    station = _kiosk_station(db, kiosk, detail)
+    if station is None:
+        return None
+    # The kiosk's line as the tills read it ("קיוסק 3 — עמדת המזומן קופה ראשית לא עונה"), its name first.
+    message = (getattr(alert, "text", None) or "").strip() or f"{kiosk_name or 'קיוסק'} — {label_of(KIOSK_CODE)}"
+    return open_alert(
+        db, station, code=KIOSK_CODE, unit=f"kiosk:{kiosk.id}", message=message, source=SOURCE_KIOSK, now=now,
+        extra={"kioskMachineId": str(kiosk.id), "kioskName": kiosk_name, "kioskReason": getattr(alert, "reason", None)},
+    )
+
+
+def resolve_kiosk_alerts(db: Session, kiosk: POSMachine, *, now: Optional[datetime] = None) -> int:
+    """The kiosk stopped reporting it: its stations' `unreachable` alerts for this kiosk close."""
+    from app.services.cash_stations import stations_of_shop
+
+    closed = 0
+    unit = f"kiosk:{kiosk.id}"
+    for station in stations_of_shop(db, kiosk.shop_id, active_only=False) if kiosk.shop_id is not None else []:
+        for row in rows_of_station(db, station.id):
+            details = row.details or {}
+            if details.get("source") == SOURCE_KIOSK and details.get("unit") == unit:
+                resolve(row, _now(now), "הקיוסק מגיע שוב לעמדת המזומן")
+                closed += 1
+    return closed
 
 
 # ── The offline watch ─────────────────────────────────────────────────────────
