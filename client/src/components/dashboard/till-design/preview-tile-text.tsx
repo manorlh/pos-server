@@ -194,7 +194,8 @@ export function TileName({ m, p, d, size, tileLines, weight = 700, lineHeight = 
   const { ref, layout } = useTileText(m, p, size, tileLines, weight, lineHeight, badgeRoom, badgeAxis);
   const badge = !!layout?.badge;
   const text: CSSProperties = { fontWeight: weight, lineHeight, color, textAlign: align, fontFamily: FONT };
-  // "wrap": the box is as tall as its lines (the tile grows); otherwise the tile gives it its height.
+  // "wrap": the box at least as tall as its lines (the tile grows) — its width still the tile's (a row
+  // parent's share, never its own content's); otherwise the tile gives it its height.
   const wrap = m.productText.productNameFit === 'wrap';
   return (
     <div
@@ -207,7 +208,7 @@ export function TileName({ m, p, d, size, tileLines, weight = 700, lineHeight = 
         flexDirection: 'column',
         justifyContent: align === 'center' ? 'center' : 'flex-start',
         ...style,
-        ...(wrap ? { flex: '0 0 auto', height: 'auto', maxHeight: 'none' } : {}),
+        ...(wrap ? { height: 'auto', maxHeight: 'none', minHeight: 'auto' } : {}),
       }}
     >
       {layout ? (
