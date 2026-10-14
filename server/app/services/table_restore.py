@@ -191,7 +191,7 @@ FIRE_FLOW_GROUP = "fireFlow"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
-    from app.services import course_auto_fire, table_map_display, table_policies
+    from app.services import course_auto_fire, fire_flow, table_map_display, table_policies
 
     return (
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),

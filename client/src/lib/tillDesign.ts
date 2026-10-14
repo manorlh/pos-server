@@ -129,8 +129,11 @@ export const FIELD_KEYS = ['customerName', 'serviceType', 'guests'] as const;
 export type FieldKey = (typeof FIELD_KEYS)[number];
 export const SUMMARY_STATES = ['auto', 'open', 'closed'] as const;
 export type SummaryState = (typeof SUMMARY_STATES)[number];
-/** "איך זה עובד" of the courses (P:/specs/fire-restaurant-flow.md §5, §8.1): auto — the till parameter `fireHints`. */
-export const FIRE_HINTS = ['auto', 'on', 'first_time', 'off'] as const;
+/**
+ * "איך זה עובד" of the courses (P:/specs/fire-restaurant-flow.md §5, §8.1): `hints.fireHints`, the till parameter
+ * `fireHints`'s codes; absent (the defaults have no `hints`, like `look`) — the parameter's.
+ */
+export const FIRE_HINTS = ['on', 'first_time', 'off'] as const;
 export type FireHints = (typeof FIRE_HINTS)[number];
 export const MAP_STYLES = ['auto', 'classic', 'modern'] as const;
 export type MapStyle = (typeof MAP_STYLES)[number];
@@ -279,7 +282,7 @@ export interface TillDesignConfig {
   colors: { accent: string | null; mode: ColorMode };
   texts: Partial<Record<TextKey, string>>;
   fields: Record<FieldKey, FieldMode>;
-  behavior: { summary: SummaryState; lineStatus: boolean; fireHints: FireHints };
+  behavior: { summary: SummaryState; lineStatus: boolean };
   tables: { mapStyle: MapStyle; showChairs: ShowHide };
   courses: { fireGapMinutes: number; autoFireFirst: boolean };
   payDock: { savings: boolean };
@@ -291,6 +294,8 @@ export interface TillDesignConfig {
   motion?: MotionEngineSettings;
   /** "מראה" — "שם פריט מלא ותג i": the design's own four (absent / "base": the till parameters'). */
   look?: ProductTextDesign;
+  /** "הסבר לעובד" (fire-restaurant-flow.md §5): absent — the till parameter `fireHints`. */
+  hints?: { fireHints?: FireHints };
 }
 
 /** A partial layer as stored / sent (`{overrides}`). */
@@ -338,7 +343,7 @@ export const TILL_DESIGN_DEFAULTS: TillDesignConfig = {
   colors: { accent: null, mode: 'auto' },
   texts: {},
   fields: { customerName: 'auto', serviceType: 'auto', guests: 'auto' },
-  behavior: { summary: 'auto', lineStatus: true, fireHints: 'auto' },
+  behavior: { summary: 'auto', lineStatus: true },
   tables: { mapStyle: 'auto', showChairs: 'auto' },
   // Phase 2: every default is today's behaviour.
   courses: { fireGapMinutes: 0, autoFireFirst: true },
@@ -560,7 +565,6 @@ export function tillDesignCatalog() {
       colorMode: [...COLOR_MODES],
       fieldMode: [...FIELD_MODES],
       summary: [...SUMMARY_STATES],
-      fireHints: [...FIRE_HINTS],
       mapStyle: [...MAP_STYLES],
       showChairs: [...SHOW_HIDE],
       columns: [...COLUMNS_CHOICES],
@@ -1083,7 +1087,7 @@ const SCHEMA = new ObjNode({
   colors: new ObjNode({ accent: new OrLiteralNode(new ColorNode(true), ACCENT_BRAND), mode: new EnumNode(COLOR_MODES) }),
   texts: new MapNode(new StrNode(TEXT_MAX), TEXT_KEYS),
   fields: new ObjNode(Object.fromEntries(FIELD_KEYS.map((k) => [k, new EnumNode(FIELD_MODES)]))),
-  behavior: new ObjNode({ summary: new EnumNode(SUMMARY_STATES), lineStatus: new BoolNode(), fireHints: new EnumNode(FIRE_HINTS) }),
+  behavior: new ObjNode({ summary: new EnumNode(SUMMARY_STATES), lineStatus: new BoolNode() }),
   tables: new ObjNode({ mapStyle: new EnumNode(MAP_STYLES), showChairs: new EnumNode(SHOW_HIDE) }),
   // Phase 2's sections.
   courses: new ObjNode({ fireGapMinutes: new IntOrOffNode(FIRE_GAP_MIN, FIRE_GAP_MAX), autoFireFirst: new BoolNode() }),
@@ -1133,6 +1137,9 @@ const LOOK_NODE = new PartialObjNode({
 });
 SCHEMA.fields.look = LOOK_NODE;
 SCHEMA.fill.look = {};
+/** "הסבר לעובד" (the server's `hints`): optional, like `look`. */
+SCHEMA.fields.hints = new PartialObjNode({ fireHints: new EnumNode(FIRE_HINTS) });
+SCHEMA.fill.hints = {};
 
 /* --------------------------------------------------------------- validation */
 

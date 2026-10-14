@@ -45,7 +45,7 @@ const VOCAB_OF: Record<string, string> = {
   textSize: 'textSize',
   'colors.mode': 'colorMode',
   'behavior.summary': 'summary',
-  'behavior.fireHints': 'fireHints',
+  'hints.fireHints': 'fireHints',
   'tables.mapStyle': 'mapStyle',
   'tables.showChairs': 'showChairs',
   'night.hand': 'nightHand',

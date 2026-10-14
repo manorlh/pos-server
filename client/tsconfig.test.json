@@ -159,6 +159,7 @@
     "src/lib/screenLook.test.ts",
     "src/lib/kdsLayouts.ts",
     "src/lib/kdsLayouts.test.ts",
+    "src/lib/kdsScheduled.test.ts",
     "src/lib/lanMode.ts",
     "src/lib/lanMode.test.ts",
     "src/lib/tillDesign.ts",

@@ -45,6 +45,24 @@ export function roleTitle(device: KdsDeviceInfo | null | undefined): string {
 /* --------------------------------------------------------------------- tasks */
 
 export const isHeld = (t: KdsTask): boolean => t.release === 'hold';
+
+/**
+ * A held line that waits for its own time (P:/specs/fire-restaurant-flow.md §8.4), as the screen words it:
+ * "מתוזמן 20:30" (local time), "מתוזמן · אחרי עיקריות"; null for any other line.
+ */
+export function scheduledText(t: Pick<KdsTask, 'release' | 'scheduledAt' | 'scheduledNote'>): string | null {
+  if (t.release !== 'hold') return null;
+  const parts: string[] = [];
+  if (t.scheduledAt) {
+    const at = new Date(t.scheduledAt);
+    if (!Number.isNaN(at.getTime())) {
+      parts.push(`${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`);
+    }
+  }
+  const note = (t.scheduledNote ?? '').trim();
+  if (!parts.length && !note) return null;
+  return note ? `מתוזמן${parts.length ? ` ${parts[0]}` : ''} · ${note}` : `מתוזמן ${parts[0]}`;
+}
 export const isCancelled = (t: KdsTask): boolean => t.activeQty <= EPS;
 /** Released and not cancelled: work on the screen. */
 export const isLive = (t: KdsTask): boolean => !isHeld(t) && !isCancelled(t);

@@ -632,11 +632,12 @@ class TestMapDisplayParameters:
         from app.routers import table_restore as RR
 
         got = RR.get_table_restore_params(str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w))
-        # After restoring and the payments; the courses' auto-fire (P:/specs/courses-fire-v2.md §1) comes last.
-        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "courses"]
+        # After restoring and the payments; then the courses' auto-fire (P:/specs/courses-fire-v2.md §1) and
+        # "מתי עיקריות?" / scheduled items (P:/specs/fire-restaurant-flow.md §8.1).
+        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "courses", "fireFlow"]
         mine = [p for p in got["parameters"] if p["group"] == "mapDisplay"]
         assert [p["key"] for p in mine] == list(MAP_DEFAULTS)
-        assert [p["key"] for p in got["parameters"]][-6:-2] == list(MAP_DEFAULTS)
+        assert [p["key"] for p in got["parameters"]][-12:-8] == list(MAP_DEFAULTS)
         by_key = {p["key"]: p for p in mine}
         assert by_key["mapDecor"]["enumLabels"]["full"] and by_key["mapSymbolScale"]["valueType"] == "integer"
         assert {k: got["inherited"][k] for k in MAP_DEFAULTS} == MAP_DEFAULTS

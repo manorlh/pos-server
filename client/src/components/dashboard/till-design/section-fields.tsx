@@ -26,11 +26,11 @@ import { AutoHint, FieldShell, SectionCard, SegmentField, SwitchField } from './
 
 /**
  * The till's "איך זה עובד" card of the courses (P:/specs/fire-restaurant-flow.md §5), as the choice of
- * `behavior.fireHints` shows it: the three steps, "הבנתי" and "אל תציג שוב"; off — a line saying so.
+ * `hints.fireHints` shows it: the three steps, "הבנתי" and "אל תציג שוב"; off — a line saying so.
  */
 export function FireHintsPreview() {
   const tb = useTranslations('tillDesign.behavior');
-  const f = useTillField<FireHints>('behavior.fireHints');
+  const f = useTillField<FireHints>('hints.fireHints');
   if (f.value === 'off') {
     return <p className="text-xs text-muted-foreground" data-testid="fire-hints-preview-off">{tb('fireHintsOff')}</p>;
   }
@@ -135,7 +135,7 @@ export function FieldsSection() {
         />
         <SwitchField path="behavior.lineStatus" label={tb('lineStatus')} hint={tb('lineStatusHint')} />
         <SegmentField
-          path="behavior.fireHints"
+          path="hints.fireHints"
           label={tb('fireHints')}
           hint={tb('fireHintsHint')}
           options={FIRE_HINTS.map((v) => ({ value: v, label: tv(`fireHints.${v}`) }))}
