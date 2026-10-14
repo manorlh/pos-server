@@ -56,6 +56,12 @@ class MachineCatalogProduct(BaseModel):
     #: "מחייב אישור מנהל במכירה", resolved (its own flag, or its category's or above —
     #: app/services/restricted_items.py): the kiosk editor leaves it out, as every kiosk does.
     requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
+    #: What "עיצוב קופה"'s preview shows in the item's sheet ("תג i", P:/specs/product-tile-text.md §4) and the
+    #: visual menu's cards: the description, the dietary codes (app/services/dietary.py) and the allergen codes —
+    #: as the till's catalog carries them (app/services/sync.py). Additive: an older dashboard ignores them.
+    description: Optional[str] = None
+    dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
+    allergens: List[str] = Field(default_factory=list)
 
 
 class MachineCatalogCategory(BaseModel):

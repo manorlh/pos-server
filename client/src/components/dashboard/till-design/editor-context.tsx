@@ -41,6 +41,11 @@ export interface TillEditorValue {
   serverErrors: TillDesignIssue[];
   set: (path: string, value: unknown) => void;
   reset: (path: string) => void;
+  /** "תג i": open the item's sheet in the preview, on the longest name. */
+  showProductInfo: () => void;
+  /** The preview on the sample menu (long names, a long price) even when a till's catalog has loaded. */
+  previewSample: boolean;
+  setPreviewSample: (on: boolean) => void;
 }
 
 export const TillEditorContext = createContext<TillEditorValue | null>(null);

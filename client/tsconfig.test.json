@@ -348,6 +348,8 @@
     "src/lib/exclusiveLogin.ts",
     "src/lib/exclusiveLogin.test.ts",
     "src/lib/kitchenTicketStyle.ts",
-    "src/lib/kitchenTicketStyle.test.ts"
+    "src/lib/kitchenTicketStyle.test.ts",
+    "src/lib/productTileText.ts",
+    "src/lib/productTileText.test.ts"
   ]
 }

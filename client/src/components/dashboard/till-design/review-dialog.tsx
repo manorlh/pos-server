@@ -91,8 +91,15 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
   const tf = useTranslations('tillDesign.values.fieldMode');
   const tr = useTranslations('tillDesign.review');
   const tm = useMotionText('till');
+  const tpt = useTranslations('tillDesign.productText');
   const parts = path.split('.');
   const last = parts[parts.length - 1];
+  // "מראה" — "שם פריט מלא ותג i": nothing / "base" = the till parameters'; a code in its words.
+  if (parts[0] === 'look') {
+    if (value === null || value === undefined || value === AS_BASE) return <span className="text-muted-foreground">{tpt('params')}</span>;
+    const group = last === 'productNameFit' ? 'fit' : last === 'productNameMinTextSize' ? 'minSizes' : last === 'productInfoBadge' ? 'badge' : null;
+    if (group && typeof value === 'string' && tpt.has(`${group}.${value}`)) return <span>{tpt(`${group}.${value}`)}</span>;
+  }
   if (value === null || value === undefined) return <span className="text-muted-foreground">{tr('asBase')}</span>;
   if (parts[0] === 'motion') {
     // "הנפשות": a preset, a speed, a kind, a curve, a direction, a fallback, on / off — in words.

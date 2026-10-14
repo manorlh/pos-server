@@ -38,7 +38,9 @@ import {
   menuView,
   orderCategories,
   pruneEmptyMotion,
+  pruneEmptyLook,
   pruneOverrides,
+  lookBaseValue,
   quickCashNotes,
   resolveFieldMode,
   resolveTileSize,
@@ -525,5 +527,59 @@ describe('"הנפשות": the Motion Engine in the till design (P:/specs/till-mo
     const kept = pruneEmptyMotion(setPath(setPath(TILL_DESIGN_DEFAULTS, 'motion.preset', 'fast'), 'motion.events.toast', {}));
     assert.deepEqual((kept as TillDesignConfig).motion, { preset: 'fast' });
     assert.equal(pruneEmptyMotion(TILL_DESIGN_DEFAULTS), TILL_DESIGN_DEFAULTS);
+  });
+});
+
+describe('"מראה" — "שם פריט מלא ותג i": the design look (P:/specs/product-tile-text.md §5)', () => {
+  it('is absent from the defaults: nothing set changes no till config', () => {
+    assert.equal('look' in TILL_DESIGN_DEFAULTS, false);
+    assert.deepEqual(validateTillDesign(TILL_DESIGN_DEFAULTS), []);
+    assert.deepEqual(LEGACY_FALLBACK.productText, { productNameFit: 'fit', productNameMaxLines: 3, productNameMinTextSize: 's', productInfoBadge: 'auto' });
+  });
+
+  it('validates the codes and "base" with the server codes', () => {
+    const layer = { look: { productNameFit: 'wrap', productNameMaxLines: 4, productNameMinTextSize: 'l', productInfoBadge: 'always' } };
+    assert.deepEqual(validateTillDesignLayer(layer), { cleaned: layer, errors: [] });
+    const base = { look: { productNameFit: 'base', productNameMaxLines: 'base', productNameMinTextSize: 'base', productInfoBadge: 'base' } };
+    assert.deepEqual(validateTillDesignLayer(base).errors, []);
+    assert.deepEqual(validateTillDesignLayer({ look: { productNameFit: null } }), { cleaned: {}, errors: [] });
+    assert.deepEqual(validateTillDesignLayer({ look: { productNameFit: 'params' } }).errors.map((e) => e.code), ['invalid_value']);
+    const bad = validateTillDesignLayer({
+      look: { productNameFit: 'shrink', productNameMaxLines: 5, productNameMinTextSize: 'xl', productInfoBadge: true, size: 3 },
+    });
+    assert.deepEqual(
+      bad.errors.map((e) => [e.path, e.code]).sort(),
+      [
+        ['look.productInfoBadge', 'invalid_value'],
+        ['look.productNameFit', 'invalid_value'],
+        ['look.productNameMaxLines', 'out_of_range'],
+        ['look.productNameMinTextSize', 'invalid_value'],
+        ['look.size', 'unknown_key'],
+      ],
+    );
+    assert.deepEqual(validateTillDesignLayer({ look: { productNameMaxLines: '3' } }).errors.map((e) => e.code), ['invalid_type']);
+    assert.deepEqual(validateTillDesign({ ...TILL_DESIGN_DEFAULTS, look: { productNameFit: 'clip' } }), []);
+  });
+
+  it('merges key by key; "base" undoes a level above; the saved layer is only what differs', () => {
+    const eff = resolveTillDesign(
+      { look: { productNameFit: 'wrap', productInfoBadge: 'off' } },
+      { look: { productNameMaxLines: 2 } },
+      {},
+      { look: { productNameFit: 'base' } },
+    );
+    assert.deepEqual(eff.look, { productNameFit: 'base', productInfoBadge: 'off', productNameMaxLines: 2 });
+    const inherited = resolveTillDesign({ look: { productNameFit: 'wrap' } });
+    assert.equal(lookBaseValue('productNameFit', inherited.look?.productNameFit), 'base');
+    assert.equal(lookBaseValue('productNameMaxLines', inherited.look?.productNameMaxLines), undefined);
+    const draft = setPath(inherited, 'look.productNameFit', 'base');
+    assert.deepEqual(pruneOverrides(inherited, draft), { look: { productNameFit: 'base' } });
+    // A field set and set back to inherit leaves no section, so the draft is not "changed".
+    const back = pruneEmptyLook(setPath(setPath(TILL_DESIGN_DEFAULTS, 'look.productNameFit', 'clip'), 'look.productNameFit', undefined));
+    assert.deepEqual(back, TILL_DESIGN_DEFAULTS);
+    assert.equal(pruneEmptyLook(TILL_DESIGN_DEFAULTS), TILL_DESIGN_DEFAULTS);
+    assert.deepEqual(diffConfigs({}, pruneOverrides(TILL_DESIGN_DEFAULTS, setPath(TILL_DESIGN_DEFAULTS, 'look.productInfoBadge', 'always'))), [
+      { path: 'look.productInfoBadge', before: null, after: 'always' },
+    ]);
   });
 });
