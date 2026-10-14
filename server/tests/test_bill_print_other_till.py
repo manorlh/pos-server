@@ -280,6 +280,8 @@ class TestTheJob:
         assert pending(d, t1) == []
         [job] = pending(d, t2)
         assert (job["kind"], job["ticket"]) == ("document", None)
+        # The sender's wait: the host never prints one older than that (it fell back by then).
+        assert job["timeoutSec"] == 20
         assert job["printer"]["connection"] == "till" and job["printer"]["paperWidth"] == 58
         assert base64.b64decode(job["document"]["image"]).startswith(b"\x89PNG")
         assert (job["document"]["sourceMachineId"], job["document"]["bytes"]) == (str(t1.id), len(png(576, 40)))
@@ -438,6 +440,7 @@ class TestTheParameters:
         out = send_document(d, t1, printer_id=d.receipt["id"])
         created, expires = datetime.fromisoformat(out["createdAt"]), datetime.fromisoformat(out["expiresAt"])
         assert expires - created == timedelta(seconds=90)
+        assert {j["id"]: j["timeoutSec"] for j in pending(d, t2)}[out["id"]] == 90
 
 
 # ── "לא הודפס" on "בעיות" ─────────────────────────────────────────────────────
@@ -677,6 +680,29 @@ class TestTheDrawer:
         assert (ok.event_type, ok.result, ok.decision, float(ok.amount)) == ("REMOTE_SALE", "approved", "allow", 50.0)
         assert (failed.result, failed.result_reason) == ("failed", "busy_payment")
         assert dd.db.query(AuditException).filter(AuditException.exception_type == "drawer_open").count() == 0
+
+    def test_declined_or_approved_from_the_phone(self, dd):
+        """"askDeclined" is a "לא" — logged, never an exception or an alert; a phone approval is kept as sent."""
+        from app.models.cash_drawer import CashDrawerEvent
+        from app.models.exception_alerts import ExceptionLogEntry
+
+        t1, t2 = dd.tills
+        request = uuid.uuid4()
+        declined = send_drawer(dd, t1, printer_id=dd.receipt["id"],
+                               approvedBy={"id": "pu-9", "name": "רון", "method": "remote"},
+                               approvalRequestId=str(request))["id"]
+        [job] = pending(dd, t2)
+        assert job["timeoutSec"] == 20 and job["drawer"]["approvalRequestId"] == str(request)
+        assert job["drawer"]["approvedBy"] == {"id": "pu-9", "name": "רון", "method": "remote"}
+        ack(dd, t2, declined, "failed", "askDeclined")
+        dd.db.commit()
+        dd.db.expire_all()
+        event = dd.db.get(CashDrawerEvent, uuid.UUID(declined))
+        assert (event.result, event.result_reason, event.approver_method) == ("failed", "askDeclined", "remote")
+        assert event.details["approvalRequestId"] == str(request)
+        assert dd.db.query(AuditException).count() == 0
+        assert dd.db.query(ExceptionLogEntry).count() == 0
+        assert unprinted(dd, declined) == []
 
     def test_a_drawer_opening_is_given_up_in_two_minutes(self, dd):
         t1, t2 = dd.tills
