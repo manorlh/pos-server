@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * "צבעים וטקסטים": one accent colour (null = the brand colour the till uses today; "brand" = the
+ * "מראה": one accent colour (null = the brand colour the till uses today; "brand" = the
  * brand colour over an accent the level above set, phase 2 §3.10) and light / dark / as today; every screen text the business may reword, its default as the placeholder
- * (empty = the default).
+ * (empty = the default). Then the category's colour and picture (till parameters, saved on their own) and
+ * "שם הפריט על הכפתור ותג i" (`productText`, P:/specs/product-tile-text.md §5).
  */
 
 import { useTranslations } from 'next-intl';
@@ -16,6 +17,7 @@ import { useTillField } from './editor-context';
 import { FieldShell, SectionCard, SegmentField } from './fields';
 import { DEFAULT_ACCENT } from './preview-model';
 import { CategoryDisplayCard } from './section-category-display';
+import { ProductTextCard } from './section-product-text';
 
 /** A few calm accents (one is picked; the till draws everything else in neutrals). */
 const SWATCHES = ['#007AFF', '#1663D6', '#0E7C66', '#15803D', '#6D28D9', '#B45309', '#BE123C', '#0F172A'];
@@ -109,6 +111,8 @@ export function LookSection() {
       </SectionCard>
       {/* "צבע ותמונה למחלקה": three till parameters, saved on their own (P:/specs/category-color-image.md §2). */}
       <CategoryDisplayCard />
+      {/* "שם הפריט על הכפתור ותג i": the design's own four, over the till parameters. */}
+      <ProductTextCard />
       <SectionCard title={tt('title')} description={tt('description')} paths={['texts']}>
         <div className="grid gap-4 md:grid-cols-2">
           {TEXT_KEYS.map((k) => (

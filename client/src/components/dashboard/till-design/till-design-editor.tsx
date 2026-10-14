@@ -31,6 +31,7 @@ import {
   imageCoverage,
   jsonEqual,
   pruneEmptyMotion,
+  pruneEmptyProductText,
   pruneOverrides,
   setPath,
   templatesInUse,
@@ -74,7 +75,7 @@ const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'layout', paths: ['layout', 'profiles'] },
   { key: 'menu', paths: ['menu', 'bar.favorites'] },
   { key: 'actions', paths: ['actionBar', 'quickCash', 'bar.quantityPresets', 'bar.repeatRound'] },
-  { key: 'look', paths: ['colors', 'texts'] },
+  { key: 'look', paths: ['colors', 'texts', 'productText'] },
   { key: 'fields', paths: ['fields', 'tables', 'behavior', 'orderNumber'] },
   // "הנפשות" (P:/specs/till-motion.md): the kiosk's Motion Engine on the till.
   { key: 'motion', paths: ['motion'] },
@@ -131,6 +132,9 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
   const [serverErrors, setServerErrors] = useState<TillDesignIssue[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
+  // "שם פריט מלא ותג i": the sheet opened in the preview on request, and the sample's long names on a real till.
+  const [infoNonce, setInfoNonce] = useState(0);
+  const [previewSample, setPreviewSample] = useState(false);
 
   const dirty = !jsonEqual(draft, saved);
   useEffect(() => {
@@ -203,13 +207,20 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
     setMode,
     errors,
     serverErrors,
-    // A `motion` edit may leave empty objects behind (an event back to nothing): pruned, as the server does.
+    // A `motion` or `productText` edit may leave empty objects behind (back to nothing): pruned, as the server does.
     set: (path, value) => {
-      setDraft((d) => pruneEmptyMotion(setPath(d, path, value)));
+      setDraft((d) => pruneEmptyProductText(pruneEmptyMotion(setPath(d, path, value))));
       setServerErrors((list) => (list.length ? list.filter((e) => !hits([path], e.path)) : list));
     },
-    reset: (path) => setDraft((d) => pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path))))),
+    reset: (path) => setDraft((d) => pruneEmptyProductText(pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path)))))),
+    showProductInfo: () => {
+      setShowPreview(true);
+      setInfoNonce((n) => n + 1);
+    },
+    previewSample,
+    setPreviewSample,
   };
+  const previewCatalog = previewSample ? null : catalog;
 
   const sectionErrors = (key: SectionKey) => {
     const paths = SECTIONS.find((s) => s.key === key)?.paths ?? [];
@@ -344,7 +355,7 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
                     ]}
                   />
                   <span className="text-xs text-muted-foreground">
-                    {catalog && catalog.products.length > 0 ? t('previewReal', { name: catalog.machineName }) : t('previewSample')}
+                    {previewCatalog && previewCatalog.products.length > 0 ? t('previewReal', { name: previewCatalog.machineName }) : t('previewSample')}
                   </span>
                 </div>
                 {view.template === 'courses' ? <CoursesOffNote /> : null}
@@ -355,11 +366,12 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
                 ) : null}
                 {view.template === 'visual' ? <CoverageSummary compact /> : null}
                 <TillPreview
-                  key={`${mode}:${catalog?.machineId ?? 'sample'}:${view.template === 'courses' ? 'courses' : ''}`}
+                  key={`${mode}:${previewCatalog?.machineId ?? 'sample'}:${view.template === 'courses' ? 'courses' : ''}`}
                   cfg={draft}
                   profile={profile}
                   mode={mode}
-                  catalog={catalog}
+                  catalog={previewCatalog}
+                  openInfo={infoNonce}
                   legacy={settings.legacy ?? null}
                   maxHeight={previewMaxHeight}
                   courseNames={courseNames}

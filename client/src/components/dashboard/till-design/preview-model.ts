@@ -28,6 +28,7 @@ import {
   type TileSize,
 } from '@/lib/tillDesign';
 import type { KioskSourceCatalog } from '@/lib/kioskApi';
+import { resolveProductText, type ProductTextSettings } from '@/lib/productTileText';
 
 /* ------------------------------------------------------------ the colours */
 
@@ -166,6 +167,11 @@ export interface PProduct {
   /** "תפריט ויזואלי": the dish card's description and dietary tags. */
   description?: string | null;
   dietary?: string[];
+  /** "תג i" (P:/specs/product-tile-text.md §4): the item's sheet — its allergen codes, its sizes / variants
+   * (agorot each), and why it is not on sale ("אזל" / "חסום" with the reason). */
+  allergens?: string[];
+  variants?: Array<{ name: string; price: number }>;
+  status?: { kind: 'sold_out' | 'blocked'; reason: string | null } | null;
 }
 
 export type LineStatus = 'new' | 'sent' | 'pending' | 'failed';
@@ -195,20 +201,47 @@ export const SAMPLE_CATEGORIES: PCategory[] = [
   { id: 'c-dessert', name: 'קינוחים' },
 ];
 
-const sample = (id: string, name: string, shekels: number, categoryId: string, description: string | null = null, dietary: string[] = []): PProduct => ({
+const sample = (
+  id: string,
+  name: string,
+  shekels: number,
+  categoryId: string,
+  description: string | null = null,
+  dietary: string[] = [],
+  more: Partial<PProduct> = {},
+): PProduct => ({
   id,
   name,
-  price: shekels * 100,
+  price: Math.round(shekels * 100),
   categoryId,
   imageUrl: null,
   available: true,
   description,
   dietary,
+  ...more,
 });
 
 export const SAMPLE_PRODUCTS: PProduct[] = [
-  sample('p-burger', 'המבורגר', 64, 'c-main', 'קציצת בקר 220 גרם, חסה, עגבנייה ובצל סגול, בלחמנייה של המאפייה.', ['meat']),
-  sample('p-schnitzel', 'שניצל בחלה', 54, 'c-main', 'שניצל עוף פריך בחלה טרייה, עם ירקות ורוטב הבית.', ['meat']),
+  sample('p-burger', 'המבורגר', 64, 'c-main', 'קציצת בקר 220 גרם, חסה, עגבנייה ובצל סגול, בלחמנייה של המאפייה.', ['meat'], { allergens: ['gluten', 'sesame'] }),
+  sample('p-schnitzel', 'שניצל בחלה', 54, 'c-main', 'שניצל עוף פריך בחלה טרייה, עם ירקות ורוטב הבית.', ['meat'], { allergens: ['gluten', 'eggs'] }),
+  // "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5): long names, a long price, a blocked dish with its reason.
+  sample(
+    'p-platter',
+    'פלטת גבינות זהב עם ירקות טריים ולחם הבית',
+    168,
+    'c-main',
+    'מבחר גבינות קשות ורכות, ירקות עונה טריים, זיתים ולחם הבית החם. מתאים לשניים עד שלושה סועדים.',
+    ['vegetarian', 'dairy'],
+    { allergens: ['milk', 'gluten'] },
+  ),
+  sample('p-feast', 'מגש אירוח משפחתי גדול במיוחד', 1268.5, 'c-main', 'סלטים, גבינות, דגים מעושנים, לחמים ומטבלים של הבית — לעשרה סועדים. בהזמנה מראש.', [], {
+    allergens: ['gluten', 'milk', 'fish', 'sesame'],
+  }),
+  sample('p-salmon', 'סלמון צלוי ברוטב לימון וחמאה', 92, 'c-main', 'נתח סלמון נורווגי על מצע פירה ואספרגוס.', ['gluten_free'], {
+    allergens: ['fish', 'milk'],
+    available: false,
+    status: { kind: 'blocked', reason: 'המטבח: נגמר הדג להיום' },
+  }),
   sample('p-fries', 'צ׳יפס', 16, 'c-side', 'תפוחי אדמה בחיתוך עבה, מלח ים.', ['vegan']),
   sample('p-cola', 'קולה', 14, 'c-drink'),
   sample('p-water', 'מים מינרליים', 10, 'c-drink'),
@@ -217,7 +250,12 @@ export const SAMPLE_PRODUCTS: PProduct[] = [
   sample('p-pasta', 'פסטה רוזה', 58, 'c-main', 'פנה ברוטב עגבניות ושמנת, בזיליקום טרי.', ['vegetarian', 'dairy']),
   sample('p-rings', 'טבעות בצל', 18, 'c-side', 'טבעות בצל בבלילת בירה, עם איולי חריף.', ['spicy']),
   sample('p-lemonade', 'לימונדה', 16, 'c-drink'),
-  sample('p-beer', 'בירה מהחבית', 28, 'c-drink'),
+  sample('p-beer', 'בירה מהחבית', 28, 'c-drink', null, [], {
+    variants: [
+      { name: 'שליש', price: 2800 },
+      { name: 'חצי', price: 3400 },
+    ],
+  }),
   sample('p-cheesecake', 'עוגת גבינה', 26, 'c-dessert', 'עוגת גבינה אפויה על בסיס פירורים.', ['dairy']),
 ];
 
@@ -250,16 +288,16 @@ function coursesSample(products: readonly PProduct[]): PLine[] {
 }
 
 /** The order: המבורגר ×1 (seat 1, sent), קולה ×2 (seat 2, sent), צ׳יפס ×1 (seat 1, new) → ₪108. */
-const SAMPLE_ORDER: Array<{ productIndex: number; qty: number; note: string | null; seat: number; status: LineStatus }> = [
-  { productIndex: 0, qty: 1, note: 'ללא בצל · עשוי היטב', seat: 1, status: 'sent' },
-  { productIndex: 3, qty: 2, note: null, seat: 2, status: 'sent' },
-  { productIndex: 2, qty: 1, note: null, seat: 1, status: 'new' },
+const SAMPLE_ORDER: Array<{ productId: string; qty: number; note: string | null; seat: number; status: LineStatus }> = [
+  { productId: 'p-burger', qty: 1, note: 'ללא בצל · עשוי היטב', seat: 1, status: 'sent' },
+  { productId: 'p-cola', qty: 2, note: null, seat: 2, status: 'sent' },
+  { productId: 'p-fries', qty: 1, note: null, seat: 1, status: 'new' },
 ];
 
 /** The order's starting lines on these products (the sample's dishes, else the first three on sale). */
 export function sampleLines(products: readonly PProduct[], mode: Mode): PLine[] {
   const byId = new Map(products.map((p) => [p.id, p]));
-  const owner = SAMPLE_ORDER.map((o) => byId.get(SAMPLE_PRODUCTS[o.productIndex].id)).filter((p): p is PProduct => !!p);
+  const owner = SAMPLE_ORDER.map((o) => byId.get(o.productId)).filter((p): p is PProduct => !!p);
   const picks = owner.length === SAMPLE_ORDER.length ? owner : products.filter((p) => p.available).slice(0, SAMPLE_ORDER.length);
   return picks.map((p, i) => {
     const o = SAMPLE_ORDER[i];
@@ -290,8 +328,20 @@ export function catalogProducts(catalog: KioskSourceCatalog | null | undefined):
       available: p.available,
       description: p.description ?? null,
       dietary: [...(p.dietaryTags ?? [])],
+      allergens: [...(p.allergens ?? [])],
     })),
   };
+}
+
+/**
+ * The product "פתח את חלון התיאור" shows (P:/specs/product-tile-text.md §5): the longest name, a
+ * description first among equals — the case the sheet is for.
+ */
+export function showcaseProductId(products: readonly PProduct[]): string | null {
+  let best: PProduct | null = null;
+  const score = (p: PProduct) => p.name.length * 2 + (p.description?.trim() ? 1 : 0);
+  for (const p of products) if (!best || score(p) > score(best)) best = p;
+  return best?.id ?? null;
 }
 
 /* -------------------------------------------------------------- the model */
@@ -325,6 +375,8 @@ export interface PreviewState {
   drawerOpen?: boolean;
   /** "לילה": the product just added (its quick add-ons row open). */
   lastAdded?: string | null;
+  /** "תג i": the product whose sheet is open. */
+  infoProduct?: string | null;
 }
 
 /** One lane of "לוח מנות": a course (null = "ללא שלב"), its lines and where it stands. */
@@ -385,6 +437,11 @@ export interface PreviewModel {
   dietaryShown: boolean;
   /** Whether the products are the owner's sample (no photos there). */
   sample: boolean;
+  /** "שם פריט מלא ותג i": the design's `productText` over the till parameters' (legacy). */
+  productText: ProductTextSettings;
+  /** "תג i": the product whose sheet is open, and the name of its category. */
+  infoProduct: PProduct | null;
+  infoCategory: string | null;
 }
 
 export const SEAT_COUNT = 4;
@@ -546,6 +603,7 @@ export function buildPreviewModel(opts: BuildOptions): PreviewModel {
   actions.sort((a, b) => Number(b.primary) - Number(a.primary));
 
   const byId = new Map(menu.products.map((p) => [p.id, p]));
+  const infoProduct = state.infoProduct ? (baseProducts.find((p) => p.id === state.infoProduct) ?? null) : null;
   const favorites = (cfg.bar.favorites ?? []).map((id) => byId.get(id)).filter((p): p is PProduct => !!p);
   const seats = [0, ...Array.from({ length: SEAT_COUNT }, (_, i) => i + 1)].map((seat) => {
     const own = lines.filter((l) => l.seat === seat);
@@ -598,6 +656,9 @@ export function buildPreviewModel(opts: BuildOptions): PreviewModel {
     due,
     dietaryShown: cfg.visual?.dietary === 'show' || (cfg.visual?.dietary !== 'hide' && !!legacy?.showDietaryMarks),
     sample: isSample,
+    productText: resolveProductText(cfg.productText, legacy?.productText ?? null),
+    infoProduct,
+    infoCategory: infoProduct?.categoryId ? (baseCategories.find((c) => c.id === infoProduct.categoryId)?.name ?? null) : null,
   };
 }
 
@@ -627,6 +688,7 @@ export type PreviewEvent =
   | { type: 'hold'; course: number }
   | { type: 'drawer'; open: boolean }
   | { type: 'addons'; productId: string | null }
+  | { type: 'info'; productId: string | null }
   | { type: 'reset'; state: PreviewState };
 
 /**
@@ -694,6 +756,8 @@ export function reducePreview(state: PreviewState, e: PreviewEvent): PreviewStat
       return { ...state, drawerOpen: e.open };
     case 'addons':
       return { ...state, lastAdded: e.productId };
+    case 'info':
+      return { ...state, infoProduct: e.productId };
     case 'reset':
       return e.state;
     default:

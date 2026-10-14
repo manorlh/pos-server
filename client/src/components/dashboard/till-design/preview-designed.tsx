@@ -36,6 +36,7 @@ import {
   useBoxSize,
 } from './preview-atoms';
 import type { PLine, PProduct, PreviewEvent, PreviewModel } from './preview-model';
+import { TileName, TilePrice, wrapsName } from './preview-tile-text';
 
 type D = (e: PreviewEvent) => void;
 
@@ -460,7 +461,8 @@ function SoldOut({ m }: { m: PreviewModel }) {
 
 function tileBase(m: PreviewModel, p: PProduct, height: number): CSSProperties {
   return {
-    height,
+    // "שם הפריט על הכפתור" = wrap: at least its height, taller by its name (the grid's row takes its tallest).
+    ...(wrapsName(m) ? { minHeight: height } : { height }),
     minWidth: 0,
     borderRadius: R,
     border: `1px solid ${m.t.border}`,
@@ -491,13 +493,13 @@ function CardTile({ m, p, h, d }: { m: PreviewModel; p: PProduct; h: number; d: 
     <button type="button" onClick={() => d({ type: 'add', product: p })} style={tileBase(m, p, h)} aria-label={p.name}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', opacity: p.available ? 1 : 0.45 }}>
         {photo ? <Photo url={photo} height={Math.round(h * 0.42)} /> : null}
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: inner, minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: m.fs(small ? 15 : 16), fontWeight: 600, lineHeight: 1.25, ...ellipsis(small || photo ? 1 : 2) }}>{p.name}</span>
+        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 4, padding: inner, minHeight: 0 }}>
+          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 8 }}>
+            <TileName m={m} p={p} d={d} size={m.fs(small ? 15 : 16)} weight={600} lineHeight={1.25} style={{ flex: '1 1 0' }} />
             {photo ? null : <PlusSquare m={m} size={small ? 24 : 28} />}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Num style={{ fontSize: m.fs(15), color: m.t.ink2 }}>{formatMoney(p.price)}</Num>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flex: '0 0 auto' }}>
+            <TilePrice agorot={p.price} size={m.fs(15)} weight={400} color={m.t.ink2} />
             {p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}
           </div>
         </div>
@@ -513,13 +515,13 @@ function PhotoTile({ m, p, h, d }: { m: PreviewModel; p: PProduct; h: number; d:
     <button type="button" onClick={() => d({ type: 'add', product: p })} style={tileBase(m, p, h)} aria-label={p.name}>
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', opacity: p.available ? 1 : 0.45 }}>
         {photo ? <Photo url={photo} height="auto" /> : null}
-        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: 14, minHeight: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: m.fs(photo ? 18 : 20), fontWeight: 700, lineHeight: 1.2, ...ellipsis(2) }}>{p.name}</span>
-            {p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}
+        <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 6, padding: 14, minHeight: 0 }}>
+          <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 8 }}>
+            <TileName m={m} p={p} d={d} size={m.fs(photo ? 18 : 20)} style={{ flex: '1 1 0' }} />
+            <span style={{ flex: '0 0 auto', alignSelf: 'flex-start' }}>{p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Num style={{ fontSize: m.fs(16), color: m.t.ink2 }}>{formatMoney(p.price)}</Num>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flex: '0 0 auto' }}>
+            <TilePrice agorot={p.price} size={m.fs(16)} weight={400} color={m.t.ink2} />
             <PlusSquare m={m} size={36} />
           </div>
         </div>
@@ -532,10 +534,10 @@ function KeyTile({ m, p, h, d }: { m: PreviewModel; p: PProduct; h: number; d: D
   const n = m.inOrder[p.id] ?? 0;
   return (
     <button type="button" onClick={() => d({ type: 'add', product: p })} style={tileBase(m, p, h)} aria-label={p.name}>
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: h < 66 ? '6px 10px' : '9px 10px', opacity: p.available ? 1 : 0.45 }}>
-        <span style={{ fontSize: m.fs(16), fontWeight: 700, lineHeight: 1.2, ...ellipsis(h < 70 ? 1 : 2) }}>{p.name}</span>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-          <Num style={{ fontSize: m.fs(13), color: m.t.accent, fontWeight: 600 }}>{formatMoney(p.price)}</Num>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 2, padding: h < 66 ? '6px 10px' : '9px 10px', opacity: p.available ? 1 : 0.45 }}>
+        <TileName m={m} p={p} d={d} size={m.fs(16)} style={{ flex: '1 1 0' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flex: '0 0 auto' }}>
+          <TilePrice agorot={p.price} size={m.fs(13)} weight={600} color={m.t.accent} />
           {p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}
         </div>
       </div>
@@ -552,12 +554,11 @@ function RowItem({ m, p, h, last, d }: { m: PreviewModel; p: PProduct; h: number
       onClick={() => d({ type: 'add', product: p })}
       aria-label={p.name}
       style={{
-        height: h,
+        ...(wrapsName(m) ? { minHeight: h, padding: '6px 12px' } : { height: h, padding: '0 12px' }),
         width: '100%',
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '0 12px',
         border: 'none',
         borderBottom: last ? 'none' : `1px solid ${t.border}`,
         background: 'transparent',
@@ -567,11 +568,20 @@ function RowItem({ m, p, h, last, d }: { m: PreviewModel; p: PProduct; h: number
         cursor: p.available ? 'pointer' : 'not-allowed',
       }}
     >
-      <span style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, opacity: p.available ? 1 : 0.45 }}>
-        <span style={{ fontSize: m.fs(16), fontWeight: 500, ...ellipsis(1) }}>{p.name}</span>
+      <span style={{ flex: '1 1 auto', minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center', gap: 8, opacity: p.available ? 1 : 0.45 }}>
+        {/* A row is one line tall: the name fits its height (the badge centred at its end). */}
+        <TileName
+          m={m}
+          p={p}
+          d={d}
+          size={m.fs(16)}
+          weight={500}
+          style={{ flex: '1 1 0', height: Math.max(20, h - 8), justifyContent: 'center' }}
+          badgeStyle={{ top: '50%', transform: 'translateY(-50%)' }}
+        />
         {p.available ? <CountBadge m={m} n={n} /> : <SoldOut m={m} />}
       </span>
-      <Num style={{ width: 72, fontSize: m.fs(15), color: t.ink2, textAlign: 'start', flex: '0 0 auto' }}>{formatMoney(p.price)}</Num>
+      <TilePrice agorot={p.price} size={m.fs(15)} weight={400} color={t.ink2} style={{ width: 72, flex: '0 0 72px' }} />
       <PlusSquare m={m} size={h >= 56 ? 40 : 36} />
     </button>
   );
@@ -629,7 +639,7 @@ function ProductGrid({ m, d }: { m: PreviewModel; d: D }) {
       const rows = Math.max(1, Math.ceil((size.h + G) / (th + G)));
       const shown = items.slice(0, cols * rows);
       body = (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: th, gap: G }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: wrapsName(m) ? `minmax(${th}px, auto)` : th, gap: G }}>
           {shown.map((p) =>
             style === 'photo' ? (
               <PhotoTile key={p.id} m={m} p={p} h={th} d={d} />

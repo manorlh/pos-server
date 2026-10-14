@@ -342,6 +342,8 @@
     "src/lib/liveTables.ts",
     "src/lib/liveTables.test.ts",
     "src/lib/syncStatus.ts",
-    "src/lib/syncStatus.test.ts"
+    "src/lib/syncStatus.test.ts",
+    "src/lib/productTileText.ts",
+    "src/lib/productTileText.test.ts"
   ]
 }

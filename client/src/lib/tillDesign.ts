@@ -20,6 +20,10 @@
  * "הנפשות" (P:/specs/till-motion.md "תיקון 14.10"): `motion` — the kiosk's Motion Engine on the till
  * (lib/kioskMotionEngine.ts, surface "till"), every key optional (nothing set: "legacy", today's
  * screens), merged per event and parameter; checked by the engine's own tables, as the server does.
+ *
+ * "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5): `productText` — the four till parameters of
+ * lib/productTileText.ts as the design's own fields under "מראה", every key optional (absent: the till
+ * parameters'); a code wins over the parameter, "params" undoes a level above's value.
  */
 
 import {
@@ -35,6 +39,19 @@ import {
   type MotionEventKey,
   type MotionParam,
 } from './kioskMotionEngine';
+import {
+  INFO_BADGES,
+  MIN_TEXT_SIZES,
+  NAME_FITS,
+  NAME_MAX_LINES_MAX,
+  NAME_MAX_LINES_MIN,
+  PRODUCT_TEXT_DEFAULTS,
+  PRODUCT_TEXT_PARAMS,
+  isProductTextCode,
+  type ProductTextDesign,
+  type ProductTextKey,
+  type ProductTextSettings,
+} from './productTileText';
 
 /* ------------------------------------------------------------ vocabularies */
 
@@ -269,6 +286,8 @@ export interface TillDesignConfig {
   orderNumber: { atOpen: boolean; prefix: string };
   /** "הנפשות": the Motion Engine's `motion` (absent: nothing set at any level — "legacy", today's screens). */
   motion?: MotionEngineSettings;
+  /** "שם פריט מלא ותג i": the design's own four (absent / "params": the till parameters'). */
+  productText?: ProductTextDesign;
 }
 
 /** A partial layer as stored / sent (`{overrides}`). */
@@ -1101,6 +1120,16 @@ const MOTION_NODE = new PartialObjNode({
 SCHEMA.fields.motion = MOTION_NODE;
 SCHEMA.fill.motion = {};
 
+/** "שם פריט מלא ותג i" (the server's `PRODUCT_TEXT`): each key its codes, or "params". */
+const PRODUCT_TEXT_NODE = new PartialObjNode({
+  productNameFit: new OrLiteralNode(new EnumNode(NAME_FITS), PRODUCT_TEXT_PARAMS),
+  productNameMaxLines: new OrLiteralNode(new IntNode(NAME_MAX_LINES_MIN, NAME_MAX_LINES_MAX), PRODUCT_TEXT_PARAMS),
+  productNameMinTextSize: new OrLiteralNode(new EnumNode(MIN_TEXT_SIZES), PRODUCT_TEXT_PARAMS),
+  productInfoBadge: new OrLiteralNode(new EnumNode(INFO_BADGES), PRODUCT_TEXT_PARAMS),
+});
+SCHEMA.fields.productText = PRODUCT_TEXT_NODE;
+SCHEMA.fill.productText = {};
+
 /* --------------------------------------------------------------- validation */
 
 function dedupe(errors: TillDesignIssue[]): TillDesignIssue[] {
@@ -1301,15 +1330,43 @@ export function pruneEmptyMotion<T>(cfg: T): T {
   return out as T;
 }
 
+/**
+ * The config without a `productText` an edit left empty or with keys cleared to inherit (`{}` sets
+ * nothing — the server prunes it), so a field set and set back is no change.
+ */
+export function pruneEmptyProductText<T>(cfg: T): T {
+  if (!isDict(cfg) || !('productText' in cfg)) return cfg;
+  const own = isDict(cfg.productText) ? cfg.productText : {};
+  const kept = Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined && v !== null));
+  const out: Dict = { ...cfg };
+  if (Object.keys(kept).length === 0) delete out.productText;
+  else out.productText = kept;
+  return out as T;
+}
+
+/**
+ * What "לפי פרמטרי הקופה" saves at this level for a `productText` key: "params" when the level above set
+ * a value itself (so it is undone), else nothing (inherit — the parameters already).
+ */
+export function productTextParamsValue(key: ProductTextKey, inherited: unknown): typeof PRODUCT_TEXT_PARAMS | undefined {
+  return isProductTextCode(key, inherited) ? PRODUCT_TEXT_PARAMS : undefined;
+}
+
 export interface ConfigChange {
   path: string;
   before: unknown;
   after: unknown;
 }
 
-/** Every leaf (scalar or list) that differs between two configs, by dotted path. */
+/**
+ * Every leaf (scalar or list) that differs between two configs, by dotted path. A section one side
+ * does not have at all (an optional one — `motion`, `productText` — or any section of an empty layer)
+ * is compared as an empty one, leaf by leaf.
+ */
 export function diffConfigs(before: unknown, after: unknown, prefix = ''): ConfigChange[] {
   const out: ConfigChange[] = [];
+  if (before === undefined && isDict(after)) before = {};
+  if (after === undefined && isDict(before)) after = {};
   if (isDict(before) && isDict(after)) {
     const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
     for (const key of keys) out.push(...diffConfigs(before[key], after[key], prefix ? `${prefix}.${key}` : key));
@@ -1523,6 +1580,8 @@ export interface TillDesignLegacy {
   coursesEnabled?: boolean;
   /** "הצג סימוני תזונה בקופה": the visual menu's dietary words on "auto". */
   showDietaryMarks?: boolean;
+  /** "שם פריט מלא ותג i": the four as the till parameters set them (absent from an older server). */
+  productText?: ProductTextSettings;
 }
 
 /** Nothing set in the till parameters (the hints' fallback before the server answers). */
@@ -1533,6 +1592,7 @@ export const LEGACY_FALLBACK: TillDesignLegacy = {
   tables: { mapStyle: 'classic', showChairs: 'show' },
   coursesEnabled: false,
   showDietaryMarks: false,
+  productText: { ...PRODUCT_TEXT_DEFAULTS },
 };
 
 /** Which `legacy.tileSize` key a profile and mode read. */

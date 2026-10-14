@@ -39,6 +39,7 @@ import {
 } from './preview-atoms';
 import { BillLines, BottomBlock, CategoryRow, CollapsibleSummary, Extras, MenuArea, OrderHeader, SidePanel } from './preview-designed';
 import type { CourseLane, PAction, PLine, PProduct, PreviewEvent, PreviewModel } from './preview-model';
+import { DIETARY_WORDS, TileName, TilePrice, wrapsName } from './preview-tile-text';
 
 type D = (e: PreviewEvent) => void;
 
@@ -557,15 +558,6 @@ function NightScreen({ m: base, d }: { m: PreviewModel; d: D }) {
 
 /* ------------------------------------------------------------ תפריט ויזואלי */
 
-const DIETARY_WORDS: Record<string, string> = {
-  vegan: 'טבעוני',
-  vegetarian: 'צמחוני',
-  dairy: 'חלבי',
-  meat: 'בשרי',
-  gluten_free: 'ללא גלוטן',
-  spicy: 'חריף',
-};
-
 /** The categories with at least half their products photographed (the others show as text cards). */
 function photographedCategories(products: readonly PProduct[]): Set<string | null> {
   const by = new Map<string | null, { all: number; photo: number }>();
@@ -597,8 +589,25 @@ function DishCard({ m, p, d, photoArea, h }: { m: PreviewModel; p: PProduct; d: 
   const photo = photoArea && m.showImages ? p.imageUrl : null;
   const added = m.state.lastAdded === p.id;
   const face: CSSProperties = { aspectRatio: '16 / 10', width: '100%', background: t.tint, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 8, boxSizing: 'border-box' };
+  const wrap = wrapsName(m);
+  // The name under the photo: as many lines as the setting allows (up to two beside a description), the
+  // badge at the top-left of the card's text.
+  const nameLines = Math.max(1, Math.min(m.productText.productNameMaxLines, p.description && lines > 0 ? 2 : 3));
   return (
-    <div style={{ height: h, minWidth: 0, borderRadius: R, border: `1px solid ${added ? t.accent : t.border}`, background: t.surface, overflow: 'hidden', display: 'flex', flexDirection: 'column', opacity: p.available ? 1 : 0.45 }}>
+    <div
+      style={{
+        ...(wrap ? { minHeight: h } : { height: h }),
+        position: 'relative',
+        minWidth: 0,
+        borderRadius: R,
+        border: `1px solid ${added ? t.accent : t.border}`,
+        background: t.surface,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        opacity: p.available ? 1 : 0.45,
+      }}
+    >
       {photoArea && m.showImages ? (
         photo ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -610,11 +619,11 @@ function DishCard({ m, p, d, photoArea, h }: { m: PreviewModel; p: PProduct; d: 
         )
       ) : null}
       <div style={{ flex: '1 1 auto', minHeight: 0, padding: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ fontSize: m.fs(18), fontWeight: 700, ...ellipsis(p.description && lines > 0 ? 1 : 2) }}>{p.name}</span>
+        <TileName m={m} p={p} d={d} size={m.fs(18)} style={{ flex: '0 1 auto', height: Math.ceil(m.fs(18) * 1.2 * nameLines) }} />
         {p.description && lines > 0 ? <span style={{ fontSize: m.fs(13), color: t.ink2, lineHeight: 1.35, ...ellipsis(lines) }}>{p.description}</span> : null}
         <DietaryWords m={m} p={p} />
         <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <Num style={{ fontSize: m.fs(16), fontWeight: 600 }}>{formatMoney(p.price)}</Num>
+          <TilePrice agorot={p.price} size={m.fs(16)} weight={600} />
           {added ? <span style={{ fontSize: m.fs(12), fontWeight: 700, color: t.accent }}>נוסף</span> : null}
           <button type="button" aria-label={`הוספת ${p.name}`} onClick={() => d({ type: 'add', product: p })} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
             <PlusSquare m={m} size={40} />
@@ -640,9 +649,11 @@ function DishRow({ m, p, d, photoArea }: { m: PreviewModel; p: PProduct; d: D; p
         )
       ) : null}
       <span style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <span style={{ fontSize: m.fs(16), fontWeight: 700, ...ellipsis(1) }}>{p.name}</span>
+        <TileName m={m} p={p} d={d} size={m.fs(16)} style={{ height: Math.ceil(m.fs(16) * 1.2 * Math.min(2, m.productText.productNameMaxLines)) }} />
         {p.description && (m.cfg.visual?.descriptionLines ?? 2) > 0 ? <span style={{ fontSize: m.fs(13), color: t.ink2, ...ellipsis(1) }}>{p.description}</span> : null}
-        <Num style={{ fontSize: m.fs(15), fontWeight: 600 }}>{formatMoney(p.price)}</Num>
+        <span style={{ display: 'flex' }}>
+          <TilePrice agorot={p.price} size={m.fs(15)} weight={600} />
+        </span>
       </span>
       <button type="button" aria-label={`הוספת ${p.name}`} onClick={() => d({ type: 'add', product: p })} style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer' }}>
         <PlusSquare m={m} size={40} />
@@ -671,7 +682,7 @@ function DishGrid({ m, d }: { m: PreviewModel; d: D }) {
       const anyPhoto = m.products.some((p) => photographed.has(p.categoryId));
       const h = tileHeight({ style: 'dish', size: m.tileSize, density: m.view.density, tileWidth: tileW, withPhoto: anyPhoto && m.showImages });
       body = (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: h, gap: G }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: wrapsName(m) ? `minmax(${h}px, auto)` : h, gap: G }}>
           {m.products.slice(0, cols * Math.max(1, Math.ceil((size.h + G) / (h + G)))).map((p) => (
             <DishCard key={p.id} m={m} p={p} d={d} photoArea={photographed.has(p.categoryId)} h={h} />
           ))}

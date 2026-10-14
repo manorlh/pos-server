@@ -38,7 +38,9 @@ import {
   menuView,
   orderCategories,
   pruneEmptyMotion,
+  pruneEmptyProductText,
   pruneOverrides,
+  productTextParamsValue,
   quickCashNotes,
   resolveFieldMode,
   resolveTileSize,
@@ -525,5 +527,58 @@ describe('"הנפשות": the Motion Engine in the till design (P:/specs/till-mo
     const kept = pruneEmptyMotion(setPath(setPath(TILL_DESIGN_DEFAULTS, 'motion.preset', 'fast'), 'motion.events.toast', {}));
     assert.deepEqual((kept as TillDesignConfig).motion, { preset: 'fast' });
     assert.equal(pruneEmptyMotion(TILL_DESIGN_DEFAULTS), TILL_DESIGN_DEFAULTS);
+  });
+});
+
+describe('"שם פריט מלא ותג i": the design productText (P:/specs/product-tile-text.md §5)', () => {
+  it('is absent from the defaults: nothing set changes no till config', () => {
+    assert.equal('productText' in TILL_DESIGN_DEFAULTS, false);
+    assert.deepEqual(validateTillDesign(TILL_DESIGN_DEFAULTS), []);
+    assert.deepEqual(LEGACY_FALLBACK.productText, { productNameFit: 'fit', productNameMaxLines: 3, productNameMinTextSize: 's', productInfoBadge: 'auto' });
+  });
+
+  it('validates the codes and "params" with the server codes', () => {
+    const layer = { productText: { productNameFit: 'wrap', productNameMaxLines: 4, productNameMinTextSize: 'l', productInfoBadge: 'always' } };
+    assert.deepEqual(validateTillDesignLayer(layer), { cleaned: layer, errors: [] });
+    const params = { productText: { productNameFit: 'params', productNameMaxLines: 'params', productNameMinTextSize: 'params', productInfoBadge: 'params' } };
+    assert.deepEqual(validateTillDesignLayer(params).errors, []);
+    assert.deepEqual(validateTillDesignLayer({ productText: { productNameFit: null } }), { cleaned: {}, errors: [] });
+    const bad = validateTillDesignLayer({
+      productText: { productNameFit: 'shrink', productNameMaxLines: 5, productNameMinTextSize: 'xl', productInfoBadge: true, size: 3 },
+    });
+    assert.deepEqual(
+      bad.errors.map((e) => [e.path, e.code]).sort(),
+      [
+        ['productText.productInfoBadge', 'invalid_value'],
+        ['productText.productNameFit', 'invalid_value'],
+        ['productText.productNameMaxLines', 'out_of_range'],
+        ['productText.productNameMinTextSize', 'invalid_value'],
+        ['productText.size', 'unknown_key'],
+      ],
+    );
+    assert.deepEqual(validateTillDesignLayer({ productText: { productNameMaxLines: '3' } }).errors.map((e) => e.code), ['invalid_type']);
+    assert.deepEqual(validateTillDesign({ ...TILL_DESIGN_DEFAULTS, productText: { productNameFit: 'clip' } }), []);
+  });
+
+  it('merges key by key; "params" undoes a level above; the saved layer is only what differs', () => {
+    const eff = resolveTillDesign(
+      { productText: { productNameFit: 'wrap', productInfoBadge: 'off' } },
+      { productText: { productNameMaxLines: 2 } },
+      {},
+      { productText: { productNameFit: 'params' } },
+    );
+    assert.deepEqual(eff.productText, { productNameFit: 'params', productInfoBadge: 'off', productNameMaxLines: 2 });
+    const inherited = resolveTillDesign({ productText: { productNameFit: 'wrap' } });
+    assert.equal(productTextParamsValue('productNameFit', inherited.productText?.productNameFit), 'params');
+    assert.equal(productTextParamsValue('productNameMaxLines', inherited.productText?.productNameMaxLines), undefined);
+    const draft = setPath(inherited, 'productText.productNameFit', 'params');
+    assert.deepEqual(pruneOverrides(inherited, draft), { productText: { productNameFit: 'params' } });
+    // A field set and set back to inherit leaves no section, so the draft is not "changed".
+    const back = pruneEmptyProductText(setPath(setPath(TILL_DESIGN_DEFAULTS, 'productText.productNameFit', 'clip'), 'productText.productNameFit', undefined));
+    assert.deepEqual(back, TILL_DESIGN_DEFAULTS);
+    assert.equal(pruneEmptyProductText(TILL_DESIGN_DEFAULTS), TILL_DESIGN_DEFAULTS);
+    assert.deepEqual(diffConfigs({}, pruneOverrides(TILL_DESIGN_DEFAULTS, setPath(TILL_DESIGN_DEFAULTS, 'productText.productInfoBadge', 'always'))), [
+      { path: 'productText.productInfoBadge', before: null, after: 'always' },
+    ]);
   });
 });

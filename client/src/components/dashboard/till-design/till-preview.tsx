@@ -11,7 +11,7 @@
  * "לוח מנות" in a quick order is "נקי", as on the till.
  */
 
-import { useMemo, useReducer, type ReactNode } from 'react';
+import { useEffect, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { KioskSourceCatalog } from '@/lib/kioskApi';
 import { PHASE2_NEW_TEMPLATES, forProfile, type Mode, type Profile, type Template, type TillDesignConfig, type TillDesignLegacy } from '@/lib/tillDesign';
 import { FONT, useBoxSize } from './preview-atoms';
@@ -24,14 +24,17 @@ import {
   initialState,
   reducePreview,
   SAMPLE_PRODUCTS,
+  showcaseProductId,
   type PreviewEvent,
   type PreviewModel,
 } from './preview-model';
+import { InfoSheet, useTileFonts } from './preview-tile-text';
 
 const NOOP = () => undefined;
 
-/** One till screen at its real size (no scaling). */
+/** One till screen at its real size (no scaling); the item's sheet ("תג i") over it when open. */
 export function TillScreen({ m, d = NOOP }: { m: PreviewModel; d?: (e: PreviewEvent) => void }) {
+  useTileFonts();
   return (
     <div
       dir="rtl"
@@ -56,6 +59,7 @@ export function TillScreen({ m, d = NOOP }: { m: PreviewModel; d?: (e: PreviewEv
       ) : (
         <DesignedScreen m={m} d={d} />
       )}
+      <InfoSheet m={m} d={d} />
     </div>
   );
 }
@@ -117,6 +121,8 @@ export interface TillPreviewProps {
   maxHeight?: number;
   /** "לוח מנות": the company's courses ("שלבי הגשה"). */
   courseNames?: string[];
+  /** "תג i": a count the editor bumps to open the item's sheet on the longest name (0: never asked). */
+  openInfo?: number;
 }
 
 /** What a mode of a profile draws: "לוח מנות" has no courses in a quick order — "נקי" there. */
@@ -129,9 +135,17 @@ export function drawnTemplate(cfg: TillDesignConfig, profile: Profile, mode: Mod
  * switch starts the order afresh (a template or profile switch keeps it, as rotation does on
  * the till).
  */
-export function TillPreview({ cfg, profile, mode, catalog, legacy, brandColor, maxHeight, courseNames }: TillPreviewProps) {
+export function TillPreview({ cfg, profile, mode, catalog, legacy, brandColor, maxHeight, courseNames, openInfo = 0 }: TillPreviewProps) {
   const products = useMemo(() => catalogProducts(catalog)?.products ?? SAMPLE_PRODUCTS, [catalog]);
   const [state, dispatch] = useReducer(reducePreview, undefined, () => initialState(products, mode, forProfile(cfg, profile).template));
+  // "פתח את חלון התיאור": the sheet of the product with the longest name (the case it is for) — on a new
+  // request only, not again when the preview starts afresh (another mode or catalog).
+  const handled = useRef(openInfo);
+  useEffect(() => {
+    if (openInfo === handled.current) return;
+    handled.current = openInfo;
+    dispatch({ type: 'info', productId: showcaseProductId(products) });
+  }, [openInfo, products]);
   const forced = drawnTemplate(cfg, profile, mode);
   const m = buildPreviewModel({ cfg, profile, mode, catalog, legacy, brandColor, state, courseNames, template: forced });
   return (

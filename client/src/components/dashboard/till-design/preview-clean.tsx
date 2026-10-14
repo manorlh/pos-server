@@ -21,6 +21,7 @@ import { ArrowLeft, ArrowRight, MoreVertical, Plus, ScanLine, Search, Send, Shop
 import { DENSITY_FACTOR, TILE_HEIGHT_DP, type TileSize } from '@/lib/tillDesign';
 import { FONT, Num, ellipsis, fitChips, formatMoney, useBoxSize } from './preview-atoms';
 import { mixHex, type PAction, type PProduct, type PreviewEvent, type PreviewModel } from './preview-model';
+import { InfoBadge, TileName, TilePrice, badgeWithoutName, wrapsName } from './preview-tile-text';
 
 type D = (e: PreviewEvent) => void;
 type Size = Exclude<TileSize, 'auto'>;
@@ -51,7 +52,21 @@ function productColumns(paneWidth: number, size: Size, handheld: boolean): numbe
   return Math.max(2, Math.min(8, Math.floor((paneWidth - 16 + 6) / (target + 6))));
 }
 
-/** The largest name size (sp) that keeps a dish's name to three lines on its card's face. */
+/**
+ * The face's own name size for "שם הפריט על הכפתור" = fit (P:/specs/product-tile-text.md §3): the
+ * largest of today's sizes the tile's width takes; the fit makes it smaller as the name needs.
+ */
+function faceTopSp(tileWidth: number): number {
+  const width = tileWidth > 0 ? tileWidth : 82;
+  return [22, 20, 18, 16, 15, 14].find((sp) => sp <= width / 5) ?? 13;
+}
+
+/** The face's name size: fit starts at the top size; wrap and clip keep today's size by the name's length. */
+function faceSp(m: PreviewModel, name: string, tileWidth: number): number {
+  return m.productText.productNameFit === 'fit' ? faceTopSp(tileWidth) : faceNameSp(name, tileWidth);
+}
+
+/** The largest name size (sp) that keeps a dish's name to three lines on its card's face (today's rule). */
 function faceNameSp(name: string, tileWidth: number): number {
   const width = tileWidth > 0 ? tileWidth : 82;
   const length = Math.max(1, name.trim().length);
@@ -152,6 +167,7 @@ function DishCard({ m, p, w, compact, d }: { m: PreviewModel; p: PProduct; w: nu
   const face = Math.round(w * 0.75) + (compact ? 18 : 22);
   const plus = compact ? 24 : 32;
   const photo = m.showImages && p.imageUrl ? p.imageUrl : null;
+  const wrap = wrapsName(m);
   return (
     <button
       type="button"
@@ -172,18 +188,43 @@ function DishCard({ m, p, w, compact, d }: { m: PreviewModel; p: PProduct; w: nu
       }}
     >
       <div style={{ opacity: p.available ? 1 : 0.45 }}>
-        <div style={{ height: face, background: t.tint, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '28px 4px 4px' }}>
+        <div
+          style={{
+            ...(wrap ? { minHeight: face } : { height: face }),
+            background: t.tint,
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '28px 4px 4px',
+          }}
+        >
           {photo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={photo} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={photo} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+              {badgeWithoutName(m, p) ? <InfoBadge m={m} p={p} d={d} style={{ top: 0, insetInlineEnd: 0 }} /> : null}
+            </>
           ) : (
-            <span style={{ fontSize: faceNameSp(p.name, w), fontWeight: 700, lineHeight: 1.15, color: faceInk(m), textAlign: 'center', ...ellipsis(3) }}>{p.name}</span>
+            // The badge at the face's top-left corner, over the 28 dp the count keeps clear: no room taken.
+            <TileName
+              m={m}
+              p={p}
+              d={d}
+              size={faceSp(m, p.name, w)}
+              lineHeight={1.15}
+              color={faceInk(m)}
+              align="center"
+              style={{ width: '100%', height: p.available ? '100%' : 'calc(100% - 18px)', marginBottom: p.available ? 0 : 18, position: 'static' }}
+              badgeRoom={0}
+              badgeStyle={{ top: 0, insetInlineEnd: 0 }}
+            />
           )}
           <InCart m={m} n={n} compact={compact} />
           {p.available ? null : <SoldOutBadge m={m} />}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: compact ? '5px 6px' : '8px 10px', minHeight: plus + (compact ? 10 : 16) }}>
-          <Num style={{ flex: '1 1 auto', fontSize: m.fs(compact ? 13 : 15), fontWeight: 700, color: t.accent }}>{formatMoney(p.price)}</Num>
+          <TilePrice agorot={p.price} size={m.fs(compact ? 13 : 15)} color={t.accent} />
           <span
             aria-hidden
             style={{ width: plus, height: plus, borderRadius: 8, background: t.accent, color: t.onAccent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
@@ -323,6 +364,7 @@ function ProductTileToday({ m, p, w, h, d }: { m: PreviewModel; p: PProduct; w: 
   const n = m.inOrder[p.id] ?? 0;
   const photo = m.showImages && p.imageUrl ? p.imageUrl : null;
   const compact = w < 100;
+  const wrap = wrapsName(m);
   return (
     <button
       type="button"
@@ -330,7 +372,7 @@ function ProductTileToday({ m, p, w, h, d }: { m: PreviewModel; p: PProduct; w: 
       onClick={() => d({ type: 'add', product: p })}
       style={{
         position: 'relative',
-        height: h,
+        ...(wrap ? { minHeight: h } : { height: h }),
         minWidth: 0,
         padding: 0,
         borderRadius: 14,
@@ -346,16 +388,33 @@ function ProductTileToday({ m, p, w, h, d }: { m: PreviewModel; p: PProduct; w: 
     >
       <div style={{ flex: '1 1 auto', width: '100%', background: t.tint, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', opacity: p.available ? 1 : 0.45 }}>
         {photo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={photo} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={photo} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+            {badgeWithoutName(m, p) ? <InfoBadge m={m} p={p} d={d} style={{ top: 0, insetInlineEnd: 0 }} /> : null}
+          </>
         ) : (
-          <span style={{ fontSize: Math.min(faceNameSp(p.name, w), compact ? 15 : 22), fontWeight: 700, lineHeight: 1.15, color: faceInk(m), textAlign: 'center', ...ellipsis(3) }}>{p.name}</span>
+          // The badge at the face's top-left corner (the count stands at the right), above the name: its
+          // room is taken from the face's height, never from a narrow tile's width.
+          <TileName
+            m={m}
+            p={p}
+            d={d}
+            size={Math.min(faceSp(m, p.name, w), compact ? 15 : 22)}
+            lineHeight={1.15}
+            color={faceInk(m)}
+            align="center"
+            // "אזל" stands at the face's bottom: the name keeps clear of it.
+            style={{ width: '100%', height: p.available ? '100%' : 'calc(100% - 18px)', marginBottom: p.available ? 0 : 18, position: 'static' }}
+            badgeAxis="height"
+            badgeStyle={{ top: 0, insetInlineEnd: 0 }}
+          />
         )}
         <InCart m={m} n={n} compact={compact} />
         {p.available ? null : <SoldOutBadge m={m} />}
       </div>
-      <div style={{ flex: '0 0 auto', width: '100%', height: compact ? 26 : 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderTop: `1px solid ${t.border}` }}>
-        <Num style={{ fontSize: m.fs(compact ? 13 : 15), fontWeight: 700 }}>{formatMoney(p.price)}</Num>
+      <div style={{ flex: '0 0 auto', width: '100%', height: compact ? 26 : 32, display: 'flex', alignItems: 'center', justifyContent: 'center', borderTop: `1px solid ${t.border}`, padding: '0 4px' }}>
+        <TilePrice agorot={p.price} size={m.fs(compact ? 13 : 15)} align="center" />
       </div>
     </button>
   );
