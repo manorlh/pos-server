@@ -68,6 +68,8 @@ export interface ReportExportConfig {
   title?: string;
   /** Excel only (no PDF / print): a page that prints its own documents. */
   excelOnly?: boolean;
+  /** The designed PDF, Excel and CSV but no print template (a page that prints its own documents). */
+  noPrint?: boolean;
   /**
    * The report's own filters (its `extras`, not in the unified bar: a status, a list of tills…)
    * as the export header's "סינון:" line names them, after the bar's ("סטטוס: פתוחות").
@@ -251,6 +253,7 @@ export function ReportPage({
                   companyId={companyId}
                   companyName={companyName}
                   excelOnly={exportConfig.excelOnly}
+                  noPrint={exportConfig.noPrint}
                   disabled={exportConfig.disabled}
                   reportType={exportConfig.reportType}
                   kpis={exportConfig.kpis}

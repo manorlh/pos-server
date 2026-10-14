@@ -104,6 +104,11 @@ export interface ReportExportBarProps {
   disabled?: boolean;
   /** Excel and its columns only — for a page that prints its own document (a Z). */
   excelOnly?: boolean;
+  /**
+   * The designed PDF, Excel and CSV, but no print template: a page that prints its own
+   * documents (the Z list's A4 / 80 mm sequence, a Z) keeps its print to itself.
+   */
+  noPrint?: boolean;
   /** The server's `reportInsights.<type>` (§2); absent: a general designed report. */
   reportType?: string;
   /** The KPI cards (3–6), as the page shows them. */
@@ -192,6 +197,7 @@ export function ReportExportBar({
   companyName,
   disabled,
   excelOnly = false,
+  noPrint = false,
   reportType,
   kpis,
   chart,
@@ -513,7 +519,7 @@ export function ReportExportBar({
               <FileText aria-hidden />
               {t('csv')}
             </DropdownMenuItem>
-            {excelOnly ? null : (
+            {excelOnly || noPrint ? null : (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={print}>
@@ -535,7 +541,7 @@ export function ReportExportBar({
       </div>
 
       {/* The print template's header. Never on screen. */}
-      {excelOnly ? null : (
+      {excelOnly || noPrint ? null : (
         <div className="report-print-header hidden print:block" dir="rtl">
           {headerLines(generatedAt).map((line, i) => (
             <div key={i} className={i === 0 ? 'text-lg font-bold' : 'text-sm'}>
