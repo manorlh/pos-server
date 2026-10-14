@@ -478,7 +478,8 @@ def get_table_display(
     """
     "שולחנות ומפה" at one level (P:/specs/till-design-tables.md §5): `tableTileStyle`, `tableTileInfo`,
     `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize`, then `mapDecor`, `mapLegend`,
-    `mapSymbolLabels`, `mapSymbolScale` — what the level sets (`own`), what it inherits, the
+    `mapSymbolLabels`, `mapSymbolScale`, then `receiptTableInfo` (the table's line on its documents,
+    P:/specs/receipt-table-number.md) — what the level sets (`own`), what it inherits, the
     definitions in their groups. Read and written by whoever reads and writes the till design.
     """
     scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
