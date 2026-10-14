@@ -22,6 +22,14 @@ POST  /sync/{machine_id}/tables/{table_id}/merge        → the merged order; so
 POST  /sync/{machine_id}/tables/{table_id}/rename       → a manager renames it (`catalog:write`)
 POST  /sync/{machine_id}/tables/layout                  → the till's edit mode: zones and tables at once
                                                           (`catalog:write`; all or nothing)
+POST  /sync/{machine_id}/tables/assignments             → "שיוך מלצרים": assign / unassign (TABLES.ASSIGN)
+POST  /sync/{machine_id}/tables/assignments/copy        → "העתק שיוך מאתמול" / "מהמשמרת הקודמת"
+POST  /sync/{machine_id}/tables/assignments/report      → a LAN host's (single till's) copy, merged
+POST  /sync/{machine_id}/tables/{table_id}/entry-request → "בקש מדנה לצאת" (`tableBusyEntry` = request)
+GET   /sync/{machine_id}/tables/notices                 → this device's notices (entry requests, §5's)
+GET   /sync/{machine_id}/tables/notices/{id}            → one, with its answer
+POST  /sync/{machine_id}/tables/notices/{id}/answer     → leaving | ignored | seen
+(P:/specs/table-waiter-assignment.md; app/services/table_assignments.py, app/services/table_notices.py)
 
 409 bodies are `{code, ...}`: `table_locked` / `table_lock_lost` / `table_target_locked`
 (with `lock`: till, employee, expiry), `table_version_conflict` (with the current
@@ -36,7 +44,8 @@ positions, archive), `/tables/cancel-reasons`, `/tables/live` (and its push, `/t
 `/tables/report`, and a manager's cancel / forced release of a stuck table. "כרטיס שולחן"
 (P:/specs/live-tables-cloud.md §2, §6.8): `/tables/tables/{id}/card`, `/tables/tables/{id}/bill-printers`,
 `/tables/tables/{id}/actions/{action}` (app/services/table_actions.py) and `/tables/waiters`; the cancel
-and "החלף מלצר" need the dashboard section `tables_manage` (edit) besides `tables`. Table types ("סוגי שולחנות" —
+and "החלף מלצר" need the dashboard section `tables_manage` (edit) besides `tables`. "שיוך מלצרים"
+(`/tables/assignments`, `/tables/assignments/copy`): reading with the tables, writing with `tables_manage`. Table types ("סוגי שולחנות" —
 `/tables/types`: staff, managers, a discount) and the staff / managers' meals report
 (`/tables/meals-report`) — app/services/table_policies.py.
 """
@@ -74,6 +83,13 @@ from app.models.tables import TableCancelReason
 from app.models.user import User
 from app.routers.shops import _check_shop_access, _check_shop_override_write
 from app.schemas.tables import (
+    DashboardAssignmentCopyIn,
+    DashboardAssignmentsIn,
+    TableAssignmentCopyIn,
+    TableAssignmentsIn,
+    TableAssignmentsReportIn,
+    TableEntryRequestIn,
+    TableNoticeAnswerIn,
     TableBillPrintedIn,
     TableCleanedIn,
     BulkTablesIn,
@@ -402,7 +418,11 @@ def table_heartbeat(
     db: Session = Depends(get_db),
 ):
     out = T.heartbeat(db, _actor(machine, body), table_id)
+    changed = out.pop("_changed", False)
     db.commit()
+    if changed:
+        # Another employee signed in at the device inside it (§8 "מתעדכן בהחלפת עובד"): the others redraw.
+        T.tables_changed(db, machine.shop_id, tenant_id=machine.tenant_id, table_id=str(table_id), origin=machine.id)
     return out
 
 
@@ -750,6 +770,210 @@ def force_release_table(
     db.commit()
     _wake_all(db, machine, str(table_id))
     return out
+
+
+# ── "שיוך מלצרים" and "שולחן תפוס" from a till (P:/specs/table-waiter-assignment.md §3, §5, §6, §8) ──
+
+
+def _machine_shop(db: Session, machine: POSMachine) -> Shop:
+    shop = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
+    if shop is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
+    return shop
+
+
+def _assign_authority(db: Session, machine: POSMachine, operator_id: Optional[str]) -> PosUser:
+    """
+    The till user `X-Pos-User-Id` names — the one signed in, or the manager who approved at the till —
+    when they hold TABLES.ASSIGN ("שיוך שולחנות למלצרים") alone; else 401 `elevation_required`.
+    """
+    from app.services.till_roles import pos_user_allows
+
+    try:
+        ident = uuid.UUID(str(operator_id).strip()) if isinstance(operator_id, str) else None
+    except ValueError:
+        ident = None
+    operator = (
+        db.query(PosUser)
+        .filter(PosUser.id == ident, PosUser.shop_id == machine.shop_id, PosUser.is_active.is_(True))
+        .first()
+    ) if ident is not None else None
+    if operator is None or not pos_user_allows(operator, "TABLES.ASSIGN"):
+        raise _elevation_401("elevation_required")
+    return operator
+
+
+def _till_who(db: Session, machine: POSMachine, operator: PosUser):
+    from app.services import table_assignments as TAS
+    from app.services.attendance import pos_user_name
+
+    return TAS.Who(name=pos_user_name(operator), pos_user_id=operator.id, machine_id=machine.id, source="till")
+
+
+@router.post("/sync/{machine_id}/tables/assignments", dependencies=FISCAL_MACHINE_TOKEN)
+def till_assign_tables(
+    machine_id: str,
+    body: TableAssignmentsIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    db: Session = Depends(get_db),
+):
+    """
+    "שיוך מלצרים" at the till (the cloud's tables): the taps in order — `{action: assign | unassign,
+    posUserId, tableId | zoneId}` — after "נקה הכל" when `clear`; all or nothing. TABLES.ASSIGN: the till
+    user `X-Pos-User-Id` names (401 `elevation_required` otherwise). Answers `{changed, businessDay,
+    assignments}`; every till of the shop pulls the new state. 409 `tables_not_synced` (a LAN host or a
+    single till keeps its own and reports it: `/tables/assignments/report`), `waiter_not_found`; 404
+    `table_not_found` / `zone_not_found`.
+    """
+    from app.services import table_assignments as TAS
+
+    T._require_synced(db, machine)
+    operator = _assign_authority(db, machine, operator_id)
+    shop = _machine_shop(db, machine)
+    try:
+        out = TAS.apply_changes(db, shop, body.changes, _till_who(db, machine, operator), clear_first=body.clear)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    if out.get("changed"):
+        _wake_all(db, machine)
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/assignments/copy", dependencies=FISCAL_MACHINE_TOKEN)
+def till_copy_assignments(
+    machine_id: str,
+    body: TableAssignmentCopyIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    db: Session = Depends(get_db),
+):
+    """
+    "העתק שיוך מאתמול" (`from: yesterday`) / "מהמשמרת הקודמת" (`previous_shift`): today's assignment
+    becomes that one. TABLES.ASSIGN. `{copied, released, from, businessDay, assignments}`; 409
+    `nothing_to_copy`.
+    """
+    from app.services import table_assignments as TAS
+
+    T._require_synced(db, machine)
+    operator = _assign_authority(db, machine, operator_id)
+    shop = _machine_shop(db, machine)
+    try:
+        out = TAS.copy_from(db, shop, body.source, _till_who(db, machine, operator))
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    _wake_all(db, machine)
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/assignments/report", dependencies=HOST_MACHINE_TOKEN)
+def report_assignments(
+    machine_id: str,
+    body: TableAssignmentsReportIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The LAN host's copy of the assignments (or a single till's), merged with the cloud's (§6): rows by id
+    — a new one added as made there, a release final wherever it was made. Answers what holds in the
+    cloud now (`assignments`), which the host's copy becomes (plus what it made since it sent this);
+    `accepted`, `skipped`. 409 `tables_not_local` for a till of the cloud's tables.
+    """
+    from app.services import table_assignments as TAS
+
+    mode = T.mode_of(T.machine_params(db, machine).get(T.TABLES_MODE_KEY))
+    if mode not in (T.MODE_LAN, T.MODE_SINGLE):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "tables_not_local"})
+    try:
+        out = TAS.merge_report(db, machine, body.assignments)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    if out.get("accepted"):
+        _wake_all(db, machine)
+    return out
+
+
+@router.post("/sync/{machine_id}/tables/{table_id}/entry-request", dependencies=FISCAL_MACHINE_TOKEN)
+def request_table_entry(
+    machine_id: str,
+    table_id: uuid.UUID,
+    body: Optional[TableEntryRequestIn] = None,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "בקש מדנה לצאת" (§8, `tableBusyEntry` = request): the device inside the table is asked — woken now
+    (Ably `table-notice`), and told again on its table heartbeat (`entryRequests`). `{request}` (follow it:
+    `GET /sync/{m}/tables/notices/{id}`; the answer also wakes this till). 409 `table_not_locked` (nobody
+    inside: enter), `entry_request_off`. A second tap while it waits is the same request.
+    """
+    from app.services import table_notices as TN
+
+    T._require_synced(db, machine)
+    table = T.table_for_machine(db, machine, table_id)
+    n = TN.create_entry_request(db, _actor(machine, body), table)
+    TN.wake_after_commit(db, [n])
+    db.commit()
+    return {"request": TN.notice_out(n)}
+
+
+@router.get("/sync/{machine_id}/tables/notices")
+def get_table_notices(
+    machine_id: str,
+    pos_user_id: Optional[str] = Query(None, alias="posUserId", max_length=100),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    What this device shows now (§5, §8): requests to leave a table it is inside, and the notices for the
+    waiter signed in at it (`posUserId`) — "מוכן להגשה", "שולחן מתעכב". The first pull marks them delivered.
+    """
+    from app.services import table_notices as TN
+
+    # `isinstance`: called directly (the tests), the default is the Query object itself.
+    rows = TN.pending_for(db, machine, pos_user_id if isinstance(pos_user_id, str) else None)
+    db.commit()
+    return {"notices": [TN.notice_out(n) for n in rows]}
+
+
+@router.get("/sync/{machine_id}/tables/notices/{notice_id}")
+def get_table_notice(
+    machine_id: str,
+    notice_id: uuid.UUID,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """One notice this device sent or got — an entry request's `status` (pending | leaving | ignored | expired)."""
+    from app.services import table_notices as TN
+
+    return {"notice": TN.notice_out(TN.get_for(db, machine, notice_id))}
+
+
+@router.post("/sync/{machine_id}/tables/notices/{notice_id}/answer", dependencies=FISCAL_MACHINE_TOKEN)
+def answer_table_notice(
+    machine_id: str,
+    notice_id: uuid.UUID,
+    body: TableNoticeAnswerIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    `leaving` ("שמור וצא" — the holder leaves once its action is done, never mid-payment), `ignored`
+    ("התעלם"), `seen`. Once; the asking device is woken with it.
+    """
+    from app.services import table_notices as TN
+
+    n = TN.answer(db, machine, notice_id, body.answer, body.pos_user_name)
+    if n.kind == TN.ENTRY_REQUEST:
+        TN.wake_after_commit(db, [n], answered=True)
+    db.commit()
+    return {"notice": TN.notice_out(n)}
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -1116,6 +1340,95 @@ def get_table_waiters(
 
     shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
     return {"waiters": TA.waiters(db, shop)}
+
+
+# ── "שיוך מלצרים" from the dashboard (P:/specs/table-waiter-assignment.md §3) ──────────────────
+
+
+def _may_manage(db: Session, user: User) -> bool:
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+    from app.services import table_actions as TA
+
+    return DA.effective_access(db, user).allows(TA.MANAGE_SECTION, DS.EDIT)
+
+
+def _dashboard_who(user: User):
+    from app.services import table_assignments as TAS
+
+    return TAS.Who(name=user.username or user.email, user_id=user.id, source="dashboard")
+
+
+@router.get("/tables/assignments")
+def get_table_assignments(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The assignment mode's data: the shop's parameters (`config`), the business day, the live rows, the
+    waiters with their colours (on shift first), each table's effective assignment, what each copy would
+    bring (`copySources`), and whether this user may change it (`canManage`: `tables_manage` at edit).
+    """
+    from app.services import table_assignments as TAS
+
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    out = TAS.dashboard_view(db, shop)
+    db.commit()  # what no longer holds, released (`sweep`)
+    out["canManage"] = _may_manage(db, current_user)
+    return out
+
+
+@router.post("/tables/assignments")
+def post_table_assignments(
+    body: DashboardAssignmentsIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The assignment mode's taps (pick a waiter, tap tables / zones), as at the till: `{action, posUserId,
+    tableId | zoneId}` in order, after "נקה הכל" when `clear`. 403 `section_forbidden` without
+    `tables_manage` at edit. Every till of the shop pulls the new state.
+    """
+    from app.services import table_assignments as TAS
+
+    shop = _writable_shop(db, body.shop_id, current_user, active_tenant_id)
+    _require_manage(db, current_user)
+    try:
+        out = TAS.apply_changes(db, shop, body.changes, _dashboard_who(current_user), clear_first=body.clear)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    if out.get("changed"):
+        _wake_shop(background_tasks, db, shop.id)
+    return out
+
+
+@router.post("/tables/assignments/copy")
+def copy_table_assignments(
+    body: DashboardAssignmentCopyIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"העתק שיוך מאתמול" / "מהמשמרת הקודמת". `tables_manage` at edit. 409 `nothing_to_copy`."""
+    from app.services import table_assignments as TAS
+
+    shop = _writable_shop(db, body.shop_id, current_user, active_tenant_id)
+    _require_manage(db, current_user)
+    try:
+        out = TAS.copy_from(db, shop, body.source, _dashboard_who(current_user))
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    _wake_shop(background_tasks, db, shop.id)
+    return out
 
 
 def _reasons_changed(db: Session, tenant_id) -> None:

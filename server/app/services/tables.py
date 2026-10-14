@@ -41,7 +41,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, update
+from sqlalchemy import and_, case, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -293,6 +293,13 @@ def try_lock(db: Session, table: DiningTable, actor: Actor, minutes: int, now: d
     for a free table cannot both get it.
     """
     expires = now + timedelta(minutes=minutes)
+    # "מאז 20:14" (P:/specs/table-waiter-assignment.md §8): its own live lock extended keeps its start.
+    still_mine = and_(
+        DiningTable.lock_machine_id == actor.machine.id,
+        DiningTable.lock_expires_at.isnot(None),
+        DiningTable.lock_expires_at > now,
+        DiningTable.lock_acquired_at.isnot(None),
+    )
     result = db.execute(
         update(DiningTable)
         .where(
@@ -308,8 +315,9 @@ def try_lock(db: Session, table: DiningTable, actor: Actor, minutes: int, now: d
             lock_machine_id=actor.machine.id,
             lock_pos_user_id=(actor.pos_user_id or None),
             lock_pos_user_name=(actor.pos_user_name or None),
-            lock_acquired_at=now,
+            lock_acquired_at=case((still_mine, DiningTable.lock_acquired_at), else_=now),
             lock_expires_at=expires,
+            lock_seen_at=now,
         )
         .execution_options(synchronize_session=False)
     )
@@ -324,7 +332,7 @@ def release_lock(db: Session, table: DiningTable, machine: POSMachine) -> bool:
         .where(DiningTable.id == table.id, DiningTable.lock_machine_id == machine.id)
         .values(
             lock_machine_id=None, lock_pos_user_id=None, lock_pos_user_name=None,
-            lock_acquired_at=None, lock_expires_at=None,
+            lock_acquired_at=None, lock_expires_at=None, lock_seen_at=None,
         )
         .execution_options(synchronize_session=False)
     )
@@ -339,14 +347,61 @@ def clear_lock(db: Session, table: DiningTable) -> None:
         .where(DiningTable.id == table.id)
         .values(
             lock_machine_id=None, lock_pos_user_id=None, lock_pos_user_name=None,
-            lock_acquired_at=None, lock_expires_at=None,
+            lock_acquired_at=None, lock_expires_at=None, lock_seen_at=None,
         )
         .execution_options(synchronize_session=False)
     )
     db.refresh(table)
 
 
+def device_label(machine: Optional[POSMachine]) -> Optional[str]:
+    """"קופה 3 (בר)" — a device as the busy table's message names it (number and name)."""
+    if machine is None:
+        return None
+    number = (getattr(machine, "pos_number", None) or "").strip()
+    name = (getattr(machine, "name", None) or "").strip()
+    if number and name and name != number:
+        return f"קופה {number} ({name})"
+    if number:
+        return f"קופה {number}"
+    return name or None
+
+
+def device_short(machine: Optional[POSMachine]) -> Optional[str]:
+    """"ק3" — the device on a busy table's tile."""
+    if machine is None:
+        return None
+    number = (getattr(machine, "pos_number", None) or "").strip()
+    if number:
+        return f"ק{number}"
+    name = (getattr(machine, "name", None) or "").strip()
+    return name[:6] or None
+
+
+def _holder_fields(machine: Optional[POSMachine], user_name: Optional[str]) -> dict:
+    """§8: the device (number and name), the employee and their initials, in words."""
+    from app.services.table_assignments import initials
+
+    label = device_label(machine)
+    short = device_short(machine)
+    user = (user_name or "").strip() or None
+    marks = initials(user)
+    return {
+        "deviceLabel": label,
+        "deviceShort": short,
+        "posUserInitials": marks,
+        # "קופה 3 (בר) · דנה" — the menu and the busy message; "ק3 · ד.כ" — the tile.
+        "holderText": " · ".join(p for p in (label, user) if p) or None,
+        "holderShort": " · ".join(p for p in (short, marks) if p) or None,
+    }
+
+
 def lock_out(db: Session, table: DiningTable, now: datetime, viewer: Optional[POSMachine] = None) -> Optional[dict]:
+    """
+    Who is inside the table now (None when nobody): the device — id, name, number, `deviceLabel` "קופה 3
+    (בר)" — and the employee signed in at it (their name, `posUserInitials`), `since` (`acquiredAt`: when
+    this device took it; its heartbeats keep it), `lastSeenAt` (its last heartbeat), `expiresAt`, `mine`.
+    """
     if not lock_live(table, now):
         return None
     machine = db.get(POSMachine, table.lock_machine_id)
@@ -357,18 +412,89 @@ def lock_out(db: Session, table: DiningTable, now: datetime, viewer: Optional[PO
         "posUserId": table.lock_pos_user_id,
         "posUserName": table.lock_pos_user_name,
         "acquiredAt": _iso(table.lock_acquired_at),
+        "since": _iso(table.lock_acquired_at),
+        "lastSeenAt": _iso(getattr(table, "lock_seen_at", None) or table.lock_acquired_at),
         "expiresAt": _iso(table.lock_expires_at),
         "mine": viewer is not None and table.lock_machine_id == viewer.id,
+        **_holder_fields(machine, table.lock_pos_user_name),
     }
 
 
-def _locked(db: Session, table: DiningTable, now: datetime, code: str = "table_locked") -> HTTPException:
-    return _conflict(code, table=table_ref(table), lock=lock_out(db, table, now))
+#: How long a lock that ran out unreleased is still named on the table ("המכשיר לא מדווח מאז…").
+STALE_LOCK_WINDOW = timedelta(hours=12)
 
 
-def ensure_lock(db: Session, table: DiningTable, actor: Actor, minutes: int, now: datetime, *, code: str = "table_locked") -> None:
-    if not try_lock(db, table, actor, minutes, now):
-        raise _locked(db, table, now, code)
+def stale_lock_out(db: Session, table: DiningTable, now: datetime) -> Optional[dict]:
+    """
+    §8 "נעילה של מכשיר שלא מדווח": a lock that ran out without being released (the device stopped
+    reporting) — who held it and since when nobody heard from it (`lastSeenAt`), until someone enters
+    the table or `STALE_LOCK_WINDOW` passes. The table is free to enter meanwhile.
+    """
+    if table.lock_machine_id is None or lock_live(table, now):
+        return None
+    expires = as_utc(table.lock_expires_at)
+    if expires is None or now - expires > STALE_LOCK_WINDOW:
+        return None
+    machine = db.get(POSMachine, table.lock_machine_id)
+    return {
+        "machineId": str(table.lock_machine_id),
+        "machineName": machine.name if machine is not None else None,
+        "posNumber": machine.pos_number if machine is not None else None,
+        "posUserId": table.lock_pos_user_id,
+        "posUserName": table.lock_pos_user_name,
+        "since": _iso(table.lock_acquired_at),
+        "lastSeenAt": _iso(getattr(table, "lock_seen_at", None) or table.lock_acquired_at),
+        "expiredAt": _iso(table.lock_expires_at),
+        **_holder_fields(machine, table.lock_pos_user_name),
+    }
+
+
+def busy_entry(db: Session, machine: POSMachine, params: Optional[Dict[str, Any]] = None):
+    """The till's `tableBusyEntry` / `tableBusyShowHolder` (app/services/table_assignments.py `Config`)."""
+    from app.services.table_assignments import config_of
+
+    return config_of(params if params is not None else machine_params(db, machine))
+
+
+def _busy_detail(cfg: Any, lock: Optional[dict]) -> dict:
+    """What a refused till may offer (§8): ask the holder to leave, read it without a lock, or neither."""
+    from app.services import table_assignments as TAS
+
+    entry = getattr(cfg, "busy_entry", TAS.BUSY_BLOCK)
+    return {
+        "entry": entry,
+        "showHolder": bool(getattr(cfg, "busy_show_holder", True)),
+        # `POST /sync/{m}/tables/{t}/entry-request`: only to a device the cloud knows inside it.
+        "canRequest": entry == TAS.BUSY_REQUEST and lock is not None,
+        # `GET /sync/{m}/tables/{t}/order`: the order read without a lock.
+        "canView": entry == TAS.BUSY_VIEW,
+        "canRelease": True,
+    }
+
+
+def _locked(db: Session, table: DiningTable, now: datetime, code: str = "table_locked", *, busy: Any = None) -> HTTPException:
+    lock = lock_out(db, table, now)
+    extra: Dict[str, Any] = {}
+    if busy is not None:
+        extra["busy"] = _busy_detail(busy, lock)
+    return _conflict(code, table=table_ref(table), lock=lock, **extra)
+
+
+def ensure_lock(
+    db: Session, table: DiningTable, actor: Actor, minutes: int, now: datetime, *, code: str = "table_locked",
+    busy: Any = None,
+) -> bool:
+    """
+    The table locked for `actor`'s till, else 409 `code` with who holds it. With `tableBusyEntry` = off
+    (`busy`) another till's lock does not refuse: False, nothing locked — the version still guards.
+    """
+    from app.services import table_assignments as TAS
+
+    if try_lock(db, table, actor, minutes, now):
+        return True
+    if busy is not None and getattr(busy, "busy_entry", None) == TAS.BUSY_OFF:
+        return False
+    raise _locked(db, table, now, code, busy=busy)
 
 
 # ── Shapes ───────────────────────────────────────────────────────────────────
@@ -637,6 +763,8 @@ class _TableRow:
     #: `lock_out` as any till reads it (`mine` false); None when not locked.
     lock: Optional[dict]
     lock_machine_id: Optional[str]
+    #: `stale_lock_out`: a lock that ran out unreleased ("המכשיר לא מדווח מאז…"); None otherwise.
+    stale_lock: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -644,13 +772,16 @@ class ShopTables:
     """
     The shop-wide part of the tills' state, as plain values: every live zone (with its point
     of sale), every live table with its open synced order and its lock, the bookings around
-    the build time, the tenant's reasons. Never changed once built (shared between requests).
+    the build time, the tenant's reasons, the waiters' assignments. Never changed once built
+    (shared between requests).
     """
 
     reasons: Tuple[dict, ...]
     zones: Tuple[Tuple[Optional[str], str, dict], ...]
     tables: Tuple[_TableRow, ...]
     reservations: Tuple[Tuple[datetime, Optional[str], dict], ...]
+    #: "שיוך שולחנות למלצרים" (app/services/table_assignments.py `build_for_state`); None: not read.
+    assignments: Any = None
 
 
 #: The bookings a till shows, from `RESERVATION_GRACE` ago to this far ahead.
@@ -701,6 +832,7 @@ def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[
             order_state=table_state(order, None),
             lock=lock,
             lock_machine_id=str(table.lock_machine_id) if lock is not None else None,
+            stale_lock=stale_lock_out(db, table, now) if lock is None else None,
         ))
     # Wider than any one till's window (it moves with the clock until the next build); each
     # request cuts its own (`_compose`).
@@ -716,6 +848,18 @@ def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[
         .limit(RESERVATIONS_LIMIT * 2)
         .all()
     )
+    # "שיוך שולחנות למלצרים": the live rows, the waiters and each table's effective assignment —
+    # composed per till only where its `tableAssignmentMode` is on (`_compose`).
+    assignments = None
+    shop_row = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
+    if shop_row is not None:
+        from app.services import table_assignments as TAS
+
+        try:
+            with db.begin_nested():
+                assignments = TAS.build_for_state(db, shop_row, tables, zones, now)
+        except Exception:  # noqa: BLE001 - the floor is served without them
+            logger.exception("table assignments of shop %s not read", machine.shop_id)
     shop = ShopTables(
         reasons=reasons,
         zones=tuple(
@@ -725,12 +869,17 @@ def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[
         reservations=tuple(
             (as_utc(r.reserved_at), str(r.table_id) if r.table_id else None, reservation_out(r)) for r in bookings
         ),
+        assignments=assignments,
     )
     return shop, valid_until
 
 
-def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str, Any]) -> Dict[str, Any]:
-    """The till's own view of the shop state: its point of sale's zones, its own lock, its bookings."""
+def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str, Any],
+             assigning: Any = None) -> Dict[str, Any]:
+    """
+    The till's own view of the shop state: its point of sale's zones, its own lock, its bookings — and,
+    where its `tableAssignmentMode` is on ([assigning]: its `Config`), the assignments of what it sees.
+    """
     area = str(machine.area_id) if machine.area_id else None
     me = str(machine.id)
     visible = set()
@@ -739,6 +888,7 @@ def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str
             visible.add(zone_id)
             out["zones"].append(zone)
     seen = set()
+    assigned = shop.assignments if assigning is not None and getattr(assigning, "on", False) else None
     for row in shop.tables:
         if row.zone_id not in visible:
             continue
@@ -746,12 +896,30 @@ def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str
         lock = row.lock
         if lock is not None:
             lock = {**lock, "mine": row.lock_machine_id == me}
-        out["tables"].append({
+        item = {
             **row.base,
             "order": row.order,
             "lock": lock,
             "state": "locked" if lock is not None and not lock["mine"] else row.order_state,
-        })
+        }
+        if row.stale_lock is not None and row.stale_lock.get("machineId") != me:
+            # "המכשיר לא מדווח מאז…" (§8): free to enter; who left it locked, and since when.
+            item["staleLock"] = row.stale_lock
+        if assigned is not None:
+            item["assignment"] = assigned.per_table.get(row.table_id)
+        out["tables"].append(item)
+    if assigned is not None:
+        from app.services import table_assignments as TAS
+
+        out["assignment"] = {
+            **TAS.config_out(assigning),
+            "businessDay": assigned.business_day,
+            "rows": [
+                r for r in assigned.rows
+                if (r["zoneId"] is not None and r["zoneId"] in visible) or (r["tableId"] is not None and r["tableId"] in seen)
+            ],
+            "waiters": list(assigned.waiters),
+        }
     # "הזמנות": the day's bookings still to come (and those due a while ago, not seated yet).
     low, high = now - RESERVATION_GRACE, now + RESERVATIONS_AHEAD
     window = [(table_id, r) for at, table_id, r in shop.reservations if at is not None and low <= at < high]
@@ -772,15 +940,25 @@ def till_state(
     Everything the tables screen draws: the zones and tables this till sees, each with
     its open order's summary and its lock, the cancellation reasons, the lock time.
 
+    "שולחן תפוס" (P:/specs/table-waiter-assignment.md §8): `busy` — this till's `tableBusyEntry` and
+    `tableBusyShowHolder`; a table another device left locked without a word, `staleLock`. "שיוך מלצרים"
+    (§1–§6), only where this till's `tableAssignmentMode` is on: the `assignment` block (its parameters,
+    the business day, the live `rows`, the `waiters` with their colours) and each table's `assignment`
+    (`{via, posUserIds}` or null).
+
     [shop]: the shop-wide part already built (`till_state_cached`); built here otherwise.
     """
+    from app.services import table_assignments as TAS
+
     now = now or _now()
     params = machine_params(db, machine)
+    cfg = TAS.config_of(params)
     out: Dict[str, Any] = {
         "serverTime": now.isoformat(),
         "mode": mode_of(params.get(TABLES_MODE_KEY)),
         "lockMinutes": lock_minutes_of(params),
         "blockCloseWithOpenTables": blocks_close(params),
+        "busy": TAS.busy_out(cfg),
         "zones": [],
         "tables": [],
     }
@@ -792,7 +970,7 @@ def till_state(
     if shop is None:
         shop, _ = build_shop_tables(db, machine, now)
     out["cancelReasons"] = list(shop.reasons) if machine.tenant_id else []
-    _compose(shop, machine, now, out)
+    _compose(shop, machine, now, out, assigning=cfg)
     if out["mode"] == MODE_LAN:
         # Who holds the shop's tables on the LAN, and the secret the tills present to it.
         from app.services.printers import print_secret
@@ -899,43 +1077,78 @@ def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]
 
 def _require_synced(db: Session, machine: POSMachine) -> int:
     """The lock time, for a till in the synced mode; 409 `tables_not_synced` otherwise."""
+    return _synced(db, machine)[0]
+
+
+def _synced(db: Session, machine: POSMachine) -> Tuple[int, Any]:
+    """
+    The lock time and the till's "שולחן תפוס" parameters (`tableBusyEntry`…, app/services/
+    table_assignments.py `Config`), for a till in the synced mode; 409 `tables_not_synced` otherwise.
+    """
     params = machine_params(db, machine)
     if mode_of(params.get(TABLES_MODE_KEY)) != MODE_SYNCED:
         raise _conflict("tables_not_synced")
-    return lock_minutes_of(params)
+    return lock_minutes_of(params), busy_entry(db, machine, params)
 
 
 # ── Writes from a till (synced mode) ─────────────────────────────────────────
 
 
 def enter(db: Session, actor: Actor, table_id: Any, *, now: Optional[datetime] = None) -> dict:
-    """Lock the table for this till and hand back its order (null for a free table)."""
+    """
+    Lock the table for this till and hand back its order (null for a free table).
+
+    Another device inside (§8, `tableBusyEntry`): 409 `table_locked` with `lock` (the device — number,
+    name, `deviceLabel` — the employee signed in at it, `since`) and `busy` (`entry`, `canRequest`,
+    `canView`). `off`: not refused — the order is handed back unlocked (`shared`), the other's `lock` in it.
+    A table another device left locked without a word is entered, and `staleLock` says who.
+    """
     now = now or _now()
-    minutes = _require_synced(db, actor.machine)
+    minutes, busy = _synced(db, actor.machine)
     table = table_for_machine(db, actor.machine, table_id)
-    ensure_lock(db, table, actor, minutes, now)
+    stale = stale_lock_out(db, table, now)
+    if stale is not None and stale.get("machineId") == str(actor.machine.id):
+        stale = None
+    holds = ensure_lock(db, table, actor, minutes, now, busy=busy)
     order = open_order(db, table.id)
-    return {
+    out = {
         "table": table_out(table),
         "order": order_full(order),
         "lock": lock_out(db, table, now, viewer=actor.machine),
         "lockMinutes": minutes,
         "serverTime": now.isoformat(),
     }
+    if not holds:
+        out["shared"] = True
+    if stale is not None:
+        out["staleLock"] = stale
+    return out
 
 
 def heartbeat(db: Session, actor: Actor, table_id: Any, *, now: Optional[datetime] = None) -> dict:
-    """Still inside: extend the lock. 409 `table_lock_lost` when another till has it now."""
+    """
+    Still inside: extend the lock. 409 `table_lock_lost` when another till has it now (`off`: not
+    refused, `shared`). The employee signed in now is the lock's (§8 "מתעדכן בהחלפת עובד" — `_changed`
+    tells the route to wake the others). `entryRequests`: who asks to come in (§8 `request`), pending.
+    """
+    from app.services import table_notices as TN
+
     now = now or _now()
-    minutes = _require_synced(db, actor.machine)
+    minutes, busy = _synced(db, actor.machine)
     table = table_for_machine(db, actor.machine, table_id)
-    ensure_lock(db, table, actor, minutes, now, code="table_lock_lost")
+    before = (table.lock_machine_id, table.lock_pos_user_id, table.lock_pos_user_name)
+    holds = ensure_lock(db, table, actor, minutes, now, code="table_lock_lost", busy=busy)
     order = open_order(db, table.id)
-    return {
+    out = {
         "lock": lock_out(db, table, now, viewer=actor.machine),
         "version": order.version if order is not None else None,
         "orderId": str(order.id) if order is not None else None,
+        "entryRequests": [TN.notice_out(n) for n in TN.entry_requests_for(db, actor.machine, table, now)],
+        "_changed": holds and before != (table.lock_machine_id, table.lock_pos_user_id, table.lock_pos_user_name),
     }
+    if not holds:
+        out["shared"] = True
+    return out
 
 
 def peek(db: Session, machine: POSMachine, table_id: Any, *, now: Optional[datetime] = None) -> dict:
@@ -961,16 +1174,19 @@ def mark_bill_printed(db: Session, actor: Actor, table_id: Any, body, *, now: Op
     version read): the table is awaiting payment, as `save` with `bill` marks it from
     inside. Refused while another till is inside it (409 `table_locked`) or once the order
     moved on since it was read (409 `table_version_conflict`, with it) — the till prints
-    only after this went through. Idempotent by the request id.
+    only after this went through. Idempotent by the request id. (`tableBusyEntry` = off: not refused
+    for another till inside — the version still guards.)
     """
+    from app.services import table_assignments as TAS
+
     now = now or _now()
-    _require_synced(db, actor.machine)
+    _minutes, busy = _synced(db, actor.machine)
     table = table_for_machine(db, actor.machine, table_id)
     replay = _replayed(db, body.order_id, body.request_id)
     if replay is not None:
         return {"order": order_full(replay) if replay.status == "open" else order_summary(replay), "replayed": True}
-    if lock_live(table, now) and table.lock_machine_id != actor.machine.id:
-        raise _locked(db, table, now)
+    if lock_live(table, now) and table.lock_machine_id != actor.machine.id and busy.busy_entry != TAS.BUSY_OFF:
+        raise _locked(db, table, now, busy=busy)
     current = open_order(db, table.id)
     if current is None:
         raise _conflict("table_version_conflict", order=None)
@@ -1026,9 +1242,13 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
     `send` marks a kitchen send and releases the lock, `bill` marks the bill printed,
     `leave` releases the lock. A table left empty that never sent anything is voided
     (back to free) rather than kept as an empty open order.
+
+    A new order is its opener's unless the till names its waiter — or, with "שיוך מלצרים" on and
+    `tableAssignmentOwner` = assigned, the table's assigned waiter's (app/services/table_assignments.py
+    `owner_for_new_order`; the till shows whose it is either way).
     """
     now = now or _now()
-    minutes = _require_synced(db, actor.machine)
+    minutes, busy = _synced(db, actor.machine)
     table = table_for_machine(db, actor.machine, table_id)
     releases = body.action in ("send", "leave")
 
@@ -1038,7 +1258,7 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
             release_lock(db, table, actor.machine)
         return {"order": order_full(replay) if replay.status == "open" else order_summary(replay), "replayed": True}
 
-    ensure_lock(db, table, actor, minutes, now)
+    ensure_lock(db, table, actor, minutes, now, busy=busy)
     current = open_order(db, table.id)
     _check_version(current, body.order_id, body.expected_version)
 
@@ -1053,6 +1273,12 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
             if releases:
                 release_lock(db, table, actor.machine)
             return {"order": None, "replayed": False}
+        named = getattr(body, "waiter_pos_user_id", None)
+        owner = None
+        if not named and getattr(busy, "on", False):
+            from app.services import table_assignments as TAS
+
+            owner = TAS.owner_for_new_order(db, actor.machine, table, actor.pos_user_id, cfg=busy, now=now)
         current = TableOrder(
             id=body.order_id,
             tenant_id=actor.machine.tenant_id,
@@ -1068,9 +1294,11 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
             opened_machine_id=actor.machine.id,
             opened_by_pos_user_id=actor.pos_user_id,
             opened_by_pos_user_name=actor.pos_user_name,
-            # The table is its opener's unless the till names another waiter.
-            waiter_pos_user_id=getattr(body, "waiter_pos_user_id", None) or actor.pos_user_id,
-            waiter_pos_user_name=getattr(body, "waiter_pos_user_name", None) or actor.pos_user_name,
+            # The table is its opener's unless the till names another waiter (or it is assigned).
+            waiter_pos_user_id=named or (owner[0] if owner else None) or actor.pos_user_id,
+            waiter_pos_user_name=(
+                getattr(body, "waiter_pos_user_name", None) if named else (owner[1] if owner else None)
+            ) or actor.pos_user_name,
             send_count=0,
         )
         try:
@@ -1885,7 +2113,14 @@ def host_seed(db: Session, machine: POSMachine) -> dict:
     from app.services.tables_mode_guard import is_single_order
 
     rows = [o for o in rows if not (o.status == "open" and is_single_order(o))]
-    return {"orders": [_host_order_out(o) for o in rows]}
+    out: Dict[str, Any] = {"orders": [_host_order_out(o) for o in rows]}
+    # "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §6): the live rows a new host starts its copy from.
+    shop = db.get(Shop, machine.shop_id)
+    if shop is not None:
+        from app.services import table_assignments as TAS
+
+        out["assignments"] = TAS.host_seed_rows(db, shop)
+    return out
 
 
 def _host_order_out(o: TableOrder) -> Dict[str, Any]:
@@ -2822,6 +3057,19 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
 
     action_routes = TA.routes_for(db, shop, orders.values()) if orders else {}
     fire_cache: Dict[Any, Any] = {}
+    # "שיוך מלצרים" and "שולחן תפוס" (P:/specs/table-waiter-assignment.md §3, §8), as the shop reads them.
+    from app.services import table_assignments as TAS
+
+    assignment = None
+    try:
+        with db.begin_nested():
+            assignment = TAS.build_for_state(db, shop, tables, zones, now)
+    except Exception:  # noqa: BLE001 - the floor is shown without them
+        logger.exception("table assignments of shop %s not read", shop.id)
+    try:
+        shop_cfg = TAS.shop_config(db, shop)
+    except Exception:  # noqa: BLE001 - the defaults
+        shop_cfg = TAS.Config()
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now)
@@ -2839,6 +3087,13 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
                 logger.exception("next course of table order %s not read", order.id)
         row["heldBy"] = TA.holder_text(lock)
         row["lock"] = lock
+        # "פתוח כעת: קופה 3 · דנה" (§8 `tableBusyShowHolder`): the device and the employee in it now.
+        row["holder"] = (
+            {"text": lock.get("holderText"), "short": lock.get("holderShort"), "since": lock.get("since")}
+            if lock is not None and shop_cfg.busy_show_holder else None
+        )
+        row["staleLock"] = stale_lock_out(db, table, now) if lock is None else None
+        row["assignment"] = assignment.per_table.get(str(table.id)) if assignment is not None else None
         # From the dashboard every live lock is "another till's": red, with its name.
         row["state"] = table_state(order, lock)
         if order is not None:
@@ -2872,6 +3127,14 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
         "summary": {"openTables": open_count, "openTotal": float(open_total), "guests": guests},
         "voidTickets": void_tickets,
         "thresholds": {"warnMinutes": warn, "alertMinutes": alert},
+        # "שיוך מלצרים" (§3): the shop's parameters, the live rows and the waiters with their colours.
+        "assignment": {
+            **TAS.config_out(shop_cfg),
+            "businessDay": assignment.business_day,
+            "rows": list(assignment.rows),
+            "waiters": list(assignment.waiters),
+        } if assignment is not None else {**TAS.config_out(shop_cfg), "rows": [], "waiters": []},
+        "busy": TAS.busy_out(shop_cfg),
     }
 
 

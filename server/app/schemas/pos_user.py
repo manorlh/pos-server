@@ -33,11 +33,20 @@ class PosUserCreate(BaseModel):
     #: The till role ("תפקידים והרשאות"). Omitted: the company's legacy role for `role`.
     till_role_id: Optional[uuid.UUID] = Field(None, alias="tillRoleId")
     pin: str
+    #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb`; none — automatic.
+    table_color: Optional[str] = Field(None, alias="tableColor", max_length=9)
 
     @field_validator("pin")
     @classmethod
     def _v_pin(cls, v: str) -> str:
         return _validate_pin(v)
+
+    @field_validator("table_color")
+    @classmethod
+    def _v_table_color(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.table_assignments import clean_color
+
+        return clean_color(v)
 
     @field_validator("worker_number")
     @classmethod
@@ -60,6 +69,8 @@ class PosUserUpdate(BaseModel):
     is_active: Optional[bool] = Field(None, alias="isActive")
     # Optional PIN reset in-line with update; explicit reset endpoint also exists.
     pin: Optional[str] = None
+    #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb`; null or "" — automatic again.
+    table_color: Optional[str] = Field(None, alias="tableColor", max_length=9)
 
     @field_validator("pin")
     @classmethod
@@ -67,6 +78,13 @@ class PosUserUpdate(BaseModel):
         if v is None:
             return v
         return _validate_pin(v)
+
+    @field_validator("table_color")
+    @classmethod
+    def _v_table_color(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.table_assignments import clean_color
+
+        return clean_color(v)
 
     class Config:
         populate_by_name = True
@@ -97,6 +115,10 @@ class PosUserResponse(BaseModel):
     #: Set by the router (not a column): the role's name as resolved now.
     till_role_name: Optional[str] = Field(None, alias="tillRoleName")
     permission_overrides: Optional[dict] = Field(None, alias="permissionOverrides")
+    #: "צבע מלצר": their own (`tableColor`, null — automatic) and the one the floor shows now.
+    table_color: Optional[str] = Field(None, alias="tableColor")
+    #: Set by the router (not a column): the colour on the floor (their own, else the automatic one).
+    table_color_effective: Optional[str] = Field(None, alias="tableColorEffective")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

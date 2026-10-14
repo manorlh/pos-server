@@ -784,6 +784,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/tables/live", S("tables", "reports", level=VIEW)),
     # The live view's realtime (P:/specs/live-tables-cloud.md §6.8): whoever reads the live view.
     (_GET, "/tables/live/push", S("tables", "reports", level=VIEW)),
+    # "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §3): read with the live view; a write is the
+    # tables' at edit and `tables_manage` at edit (the route checks the second, as for "החלף מלצר").
+    (_GET, "/tables/assignments", S("tables", "reports", level=VIEW)),
+    ("POST", "/tables/assignments", S("tables")),
+    ("POST", "/tables/assignments/copy", S("tables")),
     (_GET, "/tables/report", S("tables", "reports", level=VIEW)),
     (_GET, "/tables/meals-report", S("tables", "reports", level=VIEW)),
     (_ALL, "/tables/*", S("tables")),

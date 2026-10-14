@@ -96,6 +96,14 @@ def _with_role_names(db: Session, users: List[PosUser]) -> List[PosUser]:
     effective = effective_for_users(db, users)
     for u in users:
         u.till_role_name = effective[u.id].role_name
+    # "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): their own, else the shop's automatic one.
+    from app.services.table_assignments import colors_of, shop_users
+
+    colors: dict = {}
+    for shop_id in {u.shop_id for u in users}:
+        colors.update(colors_of(shop_users(db, shop_id)))
+    for u in users:
+        u.table_color_effective = colors.get(str(u.id))
     return users
 
 
@@ -179,6 +187,7 @@ def create_pos_user(
         pin_hash=get_password_hash(data.pin),
         role=data.role,
         is_active=True,
+        table_color=data.table_color,
     )
     db.add(user)
     db.flush()
@@ -241,6 +250,10 @@ def update_pos_user(
     for field in ("first_name", "last_name", "worker_number", "role", "is_active"):
         if field in payload:
             setattr(pu, field, payload[field])
+    # "צבע מלצר": the floor's tills redraw their tables in it.
+    color_changed = "table_color" in payload and payload["table_color"] != pu.table_color
+    if "table_color" in payload:
+        pu.table_color = payload["table_color"]
 
     if "pin" in payload and payload["pin"] is not None:
         pu.pin_hash = get_password_hash(payload["pin"])
@@ -256,6 +269,12 @@ def update_pos_user(
     db.refresh(pu)
 
     notify_machines_for_shop_pos_users(db, str(shop.id), reason="pos_user_updated")
+    if color_changed or "is_active" in payload or "first_name" in payload or "last_name" in payload:
+        # The tables state names and colours the waiters ("שיוך מלצרים").
+        from app.services import tables as T
+
+        T.tables_changed(db, shop.id, tenant_id=shop.tenant_id)
+        db.refresh(pu)
     return _with_role_names(db, [pu])[0]
 
 

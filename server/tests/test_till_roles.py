@@ -233,9 +233,9 @@ class TestLegacy:
         # ITEM_BLOCK_WIDE: "חסימה מעבר לקופה" (P:/specs/item-block-control.md §2) — the same.
         # "ניהול קטלוג" (specs/till-catalog-management.md §6.2): the four writes, as CATALOG_WRITE was.
         # CASH_DRAWER.OPEN_REMOTE: "פתיחת מגירה בקופה אחרת" (P:/specs/bill-print-other-till.md §9) — new, on a
-        # manager's code.
+        # manager's code. TABLES.ASSIGN: "שיוך שולחנות למלצרים" (P:/specs/table-waiter-assignment.md §3) — a manager's.
         assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK", "ITEM_BLOCK_WIDE"} | {
-            "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
+            "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE", "TABLES.ASSIGN",
         } | TP.TABLE_PAYMENT_REVERSE_CODES | {"CASH_DRAWER.OPEN_REMOTE"}  # a table's payment reversed: as a refund was (table-restore-payments §4)
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a

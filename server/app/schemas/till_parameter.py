@@ -149,6 +149,9 @@ class TillParameterOut(BaseModel):
     managed_on: Optional[str] = Field(None, alias="managedOn")
     #: Changed by a super admin or a distributor only (`kioskTillModeEnabled`): the page says so.
     admin_only: bool = Field(False, alias="adminOnly")
+    #: A warning the dashboard shows next to an option once it is chosen (`tableBusyEntry` = off:
+    #: "לא בטוח…", app/services/table_assignments.py `OPTION_WARNINGS`); null for most.
+    option_warnings: Optional[Dict[str, str]] = Field(None, alias="optionWarnings")
     created_at: Optional[datetime] = Field(None, alias="createdAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
 

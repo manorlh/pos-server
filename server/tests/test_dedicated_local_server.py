@@ -311,6 +311,8 @@ class TestRefused:
                 found |= {(m, route.path.removeprefix("/api/v1")) for m in route.methods}
         assert found == {
             ("POST", "/sync/{machine_id}/tables/report"),
+            # The host's copy of the waiters' assignment (P:/specs/table-waiter-assignment.md §9.6).
+            ("POST", "/sync/{machine_id}/tables/assignments/report"),
             ("POST", "/sync/{machine_id}/shop-z/local"),
             ("POST", "/sync/{machine_id}/shop-z/local-request/ack"),
             ("POST", "/sync/{machine_id}/shop-z/remote-close"),

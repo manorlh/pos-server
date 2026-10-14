@@ -11,13 +11,20 @@
  * open; filters by waiter or state dim the rest. On a phone the map fits the width, pinches to zoom and
  * drags; a tap opens the table's card (./table-card.tsx). Realtime through the shop's Ably channel when
  * the server offers it, else every 5 seconds.
+ *
+ * "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §3, §4): each assigned table carries its waiter's
+ * initials in their colour (a free one their name, faint); "לפי שיוך" dims the rest; with `tables_manage`
+ * the assignment mode (./assignment-bar.tsx) — pick a waiter, tap tables or the zone. "שולחן תפוס" (§8):
+ * a busy table says the device and the employee inside it ("פתוח כעת: קופה 3 · דנה") with
+ * `tableBusyShowHolder` on, and a device that stopped reporting ("המכשיר לא מדווח מאז…").
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Lock, Maximize2, Radio, ZoomIn, ZoomOut } from 'lucide-react';
-import { formatCurrency } from '@/lib/format';
+import { Lock, Maximize2, Radio, Users, ZoomIn, ZoomOut } from 'lucide-react';
+import { toast } from 'sonner';
+import { formatCurrency, formatTime } from '@/lib/format';
 import { ablySseUrl } from '@/lib/eventLive';
 import {
   FIT,
@@ -46,10 +53,27 @@ import {
   type VisualState,
 } from '@/lib/liveTables';
 import { tableDisplay } from '@/lib/tableRestore';
+import {
+  assignedCounts,
+  assignedWaiters,
+  holderLine,
+  inkOn,
+  isAssignedTo,
+  staleLine,
+  tapChange,
+  type AssignmentWaiter,
+} from '@/lib/tableAssignment';
 import { CHAIR_LOOK, PLAIN, SKETCH_STYLE, TABLE_LOOK, backgroundOf, chairLayout, type SketchElement } from '@/lib/tableSketch';
-import { fetchTablesLive, fetchTablesLivePush, type LiveTable, type TableZone } from '@/lib/tablesApi';
+import {
+  fetchTableAssignments,
+  fetchTablesLive,
+  fetchTablesLivePush,
+  type LiveTable,
+  type TableZone,
+} from '@/lib/tablesApi';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AssignmentBar, useAssignmentWrites } from './assignment-bar';
 import { FloorDefs, SketchShape } from './sketch-shapes';
 import { TableCardSheet, useNow } from './table-card';
 
@@ -59,6 +83,10 @@ interface FloorTable {
   visual: VisualState;
   dim: boolean;
   minutes: number | null;
+  /** "שיוך מלצרים": its waiters, the main one first. */
+  assigned: AssignmentWaiter[];
+  /** The assignment mode: the table is the picked waiter's. */
+  picked: boolean;
 }
 
 /** The shop's tables signal over Ably (server-sent events, no library): every change refetches. */
@@ -125,9 +153,20 @@ export function TablesLive({ shopId }: { shopId: string }) {
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FloorFilter>(NO_FILTER);
   const [picked, setPicked] = useState<string | null>(null);
+  // "שיוך מלצרים": the mode's data (who may change it, the copy sources), the mode, the waiter picked in
+  // it, and the "לפי שיוך" filter.
+  const assignView = useQuery({ queryKey: ['tables-assignments', shopId], queryFn: () => fetchTableAssignments(shopId) });
+  const canAssign = assignView.data?.canManage === true;
+  const [assigning, setAssigning] = useState(false);
+  const [assignFor, setAssignFor] = useState<string | null>(null);
+  const [assignee, setAssignee] = useState<string | null>(null);
+  const writes = useAssignmentWrites(shopId, refetch);
 
   const zones = useMemo(() => data?.zones ?? [], [data]);
   const tables = useMemo(() => data?.tables ?? [], [data]);
+  const assignWaiters = useMemo(() => data?.assignment?.waiters ?? assignView.data?.waiters ?? [], [data, assignView.data]);
+  const assignRows = useMemo(() => data?.assignment?.rows ?? [], [data]);
+  const assignCounts = useMemo(() => assignedCounts(tables.map((tb) => tb.assignment)), [tables]);
   const alertMinutes = data?.thresholds?.alertMinutes ?? 90;
   const counts = useMemo(() => zoneCounts(tables), [tables]);
   // The first zone with open tables, else the first — until the manager picks one.
@@ -142,9 +181,16 @@ export function TablesLive({ shopId }: { shopId: string }) {
         .filter((tb) => zone && tb.zoneId === zone.id)
         .map((tb) => {
           const visual = visualState(tb, now, alertMinutes);
-          return { table: tb, visual, dim: dimmed(tb, visual, filter), minutes: minutesSince(tb.order?.openedAt, now) };
+          return {
+            table: tb,
+            visual,
+            dim: dimmed(tb, visual, filter) || !isAssignedTo(tb.assignment, assignee),
+            minutes: minutesSince(tb.order?.openedAt, now),
+            assigned: assignedWaiters(tb.assignment, assignWaiters),
+            picked: assigning && !!assignFor && isAssignedTo(tb.assignment, assignFor),
+          };
         }),
-    [tables, zone, now, alertMinutes, filter],
+    [tables, zone, now, alertMinutes, filter, assignee, assignWaiters, assigning, assignFor],
   );
   const waiters = useMemo(() => waitersOf(tables), [tables]);
 
@@ -153,6 +199,18 @@ export function TablesLive({ shopId }: { shopId: string }) {
   const voidTickets = data?.voidTickets ?? [];
   const toggleState = (s: VisualState) =>
     setFilter((f) => ({ ...f, states: f.states.includes(s) ? f.states.filter((x) => x !== s) : [...f.states, s] }));
+  // A tap on the floor: the card — or, in the assignment mode, the picked waiter on (or off) the table.
+  const onTable = (id: string) => {
+    if (!assigning) {
+      setPicked(id);
+      return;
+    }
+    if (!assignFor) {
+      toast.message(tl('assign.pickFirst'));
+      return;
+    }
+    if (!writes.busy) writes.tap.mutate([tapChange(assignRows, assignFor, { tableId: id })]);
+  };
 
   return (
     <div className="space-y-3">
@@ -184,11 +242,37 @@ export function TablesLive({ shopId }: { shopId: string }) {
             <span className="ms-1 rounded-full bg-background/20 px-1.5 text-xs tabular-nums">{counts[z.id] ?? 0}</span>
           </Button>
         ))}
-        <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground" title={pushed ? tl('realtime') : tl('polling')}>
+        {canAssign && !assigning ? (
+          <Button size="sm" variant="outline" className="ms-auto" onClick={() => setAssigning(true)}>
+            <Users className="me-1 h-4 w-4" />
+            {tl('assign.open')}
+          </Button>
+        ) : null}
+        <span
+          className={`${canAssign && !assigning ? '' : 'ms-auto '}flex items-center gap-1 text-xs text-muted-foreground`}
+          title={pushed ? tl('realtime') : tl('polling')}
+        >
           <Radio className={`h-3.5 w-3.5 ${pushed ? 'text-green-600' : ''}`} />
           {pushed ? tl('realtime') : tl('polling')}
         </span>
       </div>
+
+      {assigning ? (
+        <AssignmentBar
+          view={assignView.data}
+          zone={zone}
+          rows={assignRows}
+          waiters={assignWaiters}
+          counts={assignCounts}
+          picked={assignFor}
+          onPick={setAssignFor}
+          writes={writes}
+          onDone={() => {
+            setAssigning(false);
+            setAssignFor(null);
+          }}
+        />
+      ) : null}
 
       {/* "הצג": by waiter or state — the rest are dimmed, never hidden. */}
       <div className="flex flex-wrap items-center gap-1.5 text-xs">
@@ -205,6 +289,24 @@ export function TablesLive({ shopId }: { shopId: string }) {
             </option>
           ))}
         </select>
+        {assignWaiters.length > 0 && assignRows.length > 0 ? (
+          // "לפי שיוך": the tables assigned to one waiter (their zones' too).
+          <select
+            className="h-8 rounded-md border bg-background px-2 text-sm"
+            value={assignee ?? ''}
+            aria-label={tl('assign.filter')}
+            onChange={(e) => setAssignee(e.target.value || null)}
+          >
+            <option value="">{tl('assign.anyAssignee')}</option>
+            {assignWaiters
+              .filter((w) => assignCounts[w.posUserId])
+              .map((w) => (
+                <option key={w.posUserId} value={w.posUserId}>
+                  {tl('assign.assigneeOption', { name: w.name ?? '?', count: assignCounts[w.posUserId] ?? 0 })}
+                </option>
+              ))}
+          </select>
+        ) : null}
         {VISUAL_STATES.map((s) => {
           const on = filter.states.includes(s);
           return (
@@ -220,8 +322,16 @@ export function TablesLive({ shopId }: { shopId: string }) {
             </button>
           );
         })}
-        {filterActive(filter) ? (
-          <Button size="sm" variant="ghost" className="h-8" onClick={() => setFilter(NO_FILTER)}>
+        {filterActive(filter) || assignee ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8"
+            onClick={() => {
+              setFilter(NO_FILTER);
+              setAssignee(null);
+            }}
+          >
             {tl('clearFilters')}
           </Button>
         ) : null}
@@ -232,9 +342,9 @@ export function TablesLive({ shopId }: { shopId: string }) {
       ) : floor.length === 0 ? (
         <div className="rounded-lg border bg-card p-8 text-center text-muted-foreground">{tl('emptyZone')}</div>
       ) : zone.layout === 'map' ? (
-        <LiveMap key={zone.id} zone={zone} floor={floor} now={now} onPick={(id) => setPicked(id)} />
+        <LiveMap key={zone.id} zone={zone} floor={floor} now={now} onPick={onTable} />
       ) : (
-        <LiveGrid floor={floor} now={now} onPick={(id) => setPicked(id)} />
+        <LiveGrid floor={floor} now={now} onPick={onTable} />
       )}
 
       {picked ? (
@@ -477,7 +587,12 @@ function MapTable({ layer, f, perPx, tag, onPick }: {
   const inner = o ? [o.guests ? `${o.guests}👤` : null, seatedText(f.minutes)].filter(Boolean).join(' · ') : null;
   // Three lines when the table is tall enough, else the number and the guests / time.
   const roomy = tb.height >= fs * 2.9;
-  const below = tb.heldBy ? `🔒 ${tl('heldTill', { till: tb.heldBy })}` : o?.waiterName ?? null;
+  // §8: "ק3 · ד.כ" — the device and the employee inside, when the shop shows them; else the till as before.
+  const held = tb.holder?.short ? `🔒 ${tb.holder.short}` : tb.heldBy ? `🔒 ${tl('heldTill', { till: tb.heldBy })}` : null;
+  // §4: a free table assigned to a waiter shows their name, faint, in their colour.
+  const main = f.assigned[0] ?? null;
+  const assignedName = !o && !held && main ? f.assigned.map((w) => w.name ?? '?').join(', ') : null;
+  const below = held ?? o?.waiterName ?? assignedName;
   const fill = emphasis.tint > 0 ? tintOf(color, emphasis.tint) : TABLE_LOOK.fill;
   const pill = (y: number, text: string, bg: string, ink: string) => {
     const w = Math.max(text.length * small * 0.62 + 12 * perPx, 26 * perPx);
@@ -494,11 +609,34 @@ function MapTable({ layer, f, perPx, tag, onPick }: {
   const reach = short * 0.27;
   const numberY = o ? (roomy ? cy - fs * 0.42 : cy - fs * 0.22) : cy;
   if (layer === 'labels') {
-    if (!tag && !below) return null;
+    if (!tag && !below && !main) return null;
+    const r = small * 1.05;
+    const badge = main ? (main.initials ?? '?') + (f.assigned.length > 1 ? `+${f.assigned.length - 1}` : '') : '';
+    const badgeW = Math.max(r * 2, badge.length * small * 0.55 + small * 0.6);
+    const belowY = tb.y + tb.height + reach + small * 0.15;
     return (
       <g opacity={f.dim ? 0.25 : 1} style={{ cursor: 'pointer' }} onClick={onPick}>
         {tag ? pill(tb.y - reach - small * 1.75, tag, '#fff7ed', '#c2410c') : null}
-        {below ? pill(tb.y + tb.height + reach + small * 0.15, below, tb.heldBy ? '#7c3aed' : color, '#ffffff') : null}
+        {below
+          ? assignedName && main
+            ? pill(belowY, below, tintOf(main.color, 0.18), main.color)
+            : pill(belowY, below, held ? '#7c3aed' : color, '#ffffff')
+          : null}
+        {main ? (
+          // The waiter's initials in their colour, at the table's corner (+N for helpers).
+          <g>
+            <rect
+              x={tb.x + tb.width - badgeW / 2} y={tb.y - r} width={badgeW} height={r * 2} rx={r}
+              fill={main.color} stroke="#ffffff" strokeWidth={perPx * 1.5}
+            />
+            <text
+              x={tb.x + tb.width} y={tb.y} textAnchor="middle" dominantBaseline="central"
+              fontSize={small * 0.82} fontWeight={700} fill={inkOn(main.color)} direction="rtl"
+            >
+              {badge}
+            </text>
+          </g>
+        ) : null}
       </g>
     );
   }
@@ -511,6 +649,20 @@ function MapTable({ layer, f, perPx, tag, onPick }: {
       aria-label={`${label.text} · ${tl(`state.${f.visual}`)}`}
     >
       <g transform={`rotate(${tb.rotation || 0} ${cx} ${cy})`}>
+        {f.picked && main ? (
+          // The assignment mode: the picked waiter's tables, ringed in their colour.
+          tb.shape === 'round' ? (
+            <ellipse
+              cx={cx} cy={cy} rx={tb.width / 2 + 6 * perPx} ry={tb.height / 2 + 6 * perPx} fill="none"
+              stroke={main.color} strokeWidth={4 * perPx} strokeDasharray={`${8 * perPx} ${4 * perPx}`}
+            />
+          ) : (
+            <rect
+              x={tb.x - 6 * perPx} y={tb.y - 6 * perPx} width={tb.width + 12 * perPx} height={tb.height + 12 * perPx}
+              rx={short * 0.22} fill="none" stroke={main.color} strokeWidth={4 * perPx} strokeDasharray={`${8 * perPx} ${4 * perPx}`}
+            />
+          )
+        ) : null}
         {chairLayout(tb.shape === 'round', tb.width, tb.height, tb.seats).map((c, i) => (
           <g key={`c${i}`} transform={`translate(${tb.x + c.cx} ${tb.y + c.cy}) rotate(${c.angle})`}>
             <rect
@@ -579,6 +731,9 @@ function LiveGrid({ floor, now, onPick }: { floor: FloorTable[]; now: number; on
         const emphasis = STATE_EMPHASIS[f.visual];
         const tag = courseTag(tb, now);
         const label = tableDisplay(tb);
+        const main = f.assigned[0] ?? null;
+        const holder = holderLine(tb.holder);
+        const stale = staleLine(tb.staleLock, (iso) => formatTime(iso));
         return (
           <button
             key={tb.id}
@@ -589,9 +744,19 @@ function LiveGrid({ floor, now, onPick }: { floor: FloorTable[]; now: number; on
               opacity: f.dim ? 0.25 : 1,
               background: tintOf(color, emphasis.tint),
               border: `${emphasis.edge}px solid ${f.visual === 'free' ? '#cbd5e1' : color}`,
+              ...(f.picked && main ? { outline: `3px dashed ${main.color}`, outlineOffset: '2px' } : {}),
             }}
             aria-label={`${label.text} · ${tl(`state.${f.visual}`)}`}
           >
+            {main ? (
+              <span
+                className="absolute start-1 top-1 rounded-full px-1.5 text-[10px] font-bold leading-4"
+                style={{ background: main.color, color: inkOn(main.color) }}
+                title={f.assigned.map((w) => w.name ?? '?').join(', ')}
+              >
+                {(main.initials ?? '?') + (f.assigned.length > 1 ? `+${f.assigned.length - 1}` : '')}
+              </span>
+            ) : null}
             <span className="text-2xl font-bold tabular-nums leading-tight text-slate-800">{label.main}</span>
             {label.sub ? <span className="max-w-full truncate text-xs text-slate-500">{label.sub}</span> : null}
             {tb.order ? (
@@ -604,13 +769,20 @@ function LiveGrid({ floor, now, onPick }: { floor: FloorTable[]; now: number; on
               </>
             ) : !tb.order && tb.cleaningSince ? (
               <span className="text-xs font-medium text-slate-500">{tl('state.cleaning')}</span>
+            ) : !tb.order && main ? (
+              // §4: free and assigned — the waiter's name, faint, in their colour.
+              <span className="max-w-full truncate text-xs font-medium opacity-70" style={{ color: main.color }}>
+                {f.assigned.map((w) => w.name ?? '?').join(', ')}
+              </span>
             ) : null}
             {tag ? <span className="mt-1 rounded-full bg-orange-50 px-2 text-[11px] font-medium text-orange-700">{tag}</span> : null}
-            {tb.heldBy ? (
-              <span className="mt-1 flex items-center gap-1 rounded-full bg-violet-600 px-2 text-[11px] font-medium text-white">
-                <Lock className="h-3 w-3" />
-                {tl('heldTill', { till: tb.heldBy })}
+            {holder || tb.heldBy ? (
+              <span className="mt-1 flex max-w-full items-center gap-1 rounded-full bg-violet-600 px-2 text-[11px] font-medium text-white">
+                <Lock className="h-3 w-3 shrink-0" />
+                <span className="truncate">{holder ?? tl('heldTill', { till: tb.heldBy ?? '?' })}</span>
               </span>
+            ) : stale ? (
+              <span className="mt-1 max-w-full truncate text-[11px] text-slate-500">{stale}</span>
             ) : null}
           </button>
         );

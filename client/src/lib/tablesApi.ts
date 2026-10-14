@@ -8,6 +8,14 @@ import type { Sketch } from './tableSketch';
 import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
 import type { RemoteCancelRequested, RemoteCancelStatus, TableCancelRoute } from './remoteTableCancel';
 import type { ActionStatus, NextCourse } from './liveTables';
+import type {
+  AssignmentChange,
+  AssignmentConfig,
+  AssignmentRow,
+  AssignmentWaiter,
+  CopySource,
+  TableAssignmentRef,
+} from './tableAssignment';
 
 export type ZoneLayout = 'map' | 'grid';
 export type TableShape = 'round' | 'square' | 'rect';
@@ -92,6 +100,28 @@ export interface TableLock {
   posUserName: string | null;
   acquiredAt: string | null;
   expiresAt: string | null;
+  /** "שולחן תפוס" (P:/specs/table-waiter-assignment.md §8): since when this device holds it, its last word. */
+  since?: string | null;
+  lastSeenAt?: string | null;
+  /** "קופה 3 (בר)", "ק3", "ד.כ", "קופה 3 (בר) · דנה", "ק3 · ד.כ". */
+  deviceLabel?: string | null;
+  deviceShort?: string | null;
+  posUserInitials?: string | null;
+  holderText?: string | null;
+  holderShort?: string | null;
+}
+
+/** A lock that ran out unreleased: the device stopped reporting (§8 "המכשיר לא מדווח מאז…"). */
+export interface StaleLock {
+  machineId: string;
+  machineName: string | null;
+  posNumber: string | null;
+  posUserName: string | null;
+  since: string | null;
+  lastSeenAt: string | null;
+  expiredAt: string | null;
+  holderText?: string | null;
+  holderShort?: string | null;
 }
 
 export interface LiveTable extends DiningTable {
@@ -105,6 +135,11 @@ export interface LiveTable extends DiningTable {
   nextCourse?: NextCourse | null;
   /** "2 (דנה)": the till inside it. */
   heldBy?: string | null;
+  /** "פתוח כעת: קופה 3 · דנה" — with `tableBusyShowHolder` on (§8); null otherwise. */
+  holder?: { text: string | null; short: string | null; since: string | null } | null;
+  staleLock?: StaleLock | null;
+  /** "שיוך מלצרים" (§2): its own or its zone's waiters; null — assigned to nobody. */
+  assignment?: TableAssignmentRef | null;
   lock: TableLock | null;
   state: TableStateCode;
   minutesOpen?: number | null;
@@ -145,6 +180,38 @@ export interface TablesLive {
   voidTickets?: VoidTicket[];
   /** The till's seated-time marks: amber, then red ("חריגת זמן"). */
   thresholds?: { warnMinutes: number; alertMinutes: number };
+  /** "שיוך מלצרים" as the shop reads it: its parameters, the live rows, the waiters with their colours. */
+  assignment?: AssignmentConfig & { businessDay?: string | null; rows: AssignmentRow[]; waiters: AssignmentWaiter[] };
+  /** "שולחן תפוס": `tableBusyEntry`, `tableBusyShowHolder`. */
+  busy?: BusyConfig;
+}
+
+export interface BusyConfig {
+  entry: 'block' | 'request' | 'view' | 'off';
+  showHolder: boolean;
+}
+
+/** `GET /tables/assignments`: the assignment mode's data. */
+export interface TableAssignmentsView {
+  serverTime: string;
+  businessDay: string;
+  config: AssignmentConfig & { busy: BusyConfig };
+  assignments: AssignmentRow[];
+  waiters: AssignmentWaiter[];
+  /** tableId → its effective assignment. */
+  tables: Record<string, TableAssignmentRef>;
+  copySources: { yesterday: CopySource | null; previous_shift: CopySource | null };
+  /** `tables_manage` at edit: may change it. */
+  canManage: boolean;
+}
+
+/** `POST /tables/assignments` and `/copy`: the live rows after it. */
+export interface TableAssignmentsResult {
+  changed?: number;
+  copied?: number;
+  released?: number;
+  businessDay: string;
+  assignments: AssignmentRow[];
 }
 
 // ── "כרטיס שולחן" (P:/specs/live-tables-cloud.md §2, §6.8) ─────────────────────
@@ -288,6 +355,8 @@ export interface TableActionBody {
   roundId?: string;
   picks?: { roundId: string; lineId: string }[];
   waiterPosUserId?: string;
+  /** set-waiter: "גם שיוך" — the table's assignment moves to the new waiter too. */
+  alsoAssignment?: boolean;
   targetTableId?: string;
   sources?: { tableId: string; orderId?: string; expectedVersion?: number }[];
   text?: string | null;
@@ -536,6 +605,18 @@ export const updateCancelReason = (
 
 export const fetchTablesLive = (shopId: string) =>
   api.get<TablesLive>('/tables/live', { params: { shopId } }).then((r) => r.data);
+
+/** "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §3): the mode's data. */
+export const fetchTableAssignments = (shopId: string) =>
+  api.get<TableAssignmentsView>('/tables/assignments', { params: { shopId } }).then((r) => r.data);
+
+/** The taps, in order (after "נקה הכל" when `clear`). `tables_manage` at edit. */
+export const postTableAssignments = (shopId: string, changes: AssignmentChange[], clear = false) =>
+  api.post<TableAssignmentsResult>('/tables/assignments', { shopId, changes, clear }).then((r) => r.data);
+
+/** "העתק שיוך מאתמול" / "מהמשמרת הקודמת" — 409 `nothing_to_copy`. */
+export const copyTableAssignments = (shopId: string, from: 'yesterday' | 'previous_shift') =>
+  api.post<TableAssignmentsResult>('/tables/assignments/copy', { shopId, from }).then((r) => r.data);
 
 /** The live view's realtime: a subscribe-only Ably token for the shop's tables signal (else poll). */
 export const fetchTablesLivePush = (shopId: string) =>

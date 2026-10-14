@@ -2751,6 +2751,9 @@ export interface PosUser {
   tillRoleId?: string | null;
   tillRoleName?: string | null;
   permissionOverrides?: Record<string, unknown> | null;
+  /** "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): their own (null — automatic) and the one shown. */
+  tableColor?: string | null;
+  tableColorEffective?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2763,6 +2766,8 @@ export interface PosUserCreate {
   role: PosUserRole;
   tillRoleId?: string;
   pin: string;
+  /** `#rrggbb`; none — automatic. */
+  tableColor?: string | null;
 }
 
 export interface PosUserUpdate {
@@ -2773,6 +2778,8 @@ export interface PosUserUpdate {
   tillRoleId?: string;
   isActive?: boolean;
   pin?: string;
+  /** `#rrggbb`; '' or null — automatic again. */
+  tableColor?: string | null;
 }
 
 // ── Operational reports (GET /reports/products, /reports/cashiers, /reports/tips) ──
@@ -3267,6 +3274,8 @@ export interface TillParameter {
    * option → the Hebrew shown for it. null = the options are shown as they are.
    */
   enumLabels?: Record<string, string> | null;
+  /** A warning per option, shown once it is chosen (`tableBusyEntry` = off: "לא בטוח…"). */
+  optionWarnings?: Record<string, string> | null;
   /** null = no default: a till with no value at any level does not get the key. */
   defaultValue?: TillParameterScalar | null;
   isActive: boolean;

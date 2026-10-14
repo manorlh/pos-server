@@ -224,7 +224,12 @@ export function TableCardSheet({
               <div className="flex items-start gap-2 rounded-lg border border-violet-500 bg-violet-50 p-2 text-violet-900 dark:bg-violet-950/40 dark:text-violet-100">
                 <Lock className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
-                  <div className="font-semibold">{t('heldBanner', { till: card.heldBy })}</div>
+                  <div className="font-semibold">
+                    {/* §8: the device and the employee in it now, since when ("פתוח כעת: קופה 3 (בר) · דנה"). */}
+                    {card.lock?.holderText
+                      ? t('heldNow', { holder: card.lock.holderText, since: formatTime(card.lock.since ?? card.lock.acquiredAt) })
+                      : t('heldBanner', { till: card.heldBy })}
+                  </div>
                   <div className="text-xs">{t('heldHint')}</div>
                 </div>
               </div>
@@ -685,10 +690,16 @@ function WaiterPanel({ card, shopId, busy, onSend, onBack }: {
   const { data: waiters = [], isLoading } = useQuery({ queryKey: ['table-waiters', shopId], queryFn: () => fetchTableWaiters(shopId) });
   const current = card.order?.waiterPosUserId ?? null;
   const anyOnShift = waiters.some((w) => w.onShift);
+  // "גם שיוך" (P:/specs/table-waiter-assignment.md §4): the table's assignment moves with the order.
+  const [alsoAssignment, setAlsoAssignment] = useState(false);
   return (
     <div className="space-y-2">
       <div className="font-medium">{t('waiterTitle')}</div>
       {!isLoading && !anyOnShift ? <p className="text-xs text-muted-foreground">{t('noOnShift')}</p> : null}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={alsoAssignment} onChange={(e) => setAlsoAssignment(e.target.checked)} />
+        {t('alsoAssignment')}
+      </label>
       {isLoading ? (
         <Skeleton className="h-16 w-full" />
       ) : (
@@ -699,7 +710,7 @@ function WaiterPanel({ card, shopId, busy, onSend, onBack }: {
               size="sm"
               variant={w.posUserId === current ? 'default' : 'outline'}
               disabled={busy || w.posUserId === current}
-              onClick={() => onSend('set-waiter', { waiterPosUserId: w.posUserId })}
+              onClick={() => onSend('set-waiter', { waiterPosUserId: w.posUserId, ...(alsoAssignment ? { alsoAssignment: true } : {}) })}
             >
               {w.name ?? '?'}
               {w.onShift ? <span className="ms-1 text-[10px] text-green-700 dark:text-green-400">● {t('onShift')}</span> : null}
