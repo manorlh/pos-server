@@ -114,7 +114,7 @@ export const SKETCH_VARIANTS: Partial<Record<SketchKind, SketchVariant[]>> = {
   plant: ['large', 'small'],
 };
 /** The sketch schema this editor writes (the server's SKETCH_SCHEMA; the till's too). */
-export const SKETCH_SCHEMA = 3;
+export const SKETCH_SCHEMA = 4;
 
 /** `variant` as `kind` keeps it: a counter is straight unless L or U; a restroom or an exit only its own; others none. */
 export function variantOf(kind: SketchKind, variant: SketchVariant | null | undefined): SketchVariant | null {
@@ -156,8 +156,24 @@ export interface SketchElement {
   src?: string | null;
   /** An area ("אזור"): its fill, from AREA_FILLS. */
   fill?: string | null;
-  /** An area: how opaque its fill is, in percent (10–60). */
+  /** An area: how opaque its fill is, in percent (10–60). A logo: how opaque it is (20–100; none: 100). */
   opacity?: number | null;
+  /**
+   * Schema 4 ("טקסט ולוגו", P:/specs/table-map-decor-v3.md §8). A text: its size — a name (s / m / l /
+   * xl) or 10–72 canvas units; none: fitted to its box.
+   */
+  fontSize?: LabelFontSize | null;
+  /** A text in bold. */
+  bold?: boolean | null;
+  /** A text's chip behind it ("#rrggbb", its box) and how opaque the chip is (10–100). */
+  bg?: string | null;
+  bgOpacity?: number | null;
+  /** A text's alignment in its box (none: centred). */
+  align?: LabelAlign | null;
+  /** A logo: the business's, or the picture uploaded for it (`src`); none — `src` decides. */
+  source?: LogoSource | null;
+  /** A logo stretched to its box (false); none or true — fitted, its proportions kept. */
+  keepAspect?: boolean | null;
 }
 
 /**
@@ -1606,6 +1622,7 @@ export function onView(el: SketchElement, view: MapView): SketchElement {
   const h = el.h * (q ? sx : sy);
   const cx = ox + (el.x + el.w / 2) * sx;
   const cy = oy + (el.y + el.h / 2) * sy;
+  const fs = el.kind === 'label' ? labelFontSize(el) : null;
   return {
     ...el,
     x: cx - w / 2,
@@ -1613,6 +1630,8 @@ export function onView(el: SketchElement, view: MapView): SketchElement {
     w,
     h,
     stroke: el.stroke != null ? el.stroke * Math.min(sx, sy) : el.stroke,
+    // A text's own size grows and shrinks with the map, like its box (§8).
+    ...(fs != null ? { fontSize: fs * Math.min(sx, sy) } : {}),
   };
 }
 
@@ -1635,4 +1654,151 @@ export const DECOR_COMPACT_BELOW_DP = 600;
 export const DECOR_MIN_ICON_DP = 18;
 export function isCompactScreen(width: number, height: number): boolean {
   return Math.min(width, height) < DECOR_COMPACT_BELOW_DP;
+}
+
+// ── "טקסט ולוגו" (schema 4, P:/specs/table-map-decor-v3.md §8) ────────────────
+
+export type LabelSizeName = 's' | 'm' | 'l' | 'xl';
+/** A text's size: a name, or a whole number of canvas units (10–72). */
+export type LabelFontSize = LabelSizeName | number;
+export type LabelAlign = 'left' | 'center' | 'right';
+export type LogoSource = 'business' | 'image';
+
+/** The named sizes, in canvas units (the server's SKETCH_FONT_SIZES). */
+export const LABEL_SIZES: Record<LabelSizeName, number> = { s: 14, m: 20, l: 28, xl: 40 };
+export const LABEL_SIZE_NAMES: LabelSizeName[] = ['s', 'm', 'l', 'xl'];
+export const LABEL_SIZE_LABELS: Record<LabelSizeName, string> = { s: 'קטן', m: 'בינוני', l: 'גדול', xl: 'גדול מאוד' };
+export const LABEL_FONT_RANGE = { min: 10, max: 72 } as const;
+export const LABEL_ALIGNS: LabelAlign[] = ['right', 'center', 'left'];
+/** A text's words: up to 200 characters on several lines; any other shape's: 60 on one. */
+export const LABEL_TEXT_MAX = 200;
+export const SKETCH_TEXT_MAX = 60;
+export const LABEL_BG_OPACITY = { min: 10, max: 100, default: 100 } as const;
+export const LOGO_OPACITY = { min: 20, max: 100, default: 100 } as const;
+/** A text's line height, as a multiple of its size. */
+export const LABEL_LINE_HEIGHT = 1.25;
+
+const clampInt = (v: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(v)));
+
+/** How many characters `kind`'s words may have. */
+export function textMax(kind: SketchKind): number {
+  return kind === 'label' ? LABEL_TEXT_MAX : SKETCH_TEXT_MAX;
+}
+
+/** Words as typed, as the server keeps them: one kind of line break, a text's several lines, at most its length. */
+export function cleanText(kind: SketchKind, text: string): string | null {
+  let out = text.replace(/\r\n?/g, '\n');
+  if (kind !== 'label') out = out.replace(/\n/g, ' ');
+  out = out.slice(0, textMax(kind));
+  return out.trim() ? out : null;
+}
+
+/** A text's lines (none: no line). */
+export function labelLines(text: string | null | undefined): string[] {
+  if (!text) return [];
+  return text.replace(/\r\n?/g, '\n').split('\n');
+}
+
+/** A typed or chosen size as stored: a name stays; a number is rounded into 10–72; nothing: fitted. */
+export function cleanFontSize(value: string | number | null | undefined): LabelFontSize | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'string') {
+    if ((LABEL_SIZE_NAMES as string[]).includes(value)) return value as LabelSizeName;
+    const n = Number(value.trim());
+    return Number.isFinite(n) ? clampInt(n, LABEL_FONT_RANGE.min, LABEL_FONT_RANGE.max) : null;
+  }
+  return Number.isFinite(value) ? clampInt(value, LABEL_FONT_RANGE.min, LABEL_FONT_RANGE.max) : null;
+}
+
+/** A text's own size in its units (a name's, its number), or null — fitted to its box. */
+export function labelFontSize(el: Pick<SketchElement, 'fontSize'>): number | null {
+  const v = el.fontSize;
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'string') return LABEL_SIZES[v as LabelSizeName] ?? null;
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+/** The size that fits `lines` in a w × h box (the size a text without one of its own is drawn at). */
+export function fittedFontSize(lines: string[], w: number, h: number): number {
+  const rows = Math.max(1, lines.length);
+  const longest = Math.max(2, ...lines.map((l) => l.length));
+  return Math.max(0, Math.min(Math.min(w, h) * 0.55, h / (rows * LABEL_LINE_HEIGHT), (w * 1.6) / longest));
+}
+
+export interface LabelLayout {
+  fontSize: number;
+  anchor: 'start' | 'middle' | 'end';
+  x: number;
+  /** Each line and the y of its middle. */
+  lines: { text: string; y: number }[];
+}
+
+/**
+ * Where a text's lines go in its box (a left-to-right picture: "left" anchors at the box's left
+ * edge, "right" at its right one, a little in from it): its own size, else fitted; at least `minSize`.
+ */
+export function labelLayout(
+  el: Pick<SketchElement, 'x' | 'y' | 'w' | 'h' | 'text' | 'fontSize' | 'align'>,
+  text: string | null = el.text ?? null,
+  minSize = 0,
+): LabelLayout {
+  const lines = labelLines(text);
+  const own = labelFontSize(el);
+  const fontSize = Math.max(minSize, own ?? fittedFontSize(lines, el.w, el.h));
+  const pad = Math.min(el.w * 0.06, fontSize * 0.5);
+  const align = el.align ?? 'center';
+  const anchor = align === 'left' ? 'start' : align === 'right' ? 'end' : 'middle';
+  const x = align === 'left' ? el.x + pad : align === 'right' ? el.x + el.w - pad : el.x + el.w / 2;
+  const step = fontSize * LABEL_LINE_HEIGHT;
+  const top = el.y + el.h / 2 - (step * (lines.length - 1)) / 2;
+  return { fontSize, anchor, x, lines: lines.map((t, i) => ({ text: t, y: top + i * step })) };
+}
+
+export function clampBgOpacity(v: number): number {
+  return clampInt(Number.isFinite(v) ? v : LABEL_BG_OPACITY.default, LABEL_BG_OPACITY.min, LABEL_BG_OPACITY.max);
+}
+
+export function clampLogoOpacity(v: number): number {
+  return clampInt(Number.isFinite(v) ? v : LOGO_OPACITY.default, LOGO_OPACITY.min, LOGO_OPACITY.max);
+}
+
+/** A text's chip as drawn: its colour and opacity (0–1), or null — none. */
+export function labelChip(el: Pick<SketchElement, 'bg' | 'bgOpacity'>): { fill: string; opacity: number } | null {
+  if (!el.bg || !/^#[0-9a-fA-F]{6}$/.test(el.bg)) return null;
+  return { fill: el.bg.toLowerCase(), opacity: clampBgOpacity(el.bgOpacity ?? LABEL_BG_OPACITY.default) / 100 };
+}
+
+/** Where a logo's picture comes from: as chosen, else its own picture when it has one, else the business's. */
+export function logoSourceOf(el: Pick<SketchElement, 'source' | 'src'>): LogoSource {
+  if (el.source === 'business' || el.source === 'image') return el.source;
+  return el.src ? 'image' : 'business';
+}
+
+/** The picture a logo shows: the uploaded one, or the business's (null: none yet). */
+export function logoPicture(el: Pick<SketchElement, 'source' | 'src'>, businessLogo: string | null): string | null {
+  return logoSourceOf(el) === 'image' ? (el.src ?? null) : businessLogo;
+}
+
+/** How opaque a logo is drawn, 0.2–1. */
+export function logoOpacity(el: Pick<SketchElement, 'opacity'>): number {
+  return clampLogoOpacity(el.opacity ?? LOGO_OPACITY.default) / 100;
+}
+
+/** The change that makes a logo the business's (its picture forgotten) or the uploaded one's. */
+export function withLogoSource(source: LogoSource, src?: string | null): Partial<SketchElement> {
+  return source === 'business' ? { source: 'business', src: null } : { source: 'image', ...(src !== undefined ? { src } : {}) };
+}
+
+/**
+ * A box of a picture's proportions (`ratio` = width / height) about the same centre, as large as
+ * the box's longer side allows — when "keep the proportions" is on, or a picture is chosen.
+ */
+export function boxOfRatio(el: Pick<SketchElement, 'x' | 'y' | 'w' | 'h'>, ratio: number): Pick<SketchElement, 'x' | 'y' | 'w' | 'h'> {
+  if (!(ratio > 0) || !Number.isFinite(ratio)) return { x: el.x, y: el.y, w: el.w, h: el.h };
+  const long = Math.max(el.w, el.h);
+  const w = ratio >= 1 ? long : long * ratio;
+  const h = ratio >= 1 ? long / ratio : long;
+  const cx = el.x + el.w / 2;
+  const cy = el.y + el.h / 2;
+  return { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w: Math.round(w), h: Math.round(h) };
 }

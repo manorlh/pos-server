@@ -38,6 +38,7 @@ from pydantic import ValidationError
 
 from app.routers import tables as R
 from app.schemas.tables import (
+    SKETCH_FIELD_SINCE,
     SKETCH_KIND_SINCE,
     SKETCH_KINDS,
     SKETCH_KINDS_3,
@@ -59,7 +60,7 @@ from test_tables import ctx, run, w  # noqa: F401  (w: the tables world fixture)
 GOLDEN = Path(__file__).parent / "fixtures" / "table_map_decor_golden.json"
 #: The file's SHA-256 (line endings read as LF) — the same constant in pos-android's
 #: TableMapDecorTest. Change the fixture in both repositories, and both constants, together.
-GOLDEN_SHA256 = "1a28af0baafef795ef396dec72d5bcbb655422a84a0da31572cd02031acee3d4"
+GOLDEN_SHA256 = "8ac0b871bcd954ffecbdaa5f00f2688e96142288d3025b5866a9b61eab6d7c76"
 #: pos-android beside pos-server (as on the developers' machines): the two copies must be equal.
 SIBLING = Path(__file__).resolve().parents[3] / "pos-android" / "app" / "src" / "test" / "resources" / GOLDEN.name
 
@@ -83,6 +84,11 @@ def golden_sketch() -> dict:
 def golden_sketch_3() -> dict:
     """Zone 1: every kind, variant and area of schema 3."""
     return golden()["zones"][1]["sketch"]
+
+
+def golden_sketch_4() -> dict:
+    """Zone 2: schema 4's styled texts and logos (P:/specs/table-map-decor-v3.md §8)."""
+    return golden()["zones"][2]["sketch"]
 
 
 def as_old_till_sends(sketch: dict) -> dict:
@@ -172,10 +178,18 @@ def test_the_fixture_has_every_kind_and_variant_of_the_decor():
     areas = [e for e in every if e["kind"] == "area"]
     assert any("points" in a for a in areas) and any("points" not in a for a in areas)
     assert any(e.get("color") and e["kind"] in SKETCH_KINDS_3 for e in every)
-    assert SKETCH_SCHEMA == 3
+    # Zones 0 and 1 have none of schema 4's fields; zone 2 has every one of them (§8).
+    for z in golden()["zones"][:2]:
+        for e in z["sketch"]["elements"]:
+            assert not set(SKETCH_FIELD_SINCE.get(e["kind"], {})) & set(e), e["id"]
+    styled = golden_sketch_4()["elements"]
+    for kind, fields in SKETCH_FIELD_SINCE.items():
+        have = {f for e in styled if e["kind"] == kind for f in e}
+        assert set(fields) <= have, kind
+    assert SKETCH_SCHEMA == 4
 
 
-@pytest.mark.parametrize("which", [0, 1])
+@pytest.mark.parametrize("which", [0, 1, 2])
 def test_the_dashboard_stores_the_decor_exactly_as_the_golden_layout_has_it(w, which):
     zone_golden = golden()["zones"][which]
     sketch = zone_golden["sketch"]
@@ -206,12 +220,12 @@ def test_decor_is_never_a_table(w):
     w.db.commit()
     state = T.till_state(w.db, w.a)
     hall = [t for t in state["tables"] if t["zoneId"] == str(w.hall.id)]
-    # The world's four tables and the golden six — not one of the 58 shapes.
+    # The world's four tables and the golden six — not one of the 65 shapes.
     assert len(hall) == 4 + len(golden()["tables"]) == 10
     assert not [t for t in state["tables"] if t["zoneId"] == str(garden.id)]
     assert len(next(z for z in state["zones"] if z["id"] == str(garden.id))["sketch"]["elements"]) == 39
     ids = {e["id"] for z in golden()["zones"] for e in z["sketch"]["elements"]}
-    assert len(ids) == 58
+    assert len(ids) == 65
     assert not ids & {t["id"] for t in state["tables"]}
 
 
@@ -463,8 +477,9 @@ def test_a_till_of_schema_3_saves_what_it_sends(w):
     by_id(sent)["gkd00001"].pop("color")
     save_from_till(w, {"sketchSchema": 3, "zones": [{"id": str(w.hall.id), "sketch": sent}]})
     after = stored(w)
+    # Nothing of schema 4 in these plans: a schema-3 till's save is what it sent.
     assert after == sent
-    assert SKETCH_SCHEMA == 3
+    assert SKETCH_SCHEMA == 4
 
 
 def test_an_old_till_s_new_zone_and_floor_change_are_untouched(w):
@@ -630,3 +645,159 @@ class TestMapDisplayParameters:
         assert set(MD.STRUCTURE_KINDS) == {"wall", "window", "column", "sofa", "logo", "line", "polyline", "freehand", "rect"}
         assert set(MD.STRUCTURE_KINDS) <= set(SKETCH_KINDS)
         assert not set(MD.STRUCTURE_KINDS) & set(SKETCH_KINDS_3)
+
+
+# ── "טקסט ולוגו" (schema 4, §8) ──────────────────────────────────────────────
+
+
+def label(**extra) -> dict:
+    return {"id": "l1", "kind": "label", "x": 10, "y": 10, "w": 300, "h": 60, "text": "ברוכים הבאים", **extra}
+
+
+def logo(**extra) -> dict:
+    return {"id": "g1", "kind": "logo", "x": 10, "y": 10, "w": 160, "h": 120, **extra}
+
+
+def one(el: dict) -> dict:
+    return T.sketch_json(SketchIn.model_validate({"elements": [el]}))["elements"][0]
+
+
+@pytest.mark.parametrize("size", ["s", "m", "l", "xl", 10, 24, 72, 30.0])
+def test_a_text_s_size_is_a_name_or_ten_to_seventy_two(size):
+    out = one(label(fontSize=size))
+    assert out["fontSize"] == (int(size) if isinstance(size, float) else size)
+
+
+def test_a_text_s_style_is_kept_and_only_what_differs():
+    out = one(label(fontSize="xl", bold=True, color="#1E293B", bg="#FEF3C7", bgOpacity=85, align="right", rotation=30))
+    assert {k: out[k] for k in ("fontSize", "bold", "color", "bg", "bgOpacity", "align", "rotation")} == {
+        "fontSize": "xl", "bold": True, "color": "#1e293b", "bg": "#fef3c7", "bgOpacity": 85, "align": "right", "rotation": 30,
+    }
+    # A chip with no opacity: a whole one; centred, regular, no size: nothing stored.
+    plain = one(label(bg="#ffffff", align="center", bold=False))
+    assert plain["bgOpacity"] == 100 and plain["bg"] == "#ffffff"
+    assert not {"align", "bold", "fontSize"} & set(plain)
+    # An opacity with no chip: nothing.
+    assert not {"bg", "bgOpacity"} & set(one(label(bgOpacity=50)))
+    # A text as before §8: exactly as it was stored.
+    assert one(label(color="#2563eb")) == {
+        "id": "l1", "kind": "label", "x": 10, "y": 10, "w": 300, "h": 60, "rotation": 0, "text": "ברוכים הבאים", "color": "#2563eb",
+    }
+
+
+def test_a_text_takes_several_lines_up_to_two_hundred_characters():
+    text = "שעות פתיחה\r\nא׳–ה׳ 12:00–23:00\rו׳ 10:00–15:00"
+    assert one(label(text=text))["text"] == "שעות פתיחה\nא׳–ה׳ 12:00–23:00\nו׳ 10:00–15:00"
+    assert len(one(label(text="א" * 200))["text"]) == 200
+    with pytest.raises(ValidationError):
+        SketchIn.model_validate({"elements": [label(text="א" * 201)]})
+    # Any other kind: 60, as before.
+    with pytest.raises(ValidationError):
+        SketchIn.model_validate({"elements": [{"id": "b", "kind": "bar", "x": 0, "y": 0, "w": 9, "h": 9, "text": "א" * 61}]})
+    assert one({"id": "b", "kind": "bar", "x": 0, "y": 0, "w": 9, "h": 9, "text": "א" * 60})["text"] == "א" * 60
+
+
+@pytest.mark.parametrize("extra", [
+    dict(fontSize="xxl"), dict(fontSize="M"), dict(fontSize=9), dict(fontSize=73), dict(fontSize=20.5),
+    dict(fontSize=True), dict(fontSize="20"), dict(bg="yellow"), dict(bg="#fff"), dict(bgOpacity=9),
+    dict(bgOpacity=101), dict(align="justify"), dict(align="start"), dict(rotation=360),
+])
+def test_a_text_s_style_out_of_bounds_is_refused(extra):
+    with pytest.raises(ValidationError):
+        SketchIn.model_validate({"elements": [label(**extra)]})
+
+
+def test_the_style_of_a_text_is_a_text_s_only():
+    out = one({"id": "c", "kind": "coffee_station", "x": 0, "y": 0, "w": 80, "h": 60,
+               "fontSize": "xl", "bold": True, "bg": "#ffffff", "bgOpacity": 50, "align": "left", "keepAspect": False, "source": "image"})
+    assert not {"fontSize", "bold", "bg", "bgOpacity", "align", "keepAspect", "source"} & set(out)
+
+
+def test_a_logo_s_source_opacity_and_stretch():
+    url = "https://media.example.com/uploads/logo.png"
+    business = one(logo(source="business", src=url, opacity=60, rotation=15))
+    # The business's: no picture of its own kept.
+    assert (business["source"], business["opacity"], business["rotation"]) == ("business", 60, 15)
+    assert "src" not in business
+    image = one(logo(source="image", src=url, opacity=35, keepAspect=False))
+    assert (image["source"], image["src"], image["opacity"], image["keepAspect"]) == ("image", url, 35, False)
+    # As before §8: `src` decides; a whole opacity and a fitted picture are not stored.
+    before = one(logo(src=url, opacity=100, keepAspect=True))
+    assert before == {"id": "g1", "kind": "logo", "x": 10, "y": 10, "w": 160, "h": 120, "rotation": 0, "text": None, "src": url}
+    assert one(logo())["kind"] == "logo" and "src" not in one(logo())
+
+
+@pytest.mark.parametrize("extra", [
+    dict(source="image"),  # an uploaded picture with no picture
+    dict(source="brand"), dict(opacity=19), dict(opacity=101), dict(opacity=50.5),
+    dict(src="ftp://x/logo.png"), dict(keepAspect="no"),
+])
+def test_a_logo_out_of_bounds_is_refused(extra):
+    with pytest.raises(ValidationError):
+        SketchIn.model_validate({"elements": [logo(**extra)]})
+
+
+def test_an_area_s_opacity_is_still_ten_to_sixty_and_a_logo_s_twenty_to_a_hundred():
+    with pytest.raises(ValidationError):
+        SketchIn.model_validate({"elements": [area(opacity=70)]})
+    assert one(logo(opacity=20))["opacity"] == 20
+    with pytest.raises(ValidationError):
+        SketchIn.model_validate({"elements": [logo(opacity=10)]})
+
+
+def as_schema_3_till_sends(sketch: dict) -> dict:
+    """The plan as a schema-3 till's designer saves it: every kind and variant, none of §8's fields."""
+    out = copy.deepcopy(sketch)
+    for e in out["elements"]:
+        for field in SKETCH_FIELD_SINCE.get(e["kind"], {}):
+            e.pop(field, None)
+    return out
+
+
+@pytest.mark.parametrize("schema", [None, 2, 3])
+def test_an_older_till_saving_its_plan_keeps_the_texts_and_logos_style(w, schema):
+    sketch = golden_sketch_4()
+    R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": sketch}), BackgroundTasks(), **ctx(w))
+    sent = as_schema_3_till_sends(sketch)
+    # It moved the welcome text and the business's logo.
+    for e in sent["elements"]:
+        if e["id"] in ("tlbl0001", "tlgo0001"):
+            e["x"] += 10
+    assert "fontSize" not in by_id(sent)["tlbl0001"] and "opacity" not in by_id(sent)["tlgo0001"]
+    save_from_till(w, {**({"sketchSchema": schema} if schema else {}), "zones": [{"id": str(w.hall.id), "sketch": sent}]})
+    after = by_id(stored(w))
+    expected = by_id(copy.deepcopy(sketch))
+    for i in ("tlbl0001", "tlgo0001"):
+        expected[i]["x"] += 10
+    assert after == expected
+
+
+def test_a_till_of_schema_4_saves_the_style_it_sends(w):
+    sketch = golden_sketch_4()
+    R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": sketch}), BackgroundTasks(), **ctx(w))
+    sent = copy.deepcopy(sketch)
+    by_id(sent)["tlbl0001"].pop("bold")
+    by_id(sent)["tlbl0003"].pop("bg")
+    by_id(sent)["tlbl0003"].pop("bgOpacity")
+    by_id(sent)["tlgo0002"].pop("keepAspect")
+    save_from_till(w, {"sketchSchema": 4, "zones": [{"id": str(w.hall.id), "sketch": sent}]})
+    assert stored(w) == sent
+
+
+def test_keep_decor_restores_a_style_field_only_on_the_same_kind():
+    before = {"elements": [
+        {"id": "l", "kind": "label", "text": "א", "fontSize": "xl", "bg": "#ffffff", "bgOpacity": 40},
+        {"id": "g", "kind": "logo", "source": "business", "opacity": 50},
+        {"id": "x", "kind": "label", "bold": True},
+    ]}
+    saved = {"template": None, "background": None, "elements": [
+        {"id": "l", "kind": "label", "text": "ב", "bg": "#000000"},  # it sent a chip of its own: kept as sent
+        {"id": "g", "kind": "logo"},
+        {"id": "x", "kind": "tree"},  # another kind now: left as sent
+    ]}
+    out = by_id(T.keep_decor_unknown_to_till(before, saved, 3))
+    assert out["l"] == {"id": "l", "kind": "label", "text": "ב", "bg": "#000000", "fontSize": "xl", "bgOpacity": 40}
+    assert out["g"] == {"id": "g", "kind": "logo", "source": "business", "opacity": 50}
+    assert out["x"] == {"id": "x", "kind": "tree"}
+    # Schema 4: what it sent.
+    assert T.keep_decor_unknown_to_till(before, saved, 4)["elements"] == saved["elements"]

@@ -1994,6 +1994,13 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "עיצוב השולחנות" (P:/specs/till-design-tables.md §5, app/services/table_tile_look.py): `tableTileStyle`,
+# `tableTileInfo`, `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize` — read by the till only.
+# Edited in "עיצוב קופה → שולחנות ומפה" (app/routers/till_design.py `/till-design/table-display`).
+from app.services.table_tile_look import PARAMETER_SPECS as _TILE_LOOK_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILE_LOOK_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2092,6 +2099,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in remote_support.VALIDATED_KEYS and value is not None:
         try:
             return remote_support.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "עיצוב השולחנות": the codes, the info list, the colours (#RRGGBB per state), 5–600 minutes.
+    from app.services import table_tile_look
+
+    if key in table_tile_look.VALIDATED_KEYS and value is not None:
+        try:
+            return table_tile_look.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

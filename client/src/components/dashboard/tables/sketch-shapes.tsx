@@ -23,6 +23,10 @@ import {
   defaultText,
   hasPoints,
   isPolygonArea,
+  labelChip,
+  labelLayout,
+  logoOpacity,
+  logoPicture,
   mix,
   polygonCentroid,
   styleOf,
@@ -133,10 +137,13 @@ export function SketchShape({
   if (el.kind === 'area') {
     return <AreaShape el={el} perPx={perPx} selected={selected} onDown={onDown} onResize={onResize} />;
   }
+  if (el.kind === 'label') {
+    return <LabelShape el={el} perPx={perPx} selected={selected} onDown={onDown} onResize={onResize} compact={compact} words={words} />;
+  }
 
   // The words: a symbol's name where it fits (`auto`; none on a small screen), always, or never.
-  // A free text (a label, an arrow's) is the user's own: hidden only on a small screen in `auto`.
-  const ownWords = el.kind === 'label' || el.kind === 'arrow';
+  // A free text (an arrow's; a label's is LabelShape's) is the user's own: hidden only on a small screen in `auto`.
+  const ownWords = el.kind === 'arrow';
   const showWords = ownWords ? !compact || words === 'always' : words === 'always' || (words === 'auto' && !compact);
   const text = showWords ? (el.text ?? defaultText(el)) : null;
   const symbol = hasSymbol(el.kind, el.variant);
@@ -173,7 +180,7 @@ export function SketchShape({
     <g>
       <g transform={`rotate(${el.rotation} ${cx} ${cy})`} onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
         {el.kind === 'logo' ? (
-          <LogoShape el={el} perPx={perPx} selected={selected} src={el.src ?? logoUrl} label={logoLabel} />
+          <LogoShape el={el} perPx={perPx} selected={selected} src={logoPicture(el, logoUrl)} label={logoLabel} />
         ) : el.kind === 'counter' ? (
           <CounterShape el={el} perPx={perPx} selected={selected} />
         ) : el.kind === 'plant' ? (
@@ -194,8 +201,6 @@ export function SketchShape({
           <SofaShape el={el} perPx={perPx} />
         ) : el.kind === 'stairs' ? (
           <StairsShape el={el} perPx={perPx} />
-        ) : el.kind === 'label' ? (
-          <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" stroke={selected ? SELECT_BLUE : 'none'} strokeDasharray="4 4" />
         ) : st.round ? (
           <ellipse cx={cx} cy={cy} rx={el.w / 2} ry={el.h / 2} fill={st.fill} stroke={st.stroke} strokeWidth={2 * perPx} />
         ) : (
@@ -232,7 +237,7 @@ export function SketchShape({
             textAnchor="middle"
             dominantBaseline="central"
             fontSize={el.kind === 'arrow' ? arrowFs : textFs}
-            fill={el.kind === 'label' && el.color ? el.color : el.kind === 'arrow' ? '#ffffff' : st.text}
+            fill={el.kind === 'arrow' ? '#ffffff' : st.text}
             stroke={el.kind === 'arrow' ? st.stroke : undefined}
             strokeWidth={el.kind === 'arrow' ? Math.max(perPx, arrowFs * 0.14) : undefined}
             paintOrder={el.kind === 'arrow' ? 'stroke' : undefined}
@@ -716,9 +721,11 @@ function AreaShape({
  * the same); with no picture, a dashed box saying where it goes.
  */
 function LogoShape({ el, perPx, selected, src, label }: { el: SketchElement; perPx: number; selected: boolean; src: string | null; label: string }) {
+  // §8: how opaque, and stretched to its box or fitted with its proportions kept.
+  const opacity = logoOpacity(el);
   if (!src) {
     return (
-      <g>
+      <g opacity={opacity}>
         <rect
           x={el.x} y={el.y} width={el.w} height={el.h} rx={6 * perPx}
           fill="#ffffff" fillOpacity={0.6}
@@ -739,13 +746,90 @@ function LogoShape({ el, perPx, selected, src, label }: { el: SketchElement; per
   }
   return (
     <g>
-      <image href={src} x={el.x} y={el.y} width={el.w} height={el.h} preserveAspectRatio="xMidYMid meet" />
+      <image
+        href={src}
+        x={el.x}
+        y={el.y}
+        width={el.w}
+        height={el.h}
+        opacity={opacity}
+        preserveAspectRatio={el.keepAspect === false ? 'none' : 'xMidYMid meet'}
+      />
       {selected ? (
         <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="none" stroke={SELECT_BLUE} strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
       ) : (
         // An invisible box over it, so the whole logo picks up the pointer.
         <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
       )}
+    </g>
+  );
+}
+
+/**
+ * A text ("טקסט", §8): its lines at its own size (else fitted to its box), bold or not, in its colour,
+ * on a chip of its own when it has one, aligned in its box. It turns with its box at any angle — on a
+ * small screen it stands upright, and in `auto` it is not drawn there at all (v3 §3).
+ */
+function LabelShape({
+  el,
+  perPx,
+  selected,
+  onDown,
+  onResize,
+  compact,
+  words,
+}: {
+  el: SketchElement;
+  perPx: number;
+  selected: boolean;
+  onDown?: (e: React.PointerEvent) => void;
+  onResize?: (e: React.PointerEvent) => void;
+  compact: boolean;
+  words: 'auto' | 'always' | 'never';
+}) {
+  const cx = el.x + el.w / 2;
+  const cy = el.y + el.h / 2;
+  const handle = 12 * perPx;
+  const text = !compact || words === 'always' ? (el.text ?? defaultText(el)) : null;
+  const layout = labelLayout(el, text, 9 * perPx);
+  const chip = labelChip(el);
+  // An RTL text: its start is the box's right edge.
+  const anchor = layout.anchor === 'start' ? 'end' : layout.anchor === 'end' ? 'start' : 'middle';
+  const turn = !compact && el.rotation ? `rotate(${el.rotation} ${cx} ${cy})` : undefined;
+  return (
+    <g>
+      <g transform={turn} onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
+        {chip ? (
+          <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={Math.min(el.h * 0.3, 14 * perPx)} fill={chip.fill} fillOpacity={chip.opacity} />
+        ) : null}
+        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" stroke={selected ? SELECT_BLUE : 'none'} strokeDasharray="4 4" />
+        {text ? (
+          <text
+            direction="rtl"
+            textAnchor={anchor}
+            fontSize={layout.fontSize}
+            fontWeight={el.bold ? 700 : 400}
+            fill={el.color ?? SKETCH_STYLE.label.text}
+          >
+            {layout.lines.map((line, i) => (
+              <tspan key={i} x={layout.x} y={line.y} dominantBaseline="central">
+                {line.text || '\u00a0'}
+              </tspan>
+            ))}
+          </text>
+        ) : null}
+      </g>
+      {selected && onResize ? (
+        <rect
+          x={el.x + el.w - handle / 2}
+          y={el.y + el.h - handle / 2}
+          width={handle}
+          height={handle}
+          fill={SELECT_BLUE}
+          style={{ cursor: 'nwse-resize' }}
+          onPointerDown={onResize}
+        />
+      ) : null}
     </g>
   );
 }

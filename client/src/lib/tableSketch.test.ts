@@ -8,6 +8,21 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+  LABEL_SIZES,
+  LABEL_TEXT_MAX,
+  boxOfRatio,
+  cleanFontSize,
+  cleanText,
+  fittedFontSize,
+  labelChip,
+  labelFontSize,
+  labelLayout,
+  labelLines,
+  logoOpacity,
+  logoPicture,
+  logoSourceOf,
+  textMax,
+  withLogoSource,
   AREA_FILLS,
   AREA_FILL_DEFAULT,
   AREA_OPACITY,
@@ -165,7 +180,7 @@ describe('the decor symbols', () => {
     for (const k of SKETCH_KINDS_3) assert.ok(SKETCH_KINDS.includes(k), k);
     // The drawing tools' kinds are not in the palette.
     for (const k of ['line', 'polyline', 'freehand', 'rect'] as SketchKind[]) assert.ok(!SKETCH_KINDS.includes(k), k);
-    assert.equal(SKETCH_SCHEMA, 3);
+    assert.equal(SKETCH_SCHEMA, 4);
   });
 
   it('keeps a variant only on its own kind, as the server and the till do', () => {
@@ -234,9 +249,10 @@ describe('the decor symbols', () => {
     const file = path.join(__dirname, '..', '..', 'server', 'tests', 'fixtures', 'table_map_decor_golden.json');
     if (!fs.existsSync(file)) return;
     const golden = JSON.parse(fs.readFileSync(file, 'utf8')) as { zones: { sketch: Sketch }[] };
-    // Zone 0: schema 2, as it was; zone 1: schema 3.
+    // Zone 0: schema 2, as it was; zone 1: schema 3; zone 2: schema 4's texts and logos (§8).
     assert.equal(golden.zones[0].sketch.elements.length, 19);
     assert.equal(golden.zones[1].sketch.elements.length, 39);
+    assert.equal(golden.zones[2].sketch.elements.length, 7);
     const elements = golden.zones.flatMap((z) => z.sketch.elements);
     for (const el of elements) {
       assert.ok(SKETCH_KINDS.includes(el.kind), el.kind);
@@ -575,5 +591,107 @@ describe('the till: what it draws, its legend, its fit', () => {
     assert.deepEqual([drawn.w, drawn.h], [300, 10]);
     assert.ok(quarterTurned(90) && quarterTurned(270) && !quarterTurned(0) && !quarterTurned(30) && quarterTurned(45));
     assert.ok(isCompactScreen(360, 640) && isCompactScreen(1080 / 2.625, 2400 / 2.625) && !isCompactScreen(1280, 800));
+  });
+});
+
+// ── "טקסט ולוגו" (schema 4, P:/specs/table-map-decor-v3.md §8) ────────────────
+
+describe('a text on the map', () => {
+  const box = { x: 100, y: 100, w: 300, h: 120 };
+
+  it('takes a named size or 10–72, as the server does', () => {
+    assert.deepEqual(LABEL_SIZES, { s: 14, m: 20, l: 28, xl: 40 });
+    assert.equal(cleanFontSize('xl'), 'xl');
+    assert.equal(cleanFontSize('24'), 24);
+    assert.equal(cleanFontSize(9), 10);
+    assert.equal(cleanFontSize(80), 72);
+    assert.equal(cleanFontSize(20.4), 20);
+    assert.equal(cleanFontSize(''), null);
+    assert.equal(cleanFontSize(null), null);
+    assert.equal(cleanFontSize('huge'), null);
+    assert.equal(labelFontSize({ fontSize: 'l' }), 28);
+    assert.equal(labelFontSize({ fontSize: 33 }), 33);
+    assert.equal(labelFontSize({ fontSize: null }), null);
+  });
+
+  it('keeps several lines, up to 200 characters; any other shape one line of 60', () => {
+    assert.equal(textMax('label'), LABEL_TEXT_MAX);
+    assert.equal(textMax('bar'), 60);
+    assert.equal(cleanText('label', 'שעות\r\nא׳–ה׳'), 'שעות\nא׳–ה׳');
+    assert.equal(cleanText('bar', 'בר\nיין'), 'בר יין');
+    assert.equal(cleanText('label', 'א'.repeat(250))?.length, 200);
+    assert.equal(cleanText('label', '   '), null);
+    assert.deepEqual(labelLines('א\nב\r\nג'), ['א', 'ב', 'ג']);
+    assert.deepEqual(labelLines(null), []);
+  });
+
+  it('lays its lines out centred, or from the left or right edge, at its own size or fitted', () => {
+    const centred = labelLayout({ ...box, text: 'א\nב\nג', fontSize: 'm', align: null });
+    assert.equal(centred.fontSize, 20);
+    assert.equal(centred.anchor, 'middle');
+    assert.equal(centred.x, 250);
+    assert.deepEqual(centred.lines.map((l) => l.y), [135, 160, 185]);
+    const left = labelLayout({ ...box, text: 'א', fontSize: 20, align: 'left' });
+    assert.equal(left.anchor, 'start');
+    assert.ok(left.x > 100 && left.x < 120);
+    const right = labelLayout({ ...box, text: 'א', fontSize: 20, align: 'right' });
+    assert.equal(right.anchor, 'end');
+    assert.ok(right.x < 400 && right.x > 380);
+    // No size of its own: fitted to the box, every line in it.
+    const fitted = labelLayout({ ...box, text: 'שורה ראשונה\nשנייה' });
+    assert.equal(fitted.fontSize, fittedFontSize(['שורה ראשונה', 'שנייה'], 300, 120));
+    assert.ok(fitted.fontSize * 1.25 * 2 <= 120 + 0.01);
+    // A least size (a small screen's).
+    assert.equal(labelLayout({ ...box, w: 20, h: 10, text: 'אבגדה' }, 'אבגדה', 9).fontSize, 9);
+  });
+
+  it('draws a chip only with a colour, at its opacity', () => {
+    assert.equal(labelChip({ bg: null, bgOpacity: 50 }), null);
+    assert.deepEqual(labelChip({ bg: '#FEF3C7', bgOpacity: null }), { fill: '#fef3c7', opacity: 1 });
+    assert.deepEqual(labelChip({ bg: '#000000', bgOpacity: 5 }), { fill: '#000000', opacity: 0.1 });
+    assert.equal(labelChip({ bg: 'yellow', bgOpacity: 50 }), null);
+  });
+});
+
+describe('a logo on the map', () => {
+  it('shows the business\'s logo or its own picture', () => {
+    assert.equal(logoSourceOf({ source: null, src: null }), 'business');
+    assert.equal(logoSourceOf({ source: null, src: 'https://x/l.png' }), 'image');
+    assert.equal(logoSourceOf({ source: 'business', src: 'https://x/l.png' }), 'business');
+    assert.equal(logoPicture({ source: 'business', src: 'https://x/l.png' }, 'https://brand/logo.png'), 'https://brand/logo.png');
+    assert.equal(logoPicture({ source: 'image', src: 'https://x/l.png' }, 'https://brand/logo.png'), 'https://x/l.png');
+    assert.equal(logoPicture({ source: 'image', src: null }, 'https://brand/logo.png'), null);
+    assert.deepEqual(withLogoSource('business'), { source: 'business', src: null });
+    assert.deepEqual(withLogoSource('image', 'https://x/l.png'), { source: 'image', src: 'https://x/l.png' });
+    assert.deepEqual(withLogoSource('image'), { source: 'image' });
+  });
+
+  it('is 20–100% opaque', () => {
+    assert.equal(logoOpacity({ opacity: null }), 1);
+    assert.equal(logoOpacity({ opacity: 35 }), 0.35);
+    assert.equal(logoOpacity({ opacity: 5 }), 0.2);
+  });
+
+  it('keeps a picture\'s proportions about its centre', () => {
+    assert.deepEqual(boxOfRatio({ x: 100, y: 100, w: 200, h: 200 }, 2), { x: 100, y: 150, w: 200, h: 100 });
+    assert.deepEqual(boxOfRatio({ x: 0, y: 0, w: 100, h: 50 }, 0.5), { x: 25, y: -25, w: 50, h: 100 });
+    assert.deepEqual(boxOfRatio({ x: 1, y: 2, w: 3, h: 4 }, 0), { x: 1, y: 2, w: 3, h: 4 });
+  });
+
+  it('reads every text and logo of the golden zone 2', () => {
+    const file = path.join(__dirname, '..', '..', 'server', 'tests', 'fixtures', 'table_map_decor_golden.json');
+    if (!fs.existsSync(file)) return;
+    const golden = JSON.parse(fs.readFileSync(file, 'utf8')) as { zones: { sketch: Sketch }[] };
+    const els = golden.zones[2].sketch.elements;
+    const byId = Object.fromEntries(els.map((e) => [e.id, e]));
+    assert.equal(labelFontSize(byId.tlbl0001), 40);
+    assert.equal(labelFontSize(byId.tlbl0003), 24);
+    assert.equal(labelLines(byId.tlbl0004.text).length, 3);
+    assert.deepEqual(labelChip(byId.tlbl0003), { fill: '#0f172a', opacity: 0.6 });
+    assert.equal(logoSourceOf(byId.tlgo0001), 'business');
+    assert.equal(logoSourceOf(byId.tlgo0002), 'image');
+    assert.equal(logoOpacity(byId.tlgo0002), 0.35);
+    assert.equal(byId.tlgo0002.keepAspect, false);
+    for (const el of els) if (el.kind === 'label') assert.equal(cleanFontSize(el.fontSize ?? null), el.fontSize ?? null);
   });
 });
