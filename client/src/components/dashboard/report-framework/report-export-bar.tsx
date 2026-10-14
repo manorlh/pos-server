@@ -114,7 +114,7 @@ export interface ReportExportBarProps {
   reportType?: string;
   /** The KPI cards (3–6), as the page shows them. */
   kpis?: ReportKpi[];
-  /** The main figure's chart. */
+  /** The main figure's chart; `null`: none (absent: the server's default for the type). */
   chart?: ReportChart | null;
   /** No `chart`: one built from the exported main table (the top rows by `value`). */
   chartFrom?: { label: string; value: string; type?: ReportChartType; top?: number; kind?: ReportChart['kind']; title?: string };
@@ -310,14 +310,17 @@ export function ReportExportBar({
     const beforeRange = before ? rangeText(before.from, before.to) : '';
     const previousLabel = before?.label ?? (beforeRange ? t('compareWith', { range: beforeRange }) : undefined);
     const cards = cleanKpis(withCompare(kpis ?? [], before?.kpis ?? null, previousLabel));
-    let previousRows: (string | number | null)[][] | undefined;
-    if (main && r && before?.rows) {
-      const x = expandExportColumns(r.table, before.rows, r.keys);
-      const prevTable = toExportTable(x.table, '', title, before.rows);
-      const prev = exportTablePdfBody(prevTable, x.keys, { title, subtitleLines: [], filterLines: [], fileName });
-      previousRows = prev.rows;
-    }
     const sheet = main ? exportTableSheet(main.table, main.keys) : null;
+    let previousRows: (string | number | null)[][] | undefined;
+    if (sheet && r && before?.rows) {
+      // The previous period in the current one's columns, matched by key (a column the data
+      // makes — one per payment method — may exist in one period only: blank in the other).
+      const x = expandExportColumns(r.table, before.rows, r.keys);
+      const prev = exportTableSheet(toExportTable(x.table, '', title, before.rows), x.keys);
+      const at = sheet.columns.slice(0, 40).map((c) => prev.columns.findIndex((p) => p.key === c.key));
+      const plain = (v: unknown): string | number | null => (typeof v === 'number' || typeof v === 'string' ? v : null);
+      previousRows = prev.rows.map((row) => at.map((i) => (i < 0 ? null : plain(row[i]))));
+    }
     const drawn =
       cleanChart(chart) ??
       (chartFrom && sheet
@@ -342,8 +345,9 @@ export function ReportExportBar({
       ...(range ? { period: range } : {}),
       ...(business || place ? { scope: [business, place].filter((x) => x && x.trim()).join(' › ') } : {}),
       ...(cards.length ? { kpis: cards } : {}),
-      // No chart from the page: the server draws its type's default (§7.4).
-      ...(drawn ? { chart: drawn } : {}),
+      // No chart from the page: the server draws its type's default (§7.4); `null`: no chart at
+      // all (a list of single records has nothing to plot).
+      ...(chart === null ? { chart: null } : drawn ? { chart: drawn } : {}),
       ...(previousRows ? { previousRows } : {}),
       ...(previousLabel && before ? { previousLabel } : {}),
       ...(groups.length ? { groupBy: groups } : {}),
@@ -372,7 +376,7 @@ export function ReportExportBar({
       const extra = (await extraSheets?.()) ?? [];
       // "סיכום ותובנות" first (§1): the KPIs and the server's sentences about this report.
       const mainPrepared = prepared.find((x) => x.r === main)?.p ?? null;
-      const words = {
+      const summaryWords = {
         sheetName: t('summarySheet'),
         kpiHeader: t('summaryKpi'),
         valueHeader: t('summaryValue'),
@@ -383,7 +387,7 @@ export function ReportExportBar({
       let summary: ExcelSheet | null = null;
       if (insights) {
         // The page has the server's sentences already (a report that carries them).
-        summary = summarySheet(cleanKpis(kpis ?? []), insights, words);
+        summary = summarySheet(cleanKpis(kpis ?? []), insights, summaryWords);
       } else if (main && mainPrepared) {
         const body = {
           ...exportTablePdfBody(mainPrepared.table, mainPrepared.keys, pdfHeader(main), orientation),
@@ -391,9 +395,9 @@ export function ReportExportBar({
         };
         // The server's sentences, and its KPIs with the comparison worked out (§7.2).
         const answer = body.rows.length <= PDF_MAX_ROWS ? await fetchReportInsights(body) : null;
-        summary = summarySheet(answer?.kpis.length ? answer.kpis : (body.kpis ?? []), answer?.insights ?? [], words);
+        summary = summarySheet(answer?.kpis.length ? answer.kpis : (body.kpis ?? []), answer?.insights ?? [], summaryWords);
       } else if (kpis?.length) {
-        summary = summarySheet(cleanKpis(kpis), [], words);
+        summary = summarySheet(cleanKpis(kpis), [], summaryWords);
       }
       const body = extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra];
       await downloadExcel(summary ? [summary, ...body] : body, fileName, {

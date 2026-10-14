@@ -142,7 +142,7 @@ function Sparkline({ values }: { values: number[] }) {
   const points = values.map((v, i) => `${((i / (values.length - 1)) * w).toFixed(1)},${(h - ((v - min) / span) * h).toFixed(1)}`);
   const last = points[points.length - 1].split(',');
   return (
-    <svg width={w} height={h} viewBox={`-2 -2 ${w + 4} ${h + 4}`} aria-hidden className="text-primary overflow-visible" dir="ltr">
+    <svg width={w} height={h} viewBox={`-2 -2 ${w + 4} ${h + 4}`} aria-hidden className="text-primary overflow-visible">
       <polyline points={points.join(' ')} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" />
       <circle cx={last[0]} cy={last[1]} r={2.5} fill="currentColor" />
     </svg>
