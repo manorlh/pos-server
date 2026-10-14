@@ -89,10 +89,11 @@ jobs:
 
       - name: Tests
         run: |
+          # `python -m pytest`, not `pytest`: the server folder must be on the import path (`import app`).
           # Files run whole on one worker (`loadfile`): some suites share module state.
-          if ! poetry run pytest -q -n auto --dist loadfile tests; then
+          if ! poetry run python -m pytest -q -n auto --dist loadfile tests; then
             echo "A first run failed; running only the failures again, one at a time (order-dependent and timing tests)."
-            poetry run pytest -q -n 0 --last-failed --last-failed-no-failures none tests
+            poetry run python -m pytest -q -n 0 --last-failed --last-failed-no-failures none tests
           fi
 
   client-checks:
