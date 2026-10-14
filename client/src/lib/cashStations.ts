@@ -592,15 +592,18 @@ export function commandDraftError(d: CommandDraft): CommandDraftError | null {
   if (d.op === 'collect' && d.counted.trim() && shekelsToAgorot(d.counted) === null) return 'counted';
   if (d.op === 'dump' && d.dumpValue !== null) {
     const n = countOf(d.dumpNotes);
-    if (n === 'bad' || n === 0) return 'dumpNotes';
+    if (n === 'bad' || n === 0 || (typeof n === 'number' && n > DUMP_NOTES_MAX)) return 'dumpNotes';
   }
   return null;
 }
 
+/** A partial dump's count: 1–100000 notes (the server's `notes`). */
+export const DUMP_NOTES_MAX = 100_000;
+
 /**
  * `POST /cash-stations/{id}/commands`'s body for the draft (null while `commandDraftError`):
- * `{op, args: {pieces?, countedAgorot?, note?}}`. A dump of one denomination says it both as the host reads
- * it (`valueAgorot`, `notes`) and as the cloud keeps it (`pieces`: that value, count = the notes or 0 = all).
+ * `{op, args: {pieces?, countedAgorot?, note?}}`. A dump of one denomination: `valueAgorot` (that coin / note)
+ * and, for a partial one, `notes` — as the cloud keeps them and the host reads them; no `pieces`.
  */
 export function commandBody(d: CommandDraft): { op: CommandOp; args: Record<string, unknown> } | null {
   if (commandDraftError(d)) return null;
@@ -622,7 +625,6 @@ export function commandBody(d: CommandDraft): { op: CommandOp; args: Record<stri
     const notes = typeof n === 'number' ? n : null;
     args.valueAgorot = d.dumpValue;
     if (notes !== null) args.notes = notes;
-    args.pieces = [{ valueAgorot: d.dumpValue, count: notes ?? 0 }];
   }
   const note = d.note.trim().replace(/\s+/g, ' ').slice(0, 300);
   if (note) args.note = note;
@@ -952,26 +954,15 @@ export function effectiveText(key: string, value: unknown, labels: { yes: string
   return String(value);
 }
 
-// ── Kiosk assignment (till parameters, machine level) ────────────────────────
+// ── Kiosk assignment and the cash parameters' keys ───────────────────────────
+// A kiosk is assigned by its own till parameters (`cashEnabled`, `cashStation`), which the server writes for
+// "משויך לעמדה" (`PUT /cash-stations/{id}/clients/{machineId}`).
 
 export const CASH_ENABLED_KEY = 'cashEnabled';
 export const CASH_STATION_KEY = 'cashStation';
 export const CASH_ALERT_TILLS_KEY = 'cashAlertTills';
 export const CASH_COINS_KEY = 'cashCoinsAccepted';
 export const CASH_NOTES_KEY = 'cashNotesAccepted';
-
-/**
- * "משויך לעמדה" on a kiosk: the machine-level values written — on: `cashEnabled` true and `cashStation` this
- * station; off: `cashEnabled` false (its station value stays, harmless while cash is off).
- */
-export function assignmentValues(on: boolean, stationId: string): { key: string; value: boolean | string }[] {
-  return on
-    ? [
-        { key: CASH_ENABLED_KEY, value: true },
-        { key: CASH_STATION_KEY, value: stationId },
-      ]
-    : [{ key: CASH_ENABLED_KEY, value: false }];
-}
 
 /** Which station of `stations` a kiosk resolves to now (each station's `clients`), or null. */
 export function stationOfClient(stations: readonly Pick<CashStation, 'stationId' | 'clients'>[], machineId: string): string | null {

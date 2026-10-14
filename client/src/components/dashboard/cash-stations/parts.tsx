@@ -68,10 +68,10 @@ const STATION_ROLES = ['super_admin', 'distributor', 'company_manager', 'shop_ma
 
 /**
  * Who may do what — the server's own rules (dashboard_sections.py ROUTE_RULES): change a station or close an
- * owed item — `devices` at edit; send a command to its host — `devices` or `device_control` at edit; assign a
- * kiosk — the till parameters API, the super admin's only.
+ * owed item or assign a kiosk — `devices` at edit; send a command to its host — `devices` or `device_control`
+ * at edit.
  */
-export function useCashAccess(): { canEdit: boolean; canCommand: boolean; canAssign: boolean; hydrated: boolean } {
+export function useCashAccess(): { canEdit: boolean; canCommand: boolean; hydrated: boolean } {
   const role = useAuth((s) => s.user?.role ?? null);
   const hydrated = useAuth((s) => s.authHydrated);
   const access = useDashboardAccess();
@@ -80,7 +80,6 @@ export function useCashAccess(): { canEdit: boolean; canCommand: boolean; canAss
     hydrated,
     canEdit: roleOk && canAccess(access, 'devices', 'edit'),
     canCommand: roleOk && (canAccess(access, 'devices', 'edit') || canAccess(access, 'device_control', 'edit')),
-    canAssign: role === 'super_admin',
   };
 }
 

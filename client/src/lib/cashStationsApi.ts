@@ -3,12 +3,11 @@
  * one's journal, movements, owed items, drawer and the commands to its cash host. The shapes and the pure
  * rules are lib/cashStations.ts.
  *
- * Kiosk assignment is two machine-level till parameters (`cashEnabled`, `cashStation`), written through the
- * till parameters' values API (`PUT /till-parameters/{id}/values`, the super admin's).
+ * Assigning a kiosk ("משויך לעמדה") is the server's own route: it writes the kiosk's till parameters
+ * (`cashEnabled`, `cashStation`) at its level, under the devices section (no super admin needed).
  */
-import { api, fetchTillParameters, setTillParameterValue } from './api';
+import { api } from './api';
 import {
-  assignmentValues,
   type CashCommandRecord,
   type CashDrawer,
   type CashMovement,
@@ -116,15 +115,11 @@ export async function fetchCashDrawer(id: string, params: Record<string, string>
 }
 
 /**
- * "משויך לעמדה": writes the kiosk's own `cashEnabled` (and, on, `cashStation`) — the till parameters API,
- * which only the super admin may call (the server refuses anyone else).
+ * "משויך לעמדה": `PUT /cash-stations/{id}/clients/{machineId}` `{assigned}` → the station (detail). On: the device's
+ * own `cashEnabled` true and `cashStation` this station; off: `cashEnabled` false. 404 `client_not_found` (not an
+ * active kiosk / till of the station's shop), 409 `station_inactive`.
  */
-export async function setKioskStation(machineId: string, stationId: string, on: boolean): Promise<void> {
-  const params = await fetchTillParameters();
-  const byKey = new Map(params.map((p) => [p.key, p.id]));
-  for (const { key, value } of assignmentValues(on, stationId)) {
-    const id = byKey.get(key);
-    if (!id) throw new Error(`till parameter ${key} is missing`);
-    await setTillParameterValue(id, { scopeType: 'machine', scopeId: machineId, value });
-  }
+export async function setStationClient(stationId: string, machineId: string, assigned: boolean): Promise<CashStation> {
+  const { data } = await api.put<CashStation>(`/cash-stations/${stationId}/clients/${machineId}`, { assigned });
+  return data;
 }

@@ -44,7 +44,7 @@ export default function CashStationPage({ params }: { params: Promise<{ id: stri
   const search = useSearchParams();
   const asked = search.get('tab');
   const [tab, setTab] = useState<Tab>((TABS as readonly string[]).includes(asked ?? '') ? (asked as Tab) : 'status');
-  const { canEdit, canCommand, canAssign } = useCashAccess();
+  const { canEdit, canCommand } = useCashAccess();
   const { scope } = usePageScope({ maxLevel: 'shop', silent: true });
 
   const query = useQuery({
@@ -163,7 +163,7 @@ export default function CashStationPage({ params }: { params: Promise<{ id: stri
         {tab === 'drawer' ? <DrawerTab stationId={station.stationId} /> : null}
         {tab === 'maintenance' ? <MaintenanceTab station={station} canCommand={canCommand} /> : null}
         {tab === 'settings' ? <SettingsTab key={station.stationId} station={station} canEdit={canEdit} machines={scope.machines} /> : null}
-        {tab === 'kiosks' ? <KiosksTab station={station} machines={scope.machines} canAssign={canAssign} /> : null}
+        {tab === 'kiosks' ? <KiosksTab station={station} machines={scope.machines} canEdit={canEdit} /> : null}
       </div>
     </div>
   );

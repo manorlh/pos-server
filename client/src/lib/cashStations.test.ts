@@ -10,6 +10,7 @@ import { join } from 'node:path';
 
 import {
   COMMAND_OPS,
+  DUMP_NOTES_MAX,
   EMPTY_JOURNAL_FILTERS,
   ILS_DENOMINATIONS,
   MOVEMENT_KINDS,
@@ -21,7 +22,6 @@ import {
   addDays,
   agorotText,
   agorotToShekelsText,
-  assignmentValues,
   commandBody,
   commandDraftError,
   commandDraftTotal,
@@ -221,17 +221,16 @@ describe('maintenance commands', () => {
     assert.deepEqual(commandBody({ ...emptyCommandDraft('collect'), counted: '3600' }), { op: 'collect', args: { countedAgorot: 360000 } });
   });
 
-  it('a dump: everything, or one denomination (all of it or some notes), said both ways', () => {
+  it('a dump: everything, or one denomination (all of it or some notes) — valueAgorot / notes, no pieces', () => {
     assert.deepEqual(commandBody(emptyCommandDraft('dump')), { op: 'dump', args: {} });
-    assert.deepEqual(commandBody({ ...emptyCommandDraft('dump'), dumpValue: 2000 }), {
+    assert.deepEqual(commandBody({ ...emptyCommandDraft('dump'), dumpValue: 2000 }), { op: 'dump', args: { valueAgorot: 2000 } });
+    assert.deepEqual(commandBody({ ...emptyCommandDraft('dump'), dumpValue: 2000, dumpNotes: '5', note: 'סוף יום' }), {
       op: 'dump',
-      args: { valueAgorot: 2000, pieces: [{ valueAgorot: 2000, count: 0 }] },
-    });
-    assert.deepEqual(commandBody({ ...emptyCommandDraft('dump'), dumpValue: 2000, dumpNotes: '5' }), {
-      op: 'dump',
-      args: { valueAgorot: 2000, notes: 5, pieces: [{ valueAgorot: 2000, count: 5 }] },
+      args: { valueAgorot: 2000, notes: 5, note: 'סוף יום' },
     });
     assert.equal(commandDraftError({ ...emptyCommandDraft('dump'), dumpValue: 2000, dumpNotes: '0' }), 'dumpNotes');
+    assert.equal(commandDraftError({ ...emptyCommandDraft('dump'), dumpValue: 2000, dumpNotes: String(DUMP_NOTES_MAX + 1) }), 'dumpNotes');
+    assert.equal(commandDraftError({ ...emptyCommandDraft('dump'), dumpValue: 2000, dumpNotes: String(DUMP_NOTES_MAX) }), null);
   });
 
   it('the others carry nothing — the cloud keeps no argument of them, not even a note', () => {
@@ -341,16 +340,6 @@ describe('the station settings form', () => {
   });
 });
 
-describe('assigning a kiosk (machine-level till parameters)', () => {
-  it('on: cash on and this station; off: cash off', () => {
-    assert.deepEqual(assignmentValues(true, 's1'), [
-      { key: 'cashEnabled', value: true },
-      { key: 'cashStation', value: 's1' },
-    ]);
-    assert.deepEqual(assignmentValues(false, 's1'), [{ key: 'cashEnabled', value: false }]);
-  });
-});
-
 describe('he.json', () => {
   it('every word the pages say is there', () => {
     const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
@@ -382,5 +371,8 @@ describe('he.json', () => {
     assert.ok(he.phoneAlerts.type.cash);
     assert.ok(he.nav.cashStations);
     assert.ok(he.kiosks.payment.cashDeviceStationsNote);
+    for (const k of ['intro', 'readOnly', 'assigned', 'unassigned', 'servedHere', 'servedElsewhere', 'noCash', 'switchLabel']) {
+      assert.ok(cs.kiosks[k], `kiosks.${k}`);
+    }
   });
 });

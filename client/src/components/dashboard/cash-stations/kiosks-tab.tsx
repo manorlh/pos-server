@@ -4,7 +4,8 @@
  * "קיוסקים" — which kiosks this cash station serves (P:/specs/cash-paylink.md §11.10, §12): a kiosk is assigned
  * by two till parameters on its own level — `cashEnabled` (cash on) and `cashStation` (this station). The list
  * shows what each kiosk resolves to now (the station's `clients`, worked out by the server through every
- * level); the switch writes the kiosk's own values. Several kiosks may share a station (they queue).
+ * level); the switch is `PUT /cash-stations/{id}/clients/{machineId}` (devices at edit), which writes the
+ * kiosk's own values. Several kiosks may share a station (they queue).
  */
 
 import Link from 'next/link';
@@ -14,13 +15,13 @@ import { toast } from 'sonner';
 import { Loader2, MonitorSmartphone } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { stationOfClient, type CashStation } from '@/lib/cashStations';
-import { cashStationKey, cashStationsKey, fetchCashStations, setKioskStation } from '@/lib/cashStationsApi';
+import { cashStationKey, cashStationsKey, fetchCashStations, setStationClient } from '@/lib/cashStationsApi';
 import type { PosMachine } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { ToneBadge } from './parts';
 
-export function KiosksTab({ station, machines, canAssign }: { station: CashStation; machines: PosMachine[]; canAssign: boolean }) {
+export function KiosksTab({ station, machines, canEdit }: { station: CashStation; machines: PosMachine[]; canEdit: boolean }) {
   const t = useTranslations('cashStations.kiosks');
   const tc = useTranslations('common');
   const qc = useQueryClient();
@@ -39,10 +40,11 @@ export function KiosksTab({ station, machines, canAssign }: { station: CashStati
   const others = station.clients.filter((c) => !kioskIds.has(c.machineId.toLowerCase()));
 
   const assign = useMutation({
-    mutationFn: (a: { machineId: string; on: boolean }) => setKioskStation(a.machineId, station.stationId, a.on),
-    onSuccess: (_d, a) => {
+    mutationFn: (a: { machineId: string; on: boolean }) => setStationClient(station.stationId, a.machineId, a.on),
+    onSuccess: (next, a) => {
       toast.success(a.on ? t('assigned') : t('unassigned'));
-      void qc.invalidateQueries({ queryKey: cashStationKey(station.stationId) });
+      qc.setQueryData(cashStationKey(station.stationId), next);
+      // The shop's other stations lose (or gain) the kiosk too; the parameters page shows its new values.
       void qc.invalidateQueries({ queryKey: ['cash-stations'] });
       void qc.invalidateQueries({ queryKey: ['till-parameters'] });
     },
@@ -54,11 +56,7 @@ export function KiosksTab({ station, machines, canAssign }: { station: CashStati
   return (
     <div className="space-y-3">
       <p className="max-w-3xl text-sm text-muted-foreground">{t('intro')}</p>
-      {!canAssign ? (
-        <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
-          {t('superAdminOnly')}
-        </p>
-      ) : null}
+      {!canEdit ? <p className="text-xs text-muted-foreground">{t('readOnly')}</p> : null}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-1 text-sm font-medium text-muted-foreground">
@@ -92,7 +90,7 @@ export function KiosksTab({ station, machines, canAssign }: { station: CashStati
                       <label className="flex items-center gap-2 text-xs">
                         <Switch
                           checked={here}
-                          disabled={!canAssign || assign.isPending || !station.isActive}
+                          disabled={!canEdit || assign.isPending || (!here && !station.isActive)}
                           onCheckedChange={(v) => assign.mutate({ machineId: k.id, on: !!v })}
                           aria-label={t('switch', { name: k.name })}
                         />
