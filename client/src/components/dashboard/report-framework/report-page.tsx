@@ -86,10 +86,13 @@ export interface ReportExportConfig {
   kpis?: ReportExportBarProps['kpis'];
   chart?: ReportExportBarProps['chart'];
   chartFrom?: ReportExportBarProps['chartFrom'];
+  insightKeys?: ReportExportBarProps['insightKeys'];
   groupBy?: ReportExportBarProps['groupBy'];
   previous?: ReportExportBarProps['previous'];
   /** The page's own CSV instead of the main table's. */
   csv?: ReportExportBarProps['csv'];
+  /** A designed PDF the server builds whole (instead of the main table's). */
+  pdf?: ReportExportBarProps['pdf'];
 }
 
 export interface ReportPageProps {
@@ -259,9 +262,11 @@ export function ReportPage({
                   kpis={exportConfig.kpis}
                   chart={exportConfig.chart}
                   chartFrom={exportConfig.chartFrom}
+                  insightKeys={exportConfig.insightKeys}
                   groupBy={exportConfig.groupBy}
                   previous={exportConfig.previous}
                   csv={exportConfig.csv}
+                  pdf={exportConfig.pdf}
                 />
               ) : null}
               {children}

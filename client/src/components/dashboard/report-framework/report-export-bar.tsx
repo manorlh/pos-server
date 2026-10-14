@@ -125,6 +125,11 @@ export interface ReportExportBarProps {
   previous?: () => Promise<PreviousPeriod | null>;
   /** The page's own CSV instead of the main table's (a server file, a page's own columns). */
   csv?: () => void | Promise<void>;
+  /**
+   * A designed PDF the server builds whole from the report's own parameters (§7.3 "סיכום יום",
+   * §7.6 "לפי ימים"), instead of `POST /reports/pdf` with the main table.
+   */
+  pdf?: () => Promise<void>;
 }
 
 export type { PreviousPeriod, ReportChart, ReportKpi };
@@ -208,6 +213,7 @@ export function ReportExportBar({
   groupBy,
   previous,
   csv,
+  pdf,
 }: ReportExportBarProps) {
   const t = useTranslations('reportFramework.export');
   const ctx = useReportContext();
@@ -428,6 +434,17 @@ export function ReportExportBar({
   };
 
   const onPdf = async () => {
+    if (pdf) {
+      setBusy('pdf');
+      try {
+        await pdf();
+      } catch (err) {
+        toast.error(axiosErrorToToastMessage(err, t('pdfFailed')));
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
     const r = mainResolved();
     if (!r) return;
     setBusy('pdf');
@@ -519,7 +536,7 @@ export function ReportExportBar({
           />
           <DropdownMenuContent align="start" className="w-56">
             {excelOnly ? null : (
-              <DropdownMenuItem onClick={() => void onPdf()} disabled={exported.length === 0}>
+              <DropdownMenuItem onClick={() => void onPdf()} disabled={!pdf && exported.length === 0}>
                 <FileDown aria-hidden />
                 {t('pdfDesigned')}
               </DropdownMenuItem>
