@@ -274,6 +274,10 @@ class TicketIn(BaseModel):
     training: Optional[bool] = None
     #: When the table was opened (ISO-8601): "פתוח 25 דק'" at the head (`kitchenTicketElapsed`).
     opened_at: Optional[str] = Field(None, alias="openedAt", max_length=64)
+    #: The courses still held (P:/specs/fire-restaurant-flow.md §1, §6): their lines, printed apart at the foot
+    #: under "ממתין ל-FIRE" — never cooked. Apart from `lines`, so a printing till that does not know it prints
+    #: nothing of them. Kept through the relay as the sending till wrote it.
+    waiting: Optional[List[TicketLineIn]] = Field(None, max_length=TICKET_LINES_MAX)
 
 
 DOCUMENT_TEXT_MAX = 120

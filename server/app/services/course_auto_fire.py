@@ -298,8 +298,10 @@ def sent_quantities(extras: Dict[str, Any], *, paper_only: bool = False, firing_
     """
     What the kitchen has of each line (`sent`), for the lines it has any of. `paper_only`: not the
     lines marked "נשלח (בלי בון)" (`"s": true`, §2) — the kitchen never had those on paper. `firing_only`:
-    nor the lines that went by their own schedule (`"sch": true`, P:/specs/fire-restaurant-flow.md §8.3) —
-    they never make their course "fired".
+    nor the lines that went by their own schedule (`"sch": true`, P:/specs/fire-restaurant-flow.md §8.3), nor
+    a line sent alone out of a held course ("שגר נבחרים" / "שגר עכשיו", `"e": true`,
+    P:/specs/tables-send-selected-stay.md) — they never make their course "fired" (the till's
+    CourseFire.fired skips `silent` and `early` alike).
     """
     sent = extras.get("sent")
     if not isinstance(sent, dict):
@@ -310,7 +312,7 @@ def sent_quantities(extras: Dict[str, Any], *, paper_only: bool = False, firing_
             continue
         if (paper_only or firing_only) and s.get("s") is True:
             continue
-        if firing_only and s.get("sch") is True:
+        if firing_only and (s.get("sch") is True or s.get("e") is True):
             continue
         out[str(line_id)] = _float(s.get("q"))
     return out
