@@ -1770,6 +1770,7 @@ def build_day_summary_report(
     *,
     shop_ids: Optional[Sequence[uuid_mod.UUID]] = None,
     machine_ids: Optional[Sequence[uuid_mod.UUID]] = None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> DaySummaryReportResponse:
     """
     Z reports in the range, grouped by the business date they were filed under.
@@ -1782,7 +1783,9 @@ def build_day_summary_report(
 
     `shop_ids` and `machine_ids` narrow the selection and combine as an intersection —
     asking for a shop and a machine outside it is a contradiction and correctly returns
-    nothing, rather than quietly widening to either.
+    nothing, rather than quietly widening to either. `company_id` narrows to that company and
+    its subsidiaries — also when no shop is picked (a company scope is never "everything the
+    role sees").
     """
     query = (
         db.query(ZReport)
@@ -1808,6 +1811,11 @@ def build_day_summary_report(
         )
     query = scoped
 
+    if isinstance(company_id, uuid_mod.UUID):
+        from app.services.company_hierarchy import descendant_company_ids
+
+        group = descendant_company_ids(db, company_id)
+        query = query.filter(ZReport.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
     if shop_ids:
         query = query.filter(ZReport.shop_id.in_(list(shop_ids)))
     if machine_ids:

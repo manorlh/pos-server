@@ -22,9 +22,12 @@ Why not pages drawn as pictures with Pillow, as the vouchers are: a report can b
 hundreds of pages — and as images that is hundreds of megabytes and minutes, where as text it is
 a few megabytes and a few seconds, crisp at every zoom and printable on any printer.
 
-Every page: the header (logo, title, sub-titles, filters), the column headers, the rows (zebra),
-the footer "עמוד X מתוך Y" and when it was made. The totals row closes the last page. Columns
-run right to left; `auto` orientation is landscape above `AUTO_LANDSCAPE_COLUMNS` columns.
+This module is the writer's ground floor — the font, the text, the formats, the canvas (text,
+rectangles, lines and the vector shapes: rounded rectangles, polygons, ring segments, clipping,
+form XObjects) and the file. What a page looks like — the header band with both logos, KPI
+cards, insights, charts, tables, the cover and the footer (P:/specs/reports-designed-pdf.md §5)
+— is app/services/report_design.py. Columns run right to left; `auto` orientation is landscape
+above `AUTO_LANDSCAPE_COLUMNS` columns.
 """
 from __future__ import annotations
 
@@ -66,7 +69,9 @@ FOOTER_SIZE = 7.5
 #: Text columns never grow past this (in points at the body size) before wrapping is cut.
 TEXT_COLUMN_CAP = 260.0
 
-NUMERIC_KINDS = ("money", "number", "percent")
+NUMERIC_KINDS = ("money", "number", "percent", "trend")
+#: The kinds a column may be (`POST /reports/pdf`).
+COLUMN_KINDS = ("text", "money", "number", "percent", "date", "datetime", "trend")
 DASH = "—"
 TOTAL_LABEL = "סה״כ"
 NO_ROWS = "אין נתונים להצגה"
@@ -223,11 +228,16 @@ def visual(text: str, base_dir: Optional[str] = None) -> str:
     return get_display(text, base_dir=direction)
 
 
+#: Characters Heebo has no glyph for, as ones it has. An arrow in a Hebrew line ("חברה ← סניף")
+#: becomes the angle quote that the bidi algorithm mirrors to point the same way.
+_SUBSTITUTES = str.maketrans({"←": "›", "→": "‹", "⇐": "›", "⇒": "‹", "▲": "+", "▼": "-", "✓": "V", "✔": "V"})
+
+
 def clean(text: Any) -> str:
     """One line of printable text: no control characters or explicit bidi marks, no newlines."""
     s = "" if text is None else str(text)
     s = s.replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
-    return _CONTROL.sub("", s)
+    return _CONTROL.sub("", s).translate(_SUBSTITUTES)
 
 
 def _num(value: Any) -> Optional[Decimal]:
@@ -310,7 +320,7 @@ def format_cell(value: Any, kind: str, tz_name: str = "Asia/Jerusalem") -> str:
         return format_money(value)
     if kind == "number":
         return format_number(value)
-    if kind == "percent":
+    if kind in ("percent", "trend"):
         return format_percent(value)
     if kind in ("date", "datetime"):
         return format_date(value, tz_name)
@@ -334,6 +344,16 @@ class Column:
     label: str
     kind: str = "text"
     align: Optional[str] = None
+    #: A percent column: a small bar under the value (0–100).
+    bar: bool = True
+    #: What a group's subtotal row does with it: "sum" or "none" (None: by the kind).
+    agg: Optional[str] = None
+    #: A trend column: which way is good ("up" / "down").
+    better: str = "up"
+
+    @property
+    def sums(self) -> bool:
+        return self.agg == "sum" if self.agg in ("sum", "none") else self.kind in ("money", "number")
 
     @property
     def numeric(self) -> bool:
@@ -365,6 +385,20 @@ class Report:
     logo: Any = None  # a PIL image, or None
 
 
+def column_of(c: Dict[str, Any]) -> Column:
+    """A column from its JSON (`key`, `label`, `kind`, `align`, `bar`, `agg`, `better`)."""
+    kind = c.get("kind") or "text"
+    return Column(
+        key=str(c["key"]),
+        label=clean(c.get("label") or c["key"]),
+        kind=kind if kind in COLUMN_KINDS else "text",
+        align=c.get("align"),
+        bar=c.get("bar") is not False,
+        agg=c.get("agg") if c.get("agg") in ("sum", "none") else None,
+        better="down" if c.get("better") == "down" else "up",
+    )
+
+
 def build_report(
     *,
     title: str,
@@ -379,10 +413,7 @@ def build_report(
     now: Optional[datetime] = None,
 ) -> Report:
     """The rows as the strings they print as (by each column's kind)."""
-    cols = [
-        Column(key=str(c["key"]), label=clean(c.get("label") or c["key"]), kind=c.get("kind") or "text", align=c.get("align"))
-        for c in columns
-    ]
+    cols = [column_of(c) for c in columns]
 
     def cells(row: Any) -> List[str]:
         if isinstance(row, dict):
@@ -462,41 +493,33 @@ def _fit(font: _Font, text: str, size: float, width: float) -> str:
     return text[:lo].rstrip() + "…" if lo else "…"
 
 
-@dataclass
-class _Plan:
-    page_w: float
-    page_h: float
-    size: float
-    widths: List[float]
-    header_lines: List[Tuple[str, float, bool, float]]  # (text, size, bold, gray)
-    header_h: float
-    col_labels: List[List[str]]
-    col_head_h: float
-    row_h: float
-    rows_per_page: int
-    pages: int
-    logo_box: Optional[Tuple[float, float]]
-
-
-def _column_widths(report: Report, regular: _Font, bold: _Font, available: float) -> Tuple[float, List[float]]:
-    """(body size, widths in points), first column first. Numbers are never cut."""
-    n = len(report.columns)
+def column_widths(columns: Sequence[Column], rows: Sequence[Sequence[str]], totals: Optional[Sequence[str]],
+                  regular: _Font, bold: _Font, available: float) -> Tuple[float, List[float]]:
+    """
+    (body size, widths in points), first column first, for a table of `rows` (each its cells as
+    they print) in `available` points. Numbers are never cut; text columns share what is left.
+    A trend column (▲/▼) gets the arrow's room too.
+    """
+    n = len(columns)
     # Natural widths at 1pt, then scaled with the size.
     content = [0.0] * n
-    for row in report.rows:
-        for i, text in enumerate(row):
+    for row in rows:
+        for i, text in enumerate(row[:n]):
             w = regular.width(text, 1.0)
             if w > content[i]:
                 content[i] = w
-    if report.totals:
-        for i, text in enumerate(report.totals):
+    if totals:
+        for i, text in enumerate(totals[:n]):
             content[i] = max(content[i], bold.width(text, 1.0))
-    label_word = [max((bold.width(wd, 1.0) for wd in c.label.split()), default=0.0) for c in report.columns]
-    label_full = [bold.width(c.label, 1.0) for c in report.columns]
+    for i, col in enumerate(columns):
+        if col.kind == "trend" and content[i]:
+            content[i] += 1.2
+    label_word = [max((bold.width(wd, 1.0) for wd in c.label.split()), default=0.0) for c in columns]
+    label_full = [bold.width(c.label, 1.0) for c in columns]
 
     for size in [s / 2 for s in range(int(BODY_SIZE * 2), int(MIN_BODY_SIZE * 2) - 1, -1)]:
         natural, minimum = [], []
-        for i, col in enumerate(report.columns):
+        for i, col in enumerate(columns):
             head = max(label_word[i], label_full[i] / 2)
             body = content[i]
             if not col.numeric:
@@ -509,8 +532,8 @@ def _column_widths(report: Report, regular: _Font, bold: _Font, available: float
             total = sum(natural) or 1.0
             return size, [w + extra * w / total for w in natural]
         if sum(minimum) <= available:
-            fixed = sum(natural[i] for i, c in enumerate(report.columns) if c.numeric)
-            text_idx = [i for i, c in enumerate(report.columns) if not c.numeric]
+            fixed = sum(natural[i] for i, c in enumerate(columns) if c.numeric)
+            text_idx = [i for i, c in enumerate(columns) if not c.numeric]
             widths = list(natural)
             room = available - fixed
             free = list(text_idx)
@@ -535,74 +558,173 @@ def _column_widths(report: Report, regular: _Font, bold: _Font, available: float
     size = MIN_BODY_SIZE
     natural = [
         max(min(content[i], TEXT_COLUMN_CAP / size) if not c.numeric else content[i], label_word[i]) * size + 2 * PAD
-        for i, c in enumerate(report.columns)
+        for i, c in enumerate(columns)
     ]
     total = sum(natural) or 1.0
     return size, [available * w / total for w in natural]
 
 
-def plan(report: Report, regular: _Font, bold: _Font) -> _Plan:
-    page_w, page_h = page_size(report)
-    available = page_w - 2 * MARGIN
-    size, widths = _column_widths(report, regular, bold, available)
-
-    logo_box = None
-    if report.logo is not None:
-        w, h = report.logo.size
-        scale = min(LOGO_MAX[0] / w, LOGO_MAX[1] / h)
-        logo_box = (w * scale, h * scale)
-    text_w = available - ((logo_box[0] + 10) if logo_box else 0)
-    lines: List[Tuple[str, float, bool, float]] = []
-    for text in _wrap(bold, report.title, TITLE_SIZE, text_w, 2):
-        lines.append((text, TITLE_SIZE, True, 0.1))
-    for sub in report.subtitle_lines[:10]:
-        for text in _wrap(regular, sub, SUBTITLE_SIZE, text_w, 2):
-            lines.append((text, SUBTITLE_SIZE, False, 0.25))
-    for flt in report.filter_lines[:30]:
-        for text in _wrap(regular, flt, FILTER_SIZE, text_w, 3):
-            lines.append((text, FILTER_SIZE, False, 0.4))
-    text_h = sum(s * 1.35 for _t, s, _b, _g in lines)
-    header_h = max(text_h, logo_box[1] if logo_box else 0.0) + 8.0
-
-    col_labels = [_wrap(bold, c.label, size, max(1.0, widths[i] - 2 * PAD), 2) or [""] for i, c in enumerate(report.columns)]
-    head_lines = max(len(labels) for labels in col_labels)
-    col_head_h = head_lines * size * 1.25 + 7.0
-    row_h = round(size * 1.9, 2)
-    body_h = page_h - TOP - header_h - col_head_h - FOOTER_H - BOTTOM
-    rows_per_page = max(1, int(body_h // row_h))
-    slots = max(1, len(report.rows)) + (1 if report.totals else 0)
-    pages = max(1, math.ceil(slots / rows_per_page))
-    return _Plan(page_w, page_h, size, widths, lines, header_h, col_labels, col_head_h, row_h, rows_per_page, pages, logo_box)
-
-
 # ── Drawing ──────────────────────────────────────────────────────────────────
+
+#: A colour: a gray level (0 black … 1 white) or an (r, g, b) triple of 0…1.
+Color = Any
+#: Bezier factor of a quarter circle.
+_KAPPA = 0.5523
+
+
+def _color(c: Color) -> str:
+    if isinstance(c, (int, float)):
+        return f"{float(c):.3f} {float(c):.3f} {float(c):.3f}"
+    r, g, b = c
+    return f"{r:.3f} {g:.3f} {b:.3f}"
 
 
 class _Canvas:
-    """One page's content stream, in a top-left coordinate system (y grows down)."""
+    """
+    One page's content stream, in a top-left coordinate system (y grows down).
+
+    Text, rectangles and lines as before, and the vector shapes the designed report draws
+    (app/services/report_design.py): rounded rectangles, polygons, polylines, circles, ring
+    segments, clipping, and form XObjects (the R2M pixel logo).
+    """
 
     def __init__(self, page_h: float):
         self.page_h = page_h
         self.ops: List[str] = []
 
-    def rect(self, x: float, y: float, w: float, h: float, gray: float) -> None:
-        self.ops.append(f"{gray:.3f} g {x:.2f} {self.page_h - y - h:.2f} {w:.2f} {h:.2f} re f")
+    # ── Points and paths ──
 
-    def line(self, x1: float, y1: float, x2: float, y2: float, gray: float = 0.75, width: float = 0.5) -> None:
+    def _p(self, x: float, y: float) -> str:
+        return f"{x:.2f} {self.page_h - y:.2f}"
+
+    def _paint(self, path: str, fill: Optional[Color], stroke: Optional[Color], width: float) -> None:
+        if fill is None and stroke is None:
+            return
+        parts = ["q"]
+        if fill is not None:
+            parts.append(f"{_color(fill)} rg")
+        if stroke is not None:
+            parts.append(f"{_color(stroke)} RG {width:.2f} w 1 j 1 J")
+        parts.append(path)
+        parts.append("B" if fill is not None and stroke is not None else ("f" if fill is not None else "S"))
+        parts.append("Q")
+        self.ops.append(" ".join(parts))
+
+    def round_rect_path(self, x: float, y: float, w: float, h: float, r: float) -> str:
+        r = max(0.0, min(r, w / 2, h / 2))
+        if r <= 0.01:
+            return f"{x:.2f} {self.page_h - y - h:.2f} {w:.2f} {h:.2f} re"
+        k = _KAPPA * r
+        p = self._p
+        return " ".join([
+            f"{p(x + r, y)} m",
+            f"{p(x + w - r, y)} l",
+            f"{p(x + w - r + k, y)} {p(x + w, y + r - k)} {p(x + w, y + r)} c",
+            f"{p(x + w, y + h - r)} l",
+            f"{p(x + w, y + h - r + k)} {p(x + w - r + k, y + h)} {p(x + w - r, y + h)} c",
+            f"{p(x + r, y + h)} l",
+            f"{p(x + r - k, y + h)} {p(x, y + h - r + k)} {p(x, y + h - r)} c",
+            f"{p(x, y + r)} l",
+            f"{p(x, y + r - k)} {p(x + r - k, y)} {p(x + r, y)} c h",
+        ])
+
+    # ── Shapes ──
+
+    def rect(self, x: float, y: float, w: float, h: float, gray: Color) -> None:
+        op = "g" if isinstance(gray, (int, float)) else "rg"
+        value = f"{float(gray):.3f}" if op == "g" else _color(gray)
+        self.ops.append(f"{value} {op} {x:.2f} {self.page_h - y - h:.2f} {w:.2f} {h:.2f} re f")
+
+    def line(self, x1: float, y1: float, x2: float, y2: float, gray: Color = 0.75, width: float = 0.5) -> None:
+        op = "G" if isinstance(gray, (int, float)) else "RG"
+        value = f"{float(gray):.3f}" if op == "G" else _color(gray)
         self.ops.append(
-            f"{gray:.3f} G {width:.2f} w {x1:.2f} {self.page_h - y1:.2f} m {x2:.2f} {self.page_h - y2:.2f} l S"
+            f"{value} {op} {width:.2f} w {x1:.2f} {self.page_h - y1:.2f} m {x2:.2f} {self.page_h - y2:.2f} l S"
         )
 
-    def text(self, font: _Font, size: float, x: float, baseline: float, visual_text: str, gray: float = 0.1) -> None:
+    def round_rect(self, x: float, y: float, w: float, h: float, r: float, *, fill: Optional[Color] = None,
+                   stroke: Optional[Color] = None, width: float = 0.6) -> None:
+        self._paint(self.round_rect_path(x, y, w, h, r), fill, stroke, width)
+
+    def polygon(self, points: Sequence[Tuple[float, float]], *, fill: Optional[Color] = None,
+                stroke: Optional[Color] = None, width: float = 0.6) -> None:
+        if len(points) < 2:
+            return
+        path = " ".join([f"{self._p(*points[0])} m"] + [f"{self._p(*pt)} l" for pt in points[1:]]) + " h"
+        self._paint(path, fill, stroke, width)
+
+    def polyline(self, points: Sequence[Tuple[float, float]], color: Color, width: float = 1.0) -> None:
+        if len(points) < 2:
+            return
+        path = " ".join([f"{self._p(*points[0])} m"] + [f"{self._p(*pt)} l" for pt in points[1:]])
+        self._paint(path, None, color, width)
+
+    def circle(self, cx: float, cy: float, r: float, *, fill: Optional[Color] = None,
+               stroke: Optional[Color] = None, width: float = 0.6) -> None:
+        self._paint(self.round_rect_path(cx - r, cy - r, 2 * r, 2 * r, r), fill, stroke, width)
+
+    def _arc(self, cx: float, cy: float, r: float, a0: float, a1: float, move: bool) -> List[str]:
+        """An arc from angle a0 to a1 (radians, counter-clockwise on the page, 0 = east)."""
+        out: List[str] = []
+        steps = max(1, int(math.ceil(abs(a1 - a0) / (math.pi / 2) - 1e-9)))
+        delta = (a1 - a0) / steps
+        k = 4.0 / 3.0 * math.tan(delta / 4.0)
+        base = self.page_h - cy  # the centre in PDF coordinates (y up)
+
+        def pt(a: float) -> Tuple[float, float]:
+            return cx + r * math.cos(a), base + r * math.sin(a)
+
+        start = pt(a0)
+        if move:
+            out.append(f"{start[0]:.2f} {start[1]:.2f} m")
+        else:
+            out.append(f"{start[0]:.2f} {start[1]:.2f} l")
+        a = a0
+        for _ in range(steps):
+            b = a + delta
+            p0, p3 = pt(a), pt(b)
+            c1 = (p0[0] - k * r * math.sin(a), p0[1] + k * r * math.cos(a))
+            c2 = (p3[0] + k * r * math.sin(b), p3[1] - k * r * math.cos(b))
+            out.append(f"{c1[0]:.2f} {c1[1]:.2f} {c2[0]:.2f} {c2[1]:.2f} {p3[0]:.2f} {p3[1]:.2f} c")
+            a = b
+        return out
+
+    def ring_segment(self, cx: float, cy: float, r_out: float, r_in: float, a0: float, a1: float,
+                     fill: Color) -> None:
+        """A donut slice from a0 to a1 (radians, counter-clockwise; a clockwise slice has a1 < a0)."""
+        parts = self._arc(cx, cy, r_out, a0, a1, True)
+        if r_in > 0:
+            parts += self._arc(cx, cy, r_in, a1, a0, False)
+        else:
+            parts.append(f"{cx:.2f} {self.page_h - cy:.2f} l")
+        self._paint(" ".join(parts) + " h", fill, None, 0)
+
+    # ── State ──
+
+    def save(self) -> None:
+        self.ops.append("q")
+
+    def restore(self) -> None:
+        self.ops.append("Q")
+
+    def clip_round_rect(self, x: float, y: float, w: float, h: float, r: float) -> None:
+        """Clip what follows (until `restore`) to a rounded rectangle; call `save` first."""
+        self.ops.append(f"{self.round_rect_path(x, y, w, h, r)} W n")
+
+    # ── Text and pictures ──
+
+    def text(self, font: _Font, size: float, x: float, baseline: float, visual_text: str, gray: Color = 0.1) -> None:
         if not visual_text:
             return
+        op = "g" if isinstance(gray, (int, float)) else "rg"
+        value = f"{float(gray):.3f}" if op == "g" else _color(gray)
         self.ops.append(
-            f"BT /{font.resource} {size:.2f} Tf {gray:.3f} g 1 0 0 1 {x:.2f} {self.page_h - baseline:.2f} Tm "
+            f"BT /{font.resource} {size:.2f} Tf {value} {op} 1 0 0 1 {x:.2f} {self.page_h - baseline:.2f} Tm "
             f"<{font.encode(visual_text)}> Tj ET"
         )
 
     def text_in(self, font: _Font, size: float, left: float, right: float, baseline: float, visual_text: str,
-                anchor: str, gray: float = 0.1, width: Optional[float] = None) -> None:
+                anchor: str, gray: Color = 0.1, width: Optional[float] = None) -> None:
         w = font.width(visual_text, size) if width is None else width
         if anchor == "left":
             x = left
@@ -615,94 +737,16 @@ class _Canvas:
     def image(self, name: str, x: float, y: float, w: float, h: float) -> None:
         self.ops.append(f"q {w:.2f} 0 0 {h:.2f} {x:.2f} {self.page_h - y - h:.2f} cm /{name} Do Q")
 
+    def form(self, name: str, x: float, y: float, w: float, h: float, unit_w: float, unit_h: float,
+             fill: Optional[Color] = None) -> None:
+        """A form XObject whose box is unit_w × unit_h, drawn into (x, y, w, h), in `fill`."""
+        color = f"{_color(fill)} rg " if fill is not None else ""
+        self.ops.append(
+            f"q {color}{w / unit_w:.4f} 0 0 {h / unit_h:.4f} {x:.2f} {self.page_h - y - h:.2f} cm /{name} Do Q"
+        )
+
     def stream(self) -> bytes:
         return "\n".join(self.ops).encode("latin-1")
-
-
-def _draw_page(report: Report, p: _Plan, regular: _Font, bold: _Font, number: int, rows: List[List[str]],
-               first_index: int, with_totals: bool) -> bytes:
-    c = _Canvas(p.page_h)
-    right = p.page_w - MARGIN
-    left = MARGIN
-
-    # Header: logo at the start (right), the text block beside it, right-aligned.
-    y = TOP
-    text_right = right
-    if p.logo_box is not None:
-        lw, lh = p.logo_box
-        c.image("Logo", right - lw, y, lw, lh)
-        text_right = right - lw - 10
-    ty = y
-    for text, size, is_bold, gray in p.header_lines:
-        ty += size * 1.35
-        font = bold if is_bold else regular
-        c.text_in(font, size, left, text_right, ty - size * 0.3, visual(text, "R"), "right", gray)
-    y += p.header_h
-    c.line(left, y - 4, right, y - 4, 0.55, 0.8)
-
-    # Column x positions, right to left.
-    edges = [right]
-    for w in p.widths:
-        edges.append(edges[-1] - w)
-
-    # Column headers.
-    head_top = y
-    c.rect(edges[-1], head_top, right - edges[-1], p.col_head_h, 0.91)
-    for i, col in enumerate(report.columns):
-        labels = p.col_labels[i]
-        block = len(labels) * p.size * 1.25
-        ly = head_top + (p.col_head_h - block) / 2
-        for label in labels:
-            ly += p.size * 1.25
-            c.text_in(bold, p.size, edges[i + 1] + PAD, edges[i] - PAD, ly - p.size * 0.3, visual(label),
-                      col.anchor, 0.05)
-    y = head_top + p.col_head_h
-
-    # Rows.
-    for n, row in enumerate(rows):
-        if (first_index + n) % 2 == 1:
-            c.rect(edges[-1], y, right - edges[-1], p.row_h, 0.965)
-        baseline = y + p.row_h / 2 + p.size * 0.35
-        for i, col in enumerate(report.columns):
-            room = edges[i] - edges[i + 1] - 2 * PAD
-            text = row[i]
-            width = regular.width(text, p.size)  # measured once: order does not change a width
-            if width > room:
-                text = _fit(regular, text, p.size, room)
-                width = regular.width(text, p.size)
-            c.text_in(regular, p.size, edges[i + 1] + PAD, edges[i] - PAD, baseline,
-                      text if col.numeric else visual(text), col.anchor, width=width)
-        y += p.row_h
-    if not report.rows and number == 1:
-        c.text_in(regular, p.size, left, right, y + p.row_h / 2 + p.size * 0.35, visual(NO_ROWS), "center", 0.4)
-        y += p.row_h
-
-    # Totals.
-    if with_totals and report.totals:
-        c.rect(edges[-1], y, right - edges[-1], p.row_h, 0.88)
-        c.line(edges[-1], y, right, y, 0.3, 0.9)
-        baseline = y + p.row_h / 2 + p.size * 0.35
-        for i, col in enumerate(report.columns):
-            room = edges[i] - edges[i + 1] - 2 * PAD
-            text = _fit(bold, report.totals[i], p.size, room)
-            c.text_in(bold, p.size, edges[i + 1] + PAD, edges[i] - PAD, baseline,
-                      text if col.numeric else visual(text), col.anchor, 0.0)
-        y += p.row_h
-
-    # Column rules and the table's frame.
-    for x in edges:
-        c.line(x, head_top, x, y, 0.82, 0.35)
-    c.line(edges[-1], head_top, right, head_top, 0.6, 0.6)
-    c.line(edges[-1], head_top + p.col_head_h, right, head_top + p.col_head_h, 0.6, 0.6)
-    c.line(edges[-1], y, right, y, 0.6, 0.6)
-
-    # Footer.
-    fy = p.page_h - BOTTOM
-    c.text_in(regular, FOOTER_SIZE, left, right, fy, visual(f"עמוד {number} מתוך {p.pages}", "R"), "center", 0.35)
-    c.text_in(regular, FOOTER_SIZE, left, right, fy, visual(report.generated, "R"), "left", 0.45)
-    c.text_in(regular, FOOTER_SIZE, left, right, fy, visual(_fit(regular, report.title, FOOTER_SIZE, 200), "R"),
-              "right", 0.45)
-    return c.stream()
 
 
 # ── The file ─────────────────────────────────────────────────────────────────
@@ -817,51 +861,10 @@ def _logo_object(w: _Writer, image: Any, box: Tuple[float, float]) -> int:
 
 
 def render(report: Report) -> bytes:
-    """The report as PDF bytes."""
-    regular = _Font(_truetype(False), "F1")
-    bold = _Font(_truetype(True), "F2")
-    p = plan(report, regular, bold)
+    """The report as PDF bytes: the designed layout (app/services/report_design.py), its table only."""
+    from app.services import report_design
 
-    w = _Writer()
-    catalog = w.reserve()
-    pages_num = w.reserve()
-    logo_num = _logo_object(w, report.logo, p.logo_box) if p.logo_box is not None else None
-    font_nums = (w.reserve(), w.reserve())
-
-    page_nums: List[int] = []
-    index = 0
-    for number in range(1, p.pages + 1):
-        take = p.rows_per_page
-        last = number == p.pages
-        if last and report.totals:
-            take = max(0, take - 1)
-        chunk = report.rows[index:index + take]
-        content = _draw_page(report, p, regular, bold, number, chunk, index, last)
-        index += len(chunk)
-        stream_num = w.stream("", content)
-        xobjects = f"/XObject << /Logo {logo_num} 0 R >> " if logo_num else ""
-        page_nums.append(
-            w.add(
-                (
-                    f"<< /Type /Page /Parent {pages_num} 0 R /MediaBox [0 0 {p.page_w:.2f} {p.page_h:.2f}] "
-                    f"/Resources << /Font << /F1 {font_nums[0]} 0 R /F2 {font_nums[1]} 0 R >> {xobjects}"
-                    f"/ProcSet [/PDF /Text /ImageC] >> /Contents {stream_num} 0 R >>"
-                ).encode("latin-1")
-            )
-        )
-    # The fonts last: only now is it known which glyphs the pages drew.
-    for num, font in zip(font_nums, (regular, bold)):
-        _font_objects(w, font, num)
-    kids = " ".join(f"{n} 0 R" for n in page_nums)
-    w.put(pages_num, f"<< /Type /Pages /Kids [{kids}] /Count {len(page_nums)} >>".encode("latin-1"))
-    w.put(catalog, f"<< /Type /Catalog /Pages {pages_num} 0 R /ViewerPreferences << /Direction /R2L >> >>".encode("latin-1"))
-    info = w.add(
-        (
-            f"<< /Title {_pdf_text(report.title)} /Producer (R2M POS) "
-            f"/CreationDate (D:{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%SZ')}) >>"
-        ).encode("latin-1")
-    )
-    return w.output(catalog, info)
+    return report_design.render_document(report_design.document_from_report(report))
 
 
 def page_count(pdf: bytes) -> int:
@@ -890,6 +893,43 @@ def company_logo(db, company) -> Any:
             if image is not None:
                 return image
     return None
+
+
+_HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
+
+
+def accent_color(value: Any) -> Optional[Tuple[float, float, float]]:
+    """`#RRGGBB` (the branding page's `brandPrimaryColor`) as an RGB triple; None if not one."""
+    m = _HEX.match(value.strip()) if isinstance(value, str) else None
+    if not m:
+        return None
+    raw = m.group(1)
+    return tuple(int(raw[i:i + 2], 16) / 255.0 for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def company_branding(db, company) -> Dict[str, Any]:
+    """
+    What the designed report takes from the business: `logo` (a PIL image or None), `accent`
+    (the branding page's colour, or None for the default blue) and `name`.
+    """
+    from app.models.tenant import Tenant
+    from app.services.settings_merge import merge_all_settings_layers
+
+    out: Dict[str, Any] = {"logo": None, "accent": None, "name": getattr(company, "name", None) or ""}
+    try:
+        tenant = db.get(Tenant, company.tenant_id) if getattr(company, "tenant_id", None) else None
+        merged = merge_all_settings_layers(company, None, tenant)
+    except Exception:  # noqa: BLE001 — a report without its branding beats no report
+        return out
+    out["accent"] = accent_color(merged.get("brandPrimaryColor"))
+    for key in ("brandLogoUrl", "brandReceiptLogoUrl"):
+        url = merged.get(key)
+        if isinstance(url, str) and url.strip():
+            image = load_logo(url.strip())
+            if image is not None:
+                out["logo"] = image
+                break
+    return out
 
 
 def load_logo(url: str) -> Any:

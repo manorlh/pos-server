@@ -617,6 +617,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # The report PDF (P:/specs/reports-upgrade.md §4.5): it draws only what the caller already
     # sees and sends (any report page exports — the drawer's, a Z's), so anyone signed in.
     ("POST", "/reports/pdf", REFERENCE),
+    # Its summary as JSON (P:/specs/reports-designed-pdf.md §7.2): the Excel export's first sheet.
+    ("POST", "/reports/insights", REFERENCE),
     # "ברירת מחדל לייצוא" (§4.3): read beside any report; set by whoever edits reports, and
     # then only by the company's manager, a distributor or a super admin (the route checks).
     (_GET, "/report-export-defaults*", REFERENCE),

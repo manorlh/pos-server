@@ -354,8 +354,9 @@ class TestPdf:
         regular = P._Font(P._truetype(False), "F1")
         header = bold.encode(P.visual("נטו")).encode()
         title = bold.encode(P.visual("מכירות לפי מוצר", "R")).encode()
-        # The column headers and the report's header on every page, and each page numbered.
-        assert len([s for s in content if header in s and title in s]) == pages
+        # The column headers and the report's header on every page but the cover (more than
+        # three pages: P:/specs/reports-designed-pdf.md §5), and each page numbered.
+        assert len([s for s in content if header in s and title in s]) == pages - 1
         for n in (1, pages):
             assert any(regular.encode(P.visual(f"עמוד {n} מתוך {pages}", "R")).encode() in s for s in content)
 
