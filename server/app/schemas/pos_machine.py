@@ -252,6 +252,10 @@ class MachineHeartbeatBody(BaseModel):
     #: installedFrom}` — TeamViewer QuickSupport on the device, kept in `device_info["remoteSupport"]`,
     #: cleaned key by key in `remote_support.clean_report` (never a 422). Absent: as it was.
     remote_support: Optional[Dict[str, Any]] = Field(None, alias="remoteSupport")
+    #: "מסך לקוח" (P:/specs/customer-display-transitions.md §5.4): the slideshow files this device
+    #: holds, `{screen: bool, held: [sha256…]}` — cleaned in app/services/customer_display_media.py
+    #: `apply_report` (never a 422). Absent (an older build): as it was.
+    customer_display_media: Optional[Dict[str, Any]] = Field(None, alias="customerDisplayMedia")
 
     model_config = ConfigDict(populate_by_name=True)
 

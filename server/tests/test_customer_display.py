@@ -10,6 +10,7 @@ functions on plain values, and the rest on an in-memory SQLite world (never the 
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -147,10 +148,12 @@ def test_the_media_to_keep_logo_first_then_the_playlist_once_each():
         {"url": IMAGE, "kind": "image", "durationSec": 7},
     ])
     assert CD.media_of(effective, {"logoUrl": LOGO}) == [
-        {"url": LOGO, "kind": "image", "bytes": None},
-        {"url": IMAGE, "kind": "image", "bytes": None},
-        {"url": MEDIA, "kind": "video", "bytes": 99},
+        {"url": LOGO, "kind": "image", "bytes": None, "onServer": True},
+        {"url": IMAGE, "kind": "image", "bytes": None, "onServer": True},
+        {"url": MEDIA, "kind": "video", "bytes": 99, "onServer": True},
     ]
+    # A file the retention deleted from the server: still listed, not to be asked of the cloud.
+    assert [m["onServer"] for m in CD.media_of(effective, {}, gone={MEDIA})] == [True, False]
     assert CD.etag_of({"a": 1}) == CD.etag_of({"a": 1}) != CD.etag_of({"a": 2})
 
 
@@ -450,3 +453,144 @@ def test_the_routes_are_mounted_and_guarded():
     rule = rule_for("PUT", "/customer-display/settings/{}/{}")
     assert rule.kind == "section" and set(rule.sections) == {"till_settings", "devices"}
     assert rule_for("GET", "/sync/{}/customer-display").kind == "till"
+
+
+# ── The slideshow's motion (P:/specs/customer-display-transitions.md §1) ────
+
+
+def test_the_motion_defaults_a_fade_of_600_ms_ken_burns_and_videos_to_the_end():
+    assert CD.TRANSITIONS == ("fade", "slide", "zoom", "dissolve", "none")
+    assert {k: CD.DEFAULTS[k] for k in ("transition", "transitionMs", "kenBurns", "videoUntilEnd", "shuffle")} == {
+        "transition": "fade", "transitionMs": 600, "kenBurns": True, "videoUntilEnd": True, "shuffle": False,
+    }
+    effective, sources = CD.resolve([("company", {}), ("shop", {}), ("area", {}), ("machine", {})])
+    assert effective["transition"] == "fade" and effective["transitionMs"] == 600 and sources == {}
+
+
+def test_the_motion_fields_and_a_slides_own_transition_are_kept_as_set():
+    layer = CD.clean_layer(
+        {
+            "transition": "slide", "transitionMs": 1200.0, "kenBurns": False, "videoUntilEnd": False, "shuffle": True,
+            "playlist": [
+                {"url": IMAGE, "kind": "image", "durationSec": 5, "transition": "zoom"},
+                {"url": MEDIA, "kind": "video", "durationSec": 20, "transition": None},
+                {"url": IMAGE, "kind": "image", "durationSec": 6, "transition": "none"},
+            ],
+        },
+        level="area",
+    )
+    assert layer == {
+        "transition": "slide", "transitionMs": 1200, "kenBurns": False, "videoUntilEnd": False, "shuffle": True,
+        "playlist": [
+            {"url": IMAGE, "kind": "image", "durationSec": 5, "transition": "zoom"},
+            # null = the global transition: not stored.
+            {"url": MEDIA, "kind": "video", "durationSec": 20},
+            {"url": IMAGE, "kind": "image", "durationSec": 6, "transition": "none"},
+        ],
+    }
+    for edge in (CD.TRANSITION_MS_MIN, CD.TRANSITION_MS_MAX):
+        assert CD.clean_layer({"transitionMs": edge}, level="company") == {"transitionMs": edge}
+
+
+@pytest.mark.parametrize(
+    "raw, field",
+    [
+        ({"transition": "spin"}, "transition"),
+        ({"transition": ""}, "transition"),
+        ({"transitionMs": 199}, "transitionMs"),
+        ({"transitionMs": 2001}, "transitionMs"),
+        ({"transitionMs": 600.5}, "transitionMs"),
+        ({"transitionMs": "600"}, "transitionMs"),
+        ({"transitionMs": True}, "transitionMs"),
+        ({"kenBurns": "yes"}, "kenBurns"),
+        ({"videoUntilEnd": 1}, "videoUntilEnd"),
+        ({"shuffle": "false"}, "shuffle"),
+        ({"playlist": [{"url": IMAGE, "kind": "image", "transition": "spin"}]}, "playlist"),
+        ({"playlist": [{"url": IMAGE, "kind": "image", "transition": 3}]}, "playlist"),
+    ],
+)
+def test_a_motion_value_that_does_not_fit_is_refused_in_hebrew(raw, field):
+    with pytest.raises(CD.CustomerDisplayError) as err:
+        CD.clean_layer(raw, level="shop")
+    assert err.value.code == "customer_display_invalid" and err.value.field == field
+    assert any("\u0590" <= ch <= "\u05ff" for ch in err.value.message)
+
+
+def test_a_slides_unknown_transition_is_named_as_such():
+    with pytest.raises(CD.CustomerDisplayError) as err:
+        CD.clean_layer({"playlist": [{"url": IMAGE, "kind": "image"}, {"url": IMAGE, "kind": "image", "transition": "spin"}]}, level="shop")
+    assert err.value.message == "פריט 2 במצגת: מעבר לא מוכר."
+
+
+def test_the_motion_resolves_field_by_field_over_the_levels():
+    effective, sources = CD.resolve(
+        [
+            ("company", {"transition": "zoom", "transitionMs": 900, "shuffle": True}),
+            ("shop", {"transition": "slide"}),
+            ("area", {"kenBurns": False}),
+            ("machine", {"transitionMs": 300, "videoUntilEnd": False}),
+        ]
+    )
+    assert (effective["transition"], sources["transition"]) == ("slide", "shop")
+    assert (effective["transitionMs"], sources["transitionMs"]) == (300, "machine")
+    assert (effective["shuffle"], sources["shuffle"]) == (True, "company")
+    assert (effective["kenBurns"], sources["kenBurns"]) == (False, "area")
+    assert (effective["videoUntilEnd"], sources["videoUntilEnd"]) == (False, "machine")
+    # A stored value that no longer fits (written around the API) falls through to the level above.
+    effective, sources = CD.resolve([("company", {"transition": "dissolve"}), ("machine", {"transition": "spin", "transitionMs": 5})])
+    assert (effective["transition"], sources["transition"]) == ("dissolve", "company")
+    assert effective["transitionMs"] == CD.TRANSITION_MS_DEFAULT and "transitionMs" not in sources
+    # A playlist with a slide whose transition is unknown is passed over as a whole.
+    effective, sources = CD.resolve([
+        ("company", {"playlist": [{"url": IMAGE, "kind": "image", "durationSec": 5}]}),
+        ("machine", {"playlist": [{"url": IMAGE, "kind": "image", "durationSec": 5, "transition": "spin"}]}),
+    ])
+    assert sources["playlist"] == "company" and "transition" not in effective["playlist"][0]
+
+
+def test_a_device_pulls_the_motion_with_its_configuration(world):
+    w = world
+    CD.write_layer(w.company, "company", CD.clean_layer({
+        "enabled": True, "transition": "dissolve", "transitionMs": 800, "shuffle": True,
+        "playlist": [
+            {"url": IMAGE, "kind": "image", "durationSec": 5, "transition": "slide"},
+            {"url": MEDIA, "kind": "video", "durationSec": 9, "bytes": 99},
+        ],
+    }, level="company"))
+    CD.write_layer(w.till, "machine", CD.clean_layer({"kenBurns": False}, level="machine"))
+    w.db.commit()
+    for machine in (w.till, w.screen):
+        payload = CD.device_payload(w.db, machine)
+        config = payload["config"]
+        assert config["transition"] == "dissolve" and config["transitionMs"] == 800
+        assert config["shuffle"] is True and config["videoUntilEnd"] is True
+        assert config["playlist"][0]["transition"] == "slide" and "transition" not in config["playlist"][1]
+        assert payload["sources"]["transition"] == "company"
+        # The media to keep is unchanged by the motion: every file once, the logo first.
+        assert [m["url"] for m in payload["media"]] == [LOGO, IMAGE, MEDIA]
+    assert CD.device_payload(w.db, w.till)["config"]["kenBurns"] is False
+    assert CD.device_payload(w.db, w.screen)["config"]["kenBurns"] is True
+    # The dashboard's view of a level: its own motion, and what it inherits.
+    view = CD.layer_view("machine", w.till, [("company", w.company), ("shop", w.shop)])
+    assert view["own"] == {"kenBurns": False}
+    assert view["inherited"]["transition"] == "dissolve" and view["inheritedSources"]["transition"] == "company"
+    assert view["effective"]["kenBurns"] is False and view["sources"]["kenBurns"] == "machine"
+
+
+def test_a_changed_transition_changes_the_devices_etag(world):
+    from app.routers import customer_display as R
+
+    w = world
+    first = R.get_device_config(machine_id=str(w.till.id), request=SimpleNamespace(headers={}), machine=w.till, db=w.db)
+    etag = first.headers["ETag"]
+    with patch.object(R, "_entity_and_parents", return_value=(w.shop, [("company", w.company)])), patch.object(R, "_notify"):
+        view = R.put_layer(level="shop", entity_id=str(w.shop.id), body={"settings": {"transition": "zoom", "transitionMs": 400}},
+                           current_user=None, active_tenant_id=None, db=w.db)
+    assert view["own"] == {"transition": "zoom", "transitionMs": 400}
+    changed = R.get_device_config(machine_id=str(w.till.id), request=SimpleNamespace(headers={"if-none-match": etag}), machine=w.till, db=w.db)
+    assert changed.status_code == 200 and changed.headers["ETag"] != etag
+    assert json.loads(changed.body)["config"]["transition"] == "zoom"
+    with patch.object(R, "_entity_and_parents", return_value=(w.shop, [])), pytest.raises(HTTPException) as err:
+        R.put_layer(level="shop", entity_id=str(w.shop.id), body={"settings": {"transitionMs": 50}},
+                    current_user=None, active_tenant_id=None, db=w.db)
+    assert err.value.status_code == 422 and err.value.detail["field"] == "transitionMs"

@@ -6,6 +6,11 @@ The dashboard:
   PUT  /customer-display/settings/{level}/{entity_id}   {"settings": {...} | null}
   GET  /customer-display/displays?shopId=               the shop's customer displays and its tills
   PUT  /customer-display/displays/{machine_id}/till      {"tillMachineId": "…" | null}
+  POST /customer-display/media?level=&entityId=          a slideshow file (multipart `file`), compressed
+                                                         in the background (P:/specs/customer-display-transitions.md §3א)
+  GET  /customer-display/media?ids=                      the files' state ("בעיבוד…" until ready)
+  POST /customer-display/media/{media_id}/reupload       "העלה מחדש": a file deleted from the server, again
+  GET  /customer-display/media-presence/{level}/{id}     per file of the layer's playlist: on how many devices
 
 The devices (machine token):
   GET  /sync/{m}/customer-display                        the resolved configuration (ETag / 304)
@@ -20,7 +25,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -38,6 +43,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
 from app.services import customer_display as CD
+from app.services import customer_display_media as CDM
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +161,8 @@ def put_layer(
         layer = CD.clean_layer(body.get("settings") if isinstance(body, dict) else None, level=level)
         if layer and layer.get(CD.MIRROR_KEY):
             CD.check_till_for_display(db, getattr(entity, "shop_id", None), layer[CD.MIRROR_KEY])
+        # Slides of uploaded files: this tenant's, given their URL and hash once ready.
+        layer = CDM.fill_layer(db, getattr(entity, "tenant_id", None) or active_tenant_id, layer)
     except CD.CustomerDisplayError as exc:
         raise _refuse(exc)
     before_till = CD.mirrored_till_id(entity) if level == "machine" else None
@@ -165,6 +173,126 @@ def put_layer(
     if level == "machine" and CD.is_display_device(entity):
         _notify_tills(db, {before_till, CD.mirrored_till_id(entity)})
     return CD.layer_view(level, entity, parents)
+
+
+# ── The slideshow's files ────────────────────────────────────────────────────
+
+
+def _media_refused(exc: CDM.MediaRefused) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=exc.body())
+
+
+def _video_quality(level: str, entity: Any, parents, asked: Optional[str]) -> str:
+    """The quality a video is compressed to: the editor's (unsaved) choice, else the layer's."""
+    if asked in CD.VIDEO_QUALITIES:
+        return asked
+    return CD.layer_view(level, entity, parents)["effective"].get("videoQuality") or CD.DEFAULTS["videoQuality"]
+
+
+def _media_row(db: Session, media_id: str, active_tenant_id) -> Any:
+    from app.models.customer_display import CustomerDisplayMedia
+
+    try:
+        ident = uuid.UUID(str(media_id))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
+    row = db.get(CustomerDisplayMedia, ident)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
+    ensure_same_tenant(row.tenant_id, active_tenant_id)
+    return row
+
+
+@router.post("/customer-display/media", status_code=status.HTTP_201_CREATED)
+def upload_media(
+    level: str = Query(...),
+    entity_id: str = Query(..., alias="entityId"),
+    video_quality: Optional[str] = Query(None, alias="videoQuality"),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    A slideshow file for the layer being edited (images, MP4 / WebM up to 25 MB): kept until the
+    worker compresses it (`status: "processing"`), then stored and written into the playlists
+    that name its `id` (`mediaId`). The original is never kept.
+    """
+    entity, parents = _entity_and_parents(db, level, entity_id, current_user, active_tenant_id, write=True)
+    contents = file.file.read(CD.MEDIA_MAX_BYTES + 1)
+    try:
+        row = CDM.create(
+            db, tenant_id=getattr(entity, "tenant_id", None) or active_tenant_id, user_id=getattr(current_user, "id", None),
+            contents=contents, content_type=file.content_type, video_quality=_video_quality(level, entity, parents, video_quality),
+        )
+    except CDM.MediaRefused as exc:
+        raise _media_refused(exc)
+    db.commit()
+    CDM.wake()
+    return CDM.view(row)
+
+
+@router.get("/customer-display/media")
+def list_media(
+    ids: str = Query(""),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The files asked for (comma separated ids, at most 50) — this tenant's only."""
+    from app.models.customer_display import CustomerDisplayMedia
+
+    wanted = []
+    for raw in ids.split(",")[:50]:
+        try:
+            wanted.append(uuid.UUID(raw.strip()))
+        except ValueError:
+            continue
+    if not wanted:
+        return {"files": []}
+    q = db.query(CustomerDisplayMedia).filter(CustomerDisplayMedia.id.in_(wanted))
+    if active_tenant_id is not None:
+        q = q.filter(CustomerDisplayMedia.tenant_id == active_tenant_id)
+    return {"files": [CDM.view(r) for r in q.all()]}
+
+
+@router.post("/customer-display/media/{media_id}/reupload")
+def reupload_media(
+    media_id: str,
+    level: str = Query(...),
+    entity_id: str = Query(..., alias="entityId"),
+    video_quality: Optional[str] = Query(None, alias="videoQuality"),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"העלה מחדש": the file again, for one the server deleted (or failed); its playlists follow."""
+    entity, parents = _entity_and_parents(db, level, entity_id, current_user, active_tenant_id, write=True)
+    row = _media_row(db, media_id, active_tenant_id)
+    contents = file.file.read(CD.MEDIA_MAX_BYTES + 1)
+    try:
+        CDM.restart(db, row, contents=contents, content_type=file.content_type,
+                    video_quality=_video_quality(level, entity, parents, video_quality))
+    except CDM.MediaRefused as exc:
+        raise _media_refused(exc)
+    db.commit()
+    CDM.wake()
+    return CDM.view(row)
+
+
+@router.get("/customer-display/media-presence/{level}/{entity_id}")
+def media_presence(
+    level: str,
+    entity_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Per file of the layer's playlist: its state, "קיים ב-X מתוך Y מכשירים", and the devices lacking it."""
+    entity, parents = _entity_and_parents(db, level, entity_id, current_user, active_tenant_id, write=False)
+    playlist = CD.layer_view(level, entity, parents)["effective"].get("playlist") or []
+    return CDM.presence_view(db, level, entity, playlist)
 
 
 def _notify_tills(db: Session, till_ids) -> None:

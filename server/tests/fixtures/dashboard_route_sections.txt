@@ -141,6 +141,10 @@ DELETE /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
 PUT /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
 GET /customer-display/displays -> till_settings|devices:view
 PUT /customer-display/displays/{machine_id}/till -> till_settings|devices:edit
+GET /customer-display/media -> till_settings|devices:view
+POST /customer-display/media -> till_settings|devices:edit
+GET /customer-display/media-presence/{level}/{entity_id} -> till_settings|devices:view
+POST /customer-display/media/{media_id}/reupload -> till_settings|devices:edit
 GET /customer-display/settings/{level}/{entity_id} -> till_settings|devices:view
 PUT /customer-display/settings/{level}/{entity_id} -> till_settings|devices:edit
 GET /customers -> customers:view

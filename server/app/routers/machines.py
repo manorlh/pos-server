@@ -839,6 +839,16 @@ def post_my_heartbeat(
         _apply_bypass(machine, body.terminal_number_check_bypass)
     # The serial's source, the SIMs and the address the beat came from (device search).
     device_identity.apply_heartbeat(machine, body, request)
+    # "מסך לקוח": the slideshow files this device holds, by hash (customer-display-transitions §5.4).
+    # Never fails a beat.
+    if body is not None and body.customer_display_media is not None:
+        try:
+            from app.services import customer_display_media
+
+            with db.begin_nested():
+                customer_display_media.apply_report(db, machine, body.customer_display_media)
+        except Exception:  # noqa: BLE001
+            logger.exception("customer display media report failed for %s", machine.id)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
     # "הפעלה אוטומטית" (app/services/autostart.py): whether the device opens by itself on boot, kept in

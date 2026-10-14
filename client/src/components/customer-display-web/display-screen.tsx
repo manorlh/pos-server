@@ -7,10 +7,15 @@
  * then its slideshow. Right to left in Hebrew, left to right in English; laid out for any screen
  * by its own size (side by side when wide, one column otherwise).
  *
+ * The slideshow (P:/specs/customer-display-transitions.md §3): the configuration's transitions, Ken
+ * Burns, videos to their end and shuffle (slideshow-player.tsx); a short fade and no Ken Burns when
+ * the device asks for less motion or is too slow (`useKioskRenderProfile`); the files kept in the
+ * browser (lib/customerDisplayMediaCache.ts) and played from there, so it runs without a network.
+ *
  * `?demo=1`: a pretend till walking through a sale, never the network.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { describeBrowser, webDeviceInfo, type FetchFn } from '@/lib/kioskWebApi';
 import { openKioskStore, type StorageLike } from '@/lib/kioskWebStore';
 import {
@@ -24,6 +29,10 @@ import {
   type PlaylistItem,
 } from '@/lib/customerDisplay';
 import { CustomerDisplayWebService, type DisplayWebView } from '@/lib/customerDisplayWeb';
+import { DisplayMediaCache, subtleSha256, type CacheLike } from '@/lib/customerDisplayMediaCache';
+import { motionOf, playableSlides } from '@/lib/customerDisplayPlayer';
+import { useKioskRenderProfile } from '@/kiosk-shared/render-profile';
+import { SlideshowPlayer } from '@/components/customer-display-web/slideshow-player';
 import { WebPairing, type PairingTexts } from '@/components/kiosk-web/web-pairing';
 import { isStandalone, useFullscreenOnTap, useKioskGuards, useWakeLock } from '@/components/kiosk-web/web-shell';
 import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
@@ -67,13 +76,35 @@ const DEMO_CONFIG: CdConfig = {
   enabled: true, layout: 'auto', theme: 'dark',
   show: { items: true, prices: true, modifiers: true, promotions: true, vouchers: true, totals: true, tip: true, payment: true, change: true, thanks: true },
   playlist: [], logoUrl: '', language: 'auto', idleTimeoutSec: 0, thanksSec: 6, welcomeText: '', thanksText: '',
+  transition: 'fade', transitionMs: 600, kenBurns: true, videoUntilEnd: true, shuffle: false, videoQuality: '720p', mediaRetention: 'keep',
 };
+
+/** Where the slideshow's files are kept: Cache Storage (a secure context), else nowhere. */
+function browserMediaCache(): DisplayMediaCache | null {
+  const storage = safe(() => (typeof caches === 'undefined' ? null : caches));
+  if (!storage) return null;
+  return new DisplayMediaCache({
+    open: async () => (await storage.open('r2m-display-media')) as unknown as CacheLike,
+    fetchFile: async (url) => fetch(url, { mode: 'cors', credentials: 'omit' }),
+    digest: subtleSha256,
+    createObjectURL: (blob) => URL.createObjectURL(blob),
+    revokeObjectURL: (u) => URL.revokeObjectURL(u),
+    log: (msg) => console.info(`[display] ${msg}`),
+  });
+}
+
+/** What the slideshow loads: the copy kept in the browser, else the URL. */
+export interface SlideSource {
+  srcFor: (url: string) => Promise<string>;
+  release: (src: string) => void;
+}
 
 export function DisplayWeb({ apiUrl }: { apiUrl: string }) {
   const [svc, setSvc] = useState<CustomerDisplayWebService | null>(null);
   const [view, setView] = useState<DisplayWebView | null>(null);
   const [demo, setDemo] = useState<number | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [media, setMedia] = useState<DisplayMediaCache | null>(null);
 
   useKioskGuards();
   const live = demo !== null || view?.phase === 'ready';
@@ -96,6 +127,8 @@ export function DisplayWeb({ apiUrl }: { apiUrl: string }) {
         { dbName: 'r2m-display', mirrored: ['r2m.display.credentials'] },
       );
       const fetchFn: FetchFn = (input, init) => fetch(input, init);
+      const mediaCache = browserMediaCache();
+      if (!gone) setMedia(mediaCache);
       made = new CustomerDisplayWebService({
         store,
         fetchFn,
@@ -117,6 +150,7 @@ export function DisplayWeb({ apiUrl }: { apiUrl: string }) {
           browser: describeBrowser(navigator.userAgent).browser,
         }),
         log: (msg) => console.info(`[display] ${msg}`),
+        mediaCache: mediaCache ?? undefined,
       });
       made.onView((v) => {
         if (!gone) setView(v);
@@ -155,6 +189,7 @@ export function DisplayWeb({ apiUrl }: { apiUrl: string }) {
       state={view.state}
       online={view.online}
       tillMissing={!view.tillName}
+      media={media}
     />
   );
 }
@@ -165,22 +200,18 @@ function themeOf(config: CdConfig, primary?: string | null) {
   return { bg: '#0d1016', fg: '#ffffff', muted: 'rgba(255,255,255,.6)', card: 'rgba(255,255,255,.06)', accent: primary || '#38bdf8' };
 }
 
-/** The idle slideshow: each slide its own duration, videos muted and played through. */
-function Slideshow({ items }: { items: PlaylistItem[] }) {
-  const [i, setI] = useState(0);
-  const item = items[i % Math.max(items.length, 1)];
-  useEffect(() => {
-    if (!item) return;
-    const t = setTimeout(() => setI((n) => (n + 1) % items.length), item.durationSec * 1000);
-    return () => clearTimeout(t);
-  }, [item, items.length]);
-  if (!item) return null;
-  return item.kind === 'video' ? (
-    <video key={item.url} src={item.url} autoPlay muted playsInline className="h-full w-full object-contain" onError={() => setI((n) => n + 1)} />
-  ) : (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img key={item.url} src={item.url} alt="" className="h-full w-full object-contain" />
-  );
+/**
+ * The idle slideshow: the configuration's transitions, Ken Burns, videos to their end, shuffle; a
+ * short fade and no Ken Burns on a device asking for less motion or too slow to animate.
+ */
+function Slideshow({ items, config, dir, media }: { items: PlaylistItem[]; config: CdConfig; dir: 'rtl' | 'ltr'; media?: SlideSource | null }) {
+  const calm = useKioskRenderProfile('auto') === 'light';
+  const slides = useMemo(() => playableSlides(items), [items]);
+  const motion = useMemo(() => motionOf(config), [config]);
+  const resolveSrc = useCallback((slide: { url: string }) => (media ? media.srcFor(slide.url) : slide.url), [media]);
+  const releaseSrc = useCallback((src: string) => media?.release(src), [media]);
+  if (!slides.length) return null;
+  return <SlideshowPlayer slides={slides} motion={motion} calm={calm} dir={dir} resolveSrc={resolveSrc} releaseSrc={releaseSrc} />;
 }
 
 export function CustomerScreen({
@@ -191,6 +222,7 @@ export function CustomerScreen({
   state,
   online,
   tillMissing = false,
+  media = null,
 }: {
   config: CdConfig;
   brandName: string;
@@ -199,6 +231,8 @@ export function CustomerScreen({
   state: CdState;
   online: boolean;
   tillMissing?: boolean;
+  /** The files kept in the browser (the slideshow plays them from there). */
+  media?: SlideSource | null;
 }) {
   const lang = screenLang(config.language, typeof navigator === 'undefined' ? 'he' : navigator.language);
   const t = SCREEN_TEXT[lang];
@@ -230,7 +264,7 @@ export function CustomerScreen({
   );
 
   if (idle) {
-    if (idleLong && config.playlist.length) return wrap(<Slideshow items={config.playlist} />);
+    if (idleLong && config.playlist.length) return wrap(<Slideshow items={config.playlist} config={config} dir={dir} media={media} />);
     return wrap(
       <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8 text-center">
         {logoUrl ? (
@@ -351,7 +385,7 @@ export function CustomerScreen({
         </div>
       );
     }
-    if (config.playlist.length) return <Slideshow items={config.playlist} />;
+    if (config.playlist.length) return <Slideshow items={config.playlist} config={config} dir={dir} media={media} />;
     return logoUrl ? (
       // eslint-disable-next-line @next/next/no-img-element
       <img src={logoUrl} alt="" className="max-h-[40vh] max-w-full object-contain" />

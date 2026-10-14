@@ -4,8 +4,17 @@
  * field by field; the screen state a till publishes (`customer_display_state` v1); the Hebrew
  * labels of the dashboard page and the customer-facing words in Hebrew and English.
  *
+ * The slideshow's motion and files (P:/specs/customer-display-transitions.md): `transition`,
+ * `transitionMs`, `kenBurns`, `videoUntilEnd`, `shuffle` (played by lib/customerDisplayPlayer.ts),
+ * `videoQuality` and `mediaRetention`; a slide of an upload still being compressed has its
+ * `mediaId` and no URL yet.
+ *
  * Self-contained on purpose (no `@/` imports): `npm test` compiles it on its own.
  */
+
+import { TRANSITION_MS_DEFAULT, isTransition, type CdTransition } from './customerDisplayPlayer';
+
+export { TRANSITIONS, TRANSITION_MS_MAX, TRANSITION_MS_MIN, type CdTransition } from './customerDisplayPlayer';
 
 export const LEVELS = ['company', 'shop', 'area', 'machine'] as const;
 export type CdLevel = (typeof LEVELS)[number];
@@ -25,12 +34,27 @@ export const IDLE_MAX = 3600;
 export const THANKS_MIN = 2;
 export const THANKS_MAX = 60;
 export const TEXT_MAX = 80;
+export const MEDIA_MAX_BYTES = 25 * 1024 * 1024;
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+export const VIDEO_TYPES = ['video/mp4', 'video/webm'] as const;
+export const VIDEO_QUALITIES = ['720p', '1080p'] as const;
+export type CdVideoQuality = (typeof VIDEO_QUALITIES)[number];
+export const RETENTION_DAYS_MIN = 1;
+export const RETENTION_DAYS_MAX = 365;
+export const RETENTION_DAYS_DEFAULT = 30;
 
+/**
+ * One slide. `url` is absent while its file is still being compressed (`mediaId` only); `sha256`
+ * is the file's hash once ready; `transition` the slide's own, over the global one.
+ */
 export interface PlaylistItem {
-  url: string;
+  url?: string;
+  mediaId?: string;
   kind: 'image' | 'video';
   durationSec: number;
   bytes?: number;
+  sha256?: string;
+  transition?: CdTransition;
 }
 
 export interface CdConfig {
@@ -45,6 +69,14 @@ export interface CdConfig {
   thanksSec: number;
   welcomeText: string;
   thanksText: string;
+  transition: CdTransition;
+  transitionMs: number;
+  kenBurns: boolean;
+  videoUntilEnd: boolean;
+  shuffle: boolean;
+  videoQuality: CdVideoQuality;
+  /** `keep` | `until_downloaded` | `days:N`. */
+  mediaRetention: string;
 }
 
 /** A layer's own fields: only what it sets (the rest inherit). `mirrorTillId` on a display device only. */
@@ -62,6 +94,13 @@ export const DEFAULTS: CdConfig = {
   thanksSec: 6,
   welcomeText: '',
   thanksText: '',
+  transition: 'fade',
+  transitionMs: TRANSITION_MS_DEFAULT,
+  kenBurns: true,
+  videoUntilEnd: true,
+  shuffle: false,
+  videoQuality: '720p',
+  mediaRetention: 'keep',
 };
 
 export const CONFIG_KEYS = Object.keys(DEFAULTS) as (keyof CdConfig)[];
@@ -160,12 +199,125 @@ export function playlistError(list: readonly PlaylistItem[]): string | null {
   if (list.length > PLAYLIST_MAX) return `עד ${PLAYLIST_MAX} תמונות וסרטונים במצגת.`;
   for (let i = 0; i < list.length; i++) {
     const it = list[i];
-    if (!it.url || (it.kind !== 'image' && it.kind !== 'video')) return `פריט ${i + 1} במצגת לא תקין.`;
+    if ((!it.url && !it.mediaId) || (it.kind !== 'image' && it.kind !== 'video')) return `פריט ${i + 1} במצגת לא תקין.`;
+    if (it.transition !== undefined && !isTransition(it.transition)) return `פריט ${i + 1} במצגת: מעבר לא מוכר.`;
     if (!Number.isInteger(it.durationSec) || it.durationSec < DURATION_MIN || it.durationSec > DURATION_MAX) {
       return `פריט ${i + 1}: משך של ${DURATION_MIN}–${DURATION_MAX} שניות.`;
     }
   }
   return null;
+}
+
+/* ------------------------------------------------------------------ the files (§3א, §5) */
+
+export type CdMediaStatus = 'processing' | 'ready' | 'failed' | 'deleted';
+
+/** A file as `POST/GET /customer-display/media` answer it. */
+export interface CdMediaFile {
+  id: string;
+  kind: 'image' | 'video';
+  status: CdMediaStatus;
+  url: string | null;
+  sha256: string | null;
+  bytes: number | null;
+  sourceBytes: number | null;
+  width: number | null;
+  height: number | null;
+  /** Stored as uploaded: `ffmpeg_missing` | `compress_failed`. */
+  warning: string | null;
+  onServer: boolean;
+  videoQuality: CdVideoQuality | null;
+  createdAt: string | null;
+  readyAt: string | null;
+  deletedAt: string | null;
+}
+
+/** `GET /customer-display/media-presence/{level}/{id}`: per file, on how many of the devices using it. */
+export interface CdPresenceFile extends CdMediaFile {
+  held: number;
+  total: number;
+  lacking: { machineId: string; name: string; posNumber: string | null; reported: boolean }[];
+}
+
+/** A new slide for an upload just accepted (its URL comes once the file is ready). */
+export function pendingItemOf(file: Pick<CdMediaFile, 'id' | 'kind'>, durationSec = DURATION_DEFAULT): PlaylistItem {
+  return { mediaId: file.id, kind: file.kind, durationSec: clampDuration(durationSec) };
+}
+
+/** The slide with its file's URL, hash and size, once the file is ready (the slide's own fields kept). */
+export function withFile(item: PlaylistItem, file: CdMediaFile): PlaylistItem {
+  if (!file.url || (file.status !== 'ready' && file.status !== 'deleted')) return item;
+  const out: PlaylistItem = { ...item, url: file.url, kind: file.kind };
+  if (file.sha256) out.sha256 = file.sha256;
+  if (file.bytes && file.bytes <= MEDIA_MAX_BYTES) out.bytes = file.bytes;
+  else delete out.bytes;
+  return out;
+}
+
+/** The ids of the files still being compressed (to ask after). */
+export function pendingMediaIds(list: readonly PlaylistItem[]): string[] {
+  return [...new Set(list.filter((i) => i.mediaId && !i.url).map((i) => i.mediaId as string))];
+}
+
+/** The files of a multi-file upload that may go: the type, the size, the room left in the playlist. */
+export function acceptFiles<F extends { name: string; size: number; type: string }>(
+  files: readonly F[],
+  room: number,
+): { accepted: F[]; rejected: { name: string; reason: 'type' | 'size' | 'full' }[] } {
+  const accepted: F[] = [];
+  const rejected: { name: string; reason: 'type' | 'size' | 'full' }[] = [];
+  for (const f of files) {
+    const type = (f.type || '').toLowerCase();
+    const known = (IMAGE_TYPES as readonly string[]).includes(type) || (VIDEO_TYPES as readonly string[]).includes(type);
+    if (!known) rejected.push({ name: f.name, reason: 'type' });
+    else if (f.size > MEDIA_MAX_BYTES) rejected.push({ name: f.name, reason: 'size' });
+    else if (accepted.length >= Math.max(0, room)) rejected.push({ name: f.name, reason: 'full' });
+    else accepted.push(f);
+  }
+  return { accepted, rejected };
+}
+
+/**
+ * Where a row dragged from [from] goes, the pointer at [y]: past every other row whose middle is
+ * above it (the target index for `moveItem`).
+ */
+export function dropIndex(y: number, rows: readonly { top: number; height: number }[], from: number): number {
+  let n = 0;
+  rows.forEach((r, i) => {
+    if (i !== from && r.top + r.height / 2 < y) n += 1;
+  });
+  return n;
+}
+
+export type RetentionMode = 'keep' | 'until_downloaded' | 'days';
+
+/** `mediaRetention` read for the editor (anything unknown: keep). */
+export function parseRetention(value: unknown): { mode: RetentionMode; days: number } {
+  if (value === 'until_downloaded') return { mode: 'until_downloaded', days: RETENTION_DAYS_DEFAULT };
+  if (typeof value === 'string' && /^days:[1-9][0-9]*$/.test(value)) {
+    const days = Number(value.slice(5));
+    if (days >= RETENTION_DAYS_MIN && days <= RETENTION_DAYS_MAX) return { mode: 'days', days };
+  }
+  return { mode: 'keep', days: RETENTION_DAYS_DEFAULT };
+}
+
+export function retentionValue(mode: RetentionMode, days: number): string {
+  if (mode !== 'days') return mode;
+  const d = Number.isFinite(days) ? Math.min(RETENTION_DAYS_MAX, Math.max(RETENTION_DAYS_MIN, Math.round(days))) : RETENTION_DAYS_DEFAULT;
+  return `days:${d}`;
+}
+
+/**
+ * A file's state on the devices, for its row: "X of Y", and — once it left the server — the
+ * devices that reported and lack it ("חסר בקופה N").
+ */
+export function presenceSummary(p: Pick<CdPresenceFile, 'held' | 'total' | 'onServer' | 'lacking'> | undefined): {
+  held: number;
+  total: number;
+  missing: CdPresenceFile['lacking'];
+} | null {
+  if (!p) return null;
+  return { held: p.held, total: p.total, missing: p.onServer ? [] : p.lacking.filter((d) => d.reported) };
 }
 
 /** How long one round of the slideshow takes, in seconds. */

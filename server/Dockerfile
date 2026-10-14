@@ -2,6 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# ffmpeg: "מסך לקוח" compresses the slideshow's videos to H.264 MP4 on upload
+# (app/services/customer_display_media.py). Without it a video is stored as uploaded, with a warning.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install poetry==1.8.4
 
 COPY pyproject.toml poetry.lock ./
