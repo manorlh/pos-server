@@ -323,6 +323,8 @@
     "src/lib/approvals.ts",
     "src/lib/approvals.test.ts",
     "src/lib/tableRestore.ts",
-    "src/lib/tableRestore.test.ts"
+    "src/lib/tableRestore.test.ts",
+    "src/lib/tableTileLook.ts",
+    "src/lib/tableTileLook.test.ts"
   ]
 }

@@ -5,10 +5,12 @@
  * app/routers/till_design.py, docs/SPEC_TILL_DESIGN.md): a template per device profile, the
  * layout, the menu's order, the action bar (a cash-with-change button, banknotes), colours,
  * texts and the order's questions — per company → shop → point of sale → till, with a live
- * preview of what the till shows. Nothing set = today's screens.
+ * preview of what the till shows. Nothing set = today's screens. `?section=floor` opens "שולחנות ומפה"
+ * (the tables page's link: the floor is designed here first, P:/specs/till-design-tables.md).
  */
 
 import { useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { LayoutTemplate } from 'lucide-react';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -24,6 +26,7 @@ export default function TillDesignPage() {
   const { resolution, effective, scope } = usePageScope({ maxLevel: 'shop' });
   const role = useAuth((s) => s.user?.role ?? null);
   const authHydrated = useAuth((s) => s.authHydrated);
+  const initialSection = useSearchParams().get('section');
 
   const shopId = effective.shopId ?? null;
   const shop = scope.shops.find((s) => s.id === shopId) ?? null;
@@ -62,6 +65,7 @@ export default function TillDesignPage() {
           shopName={shop?.name ?? null}
           role={role}
           fallbackMachineIds={fallbackMachineIds}
+          initialSection={initialSection}
         />
       </ScopeGate>
     </div>
