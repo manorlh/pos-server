@@ -64,6 +64,7 @@ from app.routers import (
     prepaid_voucher_extras as prepaid_voucher_extras_router,
     prepaid_voucher_manual as prepaid_voucher_manual_router,
     till_shop_z as till_shop_z_router,
+    till_shop_x as till_shop_x_router,
     main_till as main_till_router,
     local_server as local_server_router,
     lan_server as lan_server_router,
@@ -252,6 +253,8 @@ app.include_router(prepaid_voucher_extras_router.router, prefix=_prefix)
 # "מימוש ידני מהענן": manual redemption from the dashboard, one, many, and its undo.
 app.include_router(prepaid_voucher_manual_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
+# "דוח X סניפי" (P:/specs/shop-x-report.md): the till's and the dashboard's.
+app.include_router(till_shop_x_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
 # "העברת שרת מקומי" and "סגירת משמרת מהענן" (P:/specs/local-server-switch.md §8).
 app.include_router(local_server_router.router, prefix=_prefix)

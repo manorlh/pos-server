@@ -69,6 +69,9 @@ class Scope(str, enum.Enum):
     #: Release an employee signed in at another till, so they can sign in here
     #: ("עובד מחובר בקופה אחת בלבד", docs/SPEC_EXCLUSIVE_LOGIN.md).
     USER_SESSION_RELEASE = "user-session:release"
+    #: Run "דוח X סניפי" (P:/specs/shop-x-report.md §3, `GET/POST /sync/{m}/shop-x`): a report, so a
+    #: session-length grant — a cashier on a manager's code reads it, and may refresh it.
+    SHOP_X_REPORT = "report:shop-x"
 
 
 #: The catalog scopes a legacy `catalog:write` grant also answers for.
@@ -119,6 +122,7 @@ _MANAGER_SCOPES = frozenset({
     Scope.TABLE_CANCEL,
     Scope.TABLE_UNLOCK,
     Scope.USER_SESSION_RELEASE,
+    Scope.SHOP_X_REPORT,
 })
 
 #: What a shift supervisor (אחמ"ש) may authorise: the money decisions and the close of
@@ -134,6 +138,7 @@ _SUPERVISOR_SCOPES = frozenset({
     Scope.TABLE_CANCEL,
     Scope.TABLE_UNLOCK,
     Scope.USER_SESSION_RELEASE,
+    Scope.SHOP_X_REPORT,
 })
 
 _TILL_SCOPES_BY_ROLE: dict[UserRole, FrozenSet[Scope]] = {

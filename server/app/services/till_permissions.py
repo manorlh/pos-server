@@ -172,6 +172,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "שידור ידני של עסקאות האשראי לשב\"א ופעולות מצב לא מקוון של המסוף.", scope="transmit"),
     PermissionSpec("VIEW_REPORTS", "דוחות בקופה", "shift",
                    "תפריט \"דוחות\" בקופה: מכירות מוצרים, עובדים, שולחנות, טיפים והיסטוריית משמרות."),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): the shop-wide interim X — a cashier on a manager's code.
+    # The cloud checks it on `GET/POST /sync/{m}/shop-x` (the signed-in user, or a grant for `report:shop-x`).
+    PermissionSpec("SHOP_X_REPORT", "דוח X סניפי", "shift",
+                   "\"דוח X סניפי\" בתפריט \"דוחות\": דוח ביניים של כל קופות הסניף לתקופה הפתוחה — לא סוגר משמרות, "
+                   "לא מקבל מספר. מופיע בקופות לפי הפרמטר \"דוח X סניפי — באילו קופות מופיע\".",
+                   scope="report:shop-x"),
     # ── מגירת מזומן (spec §2) ──
     PermissionSpec("CASH_DRAWER.OPEN_ON_CASH_SALE", "פתיחה בעסקת מזומן", "drawer",
                    "פתיחה אוטומטית אחרי שתשלום המזומן נרשם והעסקה הושלמה.", devices=_FIXED),
@@ -398,6 +404,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
     "SELL_RESTRICTED_ITEMS",
     "HELD_SALE_CANCEL",
+    # "דוח X סניפי": a legacy cashier asks a manager, a legacy manager runs it alone.
+    "SHOP_X_REPORT",
     "ITEM_BLOCK",
     "ITEM_BLOCK_WIDE",
     # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
@@ -458,6 +466,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "Z":                                 (D, P, A, A),
     "TRANSMIT":                          (D, P, A, A),
     "VIEW_REPORTS":                      (D, A, A, A),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): waiter never, cashier with a manager's code.
+    "SHOP_X_REPORT":                     (D, P, A, A),
     # spec §3 — פתיחה בעסקת מזומן / ידנית / פריטה / Cash Out / הפקדה / ספירה / בדיקה / אחרי Z / לוג
     "CASH_DRAWER.OPEN_ON_CASH_SALE":     (A, A, A, A),
     "CASH_DRAWER.OPEN_MANUALLY":         (P, P, A, A),

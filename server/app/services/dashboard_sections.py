@@ -715,6 +715,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/kitchen-stations/*", S("printers")),
     ("PUT", "/shops/{}/local-network", S("devices")),
     (_ALL, "/shops/{}/local-shop-z*", S("z")),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): the shop's interim X, with the reports.
+    (_GET, "/shops/{}/shop-x", S("reports")),
     (_ALL, "/shops/{}/main-till", S("devices")),
     # "העברת שרת מקומי" (app/routers/local_server.py): read with the card; the switch is the
     # grantable permission's (the route then checks the profile itself).

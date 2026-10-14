@@ -2169,6 +2169,76 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "דוח X סניפי" (P:/specs/shop-x-report.md §3, app/services/shop_x.py): the shop-wide interim X — where it
+# shows, which tills, how long the pre-build refresh waits, and its per-till / per-employee sections. Read by
+# the cloud (the report) and the till (its menu: "דוחות" → "דוח X סניפי").
+SHOP_X_TILLS_KEY = "shopXTills"
+SHOP_X_TILL_IDS_KEY = "shopXTillIds"
+SHOP_X_REFRESH_SEC_KEY = "shopXRefreshSec"
+SHOP_X_PER_TILL_KEY = "shopXPerTill"
+SHOP_X_PER_EMPLOYEE_KEY = "shopXPerEmployee"
+SHOP_X_REFRESH_SEC_DEFAULT = 10
+SHOP_X_REFRESH_SEC_MIN = 0
+SHOP_X_REFRESH_SEC_MAX = 60
+SHOP_X_TILLS_LABELS = {
+    "all": "בכל קופות הסניף",
+    "selected": "רק בקופות שנבחרו",
+    "master": "רק בקופה הראשית של ה-Z הסניפי",
+    "off": "לא מופיע",
+}
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=SHOP_X_TILLS_KEY,
+        label="דוח X סניפי — באילו קופות מופיע",
+        value_type="enum",
+        enum_options=tuple(SHOP_X_TILLS_LABELS),
+        enum_labels=SHOP_X_TILLS_LABELS,
+        default_value="all",
+        description=(
+            "\"דוח X סניפי\" (בתפריט הקופה, תחת \"דוחות\") — דוח ביניים של כל קופות הסניף לתקופה הפתוחה, "
+            "שאינו סוגר משמרות ואינו מקבל מספר. «בכל קופות הסניף» — בכל קופה, למי שיש לו הרשאה \"דוח X סניפי\". "
+            "«רק בקופות שנבחרו» — בקופות שברשימה \"דוח X סניפי — קופות נבחרות\" (או שסומנו בכרטיס הקופה). "
+            "«רק בקופה הראשית של ה-Z הסניפי» — רק בקופה שמפיקה את ה-Z הסניפי. «לא מופיע» — בשום קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=SHOP_X_TILL_IDS_KEY,
+        label="דוח X סניפי — קופות נבחרות",
+        value_type="string",
+        default_value=None,
+        description=(
+            "כשהפרמטר \"דוח X סניפי — באילו קופות מופיע\" הוא «רק בקופות שנבחרו»: הקופות שבהן הדוח מופיע "
+            "(מזהי קופה מופרדים בפסיקים; נערך כרשימה בדשבורד ובכרטיס הקופה). בדרך כלל ברמת סניף."
+        ),
+    ),
+    BuiltinParameter(
+        key=SHOP_X_REFRESH_SEC_KEY,
+        label="דוח X סניפי — המתנה לרענון הקופות (שניות)",
+        value_type="integer",
+        default_value=SHOP_X_REFRESH_SEC_DEFAULT,
+        description=(
+            "לפני בניית הדוח כל הקופות המחוברות מקבלות \"שלח עכשיו\", והענן מחכה להן עד מספר השניות הזה "
+            f"({SHOP_X_REFRESH_SEC_MIN}–{SHOP_X_REFRESH_SEC_MAX}, ברירת מחדל {SHOP_X_REFRESH_SEC_DEFAULT}). "
+            "קופה שלא ענתה, או שיש לה מסמכים שעוד לא נשלחו, מסומנת בדוח — והדוח נבנה בכל זאת."
+        ),
+    ),
+    BuiltinParameter(
+        key=SHOP_X_PER_TILL_KEY,
+        label="דוח X סניפי — פירוט לכל קופה",
+        value_type="boolean",
+        default_value=True,
+        description="כשמופעל, אחרי הסיכום לסניף מוצג ומודפס פירוט לכל קופה: אותם סכומים, מצב המשמרת ומתי הקופה עודכנה לאחרונה.",
+    ),
+    BuiltinParameter(
+        key=SHOP_X_PER_EMPLOYEE_KEY,
+        label="דוח X סניפי — פירוט לכל עובד",
+        value_type="boolean",
+        default_value=False,
+        description="כשמופעל, הדוח מציג ומדפיס גם פירוט לכל עובד: מכירות וטיפים.",
+    ),
+)
+
 # "עיצוב השולחנות" (P:/specs/till-design-tables.md §5, app/services/table_tile_look.py): `tableTileStyle`,
 # `tableTileInfo`, `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize` — read by the till only.
 # Edited in "עיצוב קופה → שולחנות ומפה" (app/routers/till_design.py `/till-design/table-display`).

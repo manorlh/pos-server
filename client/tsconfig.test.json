@@ -60,6 +60,8 @@
     "src/lib/displayOrdering.test.ts",
     "src/lib/digitalProfiles.ts",
     "src/lib/digitalProfiles.test.ts",
+    "src/lib/shopXPrint.ts",
+    "src/lib/shopXPrint.test.ts",
     "src/lib/zParticipation.ts",
     "src/lib/zParticipation.test.ts",
     "src/lib/localShopZ.ts",

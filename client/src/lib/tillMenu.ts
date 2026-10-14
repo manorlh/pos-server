@@ -157,6 +157,8 @@ export const TILL_MENU_ITEMS: readonly TillMenuItem[] = [
   item('signed_in_users', 'עובדים מחוברים', 'more', 'user', TILE.indigo, {
     also: 'המסך שממנו מנהל משחרר עובד מחובר; "שחרור באישור מנהל" במסך הכניסה נשאר',
   }),
+  // "דוח X סניפי" (P:/specs/shop-x-report.md §3): in the "דוחות" folder; appended last, the keys keep their places.
+  item('shop_x', 'דוח X סניפי', 'reports', 'receipt', TILE.purple, { report: true }),
 ];
 
 /** The groups of the till's menu, in order; a null title is a group without a heading. */

@@ -360,6 +360,10 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("payment_reversed", "table_restored")
 #: reported by the till that fired it (one till, the LAN host), written by the cloud for its own tables
 #: (app/services/course_auto_fire.py). Recorded, feeds no rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
+#: "דוח X סניפי" (P:/specs/shop-x-report.md §4 "רישום"): who ran the shop's interim X, from which till, when —
+#: written by the cloud for its runs (app/services/shop_x.py), reported by a till that built it on the LAN.
+#: Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("shop_x_report",)
 
 
 class RuleValueError(ValueError):

@@ -35,7 +35,10 @@ class TillEventIn(BaseModel):
                   # "הוצאה אוטומטית של השלב הבא" (app/services/course_auto_fire.py): a course that went by
                   # itself, by the till that fired it (details: orderId, tableNumber, tableName, courseId,
                   # courseName, trigger after_minutes | after_ready, minutes). Kept for the record, no rule.
-                  "course_auto_fired"]
+                  "course_auto_fired",
+                  # "דוח X סניפי" (P:/specs/shop-x-report.md §4): a run, by whom and from which till (details: by,
+                  # posNumber, refreshed; `source` "lan" when the host built it). Kept for the record, no rule.
+                  "shop_x_report"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)

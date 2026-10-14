@@ -739,6 +739,7 @@ POST /shops/{shop_id}/product-overrides/{global_product_id} -> products:edit
 PUT /shops/{shop_id}/product-overrides/{global_product_id} -> products:edit
 GET /shops/{shop_id}/settings -> till_settings:view
 PATCH /shops/{shop_id}/settings -> till_settings:edit
+GET /shops/{shop_id}/shop-x -> reports:view
 POST /shops/{shop_id}/shop-z-conflicts/{z_id}/resolve -> z:edit
 GET /shops/{shop_id}/shop-z-producer -> z:view
 POST /shops/{shop_id}/shop-z-producer/handover -> z:edit
@@ -856,6 +857,8 @@ GET /sync/{machine_id}/products/{product_id}/kitchen-printers -> till
 GET /sync/{machine_id}/promotions -> till
 GET /sync/{machine_id}/settings -> till
 POST /sync/{machine_id}/shifts/{shift_id}/close -> till
+GET /sync/{machine_id}/shop-x -> till
+POST /sync/{machine_id}/shop-x -> till
 GET /sync/{machine_id}/shop-z -> till
 POST /sync/{machine_id}/shop-z -> till
 GET /sync/{machine_id}/shop-z/cloud-refund-guard -> till

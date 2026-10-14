@@ -133,11 +133,14 @@ ITEMS: Tuple[MenuItem, ...] = (
         "עובדים מחוברים",
         also="המסך שממנו מנהל משחרר עובד מחובר; \"שחרור באישור מנהל\" במסך הכניסה נשאר",
     ),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): in the "דוחות" folder; appended last — the keys keep their places.
+    MenuItem("shop_x", "דוח X סניפי"),
 )
 
 #: The reports in the menu's "דוחות" folder (§5 18–25): all of them hidden, the folder goes too.
 REPORT_KEYS: Tuple[str, ...] = (
     "recent", "shift_history", "till_z_history", "product_sales", "workers", "tips", "tables_reports", "z_reports",
+    "shop_x",
 )
 KNOWN_KEYS: Tuple[str, ...] = tuple(item.key for item in ITEMS)
 _LABELS: Dict[str, str] = {item.key: item.label for item in ITEMS}
