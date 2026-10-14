@@ -880,6 +880,9 @@ GET /system/dealer-types -> reference
 PUT /system/dealer-types -> super_admin
 GET /system/open-format -> reference
 PUT /system/open-format -> super_admin
+GET /tables/assignments -> tables|reports:view
+POST /tables/assignments -> tables:edit
+POST /tables/assignments/copy -> tables:edit
 GET /tables/cancel-reasons -> tables:view
 POST /tables/cancel-reasons -> tables:edit
 PATCH /tables/cancel-reasons/{reason_id} -> tables:edit
