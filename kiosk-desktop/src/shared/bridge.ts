@@ -85,7 +85,13 @@ export interface KioskView {
    * now (the card through its terminal, a voucher online, cash at the till always), and why the card
    * cannot (Hebrew), else null.
    */
-  pay: { methods: PaymentMethod[]; usable: PaymentMethod[]; cardOff: string | null };
+  pay: {
+    methods: PaymentMethod[];
+    usable: PaymentMethod[];
+    cardOff: string | null;
+    /** "מזומן" at the cash station: why its tile is off now (Hebrew), else null / absent. */
+    cashOff?: string | null;
+  };
   /**
    * "סניף לא פעיל" (client lib/shopActive.ts): false — the shop was turned off in the cloud; the
    * screens lock once the customer on them is done, until it is on again. Absent (the Android
@@ -159,6 +165,8 @@ export interface StartPaymentIn {
    * the second pay part of it — the card is charged what is left, and nothing at all when they pay it whole.
    */
   vouchers?: StartVouchers;
+  /** How the rest is paid: the card (default) or "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6). */
+  method?: 'card' | 'cash_device';
 }
 
 /** "voucherApply" (Android, pos-android KioskWebProtocol.parseVoucher): the code scanned or typed, and the basket as "לתשלום" sends it. */
@@ -218,6 +226,26 @@ export interface PayProgress {
   pickupLabel?: string;
   documentNumber?: string;
   receipt?: 'ask' | 'printing' | 'printed' | 'declined' | 'none' | 'failed';
+  /** "מזומן" at the cash station: where it stands (the pay screen's cash look). */
+  cash?: CashPayView | null;
+}
+
+/** The cash station's side of a payment, as the pay screen draws it (§11.6). */
+export interface CashPayView {
+  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault';
+  /** In the queue: the place (1 = next). */
+  position: number | null;
+  stationName: string | null;
+  insertedAgorot: number;
+  dueAgorot: number;
+  changeAgorot: number;
+  changeOwedAgorot: number;
+  exactOnly: boolean;
+  /** A note being checked in escrow. */
+  escrowAgorot: number;
+  accepts: { coins: number[]; notes: number[] } | null;
+  slipCode: string | null;
+  txShort: string | null;
 }
 
 /** "צימוד מסוף SynqPay" (pos-server docs/SPEC_SYNQPAY.md §2.2): where the pairing stands. */

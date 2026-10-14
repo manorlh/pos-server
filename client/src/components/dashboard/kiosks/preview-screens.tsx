@@ -267,6 +267,11 @@ export interface KioskLive {
     /** The status line under the instruction (the terminal's progress, or why it is blocked). */
     message: string | null;
     amount: number;
+    /**
+     * "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6): the queue ("מקום N"), what went in of what
+     * is due, the change being paid. Absent / null: the card's screen.
+     */
+    cash?: LiveCashPay | null;
     canCancel: boolean;
     cancelling: boolean;
     onCancel: () => void;
@@ -3431,7 +3436,134 @@ export function WaitLogo({ m }: { m: PreviewModel }) {
   );
 }
 
+/** The cash station's side of a live payment (the Windows kiosk's PayProgress.cash). */
+export interface LiveCashPay {
+  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault';
+  position: number | null;
+  stationName: string | null;
+  insertedAgorot: number;
+  dueAgorot: number;
+  changeAgorot: number;
+  changeOwedAgorot: number;
+  exactOnly: boolean;
+  escrowAgorot: number;
+  accepts: { coins: number[]; notes: number[] } | null;
+  slipCode: string | null;
+  txShort: string | null;
+}
+
+/** "מזומן" at the cash station: the words of each stage (no kiosk text of its own yet — plain Hebrew). */
+function cashHeadline(cash: LiveCashPay): string {
+  switch (cash.stage) {
+    case 'connecting':
+      return 'מתחבר למכשיר המזומן…';
+    case 'queued':
+      return `מכשיר המזומן תפוס — ממתין… (מקום ${cash.position ?? 1})`;
+    case 'insert':
+      return 'הכניסו כסף במכשיר המזומן';
+    case 'settling':
+      return 'רגע…';
+    case 'change':
+      return 'מחזיר עודף — קחו את העודף מהמכשיר';
+    case 'refunding':
+      return 'מחזיר את הכסף — קחו אותו מהמכשיר';
+    case 'done':
+      return 'שולם';
+    case 'refunded':
+      return 'הכסף הוחזר';
+    default:
+      return 'תקלה — פנו לצוות';
+  }
+}
+
+function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskLive['pay']>; cash: LiveCashPay }) {
+  const shekels = (agorot: number) => m.money(agorot / 100);
+  const fault = live.phase === 'unknown' || cash.stage === 'fault';
+  const remaining = Math.max(0, cash.dueAgorot - cash.insertedAgorot);
+  return (
+    <ScreenBody m={m}>
+      <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <WaitLogo m={m} />
+        <h2 className="text-xl font-extrabold">{fault ? 'תקלה — פנו לצוות' : cashHeadline(cash)}</h2>
+        {cash.stationName ? (
+          <p className="kt-13" style={{ color: m.c.mutedText }}>
+            {cash.stationName}
+          </p>
+        ) : null}
+        {fault ? (
+          <div className="flex w-full flex-col items-center gap-2 p-4" style={cardStyle(m)}>
+            {cash.insertedAgorot > 0 ? <div className="text-lg font-extrabold">הוכנסו {shekels(cash.insertedAgorot)}</div> : null}
+            <div className="text-sm" style={{ color: m.c.mutedText }}>
+              הכסף שמור במכשיר. הדפסנו פתק — הראו אותו לצוות.
+            </div>
+            {cash.txShort ? <div className="kt-11 tabular-nums" style={{ color: m.c.mutedText }}>עסקה {cash.txShort}</div> : null}
+            <div className="mt-2 w-full">
+              <BigButton m={m} variant="soft" onClick={live.onBack}>
+                {m.t('payBack')}
+              </BigButton>
+            </div>
+          </div>
+        ) : live.phase === 'declined' || live.phase === 'blocked' ? (
+          <div className="flex w-full flex-col items-center gap-3 p-4" style={cardStyle(m)}>
+            <div className="text-lg font-extrabold">{live.message ?? cashHeadline(cash)}</div>
+            <div className="grid w-full grid-cols-2 gap-2">
+              <BigButton m={m} variant="soft" onClick={live.onBack}>
+                {m.t('payBack')}
+              </BigButton>
+              <BigButton m={m} onClick={live.onRetry}>
+                {m.t('payRetry')}
+              </BigButton>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="w-full max-w-sm p-4" style={cardStyle(m)}>
+              <div className="text-sm font-bold" style={{ color: m.c.mutedText }}>
+                הוכנסו
+              </div>
+              <div className="text-5xl font-black tabular-nums" style={{ color: m.c.primary }}>
+                {shekels(cash.insertedAgorot)}
+              </div>
+              <div className="mt-1 text-base font-bold tabular-nums">מתוך {shekels(cash.dueAgorot)}</div>
+              {cash.stage === 'insert' && remaining > 0 ? (
+                <div className="mt-2 text-lg font-extrabold tabular-nums">נותר {shekels(remaining)}</div>
+              ) : null}
+              {cash.escrowAgorot > 0 ? (
+                <div className="mt-2 text-sm" style={{ color: m.c.mutedText }}>
+                  בודק שטר של {shekels(cash.escrowAgorot)}…
+                </div>
+              ) : null}
+              {cash.changeAgorot > 0 ? <div className="mt-2 text-base font-bold tabular-nums">עודף {shekels(cash.changeAgorot)}</div> : null}
+            </div>
+            {cash.exactOnly && cash.stage === 'insert' ? (
+              <p className="rounded-lg px-3 py-1 text-sm font-extrabold" style={{ background: '#FEF3C7', color: '#92400E' }}>
+                סכום מדויק בלבד — אין עודף במכשיר
+              </p>
+            ) : null}
+            {cash.stage === 'insert' && cash.accepts ? (
+              <p className="kt-11" style={{ color: m.c.mutedText }}>
+                מתקבל: {[...cash.accepts.notes, ...cash.accepts.coins].sort((a, b) => b - a).map((v) => shekels(v)).join(' · ')}
+              </p>
+            ) : null}
+            {cash.stage === 'connecting' || cash.stage === 'queued' || cash.stage === 'settling' ? (
+              <span aria-hidden className="inline-block h-10 w-10 animate-spin rounded-full border-4" style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />
+            ) : null}
+            {live.canCancel ? (
+              <div className="mt-auto w-full">
+                <BigButton m={m} variant="soft" onClick={live.onCancel} disabledLook={live.cancelling}>
+                  {live.cancelling ? m.t('payCancelling') : m.t('payCancel')}
+                </BigButton>
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+    </ScreenBody>
+  );
+}
+
 function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pay']> }) {
+  if (live.cash) return <LiveCash m={m} live={live} cash={live.cash} />;
   const payErr = errorFx(m.engine);
   // The explanation's words and buttons fade in over the error's time (never with no engine: as before).
   const payFade =

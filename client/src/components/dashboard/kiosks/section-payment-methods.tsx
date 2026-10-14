@@ -8,7 +8,7 @@
  */
 
 import { useTranslations } from 'next-intl';
-import { Banknote, CreditCard, Ticket, WalletCards } from 'lucide-react';
+import { Banknote, Coins, CreditCard, Ticket, WalletCards } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -24,13 +24,15 @@ import {
 import { useKioskField } from './editor-context';
 import { FieldShell, MoveButtons, NumberInput, SwitchField } from './fields';
 
-const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, split_card: WalletCards };
+const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, cash_device: Coins, split_card: WalletCards };
 /** Each method's name and line under it (kiosks.payment). */
-const LABEL: Record<PaymentMethod, string> = { card: 'methodCard', voucher: 'methodVoucher', cash_at_till: 'methodCash', split_card: 'methodSplitCard' };
+const LABEL: Record<PaymentMethod, string> = { card: 'methodCard', voucher: 'methodVoucher', cash_at_till: 'methodCash', cash_device: 'methodCashDevice', split_card: 'methodSplitCard' };
 const HINT: Record<PaymentMethod, string> = {
   card: 'methodCardHint',
   voucher: 'methodVoucherHint',
   cash_at_till: 'methodCashHint',
+  // "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6).
+  cash_device: 'methodCashDeviceHint',
   split_card: 'methodSplitCardHint',
 };
 

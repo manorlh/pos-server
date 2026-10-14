@@ -100,8 +100,8 @@ export class CashLanClient {
     return this.request<TxView>('POST', `tx/${txId}/cancel`, { reason });
   }
 
-  ack(txId: string, documentId: string | null, documentNumber: string | null) {
-    return this.request<TxView>('POST', `tx/${txId}/ack`, { ...(documentId ? { documentId } : {}), ...(documentNumber ? { documentNumber } : {}) });
+  ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null) {
+    return this.request<TxView>('POST', `tx/${txId}/ack`, { ...(documentId ? { documentId } : {}), ...(documentNumber ? { documentNumber } : {}), ...(orderLabel ? { orderLabel } : {}) });
   }
 }
 

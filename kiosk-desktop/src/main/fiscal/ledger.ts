@@ -67,6 +67,8 @@ export interface DocDraft {
   voucherReleases?: string[];
   /** The card's leg; null with the vouchers alone paying the sale (nothing was charged). */
   card: ApprovedCard | null;
+  /** "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.7): the cash leg in place of the card's. */
+  cash?: DocCashLeg | null;
   paymentId: string;
   /** The lookup's evidence on a voided document. */
   voidMeta: Record<string, unknown> | null;
@@ -107,6 +109,19 @@ export interface DocVoucherLeg {
   redemptionId: string;
   serial: number;
   amountAgorot: number;
+}
+
+/** The cash leg (§11.7): the station's transaction, what went in, the change, what is owed, the rounding. */
+export interface DocCashLeg {
+  txId: string;
+  stationId: string;
+  hostId: string;
+  receivedAgorot: number;
+  changeAgorot: number;
+  changeOwedAgorot: number;
+  /** The cash due rounded to 10 agorot minus the exact amount (−4…+5): the document keeps its exact total. */
+  roundingAgorot: number;
+  slipCode: string | null;
 }
 
 /** What the vouchers' legs pay. */
@@ -406,6 +421,18 @@ export class Ledger {
     });
   }
 
+  /** Paid at the cash station: completed with its cash leg, in one transaction with its outbox row. Only from pending. */
+  completeCashSale(id: string, cash: DocCashLeg, now = new Date()): DocDraft | null {
+    return this.db.tx(() => {
+      const d = this.doc(id);
+      if (!d || d.status !== 'pending') return d;
+      const next: DocDraft = { ...d, status: 'completed', card: null, cash, updatedAt: now.toISOString() };
+      this.db.run("UPDATE documents SET status = 'completed', updated_at = ?, payload = ? WHERE id = ?", next.updatedAt, JSON.stringify(next), id);
+      this.outbox.enqueue('transaction', id);
+      return next;
+    });
+  }
+
   /** Certainly not charged: cancelled (the number stays burned), with the lookup's evidence. */
   voidCardSale(id: string, voidMeta: Record<string, unknown> | null, now = new Date()): DocDraft | null {
     return this.db.tx(() => {
@@ -489,13 +516,14 @@ export function xDocOf(d: DocDraft): XDoc {
         ? [
             ...(d.voucherLegs ?? []).map((l) => ({ method: 'production_voucher', amountAgorot: l.amountAgorot })),
             ...(d.card ? [{ method: 'card', amountAgorot: cardPrincipalAgorot(d) }] : []),
+            ...(d.cash ? [{ method: 'cash', amountAgorot: cardPrincipalAgorot(d) }] : []),
           ]
         : [],
-    paymentMethod: d.card || (d.voucherLegs ?? []).length === 0 ? 'card' : 'production_voucher',
+    paymentMethod: d.cash ? 'cash' : d.card || (d.voucherLegs ?? []).length === 0 ? 'card' : 'production_voucher',
     vatAgorot: d.totals.vatAgorot,
     vatRate: d.totals.vatRate,
     tipAgorot: d.totals.tipAgorot,
-    tipPaymentMethod: d.totals.tipAgorot > 0 ? 'card' : null,
+    tipPaymentMethod: d.totals.tipAgorot > 0 ? (d.cash ? 'cash' : 'card') : null,
   };
 }
 
@@ -598,9 +626,9 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     documentType: d.documentType,
     documentProductionDate: d.createdAt,
     // A sale the vouchers paid whole names them, as the till's (CheckoutViewModel: PRODUCTION_VOUCHER); else the card's.
-    paymentMethod: !d.card && (d.voucherLegs ?? []).length > 0 ? 'production_voucher' : 'card',
+    paymentMethod: d.cash ? 'cash' : !d.card && (d.voucherLegs ?? []).length > 0 ? 'production_voucher' : 'card',
     tipAmount: r2(d.totals.tipAgorot),
-    tipPaymentMethod: d.totals.tipAgorot > 0 ? 'card' : undefined,
+    tipPaymentMethod: d.totals.tipAgorot > 0 ? (d.cash ? 'cash' : 'card') : undefined,
     totalAmount: r2(d.totals.grossAgorot),
     netAmount: r2(d.totals.netAgorot),
     vatAmount: r2(d.totals.vatAgorot),
@@ -638,7 +666,7 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
       ? { promotions: d.promotions.map((p) => ({ promotionId: p.promotionId, name: p.name, type: p.type, applications: p.applications, discount: r2(p.discountAgorot) })) }
       : {}),
   };
-  if (d.status === 'completed' && (d.card || (d.voucherLegs ?? []).length > 0)) {
+  if (d.status === 'completed' && (d.card || d.cash || (d.voucherLegs ?? []).length > 0)) {
     const legs = (d.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);
     // The goods vouchers' legs first ("שובר הפקה"), then the card's for what they did not cover: the legs add up to the goods after discounts.
     wire.payments = [
@@ -659,6 +687,28 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
               nayaxMeta: flattenMeta(d.card.meta),
               creditPayments: d.card.payments ?? undefined,
               cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
+              createdAt: d.updatedAt,
+            },
+          ]
+        : []),
+      // "מזומן" at the cash station: a `cash` leg (every report counts it as cash) with its transaction (§11.7).
+      ...(d.cash
+        ? [
+            {
+              id: d.paymentId,
+              sequence: legs.length + 1,
+              method: 'cash',
+              amount: r2(cardPrincipalAgorot(d)),
+              cashDevice: {
+                txId: d.cash.txId,
+                stationId: d.cash.stationId,
+                hostId: d.cash.hostId,
+                receivedAgorot: d.cash.receivedAgorot,
+                changeAgorot: d.cash.changeAgorot,
+                changeOwedAgorot: d.cash.changeOwedAgorot,
+                roundingAgorot: d.cash.roundingAgorot,
+                slipCode: d.cash.slipCode,
+              },
               createdAt: d.updatedAt,
             },
           ]

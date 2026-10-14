@@ -44,7 +44,7 @@ import type {
   VoucherApplyIn,
 } from '../../shared/bridge';
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
-import { configOfflineBlockScope, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
+import { configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
 import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
 export { ANDROID_BRIDGE_API, ANDROID_CALLS, ANDROID_EVENTS, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, ANDROID_SENDS, ANDROID_WIRE_API } from './androidWire';
@@ -202,7 +202,8 @@ export function normalizeView(view: KioskView, opts: { payAtTill?: boolean } = {
   const blocked = kioskOfflineBlocks(resolved.general, view.state?.offline === true);
   const scope = offlineBlockScopeOf(configOfflineBlockScope(view.config));
   const base = opts.payAtTill ? tillPay(configured, androidNoCard(view), blocked) : androidNoCard(view) ? noCardPay(configured) : cardPay(configured);
-  const pay = { ...base, usable: offlineUsable(base.usable, blocked, scope) };
+  // "מזומן עובד בלי אינטרנט" (§13): the cash station stays unless the config says `general.offlineBlockCash`.
+  const pay = { ...base, usable: offlineUsable(base.usable, blocked, scope, offlineBlockCashOf(undefined, view.config)) };
   // Resting for it: the "offline" screen's words (the Windows kiosk's noPaymentReason), not the terminal's.
   const state = view.state && offlineRests(blocked, scope, pay.usable) ? { ...view.state, noPayment: true, noPaymentReason: 'offline' as const } : view.state;
   return { ...view, state, pay, config };

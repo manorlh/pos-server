@@ -29,7 +29,7 @@ export const DEFAULT_CODE = '1995';
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 5 * 60_000;
 /** "אמצעי תשלום כאן": what this browser takes (split_card never — one card per document here). */
-const USABLE_LABEL: Record<PaymentMethod, string> = { cash_at_till: 'מזומן בקופה', card: 'אשראי (גשר)', voucher: 'שובר', split_card: 'פיצול בין כרטיסים' };
+const USABLE_LABEL: Record<PaymentMethod, string> = { cash_at_till: 'מזומן בקופה', card: 'אשראי (גשר)', voucher: 'שובר', cash_device: 'מזומן במכשיר', split_card: 'פיצול בין כרטיסים' };
 const SCHEME = 'pbkdf2-sha256';
 const SALT_PREFIX = 'r2m-kiosk-technician:';
 

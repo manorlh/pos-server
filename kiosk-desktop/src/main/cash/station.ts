@@ -556,7 +556,7 @@ export class CashStation {
     return err(409, 'too_late', { message: 'הסכום כבר שולם', tx: txView(t) });
   }
 
-  ackTx(clientId: string, txId: string, body: { documentId?: unknown; documentNumber?: unknown }): Reply {
+  ackTx(clientId: string, txId: string, body: { documentId?: unknown; documentNumber?: unknown; orderLabel?: unknown }): Reply {
     const t = this.d.journal.tx(txId);
     if (!t || t.stationId !== this.id || t.clientId !== clientId) return err(404, 'unknown_tx');
     if (t.state !== 'DONE' && t.state !== 'HELD') return err(409, 'not_final', { tx: txView(t) });
@@ -565,6 +565,8 @@ export class CashStation {
       t.acked = true;
       if (typeof body.documentId === 'string') t.documentId = body.documentId.slice(0, 80);
       if (typeof body.documentNumber === 'string') t.documentNumber = body.documentNumber.slice(0, 40);
+      // The order's number is known only once the document is written ("עודף חייב — הזמנה 57" at the tills).
+      if (typeof body.orderLabel === 'string' && !t.orderLabel) t.orderLabel = body.orderLabel.slice(0, 40);
       this.save(t, now);
     }
     this.leases = this.leases.filter((l) => l.txId !== txId);

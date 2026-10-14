@@ -221,7 +221,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
   const payAsk = kioskPayChooser(cfg, payInfo.methods, payInfo.usable);
   const asksPay = payAsk.asks;
-  const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : 'card';
+  const fallbackMethod: 'card' | 'cash_at_till' | 'cash_device' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : payAsk.fallback === 'cash_device' ? 'cash_device' : 'card';
   const flowReducer = useCallback((s: KioskFlowState, a: FlowAction) => reduce(s, a.event, { ...rulesOf(cfgIn, a.cartEmpty), asksPayMethod: asksPay }), [cfgIn, asksPay]);
   const [flow, dispatchFlow] = useReducer(flowReducer, INITIAL_FLOW);
   const [cart, setCart] = useState<PLine[]>([]);
@@ -257,7 +257,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   const tillRef = useRef(till);
   tillRef.current = till;
   /** This order's method: chosen on "איך תרצו לשלם?", else the fallback (payMethodAsk). */
-  const methodRef = useRef<'card' | 'cash_at_till' | null>(null);
+  const methodRef = useRef<'card' | 'cash_at_till' | 'cash_device' | null>(null);
   const [lastTouch, setLastTouch] = useState(() => Date.now());
   const [leaveAsk, setLeaveAsk] = useState(false);
   const [changes, setChanges] = useState<string[] | null>(null);
@@ -525,10 +525,12 @@ export function KioskApp({ view }: { view: KioskView }) {
     const input = paymentInput();
     // "מזומן בקופה": the order to the shop's tills, with its vouchers (no document here). By card, the vouchers are legs of
     // the document (goods) and a discount on it (discount ones): the card is charged what they leave.
-    const cash = (methodRef.current ?? fallbackMethod) === 'cash_at_till';
+    const method = methodRef.current ?? fallbackMethod;
+    const cash = method === 'cash_at_till';
+    // "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6): the same payment as the card's, paid there.
     const r: PlaceOrderOut | Awaited<ReturnType<typeof kiosk.startPayment>> = cash
       ? ((await kiosk.placeOpenOrder?.({ ...input, vouchers: voucherSession.state.legs, discounts: voucherSession.state.discounts })) ?? { ok: false, reason: 'error', message: t('placeFailed') })
-      : await kiosk.startPayment(paymentInput(true));
+      : await kiosk.startPayment({ ...paymentInput(true), method: method === 'cash_device' ? 'cash_device' : 'card' });
     if (r.ok) {
       if (cash && 'pickupLabel' in r) {
         setTill((p) => ({ ...p, placed: r }));
@@ -730,6 +732,8 @@ export function KioskApp({ view }: { view: KioskView }) {
             phase: payBlocked ? 'blocked' : flow.pay === 'idle' ? 'starting' : flow.pay === 'approved' ? 'charging' : flow.pay,
             message: payBlocked ?? pay?.message ?? null,
             amount: amount / 100,
+            // "מזומן" at the cash station: the queue, what went in, the change (§11.6).
+            cash: pay?.cash ?? null,
             canCancel: mayCancelPayment(flow) && !!pay?.canCancel,
             cancelling: !!pay?.cancelling,
             onCancel: () => {
@@ -848,7 +852,18 @@ export function KioskApp({ view }: { view: KioskView }) {
         steps: detailsSteps,
         tiles: payInfo.methods.map((method) => ({
           method,
-          off: method === 'card' ? cardOff : method === 'voucher' && !usable.has('voucher') ? t('voucherOffline') : method === 'voucher' && dueNow === 0 ? m.txt('voucherApplied') : null,
+          off:
+            method === 'card'
+              ? cardOff
+              : method === 'cash_device'
+                ? usable.has('cash_device')
+                  ? null
+                  : (payInfo.cashOff ?? 'מכשיר המזומן לא זמין')
+                : method === 'voucher' && !usable.has('voucher')
+                  ? t('voucherOffline')
+                  : method === 'voucher' && dueNow === 0
+                    ? m.txt('voucherApplied')
+                    : null,
         })),
         goodsAgorot: native?.totalAgorot ?? goodsAgorot,
         tipAgorot: tipNow,
@@ -864,7 +879,7 @@ export function KioskApp({ view }: { view: KioskView }) {
           else if (method === 'cash_at_till' && vState.discounts.length > 0) {
             // A discount voucher is held for this kiosk's own payment: not taken to a till (removed first).
             setTill((p) => ({ ...p, error: DISCOUNT_PAY_HERE, note: null }));
-          } else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
+          } else if (method === 'cash_at_till' || (method === 'card' && cardOff === null) || (method === 'cash_device' && usable.has('cash_device'))) {
             methodRef.current = method;
             dispatch({ type: 'detailsDone' });
           }

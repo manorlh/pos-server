@@ -100,6 +100,8 @@ const PROBLEM_KINDS = new Set([
   'quicksupport_signer_mismatch',
   // "הדפסה בקופה אחרת": a bill relayed to another till's printer that did not print there.
   'document_unprinted',
+  // "מכשיר מזומן" (P:/specs/cash-paylink.md §11.9): a cash station's alerts (offline, jam, low change, held credit…).
+  'cash_unit',
   'document_refused', 'document_number_conflict', 'z_totals_mismatch', 'shift_totals_mismatch',
   'local_shop_z_mismatch', 'offline_z_gap', 'offline_z_conflict',
 ]);

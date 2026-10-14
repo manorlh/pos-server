@@ -17665,7 +17665,9 @@
       "stepOn": "פעיל",
       "stepOff": "כבוי",
       "stepDetailsHint": "לפי שדות הלקוח",
-      "stepDetailsElsewhere": "נשאל בשלב אחר (לפי \"מתי לשאול\")"
+      "stepDetailsElsewhere": "נשאל בשלב אחר (לפי \"מתי לשאול\")",
+      "methodCashDevice": "מזומן במכשיר",
+      "methodCashDeviceHint": "תשלום במכשיר המזומן של הסניף (עמדת מזומן): העודף ניתן במקום. מוצג רק כשהעמדה זמינה ומזומן מופעל לקיוסק"
     },
     "stepModes": {
       "title": "חובה / רשות / כבוי לכל שלב",

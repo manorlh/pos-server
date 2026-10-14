@@ -76,6 +76,8 @@ export interface ReceiptInput {
   /** The goods vouchers that paid part of it: each a "שובר הפקה" leg in the payment (the card's leg is the rest). */
   voucherLegs?: Array<{ amountAgorot: number }>;
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
+  /** "מזומן" at the cash station (`cashReceiptLines`): שולם / עודף, what is owed and its code, the rounding. */
+  cash?: { receivedAgorot: number; changeAgorot: number; changeOwedAgorot: number; roundingAgorot: number; slipCode: string | null; lines: boolean } | null;
   footer: [string | null, string | null];
   logoUrl: string | null;
   /** Where it was issued — the shop, the till's number and name ([placeLine]); absent: no line. */
@@ -217,6 +219,19 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
         value: r.card.firstPaymentAgorot ? `${r.card.payments} × ${formatShekelSign(r.card.firstPaymentAgorot)}` : String(r.card.payments),
         style: 'small',
       });
+    }
+  }
+  if (r.cash) {
+    const due = grand - legs.reduce((s, l) => s + l.amountAgorot, 0);
+    ops.push({ t: 'row', label: 'מזומן', value: formatAgorot(due), style: 'body' });
+    if (r.cash.lines) {
+      if (r.cash.roundingAgorot !== 0) ops.push({ t: 'row', label: 'עיגול מזומן', value: formatAgorot(r.cash.roundingAgorot), style: 'small' });
+      ops.push({ t: 'row', label: 'שולם במזומן', value: formatAgorot(r.cash.receivedAgorot), style: 'small' });
+      ops.push({ t: 'row', label: 'עודף', value: formatAgorot(r.cash.changeAgorot), style: 'small' });
+    }
+    if (r.cash.changeOwedAgorot > 0) {
+      ops.push({ t: 'row', label: 'עודף חייב', value: formatAgorot(r.cash.changeOwedAgorot), style: 'bodyBold' });
+      if (r.cash.slipCode) ops.push({ t: 'row', label: 'קוד', value: ltr(r.cash.slipCode), style: 'small' });
     }
   }
   ops.push({ t: 'footerRule' });
@@ -528,3 +543,46 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
 }
 
 export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc;
+
+/* ------------------------------------------------------- the cash station's slips (P:/specs/cash-paylink.md §11.7) */
+
+/**
+ * "עודף חייב" — change the station could not pay (notify, §9א): the amount, the order, the code the
+ * till's "שולם ללקוח" finds, the station. And the fault slip — a payment the station holds or that
+ * went silent: the transaction, what went in, "פנו לצוות". Drawn as a receipt page (ops).
+ */
+export function cashSlipDoc(input: {
+  kind: 'change_owed' | 'fault';
+  businessName: string | null;
+  amountAgorot: number;
+  orderLabel: string | null;
+  slipCode: string | null;
+  txShort: string;
+  stationName: string | null;
+  at: Date;
+}): ReceiptDoc {
+  const ops: ReceiptOp[] = [];
+  ops.push({ t: 'text', text: nonBlank(input.businessName) ?? 'R2M', style: 'title', align: 'center' });
+  ops.push({ t: 'divider', gap: 8 });
+  if (input.kind === 'change_owed') {
+    ops.push({ t: 'text', text: 'עודף חייב', style: 'heading', align: 'center' });
+    ops.push({ t: 'text', text: ltr(formatShekelSign(input.amountAgorot)), style: 'number', align: 'center' });
+    if (input.orderLabel) ops.push({ t: 'row', label: 'הזמנה', value: ltr(input.orderLabel), style: 'body' });
+    if (input.slipCode) ops.push({ t: 'row', label: 'קוד', value: ltr(input.slipCode), style: 'bodyBold' });
+    ops.push({ t: 'divider', gap: 8 });
+    ops.push({ t: 'text', text: 'מכשיר המזומן לא יכול היה לתת את כל העודף.', style: 'small', align: 'center' });
+    ops.push({ t: 'text', text: 'גשו עם הפתק לקופה ותקבלו את העודף.', style: 'bodyBold', align: 'center' });
+  } else {
+    ops.push({ t: 'text', text: 'תקלה במזומן — פנו לצוות', style: 'heading', align: 'center' });
+    if (input.amountAgorot > 0) ops.push({ t: 'row', label: 'הוכנסו', value: formatAgorot(input.amountAgorot), style: 'body' });
+    if (input.orderLabel) ops.push({ t: 'row', label: 'הזמנה', value: ltr(input.orderLabel), style: 'body' });
+    if (input.slipCode) ops.push({ t: 'row', label: 'קוד', value: ltr(input.slipCode), style: 'bodyBold' });
+    ops.push({ t: 'divider', gap: 8 });
+    ops.push({ t: 'text', text: 'הכסף שמור במכשיר. הצוות יחזיר אותו או יקזז אותו בהזמנה.', style: 'small', align: 'center' });
+  }
+  ops.push({ t: 'row', label: 'עסקה', value: ltr(input.txShort), style: 'small' });
+  if (input.stationName) ops.push({ t: 'row', label: 'עמדה', value: input.stationName, style: 'small' });
+  ops.push({ t: 'row', label: 'זמן', value: stamp(input.at), style: 'small' });
+  ops.push({ t: 'end' });
+  return { kind: 'receipt', logoUrl: null, ops };
+}
