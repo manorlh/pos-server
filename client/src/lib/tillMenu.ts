@@ -153,6 +153,8 @@ export const TILL_MENU_ITEMS: readonly TillMenuItem[] = [
     also:
       'הקופה נפתחת על מסך השולחנות; הלשונית "הזמנה מהירה", כל מעבר למסך המכירה שלא דרך שולחן, "מכירה מהירה" במסך השולחנות ו"החזר הזמנה"',
   }),
+  // "דוח X סניפי" (P:/specs/shop-x-report.md §3): in the "דוחות" folder; appended last, the keys keep their places.
+  item('shop_x', 'דוח X סניפי', 'reports', 'receipt', TILE.purple, { report: true }),
 ];
 
 /** The groups of the till's menu, in order; a null title is a group without a heading. */

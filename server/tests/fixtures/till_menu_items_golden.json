@@ -318,5 +318,13 @@
     "critical": false,
     "warning": null,
     "report": false
+  },
+  {
+    "key": "shop_x",
+    "label": "דוח X סניפי",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
   }
 ]
