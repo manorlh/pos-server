@@ -247,10 +247,12 @@ def test_the_parameters_page_route_refuses_what_the_card_refuses(w):
 
 def test_the_card_lists_the_look_then_the_map_s_display(w):
     got = get(w, "shop", w.shop.id)
-    assert [g["key"] for g in got["groups"]] == ["tileLook", "mapDisplay"]
-    assert [p["key"] for p in got["parameters"]] == [*TILE_DEFAULTS, *MAP_DEFAULTS]
+    # Then the table's line on its documents ("מספר שולחן על החשבונית", receipt_table_info.py).
+    assert [g["key"] for g in got["groups"]] == ["tileLook", "mapDisplay", "receiptTable"]
+    assert [p["key"] for p in got["parameters"]] == [*TILE_DEFAULTS, *MAP_DEFAULTS, "receiptTableInfo"]
     assert {p["key"]: p["group"] for p in got["parameters"]} == {
         **{k: "tileLook" for k in TILE_DEFAULTS}, **{k: "mapDisplay" for k in MAP_DEFAULTS},
+        "receiptTableInfo": "receiptTable",
     }
     by_key = {p["key"]: p for p in got["parameters"]}
     assert by_key["tableTileStyle"]["enumLabels"]["filled"] and by_key["mapDecor"]["enumLabels"]["full"]
@@ -258,7 +260,7 @@ def test_the_card_lists_the_look_then_the_map_s_display(w):
     assert got["own"] == {} and got["canEdit"] is True
     assert {k: got["inherited"][k] for k in TILE_DEFAULTS} == TILE_DEFAULTS
     assert {k: got["inherited"][k] for k in MAP_DEFAULTS} == MAP_DEFAULTS
-    assert TL.till_design_keys() == (*TILE_DEFAULTS, *MAP_DEFAULTS)
+    assert TL.till_design_keys() == (*TILE_DEFAULTS, *MAP_DEFAULTS, "receiptTableInfo")
     assert MD.LEVEL_KEYS == tuple(MAP_DEFAULTS)
 
 

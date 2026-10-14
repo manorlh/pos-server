@@ -2408,6 +2408,14 @@ from app.services.table_assignments import PARAMETER_SPECS as _TABLE_ASSIGNMENT_
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_ASSIGNMENT_SPECS)
 
+# "מספר שולחן על החשבונית" (P:/specs/receipt-table-number.md, app/services/receipt_table_info.py):
+# `receiptTableInfo` — what of the table (table, zone, guests, waiter) a table's document prints under
+# its title; empty by default (no line). Read by the till and by the cloud's copy of a document; edited
+# in "עיצוב קופה → שולחנות ומפה" too (table_tile_look.till_design_groups).
+from app.services.receipt_table_info import PARAMETER_SPECS as _RECEIPT_TABLE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _RECEIPT_TABLE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2571,6 +2579,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_assignments.VALIDATED_KEYS and value is not None:
         try:
             return table_assignments.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מספר שולחן על החשבונית": table / zone / guests / waiter in the line's order, or `none`.
+    from app.services import receipt_table_info
+
+    if key in receipt_table_info.VALIDATED_KEYS and value is not None:
+        try:
+            return receipt_table_info.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value
