@@ -289,3 +289,64 @@ def test_hints_never_across_shops_nor_odd_keys(f):
     with pytest.raises(HTTPException) as e:
         hints(f, f.t1, u, dismiss=["Fire Intro!"])
     assert e.value.status_code == 422
+
+
+# ── A line sent alone out of a held course ("שגר נבחרים", `"e": true`) ───────
+
+
+def test_a_line_sent_alone_from_a_held_course_does_not_fire_it(f):
+    """The fish of the mains went alone (`e`): the mains stay held — the steak still waits for "הוצא"."""
+    auto(f)
+    o = order(f, [
+        line("l1", f.salad, 1, f.starters), line("l2", f.burger, 1, f.main_c), line("l6", f.bread, 1, f.main_c),
+    ], {
+        "l1": sent_row(f.salad, 1, NOW - timedelta(minutes=16)),
+        "l6": {**sent_row(f.bread, 1, NOW - timedelta(minutes=16)), "e": True},
+    })
+    lines, ex = F.cart_lines(o.cart_json), F.extras_of(o.extras_json)
+    assert str(f.main_c.id) not in F.fired_courses(lines, ex)
+    assert [c.id for c in F.held_courses(lines, ex)] == [str(f.main_c.id)]
+    assert [line.id for line in F.held_after(lines, ex)] == ["l2"]
+    # Without `e` the same row would have fired the mains (as before): nothing left held.
+    plain = {**ex, "sent": {**ex["sent"], "l6": {k: v for k, v in ex["sent"]["l6"].items() if k != "e"}}}
+    assert str(f.main_c.id) in F.fired_courses(lines, plain)
+    # The cloud's auto-fire still fires the mains when due: the steak only, never the bread again.
+    fired = F.run_pass(f.db, now=NOW)
+    assert [(x["courseName"], x["printedLines"]) for x in fired] == [("עיקריות", ["l2"])]
+
+
+def test_the_tables_choice_counts_a_held_course_with_an_early_line(f):
+    o = order(f, [
+        line("l1", f.salad, 1, f.starters), line("l2", f.burger, 1, f.main_c), line("l6", f.bread, 1, f.main_c),
+    ], {
+        "l1": sent_row(f.salad, 1, NOW - timedelta(minutes=16)),
+        "l6": {**sent_row(f.bread, 1, NOW - timedelta(minutes=10)), "e": True},
+    }, fireWhen={})
+    x = extras(o)
+    x["fireWhen"] = {str(f.main_c.id): choose("minutes", 5)}
+    o.extras_json = json.dumps(x)
+    f.db.commit()
+    fired = F.run_pass(f.db, now=NOW)
+    assert [(x["courseName"], x["printedLines"]) for x in fired] == [("עיקריות", ["l2"])]
+
+
+def test_waiting_reaches_the_printing_till_through_the_relay(k):
+    """A till's ticket with held courses (`waiting`) uploaded to the relay: the host is handed it as it was sent."""
+    from fastapi import BackgroundTasks
+
+    from app.routers import printers as PR
+    from app.schemas.kitchen_printers import PrintJobIn
+    from test_kitchen_printers import create, pending, ticket
+    from test_menu import _run
+
+    t1, t2 = k.tills
+    cloud = create(k, name="Bar", connectionType="cloud", hostMachineId=str(t2.id), hostConnection="network", host="10.0.0.5")
+    waiting = [{"productId": "p2", "name": "סטייק", "quantity": 2, "course": "עיקריות"}]
+    job_id = str(uuid.uuid4())
+    tasks = BackgroundTasks()
+    body = PrintJobIn.model_validate({"id": job_id, "printerId": cloud["id"], "ticket": ticket(waiting=waiting)})
+    PR.post_print_job(str(t1.id), body, tasks, machine=t1, db=k.db)
+    _run(tasks)
+    handed = pending(k, t2)
+    got = handed[0]["ticket"]["waiting"]
+    assert [(w["name"], w["quantity"], w["course"]) for w in got] == [("סטייק", 2, "עיקריות")]

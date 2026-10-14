@@ -222,3 +222,22 @@ def test_the_migration_adds_nullable_columns_only():
     assert "ALTER TABLE pos_users ADD COLUMN hints_dismissed JSONB" in sql
     assert "NOT NULL" not in sql.split("4ff6c2ab6d7c", 1)[-1].replace("version_num VARCHAR(32) NOT NULL", "")
     assert "DROP" not in sql
+
+
+# ── The ticket's held courses ("ממתין ל-FIRE") through the relay ─────────────
+
+
+def test_the_tickets_waiting_lines_pass_through_the_relay():
+    """`waiting` (the held courses' lines, printed apart) survives the relay's validation and re-serialisation."""
+    from app.schemas.kitchen_printers import TicketIn
+
+    body = {
+        "source": "table", "tableName": "12", "createdAt": "2026-10-14T20:00:00+03:00",
+        "lines": [{"productId": "p1", "name": "סלט", "quantity": 1, "course": "ראשונות"}],
+        "waiting": [{"productId": "p2", "name": "סטייק", "quantity": 2, "course": "עיקריות", "mods": ["מדיום"]}],
+    }
+    out = TicketIn.model_validate(body).model_dump(by_alias=True)
+    assert [(w["name"], w["quantity"], w["course"], w["mods"]) for w in out["waiting"]] == [("סטייק", 2, "עיקריות", ["מדיום"])]
+    assert out["lines"][0]["name"] == "סלט"
+    # An older till sends none: none kept.
+    assert TicketIn.model_validate({k: v for k, v in body.items() if k != "waiting"}).model_dump(by_alias=True)["waiting"] is None
