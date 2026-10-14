@@ -331,6 +331,8 @@
     "src/lib/tableRestore.ts",
     "src/lib/tableRestore.test.ts",
     "src/lib/remoteSupport.ts",
-    "src/lib/remoteSupport.test.ts"
+    "src/lib/remoteSupport.test.ts",
+    "src/lib/courseFire.ts",
+    "src/lib/courseFire.test.ts"
   ]
 }

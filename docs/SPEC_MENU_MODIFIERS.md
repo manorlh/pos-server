@@ -410,6 +410,7 @@
 - בבון: השורות מקובצות לפי מנה עם כותרת המנה.
 - דלפק: מנות מתעלמות — הכול יוצא מיד.
 - פרמטר קופה `coursesEnabled` (ברירת מחדל: כבוי — התנהגות של היום).
+- **שלב 2** (P:/specs/courses-fire-v2.md, 14.10.2026): הוצאה אוטומטית של השלב הבא — פרמטר קופה `autoFire` (`off` / `after_minutes` / `after_ready`) ו-`autoFireMinutesOverride`, ודקות לכל שלב (`menu_courses.auto_fire_minutes`, `courses[].autoFireMinutes`, ברירת מחדל 15); "יוצא בלי בון" (`sendSilently`) על מוצר ומחלקה, עם ירושה. בשולחנות בענן הענן מוציא בעצמו (`app/services/course_auto_fire.py`).
 
 ---
 

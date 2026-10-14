@@ -3,6 +3,9 @@
  * §3, §5): the tables page's editor of the eight till parameters per level — the pure helpers. How a
  * level's value reads and is written back, the restore window (`same_z` | `same_shift` | `any` |
  * `hours:N`), the methods list (`cash,card,voucher,external`), and the checks the server makes too.
+ * The same card also edits the courses' auto-fire (P:/specs/courses-fire-v2.md §1, §5): `autoFire`
+ * (`off` | `after_minutes` | `after_ready`) and `autoFireMinutesOverride`, an integer 1–180 sent as a
+ * JSON number (the server refuses the text "15"); empty = each course's own minutes.
  *
  * Self-contained on purpose (no imports): the node test build compiles it alone.
  */
@@ -29,7 +32,7 @@ export interface RestoreParam {
   enumOptions: string[] | null;
   enumLabels: Record<string, string> | null;
   defaultValue: unknown;
-  /** The card's group (`staffTables` | `restore`). Absent on an older server. */
+  /** The card's group (`staffTables` | `restore` | `courses`). Absent on an older server. */
   group?: string | null;
 }
 
@@ -50,7 +53,7 @@ export interface RestoreLevelView {
   parameters: RestoreParam[];
   /**
    * The staff / managers' tables (`staffTableDiscountCheck`, P:/specs/owner-decisions-1410.md §1), then
-   * the restore and payments. Absent on an older server: one list.
+   * the restore and payments, then the courses' auto-fire (`courses`). Absent on an older server: one list.
    */
   groups?: ParamGroup[];
   methods: { key: string; label: string }[];
@@ -125,24 +128,32 @@ export function toText(value: unknown): string {
 }
 
 /**
- * Back to the value the server takes: null clears the level's own value; a whole number typed for an
- * integer parameter is a number (the server refuses "100" for 100).
+ * Back to the value the server takes: null clears the level's own value. An integer goes as a JSON
+ * number ("15" → 15, "100" → 100: the server's integer check refuses the text); text that is not a whole
+ * number stays text, and `editError` stops it before it is sent.
  */
 export function fromText(valueType: string, text: string): unknown {
   if (text === '') return null;
   if (valueType === 'boolean') return text === 'true';
-  if (valueType === 'integer' && /^-?\d+$/.test(text.trim())) return Number(text.trim());
+  if (valueType === 'integer') {
+    const trimmed = text.trim();
+    return /^-?[0-9]+$/.test(trimmed) ? Number(trimmed) : text;
+  }
   return text;
 }
 
 /** The symbols' size on the till's map, percent (pos-server app/services/table_map_display.py). */
 export const MAP_SYMBOL_SCALE_RANGE = { min: 70, max: 150 } as const;
 
+/** `autoFireMinutesOverride`: the minutes for every course at the level, 1–180 (as a course's own). */
+export const AUTO_FIRE_MINUTES_MIN = 1;
+export const AUTO_FIRE_MINUTES_MAX = 180;
+
 /**
  * Why an edited text would be refused (the server refuses it too), or null. `INHERIT` (an empty
  * text) is always fine; an empty methods list is written as the empty list, not as inherit.
  */
-export function editError(key: string, text: string): 'prefix' | 'window' | 'scale' | null {
+export function editError(key: string, text: string): 'prefix' | 'window' | 'scale' | 'minutes' | null {
   if (text === '') return null;
   if (key === 'restoredTablePrefix') return text.trim() === '' || text.length > PREFIX_MAX ? 'prefix' : null;
   if (key === 'restoreWindow') {
@@ -153,6 +164,11 @@ export function editError(key: string, text: string): 'prefix' | 'window' | 'sca
     const n = Number(text.trim());
     const { min, max } = MAP_SYMBOL_SCALE_RANGE;
     return /^\d+$/.test(text.trim()) && n >= min && n <= max ? null : 'scale';
+  }
+  if (key === 'autoFireMinutesOverride') {
+    const trimmed = text.trim();
+    const n = Number(trimmed);
+    return /^[0-9]{1,3}$/.test(trimmed) && n >= AUTO_FIRE_MINUTES_MIN && n <= AUTO_FIRE_MINUTES_MAX ? null : 'minutes';
   }
   return null;
 }

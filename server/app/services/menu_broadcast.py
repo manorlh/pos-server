@@ -450,9 +450,13 @@ _CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 #: Fields added after publications existed, with the value a publication made before them means:
 #: a row carrying exactly that value is the same content as one without the field, so adding a
 #: field never makes every shop's draft "changed" (the fingerprint), nor shows in the review.
-_PRODUCT_DEFAULTS: Dict[str, Any] = {"addonRole": "none"}
+_PRODUCT_DEFAULTS: Dict[str, Any] = {"addonRole": "none", "sendSilently": None}
+#: "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): null — inherited, as before the field.
+_CATEGORY_DEFAULTS: Dict[str, Any] = {"sendSilently": None}
 _OPTION_DEFAULTS: Dict[str, Any] = {"imageUrl": None}
 _CHIP_DEFAULTS: Dict[str, Any] = {"imageUrl": None}
+#: A course's "הוצאה אוטומטית" minutes (P:/specs/courses-fire-v2.md §1): 15 — every course before the field.
+_COURSE_DEFAULTS: Dict[str, Any] = {"autoFireMinutes": 15}
 
 
 def _without_defaults(row: Any, defaults: Dict[str, Any]) -> Any:
@@ -473,6 +477,8 @@ def _menu_content(menu: Dict[str, Any]) -> Dict[str, Any]:
     notes = out.get("notes")
     if isinstance(notes, dict):
         out["notes"] = _chips_content(notes)
+    if isinstance(out.get("courses"), list):
+        out["courses"] = [_without_defaults(c, _COURSE_DEFAULTS) for c in out["courses"]]
     return out
 
 
@@ -505,7 +511,7 @@ def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             for k, g in (snapshot.get("productGates") or {}).items()
         },
         "categories": {
-            k: {f: v for f, v in row.items() if f not in _CATEGORY_LIVE}
+            k: _without_defaults({f: v for f, v in row.items() if f not in _CATEGORY_LIVE}, _CATEGORY_DEFAULTS)
             for k, row in (snapshot.get("categories") or {}).items()
         },
         "menu": menu,
@@ -1059,6 +1065,8 @@ _CATEGORY_FIELDS = (
 )
 #: Compared only when both snapshots carry them (as _PRODUCT_NEW_FIELDS).
 _CATEGORY_NEW_FIELDS = ("requiresManagerApproval",)
+#: Compared as their "before" value when a snapshot has none (`_CATEGORY_DEFAULTS`).
+_CATEGORY_DEFAULTED_FIELDS = tuple(_CATEGORY_DEFAULTS)
 _GROUP_FIELDS = ("name", "kind", "minSelect", "maxSelect", "freeCount", "allowQuantity", "allowPre")
 _OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens", "imageUrl")
 _UPSELL_HOURS = ("startTime", "endTime", "weekdays")
@@ -1233,6 +1241,10 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
                 for f in _CATEGORY_NEW_FIELDS
                 if f in a and f in b and not _same(a.get(f), b.get(f))
             ]
+            for f in _CATEGORY_DEFAULTED_FIELDS:
+                before_v, after_v = a.get(f, _CATEGORY_DEFAULTS[f]), b.get(f, _CATEGORY_DEFAULTS[f])
+                if not _same(before_v, after_v):
+                    changes.append(_change(f, shown(f, before_v, True), shown(f, after_v)))
             if changes:
                 out["categories"].append(_item("changed", key, name, changes))
 
@@ -1384,6 +1396,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             out["menu"].append(_item("removed", key, a.get("name"), detail="course"))
         else:
             changes = [_change(f, a.get(f), b.get(f)) for f in ("name", "sortOrder") if not _same(a.get(f), b.get(f))]
+            changes += [
+                _change(f, a.get(f, d), b.get(f, d))
+                for f, d in _COURSE_DEFAULTS.items()
+                if not _same(a.get(f, d), b.get(f, d))
+            ]
             if changes:
                 out["menu"].append(_item("changed", key, b.get("name"), changes, detail="course"))
     # "תפריטים" (docs/SPEC_MENUS.md): menus, their assignments and fallbacks.

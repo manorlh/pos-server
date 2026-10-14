@@ -4,10 +4,11 @@
  * "הגדרות שולחנות" (pos-server app/services/table_restore.py, P:/specs/table-restore-payments.md §3, §5):
  * the eight till parameters of restoring a closed table with its payments, reversing payments inside a
  * table and the bill with a balance — and, in a group of its own first, the staff / managers' tables'
- * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1), and last the till's map — its legend
- * and display (`mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale`; P:/specs/table-map-decor-v3.md
- * §3) — at one level: company, shop, point of
- * sale or till. A level shows what it inherits and what it sets itself; "ירושה" inherits. Stored as till
+ * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1), then the till's map — its legend and
+ * display (`mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale`; P:/specs/table-map-decor-v3.md
+ * §3) — and last the courses' auto-fire (`autoFire`, `autoFireMinutesOverride`: P:/specs/courses-fire-v2.md
+ * §1, §5; a course's own minutes are set in "שלבי הגשה") — at one level: company, shop, point of sale or
+ * till. A level shows what it inherits and what it sets itself; "ירושה" inherits. Stored as till
  * parameters: the till gets the resolved value with the rest of its parameters. Who restores and
  * reverses, and each role's discount ceiling, is the roles editor's.
  */
@@ -153,6 +154,10 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
     return kind === 'hours' ? t('window.hoursValue', { hours: hours ?? 0 }) : t(`window.${kind}`);
   };
   const describe = (p: RestoreParam, value: unknown): string => {
+    // No override: each course goes out after its own minutes ("שלבי הגשה").
+    if (p.key === 'autoFireMinutesOverride') {
+      return value === undefined || value === null || value === '' ? t('minutesByCourse') : t('minutesValue', { n: String(value) });
+    }
     if (value === undefined || value === null) return '—';
     if (p.valueType === 'boolean') return value ? t('on') : t('off');
     if (p.key === 'restoreWindow') return windowLabel(value);
@@ -163,9 +168,11 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
     if (p.valueType === 'enum') return optionLabel(p, String(value));
     return String(value);
   };
-  const errors = data.parameters
-    .filter((p) => p.key in edits && editError(p.key, edits[p.key]))
-    .map((p) => t('invalid', { label: name(p) }));
+  const errors = data.parameters.flatMap((p) => {
+    const error = p.key in edits ? editError(p.key, edits[p.key]) : null;
+    if (!error) return [];
+    return [error === 'minutes' ? t('invalidMinutes', { label: name(p) }) : t('invalid', { label: name(p) })];
+  });
   const dirty = Object.keys(changedValues(data.own, edits, {})).length > 0;
   const groupName = (g: ParamGroup) => (t.has(`groups.${g.key}`) ? t(`groups.${g.key}`) : g.label);
   const row = (p: RestoreParam) => {
@@ -201,7 +208,7 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
   return (
     <div className="space-y-2">
       {!canEdit ? <p className="text-xs text-muted-foreground">{t('readOnly')}</p> : null}
-      {/* The staff / managers' tables, then restoring and the payments (a group per heading). */}
+      {/* The staff / managers' tables, restoring and the payments, the till's map, then the courses' auto-fire (a group per heading). */}
       {groupParams(data.parameters, data.groups).map(({ group, parameters }) => (
         <section key={group?.key ?? '_'} className="space-y-1.5">
           {group ? <h3 className="pt-1 text-sm font-semibold">{groupName(group)}</h3> : null}
@@ -362,14 +369,35 @@ function Editor({
     );
   }
 
+  if (p.valueType === 'integer') {
+    // Digits only (`autoFireMinutesOverride`, the map's `mapSymbolScale`): saved as a JSON number
+    // (lib/tableRestore.ts fromText); empty inherits.
+    const minutes = p.key === 'autoFireMinutesOverride';
+    // The unit is beside the box: an inherited number shows bare ("20"), no override as "לפי השלב".
+    const placeholder = minutes && typeof inherited === 'number' ? String(inherited) : describe(inherited);
+    return (
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          className={minutes ? `${SELECT} w-28` : SELECT}
+          aria-label={p.label}
+          inputMode="numeric"
+          dir="ltr"
+          disabled={disabled}
+          placeholder={placeholder}
+          value={text}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+        />
+        {minutes ? t('minutesUnit') : null}
+      </label>
+    );
+  }
+
   return (
     <input
       className={SELECT}
       aria-label={p.label}
       disabled={disabled}
       placeholder={describe(inherited)}
-      inputMode={p.valueType === 'integer' ? 'numeric' : undefined}
-      dir={p.valueType === 'integer' ? 'ltr' : undefined}
       value={text}
       onChange={(e) => onChange(e.target.value)}
     />

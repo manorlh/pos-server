@@ -988,9 +988,17 @@ def set_meal(db: Session, user: User, tenant_id, product: Product, body: MealIn)
 # ── Courses ───────────────────────────────────────────────────────────────────
 
 
+def course_minutes(c: MenuCourse) -> int:
+    """The course's "הוצאה אוטומטית" minutes (P:/specs/courses-fire-v2.md §1); 15 when not set."""
+    from app.schemas.menu import AUTO_FIRE_MINUTES_DEFAULT
+
+    value = getattr(c, "auto_fire_minutes", None)
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) and value > 0 else AUTO_FIRE_MINUTES_DEFAULT
+
+
 def course_out(c: MenuCourse) -> Dict[str, Any]:
     return {"id": str(c.id), "name": c.name, "sortOrder": c.sort_order or 0, "isActive": bool(c.is_active),
-            "companyId": _s(c.company_id)}
+            "companyId": _s(c.company_id), "autoFireMinutes": course_minutes(c)}
 
 
 def list_courses(db: Session, user: User, tenant_id) -> Dict[str, Any]:
@@ -1029,6 +1037,10 @@ def replace_courses(db: Session, user: User, tenant_id, body: CoursesIn) -> None
         row.name = course.name
         row.is_active = course.is_active
         row.sort_order = index
+        if course.auto_fire_minutes is not None:
+            row.auto_fire_minutes = course.auto_fire_minutes
+        elif row.auto_fire_minutes is None:
+            row.auto_fire_minutes = course_minutes(row)
         row.updated_at = _now()
     for key, row in existing.items():
         if key not in kept:
@@ -1061,6 +1073,8 @@ def product_menu_out(db: Session, user: User, tenant_id, product: Product) -> Di
         "productId": str(product.id),
         "allergens": [a for a in (product.allergens or []) if a in ALLERGENS],
         "courseId": _s(product.course_id),
+        # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): null — the category's.
+        "sendSilently": getattr(product, "send_silently", None),
         "links": links_out(db, tenant_id, "product", product),
         "notes": notes_out(db, tenant_id, "product", product),
         "meal": meal_out(db, product.id),
@@ -1090,6 +1104,9 @@ def set_product_menu(db: Session, user: User, tenant_id, product: Product, body:
         _check_course(db, tenant_id, body.course_id)
         product.course_id = body.course_id
         touched = True
+    if body.set_send_silently:
+        product.send_silently = body.send_silently
+        touched = True
     if body.set_limits:
         product.max_per_order = body.max_per_order
         product.refillable = body.refillable
@@ -1102,7 +1119,7 @@ def set_product_menu(db: Session, user: User, tenant_id, product: Product, body:
     if body.meal is not None:
         set_meal(db, user, tenant_id, product, body.meal)
     if touched:
-        # The product row itself carries allergens and the course: a delta pull resends it.
+        # The product row itself carries allergens, the course and "יוצא בלי בון": a delta pull resends it.
         product.updated_at = _now()
     db.flush()
     bump(db, tenant_id)
@@ -1112,6 +1129,8 @@ def category_menu_out(db: Session, user: User, tenant_id, category: Category) ->
     return {
         "categoryId": str(category.id),
         "courseId": _s(category.course_id),
+        # "יוצא בלי בון": null — the parent's (none at the top: off).
+        "sendSilently": getattr(category, "send_silently", None),
         "links": links_out(db, tenant_id, "category", category),
         "notes": notes_out(db, tenant_id, "category", category),
         "canEdit": _may_target(db, user, category),
@@ -1123,6 +1142,9 @@ def set_category_menu(db: Session, user: User, tenant_id, category: Category, bo
     if body.set_course:
         _check_course(db, tenant_id, body.course_id)
         category.course_id = body.course_id
+        category.updated_at = _now()
+    if body.set_send_silently:
+        category.send_silently = body.send_silently
         category.updated_at = _now()
     if body.links is not None:
         set_links(db, user, tenant_id, "category", category, body.links)
@@ -1511,7 +1533,8 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
     }
 
     courses = [
-        {"id": str(c.id), "name": c.name, "sortOrder": c.sort_order or 0}
+        # `autoFireMinutes`: "הוצאה אוטומטית" after the course before (P:/specs/courses-fire-v2.md §1).
+        {"id": str(c.id), "name": c.name, "sortOrder": c.sort_order or 0, "autoFireMinutes": course_minutes(c)}
         for c in db.query(MenuCourse)
         .filter(MenuCourse.tenant_id == tenant_id, MenuCourse.is_active.is_(True))
         .order_by(MenuCourse.sort_order, MenuCourse.name)

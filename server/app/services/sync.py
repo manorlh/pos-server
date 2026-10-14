@@ -145,6 +145,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         # option's linked product or a meal's component) / both.
         "addonRole": addon_role.of(p),
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
+        # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): true / false, null — the category's.
+        "sendSilently": getattr(p, "send_silently", None),
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
         "refillable": bool(getattr(p, "refillable", False)),
@@ -310,6 +312,8 @@ def _serialize_merged_product(
         # sell catalog (app/services/addon_role.py).
         "addonRole": addon_role.of(global_p),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
+        # "יוצא בלי בון", from the global row like the course.
+        "sendSilently": getattr(global_p, "send_silently", None),
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
         "maxRefills": getattr(global_p, "max_refills", None),
@@ -368,6 +372,8 @@ def _serialize_category(
         "ticketMode": item_ticket.category_mode(c),
         # The course its products fire in by default (docs/SPEC_MENU_MODIFIERS.md §8).
         "courseId": str(c.course_id) if getattr(c, "course_id", None) else None,
+        # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): true / false, null — the parent's (none: off).
+        "sendSilently": getattr(c, "send_silently", None),
         # "מחייב אישור מנהל במכירה": the category's own flag; the till applies it to every
         # product beneath it (its tree is parentId).
         "requiresManagerApproval": bool(getattr(c, "requires_manager_approval", False)),

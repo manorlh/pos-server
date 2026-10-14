@@ -13,6 +13,7 @@ import {
   editError,
   formatMethods,
   formatWindow,
+  fromText,
   groupParams,
   ownKeys,
   parseMethods,
@@ -105,6 +106,46 @@ describe('edits', () => {
   });
 });
 
+describe('the courses auto-fire (courses-fire-v2 §5)', () => {
+  it('an integer goes as a JSON number: the server refuses the text "15"', () => {
+    assert.equal(fromText('integer', '15'), 15);
+    assert.equal(fromText('integer', ' 7 '), 7);
+    assert.equal(fromText('integer', ''), null);
+    // Not a whole number: left as text (editError stops it first).
+    assert.equal(fromText('integer', '1.5'), '1.5');
+    assert.equal(fromText('string', '15'), '15');
+    assert.equal(valueOf('autoFireMinutesOverride', 'integer', '20'), 20);
+    assert.equal(fromText('enum', 'after_ready'), 'after_ready');
+  });
+
+  it('the override is 1–180 minutes, or empty for each course its own', () => {
+    assert.equal(editError('autoFireMinutesOverride', ''), null);
+    assert.equal(editError('autoFireMinutesOverride', '1'), null);
+    assert.equal(editError('autoFireMinutesOverride', '180'), null);
+    assert.equal(editError('autoFireMinutesOverride', '0'), 'minutes');
+    assert.equal(editError('autoFireMinutesOverride', '181'), 'minutes');
+    assert.equal(editError('autoFireMinutesOverride', '2.5'), 'minutes');
+    assert.equal(editError('autoFireMinutesOverride', 'abc'), 'minutes');
+    assert.equal(editError('autoFireMinutesOverride', '-5'), 'minutes');
+    assert.equal(editError('autoFire', 'after_minutes'), null);
+  });
+
+  it('sends only what changed, the minutes as a number', () => {
+    const own = { autoFire: 'after_minutes', autoFireMinutesOverride: 15 };
+    const types = { autoFire: 'enum', autoFireMinutesOverride: 'integer' };
+    // The stored 15 reads as "15": unchanged, not sent.
+    assert.equal(textOf('autoFireMinutesOverride', 15), '15');
+    assert.deepEqual(changedValues(own, { autoFire: 'after_minutes', autoFireMinutesOverride: '15' }, types), {});
+    assert.deepEqual(changedValues(own, { autoFire: 'after_ready', autoFireMinutesOverride: '20' }, types), {
+      autoFire: 'after_ready',
+      autoFireMinutesOverride: 20,
+    });
+    // Emptied: back to each course's own minutes.
+    assert.deepEqual(changedValues(own, { autoFireMinutesOverride: '' }, types), { autoFireMinutesOverride: null });
+    assert.deepEqual(changedValues({}, { autoFireMinutesOverride: '5' }, types), { autoFireMinutesOverride: 5 });
+  });
+});
+
 describe('a table on the floor', () => {
   it('by its number and name, or a restored one by its label alone', () => {
     assert.deepEqual(tableDisplay({ number: 12, name: null }), { main: '12', sub: null, text: '12' });
@@ -137,6 +178,23 @@ describe('the card groups (owner-decisions-1410 §1: the staff tables first)', (
     const out = groupParams([{ key: 'x', group: 'restore' }, { key: 'y', group: 'later' }, { key: 'z' }], groups);
     assert.deepEqual(out.map((g) => g.group?.key ?? null), ['restore', null]);
     assert.deepEqual(out[1].parameters.map((p) => p.key), ['y', 'z']);
+  });
+
+  it('the courses auto-fire is a third group, after the restore (courses-fire-v2 §5)', () => {
+    const three = [...groups, { key: 'courses', label: 'שלבי הגשה: הוצאה אוטומטית' }];
+    const params = [
+      { key: 'autoFire', group: 'courses' },
+      { key: 'restoreWindow', group: 'restore' },
+      { key: 'autoFireMinutesOverride', group: 'courses' },
+      { key: 'staffTableDiscountCheck', group: 'staffTables' },
+    ];
+    const out = groupParams(params, three);
+    assert.deepEqual(out.map((g) => g.group?.key), ['staffTables', 'restore', 'courses']);
+    assert.deepEqual(out[2].parameters.map((p) => p.key), ['autoFire', 'autoFireMinutesOverride']);
+    // Groups that list only the first two: the courses' parameters still show, last, under no heading.
+    const older = groupParams(params, groups);
+    assert.deepEqual(older.map((g) => g.group?.key ?? null), ['staffTables', 'restore', null]);
+    assert.deepEqual(older[2].parameters.map((p) => p.key), ['autoFire', 'autoFireMinutesOverride']);
   });
 
   it('an older server (no groups): one list, no heading', () => {

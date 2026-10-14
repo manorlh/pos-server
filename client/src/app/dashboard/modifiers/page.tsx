@@ -3,7 +3,8 @@
 /**
  * "תוספות ושינויים" (docs/SPEC_MENU_MODIFIERS.md): the modifier groups a dish is ordered
  * with (doneness, add-ons, removals…), the note chips every dish gets, and the courses a
- * table's lines are fired in. Defined here, sent to the tills in the catalog sync and
+ * table's lines are fired in, each with the minutes after which it goes out by itself
+ * (P:/specs/courses-fire-v2.md §1). Defined here, sent to the tills in the catalog sync and
  * applied there, offline. A product's or category's own groups, chips, allergens and
  * meal are set on its edit form. Server: `/menu/*`.
  */
@@ -12,8 +13,9 @@ import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, GripVertical, Pencil, Plus, Timer, Trash2, X } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { FIRE_MINUTES_DEFAULT, fireMinutesInput, fireMinutesText, parseFireMinutes } from '@/lib/courseFire';
 import { cn } from '@/lib/utils';
 import {
   deleteGroup,
@@ -430,6 +432,8 @@ interface CourseDraft {
   id?: string;
   name: string;
   isActive: boolean;
+  /** The auto-fire minutes as typed (lib/courseFire.ts): an integer 1–180, else saving is refused. */
+  minutes: string;
 }
 
 function CoursesTab() {
@@ -442,12 +446,35 @@ function CoursesTab() {
   const key = own.companyId ?? 'org';
   const [edit, setEdit] = useState<{ key: string; list: CourseDraft[] } | null>(null);
   const list: CourseDraft[] =
-    edit && edit.key === key ? edit.list : (current?.courses ?? []).map((c) => ({ id: c.id, name: c.name, isActive: c.isActive }));
+    edit && edit.key === key
+      ? edit.list
+      : (current?.courses ?? []).map((c) => ({
+          id: c.id,
+          name: c.name,
+          isActive: c.isActive,
+          minutes: fireMinutesText(c.autoFireMinutes),
+        }));
   const set = (next: CourseDraft[]) => setEdit({ key, list: next });
   const [name, setName] = useState('');
+  const addCourse = () => {
+    set([...list, { name: name.trim(), isActive: true, minutes: String(FIRE_MINUTES_DEFAULT) }]);
+    setName('');
+  };
+  // A course without a name is dropped on save; one with a name needs whole minutes 1–180.
+  const kept = list.filter((c) => c.name.trim());
+  const minutesProblem = kept.some((c) => parseFireMinutes(c.minutes) === null);
 
   const save = useMutation({
-    mutationFn: () => saveCourses(own.companyId, list.filter((c) => c.name.trim())),
+    mutationFn: () =>
+      saveCourses(
+        own.companyId,
+        kept.map((c) => ({
+          id: c.id,
+          name: c.name,
+          isActive: c.isActive,
+          autoFireMinutes: parseFireMinutes(c.minutes) ?? FIRE_MINUTES_DEFAULT,
+        })),
+      ),
     onSuccess: (out) => {
       qc.setQueryData(['menu-courses'], out);
       setEdit(null);
@@ -479,6 +506,20 @@ function CoursesTab() {
                 onChange={(e) => set(list.map((x, j) => (j === i ? { ...x, name: e.target.value.slice(0, 60) } : x)))}
                 className="h-9 flex-1 border-0 bg-transparent px-1 text-[15px] shadow-none focus-visible:ring-0"
               />
+              {/* The minutes until this course goes out by itself (the till parameter "autoFire"). */}
+              <label className="flex shrink-0 items-center gap-1 text-[13px] text-[#8E8E93]" title={t('minutesLabel')}>
+                <Timer className="h-4 w-4" aria-hidden />
+                <Input
+                  value={c.minutes}
+                  inputMode="numeric"
+                  dir="ltr"
+                  aria-label={t('minutesLabel')}
+                  aria-invalid={c.name.trim() && parseFireMinutes(c.minutes) === null ? true : undefined}
+                  onChange={(e) => set(list.map((x, j) => (j === i ? { ...x, minutes: fireMinutesInput(e.target.value) } : x)))}
+                  className="h-8 w-14 rounded-lg border-0 bg-[#7676801F] px-1 text-center text-[15px] tabular-nums text-foreground shadow-none"
+                />
+                {t('minutesUnit')}
+              </label>
               <Button size="icon-sm" variant="ghost" aria-label={t('up')} onClick={() => move(i, -1)} disabled={i === 0}>
                 <ArrowUp className="h-4 w-4" aria-hidden />
               </Button>
@@ -497,21 +538,13 @@ function CoursesTab() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && name.trim()) {
                   e.preventDefault();
-                  set([...list, { name: name.trim(), isActive: true }]);
-                  setName('');
+                  addCourse();
                 }
               }}
               placeholder={t('placeholder')}
               className="h-9 flex-1"
             />
-            <Button
-              variant="outline"
-              disabled={!name.trim()}
-              onClick={() => {
-                set([...list, { name: name.trim(), isActive: true }]);
-                setName('');
-              }}
-            >
+            <Button variant="outline" disabled={!name.trim()} onClick={addCourse}>
               <Plus className="me-1 h-4 w-4" aria-hidden />
               {t('add')}
             </Button>
@@ -519,8 +552,9 @@ function CoursesTab() {
         </IosCard>
       )}
       <IosFootnote>{t('footnote')}</IosFootnote>
+      {minutesProblem ? <p className="mt-2 px-4 text-[13px] text-[#FF3B30]">{t('minutesInvalid')}</p> : null}
       <div className="mt-3 flex justify-end px-2">
-        <Button disabled={!edit || save.isPending} onClick={() => save.mutate()}>
+        <Button disabled={!edit || minutesProblem || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </div>
