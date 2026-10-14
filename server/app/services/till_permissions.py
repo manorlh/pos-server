@@ -148,6 +148,10 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "כניסה למסך השולחנות, פתיחת שולחן ועבודה עליו."),
     PermissionSpec("TABLES.OPEN_OTHERS", "עבודה על שולחן של מלצר אחר", "tables",
                    "כניסה לשולחן שפתח (או משויך ל) מלצר אחר."),
+    # P:/specs/table-waiter-assignment.md §3: the "שיוך מלצרים" button on the tables screen.
+    PermissionSpec("TABLES.ASSIGN", "שיוך שולחנות למלצרים", "tables",
+                   "שיוך אזורים ושולחנות למלצר לפני שהם נפתחים (כפתור \"שיוך מלצרים\" במסך השולחנות), "
+                   "\"נקה הכל\" והעתקת שיוך מאתמול או מהמשמרת הקודמת."),
     PermissionSpec("TABLE_CANCEL", "ביטול שולחן", "tables",
                    "ביטול הזמנה פתוחה של שולחן, עם סיבה.", scope="table:cancel"),
     PermissionSpec("TABLE_VOID", "ביטול פריט שנשלח למטבח", "tables",
@@ -380,6 +384,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "ITEM_BLOCK_WIDE",
     # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
     "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
+    # "שיוך שולחנות למלצרים": arranging the floor is a manager's — a legacy cashier asks one.
+    "TABLES.ASSIGN",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -416,6 +422,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "SELL_RESTRICTED_ITEMS":             (P, P, A, A),
     "TABLES.USE":                        (A, A, A, A),
     "TABLES.OPEN_OTHERS":                (P, A, A, A),
+    # "שיוך שולחנות למלצרים" (P:/specs/table-waiter-assignment.md §3): the shift supervisor and the manager.
+    "TABLES.ASSIGN":                     (D, D, A, A),
     "TABLE_CANCEL":                      (P, P, A, A),
     "TABLE_VOID":                        (P, P, A, A),
     "TABLE_RESTORE":                     (D, P, A, A),

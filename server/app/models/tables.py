@@ -186,8 +186,12 @@ class DiningTable(Base):
     #: The employee at that till, as the till names them (free text, like cashier ids).
     lock_pos_user_id = Column(String(100), nullable=True)
     lock_pos_user_name = Column(String(200), nullable=True)
+    #: Since when this till holds it ("מאז 20:14"): kept by its heartbeats, new when another takes it.
     lock_acquired_at = Column(DateTime(timezone=True), nullable=True)
     lock_expires_at = Column(DateTime(timezone=True), nullable=True)
+    #: Its last heartbeat. After the lock ran out unreleased (a device that stopped reporting) the
+    #: fields stay until someone enters: "המכשיר לא מדווח מאז…" (P:/specs/table-waiter-assignment.md §8).
+    lock_seen_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class TableOrder(Base):

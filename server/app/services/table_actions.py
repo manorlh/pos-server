@@ -570,7 +570,20 @@ def _set_waiter(db, user, shop, table, order, body, now) -> Dict[str, Any]:
     _touch(order, now)
     db.flush()
     _record(db, "waiter", table, order, user, now, fromName=before, toName=name, toPosUserId=str(pu.id))
-    return {"waiterName": name}
+    out: Dict[str, Any] = {"waiterName": name}
+    if getattr(body, "also_assignment", False):
+        # "גם שיוך" (P:/specs/table-waiter-assignment.md §4): the table's own assignment moves with it.
+        from app.services import table_assignments as TAS
+
+        ctx = TAS._Ctx.of(db, shop, now)
+        TAS.sweep(ctx)
+        who = TAS.Who(name=_name(user), user_id=getattr(user, "id", None), source="dashboard")
+        others = [r for r in TAS.live_rows(ctx) if r.table_id == table.id and r.pos_user_id != pu.id]
+        TAS._release(others, "replaced", now, who.name)
+        TAS.assign(ctx, table, None, pu, who)
+        db.flush()
+        out["assignment"] = True
+    return out
 
 
 def _other_table(db: Session, shop: Shop, table_id: Any) -> DiningTable:
@@ -864,7 +877,11 @@ def _command_params(db: Session, shop: Shop, order: TableOrder, action: str, bod
         pu = waiter_of(db, shop, getattr(body, "waiter_pos_user_id", None))
         if pu is None:
             raise _conflict("waiter_not_found")
-        return {"waiter": {"posUserId": str(pu.id), "name": pos_user_name(pu)}}
+        out = {"waiter": {"posUserId": str(pu.id), "name": pos_user_name(pu)}}
+        if getattr(body, "also_assignment", False):
+            # "גם שיוך" (P:/specs/table-waiter-assignment.md §4): the host moves its copy's assignment too.
+            out["alsoAssignment"] = True
+        return out
     if action == "move":
         target = _other_table(db, shop, getattr(body, "target_table_id", None))
         return {"targetTableId": str(target.id), "targetLabel": table_title(target.number, target.name)}

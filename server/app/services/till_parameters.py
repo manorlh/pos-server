@@ -2001,6 +2001,14 @@ from app.services.table_tile_look import PARAMETER_SPECS as _TILE_LOOK_SPECS  # 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILE_LOOK_SPECS)
 
+# "שיוך שולחנות למלצרים" and "שולחן תפוס" (P:/specs/table-waiter-assignment.md §1, §5, §8,
+# app/services/table_assignments.py): `tableAssignmentMode` (off by default) and its six, `tableBusyEntry`
+# (block — on by default) and `tableBusyShowHolder` (on). Edited on the dashboard's tables page too
+# (app/services/table_restore.py `_page_groups`, group `waiters`).
+from app.services.table_assignments import PARAMETER_SPECS as _TABLE_ASSIGNMENT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_ASSIGNMENT_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2014,6 +2022,13 @@ def enum_labels(key: str) -> Optional[Dict[str, str]]:
     """What the dashboard shows for each option of this parameter, when its options are codes."""
     labels = _ENUM_LABELS.get(key)
     return dict(labels) if labels else None
+
+
+def option_warnings(key: str) -> Optional[Dict[str, str]]:
+    """The dashboard's warning next to an option once chosen (`tableBusyEntry` = off), if any."""
+    from app.services.table_assignments import option_warnings as _warnings
+
+    return _warnings(key)
 
 
 def validate_keyed_value(key: str, value: Any) -> Any:
@@ -2107,6 +2122,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_tile_look.VALIDATED_KEYS and value is not None:
         try:
             return table_tile_look.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "שיוך שולחנות למלצרים" / "שולחן תפוס": the codes the till knows, whatever the options were re-edited to.
+    from app.services import table_assignments
+
+    if key in table_assignments.VALIDATED_KEYS and value is not None:
+        try:
+            return table_assignments.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

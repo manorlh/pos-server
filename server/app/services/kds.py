@@ -874,6 +874,12 @@ def _set_ready(
         event.occurred_at = now
         event.available_at = now
     # Otherwise (taken, sent or being sent): never a second ReadyForPickup.
+    if order.source == "table":
+        # "מוכן להגשה" for the table's assigned waiter (P:/specs/table-waiter-assignment.md §5), where
+        # `tableAssignmentNotify` is on. Its own savepoint, never raising.
+        from app.services.table_notices import on_kds_ready
+
+        on_kds_ready(db, order, now=now)
 
 
 def _recompute(

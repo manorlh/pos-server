@@ -189,13 +189,15 @@ COURSES_GROUP = "courses"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
-    from app.services import course_auto_fire, table_map_display, table_policies
+    from app.services import course_auto_fire, table_assignments, table_map_display, table_policies
 
     return (
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
         (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
         (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
+        # "שיוך מלצרים ושולחן תפוס" (P:/specs/table-waiter-assignment.md §1, §5, §8).
+        (table_assignments.PAGE_GROUP, table_assignments.PAGE_GROUP_LABEL, table_assignments.LEVEL_KEYS),
     )
 
 
@@ -285,7 +287,12 @@ def level_view(db, scope_type: str, scope_id: Any, groups: Optional[Groups] = No
 
     from app.models.till_parameter import TillParameter, TillParameterValue
     from app.services.kds_workflow import chain_for_scope
-    from app.services.till_parameters import enum_labels, ensure_builtin_parameters, resolve_till_parameters
+    from app.services.till_parameters import (
+        enum_labels,
+        ensure_builtin_parameters,
+        option_warnings,
+        resolve_till_parameters,
+    )
 
     ensure_builtin_parameters(db)
     keys = page_keys(groups)
@@ -327,6 +334,7 @@ def level_view(db, scope_type: str, scope_id: Any, groups: Optional[Groups] = No
                 "valueType": by_key[key].value_type,
                 "enumOptions": by_key[key].enum_options,
                 "enumLabels": enum_labels(key),
+                "optionWarnings": option_warnings(key),
                 "defaultValue": by_key[key].default_value,
                 "group": _group_of(key, groups),
             }

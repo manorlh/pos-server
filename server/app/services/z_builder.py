@@ -917,4 +917,9 @@ def build_z(
     from app.services.availability_reopen import after_z
 
     after_z(db, z, [m for m, _s in per_machine])
+    # "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §6, `tableAssignmentReset` = z): the day's
+    # assignments released once this Z closes the shop's day. Own savepoint, never raises.
+    from app.services.table_assignments import after_z as release_assignments_after_z
+
+    release_assignments_after_z(db, z, [m for m, _s in per_machine])
     return z

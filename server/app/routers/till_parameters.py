@@ -97,6 +97,7 @@ def _out(parameter: TillParameter, value_count: int = 0) -> TillParameterOut:
         image_kind=TP.image_kind(parameter.key, parameter.value_type),
         managed_on=TP.managed_on(parameter.key),
         admin_only=parameter.key in TP.ADMIN_ONLY_KEYS,
+        option_warnings=TP.option_warnings(parameter.key),
         created_at=parameter.created_at,
         updated_at=parameter.updated_at,
     )

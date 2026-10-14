@@ -409,6 +409,19 @@ def start_course_auto_fire_worker():
 
 
 @app.on_event("startup")
+def start_table_notices_worker():
+    """
+    "שולחן מתעכב" for the assigned waiter (P:/specs/table-waiter-assignment.md §5), every 30 s
+    (app/services/table_notices_worker.py); it tells waiters only where `tableAssignmentNotify` is on.
+    TABLE_NOTICES_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.table_notices_worker import start_background_worker as start_notices_worker
+
+    start_notices_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_zcredit_reconcile_worker():
     """
     "התאמת אשראי מול Z-Credit" nightly per terminal (app/services/zcredit_reconcile_worker.py);

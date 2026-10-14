@@ -78,6 +78,10 @@ class PosUser(Base):
     pin_failed_count = Column(Integer, nullable=False, default=0, server_default="0")
     pin_locked_until = Column(DateTime(timezone=True), nullable=True)
 
+    #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb` on the tables they are assigned;
+    #: null — chosen automatically (app/services/table_assignments.py `waiter_color`).
+    table_color = Column(String(9), nullable=True)
+
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
