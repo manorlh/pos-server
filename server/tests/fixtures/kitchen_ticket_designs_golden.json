@@ -73,7 +73,7 @@
     "fit": "fit: an item line (quantity + name) at itemSize[paper][maxSize] × fontScale; while it does not fit one line, one fitStep smaller, down to itemSize[paper][minSize]; still too long — it wraps there, continuations under the name (hangingIndent). wrap: at maxSize, wrapping.",
     "inlineMods": "mods.layout inline: choices, removals and a short note (no important note, never allergies) join the item line after \" · \" when the whole line fits at the size the name took; else each on its own indented line at detailRatio × that size",
     "header": "header.layout inline: the headline at headerRatio[header.size] × itemSize[paper][maxSize], then the other fields after \" · \" on the same line as far as they fit; the rest on the next line",
-    "order": "order.by added: as added, a group runs while the course stays the same; course: by the courses' sortOrder (a course not among them after them, by name), no course first / last by order.noCourse; category: by the catalog tree, depth first, siblings by (sortOrder, name); custom: by the first order.list entry the line matches (its course by id or name, or its category or an ancestor), the rest at the end. Within a group as added; grouping seat: by seat (\"מ2\" before \"מ10\"), no seat last. order.groupHeaders: a heading per group in bands.course; without one a line's course prints beside its seat",
+    "order": "order.by added: as added, a group runs while the course stays the same; course: by the courses' sortOrder (a course not among them after them, as first added), no course first / last by order.noCourse; category: by the catalog tree, depth first, siblings by (sortOrder, name); custom: by the first order.list entry the line matches (its course by id or name, or its category or an ancestor), the rest at the end. Within a group as added; grouping seat: by seat (\"מ2\" before \"מ10\"), no seat last. order.groupHeaders: a heading per group in bands.course; without one a line's course prints beside its seat",
     "blackArea": "solid black = fills only (bands / header / qty box / allergy / important note set to fill); text and lines are not counted"
   },
   "noticeSeparator": " · ",
@@ -1297,6 +1297,18 @@
         {"kind": "category", "title": "סלטים", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
         {"kind": "none", "title": null, "lines": [0, 3], "names": ["עוגת שוקולד", "לימונדה"]}
       ]
+    },
+    {
+      "id": "course_unknown_to_the_till",
+      "order": {"by": "course", "groupHeaders": true, "noCourse": "last", "list": []},
+      "grouping": "none",
+      "expect": [
+        {"kind": "course", "title": "קינוחים", "lines": [0], "names": ["עוגת שוקולד"]},
+        {"kind": "course", "title": "עיקריות", "lines": [1, 5], "names": ["סטייק סינטה", "פסטה ארביאטה"]},
+        {"kind": "course", "title": "ראשונות", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
+        {"kind": "none", "title": null, "lines": [3], "names": ["לימונדה"]}
+      ],
+      "courses": []
     }
   ],
   "testPrint": {"notice": "הדפסת ניסיון — לא להכנה", "sampleId": "preview_table"},

@@ -387,7 +387,8 @@ def test_the_test_print_ticket_is_the_sample_now_and_marked_a_test():
 def test_the_order_cases(case):
     sample = next(s for s in GOLDEN["samples"] if s["id"] == "order_three_courses")["ticket"]
     style = {"order": case["order"], "grouping": case["grouping"]}
-    groups = S.order_lines(sample["lines"], style, GOLDEN["orderData"]["courses"], GOLDEN["orderData"]["categories"])
+    courses = case.get("courses", GOLDEN["orderData"]["courses"])
+    groups = S.order_lines(sample["lines"], style, courses, GOLDEN["orderData"]["categories"])
     assert [{"kind": g["kind"], "title": g["title"], "lines": g["lines"]} for g in groups] == [
         {"kind": g["kind"], "title": g["title"], "lines": g["lines"]} for g in case["expect"]
     ]

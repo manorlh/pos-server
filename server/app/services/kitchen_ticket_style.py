@@ -1022,6 +1022,10 @@ def order_lines(
     cat_rank = category_positions(categories)
     cat_names = {c["id"]: c.get("name") for c in categories}
     no_course_first = order.get("noCourse") == "first"
+    # A course the till does not know keeps its place among the unknown ones: as first added.
+    first_seen: Dict[str, int] = {}
+    for i, ln in enumerate(lines):
+        first_seen.setdefault((ln.get("course") or "").strip(), i)
 
     def course_of(line: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         cid = line.get("courseId")
@@ -1060,7 +1064,8 @@ def order_lines(
                 rank = (-1 if no_course_first else 10**6,)
                 keyed.append((("none",), "none", None, rank, index))
             else:
-                rank = (course_rank.get(course["id"], 10**5), course["name"])
+                known = course.get("id") in course_rank
+                rank = (course_rank[course["id"]], 0) if known else (10**5, first_seen.get(course["name"], 0))
                 keyed.append((("course", course["name"]), "course", course["name"], rank, index))
         elif by == "category":
             cid = line.get("categoryId")
