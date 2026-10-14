@@ -1961,6 +1961,14 @@ def retarget_relay_jobs(db: Session, shop_id: Any) -> int:
     return moved
 
 
+def _wait_of(job: KitchenPrintJob) -> int:
+    """A document's / drawer's wait at its sender (`remotePrintTimeoutSec`), as its expiry was set from it."""
+    created, expires = as_utc(job.created_at), as_utc(job.expires_at)
+    if created is None or expires is None:
+        return RP.TIMEOUT_DEFAULT
+    return max(1, int(round((expires - created).total_seconds())))
+
+
 def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """
     The jobs `machine` should print now, handed out (pending → printing). A job already
@@ -2021,6 +2029,9 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
             # Open the drawer of that printer (§9 of bill-print-other-till): once per id, never past
             # `expiresAt`, never in a payment of this till's own.
             **({"drawer": job.payload} if is_drawer else {}),
+            # The sender's `remotePrintTimeoutSec`: how long it waits before it falls back (prints / opens
+            # itself) — the host never prints or opens one older than that.
+            **({"timeoutSec": _wait_of(job)} if (is_document or is_drawer) else {}),
             "createdAt": _iso(job.created_at),
             "expiresAt": _iso(job.expires_at),
             # Moved here from a print host that went silent holding it: maybe on paper there already.
