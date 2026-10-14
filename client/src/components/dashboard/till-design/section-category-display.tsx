@@ -19,7 +19,9 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { fetchCatalogCategoryLooks } from '@/lib/kioskApi';
+import { resolveProductText } from '@/lib/productTileText';
 import {
+  CATEGORY_IMAGE_PX,
   CATEGORY_DISPLAY_KEYS,
   categoryDisplayCodes,
   changedCategoryDisplay,
@@ -30,6 +32,7 @@ import { fetchCategoryDisplay, saveCategoryDisplay } from '@/lib/tillDesignApi';
 import { TillCategoryCard, TillCategoryChip, type ChipCategory } from '@/components/dashboard/categories/category-chip-preview';
 import { useTillEditor } from './editor-context';
 import { SectionCard, Segmented } from './fields';
+import { FitLabel, useTileFonts } from './preview-tile-text';
 
 const INHERIT = '';
 const PREVIEW_MAX = 6;
@@ -72,6 +75,10 @@ export function CategoryDisplayCard() {
   const effective = resolveCategoryDisplay(
     Object.fromEntries(CATEGORY_DISPLAY_KEYS.map((k) => [k, chosen(k) || data?.inherited?.[k]])),
   );
+
+  // The landing's names follow "שם הפריט על הכפתור" (the design's `look` over the till parameters).
+  useTileFonts();
+  const productText = resolveProductText(ed.draft.look, ed.legacy?.productText ?? null);
 
   const categories: ChipCategory[] = useMemo(() => {
     const list = ed.catalog?.categories ?? [];
@@ -138,7 +145,12 @@ export function CategoryDisplayCard() {
             {effective.categoryImages === 'landing' ? (
               <div className="flex flex-wrap gap-2">
                 {categories.map((c, i) => (
-                  <TillCategoryCard key={`${c.name}-${i}`} category={c} size={effective.categoryImageSize} />
+                  <TillCategoryCard
+                    key={`${c.name}-${i}`}
+                    category={c}
+                    size={effective.categoryImageSize}
+                    label={<FitLabel text={c.name} width={CATEGORY_IMAGE_PX[effective.categoryImageSize].landing} size={12} settings={productText} />}
+                  />
                 ))}
               </div>
             ) : (

@@ -244,6 +244,39 @@ export function wrapsName(m: PreviewModel): boolean {
   return m.productText.productNameFit === 'wrap';
 }
 
+/**
+ * A name in a box of a known width, as the till writes it (the categories' landing — `productNameFit`
+ * applies to the categories' names there too, never an "i"): the lines grow the box.
+ */
+export function FitLabel({
+  text,
+  width,
+  size,
+  settings,
+  weight = 600,
+  tileLines = 1,
+  className,
+}: {
+  text: string;
+  width: number;
+  size: number;
+  settings: PreviewModel['productText'];
+  weight?: number;
+  tileLines?: number;
+  className?: string;
+}) {
+  const fit = tileCache(weight).name({ name: text || '—', width, height: 0, size, tileLines, settings, lineHeight: 1.25 });
+  return (
+    <span className={className} style={{ display: 'block', width, fontSize: fit.size, fontWeight: weight, lineHeight: 1.25, textAlign: 'center' }}>
+      {fit.lines.map((line, i) => (
+        <span key={i} style={{ display: 'block', whiteSpace: 'nowrap' }}>
+          {line}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------ the price */
 
 /**
