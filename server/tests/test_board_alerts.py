@@ -80,7 +80,7 @@ def z_for(w, shifts, *, till=None):
 def test_the_new_kinds_are_rules_on_by_default_with_the_specs_values(w):
     rules = svc.rules_for_machine(w.db, w.tills[0])
     assert rules["z_missing"].enabled and rules["z_missing"].params == {"hoursAfterDayEnd": 2}
-    assert rules["shift_open_overdue"].params == {"hours": 16}
+    assert rules["shift_open_overdue"].params == {"hours": 16, "alertPastDate": False}
     assert rules["card_transmission_overdue"].params == {"warnHours": 24, "criticalDays": 4}
     assert rules["till_printer"].params == {"minutes": 3}
     from app.services.exception_alerts import catalog as CAT
@@ -197,13 +197,53 @@ def test_a_shift_open_too_long_once_per_shift_and_closed_with_it(w):
     assert SW.scan(w.db, now=now + timedelta(minutes=11)) == 1 and row.details["resolvedAt"]
 
 
-def test_a_shift_past_its_date_and_the_hours_from_the_rule(w):
+def test_a_shift_past_its_date_alerts_only_with_alert_past_date(w):
+    """
+    owner-decisions-1410 §3: "דינמי, ברירת מחדל לא להתריע" — by default no alert at midnight, the hours
+    rule alone; `alertPastDate` on (at any level) alerts when the shift passes its date, as before.
+    """
     opened = datetime(2026, 9, 26, 19, 0, tzinfo=timezone.utc)             # 22:00 local on the 26th
-    w.shift(w.tills[0], 1, status=ShiftStatus.OPEN, business_date=date(2026, 9, 26), opened_at=opened)
-    assert SW.scan(w.db, now=datetime(2026, 9, 26, 20, 59, tzinfo=timezone.utc)) == 0
-    assert SW.scan(w.db, now=datetime(2026, 9, 26, 21, 1, tzinfo=timezone.utc)) == 1  # 00:01 local: past its date
-    assert rows(w, "shift_open_overdue")[0].details["reason"] == "past_date"
-    # The company's hours, and off at a till.
+    shift = w.shift(w.tills[0], 1, status=ShiftStatus.OPEN, business_date=date(2026, 9, 26), opened_at=opened)
+    midnight = datetime(2026, 9, 26, 21, 1, tzinfo=timezone.utc)             # 00:01 local: past its date
+    assert svc.rules_for_machine(w.db, w.tills[0])["shift_open_overdue"].params["alertPastDate"] is False
+    assert SW.scan(w.db, now=midnight) == 0 and rows(w, "shift_open_overdue") == []
+    # The board's light is unchanged: the shift is past its date there all the same.
+    assert MS.date_has_passed(shift.business_date, "Asia/Jerusalem", now=midnight)
+    # Still the hours: 16 after it opened.
+    assert SW.scan(w.db, now=opened + timedelta(hours=16, minutes=1)) == 1
+    [row] = rows(w, "shift_open_overdue")
+    assert row.details["reason"] == "hours"
+    # On at the shop: a shift past its date alerts at midnight, before the hours.
+    set_rule(w, "shop", w.shop.id, "shift_open_overdue", alertPastDate=True)
+    other = w.shift(w.tills[1], 2, status=ShiftStatus.OPEN, business_date=date(2026, 9, 26), opened_at=opened)
+    assert SW.scan(w.db, now=midnight) == 1
+    [past] = [r for r in rows(w, "shift_open_overdue") if r.shift_id == other.id]
+    assert past.details["reason"] == "past_date"
+
+
+def test_alert_past_date_is_a_switch_set_per_level(w):
+    put = lambda body, level, target: R.put_rules(RulesPut(rules=body), level=level, target_id=target, **_ctx(w))  # noqa: E731
+    company = put([RuleIn(type="shift_open_overdue", params={"alertPastDate": True})], "company", w.company.id)
+    rule = next(r for r in company.rules if r.type == "shift_open_overdue")
+    assert rule.own_params == {"alertPastDate": True} and rule.effective_params["alertPastDate"] is True
+    spec = next(p for p in rule.params if p.key == "alertPastDate")
+    assert spec.boolean is True and spec.default is False
+    assert next(p for p in rule.params if p.key == "hours").boolean is False
+    shop = put([RuleIn(type="shift_open_overdue", params={"alertPastDate": False})], "shop", w.shop.id)
+    rule = next(r for r in shop.rules if r.type == "shift_open_overdue")
+    assert rule.inherited_params["alertPastDate"] is True and rule.inherited_sources["alertPastDate"] == "company"
+    assert rule.effective_params == {"hours": 16, "alertPastDate": False}
+    assert svc.rules_for_machine(w.db, w.other_till)["shift_open_overdue"].params["alertPastDate"] is True
+    # The JSON the dashboard reads: true / false, not 1 / 0.
+    dumped = shop.model_dump(by_alias=True, mode="json")
+    got = next(r for r in dumped["rules"] if r["type"] == "shift_open_overdue")
+    assert got["ownParams"] == {"alertPastDate": False} and got["inheritedParams"]["alertPastDate"] is True
+    # A switch takes true / false only, and a threshold no true / false.
+    for bad in ({"alertPastDate": 1}, {"alertPastDate": 0}, {"hours": True}):
+        assert refused(put, [RuleIn(type="shift_open_overdue", params=bad)], "shop", w.shop.id).status_code == 422
+
+
+def test_the_hours_from_the_rule_and_off_at_a_till(w):
     now = datetime(2026, 9, 27, 18, 0, tzinfo=timezone.utc)
     set_rule(w, "company", w.company.id, "shift_open_overdue", hours=20)
     w.shift(w.tills[1], 2, status=ShiftStatus.OPEN, business_date=DAY, opened_at=now - timedelta(hours=17))
@@ -211,6 +251,9 @@ def test_a_shift_past_its_date_and_the_hours_from_the_rule(w):
     w.shift(w.other_till, 3, status=ShiftStatus.OPEN, business_date=date(2026, 9, 25),
             opened_at=now - timedelta(hours=40))
     assert SW.scan(w.db, now=now) == 0
+    w.shift(w.tills[0], 1, status=ShiftStatus.OPEN, business_date=DAY, opened_at=now - timedelta(hours=21))
+    assert SW.scan(w.db, now=now) == 1
+    assert rows(w, "shift_open_overdue")[0].threshold == 20
 
 
 # ── Card transmission ────────────────────────────────────────────────────────

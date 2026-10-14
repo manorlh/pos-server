@@ -102,6 +102,7 @@
     "discount": "DISCOUNT",
     "kiosk:control": "KIOSK_CONTROL",
     "kiosk:unlock": "KIOSK_UNLOCK",
+    "oth": "OTH",
     "payment:reverse-card": "PAYMENT_REVERSE_CARD",
     "payment:reverse-cash": "PAYMENT_REVERSE_CASH",
     "payment:reverse-other": "PAYMENT_REVERSE_OTHER",

@@ -299,3 +299,67 @@ class TestParameters:
         assert (size.value_type, size.enum_options, size.default_value) == ("enum", ("קטן", "רגיל", "גדול"), "רגיל")
         got = TP.till_parameters_for_machine(w.db, w.a).parameters
         assert got["tablesShowChairs"] is True and got["tablesLabelSize"] == "רגיל"
+
+
+# ── "שולחן עובדים / מנהלים עם הנחה": the approver's ceiling (owner-decisions-1410 §1) ──────────
+
+
+def _put_level(w, scope_type, scope_id, values, user=None):
+    from app.routers import table_restore as RR
+
+    body = RR.TableRestoreParamsIn(scopeType=scope_type, scopeId=scope_id, values=values)
+    return RR.put_table_restore_params(str(w.company.id), body, **ctx(w, user))
+
+
+def _synced(w, till) -> dict:
+    from app.routers.sync import get_till_parameters_sync
+
+    return get_till_parameters_sync(machine_id=str(till.id), machine=till, db=w.db).parameters
+
+
+class TestStaffTableDiscountCheck:
+    KEY = "staffTableDiscountCheck"
+
+    def test_a_builtin_off_by_default_and_every_till_gets_it(self, w):
+        spec = {p.key: p for p in TP.BUILTIN_PARAMETERS}[self.KEY]
+        assert (spec.value_type, spec.default_value, spec.admin_only) == ("boolean", False, False)
+        assert spec.label and "תקרת ההנחה" in spec.label and "ברירת מחדל" in spec.description
+        assert P.STAFF_TABLE_DISCOUNT_CHECK_KEY == self.KEY and P.LEVEL_KEYS == (self.KEY,)
+        # In the till's parameters payload (`GET /sync/{machine}/parameters` → `parameters`), false.
+        for till in (w.a, w.b, w.other_till):
+            assert _synced(w, till)[self.KEY] is False
+
+    def test_levels_company_shop_area_till(self, w):
+        from app.models.shop_area import ShopArea
+
+        area = ShopArea(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, name="בר")
+        w.db.add(area)
+        w.db.flush()
+        w.b.area_id = area.id
+        w.db.commit()
+        _put_level(w, "company", w.company.id, {self.KEY: True})
+        assert [_synced(w, t)[self.KEY] for t in (w.a, w.b, w.other_till)] == [True, True, True]
+        _put_level(w, "shop", w.shop.id, {self.KEY: False})
+        assert [_synced(w, t)[self.KEY] for t in (w.a, w.b, w.other_till)] == [False, False, True]
+        _put_level(w, "area", area.id, {self.KEY: True})
+        assert [_synced(w, t)[self.KEY] for t in (w.a, w.b)] == [False, True]
+        view = _put_level(w, "machine", w.a.id, {self.KEY: True})
+        assert view["own"] == {self.KEY: True} and view["inherited"][self.KEY] is False
+        assert _synced(w, w.a)[self.KEY] is True
+        # Cleared at the till: the shop's again.
+        _put_level(w, "machine", w.a.id, {self.KEY: None})
+        assert _synced(w, w.a)[self.KEY] is False
+        # A boolean only.
+        assert refused(_put_level, w, "shop", w.shop.id, {self.KEY: "yes"}).status_code == 422
+
+    def test_on_the_tables_page_card_in_its_own_group_first(self, w):
+        from app.routers import table_restore as RR
+
+        got = RR.get_table_restore_params(str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w))
+        keys = [p["key"] for p in got["parameters"]]
+        assert keys[0] == self.KEY and len(keys) == 9
+        first = got["parameters"][0]
+        assert (first["valueType"], first["defaultValue"], first["group"]) == ("boolean", False, "staffTables")
+        assert {p["group"] for p in got["parameters"][1:]} == {"restore"}
+        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore"]
+        assert got["groups"][0]["label"] == "שולחן עובדים / מנהלים"

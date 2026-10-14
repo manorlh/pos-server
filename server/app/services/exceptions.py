@@ -65,10 +65,13 @@ RECEIPT_REFUND = -400
 @dataclass(frozen=True)
 class ParamSpec:
     key: str
-    default: float
+    #: A number — or, for a `boolean` param, true / false.
+    default: Any
     minimum: float = 0
     maximum: float = 1_000_000
     integer: bool = False
+    #: A switch, not a threshold: its value is true / false (`shift_open_overdue.alertPastDate`).
+    boolean: bool = False
 
 
 @dataclass(frozen=True)
@@ -216,8 +219,16 @@ RULES: Tuple[RuleSpec, ...] = (
     # hours ago and its closed shifts (with documents) still in no Z — per till in till-Z mode, per
     # shop for the shop's Z (the shop's rule decides).
     RuleSpec("z_missing", True, (ParamSpec("hoursAfterDayEnd", 2, 0, 48, integer=True),), "high", "machine_status"),
-    # A shift open more than `hours`, or past its business date.
-    RuleSpec("shift_open_overdue", True, (ParamSpec("hours", 16, 1, 96, integer=True),), "medium", "machine_status"),
+    # A shift open more than `hours` — and, with `alertPastDate` (P:/specs/owner-decisions-1410.md §3: the
+    # owner, 14.10.2026, "דינמי, ברירת מחדל לא להתריע"), also once it passes its business date (midnight).
+    # The board's light for a shift past its date is not this rule's: it stays as it is.
+    RuleSpec(
+        "shift_open_overdue",
+        True,
+        (ParamSpec("hours", 16, 1, 96, integer=True), ParamSpec("alertPastDate", False, boolean=True)),
+        "medium",
+        "machine_status",
+    ),
     # Card sales not transmitted: medium after `warnHours`, high from `criticalDays` (the card
     # companies refuse a transaction transmitted more than 7 days late).
     RuleSpec(
@@ -338,14 +349,14 @@ class RuleValueError(ValueError):
     pass
 
 
-def clean_params(rule: RuleSpec, params: Any) -> Dict[str, float]:
+def clean_params(rule: RuleSpec, params: Any) -> Dict[str, Any]:
     """The thresholds a level sets, validated; unknown keys and nulls are refused/dropped."""
     if params is None:
         return {}
     if not isinstance(params, dict):
         raise RuleValueError("params must be an object")
     known = {p.key: p for p in rule.params}
-    out: Dict[str, float] = {}
+    out: Dict[str, Any] = {}
     for key, value in params.items():
         if key == PUSH_KEY:
             raise RuleValueError(f"{rule.type}: \"push\" is set on its own, not as a threshold")
@@ -353,6 +364,11 @@ def clean_params(rule: RuleSpec, params: Any) -> Dict[str, float]:
         if spec is None:
             raise RuleValueError(f"{rule.type}: unknown threshold {key!r}")
         if value is None:
+            continue
+        if spec.boolean:
+            if not isinstance(value, bool):
+                raise RuleValueError(f"{rule.type}.{key} must be true or false")
+            out[key] = value
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise RuleValueError(f"{rule.type}.{key} must be a number")
@@ -373,7 +389,8 @@ Scope = Tuple[str, uuid.UUID]
 class EffectiveRule:
     type: str
     enabled: bool
-    params: Dict[str, float]
+    #: Numbers, and true / false for a `boolean` param.
+    params: Dict[str, Any]
     #: Per field ("enabled" and each param key), the level whose value is used; None = default.
     sources: Dict[str, Optional[str]] = field(default_factory=dict)
     #: "שלח התראה לטלפון" here (push-more §0), and the level that set it (None = the default).
@@ -418,13 +435,14 @@ def resolve_rules(rows: Iterable[ExceptionRuleValue], chain: Sequence[Scope]) ->
             if isinstance(own.get(PUSH_KEY), bool):
                 push, push_source = own[PUSH_KEY], r.scope_type
                 break
-        params: Dict[str, float] = {}
+        params: Dict[str, Any] = {}
         sources: Dict[str, Optional[str]] = {"enabled": enabled_source}
         for p in spec.params:
             value, source = p.default, None
             for r in candidates:
                 own = r.params if isinstance(r.params, dict) else {}
-                if own.get(p.key) is not None:
+                # A switch takes true / false only; a threshold anything set (as before).
+                if own.get(p.key) is not None and (not p.boolean or isinstance(own[p.key], bool)):
                     value, source = own[p.key], r.scope_type
                     break
             params[p.key] = value

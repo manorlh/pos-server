@@ -250,11 +250,17 @@ export async function rescanExceptions(
 
 export interface RuleParam {
   key: string;
-  default: number;
+  /** A number — or true / false for a switch (`boolean`). */
+  default: number | boolean;
   min: number;
   max: number;
   integer: boolean;
+  /** A switch, not a threshold (`shift_open_overdue.alertPastDate`). Absent on an older server. */
+  boolean?: boolean;
 }
+
+/** A rule param's value: a number, or true / false for a switch. */
+export type RuleParamValue = number | boolean;
 
 export interface ExceptionRule {
   /** An exception type — or a kind detected elsewhere that has only the push switch (`pushOnly`). */
@@ -265,12 +271,12 @@ export interface ExceptionRule {
   defaultEnabled: boolean;
   params: RuleParam[];
   ownEnabled: boolean | null;
-  ownParams: Record<string, number>;
+  ownParams: Record<string, RuleParamValue>;
   inheritedEnabled: boolean;
-  inheritedParams: Record<string, number>;
+  inheritedParams: Record<string, RuleParamValue>;
   inheritedSources: Record<string, RuleLevel | null>;
   effectiveEnabled: boolean;
-  effectiveParams: Record<string, number>;
+  effectiveParams: Record<string, RuleParamValue>;
   /**
    * "שלח התראה לטלפון" (pos-server P:/specs/push-more.md §0): the default, this level's own (null =
    * inherits), what applies from above and where it was set, and here. Absent on an older server.
@@ -296,7 +302,7 @@ export interface RulesResponse {
 export interface RuleInput {
   type: ExceptionType | string;
   enabled: boolean | null;
-  params: Record<string, number | null>;
+  params: Record<string, RuleParamValue | null>;
   /** "שלח התראה לטלפון" at this level; null = inherit. */
   push?: boolean | null;
 }

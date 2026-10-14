@@ -1,6 +1,7 @@
 """
 "שחזור שולחן ותשלומים" — the dashboard's tables page edits the table-restore till parameters per level
-(P:/specs/table-restore-payments.md §5, app/services/table_restore.py):
+(P:/specs/table-restore-payments.md §5, app/services/table_restore.py) — and, in the same card
+("הגדרות שולחנות"), the staff / managers' tables' `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1):
 
     GET /companies/{id}/table-restore-params?scopeType=&scopeId=   what a level sets, inherits, the definitions
     PUT /companies/{id}/table-restore-params                        set / clear them at a level

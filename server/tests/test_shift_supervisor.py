@@ -36,7 +36,7 @@ class TestWhatItMayAuthoriseAtTheTill:
     def test_it_may_authorise_the_money_decisions_and_the_close(self):
         assert till_grantable_scopes(SUP) == frozenset(
             {
-                Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
+                Scope.REFUND, Scope.DISCOUNT, Scope.OTH, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
                 Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK, Scope.USER_SESSION_RELEASE,
             }
         )
@@ -77,7 +77,7 @@ class TestPerActionReauthorisation:
         here, which would silently make it session-length.
         """
         assert PER_ACTION_SCOPES == {
-            Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
+            Scope.REFUND, Scope.DISCOUNT, Scope.OTH, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
             Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK, Scope.USER_SESSION_RELEASE,
         }
 
@@ -95,6 +95,7 @@ class TestScopeStringsAreWireContract:
             (Scope.CATALOG_WRITE, "catalog:write"),
             (Scope.REFUND, "refund"),
             (Scope.DISCOUNT, "discount"),
+            (Scope.OTH, "oth"),
             (Scope.DAY_CLOSE, "day:close"),
             (Scope.SHIFT_CLOSE, "shift:close"),
             (Scope.TRANSMIT, "transmit"),

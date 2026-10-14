@@ -47,6 +47,10 @@ class Scope(str, enum.Enum):
     REFUND = "refund"
     #: Take money off a sale — a basket discount or a line discount.
     DISCOUNT = "discount"
+    #: Give lines away "על חשבון הבית" (the till permission OTH). Before it, OTH rode on `discount`
+    #: (an older till still asks for that); this one holds the approver to OTH's own amount ceiling
+    #: when the till sends `amount` (P:/specs/owner-decisions-1410.md §2).
+    OTH = "oth"
     #: Legacy: end the trading day and print the Z. Kept so a grant naming it still
     #: parses; nothing checks it any more (the Z is built in the cloud).
     DAY_CLOSE = "day:close"
@@ -87,6 +91,7 @@ CATALOG_WRITE_COVERS: FrozenSet[Scope] = frozenset({
 PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
     Scope.REFUND,
     Scope.DISCOUNT,
+    Scope.OTH,
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
     Scope.TRANSMIT,
@@ -107,6 +112,7 @@ _MANAGER_SCOPES = frozenset({
     *CATALOG_WRITE_COVERS,
     Scope.REFUND,
     Scope.DISCOUNT,
+    Scope.OTH,
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
     Scope.TRANSMIT,
@@ -121,6 +127,7 @@ _MANAGER_SCOPES = frozenset({
 _SUPERVISOR_SCOPES = frozenset({
     Scope.REFUND,
     Scope.DISCOUNT,
+    Scope.OTH,
     Scope.DAY_CLOSE,
     Scope.SHIFT_CLOSE,
     Scope.TRANSMIT,

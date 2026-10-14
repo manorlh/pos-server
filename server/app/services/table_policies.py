@@ -25,13 +25,16 @@ report below counts them.
 
 `staff_mode` other than `percent` (a price list, or free up to an allowance per employee)
 is stored for the design; the till applies the discount % today.
+
+Whether a staff / managers' table's discount is held to the approver's ceiling is the till parameter
+`staffTableDiscountCheck` (`PARAMETER_SPECS` below; off by default).
 """
 from __future__ import annotations
 
 import uuid
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, object_session
@@ -48,6 +51,38 @@ MEAL_KINDS = (KIND_STAFF, KIND_MANAGERS)
 
 #: The sale statuses a meal is counted in (a pending or cancelled document took no meal).
 _COUNTED_STATUSES = ("completed", "refunded", "partial_refund")
+
+
+# ── "שולחן עובדים / מנהלים עם הנחה": the approver's ceiling (P:/specs/owner-decisions-1410.md §1) ──
+#
+# The owner (14.10.2026): "דינמי, ברירת מחדל לא לבדוק". A till parameter — company → shop → point of
+# sale → till like every till parameter (registered in app/services/till_parameters.py), edited on the
+# dashboard's tables page beside the restore settings (app/services/table_restore.py `page_keys`).
+# Read by the till only. Off (the default): opening a staff or managers' table with a discount asks for
+# the discount permission, the table's percent not checked against the employee's ceiling — as before.
+# On: the table's discount percent is checked against the employee's DISCOUNT `maxPercent`; above it
+# the till asks for an approval, offering only approvers whose ceiling covers the percent, and the
+# cloud holds the PIN to it (`POST /elevation/sessions` with `scopes: ["discount"]` and `percent` —
+# `till_permissions.limit_covers`, 403 `limit_exceeded`).
+STAFF_TABLE_DISCOUNT_CHECK_KEY = "staffTableDiscountCheck"
+
+PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
+    dict(
+        key=STAFF_TABLE_DISCOUNT_CHECK_KEY,
+        label="שולחן עובדים / מנהלים — בדיקת תקרת ההנחה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כבוי (ברירת מחדל) — כמו היום: פתיחת שולחן עובדים או שולחן מנהלים עם הנחה דורשת הרשאת הנחה, "
+            "בלי לבדוק את אחוז ההנחה של השולחן מול תקרת ההנחה של העובד. "
+            "דלוק — אחוז ההנחה של השולחן נבדק מול תקרת ההנחה של העובד (\"הנחה (סל / שורה)\" בתפקידים והרשאות). "
+            "מעל התקרה הקופה מבקשת אישור, ומוצגים רק מאשרים שהתקרה שלהם מכסה את האחוז; הענן בודק את האישור "
+            "מול אותה תקרה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+#: The keys, in the order the dashboard lists them.
+LEVEL_KEYS: Tuple[str, ...] = tuple(spec["key"] for spec in PARAMETER_SPECS)
 
 
 def _money(value: Any) -> float:

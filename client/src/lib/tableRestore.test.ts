@@ -13,6 +13,7 @@ import {
   editError,
   formatMethods,
   formatWindow,
+  groupParams,
   ownKeys,
   parseMethods,
   parseWindow,
@@ -92,5 +93,37 @@ describe('a table on the floor', () => {
     assert.deepEqual(tableDisplay({ number: 9012, name: 'ש-12', labelOnly: true }), { main: 'ש-12', sub: null, text: 'ש-12' });
     // A label-only table whose name was cleared reads by its number.
     assert.deepEqual(tableDisplay({ number: 9012, name: '', labelOnly: true }), { main: '9012', sub: null, text: '9012' });
+  });
+});
+
+describe('the card groups (owner-decisions-1410 §1: the staff tables first)', () => {
+  const groups = [
+    { key: 'staffTables', label: 'שולחן עובדים / מנהלים' },
+    { key: 'restore', label: 'שחזור שולחן ותשלומים בשולחן' },
+  ];
+
+  it('puts each parameter under its group, in the groups order', () => {
+    const params = [
+      { key: 'restoreWindow', group: 'restore' },
+      { key: 'staffTableDiscountCheck', group: 'staffTables' },
+      { key: 'billTipBase', group: 'restore' },
+    ];
+    const out = groupParams(params, groups);
+    assert.deepEqual(out.map((g) => g.group?.key), ['staffTables', 'restore']);
+    assert.deepEqual(out[0].parameters.map((p) => p.key), ['staffTableDiscountCheck']);
+    assert.deepEqual(out[1].parameters.map((p) => p.key), ['restoreWindow', 'billTipBase']);
+  });
+
+  it('an empty group is left out; an unknown one goes last, under no heading', () => {
+    const out = groupParams([{ key: 'x', group: 'restore' }, { key: 'y', group: 'later' }, { key: 'z' }], groups);
+    assert.deepEqual(out.map((g) => g.group?.key ?? null), ['restore', null]);
+    assert.deepEqual(out[1].parameters.map((p) => p.key), ['y', 'z']);
+  });
+
+  it('an older server (no groups): one list, no heading', () => {
+    const out = groupParams<{ key: string; group?: string | null }>([{ key: 'restoreWindow' }], undefined);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].group, null);
+    assert.deepEqual(groupParams([], undefined), []);
   });
 });

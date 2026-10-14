@@ -951,6 +951,50 @@ class TestElevationLimits:
         r = w.client.post("/api/v1/elevation/sessions", headers=_till(w), json={k: v for k, v in body.items() if k != "percent"})
         assert r.status_code == 200
 
+    # "על חשבון הבית": an amount ceiling per role, none by default (P:/specs/owner-decisions-1410.md §2).
+
+    def test_oth_has_no_ceiling_by_default_in_any_role(self, w):
+        from app.services.permissions import Scope
+
+        spec = TP.PERMISSIONS_BY_CODE["OTH"]
+        assert [lim.key for lim in spec.limits] == ["maxAmount"] and spec.scope == "oth"
+        assert TP.SCOPE_PERMISSIONS["oth"] == "OTH"
+        for role_key, limits in TP.DEFAULT_LIMITS.items():
+            assert "OTH" not in limits, role_key
+        avi = self._avi(w)
+        assert TP.limit_covers(TP.effective_permissions(template=TP.SUPERVISOR), "OTH", amount=1_000_000)
+        assert elevation.grantable_scopes_for_pos_user(avi, w.machine, [Scope.OTH], amount=99_999) == [Scope.OTH]
+
+    def test_oth_ceiling_held_when_the_till_sends_the_amount(self, w):
+        from app.services.permissions import Scope
+
+        avi = self._avi(w)
+        w.roles[TP.SUPERVISOR].limits = {**(w.roles[TP.SUPERVISOR].limits or {}), "OTH": {"maxAmount": 100}}
+        w.db.flush()
+        assert elevation.grantable_scopes_for_pos_user(avi, w.machine, [Scope.OTH], amount=100) == [Scope.OTH]
+        assert elevation.grantable_scopes_for_pos_user(avi, w.machine, [Scope.OTH], amount=150) == []
+        # No amount: as before. And the discount scope (what an older till asks for OTH) is not OTH's.
+        assert elevation.grantable_scopes_for_pos_user(avi, w.machine, [Scope.OTH]) == [Scope.OTH]
+        assert elevation.grantable_scopes_for_pos_user(avi, w.machine, [Scope.DISCOUNT], amount=150) == [Scope.DISCOUNT]
+        # A manager (no ceiling) covers it.
+        assert elevation.grantable_scopes_for_pos_user(w.ron_pu, w.machine, [Scope.OTH], amount=150) == [Scope.OTH]
+
+    def test_oth_ceiling_at_the_endpoint(self, w):
+        w.roles[TP.SUPERVISOR].limits = {**(w.roles[TP.SUPERVISOR].limits or {}), "OTH": {"maxAmount": 100}}
+        w.db.commit()
+        body = {"posUserId": str(w.avi_pu.id), "pin": "8317", "scopes": ["oth"], "amount": 150}
+        r = w.client.post("/api/v1/elevation/sessions", headers=_till(w), json=body)
+        assert r.status_code == 403 and r.json()["detail"] == "limit_exceeded"
+        r = w.client.post("/api/v1/elevation/sessions", headers=_till(w), json={**body, "amount": 80})
+        assert r.status_code == 200, r.text
+        assert r.json()["scopes"] == ["oth"]
+        row = w.db.query(ElevatedSession).filter(ElevatedSession.pos_user_id == w.avi_pu.id).one()
+        assert float(row.max_amount) == 80
+        # A waiter's OTH is "approval", never "allow": not an approver at any amount.
+        r = w.client.post("/api/v1/elevation/sessions", headers=_till(w),
+                          json={**body, "posUserId": str(w.dana.id), "amount": 1})
+        assert r.status_code == 403 and r.json()["detail"] == "not_permitted_here"
+
 
 # ── Push ─────────────────────────────────────────────────────────────────────
 

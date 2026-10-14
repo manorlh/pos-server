@@ -119,9 +119,16 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("HELD_SALE_CANCEL", "ביטול מכירה מושהית", "sale",
                    "ביטול מכירה מושהית בקופה (למשל בסגירת משמרת או Z), עם סיבה. אינה מסמך — נרשם "
                    "כאירוע קופה: מי, מתי, הפריטים והסכום."),
+    # The owner (14.10.2026, P:/specs/owner-decisions-1410.md §2): "דינמי, ברירת מחדל ללא הגבלה" — an
+    # amount ceiling per role (`maxAmount`, the full price of the lines marked), none for every role by
+    # default. Above it the till asks for an approver whose ceiling covers the amount ("מנהל מבצע" still
+    # offered); the cloud holds the PIN to it (`POST /elevation/sessions` with `scopes: ["oth"]` and
+    # `amount` — `limit_covers`, 403 `limit_exceeded`).
     PermissionSpec("OTH", "על חשבון הבית (OTH)", "sale",
                    "מתן פריט על חשבון הבית, עם סיבה. כשהפרמטר \"OTH — באישור מנהל\" כבוי, \"דורש אישור\" "
-                   "נחשב \"מותר\" (כמו היום)."),
+                   "נחשב \"מותר\" (כמו היום). תקרת סכום (המחיר המלא של הפריטים שמסומנים): ריק — ללא הגבלה "
+                   "(ברירת המחדל); מעל התקרה נדרש אישור של מי שהתקרה שלו מכסה את הסכום.",
+                   limits=(_MAX_AMOUNT,), scope="oth"),
     PermissionSpec("REFUND", "זיכוי / החזר", "sale",
                    "זיכוי מסמך או החזר בסל (כולל החזר מזומן). מעל הסכום שהוגדר נדרש אישור.",
                    limits=(_MAX_AMOUNT,), scope="refund"),
