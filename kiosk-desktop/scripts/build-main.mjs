@@ -18,6 +18,7 @@ const root = path.resolve(here, '..');
 const client = path.resolve(root, '../client/src');
 const dev = process.argv.includes('--dev');
 const smoke = process.argv.includes('--smoke');
+const cashSim = process.argv.includes('--cash-sim');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const common = {
@@ -37,7 +38,10 @@ const common = {
   external: ['electron', 'sharp', 'koffi'],
 };
 
-if (smoke) {
+if (cashSim) {
+  // A cash host with a simulated PayLink, under Node (scripts/cash-sim.ts): a kiosk's cash client tested against the real LAN API.
+  await build({ ...common, entryPoints: [path.join(root, 'scripts/cash-sim.ts')], outfile: path.join(root, 'dist/cash-sim/cash-sim.js'), minify: false, sourcemap: true });
+} else if (smoke) {
   await build({ ...common, entryPoints: [path.join(root, 'scripts/smoke.ts')], outfile: path.join(root, 'dist/smoke/smoke.js'), minify: false, sourcemap: true });
 } else {
   await build({ ...common, entryPoints: [path.join(root, 'src/main/index.ts')], outfile: path.join(root, 'dist/main/index.js') });
