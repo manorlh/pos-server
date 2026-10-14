@@ -8,7 +8,9 @@ secrets. This read says what the form cannot work out from the settings alone:
 * whether the layer, or one above it, holds each secret (never the value);
 * what the layer inherits, and from where;
 * for a till: whether it has a terminal of its own and NFC (which choices it may have),
-  what it resolves to and which fields it still lacks.
+  what it resolves to and which fields it still lacks;
+* for a kiosk: whether its config takes payment at the till (`kioskPaysAtTill`), for the
+  "ללא אשראי" warning.
 """
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -146,9 +148,6 @@ def get_payment_integration_context(
             "missing": res.missing,
         }
     return {
-        # A kiosk: whether its config takes payment at the till ("תשלום בקופה"), so its form can
-        # say "לקיוסק לא יישאר אמצעי תשלום" before a save on "ללא אשראי"; null for anything else.
-        "kioskPaysAtTill": _kiosk_pays_at_till(db, machine),
         "level": level,
         "targetId": target_id,
         "hasBuiltinTerminal": None if machine is None else bool(machine.has_builtin_terminal),
@@ -159,4 +158,7 @@ def get_payment_integration_context(
         "resolved": resolved,
         "requiredFields": {k: list(v) for k, v in PI.REQUIRED_FIELDS.items()},
         "fieldLabels": PI.FIELD_LABELS_HE,
+        # A kiosk: whether its config takes payment at the till ("תשלום בקופה"), so its form can
+        # say "לקיוסק לא יישאר אמצעי תשלום" before a save on "ללא אשראי"; null for anything else.
+        "kioskPaysAtTill": _kiosk_pays_at_till(db, machine),
     }
