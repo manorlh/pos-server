@@ -4,7 +4,9 @@
  * "הגדרות שולחנות" (pos-server app/services/table_restore.py, P:/specs/table-restore-payments.md §3, §5):
  * the eight till parameters of restoring a closed table with its payments, reversing payments inside a
  * table and the bill with a balance — and, in a group of its own first, the staff / managers' tables'
- * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1) — at one level: company, shop, point of
+ * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1), and last the till's map — its legend
+ * and display (`mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale`; P:/specs/table-map-decor-v3.md
+ * §3) — at one level: company, shop, point of
  * sale or till. A level shows what it inherits and what it sets itself; "ירושה" inherits. Stored as till
  * parameters: the till gets the resolved value with the rest of its parameters. Who restores and
  * reverses, and each role's discount ceiling, is the roles editor's.
@@ -366,6 +368,8 @@ function Editor({
       aria-label={p.label}
       disabled={disabled}
       placeholder={describe(inherited)}
+      inputMode={p.valueType === 'integer' ? 'numeric' : undefined}
+      dir={p.valueType === 'integer' ? 'ltr' : undefined}
       value={text}
       onChange={(e) => onChange(e.target.value)}
     />
