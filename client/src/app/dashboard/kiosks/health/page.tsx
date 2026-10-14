@@ -12,6 +12,9 @@
  * (P:/specs/manager-problems.md §5): the machine-admin roles (lib/navigation.ts `settingsWrite`,
  * the server's KIOSK_ROLES) with the "קיוסקים" section (the layout's guard); anyone else gets
  * "no permission". They also act on the kiosks.
+ *
+ * "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV of what the
+ * page shows now (device-health-export.tsx).
  */
 
 import { useMemo, useState } from 'react';
@@ -47,6 +50,7 @@ import { HealthSummaryChips, KioskHealthCard } from '@/components/dashboard/devi
 import { KioskHealthDrawer } from '@/components/dashboard/device-health/health-drawer';
 import { agoText, useHealthLabels, useNowMs } from '@/components/dashboard/device-health/health-ui';
 import { BatteryHistoryTable, BatterySettingsNote, DeviceBatteryCard } from '@/components/dashboard/device-health/battery';
+import { DeviceHealthExport } from '@/components/dashboard/device-health/device-health-export';
 
 const REFRESH_MS = 15_000;
 /**
@@ -140,9 +144,21 @@ export default function DeviceHealthPage() {
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">{t('subtitle')}</p>
         </div>
-        <Link href="/dashboard/kiosks" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-          <MonitorSmartphone /> {t('toKiosks')}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <DeviceHealthExport
+            kiosks={shown}
+            devices={shownDevices}
+            history={history}
+            counts={counts}
+            total={total}
+            filters={{ overall, shop: shopFilter ? (shops.find((s) => s.id === shopFilter)?.name ?? null) : null, search }}
+            place={shop?.name ?? null}
+            disabled={!health.data || total === 0}
+          />
+          <Link href="/dashboard/kiosks" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <MonitorSmartphone /> {t('toKiosks')}
+          </Link>
+        </div>
       </div>
 
       <ScopeGate resolution={resolution}>

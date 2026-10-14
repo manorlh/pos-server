@@ -8,7 +8,8 @@
  * The events are in the URL (`?ids=a,b`). Exported through the reports' export bar
  * (P:\specs\reports-upgrade.md §2ב–ד, key `event-compare`): Excel with the same three
  * sheets — the figures grid, the tills (weak and silent ones highlighted, as on screen) and
- * the top items — each with columns to choose; a PDF of the figures grid; print.
+ * the top items — each with columns to choose; a PDF of the figures grid (the designed one: the
+ * first event's cards against the second, every event's net as bars); print.
  */
 
 import { useMemo } from 'react';
@@ -22,7 +23,13 @@ import { eventErrorMessage, fetchEventCompare, type EventCompareEntry } from '@/
 import { clockLabel, durationText } from '@/lib/eventReport';
 import { CHART, Capsule, Card, InsightsSurface, Muted, SectionHeader, SkeletonCard, tooltipStyle } from '@/components/dashboard/insights/ios';
 import { IosTable, StatusChip, Td, Th, compactMoney, count, money, pctText, tillColor } from '@/components/dashboard/events/event-parts';
-import { ReportExportBar, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import {
+  ReportExportBar,
+  useReportExportScope,
+  type ReportChart,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { EXCEL_FILL } from '@/lib/excelExport';
 
 type Row = {
@@ -62,7 +69,8 @@ function bySalesPerHour(e: EventCompareEntry) {
 export default function EventsComparePage() {
   const t = useTranslations('events.compareView');
   const te = useTranslations('events');
-  const ids = useSearchParams().get('ids') ?? '';
+  const tv = useTranslations('controlBoard.event');
+  const ids =useSearchParams().get('ids') ?? '';
   const query = useQuery({
     queryKey: ['event-compare', ids],
     queryFn: () => fetchEventCompare(ids),
@@ -154,6 +162,41 @@ export default function EventsComparePage() {
   const shopNames = [...new Set(events.map((e) => e.event.shopName).filter((s): s is string => Boolean(s)))];
   const exportScope = useReportExportScope(shopNames.length ? shopNames.join(', ') : null);
   const filterLines = events.length ? [{ label: t('eventsLabel'), value: events.map((e) => e.event.name).join(', ') }] : [];
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the first event's cards against the
+  // second (`?ids=a,b` — the compare view links A then B), and every event's net as bars.
+  const [first, second] = events;
+  const versus = second ? tv('versus', { name: second.event.name }) : undefined;
+  const exportKpis: ReportKpi[] = first
+    ? (
+        [
+          ['net', 'money', 'sales'],
+          ['sales', 'count', 'receipt'],
+          ['avgTicket', 'money', 'basket'],
+          ['items', 'count', 'items'],
+          ['tips', 'money', 'tip'],
+          ['refunds', 'money', 'refund'],
+        ] as const
+      ).map(([key, kind, icon]) => {
+        const row = ROWS.find((r) => r.key === key)!;
+        return {
+          key,
+          label: `${t(`rows.${key}`)} · ${first.event.name}`,
+          value: row.value(first),
+          kind,
+          icon,
+          ...(second && versus ? { compare: row.value(second), compareLabel: versus } : {}),
+        };
+      })
+    : [];
+  const exportChart: ReportChart | null = events.length
+    ? {
+        type: 'bar',
+        title: t('net'),
+        labels: chart.map((c) => c.name),
+        series: [{ name: t('rows.net'), values: chart.map((c) => c.net) }],
+        kind: 'money',
+      }
+    : null;
 
   return (
     <InsightsSurface className="print:bg-white">
@@ -179,6 +222,9 @@ export default function EventsComparePage() {
           companyId={exportScope.companyId}
           companyName={exportScope.companyName}
           disabled={events.length === 0}
+          reportType="event-compare"
+          kpis={exportKpis}
+          chart={exportChart}
         />
       </div>
 

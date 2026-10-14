@@ -8,7 +8,8 @@
  *
  * Export (P:\specs\reports-upgrade.md §2ה, §4.6; `StandaloneExportBar`, report key `targets`):
  * today's progress (the list's own query, so the figures are the ones on screen) and every
- * target, each a sheet; the PDF is the progress (the targets when there is none today).
+ * target, each a sheet; the PDF is the progress (the targets when there is none today), with
+ * the day's counts as its cards and each target against what it has taken so far.
  */
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
@@ -33,7 +34,7 @@ import { anyRowHas, targetWhen } from '@/lib/menuTargetsReports';
 import { dmy } from '@/lib/reportExport';
 import { todayIso } from '@/lib/reportWindow';
 import { TargetsProgressList, useTargetsProgress } from '@/components/dashboard/live-control';
-import { StandaloneExportBar, type ReportColumn, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { StandaloneExportBar, type ReportChart, type ReportColumn, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 type Form = {
   id?: string;
@@ -148,6 +149,25 @@ export default function TargetsPage() {
     rows: targetRows,
     rowKey: (r) => r.id,
   };
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): what the page counts, and each of
+  // today's targets against what it has taken so far.
+  const exportKpis: ReportKpi[] = [
+    { key: 'targetsToday', label: tt('kpi.today'), value: progressRows.length, kind: 'count', icon: 'target' },
+    { key: 'reached', label: tt('kpi.reached'), value: progressRows.filter((r) => r.reached).length, kind: 'count', icon: 'star' },
+    { key: 'targets', label: tt('targetsTitle'), value: targetRows.length, kind: 'count', icon: 'calendar' },
+  ];
+  const exportChart: ReportChart | null = progressRows.length
+    ? {
+        type: 'hbar',
+        title: tt('kpi.chart'),
+        labels: progressRows.map((r) => r.label),
+        series: [
+          { name: tt('col.amount'), values: progressRows.map((r) => r.amount) },
+          { name: tt('col.actual'), values: progressRows.map((r) => r.actual) },
+        ],
+        kind: 'money',
+      }
+    : null;
 
   return (
     <div className="space-y-5">
@@ -170,6 +190,11 @@ export default function TargetsPage() {
             from={todayIso()}
             to={todayIso()}
             disabled={progressRows.length === 0 && targetRows.length === 0}
+            reportType="targets"
+            kpis={exportKpis}
+            chart={exportChart}
+            insightKeys={progressRows.length ? { label: 'target', value: 'actual' } : { label: 'target', value: 'amount' }}
+            groupBy={['shop']}
           />
         </div>
         <section className="space-y-2">

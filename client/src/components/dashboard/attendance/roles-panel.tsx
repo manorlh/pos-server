@@ -7,16 +7,21 @@
  * A job title is not a permission: what an employee may do at the till stays their till
  * role (קופאי / מנהל סניף) on the "קופאים (POS)" page. Titles are defined by the roles above
  * a branch; a shop's managers assign them.
+ *
+ * "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV of the titles
+ * (tip weight, employees, active) and, with a shop chosen, who works there as what.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { Plus, Sparkles } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { addDefaultRoles, assignRole, createRole, fetchEmployees, fetchRoles, updateRole } from '@/lib/attendanceApi';
-import type { EmployeeRole } from '@/lib/attendance';
+import type { AttendanceEmployee, EmployeeRole } from '@/lib/attendance';
+import type { ReportKpi } from '@/lib/designedReport';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +29,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AttendanceFilters, EMPTY_ATTENDANCE_SCOPE, PickSelect, type AttendanceScope } from './attendance-filters';
+import { useAttendanceExportScope } from './attendance-export-scope';
 
 const NONE = '__none__';
 
@@ -74,8 +80,72 @@ export function RolesPanel() {
   });
   const activeRoles = (roles.data?.roles ?? []).filter((r) => r.isActive);
 
+  // ── "ייצוא": the titles, and who works as what in the chosen shop ──
+  const tc = useTranslations('common');
+  const exportScope = useAttendanceExportScope(scope, false);
+  const shopEmployees = useMemo(() => (scope.shopId ? (employees.data?.employees ?? []) : []), [employees.data, scope.shopId]);
+  const exportTables = useMemo(() => {
+    const titles: ReportTableSpec<EmployeeRole> = {
+      id: 'main',
+      title: t('roles.title'),
+      rows: roles.data?.roles ?? [],
+      rowKey: (r) => r.id,
+      totalsLabel: tc('total'),
+      columns: [
+        { key: 'name', header: t('roles.name'), width: 20, required: true, value: (r) => r.name },
+        { key: 'tipWeight', header: t('roles.tipWeight'), kind: 'number', value: (r) => r.tipWeight },
+        { key: 'employees', header: t('roles.employees'), kind: 'number', value: (r) => r.employees, totalOf: (rows) => rows.reduce((n, r) => n + r.employees, 0) },
+        { key: 'active', header: t('roles.active'), width: 8, value: (r) => (r.isActive ? tc('yes') : tc('no')) },
+      ],
+    };
+    const people: ReportTableSpec<AttendanceEmployee> = {
+      id: 'employees',
+      title: t('roles.assignTitle'),
+      rows: shopEmployees,
+      rowKey: (e) => e.id,
+      columns: [
+        { key: 'employee', header: t('col.employee'), width: 20, required: true, value: (e) => e.name || e.username },
+        { key: 'workerNumber', header: t('col.workerNumber'), width: 10, value: (e) => e.workerNumber ?? null },
+        {
+          key: 'permission',
+          header: t('roles.permission'),
+          width: 12,
+          value: (e) => t(`roles.permissionRole.${e.permissionRole === 'shop_manager' ? 'shop_manager' : 'cashier'}`),
+        },
+        { key: 'role', header: t('col.role'), width: 16, value: (e) => e.roleName ?? t('roles.none') },
+      ],
+    };
+    return [titles as ReportTableSpec<unknown>, ...(shopEmployees.length ? [people as ReportTableSpec<unknown>] : [])];
+  }, [roles.data, shopEmployees, t, tc]);
+  const allRoles = roles.data?.roles ?? [];
+  const exportKpis: ReportKpi[] = [
+    { key: 'roles', label: t('rolesExport.roles'), value: allRoles.length, kind: 'count' },
+    { key: 'activeRoles', label: t('rolesExport.activeRoles'), value: activeRoles.length, kind: 'count' },
+    { key: 'assigned', label: t('rolesExport.assigned'), value: allRoles.reduce((n, r) => n + r.employees, 0), kind: 'count', icon: 'users' },
+    ...(shopEmployees.length
+      ? ([
+          { key: 'shopEmployees', label: t('rolesExport.shopEmployees'), value: shopEmployees.length, kind: 'count', icon: 'users' },
+          { key: 'noRole', label: t('rolesExport.noRole'), value: shopEmployees.filter((e) => !e.roleId).length, kind: 'count', better: 'down' },
+        ] satisfies ReportKpi[])
+      : []),
+  ];
+
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      <div className="flex flex-wrap items-center justify-end gap-2 lg:col-span-2">
+        <StandaloneExportBar
+          reportKey="attendance-roles"
+          reportType="attendance.roles"
+          title={t('roles.title')}
+          tables={exportTables}
+          place={exportScope.place}
+          companyId={exportScope.companyId}
+          filterLines={exportScope.filterLines}
+          kpis={exportKpis}
+          chartFrom={{ label: 'name', value: 'employees', type: 'hbar', kind: 'number', title: t('rolesExport.byRole') }}
+          disabled={!roles.data || allRoles.length === 0}
+        />
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>{t('roles.title')}</CardTitle>

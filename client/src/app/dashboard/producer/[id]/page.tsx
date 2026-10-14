@@ -4,17 +4,32 @@
  * "עמדת מפיק" — one event, for its producer, read-only: the sales (totals, by the hour, the
  * items), the vouchers of their production, and the settlement at production price when the
  * owner opened it. Refreshes every minute while the event runs. pos-server `/producer/events/{id}`.
+ *
+ * "ייצוא" beside the tabs (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV
+ * of the tab shown — the sales (items, by the hour), the vouchers or the settlement; while the
+ * event runs, a snapshot of that moment.
  */
 
-import { use, useState } from 'react';
+import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
-import { chargedLabelKey, hourlyBars, type ProducerSettlement, type ProducerSummary, type ProducerVouchers } from '@/lib/producer';
+import {
+  chargedLabelKey,
+  hourlyBars,
+  type ProducerSettlement,
+  type ProducerSettlementRow,
+  type ProducerSummary,
+  type ProducerVoucherBatch,
+  type ProducerVouchers,
+} from '@/lib/producer';
 import { fetchMyEvent, fetchMyEventSettlement, fetchMyEventVouchers } from '@/lib/producerApi';
+import type { ReportChart, ReportKpi } from '@/lib/designedReport';
 import { formatCurrency, formatQuantity, formatShortDateTime } from '@/lib/format';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import { Card, Muted, Segmented, SkeletonCard } from '@/components/dashboard/insights/ios';
+import { ReportExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 type Tab = 'sales' | 'vouchers' | 'settlement';
 
@@ -168,6 +183,176 @@ function Settlement({ data }: { data: ProducerSettlement }) {
   );
 }
 
+type SummaryItem = ProducerSummary['items'][number];
+type HourBar = ReturnType<typeof hourlyBars>[number];
+
+/**
+ * The tab's export. The producer sees one event of someone else's business: the bar is the
+ * framework's own (not the scope's — a producer has none), with the event's shop as the business
+ * line and no company (its export defaults are the user's own).
+ */
+function ProducerExport({
+  tab,
+  summary,
+  vouchers,
+  settlement,
+}: {
+  tab: Tab;
+  summary: ProducerSummary;
+  vouchers: ProducerVouchers | undefined;
+  settlement: ProducerSettlement | undefined;
+}) {
+  const t = useTranslations('producer');
+  const tc = useTranslations('common');
+  const ev = summary.event;
+
+  const tables = useMemo(() => {
+    if (tab === 'vouchers') {
+      const batches: ReportTableSpec<ProducerVoucherBatch> = {
+        id: 'vouchers',
+        title: t('tabs.vouchers'),
+        rows: vouchers?.batches ?? [],
+        rowKey: (b) => b.batchId,
+        totalsLabel: tc('total'),
+        columns: [
+          { key: 'batch', header: t('batch'), width: 24, required: true, value: (b) => b.name },
+          { key: 'issued', header: t('export.issued'), kind: 'number', value: (b) => b.issued, totalOf: (rows) => rows.reduce((n, b) => n + b.issued, 0) },
+          {
+            key: 'redeemedVouchers',
+            header: t('vouchersRedeemed'),
+            kind: 'number',
+            value: (b) => b.redeemedVouchers,
+            totalOf: (rows) => rows.reduce((n, b) => n + b.redeemedVouchers, 0),
+          },
+          { key: 'redemptions', header: t('redemptions'), kind: 'number', value: (b) => b.redemptions, totalOf: (rows) => rows.reduce((n, b) => n + b.redemptions, 0) },
+          { key: 'units', header: t('units'), kind: 'number', value: (b) => b.units, totalOf: (rows) => rows.reduce((n, b) => n + b.units, 0) },
+          { key: 'lastRedeemedAt', header: t('lastRedeemed'), kind: 'datetime', value: (b) => b.lastRedeemedAt },
+        ],
+      };
+      return [batches as ReportTableSpec<unknown>];
+    }
+    if (tab === 'settlement') {
+      const charged = settlement ? t(chargedLabelKey(settlement.basis)) : t('charged');
+      const rows: ReportTableSpec<ProducerSettlementRow> = {
+        id: 'settlement',
+        title: t('tabs.settlement'),
+        rows: settlement?.rows ?? [],
+        rowKey: (r) => r.batchId,
+        totalsLabel: tc('total'),
+        columns: [
+          { key: 'batch', header: t('batch'), width: 24, required: true, value: (r) => r.name },
+          { key: 'basis', header: t('export.basisCol'), width: 12, value: (r) => t(`basis.${r.basis}`) },
+          { key: 'agreement', header: t('export.agreement'), width: 18, value: (r) => r.agreementName },
+          { key: 'chargeable', header: charged, kind: 'number', value: (r) => r.chargeable, totalOf: (all) => all.reduce((n, r) => n + r.chargeable, 0) },
+          { key: 'productionPrice', header: t('productionPrice'), kind: 'money', value: (r) => r.productionPrice },
+          // The server's total, prices that are missing left out as it leaves them.
+          { key: 'amount', header: t('amount'), kind: 'money', value: (r) => r.amount, total: settlement?.totalAmount },
+        ],
+      };
+      return [rows as ReportTableSpec<unknown>];
+    }
+    const items: ReportTableSpec<SummaryItem> = {
+      id: 'main',
+      title: t('items'),
+      rows: summary.items,
+      rowKey: (i) => i.key,
+      totalsLabel: tc('total'),
+      columns: [
+        { key: 'item', header: t('item'), width: 26, required: true, value: (i) => i.name },
+        { key: 'quantity', header: t('quantity'), kind: 'number', value: (i) => i.quantity, totalOf: (rows) => rows.reduce((n, i) => n + i.quantity, 0) },
+        { key: 'revenue', header: t('revenue'), kind: 'money', value: (i) => i.revenue, totalOf: (rows) => rows.reduce((n, i) => n + i.revenue, 0) },
+      ],
+    };
+    const hours: ReportTableSpec<HourBar> = {
+      id: 'hours',
+      title: t('byHour'),
+      rows: hourlyBars(summary.hourly),
+      rowKey: (h) => h.label,
+      totalsLabel: tc('total'),
+      columns: [
+        { key: 'hour', header: t('export.hour'), width: 14, required: true, value: (h) => h.label },
+        { key: 'net', header: t('net'), kind: 'money', value: (h) => h.net, totalOf: (rows) => rows.reduce((n, h) => n + h.net, 0) },
+        { key: 'docs', header: t('export.docs'), kind: 'number', value: (h) => h.docs, totalOf: (rows) => rows.reduce((n, h) => n + h.docs, 0) },
+      ],
+    };
+    return [items as ReportTableSpec<unknown>, ...(hours.rows.length ? [hours as ReportTableSpec<unknown>] : [])];
+  }, [settlement, summary, t, tab, tc, vouchers]);
+
+  let kpis: ReportKpi[] = [];
+  let chart: ReportChart | null = null;
+  let filterLines: ReportFilterLine[] = [];
+  if (tab === 'sales') {
+    const s = summary.totals;
+    kpis = [
+      { key: 'net', label: t('net'), value: s.net, kind: 'money', icon: 'sales' },
+      { key: 'transactions', label: t('sales'), value: s.sales, kind: 'count', icon: 'receipt' },
+      { key: 'avgTicket', label: t('avgTicket'), value: s.avgTicket, kind: 'money', icon: 'basket' },
+      { key: 'items', label: t('itemsSold'), value: s.itemsSold, kind: 'number', icon: 'items' },
+      { key: 'refunds', label: t('export.refundsCount'), value: s.refunds, kind: 'count', icon: 'refund', better: 'down' },
+    ];
+    const bars = hourlyBars(summary.hourly);
+    chart = bars.length
+      ? { type: 'bar', title: t('byHour'), labels: bars.map((b) => b.label), series: [{ name: t('net'), values: bars.map((b) => b.net) }], kind: 'money' }
+      : null;
+  } else if (tab === 'vouchers' && vouchers) {
+    const v = vouchers.totals;
+    kpis = [
+      { key: 'redeemedVouchers', label: t('vouchersRedeemed'), value: v.redeemedVouchers, kind: 'count', icon: 'voucher' },
+      { key: 'issued', label: t('export.issued'), value: v.issued, kind: 'count' },
+      { key: 'redemptions', label: t('redemptions'), value: v.redemptions, kind: 'count' },
+      { key: 'units', label: t('units'), value: v.units, kind: 'number', icon: 'items' },
+    ];
+    chart = vouchers.batches.length
+      ? {
+          type: 'hbar',
+          title: t('export.redemptionsByBatch'),
+          labels: vouchers.batches.map((b) => b.name),
+          series: [{ name: t('redemptions'), values: vouchers.batches.map((b) => b.redemptions) }],
+          kind: 'number',
+        }
+      : null;
+  } else if (tab === 'settlement' && settlement) {
+    kpis = [
+      { key: 'totalDue', label: t('totalDue'), value: settlement.totalAmount, kind: 'money', icon: 'sales' },
+      { key: 'chargeable', label: t(chargedLabelKey(settlement.basis)), value: settlement.chargeableVouchers, kind: 'count', icon: 'voucher' },
+      { key: 'redeemedVouchers', label: t('vouchersRedeemed'), value: settlement.redeemedVouchers, kind: 'count' },
+    ];
+    const priced = settlement.rows.filter((r) => r.amount !== null);
+    chart = priced.length
+      ? {
+          type: 'hbar',
+          title: t('export.amountByBatch'),
+          labels: priced.map((r) => r.name),
+          series: [{ name: t('amount'), values: priced.map((r) => r.amount) }],
+          kind: 'money',
+        }
+      : null;
+    filterLines = [
+      { label: t('export.basisCol'), value: settlement.basisText ?? t('settlementMixed') },
+      ...(settlement.missingPrices ? [{ label: t('productionPrice'), value: t('missingPrices') }] : []),
+    ];
+  }
+  const ready = tab === 'sales' || (tab === 'vouchers' ? !!vouchers : !!settlement);
+
+  return (
+    <ReportExportBar
+      reportKey="producer-event"
+      reportType="events.producer"
+      title={`${ev.name} — ${t(`tabs.${tab}`)}`}
+      tables={tables}
+      from={ev.startDate}
+      to={ev.endDate}
+      business={ev.shopName ?? t('title')}
+      place={null}
+      filterLines={filterLines}
+      companyId={null}
+      kpis={kpis}
+      chart={chart}
+      disabled={!ready}
+    />
+  );
+}
+
 export default function ProducerEventPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const t = useTranslations('producer');
@@ -211,7 +396,10 @@ export default function ProducerEventPage({ params }: { params: Promise<{ id: st
         <h1 className="text-[28px] font-bold leading-tight tracking-tight">{ev.name}</h1>
         <Muted>{[ev.shopName, `${ev.startDate} ${ev.startTime} – ${ev.endDate} ${ev.endTime}`, t(`phase.${ev.phase}`)].filter(Boolean).join(' · ')}</Muted>
       </div>
-      <Segmented value={tab} onChange={setTab} options={tabs} label={t('tabsLabel')} className="max-w-md" />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Segmented value={tab} onChange={setTab} options={tabs} label={t('tabsLabel')} className="max-w-md flex-1" />
+        <ProducerExport tab={tab} summary={summary.data} vouchers={vouchers.data} settlement={settlement.data} />
+      </div>
       {tab === 'sales' ? <Sales data={summary.data} /> : null}
       {tab === 'vouchers' ? (vouchers.data ? <Vouchers data={vouchers.data} /> : <SkeletonCard className="h-40" />) : null}
       {tab === 'settlement' ? (settlement.data ? <Settlement data={settlement.data} /> : <SkeletonCard className="h-40" />) : null}

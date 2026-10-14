@@ -12,7 +12,8 @@
  * till: one register section, numbered per till ("קופה 2 · Z 12"), with no shop number.
  *
  * "Print" opens the browser's print dialog on an A4 layout (`ZPrintDocument`) that is
- * hidden on screen; "save as PDF" there gives the file.
+ * hidden on screen; "save as PDF" there gives the file. "ייצוא" is the reports' designed PDF
+ * (P:\specs\reports-designed-pdf.md §7, type `z-report`), Excel and CSV, without a print of its own.
  */
 
 import { use, useState } from 'react';
@@ -28,7 +29,7 @@ import { fetchZPrintDocument, fetchZReport } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { cashMovementRows } from '@/lib/zCashMovements';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
+import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, Shift, TablePaymentReversals, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
@@ -41,6 +42,7 @@ import {
   ShiftBadges,
   SignedMoney,
   TipsSplit,
+  usePaymentMethodLabel,
   useShiftLabel,
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
@@ -70,7 +72,7 @@ import {
 } from '@/components/dashboard/z-report/offline-summary';
 import { useZTitle, ZProducedBy, zNumberSourceOf } from '@/components/dashboard/z-report/z-number';
 import { useZExportTables, zShiftsTableSpec } from '@/components/dashboard/z-report/z-export-sheets';
-import { ReportTable, StandaloneExportBar } from '@/components/dashboard/report-framework';
+import { ReportTable, StandaloneExportBar, type ReportChart, type ReportKpi } from '@/components/dashboard/report-framework';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -355,6 +357,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const t = useTranslations('zReports');
   const zTitle = useZTitle();
   const zExport = useZExportTables();
+  const methodLabel = usePaymentMethodLabel();
   usePageScope({ maxLevel: 'machine', silent: true });
   // Stamped when the print dialog opens, so the paper says when it was printed.
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
@@ -396,6 +399,31 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const title = zPrintTitle([(z.zNumber ?? z.shopSequenceNumber)]);
   // Excel with export columns: the Z, its tills, card brands, waiters and shifts (keyed tables).
   const exported = zExport(z);
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the Z's main figures as its cards —
+  // the over / short once counted — the tenders as a donut, and the tills (when the Z has
+  // sections) as its table: the Z's own row is the cards already.
+  const zKpis: ReportKpi[] = [
+    { key: 'sales', label: t('salesAfterDiscounts'), value: z.totalSales ?? null, kind: 'money', icon: 'sales' },
+    { key: 'net', label: t('netSales'), value: z.netSales ?? null, kind: 'money', icon: 'chart' },
+    { key: 'refunds', label: t('refundsAndCredits'), value: z.totalRefunds ?? null, kind: 'money', icon: 'refund' },
+    { key: 'documents', label: t('documentsSalesAndCredits'), value: z.transactionsCount ?? null, kind: 'count', icon: 'receipt' },
+    { key: 'tips', label: t('tips'), value: z.totalTips ?? null, kind: 'money', icon: 'tip' },
+    { key: 'discrepancy', label: t('discrepancy'), value: withheld ? null : (z.discrepancy ?? null), kind: 'money', icon: 'alert' },
+  ];
+  // A figure the Z does not have (no net from an older server, a cash count withheld): no card.
+  const exportKpis = zKpis.filter((k) => k.value != null);
+  const tenderRank = (m: string) => (m === 'cash' ? 0 : m === 'card' ? 1 : 2);
+  const tenders = Object.entries(z.paymentBreakdown ?? {}).sort(([a], [b]) => tenderRank(a) - tenderRank(b) || a.localeCompare(b));
+  const exportChart: ReportChart | null = tenders.length
+    ? {
+        type: 'donut',
+        title: t('paymentsTitle'),
+        labels: tenders.map(([m]) => methodLabel(m)),
+        series: [{ name: t('paymentsTitle'), values: tenders.map(([, amount]) => moneyValue(amount)) }],
+        kind: 'money',
+      }
+    : null;
+  const pdfTableId = exported.tables.some((tb) => tb.id === 'tills') ? 'tills' : undefined;
   const print = (pdf = false) => {
     if (pdf) toast.info(tp('pdfHint'));
     if (view === 'till') {
@@ -439,16 +467,22 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             <ZScopeLine z={z} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {/* Excel only: the Z prints its own fiscal document (A4 or the till's paper) below. */}
+            {/* The designed PDF, Excel and CSV — no print template: the Z prints its own fiscal
+                document (A4 or the till's paper) with the buttons beside it. */}
             <StandaloneExportBar
               reportKey="z-report"
               title={zTitle(zNumberSourceOf(z))}
               tables={exported.tables}
               extraSheets={exported.extraSheets}
+              pdfTableId={pdfTableId}
               from={z.businessDate}
               to={z.businessDate}
               place={[z.shopName ?? z.business?.shopName, areaName].filter(Boolean).join(' · ') || null}
-              excelOnly
+              noPrint
+              reportType="z-report"
+              kpis={exportKpis}
+              chart={exportChart}
+              insightKeys={pdfTableId ? { label: 'machineName', value: 'salesAfterDiscounts', count: 'documents' } : undefined}
             />
             <ZPrintViewToggle value={view} onChange={setView} />
             <Button size="sm" onClick={() => print()} disabled={printDisabled}>

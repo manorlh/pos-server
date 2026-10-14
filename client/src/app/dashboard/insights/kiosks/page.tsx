@@ -16,8 +16,9 @@
  * the page's own scope, the kiosk picked — lives in the URL (lib/insightsView.ts), so a link
  * reproduces it; the per-kiosk table is a report table (sortable, the reader's columns, cards
  * on a phone); the export bar is the framework's (Excel with the header on every sheet, a real
- * PDF of the per-kiosk table, export columns and the company's default, print as before), the
- * CSV beside it.
+ * PDF of the per-kiosk table, export columns and the company's default, print as before), its
+ * CSV the report's own (every kiosk with the funnel and the abandonment). The designed PDF's
+ * cards are six headline figures against the period before, its chart the daily trend.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -26,18 +27,20 @@ import { useTranslations } from 'next-intl';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { ChevronRight, Download, RefreshCw, TabletSmartphone } from 'lucide-react';
+import { ChevronRight, RefreshCw, TabletSmartphone } from 'lucide-react';
 import { agorot } from '@/lib/insightsApi';
 import { cn } from '@/lib/utils';
 import { downloadCsv } from '@/lib/csv';
 import { formatShortDate } from '@/lib/format';
 import { insightsPeriodParams, insightsViewQuery, type InsightsRange, type InsightsViewSpec } from '@/lib/insightsView';
+import { rangeText } from '@/lib/reportExport';
 import { todayIso } from '@/lib/reportWindow';
 import {
   buildKioskCsv,
   durationText,
   kioskCsvFilename,
   pctText,
+  shekels,
   type KioskHeadline,
   type KioskInsightsParams,
   type KioskRef,
@@ -47,7 +50,6 @@ import { ALL_COMPANIES, type OrgScope } from '@/components/dashboard/org-scope-c
 import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
 import { Card, Delta, IOS, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard, Switch, Widget } from '@/components/dashboard/insights/ios';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Button } from '@/components/ui/button';
 import { scopeParams } from '@/components/dashboard/insights/scope-params';
 import { useInsightsExportScope, useInsightsView } from '@/components/dashboard/insights/use-insights-view';
 import { AbandonmentChart, ByHourChart, DailyChart, FunnelChart, OrderTimeChart } from '@/components/dashboard/kiosk-insights/charts';
@@ -61,7 +63,7 @@ import {
 } from '@/components/dashboard/kiosk-insights/tables';
 import { useKioskInsightsSheets } from '@/components/dashboard/kiosk-insights/export-sheets';
 import { useKioskLabels } from '@/components/dashboard/kiosk-insights/labels';
-import { ReportExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { ReportExportBar, type ReportChart, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 const AUTO_REFRESH_MS = 5 * 60_000;
 
@@ -141,6 +143,53 @@ export default function KioskInsightsPage() {
   const exportCsv = () => {
     if (data) downloadCsv(kioskCsvFilename(data.period), buildKioskCsv(data, L.csv));
   };
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): six of the headline cards against the
+  // period before, as the report already has it (agorot → shekels), and the daily trend.
+  const tx = useTranslations('reportFramework.export');
+  const head = exportReady ? data?.headline : undefined;
+  const prevLabel =
+    head?.previous && data ? tx('compareWith', { range: rangeText(data.period.prevFrom, data.period.prevTo) }) : undefined;
+  const headlineKpi = (
+    key: string,
+    label: string,
+    kind: ReportKpi['kind'],
+    icon: ReportKpi['icon'],
+    pick: (h: KioskHeadline) => number | null,
+    better?: ReportKpi['better'],
+  ): ReportKpi | null => {
+    if (!head?.current) return null;
+    const before = head.previous ? pick(head.previous) : null;
+    return {
+      key,
+      label,
+      value: pick(head.current),
+      kind,
+      icon,
+      ...(better ? { better } : {}),
+      ...(before !== null && prevLabel ? { compare: before, compareLabel: prevLabel } : {}),
+    };
+  };
+  const exportKpis = [
+    headlineKpi('revenue', t('kpi.revenue'), 'money', 'sales', (h) => shekels(h.revenue)),
+    headlineKpi('orders', t('kpi.orders'), 'count', 'receipt', (h) => h.orders),
+    headlineKpi('avgBasket', t('kpi.avgBasket'), 'money', 'basket', (h) => shekels(h.avgBasket)),
+    headlineKpi('sessions', t('kpi.sessions'), 'count', 'kiosk', (h) => h.sessions),
+    headlineKpi('conversion', t('kpi.conversion'), 'percent', 'percent', (h) => h.conversion),
+    headlineKpi('payFailureRate', t('kpi.payFailureRate'), 'percent', 'alert', (h) => h.payFailureRate, 'down'),
+  ].filter((k): k is ReportKpi => k !== null);
+  const daily = exportReady && data ? data.daily : [];
+  const exportChart: ReportChart | null = daily.some((r) => r.sessions > 0 || r.orders > 0)
+    ? {
+        type: 'line',
+        title: t('sections.daily'),
+        labels: daily.map((r) => formatShortDate(r.date)),
+        series: [
+          { name: t('daily.orders'), values: daily.map((r) => r.orders) },
+          { name: t('daily.sessions'), values: daily.map((r) => r.sessions) },
+        ],
+        kind: 'number',
+      }
+    : null;
 
   const period = data?.period;
   const cur = data?.headline.current ?? null;
@@ -206,12 +255,13 @@ export default function KioskInsightsPage() {
           companyId={exportScope.companyId}
           companyName={exportScope.companyName}
           disabled={!exportReady}
-          actions={
-            <Button variant="outline" size="sm" onClick={exportCsv} disabled={!exportReady} title={t('exportHint')}>
-              <Download className="h-4 w-4" aria-hidden />
-              {t('export')}
-            </Button>
-          }
+          reportType="kiosk-insights"
+          kpis={exportKpis}
+          chart={exportChart}
+          chartFrom={{ label: 'name', value: 'revenue', type: 'hbar' }}
+          insightKeys={{ label: 'name', value: 'revenue', count: 'orders' }}
+          groupBy={['shopName']}
+          csv={exportCsv}
         />
       </div>
 

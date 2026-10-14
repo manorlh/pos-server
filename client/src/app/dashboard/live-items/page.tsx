@@ -14,7 +14,8 @@
  * URL (lib/liveItemsView.ts), so a link is the board. From `md` up the table is a ReportTable
  * (sort by a header, column chooser, its totals); the phone keeps its ranked cards. Excel / PDF
  * with export columns take every product of the scope and period (not only the top 20), with
- * the scope's totals (a search sums its rows). No tips: an item has none.
+ * the scope's totals (a search sums its rows). No tips: an item has none. The designed PDF adds
+ * the three cards against the period before (not for the open shifts) and the products by net.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -45,7 +46,14 @@ import type { LiveItemRow } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { ALL_COMPANIES, type OrgScope } from '@/components/dashboard/org-scope-cascade';
 import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
-import { ReportTable, StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { previousWindow } from '@/lib/designedReport';
+import {
+  ReportTable,
+  StandaloneExportBar,
+  type PreviousPeriod,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -219,6 +227,29 @@ export default function LiveItemsPage() {
     };
   }, [rank, rows, searching, shown, t, tc, totals]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the three cards, the products by net,
+  // and — for a day or a range, not the open shifts — the same board for the period before it
+  // (`previousWindow`: a day against the same weekday last week), fetched on the click.
+  const exportKpis: ReportKpi[] = totals
+    ? [
+        { key: 'net', label: t('kpi.net'), value: totals.net, kind: 'money', icon: 'sales' },
+        { key: 'qty', label: t('kpi.qty'), value: totals.qty, kind: 'number', icon: 'items' },
+        { key: 'products', label: t('kpi.products'), value: totals.productCount, kind: 'count', icon: 'box' },
+      ]
+    : [];
+  const shownWindow = report.data?.window;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = period === 'shift' ? null : previousWindow(shownWindow?.from, shownWindow?.to);
+    if (!before) return null;
+    const prev = await fetchLiveItems({ ...params, shift: undefined, from: before.from, to: before.to });
+    return {
+      rows: sortLiveRows(searchLiveRows(prev.rows, query, normalizeNavText), state.sort, state.desc),
+      kpis: { net: prev.totals.net, qty: prev.totals.qty, products: prev.totals.productCount },
+      from: before.from,
+      to: before.to,
+    };
+  };
+
   // The page's own scope (not the dashboard's), the period, the search and the row limit.
   const filterLines: ReportFilterLine[] = [
     { label: t('period.label'), value: t(`period.${period}`) },
@@ -271,6 +302,11 @@ export default function LiveItemsPage() {
           place={scopeName}
           filterLines={filterLines}
           disabled={!report.data || rows.length === 0}
+          reportType="live-items"
+          kpis={exportKpis}
+          chartFrom={{ label: 'name', value: 'net', type: 'hbar' }}
+          insightKeys={{ label: 'name', value: 'net', count: 'qty' }}
+          previous={previous}
         />
       </div>
 

@@ -7,7 +7,8 @@
  * * **ממתינות** — live (every 5 seconds), a card per request: what, how much, the table, the till,
  *   who asked and why, the time left; "פתח" opens the request to decide it.
  * * **היסטוריה** — every request, filtered by type, shop, requester, approver, outcome, reason
- *   and dates; a table on a wide screen, cards on a phone; Excel / PDF of every matching row.
+ *   and dates; a table on a wide screen, cards on a phone; Excel / PDF of every matching row
+ *   (the designed PDF: the counts, subtotals by shop and till).
  *
  * The tab sits in the URL (`?tab=history`). The menu's badge counts the same pending requests.
  */
@@ -41,10 +42,13 @@ import {
 } from '@/lib/approvals';
 import { fetchApprovalCatalog, fetchApprovals } from '@/lib/approvalsApi';
 import type { Shop } from '@/lib/types';
+import { previousWindow } from '@/lib/designedReport';
 import {
   ReportTable,
   StandaloneExportBar,
+  type PreviousPeriod,
   type ReportColumn,
+  type ReportKpi,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -320,6 +324,19 @@ function HistoryTab() {
     return lines;
   }, [applied, approvers, shopOptions, t, typeOptions]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the requests found and those waiting
+  // now; with both dates, the count of the days before them (one row is enough for its total).
+  const exportKpis: ReportKpi[] = [
+    { key: 'requests', label: t('kpi.total'), value: total, kind: 'count', icon: 'receipt' },
+    { key: 'pending', label: t('tabs.pending'), value: list.data?.pendingCount ?? null, kind: 'count', icon: 'clock' },
+  ];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = previousWindow(applied.from || null, applied.to || null);
+    if (!before) return null;
+    const prev = await fetchApprovals(historyParams({ ...applied, ...before }, { status: 'all', limit: 1 }));
+    return { kpis: { requests: prev.total }, ...before };
+  };
+
   const activeCount = activeFilterCount(draft);
 
   return (
@@ -432,6 +449,11 @@ function HistoryTab() {
             place={null}
             filterLines={filterLines}
             disabled={!rows.length}
+            reportType="approvals"
+            kpis={exportKpis}
+            groupBy={['shop', 'till']}
+            insightKeys={{ label: 'type', value: 'amount', employee: 'requester' }}
+            previous={previous}
           />
           <ReportTable table={table} reportKey="approvals" />
           {total > HISTORY_PAGE ? (

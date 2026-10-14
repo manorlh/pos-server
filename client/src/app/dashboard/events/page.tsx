@@ -8,10 +8,11 @@
  * Excel export. Confirming it ("נותן תוקף") freezes the report and releases the tills.
  *
  * This page: the events of the shop in scope, a create / edit dialog, and choosing two or
- * more to compare.
+ * more to compare. "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and
+ * CSV of the events listed (the status filter applies) with each confirmed event's figures.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -22,7 +23,10 @@ import { useAuth } from '@/lib/auth';
 import { usePageScope } from '@/lib/scope';
 import { deleteEvent, eventErrorMessage, fetchEvents, type EventListItem, type ReportEvent } from '@/lib/eventsApi';
 import { clockLabel, compareIds, durationText } from '@/lib/eventReport';
+import type { ReportKpi } from '@/lib/designedReport';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import { cn } from '@/lib/utils';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { Card, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard } from '@/components/dashboard/insights/ios';
 import { EventFormDialog } from '@/components/dashboard/events/event-form-dialog';
@@ -68,8 +72,51 @@ export default function EventsPage() {
     onError: (err) => toast.error(eventErrorMessage(err, tc('error'))),
   });
 
-  const list = (events.data ?? []).filter((e) => filter === 'all' || e.status === filter);
+  const list = useMemo(() => (events.data ?? []).filter((e) => filter === 'all' || e.status === filter), [events.data, filter]);
   const compare = compareIds(selected);
+
+  // ── "ייצוא": the events listed; a draft's figures are computed live in its report, so blank here ──
+  const exportTable = useMemo<ReportTableSpec<EventListItem>>(
+    () => ({
+      id: 'main',
+      title: t('listTitle'),
+      rows: list,
+      rowKey: (e) => e.id,
+      totalsLabel: tc('total'),
+      columns: [
+        { key: 'name', header: t('listExport.event'), width: 26, required: true, value: (e) => e.name },
+        { key: 'status', header: tc('status'), width: 10, value: (e) => t(`status.${e.status}`) },
+        { key: 'start', header: t('form.start'), kind: 'datetime', value: (e) => e.startsAt },
+        { key: 'end', header: t('form.end'), kind: 'datetime', value: (e) => e.endsAt },
+        { key: 'duration', header: t('listExport.duration'), kind: 'number', value: (e) => e.durationMinutes },
+        { key: 'tills', header: t('listExport.tills'), kind: 'number', value: (e) => e.machineIds.length },
+        { key: 'tillNames', header: t('listExport.tillNames'), width: 30, defaultHidden: true, value: (e) => e.machines.map((m) => m.name).join(' · ') || null },
+        { key: 'producer', header: t('form.producer'), width: 16, value: (e) => e.producerName },
+        { key: 'net', header: t('tills.net'), kind: 'money', value: (e) => e.summary?.net ?? null, totalOf: (rows) => rows.reduce((n, e) => n + (e.summary?.net ?? 0), 0) },
+        { key: 'sales', header: t('tills.sales'), kind: 'number', value: (e) => e.summary?.salesCount ?? null, totalOf: (rows) => rows.reduce((n, e) => n + (e.summary?.salesCount ?? 0), 0) },
+        { key: 'avgTicket', header: t('tills.avgTicket'), kind: 'money', value: (e) => e.summary?.avgTicket ?? null },
+        { key: 'tips', header: t('tills.tips'), kind: 'money', value: (e) => e.summary?.tips ?? null, totalOf: (rows) => rows.reduce((n, e) => n + (e.summary?.tips ?? 0), 0) },
+        { key: 'alerts', header: t('listExport.alerts'), kind: 'number', value: (e) => e.summary?.alerts ?? null },
+        { key: 'confirmedAt', header: t('listExport.confirmedAt'), kind: 'datetime', value: (e) => e.confirmedAt },
+      ],
+    }),
+    [list, t, tc],
+  );
+  const confirmed = list.filter((e) => e.status === 'confirmed');
+  const exportKpis: ReportKpi[] = [
+    { key: 'events', label: t('listExport.events'), value: list.length, kind: 'count', icon: 'calendar' },
+    { key: 'confirmed', label: t('listExport.confirmed'), value: confirmed.length, kind: 'count' },
+    { key: 'drafts', label: t('listExport.drafts'), value: list.length - confirmed.length, kind: 'count' },
+    { key: 'net', label: t('listExport.net'), value: confirmed.reduce((n, e) => n + (e.summary?.net ?? 0), 0), kind: 'money', icon: 'sales' },
+    { key: 'transactions', label: t('listExport.sales'), value: confirmed.reduce((n, e) => n + (e.summary?.salesCount ?? 0), 0), kind: 'count', icon: 'receipt' },
+  ];
+  const exportLines: ReportFilterLine[] = [
+    ...(filter !== 'all' ? [{ label: t('filterLabel'), value: t(`filter.${filter}`) }] : []),
+    ...(confirmed.length < list.length ? [{ label: t('listExport.noteLabel'), value: t('listExport.draftsNote') }] : []),
+  ];
+  // The days the listed events span (their own local days).
+  const exportFrom = list.reduce<string | null>((d, e) => (!d || e.startDate < d ? e.startDate : d), null);
+  const exportTo = list.reduce<string | null>((d, e) => (!d || e.endDate > d ? e.endDate : d), null);
   const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
   return (
@@ -83,7 +130,20 @@ export default function EventsPage() {
           <h1 className="text-[34px] font-bold leading-tight tracking-tight">{t('title')}</h1>
           <p className="text-[15px] text-[#8E8E93]">{t('subtitle')}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <StandaloneExportBar
+            reportKey="events"
+            reportType="events"
+            title={t('listTitle')}
+            tables={[exportTable as ReportTableSpec<unknown>]}
+            from={exportFrom}
+            to={exportTo}
+            place={shopName || null}
+            filterLines={exportLines}
+            kpis={exportKpis}
+            chartFrom={{ label: 'name', value: 'net', type: 'hbar', title: t('listExport.netByEvent') }}
+            disabled={!events.data || list.length === 0}
+          />
           {compare ? (
             <Button variant="outline" onClick={() => router.push(`/dashboard/events/compare?ids=${compare}`)}>
               <GitCompareArrows className="h-4 w-4" aria-hidden />

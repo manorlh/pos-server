@@ -6,17 +6,26 @@
  * date, with "חדש" on a manual upload with a note nobody opened yet. View (the first 2000 lines,
  * searchable) and download (.txt / .log.gz) as on the device's page. The server checks the role
  * again (app/services/device_logs.py); the content never reaches anyone else.
+ *
+ * "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV of the uploads
+ * list — every upload the filters match, read page by page (lib/fetchAllPages.ts), never the
+ * logs' content.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchMachines, fetchShops } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
-import { LOG_REASONS, type DeviceLogUpload, type LogFilters, type LogReason } from '@/lib/deviceLogs';
+import type { ReportKpi } from '@/lib/designedReport';
+import { LOG_REASONS, rangeLabel, type DeviceLogUpload, type LogFilters, type LogReason } from '@/lib/deviceLogs';
 import { fetchDeviceLogs } from '@/lib/deviceLogsApi';
+import { EXCEL_FILL } from '@/lib/excelExport';
+import { EXPORT_PAGE_SIZE, fetchAllPages } from '@/lib/fetchAllPages';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import { LogUploadsTable, LogViewerDialog } from '@/components/dashboard/machines/device-logs';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -133,6 +142,86 @@ function DeviceLogsBrowser() {
     .map((m) => ({ value: m.id, label: m.name }));
   const total = list.data?.total ?? 0;
 
+  // ── "ייצוא": every upload the filters match (page after page at the API's 200), not the page shown ──
+  const tc = useTranslations('common');
+  const exportFilters = useMemo<LogFilters>(
+    () => ({
+      tenantId: tenantId || (shopId || machineId ? activeTenantId : null),
+      shopId: inActiveOrg ? shopId || null : null,
+      machineId: inActiveOrg ? machineId || null : null,
+      reason: reason || null,
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null,
+      onlyNew,
+    }),
+    [activeTenantId, dateFrom, dateTo, inActiveOrg, machineId, onlyNew, reason, shopId, tenantId],
+  );
+  const pageRows = list.data?.items;
+  const exportTable = useMemo<ReportTableSpec<DeviceLogUpload>>(
+    () => ({
+      id: 'main',
+      title: t('page.title'),
+      rows: pageRows ?? [],
+      rowKey: (u) => u.id,
+      rowFill: (u) => (u.reason === 'crash' ? EXCEL_FILL.missing : u.isNew ? EXCEL_FILL.info : null),
+      exportRows: () =>
+        fetchAllPages(async (page, pageSize) => {
+          const d = await fetchDeviceLogs({ ...exportFilters, limit: pageSize, offset: (page - 1) * pageSize });
+          return { items: d.items, total: d.total };
+        }, { pageSize: EXPORT_PAGE_SIZE }),
+      columns: [
+        { key: 'receivedAt', header: t('col.time'), kind: 'datetime', required: true, value: (u) => u.receivedAt },
+        { key: 'device', header: t('col.device'), width: 18, value: (u) => u.machineName ?? u.machineId.slice(0, 8) },
+        { key: 'pos', header: t('export.pos'), width: 8, value: (u) => u.posNumber },
+        { key: 'org', header: t('col.org'), width: 16, value: (u) => u.tenantName },
+        { key: 'branch', header: t('col.branch'), width: 16, value: (u) => u.branchName },
+        { key: 'reason', header: t('col.reason'), width: 10, value: (u) => t(`reason.${u.reason}`) },
+        { key: 'isNew', header: t('new'), width: 6, value: (u) => (u.isNew ? tc('yes') : null) },
+        { key: 'version', header: t('col.version'), width: 12, value: (u) => u.appVersion },
+        { key: 'model', header: t('export.model'), width: 14, defaultHidden: true, value: (u) => u.deviceModel },
+        { key: 'os', header: t('export.os'), width: 12, defaultHidden: true, value: (u) => u.os },
+        { key: 'range', header: t('col.range'), width: 24, value: (u) => (u.fromMs != null && u.toMs != null ? rangeLabel(u.fromMs, u.toMs) : null) },
+        { key: 'lines', header: t('export.lines'), kind: 'number', defaultHidden: true, value: (u) => u.lineCount },
+        { key: 'sizeKb', header: t('export.sizeKb'), kind: 'number', value: (u) => Math.round((u.sizeBytes / 1024) * 10) / 10 },
+        { key: 'note', header: t('col.note'), width: 30, value: (u) => u.note },
+        { key: 'requestedBy', header: t('col.requestedBy'), width: 14, value: (u) => u.requestedBy },
+        { key: 'openedBy', header: t('export.openedBy'), width: 14, defaultHidden: true, value: (u) => u.openedBy },
+      ],
+    }),
+    [exportFilters, pageRows, t, tc],
+  );
+  const exportKpis: ReportKpi[] = list.data
+    ? [
+        { key: 'uploads', label: t('export.uploads'), value: list.data.total, kind: 'count', icon: 'box' },
+        { key: 'newUploads', label: t('export.newUploads'), value: list.data.newCount, kind: 'count', icon: 'alert' },
+      ]
+    : [];
+  // By reason only when the page holds every upload: a chart of one page would read as the whole.
+  const allShown = !!pageRows && total <= PAGE;
+  const byReason = LOG_REASONS.map((r) => ({ r, n: (pageRows ?? []).filter((u) => u.reason === r).length })).filter((x) => x.n > 0);
+  const exportChart =
+    allShown && byReason.length
+      ? {
+          type: 'donut' as const,
+          title: t('col.reason'),
+          labels: byReason.map((x) => t(`reason.${x.r}`)),
+          series: [{ name: t('export.uploads'), values: byReason.map((x) => x.n) }],
+          kind: 'number' as const,
+        }
+      : null;
+  const exportPlace =
+    [
+      tenantId ? tenants.find((x) => x.id === tenantId)?.name : null,
+      shopId ? shopOptions.find((o) => o.value === shopId)?.label : null,
+      machineId ? (machines.data ?? []).find((m) => m.id === machineId)?.name : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || null;
+  const exportLines: ReportFilterLine[] = [
+    ...(reason ? [{ label: t('filters.reason'), value: t(`reason.${reason}`) }] : []),
+    ...(onlyNew ? [{ label: t('filters.onlyNew'), value: tc('yes') }] : []),
+  ];
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -140,12 +229,27 @@ function DeviceLogsBrowser() {
           <h1 className="text-2xl font-bold">{t('page.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('page.subtitle')}</p>
         </div>
-        {list.data ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>{t('page.count', { total })}</span>
-            {list.data.newCount > 0 ? <Badge>{t('page.newCount', { count: list.data.newCount })}</Badge> : null}
-          </div>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {list.data ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>{t('page.count', { total })}</span>
+              {list.data.newCount > 0 ? <Badge>{t('page.newCount', { count: list.data.newCount })}</Badge> : null}
+            </div>
+          ) : null}
+          <StandaloneExportBar
+            reportKey="device-logs"
+            reportType="exceptions.device-logs"
+            title={t('page.title')}
+            tables={[exportTable as ReportTableSpec<unknown>]}
+            from={dateFrom || null}
+            to={dateTo || null}
+            place={exportPlace}
+            filterLines={exportLines}
+            kpis={exportKpis}
+            chart={exportChart}
+            disabled={!list.data || total === 0}
+          />
+        </div>
       </div>
 
       <Card>

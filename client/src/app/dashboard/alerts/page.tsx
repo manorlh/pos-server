@@ -6,21 +6,30 @@
  * sale, a till barely selling, a target reached), each markable "טופל" here; what was sent to
  * my own devices (sent, held back by quiet hours / the rate limit, failed); and "הירשם להתראות
  * בטלפון" — this phone's subscription and my preferences.
+ *
+ * "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV of the alerts
+ * as listed (open, or all) and of what was sent to my devices. Neither list is paged: the export
+ * asks for each again at the API's most (200 rows) rather than the 100 / 50 the screen shows.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BellRing, Check, ExternalLink, RotateCcw } from 'lucide-react';
 import { usePageScope } from '@/lib/scope';
-import { alertHref, canAcknowledgeAlerts, historyTone, type AlertsFeed, type HistoryRow } from '@/lib/pushAlerts';
+import { alertHref, canAcknowledgeAlerts, historyTone, type AlertsFeed, type FeedAlert, type HistoryRow } from '@/lib/pushAlerts';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { acknowledgeAlert, fetchAlertsFeed, fetchPushHistory } from '@/lib/pushAlertsApi';
+import { shiftDay, type ReportChart, type ReportKpi } from '@/lib/designedReport';
+import { EXCEL_FILL } from '@/lib/excelExport';
 import { formatShortDateTime } from '@/lib/format';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import { todayIso } from '@/lib/reportWindow';
 import { cn } from '@/lib/utils';
 import { Card, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard } from '@/components/dashboard/insights/ios';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { PushAlertsSheet } from '@/components/dashboard/event-live/push-alerts-sheet';
 
@@ -49,6 +58,79 @@ export default function AlertsPage() {
     onError: () => toast.error(t('ackFailed')),
   });
 
+  // ── "ייצוא": the alerts as listed (the same scope, window and filter) and what was sent to me ──
+  const tp = useTranslations('problems');
+  const tc = useTranslations('common');
+  const days = show === 'open' ? 7 : 3;
+  const { companyId, shopId, machineId } = scope;
+  const feedRows = feed.data?.alerts;
+  const historyRows = history.data;
+  const exportTables = useMemo(() => {
+    const alerts: ReportTableSpec<FeedAlert> = {
+      id: 'main',
+      title: t('title'),
+      rows: feedRows ?? [],
+      rowKey: (a) => a.id,
+      rowFill: (a) => (a.acknowledged ? null : a.severity === 'high' ? EXCEL_FILL.missing : a.severity === 'medium' ? EXCEL_FILL.difference : null),
+      // The feed is not paged: the export asks again at the API's most.
+      exportRows: async () =>
+        (await fetchAlertsFeed({ companyId, shopId, machineId }, { open: show === 'open', days, limit: 200 })).alerts,
+      columns: [
+        { key: 'occurredAt', header: t('export.time'), kind: 'datetime', required: true, value: (a) => a.occurredAt },
+        { key: 'category', header: t('export.category'), width: 18, value: (a) => a.categoryLabel },
+        { key: 'kind', header: t('export.kind'), width: 18, value: (a) => a.kindLabel },
+        { key: 'severity', header: t('export.severity'), width: 10, value: (a) => tp(`severity.${a.severity}`) },
+        { key: 'shop', header: t('export.shop'), width: 16, value: (a) => a.shopName },
+        { key: 'till', header: t('export.till'), width: 14, value: (a) => a.machineName ?? a.posNumber },
+        { key: 'employee', header: t('export.employee'), width: 14, value: (a) => a.posUserName },
+        { key: 'amount', header: t('export.amount'), kind: 'money', value: (a) => a.amount },
+        { key: 'summary', header: t('export.summary'), width: 36, value: (a) => a.summary },
+        { key: 'handled', header: t('handled'), width: 8, value: (a) => (a.acknowledged ? tc('yes') : tc('no')) },
+        { key: 'note', header: t('export.note'), width: 24, value: (a) => a.note },
+      ],
+    };
+    const sent: ReportTableSpec<HistoryRow> = {
+      id: 'history',
+      title: t('historyTitle'),
+      rows: historyRows ?? [],
+      rowKey: (h) => h.id,
+      rowFill: (h) => (historyTone(h.status) === 'failed' ? EXCEL_FILL.missing : historyTone(h.status) === 'held' ? EXCEL_FILL.difference : null),
+      exportRows: () => fetchPushHistory(200),
+      columns: [
+        { key: 'at', header: t('export.time'), kind: 'datetime', required: true, value: (h) => h.at ?? h.sentAt },
+        { key: 'status', header: t('export.status'), width: 12, value: (h) => h.statusLabel },
+        { key: 'kind', header: t('export.category'), width: 10, value: (h) => t(`historyKind.${h.kind}`) },
+        { key: 'title', header: t('export.title'), width: 26, value: (h) => h.title || null },
+        { key: 'body', header: t('export.body'), width: 40, value: (h) => h.body || null },
+        { key: 'device', header: t('device'), width: 16, value: (h) => h.device },
+        { key: 'digest', header: t('export.digest'), kind: 'number', value: (h) => h.digestCount },
+      ],
+    };
+    return [alerts as ReportTableSpec<unknown>, ...((historyRows ?? []).length ? [sent as ReportTableSpec<unknown>] : [])];
+  }, [companyId, days, feedRows, historyRows, machineId, shopId, show, t, tc, tp]);
+  const listed = feedRows ?? [];
+  const exportKpis: ReportKpi[] = feed.data
+    ? [
+        { key: 'open', label: t('export.open'), value: feed.data.open, kind: 'count', icon: 'alert', better: 'down' },
+        { key: 'listed', label: t('export.listed'), value: listed.length, kind: 'count' },
+        { key: 'high', label: t('export.high'), value: listed.filter((a) => a.severity === 'high').length, kind: 'count', better: 'down' },
+        { key: 'handled', label: t('export.handledCount'), value: listed.filter((a) => a.acknowledged).length, kind: 'count', better: 'up' },
+      ]
+    : [];
+  const byCategory = new Map<string, number>();
+  for (const a of listed) byCategory.set(a.categoryLabel, (byCategory.get(a.categoryLabel) ?? 0) + 1);
+  const exportChart: ReportChart | null = byCategory.size
+    ? {
+        type: 'donut',
+        title: t('export.byCategory'),
+        labels: [...byCategory.keys()],
+        series: [{ name: t('export.listed'), values: [...byCategory.values()] }],
+        kind: 'number',
+      }
+    : null;
+  const today = todayIso();
+  const exportLines: ReportFilterLine[] = [{ label: t('filter'), value: show === 'open' ? t('openOnly') : t('all') }];
+
   return (
     <InsightsSurface>
       <div className="flex flex-wrap items-end justify-between gap-3 px-1">
@@ -59,10 +141,24 @@ export default function AlertsPage() {
           </h1>
           <Muted>{t('subtitle')}</Muted>
         </div>
-        <Button onClick={() => setSheet(true)}>
-          <BellRing className="size-4" aria-hidden />
-          {t('openSheet')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <StandaloneExportBar
+            reportKey="alerts"
+            reportType="exceptions.alerts"
+            title={t('title')}
+            tables={exportTables}
+            from={shiftDay(today, -(days - 1))}
+            to={today}
+            filterLines={exportLines}
+            kpis={exportKpis}
+            chart={exportChart}
+            disabled={!feed.data}
+          />
+          <Button onClick={() => setSheet(true)}>
+            <BellRing className="size-4" aria-hidden />
+            {t('openSheet')}
+          </Button>
+        </div>
       </div>
       <PushAlertsSheet scope={scope} open={sheet} onOpenChange={setSheet} />
 

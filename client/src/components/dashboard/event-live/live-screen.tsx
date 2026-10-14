@@ -7,6 +7,9 @@
  * Data: `GET /report-events/{id}/live` (lib/eventLiveApi.ts), refreshed every 15 s while live
  * (every minute with Ably push connected, which also refetches on every till sync), slower
  * before and after. The screen stays awake (Wake Lock) and can go full screen.
+ *
+ * "ייצוא" in the header (live-event-export.tsx): the designed PDF, Excel and CSV of what the
+ * screen shows at that moment.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -60,6 +63,7 @@ import { formatTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { EventTillsQuickDialog } from '@/components/dashboard/events/event-tills-quick-dialog';
 import { useCanAssignEventTills } from '@/components/dashboard/events/event-tills-access';
+import { LiveEventExport } from './live-event-export';
 
 // ── Look ─────────────────────────────────────────────────────────────────────
 
@@ -643,6 +647,10 @@ export function LiveScreen({ eventId, backHref, onClose }: { eventId: string; ba
             <span className="hidden lg:inline">{tt('action')}</span>
           </button>
         ) : null}
+        {/* The dashboard's own controls in the screen's dark look (`.dark` tokens). */}
+        <div className="dark text-foreground">
+          <LiveEventExport live={live} />
+        </div>
         <button
           type="button"
           onClick={toggleFullscreen}
