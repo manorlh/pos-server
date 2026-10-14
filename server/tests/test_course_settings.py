@@ -231,6 +231,9 @@ def test_the_migration_is_the_single_head_on_the_release():
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
-    assert heads == ["b637e9784d58"]
+    # One head: #105's e3b9d7a41c62 chains on this one, and release 14.10b joins that with its other
+    # heads (5d1f8b3e7a92, e4b7c2d9a6f1) in bb6205ba290c; later ones chain on top.
+    assert len(heads) == 1
+    assert "b637e9784d58" in {r.revision for r in script.walk_revisions("base", heads[0])}
     # On the release's merge of 14.10 (ba584f6fb704), nothing else.
     assert script.get_revision("b637e9784d58").down_revision == "ba584f6fb704"
