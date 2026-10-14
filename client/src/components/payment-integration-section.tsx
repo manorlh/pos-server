@@ -50,6 +50,7 @@ import {
   inheritedValueLabel,
   integrationOptions,
   isTypedSecret,
+  kioskLeftWithoutPayment,
   missingFieldsLabel,
   missingRequiredFields,
   secretSavedLabel,
@@ -405,10 +406,22 @@ export function PaymentIntegrationSection({
           <p role="alert" className={ERROR}>
             {errors.paymentIntegration}
           </p>
-        ) : hasBuiltinTerminal === false ? (
+        ) : hasBuiltinTerminal === false && integration.effective !== 'none' ? (
           <p className={WARN}>{PI_TEXT.agamentoNeedsBuiltin}</p>
         ) : null}
       </div>
+
+      {/* "ללא אשראי": no terminal, so none of its fields; a kiosk must still be paid at the till. */}
+      {integration.effective === 'none' ? (
+        <div className="space-y-1">
+          <p className={HINT}>{PI_TEXT.noneHint}</p>
+          {kioskLeftWithoutPayment(integration.effective, context?.kioskPaysAtTill) ? (
+            <p role="status" className={WARN}>
+              {PI_TEXT.kioskNoPayment} — {PI_TEXT.kioskNoPaymentHint}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {integration.automatic ? (
         <div className="space-y-1">

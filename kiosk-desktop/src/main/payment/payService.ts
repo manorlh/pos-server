@@ -21,7 +21,7 @@
  */
 
 import { blocksCard, cancelAction, cardBlocked, lookupVoidMeta, type CardAttempt } from '../../core/cardRecovery';
-import { mayCheckTerminal, terminalCheckDue, terminalConfigState, terminalState, type TerminalState } from '../../core/kioskHealth';
+import { isNoCard, mayCheckTerminal, terminalCheckDue, terminalConfigState, terminalState, type TerminalState } from '../../core/kioskHealth';
 import type { Db } from '../db/sqlite';
 import type { ApprovedCard, PaymentProvider, Resolution, TransmitResult } from './provider';
 
@@ -32,7 +32,7 @@ export type ChargeOutcome =
   | { kind: 'refused'; reason: 'terminal' | 'in_flight' | 'unresolved' | 'amount' };
 
 export interface MonitorState {
-  config: 'ready' | 'unconfigured' | 'not_external';
+  config: 'ready' | 'unconfigured' | 'not_external' | 'no_card';
   failures: number;
   lastCheckAtMs: number | null;
   lastOkAtMs: number | null;
@@ -67,6 +67,9 @@ export class PayService {
   /** The cloud settings changed: pick the provider (never while a frame is out). */
   setProvider(p: PaymentProvider | null, integration: string | null) {
     if (this.inFlight) return;
+    // "ללא אשראי": no terminal — except the one a card left unresolved was taken on, kept only to look
+    // that card up (never charged on, never checked) until it is settled (payment-integration-none.md §4.6).
+    if (isNoCard(integration)) p = this.unresolved() ? this.provider : null;
     // A terminal paired since (or no longer) is another provider: its own settings say so.
     const same =
       p && this.provider && p.kind === this.provider.kind && p.describe().address === this.provider.describe().address &&
@@ -137,6 +140,11 @@ export class PayService {
   /** A terminal is set up to charge on: what refuses a card in advance — never its health check. */
   get configured(): boolean {
     return !!this.provider && this.monitor.config === 'ready';
+  }
+
+  /** "ללא אשראי": the kiosk takes no card — no card tile, no terminal check, no terminal alert. */
+  get noCard(): boolean {
+    return this.monitor.config === 'no_card';
   }
 
   /* ------------------------------------------------------------- charging */
@@ -288,7 +296,8 @@ export class PayService {
   /** The 10-second tick: check the terminal when due and allowed (KioskTerminalMonitor). */
   async monitorTick(flow: { busy: boolean; screen: string }, forced = false): Promise<void> {
     const p = this.provider;
-    if (!p) return;
+    // "ללא אשראי": nothing to watch (a terminal kept for an unresolved card is only looked up).
+    if (!p || this.noCard) return;
     const now = Date.now();
     if (!forced && !terminalCheckDue(this.monitor.lastCheckAtMs, this.monitor.failures, now)) return;
     if (!mayCheckTerminal({ cardInFlight: this.cardInFlight, lastCardAnswerAtMs: this.lastCardAnswerAtMs, nowMs: now, flowBusy: flow.busy, screen: flow.screen, forced })) return;

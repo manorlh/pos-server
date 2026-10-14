@@ -11,14 +11,22 @@
  *    alert; only an unusable pinpad blocks payment (before anything is sent).
  */
 
-export type TerminalConfigState = 'ready' | 'unconfigured' | 'not_external';
+export type TerminalConfigState = 'ready' | 'unconfigured' | 'not_external' | 'no_card';
 export type TerminalState = TerminalConfigState | 'unreachable';
+
+/** "ללא אשראי" (`paymentIntegration` = `none`, pos-server P:/specs/payment-integration-none.md). */
+export function isNoCard(integration: string | null | undefined): boolean {
+  return (integration ?? '').trim().toLowerCase() === 'none';
+}
 
 /**
  * ready: a provider is configured (a Nayax LAN pinpad with an address, SynqPay…); not_external:
- * the settings name a built-in terminal the kiosk does not have; unconfigured: nothing set.
+ * the settings name a built-in terminal the kiosk does not have; unconfigured: nothing set;
+ * no_card: "ללא אשראי" — the kiosk takes no card at all (no terminal, no check, no alert), whatever
+ * else the settings say.
  */
 export function terminalConfigState(input: { integration: string | null; providerConfigured: boolean }): TerminalConfigState {
+  if (isNoCard(input.integration)) return 'no_card';
   if (input.providerConfigured) return 'ready';
   const integration = (input.integration ?? 'auto').toLowerCase().replace(/-/g, '_');
   if (integration === 'agamento' || integration === 'tap_to_pay' || integration === 'zcredit') return 'not_external';

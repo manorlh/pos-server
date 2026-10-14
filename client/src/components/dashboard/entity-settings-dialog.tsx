@@ -30,7 +30,12 @@ import { isNoPaymentOptionAllowedError, noPaymentOptionAllowed } from '@/lib/pay
 import { voucherStationTitleTooLong } from '@/lib/voucherTillSettings';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
 import { usePaymentIntegrationValidation } from '@/components/payment-integration-section';
-import { PI_TEXT, paymentIntegrationErrorMessage, withSendableSecrets } from '@/lib/paymentIntegration';
+import {
+  PI_TEXT,
+  paymentIntegrationErrorMessage,
+  saveWarningMessages,
+  withSendableSecrets,
+} from '@/lib/paymentIntegration';
 import type { EffectiveSources, PosSettingsV1 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import {
@@ -156,11 +161,17 @@ export function EntityPosSettingsDialog({
     if (!canChangeZScope || level !== 'tenant') delete patch.zScope;
     setSaving(true);
     try {
-      if (level === 'tenant') await patchTenantSettings(entityId, patch);
-      else if (level === 'company') await patchCompanySettings(entityId, patch);
-      else if (level === 'shop') await patchShopSettings(entityId, patch);
-      else await patchMachineSettings(entityId, patch);
+      const saved =
+        level === 'tenant'
+          ? await patchTenantSettings(entityId, patch)
+          : level === 'company'
+            ? await patchCompanySettings(entityId, patch)
+            : level === 'shop'
+              ? await patchShopSettings(entityId, patch)
+              : await patchMachineSettings(entityId, patch);
       toast.success(tps('saved'));
+      // Saved, with what it leaves someone should know of ("לקיוסק לא יישאר אמצעי תשלום").
+      for (const warning of saveWarningMessages(saved)) toast.warning(warning);
       // Every layer's context (a layer below inherits this one), and the machines list's
       // integration badges.
       void qc.invalidateQueries({ queryKey: ['payment-integration-context'] });

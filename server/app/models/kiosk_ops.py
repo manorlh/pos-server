@@ -63,7 +63,7 @@ class KioskAlert(Base):
     acknowledged_by_machine_id = Column(UUID(as_uuid=True), nullable=True)
     acknowledged_by_name = Column(String(200), nullable=True)
     cleared_at = Column(DateTime(timezone=True), nullable=True)
-    #: recovered | acknowledged | expired | reset | kiosk_removed
+    #: recovered | acknowledged | expired | reset | kiosk_removed | no_card (set "ללא אשראי")
     clear_reason = Column(String(24), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
