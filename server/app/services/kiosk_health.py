@@ -15,6 +15,10 @@ and a code the dashboard words:
 * **media** — the downloaded pictures and videos (missing ones);
 * **uploads** — what waits on the kiosk to reach the cloud (orders, documents, funnel events).
 
+Beside the parts, each kiosk and device says `autoStart` — "פתיחה אוטומטית" on boot, as its last
+heartbeat reported it (app/services/autostart.py): ready (and how), missing, off, or null when it
+never reported. It is not a part: it does not move the overall state.
+
 The kiosk reports what only it can see as `status.health` on its `kiosk/sync` (cleaned here,
 `clean_health`); the rest is the cloud's own (heartbeat, alerts, KDS screens, card lock).
 
@@ -37,6 +41,7 @@ from sqlalchemy.orm import Session
 from app.models.kiosk import KioskDevice
 from app.models.kiosk_ops import KioskAlert
 from app.models.pos_machine import POSMachine
+from app.services import autostart
 
 logger = logging.getLogger(__name__)
 
@@ -421,6 +426,8 @@ def _row(db: Session, summary: Dict[str, Any], device: KioskDevice, machine: POS
         "kdsScreens": screens if summary.get("fulfillmentMode") == "KDS" else [],
         "battery": battery,
         "batteryMonitored": battery_monitoring is None,
+        # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off; null — never reported.
+        "autoStart": autostart.status_of_machine(machine),
         "ordersToday": summary.get("ordersToday"),
         "salesTodayAgorot": summary.get("salesTodayAgorot"),
         "lastOrderAt": summary.get("lastOrderAt"),
@@ -519,6 +526,8 @@ def devices_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None,
             "battery": battery,
             "batteryPart": part,
             "batteryMonitored": monitoring is None,
+            # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off; null — never reported.
+            "autoStart": autostart.status_of_machine(m),
             "overall": "offline" if not online else ("error" if part["level"] == "error" else "warn" if part["level"] == "warn" else "ok"),
         })
     out.sort(key=lambda d: (d["shopName"] or "", d["name"] or ""))

@@ -1922,6 +1922,12 @@ from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  #
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
 
+# "הפעלה אוטומטית כשהמכשיר נדלק" (P:/specs/autostart-default.md §1, app/services/autostart.py):
+# `autoStartOnBoot`, on by default; the till reports whether it can (§3) on its heartbeat.
+from app.services.autostart import PARAMETER_SPECS as _AUTOSTART_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _AUTOSTART_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
