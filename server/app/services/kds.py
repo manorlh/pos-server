@@ -583,6 +583,9 @@ def release(db: Session, machine: POSMachine, body: KdsReleaseIn) -> Dict[str, A
             if take == active_qty(hold):
                 hold.release_state = "released"
                 hold.released_at = now
+                # A scheduled line that went (fire-restaurant-flow.md §8.4): no longer "מתוזמן".
+                hold.scheduled_at = None
+                hold.scheduled_note = None
                 hold.fallback_printed = hold.fallback_printed or body.fallback_printed
                 hold.version += 1
             else:
@@ -719,6 +722,17 @@ def _sync_held(db, order, tasks, held: Sequence[KdsItemIn], make_task, now) -> N
         have = sum((active_qty(t) for t in by_line.get(line_key, [])), ZERO)
         if want > have:
             make_task(item, want - have, "hold")
+    # Scheduled lines (fire-restaurant-flow.md §8.4): every hold task of the line says when it goes.
+    for t in tasks:
+        if t.release_state != "hold" or t.line_key not in wanted:
+            continue
+        item = wanted[t.line_key][0]
+        at = as_utc(item.scheduled_at) if item.scheduled_at is not None else None
+        note = (item.scheduled_note or "").strip() or None
+        if as_utc(t.scheduled_at) != at or t.scheduled_note != note:
+            t.scheduled_at = at
+            t.scheduled_note = note
+            t.version += 1
 
 
 def _note_line(db, order, tasks, line_key: str, notes: Optional[str], dispatch_id: str, now: datetime) -> None:
@@ -1294,6 +1308,9 @@ def task_out(task: KitchenTask) -> Dict[str, Any]:
         "preparedQty": _num(task.prepared_qty),
         "activeQty": _num(active_qty(task)),
         "release": task.release_state,
+        # Held until its own time (fire-restaurant-flow.md §8.4): drawn greyed, "מתוזמן 20:30".
+        "scheduledAt": _iso(getattr(task, "scheduled_at", None)),
+        "scheduledNote": getattr(task, "scheduled_note", None),
         "state": task.prep_state,
         "fallbackPrinted": bool(task.fallback_printed),
         "fallbackResolved": task.fallback_resolved_at is not None,

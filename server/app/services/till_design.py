@@ -144,6 +144,8 @@ COLOR_MODES = ("auto", "light", "dark")
 FIELD_MODES = ("auto", "off", "optional", "required")
 FIELD_KEYS = ("customerName", "serviceType", "guests")
 SUMMARY_STATES = ("auto", "open", "closed")
+#: "איך זה עובד" of the courses (P:/specs/fire-restaurant-flow.md §5, §8.1): auto — the till parameter `fireHints`.
+FIRE_HINTS = ("auto", "on", "first_time", "off")
 MAP_STYLES = ("auto", "classic", "modern")
 SHOW_HIDE = ("auto", "show", "hide")
 
@@ -565,6 +567,7 @@ SCHEMA = Obj({
     "behavior": Obj({
         "summary": Enum(SUMMARY_STATES),
         "lineStatus": Bool(),
+        "fireHints": Enum(FIRE_HINTS),
     }),
     "tables": Obj({
         "mapStyle": Enum(MAP_STYLES),
@@ -629,7 +632,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "colors": {"accent": None, "mode": "auto"},
     "texts": {},
     "fields": {k: "auto" for k in FIELD_KEYS},
-    "behavior": {"summary": "auto", "lineStatus": True},
+    "behavior": {"summary": "auto", "lineStatus": True, "fireHints": "auto"},
     "tables": {"mapStyle": "auto", "showChairs": "auto"},
     # Phase 2: every default is today's behaviour (nothing new shows until it is chosen).
     "courses": {"fireGapMinutes": 0, "autoFireFirst": True},
@@ -1023,7 +1026,7 @@ def catalog() -> Dict[str, Any]:
             "tileSize": list(TILE_SIZES), "tileStyle": list(TILE_STYLES), "density": list(DENSITIES),
             "billPosition": list(BILL_POSITIONS), "categoryBar": list(CATEGORY_BARS), "images": list(IMAGES),
             "textSize": list(TEXT_SIZES), "colorMode": list(COLOR_MODES), "fieldMode": list(FIELD_MODES),
-            "summary": list(SUMMARY_STATES), "mapStyle": list(MAP_STYLES), "showChairs": list(SHOW_HIDE),
+            "summary": list(SUMMARY_STATES), "fireHints": list(FIRE_HINTS), "mapStyle": list(MAP_STYLES), "showChairs": list(SHOW_HIDE),
             "columns": list(COLUMNS_CHOICES),
             "nightHand": list(NIGHT_HANDS), "descriptionLines": list(DESCRIPTION_LINES),
             "visualDietary": list(DIETARY_MODES),

@@ -10,9 +10,54 @@
 
 import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
-import { FIELD_KEYS, FIELD_MODES, LEGACY_FALLBACK, MAP_STYLES, ORDER_PREFIX_MAX, SHOW_HIDE, SUMMARY_STATES } from '@/lib/tillDesign';
+import {
+  FIELD_KEYS,
+  FIELD_MODES,
+  FIRE_HINTS,
+  LEGACY_FALLBACK,
+  MAP_STYLES,
+  ORDER_PREFIX_MAX,
+  SHOW_HIDE,
+  SUMMARY_STATES,
+  type FireHints,
+} from '@/lib/tillDesign';
 import { useTillEditor, useTillField } from './editor-context';
 import { AutoHint, FieldShell, SectionCard, SegmentField, SwitchField } from './fields';
+
+/**
+ * The till's "איך זה עובד" card of the courses (P:/specs/fire-restaurant-flow.md §5), as the choice of
+ * `behavior.fireHints` shows it: the three steps, "הבנתי" and "אל תציג שוב"; off — a line saying so.
+ */
+export function FireHintsPreview() {
+  const tb = useTranslations('tillDesign.behavior');
+  const f = useTillField<FireHints>('behavior.fireHints');
+  if (f.value === 'off') {
+    return <p className="text-xs text-muted-foreground" data-testid="fire-hints-preview-off">{tb('fireHintsOff')}</p>;
+  }
+  const steps = ['step1', 'step2', 'step3'] as const;
+  return (
+    <div className="space-y-1.5" data-testid="fire-hints-preview">
+      <p className="text-xs text-muted-foreground">{tb('fireHintsPreview')}</p>
+      <div className="max-w-sm rounded-xl border bg-card p-3 shadow-sm">
+        <p className="mb-2 text-sm font-semibold">{tb('fireHintsCard.title')}</p>
+        <ol className="space-y-1.5">
+          {steps.map((s, i) => (
+            <li key={s} className="flex items-start gap-2 text-xs">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
+                {i + 1}
+              </span>
+              <span>{tb(`fireHintsCard.${s}`)}</span>
+            </li>
+          ))}
+        </ol>
+        <div className="mt-3 flex justify-end gap-2 text-xs">
+          <span className="rounded-md border px-2.5 py-1 text-muted-foreground">{tb('fireHintsCard.dontShow')}</span>
+          <span className="rounded-md bg-primary px-2.5 py-1 text-primary-foreground">{tb('fireHintsCard.gotIt')}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function OrderNumberCard() {
   const t = useTranslations('tillDesign.orderNumber');
@@ -89,6 +134,13 @@ export function FieldsSection() {
           options={SUMMARY_STATES.map((v) => ({ value: v, label: tv(`summary.${v}`) }))}
         />
         <SwitchField path="behavior.lineStatus" label={tb('lineStatus')} hint={tb('lineStatusHint')} />
+        <SegmentField
+          path="behavior.fireHints"
+          label={tb('fireHints')}
+          hint={tb('fireHintsHint')}
+          options={FIRE_HINTS.map((v) => ({ value: v, label: tv(`fireHints.${v}`) }))}
+        />
+        <FireHintsPreview />
       </SectionCard>
       <OrderNumberCard />
     </div>

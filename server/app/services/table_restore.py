@@ -186,6 +186,8 @@ RESTORE_GROUP = "restore"
 MAP_DISPLAY_GROUP = "mapDisplay"
 #: "הוצאה אוטומטית של השלב הבא" (app/services/course_auto_fire.py, P:/specs/courses-fire-v2.md §1).
 COURSES_GROUP = "courses"
+#: "FIRE כמו במסעדות" and scheduled items (app/services/fire_flow.py, P:/specs/fire-restaurant-flow.md §8.1).
+FIRE_FLOW_GROUP = "fireFlow"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
@@ -196,6 +198,7 @@ def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
         (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
         (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
+        (FIRE_FLOW_GROUP, "שלבי הגשה: \"מתי עיקריות?\", שיגור מתוזמן והסבר לעובד", fire_flow.LEVEL_KEYS),
     )
 
 

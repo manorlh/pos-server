@@ -32,6 +32,10 @@ class KdsItemIn(_Body):
     seat: Optional[str] = Field(None, max_length=60)
     course: Optional[str] = Field(None, max_length=60)
     meal_name: Optional[str] = Field(None, alias="mealName", max_length=100)
+    #: A held line that waits for its own time (P:/specs/fire-restaurant-flow.md §8.4): when it goes, or what it
+    #: waits for ("אחרי עיקריות"). Read on `held` items only; the screens draw it greyed, "מתוזמן 20:30".
+    scheduled_at: Optional[datetime] = Field(None, alias="scheduledAt")
+    scheduled_note: Optional[str] = Field(None, alias="scheduledNote", max_length=60)
 
 
 class KdsNoteIn(_Body):
