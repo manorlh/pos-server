@@ -1828,18 +1828,21 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
 )
 
 # "לשונית 'הכל' בקטלוג ההזמנה" (the owner, 13.10.2026): where the till's category bar puts "הכל"
-# (every product) — first as today, last, or not at all (the order opens on the first category;
-# search still covers every product). Read by the till only, on every order screen with a
-# category bar: phone, tablet, a table's order and the designed templates (till-design).
+# (every product) — first, last, or not at all (the order opens on the first category; search
+# still covers every product). Hidden by default for every customer (the owner, 14.10.2026);
+# whoever wants "הכל" sets first or last at a level. Read by the till only, on every order
+# screen with a category bar: phone, tablet, a table's order and the designed templates
+# (till-design). Existing databases: alembic 5d1f8b3e7a92 moves the saved default.
 SELL_ALL_TAB_KEY = "sellAllTab"
 SELL_ALL_TAB_FIRST = "first"
 SELL_ALL_TAB_LAST = "last"
 SELL_ALL_TAB_HIDDEN = "hidden"
 SELL_ALL_TAB_OPTIONS = (SELL_ALL_TAB_FIRST, SELL_ALL_TAB_LAST, SELL_ALL_TAB_HIDDEN)
+SELL_ALL_TAB_DEFAULT = SELL_ALL_TAB_HIDDEN
 SELL_ALL_TAB_LABELS = {
-    SELL_ALL_TAB_FIRST: "ראשונה — כמו היום",
+    SELL_ALL_TAB_FIRST: "ראשונה",
     SELL_ALL_TAB_LAST: "אחרונה",
-    SELL_ALL_TAB_HIDDEN: "מוסתרת — נפתחת המחלקה הראשונה",
+    SELL_ALL_TAB_HIDDEN: "מוסתרת — נפתחת המחלקה הראשונה (ברירת מחדל)",
 }
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
@@ -1849,14 +1852,14 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
         value_type="enum",
         enum_options=SELL_ALL_TAB_OPTIONS,
         enum_labels=SELL_ALL_TAB_LABELS,
-        default_value=SELL_ALL_TAB_FIRST,
+        default_value=SELL_ALL_TAB_DEFAULT,
         description=(
             "איפה מופיעה לשונית \"הכל\" (כל הפריטים) בסרגל המחלקות של ההזמנה בקופה — בטלפון, בטאבלט, "
             "בהזמנת שולחן ובתבניות המעוצבות (\"עיצוב קופה\"). "
-            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_FIRST]}» (ברירת מחדל) — \"הכל\" לפני כל המחלקות. "
-            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_LAST]}» — \"הכל\" אחרי המחלקה האחרונה. "
             f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_HIDDEN]}» — אין לשונית \"הכל\", וההזמנה נפתחת על המחלקה "
             "הראשונה; החיפוש עדיין מחפש בכל המוצרים. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_FIRST]}» — \"הכל\" לפני כל המחלקות. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_LAST]}» — \"הכל\" אחרי המחלקה האחרונה. "
             "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
