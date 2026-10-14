@@ -511,12 +511,14 @@ class TestMigration:
         # (8d4f2a6c1e93, a7c3e9f1d2b4) in 9f55dd368692, 396f22daf19c chains on it, and ba584f6fb704
         # joins that with table-restore's a7d3e1c9b5f2; release 14.10b joins e3b9d7a41c62 (tables_layout,
         # on b637e9784d58 courses FIRE v2), 5d1f8b3e7a92 (the "הכל" tab) and e4b7c2d9a6f1 (customer
-        # display media) in bb6205ba290c. This migration stays on test mode, on the single head's line;
-        # later ones chain on top.
+        # display media) in bb6205ba290c, and 6af69aa646d1 joins 7c4e2a9d1b6f (exclusive login v2) and
+        # d8a3f1c6e2b7 (kitchen ticket designs) built on that one. This migration stays on test mode, on the
+        # single head's line; later ones chain on top.
         heads = script.get_heads()
         assert len(heads) == 1
         line = {r.revision for r in script.walk_revisions("base", heads[0])}
-        assert {"bb6205ba290c", "ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
+        assert {"6af69aa646d1", "bb6205ba290c", "ba584f6fb704", "a7d3e1c9b5f2", "396f22daf19c", "9f55dd368692", "78c88a7afc4f"} <= line
+        assert set(script.get_revision("6af69aa646d1").down_revision) == {"7c4e2a9d1b6f", "d8a3f1c6e2b7"}
         assert set(script.get_revision("bb6205ba290c").down_revision) == {"e3b9d7a41c62", "5d1f8b3e7a92", "e4b7c2d9a6f1"}
         assert set(script.get_revision("ba584f6fb704").down_revision) == {"396f22daf19c", "a7d3e1c9b5f2"}
         assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"
