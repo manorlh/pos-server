@@ -330,6 +330,15 @@ RULES = RULES + (
     RuleSpec("document_unprinted", True, (), "medium", "print_relay", push_default=False),
 )
 
+# "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): a basket the automatic close held
+# or discarded, and the held sales it cancelled — from the till's events, each with its items and amount. The
+# manager is alerted on the phone (on by default: the owner asked for it).
+RULES = RULES + (
+    RuleSpec("auto_close_cart_discarded", True, (), "medium", "till_event"),
+    RuleSpec("auto_close_cart_held", True, (), "low", "till_event"),
+    RuleSpec("auto_close_held_sales_cancelled", True, (), "medium", "till_event"),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
@@ -364,6 +373,11 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
 #: written by the cloud for its runs (app/services/shop_x.py), reported by a till that built it on the LAN.
 #: Recorded, feeds no rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("shop_x_report",)
+#: "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): a basket held or discarded and
+#: the held sales cancelled by the automatic close — each feeds its own rule — and the close's journal line
+#: (`shift_auto_closed`, recorded, feeds no rule).
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("auto_close_cart_held", "auto_close_cart_discarded",
+                                       "auto_close_held_sales_cancelled", "shift_auto_closed")
 
 
 class RuleValueError(ValueError):
@@ -825,6 +839,14 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
             if minutes >= limit:
                 return [Found(type="long_order", key=f"long_order:{event.id}", amount=amount, value=minutes,
                               threshold=limit, details=details, **common)]
+    elif kind in ("auto_close_cart_held", "auto_close_cart_discarded", "auto_close_held_sales_cancelled"):
+        # The automatic close's basket / held sales (app/services/auto_close_cart.py): the line the list shows.
+        rule = rules.get(kind)
+        if rule and rule.enabled:
+            from app.services import auto_close_cart
+
+            details["summary"] = auto_close_cart.summary(kind, details)
+            return [Found(type=kind, key=f"{kind}:{event.id}", amount=amount, details=details, **common)]
     elif kind in ("payment_reversed", "table_restored"):
         # A table's payment reversed / a table restored (app/services/table_restore.py).
         from app.services import table_restore
