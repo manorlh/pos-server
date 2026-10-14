@@ -183,6 +183,12 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   // "בעיות": every dashboard role but the cashier (the server's `scoped()` refuses a cashier).
   const isStaff =
     authHydrated && !!internalUser?.role && internalUser.role !== 'cashier' && internalUser.role !== 'producer_view';
+  // "מסופונים — מצב לא מקוון": the super admin, a company manager and a shop manager (the server's own roles).
+  const isShopManager =
+    authHydrated &&
+    (internalUser?.role === 'super_admin' ||
+      internalUser?.role === 'company_manager' ||
+      internalUser?.role === 'shop_manager');
 
   // Same three gates as before, now expressed once and applied to the grouped
   // table in lib/navigation. Nobody gains an entry they did not already have.
@@ -199,6 +205,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
     if (item.gate === 'superAdmin') return isSuperAdmin;
     if (item.gate === 'settingsWrite') return canWriteSettings;
     if (item.gate === 'staff') return isStaff;
+    if (item.gate === 'shopManagers') return isShopManager;
     return true;
   };
 
@@ -213,7 +220,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
       })).filter((section) => section.items.length > 0),
     // `allows` closes over the three capability flags; recompute when they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, isStaff, roleAccess.hidden, dashboardAccess, simpleMode],
+    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, isStaff, isShopManager, roleAccess.hidden, dashboardAccess, simpleMode],
   );
 
   const activeEntry = findNavEntry(pathname);

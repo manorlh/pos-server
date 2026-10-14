@@ -90,6 +90,7 @@ import {
   PackageSearch,
   ClipboardCheck,
   ShieldQuestion,
+  CloudOff,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -101,7 +102,9 @@ export type NavGate =
   | 'superAdmin'
   | 'settingsWrite'
   /** Every dashboard role but the cashier (the exceptions log's own rule, `scoped()`). */
-  | 'staff';
+  | 'staff'
+  /** The super admin, a company manager and a shop manager ("מסופונים — מצב לא מקוון", deferred_terminals.ROLES). */
+  | 'shopManagers';
 
 export interface NavItem {
   href: string;
@@ -296,6 +299,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // "תקינות מכשירים": each kiosk's parts (app, terminal, printer, till link, KDS, media,
       // uploads) live, and its open alerts — the same roles as the kiosks page.
       { href: '/dashboard/kiosks/health', labelKey: 'deviceHealth', icon: HeartPulse, gate: 'settingsWrite' },
+      // "מסופונים — מצב לא מקוון" (P:/specs/nayax-deferred-all.md §9): every card terminal of a shop to the
+      // deferred mode and back — the section `terminals_offline`, the shop's managers.
+      { href: '/dashboard/deferred-terminals', labelKey: 'deferredTerminals', icon: CloudOff, gate: 'shopManagers' },
       // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
       // Every role but the cashier reads (the server scopes it); managers correct.
       { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },

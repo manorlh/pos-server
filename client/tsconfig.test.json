@@ -356,6 +356,8 @@
     "src/lib/remotePrint.ts",
     "src/lib/remotePrint.test.ts",
     "src/lib/tableAssignment.ts",
-    "src/lib/tableAssignment.test.ts"
+    "src/lib/tableAssignment.test.ts",
+    "src/lib/deferredTerminals.ts",
+    "src/lib/deferredTerminals.test.ts"
   ]
 }

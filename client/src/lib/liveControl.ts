@@ -372,6 +372,8 @@ const OTHER_ACTION_LABELS: Record<string, string> = {
   table_move: 'העברת שולחן מהדשבורד',
   table_merge: 'איחוד שולחנות מהדשבורד',
   table_note: 'הערה לשולחן מהדשבורד',
+  // "מסופונים — מצב לא מקוון" (P:/specs/nayax-deferred-all.md §9): sent from its own page.
+  terminal_offline: 'מצב לא מקוון במסופון',
 };
 
 export function actionLabel(action: string): string {
@@ -404,6 +406,11 @@ const REFUSALS: Record<string, string> = {
   manager_code: 'שוחרר בקוד מנהל בקופה',
   after_sale: 'יינעל בסוף המכירה',
   not_answered: 'לא נענה',
+  // `terminal_offline` (P:/specs/nayax-deferred-all.md §8.3, §8.7).
+  timeout_busy: 'המסופון היה עסוק עד שפג התוקף',
+  no_line: 'אין קו — נשאר לא מקוון',
+  conflict: 'פקודה מהסניף גברה',
+  stale: 'כבר בוצעה הוראה מאוחרת יותר',
 };
 
 /** "נשלח" / "נמסר לקופה" / "בוצע בקופה" / "נדחה: באמצע מכירה"… */
