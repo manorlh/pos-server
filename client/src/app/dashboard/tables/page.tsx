@@ -12,6 +12,8 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { usePageScope } from '@/lib/scope';
+import { canEditTablesLayout } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { Button } from '@/components/ui/button';
 import { TablesEditor } from '@/components/dashboard/tables/tables-editor';
@@ -30,7 +32,10 @@ export default function TablesPage() {
   const { resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'shop' });
   const shopId = effective.shopId ?? '';
   const companyId = effective.companyId ?? '';
-  const [section, setSection] = useState<Section>('editor');
+  // "עריכת מפה ושולחנות" (`tables_layout`): the editor is theirs who hold it; the others open on the floor.
+  const canEditLayout = canEditTablesLayout(useDashboardAccess());
+  const [picked, setSection] = useState<Section | null>(null);
+  const section: Section = picked ?? (canEditLayout ? 'editor' : 'live');
 
   return (
     <div className="space-y-4">
@@ -71,7 +76,13 @@ export default function TablesPage() {
         <ScopeGate resolution={resolution}>
           {shopId ? (
             section === 'editor' ? (
-              <TablesEditor shopId={shopId} />
+              canEditLayout ? (
+                <TablesEditor shopId={shopId} />
+              ) : (
+                <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
+                  {t('layoutForbidden')}
+                </div>
+              )
             ) : section === 'live' ? (
               <TablesLive shopId={shopId} />
             ) : section === 'reservations' ? (
