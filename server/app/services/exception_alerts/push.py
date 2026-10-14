@@ -156,10 +156,11 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("high_sale", "עסקה גדולה", "עסקה מעל הסכום שבחוק החריגה.", ("high_amount",), amount=True),
     Category("after_hours", "מכירה מחוץ לשעות", "מכירה בשעות שבחוק החריגה.", ("after_hours",)),
     Category("sensitive_actions", "פעולות רגישות",
-             "הכרעת אשראי ידנית, עקיפת בדיקת מסוף, איפוס או החלפת קופה, Z בכפייה או מהתמיכה, מצב הדרכה.",
+             "הכרעת אשראי ידנית, עקיפת בדיקת מסוף, איפוס או החלפת קופה, Z בכפייה או מהתמיכה, מצב הדרכה, "
+             "חתימת QuickSupport לא תואמת.",
              ("card_decision_override", "terminal_check_bypass", "till_reset", "till_replaced", "forced_z_close",
               "support_z_produced", "z_forced_open_shifts", "z_forced_pending_cloud_refund", "shop_z_producer_forced",
-              "training_mode", "training_dropped")),
+              "training_mode", "training_dropped", "quicksupport_signer_mismatch")),
     Category("staff_actions", "עובדים ונוכחות",
              "שינוי נוכחות ידני, שחרור עובד מקופה אחרת, הדפסה חוזרת וסגירה עם מכירות מושהות.",
              ("attendance_manual", "user_session_release", "reprint", "close_keep_held_sales")),

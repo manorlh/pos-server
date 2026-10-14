@@ -838,6 +838,12 @@ def post_my_heartbeat(
     device_identity.apply_heartbeat(machine, body, request)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
+    # "תמיכה מרחוק": QuickSupport on the device, the first signer pin or a mismatch's alert
+    # (app/services/remote_support.py); absent leaves it as it was, and it never fails a beat.
+    if body is not None and body.remote_support is not None:
+        from app.services import remote_support
+
+        remote_support.apply_heartbeat(db, machine, body.remote_support)
     # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
     if body is not None and body.capabilities is not None:
         from app.services import device_logs

@@ -87,6 +87,8 @@ KIND_GROUP: Dict[str, str] = {
     "kiosk_terminal": "devices",
     "device_battery": "devices",
     "till_idle": "devices",
+    # "תמיכה מרחוק" (app/services/remote_support.py): QuickSupport signed by another certificate.
+    "quicksupport_signer_mismatch": "devices",
     # ── Z and shifts ──
     "z_missing": "z_shift",
     "shift_open_overdue": "z_shift",

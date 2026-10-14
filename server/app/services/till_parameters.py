@@ -1922,6 +1922,15 @@ from app.services.table_policies import PARAMETER_SPECS as _STAFF_TABLE_SPECS  #
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _STAFF_TABLE_SPECS)
 
+# "תמיכה מרחוק" (app/services/remote_support.py, P:/specs/quicksupport-autoinstall.md §2, §2א): the till
+# installs TeamViewer QuickSupport by itself — on by default after pairing (`remoteSupportAutoInstall`),
+# from `remoteSupportApkUrl` (the official download by default), only an allowed package
+# (`remoteSupportPackages`) signed by a pinned certificate (`remoteSupportSignerSha256`; empty: the
+# first install from the official host pins it). Read by the till; checked on write (`validate_keyed_value`).
+from app.services.remote_support import PARAMETER_SPECS as _REMOTE_SUPPORT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_SUPPORT_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1980,6 +1989,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_restore.VALIDATED_KEYS and value is not None:
         try:
             return table_restore.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "תמיכה מרחוק": https:// only, SHA-256 fingerprints, package names — stored canonical.
+    from app.services import remote_support
+
+    if key in remote_support.VALIDATED_KEYS and value is not None:
+        try:
+            return remote_support.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value
