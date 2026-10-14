@@ -30,7 +30,9 @@ tills and one till (a tablet) can be set apart. The values:
   warned of: no missing fields, no pinpad address, no terminal number, no card lock, no
   kiosk terminal alerts. Its sync carries the three card switches off whatever the layers say
   (`CARD_OFF`), so an older till that reads `none` as `auto` still shows no card; the stored
-  switches are untouched, and back on `auto` they apply again.
+  switches are untouched, and back on `auto` they apply again. A write that would move a till
+  with open card sales (not in a Z, not transmitted, not decided) to it is refused — 409
+  `payment_integration_open_card`, no force (§6, `check_no_card_switch`).
 
 `auto` is never stored: written, it removes the layer's own value (inherit again), so a
 shop left on "אוטומטי" never hides its company's choice. Resolving walks the layers from
@@ -612,6 +614,189 @@ def kiosk_warnings(db: Any, machines: Sequence[Any]) -> List[Dict[str, Any]]:
         "machineIds": [mid for mid, _ in found],
         "names": [name for _, name in found],
     }]
+
+
+# ── No "ללא אשראי" over open card sales (spec §6) ─────────────────────────────
+
+#: The 409 of a save that would move a till with open card sales to `none` (the owner,
+#: 14.10.2026: "אי אפשר להעביר קופה ללא אשראי שיש בה עסקאות אשראי"). No force: Z first.
+OPEN_CARD_CODE = "payment_integration_open_card"
+OPEN_CARD_TAIL_HE = "יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'"
+
+
+@dataclass
+class OpenCard:
+    """A till's card sales not yet done with: not in a Z, not transmitted, not decided."""
+
+    machine: Any
+    #: Card documents in shifts no Z has taken yet.
+    card_sales: int = 0
+    #: Card transactions not transmitted: the till's own transmission report, else the cloud's count.
+    untransmitted: int = 0
+    #: Card payments "לא הוכרע".
+    unresolved: int = 0
+
+    @property
+    def any(self) -> bool:
+        return bool(self.card_sales or self.untransmitted or self.unresolved)
+
+    def as_json(self) -> Dict[str, Any]:
+        number = (getattr(self.machine, "pos_number", None) or "").strip()
+        return {
+            "machineId": str(self.machine.id),
+            "name": getattr(self.machine, "name", None),
+            "posNumber": number or None,
+            "cardSales": self.card_sales,
+            "untransmitted": self.untransmitted,
+            "unresolved": self.unresolved,
+        }
+
+
+def _till_label_he(machine: Any) -> str:
+    number = (getattr(machine, "pos_number", None) or "").strip()
+    return f"קופה {number}" if number else (getattr(machine, "name", None) or "קופה")
+
+
+def open_card_line_he(open_card: OpenCard) -> str:
+    """"בקופה 3 יש 12 עסקאות אשראי שלא נסגרו ב-Z (2 לא שודרו, 1 לא מוכרעת)"."""
+    o = open_card
+    untransmitted = (f"{o.untransmitted} לא שודרה" if o.untransmitted == 1 else f"{o.untransmitted} לא שודרו") if o.untransmitted else None
+    unresolved = (f"{o.unresolved} לא מוכרעת" if o.unresolved == 1 else f"{o.unresolved} לא מוכרעות") if o.unresolved else None
+    where = f"ב{_till_label_he(o.machine)} יש"
+    if o.card_sales:
+        sales = "עסקת אשראי אחת שלא נסגרה ב-Z" if o.card_sales == 1 else f"{o.card_sales} עסקאות אשראי שלא נסגרו ב-Z"
+        extra = ", ".join(p for p in (untransmitted, unresolved) if p)
+        return f"{where} {sales}" + (f" ({extra})" if extra else "")
+    # Nothing left for a Z, and still a batch to transmit or a card to decide.
+    parts = []
+    if o.untransmitted:
+        parts.append("עסקת אשראי אחת שלא שודרה" if o.untransmitted == 1 else f"{o.untransmitted} עסקאות אשראי שלא שודרו")
+    if o.unresolved:
+        parts.append("תשלום אשראי אחד לא מוכרע" if o.unresolved == 1 else f"{o.unresolved} תשלומי אשראי לא מוכרעים")
+    return f"{where} " + ", ".join(parts)
+
+
+def open_card_message_he(open_cards: Sequence[OpenCard]) -> str:
+    """The lines of every till that holds the save back, then what to do."""
+    return "; ".join(open_card_line_he(o) for o in open_cards) + ". " + OPEN_CARD_TAIL_HE
+
+
+def open_card_counts(db: Any, machines: Sequence[Any]) -> Dict[Any, OpenCard]:
+    """
+    Per till of [machines] (by id), its open card sales — three queries for the whole list:
+
+    1. card documents (completed / refunded) in a shift no Z has taken yet;
+    2. card transactions not transmitted — the till's own count from its transmission report
+       when it sent one, else the cloud's untransmitted card legs (app/services/transmissions.py);
+    3. card payments "לא הוכרע" (`failed_payment_attempts.outcome` = unresolved).
+    """
+    from sqlalchemy import func
+
+    from app.models.failed_payment import OUTCOME_UNRESOLVED, FailedPaymentAttempt
+    from app.models.shift import Shift
+    from app.models.transaction import Transaction
+    from app.models.transaction_payment import TransactionPayment
+    from app.services import transmissions
+
+    out = {m.id: OpenCard(m) for m in machines}
+    ids = list(out)
+    if not ids:
+        return out
+    for machine_id, count in (
+        db.query(Transaction.machine_id, func.count(func.distinct(Transaction.id)))
+        .join(TransactionPayment, TransactionPayment.transaction_id == Transaction.id)
+        .join(Shift, Shift.id == Transaction.shift_id)
+        .filter(
+            Transaction.machine_id.in_(ids),
+            TransactionPayment.method == transmissions.CARD_METHOD,
+            Transaction.status.in_(transmissions.TRANSMITTABLE_STATUSES),
+            Shift.z_report_id.is_(None),
+        )
+        .group_by(Transaction.machine_id)
+        .all()
+    ):
+        out[machine_id].card_sales = int(count)
+    legs = transmissions.untransmitted_summary(db, ids)
+    for m in machines:
+        pending = transmissions.machine_transmission(m, legs.get(m.id), None).pending_count
+        out[m.id].untransmitted = int(pending or 0)
+    for machine_id, count in (
+        db.query(FailedPaymentAttempt.machine_id, func.count(FailedPaymentAttempt.id))
+        .filter(FailedPaymentAttempt.machine_id.in_(ids), FailedPaymentAttempt.outcome == OUTCOME_UNRESOLVED)
+        .group_by(FailedPaymentAttempt.machine_id)
+        .all()
+    ):
+        out[machine_id].unresolved = int(count)
+    return out
+
+
+def turning_no_card(db: Any, machines: Sequence[Any], level: str, entity_id: Any, after: Any) -> List[Any]:
+    """
+    Of [machines], the tills a write of [after] as the settings of the [level] layer [entity_id]
+    moves to "ללא אשראי": `none` after it, and not before (a till already on it is left alone —
+    a form saved again round-trips its value). Their parents are loaded once for the list.
+    """
+    from app.models.company import Company
+    from app.models.shop import Shop
+    from app.models.shop_area import ShopArea
+    from app.models.tenant import Tenant
+
+    def by_id(model, wanted) -> Dict[Any, Any]:
+        keys = {w for w in wanted if w is not None}
+        return {r.id: r for r in db.query(model).filter(model.id.in_(list(keys))).all()} if keys else {}
+
+    shops = by_id(Shop, (m.shop_id for m in machines))
+    companies = by_id(Company, (s.company_id for s in shops.values()))
+    tenants = by_id(Tenant, (c.tenant_id for c in companies.values()))
+    areas = by_id(ShopArea, (getattr(m, "area_id", None) for m in machines))
+    target = str(entity_id)
+    out: List[Any] = []
+    for m in machines:
+        shop = shops.get(m.shop_id)
+        company = companies.get(shop.company_id) if shop is not None else None
+        tenant = tenants.get(company.tenant_id) if company is not None else None
+        area = areas.get(getattr(m, "area_id", None)) if shop is not None else None
+        entities = [
+            (lvl, e)
+            for lvl, e in (("tenant", tenant), ("company", company), ("shop", shop), ("area", area), ("machine", m))
+            if e is not None
+        ]
+        before = [(lvl, getattr(e, "settings", None)) for lvl, e in entities]
+        changed = [
+            (lvl, after if lvl == level and str(e.id) == target else getattr(e, "settings", None)) for lvl, e in entities
+        ]
+        builtin = bool(getattr(m, "has_builtin_terminal", True))
+        synqpay = is_synqpay_device(m)
+        if no_card(resolve(changed, builtin, synqpay_device=synqpay)) and not no_card(
+            resolve(before, builtin, synqpay_device=synqpay)
+        ):
+            out.append(m)
+    return out
+
+
+def check_no_card_switch(db: Any, machines: Sequence[Any], level: str, entity_id: Any, after: Any) -> None:
+    """
+    Refuse a write that moves a till with open card sales to "ללא אשראי": 409
+    `payment_integration_open_card` with the Hebrew line per till (`msg`) and its counts
+    (`tills`). A till with none moves as usual; there is no force — a Z first.
+    """
+    moving = turning_no_card(db, machines, level, entity_id, after)
+    if not moving:
+        return
+    counts = open_card_counts(db, moving)
+    blocking = [counts[m.id] for m in moving if counts[m.id].any]
+    if not blocking:
+        return
+    from fastapi import HTTPException, status
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": OPEN_CARD_CODE,
+            "msg": open_card_message_he(blocking),
+            "tills": [o.as_json() for o in blocking],
+        },
+    )
 
 
 def machine_fields(res: Optional[Resolution]) -> Dict[str, Any]:

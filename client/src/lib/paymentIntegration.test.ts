@@ -21,6 +21,7 @@ import {
   INTEGRATION_SHORT_LABELS,
   integrationOptions,
   isExternal,
+  isOpenCardError,
   isSecretMask,
   isValidPinpadHost,
   isValidPort,
@@ -28,6 +29,9 @@ import {
   missingFieldsLabel,
   missingRequiredFields,
   normalizeMachineIntegration,
+  openCardLine,
+  openCardMessage,
+  openCardTills,
   paymentIntegrationErrorMessage,
   PAYMENT_INTEGRATIONS,
   PI_TEXT,
@@ -803,6 +807,34 @@ describe('no card (none)', () => {
     // An older server answers without `warnings`.
     assert.deepEqual(saveWarningMessages({ settings: {} }), []);
     assert.deepEqual(saveWarningMessages(undefined), []);
+  });
+
+  it('words the 409 over open card sales (§6) from its tills, as the server does', () => {
+    const err = (detail: unknown) => ({ response: { status: 409, data: { detail } } });
+    const tills = [
+      { machineId: 'm3', name: 'Till 3', posNumber: '3', cardSales: 12, untransmitted: 2, unresolved: 1 },
+      { machineId: 'm5', name: 'טאבלט', posNumber: null, cardSales: 0, untransmitted: 1, unresolved: 0 },
+      { machineId: 'm7', name: 'קופה 7', posNumber: '7', cardSales: 0, untransmitted: 0, unresolved: 0 },
+    ];
+    const e = err({ code: 'payment_integration_open_card', msg: 'server words', tills });
+    assert.equal(isOpenCardError(e), true);
+    assert.equal(
+      paymentIntegrationErrorMessage(e),
+      "בקופה 3 יש 12 עסקאות אשראי שלא נסגרו ב-Z (2 לא שודרו, 1 לא מוכרעת); בטאבלט יש עסקת אשראי אחת שלא שודרה. יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'",
+    );
+    // A till with nothing open is no row; no rows: the server's words, else what to do.
+    assert.deepEqual(openCardTills(tills).map((t) => t.machineId), ['m3', 'm5']);
+    assert.equal(paymentIntegrationErrorMessage(err({ code: 'payment_integration_open_card', msg: 'server words', tills: [] })), 'server words');
+    assert.equal(paymentIntegrationErrorMessage(err({ code: 'payment_integration_open_card' })), PI_TEXT.openCardTail);
+    assert.equal(isOpenCardError(err({ code: 'usb_terminal_second' })), false);
+    // Singular and plural, as the spec's example.
+    const one = { machineId: 'x', name: null, posNumber: '1', cardSales: 1, untransmitted: 1, unresolved: 2 };
+    assert.equal(openCardLine(one), 'בקופה 1 יש עסקת אשראי אחת שלא נסגרה ב-Z (1 לא שודרה, 2 לא מוכרעות)');
+    assert.equal(
+      openCardLine({ ...one, cardSales: 0, untransmitted: 3, unresolved: 1 }),
+      'בקופה 1 יש 3 עסקאות אשראי שלא שודרו, תשלום אשראי אחד לא מוכרע',
+    );
+    assert.equal(openCardMessage([{ ...one, untransmitted: 0, unresolved: 0 }]), `בקופה 1 יש עסקת אשראי אחת שלא נסגרה ב-Z. ${PI_TEXT.openCardTail}`);
   });
 
   it('says on the payment methods page that card is off on such tills, and lets a tablet pick it', () => {

@@ -32,6 +32,7 @@ import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-set
 import { usePaymentIntegrationValidation } from '@/components/payment-integration-section';
 import {
   PI_TEXT,
+  isOpenCardError,
   paymentIntegrationErrorMessage,
   saveWarningMessages,
   withSendableSecrets,
@@ -70,6 +71,8 @@ export function EntityPosSettingsDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
+  // "ללא אשראי" refused over open card sales (409): the tills, kept in the dialog until the next edit.
+  const [openCardError, setOpenCardError] = useState<string | null>(null);
   // Only the super admin may change the Z mode (the server's Z_SCOPE_WRITE_ROLES);
   // everyone else sees it read-only. The shop's and its points of sale's are on the
   // shop page (ZScopeCard).
@@ -83,6 +86,7 @@ export function EntityPosSettingsDialog({
     setInherited(undefined);
     setInheritedSources(null);
     setPaymentOptionsRejected(false);
+    setOpenCardError(null);
     setLoading(true);
     const load = async () => {
       try {
@@ -140,6 +144,7 @@ export function EntityPosSettingsDialog({
   const handleChange = (next: PosSettingsFormState) => {
     setValue(next);
     setPaymentOptionsRejected(false);
+    setOpenCardError(null);
   };
 
   const handleSave = async () => {
@@ -183,6 +188,10 @@ export function EntityPosSettingsDialog({
       if (isNoPaymentOptionAllowedError(err)) {
         setPaymentOptionsRejected(true);
         toast.error(tps('payNoneAllowed'));
+      } else if (paymentMsg && isOpenCardError(err)) {
+        // 409 `payment_integration_open_card`: which tills, and "שידור ו-Z" first — no way around it.
+        setOpenCardError(paymentMsg);
+        toast.error(paymentMsg, { duration: 15_000 });
       } else if (paymentMsg) {
         // 422 `agamento_needs_builtin_terminal` / `secret_invalid`: the server's words.
         toast.error(paymentMsg);
@@ -243,6 +252,11 @@ export function EntityPosSettingsDialog({
         {!payment.valid && !loading ? (
           <p role="alert" className="text-sm text-destructive">
             {PI_TEXT.formInvalid}
+          </p>
+        ) : null}
+        {openCardError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {openCardError}
           </p>
         ) : null}
         <DialogFooter>
