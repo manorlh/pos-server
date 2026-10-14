@@ -49,6 +49,7 @@ export type SectionId =
   | 'printers'
   | 'till_settings'
   | 'pos_users'
+  | 'user_sessions_release'
   | 'attendance'
   | 'users'
   | 'branding'
@@ -144,6 +145,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'printers', pages: ['/dashboard/kitchen-printers'] },
   { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings', '/dashboard/customer-display'] },
   { id: 'pos_users', pages: ['/dashboard/pos-users', '/dashboard/till-roles'] },
+  // "שחרור עובד מחובר במכשיר" (exclusive login v2 §2): "מחוברים כעת במכשירים" on the employees page and the
+  // cockpit (the phone) — view sees it, edit releases. No page of its own (lib/userSessions.ts).
+  { id: 'user_sessions_release', pages: [] },
   { id: 'attendance', pages: ['/dashboard/attendance'] },
   { id: 'users', pages: ['/dashboard/users'] },
   { id: 'branding', pages: ['/dashboard/branding'] },

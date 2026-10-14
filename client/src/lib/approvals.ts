@@ -45,6 +45,8 @@ export interface ApprovalCard {
   reasonText: string | null;
   note: string | null;
   tableLabel: string | null;
+  /** A line the cloud wrote for the approver ("שחרור עובד מחובר": who is signed in where, since when). */
+  summary: string | null;
   createdAt: string;
   expiresAt: string | null;
   decidedAt: string | null;
@@ -134,6 +136,7 @@ export function normalizeCard(raw: unknown): ApprovalCard {
     reasonText: str(r.reasonText),
     note: str(r.note),
     tableLabel: str(r.tableLabel),
+    summary: str(r.summary),
     createdAt: String(r.createdAt ?? ''),
     expiresAt: str(r.expiresAt),
     decidedAt: str(r.decidedAt),

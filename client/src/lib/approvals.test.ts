@@ -97,6 +97,7 @@ const CARD = {
   reasonText: 'מנה לא טעימה',
   note: 'לקוח קבוע',
   tableLabel: '12',
+  summary: 'דנה מנסה להתחבר בקופה 2',
   createdAt: '2026-10-13T10:00:00Z',
   expiresAt: '2026-10-13T10:03:00Z',
   decidedAt: null,
@@ -116,6 +117,9 @@ describe('a request off the wire', () => {
     assert.equal(c.percent, 30);
     assert.deepEqual(c.sentTo, [{ userId: 'u1', name: 'רון' }, { userId: 'u2', name: 'דנה' }]);
     assert.equal(c.canDecide, true);
+    // "שחרור עובד מחובר": the cloud's line for the approver; none on other types.
+    assert.equal(c.summary, 'דנה מנסה להתחבר בקופה 2');
+    assert.equal(normalizeCard({ ...CARD, summary: undefined }).summary, null);
     assert.equal(normalizeCard({ ...CARD, status: 'weird' }).status, 'expired');
     assert.equal(normalizeCard(null).id, '');
   });
