@@ -381,7 +381,8 @@ def _tables(w, scope_type, scope_id, mode):
 def test_quick_order_is_the_tables_only_device(w):
     (item,) = [i for i in TM.ITEMS if i.key == "quick_order"]
     assert item.label == "הזמנה מהירה (בסרגל, לא בתפריט)"
-    assert TM.KNOWN_KEYS[-3:-1] == ("training", "quick_order")
+    assert TM.KNOWN_KEYS[-4:-2] == ("training", "quick_order")
+    assert TM.KNOWN_KEYS[-2:] == ("signed_in_users", "shop_x")
     assert item.warning is None and "quick_order" not in TM.CRITICAL_KEYS
     assert "מסך השולחנות" in item.also
     _set(w, "machine", w.bar_till.id, "quick_order,training")
