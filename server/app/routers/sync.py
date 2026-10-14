@@ -2330,6 +2330,37 @@ def get_pos_users_sync(
     )
 
 
+class PosUserHintsIn(BaseModel):
+    """`POST /sync/{m}/pos-users/{id}/hints` (P:/specs/fire-restaurant-flow.md §8.5): merged, never replaced."""
+
+    dismiss: List[str] = Field(default_factory=list, max_length=50)
+    restore: List[str] = Field(default_factory=list, max_length=50)
+
+
+@router.post("/{machine_id}/pos-users/{pos_user_id}/hints")
+def post_pos_user_hints(
+    machine_id: str,
+    pos_user_id: str,
+    body: PosUserHintsIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "אל תציג שוב" of one employee of the till's shop (the "how it works" hints, fire-restaurant-flow.md §5):
+    `dismiss` adds hint keys, `restore` takes them off ("הצג שוב את ההסבר"). Idempotent. The roster
+    (`GET /sync/{m}/pos-users`) carries the list as `hintsDismissed`; the row's `updatedAt` moves, so the
+    other tills' delta pull gets it.
+    """
+    from app.services import pos_user_hints
+
+    try:
+        out = pos_user_hints.apply(db, machine, pos_user_id, body.dismiss, body.restore)
+    except pos_user_hints.HintsError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.code) from exc
+    db.commit()
+    return out
+
+
 # ── Settings (server → POS) ───────────────────────────────────────────────────
 
 @dataclass

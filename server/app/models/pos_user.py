@@ -67,6 +67,9 @@ class PosUser(Base):
     )
     #: Per-user exceptions to the role: `{"states": {code: state}, "limits": {code: {...}}}`.
     permission_overrides = Column(JSONB, nullable=True)
+    #: The "how it works" hints the employee chose not to see again ("אל תציג שוב",
+    #: P:/specs/fire-restaurant-flow.md §5, §8.5): a list of hint keys; null — none.
+    hints_dismissed = Column(JSONB, nullable=True)
 
     #: Wrong PINs typed at an *elevation* prompt, and the lockout they earn.
     #:

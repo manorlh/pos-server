@@ -169,6 +169,9 @@ export interface KdsTask {
   preparedQty: number;
   activeQty: number;
   release: 'hold' | 'released' | string;
+  /** A held line that waits for its own time (P:/specs/fire-restaurant-flow.md §8.4): "מתוזמן 20:30". */
+  scheduledAt?: string | null;
+  scheduledNote?: string | null;
   state: 'queued' | 'preparing' | 'ready' | string;
   version: number;
   releasedAt: string | null;

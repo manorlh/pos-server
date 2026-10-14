@@ -351,6 +351,87 @@ function SendSilentlySelect({
   );
 }
 
+/** "itemScheduleRules" as edited: both null — inherited; 0 minutes and no course — none here. */
+export interface ScheduleRule {
+  minutes: number | null;
+  courseId: string | null;
+}
+
+type ScheduleMode = 'inherit' | 'none' | 'rule';
+
+function scheduleModeOf(rule: ScheduleRule): ScheduleMode {
+  if (rule.minutes === null && rule.courseId === null) return 'inherit';
+  if (!rule.minutes && rule.courseId === null) return 'none';
+  return 'rule';
+}
+
+/**
+ * "שיגור מתוזמן" by the catalog (P:/specs/item-scheduled-send.md §1ב, fire-restaurant-flow.md §8.2): the item's
+ * table lines go X minutes after the send, or when course Y is ready, or X minutes after Y is ready. Inherited
+ * (product → its category → the parent) unless set here; "none" stops the inheritance.
+ */
+function ScheduleRuleEditor({
+  value,
+  onChange,
+  inheritLabel,
+  disabled,
+}: {
+  value: ScheduleRule;
+  onChange: (v: ScheduleRule) => void;
+  inheritLabel: string;
+  disabled?: boolean;
+}) {
+  const t = useTranslations('menu.section');
+  const mode = scheduleModeOf(value);
+  return (
+    <div className="space-y-2">
+      <select
+        value={mode}
+        disabled={disabled}
+        aria-label={t('schedule')}
+        onChange={(e) => {
+          const next = e.target.value as ScheduleMode;
+          if (next === 'inherit') onChange({ minutes: null, courseId: null });
+          else if (next === 'none') onChange({ minutes: 0, courseId: null });
+          else onChange({ minutes: value.minutes || 10, courseId: value.courseId });
+        }}
+        className="h-9 w-full rounded-xl border bg-background px-2 text-[14px]"
+      >
+        <option value="inherit">{inheritLabel}</option>
+        <option value="none">{t('scheduleNone')}</option>
+        <option value="rule">{t('scheduleRule')}</option>
+      </select>
+      {mode === 'rule' ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px]">
+          <label className="flex items-center gap-1">
+            {t('scheduleMinutes')}
+            <Input
+              value={value.minutes === null ? '' : String(value.minutes)}
+              disabled={disabled}
+              inputMode="numeric"
+              aria-label={t('scheduleMinutes')}
+              className="h-8 w-20"
+              onChange={(e) => {
+                const n = Number.parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
+                onChange({ ...value, minutes: Number.isFinite(n) ? Math.min(600, Math.max(0, n)) : 0 });
+              }}
+            />
+          </label>
+          <label className="flex min-w-[12rem] flex-1 items-center gap-1">
+            {t('scheduleAfter')}
+            <CourseSelect
+              value={value.courseId}
+              onChange={(v) => onChange({ ...value, courseId: v })}
+              inheritLabel={t('scheduleAfterSend')}
+              disabled={disabled}
+            />
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 interface SlotDraft {
   id?: string;
   name: string;
@@ -602,6 +683,8 @@ interface ProductDraft {
   courseId: string | null | undefined;
   /** "יוצא בלי בון": undefined = untouched, null = by the category. */
   sendSilently: boolean | null | undefined;
+  /** "שיגור מתוזמן": undefined = untouched. */
+  schedule: ScheduleRule | undefined;
   links: LinksDraft | null;
   notes: NoteDraft[] | null | undefined;
   meal: SlotDraft[] | null;
@@ -612,6 +695,7 @@ const NO_EDIT: ProductDraft = {
   allergens: null,
   courseId: undefined,
   sendSilently: undefined,
+  schedule: undefined,
   links: null,
   notes: undefined,
   meal: null,
@@ -636,6 +720,10 @@ export function ProductMenuSection({ productId }: { productId: string }) {
   const allergens = draft.allergens ?? data?.allergens ?? [];
   const courseId = draft.courseId !== undefined ? draft.courseId : (data?.courseId ?? null);
   const sendSilently = draft.sendSilently !== undefined ? draft.sendSilently : (data?.sendSilently ?? null);
+  const schedule: ScheduleRule = draft.schedule ?? {
+    minutes: data?.scheduleAfterMinutes ?? null,
+    courseId: data?.scheduleAfterCourseReady ?? null,
+  };
   const links: LinksDraft = draft.links ?? { mode: data?.links.mode ?? 'inherit', groupIds: data?.links.groupIds ?? [] };
   const ownNotes =
     draft.notes !== undefined
@@ -667,6 +755,11 @@ export function ProductMenuSection({ productId }: { productId: string }) {
       if (draft.sendSilently !== undefined) {
         body.setSendSilently = true;
         body.sendSilently = draft.sendSilently;
+      }
+      if (draft.schedule !== undefined) {
+        body.setSchedule = true;
+        body.scheduleAfterMinutes = draft.schedule.minutes;
+        body.scheduleAfterCourseReady = draft.schedule.courseId;
       }
       if (draft.links) body.links = draft.links;
       if (draft.notes !== undefined) body.notes = { mode: draft.notes ? 'own' : 'inherit', notes: draft.notes ?? [] };
@@ -735,6 +828,14 @@ export function ProductMenuSection({ productId }: { productId: string }) {
           disabled={disabled}
         />
       </Block>
+      <Block title={t('schedule')} hint={t('scheduleHint')}>
+        <ScheduleRuleEditor
+          value={schedule}
+          onChange={(v) => patch({ schedule: v })}
+          inheritLabel={t('scheduleInherit')}
+          disabled={disabled}
+        />
+      </Block>
       <Block title={t('limits')} hint={t('limitsHint')}>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
           <label className="flex items-center gap-1">
@@ -795,11 +896,18 @@ interface CategoryDraft {
   courseId: string | null | undefined;
   /** "יוצא בלי בון": undefined = untouched, null = by the parent category (top level: off). */
   sendSilently: boolean | null | undefined;
+  schedule: ScheduleRule | undefined;
   links: LinksDraft | null;
   notes: NoteDraft[] | null | undefined;
 }
 
-const NO_CATEGORY_EDIT: CategoryDraft = { courseId: undefined, sendSilently: undefined, links: null, notes: undefined };
+const NO_CATEGORY_EDIT: CategoryDraft = {
+  courseId: undefined,
+  sendSilently: undefined,
+  schedule: undefined,
+  links: null,
+  notes: undefined,
+};
 
 export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
   const t = useTranslations('menu.section');
@@ -818,6 +926,10 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
 
   const courseId = draft.courseId !== undefined ? draft.courseId : (data?.courseId ?? null);
   const sendSilently = draft.sendSilently !== undefined ? draft.sendSilently : (data?.sendSilently ?? null);
+  const schedule: ScheduleRule = draft.schedule ?? {
+    minutes: data?.scheduleAfterMinutes ?? null,
+    courseId: data?.scheduleAfterCourseReady ?? null,
+  };
   const links: LinksDraft = draft.links ?? { mode: data?.links.mode ?? 'inherit', groupIds: data?.links.groupIds ?? [] };
   const ownNotes =
     draft.notes !== undefined
@@ -836,6 +948,11 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
       if (draft.sendSilently !== undefined) {
         body.setSendSilently = true;
         body.sendSilently = draft.sendSilently;
+      }
+      if (draft.schedule !== undefined) {
+        body.setSchedule = true;
+        body.scheduleAfterMinutes = draft.schedule.minutes;
+        body.scheduleAfterCourseReady = draft.schedule.courseId;
       }
       if (draft.links) body.links = draft.links;
       if (draft.notes !== undefined) body.notes = { mode: draft.notes ? 'own' : 'inherit', notes: draft.notes ?? [] };
@@ -886,6 +1003,14 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
           onChange={(v) => patch({ sendSilently: v })}
           inheritLabel={t('sendSilentlyInheritParent')}
           yesLabel={t('sendSilentlyYesShort')}
+          disabled={disabled}
+        />
+      </Block>
+      <Block title={t('schedule')} hint={t('scheduleHint')}>
+        <ScheduleRuleEditor
+          value={schedule}
+          onChange={(v) => patch({ schedule: v })}
+          inheritLabel={t('scheduleInheritParent')}
           disabled={disabled}
         />
       </Block>

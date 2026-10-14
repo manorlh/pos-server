@@ -129,6 +129,12 @@ export const FIELD_KEYS = ['customerName', 'serviceType', 'guests'] as const;
 export type FieldKey = (typeof FIELD_KEYS)[number];
 export const SUMMARY_STATES = ['auto', 'open', 'closed'] as const;
 export type SummaryState = (typeof SUMMARY_STATES)[number];
+/**
+ * "איך זה עובד" of the courses (P:/specs/fire-restaurant-flow.md §5, §8.1): `hints.fireHints`, the till parameter
+ * `fireHints`'s codes; absent (the defaults have no `hints`, like `look`) — the parameter's.
+ */
+export const FIRE_HINTS = ['on', 'first_time', 'off'] as const;
+export type FireHints = (typeof FIRE_HINTS)[number];
 export const MAP_STYLES = ['auto', 'classic', 'modern'] as const;
 export type MapStyle = (typeof MAP_STYLES)[number];
 export const SHOW_HIDE = ['auto', 'show', 'hide'] as const;
@@ -288,6 +294,8 @@ export interface TillDesignConfig {
   motion?: MotionEngineSettings;
   /** "מראה" — "שם פריט מלא ותג i": the design's own four (absent / "base": the till parameters'). */
   look?: ProductTextDesign;
+  /** "הסבר לעובד" (fire-restaurant-flow.md §5): absent — the till parameter `fireHints`. */
+  hints?: { fireHints?: FireHints };
 }
 
 /** A partial layer as stored / sent (`{overrides}`). */
@@ -1129,6 +1137,9 @@ const LOOK_NODE = new PartialObjNode({
 });
 SCHEMA.fields.look = LOOK_NODE;
 SCHEMA.fill.look = {};
+/** "הסבר לעובד" (the server's `hints`): optional, like `look`. */
+SCHEMA.fields.hints = new PartialObjNode({ fireHints: new EnumNode(FIRE_HINTS) });
+SCHEMA.fill.hints = {};
 
 /* --------------------------------------------------------------- validation */
 

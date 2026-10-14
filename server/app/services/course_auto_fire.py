@@ -294,19 +294,33 @@ def _strings(value: Any) -> List[str]:
     return [str(v) for v in value if v is not None and str(v) != ""]
 
 
-def sent_quantities(extras: Dict[str, Any], *, paper_only: bool = False) -> Dict[str, float]:
+def sent_quantities(extras: Dict[str, Any], *, paper_only: bool = False, firing_only: bool = False) -> Dict[str, float]:
     """
     What the kitchen has of each line (`sent`), for the lines it has any of. `paper_only`: not the
-    lines marked "נשלח (בלי בון)" (`"s": true`, §2) — the kitchen never had those on paper.
+    lines marked "נשלח (בלי בון)" (`"s": true`, §2) — the kitchen never had those on paper. `firing_only`:
+    nor the lines that went by their own schedule (`"sch": true`, P:/specs/fire-restaurant-flow.md §8.3) —
+    they never make their course "fired".
     """
     sent = extras.get("sent")
     if not isinstance(sent, dict):
         return {}
     out = {}
     for line_id, s in sent.items():
-        if isinstance(s, dict) and _float(s.get("q")) > EPS and not (paper_only and s.get("s") is True):
-            out[str(line_id)] = _float(s.get("q"))
+        if not isinstance(s, dict) or _float(s.get("q")) <= EPS:
+            continue
+        if (paper_only or firing_only) and s.get("s") is True:
+            continue
+        if firing_only and s.get("sch") is True:
+            continue
+        out[str(line_id)] = _float(s.get("q"))
     return out
+
+
+def scheduled_ids(extras: Dict[str, Any]) -> frozenset:
+    """The lines that wait for their own time (`schedule`, §8.3): sent by nothing but their schedule."""
+    from app.services import fire_flow
+
+    return fire_flow.pending_ids(extras, parse_time)
 
 
 def fired_courses(lines: Sequence[Line], extras: Dict[str, Any]) -> Set[str]:
@@ -318,7 +332,7 @@ def fired_courses(lines: Sequence[Line], extras: Dict[str, Any]) -> Set[str]:
     live = [line for line in lines if line.live]
     courses = [line.course for line in live if line.course is not None]
     first = min(courses, key=lambda c: c.order).id if courses else None
-    sent = sent_quantities(extras, paper_only=True)
+    sent = sent_quantities(extras, firing_only=True)
     out = set(_strings(extras.get("fired")))
     if first is not None and first not in hold:
         out.add(first)
@@ -337,12 +351,13 @@ def held_courses(lines: Sequence[Line], extras: Dict[str, Any]) -> List[Course]:
     each with something left to send (a course of lines all marked sent has nothing to fire).
     """
     fired = fired_courses(lines, extras)
+    scheduled = scheduled_ids(extras)
     seen: Dict[str, Course] = {}
     waiting: Set[str] = set()
     for line in lines:
         course = line.course
-        if not line.live or course is None:
-            continue
+        if not line.live or course is None or line.id in scheduled:
+            continue  # a scheduled line waits for its own time, not for its course (§8.3)
         seen.setdefault(course.id, course)
         if not all_sent(line, extras):
             waiting.add(course.id)
@@ -442,6 +457,8 @@ class Plan:
     minutes: int
     #: None: not yet known (the KDS has not made the course before ready).
     due_at: Optional[datetime]
+    #: Decided by the table's own "מתי עיקריות?" (`fireWhen`, P:/specs/fire-restaurant-flow.md §8.3).
+    by_table: bool = False
 
     def due(self, now: datetime) -> bool:
         return self.due_at is not None and self.due_at <= now
@@ -796,7 +813,10 @@ def write_fire(
     printed: List[Tuple[Line, float, Optional[str]]] = []
     quiet: List[str] = []
     added: Dict[str, Any] = {}
+    scheduled = scheduled_ids(root)
     for line in course_lines(lines, course.id):
+        if line.id in scheduled:
+            continue  # it goes at its own time (P:/specs/fire-restaurant-flow.md §8.3)
         before_row = sent.get(line.id) if isinstance(sent.get(line.id), dict) else None
         before = _float((before_row or {}).get("q"))
         delta = line.quantity - before
@@ -852,9 +872,11 @@ def held_after(lines: Sequence[Line], extras: Dict[str, Any]) -> List[Line]:
     release's complete `held` set.
     """
     fired = fired_courses(lines, extras)
+    scheduled = scheduled_ids(extras)
     return [
         line for line in lines
         if line.live and line.course is not None and line.course.id not in fired and not all_sent(line, extras)
+        and line.id not in scheduled
     ]
 
 
@@ -1033,11 +1055,28 @@ def evaluate(db: Session, order: Any, table: Any, now: datetime, cache: Optional
     if routing is None:
         return None
     mode, override = params_of(db, routing, cache)
-    if mode == OFF:
+    # "מתי עיקריות?" (P:/specs/fire-restaurant-flow.md §2, §8.3): the table's own choice for this course wins
+    # over the shop's `autoFire` — "ידנית" never goes by itself, "בעוד X דק׳" goes X minutes after it was
+    # chosen, "כשהראשונות מוכנות" as `after_ready`. "השהה" won already (`next_pending`).
+    from app.services import fire_flow
+
+    choice = fire_flow.choice_of(extras, pending.course.id, parse_time)
+    if choice is not None:
+        if choice.mode == fire_flow.CHOICE_MANUAL:
+            return None
+        if choice.mode == fire_flow.CHOICE_MINUTES:
+            if choice.set_at is None:
+                return None
+            due = choice.set_at + timedelta(minutes=choice.minutes or 0)
+            return Evaluation(Plan(pending, AFTER_MINUTES, choice.minutes or 0, due, by_table=True), routing, "table")
+        mode = AFTER_READY
+    elif mode == OFF:
         return None
     minutes = course_minutes(db, order.tenant_id, pending.course.id, override)
     went_out = went_out_at(lines, extras, pending.previous.id, _as_utc(order.sent_at))
     plan = plan_of(pending, mode=mode, minutes=minutes, went_out=went_out, now=now, kds=kds_state_of(db, order))
+    if plan is not None and choice is not None:
+        plan = replace(plan, by_table=True)
     return Evaluation(plan, routing, mode) if plan is not None else None
 
 
@@ -1174,6 +1213,37 @@ def _own_note(line: Line) -> Optional[str]:
     return text if text and not text.startswith(VOUCHER_LINE_NOTE_PREFIX) else None
 
 
+def scheduled_held(db: Session, routing: Any, lines: Sequence[Line], extras: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    The scheduled lines as the KDS's held items (P:/specs/fire-restaurant-flow.md §8.4) — with `scheduledAt` /
+    `scheduledNote`, drawn greyed; none when the till's `kdsShowScheduled` is off.
+    """
+    from app.services import fire_flow
+    from app.services import tables as T
+
+    entries = fire_flow.scheduled_lines(extras, parse_time)
+    if not entries or not fire_flow.kds_shows_scheduled(T.machine_params(db, routing)):
+        return []
+    seat_names = seat_names_of(extras)
+    sent = sent_quantities(extras)
+    courses = {line.course.id: line.course.name for line in lines if line.course is not None}
+    names = {line.id: line.name for line in lines}
+    out: List[Dict[str, Any]] = []
+    for line in lines:
+        e = entries.get(line.id)
+        left = line.quantity - sent.get(line.id, 0.0)
+        if e is None or not line.live or left <= EPS:
+            continue
+        note = fire_flow.kds_note(e, courses, names)
+        for item in kds_items(line, left, _own_note(line), seat_names):
+            if e.at is not None:
+                item["scheduledAt"] = till_time(e.at)
+            if note:
+                item["scheduledNote"] = note
+            out.append(item)
+    return out
+
+
 def release_to_kds(
     db: Session, order: Any, table: Any, routing: Any, write: FireWrite, lines: Sequence[Line], now: datetime,
     *, actor_name: str = ACTOR_NAME,
@@ -1195,7 +1265,7 @@ def release_to_kds(
     held = [
         i for line in held_after(lines, write.extras)
         for i in kds_items(line, line.quantity, _own_note(line), seat_names)
-    ]
+    ] + scheduled_held(db, routing, lines, write.extras)
     kitchen = (
         db.query(KitchenOrder)
         .filter(
@@ -1264,6 +1334,7 @@ def record_till_event(db: Session, machine: Any, order: Any, plan: Plan, now: da
                     "trigger": plan.trigger,
                     "minutes": plan.minutes,
                     "lines": lines,
+                    **({"byTable": True} if plan.by_table else {}),
                 },
                 received_at=now,
             ))
@@ -1364,7 +1435,7 @@ def apply_fire(db: Session, order: Any, table: Any, found: Evaluation, now: date
         db, "send", table, order, now=now,
         details={
             "autoFire": True, "courseId": course.id, "courseName": course.name, "trigger": plan.trigger,
-            "minutes": plan.minutes, "fireId": out["fireId"],
+            "minutes": plan.minutes, "fireId": out["fireId"], **({"byTable": True} if plan.by_table else {}),
         },
     )
     record_till_event(db, routing, order, plan, now, len(out["printedLines"]) + len(out["silentLines"]))
@@ -1438,8 +1509,276 @@ def fire_if_due(
     return out
 
 
+# ── Scheduled lines ("שיגור מתוזמן של פריט", P:/specs/fire-restaurant-flow.md §8.3) ──
+
+#: The ticket's band and source of a scheduled send: "מתוזמן · שולחן 12".
+SCHEDULED_WORD = "מתוזמן"
+SCHEDULED_ACTOR = "שיגור מתוזמן"
+
+
+@dataclass(frozen=True)
+class ScheduledDue:
+    """One `scheduleId` whose lines are due: one round, under `sched|<order>|<scheduleId>`."""
+
+    schedule_id: str
+    line_ids: Tuple[str, ...]
+    seed: str
+    due_at: datetime
+
+
+def _latest_a(extras: Dict[str, Any], line_ids: Sequence[str], fallback: Optional[datetime]) -> Optional[datetime]:
+    sent = extras.get("sent") if isinstance(extras.get("sent"), dict) else {}
+    times = [
+        parse_time(sent[i].get("a")) for i in line_ids
+        if isinstance(sent.get(i), dict) and _float(sent[i].get("q")) > EPS
+    ]
+    times = [t for t in times if t is not None]
+    return max(times) if times else fallback
+
+
+def scheduled_due(
+    order_id: Any,
+    lines: Sequence[Line],
+    extras: Dict[str, Any],
+    now: datetime,
+    *,
+    sent_at: Optional[datetime] = None,
+    kds: Callable[[Sequence[str]], KdsState] = lambda ids: None,
+) -> List[ScheduledDue]:
+    """
+    The order's scheduled lines that are due now, by `scheduleId` (the first entry of a group decides its
+    time). A line that waits for "ready" waits for its target to go out first; a line gone from the cart
+    never goes.
+    """
+    from app.services import fire_flow
+
+    entries = fire_flow.scheduled_lines(extras, parse_time)
+    live = {line.id: line for line in lines if line.live}
+    sent = sent_quantities(extras)
+    paper = sent_quantities(extras, paper_only=True)
+    out: List[ScheduledDue] = []
+    for group in fire_flow.groups(entries.values()):
+        group = [e for e in group if e.line_id in live and live[e.line_id].quantity - sent.get(e.line_id, 0.0) > EPS]
+        if not group:
+            continue
+        first = group[0]
+        went: Optional[datetime] = None
+        state: KdsState = None
+        if first.after is not None:
+            kind, ident = first.after
+            targets = [line.id for line in course_lines(lines, ident)] if kind == "course" else (
+                [ident] if ident in live else []
+            )
+            targets = [i for i in targets if i not in entries]
+            gone = [i for i in targets if i in sent]
+            if not gone:
+                continue  # the target has not gone out yet
+            on_paper = [i for i in gone if i in paper]
+            state = kds(on_paper) if on_paper else None
+            went = _latest_a(extras, gone, sent_at)
+        at = fire_flow.due_at(first, went_out=went, kds=state, now=now)
+        if at is not None and at <= now:
+            out.append(ScheduledDue(
+                first.schedule_id, tuple(e.line_id for e in group), fire_flow.schedule_seed(order_id, first.schedule_id), at,
+            ))
+    return out
+
+
+def write_scheduled(
+    order_id: Any,
+    lines: Sequence[Line],
+    extras: Dict[str, Any],
+    due: ScheduledDue,
+    now: datetime,
+    *,
+    silent: Callable[[Line], bool] = lambda line: False,
+) -> FireWrite:
+    """
+    The scheduled lines sent (§8.3): each written sent with the time and `"sch": true` (it never makes its
+    course "fired"; an item that goes without a bon — `"s": true`, nothing printed), dropped from `schedule`,
+    and one round in the log (`auto`, `sched`). Nothing else of the order moves.
+    """
+    from app.services import fire_flow
+
+    root = json.loads(json.dumps(extras))
+    at = till_time(now)
+    seat_names = seat_names_of(root)
+    sent = root.get("sent") if isinstance(root.get("sent"), dict) else {}
+    root["sent"] = sent
+    if not isinstance(root.get("notes"), dict):
+        root["notes"] = {}
+    wanted = set(due.line_ids)
+    printed: List[Tuple[Line, float, Optional[str]]] = []
+    quiet: List[str] = []
+    added: Dict[str, Any] = {}
+    for line in lines:
+        if line.id not in wanted or not line.live:
+            continue
+        before_row = sent.get(line.id) if isinstance(sent.get(line.id), dict) else None
+        delta = line.quantity - _float((before_row or {}).get("q"))
+        if delta <= EPS:
+            continue
+        note = line_notes(line, root)
+        entry: Dict[str, Any] = {
+            "q": _number(line.quantity), "n": line.name, "p": line.product_id, "c": line.category_id, "t": note,
+            "a": at, "sch": True,
+        }
+        k = snapshot(line, seat_names)
+        if k is not None:
+            entry["k"] = k
+        if silent(line):
+            entry["s"] = True
+            sent[line.id] = entry
+            quiet.append(line.id)
+            continue
+        sent[line.id] = entry
+        printed.append((line, delta, note))
+        added[line.id] = _number(delta)
+    fire_flow.without(root, list(due.line_ids))
+    if added:
+        log = [r for r in root.get("log") or [] if isinstance(r, dict) and r.get("i") != due.seed]
+        log.append({"i": due.seed, "a": at, "l": added, "auto": True, "sched": due.schedule_id})
+        root["log"] = log[-ROUNDS_KEPT:]
+    return FireWrite(seed=due.seed, extras=root, printed=printed, silent=quiet)
+
+
+def fire_scheduled(
+    db: Session, order: Any, table: Any, routing: Any, due: ScheduledDue, now: datetime,
+) -> Optional[Dict[str, Any]]:
+    """The scheduled round on rows the caller locked and read again: the bookkeeping, the tickets, the KDS, the log."""
+    from app.services import kds_workflow as WF
+    from app.services import table_void_tickets as VT
+    from app.services import tables as T
+
+    lines = cart_lines(order.cart_json)
+    extras = extras_of(order.extras_json)
+    targets = [line for line in lines if line.id in set(due.line_ids)]
+    quiet = silent_products(db, targets)
+    write = write_scheduled(order.id, lines, extras, due, now, silent=lambda line: line.product_id in quiet)
+    if not write.printed and not write.silent:
+        return None
+    is_addition = (order.send_count or 0) > 0
+    order.extras_json = encode_extras(write.extras)
+    order.version = (order.version or 0) + 1
+    order.sent_at = now
+    order.send_count = (order.send_count or 0) + 1
+    order.updated_at = now
+    order.cloud_updated_at = now
+    order.last_request_id = None
+    db.flush()
+
+    seat_names = seat_names_of(write.extras)
+    items = [i for line, qty, note in write.printed for i in items_of(line, qty, note, seat_names)]
+    courses = {line.course.name for line, _q, _n in write.printed if line.course is not None}
+    band = f"{next(iter(courses))} ({SCHEDULED_WORD})" if len(courses) == 1 else None
+    prints = VT.prints_tickets(WF.config_for_machine(db, routing))
+    jobs: List[Any] = []
+    if items and prints:
+        jobs = queue_table_tickets(
+            db, order, table, items, routing=routing, seed=write.seed, is_addition=is_addition, now=now,
+            fire=band, notice=SCHEDULED_WORD, source_name=SCHEDULED_WORD,
+        )
+    kds: Optional[Dict[str, Any]] = None
+    if write.printed:
+        try:
+            with db.begin_nested():
+                kds = release_to_kds(db, order, table, routing, write, lines, now, actor_name=SCHEDULED_ACTOR)
+        except Exception:  # noqa: BLE001 - the paper went
+            logger.exception("scheduled send of table order %s: the KDS release failed", order.id)
+            if not prints:
+                raise
+    T.record_event(
+        db, "send", table, order, now=now,
+        details={
+            "scheduled": True, "scheduleId": due.schedule_id, "fireId": write.seed,
+            "lines": [line.id for line, _q, _n in write.printed] + list(write.silent),
+        },
+    )
+    return {
+        "orderId": str(order.id),
+        "tableId": str(order.table_id),
+        "scheduleId": due.schedule_id,
+        "fireId": write.seed,
+        "printedLines": [line.id for line, _q, _n in write.printed],
+        "silentLines": list(write.silent),
+        "jobs": [str(j.id) for j in jobs],
+        "kds": kds,
+        "version": order.version,
+        "_jobs": jobs,
+    }
+
+
+def fire_scheduled_if_due(db: Session, order_id: Any, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """
+    One cloud-tables order's scheduled lines that are due, each `scheduleId` once — the locking of
+    `fire_if_due`: never while a till is inside the table (it goes on the first pass after), never on a
+    closed / paid order, rows read again under SKIP LOCKED. Commits, then wakes the tills. The rounds sent.
+    """
+    from app.models.tables import DiningTable, TableOrder
+    from app.services import printers as K
+    from app.services import table_void_tickets as VT
+    from app.services import tables as T
+
+    now = now or datetime.now(timezone.utc)
+    ident = _uuid(order_id)
+    order = db.get(TableOrder, ident) if ident is not None else None
+    if order is None or order.status != "open" or order.source != "synced" or not order.extras_json:
+        return []
+
+    def due_of(row: Any) -> List[ScheduledDue]:
+        return scheduled_due(
+            row.id, cart_lines(row.cart_json), extras_of(row.extras_json), now,
+            sent_at=_as_utc(row.sent_at), kds=kds_state_of(db, row),
+        )
+
+    if not due_of(order):
+        db.rollback()
+        return []
+    table = (
+        db.query(DiningTable).filter(DiningTable.id == order.table_id)
+        .with_for_update(skip_locked=True).populate_existing().one_or_none()
+    )
+    if table is None or T.lock_live(table, now):
+        db.rollback()
+        return []
+    order = (
+        db.query(TableOrder).filter(TableOrder.id == ident)
+        .with_for_update(skip_locked=True).populate_existing().one_or_none()
+    )
+    if order is None or order.status != "open" or order.source != "synced":
+        db.rollback()
+        return []
+    routing = VT.routing_machine(db, order, table, order.updated_machine_id)
+    if routing is None:
+        db.rollback()
+        return []
+    sent: List[Dict[str, Any]] = []
+    jobs: List[Any] = []
+    for due in due_of(order):
+        out = fire_scheduled(db, order, table, routing, due, now)
+        if out is not None:
+            jobs.extend(out.pop("_jobs"))
+            sent.append(out)
+    if not sent:
+        db.rollback()
+        return []
+    printing = VT.notify_targets(db, VT.tickets_out(db, jobs, now)) if jobs else []
+    shop_id, tenant_id, table_id = order.shop_id, order.tenant_id, str(order.table_id)
+    db.commit()
+    logger.info("scheduled send of table order %s: %d rounds", order_id, len(sent))
+    T.tables_changed(db, shop_id, tenant_id=tenant_id, table_id=table_id)
+    if printing:
+        K.publish_job_notify(printing)
+    return sent
+
+
 def candidates(db: Session) -> List[Any]:
-    """The open cloud-tables orders that may have a course to fire: sent before, with courses."""
+    """
+    The open cloud-tables orders that may have something to send by itself: a course (sent before, with
+    courses), or a scheduled line (`schedule`, §8.3).
+    """
+    from sqlalchemy import and_, or_
+
     from app.models.tables import TableOrder
 
     return [
@@ -1448,10 +1787,12 @@ def candidates(db: Session) -> List[Any]:
         .filter(
             TableOrder.status == "open",
             TableOrder.source == "synced",
-            TableOrder.send_count > 0,
             TableOrder.cart_json.isnot(None),
             TableOrder.extras_json.isnot(None),
-            TableOrder.cart_json.like('%"course"%'),
+            or_(
+                and_(TableOrder.send_count > 0, TableOrder.cart_json.like('%"course"%')),
+                TableOrder.extras_json.like('%"schedule"%'),
+            ),
         )
         .all()
     ]
@@ -1473,4 +1814,9 @@ def run_pass(db: Session, *, now: Optional[datetime] = None) -> List[Dict[str, A
             continue
         if out is not None:
             fired.append(out)
+        try:
+            fired.extend(fire_scheduled_if_due(db, order_id, now=now))
+        except Exception:  # noqa: BLE001 - the next pass tries it again (its ids make that safe)
+            db.rollback()
+            logger.exception("scheduled send of table order %s failed", order_id)
     return fired

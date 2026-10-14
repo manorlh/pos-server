@@ -2131,6 +2131,14 @@ from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
 
+# "FIRE כמו במסעדות" + "שיגור מתוזמן של פריט" (P:/specs/fire-restaurant-flow.md §8.1, app/services/fire_flow.py):
+# `fireAskOnSend` (ask / never / default:<choice>), `fireAskMinutes` ("10,15,20"), `fireHints` (on / first_time /
+# off), `itemScheduleMinutes` ("5,10,15,20,30"), `itemScheduleOnClose` (ask / send / cancel), `kdsShowScheduled`
+# (true). Read by the till; `kdsShowScheduled` also by the cloud's pass. Edited on the tables page too.
+from app.services.fire_flow import PARAMETER_SPECS as _FIRE_FLOW_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FIRE_FLOW_SPECS)
+
 # "שם פריט מלא על הכפתור, ותג i" (P:/specs/product-tile-text.md §3–§5, app/services/product_tile_text.py):
 # `productNameFit` (fit / wrap / clip), `productNameMaxLines` (1–4), `productNameMinTextSize` (s / m / l),
 # `productInfoBadge` (auto / always / off) — fit, 3, s, auto. Read by the till, the web till and the
@@ -2430,6 +2438,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in course_auto_fire.VALIDATED_KEYS and value is not None:
         try:
             return course_auto_fire.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "FIRE כמו במסעדות" / "שיגור מתוזמן": the codes and minute lists the till parses.
+    from app.services import fire_flow
+
+    if key in fire_flow.VALIDATED_KEYS and value is not None:
+        try:
+            return fire_flow.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
