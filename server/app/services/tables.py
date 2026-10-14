@@ -2528,9 +2528,6 @@ def archive_table(db: Session, table: DiningTable) -> None:
 
 # ── The till's edit mode ─────────────────────────────────────────────────────
 
-#: A table "moved" by less than this (canvas units) has not moved: rounding on the till.
-_MOVE_EPSILON = 0.5
-
 
 def table_in_use(db: Session, table: DiningTable, now: datetime) -> bool:
     """
@@ -2604,7 +2601,8 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
     the till's map designer — the dashboard's shape and validation; from a till that sends
     a `sketchSchema` under the server's (or none), the decor symbols it cannot know are kept,
     keep_decor_unknown_to_till). Only the zones and tables this till sees. Refused:
-    a table someone is at that would move, change its number or go (409 `table_in_use`);
+    a table someone is at that would change its zone or its number, or go (409 `table_in_use`;
+    its place, size and turn on the floor may change, as on the dashboard's map editor);
     a number another live table of the shop has once the batch is applied (409
     `table_number_taken`); a zone removed with tables still in it (409 `zone_not_empty`).
     A new zone belongs to the till's point of sale. Answers the till's new state.
@@ -2711,13 +2709,11 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
             continue
         table = table_for_machine(db, machine, item.id)
         target_zone = zone_for(item) if (item.zone_id is not None or item.zone_client_id is not None) else None
-        moving = (
-            (target_zone is not None and target_zone.id != table.zone_id)
-            or (item.x is not None and abs(item.x - table.x) > _MOVE_EPSILON)
-            or (item.y is not None and abs(item.y - table.y) > _MOVE_EPSILON)
-        )
+        # A table someone is at keeps its zone, its number and its existence; its place on the
+        # floor, its size and its turn may change (as on the dashboard's map editor, `set_positions`).
+        leaving_zone = target_zone is not None and target_zone.id != table.zone_id
         renumbering = item.number is not None and item.number != table.number
-        if (item.archive or moving or renumbering) and table_in_use(db, table, now):
+        if (item.archive or leaving_zone or renumbering) and table_in_use(db, table, now):
             raise _conflict("table_in_use", table=table_ref(table))
         if item.archive:
             table.archived_at = now
