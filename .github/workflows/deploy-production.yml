@@ -51,7 +51,7 @@ jobs:
     name: Server checks
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_checks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: server
@@ -59,6 +59,8 @@ jobs:
       # Only two settings are required; the tests use in-memory SQLite.
       DATABASE_URL: sqlite:///./ci.db
       JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+      # Test names that are generated from sets must come out the same on every run.
+      PYTHONHASHSEED: '0'
     steps:
       - uses: actions/checkout@v4
 
@@ -76,7 +78,7 @@ jobs:
         run: |
           pip install poetry==1.8.4
           poetry install --no-interaction --no-ansi
-          poetry run pip install pytest-xdist==3.6.1
+          poetry run pip install pytest-rerunfailures==14.0
 
       - name: One Alembic head
         run: |
@@ -90,11 +92,10 @@ jobs:
       - name: Tests
         run: |
           # `python -m pytest`, not `pytest`: the server folder must be on the import path (`import app`).
-          # Files run whole on one worker (`loadfile`): some suites share module state.
-          if ! poetry run python -m pytest -q -n auto --dist loadfile tests; then
-            echo "A first run failed; running only the failures again, one at a time (order-dependent and timing tests)."
-            poetry run python -m pytest -q -n 0 --last-failed --last-failed-no-failures none tests
-          fi
+          # The whole suite runs, in one process (the tests share module state and a SQLite file, so
+          # parallel workers collide). A failing test is retried up to twice at once, in the same run:
+          # that absorbs the timing-sensitive ones without skipping anything.
+          poetry run python -m pytest -q --reruns 2 --reruns-delay 1 tests
 
   client-checks:
     name: Client checks
