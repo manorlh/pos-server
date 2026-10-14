@@ -287,6 +287,9 @@ def get_tips_range_report(
 def get_shop_transactions(
     hours: int = Query(24, ge=1, le=SHOP_TRANSACTIONS_MAX_HOURS),
     q: Optional[str] = Query(None, max_length=100),
+    # The till's "שולחן" chip: "12" is table 12 (never a document number or an amount), other
+    # text a table's name — app/services/table_documents.py `parse_table_query(chip=True)`.
+    table: Optional[str] = Query(None, max_length=60),
     # Same authentication as every other /sync/{machine_id}/... till endpoint:
     # a machine JWT whose `sub` equals machine_id, or a dashboard user who passes
     # the machine RBAC check. Decommissioned machines are locked out here.
@@ -306,11 +309,13 @@ def get_shop_transactions(
     documents to read. A machine with no shop assigned gets an empty list, never a
     `shop_id IS NULL` filter (which would match unassigned machines tenant-wide).
 
-    Capped at 200 rows, newest first.
+    Capped at 200 rows, newest first. Each row carries its table (`tableNumber`, `tableName`,
+    `tableOrderId`, `tableOpenedAt`); `table` and a `q` like "ש12" keep one table's documents
+    (P:/specs/history-table-search.md).
     """
     from app.services import area_lock
 
-    rows, _truncated = load_shop_transactions_for_machine(db, machine, hours=hours, q=q)
+    rows, _truncated = load_shop_transactions_for_machine(db, machine, hours=hours, q=q, table=table)
     return ShopTransactionsResponse(
         server_time=datetime.now(timezone.utc).isoformat(),
         transactions=rows,

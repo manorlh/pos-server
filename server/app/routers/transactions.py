@@ -14,7 +14,7 @@ from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.user import User
-from app.services import kiosk_pickup, print_documents
+from app.services import kiosk_pickup, print_documents, table_documents
 from app.services.document_prefix import document_number_from, prefixed_number_clause
 from app.services.offline_authorizations import outcomes_by_transaction
 from app.services.scoping import scope_transactions_by_user
@@ -62,13 +62,15 @@ def _filtered_query(
     amount_min=None,
     amount_max=None,
     document_number=None,
+    table=None,
 ):
     """
     The transaction search, one definition for the list and its export (docs/SPEC_REPORTS.md
     §1): the reader's tenant and scope, then every filter given — tills (`machineIds`, any
     of them), shop, dates (with no date and no basket: the last 30 days), the free search,
     card last four, a product, the tender, document types, employees (`cashierIds`),
-    statuses, an amount range and a document number. None when the role sees nothing.
+    statuses, an amount range, a document number and a table ("שולחן": "12" is table 12, other
+    text a table's name — app/services/table_documents.py). None when the role sees nothing.
     """
     query = db.query(Transaction).filter(Transaction.tenant_id == active_tenant_id)
     query = scope_transactions_by_user(query, current_user, db)
@@ -90,8 +92,11 @@ def _filtered_query(
     if from_date is None and to_date is None and not _given(basket_id):
         from_date = (datetime.now(timezone.utc) - timedelta(days=30)).date()
 
+    # "ש12" asks for a table and nothing else (below): no pickup number to look up.
+    by_table = table_documents.parse_table_query(q) if isinstance(_given(q), str) else None
     # "17", "A17", "A-17": the kiosk orders of that pickup number, in the reader's tenant and dates.
-    pickup = kiosk_pickup.parse_pickup_query(q) if isinstance(_given(q), str) else None
+    explicit_table = by_table is not None and by_table.explicit
+    pickup = kiosk_pickup.parse_pickup_query(q) if isinstance(_given(q), str) and not explicit_table else None
     pickup_ids = (
         kiosk_pickup.transaction_ids_for(
             db, pickup, tenant_id=active_tenant_id, shop_id=_given(shop_id), from_date=from_date, to_date=to_date,
@@ -99,7 +104,22 @@ def _filtered_query(
         if pickup is not None
         else None
     )
-    query = _search_filters(query, q=q, card_last4=card_last4, item=item, method=method, pickup_ids=pickup_ids)
+    # "ש12", "שולחן 12", "VIP 1" in the search, and the "שולחן" filter: the documents of the
+    # table orders of the reader's tenant (and shop) in those dates.
+    since = datetime.combine(from_date, time.min, tzinfo=timezone.utc) if from_date is not None else None
+
+    def table_ids(tq):
+        return table_documents.transaction_ids_for_table(
+            db, tq, tenant_id=active_tenant_id, shop_id=_given(shop_id), since=since,
+        )
+
+    query = _search_filters(
+        query, q=q, card_last4=card_last4, item=item, method=method, pickup_ids=pickup_ids,
+        table_ids=table_ids(by_table) if by_table is not None else None,
+    )
+    chip = table_documents.parse_table_query(table, chip=True) if isinstance(_given(table), str) else None
+    if chip is not None:
+        query = query.filter(Transaction.id.in_(table_ids(chip)))
 
     types = [t for t in (_given(document_types) or []) if isinstance(t, int)]
     if types:
@@ -153,6 +173,9 @@ def list_transactions(
     amount_min: Optional[Decimal] = Query(None, alias="amountMin"),
     amount_max: Optional[Decimal] = Query(None, alias="amountMax"),
     document_number: Optional[str] = Query(None, alias="documentNumber", max_length=40),
+    table: Optional[str] = Query(
+        None, max_length=60, description="A table: its number (\"12\") or text its name holds (\"VIP\")",
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -162,7 +185,7 @@ def list_transactions(
         machine_id=machine_id, machine_ids=machine_ids, shop_id=shop_id, basket_id=basket_id,
         from_date=from_date, to_date=to_date, q=q, card_last4=card_last4, item=item, method=method,
         document_types=document_types, cashier_ids=cashier_ids, statuses=statuses,
-        amount_min=amount_min, amount_max=amount_max, document_number=document_number,
+        amount_min=amount_min, amount_max=amount_max, document_number=document_number, table=table,
     )
     if query is None:
         return TransactionListResponse(page=page, page_size=page_size, total=0, items=[])
@@ -189,6 +212,21 @@ def list_transactions(
         found = pickups.get(str(item.id))
         item.kiosk_pickup = KioskPickupRef.model_validate(found) if found else None
         item.matched_by = kiosk_pickup.search_matches(_given(q), item.transaction_number, item.total_amount, found)
+    # Its table ("שולחן 12" beside the number), and whether the search found it by the table.
+    tables = table_documents.tables_by_transaction_any_shop(db, rows)
+    searched = _given(q) if isinstance(_given(q), str) else None
+    # The "שולחן" filter: every row was found by its table.
+    by_chip = table_documents.parse_table_query(_given(table), chip=True) is not None
+    for item in items:
+        at_table = tables.get(str(item.id))
+        if at_table:
+            item.table_number = at_table["tableNumber"]
+            item.table_name = at_table["tableName"]
+            item.table_order_id = at_table["tableOrderId"]
+            item.table_opened_at = at_table["tableOpenedAt"]
+        item.matched_by = table_documents.search_matches(searched, item.matched_by, at_table)
+        if by_chip and "table" not in (item.matched_by or []):
+            item.matched_by = [*(item.matched_by or []), "table"]
     return TransactionListResponse(
         page=page,
         page_size=page_size,
@@ -215,6 +253,7 @@ def export_transactions(
     amount_min: Optional[Decimal] = Query(None, alias="amountMin"),
     amount_max: Optional[Decimal] = Query(None, alias="amountMax"),
     document_number: Optional[str] = Query(None, alias="documentNumber", max_length=40),
+    table: Optional[str] = Query(None, max_length=60),
     current_user: User = Depends(get_current_user),
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -232,7 +271,7 @@ def export_transactions(
         machine_id=machine_id, machine_ids=machine_ids, shop_id=shop_id, basket_id=basket_id,
         from_date=from_date, to_date=to_date, q=q, card_last4=card_last4, item=item, method=method,
         document_types=document_types, cashier_ids=cashier_ids, statuses=statuses,
-        amount_min=amount_min, amount_max=amount_max, document_number=document_number,
+        amount_min=amount_min, amount_max=amount_max, document_number=document_number, table=table,
     )
     if query is None:
         return {"total": 0, "items": []}
@@ -284,7 +323,7 @@ def _customer_clause(text: str):
     )
 
 
-def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, pickup_ids=None):
+def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, pickup_ids=None, table_ids=None):
     """
     The transaction search: the document number or amount (`q`), the last four digits of
     a card (`card_last4` — the till's `cardLast4`, else the terminal's masked number, on
@@ -296,6 +335,10 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, p
     "a-17" (app/services/kiosk_pickup.py `parse_pickup_query`): `pickup_ids` are those
     documents, looked up by the caller in the reader's tenant and dates; None (a direct call)
     looks them up here, unscoped — the query's own filters still apply.
+
+    And a table's (app/services/table_documents.py `parse_table_query`): "ש12", "ש-12",
+    "שולחן 12", "t12" find that table's documents and nothing else; text with a letter ("VIP 1")
+    also finds the tables whose name holds it. `table_ids` as `pickup_ids`.
     """
     # Called directly (not through FastAPI), an unset filter is its `Query(...)` default:
     # anything that is not text is "not given".
@@ -348,6 +391,12 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, p
             )
         )
     if q and q.strip():
+        tq = table_documents.parse_table_query(q)
+        if tq is not None and table_ids is None:
+            table_ids = table_documents.transaction_ids_for_table(query.session, tq)
+        if tq is not None and tq.explicit:
+            return query.filter(Transaction.id.in_(table_ids or []))
+        by_table = [Transaction.id.in_(table_ids)] if table_ids else []
         if pickup_ids is None:
             pickup = kiosk_pickup.parse_pickup_query(q)
             pickup_ids = kiosk_pickup.transaction_ids_for(query.session, pickup) if pickup is not None else []
@@ -360,13 +409,14 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, p
         customer = _customer_clause(q.strip())
         prefixed = prefixed_number_clause(q)
         if prefixed is not None:
-            return query.filter(or_(prefixed, *by_pickup, *([customer] if customer is not None else [])))
+            return query.filter(or_(prefixed, *by_pickup, *by_table, *([customer] if customer is not None else [])))
         pattern = _like(q.strip())
         query = query.filter(
             or_(
                 Transaction.transaction_number.ilike(pattern, escape="\\"),
                 cast(Transaction.total_amount, String).like(pattern, escape="\\"),
                 *by_pickup,
+                *by_table,
                 *([customer] if customer is not None else []),
             )
         )

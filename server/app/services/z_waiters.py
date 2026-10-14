@@ -17,9 +17,7 @@ with no one on them.
 """
 from __future__ import annotations
 
-import json
 import uuid
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -31,6 +29,7 @@ from app.models.tables import TableOrder
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
 from app.services.dashboard_stats import SALE_STATUSES
+from app.services.table_documents import orders_by_tx, part_tx_ids, uuid_text
 from app.services.tenders import EXCHANGE_PAYMENT_METHOD, expected_tender_total, is_production_voucher, is_refund_document
 
 ZERO = Decimal("0")
@@ -45,60 +44,11 @@ def _dec(value: Any) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
-def _uuid_text(raw: Any) -> Optional[str]:
-    try:
-        return str(uuid.UUID(str(raw)))
-    except (TypeError, ValueError, AttributeError):
-        return None
-
-
-def _part_tx_ids(order: TableOrder) -> List[str]:
-    """The sales of the order's parts paid on their own."""
-    try:
-        extras = json.loads(order.extras_json) if order.extras_json else None
-    except ValueError:
-        return []
-    parts = extras.get("partials") if isinstance(extras, dict) else None
-    out = []
-    for part in parts if isinstance(parts, list) else []:
-        tx = _uuid_text(part.get("tx")) if isinstance(part, dict) else None
-        if tx:
-            out.append(tx)
-    return out
-
-
-def _orders_by_tx(db: Session, shop_id: Any, documents: List[Transaction]) -> Dict[str, TableOrder]:
-    """Each table sale (and the original of a credit note) → the table order it paid."""
-    if shop_id is None or not documents:
-        return {}
-    wanted = {str(d.id) for d in documents}
-    wanted |= {t for t in (_uuid_text(d.refund_of_transaction_id) for d in documents) if t}
-    found: Dict[str, TableOrder] = {}
-    for order in (
-        db.query(TableOrder)
-        .filter(TableOrder.shop_id == shop_id, TableOrder.transaction_id.in_(sorted(wanted)))
-        .all()
-    ):
-        tx = _uuid_text(order.transaction_id)
-        if tx:
-            found[tx] = order
-    # Parts paid on their own: on orders opened since a little before the first document.
-    moments = [d.created_at for d in documents if d.created_at is not None]
-    if moments:
-        since = min(moments) - timedelta(days=2)
-        for order in (
-            db.query(TableOrder)
-            .filter(
-                TableOrder.shop_id == shop_id,
-                TableOrder.opened_at >= since,
-                TableOrder.extras_json.like('%"partials"%'),
-            )
-            .all()
-        ):
-            for tx in _part_tx_ids(order):
-                if tx in wanted:
-                    found.setdefault(tx, order)
-    return found
+# The document → table order mapping is shared with the table search (app/services/
+# table_documents.py); the old private names stay for the modules that import them from here.
+_uuid_text = uuid_text
+_part_tx_ids = part_tx_ids
+_orders_by_tx = orders_by_tx
 
 
 def _names(db: Session, ids: Iterable[str]) -> Dict[str, str]:

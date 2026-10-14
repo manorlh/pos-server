@@ -2,7 +2,8 @@
  * The transactions list's own filters (P:\specs\reports-upgrade.md §2א): beside the days and
  * the free search of the report bar, everything `GET /transactions` (and its export) takes —
  * several tills, document types, employees and statuses, a card's last four digits, a
- * product, the tender, an amount range, a document number and a basket. They live in the URL
+ * product, the tender, an amount range, a document number, a table ("שולחן": "12" is table 12, other
+ * text a table's name — lib/tableSearch.ts) and a basket. They live in the URL
  * as the report's `extras` (lists comma-separated), so a link is the search.
  *
  * Pure — no React, no network — so the query it builds is tested in node.
@@ -32,6 +33,7 @@ export const TX_EXTRAS = {
   amountMin: '',
   amountMax: '',
   doc: '',
+  table: '',
   basket: '',
 } as const satisfies Record<string, string>;
 
@@ -104,6 +106,8 @@ export function transactionsQuery(input: TxQueryInput): Record<string, string | 
   if (DECIMAL.test(e.amountMax)) p.amountMax = e.amountMax;
   const doc = e.doc.replace(/[^\d-]/g, '').slice(0, 40);
   if (doc) p.documentNumber = doc;
+  const table = e.table.replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (table) p.table = table;
   if (UUIDISH.test(e.basket)) p.basketId = e.basket;
   return p;
 }
