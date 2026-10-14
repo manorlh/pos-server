@@ -1115,8 +1115,8 @@ class PartialObj(PrunedObj):
         return out
 
 
-def _motion_event_node(event: str) -> PartialObj:
-    """`motion.events.<event>`: the parameters of kiosk_motion.PARAMS, its own kinds, its own ranges."""
+def _motion_event_node(event: str, surface: str = "kiosk") -> PartialObj:
+    """`motion.events.<event>`: the parameters of kiosk_motion.PARAMS, its own kinds (on that surface), its own ranges."""
     fields: Dict[str, Node] = {}
     narrow = motion_engine.EVENT_PARAM_RANGES.get(event, {})
     for name, (kind, lo, hi) in motion_engine.PARAMS.items():
@@ -1124,7 +1124,7 @@ def _motion_event_node(event: str) -> PartialObj:
         if kind == "bool":
             fields[name] = Bool()
         elif kind == "type":
-            fields[name] = Enum(motion_engine.EVENT_TYPES[event])
+            fields[name] = Enum(motion_engine.event_types(event, surface))
         elif kind == "enum":
             fields[name] = Enum(lo)
         elif kind == "int":
@@ -1132,6 +1132,25 @@ def _motion_event_node(event: str) -> PartialObj:
         else:
             fields[name] = Num(lo, hi)
     return PartialObj(fields)
+
+
+def motion_engine_fields(surface: str = "kiosk") -> Dict[str, Node]:
+    """
+    The Motion Engine's keys of a `motion` section — `preset`, `globalSpeed`, `speedMultiplier`,
+    `events.<event>` — with the rules of kiosk_motion.py for that surface: the kiosk's config here, the
+    till design's `motion` (app/services/till_design.py, P:/specs/till-motion.md) with the till's events,
+    presets and kinds. One set of rules for both: an event's kinds, every parameter's range, remove's Undo.
+    """
+    events = motion_engine.surface_events(surface)
+    return {
+        "preset": Enum(motion_engine.presets_of(surface)),
+        "globalSpeed": Enum(MOTION_GLOBAL_SPEEDS, nullable=True),
+        "speedMultiplier": Num(motion_engine.MULTIPLIER_MIN, motion_engine.MULTIPLIER_MAX),
+        "events": PrunedObj(
+            {e: _motion_event_node(e, surface) for e in events},
+            fill={e: {} for e in events},
+        ),
+    }
 
 
 ID = Str(ID_MAX, min_len=1)
@@ -1385,14 +1404,9 @@ SCHEMA = Obj({
         "effects": Enum(MOTION_EFFECTS),
         # "תהליך פריט עם תוספות והערות": sheet / pages. A config stored before it has none (filled).
         "itemFlow": Enum(MOTION_ITEM_FLOWS),
-        # "מנוע הנפשות" (kiosk_motion.py). A config stored before it has none of these (filled).
-        "preset": Enum(MOTION_PRESETS),
-        "globalSpeed": Enum(MOTION_GLOBAL_SPEEDS, nullable=True),
-        "speedMultiplier": Num(motion_engine.MULTIPLIER_MIN, motion_engine.MULTIPLIER_MAX),
-        "events": PrunedObj(
-            {e: _motion_event_node(e) for e in motion_engine.EVENTS},
-            fill={e: {} for e in motion_engine.EVENTS},
-        ),
+        # "מנוע הנפשות" (kiosk_motion.py). A config stored before it has none of these (filled). The
+        # kiosk's events only: the till's own (`tableOpen`, `tabSwitch`) are refused here.
+        **motion_engine_fields("kiosk"),
     }, fill={
         "preset": motion_engine.DEFAULT_PRESET, "globalSpeed": None, "speedMultiplier": 1.0, "events": {},
         "itemFlow": "sheet",
@@ -1599,8 +1613,9 @@ def limits() -> Dict[str, Any]:
         },
         # "מנוע הנפשות": the events, the kinds each can play, every parameter's range (kiosk_motion.py).
         "motionEngine": {
-            "events": list(motion_engine.EVENTS),
-            "eventTypes": {e: list(t) for e, t in motion_engine.EVENT_TYPES.items()},
+            # The kiosk's: the till's own events (`tableOpen`, `tabSwitch`) are not a kiosk's.
+            "events": list(motion_engine.KIOSK_EVENTS),
+            "eventTypes": {e: list(motion_engine.EVENT_TYPES[e]) for e in motion_engine.KIOSK_EVENTS},
             "directions": list(motion_engine.DIRECTIONS),
             "easings": list(motion_engine.EASINGS),
             "fallbacks": list(motion_engine.FALLBACKS),

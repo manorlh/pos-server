@@ -21,6 +21,7 @@ import {
   MOTION_SCENES,
   SCENE_ROLES,
   counterText,
+  motionSceneOf,
   planMotionPreview,
 } from './kioskMotionPreview';
 
@@ -161,3 +162,72 @@ describe('the look as resolved', () => {
     assert.equal(counterText({ from: 2, to: 3, decimals: 0 }, 2), '3');
   });
 });
+
+describe('the till: opening a table on the tables stage, and back', () => {
+  const tableSpec = (kind: string, values: Record<string, unknown> = {}) =>
+    resolveMotionEvent({ preset: 'standard', events: { tableOpen: { animationType: kind, ...values } } } as MotionEngineSettings, 'tableOpen', { surface: 'till' });
+
+  it('every kind plays on the map, the table and its order — and backwards, mirrored', () => {
+    for (const kind of ['zoom', 'slide', 'rise', 'fade', 'flip', 'scale']) {
+      const spec = tableSpec(kind);
+      const plan = planMotionPreview(spec, 'tables');
+      const back = planMotionPreview(spec, 'tables', undefined, { reverse: true });
+      assert.ok(plan.tracks.some((t) => t.role === 'order'), kind);
+      for (const t of [...plan.tracks, ...back.tracks]) assert.ok(SCENE_ROLES.tables.includes(t.role), `${kind}: ${t.role}`);
+      assert.equal(back.tracks.length, plan.tracks.length, kind);
+      plan.tracks.forEach((t, i) => {
+        const b = back.tracks[i];
+        assert.equal(b.role, t.role, kind);
+        assert.deepEqual(stripOffset(b.frames[0]), stripOffset(t.frames[t.frames.length - 1]), `${kind} ${t.role}`);
+        assert.deepEqual(stripOffset(b.frames[b.frames.length - 1]), stripOffset(t.frames[0]), `${kind} ${t.role}`);
+        assert.equal(b.delay + b.duration <= plan.endMs + 1, true, kind);
+      });
+      // The order is on view at the end of the opening (every kind ends with it opaque).
+      const orders = plan.tracks.filter((t) => t.role === 'order');
+      const order = orders[orders.length - 1];
+      assert.equal(order.frames[order.frames.length - 1].opacity, 1, kind);
+      assert.equal(plan.endMs, spec.durationMs, kind);
+    }
+  });
+
+  it('zoom grows from the table picked on the map; slide goes the reading way, rise from the bottom; direction steers them', () => {
+    const zoom = planMotionPreview(tableSpec('zoom'), 'tables', { flyDx: 0, flyDy: 0, tile: { left: 0.1, top: 0.2, width: 0.25, height: 0.3 } });
+    assert.equal(zoom.tracks.find((t) => t.role === 'order')?.frames[0].clipPath, 'inset(20% 65% 50% 10% round 12px)');
+    const order = (spec: ReturnType<typeof tableSpec>) => planMotionPreview(spec, 'tables').tracks.find((t) => t.role === 'order')!.frames[0].transform;
+    assert.equal(order(tableSpec('slide')), 'translate(-100%, 0%)'); // in from the left, moving right (RTL reading)
+    assert.equal(order(tableSpec('rise')), 'translate(0%, 100%)'); // up from the bottom
+    assert.equal(order(tableSpec('slide', { direction: 'left' })), 'translate(100%, 0%)');
+    assert.match(String(order(tableSpec('flip'))), /rotateY\(90deg\)/);
+    assert.match(String(order(tableSpec('flip', { direction: 'up' }))), /rotateX\(-90deg\)/);
+  });
+
+  it('the time, the delay and the curve are the event\'s; none plays nothing', () => {
+    const plan = planMotionPreview(tableSpec('scale', { durationMs: 520, delayMs: 100, easing: 'ios' }), 'tables');
+    for (const t of plan.tracks) {
+      assert.equal(t.delay, 100);
+      assert.equal(t.duration, 520);
+      assert.equal(t.easing, motionCurve('ios', ''));
+    }
+    assert.equal(planMotionPreview(tableSpec('none'), 'tables').tracks.length, 0);
+  });
+
+  it('reduced motion: the order fades in (or the table lights), never a movement', () => {
+    const fade = resolveMotionEvent({ preset: 'standard' }, 'tableOpen', { surface: 'till', reduceMotion: true });
+    const plan = planMotionPreview(fade, 'tables');
+    assert.deepEqual(plan.tracks.map((t) => t.role), ['order']);
+    for (const t of plan.tracks) for (const f of t.frames) assert.equal(f.transform, undefined);
+  });
+
+  it('the till\'s payment is the payment screen rising over the order', () => {
+    assert.equal(motionSceneOf('payment', 'till'), 'screen');
+    assert.equal(motionSceneOf('payment'), 'button');
+    assert.equal(motionSceneOf('tableOpen', 'till'), 'tables');
+    const spec = resolveMotionEvent({ preset: 'standard' }, 'payment', { surface: 'till' });
+    const plan = planMotionPreview(spec, motionSceneOf('payment', 'till'));
+    assert.equal(plan.tracks.find((t) => t.role === 'screenB')?.frames[0].transform, 'translate(0%, 100%)');
+  });
+});
+
+function stripOffset(f: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(f).filter(([k]) => k !== 'offset'));
+}

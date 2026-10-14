@@ -37,6 +37,7 @@ import {
   legacyQuickActions,
   menuView,
   orderCategories,
+  pruneEmptyMotion,
   pruneOverrides,
   quickCashNotes,
   resolveFieldMode,
@@ -459,5 +460,70 @@ describe('till design: the editor\'s texts exist in he.json', () => {
     for (const profile of PROFILES) assert.ok(has(`tillDesign.profiles.${profile}`), profile);
     for (const key of Object.keys(TEXT_DEFAULTS)) assert.ok(has(`tillDesign.texts.${key}`), key);
     for (const action of Object.keys(ACTION_LABELS)) assert.ok(has(`tillDesign.actions.${action}`), action);
+  });
+});
+
+describe('"הנפשות": the Motion Engine in the till design (P:/specs/till-motion.md)', () => {
+  it('validates with the engine\'s till rules, at the server\'s paths and codes', () => {
+    const good = { motion: { preset: 'standard', globalSpeed: 'custom', speedMultiplier: 1.2, events: { tableOpen: { animationType: 'flip', durationMs: 500, easing: 'ios' }, payment: { animationType: 'fadeIn' } } } };
+    const ok = validateTillDesignLayer(good);
+    assert.deepEqual(ok.errors, []);
+    assert.deepEqual(ok.cleaned, good);
+    const bad = validateTillDesignLayer({
+      motion: {
+        preset: 'turbo',
+        speedMultiplier: 3,
+        events: { tableOpen: { animationType: 'spin', durationMs: 9000, intensity: 'max' }, payment: { animationType: 'buttonFill' }, idle: {}, remove: { holdMs: 1000 } },
+      },
+    });
+    const codes = new Set(bad.errors.map((e) => `${e.path}:${e.code}`));
+    for (const want of [
+      'motion.preset:invalid_value',
+      'motion.speedMultiplier:out_of_range',
+      'motion.events.tableOpen.animationType:invalid_value',
+      'motion.events.tableOpen.durationMs:out_of_range',
+      'motion.events.tableOpen.intensity:invalid_type',
+      'motion.events.payment.animationType:invalid_value',
+      'motion.events.idle:unknown_key',
+      'motion.events.remove.holdMs:out_of_range',
+    ]) {
+      assert.ok(codes.has(want), want);
+    }
+    // null inherits; an empty event or section sets nothing.
+    assert.deepEqual(validateTillDesignLayer({ motion: { preset: null, events: { toast: {}, error: { durationMs: null } } } }), { cleaned: {}, errors: [] });
+  });
+
+  it('nothing set is no motion at all (today\'s screens): the defaults validate without it, and with one', () => {
+    assert.equal(TILL_DESIGN_DEFAULTS.motion, undefined);
+    assert.deepEqual(validateTillDesign(TILL_DESIGN_DEFAULTS), []);
+    assert.deepEqual(validateTillDesign(resolveTillDesign({ motion: { preset: 'none' } })), []);
+  });
+
+  it('merges level by level, per event and per parameter, as the server', () => {
+    const cfg = resolveTillDesign(
+      { motion: { preset: 'standard', events: { tableOpen: { animationType: 'flip', durationMs: 700 } } } },
+      { motion: { globalSpeed: 'fast', events: { tableOpen: { easing: 'ios' } } } },
+      { motion: { events: { tableOpen: { animationType: 'rise' }, payment: { animationType: 'fadeIn' } } } },
+    );
+    assert.deepEqual(cfg.motion, {
+      preset: 'standard',
+      globalSpeed: 'fast',
+      events: { tableOpen: { animationType: 'rise', durationMs: 700, easing: 'ios' }, payment: { animationType: 'fadeIn' } },
+    });
+    // A stored value the till cannot take is dropped, the rest kept.
+    assert.deepEqual(sanitizeStoredLayer({ motion: { preset: 'warp', events: { tableOpen: { animationType: 'spin', durationMs: 400 } } } }), {
+      motion: { events: { tableOpen: { durationMs: 400 } } },
+    });
+  });
+
+  it('the saved layer is what differs from what the level inherits; an emptied event leaves nothing behind', () => {
+    const inherited = resolveTillDesign({ motion: { preset: 'standard', events: { tableOpen: { animationType: 'flip' } } } });
+    const draft = setPath(inherited, 'motion.events.tableOpen.durationMs', 500);
+    assert.deepEqual(pruneOverrides(inherited, draft), { motion: { events: { tableOpen: { durationMs: 500 } } } });
+    const emptied = pruneEmptyMotion(setPath(TILL_DESIGN_DEFAULTS, 'motion.events.addToCart', undefined));
+    assert.equal((emptied as TillDesignConfig).motion, undefined);
+    const kept = pruneEmptyMotion(setPath(setPath(TILL_DESIGN_DEFAULTS, 'motion.preset', 'fast'), 'motion.events.toast', {}));
+    assert.deepEqual((kept as TillDesignConfig).motion, { preset: 'fast' });
+    assert.equal(pruneEmptyMotion(TILL_DESIGN_DEFAULTS), TILL_DESIGN_DEFAULTS);
   });
 });

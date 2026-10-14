@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   DEFAULT_MOTION_PRESET,
+  KIOSK_MOTION_EVENTS,
   LEGACY_SPEED_FACTORS,
   LIGHT_MAX_MULTIPLIER,
   MOTION_DIRECTIONS,
@@ -34,6 +35,14 @@ import {
   MOTION_TYPES,
   REDUCED_FACTOR,
   REMOVE_MIN_HOLD_MS,
+  TILL_DEFAULT_MOTION_PRESET,
+  TILL_MOTION_EVENTS,
+  TILL_MOTION_EVENT_TYPES,
+  TILL_MOTION_LEGACY,
+  TILL_MOTION_LIGHT,
+  TILL_MOTION_PRESETS,
+  TILL_MOTION_STANDARD,
+  TILL_ONLY_MOTION_EVENTS,
   effectiveGlobalSpeed,
   explicitOf,
   globalMultiplier,
@@ -41,10 +50,13 @@ import {
   motionActive,
   motionCssVars,
   motionCurve,
+  motionConfigIssues,
   motionParamOk,
+  motionPresetOf,
   resolveDuration,
   resolveMotionEngine,
   resolveMotionEvent,
+  resolveTillMotion,
   speedOfGlobal,
   type MotionEngineSettings,
   type MotionEventKey,
@@ -195,7 +207,7 @@ describe('migration: the older choices map onto the engine', () => {
 describe('reduced motion and the light profile (spec §14, §15)', () => {
   it('reduced motion keeps feedback — fade, highlight, colour — never a movement or a loop', () => {
     const r = resolveMotionEngine({ preset: 'standard' }, { reduceMotion: true });
-    for (const e of MOTION_EVENTS) {
+    for (const e of KIOSK_MOTION_EVENTS) {
       const s = r[e];
       assert.ok(['fadeIn', 'fadeOut', 'highlight', 'none'].includes(s.animationType), `${e} ${s.animationType}`);
       assert.equal(s.distancePx, 0, e);
@@ -223,7 +235,7 @@ describe('reduced motion and the light profile (spec §14, §15)', () => {
       for (const screenChange of ['slide', 'fade', 'zoom']) {
         const r = resolveMotionEngine({ preset, screenChange, speed: 'fast' }, { profile: 'light' });
         for (const e of MOTION_LIGHT.screenEvents) {
-          const s = r[e];
+          const s = r[e as keyof typeof r];
           assert.ok(s.animationType === 'slideIn' || s.animationType === 'fadeIn', `${preset} ${screenChange} ${e} ${s.animationType}`);
           assert.ok(s.durationMs >= MOTION_LIGHT.screenMinMs, `${preset} ${screenChange} ${e} ${s.durationMs}`);
           if (s.animationType === 'slideIn') assert.ok(s.distancePx > 0 && s.distancePx <= MOTION_LIGHT.screenShiftPx, `${preset} ${e}`);
@@ -284,5 +296,96 @@ describe('the web kiosks\' CSS from the engine', () => {
     assert.equal(vars['--m-addToCart-ms'], '750ms');
     assert.equal(vars['--m-idle-ms'], '0ms');
     assert.ok(motionActive(resolveMotionEvent({}, 'success')));
+  });
+});
+
+describe('the till: the same engine, surface "till" (P:/specs/till-motion.md), the golden\'s `till` section', () => {
+  const till = gold.till as {
+    events: string[];
+    onlyEvents: string[];
+    presets: string[];
+    defaultPreset: string;
+    nonePreset: string;
+    eventTypes: unknown;
+    standard: unknown;
+    legacy: unknown;
+    light: { fadeEvents: string[]; screenEvents: string[]; fadeKinds: unknown };
+    cases: Array<{ name: string; motion: MotionEngineSettings; reduceMotion: boolean; profile: 'full' | 'light'; multiplier: number; expect: unknown }>;
+  };
+  const TABLE_KINDS = ['zoom', 'slide', 'rise', 'fade', 'flip', 'scale', 'none'];
+
+  it('its tables are the golden\'s; the kiosk resolves its own events only', () => {
+    assert.deepEqual([...TILL_MOTION_EVENTS], till.events);
+    assert.deepEqual([...TILL_ONLY_MOTION_EVENTS], till.onlyEvents);
+    assert.deepEqual([...KIOSK_MOTION_EVENTS], gold.kioskEvents);
+    assert.deepEqual([...TILL_MOTION_PRESETS], till.presets);
+    assert.equal(TILL_DEFAULT_MOTION_PRESET, till.defaultPreset);
+    assert.deepEqual(TILL_MOTION_EVENT_TYPES, till.eventTypes);
+    assert.deepEqual(TILL_MOTION_STANDARD, till.standard);
+    assert.deepEqual(TILL_MOTION_LEGACY, till.legacy);
+    assert.deepEqual({ ...TILL_MOTION_LIGHT, fadeEvents: [...TILL_MOTION_LIGHT.fadeEvents], screenEvents: [...TILL_MOTION_LIGHT.screenEvents] }, till.light);
+    assert.deepEqual([...MOTION_EVENT_TYPES.tableOpen], TABLE_KINDS);
+    assert.deepEqual(Object.keys(resolveMotionEngine({})), [...KIOSK_MOTION_EVENTS]);
+  });
+
+  it('every golden till case resolves exactly', () => {
+    for (const c of till.cases) {
+      assert.deepEqual(resolveTillMotion(c.motion, { reduceMotion: c.reduceMotion, profile: c.profile }), c.expect, c.name);
+      assert.equal(globalMultiplier(c.motion, c.profile), c.multiplier, c.name);
+    }
+  });
+
+  it('no motion is today\'s till: a push 300, payment and windows 330, the tabs 140, on the iOS curve; nothing else moves', () => {
+    const r = resolveTillMotion(undefined);
+    assert.equal(motionPresetOf(undefined, 'till'), 'legacy');
+    assert.deepEqual([r.pageTransition.animationType, r.pageTransition.durationMs, r.pageTransition.easing], ['slideIn', 300, 'ios']);
+    assert.deepEqual([r.payment.animationType, r.payment.direction, r.payment.durationMs], ['slideIn', 'up', 330]);
+    assert.deepEqual([r.modalOpen.animationType, r.modalOpen.durationMs], ['slideIn', 330]);
+    assert.deepEqual([r.tabSwitch.animationType, r.tabSwitch.durationMs], ['crossfade', 140]);
+    const moving = TILL_MOTION_EVENTS.filter((e) => r[e].animationType !== 'none');
+    assert.deepEqual(moving, ['pageTransition', 'modalOpen', 'tableOpen', 'tabSwitch', 'payment']);
+    assert.equal(MOTION_EASING_CURVES.ios.join(','), '0.32,0.72,0,1');
+    assert.equal(motionCurve('ios', 'x'), 'cubic-bezier(.32,.72,0,1)');
+  });
+
+  it('"none" switches every event off, whatever a level set', () => {
+    const r = resolveTillMotion({ preset: 'none', events: { addToCart: { enabled: true, durationMs: 500 }, tableOpen: { animationType: 'zoom' } } });
+    for (const e of TILL_MOTION_EVENTS) assert.deepEqual([r[e].enabled, r[e].animationType, r[e].durationMs], [false, 'none', 0], e);
+    // A kiosk has no "none": its default.
+    assert.equal(motionPresetOf({ preset: 'none' }), 'standard');
+  });
+
+  it('each way to open a table validates and resolves with its parameters (time, curve, intensity, direction)', () => {
+    for (const kind of TABLE_KINDS) {
+      const ev = { animationType: kind, durationMs: 520, easing: 'ios', intensity: 140, direction: 'left' };
+      assert.deepEqual(motionConfigIssues({ preset: 'standard', events: { tableOpen: ev } }, 'till'), [], kind);
+      const r = resolveMotionEvent({ preset: 'standard', globalSpeed: 'fast', events: { tableOpen: ev } }, 'tableOpen', { surface: 'till' });
+      if (kind === 'none') {
+        assert.deepEqual([r.animationType, r.durationMs], ['none', 0]);
+        continue;
+      }
+      assert.deepEqual([r.animationType, r.durationMs, r.easing, r.intensity, r.direction], [kind, 520, 'ios', 140, 'left'], kind);
+      const bare = resolveMotionEvent({ preset: 'standard', globalSpeed: 'fast', events: { tableOpen: { animationType: kind } } }, 'tableOpen', { surface: 'till' });
+      assert.deepEqual([bare.animationType, bare.durationMs], [kind, 488], kind); // 650 × 0.75
+      const light = resolveMotionEvent({ preset: 'standard', events: { tableOpen: { animationType: kind } } }, 'tableOpen', { surface: 'till', profile: 'light' });
+      assert.deepEqual([light.animationType, light.durationMs], ['fade', 488], kind);
+    }
+  });
+
+  it('the same rules refuse, on each surface, what that surface cannot take', () => {
+    const paths = (mo: Record<string, unknown>, surface: 'kiosk' | 'till') => motionConfigIssues(mo, surface).map((e) => `${e.path}:${e.code}`);
+    assert.deepEqual(paths({ preset: 'turbo', events: { tableOpen: { animationType: 'spin', durationMs: 9000 }, payment: { animationType: 'buttonFill' }, idle: {} } }, 'till'), [
+      'motion.preset:enum',
+      'motion.events.tableOpen.animationType:enum',
+      'motion.events.tableOpen.durationMs:range',
+      'motion.events.payment.animationType:enum',
+      'motion.events.idle:unknownKey',
+    ]);
+    assert.deepEqual(paths({ preset: 'none', events: { tableOpen: {}, payment: { animationType: 'slideIn' } } }, 'kiosk'), [
+      'motion.preset:enum',
+      'motion.events.tableOpen:unknownKey',
+      'motion.events.payment.animationType:enum',
+    ]);
+    assert.deepEqual(paths({ preset: 'legacy', globalSpeed: 'slow', speedMultiplier: 1.2, events: { payment: { animationType: 'fadeScale' } } }, 'till'), []);
   });
 });

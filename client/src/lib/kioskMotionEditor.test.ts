@@ -8,9 +8,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  KIOSK_MOTION_EVENTS,
   MOTION_DIRECTIONS,
   MOTION_EASINGS,
   MOTION_EVENTS,
+  TILL_MOTION_EVENTS,
+  TILL_MOTION_PRESETS,
   MOTION_FALLBACKS,
   MOTION_GLOBAL_SPEEDS,
   MOTION_PARAM_KEYS,
@@ -25,7 +28,11 @@ import {
   MOTION_BASIC_PARAMS,
   MOTION_EVENT_GROUPS,
   PRESET_EXAMPLE_EVENTS,
+  TILL_MOTION_EVENT_GROUPS,
+  TILL_PRESET_EXAMPLE_EVENTS,
   clampMultiplier,
+  globalSpeedResetEdits,
+  noMotionEdits,
   globalSpeedEdits,
   globalSpeedView,
   motionCopyEdits,
@@ -43,8 +50,12 @@ import {
 describe('the events in groups', () => {
   it('every event exactly once', () => {
     const listed = MOTION_EVENT_GROUPS.flatMap((g) => g.events);
-    assert.equal(listed.length, MOTION_EVENTS.length);
-    assert.deepEqual([...listed].sort(), [...MOTION_EVENTS].sort());
+    assert.equal(listed.length, KIOSK_MOTION_EVENTS.length);
+    assert.deepEqual([...listed].sort(), [...KIOSK_MOTION_EVENTS].sort());
+    // The till's: its own events, each once.
+    const till = TILL_MOTION_EVENT_GROUPS.flatMap((g) => g.events);
+    assert.equal(till.length, TILL_MOTION_EVENTS.length);
+    assert.deepEqual([...till].sort(), [...TILL_MOTION_EVENTS].sort());
   });
 
   it('the basic and the advanced controls are every parameter but the switch, once', () => {
@@ -245,5 +256,89 @@ describe('the screen\'s Hebrew texts exist in he.json', () => {
     for (const g of MOTION_EVENT_GROUPS) assert.equal(typeof m.groups[g.key], 'string', g.key);
     for (const e of PRESET_EXAMPLE_EVENTS) assert.equal(typeof m.example[e], 'string', e);
     assert.equal(he.kiosks.settings.sections.motion, 'הנפשות');
+  });
+});
+
+describe('the till\'s screen (surface "till", P:/specs/till-motion.md)', () => {
+  it('its preset cards: today\'s first (only the screens move), Standard and the rest as the kiosk\'s', () => {
+    assert.deepEqual([...TILL_PRESET_EXAMPLE_EVENTS], ['pageTransition', 'tableOpen', 'payment', 'addToCart']);
+    assert.deepEqual(presetExample('legacy', 'till'), { pageTransition: 300, tableOpen: 140, payment: 330, addToCart: 0 });
+    assert.deepEqual(presetExample('standard', 'till'), { pageTransition: 650, tableOpen: 650, payment: 650, addToCart: 750 });
+    assert.deepEqual(presetExample('fast', 'till'), { pageTransition: 450, tableOpen: 450, payment: 450, addToCart: 550 });
+    assert.deepEqual(presetExample('none', 'till'), { pageTransition: 0, tableOpen: 0, payment: 0, addToCart: 0 });
+    assert.ok((TILL_MOTION_PRESETS as readonly string[]).includes('none'));
+  });
+
+  it('"ללא הנפשות" is one edit, and pressing again goes back to what the level inherits', () => {
+    assert.deepEqual(noMotionEdits(true), [{ path: 'motion.preset', value: 'none' }]);
+    assert.deepEqual(noMotionEdits(false), [{ path: 'motion.preset', reset: true }]);
+  });
+
+  it('no older keys on the till: the speed is its two keys, a kind writes nothing beside it', () => {
+    assert.deepEqual(globalSpeedEdits('slow', undefined, 'till'), [{ path: 'motion.globalSpeed', value: 'slow' }]);
+    assert.deepEqual(globalSpeedEdits('custom', 1.42, 'till'), [
+      { path: 'motion.globalSpeed', value: 'custom' },
+      { path: 'motion.speedMultiplier', value: 1.4 },
+    ]);
+    assert.deepEqual(globalSpeedResetEdits('till').map((e) => e.path), ['motion.globalSpeed', 'motion.speedMultiplier']);
+    const edits = motionParamEdits({}, {}, 'pageTransition', 'animationType', 'fadeIn', 'till');
+    assert.deepEqual(edits, [{ path: 'motion.events.pageTransition', value: { animationType: 'fadeIn' } }]);
+    assert.deepEqual(motionEventResetEdits('pageTransition', 'till'), [{ path: 'motion.events.pageTransition', reset: true }]);
+  });
+
+  it('switching an event on in "כמו היום" writes it; back off leaves nothing', () => {
+    const on = motionParamEdits({}, {}, 'addToCart', 'enabled', true, 'till');
+    assert.deepEqual(on, [{ path: 'motion.events.addToCart', value: { enabled: true } }]);
+    const off = motionParamEdits({ events: { addToCart: { enabled: true } } }, {}, 'addToCart', 'enabled', false, 'till');
+    assert.deepEqual(off, [{ path: 'motion.events.addToCart', value: undefined }]);
+  });
+
+  it('the till\'s kinds: tableOpen takes its seven, payment the screen\'s; a copy keeps only what fits', () => {
+    const c = motionCopyEdits({ events: { tableOpen: { animationType: 'flip', durationMs: 500 } } }, 'tableOpen', 'payment', 'till');
+    assert.deepEqual(c.copied, ['durationMs']);
+    assert.deepEqual(c.skipped, ['animationType']);
+    const ok = motionCopyEdits({ events: { pageTransition: { animationType: 'fadeIn' } } }, 'pageTransition', 'payment', 'till');
+    assert.deepEqual(ok.copied, ['animationType']);
+  });
+
+  it('the controls under "ללא הנפשות" show what the event would play, switched off', () => {
+    const v = motionEventView({ preset: 'none' }, 'tableOpen', 'till');
+    assert.equal(v.enabled, false);
+    assert.equal(v.animationType, 'zoom');
+    assert.equal(v.durationMs, 650);
+    assert.deepEqual(motionEventCounts({ preset: 'none', events: { addToCart: { durationMs: 600 } } }, 'till'), { custom: 1, off: 1 });
+  });
+
+  it('the duration\'s arithmetic is what the till plays, for every event, preset and speed', () => {
+    for (const preset of TILL_MOTION_PRESETS) {
+      if (preset === 'none') continue;
+      for (const globalSpeed of ['slow', 'normal', 'fast', null] as const) {
+        const m: MotionEngineSettings = { preset, globalSpeed, events: { addToCart: { enabled: true } } };
+        for (const e of TILL_MOTION_EVENTS) {
+          const played = resolveMotionEvent(m, e, { surface: 'till' });
+          if (played.animationType === 'none') continue;
+          assert.equal(motionDurationView(m, e, 'full', 'till').ms, played.durationMs, `${preset} ${globalSpeed} ${e}`);
+        }
+      }
+    }
+  });
+
+  it('its Hebrew: the till\'s own words, and every till event named', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const k = he.kiosks.motion;
+    const t = he.tillDesign.motion;
+    for (const e of TILL_MOTION_EVENTS) {
+      assert.equal(typeof (t.events?.[e]?.name ?? k.events[e]?.name), 'string', e);
+      assert.equal(typeof (t.events?.[e]?.desc ?? k.events[e]?.desc), 'string', e);
+    }
+    for (const p of TILL_MOTION_PRESETS) assert.equal(typeof (t.presets?.[p]?.name ?? k.presets[p]?.name), 'string', p);
+    for (const l of ['company', 'shop', 'area', 'machine']) assert.equal(typeof t.broadcastHint[l], 'string', l);
+    for (const e of TILL_PRESET_EXAMPLE_EVENTS) assert.equal(typeof t.example[e], 'string', e);
+    for (const g of TILL_MOTION_EVENT_GROUPS) assert.equal(typeof t.groups[g.key], 'string', g.key);
+    for (const key of ['noMotion', 'noMotionOn', 'noMotionHint', 'noMotionNote']) assert.equal(typeof t[key], 'string', key);
+    for (const key of ['tableN', 'tableFree', 'tableBusy', 'backToTables', 'payTitle', 'payCash', 'payCard', 'payOther']) assert.equal(typeof k.stage[key], 'string', key);
+    for (const key of ['title', 'hint', 'tap', 'orderOf', 'reduced', 'reducedToggle', 'off', 'playing']) assert.equal(typeof t.live[key], 'string', key);
+    assert.equal(he.tillDesign.settings.sections.motion, 'הנפשות');
+    assert.equal(t.presets.legacy.name, 'כמו היום');
   });
 });

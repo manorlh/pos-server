@@ -30,6 +30,7 @@ import {
   getPath,
   imageCoverage,
   jsonEqual,
+  pruneEmptyMotion,
   pruneOverrides,
   setPath,
   templatesInUse,
@@ -60,11 +61,12 @@ import { FieldsSection } from './section-fields';
 import { LayoutSection } from './section-layout';
 import { LookSection } from './section-look';
 import { MenuSection } from './section-menu';
+import { TillMotionSection, TillTablesDemo } from './section-motion';
 import { TemplateSection } from './section-template';
 import { CoursesOffNote, CoverageSummary } from './section-template-options';
 import { TillPreview } from './till-preview';
 
-type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields';
+type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion';
 
 const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'template', paths: ['template', 'profiles', 'courses', 'payDock', 'night', 'visual', 'professional', 'bar.openTabs'] },
@@ -73,6 +75,8 @@ const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'actions', paths: ['actionBar', 'quickCash', 'bar.quantityPresets', 'bar.repeatRound'] },
   { key: 'look', paths: ['colors', 'texts'] },
   { key: 'fields', paths: ['fields', 'tables', 'behavior', 'orderNumber'] },
+  // "הנפשות" (P:/specs/till-motion.md): the kiosk's Motion Engine on the till.
+  { key: 'motion', paths: ['motion'] },
 ];
 
 /** Who may write a level (the server's machine-admin set, then its scope check). */
@@ -195,11 +199,12 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
     setMode,
     errors,
     serverErrors,
+    // A `motion` edit may leave empty objects behind (an event back to nothing): pruned, as the server does.
     set: (path, value) => {
-      setDraft((d) => setPath(d, path, value));
+      setDraft((d) => pruneEmptyMotion(setPath(d, path, value)));
       setServerErrors((list) => (list.length ? list.filter((e) => !hits([path], e.path)) : list));
     },
-    reset: (path) => setDraft((d) => setPath(d, path, cloneJson(getPath(inherited, path)))),
+    reset: (path) => setDraft((d) => pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path))))),
   };
 
   const sectionErrors = (key: SectionKey) => {
@@ -311,45 +316,51 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
               <ActionsSection />
             ) : section === 'look' ? (
               <LookSection />
+            ) : section === 'motion' ? (
+              <TillMotionSection />
             ) : (
               <FieldsSection />
             )}
           </div>
           <aside className={cn('lg:sticky lg:top-16', !showPreview && 'hidden lg:block')}>
-            <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <Segmented
-                  value={mode}
-                  onChange={setMode}
-                  ariaLabel={t('previewMode')}
-                  options={[
-                    { value: 'table', label: tm('table') },
-                    { value: 'quick', label: tm('quick') },
-                  ]}
+            {section === 'motion' ? (
+              <TillTablesDemo />
+            ) : (
+              <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Segmented
+                    value={mode}
+                    onChange={setMode}
+                    ariaLabel={t('previewMode')}
+                    options={[
+                      { value: 'table', label: tm('table') },
+                      { value: 'quick', label: tm('quick') },
+                    ]}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {catalog && catalog.products.length > 0 ? t('previewReal', { name: catalog.machineName }) : t('previewSample')}
+                  </span>
+                </div>
+                {view.template === 'courses' ? <CoursesOffNote /> : null}
+                {view.template === 'courses' && mode === 'quick' ? (
+                  <p className="flex items-start gap-2 rounded-lg border bg-background p-2.5 text-xs text-muted-foreground">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0" /> {t('coursesQuickClean')}
+                  </p>
+                ) : null}
+                {view.template === 'visual' ? <CoverageSummary compact /> : null}
+                <TillPreview
+                  key={`${mode}:${catalog?.machineId ?? 'sample'}:${view.template === 'courses' ? 'courses' : ''}`}
+                  cfg={draft}
+                  profile={profile}
+                  mode={mode}
+                  catalog={catalog}
+                  legacy={settings.legacy ?? null}
+                  maxHeight={previewMaxHeight}
+                  courseNames={courseNames}
                 />
-                <span className="text-xs text-muted-foreground">
-                  {catalog && catalog.products.length > 0 ? t('previewReal', { name: catalog.machineName }) : t('previewSample')}
-                </span>
+                <p className="text-center text-xs text-muted-foreground">{t('previewSize', { profile: tp(profile) })}</p>
               </div>
-              {view.template === 'courses' ? <CoursesOffNote /> : null}
-              {view.template === 'courses' && mode === 'quick' ? (
-                <p className="flex items-start gap-2 rounded-lg border bg-background p-2.5 text-xs text-muted-foreground">
-                  <Info className="mt-0.5 h-4 w-4 shrink-0" /> {t('coursesQuickClean')}
-                </p>
-              ) : null}
-              {view.template === 'visual' ? <CoverageSummary compact /> : null}
-              <TillPreview
-                key={`${mode}:${catalog?.machineId ?? 'sample'}:${view.template === 'courses' ? 'courses' : ''}`}
-                cfg={draft}
-                profile={profile}
-                mode={mode}
-                catalog={catalog}
-                legacy={settings.legacy ?? null}
-                maxHeight={previewMaxHeight}
-                courseNames={courseNames}
-              />
-              <p className="text-center text-xs text-muted-foreground">{t('previewSize', { profile: tp(profile) })}</p>
-            </div>
+            )}
           </aside>
         </div>
 
