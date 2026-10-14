@@ -111,6 +111,46 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX IF NOT EXISTS ix_print_jobs_status ON print_jobs(status);
   `,
+  // 2 — the cash host's journal (main/cash/journal.ts; P:/specs/cash-paylink.md §4, §11): written
+  // BEFORE the device is touched; empty on every other role.
+  `
+  CREATE TABLE IF NOT EXISTS cash_tx (
+    tx_id TEXT PRIMARY KEY,
+    station_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    uploaded_seq INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS ix_cash_tx_station_state ON cash_tx(station_id, state);
+  CREATE TABLE IF NOT EXISTS cash_cmd_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    station_id TEXT NOT NULL,
+    tx_id TEXT,
+    op TEXT NOT NULL,
+    command TEXT NOT NULL,
+    counters TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    result TEXT
+  );
+  CREATE INDEX IF NOT EXISTS ix_cash_cmd_log_tx ON cash_cmd_log(tx_id);
+  CREATE TABLE IF NOT EXISTS cash_moves (
+    id TEXT PRIMARY KEY,
+    station_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    json TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    uploaded INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS cash_station_state (
+    station_id TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
