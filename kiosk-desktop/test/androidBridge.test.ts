@@ -5,10 +5,12 @@ import {
   ANDROID_BRIDGE_API,
   ANDROID_CALLS,
   ANDROID_EVENTS,
+  ANDROID_NO_CARD_TEXT,
   ANDROID_ORIGIN,
   ANDROID_SENDS,
   NATIVE_STAFF,
   PAY_NO_ANSWER,
+  androidNoCard,
   apkSupports,
   createAndroidBridges,
   errorText,
@@ -23,9 +25,9 @@ import {
   type ScanKey,
 } from '../src/renderer/bridges/android';
 import { ScanKeyReader } from '../src/core/kioskScan';
-import { KIOSK_DEFAULTS, type KioskConfig } from '@dash-lib/kioskConfig';
+import { KIOSK_DEFAULTS, kioskPayChooser, type KioskConfig } from '@dash-lib/kioskConfig';
 import type { KioskView, PayProgress, StartPaymentIn, StartPaymentOut, VoucherAnswer, VoucherApplyIn } from '../src/shared/bridge';
-import { INITIAL_FLOW, reduce, type KioskEvent, type KioskFlowRules } from '../src/core/kioskFlow';
+import { INITIAL_FLOW, reduce, restingScreen, type KioskEvent, type KioskFlowRules } from '../src/core/kioskFlow';
 
 const fixture = JSON.parse(readFileSync(path.join(__dirname, 'fixtures/android_bridge_api.json'), 'utf8')) as {
   bridgeApi: number;
@@ -244,6 +246,37 @@ describe('production vouchers: the APK holds them ("שוברי הפקה")', () =
     expect(pay(['card', 'cash_at_till'])).toEqual({ methods: ['card'], usable: ['card'], cardOff: null });
     const own = { methods: ['card'], usable: [], cardOff: 'x' };
     expect(normalizeView({ phase: 'kiosk', config: {}, pay: own } as unknown as KioskView).pay).toEqual(own);
+  });
+
+  it('"ללא אשראי": the APK\'s terminal `no_card` is no card at all and no terminal fault', () => {
+    // pos-android KioskWebSnapshot: `state.terminal` "no_card", `noPayment` true, the config's methods without the card.
+    const view = (methods: string[], terminal = 'no_card') =>
+      normalizeView({
+        phase: 'kiosk',
+        config: { payment: { methods } },
+        state: { paused: false, pausedMessage: null, pausedUntil: null, noPayment: true, terminal, offline: false, offlineSince: null, cardBlocked: false },
+      } as unknown as KioskView);
+    expect(androidNoCard(view(['cash_at_till']))).toBe(true);
+    expect(androidNoCard(view(['card'], 'ready'))).toBe(false);
+    // No card tile, not even one shown off; the card's line says why, never "the terminal is not available".
+    for (const methods of [['cash_at_till'], ['cash_at_till', 'voucher'], ['voucher'], []]) {
+      const pay = view(methods).pay;
+      expect(pay.methods).not.toContain('card');
+      expect(pay.usable).not.toContain('card');
+      expect(pay.cardOff).toBe(ANDROID_NO_CARD_TEXT);
+    }
+    // The voucher stays a tile where the kiosk takes one; with no card and no till here it cannot finish an order.
+    expect(view(['cash_at_till', 'voucher']).pay).toEqual({ methods: ['voucher'], usable: [], cardOff: ANDROID_NO_CARD_TEXT });
+    // Nothing usable: no way to pay is asked or fallen back to — the screens rest ("no payment"), never a card charge.
+    const cfg = { ...KIOSK_DEFAULTS, payment: { ...KIOSK_DEFAULTS.payment, methods: ['cash_at_till', 'voucher'] } } as KioskConfig;
+    const pay = view(['cash_at_till', 'voucher']).pay;
+    expect(kioskPayChooser(cfg, pay.methods, pay.usable).fallback).toBeNull();
+    const rules: KioskFlowRules = { services: ['take_away'], skipCart: 'off', asksDetails: () => false, cartEmpty: true, detailsStep: 'before_pay', asksPayMethod: false };
+    let s = reduce(INITIAL_FLOW, { type: 'ready', ready: true }, rules);
+    s = reduce(s, { type: 'terminal', canCharge: kioskPayChooser(cfg, pay.methods, pay.usable).fallback !== null }, rules);
+    expect(restingScreen(s)).toBe('no_payment');
+    // Any other terminal state keeps the card as before.
+    expect(view(['card', 'voucher'], 'unreachable').pay).toEqual({ methods: ['card', 'voucher'], usable: ['card', 'voucher'], cardOff: null });
   });
 
   it('the checkout reports "details" and the charge "pay" — the APK keeps the vouchers there, "cart" gives them back', () => {
