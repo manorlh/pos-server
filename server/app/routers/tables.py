@@ -32,8 +32,11 @@ signed-in operator named by `X-Pos-User-Id` when their own role holds the scope 
 same two ways as a catalog write from a till.
 
 Dashboard (Clerk): `/tables/layout`, zones and tables (create, edit, bulk add, the map's
-positions, archive), `/tables/cancel-reasons`, `/tables/live`, `/tables/report`, and a
-manager's cancel / forced release of a stuck table. Table types ("סוגי שולחנות" —
+positions, archive), `/tables/cancel-reasons`, `/tables/live` (and its push, `/tables/live/push`),
+`/tables/report`, and a manager's cancel / forced release of a stuck table. "כרטיס שולחן"
+(P:/specs/live-tables-cloud.md §2, §6.8): `/tables/tables/{id}/card`, `/tables/tables/{id}/bill-printers`,
+`/tables/tables/{id}/actions/{action}` (app/services/table_actions.py) and `/tables/waiters`; the cancel
+and "החלף מלצר" need the dashboard section `tables_manage` (edit) besides `tables`. Table types ("סוגי שולחנות" —
 `/tables/types`: staff, managers, a discount) and the staff / managers' meals report
 (`/tables/meals-report`) — app/services/table_policies.py.
 """
@@ -95,6 +98,7 @@ from app.schemas.tables import (
     TablePositionsIn,
     TableReleaseIn,
     TableSaveIn,
+    TableActionIn,
     TablesReportIn,
     TableRestoreIn,
     TakeOverIn,
@@ -935,6 +939,7 @@ def dashboard_cancel_table(
       `GET /device-commands/{commandId}` (the outcome, or "timeout" after `remoteCancelTimeoutSeconds`).
     * 409 `remote_cancel_blocked` (the LAN mode, `dashboardTableCancel` blocked or a host build that
       cannot), 409 `order_changed` (the dashboard showed another order or version).
+    * 403 `section_forbidden` without the dashboard section `tables_manage` at edit (§2 "הרשאות").
     """
     from app.services import device_commands as DC
     from app.services import printers as K
@@ -943,6 +948,7 @@ def dashboard_cancel_table(
 
     table = T._live_table(db, table_id, active_tenant_id)
     shop = _writable_shop(db, table.shop_id, current_user, active_tenant_id)
+    _require_manage(db, current_user)
     out = T.dashboard_cancel(db, current_user, shop, table, body)
     if out.get("mode") == RTC.VIA_TILL:
         db.commit()
@@ -974,6 +980,122 @@ def dashboard_force_release(
     db.commit()
     _wake_shop(background_tasks, db, shop.id)
     return out
+
+
+# ── "כרטיס שולחן" (P:/specs/live-tables-cloud.md §2–§4, §6.8) ────────────────────────────────
+
+
+def _require_manage(db: Session, user: User) -> None:
+    """The cancel and "החלף מלצר": the dashboard section `tables_manage` at edit, besides `tables`."""
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+    from app.services import table_actions as TA
+
+    if not DA.effective_access(db, user).allows(TA.MANAGE_SECTION, DS.EDIT):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": DA.SECTION_FORBIDDEN, "section": TA.MANAGE_SECTION, "level": DS.EDIT},
+        )
+
+
+@router.get("/tables/tables/{table_id}/card")
+def get_table_card(
+    table_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The table's card: its lines by diner and course (sent, when, which round), its rounds, payments and
+    balance, times, next course, history, who is inside, who acts on it (`route`) and what is allowed.
+    """
+    from app.services import table_card as TC
+
+    table = T._live_table(db, table_id, active_tenant_id)
+    shop = _readable_shop(db, table.shop_id, current_user, active_tenant_id)
+    return TC.card(db, shop, table, current_user)
+
+
+@router.get("/tables/tables/{table_id}/bill-printers")
+def get_bill_printers(
+    table_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"הדפס חשבון": the tills and receipt printers the bill may print on (§6.4)."""
+    from app.services import table_actions as TA
+
+    table = T._live_table(db, table_id, active_tenant_id)
+    shop = _readable_shop(db, table.shop_id, current_user, active_tenant_id)
+    order = TA.open_order_of(db, table)
+    return {"printers": TA.bill_printers(db, shop, table, order) if order is not None else []}
+
+
+@router.post("/tables/tables/{table_id}/actions/{action}")
+def post_table_action(
+    table_id: uuid.UUID,
+    action: str,
+    body: TableActionIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+    response: Response = None,
+):
+    """
+    One action of the card (`print-bill`, `reprint`, `fire`, `hold`, `rush`, `set-waiter`, `move`,
+    `merge`, `note`), by the order's tables mode (app/services/table_actions.py):
+
+    * the cloud's tables: 200 `{mode: "direct", …}` — done here; the tills are woken, the printing ones too.
+    * the LAN host / the single till (and every bill): 202 `{mode: "via_till", commandId, …}` — followed
+      with `GET /device-commands/{commandId}`.
+    * 409 `table_in_use` (a till inside, with its name), `order_changed`, `table_not_open`, `table_busy`,
+      `remote_action_blocked`, and each action's own (§6.7). 403 `section_forbidden` for "החלף מלצר"
+      without `tables_manage`.
+    """
+    from app.services import device_commands as DC
+    from app.services import printers as K
+    from app.services import table_actions as TA
+
+    table = T._live_table(db, table_id, active_tenant_id)
+    shop = _writable_shop(db, table.shop_id, current_user, active_tenant_id)
+    if action in TA.MANAGE_ACTIONS:
+        _require_manage(db, current_user)
+    try:
+        out = TA.perform(db, current_user, shop, table, action, body)
+    except HTTPException:
+        db.rollback()
+        raise
+    if out.get("mode") == "via_till":
+        db.commit()
+        host = db.get(POSMachine, uuid.UUID(out["hostMachineId"]))
+        background_tasks.add_task(DC.wake, [host])
+        if response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return out
+    printing = out.pop("_printing", None) or []
+    out.pop("_tables", None)
+    db.commit()
+    if not out.get("replayed"):
+        _wake_shop(background_tasks, db, shop.id)
+    if printing:
+        background_tasks.add_task(K.publish_job_notify, printing)
+    return out
+
+
+@router.get("/tables/waiters")
+def get_table_waiters(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"החלף מלצר": the staff on shift (an open attendance shift, or signed in at a till); else everyone active."""
+    from app.services import table_actions as TA
+
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    return {"waiters": TA.waiters(db, shop)}
 
 
 def _reasons_changed(db: Session, tenant_id) -> None:
@@ -1043,6 +1165,20 @@ def update_reason(
     db.commit()
     _reasons_changed(db, active_tenant_id)
     return T.reason_out(reason)
+
+
+@router.get("/tables/live/push")
+def live_tables_push(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The live view's realtime: a subscribe-only Ably token for the shop's tables signal (else it polls)."""
+    from app.services import tables_state as TS
+
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    return TS.dashboard_token(shop.tenant_id, shop.id)
 
 
 @router.get("/tables/live")

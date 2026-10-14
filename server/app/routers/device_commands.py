@@ -10,8 +10,9 @@ POST /device-commands           {action, message?, params?, machineIds? | shopId
                                 (fire-and-forget; header Idempotency-Key: a retry never sends twice)
 GET  /device-commands/status    ?ids= → {items: [Command]} — the background status read
 GET  /device-commands           ?machineId=&shopId=&limit= → the audit, newest first
-GET  /device-commands/{id}      → one command now (a table's remote cancel `cancel_table`: for the
-                                shop's tables readers, followed to the host it went on to, with its outcome)
+GET  /device-commands/{id}      → one command now (a table's remote cancel `cancel_table`, and the table
+                                card's `table_*` actions: for the shop's tables readers, followed to the
+                                host it went on to, with its outcome)
 POST /device-commands/{id}/cancel
 
 Remote close / Z (REMOTE_TILL_Z_ENABLED; app/services/remote_till_z.py):
@@ -829,12 +830,19 @@ def get_command(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="command_not_found")
     now = svc.utc_now()
     from app.services import remote_table_cancel as RTC
+    from app.services import table_actions as TA
 
     if row.action == RTC.ACTION:
         from app.routers.tables import _readable_shop
 
         _readable_shop(db, row.shop_id, current_user, active_tenant_id)
         return RTC.view(db, row, now)
+    if row.action in TA.COMMANDS:
+        # "כרטיס שולחן" (P:/specs/live-tables-cloud.md §6.8): whoever reads the shop's tables follows it.
+        from app.routers.tables import _readable_shop
+
+        _readable_shop(db, row.shop_id, current_user, active_tenant_id)
+        return TA.view(db, row, now)
     kiosk_control.require_kiosk_role(current_user)
     machine = db.get(POSMachine, row.machine_id)
     kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
@@ -880,10 +888,12 @@ def till_ack(
     background_tasks: BackgroundTasks = None,
 ):
     from app.services import remote_table_cancel as RTC
+    from app.services import table_actions as TA
 
     row = svc.ack(db, machine, command_id, body.status, body.detail, result=body.result_out(), raw_result=body.result)
-    # "הקופה כבר אינה המארחת": a table's remote cancel goes on to the current host, once.
-    onward = RTC.on_answer(db, row)
+    # "הקופה כבר אינה המארחת": a table's remote cancel — or a table card's action — goes on to the
+    # current host, once.
+    onward = RTC.on_answer(db, row) or TA.on_answer(db, row)
     db.commit()
     if onward is not None:
         host = db.get(POSMachine, onward.machine_id)

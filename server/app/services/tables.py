@@ -2774,6 +2774,12 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
     from app.services import remote_table_cancel as RTC
 
     routes = RTC.routes_for(db, shop, orders.values()) if orders else {}
+    # The card's other actions (app/services/table_actions.py, P:/specs/live-tables-cloud.md §6.1): who does them.
+    from app.services import table_actions as TA
+    from app.services import table_card as TC
+
+    action_routes = TA.routes_for(db, shop, orders.values()) if orders else {}
+    fire_cache: Dict[Any, Any] = {}
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now)
@@ -2781,6 +2787,15 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
         row["zoneName"] = zone_names.get(table.zone_id)
         row["order"] = order_summary(order) if order is not None else None
         row["cancel"] = RTC.route_out(routes[order.id]) if order is not None and order.id in routes else None
+        row["actions"] = TA.route_out(action_routes[order.id]) if order is not None and order.id in action_routes else None
+        # "עיקריות בעוד 6 ד׳" (#96): the next course and when it goes by itself.
+        row["nextCourse"] = None
+        if order is not None and order.cart_json and '"course"' in order.cart_json:
+            try:
+                row["nextCourse"] = TC.next_course(db, order, table, now, fire_cache)
+            except Exception:  # noqa: BLE001 - the floor is shown without it
+                logger.exception("next course of table order %s not read", order.id)
+        row["heldBy"] = TA.holder_text(lock)
         row["lock"] = lock
         # From the dashboard every live lock is "another till's": red, with its name.
         row["state"] = table_state(order, lock)
@@ -2799,13 +2814,33 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
     except Exception:  # noqa: BLE001 - the floor is shown without them
         logger.exception("void tickets of shop %s not read", shop.id)
         void_tickets = []
+    # The till's seated-time marks ("tablesWarnMinutes" amber, "tablesAlertMinutes" red — overdue).
+    from app.services import till_parameters as TP
+
+    try:
+        params = TP.resolve_for_shop(db, shop)
+    except Exception:  # noqa: BLE001 - the floor is shown with the defaults
+        params = {}
+    warn = _minutes(params.get("tablesWarnMinutes"), 60)
+    alert = max(_minutes(params.get("tablesAlertMinutes"), 90), warn)
     return {
         "serverTime": now.isoformat(),
         "zones": [zone_out(z) for z in zones],
         "tables": rows,
         "summary": {"openTables": open_count, "openTotal": float(open_total), "guests": guests},
         "voidTickets": void_tickets,
+        "thresholds": {"warnMinutes": warn, "alertMinutes": alert},
     }
+
+
+def _minutes(value: Any, default: int) -> int:
+    """A till parameter of minutes as the till reads it (TablesConfig: 1 – a day)."""
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(min(max(int(float(value)), 1), 24 * 60))
+    except (TypeError, ValueError):
+        return default
 
 
 def _check_shown(order: TableOrder, body) -> None:
@@ -2865,7 +2900,10 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
         command = RTC.request(db, user, table, order, reason, body.reason_text, route, now=now)
         return RTC.requested_out(command, route)
     if lock_live(table, now):
-        raise _locked(db, table, now)
+        # A till inside the table (P:/specs/live-tables-cloud.md §4): refused with who is there.
+        from app.services.table_actions import in_use
+
+        raise in_use(db, table, now)
     name = user.username or user.email
     # The till that last worked it: the void tickets follow its view of the printers.
     worked_by = order.updated_machine_id

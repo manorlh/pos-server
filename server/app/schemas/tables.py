@@ -687,3 +687,50 @@ class DashboardCancelIn(_Camel):
     @classmethod
     def _reason_text(cls, value):
         return _clean_text(value, 300)
+
+
+# ── "כרטיס שולחן": the dashboard's actions (P:/specs/live-tables-cloud.md §6.8) ──────────────
+
+
+class ReprintPickIn(_Camel):
+    """One line of one round, picked for a reprint (the till's ReprintPick)."""
+
+    round_id: str = Field(..., alias="roundId", min_length=1, max_length=120)
+    line_id: str = Field(..., alias="lineId", min_length=1, max_length=120)
+
+
+class CardMergeSourceIn(_Camel):
+    """An open table merged into the card's, at the order and version the dashboard showed."""
+
+    table_id: uuid.UUID = Field(..., alias="tableId")
+    order_id: Optional[uuid.UUID] = Field(None, alias="orderId")
+    expected_version: Optional[int] = Field(None, alias="expectedVersion", ge=0)
+
+
+class TableActionIn(_Camel):
+    """
+    `POST /tables/tables/{id}/actions/{action}`: the order and version the card showed, the click's id
+    (a retry of it is the same request — the same command, the same tickets), and the action's own.
+    """
+
+    order_id: uuid.UUID = Field(..., alias="orderId")
+    expected_version: Optional[int] = Field(None, alias="expectedVersion", ge=0)
+    request_id: uuid.UUID = Field(..., alias="requestId")
+    #: fire / hold.
+    course_id: Optional[str] = Field(None, alias="courseId", max_length=100)
+    hold: bool = True
+    #: reprint: everything, a round, or lines of rounds.
+    scope: Literal["all", "round", "lines"] = "all"
+    round_id: Optional[str] = Field(None, alias="roundId", max_length=120)
+    picks: List[ReprintPickIn] = Field(default_factory=list, max_length=500)
+    #: set-waiter.
+    waiter_pos_user_id: Optional[uuid.UUID] = Field(None, alias="waiterPosUserId")
+    #: move.
+    target_table_id: Optional[uuid.UUID] = Field(None, alias="targetTableId")
+    #: merge: into the card's table.
+    sources: List[CardMergeSourceIn] = Field(default_factory=list, max_length=10)
+    #: note (empty clears it).
+    text: Optional[str] = Field(None, max_length=500)
+    #: print-bill: the till, and its receipt printer (none: the till's own).
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
+    printer_id: Optional[uuid.UUID] = Field(None, alias="printerId")

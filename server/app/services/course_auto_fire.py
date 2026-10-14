@@ -745,6 +745,26 @@ class FireWrite:
     printed: List[Tuple[Line, float, Optional[str]]]
     #: The lines marked sent without a ticket ("יוצא בלי בון").
     silent: List[str]
+    #: "הערה לשולחן" (P:/specs/live-tables-cloud.md §6.5) this round prints, now marked printed by it.
+    note: Optional[str] = None
+
+
+#: The table's note on its next ticket (P:/specs/live-tables-cloud.md §6.5): "הערה לשולחן: …".
+TABLE_NOTE_KEY = "tableNote"
+TABLE_NOTE_PREFIX = "הערה לשולחן: "
+
+
+def pending_note(extras: Dict[str, Any]) -> Optional[str]:
+    """The table's note when no round printed it yet (`tableNote` without `p`); None otherwise."""
+    note = extras.get(TABLE_NOTE_KEY)
+    if not isinstance(note, dict) or note.get("p"):
+        return None
+    text = _str_or_none(note.get("t"))
+    return text.strip() if text and text.strip() else None
+
+
+def note_notice(text: Optional[str]) -> Optional[str]:
+    return f"{TABLE_NOTE_PREFIX}{text}" if text else None
 
 
 def write_fire(
@@ -755,12 +775,15 @@ def write_fire(
     now: datetime,
     *,
     silent: Callable[[Line], bool] = lambda line: False,
+    auto: bool = True,
 ) -> FireWrite:
     """
     The till's automatic "הוצא <course>" (AutoFire.fire: TableExtras.withFired, SilentSend.mark for the
     lines of an item that goes "יוצא בלי בון", then KitchenDiff for the rest of the course's lines) on a
-    copy of the order's bookkeeping, and a round in the send log (`auto`). Nothing else of the order is
-    sent: other lines wait for the waiter's "שלח" as they did.
+    copy of the order's bookkeeping, and a round in the send log (`auto`; the dashboard's "הוצא" —
+    `auto` false — logs it as a plain round). Nothing else of the order is sent: other lines wait for
+    the waiter's "שלח" as they did. A table note no round printed yet goes with a round that prints
+    something, and is marked printed by it (`tableNote.p`).
     """
     root = json.loads(json.dumps(extras))  # a deep copy: the caller's stays as read
     seed = fire_seed(order_id, course.id)
@@ -812,11 +835,15 @@ def write_fire(
         root["hold"] = hold
     else:
         root.pop("hold", None)
+    note = None
     if added:
         log = [r for r in root.get("log") or [] if isinstance(r, dict) and r.get("i") != seed]
-        log.append({"i": seed, "a": at, "l": added, "auto": True})
+        log.append({"i": seed, "a": at, "l": added, **({"auto": True} if auto else {})})
         root["log"] = log[-ROUNDS_KEPT:]
-    return FireWrite(seed=seed, extras=root, printed=printed, silent=quiet)
+        note = pending_note(root)
+        if note is not None:
+            root[TABLE_NOTE_KEY] = {**root[TABLE_NOTE_KEY], "p": seed}
+    return FireWrite(seed=seed, extras=root, printed=printed, silent=quiet, note=note)
 
 
 def held_after(lines: Sequence[Line], extras: Dict[str, Any]) -> List[Line]:
@@ -1029,11 +1056,44 @@ def queue_fire_tickets(
     seed: str,
     is_addition: bool,
     now: datetime,
+    band: Optional[str] = None,
+    notice: Optional[str] = None,
+    source_name: str = SOURCE_NAME,
 ) -> List[Any]:
     """
     The fire's tickets through the relay, as the void of a dashboard cancel goes (table_void_tickets):
     the till's routing over its printers view, one job per printer under the till's id for this fire.
-    A job already made for it is answered as it stands (a retry).
+    A job already made for it is answered as it stands (a retry). [band]: the fire's words ("עיקריות
+    (אוטומטי)" by default); [notice]: a band at the head (the table's note, §6.5).
+    """
+    return queue_table_tickets(
+        db, order, table, items, routing=routing, seed=seed, is_addition=is_addition, now=now,
+        # "הוצא: עיקריות (אוטומטי)" — the band the printing till draws for a fired course.
+        fire=band if band is not None else f"{course.name}{AUTO_SUFFIX}",
+        notice=notice, source_name=source_name,
+    )
+
+
+def queue_table_tickets(
+    db: Session,
+    order: Any,
+    table: Any,
+    items: List[KitchenItem],
+    *,
+    routing: Any,
+    seed: str,
+    is_addition: bool,
+    now: datetime,
+    fire: Optional[str] = None,
+    notice: Optional[str] = None,
+    source_name: str = SOURCE_NAME,
+) -> List[Any]:
+    """
+    A table's tickets through the relay (a fire, the dashboard's reprint or rush — P:/specs/
+    live-tables-cloud.md §6.6): the till's routing over the printers view of the till that worked the
+    table, one job per printer under `jobIdOf(seed, printer, "ticket")`. A job already made for it is
+    answered as it stands (a retry). [fire]: the "הוצא: …" band; [notice]: the band at the head
+    ("הדפסה חוזרת", "זרז!", the table's note).
     """
     from app.models.printers import KitchenPrinter, KitchenPrintJob
     from app.models.tables import TableZone
@@ -1061,10 +1121,12 @@ def queue_fire_tickets(
         "createdAt": now.isoformat(),
         "isAddition": is_addition,
         "orderRef": str(order.id)[:8],
-        "sourceName": SOURCE_NAME,
-        # "הוצא: עיקריות (אוטומטי)" — the band the printing till draws for a fired course.
-        "fire": _clip(f"{course.name}{AUTO_SUFFIX}", TICKET_TEXT_MAX),
+        "sourceName": _clip(source_name, TICKET_TEXT_MAX),
     }
+    if fire:
+        head["fire"] = _clip(fire, TICKET_TEXT_MAX)
+    if notice:
+        head["notice"] = _clip(notice, TICKET_TEXT_MAX)
     print_host = K.print_host_of_shop(db, order.shop_id)
     jobs: List[Any] = []
     for pid, its in routed:
@@ -1078,11 +1140,11 @@ def queue_fire_tickets(
             continue
         target = VT.void_target(printer, print_host, routing)
         if target is None:
-            logger.warning("auto-fire of table order %s: printer %s has no till to print it", order.id, pid)
+            logger.warning("ticket of table order %s: printer %s has no till to print it", order.id, pid)
             continue
         if len(its) > TICKET_LINES_MAX:
             logger.warning(
-                "auto-fire of table order %s: %d lines on %s, the first %d sent", order.id, len(its), pid, TICKET_LINES_MAX,
+                "ticket of table order %s: %d lines on %s, the first %d sent", order.id, len(its), pid, TICKET_LINES_MAX,
             )
         ticket = TicketIn.model_validate({**head, "lines": [ticket_line(i) for i in its[:TICKET_LINES_MAX]]})
         job = KitchenPrintJob(
@@ -1114,6 +1176,7 @@ def _own_note(line: Line) -> Optional[str]:
 
 def release_to_kds(
     db: Session, order: Any, table: Any, routing: Any, write: FireWrite, lines: Sequence[Line], now: datetime,
+    *, actor_name: str = ACTOR_NAME,
 ) -> Optional[Dict[str, Any]]:
     """
     The fire on the kitchen screens, as a till's send releases it (KdsBridge.prepareTableRelease):
@@ -1160,7 +1223,7 @@ def release_to_kds(
         "zoneName": zone.name[:100] if zone is not None and zone.name else None,
         "guests": order.guests if order.guests is not None and 0 <= order.guests <= 10_000 else None,
         "waiterName": waiter[:TEXT_MAX] if waiter else None,
-        "actorName": ACTOR_NAME,
+        "actorName": (actor_name or ACTOR_NAME)[:TEXT_MAX],
         "items": items,
         "held": held,
         "noteUpdates": [],
@@ -1209,21 +1272,32 @@ def record_till_event(db: Session, machine: Any, order: Any, plan: Plan, now: da
         logger.exception("course_auto_fired of table order %s not recorded", order.id)
 
 
-def apply_fire(db: Session, order: Any, table: Any, found: Evaluation, now: datetime) -> Optional[Dict[str, Any]]:
+def fire_course(
+    db: Session,
+    order: Any,
+    table: Any,
+    routing: Any,
+    course: Course,
+    now: datetime,
+    *,
+    auto: bool = True,
+    band: Optional[str] = None,
+    source_name: str = SOURCE_NAME,
+    actor_name: str = ACTOR_NAME,
+) -> Optional[Dict[str, Any]]:
     """
-    The fire, on rows the caller locked and read again: the order's bookkeeping and version, the
-    tickets, the KDS, the logs. In the caller's transaction (it commits). None: nothing to send.
+    "הוצא <course>" on rows the caller locked and read again — the cloud's auto-fire (`apply_fire`) and
+    the dashboard's "הוצא" (app/services/table_actions.py, `auto` false): the order's bookkeeping and
+    version, the tickets (with the table's note when one waits, §6.5), the KDS. In the caller's
+    transaction (it commits) and without its logs. None: nothing of the course left to send.
     """
     from app.services import kds_workflow as WF
     from app.services import table_void_tickets as VT
-    from app.services import tables as T
 
-    plan, routing = found.plan, found.routing
-    course = plan.pending.course
     lines = cart_lines(order.cart_json)
     extras = extras_of(order.extras_json)
     quiet = silent_products(db, course_lines(lines, course.id))
-    write = write_fire(order.id, lines, extras, course, now, silent=lambda line: line.product_id in quiet)
+    write = write_fire(order.id, lines, extras, course, now, silent=lambda line: line.product_id in quiet, auto=auto)
     if not write.printed and not write.silent:
         return None  # nothing of it left to send (AutoFire.fire: skipped)
     is_addition = (order.send_count or 0) > 0
@@ -1244,32 +1318,24 @@ def apply_fire(db: Session, order: Any, table: Any, found: Evaluation, now: date
     if items and prints:
         jobs = queue_fire_tickets(
             db, order, table, items, routing=routing, course=course, seed=write.seed, is_addition=is_addition, now=now,
+            band=band, notice=note_notice(write.note), source_name=source_name,
         )
     kds: Optional[Dict[str, Any]] = None
     kds_error = False
     if write.printed:
         try:
             with db.begin_nested():
-                kds = release_to_kds(db, order, table, routing, write, lines, now)
+                kds = release_to_kds(db, order, table, routing, write, lines, now, actor_name=actor_name)
         except Exception:  # noqa: BLE001 - the paper went; a KDS-only kitchen waits for the next pass
-            logger.exception("auto-fire of table order %s: the KDS release failed", order.id)
+            logger.exception("fire of table order %s: the KDS release failed", order.id)
             if not prints:
                 raise
             kds_error = True
-    T.record_event(
-        db, "send", table, order, now=now,
-        details={
-            "autoFire": True, "courseId": course.id, "courseName": course.name, "trigger": plan.trigger,
-            "minutes": plan.minutes, "fireId": write.seed,
-        },
-    )
-    record_till_event(db, routing, order, plan, now, len(write.printed) + len(write.silent))
     return {
         "orderId": str(order.id),
         "tableId": str(order.table_id),
         "courseId": course.id,
         "courseName": course.name,
-        "trigger": plan.trigger,
         "fireId": write.seed,
         "printedLines": [line.id for line, _q, _n in write.printed],
         "silentLines": list(write.silent),
@@ -1277,8 +1343,33 @@ def apply_fire(db: Session, order: Any, table: Any, found: Evaluation, now: date
         "kds": kds,
         "kdsError": kds_error,
         "version": order.version,
+        "note": write.note,
         "_jobs": jobs,
     }
+
+
+def apply_fire(db: Session, order: Any, table: Any, found: Evaluation, now: datetime) -> Optional[Dict[str, Any]]:
+    """
+    The fire, on rows the caller locked and read again: the order's bookkeeping and version, the
+    tickets, the KDS, the logs. In the caller's transaction (it commits). None: nothing to send.
+    """
+    from app.services import tables as T
+
+    plan, routing = found.plan, found.routing
+    course = plan.pending.course
+    out = fire_course(db, order, table, routing, course, now)
+    if out is None:
+        return None
+    T.record_event(
+        db, "send", table, order, now=now,
+        details={
+            "autoFire": True, "courseId": course.id, "courseName": course.name, "trigger": plan.trigger,
+            "minutes": plan.minutes, "fireId": out["fireId"],
+        },
+    )
+    record_till_event(db, routing, order, plan, now, len(out["printedLines"]) + len(out["silentLines"]))
+    out["trigger"] = plan.trigger
+    return out
 
 
 def fire_if_due(

@@ -874,6 +874,7 @@ POST /tables/cancel-reasons -> tables:edit
 PATCH /tables/cancel-reasons/{reason_id} -> tables:edit
 GET /tables/layout -> tables:view
 GET /tables/live -> tables|reports:view
+GET /tables/live/push -> tables|reports:view
 GET /tables/meals-report -> tables|reports:view
 GET /tables/report -> tables|reports:view
 GET /tables/reservations -> tables:view
@@ -881,13 +882,17 @@ POST /tables/reservations -> tables:edit
 PATCH /tables/reservations/{reservation_id} -> tables:edit
 POST /tables/tables -> tables:edit
 PATCH /tables/tables/{table_id} -> tables:edit
+POST /tables/tables/{table_id}/actions/{action} -> tables:edit
 POST /tables/tables/{table_id}/archive -> tables:edit
+GET /tables/tables/{table_id}/bill-printers -> tables:view
 POST /tables/tables/{table_id}/cancel -> tables:edit
+GET /tables/tables/{table_id}/card -> tables:view
 POST /tables/tables/{table_id}/force-release -> tables:edit
 GET /tables/types -> tables:view
 POST /tables/types -> tables:edit
 PATCH /tables/types/{type_id} -> tables:edit
 POST /tables/types/{type_id}/archive -> tables:edit
+GET /tables/waiters -> tables:view
 POST /tables/zones -> tables:edit
 PATCH /tables/zones/{zone_id} -> tables:edit
 POST /tables/zones/{zone_id}/archive -> tables:edit

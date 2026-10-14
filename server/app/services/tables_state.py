@@ -331,6 +331,35 @@ def channels_for(
     return out
 
 
+#: How long the dashboard's token for the shop channel lasts (it asks again, polling meanwhile).
+DASHBOARD_TOKEN_TTL_MS = 60 * 60 * 1000
+
+
+def dashboard_token(tenant_id: Any, shop_id: Any) -> Dict[str, Any]:
+    """
+    "שולחנות פתוחים — חי" (P:/specs/live-tables-cloud.md §1, §6.8): a subscribe-only Ably token for the
+    shop's channel — the coalesced "tables" signal the tills get — so the dashboard refetches on every
+    change. `{enabled, channel, token, expiresAt}`; `enabled: false` without Ably (it polls every 5 s).
+    The message carries no data: the live view it refetches is scoped like every other read.
+    """
+    from app.services import ably_notify
+
+    channel = ably_notify.shop_channel(str(tenant_id), str(shop_id))
+    client = ably_notify._rest() if ably_notify.is_enabled() else None
+    if client is None:
+        return {"enabled": False, "channel": channel}
+    try:
+        details = client.auth.request_token({"capability": {channel: ["subscribe"]}, "ttl": DASHBOARD_TOKEN_TTL_MS})
+    except Exception:  # noqa: BLE001 - the dashboard polls
+        logger.exception("ably token for the tables of shop %s failed", shop_id)
+        return {"enabled": False, "channel": channel}
+    expires = getattr(details, "expires", None)
+    expires_at = (
+        datetime.fromtimestamp(expires / 1000, tz=timezone.utc).isoformat() if isinstance(expires, (int, float)) else None
+    )
+    return {"enabled": True, "channel": channel, "token": getattr(details, "token", None), "expiresAt": expires_at}
+
+
 class TablesNotifier:
     """
     Collects a shop's changes for `NOTIFY_WINDOW_S` and sends them as one message, in one
