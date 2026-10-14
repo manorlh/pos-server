@@ -117,6 +117,10 @@ export const EXCEPTION_TYPES = [
   // that failed, expired or was taken back there (details: summary, jobId, status, error, host, source,
   // document {category, type, number, copy, title}, resolvedAt — closed when it prints after all).
   'document_unprinted',
+  // "מכשיר מזומן" (pos-server app/services/cash_alerts.py, P:/specs/cash-paylink.md §9א, §11.9): a kiosk cash
+  // station's alert, naming the station (details: summary, stationId, stationName, code, unit, hostId, txId,
+  // source heartbeat | journal | watch, resolvedAt — closed by itself when it is over).
+  'cash_unit',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

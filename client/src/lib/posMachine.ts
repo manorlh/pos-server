@@ -110,12 +110,12 @@ function deviceModel(value: unknown): PosMachine['deviceModel'] {
 }
 
 /**
- * `till` | `kiosk` | `local_server` ("שרת מקומי", P:/specs/dedicated-local-server.md); null when the server
- * did not say (a screen is told apart by `fiscal: false`).
+ * `till` | `kiosk` | `local_server` ("שרת מקומי", P:/specs/dedicated-local-server.md) | `cash_host` ("שרת מזומן",
+ * P:/specs/cash-paylink.md); null when the server did not say (a screen is told apart by `fiscal: false`).
  */
 function deviceRole(value: unknown): PosMachine['deviceRole'] {
   const s = nullableString(value)?.toLowerCase();
-  return s === 'till' || s === 'kiosk' || s === 'local_server' ? s : null;
+  return s === 'till' || s === 'kiosk' || s === 'local_server' || s === 'cash_host' ? s : null;
 }
 
 /** What the device runs, as the server says (else what it said at pairing); null when unknown. */

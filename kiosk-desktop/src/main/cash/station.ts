@@ -1268,9 +1268,11 @@ export class CashStation {
     const pieces: CashMove['pieces'] = [];
     for (const d of targets) {
       const have = d.cls === 'smart_total' ? (this.view?.denominations.filter((x) => x.dispensers.some((y) => y.cls === 'smart_hopper')).reduce((sum, x) => sum + x.count, 0) ?? 0) : (this.view?.denominations.find((x) => x.valueAgorot === d.valueAgorot)?.dispensers.find((x) => x.index === d.index)?.count ?? 0);
-      if (notes !== null && canPartialDump(d.cls, d.bus)) {
-        await this.send({ op: 'dispenser', index: d.index, status: DISPENSER_PARTIAL_DUMP, notesToDump: notes }, null);
-        pieces.push({ valueAgorot: d.valueAgorot, kind: d.cls === 'note' ? 'note' : 'coin', count: Math.min(notes, have) });
+      // A SmartHopper denomination has no full dump of its own (the manual): all of it as a partial dump.
+      const partial = notes !== null ? notes : !canFullDump(d.cls, d.bus) && canPartialDump(d.cls, d.bus) ? have : null;
+      if (partial !== null && canPartialDump(d.cls, d.bus)) {
+        await this.send({ op: 'dispenser', index: d.index, status: DISPENSER_PARTIAL_DUMP, notesToDump: partial }, null);
+        pieces.push({ valueAgorot: d.valueAgorot, kind: d.cls === 'note' ? 'note' : 'coin', count: Math.min(partial, have) });
       } else {
         await this.send({ op: 'dispenser', index: d.index, status: DISPENSER_CASHBOX_DUMP }, null);
         pieces.push({ valueAgorot: d.valueAgorot, kind: d.cls === 'note' ? 'note' : 'coin', count: have });

@@ -342,9 +342,14 @@ export class CashHost implements CashLanHost {
         case 'collect':
           r = st.collect(counted, c.by, note, c.id);
           break;
-        case 'dump':
-          r = await st.dump(typeof a.valueAgorot === 'number' ? a.valueAgorot : null, typeof a.notes === 'number' ? a.notes : null, c.by, c.id);
+        case 'dump': {
+          // One denomination: `valueAgorot` (and `notes` for a partial dump), or one piece in `pieces`; none — everything.
+          const one = pieces.length === 1 ? pieces[0] : null;
+          const value = typeof a.valueAgorot === 'number' ? a.valueAgorot : (one?.valueAgorot ?? null);
+          const notes = typeof a.notes === 'number' ? a.notes : one && one.count > 0 ? one.count : null;
+          r = await st.dump(value, notes, c.by, c.id);
           break;
+        }
         case 'deliver_pending':
           r = await st.deliverPending(c.by);
           break;

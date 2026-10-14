@@ -7,6 +7,7 @@
  * and what "פיצול תשלום בכרטיסים" offers (payment.splitCard — the Android kiosk only).
  */
 
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Banknote, Coins, CreditCard, Ticket, WalletCards } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -75,6 +76,17 @@ export function PaymentMethodsField() {
           );
         })}
       </ol>
+      {/* "מזומן במכשיר" (P:/specs/cash-paylink.md §11.6): shown on the kiosk only when cash is on for it
+          (`cashEnabled`) and its cash station answers ready — set on the cash stations page. */}
+      {on.includes('cash_device') ? (
+        <p className="mt-2 flex flex-wrap items-center gap-x-1 rounded-lg bg-emerald-50 p-2 text-xs text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+          <Coins className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{t('cashDeviceStationsNote')}</span>
+          <Link href="/dashboard/cash-stations" className="font-medium underline underline-offset-2">
+            {t('cashDeviceStationsLink')}
+          </Link>
+        </p>
+      ) : null}
       {/* The browser kiosk (`/k`, docs/SPEC_KIOSK.md §27) takes what a browser can: never the card. */}
       <p className={`mt-2 rounded-lg p-2 text-xs ${on.includes('cash_at_till') ? 'bg-muted/50 text-muted-foreground' : 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'}`}>
         {t('webKioskNote')}

@@ -296,6 +296,15 @@ export const NAV_SECTIONS: NavSection[] = [
       // "תקינות מכשירים": each kiosk's parts (app, terminal, printer, till link, KDS, media,
       // uploads) live, and its open alerts — the same roles as the kiosks page.
       { href: '/dashboard/kiosks/health', labelKey: 'deviceHealth', icon: HeartPulse, gate: 'settingsWrite' },
+      // "עמדות מזומן" (P:/specs/cash-paylink.md §12): the kiosks' cash stations (PayLink units) — each one's
+      // host, serial, kiosks, state, change, journal, drawer and maintenance; the kiosk pages' roles.
+      {
+        href: '/dashboard/cash-stations',
+        labelKey: 'cashStations',
+        icon: Coins,
+        gate: 'settingsWrite',
+        matchPrefixes: ['/dashboard/cash-stations/'],
+      },
       // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
       // Every role but the cashier reads (the server scopes it); managers correct.
       { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },

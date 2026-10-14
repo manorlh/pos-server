@@ -510,6 +510,19 @@ describe('cash station — device families', () => {
     expect(w.station.ledger()!.changeAvailableAgorot).toBe(0);
   });
 
+  it('SmartHopper: one denomination emptied — as a partial dump of all of it (no full dump per denomination)', async () => {
+    const w = world({ coins: [100, 500], notes: null, smartHopper: { denominations: [{ valueAgorot: 100, count: 30 }, { valueAgorot: 500, count: 20 }] } });
+    await ready(w);
+    const r = await w.station.dump(100, null, null, null);
+    expect(r.ok).toBe(true);
+    expect(w.device.commands.some((c) => c.op === 'dispenser' && c.status === 121 && c.notesToDump === 30)).toBe(true);
+    await run(w, 400);
+    expect(w.station.ledger()!.denominations.map((d) => [d.valueAgorot, d.count])).toEqual([
+      [100, 0],
+      [500, 20],
+    ]);
+  });
+
   it('MDB changer: tubes are change (level 2 inhibited), the level 3 payout pays', async () => {
     const w = world({ coins: [50, 100, 200, 500, 1000], notes: null, mdbChanger: { tubes: [{ valueAgorot: 100, count: 40 }, { valueAgorot: 50, count: 40 }, { valueAgorot: 500, count: 20 }] } });
     await ready(w);

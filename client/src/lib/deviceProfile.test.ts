@@ -38,7 +38,9 @@ import {
   pinpadHostError,
   pinpadPortError,
   roleNeedsShop,
+  isCashHost,
   isLocalServer,
+  isServerRole,
   splitDisplayDevices,
   platformsFor,
   webKioskLink,
@@ -216,8 +218,9 @@ describe('iMin / LANDI / Feitian docks (app/models/builtin_printers.py)', () => 
 
 describe('roles', () => {
   it('a till, a kiosk, a KDS or the ready / not-ready board', () => {
-    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display', 'local_server']);
+    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display', 'local_server', 'cash_host']);
     assert.equal(deviceRoleOf('local_server'), 'local_server');
+    assert.equal(deviceRoleOf('cash_host'), 'cash_host');
     assert.equal(deviceRoleOf('customer_display'), 'customer_display');
     assert.equal(deviceRoleOf('kiosk'), 'kiosk');
     assert.equal(deviceRoleOf(' TILL '), 'till');
@@ -228,12 +231,19 @@ describe('roles', () => {
   });
 
   it('a KDS and the board are not tills, not accounting systems', () => {
-    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board', 'customer_display', 'local_server']);
+    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board', 'customer_display', 'local_server', 'cash_host']);
     // "שרת מקומי" (P:/specs/dedicated-local-server.md): not a till either — no sales, no Z, no license.
     assert.equal(isFiscalRole('local_server'), false);
     assert.equal(isLocalServer({ deviceRole: 'local_server' }), true);
     assert.equal(isLocalServer({ deviceRole: 'kds' }), false);
     assert.equal(isLocalServer(null), false);
+    // "שרת מזומן" (P:/specs/cash-paylink.md §2): runs the kiosks' cash stations — not a till either.
+    assert.equal(isFiscalRole('cash_host'), false);
+    assert.equal(isDisplayDevice({ deviceRole: 'cash_host' }), true);
+    assert.equal(isCashHost({ deviceRole: 'cash_host' }), true);
+    assert.equal(isCashHost({ deviceRole: 'local_server' }), false);
+    assert.equal(isCashHost(undefined), false);
+    assert.deepEqual(['local_server', 'cash_host', 'till', 'kds'].map(isServerRole), [true, true, false, false]);
     // "מסך לקוח" (P:/specs/customer-display.md §4): a screen too — no sales, no Z.
     assert.equal(isFiscalRole('customer_display'), false);
     assert.equal(isFiscalRole('till'), true);
@@ -286,6 +296,8 @@ describe('platforms', () => {
     assert.deepEqual(platformsFor('customer_display'), ['android', 'windows', 'web']);
     // The local server is the Android app in its server role.
     assert.deepEqual(platformsFor('local_server'), ['android']);
+    // The cash server is the Windows app in its cash role (the PayLink driver is Windows only).
+    assert.deepEqual(platformsFor('cash_host'), ['windows']);
     assert.equal(webPathOf('customer_display'), '/display');
     assert.equal(webScreenLink('http://localhost:3002', 'customer_display', 'ab12'), 'http://localhost:3002/display#pair=AB12');
     assert.equal(webScreenLink('https://pos-cloud-app.vercel.app/', 'kds', 'ab12-cd34'), 'https://pos-cloud-app.vercel.app/kds#pair=AB12CD34');
@@ -370,6 +382,18 @@ describe('adding a device', () => {
     }
   });
 
+  it('a cash server: Windows, its shop and its name ("שרת מזומן" when blank)', () => {
+    const cash = { role: 'cash_host' as const, model: '' as const, platform: 'windows' as const, companyId: 'c', shopId: 's' };
+    assert.deepEqual(pairingRequestBody({ ...cash, name: '  שרת   מזומן 2 ' }, noKiosk), {
+      deviceRole: 'cash_host',
+      platform: 'windows',
+      companyId: 'c',
+      shopId: 's',
+      name: 'שרת מזומן 2',
+    });
+    assert.equal('name' in pairingRequestBody({ ...cash, name: '' }, noKiosk), false);
+  });
+
   it('"הקופה תקבל מספר N": the server\'s peek, for a register, once the shop is chosen', () => {
     const peek = { shopId: 'S-1', nextRegisterNumber: 4 };
     assert.equal(expectedRegisterNumber({ role: 'till', shopId: 's-1' }, peek), 4);
@@ -400,7 +424,10 @@ describe('adding a device', () => {
 
   it('a KDS and the board need their shop too; a station screen its stations', () => {
     assert.equal(roleNeedsShop('till'), false);
-    for (const role of ['kiosk', 'kds', 'order_status_board', 'local_server'] as const) assert.equal(roleNeedsShop(role), true);
+    for (const role of ['kiosk', 'kds', 'order_status_board', 'local_server', 'cash_host'] as const) assert.equal(roleNeedsShop(role), true);
+    // A cash server: a shop, a Windows install (no model asked) — the server's cash_host_requires_shop.
+    assert.equal(addDeviceMissing({ ...draft, role: 'cash_host', model: '', platform: 'windows' }), 'shop');
+    assert.equal(addDeviceMissing({ ...draft, role: 'cash_host', model: '', platform: 'windows', companyId: 'c', shopId: 's' }), null);
     assert.equal(addDeviceMissing({ ...draft, role: 'kds' }), 'shop');
     assert.equal(addDeviceMissing({ ...draft, role: 'order_status_board' }), 'shop');
     const inShop = { ...draft, companyId: 'c', shopId: 's' };

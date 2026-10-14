@@ -129,7 +129,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
-  { id: 'devices', pages: ['/dashboard/machines'] },
+  // "עמדות מזומן" (P:/specs/cash-paylink.md §12) are devices too: the server's `/cash-stations*` routes are
+  // `devices` (and read by `kiosks` as well — PAGES_ALSO_OPENED_BY).
+  { id: 'devices', pages: ['/dashboard/machines', '/dashboard/cash-stations'] },
   // "העברת שרת מקומי": no page of its own — the wizard on the shop page's main till card. Only the
   // super admin grants it, and full access does not include it (the server says `canSwitch`).
   { id: 'local_server_switch', pages: [] },
@@ -175,6 +177,8 @@ export function canEditTablesLayout(access: DashboardAccess): boolean {
  */
 export const PAGES_ALSO_OPENED_BY: Readonly<Record<string, readonly SectionId[]>> = {
   '/dashboard/stock/quick-block': ['item_blocks'],
+  // The server lets the kiosks' people read the cash stations (`GET /cash-stations*`: devices | kiosks, view).
+  '/dashboard/cash-stations': ['kiosks'],
 };
 
 function alsoOpened(access: DashboardAccess, pathname: string): boolean {

@@ -146,6 +146,8 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   quicksupport_signer_mismatch: 'bg-violet-200 text-violet-950 dark:bg-violet-900 dark:text-violet-100',
   // "הדפסה בקופה אחרת": a bill that did not print on another till — the printers' family.
   document_unprinted: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
+  // "מכשיר מזומן": a kiosk cash station's alert (no change, jam, door, host offline, credit held…).
+  cash_unit: 'bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
