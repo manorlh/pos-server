@@ -324,6 +324,8 @@
     "src/lib/tableRestore.ts",
     "src/lib/tableRestore.test.ts",
     "src/lib/courseFire.ts",
-    "src/lib/courseFire.test.ts"
+    "src/lib/courseFire.test.ts",
+    "src/lib/liveTables.ts",
+    "src/lib/liveTables.test.ts"
   ]
 }

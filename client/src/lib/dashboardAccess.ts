@@ -41,6 +41,7 @@ export type SectionId =
   | 'devices'
   | 'local_server_switch'
   | 'tables'
+  | 'tables_manage'
   | 'kiosks'
   | 'till_design'
   | 'kds'
@@ -131,6 +132,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   // super admin grants it, and full access does not include it (the server says `canSwitch`).
   { id: 'local_server_switch', pages: [] },
   { id: 'tables', pages: ['/dashboard/tables'] },
+  // "ביטול והחלפת מלצר" in the table card (P:/specs/live-tables-cloud.md §2): besides `tables` at edit. No page of its own.
+  { id: 'tables_manage', pages: [] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },
   { id: 'kds', pages: ['/dashboard/kds', '/dashboard/workflow'] },
