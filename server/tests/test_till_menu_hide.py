@@ -53,7 +53,7 @@ SPEC_KEYS = [
     "voucher_balance", "app_update", "history", "recent", "shift_history", "till_z_history", "product_sales",
     "workers", "tips", "tables_reports", "z_reports", "settings", "printers", "print_queue", "screen_edit",
     "diagnostics", "kiosk_mode", "alerts", "blocks_now", "managed_kiosks", "lock", "support", "switch_user",
-    "tables", "training",
+    "tables", "training", "quick_order",
 ]
 
 
@@ -218,7 +218,7 @@ def test_the_parameters_page_lists_it_with_its_widget(w):
 
 def test_the_keys_are_the_tills_in_the_menus_order():
     assert list(TM.KNOWN_KEYS) == SPEC_KEYS
-    assert len(set(TM.KNOWN_KEYS)) == len(TM.KNOWN_KEYS) == 39
+    assert len(set(TM.KNOWN_KEYS)) == len(TM.KNOWN_KEYS) == 40
     assert all(item.label for item in TM.ITEMS)
     assert TM.REPORT_KEYS == tuple(SPEC_KEYS[17:25])
 
@@ -366,6 +366,56 @@ def test_a_level_shows_its_own_what_it_inherits_and_from_where(w):
     company = _device_get(w, "company", w.company.id)
     assert company["own"] == ["catalog_admin"]
     assert company["inherited"] == [] and company["inheritedFrom"] is None  # the default: nothing
+
+
+def _tables(w, scope_type, scope_id, mode):
+    parameter = w.db.query(TillParameter).filter(TillParameter.key == "tablesMode").one()
+    w.db.add(TillParameterValue(
+        id=uuid.uuid4(), parameter_id=parameter.id, scope_type=scope_type, scope_id=scope_id, value=mode,
+    ))
+    w.db.commit()
+
+
+def test_quick_order_is_the_tables_only_device(w):
+    (item,) = [i for i in TM.ITEMS if i.key == "quick_order"]
+    assert item.label == "הזמנה מהירה (בסרגל, לא בתפריט)"
+    assert TM.KNOWN_KEYS[-2:] == ("training", "quick_order")
+    assert item.warning is None and "quick_order" not in TM.CRITICAL_KEYS
+    assert "מסך השולחנות" in item.also
+    _set(w, "machine", w.bar_till.id, "quick_order,training")
+    assert _pulled(w, w.bar_till) == "training,quick_order"
+
+
+def test_no_way_to_sell_is_a_warning_when_the_tables_are_off_or_hidden(w):
+    def selling(view):
+        return [x["warning"] for x in view["warnings"] if x["key"] == "quick_order"]
+
+    # Tables off (the default): hiding "הזמנה מהירה" leaves no way to sell — said, not refused.
+    view = _device_put(w, "machine", w.bar_till.id, ["quick_order"])
+    assert view["own"] == ["quick_order"] and view["tablesOff"] is True
+    (text,) = selling(view)
+    assert text.startswith("בקופה הזו לא תישאר דרך למכור") and "ניהול השולחנות כבוי" in text
+    assert _pulled(w, w.bar_till) == "quick_order"
+
+    # Tables on for the shop: a tables-only till, no warning — unless "שולחנות" is hidden too.
+    _tables(w, "shop", w.shop.id, "מסונכרן בין הקופות")
+    view = _device_get(w, "machine", w.bar_till.id)
+    assert view["tablesOff"] is False and selling(view) == []
+    view = _design_put(w, "machine", w.bar_till.id, ["quick_order", "tables"])
+    (text,) = selling(view)
+    assert text.startswith(TM.NO_WAY_TO_SELL) and "גם \"שולחנות\" מוסתר" in text
+    assert [x["key"] for x in view["warnings"]] == ["quick_order"]
+
+    # Above a till: the level's own tables mode.
+    assert _device_get(w, "shop", w.shop.id)["tablesOff"] is False
+    assert _device_get(w, "company", w.company.id)["tablesOff"] is True
+    _tables(w, "area", w.area.id, "כבוי")
+    assert _device_get(w, "area", w.area.id)["tablesOff"] is True
+    view = _device_put(w, "area", w.area.id, ["quick_order"])
+    assert selling(view)
+    # Nothing about selling when "הזמנה מהירה" shows.
+    assert TM.sell_warning(["tables"], True) is None
+    assert TM.sell_warning(["quick_order"], None) is None
 
 
 def test_an_empty_own_list_is_not_inheriting(w):

@@ -66,6 +66,9 @@ function LevelEditor({ route, level, id, editable = true }: Props) {
       toast.success('תפריט הקופה נשמר. הקופות יתעדכנו בסנכרון הבא.');
       const ignored = ignoredText(next.ignored ?? []);
       if (ignored) toast.warning(ignored);
+      // §5א: saved, but the till will have no way to sell — said, never refused.
+      const selling = next.warnings?.find((w) => w.key === 'quick_order');
+      if (selling) toast.warning(selling.warning);
     },
     onError: (err) => toast.error(axiosErrorToToastMessage(err, 'שמירת תפריט הקופה נכשלה')),
   });
@@ -117,6 +120,7 @@ function LevelEditor({ route, level, id, editable = true }: Props) {
         onChange={(keys) => setDraft(keys)}
         disabled={!canEdit || mode === 'inherit' || save.isPending}
         idPrefix={`menu-${route}-${level}-${id}`}
+        tablesOff={data.tablesOff}
       />
 
       {canEdit && mode === 'inherit' ? (
