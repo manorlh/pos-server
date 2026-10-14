@@ -22,11 +22,11 @@ pos-android app/src/test/resources (and read by the dashboard's client lib/recei
 """
 from __future__ import annotations
 
-import json
-import uuid
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+# The table ↔ document link the history's table search and the waiters' Z read (one rule).
+from app.services.table_documents import ORDER_MARGIN, extra_document_ids, uuid_text as _uuid_text
 
 KEY = "receiptTableInfo"
 
@@ -167,33 +167,11 @@ def table_line(fields: Iterable[str], facts: Optional[TableFacts]) -> Optional[s
 
 # ── The cloud's documents ───────────────────────────────────────────────────────
 
-#: How far before a document its table may have been opened (a long evening, a till's clock).
-ORDER_MARGIN = timedelta(days=2)
-
-
-def _uuid_text(raw: Any) -> Optional[str]:
-    try:
-        return str(uuid.UUID(str(raw)))
-    except (TypeError, ValueError, AttributeError):
-        return None
-
-
-def _extras_ids(order: Any) -> List[str]:
-    """The order's documents besides its sale: the parts paid apart, the payments given back."""
-    try:
-        extras = json.loads(order.extras_json) if order.extras_json else None
-    except (TypeError, ValueError):
-        return []
-    if not isinstance(extras, dict):
-        return []
-    out: List[str] = []
-    for key, field in (("partials", "tx"), ("reversals", "credit")):
-        entries = extras.get(key)
-        for entry in entries if isinstance(entries, list) else []:
-            tx = _uuid_text(entry.get(field)) if isinstance(entry, dict) else None
-            if tx:
-                out.append(tx)
-    return out
+#: How far before a document its table may have been opened: app/services/table_documents.py's
+#: `ORDER_MARGIN` (a long evening, a till's clock). The ids and the extras' documents are its helpers
+#: too (`uuid_text`, `extra_document_ids`). The one-document lookup below stays its own: it also
+#: follows a re-issue to its original and an order whose extras hold payments given back only,
+#: which the history's batched `orders_by_tx` does not ask for.
 
 
 def order_of_document(db, tx: Any) -> Any:
@@ -233,7 +211,7 @@ def order_of_document(db, tx: Any) -> Any:
         query = query.filter(TableOrder.opened_at >= moment - ORDER_MARGIN)
     found: Dict[str, Any] = {}
     for order in query.all():
-        for doc in _extras_ids(order):
+        for doc in extra_document_ids(order):
             found.setdefault(doc, order)
     for wanted in ids:
         if wanted in found:
