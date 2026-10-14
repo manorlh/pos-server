@@ -169,6 +169,7 @@
     "flow": "free",
     "itemView": "sheet",
     "quickAdd": "off",
+    "cartCountBadge": true,
     "mealView": "sheet",
     "mealUpsell": "off",
     "basket": null,
@@ -734,6 +735,58 @@
         "layout.doneScreen": "classic",
         "layout.payMethodView": "screen"
       }
+    },
+    {
+      "name": "the count badge is on in every template by default",
+      "layers": [
+        {
+          "layout": {
+            "template": "magazine"
+          }
+        }
+      ],
+      "expect": {
+        "layout.cartCountBadge": true,
+        "layout.quickAdd": "off"
+      }
+    },
+    {
+      "name": "a shop turns the count badge off; the wall still adds on a tap",
+      "layers": [
+        {
+          "layout": {
+            "template": "wall"
+          }
+        },
+        {
+          "layout": {
+            "cartCountBadge": false
+          }
+        }
+      ],
+      "expect": {
+        "layout.cartCountBadge": false,
+        "layout.quickAdd": "always"
+      }
+    },
+    {
+      "name": "a kiosk turns the count badge back on over its shop",
+      "layers": [
+        {},
+        {
+          "layout": {
+            "cartCountBadge": false
+          }
+        },
+        {
+          "layout": {
+            "cartCountBadge": true
+          }
+        }
+      ],
+      "expect": {
+        "layout.cartCountBadge": true
+      }
     }
   ],
   "parseCases": [
@@ -754,6 +807,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -793,6 +847,7 @@
         "flow": "free",
         "itemView": "full",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": "bar",
@@ -833,6 +888,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "first",
         "basket": "summary",
@@ -873,6 +929,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -914,6 +971,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": "panel",
@@ -954,6 +1012,7 @@
         "flow": "free",
         "itemView": "modal",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": "summary",
@@ -994,6 +1053,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -1052,6 +1112,7 @@
         "flow": "guided",
         "itemView": "steps",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": "bar",
@@ -1092,6 +1153,7 @@
         "flow": "free",
         "itemView": "modal",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": "summary",
@@ -1132,6 +1194,7 @@
         "flow": "free",
         "itemView": "modal",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": "summary",
@@ -1171,6 +1234,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -1219,6 +1283,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -1274,6 +1339,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -1320,6 +1386,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -1362,6 +1429,7 @@
         "flow": "free",
         "itemView": "sheet",
         "quickAdd": "off",
+        "cartCountBadge": true,
         "mealView": "sheet",
         "mealUpsell": "off",
         "basket": null,
@@ -1377,6 +1445,88 @@
         "pricePill": "off",
         "sheetMotion": null,
         "topBar": [],
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
+      }
+    },
+    {
+      "name": "the count badge off as the cloud sends it (cartCountBadge)",
+      "layout": {
+        "template": "standard",
+        "cartCountBadge": false
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "cartCountBadge": false,
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
+      }
+    },
+    {
+      "name": "the count badge: not a boolean is the default (on)",
+      "layout": {
+        "template": "tabs",
+        "cartCountBadge": "yes"
+      },
+      "expect": {
+        "template": "tabs",
+        "catalog": "top",
+        "categoryIcons": "filled",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "full",
+        "quickAdd": "off",
+        "cartCountBadge": true,
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "bar",
+        "service": "sheet",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
         "helpButton": "off",
         "doneScreen": "classic",
         "payMethodView": "screen"

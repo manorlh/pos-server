@@ -19,7 +19,9 @@ FIX = Path(__file__).parent / "fixtures"
 BASELINE = json.loads((FIX / "kiosk_resolve_baseline_1013.json").read_bytes().decode("utf-8"))["cases"]
 
 NEW_LAYOUT_KEYS = ("railStyle", "railEmphasis", "catalogScroll", "railFollow", "pricePill", "sheetMotion", "topBar", "helpButton",
-                   "doneScreen", "payMethodView")
+                   "doneScreen", "payMethodView",
+                   # Added after the baseline (14.10, "תג כמות" — tests/test_kiosk_count_badge.py), on by default.
+                   "cartCountBadge")
 
 
 def _without_new_keys(cfg):

@@ -15,7 +15,8 @@ import { initialPicks, lineOptionsOf, menuGroupOfP, useDishSheet } from '@/compo
 import { reachLow } from '@/lib/kioskLayout';
 import { chosenOptions, mealPick, mealSlotProblem, mealUnitAgorot, optionText, picksValid, type MealSlot } from '@/lib/kioskMoney';
 import { MealComponentChoices, answerKey, answerToggle, componentsToAnswer, type MealAnswers } from '../meal-component-choices';
-import { kt, unitOf } from './parts';
+import { cartCounts, kt, unitOf } from './parts';
+import { DishCountBadge } from './count-badge';
 
 /** The dish one group at a time; the last step adds, with the quantity. */
 export function StepsProductSheet({
@@ -571,6 +572,7 @@ export function MealChooser({
   const u = unitOf(m);
   const [picked, setPicked] = useState(meals.length > 0 ? 0 : -1);
   const price = picked >= 0 ? meals[picked].price : product.price;
+  const counts = cartCounts(m);
   const row = (title: string, p: PProduct, on: boolean, best: boolean, onClick: () => void) => (
     <button
       type="button"
@@ -588,8 +590,12 @@ export function MealChooser({
           {kt(m, 'mealBest')}
         </span>
       ) : null}
-      <span className="shrink-0 overflow-hidden" style={{ width: 46 * u, height: 46 * u, borderRadius: 12 }}>
-        <ProductImage m={m} p={p} className="h-full w-full" />
+      <span className="relative shrink-0">
+        <span className="block overflow-hidden" style={{ width: 46 * u, height: 46 * u, borderRadius: 12 }}>
+          <ProductImage m={m} p={p} className="h-full w-full" />
+        </span>
+        {/* "תג כמות": how many of the dish (or of this meal) the basket already holds. */}
+        <DishCountBadge m={m} inCart={counts[p.id] ?? 0} size={Math.round(20 * u)} className="-end-1.5 -top-1.5" />
       </span>
       <span className="min-w-0 flex-1 truncate kt-15 font-bold">{title}</span>
       <span className="shrink-0 text-lg font-extrabold tabular-nums" style={{ color: on ? m.c.primary : m.c.text }}>

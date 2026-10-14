@@ -14,6 +14,7 @@ import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
 import { DietaryChips, ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { DP_PER_PX, Empty, cartCounts, kt, unitOf, useTapDish } from './parts';
+import { DishCountBadge } from './count-badge';
 
 export function MagazineCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
   const layout = layoutOf(m.cfg);
@@ -104,11 +105,7 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
       <div data-pic className="relative min-h-0 flex-1">
         <ProductImage m={m} p={p} className="h-full w-full" />
         {p.soldOut ? <span className="absolute start-3 top-3 rounded-full bg-black/70 px-2.5 py-1 kt-11 font-bold text-white">{m.t('soldOut')}</span> : null}
-        {inCart > 0 ? (
-          <span className="absolute end-3 top-3 flex items-center justify-center rounded-full kt-15 font-bold" style={{ width: 34 * u, height: 34 * u, background: m.c.primary, color: m.c.buttonText }}>
-            {inCart}
-          </span>
-        ) : null}
+        <DishCountBadge m={m} inCart={inCart} size={Math.round(34 * u)} className="end-3 top-3" />
       </div>
       <div className="space-y-1 p-3.5">
         {label ? (
