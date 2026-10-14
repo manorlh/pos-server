@@ -5,13 +5,17 @@
  * (KioskWebBridge.kt) instead of Electron's IPC. It implements the very KioskBridge and ShellBridge
  * the screens already use (shared/bridge.ts, shared/roles.ts), so no screen knows which host it is in.
  *
- * The wire (bridgeApi 1) is JSON text both ways:
+ * The wire (bridgeApi 1, and 2 where the APK speaks it — `R2MAndroid.bridgeApi()`) is JSON text both ways:
  *
  *   JS → APK   R2MAndroid.call(id, method, argsJson)   an answer is due:
  *   APK → JS   window.__r2mAndroid.reply(id, ok, json) (evaluateJavascript), JSON of the result
  *              (ok) or of a message (not ok)
  *   JS → APK   R2MAndroid.send(method, argsJson)       one way, nothing comes back
  *   APK → JS   window.__r2mAndroid.event(name, json)   the APK's news (a new view, the payment…)
+ *
+ * bridgeApi 2 adds the call `placeOpenOrder` — "תשלום בקופה", the Windows kiosk's call of that name: the
+ * screens offer it only where the APK says it speaks 2 ([apkPlacesOpenOrders]); on an APK of API 1 the
+ * bundle runs as before (no till; a "ללא אשראי" kiosk rests on "no payment").
  *
  * What stays native on Android: the payment (Nayax LAN / Agamento), the documents and their
  * numbers, the Z, printing (the bon, the receipt, the pickup slip), the scanner hardware, the
@@ -23,13 +27,26 @@
  * pos-android app/src/test/resources/kiosk_web_bridge_api.json; both sides' tests pin them.
  */
 
-import { resolveKioskConfig, type KioskLayer } from '@dash-lib/kioskConfig';
+import { kioskOfflineBlocks, resolveKioskConfig, tsKioskPayMethods, type KioskLayer } from '@dash-lib/kioskConfig';
 import type { PaymentMethod } from '@dash-lib/kioskConfig';
-import type { AppliedVoucher, KioskBridge, KioskEvents, KioskView, StartPaymentIn, StartPaymentOut, VoucherAnswer, VoucherApplyIn } from '../../shared/bridge';
+import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
+import type {
+  AppliedVoucher,
+  BasketChange,
+  KioskBridge,
+  KioskEvents,
+  KioskView,
+  PlaceOrderIn,
+  PlaceOrderOut,
+  StartPaymentIn,
+  StartPaymentOut,
+  VoucherAnswer,
+  VoucherApplyIn,
+} from '../../shared/bridge';
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
-import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
+import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
-export { ANDROID_BRIDGE_API, ANDROID_CALLS, ANDROID_EVENTS, ANDROID_ORIGIN, ANDROID_SENDS } from './androidWire';
+export { ANDROID_BRIDGE_API, ANDROID_CALLS, ANDROID_EVENTS, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, ANDROID_SENDS, ANDROID_WIRE_API } from './androidWire';
 
 export type AndroidCall = (typeof ANDROID_CALLS)[number];
 export type AndroidSend = (typeof ANDROID_SENDS)[number];
@@ -61,12 +78,16 @@ export const CALL_TIMEOUT_MS: Record<AndroidCall, number> = {
   // The APK waits up to 20 s for the cloud's word on a voucher (KioskWebSession START_WAIT_MS).
   voucherApply: 30_000,
   voucherRemove: 15_000,
+  // The APK checks the basket, then waits up to 20 s on its pay-at-till path (KioskWebSession START_WAIT_MS).
+  placeOpenOrder: 30_000,
 };
 
 /** The staff's screens are the APK's on Android (its corners, its PIN, its admin). */
 export const NATIVE_STAFF = 'ניהול הקיוסק נפתח מהמסך המובנה';
 /** startPayment had no answer: the customer reads it, nothing was charged by this screen. */
 export const PAY_NO_ANSWER = 'התשלום לא התחיל. אנא נסו שוב או פנו לצוות.';
+/** placeOpenOrder had no answer (or none of its shape): the Windows kiosk's words when the order did not go (i18n placeFailed). */
+export const PLACE_NO_ANSWER = 'ההזמנה לא נשלחה. נסו שוב או פנו לצוות.';
 
 interface Pending {
   resolve: (v: unknown) => void;
@@ -166,14 +187,20 @@ export function voucherAnswerOf(v: unknown): VoucherAnswer | null {
  * here against the screens' own defaults, as the Windows kiosk's main process resolves it
  * (resolveKioskConfig), with anything still remote dropped.
  */
-export function normalizeView(view: KioskView): KioskView {
+export function normalizeView(view: KioskView, opts: { payAtTill?: boolean } = {}): KioskView {
   if (!view || !view.config) return view;
   const resolved = resolveKioskConfig(view.config as KioskLayer);
-  // The APK's web engine takes the card (its own screens take cash at the till), and a voucher
-  // where the kiosk is set to take one — the APK holds it (voucherApply) and the payment books it.
-  // With the card alone: no "איך תרצו לשלם?".
+  // The APK's web engine takes the card, and a voucher where the kiosk is set to take one — the APK
+  // holds it (voucherApply) and the payment books it. With the card alone: no "איך תרצו לשלם?".
+  // Cash at the till: where the APK places orders for the till ([payAtTill], bridgeApi 2) — else its own screens'.
   const configured: readonly unknown[] = Array.isArray(resolved.payment?.methods) ? resolved.payment.methods : [];
-  const pay = view.pay ?? (androidNoCard(view) ? noCardPay(configured) : cardPay(configured));
+  const pay =
+    view.pay ??
+    (opts.payAtTill
+      ? tillPay(configured, androidNoCard(view), kioskOfflineBlocks(resolved.general, view.state?.offline === true))
+      : androidNoCard(view)
+        ? noCardPay(configured)
+        : cardPay(configured));
   return { ...view, pay, config: localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown> };
 }
 
@@ -198,13 +225,99 @@ function cardPay(configured: readonly unknown[]): KioskView['pay'] {
  * No card tile at all (not one shown off), and never the terminal's "not available" on a press: what is
  * left of what the web engine takes here is the voucher, where the kiosk takes one. A voucher is usable
  * only where its order can be finished — by the card or at the till (client lib/kioskConfig.ts
- * voucherCanFinish) — and cash at the till is the APK's own screens' (bridge API 1 has no call that places
- * an order for the till): so nothing is usable, and the kiosk rests on its "no payment" screen, as the
- * native kiosk does with nothing to sell by.
+ * voucherCanFinish) — and on an APK of bridge API 1 cash at the till is the APK's own screens' (no call
+ * places an order for the till): so nothing is usable, and the kiosk rests on its "no payment" screen, as
+ * the native kiosk does with nothing to sell by. An APK of API 2: [tillPay].
  */
 function noCardPay(configured: readonly unknown[]): KioskView['pay'] {
   const methods: PaymentMethod[] = configured.includes('voucher') ? ['voucher'] : [];
   return { methods, usable: [], cardOff: ANDROID_NO_CARD_TEXT };
+}
+
+/**
+ * An APK that places orders for the till (bridgeApi 2, "placeOpenOrder"): the Windows kiosk's "איך תרצו לשלם?"
+ * (main/service.ts payView) — the methods configured as a one-card kiosk takes them (tsKioskPayMethods, in their
+ * order); "ללא אשראי" ([noCard]) without the card (no tile; its line says why); cash at the till usable unless
+ * "חסימת הזמנות כשאין אינטרנט" holds the kiosk ([offlineBlocked]); a voucher where its order can be finished — by
+ * the card or at the till. The card is as on API 1: the APK checks its terminal on the press.
+ */
+function tillPay(configured: readonly unknown[], noCard: boolean, offlineBlocked: boolean): KioskView['pay'] {
+  const set = tsKioskPayMethods(configured).filter((m) => m === 'card' || m === 'voucher' || m === 'cash_at_till');
+  const methods = noCard ? set.filter((m) => m !== 'card') : set;
+  const cardUsable = methods.includes('card');
+  const tillUsable = methods.includes('cash_at_till') && !offlineBlocked;
+  const usable = methods.filter((m) => (m === 'card' ? cardUsable : m === 'cash_at_till' ? tillUsable : cardUsable || tillUsable));
+  return { methods, usable, cardOff: noCard ? ANDROID_NO_CARD_TEXT : null };
+}
+
+/**
+ * The APK places orders for the till ("placeOpenOrder", bridgeApi ≥ 2): `R2MAndroid.bridgeApi()` says so. An APK of
+ * API 1, one with no `bridgeApi`, or one that throws: no — the screens stay as they were.
+ */
+export function apkPlacesOpenOrders(native: { bridgeApi?: unknown } | null | undefined): boolean {
+  try {
+    if (!native || typeof native.bridgeApi !== 'function') return false;
+    const api: unknown = (native as { bridgeApi(): unknown }).bridgeApi();
+    return typeof api === 'number' && Number.isFinite(api) && api >= ANDROID_PLACE_OPEN_ORDER_API;
+  } catch {
+    return false;
+  }
+}
+
+const PLACE_REFUSALS = ['empty', 'rejected', 'error'] as const;
+
+function basketChangeOf(v: unknown): BasketChange | null {
+  const c = (v ?? {}) as Record<string, unknown>;
+  const productId = text(c.productId);
+  if (productId === null) return null;
+  const name = typeof c.name === 'string' ? c.name : '';
+  const key = text(c.key);
+  if (c.kind === 'removed') return { kind: 'removed', productId, name, ...(key !== null ? { key } : {}) };
+  const from = num(c.from);
+  const to = num(c.to);
+  if (c.kind === 'repriced' && from !== null && to !== null) return { kind: 'repriced', productId, name, ...(key !== null ? { key } : {}), from, to };
+  return null;
+}
+
+/**
+ * The APK's answer to placeOpenOrder as the screens read the Windows kiosk's (shared/bridge.ts PlaceOrderOut): placed —
+ * the number (`pickupLabel`, else `orderNumber`), what the till collects, the order's code, the vouchers taken with it;
+ * "changed" — what changed in the basket and the total now; else not placed, in the APK's words. Anything not of the
+ * answer's shape is not placed ([PLACE_NO_ANSWER]).
+ */
+export function placeAnswerOf(v: unknown): PlaceOrderOut {
+  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+  if (o.ok === true) {
+    const localId = text(o.localId);
+    const due = num(o.dueAgorot);
+    if (localId === null || due === null) return { ok: false, reason: 'error', message: PLACE_NO_ANSWER };
+    const vouchers: VoucherLeg[] = [];
+    for (const x of Array.isArray(o.vouchers) ? (o.vouchers as unknown[]) : []) {
+      const u = (x ?? {}) as Record<string, unknown>;
+      const redemptionId = text(u.redemptionId);
+      const serial = num(u.serial);
+      const amount = num(u.amountAgorot);
+      if (redemptionId !== null && serial !== null && amount !== null) {
+        vouchers.push({ redemptionId, serial, amountAgorot: Math.max(0, Math.trunc(amount)), eventName: text(u.eventName), redeemed: [] });
+      }
+    }
+    return {
+      ok: true,
+      localId,
+      pickupLabel: text(o.pickupLabel) ?? text(o.orderNumber) ?? '',
+      vouchers,
+      dueAgorot: Math.max(0, Math.trunc(due)),
+      pending: o.pending === true,
+      code: text(o.code) ?? `KO:${localId}`,
+    };
+  }
+  if (o.reason === 'changed' && Array.isArray(o.changes)) {
+    const total = num(o.totalAgorot);
+    const changes = (o.changes as unknown[]).map(basketChangeOf).filter((c): c is BasketChange => c !== null);
+    return { ok: false, reason: 'changed', changes, ...(total !== null ? { totalAgorot: total } : {}) };
+  }
+  const reason = (PLACE_REFUSALS as readonly unknown[]).includes(o.reason) ? (o.reason as (typeof PLACE_REFUSALS)[number]) : 'error';
+  return { ok: false, reason, message: text(o.message) ?? PLACE_NO_ANSWER };
 }
 
 export interface AndroidBridges {
@@ -222,6 +335,9 @@ export interface AndroidBridges {
 export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (code: string) => void; timeouts?: Partial<Record<AndroidCall, number>> } = {}): AndroidBridges {
   let seq = 0;
   const waiting = new Map<string, Pending>();
+  // bridgeApi 2: "תשלום בקופה" offered and placed through the APK (read once — an APK does not change under its page).
+  const payAtTill = apkPlacesOpenOrders(native);
+  const viewOf = (v: KioskView) => normalizeView(v, { payAtTill });
   const kioskOn: Listeners = new Map();
   const shellOn: Listeners = new Map();
 
@@ -275,7 +391,7 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
       }
       switch (name as AndroidEvent) {
         case 'view':
-          fire(kioskOn, name, normalizeView(payload as KioskView));
+          fire(kioskOn, name, viewOf(payload as KioskView));
           return;
         case 'pay':
         case 'toast':
@@ -298,7 +414,7 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
 
   const noop = () => undefined;
   const kiosk: KioskBridge = {
-    bootstrap: () => call<KioskView>('bootstrap', {}).then(normalizeView),
+    bootstrap: () => call<KioskView>('bootstrap', {}).then(viewOf),
     // Android pairs natively (its own pairing screen); the web screens never show pairing.
     pair: async () => ({ ok: false, error: NATIVE_STAFF }),
     reportFlow: (input) => send('reportFlow', input),
@@ -313,6 +429,18 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
     // Production vouchers: the APK redeems and holds them; its answer is the order's vouchers now.
     voucherApply: (input: VoucherApplyIn) => call<unknown>('voucherApply', input).then(voucherAnswerOf, () => null),
     voucherRemove: (serial: number) => call<unknown>('voucherRemove', { serial }).then(voucherAnswerOf, () => null),
+    // "תשלום בקופה" (bridgeApi 2): the order to the shop's tills through the APK's own pay-at-till path (its number, bon,
+    // slip and success). Absent on an APK of API 1 — the screens then never offer it. Never a rejection: no answer is
+    // "not placed", in the customer's words. The APK takes the vouchers it holds (voucherApply), not `vouchers`.
+    ...(payAtTill
+      ? {
+          placeOpenOrder: (input: PlaceOrderIn): Promise<PlaceOrderOut> =>
+            call<unknown>('placeOpenOrder', { ...input, vouchers: input.vouchers ?? [], discounts: input.discounts ?? [] }).then(
+              placeAnswerOf,
+              (): PlaceOrderOut => ({ ok: false, reason: 'error', message: PLACE_NO_ANSWER }),
+            ),
+        }
+      : {}),
     adminUnlock: async () => ({ ok: false, error: NATIVE_STAFF }),
     adminInfo: () => Promise.reject(new Error(NATIVE_STAFF)),
     adminAction: async () => ({ ok: false, message: NATIVE_STAFF }),

@@ -1,11 +1,11 @@
 {
-  "comment": "The Android kiosk web bridge, bridgeApi 1: kiosk-desktop src/renderer/bridges/android.ts <-> pos-android ui/kiosk/web/KioskWebBridge.kt. The same bytes in pos-android app/src/test/resources/kiosk_web_bridge_api.json; both sides' tests pin them.",
-  "bridgeApi": 1,
+  "comment": "The Android kiosk web bridge, bridgeApi 2 (2 adds placeOpenOrder; R2MAndroid.bridgeApi() says which): kiosk-desktop src/renderer/bridges/android.ts <-> pos-android ui/kiosk/web/KioskWebBridge.kt. The same bytes in pos-android app/src/test/resources/kiosk_web_bridge_api.json; both sides' tests pin them.",
+  "bridgeApi": 2,
   "native": "R2MAndroid",
   "inbox": "__r2mAndroid",
   "origin": "https://appassets.androidplatform.net",
   "manifestKind": "r2m-kiosk-web",
-  "calls": ["bootstrap", "shellView", "startPayment", "cancelPayment", "receiptChoice", "helpRequest", "voucherApply", "voucherRemove"],
+  "calls": ["bootstrap", "shellView", "startPayment", "cancelPayment", "receiptChoice", "helpRequest", "voucherApply", "voucherRemove", "placeOpenOrder"],
   "sends": ["reportFlow", "funnel", "activity", "ready", "error"],
   "events": ["view", "pay", "toast", "shell", "scan"],
   "fallbackReasons": ["ready_timeout", "render_gone", "js_errors", "no_bundle", "bridge_api", "load_error", "webview_old"],
@@ -46,6 +46,22 @@
       }
     },
     "voucherRemove": { "serial": 8 },
+    "placeOpenOrder": {
+      "lines": [
+        { "key": "l1", "productId": "p-burger", "qty": 1, "options": [], "notes": [], "unitAgorot": 5200 }
+      ],
+      "service": "take_away",
+      "customerName": "דנה",
+      "customerPhone": null,
+      "tableRef": null,
+      "tipPct": null,
+      "tipAgorot": null,
+      "expectedTotalAgorot": 5200,
+      "vouchers": [],
+      "discounts": []
+    },
+    "placeOpenOrderOk": { "ok": true, "localId": "order-2", "pickupLabel": "A18", "orderNumber": "A18", "vouchers": [], "dueAgorot": 5200, "pending": false, "code": "KO:order-2" },
+    "placeOpenOrderRefused": { "ok": false, "reason": "error", "message": "תשלום בקופה אינו מוגדר לקיוסק" },
     "voucherAnswer": { "ok": true, "error": null, "note": null, "totalAgorot": 5000, "deductionAgorot": 4000, "dueAgorot": 1000, "vouchers": [{ "serial": 8, "title": "שובר מס׳ 0008 · ארוחה", "mode": "discount", "amountAgorot": 4000, "lines": ["מנה: נקניקייה ×1", "משקה: קולה ×1"] }] }
   }
 }
