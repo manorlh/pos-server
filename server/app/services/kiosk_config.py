@@ -1488,6 +1488,7 @@ SCHEMA = Obj({
         "flow": Enum(layouts.LAYOUT_FLOWS),
         "itemView": Enum(layouts.LAYOUT_ITEM_VIEWS),
         "quickAdd": Enum(layouts.LAYOUT_QUICK_ADDS),
+        "cartCountBadge": Bool(),
         "mealView": Enum(layouts.LAYOUT_MEAL_VIEWS),
         "mealUpsell": Enum(layouts.LAYOUT_MEAL_UPSELLS),
         "basket": Enum(layouts.LAYOUT_BASKETS, nullable=True),

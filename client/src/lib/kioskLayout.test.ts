@@ -53,7 +53,7 @@ import { KIOSK_ICON_DATA } from './kioskIconData';
 import { KIOSK_TEXT_REGISTRY_DATA } from './kioskTextRegistryData';
 import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, textShownUnder, validateKioskTexts, webTextOverride } from './kioskTexts';
 
-const TEMPLATES_SHA256 = 'd605d6d7532b7a8e29fc07e75fe793ec44c807f3fa0e5f5f047553db829a0877';
+const TEMPLATES_SHA256 = '34d09102310f1731829cee38cf32731cf89140c9294288438bf854f41a217e00';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
 const REGISTRY_SHA256 = 'fc07e8b1f8350ea35238ef67c012e7c63129a81b4f229a3fd4ba0f4c708c3240';
 
@@ -400,6 +400,8 @@ import {
 
 describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additive, today\'s look by default', () => {
   const NEW_KEYS = ['railStyle', 'railEmphasis', 'catalogScroll', 'railFollow', 'pricePill', 'sheetMotion', 'topBar', 'helpButton', 'doneScreen', 'payMethodView'];
+  // Added after the baseline was taken: "תג כמות" (14.10, kioskCountBadge.test.ts), on by default.
+  const LATER_KEYS = ['cartCountBadge'];
   const baseline = JSON.parse(fixture('kiosk_resolve_baseline_1013.json')) as { cases: Array<{ name: string; layers: Layers; resolved: Record<string, unknown> }> };
 
   it('the baseline holds every older template in every style', () => {
@@ -412,7 +414,7 @@ describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additi
   for (const c of baseline.cases) {
     it(`resolves as before the change: ${c.name}`, () => {
       const cfg = JSON.parse(JSON.stringify(resolveKioskConfig(...c.layers))) as Record<string, Record<string, unknown>>;
-      for (const k of NEW_KEYS) {
+      for (const k of [...NEW_KEYS, ...LATER_KEYS]) {
         assert.deepEqual(cfg.layout[k], (KIOSK_LAYOUT_DEFAULTS as unknown as Record<string, unknown>)[k], k);
         delete cfg.layout[k];
       }

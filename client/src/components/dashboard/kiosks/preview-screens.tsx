@@ -102,7 +102,8 @@ import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
 import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
 import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
-import { catalogContinuous, doneCard, layoutOf, pricePillOn, reachLow, sheetMotionOf, topBarItems, type LayoutTopBarItem } from '@/lib/kioskLayout';
+import { catalogContinuous, dishCartCounts, doneCard, layoutOf, pricePillOn, reachLow, sheetMotionOf, tapPathOf, topBarItems, type LayoutTopBarItem } from '@/lib/kioskLayout';
+import { DishCountBadge } from '@/kiosk-shared/layouts/count-badge';
 import { catalogSearch } from '@/lib/kioskTopBar';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
 import { ERROR_COLOR, FEEDBACK_CSS, SuccessMark, badgePop, engineRoot, errorFx, revealIn, successFx } from './preview-feedback';
@@ -1696,19 +1697,30 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
 
 /* ---------------------------------------------------------------- catalog */
 
+/**
+ * A dish's card on today's menu (standard). A tap opens its window — or, where "הוספה מהירה"
+ * (layout.quickAdd) says so and nothing must be chosen, puts it straight in (tapPathOf, as every
+ * layout's card); its "+" adds what needs no choice. "תג כמות" (layout.cartCountBadge): how many of it
+ * the basket holds, on the picture's top corner.
+ */
 export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
   const showDesc = m.cfg.theme.showDescriptions && p.description;
   const large = m.cfg.theme.gridDensity === 'large';
   const added = m.justAddedId === p.id;
+  const inCart = dishCartCounts(m.cart)[p.id] ?? 0;
+  const direct = (plus: boolean) => !!m.quickAdd && tapPathOf(p, layoutOf(m.cfg).quickAdd, plus, !!m.mealOf?.(p)) === 'direct';
   return (
     <button
       type="button"
       disabled={p.soldOut}
-      onClick={() => m.openProduct(p)}
+      onClick={(e) => {
+        if (direct(false)) return m.quickAdd?.(p, e.currentTarget.querySelector('[data-pic]')?.getBoundingClientRect() ?? null);
+        m.openProduct(p);
+      }}
       className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
       style={dishCardStyle(m)}
     >
-      <div className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
+      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {p.soldOut ? (
           <span className="absolute start-2 top-2 rounded-full bg-black/70 px-2 py-0.5 kt-10 font-bold text-white">{m.t('soldOut')}</span>
@@ -1720,14 +1732,15 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
             onClick={(e) => {
               // Nothing to choose: straight in, the picture flying from its card. Anything else
               // goes on to the card, which opens the dish's window.
-              if (p.addPath !== 'direct' || !m.quickAdd) return;
+              if (!direct(true)) return;
               e.stopPropagation();
-              m.quickAdd(p, e.currentTarget.parentElement?.getBoundingClientRect() ?? null);
+              m.quickAdd?.(p, e.currentTarget.parentElement?.getBoundingClientRect() ?? null);
             }}
           >
             {added ? <Check className="h-4 w-4 kiosk-pop" /> : <Plus className="h-4 w-4" />}
           </span>
         )}
+        <DishCountBadge m={m} inCart={inCart} size={large ? 28 : 24} className="end-2 top-2" />
       </div>
       <div className={large ? 'space-y-1 p-3' : 'space-y-0.5 p-2'} style={p.soldOut ? { opacity: 0.6 } : undefined}>
         <div className={`line-clamp-2 font-bold leading-snug ${large ? 'text-base' : 'kt-13'}`} style={textSize(m, 'productName', large ? 16 : 13)}>

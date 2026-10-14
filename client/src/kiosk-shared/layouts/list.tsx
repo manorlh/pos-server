@@ -8,12 +8,12 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { Check, Plus, Search, X } from 'lucide-react';
-import { contrastText } from '@/lib/kioskConfig';
 import { listColumns } from '@/lib/kioskLayout';
 import { EntryWindow } from '@/components/dashboard/kiosks/preview-entry';
 import { ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { Empty, SectionTitle, cartCounts, kt, unitOf, useTapDish, widthDpOf } from './parts';
+import { DishCountBadge } from './count-badge';
 
 /** The search's longest query (the till's KioskKeyboardLayout.SEARCH_MAX). */
 const SEARCH_MAX = 40;
@@ -152,11 +152,12 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
             tap(p, true, pic(e));
           }}
           className="flex shrink-0 items-center justify-center rounded-full font-bold shadow-sm"
-          style={{ width: 36 * u, height: 36 * u, background: added ? m.c.accent : inCart > 0 ? m.c.primary : m.c.button, color: inCart > 0 && !added ? contrastText(m.c.primary) : m.c.buttonText }}
+          style={{ width: 36 * u, height: 36 * u, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         >
-          {added ? <Check className="h-1/2 w-1/2" /> : inCart > 0 ? inCart : <Plus className="h-1/2 w-1/2" />}
+          {added ? <Check className="h-1/2 w-1/2" /> : <Plus className="h-1/2 w-1/2" />}
         </span>
       )}
+      <DishCountBadge m={m} inCart={inCart} size={Math.round(20 * u)} className="end-1 top-1" />
     </button>
   );
 }

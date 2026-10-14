@@ -112,6 +112,9 @@ LAYOUT_DEFAULTS: Dict[str, Any] = {
     "flow": "free",
     "itemView": "sheet",
     "quickAdd": "off",
+    # "תג כמות" (P:/specs/kiosk-tap-add-count-badge.md): how many of the dish the basket holds, on its
+    # card in every template — on unless a level turns it off (no template sets it).
+    "cartCountBadge": True,
     "mealView": "sheet",
     "mealUpsell": "off",
     "basket": None,
