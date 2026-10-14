@@ -1023,14 +1023,15 @@ def _close(order: TableOrder, status_: str, actor: Actor, now: datetime) -> None
 def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datetime] = None) -> dict:
     """
     Keep the till's copy of the order (`body`: `TableSaveIn`), and act on `body.action`:
-    `send` marks a kitchen send and releases the lock, `bill` marks the bill printed,
-    `leave` releases the lock. A table left empty that never sent anything is voided
-    (back to free) rather than kept as an empty open order.
+    `send` marks a kitchen send and releases the lock — unless `body.stay` ("שגר והמשך",
+    P:/specs/tables-send-selected-stay.md §2: the till stays in the table, the lock kept) —
+    `bill` marks the bill printed, `leave` releases the lock. A table left empty that never
+    sent anything is voided (back to free) rather than kept as an empty open order.
     """
     now = now or _now()
     minutes = _require_synced(db, actor.machine)
     table = table_for_machine(db, actor.machine, table_id)
-    releases = body.action in ("send", "leave")
+    releases = body.action == "leave" or (body.action == "send" and not getattr(body, "stay", False))
 
     replay = _replayed(db, body.order_id, body.request_id)
     if replay is not None:

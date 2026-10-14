@@ -568,6 +568,26 @@ TABLES_SHOW_CHAIRS_KEY = "tablesShowChairs"
 TABLES_LABEL_SIZE_KEY = "tablesLabelSize"
 TABLES_LABEL_SIZES = ("קטן", "רגיל", "גדול")
 
+#: "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2). Read by the till only;
+#: on the dashboard's tables page too (app/services/table_restore.py `page_keys`, group `send`).
+#: `tablesSendSelected`: the table's order screen sends only the lines picked ("בחירה"); on by default.
+#: `tablesAfterSend`: after "הזמן" and "שגר נבחרים" — `leave` back to the tables screen (today's, the
+#: default) or `stay` in the table. Stored as the code; the till takes `stay` (or a value starting
+#: "נשאר") as stay and anything else as leave.
+#: `tablesSendStayButton`: the second button beside "הזמן" — "שגר והמשך" (leave) / "שגר וצא" (stay); on.
+TABLES_SEND_SELECTED_KEY = "tablesSendSelected"
+TABLES_AFTER_SEND_KEY = "tablesAfterSend"
+TABLES_AFTER_SEND_LEAVE = "leave"
+TABLES_AFTER_SEND_STAY = "stay"
+TABLES_AFTER_SEND_OPTIONS = (TABLES_AFTER_SEND_LEAVE, TABLES_AFTER_SEND_STAY)
+TABLES_AFTER_SEND_LABELS = {
+    TABLES_AFTER_SEND_LEAVE: "חזרה למסך השולחנות",
+    TABLES_AFTER_SEND_STAY: "נשארים בשולחן",
+}
+TABLES_SEND_STAY_BUTTON_KEY = "tablesSendStayButton"
+#: The three, in the order the dashboard lists them.
+TABLES_SEND_KEYS = (TABLES_SEND_SELECTED_KEY, TABLES_AFTER_SEND_KEY, TABLES_SEND_STAY_BUTTON_KEY)
+
 #: "גודל ריבוע מוצר": the sizes, smallest first, and "as the size it falls back to".
 TILE_SIZES = ("קטן מאוד", "קטן", "בינוני", "גדול")
 TILE_SIZE_INHERIT = "ברירת מחדל"
@@ -1257,6 +1277,45 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל (ברירת המחדל) — פתיחת שולחן פנוי שואלת כמה סועדים יושבים בו. כשכבוי — הקופה "
             "נכנסת ישר להזמנה בלי לשאול; מספר הסועדים נשאר ריק, ואפשר לקבוע אותו אחר כך מסרגל "
             "השולחן (\"סועדים\")."
+        ),
+    ),
+    # "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2) — read by the till only.
+    BuiltinParameter(
+        key=TABLES_SEND_SELECTED_KEY,
+        label="שגר נבחרים",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): במסך ההזמנה של שולחן אפשר \"בחירה\" (בתפריט או בלחיצה ארוכה על פריט "
+            "שלא שוגר) ושיגור רק של הפריטים המסומנים — \"שגר נבחרים (N)\". השאר נשארים \"טרם שוגר\". "
+            "פריט מסומן מקורס מעוכב יוצא, ושאר הקורס נשאר מעוכב. אותן הרשאות של שליחה. \"הזמן\" לא משתנה. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TABLES_AFTER_SEND_KEY,
+        label="אחרי שיגור (הזמן)",
+        value_type="enum",
+        enum_options=TABLES_AFTER_SEND_OPTIONS,
+        enum_labels=TABLES_AFTER_SEND_LABELS,
+        default_value=TABLES_AFTER_SEND_LEAVE,
+        description=(
+            "מה קורה אחרי \"הזמן\" ואחרי \"שגר נבחרים\": "
+            f"«{TABLES_AFTER_SEND_LABELS[TABLES_AFTER_SEND_LEAVE]}» (ברירת מחדל) — כמו היום; "
+            f"«{TABLES_AFTER_SEND_LABELS[TABLES_AFTER_SEND_STAY]}» — הקופה נשארת בשולחן עם הודעה "
+            "\"שוגרו N פריטים\", והפריטים מסומנים כמשוגרים. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TABLES_SEND_STAY_BUTTON_KEY,
+        label="כפתור שגר והמשך / שגר וצא",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): כפתור משני ליד \"הזמן\" (בטאבלט), או בלחיצה ארוכה על \"הזמן\" ובתפריט "
+            "(בטלפון ובמכשיר נייד): \"שגר והמשך\" כשאחרי שיגור = חזרה למסך השולחנות, \"שגר וצא\" כשנשארים "
+            "בשולחן. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     # Kitchen printers ("מדפסות בונים") — app/services/printers.py; also set by the shop's

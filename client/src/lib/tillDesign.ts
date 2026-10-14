@@ -154,7 +154,7 @@ export const ACTION_LABEL_MAX = 24;
 
 /** Default labels (Hebrew, the till's language). A button's own `label` replaces it. */
 export const ACTION_LABELS: Record<ActionId, string> = {
-  send: 'שדר למטבח',
+  send: 'שגר',
   bill: 'מעבר לחשבון',
   pay: 'תשלום',
   split: 'פיצול',
@@ -204,9 +204,9 @@ const ORDER_PREFIX = /^[0-9A-Za-z\u05D0-\u05EA]*$/;
 
 /** The screen texts a business may reword ("" = the default below). */
 export const TEXT_DEFAULTS = {
-  sendToKitchen: 'שדר למטבח',
+  sendToKitchen: 'שגר',
   newSuffix: 'חדש',
-  allSent: 'הכול שודר',
+  allSent: 'הכול שוגר',
   goToBill: 'מעבר לחשבון',
   pay: 'תשלום',
   orderTitle: 'הזמנה',

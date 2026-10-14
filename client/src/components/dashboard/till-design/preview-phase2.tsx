@@ -88,7 +88,7 @@ const FIRED_AT = '19:44';
 const MINUTES_SINCE = 12;
 
 function laneState(m: PreviewModel, lane: CourseLane, previousFired: boolean): { text: string; amber: boolean } {
-  if (lane.course === null) return { text: 'יוצא עם כל שידור', amber: false };
+  if (lane.course === null) return { text: 'יוצא עם כל שיגור', amber: false };
   if (lane.held) return { text: 'מושהה', amber: true };
   if (!lane.fired) {
     const gapMinutes = m.cfg.courses?.fireGapMinutes ?? 0;
@@ -283,7 +283,7 @@ function DockButton({ m, a, height, grow = 1, label }: { m: PreviewModel; a: PAc
   return <ActionButton m={m} a={label ? { ...a, ...label } : a} height={height} style={{ flex: `${grow} 1 0`, minWidth: 0 }} />;
 }
 
-/** The dock's buttons: the main one (a quick order's card, a table's "שדר") first and widest, then the rest and "עוד". */
+/** The dock's buttons: the main one (a quick order's card, a table's "שגר") first and widest, then the rest and "עוד". */
 function dockActions(m: PreviewModel): { main: PAction | null; rest: PAction[]; more: PAction } {
   const empty = m.lines.length === 0;
   const list = m.actions.map((a) => (empty ? { ...a, disabled: true } : a));

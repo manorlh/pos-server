@@ -564,7 +564,7 @@
    "table": "send"
   },
   "actionLabels": {
-   "send": "שדר למטבח",
+   "send": "שגר",
    "bill": "מעבר לחשבון",
    "pay": "תשלום",
    "split": "פיצול",
@@ -593,9 +593,9 @@
    200
   ],
   "textDefaults": {
-   "sendToKitchen": "שדר למטבח",
+   "sendToKitchen": "שגר",
    "newSuffix": "חדש",
-   "allSent": "הכול שודר",
+   "allSent": "הכול שוגר",
    "goToBill": "מעבר לחשבון",
    "pay": "תשלום",
    "orderTitle": "הזמנה",

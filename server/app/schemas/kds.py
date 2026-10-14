@@ -48,7 +48,7 @@ class KdsReleaseIn(_Body):
     id: str = Field(min_length=8, max_length=64)
     source: Literal["table", "quick", "kiosk", "external"]
     source_ref: str = Field(alias="sourceRef", min_length=1, max_length=100)
-    #: send — a table's "שלח" or a quick sale's "שלח למטבח"; payment — after the payment;
+    #: send — a table's "שלח" or a quick sale's "שגר"; payment — after the payment;
     #: cancel — the whole order was cancelled; manual — anything else.
     trigger: Literal["send", "payment", "manual", "cancel"] = "send"
     paid: bool = False

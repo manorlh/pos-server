@@ -357,11 +357,14 @@ class TestStaffTableDiscountCheck:
 
         got = RR.get_table_restore_params(str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w))
         keys = [p["key"] for p in got["parameters"]]
-        # Then the eight of restoring, the map's four of legend and display (table-map-decor-v3 §3), and
-        # last the courses' auto-fire two (P:/specs/courses-fire-v2.md §1).
-        assert keys[0] == self.KEY and len(keys) == 15
+        # Then the eight of restoring, the map's four of legend and display (table-map-decor-v3 §3), the
+        # send's three (P:/specs/tables-send-selected-stay.md §1, §2), and last the courses' auto-fire two
+        # (P:/specs/courses-fire-v2.md §1).
+        assert keys[0] == self.KEY and len(keys) == 18
         first = got["parameters"][0]
         assert (first["valueType"], first["defaultValue"], first["group"]) == ("boolean", False, "staffTables")
-        assert [p["group"] for p in got["parameters"][1:]] == ["restore"] * 8 + ["mapDisplay"] * 4 + ["courses"] * 2
-        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "courses"]
+        assert [p["group"] for p in got["parameters"][1:]] == (
+            ["restore"] * 8 + ["mapDisplay"] * 4 + ["send"] * 3 + ["courses"] * 2
+        )
+        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "send", "courses"]
         assert got["groups"][0]["label"] == "שולחן עובדים / מנהלים"

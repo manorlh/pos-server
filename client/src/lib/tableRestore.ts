@@ -32,7 +32,7 @@ export interface RestoreParam {
   enumOptions: string[] | null;
   enumLabels: Record<string, string> | null;
   defaultValue: unknown;
-  /** The card's group (`staffTables` | `restore` | `courses`). Absent on an older server. */
+  /** The card's group (`staffTables` | `restore` | `mapDisplay` | `send` | `courses`). Absent on an older server. */
   group?: string | null;
 }
 
@@ -53,7 +53,8 @@ export interface RestoreLevelView {
   parameters: RestoreParam[];
   /**
    * The staff / managers' tables (`staffTableDiscountCheck`, P:/specs/owner-decisions-1410.md §1), then
-   * the restore and payments, then the courses' auto-fire (`courses`). Absent on an older server: one list.
+   * the restore and payments, the map, the send from the table (`send`: "שגר נבחרים", "שגר והמשך"), then
+   * the courses' auto-fire (`courses`). Absent on an older server: one list.
    */
   groups?: ParamGroup[];
   methods: { key: string; label: string }[];

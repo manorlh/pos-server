@@ -179,22 +179,27 @@ VALIDATED_KEYS = frozenset({PREFIX_KEY, WINDOW_KEY, PRINT_CREDIT_KEY, METHODS_KE
 
 #: The tables page's level card ("הגדרות שולחנות"): its groups, in the order it shows them — the staff /
 #: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), these, then the
-#: map's legend and display (app/services/table_map_display.py, P:/specs/table-map-decor-v3.md §3), and
-#: last the courses' auto-fire.
+#: map's legend and display (app/services/table_map_display.py, P:/specs/table-map-decor-v3.md §3), the
+#: send from the table's order screen, and last the courses' auto-fire.
 STAFF_TABLES_GROUP = "staffTables"
 RESTORE_GROUP = "restore"
 MAP_DISPLAY_GROUP = "mapDisplay"
+#: "שגר נבחרים" / "שגר והמשך" (app/services/till_parameters.py TABLES_SEND_KEYS,
+#: P:/specs/tables-send-selected-stay.md §1, §2).
+SEND_GROUP = "send"
 #: "הוצאה אוטומטית של השלב הבא" (app/services/course_auto_fire.py, P:/specs/courses-fire-v2.md §1).
 COURSES_GROUP = "courses"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
     from app.services import course_auto_fire, table_map_display, table_policies
+    from app.services.till_parameters import TABLES_SEND_KEYS
 
     return (
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
         (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
+        (SEND_GROUP, "שיגור מהשולחן: שגר נבחרים, שגר והמשך", TABLES_SEND_KEYS),
         (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
     )
 
