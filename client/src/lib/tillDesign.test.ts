@@ -332,6 +332,14 @@ describe('till design: what the editor and the preview read', () => {
     assert.equal(textOf(cfg, 'summary'), 'סיכום ההזמנה');
   });
 
+  it('says "שגר" for the send by default (P:/specs/tables-send-selected-stay.md §0), still reworded by texts', () => {
+    assert.equal(ACTION_LABELS.send, 'שגר');
+    assert.equal(TEXT_DEFAULTS.sendToKitchen, 'שגר');
+    assert.equal(TEXT_DEFAULTS.allSent, 'הכול שוגר');
+    assert.equal(actionLabelOf({ action: 'send', label: '' }, { texts: {} }), 'שגר');
+    assert.equal(textOf({ texts: { allSent: 'הכל נשלח' } }, 'allSent'), 'הכל נשלח');
+  });
+
   it('writes shekels as the till does', () => {
     assert.equal(formatShekels(10800), '₪108');
     assert.equal(formatShekels(280), '₪2.80');

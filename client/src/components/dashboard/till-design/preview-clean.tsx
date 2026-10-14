@@ -6,7 +6,7 @@
  *
  *  - a table: the table's bar in the brand colour, the categories, the dish cards (the name is the
  *    card's face when there is no photo), and the bottom bar — the mini cart ("4 פריטים • ₪108 ·
- *    הצג הזמנה") and the green "שלח למטבח" with how many are new; the order opens in its sheet;
+ *    הצג הזמנה") and the green "שגר" with how many are new; the order opens in its sheet;
  *  - a quick order on a tablet: the catalogue and the order panel at the end (sideways) or under
  *    it (upright): the lines, the total, the two quick-pay buttons and "תשלום";
  *  - a quick order on the handheld: the total bar at the top (the way to pay), the categories and
@@ -269,7 +269,7 @@ function TableBar({ m }: { m: PreviewModel }) {
   const t = m.t;
   const ready = m.toSend > 0;
   const extra = m.actions.filter((a) => a.action !== 'send');
-  const sendLabel = m.cfg.texts.sendToKitchen?.trim() || 'שלח למטבח';
+  const sendLabel = m.cfg.texts.sendToKitchen?.trim() || 'שגר';
   return (
     <div style={{ flex: '0 0 auto', display: 'flex', gap: 10, alignItems: 'center', padding: '10px 12px 12px', background: t.surface, borderTop: `1px solid ${t.border}` }}>
       <div style={{ flex: '1 1 0', minWidth: 0, height: 56, borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, display: 'flex', alignItems: 'center', gap: 12, padding: '0 12px' }}>
@@ -517,7 +517,7 @@ function OrderPanel({ m, width, stacked, side = 'end' }: { m: PreviewModel; widt
               <span style={{ flex: '1 1 auto', minWidth: 0 }}>
                 <span style={{ display: 'block', fontSize: m.fs(15), fontWeight: 600, ...ellipsis(1) }}>{l.name}</span>
                 {l.note ? <span style={{ display: 'block', fontSize: m.fs(13), color: t.ink2, ...ellipsis(1) }}>{l.note}</span> : null}
-                {table && l.status === 'sent' ? <span style={{ display: 'block', fontSize: m.fs(12), color: CASH_GREEN }}>נשלח 19:44</span> : null}
+                {table && l.status === 'sent' ? <span style={{ display: 'block', fontSize: m.fs(12), color: CASH_GREEN }}>שוגר 19:44</span> : null}
               </span>
               <Num style={{ fontSize: m.fs(15), fontWeight: 600 }}>{formatMoney(l.qty * l.unit)}</Num>
             </div>
@@ -564,7 +564,7 @@ function OrderPanel({ m, width, stacked, side = 'end' }: { m: PreviewModel; widt
         {send.map((a) => (
           <span key={a.key} style={{ height: 56, borderRadius: 12, background: m.toSend > 0 ? SEND_GREEN : t.surface, color: m.toSend > 0 ? '#FFFFFF' : t.ink2, border: `1px solid ${m.toSend > 0 ? SEND_GREEN : t.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: m.fs(16), fontWeight: 700 }}>
             <Send size={20} style={{ transform: 'scaleX(-1)' }} />
-            {m.toSend > 0 ? `${m.cfg.texts.sendToKitchen?.trim() || 'שלח למטבח'} · ${m.toSend} חדשים` : a.label}
+            {m.toSend > 0 ? `${m.cfg.texts.sendToKitchen?.trim() || 'שגר'} · ${m.toSend} חדשים` : a.label}
           </span>
         ))}
         {pay.map((a) => {

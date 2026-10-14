@@ -171,7 +171,7 @@ ACTION_LABEL_MAX = 24
 
 #: Default labels (Hebrew, the till's language). A button's own `label` replaces it.
 ACTION_LABELS: Dict[str, str] = {
-    "send": "שדר למטבח",
+    "send": "שגר",
     "bill": "מעבר לחשבון",
     "pay": "תשלום",
     "split": "פיצול",
@@ -221,9 +221,9 @@ _ORDER_PREFIX = re.compile(r"^[0-9A-Za-z\u05D0-\u05EA]*$")
 
 #: The screen texts a business may reword ("" = the default below).
 TEXT_DEFAULTS: Dict[str, str] = {
-    "sendToKitchen": "שדר למטבח",
+    "sendToKitchen": "שגר",
     "newSuffix": "חדש",
-    "allSent": "הכול שודר",
+    "allSent": "הכול שוגר",
     "goToBill": "מעבר לחשבון",
     "pay": "תשלום",
     "orderTitle": "הזמנה",

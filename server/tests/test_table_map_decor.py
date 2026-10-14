@@ -633,12 +633,12 @@ class TestMapDisplayParameters:
 
         got = RR.get_table_restore_params(str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w))
         # After restoring and the payments; then the waiters' assignment (P:/specs/table-waiter-assignment.md),
-        # the courses' auto-fire (P:/specs/courses-fire-v2.md §1), and last "מתי עיקריות?" / scheduled items
-        # (P:/specs/fire-restaurant-flow.md §8.1).
-        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "waiters", "courses", "fireFlow"]
+        # the send from the table (P:/specs/tables-send-selected-stay.md §1, §2), the courses' auto-fire
+        # (P:/specs/courses-fire-v2.md §1), and last "מתי עיקריות?" / scheduled items (P:/specs/fire-restaurant-flow.md §8.1).
+        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "waiters", "send", "courses", "fireFlow"]
         mine = [p for p in got["parameters"] if p["group"] == "mapDisplay"]
         assert [p["key"] for p in mine] == list(MAP_DEFAULTS)
-        assert [p["key"] for p in got["parameters"]][-21:-17] == list(MAP_DEFAULTS)
+        assert [p["key"] for p in got["parameters"]][-24:-20] == list(MAP_DEFAULTS)
         by_key = {p["key"]: p for p in mine}
         assert by_key["mapDecor"]["enumLabels"]["full"] and by_key["mapSymbolScale"]["valueType"] == "integer"
         assert {k: got["inherited"][k] for k in MAP_DEFAULTS} == MAP_DEFAULTS
