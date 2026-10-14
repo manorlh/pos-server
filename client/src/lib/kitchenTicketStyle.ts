@@ -864,6 +864,8 @@ export interface LayoutOptions {
   categories?: CategoryRef[];
   timeZone?: string;
   cutPaper?: boolean;
+  /** The real text widths (a canvas); the estimate when left out. */
+  measure?: Measure;
 }
 
 const BIDI = /[\u200e\u200f\u2066-\u2069]/g;
@@ -881,18 +883,21 @@ export function textWidth(text: string, size: number, bold = false): number {
   return em * size * (bold ? 1.05 : 1);
 }
 
+/** How wide a text is drawn: the estimate, or the real canvas (the Windows kiosk's bon). */
+export type Measure = (text: string, size: number, bold: boolean) => number;
+
 /** Greedy word wrap; a word wider than the line is broken where it must. */
-export function wrapText(text: string, size: number, width: number, bold = false): string[] {
+export function wrapText(text: string, size: number, width: number, bold = false, measure: Measure = textWidth): string[] {
   const words = text.trim().split(/\s+/).filter(Boolean);
   const pieces: string[] = [];
   for (const w of words) {
-    if (textWidth(w, size, bold) <= width) {
+    if (measure(w, size, bold) <= width) {
       pieces.push(w);
       continue;
     }
     let part = '';
     for (const ch of w) {
-      if (part && textWidth(part + ch, size, bold) > width) {
+      if (part && measure(part + ch, size, bold) > width) {
         pieces.push(part);
         part = '';
       }
@@ -905,7 +910,7 @@ export function wrapText(text: string, size: number, width: number, bold = false
   let current = '';
   for (const p of pieces) {
     const next = current ? `${current} ${p}` : p;
-    if (current && textWidth(next, size, bold) > width) {
+    if (current && measure(next, size, bold) > width) {
       rows.push(current);
       current = p;
     } else current = next;
@@ -983,6 +988,8 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
   const f = style.fontScale / 100;
   const tz = opts.timeZone ?? 'Asia/Jerusalem';
   const ops: DrawOp[] = [];
+  const tw: Measure = opts.measure ?? textWidth;
+  const wrap = (t: string, size: number, width: number, bold = false) => wrapText(t, size, width, bold, tw);
   const gap = METRICS.lineGap[style.spacing] * scale;
   let y = 6 * scale;
   let black = 0;
@@ -1002,7 +1009,7 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
     if (r.fill) black += r.w * r.h;
   };
   const centred = (t: string, size: number, bold = false, extra: { gray?: boolean } = {}) => {
-    for (const row of wrapText(t, size, usable, bold)) {
+    for (const row of wrap(t, size, usable, bold)) {
       y += size + gap;
       text(row, W / 2, size, bold, 'center', extra);
     }
@@ -1026,15 +1033,15 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
       centred(label, size, true);
       if (how === 'underline') {
         y += 4 * scale;
-        const w = Math.min(usable, textWidth(label, size, true) + 16 * scale);
+        const w = Math.min(usable, tw(label, size, true) + 16 * scale);
         ops.push({ type: 'line', x1: W / 2 - w / 2, y1: y, x2: W / 2 + w / 2, y2: y, stroke: 2 * scale });
       }
       return;
     }
-    const rows = wrapText(label, size, usable - 24 * scale, true);
+    const rows = wrap(label, size, usable - 24 * scale, true);
     const top = y + 10 * scale;
     const h = rows.length * (size + 6 * scale) + 14 * scale;
-    const inset = how === 'pill' ? Math.max(0, (usable - Math.max(...rows.map((r) => textWidth(r, size, true))) - 48 * scale) / 2) : 0;
+    const inset = how === 'pill' ? Math.max(0, (usable - Math.max(...rows.map((r) => tw(r, size, true))) - 48 * scale) / 2) : 0;
     rect({ x: pad + inset, y: top, w: usable - 2 * inset, h, fill: how === 'fill', stroke: (how === 'double' ? 2 : 4) * scale, rounded: how === 'pill' });
     if (how === 'double') {
       rect({ x: pad + 5 * scale, y: top + 5 * scale, w: usable - 10 * scale, h: h - 10 * scale, fill: false, stroke: 2 * scale });
@@ -1100,7 +1107,7 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
   if (legacy) {
     let size = headerSize;
     const longest = headline.split(' ').reduce((a, b) => (b.length > a.length ? b : a), headline);
-    while (size > 30 * scale * f && textWidth(longest, size, true) > usable) size -= 2 * scale;
+    while (size > 30 * scale * f && tw(longest, size, true) > usable) size -= 2 * scale;
     centred(headline, size, true);
     if (subText) centred(subText, 24 * scale * f, true);
   } else {
@@ -1108,10 +1115,10 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
     const fill = style.header.fill;
     const boxed = fill !== 'none';
     const room = usable - (boxed ? 24 * scale : 0);
-    while (size > itemMin && textWidth(headline, size, true) > room) size -= 1;
+    while (size > itemMin && tw(headline, size, true) > room) size -= 1;
     const inline =
       style.header.layout === 'inline' && !boxed && subText &&
-      textWidth(headline, size, true) + textWidth(` · ${subText}`, detail, false) <= usable;
+      tw(headline, size, true) + tw(` · ${subText}`, detail, false) <= usable;
     if (inline) {
       y += size + gap;
       text(`${headline} · ${subText}`, startX, size, true, 'start');
@@ -1119,7 +1126,7 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
       // approximation (the till draws two sizes on one baseline).
     } else {
       const top = y + 6 * scale;
-      const rows = wrapText(headline, size, room, true);
+      const rows = wrap(headline, size, room, true);
       const h = rows.length * (size + gap) + (boxed ? 16 * scale : 0);
       if (boxed) rect({ x: pad, y: top, w: usable, h, fill: fill === 'fill', stroke: 3 * scale });
       y = top + (boxed ? 6 * scale : 0);
@@ -1129,7 +1136,7 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
       }
       y = top + h;
       if (subText) {
-        for (const row of wrapText(subText, detail, usable, true)) {
+        for (const row of wrap(subText, detail, usable, true)) {
           y += detail + gap;
           text(row, W / 2, detail, true, 'center');
         }
@@ -1156,13 +1163,13 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
   const courseShown = (g: LineGroup) => style.order.groupHeaders && g.kind === 'course';
 
   const detailRows = (t: string, x: number, width: number, size: number, bold: boolean, extra: { gray?: boolean } = {}) => {
-    for (const row of wrapText(t, size, width, bold)) {
+    for (const row of wrap(t, size, width, bold)) {
       y += size + 4 * scale;
       text(row, x, size, bold, 'start', extra);
     }
   };
   const boxed = (t: string, x: number, width: number, size: number, how: 'fill' | 'outline' | 'outline_warn') => {
-    const rows = wrapText(t, size, width - 16 * scale, true);
+    const rows = wrap(t, size, width - 16 * scale, true);
     const top = y + 8 * scale;
     const h = rows.length * (size + 6 * scale) + 10 * scale;
     rect({ x: x - width, y: top, w: width, h, fill: how === 'fill', stroke: (how === 'outline_warn' ? 3 : 2) * scale });
@@ -1201,7 +1208,7 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
       const qty = qtyText(ln.quantity);
       const gray = held || undefined;
       if (legacy) {
-        const rows = wrapText(`${qty} × ${ln.name}`, itemMax, usable, true);
+        const rows = wrap(`${qty} × ${ln.name}`, itemMax, usable, true);
         y += 8 * scale;
         for (const row of rows) {
           y += itemMax + 6 * scale;
@@ -1228,13 +1235,13 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
       }
       // The quantity column ("2×") and the name after it, one line where it fits (§7, §8).
       const qtyLabel = style.qty === 'plain' ? `${qty}×` : qty;
-      const colW = qtyCol ? Math.max(textWidth('12×', itemMax, true), textWidth(qtyLabel, itemMax, true)) + 10 * scale : 0;
+      const colW = qtyCol ? Math.max(tw('12×', itemMax, true), tw(qtyLabel, itemMax, true)) + 10 * scale : 0;
       const nameText = `${check}${ln.name}`;
-      const nameWidth = usable - colW - (qtyCol ? 0 : textWidth(`${qtyLabel} `, itemMax, true));
+      const nameWidth = usable - colW - (qtyCol ? 0 : tw(`${qtyLabel} `, itemMax, true));
       let size = itemMax;
       if (style.fit === 'fit') {
-        while (size - METRICS.fitStep >= itemMin && textWidth(nameText, size, true) > nameWidth) size -= METRICS.fitStep;
-        if (textWidth(nameText, size, true) > nameWidth) size = itemMin;
+        while (size - METRICS.fitStep >= itemMin && tw(nameText, size, true) > nameWidth) size -= METRICS.fitStep;
+        if (tw(nameText, size, true) > nameWidth) size = itemMin;
       }
       const mods = [
         ...(ln.mods ?? []).map((m) => markMod(m, false, style.mods.marks)),
@@ -1242,15 +1249,15 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
       ];
       const note = (ln.notes ?? '').trim();
       const inlineParts = [...mods, ...(note && !ln.important ? [note] : [])];
-      const oneLine = textWidth(nameText, size, true) <= nameWidth;
+      const oneLine = tw(nameText, size, true) <= nameWidth;
       // Choices on the item's line, smaller, after " · " — only when the whole line fits (§8).
       const inlineText = inlineParts.length ? `· ${inlineParts.join(' · ')}` : '';
-      const nameRun = textWidth(`${nameText} `, size, true);
+      const nameRun = tw(`${nameText} `, size, true);
       const inline =
         style.mods.layout === 'inline' && oneLine && inlineParts.length > 0 &&
-        nameRun + textWidth(inlineText, size * METRICS.detailRatio, false) <= nameWidth;
+        nameRun + tw(inlineText, size * METRICS.detailRatio, false) <= nameWidth;
       const nameX = startX - colW;
-      const rows = wrapText(nameText, size, hanging ? nameWidth : usable, true);
+      const rows = wrap(nameText, size, hanging ? nameWidth : usable, true);
       y += 6 * scale;
       rows.forEach((row, i) => {
         y += size + gap;
@@ -1264,7 +1271,7 @@ export function layoutTicket(ticket: KitchenTicket, style: TicketStyle, opts: La
             text(row, nameX, size, true, 'start', { gray });
           } else text(`${qtyLabel} ${row}`, startX, size, true, 'start', { gray });
           if (inline) {
-            const used = qtyCol ? nameRun : textWidth(`${qtyLabel} ${row} `, size, true);
+            const used = qtyCol ? nameRun : tw(`${qtyLabel} ${row} `, size, true);
             text(inlineText, (qtyCol ? nameX : startX) - used, size * METRICS.detailRatio, false, 'start', { gray });
           }
         } else text(row, hanging ? nameX : startX, size, true, 'start', { gray });
