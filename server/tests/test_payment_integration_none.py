@@ -37,6 +37,8 @@ from shift_world import accept_str_uuids, make_world
 
 T0 = datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)
 CARD_KEYS = ("payFastCardEnabled", "payCardEnabled", "payManualCardEnabled")
+#: A made-up Z-Credit password for the layers (never a real one).
+SHOP_PASS = "shop-pass"
 
 
 @pytest.fixture
@@ -221,7 +223,7 @@ def test_a_shop_set_to_none_reaches_all_its_tills_and_a_till_may_opt_back(w):
 
 def test_no_secret_reaches_a_till_on_none(w):
     till = w.tills[0]
-    _patch_shop(w, zcreditPassword="shop-pass", zcreditTerminalNumber="0012345678")
+    _patch_shop(w, zcreditPassword=SHOP_PASS, zcreditTerminalNumber="0012345678")
     _patch_machine(w, till, paymentIntegration="none")
     pulled = _pulled(w, till)
     assert "zcreditPassword" not in pulled and "synqpayApiKey" not in pulled
