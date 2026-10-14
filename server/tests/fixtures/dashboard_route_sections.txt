@@ -94,6 +94,8 @@ PUT /categories/reorder -> products:edit
 DELETE /categories/{category_id} -> products:edit
 GET /categories/{category_id} -> products:view
 PUT /categories/{category_id} -> products:edit
+DELETE /categories/{category_id}/image -> products:edit
+POST /categories/{category_id}/image -> products:edit
 GET /close-day-requests/{request_id} -> z:view
 GET /cloud-card-refunds -> reports|z:view
 POST /cloud-card-refunds -> reports|z:edit
@@ -605,6 +607,9 @@ POST /remote-credits -> reports|z:edit
 GET /remote-credits/prepare -> reports|z:view
 GET /remote-credits/{request_id} -> reports|z:view
 POST /remote-credits/{request_id}/cancel -> reports|z:edit
+GET /remote-support/signer-pin -> super_admin
+PUT /remote-support/signer-pin -> super_admin
+POST /remote-support/signer-pin/confirm -> super_admin
 GET /report-center/all-in-one -> reports|z:view
 GET /report-center/reconciliation -> reports|z:view
 GET /report-center/transmissions -> reports|z:view
@@ -912,6 +917,8 @@ GET /tenants/mine -> self
 PATCH /tenants/{tenant_id} -> organization:edit
 GET /tenants/{tenant_id}/settings -> till_settings:view
 PATCH /tenants/{tenant_id}/settings -> till_settings:edit
+GET /till-design/category-display -> till_design:view
+PUT /till-design/category-display -> till_design:edit
 GET /till-design/defaults -> till_design:view
 GET /till-design/menu-hide -> till_design:view
 PUT /till-design/menu-hide -> till_design:edit
