@@ -1,5 +1,5 @@
 {
-  "_comment": "\"עיצוב בון\" — the kitchen ticket designs and the ticketStyle contract (P:/specs/kitchen-ticket-designs.md §1, §6–§8). Shared byte-for-byte by pos-server tests/fixtures (app/services/kitchen_ticket_style.py, client/src/lib/kitchenTicketStyle.ts — the dashboard preview) and pos-android app/src/test/resources (hardware/kitchen/KitchenTicketRenderer). `samples`: tickets in the till's KitchenTicketDto shape (+ `openedAt`, the table's opening, optional); each must show every string of `mustAppear.all` and `mustAppear.byTemplate[template]` when drawn with `styles[template]` at 58 and 80 mm — the drawn texts in order, joined by one space, bidi marks (U+200E, U+200F, U+2066–U+2069) removed, times in `timeZone`. `looks`: each template before the ink saver; `styles`: as the cloud sends it with nothing set (kitchenTicketInkSaver on); `resolveCases`: resolve_with_params(input) == expect. Items marked \"ללא בון\" never reach the ticket (the till's routing drops them).",
+  "_comment": "\"עיצוב בון\" — the kitchen ticket designs and the ticketStyle contract (P:/specs/kitchen-ticket-designs.md §1, §6–§9). Shared byte-for-byte by pos-server tests/fixtures (app/services/kitchen_ticket_style.py, client/src/lib/kitchenTicketStyle.ts — the dashboard preview) and pos-android app/src/test/resources (hardware/kitchen/KitchenTicketRenderer). `samples`: tickets in the till's KitchenTicketDto shape (+ `openedAt`, the table's opening, optional); each must show every string of `mustAppear.all` and `mustAppear.byTemplate[template]` when drawn with `styles[template]` at 58 and 80 mm — the drawn texts in order, joined by one space, bidi marks (U+200E, U+200F, U+2066–U+2069) removed, times in `timeZone`. `looks`: each template before the ink saver (no solid black but classic_legacy's: `blackParts`); `styles`: as the cloud sends it with nothing set (kitchenTicketInkSaver on); `metrics` + `textRules`: sizes per paper width and the one-line fitting; `resolveCases`: resolve_with_params(input) == expect. Items marked \"ללא בון\" never reach the ticket (the till's routing drops them).",
   "version": 1,
   "timeZone": "Asia/Jerusalem",
   "templates": ["classic", "classic_legacy", "large", "compact", "courses", "modern"],
@@ -8,16 +8,20 @@
   "vocabulary": {
     "infoFields": ["table", "guests", "waiter", "time", "till", "order", "customer"],
     "footerFields": ["table", "guests", "waiter", "time", "till", "order", "customer", "printer"],
-    "sizes": ["s", "m", "l", "xl"],
+    "textSizes": ["xs", "s", "m", "l"],
+    "minTextSizes": ["xs", "s", "m"],
+    "maxTextSizes": ["s", "m", "l"],
+    "headerSizes": ["s", "m", "l"],
+    "fits": ["fit", "wrap"],
     "headerFills": ["none", "outline", "fill"],
-    "lineLayouts": ["stacked", "inline"],
+    "lineLayouts": ["inline", "stacked"],
     "bandKeys": ["addition", "fire", "dining", "eatIn", "copy", "resent", "redirected", "tableNote", "notice", "training", "course"],
-    "bandStyles": ["fill", "double", "outline", "pill", "underline", "stars", "plain"],
+    "bandStyles": ["double", "outline", "pill", "underline", "stars", "plain", "fill"],
     "qty": ["plain", "box_outline", "box_fill"],
-    "modLayouts": ["indent", "inline"],
+    "modLayouts": ["inline", "indent"],
     "modMarks": ["asis", "plusminus", "words", "bullets"],
-    "importantNote": ["fill", "outline"],
-    "allergy": ["fill", "outline_warn"],
+    "importantNote": ["outline", "fill"],
+    "allergy": ["outline_warn", "fill"],
     "separators": ["solid", "dashed", "none"],
     "weights": ["thin", "normal", "thick"],
     "itemDividers": ["none", "thin", "dashed"],
@@ -49,14 +53,20 @@
     "modMinus": "− {text}",
     "modWith": "עם {text}",
     "modWithout": "בלי {text}",
-    "bullet": "• {text}"
+    "bullet": "• {text}",
+    "inlineSeparator": " · ",
+    "held": "ממתין ל-FIRE"
   },
   "textRules": {
     "table": "a table name of digits only is written \"שולחן 12\"; any other name as it is",
     "headline": "customer (when listed and set) › table › sale › \"הזמנה\"; the zone follows the table",
     "items": "totals count each line's quantity when whole, else 1; courses count distinct non-empty course names",
     "elapsed": "whole minutes from openedAt to createdAt; no openedAt — no elapsed",
-    "mods": "plusminus / words / bullets: a mod's leading \"+ \" and a removal's leading \"בלי \" are taken off first"
+    "mods": "plusminus / words / bullets: a mod's leading \"+ \" and a removal's leading \"בלי \" are taken off first",
+    "fit": "fit: an item line (quantity + name) at itemSize[paper][maxSize] × fontScale; while it does not fit one line, one fitStep smaller, down to itemSize[paper][minSize]; still too long — it wraps there, continuations under the name (hangingIndent). wrap: at maxSize, wrapping.",
+    "inlineMods": "mods.layout inline: choices, removals and a short note (no important note, never allergies) join the item line after \" · \" when the whole line fits at the size the name took; else each on its own indented line at detailRatio × that size",
+    "header": "header.layout inline: the headline at headerRatio[header.size] × itemSize[paper][maxSize], then the other fields after \" · \" on the same line as far as they fit; the rest on the next line",
+    "blackArea": "solid black = fills only (bands / header / qty box / allergy / important note set to fill); text and lines are not counted"
   },
   "noticeSeparator": " · ",
   "noticeKinds": [
@@ -67,13 +77,24 @@
   ],
   "noticeDefaultKind": "notice",
   "metrics": {
-    "baseWidthDots": 384,
     "dotsPerMm": 8,
-    "tableSize": {"s": 28, "m": 40, "l": 56, "xl": 72},
-    "itemSize": {"s": 22, "m": 27, "l": 36, "xl": 44},
-    "detailSize": {"s": 18, "m": 22, "l": 26, "xl": 30},
-    "bandSize": {"s": 22, "m": 26, "l": 34, "xl": 40},
-    "smallSize": 20,
+    "paper": {
+      "58": {"dots": 384, "pad": 10},
+      "80": {"dots": 576, "pad": 15}
+    },
+    "avgCharEm": 0.5,
+    "itemSize": {
+      "58": {"xs": 21, "s": 26, "m": 30, "l": 36},
+      "80": {"xs": 24, "s": 29, "m": 34, "l": 42}
+    },
+    "charsPerLine": {
+      "58": {"xs": 34, "s": 28, "m": 24, "l": 20},
+      "80": {"xs": 46, "s": 38, "m": 32, "l": 26}
+    },
+    "headerRatio": {"s": 1.3, "m": 1.6, "l": 2.0},
+    "detailRatio": 0.8,
+    "smallSize": {"58": 18, "80": 22},
+    "fitStep": 1,
     "lineGap": {"tight": 2, "normal": 6},
     "separatorWidth": {"thin": 1, "normal": 3, "thick": 5},
     "feedLineDots": 24
@@ -81,25 +102,26 @@
   "looks": {
     "classic": {
       "fontScale": 100,
-      "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
-        "addition": "fill",
+        "addition": "double",
         "fire": "outline",
-        "dining": "fill",
+        "dining": "double",
         "eatIn": "outline",
-        "copy": "fill",
-        "resent": "fill",
-        "redirected": "fill",
-        "tableNote": "fill",
-        "notice": "fill",
-        "training": "outline",
+        "copy": "outline",
+        "resent": "double",
+        "redirected": "outline",
+        "tableNote": "outline",
+        "notice": "outline",
+        "training": "double",
         "course": "plain"
       },
-      "itemName": {"size": "m", "maxLines": 0},
+      "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
       "qty": "plain",
-      "mods": {"layout": "indent", "marks": "asis"},
-      "note": {"frame": true, "important": "fill"},
-      "allergy": "fill",
+      "mods": {"layout": "inline", "marks": "asis"},
+      "note": {"frame": true, "important": "outline"},
+      "allergy": "outline_warn",
       "separators": "solid",
       "separatorWeight": "thin",
       "itemDivider": "thin",
@@ -115,7 +137,8 @@
     },
     "classic_legacy": {
       "fontScale": 100,
-      "header": {"tableSize": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
+      "fit": "wrap",
+      "header": {"size": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
       "bands": {
         "addition": "fill",
         "fire": "outline",
@@ -129,7 +152,7 @@
         "training": "outline",
         "course": "plain"
       },
-      "itemName": {"size": "l", "maxLines": 0},
+      "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 0},
       "qty": "plain",
       "mods": {"layout": "indent", "marks": "asis"},
       "note": {"frame": true, "important": "fill"},
@@ -149,25 +172,26 @@
     },
     "large": {
       "fontScale": 100,
-      "header": {"tableSize": "xl", "fill": "fill", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "l", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
-        "addition": "fill",
-        "fire": "fill",
-        "dining": "fill",
+        "addition": "double",
+        "fire": "double",
+        "dining": "double",
         "eatIn": "outline",
-        "copy": "fill",
-        "resent": "fill",
-        "redirected": "fill",
-        "tableNote": "fill",
-        "notice": "fill",
-        "training": "outline",
-        "course": "fill"
+        "copy": "double",
+        "resent": "double",
+        "redirected": "double",
+        "tableNote": "double",
+        "notice": "double",
+        "training": "double",
+        "course": "double"
       },
-      "itemName": {"size": "xl", "maxLines": 2},
-      "qty": "box_fill",
+      "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 2},
+      "qty": "box_outline",
       "mods": {"layout": "indent", "marks": "plusminus"},
-      "note": {"frame": true, "important": "fill"},
-      "allergy": "fill",
+      "note": {"frame": true, "important": "outline"},
+      "allergy": "outline_warn",
       "separators": "solid",
       "separatorWeight": "thick",
       "itemDivider": "none",
@@ -183,7 +207,8 @@
     },
     "compact": {
       "fontScale": 100,
-      "header": {"tableSize": "s", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "time", "waiter"]},
+      "fit": "fit",
+      "header": {"size": "s", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "time", "waiter"]},
       "bands": {
         "addition": "stars",
         "fire": "stars",
@@ -197,7 +222,7 @@
         "training": "stars",
         "course": "underline"
       },
-      "itemName": {"size": "s", "maxLines": 0},
+      "itemName": {"maxSize": "s", "minSize": "xs", "maxLines": 0},
       "qty": "plain",
       "mods": {"layout": "inline", "marks": "asis"},
       "note": {"frame": false, "important": "outline"},
@@ -217,25 +242,26 @@
     },
     "courses": {
       "fontScale": 100,
-      "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
-        "addition": "fill",
+        "addition": "double",
         "fire": "outline",
-        "dining": "fill",
+        "dining": "double",
         "eatIn": "outline",
-        "copy": "fill",
-        "resent": "fill",
-        "redirected": "fill",
-        "tableNote": "fill",
-        "notice": "fill",
-        "training": "outline",
-        "course": "fill"
+        "copy": "outline",
+        "resent": "double",
+        "redirected": "outline",
+        "tableNote": "outline",
+        "notice": "outline",
+        "training": "double",
+        "course": "double"
       },
-      "itemName": {"size": "m", "maxLines": 0},
+      "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
       "qty": "plain",
-      "mods": {"layout": "indent", "marks": "asis"},
-      "note": {"frame": true, "important": "fill"},
-      "allergy": "fill",
+      "mods": {"layout": "inline", "marks": "asis"},
+      "note": {"frame": true, "important": "outline"},
+      "allergy": "outline_warn",
       "separators": "solid",
       "separatorWeight": "thin",
       "itemDivider": "none",
@@ -251,21 +277,22 @@
     },
     "modern": {
       "fontScale": 100,
-      "header": {"tableSize": "xl", "fill": "fill", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "m", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
-        "addition": "fill",
+        "addition": "double",
         "fire": "outline",
         "dining": "pill",
         "eatIn": "pill",
         "copy": "outline",
-        "resent": "outline",
+        "resent": "double",
         "redirected": "outline",
         "tableNote": "outline",
         "notice": "outline",
         "training": "outline",
         "course": "underline"
       },
-      "itemName": {"size": "m", "maxLines": 0},
+      "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
       "qty": "plain",
       "mods": {"layout": "indent", "marks": "bullets"},
       "note": {"frame": true, "important": "outline"},
@@ -284,6 +311,14 @@
       "feedLines": 2
     }
   },
+  "blackParts": {
+    "classic": [],
+    "classic_legacy": ["bands.addition", "bands.dining", "bands.copy", "bands.resent", "bands.redirected", "bands.tableNote", "bands.notice", "allergy", "note.important"],
+    "large": [],
+    "compact": [],
+    "courses": [],
+    "modern": []
+  },
   "styles": {
     "classic": {
       "version": 1,
@@ -292,23 +327,24 @@
       "designName": null,
       "inkSaver": true,
       "fontScale": 100,
-      "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
         "addition": "double",
         "fire": "outline",
         "dining": "double",
         "eatIn": "outline",
-        "copy": "double",
+        "copy": "outline",
         "resent": "double",
-        "redirected": "double",
-        "tableNote": "double",
-        "notice": "double",
-        "training": "outline",
+        "redirected": "outline",
+        "tableNote": "outline",
+        "notice": "outline",
+        "training": "double",
         "course": "plain"
       },
-      "itemName": {"size": "m", "maxLines": 0},
+      "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
       "qty": "plain",
-      "mods": {"layout": "indent", "marks": "asis"},
+      "mods": {"layout": "inline", "marks": "asis"},
       "note": {"frame": true, "important": "outline"},
       "allergy": "outline_warn",
       "separators": "solid",
@@ -331,7 +367,8 @@
       "designName": null,
       "inkSaver": true,
       "fontScale": 100,
-      "header": {"tableSize": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
+      "fit": "wrap",
+      "header": {"size": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
       "bands": {
         "addition": "double",
         "fire": "outline",
@@ -345,7 +382,7 @@
         "training": "outline",
         "course": "plain"
       },
-      "itemName": {"size": "l", "maxLines": 0},
+      "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 0},
       "qty": "plain",
       "mods": {"layout": "indent", "marks": "asis"},
       "note": {"frame": true, "important": "outline"},
@@ -370,7 +407,8 @@
       "designName": null,
       "inkSaver": true,
       "fontScale": 100,
-      "header": {"tableSize": "xl", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "l", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
         "addition": "double",
         "fire": "double",
@@ -381,10 +419,10 @@
         "redirected": "double",
         "tableNote": "double",
         "notice": "double",
-        "training": "outline",
+        "training": "double",
         "course": "double"
       },
-      "itemName": {"size": "xl", "maxLines": 2},
+      "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 2},
       "qty": "box_outline",
       "mods": {"layout": "indent", "marks": "plusminus"},
       "note": {"frame": true, "important": "outline"},
@@ -409,7 +447,8 @@
       "designName": null,
       "inkSaver": true,
       "fontScale": 100,
-      "header": {"tableSize": "s", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "time", "waiter"]},
+      "fit": "fit",
+      "header": {"size": "s", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "time", "waiter"]},
       "bands": {
         "addition": "stars",
         "fire": "stars",
@@ -423,7 +462,7 @@
         "training": "stars",
         "course": "underline"
       },
-      "itemName": {"size": "s", "maxLines": 0},
+      "itemName": {"maxSize": "s", "minSize": "xs", "maxLines": 0},
       "qty": "plain",
       "mods": {"layout": "inline", "marks": "asis"},
       "note": {"frame": false, "important": "outline"},
@@ -448,23 +487,24 @@
       "designName": null,
       "inkSaver": true,
       "fontScale": 100,
-      "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
         "addition": "double",
         "fire": "outline",
         "dining": "double",
         "eatIn": "outline",
-        "copy": "double",
+        "copy": "outline",
         "resent": "double",
-        "redirected": "double",
-        "tableNote": "double",
-        "notice": "double",
-        "training": "outline",
+        "redirected": "outline",
+        "tableNote": "outline",
+        "notice": "outline",
+        "training": "double",
         "course": "double"
       },
-      "itemName": {"size": "m", "maxLines": 0},
+      "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
       "qty": "plain",
-      "mods": {"layout": "indent", "marks": "asis"},
+      "mods": {"layout": "inline", "marks": "asis"},
       "note": {"frame": true, "important": "outline"},
       "allergy": "outline_warn",
       "separators": "solid",
@@ -487,21 +527,22 @@
       "designName": null,
       "inkSaver": true,
       "fontScale": 100,
-      "header": {"tableSize": "xl", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+      "fit": "fit",
+      "header": {"size": "m", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
       "bands": {
         "addition": "double",
         "fire": "outline",
         "dining": "pill",
         "eatIn": "pill",
         "copy": "outline",
-        "resent": "outline",
+        "resent": "double",
         "redirected": "outline",
         "tableNote": "outline",
         "notice": "outline",
         "training": "outline",
         "course": "underline"
       },
-      "itemName": {"size": "m", "maxLines": 0},
+      "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
       "qty": "plain",
       "mods": {"layout": "indent", "marks": "bullets"},
       "note": {"frame": true, "important": "outline"},
@@ -531,23 +572,24 @@
         "designName": null,
         "inkSaver": true,
         "fontScale": 100,
-        "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+        "fit": "fit",
+        "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
         "bands": {
           "addition": "double",
           "fire": "outline",
           "dining": "double",
           "eatIn": "outline",
-          "copy": "double",
+          "copy": "outline",
           "resent": "double",
-          "redirected": "double",
-          "tableNote": "double",
-          "notice": "double",
-          "training": "outline",
+          "redirected": "outline",
+          "tableNote": "outline",
+          "notice": "outline",
+          "training": "double",
           "course": "plain"
         },
-        "itemName": {"size": "m", "maxLines": 0},
+        "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
         "qty": "plain",
-        "mods": {"layout": "indent", "marks": "asis"},
+        "mods": {"layout": "inline", "marks": "asis"},
         "note": {"frame": true, "important": "outline"},
         "allergy": "outline_warn",
         "separators": "solid",
@@ -577,7 +619,8 @@
         "designName": null,
         "inkSaver": false,
         "fontScale": 100,
-        "header": {"tableSize": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
+        "fit": "wrap",
+        "header": {"size": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
         "bands": {
           "addition": "fill",
           "fire": "outline",
@@ -591,7 +634,7 @@
           "training": "outline",
           "course": "plain"
         },
-        "itemName": {"size": "l", "maxLines": 0},
+        "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 0},
         "qty": "plain",
         "mods": {"layout": "indent", "marks": "asis"},
         "note": {"frame": true, "important": "fill"},
@@ -620,7 +663,8 @@
         "designName": null,
         "inkSaver": true,
         "fontScale": 100,
-        "header": {"tableSize": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
+        "fit": "wrap",
+        "header": {"size": "l", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
         "bands": {
           "addition": "double",
           "fire": "outline",
@@ -634,7 +678,7 @@
           "training": "outline",
           "course": "plain"
         },
-        "itemName": {"size": "l", "maxLines": 0},
+        "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 0},
         "qty": "plain",
         "mods": {"layout": "indent", "marks": "asis"},
         "note": {"frame": true, "important": "outline"},
@@ -654,6 +698,157 @@
       }
     },
     {
+      "id": "fit_parameters",
+      "input": {
+        "template": "classic",
+        "params": {
+          "kitchenTicketFit": "wrap",
+          "kitchenTicketMinTextSize": "xs",
+          "kitchenTicketMaxTextSize": "l",
+          "kitchenTicketHeaderSize": "s",
+          "kitchenTicketInlineMods": false
+        }
+      },
+      "expect": {
+        "version": 1,
+        "template": "classic",
+        "designId": null,
+        "designName": null,
+        "inkSaver": true,
+        "fontScale": 100,
+        "fit": "wrap",
+        "header": {"size": "s", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
+        "bands": {
+          "addition": "double",
+          "fire": "outline",
+          "dining": "double",
+          "eatIn": "outline",
+          "copy": "outline",
+          "resent": "double",
+          "redirected": "outline",
+          "tableNote": "outline",
+          "notice": "outline",
+          "training": "double",
+          "course": "plain"
+        },
+        "itemName": {"maxSize": "l", "minSize": "xs", "maxLines": 0},
+        "qty": "plain",
+        "mods": {"layout": "indent", "marks": "asis"},
+        "note": {"frame": true, "important": "outline"},
+        "allergy": "outline_warn",
+        "separators": "solid",
+        "separatorWeight": "thin",
+        "itemDivider": "thin",
+        "spacing": "tight",
+        "layout": {"qtyColumn": true, "hangingIndent": true},
+        "grouping": "inline",
+        "heldCourse": "plain",
+        "totals": false,
+        "checkboxes": false,
+        "elapsed": false,
+        "footer": {"layout": "inline", "fields": ["order", "till", "printer"]},
+        "feedLines": 2
+      }
+    },
+    {
+      "id": "min_never_above_max",
+      "input": {
+        "template": "compact",
+        "params": {"kitchenTicketMinTextSize": "m"}
+      },
+      "expect": {
+        "version": 1,
+        "template": "compact",
+        "designId": null,
+        "designName": null,
+        "inkSaver": true,
+        "fontScale": 100,
+        "fit": "fit",
+        "header": {"size": "s", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "time", "waiter"]},
+        "bands": {
+          "addition": "stars",
+          "fire": "stars",
+          "dining": "stars",
+          "eatIn": "underline",
+          "copy": "stars",
+          "resent": "stars",
+          "redirected": "stars",
+          "tableNote": "stars",
+          "notice": "stars",
+          "training": "stars",
+          "course": "underline"
+        },
+        "itemName": {"maxSize": "s", "minSize": "s", "maxLines": 0},
+        "qty": "plain",
+        "mods": {"layout": "inline", "marks": "asis"},
+        "note": {"frame": false, "important": "outline"},
+        "allergy": "outline_warn",
+        "separators": "dashed",
+        "separatorWeight": "thin",
+        "itemDivider": "none",
+        "spacing": "tight",
+        "layout": {"qtyColumn": true, "hangingIndent": true},
+        "grouping": "inline",
+        "heldCourse": "plain",
+        "totals": false,
+        "checkboxes": false,
+        "elapsed": false,
+        "footer": {"layout": "inline", "fields": ["order", "till", "printer"]},
+        "feedLines": 2
+      }
+    },
+    {
+      "id": "explicit_fill_needs_the_ink_saver_off",
+      "input": {
+        "template": "large",
+        "overrides": {
+          "inkSaver": false,
+          "bands": {"addition": "fill"},
+          "qty": "box_fill"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "template": "large",
+        "designId": null,
+        "designName": null,
+        "inkSaver": false,
+        "fontScale": 100,
+        "fit": "fit",
+        "header": {"size": "l", "fill": "outline", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+        "bands": {
+          "addition": "fill",
+          "fire": "double",
+          "dining": "double",
+          "eatIn": "outline",
+          "copy": "double",
+          "resent": "double",
+          "redirected": "double",
+          "tableNote": "double",
+          "notice": "double",
+          "training": "double",
+          "course": "double"
+        },
+        "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 2},
+        "qty": "box_fill",
+        "mods": {"layout": "indent", "marks": "plusminus"},
+        "note": {"frame": true, "important": "outline"},
+        "allergy": "outline_warn",
+        "separators": "solid",
+        "separatorWeight": "thick",
+        "itemDivider": "none",
+        "spacing": "normal",
+        "layout": {"qtyColumn": true, "hangingIndent": true},
+        "grouping": "inline",
+        "heldCourse": "plain",
+        "totals": false,
+        "checkboxes": false,
+        "elapsed": false,
+        "footer": {"layout": "stacked", "fields": ["order", "till", "printer"]},
+        "feedLines": 3
+      }
+    },
+    {
       "id": "level_parameters",
       "input": {
         "template": "large",
@@ -666,7 +861,8 @@
         "designName": null,
         "inkSaver": true,
         "fontScale": 120,
-        "header": {"tableSize": "xl", "fill": "outline", "layout": "stacked", "fields": ["table", "waiter", "time"]},
+        "fit": "fit",
+        "header": {"size": "l", "fill": "outline", "layout": "stacked", "fields": ["table", "waiter", "time"]},
         "bands": {
           "addition": "double",
           "fire": "double",
@@ -677,10 +873,10 @@
           "redirected": "double",
           "tableNote": "double",
           "notice": "double",
-          "training": "outline",
+          "training": "double",
           "course": "double"
         },
-        "itemName": {"size": "xl", "maxLines": 2},
+        "itemName": {"maxSize": "l", "minSize": "m", "maxLines": 2},
         "qty": "box_outline",
         "mods": {"layout": "indent", "marks": "plusminus"},
         "note": {"frame": true, "important": "outline"},
@@ -712,23 +908,24 @@
         "designName": null,
         "inkSaver": true,
         "fontScale": 100,
-        "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "customer", "guests", "waiter", "time"]},
+        "fit": "fit",
+        "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
         "bands": {
           "addition": "double",
           "fire": "outline",
           "dining": "double",
           "eatIn": "outline",
-          "copy": "double",
+          "copy": "outline",
           "resent": "double",
-          "redirected": "double",
-          "tableNote": "double",
-          "notice": "double",
-          "training": "outline",
+          "redirected": "outline",
+          "tableNote": "outline",
+          "notice": "outline",
+          "training": "double",
           "course": "double"
         },
-        "itemName": {"size": "m", "maxLines": 0},
+        "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
         "qty": "plain",
-        "mods": {"layout": "indent", "marks": "asis"},
+        "mods": {"layout": "inline", "marks": "asis"},
         "note": {"frame": true, "important": "outline"},
         "allergy": "outline_warn",
         "separators": "solid",
@@ -767,21 +964,22 @@
         "designName": "בר",
         "inkSaver": false,
         "fontScale": 100,
-        "header": {"tableSize": "xl", "fill": "fill", "layout": "stacked", "fields": ["table", "waiter", "time"]},
+        "fit": "fit",
+        "header": {"size": "m", "fill": "outline", "layout": "stacked", "fields": ["table", "waiter", "time"]},
         "bands": {
           "addition": "stars",
           "fire": "outline",
           "dining": "pill",
           "eatIn": "pill",
           "copy": "outline",
-          "resent": "outline",
+          "resent": "double",
           "redirected": "outline",
           "tableNote": "outline",
           "notice": "outline",
           "training": "outline",
           "course": "underline"
         },
-        "itemName": {"size": "m", "maxLines": 0},
+        "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
         "qty": "box_fill",
         "mods": {"layout": "indent", "marks": "bullets"},
         "note": {"frame": true, "important": "outline"},
@@ -806,7 +1004,7 @@
         "template": "courses",
         "params": {"kitchenTicketCheckboxes": false, "kitchenTicketElapsed": true, "kitchenTicketFontScale": 130},
         "overrides": {"checkboxes": true, "fontScale": 110},
-        "printer": {"fontScale": 90, "header": ["time"], "checkboxes": false, "elapsed": false}
+        "printer": {"fontScale": 90, "header": ["time"], "checkboxes": false, "elapsed": false, "fit": "wrap", "maxTextSize": "s", "headerSize": "l", "inlineMods": true}
       },
       "expect": {
         "version": 1,
@@ -815,23 +1013,24 @@
         "designName": null,
         "inkSaver": true,
         "fontScale": 90,
-        "header": {"tableSize": "m", "fill": "none", "layout": "stacked", "fields": ["table", "time"]},
+        "fit": "wrap",
+        "header": {"size": "l", "fill": "none", "layout": "inline", "fields": ["table", "time"]},
         "bands": {
           "addition": "double",
           "fire": "outline",
           "dining": "double",
           "eatIn": "outline",
-          "copy": "double",
+          "copy": "outline",
           "resent": "double",
-          "redirected": "double",
-          "tableNote": "double",
-          "notice": "double",
-          "training": "outline",
+          "redirected": "outline",
+          "tableNote": "outline",
+          "notice": "outline",
+          "training": "double",
           "course": "double"
         },
-        "itemName": {"size": "m", "maxLines": 0},
+        "itemName": {"maxSize": "s", "minSize": "s", "maxLines": 0},
         "qty": "plain",
-        "mods": {"layout": "indent", "marks": "asis"},
+        "mods": {"layout": "inline", "marks": "asis"},
         "note": {"frame": true, "important": "outline"},
         "allergy": "outline_warn",
         "separators": "solid",
@@ -880,7 +1079,8 @@
             "seat": "מ1",
             "course": "ראשונות",
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           },
           {
             "productId": null,
@@ -895,7 +1095,8 @@
             "seat": "מ2",
             "course": "ראשונות",
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           },
           {
             "productId": null,
@@ -910,7 +1111,8 @@
             "seat": "מ1",
             "course": "עיקריות",
             "mealName": "ארוחה עסקית",
-            "refill": null
+            "refill": null,
+            "held": true
           },
           {
             "productId": null,
@@ -925,7 +1127,8 @@
             "seat": "מ2",
             "course": "עיקריות",
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": true
           }
         ],
         "orderRef": "4471",
@@ -944,7 +1147,7 @@
           "classic_legacy": ["סועדים: 4", "מלצר/קופאי: דנה", "הזמנה #4471", "קופה: קופה 1", "— ראשונות —", "(ארוחה עסקית)"],
           "large": ["4 סועדים"],
           "compact": ["4 סועדים"],
-          "courses": ["4 סועדים", "סה\"כ 5 פריטים · 2 קורסים", "☐"],
+          "courses": ["4 סועדים", "סה\"כ 5 פריטים · 2 קורסים", "☐", "ממתין ל-FIRE"],
           "modern": ["4 סועדים", "פתוח 25 דק'"]
         }
       }
@@ -977,7 +1180,8 @@
             "seat": null,
             "course": "עיקריות",
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           },
           {
             "productId": null,
@@ -992,7 +1196,8 @@
             "seat": "מ2",
             "course": "עיקריות",
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           }
         ],
         "orderRef": "4480",
@@ -1037,7 +1242,8 @@
             "seat": null,
             "course": null,
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           },
           {
             "productId": null,
@@ -1052,7 +1258,8 @@
             "seat": null,
             "course": null,
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           }
         ],
         "orderRef": "1043",
@@ -1097,7 +1304,8 @@
             "seat": null,
             "course": null,
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           }
         ],
         "orderRef": "4402",
@@ -1142,7 +1350,8 @@
             "seat": null,
             "course": null,
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           },
           {
             "productId": null,
@@ -1157,7 +1366,8 @@
             "seat": null,
             "course": null,
             "mealName": null,
-            "refill": null
+            "refill": null,
+            "held": null
           }
         ],
         "orderRef": "2001",

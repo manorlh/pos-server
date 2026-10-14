@@ -1,28 +1,36 @@
 """
 "עיצוב בון" — how a kitchen ticket ("בון") looks: the `ticketStyle` contract
-(P:/specs/kitchen-ticket-designs.md §1, §6–§8; the shared golden
+(P:/specs/kitchen-ticket-designs.md §1, §6–§9; the shared golden
 tests/fixtures/kitchen_ticket_designs_golden.json, byte-identical in pos-android).
 
 Pure rules, no database (app/services/kitchen_ticket_designs.py stores and assigns):
 
-* **Templates** (`TEMPLATES`): `classic` — the default since 14.10 §7, smaller and aligned (a fixed
-  quantity column, wrapped names / choices / notes hang under the name); `classic_legacy` — "קלאסי
-  (ישן)", the ticket exactly as the till drew it before; `large`, `compact`, `courses`, `modern`.
-  `template_style` is each one's full look before the ink saver.
+* **Templates** (`TEMPLATES`): `classic` — the default (§7: smaller and aligned — a fixed quantity
+  column, wrapped names / choices / notes hang under the name); `classic_legacy` — "קלאסי (ישן)", the
+  ticket exactly as the till drew it before, kept to compare with; `large`, `compact`, `courses`,
+  `modern`. `template_style` is each one's full look before the ink saver.
+* **No solid black in any default look** (§8 "בלי השחור הזה"): frames, double frames, bold text. A
+  fill is only ever an explicit element choice in a named design (with the ink saver off there);
+  `classic_legacy` keeps today's fills, and the ink saver (on by default) frames them too.
+* **One line where it fits, never huge** (§8): `fit` — each item line (quantity + name) shrinks from
+  `itemName.maxSize` down to `itemName.minSize` to stay on one line at the paper's real width, and
+  only then wraps with a hanging indent; `wrap` — a fixed size that wraps. Choices, removals and a
+  short note go on the item's line after " · " when they fit there (`mods.layout` `inline`), else on
+  indented lines. The header in one line as far as it fits. Sizes are capped by the paper
+  (`METRICS`: an item ≈ 32 characters a line at 80 mm, ≈ 24 at 58 mm; the table at most twice that).
 * **A named design** ("עיצוב בון", `kitchen_ticket_designs`) is a template plus per-element
   overrides — a partial `ticketStyle` (`clean_overrides` refuses anything else).
 * **The cloud resolves** (`resolve_style`) one full `ticketStyle` per printer and till and sends it in
   the printers config; the till draws by it alone. In order: the template; the till parameters SET at
-  some level (`kitchenTicketFontScale`, `kitchenTicketHeader`, `kitchenTicketCheckboxes`,
-  `kitchenTicketElapsed` — their defaults never beat a template's own look) and
+  some level (`LEVEL_OPTION_KEYS` — their defaults never beat a template's own look) and
   `kitchenTicketInkSaver` (default on); the design's overrides; the printer's own options; the
   mandatory information; then the ink saver.
 * **Mandatory information is never hidden** — the bands ("תוספת", "הוצא", "לקחת" / "לשבת", "העתק",
   "הדפסה חוזרת", "הופנה מ:", "הערה לשולחן", "הדרכה"), allergies, notes and the table: the schema has
   no "hidden" value for any of them, and the table stays in the header whatever the lists say.
-* **The ink saver** (`kitchenTicketInkSaver`, §6ב): every filled band becomes a double frame, the
-  inverted header a thick frame, the black quantity box a frame, the allergy box a frame with ⚠, an
-  important note a frame; separators thin. Off: the fills as designed.
+* **The ink saver** (`kitchenTicketInkSaver`, §6ב): a filled band becomes a double frame, an inverted
+  header a frame, the black quantity box a frame, the allergy box a frame with ⚠, an important note
+  a frame; separators thin. Off (a design's choice): its explicit fills print as chosen.
 
 The dashboard's preview (client/src/lib/kitchenTicketStyle.ts) is a port of these rules, pinned by
 the same golden.
@@ -55,12 +63,12 @@ TEMPLATE_LABELS: Dict[str, str] = {
     MODERN: "מודרני",
 }
 TEMPLATE_HINTS: Dict[str, str] = {
-    CLASSIC: "ברירת המחדל: קטן ומיושר — עמודת כמות קבועה, המשך השורה מתחת לשם",
-    CLASSIC_LEGACY: "הבון של עד היום, בלי שינוי",
-    LARGE: "מטבח עמוס, קריאה מרחוק: שולחן ענק, כמות בריבוע, שמות גדולים",
-    COMPACT: "בר וקפה, חיסכון בנייר: כותרת בשורה אחת, תוספות באותה שורה",
+    CLASSIC: "ברירת המחדל: קטן ומיושר — עמודת כמות קבועה, שורה אחת לפריט ככל שנכנס",
+    CLASSIC_LEGACY: "הבון של עד היום, להשוואה",
+    LARGE: "מטבח עמוס, קריאה מרחוק: שולחן וכמות במסגרת, שמות גדולים",
+    COMPACT: "בר וקפה, חיסכון בנייר: כותרת בשורה אחת, גופן קטן",
     COURSES: "מסעדה עם מנות לפי סדר: קבוצה לכל קורס, לפי מושב, תיבות סימון",
-    MODERN: "מראה נקי: בלוק שולחן עם הזמן מאז הפתיחה, תגים מעוגלים, קווים מקווקווים",
+    MODERN: "מראה נקי: שולחן במסגרת עם הזמן מאז הפתיחה, תגים מעוגלים, קווים מקווקווים",
 }
 
 # ── The vocabulary ──────────────────────────────────────────────────────────
@@ -82,13 +90,20 @@ MANDATORY_HEADER_FIELD = "table"
 #: The foot may also name the printer (with "עותק 1/2" when it prints more than one).
 FOOTER_FIELDS: Tuple[str, ...] = INFO_FIELDS + ("printer",)
 
-SIZES: Tuple[str, ...] = ("s", "m", "l", "xl")
-SIZE_LABELS = {"s": "קטן", "m": "בינוני", "l": "גדול", "xl": "ענק"}
+#: Text sizes, smallest first; an item's line runs between `minSize` and `maxSize`.
+TEXT_SIZES: Tuple[str, ...] = ("xs", "s", "m", "l")
+MIN_TEXT_SIZES: Tuple[str, ...] = ("xs", "s", "m")
+MAX_TEXT_SIZES: Tuple[str, ...] = ("s", "m", "l")
+HEADER_SIZES: Tuple[str, ...] = ("s", "m", "l")
+SIZE_LABELS = {"xs": "קטן מאוד", "s": "קטן", "m": "בינוני", "l": "גדול"}
+#: `fit`: shrink to one line, then wrap; `wrap`: a fixed size that wraps.
+FITS: Tuple[str, ...] = ("fit", "wrap")
+FIT_LABELS = {"fit": "שורה אחת ככל האפשר (מקטין ואז שובר)", "wrap": "גודל קבוע ושבירת שורות"}
 HEADER_FILLS: Tuple[str, ...] = ("none", "outline", "fill")
-HEADER_FILL_LABELS = {"none": "טקסט בלבד", "outline": "מסגרת עבה", "fill": "בהיפוך (לבן על שחור)"}
-#: `stacked`: the headline on its own line, the other fields in one line under it; `inline`: one line.
-LINE_LAYOUTS: Tuple[str, ...] = ("stacked", "inline")
-LINE_LAYOUT_LABELS = {"stacked": "כותרת ושורת משנה", "inline": "שורה אחת"}
+HEADER_FILL_LABELS = {"none": "טקסט בלבד", "outline": "מסגרת", "fill": "בהיפוך (לבן על שחור)"}
+#: `inline`: one line as far as it fits, the rest under it; `stacked`: the headline, the rest under it.
+LINE_LAYOUTS: Tuple[str, ...] = ("inline", "stacked")
+LINE_LAYOUT_LABELS = {"inline": "שורה אחת ככל שנכנס", "stacked": "כותרת ושורת משנה"}
 
 #: The bands. `dining`: "לקחת"; `eatIn`: "לשבת"; `notice`: any other notice ("זרז", "לא שולם",
 #: "הדפסת ניסיון"); `course`: a course's heading.
@@ -108,29 +123,30 @@ BAND_LABELS: Dict[str, str] = {
     "training": "הדרכה",
     "course": "כותרת קורס",
 }
-#: How a band is drawn — never hidden. `double`: the ink saver's double frame (═ תוספת ═);
-#: `pill`: a rounded frame; `stars`: `*** תוספת ***`; `plain`: bold text ("— ראשונות —").
-BAND_STYLES: Tuple[str, ...] = ("fill", "double", "outline", "pill", "underline", "stars", "plain")
+#: How a band is drawn — never hidden. `double`: a double frame (═ תוספת ═); `pill`: a rounded
+#: frame; `stars`: `*** תוספת ***`; `plain`: bold text ("— ראשונות —"); `fill`: white on black.
+BAND_STYLES: Tuple[str, ...] = ("double", "outline", "pill", "underline", "stars", "plain", "fill")
 BAND_STYLE_LABELS = {
-    "fill": "מילוי (לבן על שחור)",
     "double": "מסגרת כפולה",
     "outline": "מסגרת",
     "pill": "מסגרת מעוגלת",
     "underline": "קו תחתון",
     "stars": "כוכביות",
     "plain": "טקסט מודגש",
+    "fill": "מילוי (לבן על שחור)",
 }
 QTY_STYLES: Tuple[str, ...] = ("plain", "box_outline", "box_fill")
 QTY_LABELS = {"plain": "רגילה (2×)", "box_outline": "ריבוע עם מסגרת", "box_fill": "ריבוע מלא"}
-MOD_LAYOUTS: Tuple[str, ...] = ("indent", "inline")
-MOD_LAYOUT_LABELS = {"indent": "מוזחות מתחת לשם", "inline": "באותה שורה, אחרי פסיק"}
+#: `inline`: on the item's line after " · " when they fit there, else indented; `indent`: indented lines.
+MOD_LAYOUTS: Tuple[str, ...] = ("inline", "indent")
+MOD_LAYOUT_LABELS = {"inline": "באותה שורה אחרי · כשיש מקום", "indent": "מוזחות מתחת לשם"}
 #: `asis`: as the till wrote them ("+ גבינה", "בלי בצל"); `plusminus`: "+ גבינה", "− בצל";
 #: `words`: "עם גבינה", "בלי בצל"; `bullets`: "• גבינה", "• בלי בצל".
 MOD_MARKS: Tuple[str, ...] = ("asis", "plusminus", "words", "bullets")
 MOD_MARK_LABELS = {"asis": "כפי שנרשמו", "plusminus": "+ ו־−", "words": "עם / בלי", "bullets": "נקודות"}
-IMPORTANT_NOTE_STYLES: Tuple[str, ...] = ("fill", "outline")
-ALLERGY_STYLES: Tuple[str, ...] = ("fill", "outline_warn")
-ALLERGY_LABELS = {"fill": "מילוי", "outline_warn": "מסגרת עם ⚠"}
+IMPORTANT_NOTE_STYLES: Tuple[str, ...] = ("outline", "fill")
+ALLERGY_STYLES: Tuple[str, ...] = ("outline_warn", "fill")
+ALLERGY_LABELS = {"outline_warn": "מסגרת עם ⚠", "fill": "מילוי"}
 SEPARATORS: Tuple[str, ...] = ("solid", "dashed", "none")
 SEPARATOR_LABELS = {"solid": "קו מלא", "dashed": "קו מקווקו", "none": "בלי"}
 WEIGHTS: Tuple[str, ...] = ("thin", "normal", "thick")
@@ -147,16 +163,21 @@ FONT_SCALE_MIN, FONT_SCALE_MAX, FONT_SCALE_DEFAULT = 80, 150, 100
 FEED_LINES_MIN, FEED_LINES_MAX = 0, 6
 MAX_LINES_MAX = 4
 
-#: Sizes in dots on a 384-dot (58 mm) head, before `fontScale`; ×1.5 on 576 (80 mm). The till and
-#: the dashboard's preview use the same numbers. `classic_legacy` keeps the till's sizes of before.
+#: The paper's real width (§8 "לפי גודל הבון"). Sizes are in dots at each width, before
+#: `fontScale`: an item at `m` takes ≈ 24 characters a line at 58 mm and ≈ 32 at 80 mm (an average
+#: character ≈ `avgCharEm` of the size); the table `headerRatio` times the item's largest size;
+#: details (choices, notes, seats) `detailRatio` of the item's size. `classic_legacy` keeps the
+#: till's sizes of before (×1.5 at 80 mm). The till and the dashboard's preview use these numbers.
 METRICS: Dict[str, Any] = {
-    "baseWidthDots": 384,
     "dotsPerMm": 8,
-    "tableSize": {"s": 28, "m": 40, "l": 56, "xl": 72},
-    "itemSize": {"s": 22, "m": 27, "l": 36, "xl": 44},
-    "detailSize": {"s": 18, "m": 22, "l": 26, "xl": 30},
-    "bandSize": {"s": 22, "m": 26, "l": 34, "xl": 40},
-    "smallSize": 20,
+    "paper": {"58": {"dots": 384, "pad": 10}, "80": {"dots": 576, "pad": 15}},
+    "avgCharEm": 0.5,
+    "itemSize": {"58": {"xs": 21, "s": 26, "m": 30, "l": 36}, "80": {"xs": 24, "s": 29, "m": 34, "l": 42}},
+    "charsPerLine": {"58": {"xs": 34, "s": 28, "m": 24, "l": 20}, "80": {"xs": 46, "s": 38, "m": 32, "l": 26}},
+    "headerRatio": {"s": 1.3, "m": 1.6, "l": 2.0},
+    "detailRatio": 0.8,
+    "smallSize": {"58": 18, "80": 22},
+    "fitStep": 1,
     "lineGap": {"tight": 2, "normal": 6},
     "separatorWidth": {"thin": 1, "normal": 3, "thick": 5},
     "feedLineDots": 24,
@@ -164,7 +185,22 @@ METRICS: Dict[str, Any] = {
 
 # ── The templates' looks (before the ink saver) ──────────────────────────────
 
-_BANDS_CLASSIC: Dict[str, str] = {
+#: No fill anywhere (§8): the bands framed (double where the kitchen must not miss it) or bold.
+_BANDS_FRAMED: Dict[str, str] = {
+    "addition": "double",
+    "fire": "outline",
+    "dining": "double",
+    "eatIn": "outline",
+    "copy": "outline",
+    "resent": "double",
+    "redirected": "outline",
+    "tableNote": "outline",
+    "notice": "outline",
+    "training": "double",
+    "course": "plain",
+}
+#: Today's ticket (KitchenTicketRenderer before 14.10): white on black for these.
+_BANDS_LEGACY: Dict[str, str] = {
     "addition": "fill",
     "fire": "outline",
     "dining": "fill",
@@ -180,21 +216,22 @@ _BANDS_CLASSIC: Dict[str, str] = {
 
 
 def _look(**changes: Any) -> Dict[str, Any]:
-    """The new `classic` (§7), with `changes` laid over it (one level deep for the groups)."""
+    """The new `classic` (§7, §8), with `changes` laid over it (one level deep for the groups)."""
     base: Dict[str, Any] = {
         "fontScale": FONT_SCALE_DEFAULT,
+        "fit": "fit",
         "header": {
-            "tableSize": "m",
+            "size": "m",
             "fill": "none",
-            "layout": "stacked",
+            "layout": "inline",
             "fields": ["table", "customer", "guests", "waiter", "time"],
         },
-        "bands": dict(_BANDS_CLASSIC),
-        "itemName": {"size": "m", "maxLines": 0},
+        "bands": dict(_BANDS_FRAMED),
+        "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
         "qty": "plain",
-        "mods": {"layout": "indent", "marks": "asis"},
-        "note": {"frame": True, "important": "fill"},
-        "allergy": "fill",
+        "mods": {"layout": "inline", "marks": "asis"},
+        "note": {"frame": True, "important": "outline"},
+        "allergy": "outline_warn",
         "separators": "solid",
         "separatorWeight": "thin",
         "itemDivider": "thin",
@@ -219,8 +256,13 @@ def _look(**changes: Any) -> Dict[str, Any]:
 _TEMPLATE_LOOKS: Dict[str, Dict[str, Any]] = {
     CLASSIC: _look(),
     CLASSIC_LEGACY: _look(
-        header={"tableSize": "l", "fields": ["table", "customer", "order", "guests"]},
-        itemName={"size": "l"},
+        fit="wrap",
+        header={"size": "l", "layout": "stacked", "fields": ["table", "customer", "order", "guests"]},
+        bands=dict(_BANDS_LEGACY),
+        itemName={"maxSize": "l", "minSize": "m"},
+        mods={"layout": "indent"},
+        note={"important": "fill"},
+        allergy="fill",
         separatorWeight="normal",
         itemDivider="none",
         spacing="normal",
@@ -229,11 +271,11 @@ _TEMPLATE_LOOKS: Dict[str, Dict[str, Any]] = {
         feedLines=3,
     ),
     LARGE: _look(
-        header={"tableSize": "xl", "fill": "fill"},
-        bands={**{k: "fill" for k in BAND_KEYS}, "eatIn": "outline", "training": "outline"},
-        itemName={"size": "xl", "maxLines": 2},
-        qty="box_fill",
-        mods={"marks": "plusminus"},
+        header={"size": "l", "fill": "outline", "layout": "stacked"},
+        bands={**{k: "double" for k in BAND_KEYS}, "eatIn": "outline"},
+        itemName={"maxSize": "l", "minSize": "m", "maxLines": 2},
+        qty="box_outline",
+        mods={"layout": "indent", "marks": "plusminus"},
         separatorWeight="thick",
         itemDivider="none",
         spacing="normal",
@@ -241,17 +283,15 @@ _TEMPLATE_LOOKS: Dict[str, Dict[str, Any]] = {
         feedLines=3,
     ),
     COMPACT: _look(
-        header={"tableSize": "s", "layout": "inline", "fields": ["table", "customer", "guests", "time", "waiter"]},
+        header={"size": "s", "fields": ["table", "customer", "guests", "time", "waiter"]},
         bands={**{k: "stars" for k in BAND_KEYS}, "eatIn": "underline", "course": "underline"},
-        itemName={"size": "s"},
-        mods={"layout": "inline"},
-        note={"frame": False, "important": "outline"},
-        allergy="outline_warn",
+        itemName={"maxSize": "s", "minSize": "xs"},
+        note={"frame": False},
         separators="dashed",
         itemDivider="none",
     ),
     COURSES: _look(
-        bands={"course": "fill"},
+        bands={"course": "double"},
         spacing="normal",
         itemDivider="none",
         grouping="course_seat",
@@ -260,15 +300,13 @@ _TEMPLATE_LOOKS: Dict[str, Dict[str, Any]] = {
         checkboxes=True,
     ),
     MODERN: _look(
-        header={"tableSize": "xl", "fill": "fill"},
+        header={"fill": "outline", "layout": "stacked"},
         bands={
-            "addition": "fill", "fire": "outline", "dining": "pill", "eatIn": "pill", "copy": "outline",
-            "resent": "outline", "redirected": "outline", "tableNote": "outline", "notice": "outline",
+            "addition": "double", "fire": "outline", "dining": "pill", "eatIn": "pill", "copy": "outline",
+            "resent": "double", "redirected": "outline", "tableNote": "outline", "notice": "outline",
             "training": "outline", "course": "underline",
         },
-        mods={"marks": "bullets"},
-        note={"frame": True, "important": "outline"},
-        allergy="outline_warn",
+        mods={"layout": "indent", "marks": "bullets"},
         separators="dashed",
         itemDivider="none",
         spacing="normal",
@@ -287,6 +325,20 @@ def template_style(template: str) -> Dict[str, Any]:
     return copy.deepcopy(_TEMPLATE_LOOKS[template])
 
 
+def black_parts(style: Dict[str, Any]) -> List[str]:
+    """The elements of a look drawn in solid black (none in any default look, §8)."""
+    out = [f"bands.{k}" for k, v in style["bands"].items() if v == "fill"]
+    if style["header"]["fill"] == "fill":
+        out.append("header.fill")
+    if style["qty"] == "box_fill":
+        out.append("qty")
+    if style["allergy"] == "fill":
+        out.append("allergy")
+    if style["note"]["important"] == "fill":
+        out.append("note.important")
+    return out
+
+
 # ── A design's overrides: a partial ticketStyle ──────────────────────────────
 
 _ENUM = "enum"
@@ -298,14 +350,19 @@ _FIELDS = "fields"
 OVERRIDE_SPEC: Dict[str, Any] = {
     "inkSaver": (_BOOL,),
     "fontScale": (_INT, FONT_SCALE_MIN, FONT_SCALE_MAX),
+    "fit": (_ENUM, FITS),
     "header": {
-        "tableSize": (_ENUM, SIZES),
+        "size": (_ENUM, HEADER_SIZES),
         "fill": (_ENUM, HEADER_FILLS),
         "layout": (_ENUM, LINE_LAYOUTS),
         "fields": (_FIELDS, INFO_FIELDS),
     },
     "bands": {key: (_ENUM, BAND_STYLES) for key in BAND_KEYS},
-    "itemName": {"size": (_ENUM, SIZES), "maxLines": (_INT, 0, MAX_LINES_MAX)},
+    "itemName": {
+        "maxSize": (_ENUM, MAX_TEXT_SIZES),
+        "minSize": (_ENUM, MIN_TEXT_SIZES),
+        "maxLines": (_INT, 0, MAX_LINES_MAX),
+    },
     "qty": (_ENUM, QTY_STYLES),
     "mods": {"layout": (_ENUM, MOD_LAYOUTS), "marks": (_ENUM, MOD_MARKS)},
     "note": {"frame": (_BOOL,), "important": (_ENUM, IMPORTANT_NOTE_STYLES)},
@@ -406,7 +463,7 @@ def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> None:
             base[key] = copy.deepcopy(value)
 
 
-# ── The till parameters (§2, §6ב) ────────────────────────────────────────────
+# ── The till parameters (§2, §6ב, §8) ─────────────────────────────────────────
 
 DESIGN_KEY = "kitchenTicketDesign"
 INK_SAVER_KEY = "kitchenTicketInkSaver"
@@ -414,10 +471,31 @@ FONT_SCALE_KEY = "kitchenTicketFontScale"
 HEADER_KEY = "kitchenTicketHeader"
 CHECKBOXES_KEY = "kitchenTicketCheckboxes"
 ELAPSED_KEY = "kitchenTicketElapsed"
+FIT_KEY = "kitchenTicketFit"
+MIN_TEXT_KEY = "kitchenTicketMinTextSize"
+MAX_TEXT_KEY = "kitchenTicketMaxTextSize"
+HEADER_SIZE_KEY = "kitchenTicketHeaderSize"
+INLINE_MODS_KEY = "kitchenTicketInlineMods"
 #: Set at some level, they lay over the template; their defaults never do (a template's own
-#: checkboxes / elapsed / fields stay).
-LEVEL_OPTION_KEYS: Tuple[str, ...] = (FONT_SCALE_KEY, HEADER_KEY, CHECKBOXES_KEY, ELAPSED_KEY)
+#: checkboxes / elapsed / sizes / fields stay).
+LEVEL_OPTION_KEYS: Tuple[str, ...] = (
+    FONT_SCALE_KEY, HEADER_KEY, CHECKBOXES_KEY, ELAPSED_KEY,
+    FIT_KEY, MIN_TEXT_KEY, MAX_TEXT_KEY, HEADER_SIZE_KEY, INLINE_MODS_KEY,
+)
 PARAMETER_KEYS: Tuple[str, ...] = (DESIGN_KEY, INK_SAVER_KEY) + LEVEL_OPTION_KEYS
+#: The level / printer options by their short names (the printer's `ticket*` fields).
+OPTION_NAMES: Dict[str, str] = {
+    FONT_SCALE_KEY: "fontScale",
+    HEADER_KEY: "header",
+    CHECKBOXES_KEY: "checkboxes",
+    ELAPSED_KEY: "elapsed",
+    FIT_KEY: "fit",
+    MIN_TEXT_KEY: "minTextSize",
+    MAX_TEXT_KEY: "maxTextSize",
+    HEADER_SIZE_KEY: "headerSize",
+    INLINE_MODS_KEY: "inlineMods",
+}
+_LEVELS_TEXT = "כשנקבע ברמה כלשהי, גובר על התבנית; עיצוב בון ומדפסת גוברים עליו. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
 
 PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     dict(
@@ -438,9 +516,9 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         value_type="boolean",
         default_value=True,
         description=(
-            "כשמופעל (ברירת מחדל): פסים מלאים (תוספת, הוצא, לקחת, העתק, הדפסה חוזרת…) מודפסים במסגרת כפולה, "
-            "כותרת בהיפוך במסגרת עבה, ריבוע כמות ותיבת אלרגיה במסגרת, וקווי הפרדה דקים — פחות חום על ראש "
-            "ההדפסה, נייר שמחזיק והדפסה מהירה יותר. כבוי: מילוי שחור כמו בעבר. עיצוב בון יכול לקבוע אחרת."
+            "כשמופעל (ברירת מחדל): שום שטח שחור מלא בבון — פסים, כותרת, ריבוע כמות ותיבת אלרגיה במסגרת, וקווי "
+            "הפרדה דקים: פחות חום על ראש ההדפסה, נייר שמחזיק והדפסה מהירה יותר. העיצובים המוכנים בלי שחור בכל מקרה; "
+            "כבוי משפיע רק על מילוי שנבחר במפורש בעיצוב בון (ועל \"קלאסי (ישן)\")."
         ),
     ),
     dict(
@@ -450,7 +528,7 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         default_value=FONT_SCALE_DEFAULT,
         description=(
             f"הגדלה או הקטנה של כל הטקסט בבון, {FONT_SCALE_MIN}–{FONT_SCALE_MAX} אחוז "
-            f"(ברירת מחדל {FONT_SCALE_DEFAULT}). כשנקבע ברמה כלשהי, גובר על גודל התבנית; עיצוב בון ומדפסת גוברים עליו."
+            f"(ברירת מחדל {FONT_SCALE_DEFAULT}). {_LEVELS_TEXT}"
         ),
     ),
     dict(
@@ -461,7 +539,7 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         description=(
             "אילו פרטים מודפסים בראש הבון ובתחתיתו, רשימה מופרדת בפסיקים: "
             + ", ".join(f"{code} ({INFO_LABELS[code]})" for code in INFO_FIELDS)
-            + f". ברירת מחדל: הכל ({HEADER_DEFAULT}). השולחן מודפס תמיד."
+            + f". ברירת מחדל: הכל ({HEADER_DEFAULT}). השולחן מודפס תמיד. {_LEVELS_TEXT}"
         ),
     ),
     dict(
@@ -470,8 +548,7 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         value_type="boolean",
         default_value=False,
         description=(
-            "תיבת ☐ ליד כל פריט, לסימון במטבח. כשנקבע ברמה כלשהי, גובר על התבנית "
-            "(בתבנית \"לפי קורסים ומושבים\" התיבות מופעלות)."
+            "תיבת ☐ ליד כל פריט, לסימון במטבח (בתבנית \"לפי קורסים ומושבים\" התיבות מופעלות). " + _LEVELS_TEXT
         ),
     ),
     dict(
@@ -480,8 +557,60 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         value_type="boolean",
         default_value=False,
         description=(
-            "כמה זמן השולחן פתוח, בראש הבון (\"פתוח 25 דק'\"). כשנקבע ברמה כלשהי, גובר על התבנית "
-            "(בתבנית \"מודרני\" מופעל)."
+            "כמה זמן השולחן פתוח, בראש הבון (\"פתוח 25 דק'\"; בתבנית \"מודרני\" מופעל). " + _LEVELS_TEXT
+        ),
+    ),
+    dict(
+        key=FIT_KEY,
+        label="בון מטבח — שורה אחת לפריט",
+        value_type="enum",
+        enum_options=FITS,
+        enum_labels=FIT_LABELS,
+        default_value="fit",
+        description=(
+            "«fit» (ברירת מחדל): כל שורת פריט (כמות ושם) נכנסת בשורה אחת ברוחב הבון (58 או 80 מ\"מ) — קודם "
+            "הגופן קטן עד \"גודל טקסט מינימלי\", ורק אז השורה נשברת, עם המשך מתחת לשם. «wrap»: גודל קבוע "
+            "ושבירת שורות. " + _LEVELS_TEXT
+        ),
+    ),
+    dict(
+        key=MIN_TEXT_KEY,
+        label="בון מטבח — גודל טקסט מינימלי",
+        value_type="enum",
+        enum_options=MIN_TEXT_SIZES,
+        enum_labels={k: SIZE_LABELS[k] for k in MIN_TEXT_SIZES},
+        default_value="s",
+        description="עד כמה שם פריט יכול לקטון כדי להיכנס בשורה אחת: xs, s (ברירת מחדל) או m. " + _LEVELS_TEXT,
+    ),
+    dict(
+        key=MAX_TEXT_KEY,
+        label="בון מטבח — גודל טקסט מקסימלי",
+        value_type="enum",
+        enum_options=MAX_TEXT_SIZES,
+        enum_labels={k: SIZE_LABELS[k] for k in MAX_TEXT_SIZES},
+        default_value="m",
+        description=(
+            "הגודל של שם פריט כשהוא נכנס: s, m (ברירת מחדל — בערך 32 תווים בשורה ב-80 מ\"מ ו-24 ב-58 מ\"מ) "
+            "או l. " + _LEVELS_TEXT
+        ),
+    ),
+    dict(
+        key=HEADER_SIZE_KEY,
+        label="בון מטבח — גודל מספר השולחן",
+        value_type="enum",
+        enum_options=HEADER_SIZES,
+        enum_labels={k: SIZE_LABELS[k] for k in HEADER_SIZES},
+        default_value="m",
+        description="גודל השולחן בראש הבון: s, m (ברירת מחדל) או l — לכל היותר פי 2 מגודל פריט. " + _LEVELS_TEXT,
+    ),
+    dict(
+        key=INLINE_MODS_KEY,
+        label="בון מטבח — תוספות באותה שורה",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת מחדל): תוספות, הורדות והערה קצרה באותה שורה של הפריט אחרי \" · \" כשיש מקום, "
+            "אחרת בשורה מוזחת מתחת לשם. כבוי: תמיד בשורות מוזחות. " + _LEVELS_TEXT
         ),
     ),
 )
@@ -510,14 +639,29 @@ def parse_header(value: Any) -> List[str]:
     return [f for f in INFO_FIELDS if f in chosen]
 
 
+def printer_header(value: Any) -> List[str]:
+    """A printer's own info fields (a list or comma text; empty — the table alone), in `INFO_FIELDS` order."""
+    fields = _clean_fields(value, "ticketHeader", INFO_FIELDS)
+    chosen = set(fields) | {MANDATORY_HEADER_FIELD}
+    return [f for f in INFO_FIELDS if f in chosen]
+
+
+_ENUM_PARAMS: Dict[str, Tuple[str, ...]] = {
+    FIT_KEY: FITS,
+    MIN_TEXT_KEY: MIN_TEXT_SIZES,
+    MAX_TEXT_KEY: MAX_TEXT_SIZES,
+    HEADER_SIZE_KEY: HEADER_SIZES,
+}
+_BOOL_PARAMS = (INK_SAVER_KEY, CHECKBOXES_KEY, ELAPSED_KEY, INLINE_MODS_KEY)
+
+
 def clean_value(key: str, value: Any) -> Any:
     """The value the till gets for `key` (normalised), or ValueError. Other keys pass as they are."""
     if value is None:
         return None
     if key == DESIGN_KEY:
-        kind, text = parse_design_value(value)
-        return text
-    if key == INK_SAVER_KEY or key == CHECKBOXES_KEY or key == ELAPSED_KEY:
+        return parse_design_value(value)[1]
+    if key in _BOOL_PARAMS:
         if not isinstance(value, bool):
             raise StyleError(f"{key}: true or false")
         return value
@@ -525,6 +669,10 @@ def clean_value(key: str, value: Any) -> Any:
         return _whole(value, key, FONT_SCALE_MIN, FONT_SCALE_MAX)
     if key == HEADER_KEY:
         return ",".join(parse_header(value))
+    if key in _ENUM_PARAMS:
+        if value not in _ENUM_PARAMS[key]:
+            raise StyleError(f"{key}: one of {', '.join(_ENUM_PARAMS[key])}")
+        return value
     return value
 
 
@@ -539,15 +687,25 @@ def _filter_fields(style: Dict[str, Any], allowed: Iterable[str]) -> None:
 
 
 def _apply_options(style: Dict[str, Any], options: Dict[str, Any]) -> None:
-    """Font scale / info fields / checkboxes / elapsed, as a level or a printer sets them."""
+    """The options a level or a printer sets (`OPTION_NAMES`' short names); None = inherit."""
     if options.get("fontScale") is not None:
         style["fontScale"] = options["fontScale"]
     if options.get("header") is not None:
         _filter_fields(style, options["header"])
     if options.get("checkboxes") is not None:
-        style["checkboxes"] = options["checkboxes"]
+        style["checkboxes"] = bool(options["checkboxes"])
     if options.get("elapsed") is not None:
-        style["elapsed"] = options["elapsed"]
+        style["elapsed"] = bool(options["elapsed"])
+    if options.get("fit") in FITS:
+        style["fit"] = options["fit"]
+    if options.get("minTextSize") in MIN_TEXT_SIZES:
+        style["itemName"]["minSize"] = options["minTextSize"]
+    if options.get("maxTextSize") in MAX_TEXT_SIZES:
+        style["itemName"]["maxSize"] = options["maxTextSize"]
+    if options.get("headerSize") in HEADER_SIZES:
+        style["header"]["size"] = options["headerSize"]
+    if options.get("inlineMods") is not None:
+        style["mods"]["layout"] = "inline" if options["inlineMods"] else "indent"
 
 
 def apply_ink_saver(style: Dict[str, Any]) -> Dict[str, Any]:
@@ -569,16 +727,17 @@ def apply_ink_saver(style: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def level_options(params: Dict[str, Any]) -> Dict[str, Any]:
-    """The four level options as `_apply_options` takes them, from parameters SET at some level."""
+    """The level options as `_apply_options` takes them, from parameters SET at some level."""
     out: Dict[str, Any] = {}
-    if params.get(FONT_SCALE_KEY) is not None:
-        out["fontScale"] = clean_value(FONT_SCALE_KEY, params[FONT_SCALE_KEY])
-    if params.get(HEADER_KEY) is not None:
-        out["header"] = parse_header(params[HEADER_KEY])
-    if params.get(CHECKBOXES_KEY) is not None:
-        out["checkboxes"] = bool(params[CHECKBOXES_KEY])
-    if params.get(ELAPSED_KEY) is not None:
-        out["elapsed"] = bool(params[ELAPSED_KEY])
+    for key, name in OPTION_NAMES.items():
+        value = params.get(key)
+        if value is None:
+            continue
+        try:
+            value = clean_value(key, value)
+        except StyleError:
+            continue  # a stored value the look no longer takes: inherit
+        out[name] = parse_header(value) if key == HEADER_KEY else value
     return out
 
 
@@ -595,8 +754,8 @@ def resolve_style(
     """
     The full `ticketStyle` the till draws by. `level`: the till parameters SET on the till's levels
     (`level_options` of them); `ink_saver`: `kitchenTicketInkSaver` as it resolves (default on);
-    `overrides`: the design's; `printer`: the printer's own options (`fontScale`, `header`,
-    `checkboxes`, `elapsed`; None = inherit).
+    `overrides`: the design's; `printer`: the printer's own options (the short names of
+    `OPTION_NAMES`; None = inherit).
     """
     if template not in TEMPLATES:
         template = DEFAULT_TEMPLATE
@@ -608,6 +767,9 @@ def resolve_style(
     fields = look["header"]["fields"]
     if MANDATORY_HEADER_FIELD not in fields:
         fields.insert(0, MANDATORY_HEADER_FIELD)
+    item = look["itemName"]
+    if TEXT_SIZES.index(item["minSize"]) > TEXT_SIZES.index(item["maxSize"]):
+        item["minSize"] = item["maxSize"]
     if look["inkSaver"]:
         apply_ink_saver(look)
     meta = {
@@ -686,22 +848,22 @@ SAMPLE_TICKET: Dict[str, Any] = {
         {
             "productId": None, "categoryId": None, "name": "סלט ירוק", "quantity": 1.0, "notes": None,
             "mods": ["+ אבוקדו"], "removals": ["בלי בצל"], "important": None, "allergies": None,
-            "seat": "מ1", "course": "ראשונות", "mealName": None, "refill": None,
+            "seat": "מ1", "course": "ראשונות", "mealName": None, "refill": None, "held": None,
         },
         {
             "productId": None, "categoryId": None, "name": "קרפצ'יו בקר", "quantity": 1.0, "notes": "רוטב בצד",
             "mods": None, "removals": None, "important": None, "allergies": None,
-            "seat": "מ2", "course": "ראשונות", "mealName": None, "refill": None,
+            "seat": "מ2", "course": "ראשונות", "mealName": None, "refill": None, "held": None,
         },
         {
             "productId": None, "categoryId": None, "name": "המבורגר 250 גרם", "quantity": 1.0, "notes": None,
             "mods": ["מדיום"], "removals": ["בלי עגבנייה"], "important": None, "allergies": ["אגוזים"],
-            "seat": "מ1", "course": "עיקריות", "mealName": "ארוחה עסקית", "refill": None,
+            "seat": "מ1", "course": "עיקריות", "mealName": "ארוחה עסקית", "refill": None, "held": True,
         },
         {
             "productId": None, "categoryId": None, "name": "פסטה ארביאטה", "quantity": 2.0, "notes": "ללא גלוטן",
             "mods": None, "removals": None, "important": True, "allergies": None,
-            "seat": "מ2", "course": "עיקריות", "mealName": None, "refill": None,
+            "seat": "מ2", "course": "עיקריות", "mealName": None, "refill": None, "held": True,
         },
     ],
     "orderRef": "4471",
@@ -748,4 +910,3 @@ def catalog() -> Dict[str, Any]:
         "sample": copy.deepcopy(SAMPLE_TICKET),
         "samplePrinterName": SAMPLE_PRINTER_NAME,
     }
-
