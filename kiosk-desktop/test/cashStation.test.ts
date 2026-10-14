@@ -339,6 +339,23 @@ describe('cash station — leases and the queue', () => {
     expect(done.refundPaidAgorot).toBe(1000);
   });
 
+  it('a kiosk that comes back within the grace goes on: acceptance opens again', async () => {
+    const w = world(HOPPERS, { cashRefundGraceSec: 60 });
+    await ready(w);
+    const t = start(w, 3000);
+    await run(w, 400);
+    w.device.insert(1000);
+    await run(w, 7_000, 500);
+    expect(w.device.insert(500)).toBe('rejected');
+    // Renewed again.
+    expect(w.station.lease(KIOSK_A, {}).status).toBe(200);
+    await run(w, 400);
+    expect(tx(w, t.txId).state).toBe('ACCEPTING');
+    expect(w.device.insert(2000)).toBe('escrow');
+    const done = await untilState(w, t.txId, ['DONE']);
+    expect(done.outcome).toBe('paid');
+  });
+
   it('start is idempotent by txId; another body for the same id is a conflict', async () => {
     const w = world(HOPPERS);
     await ready(w);
