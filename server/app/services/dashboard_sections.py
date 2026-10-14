@@ -624,6 +624,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/item-blocks/control*", S("item_blocks", "stock")),
     (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
+    # "תפריט הקופה" (app/routers/till_menu.py): the device page's card — a till setting of the device.
+    (_ALL, "/till-menu-hide", S("devices", "till_settings")),
     # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.
     (_ALL, "/customer-display/*", S("till_settings", "devices")),
     # ── Devices ──

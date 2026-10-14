@@ -181,6 +181,8 @@
     "src/lib/prepaidBatchForm.test.ts",
     "src/lib/workConfig.ts",
     "src/lib/workConfig.test.ts",
+    "src/lib/tillMenu.ts",
+    "src/lib/tillMenu.test.ts",
     "src/lib/exceptionAlerts.ts",
     "src/lib/exceptionAlerts.test.ts",
     "src/lib/cloudCardRefund.ts",

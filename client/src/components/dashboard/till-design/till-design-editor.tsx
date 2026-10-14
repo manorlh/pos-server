@@ -61,10 +61,11 @@ import { LayoutSection } from './section-layout';
 import { LookSection } from './section-look';
 import { MenuSection } from './section-menu';
 import { TemplateSection } from './section-template';
+import { TillMenuSection } from './section-till-menu';
 import { CoursesOffNote, CoverageSummary } from './section-template-options';
 import { TillPreview } from './till-preview';
 
-type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields';
+type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'tillMenu';
 
 const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'template', paths: ['template', 'profiles', 'courses', 'payDock', 'night', 'visual', 'professional', 'bar.openTabs'] },
@@ -73,6 +74,8 @@ const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'actions', paths: ['actionBar', 'quickCash', 'bar.quantityPresets', 'bar.repeatRound'] },
   { key: 'look', paths: ['colors', 'texts'] },
   { key: 'fields', paths: ['fields', 'tables', 'behavior', 'orderNumber'] },
+  // "תפריט הקופה": a till parameter of its own (`hiddenMenuItems`), saved apart from the layer.
+  { key: 'tillMenu', paths: [] },
 ];
 
 /** Who may write a level (the server's machine-admin set, then its scope check). */
@@ -183,6 +186,7 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
 
   const ctx: TillEditorValue = {
     level,
+    targetId,
     draft,
     inherited,
     canEdit,
@@ -311,6 +315,8 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
               <ActionsSection />
             ) : section === 'look' ? (
               <LookSection />
+            ) : section === 'tillMenu' ? (
+              <TillMenuSection />
             ) : (
               <FieldsSection />
             )}
