@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { sequenceGapRows, sequenceGapText, type SequenceGapRow } from '@/lib/auditReports';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import { fetchDocumentSequenceReport, type DocumentSequenceReport, type SequenceRow } from '@/lib/salesReportsApi';
 import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +34,15 @@ const SPEC: ReportFilterSpec = { filters: ['search'], clientFilters: ['search'],
 
 /** Gap badges shown per row; the rest are counted ("ועוד 12") and all are in the Excel. */
 const SHOWN_GAPS = 20;
+
+/** The summary as the designed PDF's cards (and the period before's), by KPI key. */
+function sequenceFigures(r: DocumentSequenceReport): Record<string, number> {
+  return {
+    documents: r.rows.reduce((s, x) => s + x.documents, 0),
+    missing: r.totalMissing,
+    brokenSequences: r.rows.filter((x) => x.missing > 0).length,
+  };
+}
 
 export default function DocumentSequencePage() {
   const t = useTranslations('sequenceReport');
@@ -168,6 +178,40 @@ export default function DocumentSequencePage() {
     [data, docType, t],
   );
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the documents and what is missing as
+  // cards, the missing numbers per till as bars, and the sequences of the period before.
+  const figures = data ? sequenceFigures(data) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'documents', label: t('col.documents'), value: figures.documents, kind: 'count', icon: 'receipt' },
+        { key: 'missing', label: t('col.missing'), value: figures.missing, kind: 'count', better: 'down', icon: 'alert' },
+        { key: 'brokenSequences', label: t('brokenSequences'), value: figures.brokenSequences, kind: 'count', better: 'down' },
+      ]
+    : [];
+  // A till's document types summed: one bar per till that is missing numbers.
+  const missingByTill = new Map<string, { label: string; missing: number }>();
+  for (const r of data?.rows ?? []) {
+    if (!r.missing) continue;
+    const till = missingByTill.get(r.machineId) ?? { label: r.machineName ?? r.machineId.slice(0, 8), missing: 0 };
+    missingByTill.set(r.machineId, { ...till, missing: till.missing + r.missing });
+  }
+  const tillsMissing = [...missingByTill.values()].sort((a, b) => b.missing - a.missing);
+  const chart: ReportChart | null = tillsMissing.length
+    ? {
+        type: 'hbar',
+        title: t('col.missing'),
+        labels: tillsMissing.map((x) => x.label),
+        series: [{ name: t('col.missing'), values: tillsMissing.map((x) => x.missing) }],
+        kind: 'number',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchDocumentSequenceReport({ ...params, ...w });
+    return { rows: before.rows, kpis: sequenceFigures(before), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="document-sequence"
@@ -179,7 +223,19 @@ export default function DocumentSequencePage() {
       prompt={t('selectFilters')}
       loading="table"
       export={
-        data ? { tables: [main, gaps] as ReportTableSpec<unknown>[], from: data.window.from, to: data.window.to } : null
+        data
+          ? {
+              tables: [main, gaps] as ReportTableSpec<unknown>[],
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'document-sequence',
+              kpis,
+              chart,
+              insightKeys: { label: 'till', value: 'missing', count: 'documents' },
+              groupBy: ['shop', 'till'],
+              previous,
+            }
+          : null
       }
     >
       {data ? (

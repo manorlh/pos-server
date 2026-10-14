@@ -361,6 +361,14 @@
     "src/lib/tableAssignment.ts",
     "src/lib/tableAssignment.test.ts",
     "src/lib/receiptTableInfo.ts",
-    "src/lib/receiptTableInfo.test.ts"
+    "src/lib/receiptTableInfo.test.ts",
+    "src/lib/csv.ts",
+    "src/lib/designedReport.ts",
+    "src/lib/designedReport.test.ts",
+    "src/lib/reportPages.ts",
+    "src/lib/reportPages.test.ts",
+    "src/lib/daySummaryV2.ts",
+    "src/lib/productsByDay.ts",
+    "src/lib/daySummaryV2.test.ts"
   ]
 }

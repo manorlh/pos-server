@@ -589,6 +589,12 @@ export default function TransactionsPage() {
                 to: parsed.applied ? parsed.values.to : null,
                 filterLines: extraLines,
                 disabled: !data || data.total === 0,
+                // The designed PDF (P:\specs\reports-designed-pdf.md §7): no cards of the page's own
+                // (it shows one page of documents) — the server makes them from the export's totals —
+                // and no period before: a list of documents has no figure to set against another.
+                reportType: 'transactions',
+                insightKeys: { label: 'till', value: 'totalAmount', employee: 'employee' },
+                groupBy: ['shop', 'till'],
               }
         }
       >

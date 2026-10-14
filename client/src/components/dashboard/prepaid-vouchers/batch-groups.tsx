@@ -25,7 +25,13 @@ import { useEditFieldLabel, useEditValueFormat } from '@/components/dashboard/pr
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatDateTime, isoDate } from '@/lib/format';
 import type { ExcelSheet } from '@/lib/excelExport';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  sheetAsTable,
+  type ReportChart,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -161,64 +167,88 @@ export function PrepaidBatchGroupsView({
   const cancelled = batch.status === 'cancelled';
   const eventRows = events.data ?? [];
 
-  /** The groups with their totals, and the audit trail (all of it: the endpoint is not paged). */
-  const exportSheets = (): ExcelSheet[] => {
-    // Redemption as a percent number (12.5 → 12.5%), blank where nothing could be redeemed.
-    const ratio = (part: number, whole: number) => (whole ? Math.round((part / whole) * 10000) / 100 : null);
-    const sheets: ExcelSheet[] = [];
-    if (rows.length > 0) {
-      sheets.push({
-        name: t('title'),
-        columns: [
-          { header: t('col.group'), kind: 'number' },
-          { header: t('col.serials'), width: 14 },
-          { header: t('col.total'), kind: 'number' },
-          { header: t('col.active'), kind: 'number' },
-          { header: t('col.partiallyUsed'), kind: 'number' },
-          { header: t('col.used'), kind: 'number' },
-          { header: t('col.cancelled'), kind: 'number' },
-          { header: t('col.redeemed'), kind: 'percent' },
-        ],
-        rows: rows.map((r) => [
-          r.group ?? t('noGroup'), serialRange(r.fromSerial, r.toSerial), r.total, r.active, r.partiallyUsed, r.used,
-          r.cancelled, ratio(r.redeemed, r.total - r.cancelled),
-        ]),
-        totals: [
-          t('totals'), null, sum('total'), sum('active'), sum('partiallyUsed'), sum('used'), sum('cancelled'),
-          ratio(sum('redeemed'), sum('total') - sum('cancelled')),
-        ],
-      });
-    }
-    if (eventRows.length > 0) {
-      sheets.push({
-        name: te('title'),
-        columns: [
-          { header: te('col.when'), kind: 'datetime' },
-          { header: te('col.action'), width: 34 },
-          { header: t('col.group'), kind: 'number' },
-          { header: te('col.serial'), kind: 'number' },
-          { header: te('col.count'), kind: 'number' },
-          { header: te('col.user') },
-          { header: te('col.reason'), width: 30 },
-        ],
-        rows: eventRows.map((e) => {
-          const serial = e.details?.serial;
-          return [
-            e.createdAt, actionText(e), e.group,
-            typeof serial === 'number' ? serial : null, e.count, e.userName, e.reason,
-          ];
-        }),
-      });
-    }
-    return sheets;
+  // Redemption as a percent number (12.5 → 12.5%), blank where nothing could be redeemed.
+  const ratio = (part: number, whole: number) => (whole ? Math.round((part / whole) * 10000) / 100 : null);
+  /** The groups with their totals (the report's table), and the audit trail (all of it: the endpoint is not paged). */
+  const groupsSheet: ExcelSheet = {
+    name: t('title'),
+    columns: [
+      { key: 'group', header: t('col.group'), kind: 'number' },
+      { key: 'serials', header: t('col.serials'), width: 14 },
+      { key: 'total', header: t('col.total'), kind: 'number' },
+      { key: 'active', header: t('col.active'), kind: 'number' },
+      { key: 'partiallyUsed', header: t('col.partiallyUsed'), kind: 'number' },
+      { key: 'used', header: t('col.used'), kind: 'number' },
+      { key: 'cancelled', header: t('col.cancelled'), kind: 'number' },
+      { key: 'redeemed', header: t('col.redeemed'), kind: 'percent' },
+    ],
+    rows: rows.map((r) => [
+      r.group ?? t('noGroup'), serialRange(r.fromSerial, r.toSerial), r.total, r.active, r.partiallyUsed, r.used,
+      r.cancelled, ratio(r.redeemed, r.total - r.cancelled),
+    ]),
+    totals: [
+      t('totals'), null, sum('total'), sum('active'), sum('partiallyUsed'), sum('used'), sum('cancelled'),
+      ratio(sum('redeemed'), sum('total') - sum('cancelled')),
+    ],
   };
+  const eventsSheet: ExcelSheet = {
+    name: te('title'),
+    columns: [
+      { key: 'when', header: te('col.when'), kind: 'datetime' },
+      { key: 'action', header: te('col.action'), width: 34 },
+      { key: 'group', header: t('col.group'), kind: 'number' },
+      { key: 'serial', header: te('col.serial'), kind: 'number' },
+      { key: 'count', header: te('col.count'), kind: 'number' },
+      { key: 'user', header: te('col.user') },
+      { key: 'reason', header: te('col.reason'), width: 30 },
+    ],
+    rows: eventRows.map((e) => {
+      const serial = e.details?.serial;
+      return [
+        e.createdAt, actionText(e), e.group,
+        typeof serial === 'number' ? serial : null, e.count, e.userName, e.reason,
+      ];
+    }),
+  };
+  const exportTables = [
+    ...(rows.length > 0 ? [sheetAsTable(groupsSheet, 'main')] : []),
+    ...(eventRows.length > 0 ? [sheetAsTable(eventsSheet, 'events')] : []),
+  ] as ReportTableSpec<unknown>[];
+  // The footer's totals.
+  const exportKpis: ReportKpi[] =
+    rows.length > 0
+      ? [
+          { key: 'vouchers', label: t('kpiTotal'), value: sum('total'), kind: 'count', icon: 'voucher' },
+          { key: 'active', label: t('col.active'), value: sum('active'), kind: 'count', icon: 'voucher' },
+          { key: 'partiallyUsed', label: t('col.partiallyUsed'), value: sum('partiallyUsed'), kind: 'count', icon: 'voucher' },
+          { key: 'used', label: t('col.used'), value: sum('used'), kind: 'count', icon: 'items' },
+          { key: 'cancelled', label: t('col.cancelled'), value: sum('cancelled'), kind: 'count', icon: 'void' },
+          { key: 'redeemedPct', label: t('col.redeemed'), value: ratio(sum('redeemed'), sum('total') - sum('cancelled')), kind: 'percent', icon: 'percent' },
+        ]
+      : [];
+  // Redemption per group, in the groups' order (how many of each envelope came back).
+  const exportChart: ReportChart | null =
+    rows.length > 1
+      ? {
+          type: 'bar',
+          title: t('col.redeemed'),
+          labels: rows.map((r) => (r.group != null ? String(r.group) : t('noGroup'))),
+          series: [{ name: t('col.redeemed'), values: rows.map((r) => ratio(r.redeemed, r.total - r.cancelled)) }],
+          kind: 'percent',
+        }
+      : null;
 
   return (
     <div className="space-y-4">
-      <ReportExportToolbar
+      <StandaloneExportBar
+        reportKey="prepaid-batch-groups"
+        reportType="prepaid-vouchers.batch-groups"
         title={`${t('title')} · ${batch.name}`}
+        tables={exportTables}
         disabled={rows.length === 0 && eventRows.length === 0}
-        getSheets={exportSheets}
+        kpis={exportKpis}
+        chart={exportChart}
+        insightKeys={{ label: 'group', value: 'used' }}
       />
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">

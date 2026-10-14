@@ -20,7 +20,8 @@
  * the page's own scope, the event, the menu's category, the dead-stock days, the anomalies'
  * window — lives in the URL (lib/insightsView.ts), so a link reproduces it; the export bar
  * is the framework's (Excel with the header on every sheet, a real PDF of the feed, export
- * columns and the company's default, print as before).
+ * columns and the company's default, print as before). The designed PDF's cards are the six
+ * headline figures against the period before, its chart the trend's daily net.
  */
 
 import { useEffect, useState } from 'react';
@@ -32,7 +33,7 @@ import { RefreshCw } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { formatShortDate } from '@/lib/format';
 import { insightsPeriodParams, insightsViewQuery, type InsightsRange, type InsightsViewSpec } from '@/lib/insightsView';
-import type { ReportFilterLine } from '@/lib/reportExport';
+import { rangeText, type ReportFilterLine } from '@/lib/reportExport';
 import { todayIso } from '@/lib/reportWindow';
 import {
   agorot,
@@ -74,7 +75,7 @@ import { CashiersSection } from '@/components/dashboard/insights/cashiers-sectio
 import { CustomersSection, TablesPeriodSection } from '@/components/dashboard/insights/tables-section';
 import { useInsightsExport } from '@/components/dashboard/insights/export-sheets';
 import { useInsightsExportScope, useInsightsView } from '@/components/dashboard/insights/use-insights-view';
-import { ReportExportBar } from '@/components/dashboard/report-framework';
+import { ReportExportBar, type ReportChart, type ReportKpi } from '@/components/dashboard/report-framework';
 // Till anomalies, quick actions, happy hour (docs/SPEC_INSIGHTS.md §10).
 import { fetchEvents } from '@/lib/eventsApi';
 import { anomalyLevelOf, fetchHappyHourSuggestions, fetchTillAnomalies } from '@/lib/insightsActionsApi';
@@ -224,6 +225,53 @@ export default function InsightsPage() {
   const exportTables = feedReady ? insightsExport.feedTables(feed.data!) : [];
   const eventName = eventId ? (events.data ?? []).find((ev) => ev.id === eventId)?.name : undefined;
   const exportFilters: ReportFilterLine[] = eventId ? [{ label: tA('page.event'), value: eventName ?? eventId }] : [];
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the six headline cards against the
+  // period before, as the feed already has it (agorot → shekels), and the trend's daily net.
+  const tx = useTranslations('reportFramework.export');
+  const feedPeriod = feed.data?.period;
+  const feedKpi = feedReady ? feed.data?.kpis : undefined;
+  const shekelsOf = (v: number | null | undefined) => (v === null || v === undefined ? null : v / 100);
+  const prevLabel =
+    feedPeriod && feedKpi?.previous ? tx('compareWith', { range: rangeText(feedPeriod.prevFrom, feedPeriod.prevTo) }) : undefined;
+  const headline = (
+    key: string,
+    label: string,
+    kind: ReportKpi['kind'],
+    icon: ReportKpi['icon'],
+    pick: (k: KpiBlock) => number | null,
+  ): ReportKpi | null => {
+    if (!feedKpi) return null;
+    const before = feedKpi.previous ? pick(feedKpi.previous) : null;
+    return {
+      key,
+      label,
+      value: pick(feedKpi.current),
+      kind,
+      icon,
+      ...(before !== null && prevLabel ? { compare: before, compareLabel: prevLabel } : {}),
+    };
+  };
+  const exportKpis = [
+    headline('net', t('kpi.net'), 'money', 'sales', (k) => shekelsOf(k.net)),
+    headline('sales', t('kpi.sales'), 'count', 'receipt', (k) => k.sales),
+    headline('avgCheck', t('kpi.avgCheck'), 'money', 'basket', (k) => shekelsOf(k.avgCheck)),
+    headline('itemsPerSale', t('kpi.itemsPerSale'), 'number', 'items', (k) => k.itemsPerSale),
+    headline('discountPct', t('kpi.discountPct'), 'percent', 'discount', (k) => k.discountPct),
+    headline('tips', t('kpi.tips'), 'money', 'tip', (k) => shekelsOf(k.tips)),
+  ].filter((k): k is ReportKpi => k !== null);
+  const daily = trends.data && !trends.isPlaceholderData ? trends.data.daily : [];
+  const exportChart: ReportChart | null = daily.length
+    ? {
+        type: 'line',
+        title: t('sections.trends'),
+        labels: daily.map((d) => formatShortDate(d.date)),
+        series: [
+          { name: t('trends.netLegend'), values: daily.map((d) => shekelsOf(d.net)) },
+          { name: t('trends.baselineLegend'), values: daily.map((d) => shekelsOf(d.baseline)) },
+        ],
+        kind: 'money',
+      }
+    : null;
 
   // The sheets act on the page's scope (or its event).
   const companyScope = scope.companyId && scope.companyId !== ALL_COMPANIES ? scope.companyId : undefined;
@@ -322,6 +370,9 @@ export default function InsightsPage() {
           companyId={exportScope.companyId}
           companyName={exportScope.companyName}
           disabled={!feedReady}
+          reportType="insights"
+          kpis={exportKpis}
+          chart={exportChart}
         />
       </div>
 

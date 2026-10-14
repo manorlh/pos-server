@@ -1,26 +1,46 @@
 'use client';
 
 /**
- * The report's export bar (P:\specs\reports-upgrade.md §2ב–ד): אקסל · PDF · הדפסה · עמודות לייצוא.
+ * The report's export bar (P:\specs\reports-upgrade.md §2ב–ד, P:\specs\reports-designed-pdf.md
+ * §1–§2, §6): one "ייצוא" button — PDF מעוצב · אקסל · CSV · הדפסה — and the export columns.
  *
  * * The columns that go out, first match wins: the choice made here for this export → the
  *   company's default for the report (`report_export_defaults`) → the columns the reader sees
  *   → all. A company manager, a distributor or the super admin (the server's `canEdit`) can
  *   save the current choice as the company's default.
- * * Excel: every sheet opens with the header lines (title, business and shop, range, hours,
- *   the chosen filters, generated at) and carries only the chosen columns, with its totals
- *   row; the file is named "מכירות לפי מוצר — סניף X — 01.10–13.10.xlsx".
- * * PDF: a real file from `POST /reports/pdf` (the main table, the same columns and header).
- *   A server without it: the browser's print, "save as PDF" — as before.
+ * * The designed PDF: `POST /reports/pdf` with the main table and the report's type, its KPI
+ *   cards (each against the previous period when the page can fetch it), a chart, the previous
+ *   period's rows and the subtotal grouping; the server writes the insights and draws it all.
+ *   A server without the route: the browser's print, "save as PDF" — as before.
+ * * Excel: a first sheet "סיכום ותובנות" (the KPIs and the server's insight sentences), then
+ *   every table — each sheet opens with the header lines (title, business and shop, range,
+ *   hours, the chosen filters, generated at) and carries only the chosen columns, with its
+ *   totals row; the file is named "מכירות לפי מוצר — סניף X — 01.10–13.10.xlsx".
+ * * CSV: the main table's chosen columns, plain values (or the page's own CSV).
  * * Print: unchanged — the page's print template with its header.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Columns3, FileDown, FileSpreadsheet, Loader2, Printer } from 'lucide-react';
+import { ChevronDown, Columns3, Download, FileDown, FileSpreadsheet, FileText, Loader2, Printer } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatDateTime } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import {
+  chartFromTable,
+  cleanChart,
+  cleanKpis,
+  summarySheet,
+  tableCsv,
+  withCompare,
+  type InsightKeys,
+  type PreviousPeriod,
+  type ReportChart,
+  type ReportChartType,
+  type ReportInsight,
+  type ReportKpi,
+} from '@/lib/designedReport';
 import { downloadBlob, downloadExcel, type ExcelSheet } from '@/lib/excelExport';
 import {
   MAIN_TABLE,
@@ -40,10 +60,17 @@ import {
   type ExportTable,
   type ReportFilterLine,
 } from '@/lib/reportExport';
-import { PDF_MAX_ROWS, fetchReportPdf, saveExportDefault } from '@/lib/reportFrameworkApi';
+import { PDF_MAX_ROWS, fetchReportInsights, fetchReportPdf, saveExportDefault } from '@/lib/reportFrameworkApi';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useReportContext } from './report-context';
@@ -78,7 +105,40 @@ export interface ReportExportBarProps {
   disabled?: boolean;
   /** Excel and its columns only — for a page that prints its own document (a Z). */
   excelOnly?: boolean;
+  /**
+   * The designed PDF, Excel and CSV, but no print template: a page that prints its own
+   * documents (the Z list's A4 / 80 mm sequence, a Z) keeps its print to itself.
+   */
+  noPrint?: boolean;
+  /** The server's `reportInsights.<type>` (§2); absent: a general designed report. */
+  reportType?: string;
+  /** The KPI cards (3–6), as the page shows them. */
+  kpis?: ReportKpi[];
+  /** The main figure's chart; `null`: none (absent: the server's default for the type). */
+  chart?: ReportChart | null;
+  /** No `chart`: one built from the exported main table (the top rows by `value`). */
+  chartFrom?: { label: string; value: string; type?: ReportChartType; top?: number; kind?: ReportChart['kind']; title?: string };
+  /** Which columns the server's insight rules read (§7.1); default: `chartFrom`'s, else the server guesses. */
+  insightKeys?: InsightKeys;
+  /** The main table's column keys the PDF's subtotals group by (shop → point of sale → till). */
+  groupBy?: string[];
+  /** The same report for the previous period, fetched on the click (KPI comparison, previous rows). */
+  previous?: () => Promise<PreviousPeriod | null>;
+  /** The page's own CSV instead of the main table's (a server file, a page's own columns). */
+  csv?: () => void | Promise<void>;
+  /**
+   * A designed PDF the server builds whole from the report's own parameters (§7.3 "סיכום יום",
+   * §7.6 "לפי ימים"), instead of `POST /reports/pdf` with the main table.
+   */
+  pdf?: () => Promise<void>;
+  /**
+   * The insights the page already has from the server (a report whose JSON carries them, §7.3,
+   * §7.6): the Excel's "סיכום ותובנות" takes these instead of asking `POST /reports/insights`.
+   */
+  insights?: ReportInsight[];
 }
+
+export type { PreviousPeriod, ReportChart, ReportKpi };
 
 /**
  * The columns that are known only from the exported rows (`expandInExport`, one per payment
@@ -150,6 +210,17 @@ export function ReportExportBar({
   companyName,
   disabled,
   excelOnly = false,
+  noPrint = false,
+  reportType,
+  kpis,
+  chart,
+  chartFrom,
+  insightKeys,
+  groupBy,
+  previous,
+  csv,
+  pdf,
+  insights,
 }: ReportExportBarProps) {
   const t = useTranslations('reportFramework.export');
   const ctx = useReportContext();
@@ -163,7 +234,7 @@ export function ReportExportBar({
   const [current, setCurrent] = useState<string[] | null>(null);
   const [orientation, setOrientation] = useState<Orientation>('auto');
   const [picker, setPicker] = useState(false);
-  const [busy, setBusy] = useState<'excel' | 'pdf' | 'save' | null>(null);
+  const [busy, setBusy] = useState<'excel' | 'pdf' | 'csv' | 'save' | null>(null);
   const [generatedAt, setGeneratedAt] = useState(() => new Date().toISOString());
 
   useEffect(() => {
@@ -207,6 +278,91 @@ export function ReportExportBar({
     return { table: toExportTable(x.table, q, title, rows), keys: x.keys };
   };
 
+  /** The PDF's table: `pdfTableId`, else the first exported. */
+  const mainResolved = () => resolved.find((x) => x.table.id === pdfTableId) ?? resolved[0];
+  const range = rangeText(from, to);
+  const pdfHeader = (r: (typeof resolved)[number]) => ({
+    title: r.table.id !== MAIN_TABLE && r.table.title ? `${title} · ${r.table.title}` : title,
+    subtitleLines: [
+      [business, place].filter((s) => s && s.trim()).join(' · '),
+      range ? t('rangeLine', { range }) : '',
+      hours ? t('hoursLine', { band: hours }) : '',
+    ].filter(Boolean),
+    filterLines: filterLines.map((f) => `${f.label}: ${f.value}`),
+    fileName,
+    companyId,
+  });
+
+  /**
+   * The designed report's parts (§6) for the main table as exported: the KPIs against the
+   * previous period, the chart, the previous period's rows in the same columns, the grouping.
+   * The previous period is the page's to fetch; a failure there never fails the export.
+   */
+  const designed = async (main: { table: ExportTable; keys: string[] } | null, r: (typeof resolved)[number] | undefined) => {
+    let before: PreviousPeriod | null = null;
+    if (previous) {
+      try {
+        before = await previous();
+      } catch {
+        before = null;
+      }
+    }
+    const beforeRange = before ? rangeText(before.from, before.to) : '';
+    const previousLabel = before?.label ?? (beforeRange ? t('compareWith', { range: beforeRange }) : undefined);
+    const cards = cleanKpis(withCompare(kpis ?? [], before?.kpis ?? null, previousLabel));
+    const sheet = main ? exportTableSheet(main.table, main.keys) : null;
+    let previousRows: (string | number | null)[][] | undefined;
+    if (sheet && r && before?.rows) {
+      // The previous period in the current one's columns, matched by key (a column the data
+      // makes — one per payment method — may exist in one period only: blank in the other).
+      const x = expandExportColumns(r.table, before.rows, r.keys);
+      const prev = exportTableSheet(toExportTable(x.table, '', title, before.rows), x.keys);
+      const at = sheet.columns.slice(0, 40).map((c) => prev.columns.findIndex((p) => p.key === c.key));
+      const plain = (v: unknown): string | number | null => (typeof v === 'number' || typeof v === 'string' ? v : null);
+      previousRows = prev.rows.map((row) => at.map((i) => (i < 0 ? null : plain(row[i]))));
+    }
+    const drawn =
+      cleanChart(chart) ??
+      (chartFrom && sheet
+        ? cleanChart(
+            chartFromTable(
+              { columns: sheet.columns.map((c) => ({ key: c.key ?? c.header, header: c.header })), rows: sheet.rows },
+              chartFrom.label,
+              chartFrom.value,
+              { type: chartFrom.type, top: chartFrom.top, kind: chartFrom.kind, title: chartFrom.title },
+            ),
+          )
+        : undefined);
+    const chosen = new Set(main?.keys ?? []);
+    const groups = (groupBy ?? []).filter((k) => chosen.has(k)).slice(0, 3);
+    const keys = insightKeys ?? (chartFrom ? { label: chartFrom.label, value: chartFrom.value } : undefined);
+    const hints = keys
+      ? Object.fromEntries(Object.entries(keys).filter(([, v]) => typeof v === 'string' && chosen.has(v)))
+      : {};
+    return {
+      ...(reportType ? { reportType } : {}),
+      // The header band's two lines (§7.1): the period, then business › place.
+      ...(range ? { period: range.slice(0, 200) } : {}),
+      ...(business || place ? { scope: [business, place].filter((x) => x && x.trim()).join(' › ').slice(0, 300) } : {}),
+      ...(cards.length ? { kpis: cards } : {}),
+      // No chart from the page: the server draws its type's default (§7.4); `null`: no chart at
+      // all (a list of single records has nothing to plot).
+      ...(chart === null ? { chart: null } : drawn ? { chart: drawn } : {}),
+      ...(previousRows ? { previousRows } : {}),
+      ...(previousLabel && before ? { previousLabel: previousLabel.slice(0, 80) } : {}),
+      ...(groups.length ? { groupBy: groups } : {}),
+      ...(Object.keys(hints).length ? { insightKeys: hints } : {}),
+    };
+  };
+
+  /** The main table's PDF body with the designed parts (§6). */
+  const designedBody = async (r: (typeof resolved)[number] | undefined) => {
+    if (!r) return null;
+    const main = await prepare(r);
+    const body = exportTablePdfBody(main.table, main.keys, pdfHeader(r), orientation);
+    return { main, body: { ...body, ...(await designed(main, r)) } };
+  };
+
   const onExcel = async () => {
     setBusy('excel');
     try {
@@ -214,19 +370,60 @@ export function ReportExportBar({
         await excel();
         return;
       }
-      const sheets = await Promise.all(
-        resolved.map(async (r) => {
-          const p = await prepare(r);
-          return exportTableSheet(p.table, p.keys);
-        }),
-      );
+      const main = mainResolved();
+      const prepared = await Promise.all(resolved.map(async (r) => ({ r, p: await prepare(r) })));
+      const sheets = prepared.map(({ p }) => exportTableSheet(p.table, p.keys));
       const extra = (await extraSheets?.()) ?? [];
-      await downloadExcel(extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra], fileName, {
+      // "סיכום ותובנות" first (§1): the KPIs and the server's sentences about this report.
+      const mainPrepared = prepared.find((x) => x.r === main)?.p ?? null;
+      const summaryWords = {
+        sheetName: t('summarySheet'),
+        kpiHeader: t('summaryKpi'),
+        valueHeader: t('summaryValue'),
+        previousHeader: t('summaryPrevious'),
+        changeHeader: t('summaryChange'),
+        insightsHeading: t('summaryInsights'),
+      };
+      let summary: ExcelSheet | null = null;
+      if (insights) {
+        // The page has the server's sentences already (a report that carries them).
+        summary = summarySheet(cleanKpis(kpis ?? []), insights, summaryWords);
+      } else if (main && mainPrepared) {
+        const body = {
+          ...exportTablePdfBody(mainPrepared.table, mainPrepared.keys, pdfHeader(main), orientation),
+          ...(await designed(mainPrepared, main)),
+        };
+        // The server's sentences, and its KPIs with the comparison worked out (§7.2).
+        const answer = body.rows.length <= PDF_MAX_ROWS ? await fetchReportInsights(body) : null;
+        summary = summarySheet(answer?.kpis.length ? answer.kpis : (body.kpis ?? []), answer?.insights ?? [], summaryWords);
+      } else if (kpis?.length) {
+        summary = summarySheet(cleanKpis(kpis), [], summaryWords);
+      }
+      const body = extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra];
+      await downloadExcel(summary ? [summary, ...body] : body, fileName, {
         heading: headerLines(new Date().toISOString()),
         readableName: true,
       });
     } catch (err) {
       toast.error(axiosErrorToToastMessage(err, t('excelFailed')));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onCsv = async () => {
+    setBusy('csv');
+    try {
+      if (csv) {
+        await csv();
+        return;
+      }
+      const r = mainResolved();
+      if (!r) return;
+      const p = await prepare(r);
+      downloadCsv(`${fileName}.csv`, tableCsv(exportTableSheet(p.table, p.keys)));
+    } catch (err) {
+      toast.error(axiosErrorToToastMessage(err, t('csvFailed')));
     } finally {
       setBusy(null);
     }
@@ -245,35 +442,28 @@ export function ReportExportBar({
   };
 
   const onPdf = async () => {
-    const r = resolved.find((x) => x.table.id === pdfTableId) ?? resolved[0];
+    if (pdf) {
+      setBusy('pdf');
+      try {
+        await pdf();
+      } catch (err) {
+        toast.error(axiosErrorToToastMessage(err, t('pdfFailed')));
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+    const r = mainResolved();
     if (!r) return;
     setBusy('pdf');
     try {
-      const { table, keys } = await prepare(r);
-      if (table.rows.length > PDF_MAX_ROWS) {
+      const made = await designedBody(r);
+      if (!made) return;
+      if (made.main.table.rows.length > PDF_MAX_ROWS) {
         toast.error(t('pdfTooMany', { max: PDF_MAX_ROWS.toLocaleString('he-IL') }));
         return;
       }
-      const pdfTitle = r.table.id !== MAIN_TABLE && r.table.title ? `${title} · ${r.table.title}` : title;
-      const range = rangeText(from, to);
-      const blob = await fetchReportPdf(
-        exportTablePdfBody(
-          table,
-          keys,
-          {
-            title: pdfTitle,
-            subtitleLines: [
-              [business, place].filter((s) => s && s.trim()).join(' · '),
-              range ? t('rangeLine', { range }) : '',
-              hours ? t('hoursLine', { band: hours }) : '',
-            ].filter(Boolean),
-            filterLines: filterLines.map((f) => `${f.label}: ${f.value}`),
-            fileName,
-            companyId,
-          },
-          orientation,
-        ),
-      );
+      const blob = await fetchReportPdf(made.body);
       if (blob) downloadBlob(blob, `${fileName}.pdf`, 'application/pdf');
       else {
         toast.info(t('pdfFallback'));
@@ -339,23 +529,45 @@ export function ReportExportBar({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2 print:hidden">
-        <Button variant="outline" size="sm" onClick={onExcel} disabled={disabled || busy !== null}>
-          {busy === 'excel' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileSpreadsheet className="h-4 w-4" aria-hidden />}
-          {t('excel')}
-        </Button>
-        {excelOnly ? null : (
-          <>
-            <Button variant="outline" size="sm" onClick={onPdf} disabled={disabled || busy !== null}>
-              {busy === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileDown className="h-4 w-4" aria-hidden />}
-              {t('pdf')}
-            </Button>
-            <Button variant="outline" size="sm" onClick={print} disabled={disabled}>
-              <Printer className="h-4 w-4" aria-hidden />
-              {t('print')}
-            </Button>
-          </>
-        )}
+      <div className="flex flex-wrap items-center gap-2 print:hidden" data-report-export={reportType ?? reportKey}>
+        {/* "ייצוא" (§2): the designed PDF, Excel, CSV and print, in one place on every report. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={disabled || busy !== null}
+            render={
+              <Button variant="outline" size="sm" aria-label={t('menu')}>
+                {busy && busy !== 'save' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
+                {t('menu')}
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" aria-hidden />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="start" className="w-56">
+            {excelOnly ? null : (
+              <DropdownMenuItem onClick={() => void onPdf()} disabled={!pdf && exported.length === 0}>
+                <FileDown aria-hidden />
+                {t('pdfDesigned')}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => void onExcel()}>
+              <FileSpreadsheet aria-hidden />
+              {t('excel')}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => void onCsv()} disabled={!csv && exported.length === 0}>
+              <FileText aria-hidden />
+              {t('csv')}
+            </DropdownMenuItem>
+            {excelOnly || noPrint ? null : (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={print}>
+                  <Printer aria-hidden />
+                  {t('print')}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button variant="ghost" size="sm" onClick={() => setPicker(true)} disabled={disabled || exported.length === 0}>
           <Columns3 className="h-4 w-4" aria-hidden />
           {t('columns')}
@@ -367,7 +579,7 @@ export function ReportExportBar({
       </div>
 
       {/* The print template's header. Never on screen. */}
-      {excelOnly ? null : (
+      {excelOnly || noPrint ? null : (
         <div className="report-print-header hidden print:block" dir="rtl">
           {headerLines(generatedAt).map((line, i) => (
             <div key={i} className={i === 0 ? 'text-lg font-bold' : 'text-sm'}>

@@ -34,8 +34,15 @@ import {
 } from './parts';
 import { CancelledSalesList } from './failed-payments-section';
 import { CardCommandPanel, UnresolvedBadge } from './card-command-panel';
-import { useFailedPaymentsSheets } from './export-sheets';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { useFailedPaymentsSheetBuilders, useFailedPaymentsSheets } from './export-sheets';
+import { previousWindow } from '@/lib/designedReport';
+import {
+  StandaloneExportBar,
+  sheetAsTable,
+  type PreviousPeriod,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
 const PAGE_SIZE = 50;
 
@@ -57,6 +64,7 @@ export function FailedPaymentsTable({
 }) {
   const t = useTranslations('failedPayments');
   const labels = useFailedPaymentLabels();
+  const build = useFailedPaymentsSheetBuilders();
   const exportSheets = useFailedPaymentsSheets();
   const [page, setPage] = useState(1);
   // A new filter is a new list: back to its first page (reset during render, as the page does).
@@ -78,6 +86,50 @@ export function FailedPaymentsTable({
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const money = (agorot: number) => formatCurrency(agorotToShekels(agorot));
 
+  // The export: the page on screen as its table, every attempt of these filters fetched on the
+  // click (not just this page); the cancelled sales block beside it; the summary as the KPIs.
+  const query = { machineId, shopId, from, to, cardLast4 };
+  const cancelledSheet = data ? build.cancelled(data.cancelledSales) : null;
+  const exportTables = [
+    sheetAsTable(build.attempts(data?.items ?? []), 'main', { full: async () => (await exportSheets(query))[0] }),
+    ...(cancelledSheet ? [sheetAsTable(cancelledSheet, 'cancelled')] : []),
+  ] as ReportTableSpec<unknown>[];
+  const kpisOf = (s: FailedPaymentsResponse['summary']) => ({
+    failedAttempts: s.count,
+    failedAmount: agorotToShekels(s.totalAgorot),
+    paidLater: s.paidLaterCount,
+    unresolved: s.unresolvedCount ?? 0,
+    approvedLate: s.approvedLateCount ?? 0,
+    payouts: s.payoutCount,
+  });
+  const figures = data ? kpisOf(data.summary) : null;
+  // As the stat tiles: the last three only when there are any.
+  const exportKpis: ReportKpi[] = figures
+    ? [
+        { key: 'failedAttempts', label: t('attempts'), value: figures.failedAttempts, kind: 'count', icon: 'alert' },
+        { key: 'failedAmount', label: t('totalAmount'), value: figures.failedAmount, kind: 'money', icon: 'card' },
+        { key: 'paidLater', label: t('paidLaterCount'), value: figures.paidLater, kind: 'count', icon: 'receipt', better: 'up' },
+        ...(figures.unresolved > 0
+          ? [{ key: 'unresolved', label: t('unresolvedCount'), value: figures.unresolved, kind: 'count' as const, icon: 'alert' as const, better: 'down' as const }]
+          : []),
+        ...(figures.approvedLate > 0
+          ? [{ key: 'approvedLate', label: t('approvedLateCount'), value: figures.approvedLate, kind: 'count' as const, icon: 'card' as const }]
+          : []),
+        ...(figures.payouts > 0
+          ? [{ key: 'payouts', label: t('payouts'), value: figures.payouts, kind: 'count' as const, icon: 'refund' as const, better: 'down' as const }]
+          : []),
+      ]
+    : [];
+  /** The summary of the same filters over the period before (one page: only its summary is read). */
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = previousWindow(from, to);
+    if (!before) return null;
+    const prev: FailedPaymentsResponse = await api
+      .get('/failed-payments', { params: failedPaymentsParams({ ...query, ...before, page: 1, pageSize: 1 }) })
+      .then((r) => r.data);
+    return { kpis: kpisOf(prev.summary), ...before };
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
@@ -88,13 +140,19 @@ export function FailedPaymentsTable({
         </div>
       </div>
 
-      {/* Every attempt of these filters, not just this page. */}
-      <ReportExportToolbar
+      {/* Every attempt of these filters, not just this page. A list of attempts: no chart. */}
+      <StandaloneExportBar
+        reportKey="failed-payments"
+        reportType="transactions.failed-payments"
         title={t('title')}
+        tables={exportTables}
         from={from}
         to={to}
         disabled={!data || (data.total === 0 && data.cancelledSales.count === 0)}
-        getSheets={() => exportSheets({ machineId, shopId, from, to, cardLast4 })}
+        kpis={exportKpis}
+        chart={null}
+        insightKeys={{ label: 'till', value: 'amount', employee: 'employee' }}
+        previous={previous}
       />
 
       {data ? (

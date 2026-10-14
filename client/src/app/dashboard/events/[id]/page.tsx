@@ -12,9 +12,9 @@
  *
  * Exported through the reports' export bar (P:\specs\reports-upgrade.md §2ב–ד, key
  * `event-report`): "אקסל" is still the server's workbook (every sheet, at the timeline's
- * bucket); "PDF" a real file of the tills table, with the columns chosen in "עמודות
- * לייצוא"; "הדפסה" prints this page (the controls hide, sections keep together). The
- * timeline's bucket is in the URL (`?bucket=15|60`; 30 by default).
+ * bucket); "PDF" the designed file of the tills table (the event's cards, its tills by net),
+ * with the columns chosen in "עמודות לייצוא"; "הדפסה" prints this page (the controls hide,
+ * sections keep together). The timeline's bucket is in the URL (`?bucket=15|60`; 30 by default).
  */
 
 import { use, useCallback, useEffect, useState } from 'react';
@@ -46,7 +46,7 @@ import { EventReconcile } from '@/components/dashboard/events/event-reconcile';
 import { EventSection, ReconcileChip, StatusChip } from '@/components/dashboard/events/event-parts';
 import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
 import { ProducerAccessDialog } from '@/components/dashboard/event-live/producer-access-dialog';
-import { ReportExportBar, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { ReportExportBar, useReportExportScope, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 
 const WRITE_ROLES = new Set(['super_admin', 'distributor', 'company_manager', 'shop_manager']);
@@ -84,6 +84,7 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
   const t = useTranslations('events.page');
   const te = useTranslations('events');
   const tr = useTranslations('events.report');
+  const tk = useTranslations('events.kpi');
   const router = useRouter();
   const role = useAuth((s) => s.user?.role);
   const canWrite = !!role && WRITE_ROLES.has(role);
@@ -169,6 +170,17 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
   const draft = event.status === 'draft';
   const live = draft && Date.parse(event.endsAt) > now;
   const levels = countByLevel(report.insights);
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the event's headline cards and its
+  // tills by net (the tills are the PDF's table).
+  const k = report.kpis;
+  const exportKpis: ReportKpi[] = [
+    { key: 'net', label: tk('net'), value: k.net, kind: 'money', icon: 'sales' },
+    { key: 'sales', label: tk('sales'), value: k.salesCount, kind: 'count', icon: 'receipt' },
+    { key: 'avgTicket', label: tk('avgTicket'), value: k.avgTicket, kind: 'money', icon: 'basket' },
+    { key: 'items', label: tk('items'), value: k.itemsSold, kind: 'count', icon: 'items' },
+    { key: 'tips', label: tk('tips'), value: k.tips, kind: 'money', icon: 'tip' },
+    { key: 'refunds', label: tk('refunds'), value: k.refunds, kind: 'money', icon: 'refund' },
+  ];
 
   return (
     <InsightsSurface className="print:mx-0 print:rounded-none print:bg-white print:p-0">
@@ -208,6 +220,10 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
           ]}
           companyId={exportScope.companyId}
           companyName={exportScope.companyName}
+          reportType="events"
+          kpis={exportKpis}
+          chartFrom={{ label: 'till', value: 'net', type: 'hbar' }}
+          insightKeys={{ label: 'till', value: 'net', count: 'sales' }}
           actions={
             <>
               <LiveEventLink eventId={event.id} className="h-8 rounded-lg border border-[#FF3B30]/40 px-2.5 text-sm" />

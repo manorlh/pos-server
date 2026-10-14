@@ -16,7 +16,8 @@
  * Every filter is in the URL (lib/periodCompare.ts) with the shared scope. Excel / PDF / print
  * through the report framework's export bar (P:\specs\reports-upgrade.md §5): the figures with
  * their change, the cashiers and the breakdown — or the figures side by side — as tables with
- * export columns; the curve, the items (every one) and the vouchers as sheets of their own.
+ * export columns; the curve, the items (every one) and the vouchers as sheets of their own. The
+ * designed PDF's cards are the headline figures against B, its chart the curve.
  * Phone first, on the board's own tokens (light and dark).
  */
 
@@ -68,7 +69,9 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
 import {
   StandaloneExportBar,
+  type ReportChart,
   type ReportColumn,
+  type ReportKpi,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 import { OpenTablesWidget } from '@/components/dashboard/insights/open-tables-widget';
@@ -524,6 +527,43 @@ export function CompareView({
     return rest;
   };
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the headline figures as its cards, each
+  // against B as the page already has it (no second request), and the curve — A and B by the hour
+  // or by the day. Side by side: the figures' table, its sales as bars.
+  const versus = comparing && labelB ? tBoard('compare.versus', { day: labelB }) : undefined;
+  const kpiOf = (key: keyof FiguresLike, kind: ReportKpi['kind'], icon: ReportKpi['icon']): ReportKpi => ({
+    key,
+    label: words.figures[key],
+    value: current?.[key] ?? null,
+    kind,
+    icon,
+    ...(versus && previous ? { compare: previous[key], compareLabel: versus } : {}),
+  });
+  const exportKpis: ReportKpi[] =
+    periods && current
+      ? [
+          kpiOf('sales', 'money', 'sales'),
+          kpiOf('documents', 'count', 'receipt'),
+          kpiOf('averageTicket', 'money', 'basket'),
+          kpiOf('items', 'number', 'items'),
+          kpiOf('refunds', 'money', 'refund'),
+          kpiOf('tips', 'money', 'tip'),
+        ]
+      : [];
+  const exportChart: ReportChart | null =
+    periods && hourRows.length
+      ? {
+          type: report?.granularity === 'hour' ? 'bar' : 'line',
+          title: report?.granularity === 'day' ? t('chart.byDay') : t('hours'),
+          labels: hourRows.map((r) => r.name),
+          series: [
+            { name: labelA, values: hourRows.map((r) => r.a) },
+            ...(comparing && labelB ? [{ name: labelB, values: hourRows.map((r) => r.b) }] : []),
+          ],
+          kind: 'money',
+        }
+      : null;
+
   const anchorValue = rangeA?.from ?? today;
 
   return (
@@ -681,6 +721,10 @@ export function CompareView({
               from={rangeA?.from ?? event?.startDate}
               to={rangeA?.to ?? event?.endDate}
               disabled={periods ? !report : !side.data}
+              reportType="compare"
+              kpis={exportKpis}
+              chart={exportChart}
+              chartFrom={periods ? undefined : { label: 'name', value: 'sales', type: 'hbar' }}
             />
           </div>
         </div>

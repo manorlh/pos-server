@@ -264,9 +264,10 @@
     margin: 12mm;
   }
   /*
-   * A report printed from its toolbar (components/dashboard/report-export-toolbar.tsx):
-   * its own named page, so only it carries the "page X of Y" footer, and tables are
-   * let out of their scroll boxes so no column is cut off.
+   * A report printed from its export bar's "הדפסה" (and the browser's PDF when the server
+   * cannot draw one — components/dashboard/report-framework/report-export-bar.tsx): its own
+   * named page, so only it carries the "page X of Y" footer, and tables are let out of their
+   * scroll boxes so no column is cut off.
    */
   @page report {
     size: A4 portrait;

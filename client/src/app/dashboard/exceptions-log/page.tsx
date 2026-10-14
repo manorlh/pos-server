@@ -31,6 +31,7 @@ import { AREA_NONE } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { formatCurrency, formatDateTime } from '@/lib/format';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { parseReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
 import type { ReportFilterLine } from '@/lib/reportExport';
@@ -130,6 +131,11 @@ function FilterSelect({
 }
 
 const isSeverity = (v: string): v is Severity => (SEVERITIES as string[]).includes(v);
+
+/** The summary's tiles as the designed PDF's cards (and the period before's), by KPI key. */
+function summaryFigures(s: LogSummary): Record<string, number> {
+  return { exceptions: s.total, open: s.open, handled: s.acknowledged };
+}
 
 export default function ExceptionsLogPage() {
   const t = useTranslations('exceptionsLog');
@@ -413,6 +419,34 @@ export default function ExceptionsLogPage() {
   }, [canHandle, code, items, t]);
 
   const exportTables = [table as ReportTableSpec<unknown>];
+
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the summary's tiles as cards (not the
+  // SMS count — it is this page's), the kinds as bars, the tiles against the period before (the
+  // entries themselves have no row to set against another).
+  const s = summary.data;
+  const kpis: ReportKpi[] = s
+    ? [
+        { key: 'exceptions', label: t('total'), value: s.total, kind: 'count', better: 'down', icon: 'alert' },
+        { key: 'open', label: t('openCount'), value: s.open, kind: 'count', better: 'down' },
+        { key: 'handled', label: t('handledCount'), value: s.acknowledged, kind: 'count', better: 'up' },
+      ]
+    : [];
+  const byKind = s ? [...s.byKind].sort((a, b) => b.total - a.total) : [];
+  const chart: ReportChart | null = byKind.length
+    ? {
+        type: 'hbar',
+        title: t('byKind'),
+        labels: byKind.map((r) => r.label || kindLabel(r.key)),
+        series: [{ name: t('col.count'), values: byKind.map((r) => r.total) }],
+        kind: 'number',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(from, to);
+    if (!w) return null;
+    return { kpis: summaryFigures(await fetchLogSummary({ ...apiFilters, ...w })), ...w };
+  };
+
   // Every entry of these filters, not just this page (the log's largest page is 500).
   const allExportTables = [
     {
@@ -527,6 +561,8 @@ export default function ExceptionsLogPage() {
               companyId={exportScope.companyId}
               companyName={exportScope.companyName}
               disabled={!items.length}
+              // The one entry an SMS named: the designed PDF without a summary or a period before.
+              reportType="exceptions-log"
             />
             <div className="hidden md:block print:block">
               <ReportTable table={table} reportKey="exceptions-log" />
@@ -589,7 +625,22 @@ export default function ExceptionsLogPage() {
       ready
       phoneFilters={{ label: t('phone.filters'), title: t('phone.filtersTitle') }}
       prompt={t('empty')}
-      export={list.data ? { tables: allExportTables, filterLines, from, to } : null}
+      export={
+        list.data
+          ? {
+              tables: allExportTables,
+              filterLines,
+              from,
+              to,
+              reportType: 'exceptions-log',
+              kpis,
+              chart,
+              insightKeys: { label: 'kind', value: 'amount', employee: 'employee' },
+              groupBy: ['shop', 'area', 'till'],
+              previous,
+            }
+          : null
+      }
     >
       {summary.isLoading ? (
         <Skeleton className="h-24 w-full" />

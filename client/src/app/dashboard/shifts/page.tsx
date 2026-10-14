@@ -601,6 +601,12 @@ export default function ShiftsPage() {
           place: exportPlace,
           filterLines: extraLines,
           disabled: !data || data.total === 0,
+          // The designed PDF (P:\specs\reports-designed-pdf.md §7): no cards of the page's own — its
+          // totals are this page's shifts, the export's are every shift's, and the server makes its
+          // cards from those. No period before: the list runs on every day until a range is run.
+          reportType: 'shifts',
+          insightKeys: { label: 'till', value: 'sales' },
+          groupBy: ['shop', 'area', 'till'],
         }}
       >
         <ReportTable table={table} />

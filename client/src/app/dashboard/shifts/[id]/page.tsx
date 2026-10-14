@@ -7,6 +7,9 @@
  * The figures are the cloud's own, recomputed from the documents it holds — the same
  * source every Z is built from. The till's own X is kept for audit and shown beside
  * them only when the two disagree, because that disagreement is the thing to chase.
+ *
+ * The designed PDF (P:\specs\reports-designed-pdf.md §7, type `shift`) carries the X's figures
+ * as its cards and the tenders as a donut.
  */
 
 import { use } from 'react';
@@ -39,6 +42,7 @@ import {
   PaymentBreakdownRows,
   ShiftBadges,
   TipsSplit,
+  usePaymentMethodLabel,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
 import {
@@ -47,7 +51,7 @@ import {
   type ShiftMismatchRow,
 } from '@/components/dashboard/shifts/shift-export-sheets';
 import { ShiftCloseAction, useShiftCloseDialogs } from '@/components/dashboard/shifts/shift-close';
-import { ReportTable, StandaloneExportBar } from '@/components/dashboard/report-framework';
+import { ReportTable, StandaloneExportBar, type ReportChart, type ReportKpi } from '@/components/dashboard/report-framework';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -84,6 +88,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const tSend = useTranslations('transmission');
   const shiftLabel = useShiftLabel();
   const shiftExport = useShiftExportTables();
+  const methodLabel = usePaymentMethodLabel();
   const canProduceZ = useCanProduceZ();
   const { scope } = usePageScope({ maxLevel: 'machine', silent: true });
   // "סגור משמרת" for an open shift: as on the list (the remote close, or a dead till's administrative one).
@@ -141,6 +146,31 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
         })
       : [];
   const exported = shiftExport(shift, mismatch);
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the X's figures as its cards — the
+  // over / short once the drawer was counted — and the tenders as a donut.
+  const exportKpis: ReportKpi[] = [
+    { key: 'sales', label: t('detail.sales'), value: totals?.totalSales ?? null, kind: 'money', icon: 'sales' },
+    { key: 'documents', label: t('detail.documents'), value: totals?.transactionsCount ?? null, kind: 'count', icon: 'receipt' },
+    { key: 'refunds', label: t('detail.refunds'), value: totals?.totalRefunds ?? null, kind: 'money', icon: 'refund' },
+    { key: 'tips', label: t('detail.tips'), value: totals?.totalTips ?? null, kind: 'money', icon: 'tip' },
+    { key: 'expectedCash', label: t('detail.expectedCash'), value: shift.expectedCash ?? null, kind: 'money', icon: 'cash' },
+  ];
+  if (!open && shift.countedCash != null) {
+    exportKpis.push({ key: 'overShort', label: t('detail.overShort'), value: shift.discrepancy ?? null, kind: 'money', icon: 'alert' });
+  }
+  const tenderRank = (m: string) => (m === 'cash' ? 0 : m === 'card' ? 1 : 2);
+  const tenders = Object.entries(shift.paymentBreakdown ?? {}).sort(
+    ([a], [b]) => tenderRank(a) - tenderRank(b) || a.localeCompare(b),
+  );
+  const exportChart: ReportChart | null = tenders.length
+    ? {
+        type: 'donut',
+        title: t('detail.paymentsTitle'),
+        labels: tenders.map(([m]) => methodLabel(m)),
+        series: [{ name: t('detail.paymentsTitle'), values: tenders.map(([, amount]) => moneyValue(amount)) }],
+        kind: 'money',
+      }
+    : null;
 
   return (
     <div className="space-y-6">
@@ -176,6 +206,9 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
             from={shift.businessDate}
             to={shift.businessDate}
             place={[shift.shopName, shift.machineName].filter(Boolean).join(' · ') || null}
+            reportType="shift"
+            kpis={exportKpis}
+            chart={exportChart}
           />
           {shift.zReportId ? (
             <Link

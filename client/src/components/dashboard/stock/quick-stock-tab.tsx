@@ -9,6 +9,7 @@
  * (`?q=&category=&filter=`), so a filtered view is a link. The export is the report framework's
  * (`stock-quick`, P:\specs\reports-upgrade.md §5): Excel / PDF / print of the rows shown, with the
  * export columns, the place picked and the filters in the header; the cards stay as they are.
+ * The designed PDF adds the place's counts (tracked, low, sold out / blocked) and the largest totals.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -22,7 +23,7 @@ import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import type { ReportFilterLine } from '@/lib/reportExport';
-import { ReportExportBar, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { ReportExportBar, useReportExportScope, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { BlockItemSheet, StockNodePicker, StockUpdateSheet, invalidateStock, treeNodes, useStockTree } from '@/components/dashboard/live-control';
 import { formatQty, levelsLabel, locationLabel, nodeKey, type QuickRow, type StockNode, type StockOp } from '@/lib/stockLive';
 import { fetchQuick, postUpdate, stockKeys } from '@/lib/stockLiveApi';
@@ -30,6 +31,9 @@ import { fetchQuick, postUpdate, stockKeys } from '@/lib/stockLiveApi';
 const FILTERS = ['all', 'low', 'blocked'] as const;
 type Filter = (typeof FILTERS)[number];
 const FILTER_LABELS: Record<Filter, string> = { all: 'הכל', low: 'מלאי נמוך', blocked: 'אזל / חסום' };
+
+/** "אזל / חסום": blocked here, or not available on the devices. */
+const isBlocked = (r: QuickRow) => r.blocks.length > 0 || (!!r.devicesSee && r.devicesSee.state !== 'available');
 
 /** A stock tab's own params in the page's URL (`?q=`, `?day=`…): read, and replaced in place — the scope's and the tab's kept. */
 export function useStockUrlParams(): [URLSearchParams, (patch: Record<string, string | null>) => void] {
@@ -138,7 +142,7 @@ export function QuickStockTab({
   const rows = useMemo(() => {
     const all = data.data?.rows ?? [];
     if (filter === 'low') return all.filter((r) => r.low);
-    if (filter === 'blocked') return all.filter((r) => r.blocks.length > 0 || (r.devicesSee && r.devicesSee.state !== 'available'));
+    if (filter === 'blocked') return all.filter(isBlocked);
     return all;
   }, [data.data, filter]);
 
@@ -187,6 +191,14 @@ export function QuickStockTab({
     ...(categoryId ? [{ label: 'קטגוריה', value: categoryName || categoryId }] : []),
     ...(filter !== 'all' ? [{ label: 'סינון', value: FILTER_LABELS[filter] }] : []),
   ];
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): what the place holds — its products,
+  // how many are low, sold out or blocked (the filter's own counts) — and the largest totals.
+  const placeRows = data.data?.rows ?? [];
+  const exportKpis: ReportKpi[] = [
+    { key: 'products', label: 'מוצרים במעקב', value: placeRows.length, kind: 'count', icon: 'box' },
+    { key: 'low', label: FILTER_LABELS.low, value: placeRows.filter((r) => r.low).length, kind: 'count', icon: 'alert', better: 'down' },
+    { key: 'blocked', label: FILTER_LABELS.blocked, value: placeRows.filter(isBlocked).length, kind: 'count', icon: 'void', better: 'down' },
+  ];
 
   return (
     <section className="space-y-3">
@@ -224,6 +236,9 @@ export function QuickStockTab({
         companyId={exportScope.companyId}
         companyName={exportScope.companyName}
         disabled={rows.length === 0}
+        reportType="stock-quick"
+        kpis={exportKpis}
+        chartFrom={{ label: 'product', value: 'total', type: 'hbar', kind: 'number', title: 'סה״כ במלאי' }}
       />
 
       {data.isPending ? (

@@ -12,7 +12,8 @@
  *
  * Export (P:\specs\reports-upgrade.md §5, `StandaloneExportBar`, report key `upsells`): the
  * rules the list shows — the filters named in the export's header — with their places,
- * trigger, offer, hours, active, and their figures over the same 30 days.
+ * trigger, offer, hours, active, and their figures over the same 30 days. The designed PDF adds
+ * the cards against the 30 days before and the rules by revenue.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -54,7 +55,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { previousWindow } from '@/lib/designedReport';
+import { StandaloneExportBar, type PreviousPeriod, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 /** A rule of the export, with its figures in the stats window (none: not shown in it). */
 type ExportRow = { rule: UpsellRule; stats: UpsellReportRow | undefined };
@@ -207,6 +209,33 @@ export default function UpsellsPage() {
     ...(qDraft.trim() ? [{ label: te('search'), value: qDraft.trim() }] : []),
     { label: te('stats'), value: te('statsWindow') },
   ];
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the three cards (and what was taken),
+  // the rules by revenue, and the 30 days before against the same rules, fetched on the click.
+  const kpisOf = (x: UpsellReport['totals']) => ({
+    shown: x.shown,
+    accepted: x.accepted,
+    rate: ratePercent(x.acceptanceRate),
+    revenue: x.revenue,
+  });
+  const exportKpis: ReportKpi[] = totals
+    ? [
+        { key: 'shown', label: t('stats.shown'), value: totals.shown, kind: 'count', icon: 'chart' },
+        { key: 'accepted', label: te('col.accepted'), value: totals.accepted, kind: 'count', icon: 'items' },
+        { key: 'rate', label: t('stats.rate'), value: ratePercent(totals.acceptanceRate), kind: 'percent', icon: 'percent' },
+        { key: 'revenue', label: t('stats.revenue'), value: totals.revenue, kind: 'money', icon: 'sales' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = previousWindow(stats.data?.window.from ?? daysBackIso(29), stats.data?.window.to ?? todayIso());
+    if (!before) return null;
+    const prev = await fetchUpsellReport(before);
+    const prevByRule = new Map(prev.rows.map((r) => [r.ruleId, r]));
+    return {
+      rows: rules.map((rule): ExportRow => ({ rule, stats: prevByRule.get(rule.id) })),
+      kpis: kpisOf(prev.totals),
+      ...before,
+    };
+  };
 
   return (
     <div className="space-y-4">
@@ -227,6 +256,11 @@ export default function UpsellsPage() {
             place={null}
             filterLines={exportFilterLines}
             disabled={stats.isLoading || rules.length === 0}
+            reportType="upsells"
+            kpis={exportKpis}
+            chartFrom={{ label: 'name', value: 'revenue', type: 'hbar' }}
+            insightKeys={{ label: 'name', value: 'revenue', count: 'accepted' }}
+            previous={previous}
           />
           <p className="text-xs text-muted-foreground print:hidden">{te('note', { count: rules.length })}</p>
         </div>

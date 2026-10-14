@@ -23,8 +23,8 @@ describe('the vouchers page heading', () => {
   it('heads the page, its export and its sheet with the sidebar label', () => {
     assert.match(page, /const tn = useTranslations\('nav'\)/);
     assert.match(page, /<h1 className="text-2xl font-bold">\{tn\('vouchers'\)\}<\/h1>/);
-    assert.match(page, /<ReportExportToolbar\s+title=\{tn\('vouchers'\)\}/);
-    assert.match(page, /name: tn\('vouchers'\)/);
+    assert.match(page, /<StandaloneExportBar\s+title=\{tn\('vouchers'\)\}/);
+    assert.match(page, /title: tn\('vouchers'\)/);
   });
 
   it('keeps the print title where it belongs: the list\'s column and the form\'s field, never a heading', () => {

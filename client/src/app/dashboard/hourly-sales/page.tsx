@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatHour } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import { fetchHourlyReport, type HourlyReport } from '@/lib/salesReportsApi';
 import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import {
@@ -36,6 +37,19 @@ const SPEC: ReportFilterSpec = {
 };
 
 type HourRow = HourlyReport['byHour'][number];
+
+/**
+ * The totals row as the designed PDF's cards (and the period before's), by KPI key — the
+ * average basket of the whole window, as each hour's row has its own.
+ */
+function totalsFigures(r: HourlyReport): Record<string, number | null> {
+  return {
+    net: r.total,
+    transactions: r.documents,
+    avgTicket: r.documents ? Math.round((r.total / r.documents) * 100) / 100 : null,
+    tips: r.tipsTotal ?? null,
+  };
+}
 
 export default function HourlySalesPage() {
   const t = useTranslations('hourlyReport');
@@ -86,6 +100,36 @@ export default function HourlySalesPage() {
     };
   }, [data, t]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals as cards, the takings by
+  // hour as bars (in the hours' order), and the hours of the period before.
+  const figures = data ? totalsFigures(data) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'net', label: t('col.net'), value: figures.net, kind: 'money', icon: 'sales' },
+        { key: 'transactions', label: t('col.documents'), value: figures.transactions, kind: 'count', icon: 'receipt' },
+        { key: 'avgTicket', label: t('col.averageBasket'), value: figures.avgTicket, kind: 'money', icon: 'basket' },
+        // The tips only when the server sends them (§4.2), as the table's column.
+        ...(figures.tips === null
+          ? []
+          : [{ key: 'tips', label: t('col.tips'), value: figures.tips, kind: 'money', icon: 'tip' } satisfies ReportKpi]),
+      ]
+    : [];
+  const chart: ReportChart | null = data?.byHour.length
+    ? {
+        type: 'bar',
+        title: t('byHourTitle'),
+        labels: data.byHour.map((h) => formatHour(h.hour)),
+        series: [{ name: t('col.net'), values: data.byHour.map((h) => h.net) }],
+        kind: 'money',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchHourlyReport({ ...params, ...w });
+    return { rows: before.byHour, kpis: totalsFigures(before), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="hourly-sales"
@@ -115,6 +159,11 @@ export default function HourlySalesPage() {
               extraSheetsFirst: true,
               from: data.window.from,
               to: data.window.to,
+              reportType: 'hourly-sales',
+              kpis,
+              chart,
+              insightKeys: { label: 'hour', hour: 'hour', value: 'net', count: 'documents' },
+              previous,
             }
           : null
       }

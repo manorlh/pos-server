@@ -10,7 +10,8 @@
  * (lib/prepaidVoucherFilters.ts, already in the URL); the tables are `ReportTable`s (sort, columns,
  * phone cards, totals) and the export bar is the framework's (`prepaid-vouchers-tills`): Excel —
  * the tills, then every redemption the filters match (all pages) — the tills' PDF, print, and the
- * export columns, with the filters in words in the header.
+ * export columns, with the filters in words in the header. The designed PDF adds the totals as
+ * cards (against the days before, when both dates are set), the chart's redemptions, shop subtotals.
  *
  * Top-ups, refusals, overrides and offline redemptions are not recorded yet (reserve → confirm, the
  * override audit and offline sync come later): their columns say so rather than show a 0.
@@ -21,6 +22,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { previousWindow } from '@/lib/designedReport';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatShortDate } from '@/lib/format';
 import { agorotText, filtersToQuery, type VoucherFilters } from '@/lib/prepaidVoucherFilters';
@@ -35,7 +37,10 @@ import {
   ReportExportBar,
   ReportTable,
   useReportExportScope,
+  type PreviousPeriod,
+  type ReportChart,
   type ReportColumn,
+  type ReportKpi,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
@@ -216,6 +221,41 @@ export function TillsReport({ filters }: { filters: VoucherFilters }) {
     exportRows: () => fetchAllPages((page, size) => fetchPrepaidRedemptions(query, size, (page - 1) * size), { pageSize: 1000 }),
   };
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals as its cards, the
+  // redemptions over time as its chart, subtotals by shop, and — with both dates — the same
+  // report for the days before them (one more run of its own request, on the click).
+  const kpisOf = (x: NonNullable<typeof totals>) => ({
+    redemptions: x.redemptions,
+    vouchers: x.vouchers,
+    items: x.items,
+    value: shekels(x.value.total),
+  });
+  const exportKpis: ReportKpi[] = totals
+    ? [
+        { key: 'redemptions', label: t('redemptions'), value: totals.redemptions, kind: 'count', icon: 'receipt' },
+        { key: 'vouchers', label: t('vouchers'), value: totals.vouchers, kind: 'count', icon: 'voucher' },
+        { key: 'items', label: t('items'), value: totals.items, kind: 'count', icon: 'items' },
+        { key: 'value', label: t('value.total'), value: shekels(totals.value.total), kind: 'money', icon: 'gift' },
+      ]
+    : [];
+  const bucketLabel = (k: string | number) => (bucket === 'hour' ? `${String(k).padStart(2, '0')}:00` : formatShortDate(String(k)));
+  const series = report.data?.series ?? [];
+  const exportChart: ReportChart | null = series.length
+    ? {
+        type: 'bar',
+        title: t('chart'),
+        labels: series.map((p) => bucketLabel(p.key)),
+        series: [{ name: t('redemptions'), values: series.map((p) => p.redemptions) }],
+        kind: 'number',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = previousWindow(filters.from || null, filters.to || null);
+    if (!before) return null;
+    const prev = await fetchPrepaidTillReport(filtersToQuery({ ...filters, ...before }), bucket);
+    return { rows: prev.items, kpis: kpisOf(prev.totals), ...before };
+  };
+
   return (
     <div className="space-y-3">
       <ReportExportBar
@@ -230,6 +270,12 @@ export function TillsReport({ filters }: { filters: VoucherFilters }) {
         companyId={scope.companyId}
         companyName={scope.companyName}
         disabled={!report.data || rows.length === 0}
+        reportType="prepaid-vouchers.tills"
+        kpis={exportKpis}
+        chart={exportChart}
+        groupBy={['shop']}
+        insightKeys={{ label: 'till', value: 'valueTotal', count: 'redemptions' }}
+        previous={previous}
       />
       {report.data?.testBatchesExcluded ? (
         <p className="text-xs text-muted-foreground">{t('testExcluded', { count: report.data.testBatchesExcluded })}</p>

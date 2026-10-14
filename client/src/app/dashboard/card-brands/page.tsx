@@ -21,6 +21,7 @@ import { usePageScope } from '@/lib/scope';
 import { formatCurrency } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { useCardBrandLabels } from '@/lib/cardBrands';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import {
   fetchCardBrandsReport,
   type CardBrandRow,
@@ -37,6 +38,11 @@ import {
 } from '@/components/dashboard/report-framework';
 
 const SPEC: ReportFilterSpec = { filters: ['hours', 'area', 'cashier'] };
+
+/** The report's totals the designed PDF's cards show and compare, by KPI key. */
+function totalsFigures(r: CardBrandsReport): Record<string, number> {
+  return { net: r.net, sales: r.salesAmount, salesCount: r.salesCount, refunds: r.refundsAmount, refundsCount: r.refundsCount };
+}
 
 /** An amount with its count in brackets, as the breakdown shows them. */
 function AmountWithCount({ amount, count }: { amount: number; count: number }) {
@@ -150,6 +156,34 @@ export default function CardBrandsReportPage() {
 
   const tables = [byAcquirer, byBrand, breakdown] as ReportTableSpec<unknown>[];
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals as cards, the brands as a
+  // ring, the acquirers (the main table) against the period before.
+  const figures = data ? totalsFigures(data) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'net', label: t('col.net'), value: figures.net, kind: 'money', icon: 'card' },
+        { key: 'sales', label: t('col.salesAmount'), value: figures.sales, kind: 'money', icon: 'sales' },
+        { key: 'salesCount', label: t('col.salesCount'), value: figures.salesCount, kind: 'count', icon: 'receipt' },
+        { key: 'refunds', label: t('col.refundsAmount'), value: figures.refunds, kind: 'money', icon: 'refund' },
+        { key: 'refundsCount', label: t('col.refundsCount'), value: figures.refundsCount, kind: 'count' },
+      ]
+    : [];
+  const chart: ReportChart | null = data
+    ? {
+        type: 'donut',
+        title: t('byBrand'),
+        labels: data.byBrand.map((r) => brandLabel(r.key)),
+        series: [{ name: t('col.net'), values: data.byBrand.map((r) => r.net) }],
+        kind: 'money',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchCardBrandsReport({ ...params, ...w });
+    return { rows: before.byAcquirer, kpis: totalsFigures(before), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="card-brands"
@@ -161,7 +195,11 @@ export default function CardBrandsReportPage() {
       query={reportQueryState(query)}
       prompt={t('selectFilters')}
       loading="table"
-      export={data ? { tables, from: data.window.from, to: data.window.to } : null}
+      export={
+        data
+          ? { tables, from: data.window.from, to: data.window.to, reportType: 'card-brands', kpis, chart, previous }
+          : null
+      }
     >
       {data ? (
         <>
