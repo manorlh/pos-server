@@ -33,13 +33,69 @@
           {"id": "ddj00002", "kind": "dj_booth", "x": 160, "y": 300, "w": 120, "h": 70, "rotation": 270, "text": "DJ"}
         ]
       }
+    },
+    {
+      "id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d002",
+      "name": "גינה ומרפסת",
+      "sortOrder": 1,
+      "layout": "map",
+      "backgroundUrl": null,
+      "canvasWidth": 1200,
+      "canvasHeight": 800,
+      "sketch": {
+        "template": null,
+        "background": "clean",
+        "elements": [
+          {"id": "gare0001", "kind": "area", "x": 20, "y": 470, "w": 560, "h": 310, "rotation": 0, "text": "מרפסת", "fill": "#22c55e", "opacity": 25},
+          {"id": "gare0002", "kind": "area", "x": 640, "y": 40, "w": 540, "h": 380, "rotation": 0, "text": "VIP", "points": [640, 40, 1000, 40, 1180, 180, 1180, 420, 640, 420], "color": "#5b21b6", "fill": "#8b5cf6", "opacity": 35},
+          {"id": "gsv00001", "kind": "service_station", "x": 20, "y": 20, "w": 100, "h": 70, "rotation": 0, "text": null},
+          {"id": "gcf00001", "kind": "coffee_station", "x": 130, "y": 20, "w": 100, "h": 70, "rotation": 0, "text": null},
+          {"id": "gbf00001", "kind": "buffet", "x": 240, "y": 20, "w": 160, "h": 70, "rotation": 0, "text": null},
+          {"id": "gds00001", "kind": "dessert_station", "x": 410, "y": 20, "w": 100, "h": 70, "rotation": 0, "text": null},
+          {"id": "gfr00001", "kind": "display_fridge", "x": 520, "y": 20, "w": 80, "h": 110, "rotation": 0, "text": null},
+          {"id": "gel00001", "kind": "elevator", "x": 20, "y": 140, "w": 90, "h": 90, "rotation": 0, "text": null},
+          {"id": "gkd00001", "kind": "kids_corner", "x": 120, "y": 140, "w": 110, "h": 90, "rotation": 0, "text": null, "color": "#f59e0b"},
+          {"id": "gsm00001", "kind": "smoking", "x": 240, "y": 140, "w": 90, "h": 70, "rotation": 0, "text": null},
+          {"id": "gns00001", "kind": "no_smoking", "x": 340, "y": 140, "w": 90, "h": 70, "rotation": 0, "text": null},
+          {"id": "gcc00001", "kind": "coat_check", "x": 440, "y": 140, "w": 90, "h": 70, "rotation": 0, "text": null},
+          {"id": "gwt00001", "kind": "waiting_area", "x": 20, "y": 250, "w": 120, "h": 80, "rotation": 0, "text": "המתנה לשולחן"},
+          {"id": "gtv00001", "kind": "tv", "x": 150, "y": 250, "w": 120, "h": 40, "rotation": 0, "text": null},
+          {"id": "gsp00001", "kind": "speaker", "x": 280, "y": 250, "w": 50, "h": 50, "rotation": 0, "text": null},
+          {"id": "gpk00001", "kind": "pickup", "x": 340, "y": 250, "w": 100, "h": 70, "rotation": 0, "text": null},
+          {"id": "gdl00001", "kind": "delivery_exit", "x": 450, "y": 250, "w": 120, "h": 40, "rotation": 0, "text": null},
+          {"id": "gtr00001", "kind": "trash", "x": 20, "y": 350, "w": 50, "h": 50, "rotation": 0, "text": null},
+          {"id": "gsk00001", "kind": "sink", "x": 80, "y": 350, "w": 80, "h": 60, "rotation": 0, "text": null},
+          {"id": "gfa00001", "kind": "first_aid", "x": 170, "y": 350, "w": 60, "h": 60, "rotation": 0, "text": null, "color": "#dc2626"},
+          {"id": "gfe00001", "kind": "fire_extinguisher", "x": 240, "y": 350, "w": 40, "h": 70, "rotation": 0, "text": null},
+          {"id": "gpr00001", "kind": "parking", "x": 290, "y": 350, "w": 90, "h": 90, "rotation": 0, "text": null, "color": "#2563eb"},
+          {"id": "gar00001", "kind": "arrow", "x": 400, "y": 380, "w": 110, "h": 40, "rotation": 315, "text": "לבר"},
+          {"id": "gou00001", "kind": "outdoor", "x": 40, "y": 490, "w": 90, "h": 70, "rotation": 0, "text": null},
+          {"id": "ght00001", "kind": "heater", "x": 150, "y": 490, "w": 60, "h": 60, "rotation": 0, "text": null},
+          {"id": "gac00001", "kind": "fan_ac", "x": 660, "y": 60, "w": 110, "h": 50, "rotation": 0, "text": null},
+          {"id": "gtre0001", "kind": "tree", "x": 1040, "y": 220, "w": 120, "h": 120, "rotation": 0, "text": null},
+          {"id": "gpln0001", "kind": "planter", "x": 40, "y": 740, "w": 320, "h": 36, "rotation": 0, "text": null},
+          {"id": "ggw00001", "kind": "green_wall", "x": 640, "y": 440, "w": 400, "h": 24, "rotation": 0, "text": null},
+          {"id": "ghd00001", "kind": "hedge", "x": 455, "y": 610, "w": 260, "h": 30, "rotation": 90, "text": null, "color": "#166534"},
+          {"id": "gfl00001", "kind": "flowers", "x": 700, "y": 330, "w": 60, "h": 60, "rotation": 0, "text": null, "color": "#db2777"},
+          {"id": "gplL0001", "kind": "plant", "x": 230, "y": 600, "w": 80, "h": 80, "rotation": 0, "text": null, "variant": "large"},
+          {"id": "gplS0001", "kind": "plant", "x": 330, "y": 640, "w": 36, "h": 36, "rotation": 0, "text": null, "variant": "small"},
+          {"id": "gbrc0001", "kind": "bar", "x": 660, "y": 500, "w": 160, "h": 50, "rotation": 0, "text": null, "variant": "cocktail"},
+          {"id": "gbrb0001", "kind": "bar", "x": 840, "y": 500, "w": 160, "h": 50, "rotation": 0, "text": null, "variant": "beer"},
+          {"id": "gbrw0001", "kind": "bar", "x": 1020, "y": 500, "w": 160, "h": 50, "rotation": 0, "text": null, "variant": "wine"},
+          {"id": "gdrm0001", "kind": "door", "x": 760, "y": 770, "w": 140, "h": 30, "rotation": 0, "text": null, "variant": "main"},
+          {"id": "gdrs0001", "kind": "door", "x": 1110, "y": 685, "w": 120, "h": 30, "rotation": 90, "text": null, "variant": "side"},
+          {"id": "gdst0001", "kind": "door", "x": 1040, "y": 8, "w": 110, "h": 28, "rotation": 0, "text": null, "variant": "staff"}
+        ]
+      }
     }
   ],
   "tables": [
     {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a001", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 1, "name": null, "seats": 4, "shape": "round", "x": 260, "y": 420, "width": 84, "height": 84, "rotation": 0},
     {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a002", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 2, "name": null, "seats": 4, "shape": "square", "x": 420, "y": 400, "width": 84, "height": 84, "rotation": 0},
     {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a003", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 3, "name": "חלון", "seats": 6, "shape": "rect", "x": 560, "y": 300, "width": 126, "height": 67, "rotation": 90},
-    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a004", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 4, "name": null, "seats": 2, "shape": "round", "x": 720, "y": 280, "width": 70, "height": 70, "rotation": 0}
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a004", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 4, "name": null, "seats": 2, "shape": "round", "x": 720, "y": 280, "width": 70, "height": 70, "rotation": 0},
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a005", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d002", "number": 5, "name": null, "seats": 4, "shape": "round", "x": 120, "y": 600, "width": 84, "height": 84, "rotation": 0},
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a006", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d002", "number": 6, "name": "VIP", "seats": 4, "shape": "square", "x": 800, "y": 200, "width": 90, "height": 90, "rotation": 0}
   ],
   "cancelReasons": [],
   "lockMinutes": 2

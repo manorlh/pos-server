@@ -57,6 +57,12 @@ SKETCH_KINDS = (
     "logo",
     # Sketch schema 2 — the decor symbols (specs/table-map-decor.md): the DJ booth.
     "dj_booth",
+    # Sketch schema 3 (P:/specs/table-map-decor-v3.md): service, guests, atmosphere, safety,
+    # greenery, the arrow and the coloured area — app/schemas/tables.py SKETCH_KINDS_3.
+    "service_station", "coffee_station", "buffet", "dessert_station", "display_fridge", "elevator",
+    "kids_corner", "smoking", "no_smoking", "coat_check", "waiting_area", "tv", "speaker", "pickup",
+    "delivery_exit", "trash", "sink", "first_aid", "fire_extinguisher", "parking", "outdoor", "heater",
+    "fan_ac", "arrow", "tree", "planter", "green_wall", "hedge", "flowers", "area",
 )
 TABLE_ORDER_SOURCES = ("synced", "local")
 #: What a table is for (app/services/table_policies.py): an ordinary table, the staff's

@@ -4,8 +4,9 @@
  * Drawing on a zone's floor plan ("ציור"): lines (Shift — or the angle lock — keeps them
  * at 0°/45°/90°), walls as polylines (click the corners, double-click — or Enter — to
  * finish, a click on the first corner closes the room), rectangles (outline or filled),
- * freehand strokes, text, and an eraser — in a colour and a stroke width, snapped to the
- * grid and to the ends of what is already drawn. Select moves what is picked (Shift adds
+ * freehand strokes, text, an area's polygon ("אזור": click its corners, finish as a wall —
+ * at least three; P:/specs/table-map-decor-v3.md §2) and an eraser — in a colour and a
+ * stroke width, snapped to the grid and to the ends of what is already drawn. Select moves what is picked (Shift adds
  * to the pick); a line's ends are dragged by their handles. Copy, paste, duplicate,
  * delete, undo and redo, by button and by key (Ctrl+Z, Ctrl+Y, Ctrl+C, Ctrl+V, Ctrl+D,
  * Delete). Everything is a sketch element saved with the zone; the till draws the same
@@ -19,6 +20,7 @@ import {
   Copy,
   CopyPlus,
   Eraser,
+  Hexagon,
   Minus,
   MousePointer2,
   Pencil,
@@ -31,11 +33,13 @@ import {
   Undo2,
 } from 'lucide-react';
 import {
+  AREA_FILL_DEFAULT,
   DRAW_COLOR_KEYS,
   DRAW_COLORS,
   DRAW_STROKES,
   MAX_POINTS,
   SKETCH_DEFAULT_TEXT,
+  areaFromCorners,
   endpoints,
   hasPoints,
   hitTest,
@@ -57,17 +61,20 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-export type DrawTool = 'select' | 'line' | 'polyline' | 'rect' | 'freehand' | 'text' | 'eraser';
-const TOOLS: DrawTool[] = ['select', 'line', 'polyline', 'rect', 'freehand', 'text', 'eraser'];
+export type DrawTool = 'select' | 'line' | 'polyline' | 'rect' | 'area' | 'freehand' | 'text' | 'eraser';
+const TOOLS: DrawTool[] = ['select', 'line', 'polyline', 'rect', 'area', 'freehand', 'text', 'eraser'];
 const TOOL_ICON: Record<DrawTool, typeof Minus> = {
   select: MousePointer2,
   line: Minus,
   polyline: Spline,
   rect: Square,
+  area: Hexagon,
   freehand: Pencil,
   text: Type,
   eraser: Eraser,
 };
+/** The tools that place corners one click at a time: a wall, an area's polygon. */
+const byCorners = (tool: DrawTool) => tool === 'polyline' || tool === 'area';
 
 const HISTORY_MAX = 100;
 const GRID = 10;
@@ -202,16 +209,25 @@ export function useDrawTools({
     put([...elements(), el]);
   };
 
-  // ── A wall: corners, then finished ──────────────────────────────────────────
+  // ── A wall (or an area's polygon): corners, then finished ───────────────────
   const finishWall = useCallback(
     (pts: Pt[]) => {
       setCorners([]);
       setHover(null);
+      if (tool === 'area') {
+        // An area of three corners at least, picked when made (its fill and name: "סקיצה").
+        const area = areaFromCorners(pts);
+        if (area) {
+          add(area);
+          setSelected([area.id]);
+        }
+        return;
+      }
       if (pts.length < 2) return;
       add(withPoints(base('polyline'), pts));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [color, width],
+    [color, width, tool],
   );
 
   // ── Pointer ─────────────────────────────────────────────────────────────────
@@ -238,7 +254,8 @@ export function useDrawTools({
         changeDraft(withPoints(base('freehand'), [start, start]));
         break;
       }
-      case 'polyline': {
+      case 'polyline':
+      case 'area': {
         const last = corners[corners.length - 1] ?? null;
         const q = place(p, last, e.shiftKey);
         // A click on the first corner closes the room.
@@ -327,7 +344,7 @@ export function useDrawTools({
   const onMove = (e: React.PointerEvent) => {
     if (!active) return;
     const p = toCanvas(e);
-    if (tool === 'polyline' && corners.length) {
+    if (byCorners(tool) && corners.length) {
       setHover(place(p, corners[corners.length - 1], e.shiftKey));
     }
     const d = drag.current;
@@ -411,7 +428,7 @@ export function useDrawTools({
   };
 
   const onDoubleClick = () => {
-    if (active && tool === 'polyline') finishWall(corners);
+    if (active && byCorners(tool)) finishWall(corners);
   };
 
   // ── The pick: copy, paste, duplicate, delete, its colour and width ──────────
@@ -471,7 +488,7 @@ export function useDrawTools({
   };
 
   const chooseTool = (t: DrawTool) => {
-    if (corners.length >= 2) finishWall(corners);
+    if (corners.length >= (tool === 'area' ? 3 : 2)) finishWall(corners);
     else setCorners([]);
     changeDraft(null);
     setHover(null);
@@ -683,15 +700,27 @@ export function DrawOverlay({
       {tools.draft ? <g opacity={0.85}>{renderShape(tools.draft)}</g> : null}
       {tools.corners.length ? (
         <g pointerEvents="none">
-          <polyline
-            points={[...tools.corners, ...(tools.hover ? [tools.hover] : [])].map((p) => `${p.x},${p.y}`).join(' ')}
-            fill="none"
-            stroke={tools.color}
-            strokeWidth={strokeWidthOf(tools)}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity={0.8}
-          />
+          {tools.tool === 'area' ? (
+            // An area in the making: its polygon so far, in an area's fill.
+            <polygon
+              points={[...tools.corners, ...(tools.hover ? [tools.hover] : [])].map((p) => `${p.x},${p.y}`).join(' ')}
+              fill={AREA_FILL_DEFAULT}
+              fillOpacity={0.25}
+              stroke={AREA_FILL_DEFAULT}
+              strokeWidth={2 * perPx}
+              strokeDasharray={`${10 * perPx} ${6 * perPx}`}
+            />
+          ) : (
+            <polyline
+              points={[...tools.corners, ...(tools.hover ? [tools.hover] : [])].map((p) => `${p.x},${p.y}`).join(' ')}
+              fill="none"
+              stroke={tools.color}
+              strokeWidth={strokeWidthOf(tools)}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={0.8}
+            />
+          )}
           {tools.corners.map((p, i) => (
             <circle key={i} cx={p.x} cy={p.y} r={r * 0.6} fill="#ffffff" stroke="#2563eb" strokeWidth={2 * perPx} />
           ))}

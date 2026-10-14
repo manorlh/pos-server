@@ -323,29 +323,55 @@ SKETCH_KINDS = (
     # Sketch schema 2 ("סמלים", docs: specs/table-map-decor.md): the DJ booth.
     "dj_booth",
 )
+#: Sketch schema 3 (P:/specs/table-map-decor-v3.md §1, §2): the symbols of service, guests,
+#: atmosphere and safety, the greenery, the direction arrow (at any angle), and the coloured
+#: area ("אזור": a rectangle or a polygon, under everything).
+SKETCH_KINDS_3 = (
+    "service_station", "coffee_station", "buffet", "dessert_station", "display_fridge", "elevator",
+    "kids_corner", "smoking", "no_smoking", "coat_check", "waiting_area", "tv", "speaker", "pickup",
+    "delivery_exit", "trash", "sink", "first_aid", "fire_extinguisher", "parking", "outdoor", "heater",
+    "fan_ac", "arrow",
+    # "צמחייה" (the owner, 14.10): a tree, a planter, a green wall, a hedge, flowers.
+    "tree", "planter", "green_wall", "hedge", "flowers",
+    "area",
+)
+SKETCH_KINDS = SKETCH_KINDS + SKETCH_KINDS_3
 #: What a variant means on each kind that takes one; any other kind keeps none.
 #: counter — the bar's shape; restroom — whose (none: the both-sexes sign); exit — a plain
-#: exit ("יציאה"; none: the emergency exit, "יציאת חירום").
+#: exit ("יציאה"; none: the emergency exit, "יציאת חירום"); bar ("דלפק") — what it pours (none:
+#: a plain bar); door — which entrance (none: "כניסה"); plant — its size (none: the usual pot).
 SKETCH_VARIANTS = {
     "counter": ("straight", "L", "U"),
     "restroom": ("men", "women", "accessible"),
     "exit": ("plain",),
+    "bar": ("cocktail", "beer", "wine"),
+    "door": ("main", "side", "staff"),
+    "plant": ("large", "small"),
 }
+SKETCH_VARIANT_VALUES = tuple(dict.fromkeys(v for values in SKETCH_VARIANTS.values() for v in values))
 #: The sketch schema this server speaks. A till that sends a lower one (or none — every
-#: till before the decor symbols) cannot keep what came with schema 2: its map designer
+#: till before the decor symbols) cannot keep what came after its own: its map designer
 #: drops kinds and variants it does not know when it saves. Those are kept for it
 #: (app/services/tables.py, keep_decor_unknown_to_till). A new kind or variant: add it
 #: here with the schema it comes with, and raise SKETCH_SCHEMA (the till's too).
-SKETCH_SCHEMA = 2
+SKETCH_SCHEMA = 3
 #: The schema each kind / variant came with (absent: 1, every till knows it).
-SKETCH_KIND_SINCE = {"dj_booth": 2}
+SKETCH_KIND_SINCE = {"dj_booth": 2, **{kind: 3 for kind in SKETCH_KINDS_3}}
 SKETCH_VARIANT_SINCE = {
     ("counter", "U"): 2,
     ("restroom", "men"): 2,
     ("restroom", "women"): 2,
     ("restroom", "accessible"): 2,
     ("exit", "plain"): 2,
+    **{(kind, v): 3 for kind in ("bar", "door", "plant") for v in SKETCH_VARIANTS[kind]},
 }
+#: An area's fill when none was sent (the first of the dashboard's palette: green) and its
+#: opacity, in percent (10–60; 30 when none was sent). Stored on every area, so the till
+#: never has to guess.
+SKETCH_AREA_FILL_DEFAULT = "#22c55e"
+SKETCH_AREA_OPACITY_MIN = 10
+SKETCH_AREA_OPACITY_MAX = 60
+SKETCH_AREA_OPACITY_DEFAULT = 30
 #: `clean` — the flat, neutral floor (the default when nothing is chosen).
 SKETCH_BACKGROUNDS = ("clean", "wood", "tiles", "light", "dark", "image")
 SketchBackground = Literal["clean", "wood", "tiles", "light", "dark", "image"]
@@ -358,11 +384,8 @@ class SketchElementIn(_Camel):
     """One shape of a zone's sketch, in the zone's canvas units."""
 
     id: str = Field(..., min_length=1, max_length=64)
-    kind: Literal[
-        "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
-        "stairs", "cashier", "host", "exit", "stage", "sofa",
-        "line", "polyline", "freehand", "rect", "logo", "dj_booth",
-    ]
+    #: One of SKETCH_KINDS (schema 3 included).
+    kind: Literal[SKETCH_KINDS]  # type: ignore[valid-type]
     x: float = Field(..., ge=-100, le=5100)
     y: float = Field(..., ge=-100, le=5100)
     w: float = Field(..., ge=0, le=5200)
@@ -371,18 +394,25 @@ class SketchElementIn(_Camel):
     text: Optional[str] = Field(None, max_length=60)
     #: A bar counter ("counter"): straight, L- or U-shaped, with this many stools in front.
     #: Restrooms: "men" / "women" / "accessible" (none: both). An exit: "plain" (none: the
-    #: emergency exit). See SKETCH_VARIANTS; on any other kind it is not kept.
-    variant: Optional[Literal["straight", "L", "U", "men", "women", "accessible", "plain"]] = None
+    #: emergency exit). A bar: cocktail / beer / wine. An entrance: main / side / staff. A
+    #: plant: large / small. See SKETCH_VARIANTS; on any other kind it is not kept.
+    variant: Optional[Literal[SKETCH_VARIANT_VALUES]] = None  # type: ignore[valid-type]
     stools: int = Field(0, ge=0, le=40)
     #: A drawn line, polyline or freehand stroke: its points as x, y, x, y… (canvas units).
+    #: An area: its polygon's corners (none: the rectangle x, y, w, h).
     points: Optional[List[float]] = Field(None, max_length=SKETCH_POINTS_MAX)
     #: A drawn shape's colour ("#rrggbb"), stroke width (canvas units) and, for a
-    #: rectangle, whether it is filled.
+    #: rectangle, whether it is filled. On a symbol, its own colour (none: the theme's); on
+    #: a label, its words'; on an area, its name's.
     color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     stroke: Optional[float] = Field(None, ge=0.5, le=60)
     filled: Optional[bool] = None
     #: A logo's own picture (an uploaded image's URL); none — the business's logo.
     src: Optional[str] = Field(None, max_length=SKETCH_SRC_MAX)
+    #: An area ("אזור"): its fill ("#rrggbb", from the dashboard's palette) and how opaque it
+    #: is, in percent (10–60). On any other kind neither is kept.
+    fill: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    opacity: Optional[int] = Field(None, ge=SKETCH_AREA_OPACITY_MIN, le=SKETCH_AREA_OPACITY_MAX)
 
     @field_validator("text", mode="before")
     @classmethod
@@ -418,6 +448,8 @@ class SketchElementIn(_Camel):
     def _drawn_need_points(self):
         if self.kind in ("line", "polyline", "freehand") and not self.points:
             raise ValueError(f"a {self.kind} needs points")
+        if self.kind == "area" and self.points is not None and len(self.points) < 6:
+            raise ValueError("an area's polygon has at least three corners")
         allowed = SKETCH_VARIANTS.get(self.kind)
         if allowed is not None and self.variant is not None and self.variant not in allowed:
             raise ValueError(f"a {self.kind} is {', '.join(allowed)}, not {self.variant}")

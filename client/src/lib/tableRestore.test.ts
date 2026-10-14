@@ -68,6 +68,25 @@ describe('edits', () => {
     assert.equal(editError('restoreWindow', 'hours:12'), null);
     assert.equal(editError('restoreWindow', 'hours:0'), 'window');
     assert.equal(editError('restoreWindow', ''), null);
+    // The map's symbols' size (table-map-decor-v3 §3): a whole 70–150.
+    assert.equal(editError('mapSymbolScale', '100'), null);
+    assert.equal(editError('mapSymbolScale', ' 150 '), null);
+    assert.equal(editError('mapSymbolScale', '69'), 'scale');
+    assert.equal(editError('mapSymbolScale', '151'), 'scale');
+    assert.equal(editError('mapSymbolScale', '100.5'), 'scale');
+    assert.equal(editError('mapSymbolScale', 'גדול'), 'scale');
+    assert.equal(editError('mapSymbolScale', ''), null);
+  });
+
+  it('sends a whole number typed for an integer as a number', () => {
+    assert.equal(valueOf('mapSymbolScale', 'integer', '120'), 120);
+    assert.equal(valueOf('mapSymbolScale', 'integer', ' 80 '), 80);
+    assert.equal(valueOf('mapSymbolScale', 'integer', ''), null);
+    // Not a whole number: sent as typed, for the server to refuse (the editor shows why first).
+    assert.equal(valueOf('mapSymbolScale', 'integer', '1.5'), '1.5');
+    assert.equal(valueOf('mapDecor', 'enum', 'symbols'), 'symbols');
+    assert.deepEqual(changedValues({ mapSymbolScale: 100 }, { mapSymbolScale: '100' }, { mapSymbolScale: 'integer' }), {});
+    assert.deepEqual(changedValues({}, { mapSymbolScale: '130' }, { mapSymbolScale: 'integer' }), { mapSymbolScale: 130 });
   });
 
   it('sends only what changed, typed', () => {

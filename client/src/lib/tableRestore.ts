@@ -124,23 +124,35 @@ export function toText(value: unknown): string {
   return String(value);
 }
 
-/** Back to the value the server takes: null clears the level's own value. */
+/**
+ * Back to the value the server takes: null clears the level's own value; a whole number typed for an
+ * integer parameter is a number (the server refuses "100" for 100).
+ */
 export function fromText(valueType: string, text: string): unknown {
   if (text === '') return null;
   if (valueType === 'boolean') return text === 'true';
+  if (valueType === 'integer' && /^-?\d+$/.test(text.trim())) return Number(text.trim());
   return text;
 }
+
+/** The symbols' size on the till's map, percent (pos-server app/services/table_map_display.py). */
+export const MAP_SYMBOL_SCALE_RANGE = { min: 70, max: 150 } as const;
 
 /**
  * Why an edited text would be refused (the server refuses it too), or null. `INHERIT` (an empty
  * text) is always fine; an empty methods list is written as the empty list, not as inherit.
  */
-export function editError(key: string, text: string): 'prefix' | 'window' | null {
+export function editError(key: string, text: string): 'prefix' | 'window' | 'scale' | null {
   if (text === '') return null;
   if (key === 'restoredTablePrefix') return text.trim() === '' || text.length > PREFIX_MAX ? 'prefix' : null;
   if (key === 'restoreWindow') {
     const { kind, hours } = parseWindow(text);
     return formatWindow(kind, hours) === text.trim() ? null : 'window';
+  }
+  if (key === 'mapSymbolScale') {
+    const n = Number(text.trim());
+    const { min, max } = MAP_SYMBOL_SCALE_RANGE;
+    return /^\d+$/.test(text.trim()) && n >= min && n <= max ? null : 'scale';
   }
   return null;
 }

@@ -1939,6 +1939,13 @@ from app.services.category_display import PARAMETER_SPECS as _CATEGORY_DISPLAY_S
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CATEGORY_DISPLAY_SPECS)
 
+# "מקרא ותצוגה" of the tables map (P:/specs/table-map-decor-v3.md §3, app/services/table_map_display.py):
+# `mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale` — read by the till only. Edited on the
+# dashboard's tables page too (app/services/table_restore.py `page_keys`, group `mapDisplay`).
+from app.services.table_map_display import PARAMETER_SPECS as _MAP_DISPLAY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _MAP_DISPLAY_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2005,6 +2012,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_restore.VALIDATED_KEYS and value is not None:
         try:
             return table_restore.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מקרא ותצוגה" of the tables map: the codes the till parses, the symbols' size 70–150.
+    from app.services import table_map_display
+
+    if key in table_map_display.VALIDATED_KEYS and value is not None:
+        try:
+            return table_map_display.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

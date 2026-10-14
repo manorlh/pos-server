@@ -9,19 +9,41 @@
  *   selected table, the corner handle resizes (all selected tables take the same size),
  *   double-click opens a table's details. The bar below sets size, shape and rotation for
  *   the selection and duplicates it.
- * * **Sketch** — start from a ready-made template, add shapes from the palette, drag
- *   them, resize them from the corner, set their text and rotation.
- * * **Draw** — lines, walls, rectangles, freehand, text and an eraser, in a colour and a
- *   width (./sketch-draw.tsx). Drawings lie under the tables, like the sketch.
+ * * **Sketch** — start from a ready-made template, add shapes from the palette (its tabs —
+ *   service, guests, atmosphere, safety, structure — and its search; sketch schema 3,
+ *   P:/specs/table-map-decor-v3.md §4), drag them, resize them from the corner, set their
+ *   text, rotation, variant and colour, duplicate them in a row; an area's fill and opacity.
+ * * **Draw** — lines, walls, rectangles, an area's polygon, freehand, text and an eraser, in
+ *   a colour and a width (./sketch-draw.tsx). Drawings lie under the tables, like the sketch.
  *
  * Undo and redo (Ctrl+Z / Ctrl+Y, and the buttons) step through the sketch's changes.
  * Nothing is written until "שמור" (positions in one write, the sketch with the zone).
- * Snap to grid rounds every move and size to 10 canvas units.
+ * Snap to grid rounds every move and size to 10 canvas units; snap to the walls lays a
+ * moved shape flush against a wall it comes near. "תצוגה בקופה" shows the map as the till
+ * will (./sketch-preview.tsx). The shapes are drawn by ./sketch-shapes.tsx.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Brush, Copy, Grid3x3, ImageUp, Maximize2, MousePointer2, PenTool, Redo2, RotateCcw, RotateCw, Save, Trash2, Undo2 } from 'lucide-react';
+import {
+  Brush,
+  Copy,
+  CopyPlus,
+  Grid3x3,
+  ImageUp,
+  Magnet,
+  Maximize2,
+  MonitorSmartphone,
+  MousePointer2,
+  PenTool,
+  Redo2,
+  RotateCcw,
+  RotateCw,
+  Save,
+  Search,
+  Trash2,
+  Undo2,
+} from 'lucide-react';
 import { uploadProductImage } from '@/lib/api';
 import {
   createTable,
@@ -33,24 +55,42 @@ import {
   type TableZone,
 } from '@/lib/tablesApi';
 import {
+  AREA_FILL_NAMES,
+  AREA_FILLS,
+  AREA_OPACITY,
+  DUPLICATE_DIRECTIONS,
+  DUPLICATE_MAX,
+  GREENERY_KINDS,
+  PALETTE,
+  PALETTE_TAB_NAMES,
+  PALETTE_TABS,
+  VARIANT_CHOICES,
+  VARIANT_NAMES,
+  WALL_KINDS,
   backgroundOf,
+  clampOpacity,
   clampSize,
   counterGeometry,
+  defaultText,
+  drawOrder,
+  duplicateMany,
+  entryName,
   hasPoints,
   isDrawn,
+  isPolygonArea,
   newElement,
   newElementId,
   PLAIN,
+  resized,
   rotatePoint,
+  searchPalette,
   SKETCH_BACKGROUNDS,
-  SKETCH_STRUCTURE_KINDS,
-  SKETCH_STYLE,
-  SKETCH_SYMBOL_KINDS,
   SKETCH_TEMPLATES,
-  defaultText,
-  styleOf,
+  snapToWalls,
+  translated,
+  turnedBox,
   variantOf,
-  type SketchVariant,
+  wallBoxes,
   CHAIR_LOOK,
   CLEAN,
   chairLayout,
@@ -58,6 +98,9 @@ import {
   templateSketch,
   TILE,
   WOOD,
+  type DuplicateDirection,
+  type PaletteEntry,
+  type PaletteTab,
   type Sketch,
   type SketchBackground,
   type SketchElement,
@@ -71,6 +114,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DrawOverlay, DrawPanel, useDrawTools, useSketchHistory } from './sketch-draw';
+import { FloorDefs, KindIcon, SketchShape, hasSymbol } from './sketch-shapes';
+import { TillPreview } from './sketch-preview';
 
 type Pos = { x: number; y: number; width: number; height: number; rotation: number };
 type Pt = { x: number; y: number };
@@ -82,12 +127,17 @@ type Drag =
 
 const GRID = 10;
 const SHAPES: TableShape[] = ['round', 'square', 'rect'];
-/** The variants offered for a selected shape, in this order (null: the kind's default). */
-const VARIANT_CHOICES: Partial<Record<SketchKind, (SketchVariant | null)[]>> = {
-  restroom: [null, 'men', 'women', 'accessible'],
-  exit: ['plain', null],
-  counter: ['straight', 'L', 'U'],
-};
+/** A symbol's own colours (v3 §4): none is the theme's. */
+const SYMBOL_COLORS = ['#0f172a', '#2563eb', '#0d9488', '#16a34a', '#d97706', '#dc2626', '#db2777', '#7c3aed', '#6b4423'] as const;
+const SELECT =
+  'border-input bg-background h-8 rounded-md border px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+/** The kinds with no words of their own: the room's frame, a bar with stools, the logo, the greenery. */
+const NO_TEXT = new Set<SketchKind>(['wall', 'window', 'column', 'counter', 'logo', ...GREENERY_KINDS]);
+
+/** Who takes a colour of their own: the symbols, the greenery, the arrow, a text. */
+function takesColour(el: SketchElement): boolean {
+  return hasSymbol(el.kind, el.variant) || GREENERY_KINDS.includes(el.kind) || el.kind === 'arrow' || el.kind === 'label';
+}
 
 export function MapEditor({
   zone,
@@ -97,6 +147,7 @@ export function MapEditor({
   onError,
   onDirtyChange,
   logoUrl = null,
+  initialMode = 'tables',
 }: {
   zone: TableZone;
   tables: DiningTable[];
@@ -106,6 +157,8 @@ export function MapEditor({
   onDirtyChange?: (dirty: boolean) => void;
   /** The business's logo: what a "logo" shape shows when it has no picture of its own. */
   logoUrl?: string | null;
+  /** The mode it opens in: "סקיצה" right after a zone of squares became a map. */
+  initialMode?: 'tables' | 'sketch' | 'draw';
 }) {
   const t = useTranslations('tables');
   const cw = zone.canvasWidth;
@@ -113,8 +166,15 @@ export function MapEditor({
   const boxRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [boxWidth, setBoxWidth] = useState(800);
-  const [mode, setMode] = useState<'tables' | 'sketch' | 'draw'>('tables');
+  const [mode, setMode] = useState<'tables' | 'sketch' | 'draw'>(initialMode);
   const [snap, setSnap] = useState(true);
+  /** "הצמדה לקירות": a shape moved near a wall lies flush against it. */
+  const [wallSnap, setWallSnap] = useState(true);
+  const [paletteTab, setPaletteTab] = useState<PaletteTab>('guests');
+  const [query, setQuery] = useState('');
+  const [preview, setPreview] = useState(false);
+  /** "שכפול מרובה": how many copies, which way, how far apart (canvas units). */
+  const [dup, setDup] = useState<{ count: number; dir: DuplicateDirection; gap: number }>({ count: 3, dir: 'left', gap: 10 });
   const [moved, setMoved] = useState<Record<string, Pos>>({});
   const [selected, setSelected] = useState<string[]>([]);
   const [sketch, setSketch] = useState<Sketch>(() => ({
@@ -278,21 +338,22 @@ export function MapEditor({
         updates[id] = { ...cur, width: ww, height: hh };
       }
       setPos(updates);
-    } else if (d.type === 'element' || d.type === 'element-size') {
+    } else if (d.type === 'element') {
       const f = d.from;
-      editSketch((els) =>
-        els.map((el) =>
-          el.id !== d.id
-            ? el
-            : d.type === 'element'
-              ? hasPoints(f.kind)
-                ? translatedTo(f, snapV(f.x + dx) - f.x, snapV(f.y + dy) - f.y)
-                : { ...el, x: snapV(f.x + dx), y: snapV(f.y + dy) }
-              : hasPoints(f.kind)
-                ? el
-                : { ...el, w: Math.max(2, snapV(f.w + dx)), h: Math.max(2, snapV(f.h + dy)) },
-        ),
-      );
+      // On the grid; then, near a wall, flush against it (not a wall itself, nor an area).
+      let next = translated(f, snapV(f.x + dx) - f.x, snapV(f.y + dy) - f.y);
+      if (wallSnap && !WALL_KINDS.includes(f.kind) && f.kind !== 'area' && !hasPoints(f.kind)) {
+        const s = snapToWalls(turnedBox(next), wallBoxes(sketchRef.current.elements, f.id), Math.max(GRID, 14 * perPx));
+        if (s.dx || s.dy) next = translated(next, s.dx, s.dy);
+      }
+      editSketch((els) => els.map((el) => (el.id !== d.id ? el : { ...el, x: next.x, y: next.y, ...(next.points ? { points: next.points } : {}) })));
+    } else if (d.type === 'element-size') {
+      const f = d.from;
+      // A drawn line keeps its ends; an area's polygon is scaled with its box.
+      if (!hasPoints(f.kind)) {
+        const next = resized(f, snapV(f.w + dx), snapV(f.h + dy));
+        editSketch((els) => els.map((el) => (el.id !== d.id ? el : { ...el, w: next.w, h: next.h, ...(next.points ? { points: next.points } : {}) })));
+      }
     }
   };
 
@@ -461,12 +522,29 @@ export function MapEditor({
     setSelectedEl(null);
   };
 
-  const addElement = (kind: SketchKind) => {
-    const el = newElement(kind, cw, ch);
+  const addElement = ({ kind, variant }: PaletteEntry) => {
+    const el = newElement(kind, cw, ch, variant);
     history.snapshot();
     editSketch((els) => [...els, el]);
     setSelectedEl(el.id);
   };
+
+  /** An area drawn corner by corner: the drawing mode's area tool. */
+  const drawArea = () => {
+    setMode('draw');
+    draw.chooseTool('area');
+  };
+
+  /** "שכפול מרובה": copies of the picked shape in a row, the last of them picked. */
+  const duplicateRow = (el: SketchElement) => {
+    const copies = duplicateMany(el, dup.count, dup.dir, dup.gap, cw, ch);
+    if (!copies.length) return;
+    history.snapshot();
+    editSketch((els) => [...els, ...copies]);
+    setSelectedEl(copies[copies.length - 1].id);
+  };
+
+  const paletteEntries = query.trim() ? searchPalette(query) : PALETTE[paletteTab];
 
   /** An element changed from its panel: one step back per element, however many keys. */
   const patchById = (id: string, patch: Partial<SketchElement>) => {
@@ -502,6 +580,16 @@ export function MapEditor({
         <Button size="sm" variant={snap ? 'secondary' : 'ghost'} onClick={() => setSnap((s) => !s)}>
           <Grid3x3 className="h-4 w-4 me-1" />
           {snap ? t('sketch.snapOn') : t('sketch.snapOff')}
+        </Button>
+        {mode !== 'tables' ? (
+          <Button size="sm" variant={wallSnap ? 'secondary' : 'ghost'} onClick={() => setWallSnap((s) => !s)} title={t('sketch.snapWallsHint')}>
+            <Magnet className="h-4 w-4 me-1" />
+            {wallSnap ? t('sketch.snapWallsOn') : t('sketch.snapWallsOff')}
+          </Button>
+        ) : null}
+        <Button size="sm" variant={preview ? 'default' : 'outline'} onClick={() => setPreview((p) => !p)}>
+          <MonitorSmartphone className="h-4 w-4 me-1" />
+          {t('sketch.preview.button')}
         </Button>
         <Button
           size="sm"
@@ -599,35 +687,62 @@ export function MapEditor({
               {t('sketch.clear')}
             </Button>
           </div>
-          {(
-            [
-              ['symbols', SKETCH_SYMBOL_KINDS],
-              ['structure', SKETCH_STRUCTURE_KINDS],
-            ] as const
-          ).map(([row, kinds]) => (
-            // "סמלים" — what guests and staff find their way by; "מבנה" — the room itself.
-            <div key={row} className="flex flex-wrap items-center gap-1">
-              <span className="text-xs text-muted-foreground me-1">{t(`sketch.palette.${row}`)}</span>
-              {kinds.map((kind) => {
-                // The swatch in the colours a new one gets (an exit from here is the plain one).
-                const look = styleOf({ kind, variant: kind === 'exit' ? 'plain' : null });
-                return (
-                  <Button key={kind} size="sm" variant="secondary" onClick={() => addElement(kind)}>
-                    <span
-                      className="me-1 inline-block h-3 w-3 rounded-sm border"
-                      style={{ background: look.fill, borderColor: look.stroke }}
-                    />
-                    {t(`sketch.kind.${kind}`)}
-                  </Button>
-                );
-              })}
+          {/* The palette (v3 §4): its tabs, or what the search finds across them. */}
+          <div className="flex flex-wrap items-center gap-1 border-t pt-2">
+            <span className="text-xs text-muted-foreground me-1">{t('sketch.add')}</span>
+            {PALETTE_TABS.map((tab) => (
+              <Button
+                key={tab}
+                size="sm"
+                variant={!query.trim() && paletteTab === tab ? 'default' : 'ghost'}
+                className="h-8"
+                onClick={() => {
+                  setPaletteTab(tab);
+                  setQuery('');
+                }}
+              >
+                {PALETTE_TAB_NAMES[tab]}
+              </Button>
+            ))}
+            <div className="relative ms-auto">
+              <Search className="pointer-events-none absolute start-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-8 w-48 ps-7"
+                value={query}
+                placeholder={t('sketch.search')}
+                aria-label={t('sketch.search')}
+                onChange={(e) => setQuery(e.target.value)}
+              />
             </div>
-          ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {paletteEntries.length ? (
+              paletteEntries.map((p) => (
+                <Button key={`${p.kind}.${p.variant ?? ''}`} size="sm" variant="secondary" className="h-9" onClick={() => addElement(p)}>
+                  <KindIcon kind={p.kind} variant={p.variant} size={20} />
+                  <span className="ms-1">{entryName(p.kind, p.variant)}</span>
+                </Button>
+              ))
+            ) : (
+              <span className="text-xs text-muted-foreground">{t('sketch.searchNone')}</span>
+            )}
+            {!query.trim() && paletteTab === 'structure' ? (
+              // An area of any shape: drawn corner by corner.
+              <Button size="sm" variant="outline" className="h-9" onClick={drawArea} title={t('sketch.areaPolygonHint')}>
+                <KindIcon kind="area" size={20} />
+                <span className="ms-1">{t('sketch.areaPolygon')}</span>
+              </Button>
+            ) : null}
+          </div>
           {element ? (
             <div className="flex flex-wrap items-end gap-2 border-t pt-2">
-              <span className="text-sm font-medium">{t(`sketch.kind.${element.kind}`)}</span>
+              <span className="inline-flex items-center gap-1 text-sm font-medium">
+                <KindIcon kind={element.kind} variant={element.variant ?? null} size={22} fill={element.fill} />
+                {entryName(element.kind, element.kind === 'counter' ? null : variantOf(element.kind, element.variant))}
+              </span>
               {VARIANT_CHOICES[element.kind] ? (
-                // Restrooms: whose; an exit: plain or the emergency one; a bar: its shape.
+                // Restrooms: whose; an exit: plain or the emergency one; a bar with stools: its shape;
+                // a bar: what it pours; an entrance: which; a plant: its size.
                 <div className="flex gap-1">
                   {VARIANT_CHOICES[element.kind]!.map((v) => (
                     <Button
@@ -636,7 +751,7 @@ export function MapEditor({
                       variant={variantOf(element.kind, element.variant) === v ? 'default' : 'outline'}
                       onClick={() => patchElement({ variant: v })}
                     >
-                      {t(`sketch.variant.${element.kind}.${v ?? 'none'}`)}
+                      {VARIANT_NAMES[element.kind]?.[v ?? 'none'] ?? v}
                     </Button>
                   ))}
                 </div>
@@ -671,9 +786,9 @@ export function MapEditor({
                   onError={onError}
                 />
               ) : null}
-              {element.kind !== 'wall' && element.kind !== 'window' && element.kind !== 'plant' && element.kind !== 'column' && element.kind !== 'counter' && element.kind !== 'logo' && !isDrawn(element.kind) ? (
+              {!NO_TEXT.has(element.kind) && !isDrawn(element.kind) ? (
                 <div className="space-y-1">
-                  <Label className="text-xs">{t('sketch.text')}</Label>
+                  <Label className="text-xs">{element.kind === 'area' ? t('sketch.areaName') : t('sketch.text')}</Label>
                   <Input
                     className="h-8 w-40"
                     value={element.text ?? ''}
@@ -683,15 +798,75 @@ export function MapEditor({
                   />
                 </div>
               ) : null}
-              {!hasPoints(element.kind) ? (
+              {element.kind === 'area' ? (
+                // An area's fill (the palette) and how much of the floor shows through it.
                 <>
-                  <NumberField label={t('width')} value={element.w} onChange={(v) => patchElement({ w: Math.max(2, v) })} />
-                  <NumberField label={t('height')} value={element.h} onChange={(v) => patchElement({ h: Math.max(2, v) })} />
+                  <div className="space-y-1">
+                    <Label className="text-xs">{t('sketch.areaFill')}</Label>
+                    <div className="flex gap-1">
+                      {AREA_FILLS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          title={AREA_FILL_NAMES[c]}
+                          aria-label={AREA_FILL_NAMES[c]}
+                          onClick={() => patchElement({ fill: c })}
+                          className={`h-7 w-7 rounded-full border-2 ${element.fill === c ? 'border-slate-900 ring-2 ring-amber-300' : 'border-white'}`}
+                          style={{ background: c }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <label className="space-y-1 text-xs">
+                    <span className="block">{t('sketch.areaOpacity', { value: clampOpacity(element.opacity ?? AREA_OPACITY.default) })}</span>
+                    <input
+                      type="range"
+                      className="h-8 w-32"
+                      min={AREA_OPACITY.min}
+                      max={AREA_OPACITY.max}
+                      step={5}
+                      value={clampOpacity(element.opacity ?? AREA_OPACITY.default)}
+                      onChange={(e) => patchElement({ opacity: clampOpacity(Number(e.target.value)) })}
+                    />
+                  </label>
                 </>
               ) : null}
-              {!isDrawn(element.kind) ? (
-                // A quarter turn each click (the symbols stand square to the walls); 45° for a slant.
-                <div className="flex gap-1">
+              {takesColour(element) ? (
+                // A symbol's own colour (none: the theme's).
+                <div className="space-y-1">
+                  <Label className="text-xs">{t('sketch.color')}</Label>
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      title={t('sketch.colorTheme')}
+                      onClick={() => patchElement({ color: null })}
+                      className={`h-7 rounded-full border-2 px-2 text-[11px] ${!element.color ? 'border-slate-900 ring-2 ring-amber-300' : 'border-slate-300'}`}
+                    >
+                      {t('sketch.colorTheme')}
+                    </button>
+                    {SYMBOL_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        aria-label={c}
+                        onClick={() => patchElement({ color: c })}
+                        className={`h-7 w-7 rounded-full border-2 ${element.color === c ? 'border-slate-900 ring-2 ring-amber-300' : 'border-white'}`}
+                        style={{ background: c }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {!hasPoints(element.kind) ? (
+                <>
+                  <NumberField label={t('width')} value={element.w} onChange={(v) => patchElement(resized(element, v, element.h))} />
+                  <NumberField label={t('height')} value={element.h} onChange={(v) => patchElement(resized(element, element.w, v))} />
+                </>
+              ) : null}
+              {!isDrawn(element.kind) && !isPolygonArea(element) ? (
+                // A quarter turn each click (the symbols stand square to the walls); 45° for a slant;
+                // any angle typed (an arrow points any way).
+                <div className="flex items-end gap-1">
                   <Button
                     size="sm"
                     variant="outline"
@@ -709,13 +884,20 @@ export function MapEditor({
                   >
                     45°
                   </Button>
+                  <NumberField
+                    label={t('sketch.rotation')}
+                    value={element.rotation}
+                    allowZero
+                    onChange={(v) => patchElement({ rotation: ((Math.round(v) % 360) + 360) % 360 })}
+                  />
                 </div>
               ) : null}
               <Button
                 size="sm"
                 variant="outline"
+                title={t('sketch.duplicate')}
                 onClick={() => {
-                  const copy = { ...translatedTo(element, 20, 20), id: newElementId() };
+                  const copy = { ...translated(element, 20, 20), id: newElementId() };
                   history.snapshot();
                   editSketch((els) => [...els, copy]);
                   setSelectedEl(copy.id);
@@ -723,6 +905,34 @@ export function MapEditor({
               >
                 <Copy className="h-4 w-4" />
               </Button>
+              {/* "שכפול מרובה": copies side by side, in a row or a column. */}
+              <div className="flex items-end gap-1 rounded-md border px-1.5 py-1">
+                <NumberField
+                  label={t('sketch.duplicateCount')}
+                  value={dup.count}
+                  onChange={(v) => setDup((d) => ({ ...d, count: Math.max(1, Math.min(DUPLICATE_MAX, Math.round(v))) }))}
+                />
+                <label className="space-y-1 text-xs">
+                  <span className="block">{t('sketch.duplicateDirection')}</span>
+                  <select className={SELECT} value={dup.dir} onChange={(e) => setDup((d) => ({ ...d, dir: e.target.value as DuplicateDirection }))}>
+                    {DUPLICATE_DIRECTIONS.map((dir) => (
+                      <option key={dir} value={dir}>
+                        {t(`sketch.duplicateDir.${dir}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <NumberField
+                  label={t('sketch.duplicateGap')}
+                  value={dup.gap}
+                  allowZero
+                  onChange={(v) => setDup((d) => ({ ...d, gap: Math.max(0, Math.min(500, Math.round(v))) }))}
+                />
+                <Button size="sm" variant="outline" onClick={() => duplicateRow(element)}>
+                  <CopyPlus className="h-4 w-4 me-1" />
+                  {t('sketch.duplicateMany', { count: dup.count })}
+                </Button>
+              </div>
               <Button
                 size="sm"
                 variant="destructive"
@@ -814,12 +1024,14 @@ export function MapEditor({
           )}
           {snap ? <GridLines cw={cw} ch={ch} /> : null}
           <g opacity={mode === 'tables' ? 0.95 : 1} pointerEvents={mode === 'tables' ? 'none' : 'auto'}>
-            {sketch.elements.map((el) => (
+            {/* The areas first, under everything (v3 §2); then the rest as placed. */}
+            {drawOrder(sketch.elements).map((el) => (
               <SketchShape
                 key={el.id}
                 el={el}
                 perPx={perPx}
                 logoUrl={logoUrl}
+                logoLabel={t('sketch.kind.logo')}
                 selected={mode === 'sketch' && el.id === selectedEl}
                 onDown={(e) => (mode === 'draw' ? draw.onElementDown(e, el) : startElement(e, el))}
                 onResize={mode === 'sketch' ? (e) => startElement(e, el, true) : undefined}
@@ -830,7 +1042,7 @@ export function MapEditor({
                 tools={draw}
                 elements={sketch.elements}
                 perPx={perPx}
-                renderShape={(el) => <SketchShape el={el} perPx={perPx} logoUrl={logoUrl} />}
+                renderShape={(el) => <SketchShape el={el} perPx={perPx} logoUrl={logoUrl} logoLabel={t('sketch.kind.logo')} />}
               />
             ) : null}
           </g>
@@ -943,6 +1155,23 @@ export function MapEditor({
           </g>
         </svg>
       </div>
+      {preview ? (
+        // "תצוגה בקופה": the plan as it stands (saved or not), on the till's screens.
+        <TillPreview
+          title={zone.name}
+          elements={sketch.elements}
+          background={background}
+          backgroundUrl={zone.backgroundUrl}
+          cw={cw}
+          ch={ch}
+          tables={tables.map((tb) => {
+            const p = posOf(tb);
+            return { id: tb.id, number: tb.number, shape: tb.shape, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
+          })}
+          logoUrl={logoUrl}
+          logoLabel={t('sketch.kind.logo')}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1034,67 +1263,6 @@ function floorSwatch(bg: SketchBackground, image: string | null): React.CSSPrope
   }
 }
 
-/**
- * The floor patterns, in canvas units (the till draws the same planks and tiles): wood
- * planks with a seam at each plank, staggered end joints and a little grain; stone tiles.
- */
-export function FloorDefs() {
-  const { plank, length, tones, seam, grain } = WOOD;
-  const columns = tones.length;
-  const width = plank * columns;
-  const height = length * 2;
-  return (
-    <defs>
-      <pattern id="floor-wood" patternUnits="userSpaceOnUse" width={width} height={height}>
-        {Array.from({ length: columns }, (_, i) => {
-          const offset = (((i * 37) % 100) / 100) * length;
-          const x = i * plank;
-          return (
-            <g key={i}>
-              {[-1, 0, 1, 2].map((j) => {
-                const y = j * length - offset;
-                return (
-                  <g key={j}>
-                    <rect x={x} y={y} width={plank} height={length} fill={tones[(i * 3 + j + 4) % tones.length]} />
-                    {[0, 1, 2].map((g) => (
-                      <line
-                        key={g}
-                        x1={x + plank * (0.2 + 0.28 * g)}
-                        y1={y + length * 0.06}
-                        x2={x + plank * (0.25 + 0.28 * g)}
-                        y2={y + length * 0.94}
-                        stroke={grain}
-                        strokeWidth={1.2}
-                        opacity={0.55}
-                      />
-                    ))}
-                    <line x1={x} y1={y} x2={x + plank} y2={y} stroke={seam} strokeWidth={1.4} />
-                  </g>
-                );
-              })}
-              <line x1={x} y1={0} x2={x} y2={height} stroke={seam} strokeWidth={1.4} />
-            </g>
-          );
-        })}
-      </pattern>
-      <pattern id="floor-clean" patternUnits="userSpaceOnUse" width={CLEAN.step} height={CLEAN.step}>
-        <rect width={CLEAN.step} height={CLEAN.step} fill={CLEAN.fill} />
-        <path d={`M ${CLEAN.step} 0 L 0 0 0 ${CLEAN.step}`} fill="none" stroke={CLEAN.grid} strokeWidth={1} />
-      </pattern>
-      <pattern id="floor-tiles" patternUnits="userSpaceOnUse" width={TILE.size} height={TILE.size}>
-        <rect width={TILE.size} height={TILE.size} fill={TILE.fill} />
-        <path d={`M ${TILE.size} 0 L 0 0 0 ${TILE.size}`} fill="none" stroke={TILE.grout} strokeWidth={2} />
-      </pattern>
-      <filter id="table-shadow" x="-30%" y="-30%" width="160%" height="160%">
-        <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="#000" floodOpacity="0.22" />
-      </filter>
-      <filter id="gold-glow" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation="6" />
-      </filter>
-    </defs>
-  );
-}
-
 function GridLines({ cw, ch }: { cw: number; ch: number }) {
   const step = GRID * 5;
   const lines = [];
@@ -1103,341 +1271,6 @@ function GridLines({ cw, ch }: { cw: number; ch: number }) {
   return (
     <g stroke="#e2e8f0" strokeWidth={1} pointerEvents="none">
       {lines}
-    </g>
-  );
-}
-
-/** A bar counter, straight or L, with its numbered stools in front (as the till draws it). */
-function CounterShape({ el, perPx, selected }: { el: SketchElement; perPx: number; selected: boolean }) {
-  const st = SKETCH_STYLE.counter;
-  const { bars, stools } = counterGeometry(el);
-  return (
-    <g>
-      {bars.map((b, i) => (
-        <rect
-          key={`b${i}`}
-          x={b.x} y={b.y} width={b.w} height={b.h} rx={6 * perPx}
-          fill={st.fill}
-          stroke={selected ? '#2563eb' : st.stroke}
-          strokeWidth={(selected ? 3 : 1.5) * perPx}
-          filter="url(#table-shadow)"
-        />
-      ))}
-      {stools.map((s, i) => (
-        <g key={`s${i}`}>
-          <circle cx={s.cx} cy={s.cy} r={s.r} fill={TABLE_LOOK.fill} stroke={TABLE_LOOK.border} strokeWidth={1.5 * perPx} filter="url(#table-shadow)" />
-          {s.r > 7 * perPx ? (
-            <text x={s.cx} y={s.cy} textAnchor="middle" dominantBaseline="central" fontSize={s.r} fill={st.text} fontWeight={600}>
-              {i + 1}
-            </text>
-          ) : null}
-        </g>
-      ))}
-    </g>
-  );
-}
-
-/** One sketch shape — drawn the same way by the till (ui/tables/TableVisuals.kt, drawSketch). */
-export function SketchShape({
-  el,
-  perPx,
-  selected = false,
-  onDown,
-  onResize,
-  logoUrl = null,
-}: {
-  el: SketchElement;
-  perPx: number;
-  /** The business's logo, for a "logo" shape with no picture of its own. */
-  logoUrl?: string | null;
-  selected?: boolean;
-  onDown?: (e: React.PointerEvent) => void;
-  onResize?: (e: React.PointerEvent) => void;
-}) {
-  const st = styleOf(el);
-  const cx = el.x + el.w / 2;
-  const cy = el.y + el.h / 2;
-  const text = el.text ?? defaultText(el);
-  const long = Math.max(el.w, el.h);
-  const short = Math.min(el.w, el.h);
-  const fs = text ? Math.max(9 * perPx, Math.min(short * 0.55, (long * 1.6) / Math.max(2, text.length))) : 0;
-  const vertical = el.h > el.w * 1.6;
-  const handle = 12 * perPx;
-  // A fixture with a symbol: the symbol, and the word under it, when both fit.
-  const iconSize = SYMBOLS[el.kind] ? Math.min(short * 0.55, long * 0.4) : 0;
-  // Stacked, the word is drawn smaller (at most a quarter of the short side): it is that size
-  // that has to fit under the symbol — so a short word ("נשים", "כניסה") keeps its symbol too.
-  const stackedFs = Math.min(fs, short * 0.24);
-  const stacked = !!text && iconSize >= 14 * perPx && short >= iconSize + stackedFs * 0.9 * 1.3;
-  const textFs = stacked ? stackedFs : fs;
-  if (hasPoints(el.kind)) {
-    // A drawn line, wall or stroke: its points, its colour and width — with a wider,
-    // invisible line over it so a finger can pick it.
-    const points = pointsAttr(el.points);
-    return (
-      <g onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
-        <polyline
-          points={points}
-          fill="none"
-          stroke={el.color ?? st.stroke}
-          strokeWidth={el.stroke ?? 3}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {onDown ? (
-          <polyline points={points} fill="none" stroke="transparent" strokeWidth={(el.stroke ?? 3) + 16 * perPx} pointerEvents="stroke" />
-        ) : null}
-        {selected ? (
-          <polyline points={points} fill="none" stroke="#2563eb" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
-        ) : null}
-      </g>
-    );
-  }
-  if (el.kind === 'rect') {
-    const color = el.color ?? st.stroke;
-    return (
-      <g transform={`rotate(${el.rotation} ${cx} ${cy})`} onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
-        <rect
-          x={el.x} y={el.y} width={el.w} height={el.h}
-          fill={el.filled ? color : 'none'}
-          stroke={color}
-          strokeWidth={el.stroke ?? 3}
-          pointerEvents={onDown ? 'all' : undefined}
-        />
-        {selected ? (
-          <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="none" stroke="#2563eb" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
-        ) : null}
-      </g>
-    );
-  }
-  return (
-    <g>
-      <g transform={`rotate(${el.rotation} ${cx} ${cy})`} onPointerDown={onDown} style={{ cursor: onDown ? 'move' : undefined }}>
-        {el.kind === 'logo' ? (
-          <LogoShape el={el} perPx={perPx} selected={selected} src={el.src ?? logoUrl} />
-        ) : el.kind === 'counter' ? (
-          <CounterShape el={el} perPx={perPx} selected={selected} />
-        ) : el.kind === 'plant' ? (
-          <PlantShape el={el} />
-        ) : el.kind === 'sofa' ? (
-          <SofaShape el={el} perPx={perPx} />
-        ) : el.kind === 'stairs' ? (
-          <StairsShape el={el} perPx={perPx} />
-        ) : el.kind === 'label' ? (
-          <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" stroke={selected ? '#2563eb' : 'none'} strokeDasharray="4 4" />
-        ) : st.round ? (
-          <ellipse cx={cx} cy={cy} rx={el.w / 2} ry={el.h / 2} fill={st.fill} stroke={st.stroke} strokeWidth={2 * perPx} />
-        ) : (
-          <rect
-            x={el.x} y={el.y} width={el.w} height={el.h}
-            rx={el.kind === 'bar' || el.kind === 'dj_booth' ? Math.min(12, short / 3) : 2}
-            fill={st.fill}
-            stroke={selected ? '#2563eb' : st.stroke}
-            strokeWidth={(selected ? 3 : 1.5) * perPx}
-            strokeDasharray={st.dashed ? `${8 * perPx} ${6 * perPx}` : undefined}
-          />
-        )}
-        {selected && (el.kind === 'plant' || el.kind === 'sofa' || el.kind === 'stairs') ? (
-          <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="none" stroke="#2563eb" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
-        ) : null}
-        {stacked ? (
-          // The symbol above the word, when there is room for both.
-          <FixtureSymbol
-            kind={el.kind}
-            variant={el.variant ?? null}
-            cx={cx}
-            cy={cy - (iconSize + textFs * 1.25) / 2 + iconSize / 2}
-            size={iconSize}
-            color={st.stroke}
-            transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}
-          />
-        ) : null}
-        {text && (stacked || fs >= 6 * perPx) && el.kind !== 'counter' && el.kind !== 'sofa' ? (
-          <text
-            x={cx}
-            y={stacked ? cy + (iconSize + textFs * 1.25) / 2 - textFs * 0.6 : cy}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontSize={textFs}
-            fill={el.kind === 'label' && el.color ? el.color : st.text}
-            transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}
-          >
-            {text}
-          </text>
-        ) : null}
-      </g>
-      {selected && onResize ? (
-        <rect
-          x={el.x + el.w - handle / 2}
-          y={el.y + el.h - handle / 2}
-          width={handle}
-          height={handle}
-          fill="#2563eb"
-          style={{ cursor: 'nwse-resize' }}
-          onPointerDown={onResize}
-        />
-      ) : null}
-    </g>
-  );
-}
-
-/** The fixtures drawn with a symbol in them (the till draws the same: TableVisuals.kt, drawSymbol). */
-const SYMBOLS: Partial<Record<SketchKind, true>> = {
-  restroom: true, cashier: true, host: true, exit: true, door: true, kitchen: true, dj_booth: true, bar: true, stage: true,
-};
-
-/** A figure of the WC sign: a head and a body — a dress for `dress`. */
-function Figure({ cx, cy, size, color, dress }: { cx: number; cy: number; size: number; color: string; dress: boolean }) {
-  const top = cy - size * 0.12;
-  const bottom = cy + size * 0.48;
-  const body = dress
-    ? `M ${cx - size * 0.12} ${top} L ${cx + size * 0.12} ${top} L ${cx + size * 0.28} ${bottom} L ${cx - size * 0.28} ${bottom} Z`
-    : `M ${cx - size * 0.2} ${top} L ${cx + size * 0.2} ${top} L ${cx + size * 0.17} ${bottom} L ${cx - size * 0.17} ${bottom} Z`;
-  return (
-    <g fill={color}>
-      <circle cx={cx} cy={cy - size * 0.32} r={size * 0.16} />
-      <path d={body} />
-    </g>
-  );
-}
-
-function FixtureSymbol({
-  kind,
-  variant = null,
-  cx,
-  cy,
-  size,
-  color,
-  transform,
-}: {
-  kind: SketchKind;
-  variant?: SketchVariant | null;
-  cx: number;
-  cy: number;
-  size: number;
-  color: string;
-  transform?: string;
-}) {
-  const s = size;
-  const line = { stroke: color, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
-  return (
-    <g transform={transform} pointerEvents="none">
-      {kind === 'restroom' && variant === 'men' ? (
-        <Figure cx={cx} cy={cy} size={s * 0.85} color={color} dress={false} />
-      ) : kind === 'restroom' && variant === 'women' ? (
-        <Figure cx={cx} cy={cy} size={s * 0.85} color={color} dress />
-      ) : kind === 'restroom' && variant === 'accessible' ? (
-        // The wheelchair sign: a head, the seated body, the wheel.
-        <g>
-          <circle cx={cx - s * 0.04} cy={cy - s * 0.36} r={s * 0.09} fill={color} />
-          <path
-            d={`M ${cx - s * 0.06} ${cy - s * 0.22} L ${cx - s * 0.06} ${cy + s * 0.02} L ${cx + s * 0.2} ${cy + s * 0.02} L ${cx + s * 0.3} ${cy + s * 0.3}`}
-            {...line} strokeWidth={s * 0.08}
-          />
-          <circle cx={cx - s * 0.08} cy={cy + s * 0.16} r={s * 0.24} {...line} strokeWidth={s * 0.08} />
-        </g>
-      ) : kind === 'door' ? (
-        // The entrance: an arrow in, through the door's frame.
-        <g>
-          <path
-            d={`M ${cx - s * 0.4} ${cy} L ${cx + s * 0.12} ${cy} M ${cx - s * 0.08} ${cy - s * 0.2} L ${cx + s * 0.12} ${cy} L ${cx - s * 0.08} ${cy + s * 0.2}`}
-            {...line} strokeWidth={s * 0.08}
-          />
-          <rect x={cx + s * 0.2} y={cy - s * 0.38} width={s * 0.2} height={s * 0.76} rx={s * 0.03} {...line} strokeWidth={s * 0.064} />
-        </g>
-      ) : kind === 'kitchen' ? (
-        // A pot: its lid and knob, its body, its handles.
-        <g>
-          <circle cx={cx} cy={cy - s * 0.26} r={s * 0.06} fill={color} />
-          <path
-            d={`M ${cx - s * 0.36} ${cy - s * 0.15} L ${cx + s * 0.36} ${cy - s * 0.15} M ${cx - s * 0.42} ${cy + s * 0.02} L ${cx + s * 0.42} ${cy + s * 0.02}`}
-            {...line} strokeWidth={s * 0.07}
-          />
-          <rect x={cx - s * 0.3} y={cy - s * 0.08} width={s * 0.6} height={s * 0.42} rx={s * 0.08} fill={color} />
-        </g>
-      ) : kind === 'dj_booth' ? (
-        // A record on the deck, and the tone arm across it.
-        <g>
-          <circle cx={cx - s * 0.06} cy={cy + s * 0.04} r={s * 0.34} {...line} strokeWidth={s * 0.07} />
-          <circle cx={cx - s * 0.06} cy={cy + s * 0.04} r={s * 0.2} {...line} strokeWidth={s * 0.035} />
-          <circle cx={cx - s * 0.06} cy={cy + s * 0.04} r={s * 0.07} fill={color} />
-          <path d={`M ${cx + s * 0.38} ${cy - s * 0.38} L ${cx + s * 0.38} ${cy - s * 0.02} L ${cx + s * 0.14} ${cy + s * 0.14}`} {...line} strokeWidth={s * 0.07} />
-        </g>
-      ) : kind === 'bar' ? (
-        // A cocktail glass.
-        <g>
-          <path d={`M ${cx - s * 0.3} ${cy - s * 0.34} L ${cx + s * 0.3} ${cy - s * 0.34} L ${cx} ${cy + s * 0.02} Z`} fill={color} />
-          <path d={`M ${cx} ${cy} L ${cx} ${cy + s * 0.32} M ${cx - s * 0.16} ${cy + s * 0.34} L ${cx + s * 0.16} ${cy + s * 0.34}`} {...line} strokeWidth={s * 0.07} />
-        </g>
-      ) : kind === 'stage' ? (
-        // A microphone on its stand.
-        <g>
-          <rect x={cx - s * 0.11} y={cy - s * 0.4} width={s * 0.22} height={s * 0.34} rx={s * 0.11} fill={color} />
-          <path
-            d={`M ${cx - s * 0.2} ${cy - s * 0.16} A ${s * 0.2} ${s * 0.22} 0 0 0 ${cx + s * 0.2} ${cy - s * 0.16} M ${cx} ${cy + s * 0.06} L ${cx} ${cy + s * 0.34} M ${cx - s * 0.16} ${cy + s * 0.36} L ${cx + s * 0.16} ${cy + s * 0.36}`}
-            {...line} strokeWidth={s * 0.07}
-          />
-        </g>
-      ) : kind === 'restroom' ? (
-        <>
-          <Figure cx={cx - size * 0.28} cy={cy} size={size * 0.62} color={color} dress={false} />
-          <line x1={cx} y1={cy - size * 0.32} x2={cx} y2={cy + size * 0.32} stroke={color} strokeOpacity={0.5} strokeWidth={size * 0.04} />
-          <Figure cx={cx + size * 0.28} cy={cy} size={size * 0.62} color={color} dress />
-        </>
-      ) : kind === 'host' ? (
-        <Figure cx={cx} cy={cy} size={size * 0.8} color={color} dress />
-      ) : kind === 'cashier' ? (
-        <g fill={color}>
-          <rect x={cx - size * 0.22} y={cy - size * 0.4} width={size * 0.44} height={size * 0.26} rx={size * 0.05} />
-          <rect x={cx - size * 0.04} y={cy - size * 0.14} width={size * 0.08} height={size * 0.12} />
-          <rect x={cx - size * 0.4} y={cy - size * 0.02} width={size * 0.8} height={size * 0.38} rx={size * 0.06} />
-        </g>
-      ) : kind === 'exit' ? (
-        <path
-          d={`M ${cx - size * 0.36} ${cy} L ${cx + size * 0.3} ${cy} M ${cx + size * 0.08} ${cy - size * 0.22} L ${cx + size * 0.3} ${cy} L ${cx + size * 0.08} ${cy + size * 0.22}`}
-          fill="none" stroke={color} strokeWidth={size * 0.08} strokeLinecap="round" strokeLinejoin="round"
-        />
-      ) : null}
-    </g>
-  );
-}
-
-/**
- * The business's logo on the floor: its picture fitted whole in the box (the till draws
- * the same); with no picture, a dashed box saying where it goes.
- */
-function LogoShape({ el, perPx, selected, src }: { el: SketchElement; perPx: number; selected: boolean; src: string | null }) {
-  const t = useTranslations('tables');
-  if (!src) {
-    return (
-      <g>
-        <rect
-          x={el.x} y={el.y} width={el.w} height={el.h} rx={6 * perPx}
-          fill="#ffffff" fillOpacity={0.6}
-          stroke={selected ? '#2563eb' : SKETCH_STYLE.logo.stroke}
-          strokeWidth={(selected ? 3 : 1.5) * perPx}
-          strokeDasharray={`${8 * perPx} ${6 * perPx}`}
-        />
-        <text
-          x={el.x + el.w / 2} y={el.y + el.h / 2}
-          textAnchor="middle" dominantBaseline="central"
-          fontSize={Math.max(10 * perPx, Math.min(el.h * 0.3, el.w * 0.18))}
-          fill={SKETCH_STYLE.logo.text}
-        >
-          {t('sketch.kind.logo')}
-        </text>
-      </g>
-    );
-  }
-  return (
-    <g>
-      <image href={src} x={el.x} y={el.y} width={el.w} height={el.h} preserveAspectRatio="xMidYMid meet" />
-      {selected ? (
-        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="none" stroke="#2563eb" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`} />
-      ) : (
-        // An invisible box over it, so the whole logo picks up the pointer.
-        <rect x={el.x} y={el.y} width={el.w} height={el.h} fill="transparent" />
-      )}
     </g>
   );
 }
@@ -1494,91 +1327,4 @@ function LogoSource({
       ) : null}
     </div>
   );
-}
-
-/** A plant from above: a rosette of leaves round a dark heart. */
-function PlantShape({ el }: { el: SketchElement }) {
-  const cx = el.x + el.w / 2;
-  const cy = el.y + el.h / 2;
-  const r = Math.min(el.w, el.h) / 2;
-  const ring = (count: number, reach: number, tone: string, turn: number) =>
-    Array.from({ length: count }, (_, i) => (
-      <ellipse
-        key={`${count}-${i}`}
-        cx={cx} cy={cy - r * reach * 0.52} rx={r * 0.2 * reach} ry={r * 0.475 * reach}
-        fill={tone} transform={`rotate(${(i * 360) / count + turn} ${cx} ${cy})`}
-      />
-    ));
-  return (
-    <g>
-      <circle cx={cx} cy={cy + r * 0.08} r={r * 0.95} fill="#000" opacity={0.2} />
-      {ring(8, 1, '#2f9e44', 0)}
-      {ring(6, 0.68, '#51cf66', 30)}
-      <circle cx={cx} cy={cy} r={r * 0.16} fill="#1b5e20" />
-    </g>
-  );
-}
-
-/** A sofa from above: its back along the top, arms at the ends, the seat in cushions. */
-function SofaShape({ el, perPx }: { el: SketchElement; perPx: number }) {
-  const st = SKETCH_STYLE.sofa;
-  const r = Math.min(el.w, el.h) * 0.18;
-  const back = el.h * 0.3;
-  const arm = Math.min(el.w * 0.12, el.h * 0.35);
-  const seats = Math.max(1, Math.floor((el.w - 2 * arm) / (el.h * 0.9)));
-  const each = (el.w - 2 * arm) / seats;
-  return (
-    <g>
-      <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={r} fill={st.fill} filter="url(#table-shadow)" />
-      <rect x={el.x} y={el.y} width={el.w} height={back} rx={r} fill={st.stroke} opacity={0.55} />
-      <rect x={el.x} y={el.y} width={arm} height={el.h} rx={r} fill={st.stroke} opacity={0.45} />
-      <rect x={el.x + el.w - arm} y={el.y} width={arm} height={el.h} rx={r} fill={st.stroke} opacity={0.45} />
-      {Array.from({ length: seats - 1 }, (_, i) => (
-        <line
-          key={i}
-          x1={el.x + arm + each * (i + 1)} y1={el.y + back} x2={el.x + arm + each * (i + 1)} y2={el.y + el.h * 0.94}
-          stroke={st.stroke} strokeOpacity={0.6} strokeWidth={1.5 * perPx}
-        />
-      ))}
-      <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={r} fill="none" stroke={st.stroke} strokeWidth={1.5 * perPx} />
-    </g>
-  );
-}
-
-/** Stairs from above: the treads across the run. */
-function StairsShape({ el, perPx }: { el: SketchElement; perPx: number }) {
-  const st = SKETCH_STYLE.stairs;
-  const vertical = el.h >= el.w;
-  const run = vertical ? el.h : el.w;
-  const step = Math.max(6, Math.min(el.w, el.h) * 0.32);
-  const treads: number[] = [];
-  for (let t = step; t < run - 2; t += step) treads.push(t);
-  return (
-    <g>
-      <rect x={el.x} y={el.y} width={el.w} height={el.h} fill={st.fill} stroke={st.stroke} strokeWidth={1.6 * perPx} />
-      {treads.map((t) =>
-        vertical ? (
-          <line key={t} x1={el.x} y1={el.y + t} x2={el.x + el.w} y2={el.y + t} stroke={st.stroke} strokeWidth={1.4 * perPx} />
-        ) : (
-          <line key={t} x1={el.x + t} y1={el.y} x2={el.x + t} y2={el.y + el.h} stroke={st.stroke} strokeWidth={1.4 * perPx} />
-        ),
-      )}
-    </g>
-  );
-}
-
-/** A drawn shape's points as an SVG `points` attribute. */
-function pointsAttr(points: number[] | null | undefined): string {
-  const out: string[] = [];
-  if (points) for (let i = 0; i + 1 < points.length; i += 2) out.push(`${points[i]},${points[i + 1]}`);
-  return out.join(' ');
-}
-
-/** Moved by (dx, dy): the box, and the points of a drawn line. */
-function translatedTo(el: SketchElement, dx: number, dy: number): SketchElement {
-  if (hasPoints(el.kind) && el.points) {
-    const pts: number[] = el.points.map((v, i) => (i % 2 === 0 ? v + dx : v + dy));
-    return { ...el, points: pts, x: el.x + dx, y: el.y + dy };
-  }
-  return { ...el, x: el.x + dx, y: el.y + dy };
 }

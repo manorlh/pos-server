@@ -357,9 +357,10 @@ class TestStaffTableDiscountCheck:
 
         got = RR.get_table_restore_params(str(w.company.id), scope_type="shop", scope_id=w.shop.id, **ctx(w))
         keys = [p["key"] for p in got["parameters"]]
-        assert keys[0] == self.KEY and len(keys) == 9
+        # Then the eight of restoring, then the map's four of legend and display (table-map-decor-v3 §3).
+        assert keys[0] == self.KEY and len(keys) == 13
         first = got["parameters"][0]
         assert (first["valueType"], first["defaultValue"], first["group"]) == ("boolean", False, "staffTables")
-        assert {p["group"] for p in got["parameters"][1:]} == {"restore"}
-        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore"]
+        assert [p["group"] for p in got["parameters"][1:]] == ["restore"] * 8 + ["mapDisplay"] * 4
+        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay"]
         assert got["groups"][0]["label"] == "שולחן עובדים / מנהלים"
