@@ -48,8 +48,9 @@ def test_two_hundred_tables_one_hundred_fifty_open(w):
     stop()
     assert len(state["tables"]) == 204  # the fixture's 4 and these 200
     assert sum(1 for t in state["tables"] if t["order"]) == 150
-    # No query per table: a fixed handful, whatever the size.
-    assert counter["n"] < 25, counter["n"]
+    # No query per table: a fixed handful, whatever the size. (27 with table waiter assignment's own reads —
+    # the assignments and the busy tables' holders, once each per state, never per table.)
+    assert counter["n"] < 30, counter["n"]
     size = len(json.dumps(state, ensure_ascii=False).encode("utf-8"))
     print(f"\ntill state: {took * 1000:.0f} ms, {counter['n']} queries, {size / 1024:.0f} KB")
     assert took < 2.0
