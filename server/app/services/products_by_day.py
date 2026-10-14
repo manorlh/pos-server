@@ -31,6 +31,7 @@ from app.services import report_design as D
 from app.services import report_insights as I
 from app.services import report_pdf as P
 from app.services.reports import ReportWindow, _is_refund_condition, _load_zoneinfo, _to_float
+from app.services.tenders import sale_condition
 
 SHORT_WEEKDAYS = ("יום ב׳", "יום ג׳", "יום ד׳", "יום ה׳", "יום ו׳", "שבת", "יום א׳")
 #: Days above which the matrix is by week (§8.4).
@@ -166,7 +167,7 @@ def _rows_by_day(db: Session, q, window: ReportWindow, category_ids: Sequence[An
         acc["net"] += _to_float(net)
     docs: Dict[date, int] = {}
     for raw_day, n in (
-        q.filter(~_is_refund_condition()).with_entities(day, func.count(Transaction.id)).group_by(day).all()
+        q.filter(sale_condition()).with_entities(day, func.count(Transaction.id)).group_by(day).all()
     ):
         d = _local_day(window, raw_day)
         docs[d] = docs.get(d, 0) + int(n or 0)

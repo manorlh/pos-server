@@ -54,6 +54,7 @@ from app.services.reports import (
     resolve_report_timezone,
     _load_zoneinfo,
 )
+from app.services.tenders import sale_condition
 
 AREA_NONE = "none"
 WEEKDAYS = ("יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "יום שישי", "שבת", "יום ראשון")
@@ -377,7 +378,7 @@ def figures(ctx: _Ctx, window: ReportWindow) -> Dict[str, Any]:
         out["oth"] = _r(oth)
         out["othCount"] = int(oth_lines or 0)
         out["discountsCount"] = int(
-            q.filter(~_is_refund_condition(), func.coalesce(Transaction.document_discount, 0) > 0)
+            q.filter(sale_condition(), func.coalesce(Transaction.document_discount, 0) > 0)
             .with_entities(func.count(Transaction.id)).scalar() or 0
         )
     ev = _till_events(db, ctx.machine_ids, window, ("line_void", "basket_cancel"))

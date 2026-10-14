@@ -22,9 +22,12 @@ Why not pages drawn as pictures with Pillow, as the vouchers are: a report can b
 hundreds of pages — and as images that is hundreds of megabytes and minutes, where as text it is
 a few megabytes and a few seconds, crisp at every zoom and printable on any printer.
 
-Every page: the header (logo, title, sub-titles, filters), the column headers, the rows (zebra),
-the footer "עמוד X מתוך Y" and when it was made. The totals row closes the last page. Columns
-run right to left; `auto` orientation is landscape above `AUTO_LANDSCAPE_COLUMNS` columns.
+This module is the writer's ground floor — the font, the text, the formats, the canvas (text,
+rectangles, lines and the vector shapes: rounded rectangles, polygons, ring segments, clipping,
+form XObjects) and the file. What a page looks like — the header band with both logos, KPI
+cards, insights, charts, tables, the cover and the footer (P:/specs/reports-designed-pdf.md §5)
+— is app/services/report_design.py. Columns run right to left; `auto` orientation is landscape
+above `AUTO_LANDSCAPE_COLUMNS` columns.
 """
 from __future__ import annotations
 
