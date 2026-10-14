@@ -192,7 +192,8 @@ SECTIONS: Tuple[Section, ...] = (
     Section(
         "devices", "מכשירים",
         "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, תצורת עבודה, קופה ראשית ורשת מקומית.",
-        ("/dashboard/machines",),
+        # "עמדות מזומן" (P:/specs/cash-paylink.md §12): the kiosks' cash stations are devices too.
+        ("/dashboard/machines", "/dashboard/cash-stations"),
     ),
     # "העברת שרת מקומי" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §7):
     # the support's permission, without a role of its own. Only the super admin grants it, and

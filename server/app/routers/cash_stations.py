@@ -9,6 +9,8 @@ GET    /cash-stations/{id}                                  → the station in d
                                                               queue, active tx, settings, alert tills, commands)
 PUT    /cash-stations/{id}                                  {name?, location?, serial?, hostMachineId?, settings?,
                                                               isActive?} → the station
+PUT    /cash-stations/{id}/clients/{machineId}              {assigned: true|false} — the device's own cashEnabled
+                                                              (+ cashStation) → the station (detail)
 DELETE /cash-stations/{id}                                  → taken out of use (its journal and drawer stay)
 GET    /cash-stations/{id}/journal?from=&to=&state=&outcome=&owed=&limit=&offset=
 GET    /cash-stations/{id}/movements?from=&to=&kind=&limit=&offset=
@@ -24,7 +26,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -49,6 +51,12 @@ class StationIn(BaseModel):
     #: The station's own overrides of the §11.10 station parameters (null value: inherit).
     settings: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = Field(None, alias="isActive")
+
+
+class ClientIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    assigned: bool
 
 
 class ResolveIn(BaseModel):
@@ -144,6 +152,34 @@ def delete_cash_station(
     out = A.remove_station(db, current_user, station)
     db.commit()
     return out
+
+
+@router.put("/{station_id}/clients/{machine_id}")
+def put_cash_station_client(
+    station_id: uuid.UUID,
+    machine_id: uuid.UUID,
+    body: ClientIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    A kiosk (or a till) of the station's shop assigned to it (`cashEnabled` true + `cashStation` = the station, at
+    the device's own level) or taken off cash (`cashEnabled` false). Answers the station; the device re-pulls.
+    """
+    from app.services import till_parameters as TP
+
+    station = A.station_in_scope(db, current_user, station_id, active_tenant_id)
+    try:
+        targets = A.assign_client(db, current_user, station, machine_id, body.assigned)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    if targets:
+        background_tasks.add_task(TP.publish_parameters_notify, targets)
+    return A.station_out(db, station, detail=True)
 
 
 @router.get("/{station_id}/journal")

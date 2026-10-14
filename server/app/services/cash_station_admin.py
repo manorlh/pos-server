@@ -431,6 +431,45 @@ def resolve(db: Session, user: User, station: CashStation, tx_id: Any, body: Dic
     return {"ok": True, "item": CS.owed_item(tx, station, CS._client_names(db, [tx.client_machine_id]).get(tx.client_machine_id))}
 
 
+def assign_client(db: Session, user: User, station: CashStation, machine_id: Any, assigned: bool) -> List[Any]:
+    """
+    "שיוך קיוסק לעמדה" from the station's page: the device's own till parameter values — `cashEnabled` true and
+    `cashStation` this station, or `cashEnabled` false (its `cashStation` left as it is) — each with its row in the
+    parameters' change log, as the parameters page writes them. Only an active kiosk or till of the station's shop
+    (404 `client_not_found`). The tills to tell (`publish_parameters_notify` after the commit); the caller commits.
+    """
+    from app.services import till_parameters as TP
+    from app.models.pos_machine import PairingStatus
+    from app.models.till_parameter import TillParameter
+
+    ident = machine_id if isinstance(machine_id, uuid.UUID) else CS._uuid(str(machine_id))
+    machine = db.get(POSMachine, ident) if ident is not None else None
+    if (
+        machine is None or not machine.is_active or machine.shop_id != station.shop_id
+        or machine.pairing_status != PairingStatus.ASSIGNED or getattr(machine, "is_fiscal", True) is False
+    ):
+        raise _refuse(status.HTTP_404_NOT_FOUND, "client_not_found", "הקיוסק לא נמצא בסניף של העמדה.")
+    if assigned and not station.is_active:
+        raise _refuse(status.HTTP_409_CONFLICT, "station_inactive", "העמדה לא פעילה.")
+    TP.ensure_builtin_parameters(db)
+    params = {p.key: p for p in db.query(TillParameter).filter(
+        TillParameter.key.in_([CP.ENABLED_KEY, CP.STATION_KEY])).all()}
+    now = CS._now()
+    changed = TP.write_value(db, params[CP.ENABLED_KEY], "machine", machine.id, bool(assigned), user=user, now=now)
+    if assigned:
+        changed = TP.write_value(
+            db, params[CP.STATION_KEY], "machine", machine.id, str(station.id), user=user, now=now,
+        ) or changed
+    db.flush()
+    if not changed:
+        return []
+    # Its host serves the new client list; a host the kiosk leaves hears it too.
+    for host in {CS.host_of(db, s) for s in CS.stations_of_shop(db, station.shop_id)} - {None}:
+        CS.wake(host, "cash_stations")
+    active = [p for p in params.values() if p.is_active]
+    return list(TP.notify_targets_for_scope(db, "machine", machine.id)) if active else []
+
+
 def parse_moment(value: Optional[str], field: str) -> Optional[datetime]:
     """An ISO date or date-time (a bare date: its midnight, UTC)."""
     if value in (None, ""):

@@ -1059,6 +1059,68 @@ class TestDashboard:
         e = refusal(CS.ack_command, w.db, w.host, uuid.uuid4(), {"status": "done"})
         assert e.detail["code"] == "unknown_command"
 
+    def test_a_dump_of_one_denomination_keeps_its_value_and_count(self, w):
+        out = CR.post_cash_station_command(
+            w.station.id, CR.CommandIn(op="dump", args={"valueAgorot": 2000, "notes": 3, "note": "לקופסה"}),
+            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        assert out["args"] == {"valueAgorot": 2000, "notes": 3, "note": "לקופסה"}
+        whole = CS.create_command(w.db, w.admin, w.station, "dump", {"valueAgorot": 100})
+        assert whole.args == {"valueAgorot": 100}
+        # Not a dump: the two are not its arguments.
+        assert CS.create_command(w.db, w.admin, w.station, "count", {"valueAgorot": 100, "notes": 2}).args == {}
+        for bad in ({"valueAgorot": 300}, {"valueAgorot": True}, {"notes": 0}, {"notes": "3"}, {"notes": 2.5}):
+            e = refusal(CS.create_command, w.db, w.admin, w.station, "dump", bad)
+            assert e.detail["code"] == "invalid_args", bad
+
+    def test_a_kiosk_assigned_and_taken_off_from_the_station_page(self, w, monkeypatch):
+        from fastapi import BackgroundTasks
+
+        told = []
+        monkeypatch.setattr(TP, "publish_parameters_notify", lambda targets: told.append(list(targets)))
+        tasks = BackgroundTasks()
+        out = CR.put_cash_station_client(w.station.id, w.kiosk.id, CR.ClientIn(assigned=True), tasks,
+                                         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        for task in tasks.tasks:
+            task.func(*task.args, **task.kwargs)
+        assert out["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk"}]
+        params = CS.machine_params(w.db, w.kiosk)
+        assert (params["cashEnabled"], params["cashStation"]) == (True, str(w.station.id))
+        assert told == [[(str(w.tenant.id), str(w.kiosk.id))]]  # the kiosk re-pulls its parameters
+        assert (HOST_ID, "cash_stations") in w.woken
+        assert CS.view_for(w.db, w.kiosk)["station"]["stationId"] == str(w.station.id)
+        # The same again: nothing changes, nobody is told.
+        told.clear()
+        tasks = BackgroundTasks()
+        CR.put_cash_station_client(w.station.id, w.kiosk.id, CR.ClientIn(assigned=True), tasks,
+                                   current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        assert tasks.tasks == []
+        # Taken off: cash off at its own level, its station left as it was.
+        out = CR.put_cash_station_client(w.station.id, w.kiosk.id, CR.ClientIn(assigned=False), BackgroundTasks(),
+                                         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        assert out["clients"] == []
+        params = CS.machine_params(w.db, w.kiosk)
+        assert (params["cashEnabled"], params["cashStation"]) == (False, str(w.station.id))
+        # Each write is in the parameters' change log.
+        from app.models.till_parameter import TillParameterChange
+
+        assert w.db.query(TillParameterChange).filter(TillParameterChange.scope_id == w.kiosk.id).count() == 3
+
+    def test_only_a_device_of_the_stations_shop_and_in_the_users_scope(self, w):
+        from fastapi import BackgroundTasks
+
+        for machine_id in (w.other_till.id, w.host.id, uuid.uuid4()):
+            e = refusal(CR.put_cash_station_client, w.station.id, machine_id, CR.ClientIn(assigned=True),
+                        BackgroundTasks(), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+            assert (e.status_code, e.detail["code"]) == (404, "client_not_found")
+        e = refusal(CR.put_cash_station_client, w.station.id, w.kiosk.id, CR.ClientIn(assigned=True), BackgroundTasks(),
+                    current_user=manager(w, w.other_shop), active_tenant_id=w.tenant.id, db=w.db)
+        assert e.status_code == 403
+        # A manager of the station's shop may.
+        out = CR.put_cash_station_client(w.station.id, w.till2.id, CR.ClientIn(assigned=True), BackgroundTasks(),
+                                         current_user=manager(w, w.shop), active_tenant_id=w.tenant.id, db=w.db)
+        assert {c["machineId"]: c["kind"] for c in out["clients"]} == {str(w.till2.id): "till"}
+
     def test_scope(self, w):
         theirs = manager(w, w.other_shop)
         e = refusal(CR.get_cash_station, w.station.id, current_user=theirs, active_tenant_id=w.tenant.id, db=w.db)
@@ -1085,6 +1147,10 @@ class TestDashboard:
         assert rule("PUT", "/cash-stations/{station_id}").sections == ("devices",)
         assert rule("POST", "/cash-stations/{station_id}/owed/{tx_id}/resolve").sections == ("devices",)
         assert rule("POST", "/cash-stations/{station_id}/commands").sections == ("devices", "device_control")
+        assigned = rule("PUT", "/cash-stations/{station_id}/clients/{machine_id}")
+        assert assigned.sections == ("devices",) and assigned.needed_level("PUT") == DS.EDIT
+        (devices,) = [s for s in DS.SECTIONS if s.id == "devices"]
+        assert "/dashboard/cash-stations" in devices.pages
         assert DA is not None
 
 

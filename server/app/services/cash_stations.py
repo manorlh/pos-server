@@ -1158,6 +1158,18 @@ def clean_command_args(op: str, raw: Any) -> Dict[str, Any]:
     note = _str(raw.get("note"), 300)
     if note:
         out["note"] = note
+    if op == "dump":
+        # One denomination's dispenser emptied into the cashbox (`valueAgorot`), all of it or `notes` of it.
+        if raw.get("valueAgorot") is not None:
+            value = _opt_int(raw.get("valueAgorot"), 1, 10_000_000)
+            if isinstance(raw.get("valueAgorot"), bool) or value not in CP.ILS_COINS + CP.ILS_NOTES:
+                raise ValueError("valueAgorot must be a coin or a note in agorot")
+            out["valueAgorot"] = value
+        if raw.get("notes") is not None:
+            count = raw.get("notes")
+            if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= 100_000:
+                raise ValueError("notes must be a whole number 1–100000")
+            out["notes"] = count
     return out
 
 

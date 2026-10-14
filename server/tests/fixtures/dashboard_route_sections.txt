@@ -76,6 +76,7 @@ POST /cash-stations -> devices:edit
 DELETE /cash-stations/{station_id} -> devices:edit
 GET /cash-stations/{station_id} -> devices|kiosks:view
 PUT /cash-stations/{station_id} -> devices:edit
+PUT /cash-stations/{station_id}/clients/{machine_id} -> devices:edit
 POST /cash-stations/{station_id}/commands -> devices|device_control:edit
 GET /cash-stations/{station_id}/drawer -> devices|kiosks:view
 GET /cash-stations/{station_id}/journal -> devices|kiosks:view
