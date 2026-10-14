@@ -1075,6 +1075,9 @@ def product_menu_out(db: Session, user: User, tenant_id, product: Product) -> Di
         "courseId": _s(product.course_id),
         # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): null — the category's.
         "sendSilently": getattr(product, "send_silently", None),
+        # "itemScheduleRules" (P:/specs/fire-restaurant-flow.md §8.2): both null — the category's.
+        "scheduleAfterMinutes": getattr(product, "schedule_after_minutes", None),
+        "scheduleAfterCourseReady": _s(getattr(product, "schedule_after_course_ready", None)),
         "links": links_out(db, tenant_id, "product", product),
         "notes": notes_out(db, tenant_id, "product", product),
         "meal": meal_out(db, product.id),
@@ -1107,6 +1110,11 @@ def set_product_menu(db: Session, user: User, tenant_id, product: Product, body:
     if body.set_send_silently:
         product.send_silently = body.send_silently
         touched = True
+    if body.set_schedule:
+        _check_course(db, tenant_id, body.schedule_after_course_ready)
+        product.schedule_after_minutes = body.schedule_after_minutes
+        product.schedule_after_course_ready = body.schedule_after_course_ready
+        touched = True
     if body.set_limits:
         product.max_per_order = body.max_per_order
         product.refillable = body.refillable
@@ -1131,6 +1139,9 @@ def category_menu_out(db: Session, user: User, tenant_id, category: Category) ->
         "courseId": _s(category.course_id),
         # "יוצא בלי בון": null — the parent's (none at the top: off).
         "sendSilently": getattr(category, "send_silently", None),
+        # "itemScheduleRules": both null — the parent's (none at the top: no rule).
+        "scheduleAfterMinutes": getattr(category, "schedule_after_minutes", None),
+        "scheduleAfterCourseReady": _s(getattr(category, "schedule_after_course_ready", None)),
         "links": links_out(db, tenant_id, "category", category),
         "notes": notes_out(db, tenant_id, "category", category),
         "canEdit": _may_target(db, user, category),
@@ -1145,6 +1156,11 @@ def set_category_menu(db: Session, user: User, tenant_id, category: Category, bo
         category.updated_at = _now()
     if body.set_send_silently:
         category.send_silently = body.send_silently
+        category.updated_at = _now()
+    if body.set_schedule:
+        _check_course(db, tenant_id, body.schedule_after_course_ready)
+        category.schedule_after_minutes = body.schedule_after_minutes
+        category.schedule_after_course_ready = body.schedule_after_course_ready
         category.updated_at = _now()
     if body.links is not None:
         set_links(db, user, tenant_id, "category", category, body.links)

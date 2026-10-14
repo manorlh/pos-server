@@ -144,6 +144,10 @@ COLOR_MODES = ("auto", "light", "dark")
 FIELD_MODES = ("auto", "off", "optional", "required")
 FIELD_KEYS = ("customerName", "serviceType", "guests")
 SUMMARY_STATES = ("auto", "open", "closed")
+#: "איך זה עובד" of the courses (P:/specs/fire-restaurant-flow.md §5, §8.1): `hints.fireHints`, the till parameter
+#: `fireHints`'s codes. Like `look`, absent from DEFAULT_CONFIG (nothing set: today's sync bytes and version, the
+#: shared contract fixture as it was); absent — the parameter's.
+FIRE_HINTS = ("on", "first_time", "off")
 MAP_STYLES = ("auto", "classic", "modern")
 SHOW_HIDE = ("auto", "show", "hide")
 
@@ -167,7 +171,7 @@ ACTION_LABEL_MAX = 24
 
 #: Default labels (Hebrew, the till's language). A button's own `label` replaces it.
 ACTION_LABELS: Dict[str, str] = {
-    "send": "שדר למטבח",
+    "send": "שגר",
     "bill": "מעבר לחשבון",
     "pay": "תשלום",
     "split": "פיצול",
@@ -217,9 +221,9 @@ _ORDER_PREFIX = re.compile(r"^[0-9A-Za-z\u05D0-\u05EA]*$")
 
 #: The screen texts a business may reword ("" = the default below).
 TEXT_DEFAULTS: Dict[str, str] = {
-    "sendToKitchen": "שדר למטבח",
+    "sendToKitchen": "שגר",
     "newSuffix": "חדש",
-    "allSent": "הכול שודר",
+    "allSent": "הכול שוגר",
     "goToBill": "מעבר לחשבון",
     "pay": "תשלום",
     "orderTitle": "הזמנה",
@@ -600,11 +604,13 @@ SCHEMA = Obj({
     # per event and parameter level by level. Every key optional: nothing set is the "legacy" preset —
     # today's till (a push / pop of 300 ms, payment and the windows 330 ms, the tabs 140 ms).
     "motion": PartialObj(motion_engine_fields("till")),
+    # "הסבר לעובד" (P:/specs/fire-restaurant-flow.md §5): wins over the till parameter `fireHints` when set.
+    "hints": PartialObj({"fireHints": Enum(FIRE_HINTS)}),
     # "מראה" (P:/specs/product-tile-text.md §5): the four till parameters of the product tiles' text as the
     # design's own fields — `productNameFit`, `productNameMaxLines`, `productNameMinTextSize`,
     # `productInfoBadge`. Every key optional (`LOOK`): nothing set follows the till parameters.
     _tile_text.DESIGN_SECTION: LOOK,
-}, fill={"motion": {}, _tile_text.DESIGN_SECTION: {}})
+}, fill={"motion": {}, _tile_text.DESIGN_SECTION: {}, "hints": {}})
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schemaVersion": SCHEMA_VERSION,

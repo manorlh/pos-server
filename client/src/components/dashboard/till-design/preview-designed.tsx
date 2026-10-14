@@ -781,7 +781,7 @@ export function MenuArea({ m, d, railAtEnd = false }: { m: PreviewModel; d: D; r
 
 function orderLines(m: PreviewModel): PLine[] {
   if (m.mode !== 'table') return m.lines;
-  // A table: the new lines first (what "שדר" sends), the sent ones apart after them.
+  // A table: the new lines first (what "שגר" sends), the sent ones apart after them.
   return [...m.lines.filter((l) => l.status === 'new'), ...m.lines.filter((l) => l.status !== 'new')];
 }
 
@@ -917,7 +917,7 @@ export function BillLines({ m, d, wide }: { m: PreviewModel; d: D; wide: boolean
         {fresh.map((l, i) => (
           <LineRow key={l.id} m={m} l={l} d={d} last={i === fresh.length - 1} />
         ))}
-        {sent.length ? <GroupLabel m={m}>{`שודר · ${sent.length}`}</GroupLabel> : null}
+        {sent.length ? <GroupLabel m={m}>{`שוגר · ${sent.length}`}</GroupLabel> : null}
         {sent.map((l, i) => (
           <LineRow key={l.id} m={m} l={l} d={d} last={i === sent.length - 1} />
         ))}

@@ -32,6 +32,10 @@ class KdsItemIn(_Body):
     seat: Optional[str] = Field(None, max_length=60)
     course: Optional[str] = Field(None, max_length=60)
     meal_name: Optional[str] = Field(None, alias="mealName", max_length=100)
+    #: A held line that waits for its own time (P:/specs/fire-restaurant-flow.md §8.4): when it goes, or what it
+    #: waits for ("אחרי עיקריות"). Read on `held` items only; the screens draw it greyed, "מתוזמן 20:30".
+    scheduled_at: Optional[datetime] = Field(None, alias="scheduledAt")
+    scheduled_note: Optional[str] = Field(None, alias="scheduledNote", max_length=60)
 
 
 class KdsNoteIn(_Body):
@@ -48,7 +52,7 @@ class KdsReleaseIn(_Body):
     id: str = Field(min_length=8, max_length=64)
     source: Literal["table", "quick", "kiosk", "external"]
     source_ref: str = Field(alias="sourceRef", min_length=1, max_length=100)
-    #: send — a table's "שלח" or a quick sale's "שלח למטבח"; payment — after the payment;
+    #: send — a table's "שלח" or a quick sale's "שגר"; payment — after the payment;
     #: cancel — the whole order was cancelled; manual — anything else.
     trigger: Literal["send", "payment", "manual", "cancel"] = "send"
     paid: bool = False

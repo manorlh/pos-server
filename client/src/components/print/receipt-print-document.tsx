@@ -39,6 +39,11 @@ export interface PrintDocument {
   subtitle: string[];
   sections: PrintDocumentSection[];
   footer: string[];
+  /**
+   * "שולחן 12 · גן · 4 סועדים · מלצר: דנה" under the title of a table's document (`receiptTableInfo`,
+   * P:/specs/receipt-table-number.md); null or absent — none.
+   */
+  tableLine?: string | null;
 }
 
 /** Several slips (every card voucher of a document). */
@@ -57,6 +62,7 @@ const COPY_CSS = `
 .rpd-copy { margin: 4px auto 2px; padding: 1px 0; width: 60%; border: 2px solid #000; text-align: center;
   font-weight: 700; font-size: 16px; letter-spacing: 2px; }
 .rpd-copy-top { width: 80mm; max-width: 100%; }
+.rpd-table { margin: 2px 0; text-align: center; font-weight: 600; }
 `;
 
 /** The receipt stylesheet plus the copy mark's. */
@@ -65,13 +71,16 @@ export const RECEIPT_PRINT_CSS = `${TILL_RECEIPT_CSS}${COPY_CSS}`;
 /** One document on 80 mm, as HTML (every string escaped). */
 export function receiptPrintHtml(doc: PrintDocument): string {
   const html = tillReceiptHtml({ ...doc, number: null });
-  if (!doc.copyMark) return html;
-  const mark = `<div class="rpd-copy">${escape(doc.copyMark)}</div>`;
+  // The copy mark, then a table's line ("שולחן 12 · גן · …"), as the till prints them under the title.
+  const mark = doc.copyMark ? `<div class="rpd-copy">${escape(doc.copyMark)}</div>` : '';
+  const table = doc.tableLine ? `<div class="rpd-table">${escape(doc.tableLine)}</div>` : '';
+  const under = mark + table;
+  if (!under) return html;
   const titled = /(<div class="ztr-title">[\s\S]*?<\/div>)/;
   // Under the title when the layout has one; above the slip otherwise — never dropped.
   return titled.test(html)
-    ? html.replace(titled, `$1${mark}`)
-    : `<div class="rpd-copy-top">${mark}</div>${html}`;
+    ? html.replace(titled, (title) => `${title}${under}`) // a function: no `$` in a name is read as a pattern
+    : `<div class="rpd-copy-top">${under}</div>${html}`;
 }
 
 /** The screen preview of one document on 80 mm paper. */

@@ -294,6 +294,10 @@ class KitchenTask(Base):
     cancelled_qty = Column(Numeric(12, 3), nullable=False, default=0)
     prepared_qty = Column(Numeric(12, 3), nullable=False, default=0)
     release_state = Column(String(8), nullable=False, default="released", server_default="released")
+    #: A held line that waits for its own time (P:/specs/fire-restaurant-flow.md §8.4): when, or what it waits
+    #: for ("אחרי עיקריות"). Drawn greyed, "מתוזמן 20:30"; cleared when it is released.
+    scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    scheduled_note = Column(String(60), nullable=True)
     prep_state = Column(String(12), nullable=False, default="queued", server_default="queued")
     #: Printed on a fallback printer before the KDS had it: reconciled explicitly.
     fallback_printed = Column(Boolean, nullable=False, default=False, server_default="false")

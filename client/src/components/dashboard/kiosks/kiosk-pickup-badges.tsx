@@ -18,7 +18,7 @@ export function KioskPickupBadges({
   className,
 }: {
   pickup?: { label: string; businessDate: string | null } | null;
-  matchedBy?: ReadonlyArray<'document' | 'pickup'> | null;
+  matchedBy?: ReadonlyArray<'document' | 'pickup' | 'table'> | null;
   /** The search as typed: the reasons are shown only when it may be a pickup number. */
   query?: string | null;
   className?: string;

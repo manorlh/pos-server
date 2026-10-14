@@ -525,6 +525,10 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
     if payments:
         sections.append(PrintSection(title="אמצעי תשלום", rows=payments))
 
+    # "שולחן 12 · גן · 4 סועדים · מלצר: דנה" (`receiptTableInfo`, app/services/receipt_table_info.py):
+    # a table's document says which table under its title, as the till printed it.
+    from app.services.receipt_table_info import line_for_document
+
     return PrintDocumentOut(
         title=f"{document_title(title_type)} {document_number_of(tx)}",
         copy_mark=COPY_MARK,
@@ -532,6 +536,7 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         subtitle=subtitle,
         sections=sections,
         footer=["העתק נאמן למקור — אינו מהווה מסמך מקור", _printed_footer(zone)],
+        table_line=line_for_document(db, tx),
     )
 
 

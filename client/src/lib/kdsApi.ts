@@ -230,6 +230,9 @@ export interface KdsTask {
   preparedQty: number;
   activeQty: number;
   release: 'hold' | 'released';
+  /** Held until its own time (P:/specs/fire-restaurant-flow.md §8.4). */
+  scheduledAt?: string | null;
+  scheduledNote?: string | null;
   state: KdsPrepState;
   fallbackPrinted: boolean;
   fallbackResolved: boolean;

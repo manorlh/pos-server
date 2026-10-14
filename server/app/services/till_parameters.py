@@ -568,6 +568,26 @@ TABLES_SHOW_CHAIRS_KEY = "tablesShowChairs"
 TABLES_LABEL_SIZE_KEY = "tablesLabelSize"
 TABLES_LABEL_SIZES = ("קטן", "רגיל", "גדול")
 
+#: "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2). Read by the till only;
+#: on the dashboard's tables page too (app/services/table_restore.py `page_keys`, group `send`).
+#: `tablesSendSelected`: the table's order screen sends only the lines picked ("בחירה"); on by default.
+#: `tablesAfterSend`: after "הזמן" and "שגר נבחרים" — `leave` back to the tables screen (today's, the
+#: default) or `stay` in the table. Stored as the code; the till takes `stay` (or a value starting
+#: "נשאר") as stay and anything else as leave.
+#: `tablesSendStayButton`: the second button beside "הזמן" — "שגר והמשך" (leave) / "שגר וצא" (stay); on.
+TABLES_SEND_SELECTED_KEY = "tablesSendSelected"
+TABLES_AFTER_SEND_KEY = "tablesAfterSend"
+TABLES_AFTER_SEND_LEAVE = "leave"
+TABLES_AFTER_SEND_STAY = "stay"
+TABLES_AFTER_SEND_OPTIONS = (TABLES_AFTER_SEND_LEAVE, TABLES_AFTER_SEND_STAY)
+TABLES_AFTER_SEND_LABELS = {
+    TABLES_AFTER_SEND_LEAVE: "חזרה למסך השולחנות",
+    TABLES_AFTER_SEND_STAY: "נשארים בשולחן",
+}
+TABLES_SEND_STAY_BUTTON_KEY = "tablesSendStayButton"
+#: The three, in the order the dashboard lists them.
+TABLES_SEND_KEYS = (TABLES_SEND_SELECTED_KEY, TABLES_AFTER_SEND_KEY, TABLES_SEND_STAY_BUTTON_KEY)
+
 #: "גודל ריבוע מוצר": the sizes, smallest first, and "as the size it falls back to".
 TILE_SIZES = ("קטן מאוד", "קטן", "בינוני", "גדול")
 TILE_SIZE_INHERIT = "ברירת מחדל"
@@ -1257,6 +1277,45 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל (ברירת המחדל) — פתיחת שולחן פנוי שואלת כמה סועדים יושבים בו. כשכבוי — הקופה "
             "נכנסת ישר להזמנה בלי לשאול; מספר הסועדים נשאר ריק, ואפשר לקבוע אותו אחר כך מסרגל "
             "השולחן (\"סועדים\")."
+        ),
+    ),
+    # "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2) — read by the till only.
+    BuiltinParameter(
+        key=TABLES_SEND_SELECTED_KEY,
+        label="שגר נבחרים",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): במסך ההזמנה של שולחן אפשר \"בחירה\" (בתפריט או בלחיצה ארוכה על פריט "
+            "שלא שוגר) ושיגור רק של הפריטים המסומנים — \"שגר נבחרים (N)\". השאר נשארים \"טרם שוגר\". "
+            "פריט מסומן מקורס מעוכב יוצא, ושאר הקורס נשאר מעוכב. אותן הרשאות של שליחה. \"הזמן\" לא משתנה. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TABLES_AFTER_SEND_KEY,
+        label="אחרי שיגור (הזמן)",
+        value_type="enum",
+        enum_options=TABLES_AFTER_SEND_OPTIONS,
+        enum_labels=TABLES_AFTER_SEND_LABELS,
+        default_value=TABLES_AFTER_SEND_LEAVE,
+        description=(
+            "מה קורה אחרי \"הזמן\" ואחרי \"שגר נבחרים\": "
+            f"«{TABLES_AFTER_SEND_LABELS[TABLES_AFTER_SEND_LEAVE]}» (ברירת מחדל) — כמו היום; "
+            f"«{TABLES_AFTER_SEND_LABELS[TABLES_AFTER_SEND_STAY]}» — הקופה נשארת בשולחן עם הודעה "
+            "\"שוגרו N פריטים\", והפריטים מסומנים כמשוגרים. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TABLES_SEND_STAY_BUTTON_KEY,
+        label="כפתור שגר והמשך / שגר וצא",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): כפתור משני ליד \"הזמן\" (בטאבלט), או בלחיצה ארוכה על \"הזמן\" ובתפריט "
+            "(בטלפון ובמכשיר נייד): \"שגר והמשך\" כשאחרי שיגור = חזרה למסך השולחנות, \"שגר וצא\" כשנשארים "
+            "בשולחן. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     # Kitchen printers ("מדפסות בונים") — app/services/printers.py; also set by the shop's
@@ -2139,6 +2198,14 @@ from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
 
+# "FIRE כמו במסעדות" + "שיגור מתוזמן של פריט" (P:/specs/fire-restaurant-flow.md §8.1, app/services/fire_flow.py):
+# `fireAskOnSend` (ask / never / default:<choice>), `fireAskMinutes` ("10,15,20"), `fireHints` (on / first_time /
+# off), `itemScheduleMinutes` ("5,10,15,20,30"), `itemScheduleOnClose` (ask / send / cancel), `kdsShowScheduled`
+# (true). Read by the till; `kdsShowScheduled` also by the cloud's pass. Edited on the tables page too.
+from app.services.fire_flow import PARAMETER_SPECS as _FIRE_FLOW_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FIRE_FLOW_SPECS)
+
 # "שם פריט מלא על הכפתור, ותג i" (P:/specs/product-tile-text.md §3–§5, app/services/product_tile_text.py):
 # `productNameFit` (fit / wrap / clip), `productNameMaxLines` (1–4), `productNameMinTextSize` (s / m / l),
 # `productInfoBadge` (auto / always / off) — fit, 3, s, auto. Read by the till, the web till and the
@@ -2391,6 +2458,14 @@ from app.services.table_assignments import PARAMETER_SPECS as _TABLE_ASSIGNMENT_
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_ASSIGNMENT_SPECS)
 
+# "מספר שולחן על החשבונית" (P:/specs/receipt-table-number.md, app/services/receipt_table_info.py):
+# `receiptTableInfo` — what of the table (table, zone, guests, waiter) a table's document prints under
+# its title; empty by default (no line). Read by the till and by the cloud's copy of a document; edited
+# in "עיצוב קופה → שולחנות ומפה" too (table_tile_look.till_design_groups).
+from app.services.receipt_table_info import PARAMETER_SPECS as _RECEIPT_TABLE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _RECEIPT_TABLE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2482,6 +2557,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
             return course_auto_fire.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
+    # "FIRE כמו במסעדות" / "שיגור מתוזמן": the codes and minute lists the till parses.
+    from app.services import fire_flow
+
+    if key in fire_flow.VALIDATED_KEYS and value is not None:
+        try:
+            return fire_flow.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
     from app.services import table_restore
 
@@ -2546,6 +2629,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_assignments.VALIDATED_KEYS and value is not None:
         try:
             return table_assignments.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מספר שולחן על החשבונית": table / zone / guests / waiter in the line's order, or `none`.
+    from app.services import receipt_table_info
+
+    if key in receipt_table_info.VALIDATED_KEYS and value is not None:
+        try:
+            return receipt_table_info.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     # "מכשיר מזומן" (P:/specs/cash-paylink.md §11.10): the station id, the coins / notes in agorot, the alert

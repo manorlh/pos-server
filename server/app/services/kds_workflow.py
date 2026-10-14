@@ -124,7 +124,7 @@ WORKFLOW_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         key="workflowPaymentPolicy", label="תצורת עבודה — שחרור למטבח", value_type="enum",
         enum_options=PAYMENT_POLICIES, default_value=AFTER_PAYMENT,
         description=(
-            "הזמנה מהירה: AFTER_PAYMENT — משתחררת למטבח אחרי התשלום; BEFORE_PAYMENT — ב\"שלח למטבח\" לפני התשלום. "
+            "הזמנה מהירה: AFTER_PAYMENT — משתחררת למטבח אחרי התשלום; BEFORE_PAYMENT — ב\"שגר\" לפני התשלום. "
             "שולחן משתחרר תמיד בשליחת המלצר; קיוסק תמיד אחרי תשלום."
         ),
     ),

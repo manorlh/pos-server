@@ -64,6 +64,9 @@ class TableSaveIn(_Versioned, WaiterRef):
     #: save — keep it (autosave, before payment); send — "הזמן", then leave;
     #: bill — the bill was printed; leave — back to the tables screen.
     action: Literal["save", "send", "bill", "leave"] = "save"
+    #: With `send`: the till stays in the table ("שגר והמשך", `tablesAfterSend` = stay,
+    #: P:/specs/tables-send-selected-stay.md §2) — the send is recorded, the lock kept.
+    stay: Optional[bool] = None
     guests: Optional[int] = Field(None, ge=0, le=999)
     cart_json: str = Field(..., alias="cartJson", max_length=CART_JSON_MAX)
     extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)

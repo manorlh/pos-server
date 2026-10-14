@@ -450,9 +450,13 @@ _CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 #: Fields added after publications existed, with the value a publication made before them means:
 #: a row carrying exactly that value is the same content as one without the field, so adding a
 #: field never makes every shop's draft "changed" (the fingerprint), nor shows in the review.
-_PRODUCT_DEFAULTS: Dict[str, Any] = {"addonRole": "none", "sendSilently": None}
+_PRODUCT_DEFAULTS: Dict[str, Any] = {
+    "addonRole": "none", "sendSilently": None,
+    # "itemScheduleRules" (P:/specs/fire-restaurant-flow.md §8.2): null — inherited, as before the fields.
+    "scheduleAfterMinutes": None, "scheduleAfterCourseReady": None,
+}
 #: "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): null — inherited, as before the field.
-_CATEGORY_DEFAULTS: Dict[str, Any] = {"sendSilently": None}
+_CATEGORY_DEFAULTS: Dict[str, Any] = {"sendSilently": None, "scheduleAfterMinutes": None, "scheduleAfterCourseReady": None}
 _OPTION_DEFAULTS: Dict[str, Any] = {"imageUrl": None}
 _CHIP_DEFAULTS: Dict[str, Any] = {"imageUrl": None}
 #: A course's "הוצאה אוטומטית" minutes (P:/specs/courses-fire-v2.md §1): 15 — every course before the field.

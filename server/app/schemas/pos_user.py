@@ -152,8 +152,15 @@ class PosUserSyncRow(BaseModel):
     till_role_name: Optional[str] = Field(None, alias="tillRoleName")
     permissions: Optional[Dict[str, str]] = None
     limits: Optional[Dict[str, Dict[str, float]]] = None
+    #: "אל תציג שוב" (P:/specs/fire-restaurant-flow.md §8.5): the hints the employee dismissed; [] — none.
+    hints_dismissed: List[str] = Field(default_factory=list, alias="hintsDismissed")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
+
+    @field_validator("hints_dismissed", mode="before")
+    @classmethod
+    def _hints(cls, v):
+        return [str(x) for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
     class Config:
         from_attributes = True

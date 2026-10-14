@@ -1,0 +1,412 @@
+{
+  "_comment": "receiptTableInfo — the line under a table document's title (P:/specs/receipt-table-number.md). Byte-identical in pos-server tests/fixtures and pos-android app/src/test/resources: server app/services/receipt_table_info.py, android domain/ReceiptTableInfo.kt, client lib/receiptTableInfo.ts.",
+  "parse": [
+    {
+      "value": null,
+      "fields": []
+    },
+    {
+      "value": "",
+      "fields": []
+    },
+    {
+      "value": "none",
+      "fields": []
+    },
+    {
+      "value": " NONE ",
+      "fields": []
+    },
+    {
+      "value": "table",
+      "fields": [
+        "table"
+      ]
+    },
+    {
+      "value": "waiter,table",
+      "fields": [
+        "table",
+        "waiter"
+      ]
+    },
+    {
+      "value": " Guests , ZONE ",
+      "fields": [
+        "zone",
+        "guests"
+      ]
+    },
+    {
+      "value": "table,zone,guests,waiter",
+      "fields": [
+        "table",
+        "zone",
+        "guests",
+        "waiter"
+      ]
+    },
+    {
+      "value": "table,bogus",
+      "fields": [
+        "table"
+      ]
+    }
+  ],
+  "combinations": [
+    {
+      "fields": [],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": null
+    },
+    {
+      "fields": [
+        "table"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12"
+    },
+    {
+      "fields": [
+        "zone"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "גן"
+    },
+    {
+      "fields": [
+        "guests"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "4 סועדים"
+    },
+    {
+      "fields": [
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "מלצר: דנה"
+    },
+    {
+      "fields": [
+        "table",
+        "zone"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · גן"
+    },
+    {
+      "fields": [
+        "table",
+        "guests"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · 4 סועדים"
+    },
+    {
+      "fields": [
+        "table",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · מלצר: דנה"
+    },
+    {
+      "fields": [
+        "zone",
+        "guests"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "גן · 4 סועדים"
+    },
+    {
+      "fields": [
+        "zone",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "גן · מלצר: דנה"
+    },
+    {
+      "fields": [
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "4 סועדים · מלצר: דנה"
+    },
+    {
+      "fields": [
+        "table",
+        "zone",
+        "guests"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · גן · 4 סועדים"
+    },
+    {
+      "fields": [
+        "table",
+        "zone",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · גן · מלצר: דנה"
+    },
+    {
+      "fields": [
+        "table",
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · 4 סועדים · מלצר: דנה"
+    },
+    {
+      "fields": [
+        "zone",
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "גן · 4 סועדים · מלצר: דנה"
+    },
+    {
+      "fields": [
+        "table",
+        "zone",
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · גן · 4 סועדים · מלצר: דנה"
+    }
+  ],
+  "lines": [
+    {
+      "name": "the spec's example",
+      "fields": [
+        "table",
+        "zone",
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · גן · 4 סועדים · מלצר: דנה"
+    },
+    {
+      "name": "a document of no table (quick sale, kiosk)",
+      "fields": [
+        "table",
+        "zone",
+        "guests",
+        "waiter"
+      ],
+      "facts": null,
+      "line": null
+    },
+    {
+      "name": "nothing asked",
+      "fields": [],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": null
+    },
+    {
+      "name": "a named table",
+      "fields": [
+        "table",
+        "zone"
+      ],
+      "facts": {
+        "number": 5,
+        "name": "VIP 1",
+        "zone": "בר",
+        "guests": null,
+        "waiter": null
+      },
+      "line": "שולחן 5 · VIP 1 · בר"
+    },
+    {
+      "name": "a restored table by its label alone",
+      "fields": [
+        "table"
+      ],
+      "facts": {
+        "number": 9012,
+        "name": "ש-12",
+        "zone": null,
+        "guests": null,
+        "waiter": null
+      },
+      "line": "שולחן ש-12"
+    },
+    {
+      "name": "one guest",
+      "fields": [
+        "guests"
+      ],
+      "facts": {
+        "number": 3,
+        "name": null,
+        "zone": null,
+        "guests": 1,
+        "waiter": null
+      },
+      "line": "סועד אחד"
+    },
+    {
+      "name": "no guests recorded are left out",
+      "fields": [
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 3,
+        "name": null,
+        "zone": null,
+        "guests": 0,
+        "waiter": "Dana"
+      },
+      "line": "מלצר: Dana"
+    },
+    {
+      "name": "none of the asked facts known",
+      "fields": [
+        "zone",
+        "guests",
+        "waiter"
+      ],
+      "facts": {
+        "number": 3,
+        "name": null,
+        "zone": " ",
+        "guests": null,
+        "waiter": null
+      },
+      "line": null
+    },
+    {
+      "name": "the line's order, whatever the list's",
+      "fields": [
+        "waiter",
+        "table"
+      ],
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": "גן",
+        "guests": 4,
+        "waiter": "דנה"
+      },
+      "line": "שולחן 12 · מלצר: דנה"
+    }
+  ]
+}

@@ -522,7 +522,7 @@ export function buildPreviewModel(opts: BuildOptions): PreviewModel {
   const total = lines.reduce((s, l) => s + l.qty * l.unit, 0);
   const units = lines.reduce((s, l) => s + l.qty, 0);
   const legacy = opts.legacy ?? null;
-  // "לוח מנות": the lanes; "שדר" sends only the fired courses (and the lines with no course).
+  // "לוח מנות": the lanes; "שגר" sends only the fired courses (and the lines with no course).
   const courseNames = opts.courseNames && opts.courseNames.length > 0 ? opts.courseNames : SAMPLE_COURSES;
   const catOf = new Map(baseProducts.map((p) => [p.id, p.categoryId]));
   const courseOf = (l: PLine) => courseOfLine(l, (id) => catOf.get(id) ?? null, menu.categories, courseNames.length);

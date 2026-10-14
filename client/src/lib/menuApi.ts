@@ -167,6 +167,9 @@ export interface ProductMenu {
   courseId: string | null;
   /** "יוצא בלי בון": its lines are marked sent on "שלח", with no ticket and no KDS. Null: the category's. */
   sendSilently: boolean | null;
+  /** "itemScheduleRules" (P:/specs/fire-restaurant-flow.md §8.2): both null — the category's; 0 and no course — none. */
+  scheduleAfterMinutes: number | null;
+  scheduleAfterCourseReady: string | null;
   links: LinksState;
   notes: NotesState;
   meal: { slots: MealSlot[] };
@@ -184,6 +187,10 @@ export interface ProductMenuInput {
   /** Sent only together with `setSendSilently: true` (null: inherit). */
   sendSilently?: boolean | null;
   setSendSilently?: boolean;
+  /** Sent only together with `setSchedule: true` (both null: inherit). */
+  scheduleAfterMinutes?: number | null;
+  scheduleAfterCourseReady?: string | null;
+  setSchedule?: boolean;
   links?: { mode: LinksMode; groupIds: string[] };
   notes?: { mode: 'inherit' | 'own'; notes: NoteInput[] };
   meal?: {
@@ -219,13 +226,25 @@ export interface CategoryMenu {
   courseId: string | null;
   /** "יוצא בלי בון". Null: the parent category's (at the top level: off). */
   sendSilently: boolean | null;
+  /** "itemScheduleRules": both null — the parent category's (at the top level: none). */
+  scheduleAfterMinutes: number | null;
+  scheduleAfterCourseReady: string | null;
   links: LinksState;
   notes: NotesState;
   canEdit: boolean;
 }
 
 export type CategoryMenuInput = Pick<
-  ProductMenuInput, 'courseId' | 'setCourse' | 'sendSilently' | 'setSendSilently' | 'links' | 'notes'
+  ProductMenuInput,
+  | 'courseId'
+  | 'setCourse'
+  | 'sendSilently'
+  | 'setSendSilently'
+  | 'scheduleAfterMinutes'
+  | 'scheduleAfterCourseReady'
+  | 'setSchedule'
+  | 'links'
+  | 'notes'
 >;
 
 export async function fetchCategoryMenu(categoryId: string): Promise<CategoryMenu> {

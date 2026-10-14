@@ -163,12 +163,12 @@ def cart(*lines):
 
 
 def save(w, till, table, order_id, expected, *, action="save", lines=("l1",), total="50", request_id=None,
-         guests=2, name="דנה"):
+         guests=2, name="דנה", stay=None):
     tasks = BackgroundTasks()
     body = TableSaveIn(
         orderId=order_id, expectedVersion=expected, requestId=request_id or uuid.uuid4().hex, action=action,
         guests=guests, cartJson=cart(*lines), extrasJson=None, itemCount=len(lines), total=Decimal(total),
-        posUserId="pu-" + name, posUserName=name,
+        posUserId="pu-" + name, posUserName=name, stay=stay,
     )
     out = R.save_table(str(till.id), table.id, body, tasks, machine=till, db=w.db)
     run(tasks)
@@ -1686,6 +1686,83 @@ class TestAskGuests:
         assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("quickPayButton1") == "אשראי מהיר"
         set_param(w, "quickPayButton1", "shop", w.shop.id, "מזומן מהיר")
         assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("quickPayButton1") == "מזומן מהיר"
+
+
+# ── "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2) ──────────
+
+
+class TestSendSelectedAndStay:
+    KEYS = ("tablesSendSelected", "tablesAfterSend", "tablesSendStayButton")
+
+    def test_the_three_parameters_with_their_defaults(self, w):
+        selected, after, button = (w.params[k] for k in self.KEYS)
+        assert (selected.value_type, selected.default_value, selected.label) == ("boolean", True, "שגר נבחרים")
+        assert (after.value_type, after.default_value, after.label) == ("enum", "leave", "אחרי שיגור (הזמן)")
+        # Stored as the codes the till parses; the dashboard shows the Hebrew.
+        assert list(after.enum_options) == ["leave", "stay"]
+        assert TP.enum_labels("tablesAfterSend") == {"leave": "חזרה למסך השולחנות", "stay": "נשארים בשולחן"}
+        assert (button.value_type, button.default_value, button.label) == (
+            "boolean", True, "כפתור שגר והמשך / שגר וצא",
+        )
+        assert tuple(TP.TABLES_SEND_KEYS) == self.KEYS
+        got = TP.till_parameters_for_machine(w.db, w.a).parameters
+        assert [got[k] for k in self.KEYS] == [True, "leave", True]
+        with pytest.raises(TP.TillParameterValueError):
+            TP.validate_value("enum", "נשארים בשולחן", after.enum_options)
+
+    def test_dynamic_per_layer(self, w):
+        set_param(w, "tablesAfterSend", "company", w.company.id, "stay")
+        set_param(w, "tablesSendSelected", "shop", w.shop.id, False)
+        set_param(w, "tablesSendStayButton", "machine", w.b.id, False)
+        a = TP.till_parameters_for_machine(w.db, w.a).parameters
+        b = TP.till_parameters_for_machine(w.db, w.b).parameters
+        assert [a[k] for k in self.KEYS] == [False, "stay", True]
+        assert [b[k] for k in self.KEYS] == [False, "stay", False]
+
+    def test_on_the_tables_page_in_a_group_of_their_own(self, w):
+        from app.services import table_restore as TR
+
+        view = TR.level_view(w.db, "shop", w.shop.id)
+        assert [p["key"] for p in view["parameters"] if p["group"] == "send"] == list(self.KEYS)
+        after = next(p for p in view["parameters"] if p["key"] == "tablesAfterSend")
+        assert after["enumLabels"] == {"leave": "חזרה למסך השולחנות", "stay": "נשארים בשולחן"}
+        # Just before the courses' auto-fire; "מתי עיקריות?" (fire-restaurant-flow, `fireFlow`) comes last.
+        assert [g["key"] for g in view["groups"]][-3:] == ["send", "courses", "fireFlow"]
+
+    def test_send_and_stay_keeps_the_lock_and_counts_the_send(self, w):
+        assert TableSaveIn.model_validate({"orderId": str(uuid.uuid4()), "cartJson": "{}", "stay": True}).stay is True
+        enter(w, w.a, w.t[2])
+        oid = uuid.uuid4()
+        save(w, w.a, w.t[2], oid, None)
+        out = save(w, w.a, w.t[2], oid, 1, action="send", stay=True, lines=("l1", "l2"))
+        assert out["order"]["sendCount"] == 1 and out["order"]["sentAt"]
+        assert w.db.get(DiningTable, w.t[2].id).lock_machine_id == w.a.id
+        assert refused(enter, w, w.b, w.t[2]).detail["code"] == "table_locked"
+        assert w.db.query(TableEvent).filter(TableEvent.kind == "send").count() == 1
+        # Again, still in the table.
+        out = save(w, w.a, w.t[2], oid, 2, action="send", stay=True, lines=("l1", "l2", "l3"))
+        assert out["order"]["sendCount"] == 2
+        assert w.db.get(DiningTable, w.t[2].id).lock_machine_id == w.a.id
+        # "הזמן" without stay lets go, as today.
+        out = save(w, w.a, w.t[2], oid, 3, action="send", lines=("l1", "l2", "l3", "l4"))
+        assert out["order"]["sendCount"] == 3
+        assert w.db.get(DiningTable, w.t[2].id).lock_machine_id is None
+        enter(w, w.b, w.t[2])
+
+    def test_a_retried_send_and_stay_does_not_let_go(self, w):
+        enter(w, w.a, w.t[2])
+        oid = uuid.uuid4()
+        save(w, w.a, w.t[2], oid, None)
+        first = save(w, w.a, w.t[2], oid, 1, action="send", stay=True, request_id="req-stay")
+        again = save(w, w.a, w.t[2], oid, 1, action="send", stay=True, request_id="req-stay")
+        assert again["replayed"] is True
+        assert again["order"]["sendCount"] == first["order"]["sendCount"] == 1
+        assert w.db.get(DiningTable, w.t[2].id).lock_machine_id == w.a.id
+        # A retried "הזמן" still lets go.
+        save(w, w.a, w.t[2], oid, 2, action="send", request_id="req-go")
+        enter(w, w.a, w.t[2])
+        assert save(w, w.a, w.t[2], oid, 2, action="send", request_id="req-go")["replayed"] is True
+        assert w.db.get(DiningTable, w.t[2].id).lock_machine_id is None
 
 
 def test_the_migration_is_a_single_head():

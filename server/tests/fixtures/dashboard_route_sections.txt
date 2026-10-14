@@ -850,6 +850,7 @@ PUT /sync/{machine_id}/machine-catalog -> till
 GET /sync/{machine_id}/parameters -> till
 PUT /sync/{machine_id}/payment-terminal -> till
 GET /sync/{machine_id}/pos-users -> till
+POST /sync/{machine_id}/pos-users/{pos_user_id}/hints -> till
 POST /sync/{machine_id}/print-host -> till
 POST /sync/{machine_id}/print-jobs -> till
 GET /sync/{machine_id}/print-jobs/pending -> till
