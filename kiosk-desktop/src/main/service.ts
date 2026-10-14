@@ -171,6 +171,8 @@ export interface LocalSettings {
 const LOCAL_SETTINGS = 'local.settings';
 const LOCAL_PAUSE = 'local.pause';
 const TECH_LOCK = 'technician.lock';
+/** Why there is no card on a kiosk set "ללא אשראי" (`paymentIntegration` = `none`): staff and the bridge's tile. */
+const NO_CARD_TEXT = 'הקיוסק מוגדר ללא אשראי';
 const HELP = 'kiosk.helpRequest';
 /** A SynqPay key paired at this kiosk (sealed), until and after the cloud has it (pairing.ts). */
 const SYNQ_LOCAL_KEY = 'synqpay.localKey';
@@ -314,7 +316,8 @@ export class KioskService extends EventEmitter {
 
   /** The kiosk's Nayax LAN pinpad as the cloud settings place it; null on any other terminal. */
   private pinpadHere(): { host: string; port: number; path: string } | null {
-    if (this.pay.describe().kind !== 'nayax_lan') return null;
+    // "ללא אשראי": no pinpad to look for or move (a terminal kept for an unresolved card included).
+    if (this.pay.noCard || this.pay.describe().kind !== 'nayax_lan') return null;
     const s = (this.cloud.settings().settings ?? {}) as Record<string, unknown>;
     const port = s.nayaxDevicePort === undefined || s.nayaxDevicePort === null ? null : String(s.nayaxDevicePort);
     const a = pinpadAddressOf(s.nayaxDeviceHost as string | null, port, s.nayaxSpicyPath as string | null);
@@ -640,8 +643,9 @@ export class KioskService extends EventEmitter {
         pausedUntil: paused.until,
         // No terminal set up at all (a health check that did not answer is tried on the press), or offline with
         // "חסימת הזמנות כשאין אינטרנט" on (kioskOfflineBlocks — the Android kiosk's KioskPayBlock.OFFLINE).
-        noPayment: !this.pay.configured || this.offlineBlocked(cfg),
-        noPaymentReason: this.offlineBlocked(cfg) ? 'offline' : !this.pay.configured ? 'terminal' : null,
+        // "ללא אשראי" is no terminal fault: the kiosk takes what it is set to besides the card (`pay.usable`).
+        noPayment: (!this.pay.configured && !this.pay.noCard) || this.offlineBlocked(cfg),
+        noPaymentReason: this.offlineBlocked(cfg) ? 'offline' : !this.pay.configured && !this.pay.noCard ? 'terminal' : null,
         terminal: this.pay.monitor.state,
         offline: this.offlineNow,
         offlineSince: this.offline.since,
@@ -790,6 +794,7 @@ export class KioskService extends EventEmitter {
     if (health !== 'ok' && health !== 'unknown') alerts.push({ kind: 'printer', key: 'printer:receipt', reason: health === 'no_paper' ? 'no_paper' : health === 'offline' || health === 'unavailable' ? 'offline' : 'error' });
     const bonsFailed = today.filter((o) => o.bonStatus === 'failed').length;
     if (bonsFailed > 0) alerts.push({ kind: 'printer', key: 'printer:bon', reason: 'bon_failed', detail: { failed: bonsFailed } });
+    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does.
     if (this.pay.monitor.state === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
     else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
     if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
@@ -831,7 +836,13 @@ export class KioskService extends EventEmitter {
       platform: 'windows',
       screen: this.flow.screen,
       terminal: {
-        state: terminal.state === 'unconfigured' ? 'not_configured' : terminal.state === 'not_external' ? 'none' : terminal.state,
+        // "ללא אשראי" reads as no terminal ("none"); the cloud shows it as such (kiosk_health `no_card`).
+        state:
+          terminal.state === 'unconfigured'
+            ? 'not_configured'
+            : terminal.state === 'not_external' || terminal.state === 'no_card'
+              ? 'none'
+              : terminal.state,
         checkedAt: iso(terminal.lastCheckAtMs),
         address: this.pay.describe().address ?? undefined,
       },
@@ -1527,17 +1538,21 @@ export class KioskService extends EventEmitter {
   }
 
   private payView(kiosk: boolean): KioskView['pay'] {
-    const methods = kiosk ? tsKioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
+    const set = kiosk ? tsKioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
+    // "ללא אשראי": no card tile at all (not one shown off) — cash at the till and the voucher stay.
+    const methods = this.pay.noCard ? set.filter((m) => m !== 'card' && m !== 'split_card') : set;
     const state = this.pay.monitor.state;
     // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
     // a terminal that did not answer its check is tried on the press.
-    const cardOff = this.pay.blocked()
-      ? 'תשלום קודם ממתין לבירור. אנא פנו לצוות.'
-      : this.pay.configured
-        ? null
-        : state === 'unconfigured'
-          ? 'לא הוגדר מסופון אשראי לקיוסק'
-          : 'מסופון האשראי לא זמין כרגע';
+    const cardOff = this.pay.noCard
+      ? NO_CARD_TEXT
+      : this.pay.blocked()
+        ? 'תשלום קודם ממתין לבירור. אנא פנו לצוות.'
+        : this.pay.configured
+          ? null
+          : state === 'unconfigured'
+            ? 'לא הוגדר מסופון אשראי לקיוסק'
+            : 'מסופון האשראי לא זמין כרגע';
     const usable = methods.filter((m) =>
       // A voucher only where its order can be finished: by the card (the vouchers are legs of the document) or at the till
       // (voucherCanFinish) — never a dead end.
@@ -1752,6 +1767,7 @@ export class KioskService extends EventEmitter {
     const blocked = this.pay.blocked();
     if (!this.fiscalRole || !this.paired) return { ready: false, state, blocked, reason: 'הגשר אינו מקושר לקיוסק' };
     if (!this.isKiosk()) return { ready: false, state, blocked, reason: 'המכשיר אינו קיוסק פעיל בענן' };
+    if (this.pay.noCard) return { ready: false, state, blocked, reason: NO_CARD_TEXT };
     if (blocked) return { ready: false, state, blocked, reason: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
     if (!this.pay.configured) return { ready: false, state, blocked, reason: state === 'unconfigured' ? 'לא הוגדר מסופון אשראי לקיוסק' : 'מסופון האשראי לא זמין כרגע' };
     return { ready: true, state, blocked, reason: null };
@@ -2499,6 +2515,7 @@ export class KioskService extends EventEmitter {
         this.printQueue.retryFailed();
         return { ok: true };
       case 'checkTerminal':
+        if (this.pay.noCard) return { ok: false, message: NO_CARD_TEXT };
         await this.pay.monitorTick({ busy: this.flow.busy, screen: this.flow.screen }, true);
         return { ok: this.pay.monitor.state === 'ready', message: this.pay.monitor.lastError ?? undefined };
       case 'recheckPayment':
@@ -2690,6 +2707,7 @@ export class KioskService extends EventEmitter {
       case 'pinpadCheck': {
         // Read-only: getStatus, never a charge.
         const p = this.pay.current;
+        if (this.pay.noCard) return { ok: false, message: NO_CARD_TEXT };
         if (!p) return { ok: false, message: 'לא הוגדר מסופון' };
         // "בדיקת מסופון USB": getStatus + getRetailerInfo, the raw replies and the framing (nayaxUsb.ts).
         if (p instanceof NayaxUsbProvider) {
