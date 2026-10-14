@@ -56,7 +56,46 @@ export const T = {
   offline: 'לא מחובר',
   printer: 'מדפסת',
   terminal: 'מסופון',
+  // "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §4): the tile's "i" and the item's details.
+  itemDetails: 'פרטי הפריט',
+  soldOut: 'אזל',
+  blocked: 'חסום',
+  noDescription: 'אין תיאור לפריט.',
+  price: 'מחיר',
+  priceRange: 'טווח מחירים',
+  variants: 'גדלים ווריאציות',
+  dietary: 'תגיות תזונה',
+  allergens: 'אלרגנים',
+  addToCart: 'הוסף לסל',
 } as const;
+
+/** The dietary codes in words (the APK's strings_dietary.xml, the dashboard's productDietary.tags). */
+export const DIETARY_HE: Record<string, string> = {
+  vegan: 'טבעוני',
+  vegetarian: 'צמחוני',
+  dairy: 'חלבי',
+  meat: 'בשרי',
+  gluten_free: 'ללא גלוטן',
+  spicy: 'חריף',
+};
+
+/** The allergen codes in words (the dashboard's menu.allergens). */
+export const ALLERGEN_HE: Record<string, string> = {
+  gluten: 'גלוטן',
+  milk: 'חלב',
+  nuts: 'אגוזים',
+  eggs: 'ביצים',
+  peanuts: 'בוטנים',
+  fish: 'דגים',
+  soy: 'סויה',
+  sesame: 'שומשום',
+  celery: 'סלרי',
+  mustard: 'חרדל',
+  sulphites: 'סולפיטים',
+  lupin: 'תורמוס',
+  molluscs: 'רכיכות',
+  crustaceans: 'סרטנים',
+};
 
 /** Agorot → "₪1,234.50" (the shekel sign before, as on the till's screens). */
 export function money(agorot: number): string {

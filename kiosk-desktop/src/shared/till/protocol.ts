@@ -17,6 +17,8 @@
  * Money is in agorot (integers), as on the APK.
  */
 
+import type { ProductTextSettings } from '@dash-lib/productTileText';
+
 export const TILL_PROTOCOL = 1;
 /** Where these names come from until the golden file lands (S0-1). */
 export const PROTOCOL_SOURCE = 'local-mock-v0';
@@ -159,6 +161,7 @@ export const TILL_ERRORS = {
   card_in_flight: 'עסקת אשראי בתהליך — אי אפשר לבטל עכשיו',
   wrong_pin: 'קוד שגוי',
   not_implemented: 'עוד לא בשלד הזה',
+  product_unavailable: 'הפריט לא זמין למכירה כרגע',
   z_not_in_demo: 'Z לא מופק במצב הדגמה',
 } as const;
 
@@ -199,6 +202,18 @@ export interface Product {
   priceAgorot: number;
   /** Short label for a tile without a picture. */
   short?: string;
+  // "תג i" (P:/specs/product-tile-text.md §4) — what the item's details show; all optional (an older
+  // engine sends none), as the till's catalog carries them (description, imageUrl, dietaryTags, allergens).
+  description?: string | null;
+  imageUrl?: string | null;
+  /** vegan | vegetarian | dairy | meat | gluten_free | spicy. */
+  dietaryTags?: string[];
+  /** gluten, milk, … (the menu's fixed codes). */
+  allergens?: string[];
+  /** Sizes / variants and their prices: the details show the range. */
+  variants?: Array<{ name: string; priceAgorot: number }>;
+  /** Not on sale now — "אזל" / "חסום", with the block's own words; null / absent: on sale. */
+  blocked?: { kind: 'sold_out' | 'blocked'; reason: string | null } | null;
 }
 
 export interface Catalog {
@@ -287,6 +302,12 @@ export interface EngineDialog {
   actions: Array<{ id: string; label: string; primary?: boolean }>;
 }
 
+/** How the screens draw what the engine sells — the APK's settings as the engine resolved them. */
+export interface DisplayState {
+  /** "שם פריט מלא ותג i": the till parameters with the till design's `look` over them (§5). */
+  productText: ProductTextSettings;
+}
+
 export interface ModeState {
   role: DeviceRoleName;
   current: DeviceRoleName;
@@ -304,6 +325,8 @@ export interface TillState {
   health: HealthState;
   dialog: EngineDialog | null;
   mode: ModeState;
+  /** Absent from an older engine: the defaults. */
+  display?: DisplayState;
 }
 
 export interface XReport {

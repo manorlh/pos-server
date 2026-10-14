@@ -10,6 +10,7 @@
  * its main process behind IPC (main/roles/till.ts).
  */
 
+import { PRODUCT_TEXT_DEFAULTS, type ProductTextSettings } from '@dash-lib/productTileText';
 import { job, type MonoBitmap } from '../../core/escpos';
 import { bytesToBase64 } from './bytes';
 import { demoCatalog } from './catalogDemo';
@@ -57,6 +58,8 @@ export interface MockEngineOptions {
   rolesAllowed?: DeviceRoleName[];
   now?: () => number;
   schedule?: (fn: () => void, ms: number) => void;
+  /** "שם פריט מלא ותג i": the four as a till's parameters and design set them (absent: the defaults). */
+  productText?: Partial<ProductTextSettings>;
 }
 
 class Refusal extends Error {
@@ -98,7 +101,15 @@ function demoReceiptBitmap(lines: number): MonoBitmap {
   return { width, height, rowBytes, data };
 }
 
-export function initialState(o: { role: DeviceRoleName; rolesAllowed: DeviceRoleName[]; terminal: boolean; printer: boolean; catalogVersion: number; nowIso: string }): TillState {
+export function initialState(o: {
+  role: DeviceRoleName;
+  rolesAllowed: DeviceRoleName[];
+  terminal: boolean;
+  printer: boolean;
+  catalogVersion: number;
+  nowIso: string;
+  productText?: Partial<ProductTextSettings>;
+}): TillState {
   return {
     protocol: TILL_PROTOCOL,
     session: { cashier: { id: 'demo-cashier', name: 'קופאי הדגמה' }, locked: false, permissions: ['SELL', 'SHIFT_OPEN', 'SHIFT_CLOSE', 'REPORT_X'], demo: true },
@@ -109,6 +120,7 @@ export function initialState(o: { role: DeviceRoleName; rolesAllowed: DeviceRole
     health: { cloud: 'demo', printer: o.printer ? 'ok' : 'none', terminal: o.terminal ? 'ok' : 'none', outbox: 0 },
     dialog: null,
     mode: { role: o.role, current: o.role, rolesAllowed: o.rolesAllowed.slice() },
+    display: { productText: { ...PRODUCT_TEXT_DEFAULTS, ...(o.productText ?? {}) } },
   };
 }
 
@@ -139,6 +151,7 @@ export class MockTillEngine implements EngineEndpoint {
       printer: !!o.printerTarget,
       catalogVersion: this.catalog.version,
       nowIso: new Date(this.now()).toISOString(),
+      productText: o.productText,
     });
   }
 
@@ -328,6 +341,8 @@ export class MockTillEngine implements EngineEndpoint {
     if (!isInt(qty, 1, 999)) refuse('invalid_args');
     const p = this.catalog.products.find((x) => x.id === a.productId);
     if (!p) return refuse('invalid_args');
+    // "אזל" / "חסום": refused — from the tile or from the item's details alike (the same `sell.add`).
+    if (p.blocked) return refuse('product_unavailable', { kind: p.blocked.kind });
     const same = this.st.sell.lines.find((l) => l.productId === p.id && l.discountPct === 0);
     if (same) same.qty = Math.min(999, same.qty + qty);
     else {

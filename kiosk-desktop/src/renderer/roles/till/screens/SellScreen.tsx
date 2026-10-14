@@ -9,6 +9,8 @@ import type { Catalog, TillState } from '../../../../shared/till/protocol';
 import type { TillLayout } from '../layout/tillLayout';
 import { CartPane, type CartActions } from '../parts/CartPane';
 import { ProductGrid } from '../parts/ProductGrid';
+import { ProductInfo } from '../parts/ProductInfo';
+import { displayProductText } from '../parts/tileText';
 import { money, T } from '../text';
 
 export function filterProducts(catalog: Catalog, departmentId: string | null, search: string) {
@@ -34,8 +36,20 @@ export function SellScreen({
   cart: CartActions;
 }) {
   const [cartOpen, setCartOpen] = useState(false);
+  // "תג i": the product whose details are open (a tap on the "i", never on the tile, opens them).
+  const [infoId, setInfoId] = useState<string | null>(null);
   const sell = state.sell;
   const products = catalog ? filterProducts(catalog, sell.departmentId, sell.search) : [];
+  const info = infoId ? (catalog?.products.find((p) => p.id === infoId) ?? null) : null;
+  const infoPanel = info ? (
+    <ProductInfo
+      product={info}
+      department={catalog?.departments.find((d) => d.id === info.departmentId) ?? null}
+      sheet={layout.panes === 'single'}
+      onAdd={onAdd}
+      onClose={() => setInfoId(null)}
+    />
+  ) : null;
   const catalogPane = (
     <section className="t-catalog" aria-label={T.sell}>
       <div className="t-catalog-bar">
@@ -51,7 +65,15 @@ export function SellScreen({
         </div>
         <input className="t-search" type="search" inputMode="search" placeholder={T.searchPlaceholder} value={sell.search} onChange={(e) => onSearch(e.target.value)} />
       </div>
-      <ProductGrid products={products} departments={catalog?.departments ?? []} columns={layout.columns} tileHeight={layout.tileHeightDp} onAdd={onAdd} />
+      <ProductGrid
+        products={products}
+        departments={catalog?.departments ?? []}
+        columns={layout.columns}
+        tileHeight={layout.tileHeightDp}
+        productText={displayProductText(state.display)}
+        onAdd={onAdd}
+        onInfo={setInfoId}
+      />
     </section>
   );
 
@@ -60,6 +82,7 @@ export function SellScreen({
       <div className="t-sell t-sell-side" style={{ gridTemplateColumns: `minmax(0, 1fr) ${layout.cartWidthDp}px` }}>
         {catalogPane}
         <CartPane sell={sell} actions={cart} />
+        {infoPanel}
       </div>
     );
   }
@@ -69,6 +92,7 @@ export function SellScreen({
       <div className="t-sell t-sell-stacked" style={{ gridTemplateRows: `minmax(0, 1fr) ${cartPct}%` }}>
         {catalogPane}
         <CartPane sell={sell} actions={cart} compact />
+        {infoPanel}
       </div>
     );
   }
@@ -93,6 +117,7 @@ export function SellScreen({
           <strong>{money(sell.totalAgorot)}</strong>
         </button>
       ) : null}
+      {infoPanel}
     </div>
   );
 }

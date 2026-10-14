@@ -314,6 +314,222 @@
 
 .t-tile-price {
   color: var(--t-muted);
+  /* Never cut (P:/specs/product-tile-text.md §2): the size is chosen to fit (parts/tileText.ts). */
+  white-space: nowrap;
+}
+
+/* "שם פריט מלא ותג i": the tile and its "i" side by side in one cell — the "i" never inside the tile's
+   button, so a tap on it adds nothing. */
+.t-tile-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.t-tile-wrap > .t-tile {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.t-tile-name-fit {
+  display: block;
+  overflow: hidden;
+  -webkit-line-clamp: unset;
+}
+
+.t-tile-line {
+  display: block;
+  white-space: nowrap;
+}
+
+/* The top-left corner (the right one is the count's), a 32 px target around a 22 px square. */
+.t-tile-info {
+  position: absolute;
+  top: 2px;
+  inset-inline-end: 2px;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.t-tile-info > span {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--t-line);
+  border-radius: 6px;
+  background: var(--t-surface);
+  color: var(--t-accent);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.t-tile-blocked > .t-tile {
+  opacity: 0.55;
+}
+
+.t-tile-flag {
+  position: absolute;
+  bottom: 6px;
+  inset-inline-end: 8px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--t-danger-soft);
+  color: var(--t-danger);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* The item's details: a window on a tablet or a PC, a bottom sheet on a phone. */
+.t-info-scrim {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.t-info {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--t-surface);
+  color: var(--t-text);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.t-info-window {
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: 86vh;
+  border-radius: 14px;
+}
+
+.t-info-sheet {
+  align-self: flex-end;
+  width: 100%;
+  max-height: 84vh;
+  border-radius: 16px 16px 0 0;
+}
+
+.t-info-image {
+  display: block;
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+.t-info-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.t-info-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.t-info-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.t-info-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.t-info-department,
+.t-info-label,
+.t-info-muted {
+  color: var(--t-muted);
+}
+
+.t-info-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.t-info-flag {
+  align-self: flex-start;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--t-danger-soft);
+  color: var(--t-danger);
+  font-weight: 700;
+}
+
+.t-info-description {
+  margin: 0;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.t-info-price {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 20px;
+}
+
+.t-info-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.t-info-variants {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.t-info-variants > li {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--t-line);
+}
+
+.t-info-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.t-info-tag {
+  padding: 1px 8px;
+  border: 1px solid var(--t-line);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.t-info-allergens {
+  color: var(--t-warn);
 }
 
 .t-empty {
