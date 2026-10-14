@@ -24,6 +24,7 @@ import {
   setTillParameterValue,
 } from '@/lib/api';
 import { findBySameId } from '@/lib/entityLookup';
+import { optionWarning } from '@/lib/tableAssignment';
 import type {
   Company,
   PosMachine,
@@ -183,6 +184,8 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
   // own tables; choosing *which* till is a value on that till.
   const singleTillHint =
     parameter.key === 'tablesMode' && value === 'קופה אחת' && !!scopeType && scopeType !== 'machine';
+  // "שולחן תפוס" = off (P:/specs/table-waiter-assignment.md §8): not safe — said once it is chosen.
+  const optionHint = optionWarning(parameter.optionWarnings, value);
 
   const save = useMutation({
     mutationFn: () =>
@@ -465,6 +468,11 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
                 {tv('chooseTill')}
               </Button>
             </div>
+          ) : null}
+          {optionHint ? (
+            <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+              {optionHint}
+            </p>
           ) : null}
           {!editing ? <p className="text-muted-foreground text-xs">{tv('entityHint')}</p> : null}
           <div className="flex gap-2">

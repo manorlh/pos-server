@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { api, fetchShopAreas } from '@/lib/api';
 import { useScope } from '@/lib/scope';
+import { optionWarning } from '@/lib/tableAssignment';
 import { sameId } from '@/lib/entityLookup';
 import {
   METHODS,
@@ -179,6 +180,8 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
     const inherited = data.inherited[p.key] ?? p.defaultValue;
     const text = shown(p.key);
     const own = data.own[p.key] !== undefined && data.own[p.key] !== null;
+    // "שולחן תפוס" = off (P:/specs/table-waiter-assignment.md §8): the dashboard warns once it is chosen.
+    const warning = optionWarning(p.optionWarnings, text !== '' ? text : inherited);
     return (
       <div key={p.key} className="flex flex-wrap items-start gap-3 p-3">
         <div className="min-w-[16rem] flex-1 space-y-0.5">
@@ -200,6 +203,11 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
             methodLabel={methodLabel}
             describe={(v) => describe(p, v)}
           />
+          {warning ? (
+            <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+              {warning}
+            </p>
+          ) : null}
         </div>
       </div>
     );

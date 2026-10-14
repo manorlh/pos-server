@@ -32,8 +32,10 @@ export interface RestoreParam {
   enumOptions: string[] | null;
   enumLabels: Record<string, string> | null;
   defaultValue: unknown;
-  /** The card's group (`staffTables` | `restore` | `courses`). Absent on an older server. */
+  /** The card's group (`staffTables` | `restore` | `courses` | `waiters`). Absent on an older server. */
   group?: string | null;
+  /** A warning per option, shown once it is chosen (`tableBusyEntry` = off: "לא בטוח…"). */
+  optionWarnings?: Record<string, string> | null;
 }
 
 /** A group of the card ("הגדרות שולחנות"), in the order it shows them. */

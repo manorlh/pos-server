@@ -4628,7 +4628,12 @@
     "roles": {
       "cashier": "קופאי",
       "shop_manager": "מנהל סניף"
-    }
+    },
+    "tableColor": "צבע מלצר",
+    "tableColorCustom": "צבע אחר",
+    "tableColorAuto": "אוטומטי",
+    "tableColorAutoHint": "הצבע של השולחנות המשויכים לעובד, בקופה ובשולחנות פתוחים. אוטומטי: נבחר לפי סדר העובדים בסניף.",
+    "tableColorOwnHint": "הצבע של השולחנות המשויכים לעובד, בקופה ובשולחנות פתוחים."
   },
   "tillRoles": {
     "title": "תפקידים והרשאות",
@@ -13052,7 +13057,38 @@
       "nextNow": "{course} יוצא עכשיו",
       "nextPaused": "{course} מושהה",
       "nextWaiting": "הבא: {course}",
-      "heldTill": "קופה {till}"
+      "heldTill": "קופה {till}",
+      "assign": {
+        "open": "שיוך מלצרים",
+        "title": "שיוך מלצרים",
+        "pickHint": "בחרו מלצר, ואז געו בשולחנות או באזור.",
+        "tapHint": "נגיעה בשולחן משייכת אותו למלצר שבחרתם, או מבטלת את השיוך.",
+        "pickFirst": "בחרו קודם מלצר בסרגל השיוך",
+        "done": "סיום",
+        "modeOff": "שיוך המלצרים כבוי בקופות (ההגדרה «שיוך שולחנות למלצרים» בהגדרות השולחנות). אפשר לשייך כבר עכשיו, והקופות יציגו את השיוך כשההגדרה תופעל.",
+        "noWaiters": "אין עובדים פעילים בסניף",
+        "zoneAssign": "שייכו את כל «{zone}»",
+        "zoneRemove": "בטלו את השיוך של «{zone}»",
+        "zoneOf": "«{zone}» משויך ל: {names}",
+        "copyYesterdayNone": "אין שיוך מאתמול",
+        "copyPreviousNone": "אין משמרת קודמת",
+        "clear": "נקה הכל",
+        "clearConfirm": "לבטל את כל השיוכים של היום?",
+        "cleared": "השיוכים נוקו",
+        "copied": "{count, plural, =0 {לא הועתק שיוך} one {הועתק שיוך אחד} other {הועתקו # שיוכים}}",
+        "filter": "לפי שיוך",
+        "anyAssignee": "כל השיוכים",
+        "assigneeOption": "{name} ({count})",
+        "errors": {
+          "nothing_to_copy": "אין מה להעתיק",
+          "waiter_not_found": "העובד כבר לא פעיל בסניף",
+          "table_not_found": "השולחן כבר לא קיים",
+          "zone_not_found": "האזור כבר לא קיים",
+          "assignment_conflict": "שיוך אחר נשמר באותו רגע. נסו שוב.",
+          "section_forbidden": "שיוך מלצרים דורש את ההרשאה «ניהול שולחנות פתוחים»",
+          "other": "השיוך לא נשמר"
+        }
+      }
     },
     "card": {
       "title": "שולחן {table}",
@@ -13231,7 +13267,9 @@
         "reprint": "הדפסה חוזרת למטבח",
         "waiter": "הוחלף מלצר: {detail}",
         "restore": "שוחזר"
-      }
+      },
+      "alsoAssignment": "גם שיוך: השולחן ישויך למלצר החדש",
+      "heldNow": "פתוח כעת: {holder}, מאז {since}"
     },
     "sectionReport": "דוח שולחנות",
     "sectionReasons": "סיבות ביטול",
