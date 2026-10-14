@@ -30,6 +30,12 @@ sections of the new templates and of §3 (open tabs, the in-screen keyboard, the
 open), "הוצא הבא" and the table's one-tap tenders, "עוד סבב" in a quick order. A till older
 than phase 2 reads what it does not know as it always did: a new template as clean, an unknown
 button or key dropped, "base" / "brand" as not set.
+
+"שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5): `productText` — the four till parameters of
+app/services/product_tile_text.py as the design's own fields under "מראה", every key optional (absent
+from the defaults, like `motion`: nothing set leaves a till's sync bytes as they were). A code wins
+over the parameter; `"params"` ("לפי פרמטרי הקופה") undoes a level above's value. `legacy_view` carries
+the parameters' four (`productText`) for the editor and its preview.
 """
 from __future__ import annotations
 
@@ -62,6 +68,7 @@ from app.services.kiosk_config import (
     _merge_node,
     motion_engine_fields,
 )
+from app.services import product_tile_text as _tile_text
 
 SCHEMA_VERSION = 1
 
@@ -501,6 +508,21 @@ PROFILE_OVERRIDE = Obj({
     "actionBar": PROFILE_ACTION_BAR,
 }, fill={**{k: None for k in PROFILE_FIELDS}, "actionBar": {"table": None, "quick": None}})
 
+#: "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5, app/services/product_tile_text.py): the same four
+#: keys as the till parameters, with their codes; a code wins over the parameter ("העיצוב גובר על
+#: הפרמטר"). Like `motion`, absent from DEFAULT_CONFIG — nothing set anywhere is no `productText` and
+#: today's sync bytes — and every key optional. `"params"` ("לפי פרמטרי הקופה") undoes a value a level
+#: above set, as "base" / "brand" do; a till reads it, null or anything it does not know as not set.
+PRODUCT_TEXT_PARAMS = _tile_text.DESIGN_PARAMS
+PRODUCT_TEXT = PartialObj({
+    _tile_text.NAME_FIT_KEY: OrLiteral(Enum(_tile_text.NAME_FITS), PRODUCT_TEXT_PARAMS),
+    _tile_text.MAX_LINES_KEY: OrLiteral(
+        Int(_tile_text.MAX_LINES_MIN, _tile_text.MAX_LINES_MAX), PRODUCT_TEXT_PARAMS,
+    ),
+    _tile_text.MIN_TEXT_SIZE_KEY: OrLiteral(Enum(_tile_text.MIN_TEXT_SIZES), PRODUCT_TEXT_PARAMS),
+    _tile_text.INFO_BADGE_KEY: OrLiteral(Enum(_tile_text.INFO_BADGES), PRODUCT_TEXT_PARAMS),
+})
+
 SCHEMA = Obj({
     "schemaVersion": IntChoice((SCHEMA_VERSION,)),
     "template": TemplateNode(),
@@ -580,7 +602,11 @@ SCHEMA = Obj({
     # per event and parameter level by level. Every key optional: nothing set is the "legacy" preset —
     # today's till (a push / pop of 300 ms, payment and the windows 330 ms, the tabs 140 ms).
     "motion": PartialObj(motion_engine_fields("till")),
-}, fill={"motion": {}})
+    # "שם פריט מלא ותג i" (P:/specs/product-tile-text.md §5): the four till parameters as the design's own
+    # fields under "מראה" — `productNameFit`, `productNameMaxLines`, `productNameMinTextSize`,
+    # `productInfoBadge`. Every key optional (`PRODUCT_TEXT`): nothing set follows the till parameters.
+    "productText": PRODUCT_TEXT,
+}, fill={"motion": {}, "productText": {}})
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schemaVersion": SCHEMA_VERSION,
@@ -958,7 +984,15 @@ def legacy_view(parameters: Dict[str, Any]) -> Dict[str, Any]:
         # בשולחן' כבוי — יוצג 'נקי'"); "הצג סימוני תזונה בקופה" — the visual menu's "auto".
         "coursesEnabled": flag("coursesEnabled") is True,
         "showDietaryMarks": flag("showDietaryMarks") is True,
+        # "שם פריט מלא ותג i": the four as the till parameters set them — what `productText` follows
+        # where the design sets nothing (or "params").
+        "productText": _tile_text.from_parameters(parameters),
     }
+
+
+def legacy_parameter_keys() -> List[str]:
+    """The till parameters `legacy_view` reads: those of LEGACY_MAP and the product text's four."""
+    return sorted({k for ks in LEGACY_MAP.values() for k in ks} | set(_tile_text.KEYS))
 
 
 def catalog() -> Dict[str, Any]:

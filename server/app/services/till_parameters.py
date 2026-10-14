@@ -1972,6 +1972,14 @@ from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
 
+# "שם פריט מלא על הכפתור, ותג i" (P:/specs/product-tile-text.md §3–§5, app/services/product_tile_text.py):
+# `productNameFit` (fit / wrap / clip), `productNameMaxLines` (1–4), `productNameMinTextSize` (s / m / l),
+# `productInfoBadge` (auto / always / off) — fit, 3, s, auto. Read by the till, the web till and the
+# Windows till; the same four are fields of "עיצוב קופה" (`productText`), which win over these.
+from app.services.product_tile_text import PARAMETER_SPECS as _PRODUCT_TILE_TEXT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _PRODUCT_TILE_TEXT_SPECS)
+
 # "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
 # a device online but not up to date is a problem on "בעיות". Read by the cloud only.
 SYNC_STALE_MINUTES_KEY = "syncStaleMinutes"
@@ -2060,6 +2068,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in category_display.CODES and value is not None:
         try:
             return category_display.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "שם פריט מלא ותג i": the codes the till knows, the name's lines 1–4.
+    from app.services import product_tile_text
+
+    if key in product_tile_text.KEYS and value is not None:
+        try:
+            return product_tile_text.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     # "הוצאה אוטומטית של השלב הבא": the codes and the minutes the till and the cloud's pass read.
