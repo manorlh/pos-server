@@ -49,6 +49,8 @@ class MenuItem:
 
 
 QUICK_ORDER_KEY = "quick_order"
+#: "עובדים מחוברים" (P:/specs/exclusive-login-v2.md §8א): who is signed in where, and a manager's release.
+SIGNED_IN_USERS_KEY = "signed_in_users"
 TABLES_ITEM_KEY = "tables"
 
 #: Every item that may be hidden, in the order of the till's menu (spec §5 — the keys are the till's
@@ -124,6 +126,12 @@ ITEMS: Tuple[MenuItem, ...] = (
             "הקופה נפתחת על מסך השולחנות; הלשונית \"הזמנה מהירה\", כל מעבר למסך המכירה שלא דרך שולחן, "
             "\"מכירה מהירה\" במסך השולחנות ו\"החזר הזמנה\""
         ),
+    ),
+    # "עובד במכשיר אחד בלבד" v2 §8א: the manager's "עובדים מחוברים" screen (release from any device).
+    MenuItem(
+        SIGNED_IN_USERS_KEY,
+        "עובדים מחוברים",
+        also="המסך שממנו מנהל משחרר עובד מחובר; \"שחרור באישור מנהל\" במסך הכניסה נשאר",
     ),
 )
 

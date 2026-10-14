@@ -20,6 +20,13 @@
  * `UserSessionGuard` — the claim, the minute's heartbeat and releases kept until the cloud
  * answers. The screens (the web till's login, its banner, its idle gate) call these.
  *
+ * "עובדים מחוברים" (§8 — a manager releases from any device, tables and all):
+ *
+ *   GET  sync/{machineId}/user-sessions                         → the shop's live sessions + the policy
+ *   POST sync/{machineId}/user-sessions/{sessionId}/release    {transfers?} (+ the approval's header)
+ *
+ * The dashboard's card "מחוברים כעת במכשירים" reads the same rows and the same release outcome.
+ *
  * Pure of React; relative imports only (the node tests compile it on its own).
  */
 
@@ -310,17 +317,152 @@ export const TEXTS = {
   title: 'מחובר/ת בקופה אחרת',
   releaseWithCode: 'שחרור באישור מנהל',
   requestFromPhone: 'בקשת שחרור ממנהל',
+  signedInUsers: 'עובדים מחוברים',
+  release: 'שחרור',
+  keepTables: (name: string) => `להשאיר אצל ${name}`,
+  transferTables: 'להעביר ל…',
   notPermitted: 'האישור לא מתיר שחרור עובד בקופה הזו',
   checking: 'בודק…',
   offlineManager: (name: string) => `אין תשובה מהענן. הכניסה של ${name} באישור מנהל.`,
   elevateReason: (name: string, holder: Holder) => `שחרור ${name} מ${tillName(holder)} כדי להתחבר בקופה הזו`,
 } as const;
 
+// ── "עובדים מחוברים" and the dashboard's card (§8) ────────────────────────────
+
+export type ReleaseTables = 'keep' | 'ask';
+
+export interface OpenTable {
+  orderId: string;
+  tableId: string | null;
+  number: number | null;
+  name: string | null;
+  total: number | null;
+}
+
+/** One row of the list (the till's `GET …/user-sessions`, the dashboard's `GET /shops/{id}/user-sessions`). */
+export interface SignedInSession {
+  id: string;
+  posUserId: string;
+  posUserName: string | null;
+  machineName: string | null;
+  posNumber: string | null;
+  startedAt: string | null;
+  silent: boolean;
+  silentSince: string | null;
+  openTables: number;
+  tables: OpenTable[];
+  /** What a release does with the tables, by the holder device's parameter. */
+  releaseTables: ReleaseTables;
+  /** The till asking holds this one itself (the till's list only). */
+  here?: boolean;
+}
+
+export interface TableTransfer {
+  orderId: string;
+  toPosUserId: string;
+}
+
+export interface ReleaseOutcome {
+  status: 'released' | 'not_held';
+  openTables: number;
+  tablesUnlocked: OpenTable[];
+  tablesTransferred: (OpenTable & { toPosUserId: string; toName: string | null })[];
+  tablesNotTransferred: (Partial<OpenTable> & { why: string })[];
+  /** "שולחן 12 נפתח במכשיר שלא מדווח מאז 20:14. שינויים שלא נשמרו שם לא יופיעו." — said to the manager. */
+  warnings: string[];
+}
+
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function tableOf(raw: unknown): OpenTable {
+  const o = obj(raw);
+  return { orderId: str(o.orderId) ?? '', tableId: str(o.tableId), number: num(o.number), name: str(o.name), total: num(o.total) };
+}
+
+export function sessionOf(raw: unknown): SignedInSession {
+  const o = obj(raw);
+  const tables = Array.isArray(o.tables) ? o.tables.map(tableOf) : [];
+  return {
+    id: str(o.id) ?? '',
+    posUserId: str(o.posUserId) ?? '',
+    posUserName: str(o.posUserName) ?? str(o.username),
+    machineName: str(o.machineName),
+    posNumber: str(o.posNumber),
+    startedAt: str(o.startedAt),
+    silent: o.silent === true,
+    silentSince: str(o.silentSince),
+    openTables: num(o.openTables) ?? tables.length,
+    tables,
+    releaseTables: oneOf(o.releaseTables, ['keep', 'ask'] as const, 'keep'),
+    ...(typeof o.here === 'boolean' ? { here: o.here } : {}),
+  };
+}
+
+export function releaseOutcomeOf(raw: unknown): ReleaseOutcome {
+  const o = obj(raw);
+  const list = (v: unknown) => (Array.isArray(v) ? v : []);
+  return {
+    status: o.status === 'not_held' ? 'not_held' : 'released',
+    openTables: num(o.openTables) ?? 0,
+    tablesUnlocked: list(o.tablesUnlocked).map(tableOf),
+    tablesTransferred: list(o.tablesTransferred).map((t) => ({ ...tableOf(t), toPosUserId: str(obj(t).toPosUserId) ?? '', toName: str(obj(t).toName) })),
+    tablesNotTransferred: list(o.tablesNotTransferred).map((t) => ({ ...tableOf(t), why: str(obj(t).why) ?? 'unknown' })),
+    warnings: list(o.warnings).filter((w): w is string => typeof w === 'string'),
+  };
+}
+
+/** The question "להשאיר אצלה / להעביר ל…" is asked: the policy asks, and the employee has open tables. */
+export function asksAboutTables(s: Pick<SignedInSession, 'releaseTables' | 'openTables'>): boolean {
+  return s.releaseTables === 'ask' && s.openTables > 0;
+}
+
+/** "להעביר ל…": every open table of the employee, to one waiter (the cloud hands on what it can). */
+export function transfersTo(s: Pick<SignedInSession, 'tables'>, toPosUserId: string | null): TableTransfer[] {
+  if (!toPosUserId) return [];
+  return s.tables.filter((t) => t.orderId).map((t) => ({ orderId: t.orderId, toPosUserId }));
+}
+
+const NOT_TRANSFERRED: Record<string, string> = {
+  lan: 'ברשת מקומית — מעבירים בקופה המארחת',
+  single: 'בקופה בודדת — מעבירים בקופה',
+  table_in_use: 'מכשיר אחר בתוך השולחן',
+  table_busy: 'השולחן נשמר ברגע זה — נסו שוב',
+  not_theirs: 'השולחן כבר לא שלו/שלה',
+  waiter_not_found: 'המלצר לא נמצא',
+  table_not_open: 'השולחן כבר נסגר',
+};
+
+/** What the manager is told after a release, line by line: the hand-over, what stayed, the warnings. */
+export function releaseOutcomeLines(out: ReleaseOutcome): string[] {
+  const lines: string[] = [];
+  if (out.tablesTransferred.length) {
+    lines.push(`הועברו ${out.tablesTransferred.length} שולחנות: ${out.tablesTransferred.map((t) => `${tableLabel(t)} ל${t.toName ?? '?'}`).join(', ')}.`);
+  }
+  for (const t of out.tablesNotTransferred) {
+    lines.push(`${tableLabel(t)} לא הועבר: ${NOT_TRANSFERRED[t.why] ?? t.why}.`);
+  }
+  return [...lines, ...out.warnings];
+}
+
+function tableLabel(t: Partial<OpenTable>): string {
+  const label = t.number ?? t.name;
+  return label !== null && label !== undefined && label !== '' ? `שולחן ${label}` : 'שולחן';
+}
+
+/** "לדנה 3 שולחנות פתוחים" — the question's head. */
+export function tablesQuestion(name: string, n: number): string {
+  return n === 1 ? `ל${name} שולחן פתוח אחד` : `ל${name} ${n} שולחנות פתוחים`;
+}
+
 // ── The guard ────────────────────────────────────────────────────────────────
 
 /** The machine-token client (kioskWebApi's `KioskApi.post`). */
 export interface SessionTransport {
   post(path: string, body?: unknown, opts?: { timeoutMs?: number; headers?: Record<string, string> }): Promise<ApiReply>;
+  /** "עובדים מחוברים" reads with it (kioskWebApi's `KioskApi.get`). */
+  get?(path: string, opts?: { timeoutMs?: number; headers?: Record<string, string> }): Promise<ApiReply>;
 }
 
 /** Where releases wait for an answer (localStorage on the web till; a map in tests). */
@@ -413,6 +555,43 @@ export class UserSessionGuard {
       if (reply.kind === 'offline' || (reply.kind === 'refused' && reply.status >= 500)) left.push(id);
     }
     this.savePending(left);
+  }
+
+  /** "עובדים מחוברים": the shop's live sessions and this till's policy (null: no answer). */
+  async signedIn(): Promise<{ policy: SessionPolicy; sessions: SignedInSession[]; waiters: { posUserId: string; name: string | null }[] | null } | null> {
+    if (!this.api.get) return null;
+    const reply = await this.api.get(`sync/${encodeURIComponent(this.machineId)}/user-sessions`, { timeoutMs: CLAIM_TIMEOUT_MS });
+    if (reply.kind !== 'ok') return null;
+    const o = obj(reply.body);
+    this.policy = policyOf(o);
+    const waiters = Array.isArray(o.waiters)
+      ? o.waiters.map((w) => ({ posUserId: str(obj(w).posUserId) ?? '', name: str(obj(w).name) }))
+      : null;
+    return { policy: this.policy, sessions: Array.isArray(o.sessions) ? o.sessions.map(sessionOf) : [], waiters };
+  }
+
+  /**
+   * A manager releases one, from this till (a code here or a phone's grant: `elevationToken`; the
+   * signed-in manager: `operatorId`) — `transfers` only where the policy asks. The answer's kinds as
+   * a claim's: 401 the code again, 403 not this approval, 409 `release_tables_keep`.
+   */
+  async releaseSession(sessionId: string, approval: ForceApproval, transfers: TableTransfer[] = []): Promise<
+    { kind: 'ok'; outcome: ReleaseOutcome } | { kind: 'needsManager' | 'forbidden'; code: string } | { kind: 'refused'; status: number; code: string | null } | { kind: 'unreachable' }
+  > {
+    const headers: Record<string, string> = {};
+    if (approval.elevationToken) headers['X-Elevation-Token'] = approval.elevationToken;
+    if (approval.operatorId) headers['X-Pos-User-Id'] = approval.operatorId;
+    const reply = await this.api.post(
+      `sync/${encodeURIComponent(this.machineId)}/user-sessions/${encodeURIComponent(sessionId)}/release`,
+      { transfers },
+      { timeoutMs: CLAIM_TIMEOUT_MS, headers },
+    );
+    if (reply.kind === 'ok') return { kind: 'ok', outcome: releaseOutcomeOf(reply.body) };
+    const answer = readAnswer(reply);
+    if (answer.kind === 'needsManager' || answer.kind === 'forbidden') return answer;
+    if (answer.kind === 'refused') return answer;
+    if (answer.kind === 'unreachable') return answer;
+    return { kind: 'refused', status: reply.kind === 'refused' ? reply.status : 0, code: null };
   }
 
   /** The operator changed: whoever stopped being the operator is released — no screen has to remember. */

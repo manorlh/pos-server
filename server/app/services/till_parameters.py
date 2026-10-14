@@ -597,6 +597,15 @@ EXCLUSIVE_DUPLICATE_LABELS = {
     EXCLUSIVE_DUPLICATE_WARN: "פס אזהרה (ברירת מחדל)",
     EXCLUSIVE_DUPLICATE_SIGNOUT: "ניתוק במכשיר שהתחבר אחרון",
 }
+#: §8ב (the owner, 14.10: "מי יכול לשחרר עובד אם יש עליו שולחנות?"): a manager's release keeps the
+#: employee's open tables theirs (`keep`), or asks whether to hand them to another waiter (`ask`).
+EXCLUSIVE_RELEASE_TABLES_KEY = "exclusiveReleaseTables"
+EXCLUSIVE_RELEASE_TABLES_KEEP = "keep"
+EXCLUSIVE_RELEASE_TABLES_ASK = "ask"
+EXCLUSIVE_RELEASE_TABLES_LABELS = {
+    EXCLUSIVE_RELEASE_TABLES_KEEP: "נשארים אצל העובד (ברירת מחדל)",
+    EXCLUSIVE_RELEASE_TABLES_ASK: "לשאול: להשאיר או להעביר למלצר אחר",
+}
 
 EXCLUSIVE_LOGIN_DESCRIPTION = (
     "כשמופעל: עובד/מלצר שמחובר במכשיר אחד (קופה, מכשיר נייד, טלפון או קופת Windows) לא יכול להתחבר "
@@ -1555,6 +1564,25 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             f"«{EXCLUSIVE_DUPLICATE_LABELS[EXCLUSIVE_DUPLICATE_WARN]}» — פס כתום במכשיר, והעבודה ממשיכה. "
             f"«{EXCLUSIVE_DUPLICATE_LABELS[EXCLUSIVE_DUPLICATE_SIGNOUT]}» — המכשיר שהתחבר אחרון מנתק את העובד "
             "בסיום הפעולה (לא באמצע תשלום ולא כששולחן פתוח), באותם תנאים כמו אחרי שחרור של מנהל. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    # §8ב: what a manager's release does with the employee's open tables.
+    BuiltinParameter(
+        key=EXCLUSIVE_RELEASE_TABLES_KEY,
+        label="עובד בקופה אחת — שולחנות בשחרור",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_RELEASE_TABLES_KEEP, EXCLUSIVE_RELEASE_TABLES_ASK),
+        enum_labels=EXCLUSIVE_RELEASE_TABLES_LABELS,
+        default_value=EXCLUSIVE_RELEASE_TABLES_KEEP,
+        description=(
+            "מה קורה לשולחנות הפתוחים של עובד שמנהל משחרר מהמכשיר שבו הוא מחובר. "
+            f"«{EXCLUSIVE_RELEASE_TABLES_LABELS[EXCLUSIVE_RELEASE_TABLES_KEEP]}» — השולחנות נשארים שלו, "
+            "וכשהוא מתחבר במכשיר אחר הוא ממשיך אותם. "
+            f"«{EXCLUSIVE_RELEASE_TABLES_LABELS[EXCLUSIVE_RELEASE_TABLES_ASK]}» — בשחרור מהמסך \"עובדים "
+            "מחוברים\" או מהדשבורד נשאלת שאלה: להשאיר אצלו, או להעביר למלצר אחר (או למנהל עצמו). ההעברה "
+            "היא \"החלפת מלצר\" לכל שולחן, ונרשמת. "
+            "בכל מקרה, כשהמכשיר הישן לא מדווח, השחרור משחרר גם את השולחנות שהמכשיר הזה נעל עבורו. "
             "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),

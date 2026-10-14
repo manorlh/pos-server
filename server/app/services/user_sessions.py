@@ -30,6 +30,10 @@ whether the rule applies there at all (`exclusiveUserLogin`) and how it behaves
   (`released_by = "duplicate"`).
 * **Self-healing** — a till has one operator at a time, so a claim or heartbeat for one
   employee lets go of anyone else the same till still held (a release that never arrived).
+* **From any device, tables and all** (§8) — "עובדים מחוברים" at any till, handheld or phone, and
+  the dashboard, release through `manager_release`: the employee's open tables stay theirs (or are
+  handed on, `exclusiveReleaseTables = ask`), and a silent device's locks on them are freed in the
+  same action, with what that means said to the manager.
 
 A till that loses its session to a manager (forced at another device, or from the dashboard)
 or to a duplicate hears it on its next heartbeat (`SessionReleased`) and signs the employee out.
@@ -40,7 +44,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -74,6 +78,10 @@ OFFLINE_MODES = (OFFLINE_ALLOW, OFFLINE_LAN, OFFLINE_MANAGER)
 DUPLICATE_WARN = TPARAMS.EXCLUSIVE_DUPLICATE_WARN
 DUPLICATE_SIGNOUT = TPARAMS.EXCLUSIVE_DUPLICATE_SIGNOUT
 DUPLICATE_MODES = (DUPLICATE_WARN, DUPLICATE_SIGNOUT)
+PARAM_RELEASE_TABLES = TPARAMS.EXCLUSIVE_RELEASE_TABLES_KEY
+RELEASE_TABLES_KEEP = TPARAMS.EXCLUSIVE_RELEASE_TABLES_KEEP
+RELEASE_TABLES_ASK = TPARAMS.EXCLUSIVE_RELEASE_TABLES_ASK
+RELEASE_TABLES_MODES = (RELEASE_TABLES_KEEP, RELEASE_TABLES_ASK)
 
 #: The till permission that exempts an employee ("עבודה בכמה מכשירים במקביל").
 PERMISSION_EXEMPT = "MULTI_DEVICE_LOGIN"
@@ -150,6 +158,8 @@ class Policy:
     offline: str = OFFLINE_ALLOW
     #: warn | signout — two devices found after an offline sign-in.
     duplicate: str = DUPLICATE_WARN
+    #: keep | ask — a manager's release keeps the employee's open tables, or asks to hand them on (§8ב).
+    release_tables: str = RELEASE_TABLES_KEEP
 
     @property
     def releases_stale(self) -> bool:
@@ -163,6 +173,7 @@ class Policy:
             "autoRelease": self.auto_release,
             "offline": self.offline,
             "duplicate": self.duplicate,
+            "releaseTables": self.release_tables,
         }
 
 
@@ -173,6 +184,7 @@ def policy_of(parameters: Dict[str, Any]) -> Policy:
         auto_release=choice_of(parameters.get(PARAM_AUTO_RELEASE), AUTO_RELEASE_MODES, AUTO_RELEASE_OFF),
         offline=choice_of(parameters.get(PARAM_OFFLINE), OFFLINE_MODES, OFFLINE_ALLOW),
         duplicate=choice_of(parameters.get(PARAM_DUPLICATE), DUPLICATE_MODES, DUPLICATE_WARN),
+        release_tables=choice_of(parameters.get(PARAM_RELEASE_TABLES), RELEASE_TABLES_MODES, RELEASE_TABLES_KEEP),
     )
 
 
@@ -408,8 +420,10 @@ def _claim(
             took_over = {**holder_info(db, active), "releasedBy": "stale"}
             _release(active, "stale", now)
         elif approval is not None:
+            # The employee moves here and carries on their tables (§8ב); a silent device's locks on them go.
             took_over = {
                 **holder_info(db, active), "releasedBy": "manager", "approvedBy": approval.name, "via": approval.via,
+                **_tables_on_release(db, active, approval, now),
             }
             _release(active, "manager", now, name=approval.name, machine_id=machine.id)
         else:
@@ -576,12 +590,18 @@ def record_forced_release(
             ) if p
         )
         how = {VIA_REMOTE: "באישור מהנייד", VIA_DASHBOARD: "מהדשבורד"}.get(approval.via)
+        open_tables = took_over.get("openTables") or 0
+        unlocked = took_over.get("tablesUnlocked") or []
+        moved = took_over.get("tablesTransferred") or []
         summary = " · ".join(
             p for p in (
                 name,
                 f"שוחרר/ה מ{from_till}" if from_till else None,
                 how,
                 f"אישר: {approval.name}" if approval.name else None,
+                f"{open_tables} שולחנות פתוחים" if open_tables else None,
+                f"שוחררו נעילות: {_tables_text(unlocked)}" if unlocked else None,
+                f"הועברו: {_moves_text(moved)}" if moved else None,
             ) if p
         )
         event = TillEvent(
@@ -610,6 +630,12 @@ def record_forced_release(
                 "approvedByPosUserId": approval.pos_user_id,
                 "approvedByUserId": str(approval.user_id) if approval.user_id else None,
                 "approvalRequestId": approval.approval_request_id,
+                # §8ב: the tables that were the employee's, those a silent device held and lost, and
+                # those handed on ("החלפת מלצר").
+                "openTables": open_tables,
+                "tablesUnlocked": unlocked,
+                "tablesTransferred": moved,
+                "warnings": took_over.get("warnings") or [],
             },
             received_at=now,
         )
@@ -619,6 +645,314 @@ def record_forced_release(
             EX.Detector(db).event(event)
     except Exception:  # noqa: BLE001 - an exception missed is found by a rescan
         logger.exception("could not report the release of %s to the exceptions", pos_user.id)
+
+
+# ── The employee's tables at a release (§8ב) ─────────────────────────────────
+
+
+class TablesKeep(Exception):
+    """A hand-over asked for where `exclusiveReleaseTables` is `keep`: the tables stay the employee's."""
+
+
+def _table_label(number: Any, name: Any) -> str:
+    return str(number) if number not in (None, "") else (str(name) if name else "?")
+
+
+def _tables_text(tables: List[Dict[str, Any]]) -> str:
+    return ", ".join(f"שולחן {_table_label(t.get('number'), t.get('name'))}" for t in tables)
+
+
+def _moves_text(moves: List[Dict[str, Any]]) -> str:
+    return ", ".join(
+        f"שולחן {_table_label(m.get('number'), m.get('name'))} ל{m.get('toName') or '?'}" for m in moves
+    )
+
+
+def open_tables_of(db: Session, shop_id: Any, pos_user_id: Any) -> List[Dict[str, Any]]:
+    """The employee's open tables as the cloud has them (theirs as the waiter, else as the opener)."""
+    from app.services.attendance import open_tables_for
+
+    try:
+        with db.begin_nested():
+            return open_tables_for(db, shop_id, pos_user_id)
+    except Exception:  # noqa: BLE001 - no tables here (a database without them): none
+        logger.debug("open tables of %s not read", pos_user_id)
+        return []
+
+
+def free_silent_tables(
+    db: Session, row: PosUserSession, approval: Approval, now: datetime,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    A manager releases an employee whose device stopped reporting: the tables that device still
+    locks for them are released in the same action (as TABLE_UNLOCK's forced release, in each
+    table's history), and the manager is told what that means — what the dead device never saved
+    is not in the cloud. A device that reports keeps its tables: it leaves them at the end of its
+    operation, then signs the employee out. Returns (the tables freed, the warnings).
+    """
+    silent = silent_since(row, now)
+    if silent is None:
+        return [], []
+    try:
+        from sqlalchemy import or_
+
+        from app.models.tables import DiningTable
+        from app.services import tables as T
+
+        with db.begin_nested():
+            held = (
+                db.query(DiningTable)
+                .filter(
+                    DiningTable.lock_machine_id == row.machine_id,
+                    or_(DiningTable.lock_pos_user_id == str(row.pos_user_id), DiningTable.lock_pos_user_id.is_(None)),
+                )
+                .all()
+            )
+            freed: List[Dict[str, Any]] = []
+            warnings: List[str] = []
+            since = _local_hhmm(db, row.tenant_id, silent)
+            for table in held:
+                if not T.lock_live(table, now):
+                    continue
+                holder = T.lock_out(db, table, now)
+                order = T.open_order(db, table.id)
+                T.clear_lock(db, table)
+                T.record_event(
+                    db, "force_release", table, order, user_id=approval.user_id, now=now,
+                    details={
+                        "heldBy": holder, "approvedBy": approval.name, "from": "user_session_release",
+                        "via": approval.via, "silentSince": _iso(silent),
+                    },
+                )
+                label = _table_label(table.number, table.name)
+                freed.append({
+                    "tableId": str(table.id),
+                    "number": table.number,
+                    "name": table.name,
+                    "orderId": str(order.id) if order is not None else None,
+                })
+                warnings.append(
+                    f"שולחן {label} נפתח במכשיר שלא מדווח מאז {since}. שינויים שלא נשמרו שם לא יופיעו."
+                )
+            db.flush()
+        return freed, warnings
+    except Exception:  # noqa: BLE001 - the release itself never fails for the tables
+        logger.exception("the tables of a silent device were not freed for %s", row.pos_user_id)
+        return [], []
+
+
+def _tables_on_release(db: Session, row: PosUserSession, approval: Approval, now: datetime) -> Dict[str, Any]:
+    """What a manager's release of `row` reports about the employee's tables (the claim's `tookOver`)."""
+    open_tables = open_tables_of(db, row.shop_id, row.pos_user_id)
+    freed, warnings = free_silent_tables(db, row, approval, now)
+    return {"openTables": len(open_tables), "tablesUnlocked": freed, "warnings": warnings}
+
+
+def transfer_tables(
+    db: Session,
+    shop: Any,
+    pos_user: PosUser,
+    transfers: List[Dict[str, Any]],
+    approval: Approval,
+    now: datetime,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    "להעביר ל…" (§8ב, `exclusiveReleaseTables = ask`): each `{orderId, toPosUserId}` is "החלפת מלצר" on
+    that table — the cloud's tables only (a LAN host's or a single till's copy is the host's to hand
+    on: `why: lan` / `single`), only a table that is the employee's, never one another device is inside
+    (`table_in_use`; the silent device's locks are gone by now). Each in the table's history.
+    Returns (handed on, not handed on).
+    """
+    from app.models.tables import DiningTable, TableOrder
+    from app.services import course_auto_fire as F
+    from app.services import remote_table_cancel as RTC
+    from app.services import table_actions as TA
+    from app.services import tables as T
+
+    moved: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    mine = str(pos_user.id)
+    for item in transfers or []:
+        order_id = T._uuid(item.get("orderId"))
+        order = db.get(TableOrder, order_id) if order_id is not None else None
+        if order is None or str(order.shop_id) != str(shop.id) or order.status != "open":
+            skipped.append({"orderId": item.get("orderId"), "why": "table_not_open"})
+            continue
+        ref = {"orderId": str(order.id), "tableId": str(order.table_id), "number": order.table_number, "name": order.table_name}
+        if str(order.waiter_pos_user_id or order.opened_by_pos_user_id or "") != mine:
+            skipped.append({**ref, "why": "not_theirs"})
+            continue
+        if order.source != "synced":
+            skipped.append({**ref, "why": "lan" if RTC.is_lan_copy(order) else "single"})
+            continue
+        target = TA.waiter_of(db, shop, item.get("toPosUserId"))
+        if target is None:
+            skipped.append({**ref, "why": "waiter_not_found"})
+            continue
+        table = db.get(DiningTable, order.table_id)
+        if table is None:
+            skipped.append({**ref, "why": "table_not_open"})
+            continue
+        try:
+            table, order = TA._lock_rows(db, table, order)
+        except Exception:  # noqa: BLE001 - a row a till's write holds right now: not this time
+            skipped.append({**ref, "why": "table_busy"})
+            continue
+        if T.lock_live(table, now):
+            skipped.append({**ref, "why": "table_in_use"})
+            continue
+        to_name = pos_user_name(target)
+        from_name = order.waiter_pos_user_name or order.opened_by_pos_user_name
+        extras = F.extras_of(order.extras_json)
+        extras["waiter"] = {"id": str(target.id), "name": to_name}
+        order.extras_json = F.encode_extras(extras)
+        order.waiter_pos_user_id = str(target.id)
+        order.waiter_pos_user_name = to_name
+        TA._touch(order, now)
+        db.flush()
+        T.record_event(
+            db, "waiter", table, order, user_id=approval.user_id, now=now,
+            details={
+                "fromName": from_name, "toName": to_name, "toPosUserId": str(target.id),
+                "from": "user_session_release", "by": approval.name, "via": approval.via,
+            },
+        )
+        moved.append({**ref, "toPosUserId": str(target.id), "toName": to_name})
+    return moved, skipped
+
+
+def manager_release(
+    db: Session,
+    row: PosUserSession,
+    approval: Approval,
+    *,
+    at_machine: Optional[POSMachine] = None,
+    transfers: Optional[List[Dict[str, Any]]] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    A manager releases `row` from wherever they are (§8א): "עובדים מחוברים" at any till, handheld or
+    phone (`at_machine`: that device), or the dashboard (`at_machine` None). The employee's tables stay
+    theirs — unless `exclusiveReleaseTables = ask` and the manager hands them on (`transfers`); a silent
+    device's locks on them go. Recorded as an exception — at `at_machine`, or at the device released
+    from. The holder hears it on its next heartbeat. `TablesKeep` for a hand-over where tables stay.
+    The caller commits.
+    """
+    now = now or _now()
+    if row.released_at is not None:
+        return {"status": "not_held"}
+    holder_machine = db.get(POSMachine, row.machine_id)
+    pos_user = db.get(PosUser, row.pos_user_id)
+    policy = policy_for_machine(db, holder_machine) if holder_machine is not None else Policy(enabled=False)
+    if transfers and policy.release_tables != RELEASE_TABLES_ASK:
+        raise TablesKeep()
+    info = holder_info(db, row)
+    silent = silent_since(row, now)
+    open_tables = open_tables_of(db, row.shop_id, row.pos_user_id)
+    freed, warnings = free_silent_tables(db, row, approval, now)
+    moved: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    if transfers and pos_user is not None:
+        from app.models.shop import Shop
+
+        shop = db.get(Shop, row.shop_id)
+        if shop is not None:
+            moved, skipped = transfer_tables(db, shop, pos_user, transfers, approval, now)
+    _release(row, "manager", now, name=approval.name, machine_id=at_machine.id if at_machine is not None else None)
+    db.flush()
+    took_over = {
+        **info, "releasedBy": "manager", "approvedBy": approval.name, "via": approval.via,
+        "openTables": len(open_tables), "tablesUnlocked": freed, "tablesTransferred": moved, "warnings": warnings,
+    }
+    where = at_machine or holder_machine
+    if where is not None and pos_user is not None:
+        record_forced_release(db, where, pos_user, took_over, approval, now=now)
+    return {
+        "status": "released",
+        "posUserId": str(row.pos_user_id),
+        "posUserName": info.get("posUserName"),
+        "holderSilentSince": _iso(silent),
+        "openTables": len(open_tables),
+        "tablesUnlocked": freed,
+        "tablesTransferred": moved,
+        "tablesNotTransferred": skipped,
+        "warnings": warnings,
+        "tablesChanged": bool(freed or moved),
+    }
+
+
+def live_sessions(
+    db: Session, shop_id: Any, *, here: Optional[POSMachine] = None, now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """
+    "עובדים מחוברים" (§8א) / "מחוברים כעת במכשירים": who is signed in at which device of the shop, oldest
+    first — the device, since when, whether it still reports (`silent`, `silentSince`), auto release
+    (`stale`), the employee's open tables (`openTables`, `tables`) and what a release does with them
+    (`releaseTables`, the holder device's). [here]: the till asking (`here` on its own rows).
+    """
+    now = now or _now()
+    rows = (
+        db.query(PosUserSession)
+        .filter(PosUserSession.shop_id == shop_id, PosUserSession.released_at.is_(None))
+        .order_by(PosUserSession.started_at)
+        .all()
+    )
+    if not rows:
+        return []
+    machines = {
+        str(m.id): m
+        for m in db.query(POSMachine).filter(POSMachine.id.in_({r.machine_id for r in rows})).all()
+    }
+    users = {
+        str(u.id): u
+        for u in db.query(PosUser).filter(PosUser.id.in_({r.pos_user_id for r in rows})).all()
+    }
+    policies: Dict[str, Policy] = {}
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        machine = machines.get(str(row.machine_id))
+        pos_user = users.get(str(row.pos_user_id))
+        if machine is not None and str(machine.id) not in policies:
+            policies[str(machine.id)] = policy_for_machine(db, machine)
+        policy = policies.get(str(row.machine_id)) or Policy(enabled=False)
+        silent = silent_since(row, now)
+        tables = open_tables_of(db, shop_id, row.pos_user_id)
+        out.append({
+            "id": str(row.id),
+            "posUserId": str(row.pos_user_id),
+            "posUserName": pos_user_name(pos_user),
+            "username": pos_user.username if pos_user is not None else None,
+            "machineId": str(row.machine_id),
+            "machineName": machine.name if machine is not None else None,
+            "posNumber": (machine.pos_number or machine.machine_code) if machine is not None else None,
+            "startedAt": _iso(row.started_at),
+            "lastSeenAt": _iso(row.last_seen_at),
+            "silent": silent is not None,
+            "silentSince": _iso(silent),
+            "stale": policy.releases_stale and is_stale(row, now, policy.stale_minutes),
+            "autoRelease": policy.auto_release,
+            "staleMinutes": policy.stale_minutes,
+            "releaseTables": policy.release_tables,
+            "openTables": len(tables),
+            "tables": [
+                {k: t.get(k) for k in ("orderId", "tableId", "number", "name", "total", "openedAt")} for t in tables
+            ],
+            **({"here": here is not None and str(here.id) == str(row.machine_id)} if here is not None else {}),
+        })
+    return out
+
+
+def transfer_candidates(db: Session, shop: Any, sessions: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    """The waiters to hand tables to (`table_actions.waiters`), only when a release would ask (else None)."""
+    if not any(s.get("releaseTables") == RELEASE_TABLES_ASK and s.get("openTables") for s in sessions):
+        return None
+    from app.services import table_actions as TA
+
+    try:
+        return TA.waiters(db, shop)
+    except Exception:  # noqa: BLE001 - no list: the manager picks on the till's roster
+        logger.exception("waiters for a hand-over not read for shop %s", getattr(shop, "id", None))
+        return []
 
 
 # ── "בקשת שחרור ממנהל" (the phone) ───────────────────────────────────────────
@@ -719,75 +1053,24 @@ def may_release_from_dashboard(db: Session, user: Any) -> bool:
 
 
 def active_sessions_for_shop(db: Session, shop_id: Any, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """
-    Who is signed in at which till of the shop now, oldest first. `silent`: the till stopped
-    reporting (since `silentSince`); `stale`: auto release is on there and the next claim
-    elsewhere would take it.
-    """
-    now = now or _now()
-    rows = (
-        db.query(PosUserSession)
-        .filter(PosUserSession.shop_id == shop_id, PosUserSession.released_at.is_(None))
-        .order_by(PosUserSession.started_at)
-        .all()
-    )
-    if not rows:
-        return []
-    machines = {
-        str(m.id): m
-        for m in db.query(POSMachine).filter(POSMachine.id.in_({r.machine_id for r in rows})).all()
-    }
-    users = {
-        str(u.id): u
-        for u in db.query(PosUser).filter(PosUser.id.in_({r.pos_user_id for r in rows})).all()
-    }
-    policies: Dict[str, Policy] = {}
-    out: List[Dict[str, Any]] = []
-    for row in rows:
-        machine = machines.get(str(row.machine_id))
-        pos_user = users.get(str(row.pos_user_id))
-        if machine is not None and str(machine.id) not in policies:
-            policies[str(machine.id)] = policy_for_machine(db, machine)
-        policy = policies.get(str(row.machine_id)) or Policy(enabled=False)
-        silent = silent_since(row, now)
-        out.append({
-            "id": str(row.id),
-            "posUserId": str(row.pos_user_id),
-            "posUserName": pos_user_name(pos_user),
-            "username": pos_user.username if pos_user is not None else None,
-            "machineId": str(row.machine_id),
-            "machineName": machine.name if machine is not None else None,
-            "posNumber": (machine.pos_number or machine.machine_code) if machine is not None else None,
-            "startedAt": _iso(row.started_at),
-            "lastSeenAt": _iso(row.last_seen_at),
-            "silent": silent is not None,
-            "silentSince": _iso(silent),
-            "stale": policy.releases_stale and is_stale(row, now, policy.stale_minutes),
-            "autoRelease": policy.auto_release,
-            "staleMinutes": policy.stale_minutes,
-        })
-    return out
+    """The dashboard's "מחוברים כעת במכשירים" — `live_sessions`."""
+    return live_sessions(db, shop_id, now=now)
 
 
-def release_by_dashboard(db: Session, row: PosUserSession, user: User, *, now: Optional[datetime] = None) -> bool:
+def release_by_dashboard(
+    db: Session,
+    row: PosUserSession,
+    user: User,
+    *,
+    transfers: Optional[List[Dict[str, Any]]] = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
     """
-    A manager releases it from the dashboard (or the phone's "מחוברים כעת במכשירים"); the till
-    signs the employee out on its next heartbeat. Recorded as an exception, at that till.
-    False when it was no longer live.
+    A manager releases it from the dashboard (or the phone's "מחוברים כעת במכשירים"): `manager_release`,
+    approved by the dashboard user. The device signs the employee out at the end of its operation.
     """
-    if row.released_at is not None:
-        return False
-    now = now or _now()
-    info = holder_info(db, row)
     name = dashboard_user_name(user)
-    _release(row, "manager", now, name=name)
-    machine = db.get(POSMachine, row.machine_id)
-    pos_user = db.get(PosUser, row.pos_user_id)
-    if machine is not None and pos_user is not None:
-        db.flush()
-        record_forced_release(
-            db, machine, pos_user, info,
-            Approval(name=name, user_id=getattr(user, "id", None), via=VIA_DASHBOARD),
-            now=now,
-        )
-    return True
+    return manager_release(
+        db, row, Approval(name=name, user_id=getattr(user, "id", None), via=VIA_DASHBOARD),
+        transfers=transfers, now=now,
+    )

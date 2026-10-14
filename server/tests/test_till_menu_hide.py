@@ -53,7 +53,7 @@ SPEC_KEYS = [
     "voucher_balance", "app_update", "history", "recent", "shift_history", "till_z_history", "product_sales",
     "workers", "tips", "tables_reports", "z_reports", "settings", "printers", "print_queue", "screen_edit",
     "diagnostics", "kiosk_mode", "alerts", "blocks_now", "managed_kiosks", "lock", "support", "switch_user",
-    "tables", "training", "quick_order",
+    "tables", "training", "quick_order", "signed_in_users",
 ]
 
 
@@ -218,7 +218,7 @@ def test_the_parameters_page_lists_it_with_its_widget(w):
 
 def test_the_keys_are_the_tills_in_the_menus_order():
     assert list(TM.KNOWN_KEYS) == SPEC_KEYS
-    assert len(set(TM.KNOWN_KEYS)) == len(TM.KNOWN_KEYS) == 40
+    assert len(set(TM.KNOWN_KEYS)) == len(TM.KNOWN_KEYS) == 41
     assert all(item.label for item in TM.ITEMS)
     assert TM.REPORT_KEYS == tuple(SPEC_KEYS[17:25])
 
@@ -379,7 +379,7 @@ def _tables(w, scope_type, scope_id, mode):
 def test_quick_order_is_the_tables_only_device(w):
     (item,) = [i for i in TM.ITEMS if i.key == "quick_order"]
     assert item.label == "הזמנה מהירה (בסרגל, לא בתפריט)"
-    assert TM.KNOWN_KEYS[-2:] == ("training", "quick_order")
+    assert TM.KNOWN_KEYS[-3:-1] == ("training", "quick_order")
     assert item.warning is None and "quick_order" not in TM.CRITICAL_KEYS
     assert "מסך השולחנות" in item.also
     _set(w, "machine", w.bar_till.id, "quick_order,training")
