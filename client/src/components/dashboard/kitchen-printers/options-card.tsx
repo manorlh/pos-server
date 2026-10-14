@@ -8,21 +8,32 @@
  *
  * Pick a level in the tree; each setting shows the level's own value, or what it inherits
  * and from where (till → point of sale → shop → company → default).
+ *
+ * `variant="ticket"`: the same card for "עיצוב בון" — the default design and its options
+ * (`kitchenTicket*`, P:/specs/kitchen-ticket-designs.md §2, §8, §9), with a design picker, the
+ * info fields as checkboxes and the custom order as a drag list. Those parameters are also on the
+ * till parameters page (by company too).
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { LayoutGrid, Monitor, Store } from 'lucide-react';
 import {
   savePrinterSettings,
+  saveTicketOptions,
   type KitchenOptions,
   type KitchenPrintersPage,
   type PrinterSettingDef,
   type PrinterSettingValue,
   type PrinterSettingValues,
 } from '@/lib/kitchenPrintersApi';
+import { INFO_FIELDS, PARAM_KEYS, parseHeader, parseOrderList, orderListText, isTemplate } from '@/lib/kitchenTicketStyle';
+import { OrderListEditor } from './order-list-editor';
+import { PICKER_TEMPLATES } from './ticket-design-picker';
+import { SimpleSelect } from './printer-dialog';
+import { useTicketOrderData } from './ticket-order-data';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -45,11 +56,27 @@ interface Level {
   areaId?: string | null;
 }
 
-const GROUPS = [
+const GROUPS: ReadonlyArray<{ id: string; keys: readonly string[] }> = [
   { id: 'Receipt', keys: ['receiptPrinter', 'receiptPrinterAddress', 'receiptPrinterModel'] },
   { id: 'Payment', keys: ['cashDrawer', 'askBeforePrint'] },
   { id: 'Kitchen', keys: ['kitchenTicketsOnSale', 'kitchenTicketsOnTill'] },
-] as const;
+];
+
+/** "עיצוב בון": the default design, the size and lines, the order of the lines. */
+const TICKET_GROUPS: ReadonlyArray<{ id: string; keys: readonly string[] }> = [
+  {
+    id: 'TicketDesign',
+    keys: [PARAM_KEYS.design, PARAM_KEYS.inkSaver, PARAM_KEYS.fontScale, PARAM_KEYS.header, PARAM_KEYS.checkboxes, PARAM_KEYS.elapsed],
+  },
+  { id: 'TicketText', keys: [PARAM_KEYS.fit, PARAM_KEYS.minTextSize, PARAM_KEYS.maxTextSize, PARAM_KEYS.headerSize, PARAM_KEYS.inlineMods] },
+  { id: 'TicketOrder', keys: [PARAM_KEYS.order, PARAM_KEYS.orderList, PARAM_KEYS.groupHeaders, PARAM_KEYS.noCourse] },
+];
+
+/** A setting edited by its own widget rather than the generic input (the ticket card's). */
+interface CustomEditor {
+  render: (text: string, onText: (text: string) => void, disabled: boolean) => ReactNode;
+  format: (value: PrinterSettingValue | null) => string;
+}
 
 /** What a level takes when it sets nothing itself; `byDevice` — the till's model's own default. */
 interface Inherited {
@@ -62,11 +89,21 @@ interface Inherited {
 const BUILT_IN = 'מובנית בקופה';
 const EXTERNAL_ONLY = new Set(['receiptPrinterAddress', 'receiptPrinterModel']);
 
-export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
+export function OptionsCard({ page, variant = 'printing' }: { page: KitchenPrintersPage; variant?: 'printing' | 'ticket' }) {
+  const ticketCard = variant === 'ticket';
+  const options = (ticketCard ? page.ticketOptions : page.options) ?? null;
+  if (!options) return null;
+  return <OptionsCardBody page={page} options={options} ticketCard={ticketCard} />;
+}
+
+function OptionsCardBody({ page, options, ticketCard }: { page: KitchenPrintersPage; options: KitchenOptions; ticketCard: boolean }) {
   const t = useTranslations('kitchenPrinters.options');
+  const tk = useTranslations('kitchenPrinters.ticketDesign');
   const tc = useTranslations('common');
   const qc = useQueryClient();
-  const options = page.options;
+  const groups = ticketCard ? TICKET_GROUPS : GROUPS;
+  const orderData = useTicketOrderData(page.shopId, page.companyId, ticketCard);
+  const designs = page.ticketDesigns ?? [];
 
   const areaIds = new Set(page.areas.map((a) => a.id));
   const levels: Level[] = [
@@ -106,10 +143,10 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
 
   const save = useMutation({
     mutationFn: (v: { level: Level; key: string; value: PrinterSettingValue | null }) =>
-      savePrinterSettings(page.shopId, v.level.type, v.level.id, { [v.key]: v.value }),
+      (ticketCard ? saveTicketOptions : savePrinterSettings)(page.shopId, v.level.type, v.level.id, { [v.key]: v.value }),
     onSuccess: (next: KitchenOptions) => {
       qc.setQueryData<KitchenPrintersPage>(['kitchen-printers', page.shopId], (old) =>
-        old ? { ...old, options: next } : old,
+        old ? (ticketCard ? { ...old, ticketOptions: next } : { ...old, options: next }) : old,
       );
       toast.success(t('saved'));
     },
@@ -121,11 +158,78 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
   const external = effective('receiptPrinter') !== BUILT_IN;
   const defs = new Map(options.parameters.map((p) => [p.key, p]));
 
+  // The ticket card's own widgets: the design as a picker, the info fields as checkboxes, the
+  // custom order as a drag list — and their values in Hebrew.
+  const designLabel = (v: unknown) =>
+    isTemplate(v) ? tk(`templates.${v}`) : designs.find((d) => d.id === String(v))?.name ?? tk('unknownDesign');
+  const custom: Record<string, CustomEditor> = ticketCard
+    ? {
+        [PARAM_KEYS.design]: {
+          render: (text, onText, disabled) => (
+            <SimpleSelect
+              value={text || 'classic'}
+              onChange={onText}
+              disabled={disabled}
+              ariaLabel={tk('title')}
+              options={[
+                ...PICKER_TEMPLATES.map((k) => ({ value: k, label: tk(`templates.${k}`) })),
+                ...designs.map((d) => ({ value: d.id, label: d.name })),
+              ]}
+            />
+          ),
+          format: (v) => (v === null ? t('none') : designLabel(v)),
+        },
+        [PARAM_KEYS.header]: {
+          render: (text, onText, disabled) => {
+            const chosen = parseHeader(text) ?? [...INFO_FIELDS];
+            return (
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {INFO_FIELDS.map((field) => (
+                  <label key={field} className="flex items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-primary"
+                      checked={field === 'table' || chosen.includes(field)}
+                      disabled={disabled || field === 'table'}
+                      onChange={(e) =>
+                        onText(INFO_FIELDS.filter((x) => (x === field ? e.target.checked : x === 'table' || chosen.includes(x))).join(','))
+                      }
+                    />
+                    {tk(`values.info.${field}`)}
+                  </label>
+                ))}
+              </div>
+            );
+          },
+          format: (v) =>
+            v === null ? t('none') : (parseHeader(v) ?? []).map((f) => tk(`values.info.${f}`)).join(', '),
+        },
+        [PARAM_KEYS.orderList]: {
+          render: (text, onText, disabled) => (
+            <OrderListEditor
+              value={parseOrderList(text) ?? []}
+              onChange={(next) => onText(orderListText(next))}
+              courses={orderData.courses}
+              categories={orderData.categories}
+              disabled={disabled}
+            />
+          ),
+          format: (v) => {
+            const list = parseOrderList(v) ?? [];
+            if (list.length === 0) return t('empty');
+            const name = (kind: string, id: string) =>
+              (kind === 'course' ? orderData.courses : orderData.categories).find((x) => x.id === id)?.name ?? tk('orderList.unknown');
+            return list.map((e) => name(e.kind, e.id)).join(' › ');
+          },
+        },
+      }
+    : {};
+
   return (
     <section className="space-y-2">
       <div>
-        <h2 className="text-lg font-semibold">{t('title')}</h2>
-        <p className="text-sm text-muted-foreground">{t('hint')}</p>
+        <h2 className="text-lg font-semibold">{ticketCard ? t('ticketTitle') : t('title')}</h2>
+        <p className="text-sm text-muted-foreground">{ticketCard ? t('ticketHint') : t('hint')}</p>
       </div>
       <div className="grid gap-3 rounded-lg border p-3 md:grid-cols-[16rem_minmax(0,1fr)]">
         <nav aria-label={t('levels')} className="space-y-0.5 md:border-e md:pe-3">
@@ -165,7 +269,7 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
 
         <div className="min-w-0 space-y-4">
           <p className="text-base font-semibold">{level.name}</p>
-          {GROUPS.map((group) => {
+          {groups.map((group) => {
             const shown = group.keys.filter((k) => defs.has(k));
             if (shown.length === 0) return null;
             return (
@@ -177,6 +281,8 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
                   <p className="text-xs text-muted-foreground">{t('groupKitchenHint')}</p>
                 ) : group.id === 'Payment' ? (
                   <p className="text-xs text-muted-foreground">{t('groupPaymentHint')}</p>
+                ) : group.id.startsWith('Ticket') ? (
+                  <p className="text-xs text-muted-foreground">{t(`group${group.id}Hint`)}</p>
                 ) : null}
                 <div className="divide-y">
                   {shown.map((key) => {
@@ -197,6 +303,7 @@ export function OptionsCard({ page }: { page: KitchenPrintersPage }) {
                         canEdit={page.canEdit}
                         saving={save.isPending}
                         onSave={(v) => save.mutate({ level, key, value: v })}
+                        custom={custom[key]}
                       />
                     );
                   })}
@@ -217,6 +324,7 @@ function SettingRow({
   canEdit,
   saving,
   onSave,
+  custom,
 }: {
   def: PrinterSettingDef;
   own: PrinterSettingValue | undefined;
@@ -224,6 +332,7 @@ function SettingRow({
   canEdit: boolean;
   saving: boolean;
   onSave: (value: PrinterSettingValue | null) => void;
+  custom?: CustomEditor;
 }) {
   const t = useTranslations('kitchenPrinters.options');
   const isOwn = own !== undefined;
@@ -235,7 +344,17 @@ function SettingRow({
   const instant = def.valueType === 'boolean' || def.valueType === 'enum';
 
   const format = (v: PrinterSettingValue | null) =>
-    v === null ? t('none') : typeof v === 'boolean' ? (v ? t('on') : t('off')) : v === '' ? t('empty') : String(v);
+    custom
+      ? custom.format(v)
+      : v === null
+        ? t('none')
+        : typeof v === 'boolean'
+          ? v
+            ? t('on')
+            : t('off')
+          : v === ''
+            ? t('empty')
+            : def.enumLabels?.[String(v)] ?? String(v);
 
   const change = (next: ValueDraft) => {
     setDraft(next);
@@ -256,14 +375,19 @@ function SettingRow({
       {isOwn || editing ? (
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-48 max-w-sm flex-1">
-              <ParameterValueInput
-                type={def.valueType}
-                enumOptions={def.enumOptions}
-                draft={draft}
-                onChange={change}
-                disabled={!canEdit || saving}
-              />
+            <div className={custom ? 'min-w-48 flex-1' : 'min-w-48 max-w-sm flex-1'}>
+              {custom ? (
+                custom.render(draft.text, (text) => setDraft({ ...draft, text }), !canEdit || saving)
+              ) : (
+                <ParameterValueInput
+                  type={def.valueType}
+                  enumOptions={def.enumOptions}
+                  enumLabels={def.enumLabels}
+                  draft={draft}
+                  onChange={change}
+                  disabled={!canEdit || saving}
+                />
+              )}
             </div>
             {canEdit && (!instant || !isOwn) && (dirty || !isOwn) ? (
               <Button size="sm" disabled={saving || draftValue === null} onClick={() => draftValue !== null && onSave(draftValue)}>

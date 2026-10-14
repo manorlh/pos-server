@@ -42,6 +42,7 @@ from app.schemas.machine_catalog import (
     MachineCatalogResponse,
     MachineCatalogSet,
 )
+from app.services import dietary
 from app.services import general_item
 from app.services import machine_catalog
 from app.services import product_availability as availability
@@ -121,6 +122,9 @@ def build_picture(db: Session, machine: POSMachine, shop: Shop, can_edit: bool) 
                 requires_manager_approval=restricted_items.is_restricted(
                     getattr(p, "requires_manager_approval", False), p.category_id, restricted,
                 ),
+                description=p.description,
+                dietary_tags=dietary.tags_out(getattr(p, "dietary_tags", None)),
+                allergens=[a for a in (getattr(p, "allergens", None) or []) if isinstance(a, str)],
             )
         )
 

@@ -597,6 +597,15 @@ EXCLUSIVE_DUPLICATE_LABELS = {
     EXCLUSIVE_DUPLICATE_WARN: "פס אזהרה (ברירת מחדל)",
     EXCLUSIVE_DUPLICATE_SIGNOUT: "ניתוק במכשיר שהתחבר אחרון",
 }
+#: §8ב (the owner, 14.10: "מי יכול לשחרר עובד אם יש עליו שולחנות?"): a manager's release keeps the
+#: employee's open tables theirs (`keep`), or asks whether to hand them to another waiter (`ask`).
+EXCLUSIVE_RELEASE_TABLES_KEY = "exclusiveReleaseTables"
+EXCLUSIVE_RELEASE_TABLES_KEEP = "keep"
+EXCLUSIVE_RELEASE_TABLES_ASK = "ask"
+EXCLUSIVE_RELEASE_TABLES_LABELS = {
+    EXCLUSIVE_RELEASE_TABLES_KEEP: "נשארים אצל העובד (ברירת מחדל)",
+    EXCLUSIVE_RELEASE_TABLES_ASK: "לשאול: להשאיר או להעביר למלצר אחר",
+}
 
 EXCLUSIVE_LOGIN_DESCRIPTION = (
     "כשמופעל: עובד/מלצר שמחובר במכשיר אחד (קופה, מכשיר נייד, טלפון או קופת Windows) לא יכול להתחבר "
@@ -1558,6 +1567,25 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # §8ב: what a manager's release does with the employee's open tables.
+    BuiltinParameter(
+        key=EXCLUSIVE_RELEASE_TABLES_KEY,
+        label="עובד בקופה אחת — שולחנות בשחרור",
+        value_type="enum",
+        enum_options=(EXCLUSIVE_RELEASE_TABLES_KEEP, EXCLUSIVE_RELEASE_TABLES_ASK),
+        enum_labels=EXCLUSIVE_RELEASE_TABLES_LABELS,
+        default_value=EXCLUSIVE_RELEASE_TABLES_KEEP,
+        description=(
+            "מה קורה לשולחנות הפתוחים של עובד שמנהל משחרר מהמכשיר שבו הוא מחובר. "
+            f"«{EXCLUSIVE_RELEASE_TABLES_LABELS[EXCLUSIVE_RELEASE_TABLES_KEEP]}» — השולחנות נשארים שלו, "
+            "וכשהוא מתחבר במכשיר אחר הוא ממשיך אותם. "
+            f"«{EXCLUSIVE_RELEASE_TABLES_LABELS[EXCLUSIVE_RELEASE_TABLES_ASK]}» — בשחרור מהמסך \"עובדים "
+            "מחוברים\" או מהדשבורד נשאלת שאלה: להשאיר אצלו, או להעביר למלצר אחר (או למנהל עצמו). ההעברה "
+            "היא \"החלפת מלצר\" לכל שולחן, ונרשמת. "
+            "בכל מקרה, כשהמכשיר הישן לא מדווח, השחרור משחרר גם את השולחנות שהמכשיר הזה נעל עבורו. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
     # "נוכחות עובדים" (app/services/attendance.py, docs/SPEC_ATTENDANCE.md) — read by the
     # till and the cloud. All four default to today's behaviour: nothing changes until set.
     BuiltinParameter(
@@ -2056,6 +2084,14 @@ from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
 
+# "שם פריט מלא על הכפתור, ותג i" (P:/specs/product-tile-text.md §3–§5, app/services/product_tile_text.py):
+# `productNameFit` (fit / wrap / clip), `productNameMaxLines` (1–4), `productNameMinTextSize` (s / m / l),
+# `productInfoBadge` (auto / always / off) — fit, 3, s, auto. Read by the till, the web till and the
+# Windows till; the same four are fields of "עיצוב קופה" (`productText`), which win over these.
+from app.services.product_tile_text import PARAMETER_SPECS as _PRODUCT_TILE_TEXT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _PRODUCT_TILE_TEXT_SPECS)
+
 # "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
 # a device online but not up to date is a problem on "בעיות". Read by the cloud only.
 SYNC_STALE_MINUTES_KEY = "syncStaleMinutes"
@@ -2084,6 +2120,13 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
 from app.services.table_tile_look import PARAMETER_SPECS as _TILE_LOOK_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILE_LOOK_SPECS)
+
+# "עיצוב בון" (P:/specs/kitchen-ticket-designs.md §2, §6ב, §8; app/services/kitchen_ticket_style.py):
+# `kitchenTicketDesign` (a template or a named design), `kitchenTicketInkSaver` (on), and the options a
+# level may lay over a template — read by the cloud, which resolves each printer's `ticketStyle`.
+from app.services.kitchen_ticket_style import PARAMETER_SPECS as _TICKET_STYLE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TICKET_STYLE_SPECS)
 
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
@@ -2153,6 +2196,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
             return category_display.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
+    # "שם פריט מלא ותג i": the codes the till knows, the name's lines 1–4.
+    from app.services import product_tile_text
+
+    if key in product_tile_text.KEYS and value is not None:
+        try:
+            return product_tile_text.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     # "הוצאה אוטומטית של השלב הבא": the codes and the minutes the till and the cloud's pass read.
     from app.services import course_auto_fire
 
@@ -2191,6 +2242,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_tile_look.VALIDATED_KEYS and value is not None:
         try:
             return table_tile_look.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "עיצוב בון": a template or a design's id, 80–150 %, the info list in its order.
+    from app.services import kitchen_ticket_style
+
+    if key in kitchen_ticket_style.VALIDATED_KEYS and value is not None:
+        try:
+            return kitchen_ticket_style.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

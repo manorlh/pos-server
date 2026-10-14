@@ -1031,3 +1031,295 @@ class TestWordingMigration:
         conn = _Conn({S.PARAM_ENABLED: ["p-1", "הניסוח שלנו"]})
         _run(m, conn, "upgrade")
         assert conn.rows[S.PARAM_ENABLED][1] == "הניסוח שלנו" and conn.updates == []
+
+
+# ── §8: "עובדים מחוברים" — a manager releases from any device, tables and all ────────────────────
+
+
+def _open_table(w, waiter, number=12, *, source="synced", cart=None, lock_till=None, lock_user=None, minutes=10):
+    """An open order of `waiter` on table [number]; [lock_till]: that till is inside it (for [lock_user])."""
+    from decimal import Decimal
+
+    from app.models.tables import DiningTable, TableOrder, TableZone
+
+    zone = w.db.query(TableZone).filter(TableZone.shop_id == w.shop.id).first()
+    if zone is None:
+        zone = TableZone(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, name="אולם", layout="grid")
+        w.db.add(zone)
+        w.db.flush()
+    table = DiningTable(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, zone_id=zone.id, number=number)
+    if lock_till is not None:
+        now = datetime.now(timezone.utc)
+        table.lock_machine_id = lock_till.id
+        table.lock_pos_user_id = str(lock_user.id) if lock_user is not None else None
+        table.lock_pos_user_name = "x"
+        table.lock_acquired_at = now - timedelta(minutes=20)
+        table.lock_expires_at = now + timedelta(minutes=minutes)
+    w.db.add(table)
+    w.db.flush()
+    order = TableOrder(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, table_id=table.id, table_number=number,
+        status="open", source=source, total=Decimal("120.00"), guests=2, cart_json=cart,
+        opened_by_pos_user_id=str(waiter.id), opened_by_pos_user_name="x", waiter_pos_user_id=str(waiter.id),
+        waiter_pos_user_name=S.pos_user_name(waiter),
+    )
+    w.db.add(order)
+    w.db.commit()
+    return table, order
+
+
+def till_list(w, till):
+    return R.list_user_sessions_at_till(machine_id=str(till.id), machine=till, db=w.db)
+
+
+def till_release(w, till, session_id, *, token=None, operator=None, transfers=None):
+    body = R.UserSessionReleaseIn(transfers=transfers or [])
+    return R.release_user_session_at_till(
+        machine_id=str(till.id), session_id=session_id, body=body, machine=till,
+        elevation_token=token, operator_id=operator, db=w.db,
+    )
+
+
+def session_of(w, pos_user):
+    return live(w, pos_user)[0].id
+
+
+@pytest.fixture
+def woken(monkeypatch):
+    from app.services import tables as T
+
+    calls = []
+    monkeypatch.setattr(T, "tables_changed", lambda db, shop_id, **kw: calls.append(str(shop_id)))
+    return calls
+
+
+class TestSignedInUsersAtAnyTill:
+    def _two(self, w):
+        turn_on(w)
+        yossi = _pos_user(w, "yossi", "יוסי", "לוי")
+        w.db.commit()
+        claim(w, w.tills[0], w.dana)
+        claim(w, w.tills[1], yossi)
+        return yossi
+
+    def test_the_list_any_till_of_the_shop_reads(self, w):
+        yossi = self._two(w)
+        _open_table(w, w.dana, 12)
+        _open_table(w, w.dana, 14)
+        age(w, live(w, yossi)[0], 10)
+        out = till_list(w, w.tills[1])
+        assert out["exclusive"] is True and out["releaseTables"] == "keep" and out["waiters"] is None
+        rows_ = {s["posUserName"]: s for s in out["sessions"]}
+        dana = rows_["דנה כהן"]
+        assert dana["machineName"] == "Till 1" and dana["here"] is False and dana["silent"] is False
+        assert dana["openTables"] == 2 and sorted(t["number"] for t in dana["tables"]) == [12, 14]
+        assert rows_["יוסי לוי"]["here"] is True and rows_["יוסי לוי"]["silent"] is True
+        assert rows_["יוסי לוי"]["silentSince"] and rows_["יוסי לוי"]["openTables"] == 0
+
+    def test_a_signed_in_manager_releases_from_another_till(self, w, woken):
+        self._two(w)
+        out = till_release(w, w.tills[1], session_of(w, w.dana), operator=str(w.boss.id))
+        assert out["status"] == "released" and out["openTables"] == 0 and out["warnings"] == []
+        [row] = rows(w, w.dana)
+        assert row.released_by == "manager" and row.released_by_name == "רותי לוי"
+        assert str(row.released_by_machine_id) == str(w.tills[1].id)
+        # Dana's till hears it and signs her out at the end of its operation.
+        err = refused(heartbeat, w, w.tills[0], w.dana)
+        assert err.detail["code"] == "user_session_released" and err.detail["fromDashboard"] is False
+        # The exception, at the till the manager released from.
+        event = w.db.query(TillEvent).filter(TillEvent.event_type == S.EXCEPTION_TYPE).one()
+        assert str(event.machine_id) == str(w.tills[1].id) and event.details["via"] == "till"
+        assert event.details["fromMachineName"] == "Till 1" and event.details["openTables"] == 0
+        assert woken == []  # no table changed
+        # Again: nothing left.
+        assert till_release(w, w.tills[1], row.id, operator=str(w.boss.id))["status"] == "not_held"
+
+    def test_a_managers_code_releases_once(self, w):
+        yossi = self._two(w)
+        token = manager_grant(w, w.tills[1])
+        assert till_release(w, w.tills[1], session_of(w, w.dana), token=token)["status"] == "released"
+        err = refused(till_release, w, w.tills[1], session_of(w, yossi), token=token)
+        assert err.status_code == 401 and err.detail == "elevation_already_used"
+        assert len(live(w, yossi)) == 1
+
+    def test_without_a_manager_nothing_is_released(self, w):
+        yossi = self._two(w)
+        err = refused(till_release, w, w.tills[1], session_of(w, w.dana))
+        assert err.status_code == 401 and err.detail == "elevation_required"
+        # A cashier signed in is no manager.
+        err = refused(till_release, w, w.tills[1], session_of(w, w.dana), operator=str(yossi.id))
+        assert err.status_code == 401
+        # A code without the right.
+        err = refused(till_release, w, w.tills[1], session_of(w, w.dana), token=manager_grant(w, w.tills[1], scopes=(Scope.REFUND,)))
+        assert err.status_code == 403
+        assert len(live(w, w.dana)) == 1
+
+    def test_another_shops_session_is_404(self, w):
+        set_param(w, S.PARAM_ENABLED, "shop", w.other_shop.id, True)
+        north = _pos_user(w, "north", "צפון", None, shop=w.other_shop)
+        w.db.commit()
+        claim(w, w.other_till, north)
+        err = refused(till_release, w, w.tills[0], session_of(w, north), operator=str(w.boss.id))
+        assert err.status_code == 404
+
+
+class TestTablesAtRelease:
+    def test_a_device_that_reports_keeps_its_tables(self, w):
+        turn_on(w)
+        claim(w, w.tills[0], w.dana)
+        table, _ = _open_table(w, w.dana, 12, lock_till=w.tills[0], lock_user=w.dana)
+        out = till_release(w, w.tills[1], session_of(w, w.dana), operator=str(w.boss.id))
+        assert out["openTables"] == 1 and out["tablesUnlocked"] == [] and out["warnings"] == []
+        w.db.refresh(table)
+        # Still inside: it leaves at the end of its operation, then signs her out.
+        assert str(table.lock_machine_id) == str(w.tills[0].id)
+
+    def test_a_silent_device_lets_go_of_her_tables_in_the_same_action(self, w, woken):
+        from app.models.tables import TableEvent
+
+        turn_on(w)
+        claim(w, w.tills[0], w.dana)
+        yossi = _pos_user(w, "yossi", "יוסי", None)
+        w.db.commit()
+        mine, order = _open_table(w, w.dana, 12, lock_till=w.tills[0], lock_user=w.dana)
+        theirs, _ = _open_table(w, yossi, 14, lock_till=w.tills[0], lock_user=yossi)
+        age(w, live(w, w.dana)[0], 10)
+        out = till_release(w, w.tills[1], session_of(w, w.dana), operator=str(w.boss.id))
+        assert out["holderSilentSince"] and out["openTables"] == 1
+        assert [t["number"] for t in out["tablesUnlocked"]] == [12]
+        assert out["tablesUnlocked"][0]["orderId"] == str(order.id)
+        [warning] = out["warnings"]
+        assert warning.startswith("שולחן 12 נפתח במכשיר שלא מדווח מאז ")
+        assert warning.endswith(". שינויים שלא נשמרו שם לא יופיעו.")
+        w.db.refresh(mine)
+        w.db.refresh(theirs)
+        assert mine.lock_machine_id is None
+        # Another employee's table on that device is not hers to free.
+        assert str(theirs.lock_machine_id) == str(w.tills[0].id)
+        # In the table's history, with who approved it.
+        event = w.db.query(TableEvent).filter(TableEvent.kind == "force_release").one()
+        assert str(event.table_id) == str(mine.id) and event.details["from"] == "user_session_release"
+        assert event.details["approvedBy"] == "רותי לוי" and event.details["silentSince"]
+        # And in the exception.
+        found = w.db.query(AuditException).filter(AuditException.exception_type == S.EXCEPTION_TYPE).one()
+        assert found.details["tablesUnlocked"][0]["number"] == 12 and found.details["warnings"] == [warning]
+        assert "שוחררו נעילות: שולחן 12" in found.details["summary"]
+        assert woken == [str(w.shop.id)]
+
+    def test_the_sign_in_dialogs_release_frees_them_too(self, w):
+        turn_on(w)
+        claim(w, w.tills[0], w.dana)
+        table, _ = _open_table(w, w.dana, 12, lock_till=w.tills[0], lock_user=w.dana)
+        age(w, live(w, w.dana)[0], 10)
+        out = claim(w, w.tills[1], w.dana, force=True, token=manager_grant(w, w.tills[1]))
+        assert out["tookOver"]["openTables"] == 1
+        assert [t["number"] for t in out["tookOver"]["tablesUnlocked"]] == [12]
+        assert out["tookOver"]["warnings"][0].startswith("שולחן 12 נפתח במכשיר שלא מדווח")
+        w.db.refresh(table)
+        assert table.lock_machine_id is None
+        # She carries on the table here: it is still hers.
+        assert till_list(w, w.tills[1])["sessions"][0]["openTables"] == 1
+
+    def test_the_dashboards_release_too(self, w):
+        turn_on(w)
+        claim(w, w.tills[0], w.dana)
+        table, _ = _open_table(w, w.dana, 12, lock_till=w.tills[0], lock_user=w.dana)
+        age(w, live(w, w.dana)[0], 10)
+        listed = list_sessions(w, w.admin)
+        assert listed["releaseTables"] == "keep" and listed["sessions"][0]["openTables"] == 1
+        out = dash_release(w, w.admin, session_of(w, w.dana))
+        assert out["status"] == "released" and len(out["warnings"]) == 1
+        w.db.refresh(table)
+        assert table.lock_machine_id is None
+
+    def test_keep_refuses_a_hand_over_and_releases_nothing(self, w):
+        turn_on(w)
+        claim(w, w.tills[0], w.dana)
+        _, order = _open_table(w, w.dana, 12)
+        err = refused(
+            till_release, w, w.tills[1], session_of(w, w.dana), operator=str(w.boss.id),
+            transfers=[{"orderId": str(order.id), "toPosUserId": str(w.boss.id)}],
+        )
+        assert err.status_code == 409 and err.detail["code"] == "release_tables_keep"
+        assert len(live(w, w.dana)) == 1
+
+    def test_ask_hands_her_tables_to_another_waiter(self, w, woken):
+        from app.models.tables import TableEvent
+
+        set_param(w, S.PARAM_RELEASE_TABLES, "shop", w.shop.id, "ask")
+        turn_on(w)
+        yossi = _pos_user(w, "yossi", "יוסי", "לוי")
+        w.db.commit()
+        claim(w, w.tills[0], w.dana)
+        _, first = _open_table(w, w.dana, 12)
+        _, second = _open_table(w, w.dana, 14)
+        listed = till_list(w, w.tills[1])
+        assert listed["releaseTables"] == "ask" and isinstance(listed["waiters"], list)
+        out = till_release(
+            w, w.tills[1], session_of(w, w.dana), operator=str(w.boss.id),
+            transfers=[
+                {"orderId": str(first.id), "toPosUserId": str(yossi.id)},
+                {"orderId": str(second.id), "toPosUserId": str(w.boss.id)},  # the manager themselves
+            ],
+        )
+        assert out["openTables"] == 2 and out["tablesNotTransferred"] == []
+        assert {(m["number"], m["toName"]) for m in out["tablesTransferred"]} == {(12, "יוסי לוי"), (14, "רותי לוי")}
+        w.db.refresh(first)
+        assert first.waiter_pos_user_id == str(yossi.id) and first.waiter_pos_user_name == "יוסי לוי"
+        assert first.version == 2
+        events = w.db.query(TableEvent).filter(TableEvent.kind == "waiter").all()
+        assert len(events) == 2 and all(e.details["from"] == "user_session_release" for e in events)
+        found = w.db.query(AuditException).filter(AuditException.exception_type == S.EXCEPTION_TYPE).one()
+        assert found.details["openTables"] == 2 and len(found.details["tablesTransferred"]) == 2
+        assert "הועברו: שולחן 12 ליוסי לוי" in found.details["summary"]
+        assert woken == [str(w.shop.id)]
+
+    def test_ask_hands_on_only_the_clouds_tables_that_are_hers_and_free(self, w):
+        set_param(w, S.PARAM_RELEASE_TABLES, "shop", w.shop.id, "ask")
+        turn_on(w)
+        yossi = _pos_user(w, "yossi", "יוסי", "לוי")
+        w.db.commit()
+        claim(w, w.tills[0], w.dana)
+        _, lan = _open_table(w, w.dana, 20, source="local", cart="[]")
+        _, single = _open_table(w, w.dana, 21, source="local")
+        _, other = _open_table(w, yossi, 22)
+        _, inside = _open_table(w, w.dana, 23, lock_till=w.tills[1], lock_user=yossi)
+        to = str(yossi.id)
+        out = till_release(
+            w, w.tills[1], session_of(w, w.dana), operator=str(w.boss.id),
+            transfers=[
+                {"orderId": str(lan.id), "toPosUserId": to},
+                {"orderId": str(single.id), "toPosUserId": to},
+                {"orderId": str(other.id), "toPosUserId": str(w.boss.id)},
+                {"orderId": str(inside.id), "toPosUserId": to},
+                {"orderId": str(uuid.uuid4()), "toPosUserId": to},
+            ],
+        )
+        why = {s.get("number"): s["why"] for s in out["tablesNotTransferred"]}
+        assert why == {20: "lan", 21: "single", 22: "not_theirs", 23: "table_in_use", None: "table_not_open"}
+        assert out["tablesTransferred"] == [] and out["status"] == "released"
+
+    def test_a_waiter_from_another_shop_is_not_one(self, w):
+        set_param(w, S.PARAM_RELEASE_TABLES, "shop", w.shop.id, "ask")
+        turn_on(w)
+        north = _pos_user(w, "north", "צפון", None, shop=w.other_shop)
+        w.db.commit()
+        claim(w, w.tills[0], w.dana)
+        _, order = _open_table(w, w.dana, 12)
+        out = dash_release(w, w.admin, session_of(w, w.dana))
+        assert out["tablesTransferred"] == []
+        claim(w, w.tills[0], w.dana)
+        out = R.release_user_session_from_dashboard(
+            shop_id=str(w.shop.id), session_id=session_of(w, w.dana),
+            body=R.UserSessionReleaseIn(transfers=[{"orderId": str(order.id), "toPosUserId": str(north.id)}]),
+            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        assert out["tablesNotTransferred"][0]["why"] == "waiter_not_found"
+
+    def test_the_parameter(self, w):
+        spec = {p.key: p for p in TP.BUILTIN_PARAMETERS}[S.PARAM_RELEASE_TABLES]
+        assert spec.value_type == "enum" and tuple(spec.enum_options) == ("keep", "ask")
+        assert spec.default_value == "keep" and set(spec.enum_labels) == {"keep", "ask"}
+        assert TP.till_parameters_for_machine(w.db, w.tills[0]).parameters[S.PARAM_RELEASE_TABLES] == "keep"
+        turn_on(w)
+        assert claim(w, w.tills[0], w.dana)["releaseTables"] == "keep"

@@ -202,7 +202,7 @@ def _legacy(db: Session, scope: Scope) -> Dict[str, Any]:
         shop_id=scope.shop_id if keep >= 1 else None,
         company_id=scope.company_id,
     )
-    keys = sorted({k for ks in design.LEGACY_MAP.values() for k in ks})
+    keys = design.legacy_parameter_keys()
     parameters = db.query(TillParameter).filter(TillParameter.key.in_(keys)).all()
     on_chain = [
         and_(TillParameterValue.scope_type == kind, TillParameterValue.scope_id == ident)

@@ -153,6 +153,10 @@ export const TILL_MENU_ITEMS: readonly TillMenuItem[] = [
     also:
       'הקופה נפתחת על מסך השולחנות; הלשונית "הזמנה מהירה", כל מעבר למסך המכירה שלא דרך שולחן, "מכירה מהירה" במסך השולחנות ו"החזר הזמנה"',
   }),
+  // "עובד במכשיר אחד בלבד" v2 §8א: the manager's screen — who is signed in where, and the release.
+  item('signed_in_users', 'עובדים מחוברים', 'more', 'user', TILE.indigo, {
+    also: 'המסך שממנו מנהל משחרר עובד מחובר; "שחרור באישור מנהל" במסך הכניסה נשאר',
+  }),
 ];
 
 /** The groups of the till's menu, in order; a null title is a group without a heading. */

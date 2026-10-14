@@ -177,6 +177,7 @@ export async function fetchTillCatalog(machineId: string): Promise<KioskSourceCa
       salesChannel?: string;
       description?: string | null;
       dietaryTags?: unknown;
+      allergens?: unknown;
     }>;
     categories?: KioskSourceCategory[];
   }>(`/machines/${machineId}/catalog`);
@@ -198,6 +199,7 @@ export async function fetchTillCatalog(machineId: string): Promise<KioskSourceCa
         available: p.available !== false,
         description: typeof p.description === 'string' && p.description.trim() ? p.description : null,
         dietaryTags: dietaryTagsOf(p.dietaryTags),
+        allergens: Array.isArray(p.allergens) ? p.allergens.filter((a): a is string => typeof a === 'string') : [],
       })),
   };
 }

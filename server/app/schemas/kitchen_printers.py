@@ -7,7 +7,12 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.printers import DEFAULT_LAN_PORT, PRINTER_CONNECTION_TYPES, PRINTER_HOST_CONNECTIONS
+from app.models.printers import (
+    DEFAULT_LAN_PORT,
+    PRINTER_CONNECTION_TYPES,
+    PRINTER_HOST_CONNECTIONS,
+    TICKET_FONT_SCALE_RANGE,
+)
 
 PRINTER_NAME_MAX = 100
 DEFAULT_PORT = 9100
@@ -77,6 +82,55 @@ class PrinterIn(BaseModel):
     beep: bool = False
     is_active: bool = Field(True, alias="isActive")
     sort_order: int = Field(0, alias="sortOrder")
+    # "עיצוב בון" (P:/specs/kitchen-ticket-designs.md §3, §6ג): left out of the body — unchanged (an
+    # older dashboard's replace keeps them); null — inherit (the till parameters).
+    #: A bare template, or a named design (`ticketDesignId`) — not both.
+    ticket_design: Optional[Literal["classic", "classic_legacy", "large", "compact", "courses", "modern"]] = Field(
+        None, alias="ticketDesign"
+    )
+    ticket_design_id: Optional[uuid.UUID] = Field(None, alias="ticketDesignId")
+    ticket_font_scale: Optional[int] = Field(
+        None, alias="ticketFontScale", ge=TICKET_FONT_SCALE_RANGE[0], le=TICKET_FONT_SCALE_RANGE[1]
+    )
+    #: The info fields that print: table / guests / waiter / time / till / order / customer (a list,
+    #: or comma text); the table always does.
+    ticket_header: Optional[List[str]] = Field(None, alias="ticketHeader")
+    ticket_checkboxes: Optional[bool] = Field(None, alias="ticketCheckboxes")
+    ticket_elapsed: Optional[bool] = Field(None, alias="ticketElapsed")
+    ticket_fit: Optional[Literal["fit", "wrap"]] = Field(None, alias="ticketFit")
+    ticket_min_text_size: Optional[Literal["xs", "s", "m"]] = Field(None, alias="ticketMinTextSize")
+    ticket_max_text_size: Optional[Literal["s", "m", "l"]] = Field(None, alias="ticketMaxTextSize")
+    ticket_header_size: Optional[Literal["s", "m", "l"]] = Field(None, alias="ticketHeaderSize")
+    ticket_inline_mods: Optional[bool] = Field(None, alias="ticketInlineMods")
+    ticket_order: Optional[Literal["added", "course", "category", "custom"]] = Field(None, alias="ticketOrder")
+    #: `custom`'s order: `[{kind: course | category, id}]` (or "course:<id>,category:<id>").
+    ticket_order_list: Optional[List[Dict[str, str]]] = Field(None, alias="ticketOrderList")
+    ticket_group_headers: Optional[Literal["auto", "on", "off"]] = Field(None, alias="ticketGroupHeaders")
+    ticket_no_course: Optional[Literal["first", "last"]] = Field(None, alias="ticketNoCourse")
+
+    @field_validator("ticket_order_list", mode="before")
+    @classmethod
+    def _ticket_order_list(cls, value):
+        if value is None:
+            return None
+        from app.services.kitchen_ticket_style import StyleError, clean_order_list
+
+        try:
+            return clean_order_list(value, "ticketOrderList")
+        except StyleError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("ticket_header", mode="before")
+    @classmethod
+    def _ticket_header(cls, value):
+        if value is None:
+            return None
+        from app.services.kitchen_ticket_style import StyleError, printer_header
+
+        try:
+            return printer_header(value)
+        except StyleError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("name", mode="before")
     @classmethod
@@ -150,7 +204,17 @@ class PrinterIn(BaseModel):
         # Narrowed to one till: its area says nothing more.
         if self.machine_id is not None:
             self.area_id = None
+        if self.ticket_design is not None and self.ticket_design_id is not None:
+            raise ValueError("ticketDesign or ticketDesignId, not both")
         return self
+
+
+#: `PrinterIn`'s "עיצוב בון" fields, by their attribute names.
+PRINTER_TICKET_FIELDS = (
+    "ticket_design", "ticket_design_id", "ticket_font_scale", "ticket_header", "ticket_checkboxes", "ticket_elapsed",
+    "ticket_fit", "ticket_min_text_size", "ticket_max_text_size", "ticket_header_size", "ticket_inline_mods",
+    "ticket_order", "ticket_order_list", "ticket_group_headers", "ticket_no_course",
+)
 
 
 class TicketLineIn(BaseModel):
@@ -171,6 +235,8 @@ class TicketLineIn(BaseModel):
     course: Optional[str] = Field(None, max_length=TICKET_TEXT_MAX)
     meal_name: Optional[str] = Field(None, alias="mealName", max_length=TICKET_TEXT_MAX)
     refill: Optional[str] = Field(None, max_length=TICKET_TEXT_MAX)
+    #: Its course waits for FIRE ("ממתין ל-FIRE"): drawn apart, greyed (the `courses` design).
+    held: Optional[bool] = None
 
 
 class TicketIn(BaseModel):
@@ -201,6 +267,8 @@ class TicketIn(BaseModel):
     #: "מצב הדרכה": a ticket of a till in training, printed "הדרכה" by whichever till prints it —
     #: kept through the relay (the kitchen must never cook a training order as a real one).
     training: Optional[bool] = None
+    #: When the table was opened (ISO-8601): "פתוח 25 דק'" at the head (`kitchenTicketElapsed`).
+    opened_at: Optional[str] = Field(None, alias="openedAt", max_length=64)
 
 
 class PrintJobIn(BaseModel):
@@ -210,6 +278,75 @@ class PrintJobIn(BaseModel):
     id: uuid.UUID
     printer_id: uuid.UUID = Field(alias="printerId")
     ticket: TicketIn
+
+
+class TestPrintIn(BaseModel):
+    """
+    `POST /printers/{id}/test` with a body: "הדפסת ניסיון בעיצוב הזה" (P:/specs/kitchen-ticket-designs.md
+    §4) — the shared sample ticket in the look the dashboard shows now. The printer's "עיצוב בון"
+    fields as the dialog has them (unsaved; left out — the printer's own), or a design being edited:
+    `template` + `overrides` (with `ticketDesignId` for its name). No body: the plain test page.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ticket_design: Optional[Literal["classic", "classic_legacy", "large", "compact", "courses", "modern"]] = Field(
+        None, alias="ticketDesign"
+    )
+    ticket_design_id: Optional[uuid.UUID] = Field(None, alias="ticketDesignId")
+    ticket_font_scale: Optional[int] = Field(
+        None, alias="ticketFontScale", ge=TICKET_FONT_SCALE_RANGE[0], le=TICKET_FONT_SCALE_RANGE[1]
+    )
+    ticket_header: Optional[List[str]] = Field(None, alias="ticketHeader")
+    ticket_checkboxes: Optional[bool] = Field(None, alias="ticketCheckboxes")
+    ticket_elapsed: Optional[bool] = Field(None, alias="ticketElapsed")
+    ticket_fit: Optional[Literal["fit", "wrap"]] = Field(None, alias="ticketFit")
+    ticket_min_text_size: Optional[Literal["xs", "s", "m"]] = Field(None, alias="ticketMinTextSize")
+    ticket_max_text_size: Optional[Literal["s", "m", "l"]] = Field(None, alias="ticketMaxTextSize")
+    ticket_header_size: Optional[Literal["s", "m", "l"]] = Field(None, alias="ticketHeaderSize")
+    ticket_inline_mods: Optional[bool] = Field(None, alias="ticketInlineMods")
+    ticket_order: Optional[Literal["added", "course", "category", "custom"]] = Field(None, alias="ticketOrder")
+    #: `custom`'s order: `[{kind: course | category, id}]` (or "course:<id>,category:<id>").
+    ticket_order_list: Optional[List[Dict[str, str]]] = Field(None, alias="ticketOrderList")
+    ticket_group_headers: Optional[Literal["auto", "on", "off"]] = Field(None, alias="ticketGroupHeaders")
+    ticket_no_course: Optional[Literal["first", "last"]] = Field(None, alias="ticketNoCourse")
+
+    @field_validator("ticket_order_list", mode="before")
+    @classmethod
+    def _ticket_order_list(cls, value):
+        if value is None:
+            return None
+        from app.services.kitchen_ticket_style import StyleError, clean_order_list
+
+        try:
+            return clean_order_list(value, "ticketOrderList")
+        except StyleError as exc:
+            raise ValueError(str(exc)) from exc
+    template: Optional[Literal["classic", "classic_legacy", "large", "compact", "courses", "modern"]] = None
+    overrides: Optional[Dict[str, Any]] = None
+
+    @field_validator("ticket_header", mode="before")
+    @classmethod
+    def _ticket_header(cls, value):
+        if value is None:
+            return None
+        from app.services.kitchen_ticket_style import StyleError, printer_header
+
+        try:
+            return printer_header(value)
+        except StyleError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+class TicketDesignIn(BaseModel):
+    """A named "עיצוב בון" (create: all but `overrides` required; update: what is sent changes)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
+    name: Optional[str] = Field(None, max_length=200)
+    template: Optional[str] = Field(None, max_length=40)
+    overrides: Optional[Dict[str, Any]] = None
 
 
 class PrintJobAckIn(BaseModel):
@@ -382,4 +519,6 @@ __all__ = [
     "ProductRouteIn",
     "KitchenPrintersPatch",
     "KitchenOptionsIn",
+    "TestPrintIn",
+    "TicketDesignIn",
 ]

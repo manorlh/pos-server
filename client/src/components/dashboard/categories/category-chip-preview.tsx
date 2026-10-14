@@ -81,13 +81,17 @@ export function TillCategoryChip({
 }
 
 /** One card of the categories' landing page ("עמוד פתיחה של מחלקות"). */
-export function TillCategoryCard({ category, size }: { category: ChipCategory; size: CategoryImageSize }) {
+/**
+ * A card of the categories' landing. `label`: the name as the till writes it ("עיצוב קופה" passes the
+ * product tiles' text rules — the landing's names follow `productNameFit`); else cut to one line.
+ */
+export function TillCategoryCard({ category, size, label }: { category: ChipCategory; size: CategoryImageSize; label?: ReactNode }) {
   const color = normalizeHex(category.color);
   const px = CATEGORY_IMAGE_PX[size].landing;
   return (
     <span className="inline-flex shrink-0 flex-col items-center gap-1.5 rounded-xl border bg-background p-2" style={{ width: px + 16 }}>
       <Picture url={category.imageUrl} size={px} radius={12} color={color} name={category.name} />
-      <span className="w-full truncate text-center text-xs font-semibold">{category.name || '—'}</span>
+      {label ?? <span className="w-full truncate text-center text-xs font-semibold">{category.name || '—'}</span>}
     </span>
   );
 }

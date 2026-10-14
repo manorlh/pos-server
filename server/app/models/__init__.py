@@ -92,7 +92,7 @@ from app.models.promotion import Promotion, TransactionPromotion
 from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
 from app.models.tables_state import TablesStateVersion  # noqa: F401
 from app.models.platform_setting import PlatformSetting
-from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob
+from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob, KitchenTicketDesign
 from app.models.menu import (
     MealSlot,
     MealSlotOption,
@@ -254,7 +254,7 @@ __all__ = [
     "PrepaidProduction",
     "Promotion", "TransactionPromotion",
     "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableType", "PlatformSetting",
-    "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",
+    "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob", "KitchenTicketDesign",
     "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
     "ReportEvent", "ReportEventMachine", "ReportEventMachineChange",

@@ -427,6 +427,8 @@ export interface KioskSourceProduct {
   description: string | null;
   /** vegan | vegetarian | dairy | meat | gluten_free | spicy (unknown ones dropped). */
   dietaryTags: DietaryTag[];
+  /** Allergen codes (gluten, milk…) — "עיצוב קופה"'s item sheet; absent from an older server. */
+  allergens?: string[];
 }
 
 export interface KioskSourceCategory {
