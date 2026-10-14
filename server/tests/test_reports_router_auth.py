@@ -58,6 +58,9 @@ def test_dashboard_reports_require_a_user_token_and_a_tenant() -> None:
         # Reads across every till in a shop, so a machine token reaching it would see
         # the whole chain's takings from one paired terminal.
         "/api/v1/reports/day-summary",
+        "/api/v1/reports/day-summary/pdf",
+        "/api/v1/reports/products-by-day",
+        "/api/v1/reports/products-by-day/pdf",
         "/api/v1/z-reports",
     ):
         deps = _auth_dependencies(path)
@@ -131,6 +134,7 @@ def test_day_summary_scope_parameters_are_narrowing_only() -> None:
     """
     schema = app.openapi()["paths"]["/api/v1/reports/day-summary"]["get"]
     names = {p["name"] for p in schema.get("parameters", [])}
-    assert names == {"from", "to", "tz", "shopIds", "machineIds", "X-Tenant-Id"}
+    # v2 (P:/specs/reports-designed-pdf.md §7.3): `date`, and `companyId` / `areaIds` — narrowing too.
+    assert names == {"date", "from", "to", "tz", "companyId", "shopIds", "areaIds", "machineIds", "X-Tenant-Id"}
     # No tenantId parameter: the tenant comes from the header the caller is a member of.
     assert "tenantId" not in names

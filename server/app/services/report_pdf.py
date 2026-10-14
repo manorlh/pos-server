@@ -225,11 +225,16 @@ def visual(text: str, base_dir: Optional[str] = None) -> str:
     return get_display(text, base_dir=direction)
 
 
+#: Characters Heebo has no glyph for, as ones it has. An arrow in a Hebrew line ("חברה ← סניף")
+#: becomes the angle quote that the bidi algorithm mirrors to point the same way.
+_SUBSTITUTES = str.maketrans({"←": "›", "→": "‹", "⇐": "›", "⇒": "‹", "▲": "+", "▼": "-", "✓": "V", "✔": "V"})
+
+
 def clean(text: Any) -> str:
     """One line of printable text: no control characters or explicit bidi marks, no newlines."""
     s = "" if text is None else str(text)
     s = s.replace("\r\n", " ").replace("\n", " ").replace("\t", " ")
-    return _CONTROL.sub("", s)
+    return _CONTROL.sub("", s).translate(_SUBSTITUTES)
 
 
 def _num(value: Any) -> Optional[Decimal]:

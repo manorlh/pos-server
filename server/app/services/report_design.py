@@ -164,7 +164,7 @@ def format_value(value: Any, kind: str, *, short: bool = False) -> str:
     if v is None:
         return P.DASH if value in (None, "") else P.clean(value)
     if kind == "money":
-        if abs(v) >= (100 if short else 10_000):
+        if abs(v) >= (100 if short else 10_000) or (short and v == int(v)):
             whole = int(round(v))
             return f"₪ {whole:,}"
         return P.format_money(v)
@@ -405,6 +405,8 @@ class Table:
     title: str = ""
     subtitle: str = ""
     empty_text: str = P.NO_ROWS
+    #: Per row, which way its trend cells are good ("up" / "down"); None: the column's.
+    row_better: Optional[List[str]] = None
 
 
 @dataclass
@@ -1283,19 +1285,20 @@ class _Layout:
         head(False)
         zebra = 0
         last = None
-        for row, style in zip(t.rows, styles):
+        for idx, (row, style) in enumerate(zip(t.rows, styles)):
+            better = t.row_better[idx] if t.row_better and idx < len(t.row_better) else None
             if self.y + row_h > self.bottom:
                 self.c.line(edges[-1], self.y, self.right, self.y, LINE, 0.6)
                 self.new_page()
                 head(True)
             if style == "sub":
                 self.c.rect(edges[-1], self.y, self.right - edges[-1], row_h, SUBTOTAL_BG)
-                self._row(row, edges, size, row_h, anchors, numeric, kinds, bars, bold, cols)
+                self._row(row, edges, size, row_h, anchors, numeric, kinds, bars, bold, cols, better=better)
                 zebra = 0
             else:
                 if zebra % 2 == 1:
                     self.c.rect(edges[-1], self.y, self.right - edges[-1], row_h, ZEBRA)
-                self._row(row, edges, size, row_h, anchors, numeric, kinds, bars, regular, cols)
+                self._row(row, edges, size, row_h, anchors, numeric, kinds, bars, regular, cols, better=better)
                 zebra += 1
             self.y += row_h
             last = style
@@ -1316,7 +1319,7 @@ class _Layout:
         self.y += GAP
 
     def _row(self, row: Sequence[str], edges: List[float], size: float, row_h: float, anchors, numeric, kinds,
-             bars, font: P._Font, cols, totals: bool = False) -> None:
+             bars, font: P._Font, cols, totals: bool = False, better: Optional[str] = None) -> None:
         c = self.c
         y = self.y
         baseline = y + row_h / 2 + size * 0.35
@@ -1332,7 +1335,7 @@ class _Layout:
                 if v is None:
                     c.text_in(font, size, left, right, baseline, P.visual(text), anchors[i], FAINT)
                     continue
-                good = (v > 0) == (cols[i].better != "down")
+                good = (v > 0) == ((better or cols[i].better) != "down")
                 color = MUTED if abs(v) < 0.05 else (GOOD if good else BAD)
                 shown = P.format_percent(abs(round(v, 1)))
                 tw = font.width(shown, size)
@@ -1375,8 +1378,11 @@ class _Layout:
         band = self.page_h * (0.5 if self.landscape else 0.44)
         c.rect(0, 0, self.page_w, band, BAND)
         # The R2M pixels, large and faint, as a watermark in the band's corner.
-        wm_h = band * 0.55
-        c.form("R2M", -wm_h * 0.4, band - wm_h * 0.8, wm_h * R2M_W / R2M_H, wm_h, R2M_W, R2M_H, WATERMARK)
+        wm_h = band * 0.42
+        c.save()
+        c.clip_round_rect(0, 0, self.page_w, band, 0)
+        c.form("R2M", -wm_h * 0.55, band - wm_h * 0.72, wm_h * R2M_W / R2M_H, wm_h, R2M_W, R2M_H, WATERMARK)
+        c.restore()
         c.rect(0, band - 4, self.page_w, 4, self.accent)
         lh = 24.0
         c.form("R2M", self.left, 34, lh * R2M_W / R2M_H, lh, R2M_W, R2M_H, WHITE)
