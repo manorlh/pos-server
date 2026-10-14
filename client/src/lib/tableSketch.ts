@@ -848,6 +848,88 @@ export function templateSketch(template: SketchTemplate, cw: number, ch: number)
   };
 }
 
+// ── From squares to a map ("עבור לתצוגת מפה") ────────────────────────────────
+
+/** A table as it is placed on a map: where, how large, turned how far. */
+export interface TablePlacement {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
+
+/** What placing tables needs to know of each. */
+export interface PlaceableTable extends TablePlacement {
+  number: number;
+}
+
+/**
+ * Do these tables have no usable place on a `cw` × `ch` map? Every table the cloud makes gets a
+ * place (rows across the canvas — the server's `_next_slot`), so a zone of squares usually opens
+ * as a tidy map; but a table off the canvas (the canvas made smaller) or two on the very same spot
+ * (tables a till opened by number, never placed) mean no map was ever laid out.
+ */
+export function tablesNeedPlacing(tables: PlaceableTable[], cw: number, ch: number): boolean {
+  const off = (t: PlaceableTable) => t.x < -0.5 || t.y < -0.5 || t.x + t.width > cw + 0.5 || t.y + t.height > ch + 0.5;
+  if (tables.some(off)) return true;
+  for (let i = 0; i < tables.length; i++) {
+    for (let j = i + 1; j < tables.length; j++) {
+      if (Math.abs(tables[i].x - tables[j].x) < 1 && Math.abs(tables[i].y - tables[j].y) < 1) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The tables in a tidy grid on a `cw` × `ch` canvas, by number (row by row, as the server's default
+ * places them): each its own size, room for its chairs between them, the grid centred; squeezed
+ * together when there are more than fit, never off the canvas.
+ */
+export function arrangeTables(tables: PlaceableTable[], cw: number, ch: number): TablePlacement[] {
+  const list = [...tables].sort((a, b) => a.number - b.number);
+  const n = list.length;
+  if (!n) return [];
+  const cellW = Math.max(...list.map((t) => t.width));
+  const cellH = Math.max(...list.map((t) => t.height));
+  // Chairs on both sides of a gap, and a little air.
+  const gap = Math.max(20, Math.round(Math.min(cellW, cellH) * 2 * CHAIR_REACH + 10));
+  // k cells and the k − 1 gaps between them fit when k·cell + (k − 1)·gap ≤ the side.
+  const fitAcross = Math.max(1, Math.floor((cw + gap) / (cellW + gap)));
+  const fitDown = Math.max(1, Math.floor((ch + gap) / (cellH + gap)));
+  // As square as the canvas is: columns by its proportions, at least enough rows' worth to fit.
+  let cols = Math.max(1, Math.min(n, Math.ceil(Math.sqrt((n * cw * (cellH + gap)) / (ch * (cellW + gap))))));
+  cols = Math.min(Math.max(cols, Math.ceil(n / fitDown)), Math.max(fitAcross, 1), n);
+  const rows = Math.ceil(n / cols);
+  const stepX = cols > 1 ? Math.min(cellW + gap, (cw - cellW) / (cols - 1)) : 0;
+  const stepY = rows > 1 ? Math.min(cellH + gap, (ch - cellH) / (rows - 1)) : 0;
+  const x0 = Math.max(0, (cw - (cellW + stepX * (cols - 1))) / 2);
+  const y0 = Math.max(0, (ch - (cellH + stepY * (rows - 1))) / 2);
+  return list.map((t, i) => {
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    const x = x0 + c * stepX + (cellW - t.width) / 2;
+    const y = y0 + r * stepY + (cellH - t.height) / 2;
+    return {
+      id: t.id,
+      x: Math.round(Math.max(0, Math.min(cw - t.width, x))),
+      y: Math.round(Math.max(0, Math.min(ch - t.height, y))),
+      width: t.width,
+      height: t.height,
+      rotation: t.rotation,
+    };
+  });
+}
+
+/**
+ * "עבור לתצוגת מפה": the places to save before a zone of squares opens as a map — none when its
+ * tables already have usable ones (as the cloud gave them), else all of them in a tidy grid.
+ */
+export function planSwitchToMap(tables: PlaceableTable[], cw: number, ch: number): TablePlacement[] {
+  return tablesNeedPlacing(tables, cw, ch) ? arrangeTables(tables, cw, ch) : [];
+}
+
 /** A new table's size: about 12% of the canvas's shorter side (as the server's bulk add). */
 export function defaultTableSize(cw: number, ch: number, shape: 'round' | 'square' | 'rect'): { width: number; height: number } {
   const side = Math.max(40, Math.round(Math.min(cw, ch) * 0.12));

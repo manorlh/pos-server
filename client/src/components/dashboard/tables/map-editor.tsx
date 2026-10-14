@@ -147,6 +147,7 @@ export function MapEditor({
   onError,
   onDirtyChange,
   logoUrl = null,
+  initialMode = 'tables',
 }: {
   zone: TableZone;
   tables: DiningTable[];
@@ -156,6 +157,8 @@ export function MapEditor({
   onDirtyChange?: (dirty: boolean) => void;
   /** The business's logo: what a "logo" shape shows when it has no picture of its own. */
   logoUrl?: string | null;
+  /** The mode it opens in: "סקיצה" right after a zone of squares became a map. */
+  initialMode?: 'tables' | 'sketch' | 'draw';
 }) {
   const t = useTranslations('tables');
   const cw = zone.canvasWidth;
@@ -163,7 +166,7 @@ export function MapEditor({
   const boxRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [boxWidth, setBoxWidth] = useState(800);
-  const [mode, setMode] = useState<'tables' | 'sketch' | 'draw'>('tables');
+  const [mode, setMode] = useState<'tables' | 'sketch' | 'draw'>(initialMode);
   const [snap, setSnap] = useState(true);
   /** "הצמדה לקירות": a shape moved near a wall lies flush against it. */
   const [wallSnap, setWallSnap] = useState(true);

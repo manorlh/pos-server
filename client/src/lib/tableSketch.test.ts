@@ -31,6 +31,7 @@ import {
   VARIANT_CHOICES,
   areaCorners,
   areaFromCorners,
+  arrangeTables,
   backgroundOf,
   chairLayout,
   chairSides,
@@ -49,6 +50,7 @@ import {
   mix,
   newElement,
   onView,
+  planSwitchToMap,
   pointInPolygon,
   polygonCentroid,
   quarterTurned,
@@ -56,6 +58,7 @@ import {
   searchPalette,
   snapToWalls,
   styleOf,
+  tablesNeedPlacing,
   templateSketch,
   translated,
   turnedBox,
@@ -63,9 +66,11 @@ import {
   variantOf,
   visibleElements,
   wallBoxes,
+  type PlaceableTable,
   type Sketch,
   type SketchElement,
   type SketchKind,
+  type TablePlacement,
 } from './tableSketch';
 import { ICON_REACH, SYMBOL_ICONS, iconKey, iconNumbers } from './sketchSymbols';
 
@@ -254,6 +259,69 @@ describe('the decor symbols', () => {
     assert.ok(legend.some((l) => l.kind === 'area' && l.name === 'VIP'));
     assert.ok(legend.some((l) => l.kind === 'bar' && l.variant === 'beer' && l.name === 'בר בירה'));
     assert.ok(!legend.some((l) => STRUCTURE_KINDS.includes(l.kind)));
+  });
+});
+
+// ── From squares to a map ("עבור לתצוגת מפה") ────────────────────────────────
+
+describe('switching a zone of squares to a map', () => {
+  const table = (number: number, x: number, y: number, size = 84): PlaceableTable => ({
+    id: `t${number}`, number, x, y, width: size, height: size, rotation: 0,
+  });
+  // Where the cloud puts a new table (app/services/tables.py `_next_slot`): rows from the top-left.
+  const slotted = (n: number, size = 84) =>
+    Array.from({ length: n }, (_, i) => {
+      const perRow = Math.max(1, Math.floor((1000 - 20) / (size + 20)));
+      return table(i + 1, 20 + (i % perRow) * (size + 20), 20 + Math.floor(i / perRow) * (size + 20), size);
+    });
+  const inside = (p: { x: number; y: number; width: number; height: number }, cw: number, ch: number) =>
+    p.x >= 0 && p.y >= 0 && p.x + p.width <= cw && p.y + p.height <= ch;
+  const overlap = (a: TablePlacement, b: TablePlacement) =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+  it('keeps the places the cloud gave the tables', () => {
+    assert.equal(tablesNeedPlacing(slotted(12), 1000, 700), false);
+    assert.deepEqual(planSwitchToMap(slotted(12), 1000, 700), []);
+    assert.deepEqual(planSwitchToMap([], 1000, 700), []);
+  });
+
+  it('places them anew when they have no place: on one spot, or off the canvas', () => {
+    const stacked = [table(1, 0, 0), table(2, 0, 0), table(3, 0, 0)];
+    assert.equal(tablesNeedPlacing(stacked, 1000, 700), true);
+    assert.equal(tablesNeedPlacing([table(1, 950, 20)], 1000, 700), true);
+    assert.equal(tablesNeedPlacing([table(1, 20, -5)], 1000, 700), true);
+    const plan = planSwitchToMap(stacked, 1000, 700);
+    assert.deepEqual(plan.map((p) => p.id), ['t1', 't2', 't3']);
+    assert.ok(plan.every((p) => inside(p, 1000, 700)));
+  });
+
+  it('arranges them in a tidy grid: by number, row by row, centred, room for chairs, apart', () => {
+    const shuffled = [7, 3, 10, 1, 5, 2, 9, 4, 8, 6].map((n) => table(n, 0, 0));
+    const plan = arrangeTables(shuffled, 1000, 700);
+    assert.deepEqual(plan.map((p) => p.id), ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 't10']);
+    // Four across, three rows, the grid in the middle of the canvas.
+    assert.deepEqual(plan.slice(0, 5).map((p) => [p.x, p.y]), [[250, 169], [389, 169], [528, 169], [667, 169], [250, 308]]);
+    const xs = plan.map((p) => p.x);
+    const ys = plan.map((p) => p.y);
+    assert.ok(Math.abs(Math.min(...xs) - (1000 - (Math.max(...xs) + 84))) <= 1);
+    assert.ok(Math.abs(Math.min(...ys) - (700 - (Math.max(...ys) + 84))) <= 1);
+    for (let i = 0; i < plan.length; i++) {
+      assert.ok(inside(plan[i], 1000, 700), plan[i].id);
+      for (let j = i + 1; j < plan.length; j++) assert.ok(!overlap(plan[i], plan[j]), `${plan[i].id} ${plan[j].id}`);
+    }
+    // Each keeps its size and turn.
+    const mixed = arrangeTables([{ ...table(1, 0, 0), width: 126, height: 67, rotation: 90 }, table(2, 0, 0)], 1000, 700);
+    assert.deepEqual([mixed[0].width, mixed[0].height, mixed[0].rotation], [126, 67, 90]);
+  });
+
+  it('squeezes many onto the canvas, never off it; one table in the middle', () => {
+    const many = Array.from({ length: 100 }, (_, i) => table(i + 1, 0, 0));
+    const plan = arrangeTables(many, 1000, 700);
+    assert.equal(plan.length, 100);
+    assert.ok(plan.every((p) => inside(p, 1000, 700)));
+    assert.equal(new Set(plan.map((p) => `${p.x},${p.y}`)).size, 100);
+    assert.deepEqual(arrangeTables([table(1, 0, 0)], 1000, 700).map((p) => [p.x, p.y]), [[458, 308]]);
+    assert.deepEqual(arrangeTables([], 1000, 700), []);
   });
 });
 
