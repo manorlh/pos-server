@@ -7,6 +7,7 @@ import { api } from './api';
 import type { Sketch } from './tableSketch';
 import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
 import type { RemoteCancelRequested, RemoteCancelStatus, TableCancelRoute } from './remoteTableCancel';
+import type { ActionStatus, NextCourse } from './liveTables';
 
 export type ZoneLayout = 'map' | 'grid';
 export type TableShape = 'round' | 'square' | 'rect';
@@ -81,6 +82,7 @@ export interface TableOrderSummary {
   billPrintedAt: string | null;
   /** The table's waiter: its own, else its opener. */
   waiterName?: string | null;
+  waiterPosUserId?: string | null;
 }
 
 export interface TableLock {
@@ -97,9 +99,23 @@ export interface LiveTable extends DiningTable {
   order: TableOrderSummary | null;
   /** How the dashboard may cancel its order: direct, through the LAN host, or not here at all. */
   cancel?: TableCancelRoute | null;
+  /** Who does the card's other actions (P:/specs/live-tables-cloud.md §6.1). */
+  actions?: ActionRoute | null;
+  /** "עיקריות בעוד 6 ד׳" — the next course and when it goes by itself. */
+  nextCourse?: NextCourse | null;
+  /** "2 (דנה)": the till inside it. */
+  heldBy?: string | null;
   lock: TableLock | null;
   state: TableStateCode;
   minutesOpen?: number | null;
+}
+
+/** Who does a table card's action: the cloud, the LAN host, the single till — or nobody (§6.1). */
+export interface ActionRoute {
+  mode: 'cloud' | 'lan' | 'single' | 'blocked';
+  why: string | null;
+  hostName: string | null;
+  timeoutSeconds: number | null;
 }
 
 /**
@@ -127,7 +143,140 @@ export interface TablesLive {
   summary: { openTables: number; openTotal: number; guests: number };
   /** Void tickets of tables cancelled here that are not on paper yet. */
   voidTickets?: VoidTicket[];
+  /** The till's seated-time marks: amber, then red ("חריגת זמן"). */
+  thresholds?: { warnMinutes: number; alertMinutes: number };
 }
+
+// ── "כרטיס שולחן" (P:/specs/live-tables-cloud.md §2, §6.8) ─────────────────────
+
+export interface CardLine {
+  id: string;
+  productId: string;
+  name: string;
+  quantity: number;
+  /** Before promotions (the line's own discount off). */
+  amount: number;
+  notes: string | null;
+  mods: string[];
+  removals: string[];
+  seat: number | null;
+  seatName: string | null;
+  course: { id: string; name: string; order: number } | null;
+  courseHeld: boolean;
+  sentQuantity: number;
+  /** "נשלח (בלי בון)". */
+  silent: boolean;
+  sentAt: string | null;
+  /** The rounds (by number) it went in. */
+  rounds: number[];
+  state: 'sent' | 'partly_sent' | 'held' | 'waiting';
+}
+
+export interface CardRound {
+  id: string;
+  at: string | null;
+  number: number;
+  lines: { lineId: string; name: string; quantity: number; course: string | null }[];
+}
+
+export interface CardCourse {
+  id: string;
+  name: string;
+  order: number;
+  fired: boolean;
+  waiting: boolean;
+  paused: boolean;
+  holdable: boolean;
+}
+
+export interface CardHistoryItem {
+  source: 'event' | 'command';
+  kind: string;
+  action?: string;
+  at: string | null;
+  by: string | null;
+  fromDashboard: boolean;
+  outcome?: string;
+  reason?: string | null;
+  heldBy?: string | null;
+  hostName?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export type CardAction =
+  | 'print-bill' | 'reprint' | 'fire' | 'hold' | 'rush' | 'set-waiter' | 'move' | 'merge' | 'note' | 'release' | 'cancel';
+
+export interface TableCard {
+  serverTime: string;
+  table: DiningTable & { zoneName: string | null };
+  lock: TableLock | null;
+  heldBy: string | null;
+  permissions: { view: boolean; edit: boolean; manage: boolean };
+  order: (TableOrderSummary & { hasCart: boolean }) | null;
+  route?: ActionRoute;
+  cancel?: TableCancelRoute;
+  lines?: CardLine[];
+  rounds?: CardRound[];
+  courses?: CardCourse[];
+  nextCourse?: NextCourse | null;
+  payments?: {
+    partials: { transactionId: string | null; number: string | null; amount: number; seat: number | null }[];
+    reversals: { transactionId: string | null; creditNumber: string | null; method: string | null; amount: number; at: string | null; by: string | null }[];
+    paid: number;
+    reversed: number;
+    net: number;
+  };
+  balance?: number;
+  note?: { text: string | null; by: string | null; at: string | null; printed: boolean } | null;
+  minutesOpen?: number | null;
+  lastSentAt?: string | null;
+  history?: CardHistoryItem[];
+  actions: Partial<Record<CardAction, { allowed: boolean; why: string | null }>>;
+}
+
+export interface BillPrinterOption {
+  key: string;
+  machineId: string;
+  printerId: string | null;
+  name: string | null;
+  tillName: string | null;
+}
+
+export interface TableWaiter {
+  posUserId: string;
+  name: string | null;
+  onShift: boolean;
+}
+
+/** The body of `POST /tables/tables/{id}/actions/{action}`. */
+export interface TableActionBody {
+  orderId: string;
+  expectedVersion: number;
+  requestId: string;
+  courseId?: string;
+  hold?: boolean;
+  scope?: 'all' | 'round' | 'lines';
+  roundId?: string;
+  picks?: { roundId: string; lineId: string }[];
+  waiterPosUserId?: string;
+  targetTableId?: string;
+  sources?: { tableId: string; orderId?: string; expectedVersion?: number }[];
+  text?: string | null;
+  machineId?: string;
+  printerId?: string | null;
+}
+
+/** 200 (the cloud's tables, done here) or 202 (sent to a till, followed by `fetchTableCommand`). */
+export type TableActionResult =
+  | ({ mode: 'direct'; action: string; version: number; replayed?: boolean } & Record<string, unknown>)
+  | {
+      mode: 'via_till';
+      action: string;
+      commandId: string;
+      hostName: string | null;
+      timeoutSeconds: number;
+      expiresAt: string | null;
+    };
 
 /** The dashboard's cancel: the order, and how the kitchen was told. */
 export interface DashboardCancelResult extends TableOrderSummary {
@@ -354,6 +503,36 @@ export const updateCancelReason = (
 
 export const fetchTablesLive = (shopId: string) =>
   api.get<TablesLive>('/tables/live', { params: { shopId } }).then((r) => r.data);
+
+/** The live view's realtime: a subscribe-only Ably token for the shop's tables signal (else poll). */
+export const fetchTablesLivePush = (shopId: string) =>
+  api
+    .get<{ enabled: boolean; channel: string; token?: string | null; expiresAt?: string | null }>('/tables/live/push', {
+      params: { shopId },
+    })
+    .then((r) => r.data);
+
+export const fetchTableCard = (tableId: string) =>
+  api.get<TableCard>(`/tables/tables/${tableId}/card`).then((r) => r.data);
+
+export const fetchBillPrinters = (tableId: string) =>
+  api.get<{ printers: BillPrinterOption[] }>(`/tables/tables/${tableId}/bill-printers`).then((r) => r.data.printers);
+
+export const fetchTableWaiters = (shopId: string) =>
+  api.get<{ waiters: TableWaiter[] }>('/tables/waiters', { params: { shopId } }).then((r) => r.data.waiters);
+
+export const postTableAction = (tableId: string, action: Exclude<CardAction, 'release' | 'cancel'>, body: TableActionBody) =>
+  api.post<TableActionResult>(`/tables/tables/${tableId}/actions/${action}`, body).then((r) => r.data);
+
+/** A table action sent to a till, as it stands (followed to the host it went on to). */
+export const fetchTableCommand = (commandId: string) =>
+  api.get<ActionStatus>(`/device-commands/${commandId}`).then((r) => r.data);
+
+/** The detail of a 409 (`{code, till, …}`), for the card's words. */
+export function tablesErrorDetail(err: unknown): Record<string, unknown> | null {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  return detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : null;
+}
 
 export const fetchTablesReport = (shopId: string, from: string, to: string) =>
   api.get<TablesReport>('/tables/report', { params: { shopId, from, to } }).then((r) => r.data);

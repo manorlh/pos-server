@@ -1,163 +1,165 @@
 'use client';
 
 /**
- * Open tables now ("שולחנות פתוחים — חי"): every table of the shop in its state's colour,
- * its order's total, guests and time open, and which till is inside it. Refreshed every
- * ten seconds. A manager can free a table a till left locked, or cancel a stuck order
- * (a till gone, the mode switched off) with a reason — recorded like a till's cancel, and the
- * kitchen gets a void ticket of what it had ("בון ביטול"), shown here until it is on paper.
+ * Open tables now ("שולחנות פתוחים — חי", P:/specs/live-tables-cloud.md §1): the till's floor. Each zone
+ * as the till draws it — the zone's sketch (walls, symbols, areas, greenery: the shared drawing code,
+ * map-editor.tsx `SketchShape` over lib/tableSketch.ts; a kind this build does not know is a labelled
+ * box), the tables in their shape and place in the till's state colours (lib/liveTables.ts: free,
+ * occupied blue, the kitchen orange, to pay amber, at another till violet, overdue red), each with its
+ * number, guests, time seated, total and waiter, the next course's countdown ("עיקריות בעוד 6 ד׳") and
+ * 🔒 with the till inside it. A grid zone is a numbered grid, as on the till. Zone tabs with how many are
+ * open; filters by waiter or state dim the rest. On a phone the map fits the width, pinches to zoom and
+ * drags; a tap opens the table's card (./table-card.tsx). Realtime through the shop's Ably channel when
+ * the server offers it, else every 5 seconds.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { formatCurrency, formatDateTime } from '@/lib/format';
-import { remoteCancelView, stillSending } from '@/lib/remoteTableCancel';
-import { tableDisplay } from '@/lib/tableRestore';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Lock, Maximize2, Radio, ZoomIn, ZoomOut } from 'lucide-react';
+import { formatCurrency } from '@/lib/format';
+import { ablySseUrl } from '@/lib/eventLive';
 import {
-  cancelOpenTable,
-  fetchCancelReasons,
-  fetchRemoteCancel,
-  fetchTablesLive,
-  forceReleaseTable,
-  tablesErrorCode,
-  type LiveTable,
-  type TableStateCode,
-} from '@/lib/tablesApi';
+  FIT,
+  NO_FILTER,
+  STATE_COLOR,
+  STATE_EMPHASIS,
+  VISUAL_STATES,
+  compactMoney,
+  countdown,
+  dimmed,
+  filterActive,
+  gridColumns,
+  gridCells,
+  isTap,
+  liveRefetchMs,
+  minutesSince,
+  panBy,
+  seatedText,
+  tintOf,
+  visualState,
+  waitersOf,
+  zoneCounts,
+  zoomAbout,
+  type FloorFilter,
+  type MapView,
+  type VisualState,
+} from '@/lib/liveTables';
+import { tableDisplay } from '@/lib/tableRestore';
+import { CHAIR_LOOK, PLAIN, SKETCH_STYLE, TABLE_LOOK, backgroundOf, chairLayout, type SketchElement } from '@/lib/tableSketch';
+import { fetchTablesLive, fetchTablesLivePush, type LiveTable, type TableZone } from '@/lib/tablesApi';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { FloorDefs, SketchShape } from './map-editor';
+import { TableCardSheet, useNow } from './table-card';
 
-/**
- * Tables look as on the till: crisp shapes with a thin edge; a free table quiet, a taken one
- * in a light tint of its state's colour with that colour on its edge and a bar along the
- * start (occupied blue, kitchen orange, to pay amber, at another till violet).
- */
-export const STATE_CLASSES: Record<TableStateCode, string> = {
-  free: 'bg-card text-foreground border-border',
-  occupied: 'bg-blue-50 text-foreground border-blue-500 dark:bg-blue-950/40',
-  sent: 'bg-orange-50 text-foreground border-orange-500 dark:bg-orange-950/40',
-  awaiting_payment: 'bg-amber-50 text-foreground border-amber-500 dark:bg-amber-950/40',
-  locked: 'bg-violet-50 text-foreground border-violet-500 dark:bg-violet-950/40',
-};
+/** A table on the floor, as drawn: its colour word and whether a filter steps it back. */
+interface FloorTable {
+  table: LiveTable;
+  visual: VisualState;
+  dim: boolean;
+  minutes: number | null;
+}
 
-/** The state's accent: the bar along the card's start. */
-const STATE_ACCENT: Record<TableStateCode, string> = {
-  free: 'bg-transparent',
-  occupied: 'bg-blue-500',
-  sent: 'bg-orange-500',
-  awaiting_payment: 'bg-amber-500',
-  locked: 'bg-violet-500',
-};
+/** The shop's tables signal over Ably (server-sent events, no library): every change refetches. */
+function useTablesPush(shopId: string, onTick: () => void): boolean {
+  const [connected, setConnected] = useState(false);
+  const tick = useRef(onTick);
+  const last = useRef(0);
+  useEffect(() => {
+    tick.current = onTick;
+  }, [onTick]);
+  useEffect(() => {
+    let source: EventSource | null = null;
+    let retry: number | undefined;
+    let stopped = false;
+    const connect = async () => {
+      try {
+        const info = await fetchTablesLivePush(shopId);
+        if (stopped || !info.enabled || !info.token || typeof EventSource === 'undefined') return;
+        source = new EventSource(ablySseUrl(info.channel, info.token));
+        source.onopen = () => setConnected(true);
+        source.onmessage = () => {
+          // A busy floor signals all the time: at most one refetch a second.
+          const now = Date.now();
+          if (now - last.current >= 1_000) {
+            last.current = now;
+            tick.current();
+          }
+        };
+        source.onerror = () => {
+          setConnected(false);
+          source?.close();
+          source = null;
+          // A new token (an hour each) and a new connection in a minute; polling covers the gap.
+          if (!stopped) retry = window.setTimeout(connect, 60_000);
+        };
+      } catch {
+        // No push: the floor polls.
+      }
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      window.clearTimeout(retry);
+      source?.close();
+      setConnected(false);
+    };
+  }, [shopId]);
+  return connected;
+}
 
 export function TablesLive({ shopId }: { shopId: string }) {
   const t = useTranslations('tables');
-  const tc = useTranslations('common');
+  const tl = useTranslations('tables.live');
   const qc = useQueryClient();
+  const now = useNow();
+  const refetch = useCallback(() => qc.invalidateQueries({ queryKey: ['tables-live', shopId] }), [qc, shopId]);
+  const pushed = useTablesPush(shopId, refetch);
   const { data, isLoading } = useQuery({
     queryKey: ['tables-live', shopId],
     queryFn: () => fetchTablesLive(shopId),
-    refetchInterval: 10_000,
-  });
-  const { data: reasons = [] } = useQuery({ queryKey: ['table-cancel-reasons'], queryFn: () => fetchCancelReasons() });
-  const [zoneId, setZoneId] = useState<string | 'all'>('all');
-  const [picked, setPicked] = useState<LiveTable | null>(null);
-  const [reasonId, setReasonId] = useState<string>('');
-  const [reasonText, setReasonText] = useState('');
-  /** A cancel sent to the LAN host ("שולח לקופה המארחת…"), followed until it answers or times out. */
-  const [remote, setRemote] = useState<{ commandId: string; startedAt: number; timeoutSeconds: number } | null>(null);
-
-  const tables = useMemo(
-    () => (data?.tables ?? []).filter((tb) => zoneId === 'all' || tb.zoneId === zoneId),
-    [data, zoneId],
-  );
-  const refresh = () => qc.invalidateQueries({ queryKey: ['tables-live', shopId] });
-  const fail = (err: unknown) => {
-    const code = tablesErrorCode(err);
-    toast.error(code && t.has(`errors.${code}`) ? t(`errors.${code}`) : axiosErrorToToastMessage(err, tc('error')));
-    // The floor the dashboard showed is stale: read it again.
-    if (code === 'order_changed' || code === 'table_order_not_open') refresh();
-  };
-
-  const { data: remoteStatus, dataUpdatedAt: remoteReadAt } = useQuery({
-    queryKey: ['remote-table-cancel', remote?.commandId],
-    queryFn: () => fetchRemoteCancel(remote!.commandId),
-    enabled: remote !== null,
     refetchInterval: (q) =>
-      remote && stillSending(remoteCancelView(q.state.data ?? null, remote.startedAt, remote.timeoutSeconds, Date.now()))
-        ? 1000
-        : false,
+      liveRefetchMs(pushed, (q.state.data?.tables ?? []).some((tb) => tb.order?.source === 'local')),
   });
-  const remoteView = remote
-    ? remoteCancelView(remoteStatus ?? null, remote.startedAt, remote.timeoutSeconds, Math.max(remoteReadAt, remote.startedAt))
-    : null;
-  const remoteDone = remoteView !== null && !stillSending(remoteView);
-  const remoteRefresh = remoteDone && remoteView.refresh;
-  useEffect(() => {
-    if (remoteRefresh) qc.invalidateQueries({ queryKey: ['tables-live', shopId] });
-  }, [remoteRefresh, qc, shopId]);
-  const closeDialog = () => {
-    setPicked(null);
-    setRemote(null);
-  };
+  const [zoneId, setZoneId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FloorFilter>(NO_FILTER);
+  const [picked, setPicked] = useState<string | null>(null);
 
-  const releaseMut = useMutation({
-    mutationFn: (id: string) => forceReleaseTable(id),
-    onSuccess: () => {
-      toast.success(t('released'));
-      setPicked(null);
-      refresh();
-    },
-    onError: fail,
-  });
-  const cancelMut = useMutation({
-    mutationFn: (tb: LiveTable) =>
-      cancelOpenTable(tb.id, {
-        reasonId,
-        reasonText: reasonText.trim() || null,
-        // As shown: another order or version now is "order_changed" (the floor is read again).
-        ...(tb.order ? { orderId: tb.order.id, expectedVersion: tb.order.version } : {}),
-      }),
-    onSuccess: (out) => {
-      if (out?.mode === 'via_till') {
-        // The LAN host cancels it: followed in the dialog until it answers.
-        setRemote({ commandId: out.commandId, startedAt: Date.now(), timeoutSeconds: out.timeoutSeconds });
-        return;
-      }
-      if (out?.voidTicketsError || out?.kdsError) toast.warning(t('voidTicket.notQueued'));
-      else if (out?.voidTickets?.length) toast.success(t('cancelledWithVoid'));
-      else toast.success(t('cancelledToast'));
-      closeDialog();
-      refresh();
-    },
-    onError: fail,
-  });
-  const reason = reasons.find((r) => r.id === reasonId);
+  const zones = useMemo(() => data?.zones ?? [], [data]);
+  const tables = useMemo(() => data?.tables ?? [], [data]);
+  const alertMinutes = data?.thresholds?.alertMinutes ?? 90;
+  const counts = useMemo(() => zoneCounts(tables), [tables]);
+  // The first zone with open tables, else the first — until the manager picks one.
+  const zone = useMemo(() => {
+    const chosen = zones.find((z) => z.id === zoneId);
+    if (chosen) return chosen;
+    return zones.find((z) => (counts[z.id] ?? 0) > 0) ?? zones[0] ?? null;
+  }, [zones, zoneId, counts]);
+  const floor = useMemo<FloorTable[]>(
+    () =>
+      tables
+        .filter((tb) => zone && tb.zoneId === zone.id)
+        .map((tb) => {
+          const visual = visualState(tb, now, alertMinutes);
+          return { table: tb, visual, dim: dimmed(tb, visual, filter), minutes: minutesSince(tb.order?.openedAt, now) };
+        }),
+    [tables, zone, now, alertMinutes, filter],
+  );
+  const waiters = useMemo(() => waitersOf(tables), [tables]);
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   const summary = data?.summary;
   const voidTickets = data?.voidTickets ?? [];
+  const toggleState = (s: VisualState) =>
+    setFilter((f) => ({ ...f, states: f.states.includes(s) ? f.states.filter((x) => x !== s) : [...f.states, s] }));
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-xs text-muted-foreground">{t('liveOpen')}</div>
-          <div className="text-2xl font-bold">{summary?.openTables ?? 0}</div>
-        </div>
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-xs text-muted-foreground">{t('liveTotal')}</div>
-          <div className="text-2xl font-bold">{formatCurrency(summary?.openTotal ?? 0)}</div>
-        </div>
-        <div className="rounded-lg border bg-card p-3">
-          <div className="text-xs text-muted-foreground">{t('liveGuests')}</div>
-          <div className="text-2xl font-bold">{summary?.guests ?? 0}</div>
-        </div>
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <Stat label={t('liveOpen')} value={String(summary?.openTables ?? 0)} />
+        <Stat label={t('liveTotal')} value={formatCurrency(summary?.openTotal ?? 0)} />
+        <Stat label={t('liveGuests')} value={String(summary?.guests ?? 0)} />
       </div>
 
       {voidTickets.length > 0 ? (
@@ -174,172 +176,445 @@ export function TablesLive({ shopId }: { shopId: string }) {
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant={zoneId === 'all' ? 'default' : 'outline'} onClick={() => setZoneId('all')}>
-          {t('allZones')}
-        </Button>
-        {(data?.zones ?? []).map((z) => (
-          <Button key={z.id} size="sm" variant={zoneId === z.id ? 'default' : 'outline'} onClick={() => setZoneId(z.id)}>
+      {/* The zones, as the till's tabs: each with how many of its tables are open. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {zones.map((z) => (
+          <Button key={z.id} size="sm" variant={zone?.id === z.id ? 'default' : 'outline'} onClick={() => setZoneId(z.id)}>
             {z.name}
+            <span className="ms-1 rounded-full bg-background/20 px-1.5 text-xs tabular-nums">{counts[z.id] ?? 0}</span>
           </Button>
         ))}
+        <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground" title={pushed ? tl('realtime') : tl('polling')}>
+          <Radio className={`h-3.5 w-3.5 ${pushed ? 'text-green-600' : ''}`} />
+          {pushed ? tl('realtime') : tl('polling')}
+        </span>
       </div>
 
-      <div className="flex flex-wrap gap-3 text-xs">
-        {(Object.keys(STATE_CLASSES) as TableStateCode[]).map((s) => (
-          <span key={s} className="flex items-center gap-1">
-            <span className={`inline-block h-3 w-3 rounded-sm border ${STATE_CLASSES[s]}`} />
-            {t(`state.${s}`)}
-          </span>
-        ))}
-      </div>
-
-      {tables.length === 0 ? (
-        <div className="rounded-lg border bg-card p-8 text-center text-muted-foreground">{t('noTables')}</div>
-      ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
-          {tables.map((tb) => (
-            <button
-              key={tb.id}
-              type="button"
-              onClick={() => (tb.order || tb.lock ? setPicked(tb) : undefined)}
-              className={`relative flex min-h-24 flex-col items-center justify-center overflow-hidden rounded-lg border p-2 text-center ${STATE_CLASSES[tb.state]}`}
-            >
-              <span className={`absolute inset-y-0 start-0 w-1 ${STATE_ACCENT[tb.state]}`} />
-              <span className="text-2xl font-semibold tabular-nums leading-tight">{tableDisplay(tb).main}</span>
-              {tableDisplay(tb).sub ? (
-                <span className="max-w-full truncate text-xs text-muted-foreground">{tableDisplay(tb).sub}</span>
-              ) : null}
-              {tb.order ? (
-                <>
-                  <span className="text-sm font-medium tabular-nums">{formatCurrency(tb.order.total)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {t('minutesOpen', { minutes: tb.minutesOpen ?? 0 })}
-                    {tb.order.guests ? ` · ${t('guestsShort', { guests: tb.order.guests })}` : ''}
-                  </span>
-                </>
-              ) : null}
-              {tb.order?.waiterName ? <span className="max-w-full truncate text-xs text-muted-foreground">{tb.order.waiterName}</span> : null}
-              {tb.lock ? (
-                <span className="text-xs">
-                  {t('lockedBy', { till: tb.lock.posNumber ?? tb.lock.machineName ?? '?', user: tb.lock.posUserName ?? '' })}
-                </span>
-              ) : null}
-              {!tb.order && tb.cleaningSince ? (
-                // Paid, not cleared yet — as the till shows it.
-                <span className="mt-1 text-xs font-medium text-muted-foreground">{t('cleaning')}</span>
-              ) : null}
-            </button>
+      {/* "הצג": by waiter or state — the rest are dimmed, never hidden. */}
+      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <select
+          className="h-8 rounded-md border bg-background px-2 text-sm"
+          value={filter.waiter ?? ''}
+          aria-label={tl('waiterFilter')}
+          onChange={(e) => setFilter((f) => ({ ...f, waiter: e.target.value || null }))}
+        >
+          <option value="">{tl('anyWaiter')}</option>
+          {waiters.map((w) => (
+            <option key={w} value={w}>
+              {w}
+            </option>
           ))}
-        </div>
+        </select>
+        {VISUAL_STATES.map((s) => {
+          const on = filter.states.includes(s);
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => toggleState(s)}
+              aria-pressed={on}
+              className={`flex h-8 items-center gap-1 rounded-full border px-2.5 ${on ? 'border-foreground bg-muted font-medium' : 'border-border'}`}
+            >
+              <span className="inline-block h-3 w-3 rounded-full border" style={{ background: tintOf(STATE_COLOR[s], 0.35), borderColor: STATE_COLOR[s] }} />
+              {tl(`state.${s}`)}
+            </button>
+          );
+        })}
+        {filterActive(filter) ? (
+          <Button size="sm" variant="ghost" className="h-8" onClick={() => setFilter(NO_FILTER)}>
+            {tl('clearFilters')}
+          </Button>
+        ) : null}
+      </div>
+
+      {!zone ? (
+        <div className="rounded-lg border bg-card p-8 text-center text-muted-foreground">{t('noZones')}</div>
+      ) : floor.length === 0 ? (
+        <div className="rounded-lg border bg-card p-8 text-center text-muted-foreground">{tl('emptyZone')}</div>
+      ) : zone.layout === 'map' ? (
+        <LiveMap key={zone.id} zone={zone} floor={floor} now={now} onPick={(id) => setPicked(id)} />
+      ) : (
+        <LiveGrid floor={floor} now={now} onPick={(id) => setPicked(id)} />
       )}
 
-      <Dialog open={picked !== null} onOpenChange={(o) => !o && closeDialog()}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{picked ? t('tableTitle', { number: picked.number }) : ''}</DialogTitle>
-          </DialogHeader>
-          {picked ? (
-            <div className="space-y-3 text-sm">
-              {picked.order ? (
-                <div className="space-y-1">
-                  <div>{t('openedBy', { name: picked.order.openedByName ?? '—', at: formatDateTime(picked.order.openedAt) })}</div>
-                  <div>{t('orderTotal', { total: formatCurrency(picked.order.total) })}</div>
-                  <div>{t(`state.${picked.state}`)}</div>
-                  {picked.order.source === 'local' ? (
-                    <div className="text-muted-foreground">
-                      {t(picked.cancel && picked.cancel.why !== 'single' ? 'lanOrderHint' : 'localOrderHint')}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-              {picked.lock ? (
-                <div className="rounded border p-2">
-                  {t('lockedBy', {
-                    till: picked.lock.posNumber ?? picked.lock.machineName ?? '?',
-                    user: picked.lock.posUserName ?? '',
-                  })}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="ms-2"
-                    disabled={releaseMut.isPending}
-                    onClick={() => releaseMut.mutate(picked.id)}
-                  >
-                    {t('forceRelease')}
-                  </Button>
-                </div>
-              ) : null}
-              {picked.order && picked.cancel?.mode === 'blocked' ? (
-                // The LAN mode, blocked (the setting, or a host build that cannot): no cancel here.
-                <div className="space-y-1 rounded border p-2">
-                  <div className="font-medium">{t('cancelStuck')}</div>
-                  <p className="text-xs text-muted-foreground">
-                    {t(picked.cancel.why === 'no_capability' ? 'remoteCancel.noCapabilityHint' : 'remoteCancel.blockedHint')}
-                  </p>
-                </div>
-              ) : null}
-              {picked.order && remoteView ? (
-                // Sent to the LAN host: "שולח לקופה המארחת…", then its answer.
-                <div
-                  className={`flex items-center gap-2 rounded border p-2 ${
-                    remoteView.phase === 'done'
-                      ? 'border-green-600 text-green-700 dark:text-green-400'
-                      : remoteView.phase === 'sending'
-                        ? ''
-                        : 'border-amber-500 text-amber-700 dark:text-amber-400'
-                  }`}
-                >
-                  {stillSending(remoteView) ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
-                  <span>{t(`remoteCancel.${remoteView.key}`, remoteView.values)}</span>
-                </div>
-              ) : null}
-              {picked.order && picked.cancel?.mode !== 'blocked' && !remoteView ? (
-                <div className="space-y-2 rounded border p-2">
-                  <div className="font-medium">{t('cancelStuck')}</div>
-                  <p className="text-xs text-muted-foreground">
-                    {picked.cancel?.mode === 'via_till'
-                      ? t('remoteCancel.viaTillHint', { host: picked.cancel.hostName ?? '?' })
-                      : t('cancelStuckHint')}
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {reasons.map((r) => (
-                      <Button
-                        key={r.id}
-                        size="sm"
-                        variant={reasonId === r.id ? 'default' : 'outline'}
-                        onClick={() => setReasonId(r.id)}
-                      >
-                        {r.name}
-                      </Button>
-                    ))}
-                  </div>
-                  <div className="space-y-1">
-                    <Label>{t('reasonText')}</Label>
-                    <Input value={reasonText} onChange={(e) => setReasonText(e.target.value)} />
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={closeDialog}>
-              {remoteDone ? t('remoteCancel.close') : tc('cancel')}
-            </Button>
-            {picked?.order && picked.cancel?.mode !== 'blocked' && !remoteView ? (
-              <Button
-                variant="destructive"
-                disabled={
-                  cancelMut.isPending || !reasonId || (reason?.requiresNote === true && !reasonText.trim())
+      {picked ? (
+        <TableCardSheet
+          shopId={shopId}
+          tableId={picked}
+          live={data ?? null}
+          onClose={() => setPicked(null)}
+          onChanged={refetch}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-2 sm:p-3">
+      <div className="truncate text-xs text-muted-foreground">{label}</div>
+      <div className="text-lg font-bold tabular-nums sm:text-2xl">{value}</div>
+    </div>
+  );
+}
+
+/** "עיקריות בעוד 6 ד׳" — the next course's tag, or null. */
+function useCourseTag() {
+  const tl = useTranslations('tables.live');
+  return (tb: LiveTable, now: number): string | null => {
+    const next = tb.nextCourse;
+    const c = countdown(next, now);
+    if (!c || !next) return null;
+    switch (c.kind) {
+      case 'in':
+        return tl('nextIn', { course: next.name, minutes: c.minutes });
+      case 'now':
+        return tl('nextNow', { course: next.name });
+      case 'paused':
+        return tl('nextPaused', { course: next.name });
+      default:
+        return tl('nextWaiting', { course: next.name });
+    }
+  };
+}
+
+// ── A map zone ────────────────────────────────────────────────────────────────
+
+function LiveMap({ zone, floor, now, onPick }: { zone: TableZone; floor: FloorTable[]; now: number; onPick: (id: string) => void }) {
+  const tl = useTranslations('tables.live');
+  const courseTag = useCourseTag();
+  const cw = zone.canvasWidth || 1000;
+  const ch = zone.canvasHeight || 700;
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    // The observer reports the box's size as soon as it starts watching it, then on every change.
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth || 800));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const height = (width * ch) / cw;
+  // Canvas units per screen pixel at the fitted size: what keeps the words readable at any width.
+  const perPx = cw / Math.max(1, width);
+  // Fitted again for every zone: the parent keys the map by its zone.
+  const [view, setView] = useState<MapView>(FIT);
+
+  // Pinch and drag: the pointers down now, and whether this press moved (then it is no tap).
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const moved = useRef(false);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const local = (e: React.PointerEvent | React.WheelEvent) => {
+    const r = boxRef.current?.getBoundingClientRect();
+    return { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) };
+  };
+  const onDown = (e: React.PointerEvent) => {
+    pointers.current.set(e.pointerId, local(e));
+    if (pointers.current.size === 1) {
+      moved.current = false;
+      start.current = local(e);
+    }
+  };
+  const onMove = (e: React.PointerEvent) => {
+    const prev = pointers.current.get(e.pointerId);
+    if (!prev) return;
+    const p = local(e);
+    if (pointers.current.size >= 2) {
+      const others = [...pointers.current.entries()].filter(([id]) => id !== e.pointerId).map(([, v]) => v);
+      const o = others[0];
+      const before = Math.hypot(prev.x - o.x, prev.y - o.y);
+      const after = Math.hypot(p.x - o.x, p.y - o.y);
+      if (before > 0) setView((v) => zoomAbout(v, after / before, (p.x + o.x) / 2, (p.y + o.y) / 2, width, height));
+      moved.current = true;
+    } else if (start.current && !isTap(p.x - start.current.x, p.y - start.current.y)) {
+      moved.current = true;
+      setView((v) => panBy(v, p.x - prev.x, p.y - prev.y, width, height));
+    }
+    pointers.current.set(e.pointerId, p);
+  };
+  const onUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+  };
+  const onWheel = (e: React.WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const p = local(e);
+    setView((v) => zoomAbout(v, e.deltaY < 0 ? 1.15 : 1 / 1.15, p.x, p.y, width, height));
+  };
+  const zoomBy = (factor: number) => setView((v) => zoomAbout(v, factor, width / 2, height / 2, width, height));
+
+  const background = backgroundOf(zone.sketch ?? null, !!zone.backgroundUrl);
+  const elements = (zone.sketch?.elements ?? []) as SketchElement[];
+
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => zoomBy(1.4)} title={tl('zoomIn')}>
+          <ZoomIn className="h-4 w-4" />
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => zoomBy(1 / 1.4)} title={tl('zoomOut')}>
+          <ZoomOut className="h-4 w-4" />
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => setView(FIT)} title={tl('fit')}>
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+      </div>
+      <div
+        ref={boxRef}
+        dir="ltr"
+        className="relative w-full overflow-hidden rounded-xl border shadow-sm select-none"
+        style={{ height, touchAction: view.scale > 1 ? 'none' : 'pan-y' }}
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        onPointerLeave={onUp}
+        onWheel={onWheel}
+      >
+        <div style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`, transformOrigin: '0 0', width, height }}>
+          <svg viewBox={`0 0 ${cw} ${ch}`} width={width} height={height} className="block">
+            <FloorDefs />
+            {background === 'image' && zone.backgroundUrl ? (
+              <image href={zone.backgroundUrl} x={0} y={0} width={cw} height={ch} preserveAspectRatio="none" />
+            ) : (
+              <rect
+                x={0}
+                y={0}
+                width={cw}
+                height={ch}
+                fill={
+                  background === 'tiles'
+                    ? 'url(#floor-tiles)'
+                    : background === 'light'
+                      ? PLAIN.light
+                      : background === 'dark'
+                        ? PLAIN.dark
+                        : background === 'wood'
+                          ? 'url(#floor-wood)'
+                          : 'url(#floor-clean)'
                 }
-                onClick={() => picked && cancelMut.mutate(picked)}
-              >
-                {t('cancelTable')}
-              </Button>
+              />
+            )}
+            <g pointerEvents="none">
+              {elements.map((el) =>
+                el.kind in SKETCH_STYLE ? (
+                  <SketchShape key={el.id} el={el} perPx={perPx} />
+                ) : (
+                  <UnknownShape key={el.id} el={el} perPx={perPx} />
+                ),
+              )}
+            </g>
+            {/* The tables, then their tags over every table (a tag never hides under the next row's chairs). */}
+            {(['body', 'labels'] as const).map((layer) =>
+              floor.map((f) => (
+                <MapTable
+                  key={`${layer}-${f.table.id}`}
+                  layer={layer}
+                  f={f}
+                  perPx={perPx}
+                  tag={courseTag(f.table, now)}
+                  onPick={() => {
+                    if (!moved.current) onPick(f.table.id);
+                  }}
+                />
+              )),
+            )}
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A sketch shape of a kind this build does not draw yet (a newer decor — feat/table-map-decor-v3): a
+ * labelled box in its place, never a crash or a hole in the plan.
+ */
+function UnknownShape({ el, perPx }: { el: SketchElement; perPx: number }) {
+  const cx = el.x + el.w / 2;
+  const cy = el.y + el.h / 2;
+  const word = (el.text ?? String(el.kind ?? '')).replace(/_/g, ' ');
+  const fs = Math.max(9 * perPx, Math.min(el.h * 0.4, (el.w * 1.4) / Math.max(3, word.length)));
+  return (
+    <g transform={`rotate(${el.rotation || 0} ${cx} ${cy})`}>
+      <rect
+        x={el.x} y={el.y} width={el.w} height={el.h} rx={4 * perPx}
+        fill="#f1f5f9" stroke="#64748b" strokeWidth={1.5 * perPx} strokeDasharray={`${6 * perPx} ${4 * perPx}`}
+      />
+      {word ? (
+        <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={fs} fill="#334155">
+          {word}
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
+/**
+ * A table on the map: its shape and chairs in its state's colour; inside it the number, the guests and
+ * the time seated, and the total; under it the waiter (or 🔒 the till inside it), over it the next course.
+ */
+function MapTable({ layer, f, perPx, tag, onPick }: {
+  layer: 'body' | 'labels';
+  f: FloorTable;
+  perPx: number;
+  tag: string | null;
+  onPick: () => void;
+}) {
+  const tl = useTranslations('tables.live');
+  const tb = f.table;
+  const color = STATE_COLOR[f.visual];
+  const emphasis = STATE_EMPHASIS[f.visual];
+  const cx = tb.x + tb.width / 2;
+  const cy = tb.y + tb.height / 2;
+  const short = Math.min(tb.width, tb.height);
+  const fs = Math.max(11 * perPx, short * 0.28);
+  const small = Math.max(9 * perPx, Math.min(fs * 0.42, 12 * perPx));
+  const label = tableDisplay(tb);
+  const o = tb.order;
+  const inner = o ? [o.guests ? `${o.guests}👤` : null, seatedText(f.minutes)].filter(Boolean).join(' · ') : null;
+  // Three lines when the table is tall enough, else the number and the guests / time.
+  const roomy = tb.height >= fs * 2.9;
+  const below = tb.heldBy ? `🔒 ${tl('heldTill', { till: tb.heldBy })}` : o?.waiterName ?? null;
+  const fill = emphasis.tint > 0 ? tintOf(color, emphasis.tint) : TABLE_LOOK.fill;
+  const pill = (y: number, text: string, bg: string, ink: string) => {
+    const w = Math.max(text.length * small * 0.62 + 12 * perPx, 26 * perPx);
+    const h = small * 1.6;
+    return (
+      <g>
+        <rect x={cx - w / 2} y={y} width={w} height={h} rx={h / 2} fill={bg} stroke="#ffffff" strokeWidth={perPx} />
+        <text x={cx} y={y + h / 2} textAnchor="middle" dominantBaseline="central" fontSize={small} fill={ink} fontWeight={600} direction="rtl">
+          {text}
+        </text>
+      </g>
+    );
+  };
+  const reach = short * 0.27;
+  const numberY = o ? (roomy ? cy - fs * 0.42 : cy - fs * 0.22) : cy;
+  if (layer === 'labels') {
+    if (!tag && !below) return null;
+    return (
+      <g opacity={f.dim ? 0.25 : 1} style={{ cursor: 'pointer' }} onClick={onPick}>
+        {tag ? pill(tb.y - reach - small * 1.75, tag, '#fff7ed', '#c2410c') : null}
+        {below ? pill(tb.y + tb.height + reach + small * 0.15, below, tb.heldBy ? '#7c3aed' : color, '#ffffff') : null}
+      </g>
+    );
+  }
+  return (
+    <g
+      opacity={f.dim ? 0.25 : 1}
+      style={{ cursor: 'pointer' }}
+      onClick={onPick}
+      role="button"
+      aria-label={`${label.text} · ${tl(`state.${f.visual}`)}`}
+    >
+      <g transform={`rotate(${tb.rotation || 0} ${cx} ${cy})`}>
+        {chairLayout(tb.shape === 'round', tb.width, tb.height, tb.seats).map((c, i) => (
+          <g key={`c${i}`} transform={`translate(${tb.x + c.cx} ${tb.y + c.cy}) rotate(${c.angle})`}>
+            <rect
+              x={-c.width / 2} y={-c.depth / 2} width={c.width} height={c.depth} rx={c.depth * 0.28}
+              fill={emphasis.tint > 0 ? tintOf(color, 0.25) : CHAIR_LOOK.wood}
+              stroke={CHAIR_LOOK.edge} strokeWidth={Math.max(perPx, c.depth * 0.06)}
+            />
+          </g>
+        ))}
+        {tb.shape === 'round' ? (
+          <ellipse
+            cx={cx} cy={cy} rx={tb.width / 2} ry={tb.height / 2} fill={fill}
+            stroke={f.visual === 'free' ? TABLE_LOOK.border : color} strokeWidth={emphasis.edge * 1.5 * perPx}
+            filter="url(#table-shadow)"
+          />
+        ) : (
+          <rect
+            x={tb.x} y={tb.y} width={tb.width} height={tb.height} rx={short * 0.18} fill={fill}
+            stroke={f.visual === 'free' ? TABLE_LOOK.border : color} strokeWidth={emphasis.edge * 1.5 * perPx}
+            filter="url(#table-shadow)"
+          />
+        )}
+      </g>
+      <text
+        x={cx} y={numberY} textAnchor="middle" dominantBaseline="central"
+        fontSize={tb.labelOnly ? fs * 0.7 : fs} fontWeight={700} fill={TABLE_LOOK.number} direction="rtl"
+      >
+        {label.main}
+      </text>
+      {inner ? (
+        <text x={cx} y={roomy ? cy + fs * 0.22 : cy + fs * 0.55} textAnchor="middle" dominantBaseline="central" fontSize={small} fill="#475569" direction="rtl">
+          {inner}
+        </text>
+      ) : null}
+      {o && roomy ? (
+        <text x={cx} y={cy + fs * 0.22 + small * 1.25} textAnchor="middle" dominantBaseline="central" fontSize={small} fontWeight={700} fill="#1e293b" direction="rtl">
+          {compactMoney(o.total)}
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
+// ── A grid zone ───────────────────────────────────────────────────────────────
+
+function LiveGrid({ floor, now, onPick }: { floor: FloorTable[]; now: number; onPick: (id: string) => void }) {
+  const tl = useTranslations('tables.live');
+  const courseTag = useCourseTag();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    // The observer reports the box's size as soon as it starts watching it, then on every change.
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth || 800));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const columns = gridColumns(width);
+  const cells = gridCells(floor.map((f) => ({ ...f, number: f.table.number })), columns);
+  return (
+    <div ref={boxRef} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+      {cells.map(({ table: f }) => {
+        const tb = f.table;
+        const color = STATE_COLOR[f.visual];
+        const emphasis = STATE_EMPHASIS[f.visual];
+        const tag = courseTag(tb, now);
+        const label = tableDisplay(tb);
+        return (
+          <button
+            key={tb.id}
+            type="button"
+            onClick={() => onPick(tb.id)}
+            className="relative flex min-h-28 flex-col items-center justify-center overflow-hidden rounded-xl p-2 text-center shadow-sm transition-opacity"
+            style={{
+              opacity: f.dim ? 0.25 : 1,
+              background: tintOf(color, emphasis.tint),
+              border: `${emphasis.edge}px solid ${f.visual === 'free' ? '#cbd5e1' : color}`,
+            }}
+            aria-label={`${label.text} · ${tl(`state.${f.visual}`)}`}
+          >
+            <span className="text-2xl font-bold tabular-nums leading-tight text-slate-800">{label.main}</span>
+            {label.sub ? <span className="max-w-full truncate text-xs text-slate-500">{label.sub}</span> : null}
+            {tb.order ? (
+              <>
+                <span className="text-xs text-slate-600">
+                  {[tb.order.guests ? `${tb.order.guests}👤` : null, seatedText(f.minutes)].filter(Boolean).join(' · ')}
+                </span>
+                <span className="text-sm font-semibold tabular-nums text-slate-800">{formatCurrency(tb.order.total)}</span>
+                {tb.order.waiterName ? <span className="max-w-full truncate text-xs text-slate-600">{tb.order.waiterName}</span> : null}
+              </>
+            ) : !tb.order && tb.cleaningSince ? (
+              <span className="text-xs font-medium text-slate-500">{tl('state.cleaning')}</span>
             ) : null}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            {tag ? <span className="mt-1 rounded-full bg-orange-50 px-2 text-[11px] font-medium text-orange-700">{tag}</span> : null}
+            {tb.heldBy ? (
+              <span className="mt-1 flex items-center gap-1 rounded-full bg-violet-600 px-2 text-[11px] font-medium text-white">
+                <Lock className="h-3 w-3" />
+                {tl('heldTill', { till: tb.heldBy })}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
 }

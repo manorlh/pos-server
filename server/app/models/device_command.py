@@ -30,6 +30,17 @@ DEVICE_ACTIONS = (
     "clear_print_queue",  # "ניקוי תור תקוע", confirmed on the dashboard (params {printerId | null, scope})
     # The LAN mode's tables host only (P:/specs/remote-table-cancel.md, app/services/remote_table_cancel.py):
     "cancel_table",     # "ביטול שולחן מהדשבורד": the host cancels it as at a till, within its timeout
+    # "כרטיס שולחן" from the dashboard (P:/specs/live-tables-cloud.md §6, app/services/table_actions.py):
+    # the LAN host or the single till does it as at a till, within the same timeout; the bill, any till.
+    "table_print_bill",  # "הדפס חשבון" (params {printerId})
+    "table_reprint",    # "הדפסה חוזרת למטבח" (params {scope, roundId, picks, seed})
+    "table_fire",       # "הוצא שלב" (params {courseId, courseName, seed})
+    "table_hold",       # "השהה שלב" (params {courseId, courseName, hold})
+    "table_rush",       # "זרז למטבח" (params {seed})
+    "table_set_waiter",  # "החלף מלצר" (params {waiter: {posUserId, name}})
+    "table_move",       # "העבר לשולחן אחר" (params {targetTableId, targetLabel})
+    "table_merge",      # "אחד שולחנות" (params {sources: [{tableId, orderId, orderVersion, tableLabel}]})
+    "table_note",       # "הערה לשולחן" (params {text})
 )
 OPEN_STATUSES = ("pending", "delivered")
 FINAL_STATUSES = ("done", "refused", "failed", "cancelled", "expired")
@@ -68,10 +79,12 @@ class DeviceCommand(Base):
     prev_state = Column(JSONB, nullable=True)
     #: The action's parameters: `upload_logs` → {"minutes": 15–1440}; a local server's `print_test_page`
     #: → {"printerId"}, `clear_print_queue` → {"printerId" | null, "scope": "failed" | "all"};
-    #: `cancel_table` → {orderId, tableId, tableLabel, orderVersion, reason, requestedBy, voidJobKey…}.
+    #: `cancel_table` → {orderId, tableId, tableLabel, orderVersion, reason, requestedBy, voidJobKey…};
+    #: the `table_*` actions → {orderId, tableId, tableLabel, orderVersion, requestId, requestedBy, mode, …}.
     params = Column(JSONB, nullable=True)
     #: What the device's answer carried: `upload_logs` → {"log_id": …} (app/services/device_logs.py);
-    #: `cancel_table` → {voidedPrinters, kds} / {reason}, and {retargetedTo} when sent on to the new host.
+    #: `cancel_table` → {voidedPrinters, kds} / {reason}, and {retargetedTo} when sent on to the new host;
+    #: the `table_*` actions → their own (P:/specs/live-tables-cloud.md §6.7) / {reason, heldBy}.
     result = Column(JSONB, nullable=True)
 
 

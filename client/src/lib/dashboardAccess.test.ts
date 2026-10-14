@@ -11,6 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
+  canEditTablesLayout,
   DASHBOARD_SECTIONS,
   ORG_MANAGER_SECTIONS,
   UNRESTRICTED,
@@ -183,5 +184,16 @@ describe('parseDashboardAccess — the server answer, read defensively', () => {
     assert.equal(parseDashboardAccess(undefined).restricted, false);
     assert.equal(parseDashboardAccess({ restricted: false, sections: {} }).restricted, false);
     assert.equal(parseDashboardAccess('x').restricted, false);
+  });
+});
+
+describe('"עריכת מפה ושולחנות" — the map is its own permission', () => {
+  it('the open tables at edit are not the map', () => {
+    const floorOnly: DashboardAccess = { restricted: true, sections: { tables: 'edit', tables_manage: 'edit' } };
+    assert.equal(canEditTablesLayout(floorOnly), false);
+    assert.equal(canEditTablesLayout({ restricted: true, sections: { tables: 'view', tables_layout: 'view' } }), false);
+    assert.equal(canEditTablesLayout({ restricted: true, sections: { tables_layout: 'edit' } }), true);
+    // Full access: everything the role allows, the map too.
+    assert.equal(canEditTablesLayout(UNRESTRICTED), true);
   });
 });
