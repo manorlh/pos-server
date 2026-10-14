@@ -6,7 +6,8 @@
  * table and the bill with a balance — and, in a group of its own first, the staff / managers' tables'
  * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1), then the till's map — its legend and
  * display (`mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale`; P:/specs/table-map-decor-v3.md
- * §3) — and last the courses' auto-fire (`autoFire`, `autoFireMinutesOverride`: P:/specs/courses-fire-v2.md
+ * §3) — the waiters' assignment and the busy table (`tableAssignment*`, `tableBusyEntry`, `tableBusyShowHolder`;
+ * P:/specs/table-waiter-assignment.md, with the warning on `tableBusyEntry` = off) — and last the courses' auto-fire (`autoFire`, `autoFireMinutesOverride`: P:/specs/courses-fire-v2.md
  * §1, §5; a course's own minutes are set in "שלבי הגשה") — at one level: company, shop, point of sale or
  * till. A level shows what it inherits and what it sets itself; "ירושה" inherits. Stored as till
  * parameters: the till gets the resolved value with the rest of its parameters. Who restores and

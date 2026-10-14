@@ -195,9 +195,9 @@ def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
         (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
-        (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
         # "שיוך מלצרים ושולחן תפוס" (P:/specs/table-waiter-assignment.md §1, §5, §8).
         (table_assignments.PAGE_GROUP, table_assignments.PAGE_GROUP_LABEL, table_assignments.LEVEL_KEYS),
+        (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
     )
 
 
