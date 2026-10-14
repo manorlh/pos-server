@@ -2,20 +2,23 @@
 
 /**
  * "מסך לקוח" — one layer's editor (P:/specs/customer-display.md §3): every field shows what it
- * inherits and where from, and may be set at this level or left to inherit. The playlist is
- * uploaded through the existing media upload (`POST /images/media`: images and MP4 / WebM up
- * to 25 MB), ordered, each slide with its duration.
+ * inherits and where from, and may be set at this level or left to inherit.
+ *
+ * The slideshow (P:/specs/customer-display-transitions.md §1–§3א): its files uploaded several at
+ * once and compressed in the background (customer-display-playlist.tsx), dragged into order, each
+ * with its duration and its own transition; the motion — the transition, its length, Ken Burns,
+ * videos to their end, shuffle — the video quality of the uploads and how long the server keeps
+ * the files; and a live preview playing it as the screen will (customer-display-preview.tsx).
  */
 
-import { useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { ArrowDown, ArrowUp, ImagePlus, Loader2, Trash2, Video } from 'lucide-react';
-import { uploadBrandingImage, uploadBrandingMedia } from '@/lib/api';
+import { ImagePlus } from 'lucide-react';
+import { uploadBrandingImage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   CD_TEXT,
-  DURATION_MAX,
-  DURATION_MIN,
   IDLE_MAX,
   IDLE_MIN,
   LANGUAGES,
@@ -23,7 +26,8 @@ import {
   LAYOUTS,
   LAYOUT_LABELS,
   LEVEL_LABELS,
-  PLAYLIST_MAX,
+  RETENTION_DAYS_MAX,
+  RETENTION_DAYS_MIN,
   SHOW_KEYS,
   SHOW_LABELS,
   TEXT_MAX,
@@ -31,27 +35,32 @@ import {
   THANKS_MIN,
   THEMES,
   THEME_LABELS,
-  clampDuration,
+  TRANSITIONS,
+  TRANSITION_MS_MAX,
+  TRANSITION_MS_MIN,
+  VIDEO_QUALITIES,
   effectiveOf,
   intInRange,
   isOwn,
-  moveItem,
+  parseRetention,
   playlistError,
-  playlistItemOf,
-  playlistSeconds,
+  retentionValue,
   withField,
   type CdConfig,
   type CdLayer,
   type CdLayerView,
+  type PlaylistItem,
+  type RetentionMode,
 } from '@/lib/customerDisplay';
 import { customerDisplayErrorMessage, putCustomerDisplayLayer } from '@/lib/customerDisplayApi';
+import { PlaylistEditor } from '@/components/dashboard/customer-display/customer-display-playlist';
+import { CustomerDisplayPreview } from '@/components/dashboard/customer-display/customer-display-preview';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
-const VIDEO_TYPES = ['video/mp4', 'video/webm'];
-const MAX_BYTES = 25 * 1024 * 1024;
+const RETENTION_MODES: readonly RetentionMode[] = ['keep', 'until_downloaded', 'days'];
 
 function SourceNote({ view, own, field }: { view: CdLayerView; own: CdLayer; field: keyof CdConfig }) {
   if (isOwn(own, field)) return <span className="text-[11px] font-medium text-primary">{CD_TEXT.own}</span>;
@@ -119,6 +128,7 @@ function Choice<T extends string>({ options, labels, value, onChange }: { option
 }
 
 export function CustomerDisplayEditor({ view, onSaved }: { view: CdLayerView; onSaved: (next: CdLayerView) => void }) {
+  const tm = useTranslations('customerDisplayMotion');
   // The mirrored till is the displays card's (and the server keeps it on a write without it).
   const [own, setOwn] = useState<CdLayer>(() => {
     const rest: CdLayer = { ...(view.own ?? {}) };
@@ -127,31 +137,34 @@ export function CustomerDisplayEditor({ view, onSaved }: { view: CdLayerView; on
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const logoRef = useRef<HTMLInputElement>(null);
+  const [playlistBusy, setPlaylistBusy] = useState(false);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [logoInput, setLogoInput] = useState<HTMLInputElement | null>(null);
   const eff = effectiveOf(view.inherited, own);
   const set = <K extends keyof CdConfig>(key: K, value: CdConfig[K] | undefined) => setOwn((o) => withField(o, key, value));
   const listError = playlistError(eff.playlist);
+  const retention = parseRetention(eff.mediaRetention);
 
-  const upload = async (file: File) => {
-    if (file.size > MAX_BYTES) {
-      toast.error('הקובץ גדול מ-25MB.');
-      return;
-    }
-    if (!file.type.startsWith('image/') && !VIDEO_TYPES.includes(file.type)) {
-      toast.error('רק תמונה, או סרטון MP4 / WebM.');
-      return;
-    }
-    setUploading(true);
-    try {
-      const result = await uploadBrandingMedia(file);
-      set('playlist', [...eff.playlist, playlistItemOf(result)].slice(0, PLAYLIST_MAX));
-    } catch (err) {
-      toast.error(axiosErrorToToastMessage(err, 'ההעלאה נכשלה'));
-    } finally {
-      setUploading(false);
-    }
-  };
+  /** A change made in the playlist editor: the playlist becomes this layer's own. */
+  const updatePlaylist = useCallback(
+    (fn: (items: PlaylistItem[]) => PlaylistItem[]) =>
+      setOwn((o) => {
+        const current = effectiveOf(view.inherited, o).playlist;
+        const next = fn(current);
+        return next === current ? o : withField(o, 'playlist', next);
+      }),
+    [view.inherited],
+  );
+  /** A file got ready: written into this layer's own playlist only (an inherited one is filled by the server). */
+  const refreshPlaylist = useCallback(
+    (fn: (items: PlaylistItem[]) => PlaylistItem[]) =>
+      setOwn((o) => {
+        if (!o.playlist) return o;
+        const next = fn(o.playlist);
+        return next === o.playlist ? o : withField(o, 'playlist', next);
+      }),
+    [],
+  );
 
   const uploadLogo = async (file: File) => {
     setUploading(true);
@@ -192,7 +205,7 @@ export function CustomerDisplayEditor({ view, onSaved }: { view: CdLayerView; on
           <Button variant="outline" size="sm" onClick={() => setOwn({})} disabled={saving}>
             {CD_TEXT.reset}
           </Button>
-          <Button size="sm" onClick={() => void save()} disabled={saving || uploading || !!listError}>
+          <Button size="sm" onClick={() => void save()} disabled={saving || uploading || playlistBusy || !!listError}>
             {saving ? CD_TEXT.saving : CD_TEXT.save}
           </Button>
         </div>
@@ -234,73 +247,114 @@ export function CustomerDisplayEditor({ view, onSaved }: { view: CdLayerView; on
         </FieldRow>
 
         <FieldRow label={CD_TEXT.playlist} hint={CD_TEXT.playlistHint} view={view} own={own} field="playlist" onInherit={() => set('playlist', undefined)}>
-          <div className="space-y-2">
-            {eff.playlist.map((item, i) => (
-              <div key={`${item.url}-${i}`} className="flex flex-wrap items-center gap-2 rounded-lg border p-2">
-                {item.kind === 'video' ? (
-                  <Video className="h-10 w-10 shrink-0 text-muted-foreground" aria-hidden />
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.url} alt="" className="h-10 w-16 shrink-0 rounded object-cover" />
-                )}
-                <span dir="ltr" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {item.url.split('/').pop()}
-                </span>
-                <label className="flex items-center gap-1 text-xs">
-                  <Input
-                    type="number"
-                    min={DURATION_MIN}
-                    max={DURATION_MAX}
-                    className="h-8 w-20"
-                    value={item.durationSec}
-                    onChange={(e) =>
-                      set(
-                        'playlist',
-                        eff.playlist.map((p, j) => (j === i ? { ...p, durationSec: clampDuration(Number(e.target.value)) } : p)),
-                      )
-                    }
-                  />
-                  {CD_TEXT.seconds}
-                </label>
-                <Button type="button" variant="ghost" size="icon" aria-label={CD_TEXT.moveUp} disabled={i === 0} onClick={() => set('playlist', moveItem(eff.playlist, i, i - 1))}>
-                  <ArrowUp className="h-4 w-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={CD_TEXT.moveDown}
-                  disabled={i === eff.playlist.length - 1}
-                  onClick={() => set('playlist', moveItem(eff.playlist, i, i + 1))}
-                >
-                  <ArrowDown className="h-4 w-4" />
-                </Button>
-                <Button type="button" variant="ghost" size="icon" aria-label={CD_TEXT.remove} onClick={() => set('playlist', eff.playlist.filter((_, j) => j !== i))}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
-            <div className="flex flex-wrap items-center gap-3">
+          <PlaylistEditor
+            items={eff.playlist}
+            update={updatePlaylist}
+            refresh={refreshPlaylist}
+            level={view.level}
+            entityId={view.entityId}
+            globalTransition={eff.transition}
+            videoUntilEnd={eff.videoUntilEnd}
+            videoQuality={eff.videoQuality}
+            playingUrl={playingUrl}
+            onBusy={setPlaylistBusy}
+          />
+          {listError ? <p className="text-xs text-destructive">{listError}</p> : null}
+        </FieldRow>
+
+        <div className="space-y-3 rounded-lg border p-3">
+          <div className="text-sm font-semibold">{tm('motionTitle')}</div>
+          <FieldRow label={tm('transition')} hint={tm('transitionHint')} view={view} own={own} field="transition" onInherit={() => set('transition', undefined)}>
+            <Choice
+              options={TRANSITIONS}
+              labels={Object.fromEntries(TRANSITIONS.map((k) => [k, tm(`transitions.${k}`)])) as Record<CdConfig['transition'], string>}
+              value={eff.transition}
+              onChange={(v) => set('transition', v)}
+            />
+          </FieldRow>
+          <FieldRow label={tm('transitionMs')} view={view} own={own} field="transitionMs" onInherit={() => set('transitionMs', undefined)}>
+            <div className="flex items-center gap-3">
               <input
-                ref={fileRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"
-                className="hidden"
+                type="range"
+                min={TRANSITION_MS_MIN}
+                max={TRANSITION_MS_MAX}
+                step={100}
+                value={eff.transitionMs}
+                disabled={eff.transition === 'none'}
+                className="w-56 accent-primary"
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = '';
-                  if (f) void upload(f);
+                  const v = intInRange(e.target.value, TRANSITION_MS_MIN, TRANSITION_MS_MAX);
+                  if (v !== null) set('transitionMs', v);
                 }}
               />
-              <Button type="button" variant="outline" size="sm" disabled={uploading || eff.playlist.length >= PLAYLIST_MAX} onClick={() => fileRef.current?.click()}>
-                {uploading ? <Loader2 className="me-1 h-4 w-4 animate-spin" /> : <ImagePlus className="me-1 h-4 w-4" />}
-                {uploading ? CD_TEXT.uploading : CD_TEXT.addMedia}
-              </Button>
-              {eff.playlist.length ? <span className="text-xs text-muted-foreground">{CD_TEXT.roundTime(playlistSeconds(eff.playlist))}</span> : null}
+              <span className="text-xs text-muted-foreground">{tm('transitionMsValue', { ms: eff.transitionMs })}</span>
             </div>
-            {listError ? <p className="text-xs text-destructive">{listError}</p> : null}
+          </FieldRow>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(['kenBurns', 'videoUntilEnd', 'shuffle'] as const).map((key) => (
+              <FieldRow key={key} label={tm(key)} hint={tm(`${key}Hint`)} view={view} own={own} field={key} onInherit={() => set(key, undefined)}>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="h-4 w-4 accent-primary" checked={eff[key]} onChange={(e) => set(key, e.target.checked)} />
+                  {eff[key] ? tm('on') : tm('off')}
+                </label>
+              </FieldRow>
+            ))}
           </div>
-        </FieldRow>
+          <div className="space-y-1.5 border-b pb-3">
+            <span className="text-sm font-medium">{tm('previewTitle')}</span>
+            <CustomerDisplayPreview config={eff} onSlide={setPlayingUrl} />
+            <p className="text-xs text-muted-foreground">{tm('previewHint')}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FieldRow label={tm('videoQuality')} hint={tm('videoQualityHint')} view={view} own={own} field="videoQuality" onInherit={() => set('videoQuality', undefined)}>
+              <Choice
+                options={VIDEO_QUALITIES}
+                labels={{ '720p': tm('videoQualities.720p'), '1080p': tm('videoQualities.1080p') }}
+                value={eff.videoQuality}
+                onChange={(v) => set('videoQuality', v)}
+              />
+            </FieldRow>
+            <FieldRow
+              label={tm('retention')}
+              hint={
+                retention.mode === 'days'
+                  ? tm('retentionDaysHint', { days: retention.days })
+                  : retention.mode === 'until_downloaded'
+                    ? tm('retentionDownloadedHint')
+                    : tm('retentionHint')
+              }
+              view={view}
+              own={own}
+              field="mediaRetention"
+              onInherit={() => set('mediaRetention', undefined)}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <Choice
+                  options={RETENTION_MODES}
+                  labels={{ keep: tm('retentionModes.keep'), until_downloaded: tm('retentionModes.until_downloaded'), days: tm('retentionModes.days') }}
+                  value={retention.mode}
+                  onChange={(m) => set('mediaRetention', retentionValue(m, retention.days))}
+                />
+                {retention.mode === 'days' ? (
+                  <label className="flex items-center gap-1 text-xs">
+                    <Input
+                      type="number"
+                      min={RETENTION_DAYS_MIN}
+                      max={RETENTION_DAYS_MAX}
+                      className="h-8 w-20"
+                      value={retention.days}
+                      onChange={(e) => {
+                        const v = intInRange(e.target.value, RETENTION_DAYS_MIN, RETENTION_DAYS_MAX);
+                        if (v !== null) set('mediaRetention', retentionValue('days', v));
+                      }}
+                    />
+                    {tm('retentionDays')}
+                  </label>
+                ) : null}
+              </div>
+            </FieldRow>
+          </div>
+        </div>
 
         <FieldRow label={CD_TEXT.logo} hint={CD_TEXT.logoHint} view={view} own={own} field="logoUrl" onInherit={() => set('logoUrl', undefined)}>
           <div className="flex flex-wrap items-center gap-2">
@@ -309,7 +363,7 @@ export function CustomerDisplayEditor({ view, onSaved }: { view: CdLayerView; on
               <img src={eff.logoUrl} alt="" className="h-10 max-w-32 rounded bg-muted object-contain" />
             ) : null}
             <input
-              ref={logoRef}
+              ref={setLogoInput}
               type="file"
               accept="image/png,image/jpeg,image/webp"
               className="hidden"
@@ -319,7 +373,7 @@ export function CustomerDisplayEditor({ view, onSaved }: { view: CdLayerView; on
                 if (f) void uploadLogo(f);
               }}
             />
-            <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => logoRef.current?.click()}>
+            <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => logoInput?.click()}>
               <ImagePlus className="me-1 h-4 w-4" />
               {CD_TEXT.logo}
             </Button>

@@ -195,7 +195,7 @@ from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
 # "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions and their audit (app/services/presentation_profiles.py).
 from app.models.presentation_profile import PresentationAudit, PresentationProfile, PresentationRevision
 # "מסך לקוח": the cloud relay of a till's customer screen (app/services/customer_display.py).
-from app.models.customer_display import CustomerDisplayState
+from app.models.customer_display import CustomerDisplayMedia, CustomerDisplayMediaPresence, CustomerDisplayState
 
 __all__ = [
     "User", "UserRole",
@@ -291,6 +291,8 @@ __all__ = [
     "SalesTarget", "SalesTargetHit",
     "DisplayOrdering", "DisplayOrderingBinding",
     "PresentationAudit", "PresentationProfile", "PresentationRevision",
+    "CustomerDisplayMedia",
+    "CustomerDisplayMediaPresence",
     "CustomerDisplayState",
 ]
 # "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).

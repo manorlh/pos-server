@@ -18,6 +18,21 @@ deepest layer that sets a field winning (`playlist` and `show` replace as a whol
 below. Nothing here touches the till's settings sync (`MANAGED_SETTING_KEYS`): the device pulls
 its resolved configuration from `GET /sync/{m}/customer-display`.
 
+**The slideshow's motion** (P:/specs/customer-display-transitions.md §1): `transition` — how one
+slide gives way to the next (`fade` a cross-fade over the slide below, never through black;
+`dissolve` a soft cross-fade with blur; `zoom` the next one settles in from slightly larger; `slide`
+the next one pushes in from the reading direction's end; `none` a cut) — over `transitionMs`;
+`kenBurns` (an image drifts and closes in slowly while shown); `videoUntilEnd` (a video plays to its
+end, its `durationSec` then unused); `shuffle` (a new random order every round). A slide may set its
+own `transition`, over the global one. A device asking for less motion, or too slow to animate,
+plays a short fade and no Ken Burns, whatever is set.
+
+**The files** (§3א, §5; app/services/customer_display_media.py): uploaded through
+`POST /customer-display/media`, compressed in the background (`videoQuality` of the uploading
+level), so a slide may first be `{mediaId, kind, durationSec}` with no URL yet — kept, never sent
+to a device until its file is ready. A ready file has its `sha256`, the devices' key for it.
+`mediaRetention` says when the server may delete a file the devices already hold.
+
 **Read only.** The state a till publishes is what the customer sees anyway: lines, totals,
 the tip, the payment's progress, the change. Never the cashier, the customer, a card or a
 document number — the relay keeps only a bounded JSON object and gives it back as it is.
@@ -45,11 +60,20 @@ LANGUAGES = ("auto", "he", "en")
 #: What the screen may show; each one a switch, all on by default.
 SHOW_KEYS = ("items", "prices", "modifiers", "promotions", "vouchers", "totals", "tip", "payment", "change", "thanks")
 MEDIA_KINDS = ("image", "video")
+#: How one slide gives way to the next (the module's note).
+TRANSITIONS = ("fade", "slide", "zoom", "dissolve", "none")
+#: The resolution an uploaded video is compressed to (its short side, at most).
+VIDEO_QUALITIES = ("720p", "1080p")
+#: When the server may delete a file of the slideshow: never; once every device using it has
+#: it; N days after it was ready ("days:N", RETENTION_DAYS_MIN–MAX).
+RETENTION_KEEP, RETENTION_DOWNLOADED, RETENTION_DAYS_PREFIX = "keep", "until_downloaded", "days:"
+RETENTION_DAYS_MIN, RETENTION_DAYS_MAX = 1, 365
 
 PLAYLIST_MAX = 20
 DURATION_MIN, DURATION_MAX, DURATION_DEFAULT = 3, 300, 8
 IDLE_MIN, IDLE_MAX, IDLE_DEFAULT = 0, 3600, 30
 THANKS_MIN, THANKS_MAX, THANKS_DEFAULT = 2, 60, 6
+TRANSITION_MS_MIN, TRANSITION_MS_MAX, TRANSITION_MS_DEFAULT = 200, 2000, 600
 TEXT_MAX = 80
 URL_MAX = 500
 #: One file of the playlist at most — the upload's own limit (`POST /images/media`, 25 MB).
@@ -67,7 +91,23 @@ DEFAULTS: Dict[str, Any] = {
     "thanksSec": THANKS_DEFAULT,
     "welcomeText": "",
     "thanksText": "",
+    "transition": "fade",
+    "transitionMs": TRANSITION_MS_DEFAULT,
+    "kenBurns": True,
+    "videoUntilEnd": True,
+    "shuffle": False,
+    "videoQuality": "720p",
+    "mediaRetention": RETENTION_KEEP,
 }
+
+#: The switches of the slideshow's motion, each a yes / no, with its Hebrew name for a refusal.
+MOTION_SWITCHES = {
+    "kenBurns": "תנועה איטית בתמונות",
+    "videoUntilEnd": "סרטון עד הסוף",
+    "shuffle": "סדר אקראי",
+}
+
+_HEX = frozenset("0123456789abcdef")
 
 #: Set by the server only, on a paired display device's own layer (`apply_on_pairing`): the
 #: machine is a customer display. Never accepted from the dashboard, never dropped by its writes.
@@ -140,25 +180,79 @@ def _text(value: Any) -> Optional[str]:
     return v if len(v) <= TEXT_MAX else None
 
 
+def _sha256(value: Any) -> Optional[str]:
+    """A sha256 as lowercase hex (64), else None."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    return v if len(v) == 64 and set(v) <= _HEX else None
+
+
+def _media_id(value: Any) -> Optional[str]:
+    try:
+        return str(uuid.UUID(str(value))) if value is not None and value != "" else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def retention_of(value: Any) -> Optional[Tuple[str, Optional[int]]]:
+    """`mediaRetention` read: ("keep", None), ("until_downloaded", None), ("days", N); None when it does not fit."""
+    if value == RETENTION_KEEP:
+        return (RETENTION_KEEP, None)
+    if value == RETENTION_DOWNLOADED:
+        return (RETENTION_DOWNLOADED, None)
+    if isinstance(value, str) and value.startswith(RETENTION_DAYS_PREFIX):
+        digits = value[len(RETENTION_DAYS_PREFIX):]
+        if digits.isdigit() and not digits.startswith("0"):
+            n = int(digits)
+            if RETENTION_DAYS_MIN <= n <= RETENTION_DAYS_MAX:
+                return ("days", n)
+    return None
+
+
 def clean_playlist_item(raw: Any) -> Optional[Dict[str, Any]]:
-    """One slide as stored: `{url, kind, durationSec, bytes?}`, or None when it does not fit."""
+    """
+    One slide as stored: `{mediaId?, url?, kind, durationSec, bytes?, sha256?, transition?}`, or
+    None when it does not fit. `transition` is the slide's own way in, over the global one; absent
+    (or null) = the global. A slide of an upload still being compressed has its `mediaId` and no
+    URL yet (the worker writes it in); any other slide has its URL.
+    """
     if not isinstance(raw, dict):
         return None
-    url = _url(raw.get("url"))
+    media_id = _media_id(raw.get("mediaId"))
+    if raw.get("mediaId") not in (None, "") and media_id is None:
+        return None
+    url = _url(raw.get("url")) if raw.get("url") not in (None, "") else None
     kind = raw.get("kind")
-    if url is None or kind not in MEDIA_KINDS:
+    if kind not in MEDIA_KINDS or (url is None and (media_id is None or raw.get("url") not in (None, ""))):
         return None
     duration = raw.get("durationSec", DURATION_DEFAULT)
     duration = _int_in(duration, DURATION_MIN, DURATION_MAX)
     if duration is None:
         return None
-    item: Dict[str, Any] = {"url": url, "kind": kind, "durationSec": duration}
+    item: Dict[str, Any] = {}
+    if media_id is not None:
+        item["mediaId"] = media_id
+    if url is not None:
+        item["url"] = url
+    item["kind"] = kind
+    item["durationSec"] = duration
     size = raw.get("bytes")
     if size is not None:
         size = _int_in(size, 1, MEDIA_MAX_BYTES)
         if size is None:
             return None
         item["bytes"] = size
+    if raw.get("sha256") is not None:
+        sha = _sha256(raw.get("sha256"))
+        if sha is None:
+            return None
+        item["sha256"] = sha
+    transition = raw.get("transition")
+    if transition is not None:
+        if transition not in TRANSITIONS:
+            return None
+        item["transition"] = transition
     return item
 
 
@@ -196,6 +290,8 @@ def clean_field(key: str, value: Any) -> Any:
         for i, raw in enumerate(value):
             item = clean_playlist_item(raw)
             if item is None:
+                if isinstance(raw, dict) and raw.get("transition") is not None and raw.get("transition") not in TRANSITIONS:
+                    raise _bad(key, f"פריט {i + 1} במצגת: מעבר לא מוכר.")
                 raise _bad(
                     key,
                     f"פריט {i + 1} במצגת לא תקין: נדרשים קישור https מההעלאה, סוג (תמונה / סרטון) "
@@ -225,6 +321,30 @@ def clean_field(key: str, value: Any) -> Any:
         if v is None:
             raise _bad(key, f"טקסט של עד {TEXT_MAX} תווים.")
         return v
+    if key == "transition":
+        if value not in TRANSITIONS:
+            raise _bad(key, "מעבר לא מוכר.")
+        return value
+    if key == "transitionMs":
+        v = _int_in(value, TRANSITION_MS_MIN, TRANSITION_MS_MAX)
+        if v is None:
+            raise _bad(key, f"משך המעבר: מספר שלם של {TRANSITION_MS_MIN}–{TRANSITION_MS_MAX} אלפיות שנייה.")
+        return v
+    if key == "videoQuality":
+        if value not in VIDEO_QUALITIES:
+            raise _bad(key, "איכות סרטון: 720p או 1080p.")
+        return value
+    if key == "mediaRetention":
+        if retention_of(value) is None:
+            raise _bad(
+                key,
+                f"שמירה בשרת: לשמור תמיד, עד שכל המכשירים הורידו, או מספר ימים ({RETENTION_DAYS_MIN}–{RETENTION_DAYS_MAX}).",
+            )
+        return value
+    if key in MOTION_SWITCHES:
+        if not isinstance(value, bool):
+            raise _bad(key, f"\"{MOTION_SWITCHES[key]}\" צריך להיות כן או לא.")
+        return value
     if key == MIRROR_KEY:
         if value is None:
             return None
@@ -427,22 +547,30 @@ def _branding(db: Session, machine: Any, effective: Dict[str, Any]) -> Dict[str,
     }
 
 
-def media_of(effective: Dict[str, Any], branding: Dict[str, Any]) -> List[Dict[str, Any]]:
+def media_of(effective: Dict[str, Any], branding: Dict[str, Any], gone: Iterable[str] = ()) -> List[Dict[str, Any]]:
     """
     The files the device keeps on its own disk (the kiosk's media cache): the logo first, then
-    the playlist in order. Every upload has a URL of its own, so a URL is its version.
+    the playlist in order. Every upload has a URL of its own, so a URL is its version; a file of
+    the new uploads has its `sha256` too (the device's key for it, §5). `onServer: false` — the
+    file was deleted from the server by its retention (`gone`): copied from a till in the shop
+    (checked by its hash), never asked of the cloud.
     """
     out: List[Dict[str, Any]] = []
     seen = set()
+    gone = set(gone)
     logo = branding.get("logoUrl")
     if logo:
-        out.append({"url": logo, "kind": "image", "bytes": None})
+        out.append({"url": logo, "kind": "image", "bytes": None, "onServer": True})
         seen.add(logo)
     for item in effective.get("playlist") or []:
-        if item["url"] in seen:
+        if not item.get("url") or item["url"] in seen:
             continue
         seen.add(item["url"])
-        out.append({"url": item["url"], "kind": item["kind"], "bytes": item.get("bytes")})
+        entry: Dict[str, Any] = {"url": item["url"], "kind": item["kind"], "bytes": item.get("bytes")}
+        if item.get("sha256"):
+            entry["sha256"] = item["sha256"]
+        entry["onServer"] = item["url"] not in gone
+        out.append(entry)
     return out
 
 
@@ -465,13 +593,17 @@ def device_payload(db: Session, machine: Any) -> Dict[str, Any]:
     * a paired display (`role: "display"`): the till it mirrors, where that till listens on the
       LAN, and the token to show it.
     """
+    from app.services import customer_display_media as CDM
+
     effective, sources = effective_for_machine(db, machine)
+    # Each slide from its file (URL, hash); one still being compressed is not sent yet.
+    effective, gone = CDM.for_devices(db, effective)
     branding = _branding(db, machine, effective)
     body: Dict[str, Any] = {
         "config": effective,
         "sources": sources,
         "branding": branding,
-        "media": media_of(effective, branding),
+        "media": media_of(effective, branding, gone),
         "poll": dict(POLL),
     }
     if is_display_device(machine):

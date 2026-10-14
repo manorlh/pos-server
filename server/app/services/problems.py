@@ -572,6 +572,37 @@ def _battery_items(db: Session, machines: List[POSMachine]) -> List[Tuple[Item, 
     return out
 
 
+# ── Customer display files missing on a device ───────────────────────────────
+
+
+def _customer_display_media_items(db: Session, machines: List[POSMachine]) -> List[Tuple[Item, Optional[str]]]:
+    """
+    "מסך לקוח" (P:/specs/customer-display-transitions.md §3א): a file of the slideshow the server
+    deleted by its retention policy, that a device using it reported it lacks — "העלה מחדש" on the
+    customer display page. Low: the device skips that slide, the rest plays.
+    """
+    from app.services import customer_display_media as CDM
+
+    try:
+        with db.begin_nested():
+            found = CDM.missing_on_devices(db, machines)
+    except Exception:  # noqa: BLE001 - one reading never fails the screen
+        logger.exception("problems: customer display media")
+        return []
+    out: List[Tuple[Item, Optional[str]]] = []
+    for machine, files in found:
+        n = len(files)
+        out.append((Item(
+            id=f"cd-media:{machine.id}", kind="customer_display_media_missing", group="devices", severity="low",
+            since=_utc(max((_utc(f.deleted_at) for f in files if f.deleted_at is not None), default=None)),
+            title="קובץ מצגת חסר במסך הלקוח" if n == 1 else f"{n} קובצי מצגת חסרים במסך הלקוח",
+            detail="נמחק מהשרת והמכשיר לא הוריד אותו. העלו אותו מחדש בעמוד מסך לקוח.",
+            link=f"/dashboard/customer-display?scopeType=machine&scopeId={machine.id}",
+            shop_id=machine.shop_id, machine_id=machine.id,
+        ), None))
+    return out
+
+
 # ── Card payments still undecided ────────────────────────────────────────────
 
 
@@ -770,6 +801,7 @@ def build(db: Session, user: User, tenant_id: Any, *, hidden: Sequence[str] = ()
     fresh(_till_items(db, tills, now))
     fresh(_kiosk_items(db, user, tenant_id, now, company_id=company_id if shop_id is None else None, shop_id=shop_id))
     fresh(_battery_items(db, machines))
+    fresh(_customer_display_media_items(db, machines))
     # 3. Card payments and Z-Credit.
     items.extend(_payment_items(db, reach, now, logged, company_ids=company_ids, shop_id=shop_id))
     items.extend(_zcredit_items(db, reach, machines, now, logged))

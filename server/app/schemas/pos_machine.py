@@ -244,6 +244,10 @@ class MachineHeartbeatBody(BaseModel):
     #: The device's LAN identity for discovery (§11.6): `{publicKey, alg: "ES256"}`, an EC P-256 key;
     #: one that is not is dropped. Absent: as it was.
     lan_identity: Optional[Dict[str, Any]] = Field(None, alias="lanIdentity")
+    #: "מסך לקוח" (P:/specs/customer-display-transitions.md §5.4): the slideshow files this device
+    #: holds, `{screen: bool, held: [sha256…]}` — cleaned in app/services/customer_display_media.py
+    #: `apply_report` (never a 422). Absent (an older build): as it was.
+    customer_display_media: Optional[Dict[str, Any]] = Field(None, alias="customerDisplayMedia")
 
     model_config = ConfigDict(populate_by_name=True)
 

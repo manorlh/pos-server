@@ -428,6 +428,19 @@ def start_device_logs_retention_worker():
     from app.services.device_logs_retention import start_background_worker as start_logs_retention
 
     start_logs_retention(SessionLocal)
+
+
+@app.on_event("startup")
+def start_customer_display_media_worker():
+    """
+    "מסך לקוח": the slideshow's uploads compressed in the background, and the files the retention
+    policy lets go deleted hourly (app/services/customer_display_media.py);
+    CUSTOMER_DISPLAY_MEDIA_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.customer_display_media import start_background_worker as start_cd_media_worker
+
+    start_cd_media_worker(SessionLocal)
 # KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
 from app.routers import kds as kds_router  # noqa: E402
 
