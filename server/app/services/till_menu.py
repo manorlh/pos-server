@@ -48,6 +48,9 @@ class MenuItem:
     warning: Optional[str] = None
 
 
+QUICK_ORDER_KEY = "quick_order"
+TABLES_ITEM_KEY = "tables"
+
 #: Every item that may be hidden, in the order of the till's menu (spec §5 — the keys are the till's
 #: and never change; pinned with the dashboard by tests/fixtures/till_menu_items_golden.json).
 ITEMS: Tuple[MenuItem, ...] = (
@@ -112,6 +115,16 @@ ITEMS: Tuple[MenuItem, ...] = (
         "מצב הדרכה: \"הפק Z\" של הדרכה",
         also="הפס הכתום לא מוסתר. בקופה אין כניסה להדרכה מהתפריט, הענן מדליק אותה",
     ),
+    # §5א "מכשיר לשולחנות בלבד" (the owner, 14.10): the till opens on its tables, and every way to the sale
+    # screen that is not through a table goes. Not with "שולחנות" hidden or the tables off — see `sell_warning`.
+    MenuItem(
+        QUICK_ORDER_KEY,
+        "הזמנה מהירה (בסרגל, לא בתפריט)",
+        also=(
+            "הקופה נפתחת על מסך השולחנות; הלשונית \"הזמנה מהירה\", כל מעבר למסך המכירה שלא דרך שולחן, "
+            "\"מכירה מהירה\" במסך השולחנות ו\"החזר הזמנה\""
+        ),
+    ),
 )
 
 #: The reports in the menu's "דוחות" folder (§5 18–25): all of them hidden, the folder goes too.
@@ -119,6 +132,7 @@ REPORT_KEYS: Tuple[str, ...] = (
     "recent", "shift_history", "till_z_history", "product_sales", "workers", "tips", "tables_reports", "z_reports",
 )
 KNOWN_KEYS: Tuple[str, ...] = tuple(item.key for item in ITEMS)
+_LABELS: Dict[str, str] = {item.key: item.label for item in ITEMS}
 _ORDER: Dict[str, int] = {key: i for i, key in enumerate(KNOWN_KEYS)}
 #: The items whose hiding the dashboard warns about (§2): no close of the shift, no Z, settings by code.
 CRITICAL_KEYS: Tuple[str, ...] = tuple(item.key for item in ITEMS if item.warning)
@@ -129,6 +143,8 @@ _DESCRIPTION = (
     "(נעילה, סנכרון, Z, סגירת משמרת, ניתוק משתמש, התקנת עדכון) ממשיכות לעבוד. ריק (ברירת מחדל) — התפריט כמו "
     "היום. הרמה הספציפית ביותר שקבעה רשימה גוברת: רמה נמוכה יכולה להסתיר עוד פריטים או להחזיר אותם (רשימה "
     "ריקה = הכל מוצג). כש\"הגדרות\" מוסתרות, הן נפתחות בקוד טכנאי מ\"אבחון\", שנשאר אז בתפריט. "
+    "\"הזמנה מהירה\" מוסתרת — מכשיר לשולחנות בלבד: הקופה נפתחת על מסך השולחנות; כשאין בה שולחנות (כבויים "
+    "או מוסתרים) היא מתעלמת מזה ומציגה את מסך המכירה. "
     "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה — כאן, בכרטיס \"תפריט הקופה\" בעמוד המכשיר, "
     "ובעיצוב הקופה."
 )
@@ -218,6 +234,35 @@ def warnings_for(keys: Iterable[str]) -> List[Dict[str, str]]:
     return [{"key": item.key, "label": item.label, "warning": item.warning} for item in ITEMS if item.warning and item.key in wanted]
 
 
+#: §5א: "quick_order" hidden with no tables to sell through — the till ignores it (the sale screen stays),
+#: and the dashboard says so when saving. A warning, never a refusal.
+NO_WAY_TO_SELL = "בקופה הזו לא תישאר דרך למכור"
+
+
+def sell_warning(keys: Iterable[str], tables_off: Optional[bool]) -> Optional[Dict[str, str]]:
+    """
+    §5א: "הזמנה מהירה" hidden while "שולחנות" is hidden too, or the tables are off where the list applies
+    (`tables_off`; None = not known) — no way left to sell. The till then ignores "quick_order".
+    """
+    hidden = set(keys)
+    if QUICK_ORDER_KEY not in hidden:
+        return None
+    if TABLES_ITEM_KEY in hidden:
+        reason = "גם \"שולחנות\" מוסתר"
+    elif tables_off:
+        reason = "ניהול השולחנות כבוי"
+    else:
+        return None
+    return {
+        "key": QUICK_ORDER_KEY,
+        "label": _LABELS[QUICK_ORDER_KEY],
+        "warning": (
+            f"{NO_WAY_TO_SELL}: {reason}. הקופה תתעלם מהסתרת \"הזמנה מהירה\" ותציג את מסך המכירה, "
+            "עד שיהיו בה שולחנות."
+        ),
+    }
+
+
 def items_out() -> List[Dict[str, Any]]:
     return [
         {
@@ -305,6 +350,11 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
         elif parameter.default_value is not None and _usable(parameter, parameter.default_value):
             inherited = list(clean(parameter.default_value).keys)
     effective = own if own is not None else inherited
+    tables_off = _tables_off(db, scope_type, ident)
+    warnings = warnings_for(effective)
+    selling = sell_warning(effective, tables_off)
+    if selling is not None:
+        warnings.append(selling)
     return {
         "key": KEY,
         "level": scope_type,
@@ -313,11 +363,45 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
         "inherited": inherited,
         "inheritedFrom": inherited_from,
         "effective": effective,
-        "warnings": warnings_for(effective),
+        "warnings": warnings,
+        # Where the list applies, as the level resolves `tablesMode` ("כבוי" — the default — is off). A
+        # till's own answer counts its place in the shop's LAN; above a till, a lower level may differ.
+        "tablesOff": tables_off,
         "items": items_out(),
         # Off: the tills get nothing for it — every item shows.
         "active": bool(parameter.is_active) if parameter is not None else False,
     }
+
+
+def _tables_off(db, scope_type: str, ident) -> bool:
+    """Whether the tables are off at this level (`tablesMode` as it resolves there)."""
+    from sqlalchemy import and_, or_
+
+    from app.models.pos_machine import POSMachine
+    from app.models.till_parameter import TillParameter, TillParameterValue
+    from app.services.kds_workflow import chain_for_scope
+    from app.services.tables import MODE_OFF, TABLES_MODE_KEY, _MODES
+    from app.services.till_parameters import resolve_till_parameters, till_parameters_for_machine
+
+    if scope_type == "machine":
+        machine = db.query(POSMachine).filter(POSMachine.id == ident).first()
+        mode = till_parameters_for_machine(db, machine).parameters.get(TABLES_MODE_KEY) if machine else None
+    else:
+        chain, _shop = chain_for_scope(db, scope_type, ident)
+        parameters = db.query(TillParameter).filter(TillParameter.key == TABLES_MODE_KEY).all()
+        scopes = chain.scopes()
+        values = (
+            db.query(TillParameterValue)
+            .filter(
+                TillParameterValue.parameter_id.in_([p.id for p in parameters]),
+                or_(*[and_(TillParameterValue.scope_type == k, TillParameterValue.scope_id == i) for k, i in scopes]),
+            )
+            .all()
+            if scopes and parameters
+            else []
+        )
+        mode = resolve_till_parameters(parameters, values, chain).parameters.get(TABLES_MODE_KEY)
+    return _MODES.get(mode, MODE_OFF) == MODE_OFF if isinstance(mode, str) else True
 
 
 @dataclass

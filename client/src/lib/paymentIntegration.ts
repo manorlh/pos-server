@@ -12,9 +12,21 @@ import { formatDateTime } from './format';
 
 // ── Values ───────────────────────────────────────────────────────────────────
 
-export type PaymentIntegration = 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay';
-/** What a till actually charges on (never `auto`). */
-export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay';
+/**
+ * `none` — "ללא אשראי (מזומן ואמצעים אחרים)" (P:/specs/payment-integration-none.md): the till takes
+ * no card at all; nothing to set up, nothing missing, no terminal warning, any device.
+ */
+export type PaymentIntegration =
+  | 'auto'
+  | 'agamento'
+  | 'nayax_lan'
+  | 'nayax_usb'
+  | 'zcredit'
+  | 'synqpay'
+  | 'tap_to_pay'
+  | 'none';
+/** What a till actually charges on (never `auto`); `none` = on nothing. */
+export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'none';
 export type ZcreditMode = 'test' | 'production';
 export type SettingsLevelName = 'tenant' | 'company' | 'shop' | 'area' | 'machine';
 
@@ -26,6 +38,7 @@ export const PAYMENT_INTEGRATIONS: readonly PaymentIntegration[] = [
   'zcredit',
   'synqpay',
   'tap_to_pay',
+  'none',
 ];
 
 /** Charged on a terminal outside the till: all a till without one of its own can use. */
@@ -41,6 +54,7 @@ export const INTEGRATION_LABELS: Record<PaymentIntegration, string> = {
   zcredit: 'Z-Credit — מסופון חיצוני',
   synqpay: 'SynqPay — מסוף חיצוני',
   tap_to_pay: 'Tap to Pay במכשיר (iPOSpays)',
+  none: 'ללא אשראי (מזומן ואמצעים אחרים)',
 };
 
 /** Short names for the machines list. */
@@ -52,6 +66,7 @@ export const INTEGRATION_SHORT_LABELS: Record<PaymentIntegration, string> = {
   zcredit: 'Z-Credit',
   synqpay: 'SynqPay',
   tap_to_pay: 'Tap to Pay',
+  none: 'ללא אשראי',
 };
 
 export const ZCREDIT_MODES: readonly ZcreditMode[] = ['test', 'production'];
@@ -234,6 +249,8 @@ export const REQUIRED_FIELDS: Record<Exclude<PaymentIntegration, 'auto'>, readon
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode'],
   synqpay: ['synqpayDeviceModel', 'synqpayConnection', 'synqpayHost'],
   tap_to_pay: [],
+  // No terminal: nothing is ever "חסר".
+  none: [],
 };
 
 /** The fields the form shows for each integration (required and optional). */
@@ -255,6 +272,8 @@ export const FORM_FIELDS: Record<PaymentIntegration, readonly PaymentFieldKey[]>
     'synqpayApiKey',
   ],
   tap_to_pay: [],
+  // The terminal's fields are hidden: there is none.
+  none: [],
 };
 
 // ── Hebrew ───────────────────────────────────────────────────────────────────
@@ -273,7 +292,7 @@ export const PI_TEXT = {
   pinpadInvalid: 'אותיות באנגלית וספרות בלבד, עם או בלי הקידומת PINPAD',
   modeRequired: 'יש לבחור מצב: בדיקה או ייצור',
   secretInvalid: 'עד 200 תווים, ללא תווי בקרה',
-  agamentoNeedsBuiltin: 'לקופה זו אין מסוף מובנה (טאבלט) — ניתן לבחור רק אינטגרציה חיצונית',
+  agamentoNeedsBuiltin: 'לקופה זו אין מסוף מובנה (טאבלט) — ניתן לבחור רק אינטגרציה חיצונית או ללא אשראי',
   tapToPayReserved: 'Tap to Pay עדיין לא זמין',
   soon: 'בקרוב',
   autoHint: 'קופה עם מסוף מובנה — Agamento; Nayax אם הוגדר; טאבלט — מסופון חיצוני',
@@ -299,6 +318,12 @@ export const PI_TEXT = {
   tapToPayHint: 'Tap to Pay במכשיר (iPOSpays) יהיה זמין בקרוב. אין עדיין שדות להגדרה.',
   tapToPayMerchant: 'מזהה סוחר (בקרוב)',
   tapToPayTerminal: 'מזהה מסוף (בקרוב)',
+  noneHint:
+    'הקופה לא מקבלת אשראי — מזומן ואמצעי התשלום האחרים בלבד. אין מסופון ואין שדות להגדרה; כפתורי האשראי מוסתרים בקופה, ואין התראות מסופון.',
+  kioskNoPayment: 'לקיוסק לא יישאר אמצעי תשלום',
+  kioskNoPaymentHint: 'קיוסק ללא אשראי מקבל תשלום רק בקופה: יש להפעיל "תשלום בקופה" בהגדרות הקיוסק.',
+  paymentMethodsNote: 'האשראי כבוי בקופות שמוגדרות ללא אשראי',
+  openCardTail: "יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'",
   needsNfc: 'למכשיר אין NFC',
   replace: 'החלף',
   cancelReplace: 'ביטול',
@@ -938,7 +963,8 @@ export function missingFieldsLabel(missing: readonly string[] | null | undefined
 /**
  * The Hebrew the server sent with a payment-integration refusal (422
  * `{detail: {code, msg}}`: `agamento_needs_builtin_terminal`, `secret_invalid`,
- * `usb_terminal_second` — one USB terminal per till), or null for any other error.
+ * `usb_terminal_second` — one USB terminal per till; 409 `payment_integration_open_card` —
+ * "ללא אשראי" over open card sales, worded from its `tills`), or null for any other error.
  */
 export function paymentIntegrationErrorMessage(err: unknown): string | null {
   const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response?.data
@@ -949,13 +975,129 @@ export function paymentIntegrationErrorMessage(err: unknown): string | null {
     return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.agamentoNeedsBuiltin;
   }
   if (code === 'usb_terminal_second') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.oneUsbTerminal;
+  if (code === OPEN_CARD_CODE) {
+    // "ללא אשראי" over open card sales (409): the tills and their counts, worded here.
+    const tills = openCardTills((detail as { tills?: unknown }).tills);
+    if (tills.length > 0) return openCardMessage(tills);
+    return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.openCardTail;
+  }
   if (code === 'secret_invalid') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.secretInvalid;
   return null;
 }
 
+// ── No "ללא אשראי" over open card sales (spec §6) ─────────────────────────────
+
+/** The server's 409 when a save would move a till with open card sales to `none`. */
+export const OPEN_CARD_CODE = 'payment_integration_open_card';
+
+/** A till that holds the save back, with its counts (`detail.tills` of the 409). */
+export interface OpenCardTill {
+  machineId: string;
+  name: string | null;
+  posNumber: string | null;
+  /** Card documents in shifts no Z has taken yet. */
+  cardSales: number;
+  /** Card transactions not transmitted. */
+  untransmitted: number;
+  /** Card payments "לא הוכרע". */
+  unresolved: number;
+}
+
+function count(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/** `detail.tills` read safely; rows with nothing open are left out. */
+export function openCardTills(raw: unknown): OpenCardTill[] {
+  if (!Array.isArray(raw)) return [];
+  const out: OpenCardTill[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const row: OpenCardTill = {
+      machineId: typeof r.machineId === 'string' ? r.machineId : '',
+      name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : null,
+      posNumber: typeof r.posNumber === 'string' && r.posNumber.trim() ? r.posNumber.trim() : null,
+      cardSales: count(r.cardSales),
+      untransmitted: count(r.untransmitted),
+      unresolved: count(r.unresolved),
+    };
+    if (row.cardSales || row.untransmitted || row.unresolved) out.push(row);
+  }
+  return out;
+}
+
+/** "בקופה 3 יש 12 עסקאות אשראי שלא נסגרו ב-Z (2 לא שודרו, 1 לא מוכרעת)" — as the server words it. */
+export function openCardLine(t: OpenCardTill): string {
+  const where = `ב${t.posNumber ? `קופה ${t.posNumber}` : (t.name ?? 'קופה')} יש`;
+  const untransmitted = t.untransmitted
+    ? t.untransmitted === 1
+      ? '1 לא שודרה'
+      : `${t.untransmitted} לא שודרו`
+    : null;
+  const unresolved = t.unresolved ? (t.unresolved === 1 ? '1 לא מוכרעת' : `${t.unresolved} לא מוכרעות`) : null;
+  if (t.cardSales) {
+    const sales = t.cardSales === 1 ? 'עסקת אשראי אחת שלא נסגרה ב-Z' : `${t.cardSales} עסקאות אשראי שלא נסגרו ב-Z`;
+    const extra = [untransmitted, unresolved].filter(Boolean).join(', ');
+    return `${where} ${sales}${extra ? ` (${extra})` : ''}`;
+  }
+  const parts: string[] = [];
+  if (t.untransmitted) {
+    parts.push(t.untransmitted === 1 ? 'עסקת אשראי אחת שלא שודרה' : `${t.untransmitted} עסקאות אשראי שלא שודרו`);
+  }
+  if (t.unresolved) parts.push(t.unresolved === 1 ? 'תשלום אשראי אחד לא מוכרע' : `${t.unresolved} תשלומי אשראי לא מוכרעים`);
+  return `${where} ${parts.join(', ')}`;
+}
+
+/** Every till's line, then what to do: "… . יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'". */
+export function openCardMessage(tills: readonly OpenCardTill[]): string {
+  return `${tills.map(openCardLine).join('; ')}. ${PI_TEXT.openCardTail}`;
+}
+
+/** The server refused "ללא אשראי" over open card sales (the dialog keeps its toast up longer). */
+export function isOpenCardError(err: unknown): boolean {
+  const detail = (err as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+  return !!detail && typeof detail === 'object' && (detail as { code?: unknown }).code === OPEN_CARD_CODE;
+}
+
+// ── A kiosk "ללא אשראי" ──────────────────────────────────────────────────────
+
+/**
+ * Whether a kiosk's form should say "לקיוסק לא יישאר אמצעי תשלום" before the save: it ends up
+ * on `none` and its config has no "תשלום בקופה" ([kioskPaysAtTill] false — the context's
+ * `kioskPaysAtTill`; null for a till that is no kiosk, or an older server). A warning only.
+ */
+export function kioskLeftWithoutPayment(effective: PaymentIntegration, kioskPaysAtTill: boolean | null | undefined): boolean {
+  return effective === 'none' && kioskPaysAtTill === false;
+}
+
+/**
+ * The toasts a settings save's `warnings` call for (the PATCH answer's, or the kiosk settings
+ * PUT's): "לקיוסק לא יישאר אמצעי תשלום: קיוסק רויאל". [] for none, or an older server.
+ */
+export function saveWarningMessages(data: unknown): string[] {
+  const raw = (data as { warnings?: unknown } | null | undefined)?.warnings;
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const { code, message, names } = item as { code?: unknown; message?: unknown; names?: unknown };
+    const head =
+      code === 'kiosk_no_payment_method'
+        ? PI_TEXT.kioskNoPayment
+        : typeof message === 'string' && message.trim()
+          ? message.trim()
+          : null;
+    if (!head) continue;
+    const who = Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string' && n.trim() !== '') : [];
+    out.push(who.length > 0 ? `${head}: ${who.join(', ')}` : head);
+  }
+  return out;
+}
+
 // ── The machines list ────────────────────────────────────────────────────────
 
-/** The integration fields of a `GET /machines` row. */
+/** The integration fields of a `GET /machines` row (`none`: "ללא אשראי", a plain badge). */
 export interface MachineIntegrationFields {
   paymentIntegration?: ResolvedIntegration | null;
   paymentIntegrationSource?: SettingsLevelName | null;
@@ -970,7 +1112,9 @@ export function normalizeMachineIntegration(raw: Record<string, unknown>): Requi
   const automatic = raw.paymentIntegrationAutomatic ?? raw.payment_integration_automatic;
   return {
     paymentIntegration:
-      v === 'agamento' || v === 'nayax_lan' || v === 'nayax_usb' || v === 'zcredit' || v === 'synqpay' ? v : null,
+      v === 'agamento' || v === 'nayax_lan' || v === 'nayax_usb' || v === 'zcredit' || v === 'synqpay' || v === 'none'
+        ? v
+        : null,
     paymentIntegrationSource: cleanLevel(raw.paymentIntegrationSource ?? raw.payment_integration_source),
     paymentIntegrationAutomatic: typeof automatic === 'boolean' ? automatic : null,
     paymentIntegrationMissing: Array.isArray(missingRaw)
@@ -980,9 +1124,9 @@ export function normalizeMachineIntegration(raw: Record<string, unknown>): Requi
 }
 
 export interface IntegrationBadge {
-  /** "Z-Credit", "Nayax (אוטומטי)". */
+  /** "Z-Credit", "Nayax (אוטומטי)", "ללא אשראי". */
   label: string;
-  /** `warn` while the integration is missing fields. */
+  /** `warn` while the integration is missing fields — never for "ללא אשראי", which needs none. */
   tone: 'neutral' | 'warn';
   /** The full name, where it was chosen and what is missing, for the badge's title. */
   title: string;
@@ -998,7 +1142,8 @@ export function integrationBadge(row: MachineIntegrationFields): IntegrationBadg
   const label = automatic
     ? `${INTEGRATION_SHORT_LABELS[v]} ${PI_TEXT.automaticSuffix}`
     : INTEGRATION_SHORT_LABELS[v];
-  const missing = missingFieldsLabel(row.paymentIntegrationMissing);
+  // "ללא אשראי": a plain badge, never a warning (nothing can be missing).
+  const missing = v === 'none' ? '' : missingFieldsLabel(row.paymentIntegrationMissing);
   const source = cleanLevel(row.paymentIntegrationSource);
   const parts = [INTEGRATION_LABELS[v]];
   if (automatic) parts.push(PI_TEXT.automaticSuffix);

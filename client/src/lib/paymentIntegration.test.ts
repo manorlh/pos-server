@@ -18,19 +18,26 @@ import {
   inheritedLabel,
   integrationBadge,
   INTEGRATION_LABELS,
+  INTEGRATION_SHORT_LABELS,
   integrationOptions,
   isExternal,
+  isOpenCardError,
   isSecretMask,
   isValidPinpadHost,
   isValidPort,
+  kioskLeftWithoutPayment,
   missingFieldsLabel,
   missingRequiredFields,
   normalizeMachineIntegration,
+  openCardLine,
+  openCardMessage,
+  openCardTills,
   paymentIntegrationErrorMessage,
   PAYMENT_INTEGRATIONS,
   PI_TEXT,
   REQUIRED_FIELDS,
   resolveFormIntegration,
+  saveWarningMessages,
   secretSavedLabel,
   spicyPathError,
   SYNQPAY_CONNECTIONS,
@@ -702,5 +709,136 @@ describe('Nayax on the till\'s USB (nayax_usb)', () => {
       'מסוף USB אחד לקופה: x',
     );
     assert.equal(paymentIntegrationErrorMessage(err({ code: 'usb_terminal_second' })), PI_TEXT.oneUsbTerminal);
+  });
+});
+
+// ── "ללא אשראי" (`none`, P:/specs/payment-integration-none.md) ─────────────────
+
+describe('no card (none)', () => {
+  it('is a known value with its labels, last in the list, not external', () => {
+    assert.equal(cleanIntegration(' None '), 'none');
+    assert.equal(PAYMENT_INTEGRATIONS[PAYMENT_INTEGRATIONS.length - 1], 'none');
+    assert.equal(INTEGRATION_LABELS.none, 'ללא אשראי (מזומן ואמצעים אחרים)');
+    assert.equal(INTEGRATION_SHORT_LABELS.none, 'ללא אשראי');
+    assert.equal(isExternal('none'), false);
+  });
+
+  it('may be picked at every level and on every device', () => {
+    for (const device of [null, { hasBuiltinTerminal: true, hasNfc: true }, { hasBuiltinTerminal: false, hasNfc: false }]) {
+      const option = integrationOptions(device).find((o) => o.value === 'none');
+      assert.ok(option);
+      assert.deepEqual(
+        { selectable: option.selectable, hidden: option.hidden, label: option.label, reason: option.reason },
+        { selectable: true, hidden: false, label: 'ללא אשראי (מזומן ואמצעים אחרים)', reason: null },
+      );
+    }
+  });
+
+  it('needs nothing and hides every terminal field', () => {
+    assert.deepEqual(REQUIRED_FIELDS.none, []);
+    assert.deepEqual(FORM_FIELDS.none, []);
+    // A till on it saves with nothing filled in — a tablet too, and whatever nayaxEnabled says.
+    const form = { paymentIntegration: 'none', nayaxEnabled: true };
+    assert.deepEqual(validatePaymentIntegration(form, {}, noSecrets, { hasBuiltinTerminal: false }), {});
+    assert.deepEqual(missingRequiredFields('none', {}, {}, noSecrets), []);
+    // A leftover bad value under it is still refused (shown as a hidden field's error, with "נקה").
+    const leftover = validatePaymentIntegration({ paymentIntegration: 'none', zcreditTerminalNumber: '12a' }, {}, noSecrets);
+    assert.equal(leftover.zcreditTerminalNumber, PI_TEXT.digitsOnly);
+  });
+
+  it('is inherited like any choice, a tablet included, and a till may opt back', () => {
+    assert.deepEqual(resolveFormIntegration({ own: null, inherited: 'none', hasBuiltinTerminal: false }), {
+      selected: 'auto',
+      effective: 'none',
+      automatic: false,
+      inherited: true,
+    });
+    assert.deepEqual(resolveFormIntegration({ own: 'agamento', inherited: 'none', hasBuiltinTerminal: true }), {
+      selected: 'agamento',
+      effective: 'agamento',
+      automatic: false,
+      inherited: false,
+    });
+    assert.equal(inheritedLabel('none', 'shop'), 'בירושה מהחנות: ללא אשראי (מזומן ואמצעים אחרים)');
+  });
+
+  it('is a plain badge on the machines list — never a warning', () => {
+    const row = normalizeMachineIntegration({
+      paymentIntegration: 'none',
+      paymentIntegrationSource: 'shop',
+      paymentIntegrationAutomatic: false,
+      // An older server could still list a field: "ללא אשראי" needs none, so no warning.
+      paymentIntegrationMissing: ['nayaxDeviceHost'],
+    });
+    assert.equal(row.paymentIntegration, 'none');
+    const badge = integrationBadge(row);
+    assert.ok(badge);
+    assert.deepEqual(badge, {
+      label: 'ללא אשראי',
+      tone: 'neutral',
+      title: 'ללא אשראי (מזומן ואמצעים אחרים) · נבחר ברמת החנות',
+      missing: '',
+    });
+  });
+
+  it('warns a kiosk left with no payment, before the save and from its answer', () => {
+    assert.equal(kioskLeftWithoutPayment('none', false), true);
+    assert.equal(kioskLeftWithoutPayment('none', true), false);
+    // A till (null) or an older server (undefined): nothing to say.
+    assert.equal(kioskLeftWithoutPayment('none', null), false);
+    assert.equal(kioskLeftWithoutPayment('none', undefined), false);
+    assert.equal(kioskLeftWithoutPayment('nayax_lan', false), false);
+    assert.equal(PI_TEXT.kioskNoPayment, 'לקיוסק לא יישאר אמצעי תשלום');
+
+    const answer = {
+      settings: {},
+      warnings: [
+        { code: 'kiosk_no_payment_method', message: 'לקיוסק לא יישאר אמצעי תשלום', machineIds: ['k1', 'k2'], names: ['קיוסק רויאל', 'קיוסק 2'] },
+        { code: 'something_new', message: 'אזהרה אחרת' },
+        { code: 'x' },
+        'junk',
+      ],
+    };
+    assert.deepEqual(saveWarningMessages(answer), [
+      'לקיוסק לא יישאר אמצעי תשלום: קיוסק רויאל, קיוסק 2',
+      'אזהרה אחרת',
+    ]);
+    assert.deepEqual(saveWarningMessages({ settings: {}, warnings: [] }), []);
+    // An older server answers without `warnings`.
+    assert.deepEqual(saveWarningMessages({ settings: {} }), []);
+    assert.deepEqual(saveWarningMessages(undefined), []);
+  });
+
+  it('words the 409 over open card sales (§6) from its tills, as the server does', () => {
+    const err = (detail: unknown) => ({ response: { status: 409, data: { detail } } });
+    const tills = [
+      { machineId: 'm3', name: 'Till 3', posNumber: '3', cardSales: 12, untransmitted: 2, unresolved: 1 },
+      { machineId: 'm5', name: 'טאבלט', posNumber: null, cardSales: 0, untransmitted: 1, unresolved: 0 },
+      { machineId: 'm7', name: 'קופה 7', posNumber: '7', cardSales: 0, untransmitted: 0, unresolved: 0 },
+    ];
+    const e = err({ code: 'payment_integration_open_card', msg: 'server words', tills });
+    assert.equal(isOpenCardError(e), true);
+    assert.equal(
+      paymentIntegrationErrorMessage(e),
+      "בקופה 3 יש 12 עסקאות אשראי שלא נסגרו ב-Z (2 לא שודרו, 1 לא מוכרעת); בטאבלט יש עסקת אשראי אחת שלא שודרה. יש לבצע שידור ו-Z לפני המעבר ל'ללא אשראי'",
+    );
+    // A till with nothing open is no row; no rows: the server's words, else what to do.
+    assert.deepEqual(openCardTills(tills).map((t) => t.machineId), ['m3', 'm5']);
+    assert.equal(paymentIntegrationErrorMessage(err({ code: 'payment_integration_open_card', msg: 'server words', tills: [] })), 'server words');
+    assert.equal(paymentIntegrationErrorMessage(err({ code: 'payment_integration_open_card' })), PI_TEXT.openCardTail);
+    assert.equal(isOpenCardError(err({ code: 'usb_terminal_second' })), false);
+    // Singular and plural, as the spec's example.
+    const one = { machineId: 'x', name: null, posNumber: '1', cardSales: 1, untransmitted: 1, unresolved: 2 };
+    assert.equal(openCardLine(one), 'בקופה 1 יש עסקת אשראי אחת שלא נסגרה ב-Z (1 לא שודרה, 2 לא מוכרעות)');
+    assert.equal(
+      openCardLine({ ...one, cardSales: 0, untransmitted: 3, unresolved: 1 }),
+      'בקופה 1 יש 3 עסקאות אשראי שלא שודרו, תשלום אשראי אחד לא מוכרע',
+    );
+    assert.equal(openCardMessage([{ ...one, untransmitted: 0, unresolved: 0 }]), `בקופה 1 יש עסקת אשראי אחת שלא נסגרה ב-Z. ${PI_TEXT.openCardTail}`);
+  });
+
+  it('says on the payment methods page that card is off on such tills, and lets a tablet pick it', () => {
+    assert.equal(PI_TEXT.paymentMethodsNote, 'האשראי כבוי בקופות שמוגדרות ללא אשראי');
+    assert.match(PI_TEXT.agamentoNeedsBuiltin, /ללא אשראי/);
   });
 });

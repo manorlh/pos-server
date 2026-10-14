@@ -3,8 +3,8 @@
 /**
  * "תפריט הקופה" on the device page (P:/specs/till-menu-hide.md §3): which of the till's menu items this
  * till hides from everyone, whatever their permissions — set on the till itself, or inherited from its
- * point of sale / shop / company (shown with where from). Written by the super admin and the company
- * managers (`/till-menu-hide`); a shop manager sees it read-only. The other levels: "עיצוב קופה" and
+ * point of sale / shop / company (shown with where from). Written by the super admin, a distributor and
+ * the company managers (`/till-menu-hide`); a shop manager sees it read-only. The other levels: "עיצוב קופה" and
  * "פרמטרים לקופות".
  */
 

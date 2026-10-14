@@ -5,10 +5,12 @@ One row per sign-in of a till user at a till, kept after it ends (`released_at`)
 small history: who released it and how (`released_by`):
 
 * ``self``    — the employee signed out at that till (or switched user, or the idle lock);
-* ``manager`` — a manager released it: at another till with their PIN (the employee
-  moved there), or from the dashboard;
+* ``manager`` — a manager released it: at another till with their PIN or the phone's
+  approval (the employee moved there), or from the dashboard;
 * ``stale``   — its till went silent for longer than `exclusiveUserLoginStaleMinutes`,
-  and the next claim elsewhere took it over;
+  and the next claim elsewhere took it over (only with `exclusiveUserLoginAutoRelease = minutes`);
+* ``duplicate`` — found at two devices after an offline sign-in, with
+  `exclusiveUserLoginDuplicate = signout`: this device signed in last and gives way;
 * ``unpair``  — its till was unpaired, deactivated, replaced or moved to another shop.
 
 The rule itself — one live session per till user — is a partial unique index, so two
@@ -24,7 +26,7 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 
-RELEASED_BY = ("self", "manager", "stale", "unpair")
+RELEASED_BY = ("self", "manager", "stale", "duplicate", "unpair")
 
 
 class PosUserSession(Base):
@@ -52,11 +54,11 @@ class PosUserSession(Base):
     last_seen_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     released_at = Column(DateTime(timezone=True), nullable=True)
-    #: self | manager | stale | unpair (`RELEASED_BY`).
+    #: self | manager | stale | duplicate | unpair (`RELEASED_BY`).
     released_by = Column(String(16), nullable=True)
     #: The manager who released it (a till user's or a cloud account's name).
     released_by_name = Column(String(200), nullable=True)
-    #: A forced release at a till: the till the employee moved to. Null from the dashboard.
+    #: A forced (or a duplicate's) release at a till: the till the employee moved to. Null from the dashboard.
     released_by_machine_id = Column(UUID(as_uuid=True), nullable=True)
 
 

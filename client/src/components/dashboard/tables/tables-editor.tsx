@@ -12,13 +12,19 @@
  * tables kept where the cloud placed them, or laid out in a tidy grid when they have no place —
  * lib/tableSketch.ts `planSwitchToMap`) and the map editor opens on "סקיצה", to design it. The way
  * back is the zone settings' "תצוגה" (the sketch and the places are kept).
+ *
+ * The same editor is the till design's "שולחנות ומפה" tab (P:/specs/till-design-tables.md §1:
+ * `embedded`) — the owner's main place to design the floor; the tables page points there. It hands
+ * the floor as it is now (`onLive`: the zone, its layout and canvas — the zone settings' too while
+ * they are open — the plan, the tables where they stand) to the preview beside it, before any save.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ImagePlus, LayoutGrid, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
+import { ImagePlus, LayoutGrid, LayoutTemplate, Map as MapIcon, Plus, Trash2 } from 'lucide-react';
 import { uploadProductImage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
@@ -36,12 +42,22 @@ import {
   type TableShape,
   type ZoneLayout,
 } from '@/lib/tablesApi';
-import { defaultTableSize, planSwitchToMap } from '@/lib/tableSketch';
+import {
+  backgroundOf,
+  defaultTableSize,
+  planSwitchToMap,
+  uniqueElements,
+  type SketchBackground,
+  type SketchElement,
+} from '@/lib/tableSketch';
 import { tableDisplay } from '@/lib/tableRestore';
 import { draftOf, policyBadge, policyBody, validatePolicyDraft, type PolicyDraft } from '@/lib/tablePolicy';
 import { PolicyFields, TableTypesDialog } from '@/components/dashboard/tables/table-types';
 import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
-import { MapEditor } from '@/components/dashboard/tables/map-editor';
+import { canAccess } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
+import { MapEditor, type MapLive } from '@/components/dashboard/tables/map-editor';
+import type { PreviewTable } from '@/components/dashboard/tables/sketch-preview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -69,13 +85,45 @@ function GridBadge({
   );
 }
 
-export function TablesEditor({ shopId }: { shopId: string }) {
+/** The floor as the editor holds it now (saved or not): what a preview beside it draws. */
+export interface FloorLive {
+  shopId: string;
+  zoneId: string;
+  zoneName: string;
+  layout: ZoneLayout;
+  cw: number;
+  ch: number;
+  backgroundUrl: string | null;
+  background: SketchBackground;
+  elements: SketchElement[];
+  tables: PreviewTable[];
+  logoUrl: string | null;
+  /** Moves or plan edits on the map not saved yet. */
+  dirty: boolean;
+}
+
+const canvasOf = (text: string, fallback: number) => Math.min(5000, Math.max(200, Number(text) || fallback));
+
+export function TablesEditor({
+  shopId,
+  embedded = false,
+  onLive,
+}: {
+  shopId: string;
+  /** Inside the till design's "שולחנות ומפה" (its preview stands beside it). */
+  embedded?: boolean;
+  /** The floor as it is now, on every change (null: no zone) — a stable function (a state setter). */
+  onLive?: (live: FloorLive | null) => void;
+}) {
   const t = useTranslations('tables');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const layoutKey = ['tables-layout', shopId];
   const { data, isLoading } = useQuery({ queryKey: layoutKey, queryFn: () => fetchTablesLayout(shopId) });
   const { data: areas = [] } = useShopAreas(shopId);
+  // "עיצוב קופה → שולחנות ומפה": pointed to from here for whoever may open it.
+  const access = useDashboardAccess();
+  const designLink = !embedded && canAccess(access, 'till_design', 'view');
 
   const zones = useMemo(() => data?.zones ?? [], [data]);
   const tableTypes = useMemo(() => data?.tableTypes ?? [], [data]);
@@ -85,6 +133,8 @@ export function TablesEditor({ shopId }: { shopId: string }) {
   const [mapDirty, setMapDirty] = useState(false);
   // The zone just turned from squares into a map: its editor opens on "סקיצה".
   const [sketchZoneId, setSketchZoneId] = useState<string | null>(null);
+  // The map editor's plan and tables as they are now (for `onLive`).
+  const [mapLive, setMapLive] = useState<MapLive | null>(null);
   const zone = zones.find((z) => z.id === zoneId) ?? zones[0] ?? null;
   const tables = useMemo(
     () => (data?.tables ?? []).filter((tb) => zone && tb.zoneId === zone.id).sort((a, b) => a.number - b.number),
@@ -277,10 +327,59 @@ export function TablesEditor({ shopId }: { shopId: string }) {
     onError: fail,
   });
 
+  // The floor as it is now, for a preview beside the editor: the zone settings while they are open
+  // (a layout switched, a canvas resized, a floor image), the map editor's unsaved plan and moves.
+  const live = useMemo<FloorLive | null>(() => {
+    if (!zone) return null;
+    const editing = zoneDialog === 'edit';
+    const layout: ZoneLayout = editing ? zLayout : zone.layout;
+    const cw = editing ? canvasOf(zWidth, zone.canvasWidth) : zone.canvasWidth;
+    const ch = editing ? canvasOf(zHeight, zone.canvasHeight) : zone.canvasHeight;
+    const backgroundUrl = editing ? zBackground : zone.backgroundUrl;
+    const fromMap = zone.layout === 'map' && mapLive?.zoneId === zone.id ? mapLive : null;
+    let liveTables: PreviewTable[] =
+      fromMap?.tables ??
+      tables.map((tb) => ({
+        id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation,
+      }));
+    if (layout === 'map' && zone.layout === 'grid') {
+      // Squares about to become a map: the tables where "עבור לתצוגת מפה" would put them.
+      const placed = new Map(planSwitchToMap(liveTables, cw, ch).map((pl) => [pl.id, pl]));
+      liveTables = liveTables.map((tb) => ({ ...tb, ...(placed.get(tb.id) ?? {}) }));
+    }
+    return {
+      shopId,
+      zoneId: zone.id,
+      zoneName: editing && zName.trim() ? zName.trim() : zone.name,
+      layout,
+      cw,
+      ch,
+      backgroundUrl,
+      background: fromMap?.background ?? backgroundOf(zone.sketch, !!backgroundUrl),
+      elements: fromMap?.elements ?? uniqueElements(zone.sketch?.elements ?? []),
+      tables: liveTables,
+      logoUrl: data?.logoUrl ?? null,
+      dirty: mapDirty,
+    };
+  }, [zone, zoneDialog, zLayout, zWidth, zHeight, zBackground, zName, mapLive, tables, shopId, data?.logoUrl, mapDirty]);
+  useEffect(() => {
+    onLive?.(live);
+  }, [onLive, live]);
+
   if (isLoading) return <Skeleton className="h-96 w-full" />;
 
   return (
     <div className="space-y-3">
+      {designLink ? (
+        // The owner: the floor is designed first in "עיצוב קופה" — the same editor, with the till's preview.
+        <Link
+          href="/dashboard/till-design?section=floor"
+          className="flex items-center gap-2 rounded-lg border border-sky-300/60 bg-sky-50 px-3 py-2 text-sm text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100"
+        >
+          <LayoutTemplate className="h-4 w-4 shrink-0" />
+          <span>{t('designInTill')}</span>
+        </Link>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {zones.map((z) => (
           <Button
@@ -341,6 +440,8 @@ export function TablesEditor({ shopId }: { shopId: string }) {
               onDirtyChange={setMapDirty}
               logoUrl={data?.logoUrl ?? null}
               initialMode={sketchZoneId === zone.id ? 'sketch' : 'tables'}
+              onLive={onLive ? setMapLive : undefined}
+              previewButton={!embedded}
             />
           ) : (
             <div className="space-y-3">

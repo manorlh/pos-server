@@ -87,6 +87,28 @@
           {"id": "gdst0001", "kind": "door", "x": 1040, "y": 8, "w": 110, "h": 28, "rotation": 0, "text": null, "variant": "staff"}
         ]
       }
+    },
+    {
+      "id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d003",
+      "name": "טקסט ולוגו",
+      "sortOrder": 2,
+      "layout": "map",
+      "backgroundUrl": null,
+      "canvasWidth": 1000,
+      "canvasHeight": 700,
+      "sketch": {
+        "template": null,
+        "background": "light",
+        "elements": [
+          {"id": "tlbl0001", "kind": "label", "x": 300, "y": 40, "w": 400, "h": 70, "rotation": 0, "text": "ברוכים הבאים", "color": "#1e293b", "fontSize": "xl", "bold": true, "bg": "#fef3c7", "bgOpacity": 85},
+          {"id": "tlbl0002", "kind": "label", "x": 40, "y": 610, "w": 320, "h": 40, "rotation": 0, "text": "קומה ב׳ — המדרגות משמאל", "color": "#475569", "fontSize": "s", "align": "left"},
+          {"id": "tlbl0003", "kind": "label", "x": 640, "y": 300, "w": 200, "h": 50, "rotation": 30, "text": "בר יין", "color": "#ffffff", "fontSize": 24, "bold": true, "bg": "#0f172a", "bgOpacity": 60, "align": "right"},
+          {"id": "tlbl0004", "kind": "label", "x": 60, "y": 200, "w": 320, "h": 130, "rotation": 0, "text": "שעות פתיחה\nא׳–ה׳ 12:00–23:00\nו׳ 10:00–15:00", "fontSize": "m", "bg": "#ffffff", "bgOpacity": 100},
+          {"id": "tlbl0005", "kind": "label", "x": 420, "y": 620, "w": 160, "h": 40, "rotation": 0, "text": "מרפסת", "color": "#15803d", "fontSize": "l"},
+          {"id": "tlgo0001", "kind": "logo", "x": 420, "y": 300, "w": 160, "h": 160, "rotation": 15, "text": null, "source": "business", "opacity": 60},
+          {"id": "tlgo0002", "kind": "logo", "x": 740, "y": 500, "w": 220, "h": 120, "rotation": 0, "text": null, "source": "image", "src": "https://media.example.com/uploads/sketch/wine-bar-logo.png", "opacity": 35, "keepAspect": false}
+        ]
+      }
     }
   ],
   "tables": [

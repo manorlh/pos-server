@@ -173,9 +173,38 @@ export function normalizeView(view: KioskView): KioskView {
   // where the kiosk is set to take one — the APK holds it (voucherApply) and the payment books it.
   // With the card alone: no "איך תרצו לשלם?".
   const configured: readonly unknown[] = Array.isArray(resolved.payment?.methods) ? resolved.payment.methods : [];
-  const methods: PaymentMethod[] = configured.includes('voucher') ? ['card', 'voucher'] : ['card'];
-  const pay = view.pay ?? { methods, usable: methods, cardOff: null };
+  const pay = view.pay ?? (androidNoCard(view) ? noCardPay(configured) : cardPay(configured));
   return { ...view, pay, config: localMediaOnly(JSON.parse(JSON.stringify(resolved))) as Record<string, unknown> };
+}
+
+/** "ללא אשראי" as the card's tile says it (the Windows kiosk's and the browser kiosk's words). */
+export const ANDROID_NO_CARD_TEXT = 'הקיוסק מוגדר ללא אשראי';
+
+/**
+ * "ללא אשראי" (`paymentIntegration` = `none`, pos-server P:/specs/payment-integration-none.md): the APK's
+ * snapshot (pos-android KioskWebSnapshot) says `state.terminal` = `no_card` — no terminal by design, not a
+ * fault. Its `state.noPayment` is set then too (KioskPayBlock.TERMINAL); the screens go by `pay` instead.
+ */
+export function androidNoCard(view: Pick<KioskView, 'state'> | null | undefined): boolean {
+  return view?.state?.terminal === 'no_card';
+}
+
+function cardPay(configured: readonly unknown[]): KioskView['pay'] {
+  const methods: PaymentMethod[] = configured.includes('voucher') ? ['card', 'voucher'] : ['card'];
+  return { methods, usable: methods, cardOff: null };
+}
+
+/**
+ * No card tile at all (not one shown off), and never the terminal's "not available" on a press: what is
+ * left of what the web engine takes here is the voucher, where the kiosk takes one. A voucher is usable
+ * only where its order can be finished — by the card or at the till (client lib/kioskConfig.ts
+ * voucherCanFinish) — and cash at the till is the APK's own screens' (bridge API 1 has no call that places
+ * an order for the till): so nothing is usable, and the kiosk rests on its "no payment" screen, as the
+ * native kiosk does with nothing to sell by.
+ */
+function noCardPay(configured: readonly unknown[]): KioskView['pay'] {
+  const methods: PaymentMethod[] = configured.includes('voucher') ? ['voucher'] : [];
+  return { methods, usable: [], cardOff: ANDROID_NO_CARD_TEXT };
 }
 
 export interface AndroidBridges {

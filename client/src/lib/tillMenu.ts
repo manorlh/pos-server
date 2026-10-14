@@ -47,7 +47,8 @@ export type MenuIcon =
   | 'lock'
   | 'phone'
   | 'logout'
-  | 'training';
+  | 'training'
+  | 'cart';
 
 export interface TillMenuItem {
   key: string;
@@ -147,6 +148,11 @@ export const TILL_MENU_ITEMS: readonly TillMenuItem[] = [
   item('training', 'מצב הדרכה: "הפק Z" של הדרכה', 'outside', 'training', TILE.orange, {
     also: 'הפס הכתום לא מוסתר. בקופה אין כניסה להדרכה מהתפריט, הענן מדליק אותה',
   }),
+  // §5א "מכשיר לשולחנות בלבד": the till opens on its tables; no way to the sale screen but through a table.
+  item('quick_order', 'הזמנה מהירה (בסרגל, לא בתפריט)', 'outside', 'cart', TILE.blue, {
+    also:
+      'הקופה נפתחת על מסך השולחנות; הלשונית "הזמנה מהירה", כל מעבר למסך המכירה שלא דרך שולחן, "מכירה מהירה" במסך השולחנות ו"החזר הזמנה"',
+  }),
 ];
 
 /** The groups of the till's menu, in order; a null title is a group without a heading. */
@@ -240,12 +246,49 @@ export const WARNING_TEXTS: Readonly<Record<string, string>> = {
   settings: 'בקופה הזו ההגדרות יהיו נגישות רק בקוד טכנאי, דרך "אבחון" (מסך הטכנאי).',
 };
 
-/** What hiding `keys` means, in the menu's order: the critical items, then how the till keeps its ways in. */
-export function menuWarnings(keys: readonly string[]): MenuWarning[] {
+/** §5א: "הזמנה מהירה" hidden with no tables to sell through (the server's `till_menu.NO_WAY_TO_SELL`). */
+export const NO_WAY_TO_SELL = 'בקופה הזו לא תישאר דרך למכור';
+
+/**
+ * Whether hiding `keys` leaves no way to sell (§5א): "הזמנה מהירה" hidden while "שולחנות" is hidden too
+ * or the tables are off (`tablesOff`; undefined = not known) — the till then ignores "quick_order".
+ */
+export function noWayToSell(keys: readonly string[], tablesOff?: boolean | null): 'tablesHidden' | 'tablesOff' | null {
+  const hidden = new Set(parseHidden([...keys]));
+  if (!hidden.has('quick_order')) return null;
+  if (hidden.has('tables')) return 'tablesHidden';
+  return tablesOff === true ? 'tablesOff' : null;
+}
+
+/**
+ * What hiding `keys` means, in the menu's order: the critical items, "no way to sell" (§5א), then how
+ * the till keeps its ways in. `tablesOff`: the tables mode where the list applies, when known.
+ */
+export function menuWarnings(keys: readonly string[], tablesOff?: boolean | null): MenuWarning[] {
   const hidden = parseHidden([...keys]);
   const out: MenuWarning[] = hidden
     .filter((k) => BY_KEY.get(k)?.critical)
     .map((k) => ({ key: k, label: BY_KEY.get(k)!.label, text: WARNING_TEXTS[k] ?? '', tone: 'critical' as const }));
+  const selling = noWayToSell(hidden, tablesOff);
+  if (selling) {
+    const reason = selling === 'tablesHidden' ? 'גם "שולחנות" מוסתר' : 'ניהול השולחנות כבוי';
+    out.push({
+      key: 'quick_order',
+      label: BY_KEY.get('quick_order')!.label,
+      text: `${NO_WAY_TO_SELL}: ${reason}. הקופה תתעלם מהסתרת "הזמנה מהירה" ותציג את מסך המכירה, עד שיהיו בה שולחנות.`,
+      tone: 'critical',
+    });
+  } else if (hidden.includes('quick_order')) {
+    out.push({
+      key: 'quick_order',
+      label: BY_KEY.get('quick_order')!.label,
+      text:
+        tablesOff === false
+          ? 'מכשיר לשולחנות בלבד: הקופה תיפתח על מסך השולחנות, ומסך המכירה רק דרך שולחן.'
+          : 'מכשיר לשולחנות בלבד: הקופה תיפתח על מסך השולחנות. אם השולחנות כבויים בה, היא תתעלם מזה ותציג את מסך המכירה.',
+      tone: 'note',
+    });
+  }
   if (hidden.includes('settings') && hidden.includes('diagnostics')) {
     out.push({
       key: 'diagnostics',
@@ -308,6 +351,8 @@ export interface MenuHideView {
   inheritedFrom: { level: MenuLevel; id: string; name: string | null } | null;
   effective: string[];
   warnings: { key: string; label: string; warning: string }[];
+  /** `tablesMode` is off where the list applies ("כבוי", the default): "הזמנה מהירה" cannot be hidden there. */
+  tablesOff: boolean;
   items: { key: string; label: string; also: string | null; critical: boolean; warning: string | null; report: boolean }[];
   active: boolean;
   canEdit: boolean;
@@ -365,13 +410,16 @@ export interface PreviewGroup {
 /**
  * The till's menu with `hidden` taken out (§5): the reports fold into their "דוחות" folder, which goes
  * when every report is hidden; "אבחון" stays while "הגדרות" is hidden (the way in by technician code);
- * an empty group goes. Every item is shown as if the till offers it — the till still shows only what
+ * "הזמנה מהירה" stays when there are no tables to sell through (§5א); an empty group goes. Every item is shown as if the till offers it — the till still shows only what
  * the user's permissions and its own setup allow.
  */
-export function menuPreview(hidden: readonly string[]): PreviewGroup[] {
+export function menuPreview(hidden: readonly string[], tablesOff?: boolean | null): PreviewGroup[] {
   const off = new Set(parseHidden([...hidden]));
   const keepDiagnostics = off.has('settings');
-  const shows = (it: TillMenuItem) => !off.has(it.key) || (it.key === 'diagnostics' && keepDiagnostics);
+  // §5א: with no tables to sell through, the till ignores "quick_order".
+  const keepQuickOrder = noWayToSell([...off], tablesOff) !== null;
+  const shows = (it: TillMenuItem) =>
+    !off.has(it.key) || (it.key === 'diagnostics' && keepDiagnostics) || (it.key === 'quick_order' && keepQuickOrder);
   const groups: PreviewGroup[] = [];
   for (const g of MENU_GROUPS) {
     const items = TILL_MENU_ITEMS.filter((it) => it.group === g.id);
@@ -388,7 +436,9 @@ export function menuPreview(hidden: readonly string[]): PreviewGroup[] {
       rows.push(
         it.key === 'diagnostics' && keepDiagnostics && off.has('diagnostics')
           ? { kind: 'item', item: it, note: 'נשאר: הדרך להגדרות בקוד טכנאי' }
-          : { kind: 'item', item: it },
+          : it.key === 'quick_order' && keepQuickOrder
+            ? { kind: 'item', item: it, note: 'נשאר: אין בקופה שולחנות למכור דרכם' }
+            : { kind: 'item', item: it },
       );
     }
     if (rows.length > 0) groups.push({ id: g.id, title: g.title, rows });

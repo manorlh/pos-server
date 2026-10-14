@@ -7,6 +7,10 @@
  * form, and the review of the changes before a save. The saved layer is the minimal one: only
  * what differs from what the level inherits. The Windows profile is not built yet and is not
  * shown (the owner: "להסתיר את מה שעוד לא בנוי", P:\specs\till-design-phase2.md decision 1).
+ *
+ * "שולחנות ומפה" (P:/specs/till-design-tables.md, ./section-floor.tsx): the floor editor itself and the
+ * tables' look and the map's display — till parameters at the same level, saved apart from the design
+ * (the bar below saves both) — with the till's floor beside it, every change shown before it is saved.
  */
 
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
@@ -43,10 +47,12 @@ import {
   type TillDesignLayer,
 } from '@/lib/tillDesign';
 import {
+  fetchTableDisplay,
   fetchTillCatalog,
   fetchTillDesignDefaults,
   fetchTillDesignSettings,
   fetchTillDesignTargets,
+  saveTableDisplay,
   saveTillDesignSettings,
   tillDesignErrors,
   type TillDesignLevel,
@@ -54,9 +60,13 @@ import {
   type TillDesignTargets,
 } from '@/lib/tillDesignApi';
 import { fetchCourses } from '@/lib/menuApi';
+import { changedParams, effectiveParams, overdueError } from '@/lib/tableTileLook';
+import type { PreviewDevice } from '@/lib/tableSketch';
+import type { FloorLive } from '@/components/dashboard/tables/tables-editor';
 import { TillEditorContext, useIssueText, type TillEditorValue } from './editor-context';
 import { OptionSelect, Segmented } from './fields';
 import { ReviewDialog } from './review-dialog';
+import { FloorPreviewPanel, FloorSection } from './section-floor';
 import { ActionsSection } from './section-actions';
 import { FieldsSection } from './section-fields';
 import { LayoutSection } from './section-layout';
@@ -68,7 +78,7 @@ import { TillMenuSection } from './section-till-menu';
 import { CoursesOffNote, CoverageSummary } from './section-template-options';
 import { TillPreview } from './till-preview';
 
-type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion' | 'tillMenu';
+type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion' | 'tillMenu' | 'floor';
 
 const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'template', paths: ['template', 'profiles', 'courses', 'payDock', 'night', 'visual', 'professional', 'bar.openTabs'] },
@@ -81,7 +91,14 @@ const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'motion', paths: ['motion'] },
   // "תפריט הקופה": a till parameter of its own (`hiddenMenuItems`), saved apart from the layer.
   { key: 'tillMenu', paths: [] },
+  // "שולחנות ומפה" (P:/specs/till-design-tables.md): till parameters and the floor, not the design's paths.
+  { key: 'floor', paths: [] },
 ];
+
+/** A tab named in the address (`?section=floor`, the tables page's link). */
+export function sectionFrom(value: string | null | undefined): SectionKey | null {
+  return SECTIONS.some((s) => s.key === value) ? (value as SectionKey) : null;
+}
 
 /** Who may write a level (the server's machine-admin set, then its scope check). */
 export const COMPANY_WRITERS = ['super_admin', 'distributor', 'company_manager'];
@@ -113,9 +130,26 @@ interface EditorBodyProps {
   phase2MinVersion?: string | null;
   /** The company whose courses ("שלבי הגשה") the courses board shows. */
   companyId?: string | null;
+  /** The page's shop: the floor "שולחנות ומפה" edits (none at company level: one is picked). */
+  shopId?: string | null;
+  /** The tab it opens on. */
+  initialSection?: SectionKey | null;
 }
 
-export function EditorBody({ level, targetId, settings, base, canEdit, catalogMachineId, targets, dirtyRef, phase2MinVersion, companyId }: EditorBodyProps) {
+export function EditorBody({
+  level,
+  targetId,
+  settings,
+  base,
+  canEdit,
+  catalogMachineId,
+  targets,
+  dirtyRef,
+  phase2MinVersion,
+  companyId,
+  shopId = null,
+  initialSection = null,
+}: EditorBodyProps) {
   const t = useTranslations('tillDesign.settings');
   const tp = useTranslations('tillDesign.profiles');
   const tm = useTranslations('tillDesign.mode');
@@ -126,7 +160,7 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
   const inherited = useMemo(() => deepMerge(base, settings.inherited as unknown as TillDesignLayer), [base, settings.inherited]);
   const saved = useMemo(() => deepMerge(base, settings.effective as unknown as TillDesignLayer), [base, settings.effective]);
   const [draft, setDraft] = useState<TillDesignConfig>(() => cloneJson(saved));
-  const [section, setSection] = useState<SectionKey>('template');
+  const [section, setSection] = useState<SectionKey>(initialSection ?? 'template');
   const [profile, setProfile] = useState<Profile>('tabletLandscape');
   const [mode, setMode] = useState<Mode>('table');
   const [serverErrors, setServerErrors] = useState<TillDesignIssue[]>([]);
@@ -136,14 +170,44 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
   const [infoNonce, setInfoNonce] = useState(0);
   const [previewSample, setPreviewSample] = useState(false);
 
+  // "שולחנות ומפה": the shop whose floor is edited, the floor as the editor holds it now, the
+  // parameters' edits not saved yet, the preview's device.
+  const [floorShop, setFloorShop] = useState<string | null>(shopId);
+  const [floorLive, setFloorLive] = useState<FloorLive | null>(null);
+  const [floorEdits, setFloorEdits] = useState<Record<string, unknown>>({});
+  const [floorDevice, setFloorDevice] = useState<PreviewDevice['key']>('tabletLandscape');
+  // Once opened, the tab stays mounted (hidden) so the floor's unsaved edits survive another tab.
+  const [floorVisited, setFloorVisited] = useState(section === 'floor');
+  if (section === 'floor' && !floorVisited) setFloorVisited(true);
+  const floorQuery = useQuery({
+    queryKey: ['till-design-table-display', level, targetId],
+    queryFn: () => fetchTableDisplay(level, targetId),
+    enabled: section === 'floor' || floorVisited,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const floorView = floorQuery.data;
+  const floorEffective = useMemo(
+    () => effectiveParams(floorView?.inherited ?? {}, floorView?.own ?? {}, floorEdits),
+    [floorView, floorEdits],
+  );
+  const floorChanged = useMemo(() => changedParams(floorView?.own ?? {}, floorEdits), [floorView, floorEdits]);
+  const floorDirty = Object.keys(floorChanged).length > 0;
+  const floorInvalid =
+    floorChanged.tableOverdueMinutes !== undefined &&
+    floorChanged.tableOverdueMinutes !== null &&
+    overdueError(String(floorChanged.tableOverdueMinutes)) !== null;
+  const floorOwnSet = Object.values(floorView?.own ?? {}).some((v) => v !== null && v !== undefined);
+
   const dirty = !jsonEqual(draft, saved);
+  const anyDirty = dirty || floorDirty || !!floorLive?.dirty;
   useEffect(() => {
-    dirtyRef.current = dirty;
-    if (!dirty) return;
+    dirtyRef.current = anyDirty;
+    if (!anyDirty) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty, dirtyRef]);
+  }, [anyDirty, dirtyRef]);
 
   const errors = useMemo(() => validateTillDesign(draft), [draft]);
   const layer = useMemo(() => pruneOverrides(inherited, draft), [inherited, draft]);
@@ -192,6 +256,17 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
     },
   });
 
+  const saveFloor = useMutation({
+    mutationFn: () => saveTableDisplay(level, targetId, floorChanged),
+    onSuccess: (next) => {
+      toast.success(t('floorSaved'));
+      setFloorEdits({});
+      qc.setQueryData(['till-design-table-display', level, targetId], next);
+      void qc.invalidateQueries({ queryKey: ['till-design-table-display'] });
+    },
+    onError: (err) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+  });
+
   const ctx: TillEditorValue = {
     level,
     targetId,
@@ -227,6 +302,7 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
     return [...errors, ...serverErrors].filter((e) => hits(paths, e.path)).length;
   };
   const sectionOverridden = (key: SectionKey) => {
+    if (key === 'floor') return floorOwnSet || floorDirty;
     const paths = SECTIONS.find((s) => s.key === key)?.paths ?? [];
     return diffConfigs({}, layer).some((c) => hits(paths, c.path));
   };
@@ -303,45 +379,77 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
         </nav>
 
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,42%)]">
-          <div key={section} className="min-w-0 space-y-4">
-            {serverErrors.length > 0 ? (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                <p className="flex items-center gap-2 font-medium text-destructive">
-                  <AlertTriangle className="h-4 w-4" /> {t('serverErrors')}
-                </p>
-                <ul className="mt-1 list-inside list-disc text-xs">
-                  {serverErrors.map((e, i) => (
-                    <li key={`${e.path}-${i}`}>
-                      <span dir="ltr" className="font-mono">
-                        {e.path}
-                      </span>{' '}
-                      — {issueText(e)}
-                    </li>
-                  ))}
-                </ul>
+          <div className="min-w-0 space-y-4">
+            <div key={section} className="min-w-0 space-y-4">
+              {serverErrors.length > 0 ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                  <p className="flex items-center gap-2 font-medium text-destructive">
+                    <AlertTriangle className="h-4 w-4" /> {t('serverErrors')}
+                  </p>
+                  <ul className="mt-1 list-inside list-disc text-xs">
+                    {serverErrors.map((e, i) => (
+                      <li key={`${e.path}-${i}`}>
+                        <span dir="ltr" className="font-mono">
+                          {e.path}
+                        </span>{' '}
+                        — {issueText(e)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {section === 'template' ? (
+                <TemplateSection />
+              ) : section === 'layout' ? (
+                <LayoutSection />
+              ) : section === 'menu' ? (
+                <MenuSection />
+              ) : section === 'actions' ? (
+                <ActionsSection />
+              ) : section === 'look' ? (
+                <LookSection />
+              ) : section === 'motion' ? (
+                <TillMotionSection />
+              ) : section === 'tillMenu' ? (
+                <TillMenuSection />
+              ) : section === 'floor' ? null : (
+                <FieldsSection />
+              )}
+            </div>
+            {floorVisited ? (
+              // Kept while another tab is open: the map editor's unsaved moves and plan stay with it.
+              <div hidden={section !== 'floor'}>
+                <FloorSection
+                  level={level}
+                  companyId={companyId ?? null}
+                  pageShopId={shopId}
+                  shopId={floorShop}
+                  onShop={(id) => {
+                    if (floorLive?.dirty && !window.confirm(t('unsavedLeave'))) return;
+                    setFloorLive(null);
+                    setFloorShop(id);
+                  }}
+                  onLive={setFloorLive}
+                  view={floorView}
+                  loading={floorQuery.isLoading}
+                  failed={floorQuery.isError}
+                  canEdit={canEdit}
+                  edits={floorEdits}
+                  effective={floorEffective}
+                  onEdit={(key, value) => setFloorEdits((e) => ({ ...e, [key]: value }))}
+                  onOpenMotion={
+                    // "הנפשות" (P:/specs/till-motion.md, `tableOpen`), in a build that has the tab.
+                    SECTIONS.some((s) => (s.key as string) === 'motion') ? () => setSection('motion' as SectionKey) : undefined
+                  }
+                />
               </div>
             ) : null}
-            {section === 'template' ? (
-              <TemplateSection />
-            ) : section === 'layout' ? (
-              <LayoutSection />
-            ) : section === 'menu' ? (
-              <MenuSection />
-            ) : section === 'actions' ? (
-              <ActionsSection />
-            ) : section === 'look' ? (
-              <LookSection />
-            ) : section === 'motion' ? (
-              <TillMotionSection />
-            ) : section === 'tillMenu' ? (
-              <TillMenuSection />
-            ) : (
-              <FieldsSection />
-            )}
           </div>
           <aside className={cn('lg:sticky lg:top-16', !showPreview && 'hidden lg:block')}>
             {section === 'motion' ? (
               <TillTablesDemo />
+            ) : section === 'floor' ? (
+              <FloorPreviewPanel live={floorLive} effective={floorEffective} device={floorDevice} onDevice={setFloorDevice} />
             ) : (
               <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -382,11 +490,12 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
           </aside>
         </div>
 
-        {dirty && canEdit ? (
+        {(dirty || floorDirty) && canEdit ? (
           <div className="sticky bottom-3 z-30 flex flex-wrap items-center gap-2 rounded-xl border bg-background p-3 shadow-lg">
             <span className="text-sm font-medium">{t('dirty')}</span>
             {errors.length > 0 ? <Badge variant="destructive">{t('errorsCount', { n: errors.length })}</Badge> : null}
-            <div className="ms-auto flex gap-2">
+            {floorInvalid ? <Badge variant="destructive">{t('floorInvalid')}</Badge> : null}
+            <div className="ms-auto flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="outline"
@@ -394,13 +503,26 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
                 onClick={() => {
                   setDraft(cloneJson(saved));
                   setServerErrors([]);
+                  setFloorEdits({});
                 }}
               >
                 {t('discard')}
               </Button>
-              <Button type="button" size="sm" disabled={errors.length > 0 || save.isPending} onClick={() => setReviewOpen(true)}>
-                {t('review')}
-              </Button>
+              {floorDirty ? (
+                // "שולחנות ומפה": the tables' look and the map's display (till parameters), saved now.
+                <Button type="button" size="sm" variant={dirty ? 'outline' : 'default'} disabled={floorInvalid || saveFloor.isPending} onClick={() => saveFloor.mutate()}>
+                  {saveFloor.isPending ? tc('saving') : t('floorSave')}
+                </Button>
+              ) : null}
+              {dirty ? (
+                <Button type="button" size="sm" disabled={errors.length > 0 || save.isPending} onClick={() => {
+                    // A design save reloads the editor: the map's unsaved moves and plan would go.
+                    if (floorLive?.dirty && !window.confirm(t('floorMapUnsaved'))) return;
+                    setReviewOpen(true);
+                  }}>
+                  {t('review')}
+                </Button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -433,6 +555,7 @@ export function TillDesignEditor({
   shopName,
   role,
   fallbackMachineIds,
+  initialSection = null,
 }: {
   companyId: string | null;
   companyName: string | null;
@@ -441,6 +564,8 @@ export function TillDesignEditor({
   role: string | null;
   /** Tills in scope to read a catalog from at company level (shop first). */
   fallbackMachineIds: { id: string; shopId: string | null }[];
+  /** The tab named in the address (`?section=floor`). */
+  initialSection?: string | null;
 }) {
   const t = useTranslations('tillDesign.settings');
   const dirtyRef = useRef(false);
@@ -570,6 +695,8 @@ export function TillDesignEditor({
           dirtyRef={dirtyRef}
           phase2MinVersion={defaults.data?.phase2MinVersion ?? null}
           companyId={companyId}
+          shopId={shopId}
+          initialSection={sectionFrom(initialSection)}
         />
       )}
     </div>

@@ -47,6 +47,10 @@ class Resource(str, enum.Enum):
     #: manager's job: an operator's PIN is what authorises sales, and whoever can mint
     #: one can decide who rings up money.
     POS_USER = "pos_user"
+    #: Releasing an employee signed in at a device ("שחרור עובד מחובר במכשיר", exclusive login v2 §2) —
+    #: from the dashboard or the phone. On top of the role, the dashboard permission
+    #: `user_sessions_release` (app/services/user_sessions.py `may_release_from_dashboard`).
+    USER_SESSION = "user_session"
 
 
 class Action(str, enum.Enum):
@@ -91,6 +95,15 @@ _MATRIX: Dict[Tuple[Resource, Action], FrozenSet[UserRole]] = {
     # admitted every role added afterwards — which is exactly how the supervisor got this
     # right without anyone choosing to give it.
     (Resource.POS_USER, Action.WRITE): frozenset({
+        UserRole.SUPER_ADMIN,
+        UserRole.DISTRIBUTOR,
+        UserRole.COMPANY_MANAGER,
+        UserRole.SHOP_MANAGER,
+    }),
+    # "שחרור עובד מחובר במכשיר": the owner's list (P:/specs/exclusive-login-v2.md §2) — the super admin, a
+    # company manager, a shop manager — and the distributor above them, who also staffs their tills. Not
+    # the shift supervisor: at the till they release with their own code; the dashboard is a manager's.
+    (Resource.USER_SESSION, Action.WRITE): frozenset({
         UserRole.SUPER_ADMIN,
         UserRole.DISTRIBUTOR,
         UserRole.COMPANY_MANAGER,

@@ -367,6 +367,30 @@ def _check_leaves_a_payment_option(
         )
 
 
+def _check_no_card_switch(db: Session, level: str, entity: Any, patch: Dict[str, Any], machines) -> None:
+    """
+    "אי אפשר להעביר קופה ללא אשראי שיש בה עסקאות אשראי" (P:/specs/payment-integration-none.md §6):
+    a write that moves any of `machines()` to "ללא אשראי" while it has card sales not in a Z, not
+    transmitted or not decided is refused — 409 `payment_integration_open_card`, per till. No force.
+    """
+    if payment_integration.KEY not in patch:
+        return
+    payment_integration.check_no_card_switch(
+        db, machines(), level, entity.id, patch_settings_json(entity.settings, patch)
+    )
+
+
+def _kiosk_warnings(db: Session, patch: Dict[str, Any], machines) -> List[Dict[str, Any]]:
+    """
+    "לקיוסק לא יישאר אמצעי תשלום" after a save that set (or reset) the integration type: the
+    kiosks of `machines()` "ללא אשראי" with no "תשלום בקופה". A warning in the answer, never a
+    refusal (app/services/payment_integration.py `kiosk_warnings`).
+    """
+    if payment_integration.KEY not in patch:
+        return []
+    return payment_integration.kiosk_warnings(db, machines())
+
+
 def _tenant_of(company: Company, db: Session):
     if not company.tenant_id:
         return None
@@ -467,6 +491,9 @@ def patch_tenant_settings(
         )
 
     _check_leaves_a_payment_option([], tenant.settings, patch)
+    _check_no_card_switch(
+        db, "tenant", tenant, patch, lambda: [m for m in _tenant_tills(db, tenant.id) if m.is_active]
+    )
     voucher_flow.audit_patch(db, "tenant", tenant, patch, current_user)
     tenant.settings = patch_settings_json(tenant.settings, patch)
     _store_secrets(db, "tenant", tenant, secrets, current_user)
@@ -477,6 +504,9 @@ def patch_tenant_settings(
     return EntitySettingsResponse(
         settings=tenant.settings or {},
         settings_updated_at=tenant.settings_updated_at,
+        warnings=_kiosk_warnings(
+            db, patch, lambda: [m for m in _tenant_tills(db, tenant.id) if m.is_active]
+        ),
     )
 
 
@@ -542,6 +572,7 @@ def patch_company_settings(
     _check_leaves_a_payment_option(
         [_settings_of(_tenant_of(company, db))], company.settings, patch
     )
+    _check_no_card_switch(db, "company", company, patch, lambda: _machines_under(db, "company", company.id))
     voucher_flow.audit_patch(db, "company", company, patch, current_user)
     company.settings = patch_settings_json(company.settings, patch)
     _store_secrets(db, "company", company, secrets, current_user)
@@ -552,6 +583,7 @@ def patch_company_settings(
     return EntitySettingsResponse(
         settings=company.settings or {},
         settings_updated_at=company.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: _machines_under(db, "company", company.id)),
     )
 
 
@@ -627,6 +659,7 @@ def patch_shop_settings(
     _check_leaves_a_payment_option(
         [_settings_of(tenant), _settings_of(company)], shop.settings, patch
     )
+    _check_no_card_switch(db, "shop", shop, patch, lambda: _machines_under(db, "shop", shop.id))
     voucher_flow.audit_patch(db, "shop", shop, patch, current_user)
     shop.settings = patch_settings_json(shop.settings, patch)
     _store_secrets(db, "shop", shop, secrets, current_user)
@@ -637,6 +670,7 @@ def patch_shop_settings(
     return ShopSettingsResponse(
         settings=shop.settings or {},
         settings_updated_at=shop.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: _machines_under(db, "shop", shop.id)),
     )
 
 
@@ -725,6 +759,7 @@ def patch_area_settings(
     _check_leaves_a_payment_option(
         [_settings_of(tenant), _settings_of(company), _settings_of(shop)], area.settings, patch
     )
+    _check_no_card_switch(db, "area", area, patch, lambda: _machines_under(db, "area", area.id))
     voucher_flow.audit_patch(db, "area", area, patch, current_user)
     area.settings = patch_settings_json(area.settings, patch)
     _store_secrets(db, "area", area, secrets, current_user)
@@ -735,6 +770,7 @@ def patch_area_settings(
     return AreaSettingsResponse(
         settings=area.settings or {},
         settings_updated_at=area.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: _machines_under(db, "area", area.id)),
     )
 
 
@@ -822,6 +858,7 @@ def patch_machine_settings(
         machine.settings,
         patch,
     )
+    _check_no_card_switch(db, "machine", machine, patch, lambda: [machine])
     voucher_flow.audit_patch(db, "machine", machine, patch, current_user)
     machine.settings = patch_settings_json(machine.settings, patch)
     _store_secrets(db, "machine", machine, secrets, current_user)
@@ -832,6 +869,7 @@ def patch_machine_settings(
     return MachineSettingsResponse(
         settings=machine.settings or {},
         settings_updated_at=machine.settings_updated_at,
+        warnings=_kiosk_warnings(db, patch, lambda: [machine]),
     )
 
 

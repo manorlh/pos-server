@@ -232,8 +232,19 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("ATTENDANCE_MANAGE", "נוכחות — אישור מנהל", "admin",
                    "יציאה ממשמרת עם שולחנות פתוחים / סיום משמרת שדורש אישור מנהל.",
                    scope="attendance:manage"),
+    # "עובד במכשיר אחד בלבד" v2 (P:/specs/exclusive-login-v2.md §2, docs/SPEC_EXCLUSIVE_LOGIN.md): the
+    # holder's own sign-in (a manager signing in releases their other device), and the approver — the
+    # code typed at the till, or "בקשת שחרור ממנהל" from the phone (APPROVE_REMOTE.user_release).
     PermissionSpec("USER_SESSION_RELEASE", "שחרור עובד מחובר בקופה אחרת", "admin",
-                   "שחרור עובד שמחובר בקופה אחרת כדי שיתחבר כאן.", scope="user-session:release"),
+                   "שחרור עובד שמחובר במכשיר אחר כדי שיתחבר כאן: בקוד של מי שמותר לו בקופה, או באישור מהנייד. "
+                   "כל שחרור נרשם בחריגות.", devices=_ALL + (DEVICE_WINDOWS,), scope="user-session:release"),
+    # P:/specs/exclusive-login-v2.md §1: who "עובד מחובר בקופה אחת בלבד" (`exclusiveUserLogin`) binds —
+    # everyone without it. Read by the cloud at claim / heartbeat (app/services/user_sessions.py: `exempt`,
+    # nothing recorded) and by the till; no elevation scope.
+    PermissionSpec("MULTI_DEVICE_LOGIN", "עבודה בכמה מכשירים במקביל", "admin",
+                   "עובד עם ההרשאה נכנס בכמה מכשירים בו-זמנית גם כשהפרמטר \"עובד מחובר בקופה אחת בלבד\" "
+                   "מופעל, ולא נרשם לו חיבור. בלי ההרשאה — מחובר במכשיר אחד בכל רגע, ורק מנהל משחרר.",
+                   devices=_ALL + (DEVICE_WINDOWS,)),
     PermissionSpec("CARD_UNRESOLVED", "עסקת אשראי לא ידועה — סימון כלא אושרה", "admin",
                    "\"סמן כלא אושר והמשך\" בעסקת אשראי שתוצאתה לא ידועה.", scope="card:unresolved"),
     PermissionSpec("KIOSK_CONTROL", "שליטה בקיוסק", "admin",
@@ -384,6 +395,10 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
 LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"}) | REMOTE_APPROVAL_CODES
+#: "עבודה בכמה מכשירים במקביל" (exclusive-login v2 §1): before it existed, `exclusiveUserLogin` bound every
+#: till user, and a legacy cashier stays bound — "deny" here is today's behaviour. A legacy shop manager
+#: (everything allowed) is exempt, as the spec's "מנהל" is.
+LEGACY_CASHIER_DENIED = LEGACY_CASHIER_DENIED | {"MULTI_DEVICE_LOGIN"}
 #: A payment reversed inside a table hands money back, as a refund did: a legacy cashier asks a manager.
 LEGACY_APPROVAL_CODES = LEGACY_APPROVAL_CODES | TABLE_PAYMENT_REVERSE_CODES
 
@@ -452,7 +467,12 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     # "חסימה מעבר לקופה" (P:\specs\item-block-control.md §2): the same people; a waiter never.
     "ITEM_BLOCK_WIDE":                   (D, P, A, A),
     "ATTENDANCE_MANAGE":                 (P, P, A, A),
-    "USER_SESSION_RELEASE":              (P, P, A, A),
+    # Exclusive login v2 (§2, the owner 14.10.2026: "רק מנהל בעל הרשאה יכול לשחרר"): a waiter or a cashier
+    # no longer releases with someone's code on their own request — a supervisor or a manager types their
+    # own code, or approves "בקשת שחרור ממנהל" from the phone. A role row that set its own value keeps it.
+    "USER_SESSION_RELEASE":              (D, D, A, A),
+    # §1: the rule binds the waiter and the cashier; the supervisor and the manager work on several devices.
+    "MULTI_DEVICE_LOGIN":                (D, D, A, A),
     "CARD_UNRESOLVED":                   (P, P, A, A),
     "KIOSK_CONTROL":                     (D, P, A, A),
     "KIOSK_UNLOCK":                      (D, P, P, A),

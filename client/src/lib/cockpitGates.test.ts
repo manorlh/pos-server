@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { UNRESTRICTED, type DashboardAccess } from './dashboardAccess';
-import { LIVE_CONTROL_GATES, MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, allowedEntries, gateAllows, pickVariant, remoteControlTabs, sortAttention } from './cockpitGates';
+import { LIVE_CONTROL_GATES, MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, USER_SESSIONS_GATES, allowedEntries, gateAllows, pickVariant, remoteControlTabs, sortAttention } from './cockpitGates';
 
 /** "מנהל סניף / אירוע" as the server's template gives it. */
 const BRANCH_MANAGER: DashboardAccess = {
@@ -151,5 +151,30 @@ describe('"שליטה חיה": what each grant may read and do (the server\'s ru
     assert.equal(gateAllows(LIVE_CONTROL_GATES.stockEdit, viewer, 'shop_manager'), false);
     assert.equal(gateAllows(LIVE_CONTROL_GATES.blocksEdit, BRANCH_MANAGER, 'shop_manager'), true);
     assert.equal(gateAllows(LIVE_CONTROL_GATES.stockEdit, BRANCH_MANAGER, 'shop_manager'), true);
+  });
+});
+
+describe('"מחוברים כעת במכשירים" (exclusive login v2): the card and its release', () => {
+  const access = (sections: DashboardAccess['sections']): DashboardAccess => ({ restricted: true, sections });
+
+  it("the shop manager's template sees it and releases; the area manager's does not release", () => {
+    const branch = access({ ...BRANCH_MANAGER.sections, user_sessions_release: 'edit' });
+    assert.equal(gateAllows(USER_SESSIONS_GATES.see, branch, 'shop_manager'), true);
+    assert.equal(gateAllows(USER_SESSIONS_GATES.release, branch, 'shop_manager'), true);
+    assert.equal(gateAllows(USER_SESSIONS_GATES.see, BRANCH_MANAGER, 'shop_manager'), false);
+    assert.equal(gateAllows(USER_SESSIONS_GATES.release, BRANCH_MANAGER, 'shop_manager'), false);
+  });
+
+  it('the employees page sees the card, but editing the employees does not release', () => {
+    const staff = access({ pos_users: 'edit' });
+    assert.equal(gateAllows(USER_SESSIONS_GATES.see, staff, 'shop_manager'), true);
+    assert.equal(gateAllows(USER_SESSIONS_GATES.release, staff, 'shop_manager'), false);
+  });
+
+  it('never a role below a manager, whatever the grant', () => {
+    const grant = access({ user_sessions_release: 'edit' });
+    assert.equal(gateAllows(USER_SESSIONS_GATES.release, grant, 'shift_supervisor'), false);
+    assert.equal(gateAllows(USER_SESSIONS_GATES.release, grant, 'cashier'), false);
+    assert.equal(gateAllows(USER_SESSIONS_GATES.release, UNRESTRICTED, 'company_manager'), true);
   });
 });

@@ -56,6 +56,12 @@ class RequestType:
     reasons: Tuple[str, ...] = ()
     reason_required: bool = False
     allow_partial: bool = False
+    #: The till permission an approver's linked employee must also hold at `allow` — the right
+    #: to do the thing itself, beside "רשאי לאשר מרחוק" (`user_release`: USER_SESSION_RELEASE).
+    approver_code: Optional[str] = None
+    #: The dashboard permission ("הרשאות דשבורד" section, at edit) a dashboard-role approver must
+    #: also hold, with the role it needs (eligibility.py `DASH_GATES`).
+    approver_section: Optional[str] = None
 
     @property
     def permission_code(self) -> str:
@@ -95,8 +101,13 @@ TYPES: Tuple[RequestType, ...] = (
     RequestType("table_ops", "פעולות שולחן (שחזור, שחרור נעילה, ביטול)", 1, None, "שולחן",
                 scopes=("table:unlock", "table:cancel")),
     RequestType("card_unresolved", "עסקת אשראי לא ידועה", 1, _A, "עסקה, סכום"),
-    RequestType("user_release", "שחרור עובד מקופה אחרת", 1, None, "עובד, קופה",
-                scopes=("user-session:release",)),
+    # "שחרור עובד מחובר" (P:/specs/exclusive-login-v2.md §2): an employee blocked at sign-in asks; the
+    # approver must be allowed to release (till: USER_SESSION_RELEASE, dashboard: user_sessions_release).
+    # The cloud fills in who is signed in where (app/services/user_sessions.py `approval_payload`); the
+    # grant is spent as `X-Elevation-Token` on the till's `claim` with `force`.
+    RequestType("user_release", "שחרור עובד מחובר", 1, None, "עובד, המכשיר שבו הוא מחובר ומאז מתי",
+                scopes=("user-session:release",), approver_code="USER_SESSION_RELEASE",
+                approver_section="user_sessions_release"),
     RequestType("z_close", "הפקת Z", 1, None, "קופה, משמרות פתוחות", scopes=("day:close",)),
     # ── §3ב: phase 2 ──
     RequestType("refund_no_receipt", "זיכוי בלי מסמך מקורי", 2, _A, "סכום, שורות",

@@ -30,7 +30,6 @@ import {
   Copy,
   CopyPlus,
   Grid3x3,
-  ImageUp,
   Magnet,
   Maximize2,
   MonitorSmartphone,
@@ -44,7 +43,6 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react';
-import { uploadProductImage } from '@/lib/api';
 import {
   createTable,
   saveTablePositions,
@@ -93,6 +91,9 @@ import {
   wallBoxes,
   CHAIR_LOOK,
   CLEAN,
+  LABEL_TEXT_MAX,
+  SKETCH_TEXT_MAX,
+  cleanText,
   chairLayout,
   TABLE_LOOK,
   templateSketch,
@@ -115,9 +116,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DrawOverlay, DrawPanel, useDrawTools, useSketchHistory } from './sketch-draw';
 import { FloorDefs, KindIcon, SketchShape, hasSymbol } from './sketch-shapes';
-import { TillPreview } from './sketch-preview';
+import { TillPreview, type PreviewTable } from './sketch-preview';
+import { LabelStyle, LogoPanel } from './sketch-text-logo';
 
 type Pos = { x: number; y: number; width: number; height: number; rotation: number };
+
+/** The map as the editor holds it now (saved or not): its plan, its floor, its tables where they stand. */
+export interface MapLive {
+  zoneId: string;
+  elements: SketchElement[];
+  background: SketchBackground;
+  tables: PreviewTable[];
+}
 type Pt = { x: number; y: number };
 type Drag =
   | { type: 'tables'; ids: string[]; start: Pt; from: Record<string, Pos>; travelled: number }
@@ -148,6 +158,8 @@ export function MapEditor({
   onDirtyChange,
   logoUrl = null,
   initialMode = 'tables',
+  onLive,
+  previewButton = true,
 }: {
   zone: TableZone;
   tables: DiningTable[];
@@ -159,6 +171,13 @@ export function MapEditor({
   logoUrl?: string | null;
   /** The mode it opens in: "סקיצה" right after a zone of squares became a map. */
   initialMode?: 'tables' | 'sketch' | 'draw';
+  /**
+   * The map as it is now, saved or not, on every change — for a preview beside the editor (the till
+   * design's "שולחנות ומפה", P:/specs/till-design-tables.md). A stable function (a state setter).
+   */
+  onLive?: (live: MapLive) => void;
+  /** Its own "תצוגה בקופה" (none where a preview already stands beside it). */
+  previewButton?: boolean;
 }) {
   const t = useTranslations('tables');
   const cw = zone.canvasWidth;
@@ -211,6 +230,19 @@ export function MapEditor({
 
   const dirty = sketchDirty || Object.keys(moved).length > 0;
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  // Every move, shape and floor at once to a preview beside it, before anything is saved.
+  useEffect(() => {
+    if (!onLive) return;
+    onLive({
+      zoneId: zone.id,
+      elements: sketch.elements,
+      background,
+      tables: tables.map((tb) => {
+        const p = moved[tb.id] ?? { x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation };
+        return { id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
+      }),
+    });
+  }, [onLive, zone.id, sketch.elements, background, tables, moved]);
 
   const perPx = cw / Math.max(1, boxWidth);
   const snapV = (v: number) => (snap ? Math.round(v / GRID) * GRID : Math.round(v));
@@ -587,10 +619,12 @@ export function MapEditor({
             {wallSnap ? t('sketch.snapWallsOn') : t('sketch.snapWallsOff')}
           </Button>
         ) : null}
-        <Button size="sm" variant={preview ? 'default' : 'outline'} onClick={() => setPreview((p) => !p)}>
-          <MonitorSmartphone className="h-4 w-4 me-1" />
-          {t('sketch.preview.button')}
-        </Button>
+        {previewButton ? (
+          <Button size="sm" variant={preview ? 'default' : 'outline'} onClick={() => setPreview((p) => !p)}>
+            <MonitorSmartphone className="h-4 w-4 me-1" />
+            {t('sketch.preview.button')}
+          </Button>
+        ) : null}
         <Button
           size="sm"
           variant="outline"
@@ -779,25 +813,35 @@ export function MapEditor({
                 </>
               ) : null}
               {element.kind === 'logo' ? (
-                <LogoSource
-                  element={element}
-                  hasBusinessLogo={!!logoUrl}
-                  onSrc={(src) => patchElement({ src })}
-                  onError={onError}
-                />
+                // §8: the business's logo or an uploaded picture, its opacity and proportions.
+                <LogoPanel element={element} businessLogo={logoUrl} onPatch={patchElement} onError={onError} />
               ) : null}
               {!NO_TEXT.has(element.kind) && !isDrawn(element.kind) ? (
                 <div className="space-y-1">
                   <Label className="text-xs">{element.kind === 'area' ? t('sketch.areaName') : t('sketch.text')}</Label>
-                  <Input
-                    className="h-8 w-40"
-                    value={element.text ?? ''}
-                    placeholder={defaultText(element) ?? ''}
-                    maxLength={60}
-                    onChange={(e) => patchElement({ text: e.target.value || null })}
-                  />
+                  {element.kind === 'label' ? (
+                    // A text: several lines, up to 200 characters (§8).
+                    <textarea
+                      className="border-input bg-background block w-56 rounded-md border px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      rows={3}
+                      value={element.text ?? ''}
+                      placeholder={defaultText(element) ?? ''}
+                      maxLength={LABEL_TEXT_MAX}
+                      title={t('sketch.labelTextHint')}
+                      onChange={(e) => patchElement({ text: cleanText('label', e.target.value) })}
+                    />
+                  ) : (
+                    <Input
+                      className="h-8 w-40"
+                      value={element.text ?? ''}
+                      placeholder={defaultText(element) ?? ''}
+                      maxLength={SKETCH_TEXT_MAX}
+                      onChange={(e) => patchElement({ text: cleanText(element.kind, e.target.value) })}
+                    />
+                  )}
                 </div>
               ) : null}
+              {element.kind === 'label' ? <LabelStyle element={element} onPatch={patchElement} /> : null}
               {element.kind === 'area' ? (
                 // An area's fill (the palette) and how much of the floor shows through it.
                 <>
@@ -1155,7 +1199,7 @@ export function MapEditor({
           </g>
         </svg>
       </div>
-      {preview ? (
+      {preview && previewButton ? (
         // "תצוגה בקופה": the plan as it stands (saved or not), on the till's screens.
         <TillPreview
           title={zone.name}
@@ -1166,7 +1210,7 @@ export function MapEditor({
           ch={ch}
           tables={tables.map((tb) => {
             const p = posOf(tb);
-            return { id: tb.id, number: tb.number, shape: tb.shape, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
+            return { id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
           })}
           logoUrl={logoUrl}
           logoLabel={t('sketch.kind.logo')}
@@ -1272,59 +1316,5 @@ function GridLines({ cw, ch }: { cw: number; ch: number }) {
     <g stroke="#e2e8f0" strokeWidth={1} pointerEvents="none">
       {lines}
     </g>
-  );
-}
-
-/** A logo's picture: the business's own (the default), or an image uploaded for this spot. */
-function LogoSource({
-  element,
-  hasBusinessLogo,
-  onSrc,
-  onError,
-}: {
-  element: SketchElement;
-  hasBusinessLogo: boolean;
-  onSrc: (src: string | null) => void;
-  onError: (err: unknown) => void;
-}) {
-  const t = useTranslations('tables');
-  const [uploading, setUploading] = useState(false);
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-muted-foreground">
-        {element.src ? t('sketch.logoOwn') : hasBusinessLogo ? t('sketch.logoBusiness') : t('sketch.logoNone')}
-      </span>
-      <label className="inline-flex">
-        <input
-          type="file"
-          accept="image/*"
-          className="hidden"
-          disabled={uploading}
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            if (!file) return;
-            setUploading(true);
-            try {
-              const result = await uploadProductImage(file, 'products', { keepBackground: true });
-              onSrc(result.url);
-            } catch (err) {
-              onError(err);
-            } finally {
-              setUploading(false);
-            }
-          }}
-        />
-        <span className="inline-flex h-8 cursor-pointer items-center rounded-md border px-3 text-sm hover:bg-accent">
-          <ImageUp className="h-4 w-4 me-1" />
-          {t('sketch.logoUpload')}
-        </span>
-      </label>
-      {element.src ? (
-        <Button size="sm" variant="ghost" onClick={() => onSrc(null)}>
-          {t('sketch.logoUseBusiness')}
-        </Button>
-      ) : null}
-    </div>
   );
 }

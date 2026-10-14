@@ -67,6 +67,17 @@ export const TILL_MESSAGE_GATES: Record<'full' | 'banner' | 'button', CockpitGat
   button: { sections: ['till_messages', 'quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
 };
 
+/**
+ * "מחוברים כעת במכשירים" (exclusive login v2 §2, §6) — `see`: the list (`GET /shops/{id}/user-sessions`:
+ * the employees page or the release permission, at view); `release`: its button (the server's
+ * `user_sessions_release` at edit, with a manager's role — it says `canRelease` itself as well).
+ */
+export const USER_SESSION_ROLES = ['super_admin', 'distributor', 'company_manager', 'shop_manager'];
+export const USER_SESSIONS_GATES: Record<'see' | 'release', CockpitGate> = {
+  see: { sections: ['pos_users', 'user_sessions_release'], level: 'view' },
+  release: { sections: ['user_sessions_release'], level: 'edit', roles: USER_SESSION_ROLES },
+};
+
 /** Those of `entries` the user may use — and, for an action, that has its sheet registered. */
 export function allowedEntries<T extends { gate: CockpitGate }>(
   entries: readonly T[],

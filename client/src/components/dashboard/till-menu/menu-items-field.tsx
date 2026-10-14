@@ -34,6 +34,7 @@ import {
   RefreshCw,
   Send,
   Settings,
+  ShoppingCart,
   Ticket,
   TriangleAlert,
   Undo2,
@@ -88,6 +89,7 @@ const ICONS: Record<MenuIcon, ComponentType<{ className?: string; 'aria-hidden'?
   phone: Phone,
   logout: LogOut,
   training: GraduationCap,
+  cart: ShoppingCart,
 };
 
 /** The item's tile as on the till: its colour, a white glyph. */
@@ -185,9 +187,9 @@ export function MenuItemsChecklist({
   );
 }
 
-/** The warnings for what is hidden: the critical items (§2), then how the till keeps its ways in. */
-export function MenuWarnings({ hidden }: { hidden: readonly string[] }) {
-  const warnings = menuWarnings(hidden);
+/** The warnings for what is hidden: the critical items (§2), no way to sell (§5א), how the till keeps its ways in. */
+export function MenuWarnings({ hidden, tablesOff }: { hidden: readonly string[]; tablesOff?: boolean | null }) {
+  const warnings = menuWarnings(hidden, tablesOff);
   if (warnings.length === 0) return null;
   return (
     <ul className="space-y-1.5" aria-live="polite">
@@ -213,8 +215,8 @@ export function MenuWarnings({ hidden }: { hidden: readonly string[] }) {
 }
 
 /** The menu as the till will show it with `hidden` taken out (lib/tillMenu.ts `menuPreview`). */
-export function TillMenuPreview({ hidden }: { hidden: readonly string[] }) {
-  const groups = menuPreview(hidden);
+export function TillMenuPreview({ hidden, tablesOff }: { hidden: readonly string[]; tablesOff?: boolean | null }) {
+  const groups = menuPreview(hidden, tablesOff);
   return (
     <div className="space-y-2 rounded-xl border bg-muted/40 p-3">
       <p className="text-[11px] text-muted-foreground">תצוגה מקדימה: התפריט בקופה</p>
@@ -270,22 +272,25 @@ export function MenuItemsField({
   onChange,
   disabled,
   idPrefix,
+  tablesOff,
 }: {
   hidden: readonly string[];
   onChange: (keys: string[]) => void;
   disabled?: boolean;
   idPrefix: string;
+  /** Whether the tables are off where the list applies (§5א); undefined = not known (the parameters page). */
+  tablesOff?: boolean | null;
 }) {
   return (
     // Laid out by its own width (a card in a narrow column stacks; a wide one goes side by side).
     <div className="@container">
       <div className="grid items-start gap-4 @2xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
         <div className="min-w-0 space-y-3">
-          <MenuWarnings hidden={hidden} />
+          <MenuWarnings hidden={hidden} tablesOff={tablesOff} />
           <MenuItemsChecklist hidden={hidden} onChange={onChange} disabled={disabled} idPrefix={idPrefix} />
         </div>
         <div className="@2xl:sticky @2xl:top-16">
-          <TillMenuPreview hidden={hidden} />
+          <TillMenuPreview hidden={hidden} tablesOff={tablesOff} />
         </div>
       </div>
     </div>

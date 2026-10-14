@@ -1,14 +1,18 @@
 'use client';
 
 /**
- * "מחוברים כעת בקופות": who is signed in at which till of the shop, for
+ * "מחוברים כעת במכשירים": who is signed in at which device of the shop, for
  * "עובד מחובר בקופה אחת בלבד" (till parameter `exclusiveUserLogin`,
- * docs/SPEC_EXCLUSIVE_LOGIN.md). A manager may release one — a till that went down with
- * the employee signed in — so they can sign in at another till at once; a till that is
- * still up signs them out on its next heartbeat (about a minute).
+ * docs/SPEC_EXCLUSIVE_LOGIN.md; v2: P:/specs/exclusive-login-v2.md §6). Each row: the device,
+ * since when, and "לא מדווח" when that device stopped reporting (safe to release). A manager
+ * holding "שחרור עובד מחובר במכשיר" may release one — a device that went down with the
+ * employee signed in — so they can sign in elsewhere at once; a device that is still up signs
+ * them out at the end of its operation. Every release is recorded as an exception.
  *
- * Shown only when the rule is on for the shop, or when someone is recorded anyway (a
- * till-level value).
+ * On the employees page and on the phone's home ("הניהול שלי", cockpit registry): one column on a
+ * phone, the button a full-width tap target. The button shows only when the server says
+ * `canRelease`. Shown only when the rule is on for the shop, or when someone is recorded anyway
+ * (a till-level value).
  */
 
 import { useTranslations } from 'next-intl';
@@ -23,7 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
-export function SignedInNowCard({ shopId, canRelease }: { shopId: string; canRelease: boolean }) {
+export function SignedInNowCard({ shopId }: { shopId: string }) {
   const t = useTranslations('userSessions');
   const qc = useQueryClient();
   const query = useQuery({
@@ -44,6 +48,7 @@ export function SignedInNowCard({ shopId, canRelease }: { shopId: string; canRel
 
   const data = query.data;
   if (!query.isLoading && data && !data.exclusive && data.sessions.length === 0) return null;
+  const canRelease = data?.canRelease === true;
 
   return (
     <Card>
@@ -62,22 +67,29 @@ export function SignedInNowCard({ shopId, canRelease }: { shopId: string; canRel
         ) : (
           <ul className="divide-y rounded-md border">
             {data.sessions.map((s) => (
-              <li key={s.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
+              <li
+                key={s.id}
+                className="flex flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4"
+              >
                 <span className="font-medium">{s.posUserName ?? s.username ?? '—'}</span>
                 <span>
                   {[s.posNumber ? t('till', { n: s.posNumber }) : null, s.machineName].filter(Boolean).join(' · ')}
                 </span>
                 <span className="text-muted-foreground">{t('since', { at: formatDateTime(s.startedAt) })}</span>
-                {s.stale && (
-                  <Badge variant="outline" title={t('staleHint', { minutes: s.staleMinutes })}>
-                    {t('stale', { at: formatDateTime(s.lastSeenAt) })}
+                {(s.silent || s.stale) && (
+                  <Badge
+                    variant="outline"
+                    className="w-fit"
+                    title={s.stale ? t('staleHint', { minutes: s.staleMinutes }) : t('silentHint')}
+                  >
+                    {t('silent', { at: formatDateTime(s.silentSince ?? s.lastSeenAt) })}
                   </Badge>
                 )}
                 {canRelease && (
                   <Button
                     size="sm"
                     variant="outline"
-                    className="ms-auto"
+                    className="mt-1 w-full sm:ms-auto sm:mt-0 sm:w-auto"
                     disabled={release.isPending}
                     onClick={() => {
                       if (window.confirm(t('releaseConfirm', { name: s.posUserName ?? s.username ?? '' }))) {

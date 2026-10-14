@@ -223,8 +223,9 @@ export default function PosUsersPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
-        {/* "עובד מחובר בקופה אחת בלבד": who is signed in where, and a manager's release. */}
-        {shopId && <SignedInNowCard shopId={shopId} canRelease={canManage} />}
+        {/* "עובד מחובר בקופה אחת בלבד": who is signed in where, and the release — its own permission
+            ("שחרור עובד מחובר במכשיר"), which the server says (`canRelease`), not "edit the employees". */}
+        {shopId && <SignedInNowCard shopId={shopId} />}
         <div className="rounded-lg border bg-card p-4 flex flex-wrap items-end gap-4">
           <div className="flex items-center gap-2">
             <Switch

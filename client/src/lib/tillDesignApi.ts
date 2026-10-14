@@ -9,6 +9,7 @@ import { api } from './api';
 import { dietaryTagsOf } from './kioskConfig';
 import type { KioskSourceCatalog, KioskSourceCategory } from './kioskApi';
 import type { CategoryDisplayKey } from './categoryLook';
+import type { RestoreLevelView } from './tableRestore';
 import type { TillDesignConfig, TillDesignIssue, TillDesignLayer, TillDesignLegacy } from './tillDesign';
 
 export type TillDesignLevel = 'company' | 'shop' | 'area' | 'machine';
@@ -115,6 +116,23 @@ export async function saveCategoryDisplay(
   values: Partial<Record<CategoryDisplayKey, string | null>>,
 ): Promise<CategoryDisplayView> {
   const { data } = await api.put<CategoryDisplayView>('/till-design/category-display', { values }, { params: { level, id } });
+  return data;
+}
+
+/**
+ * "שולחנות ומפה" (P:/specs/till-design-tables.md §5): the tables' look and the map's display — till
+ * parameters at one level, as the tables page's card reads them (lib/tableRestore.ts RestoreLevelView).
+ */
+export type TableDisplayView = RestoreLevelView;
+
+export async function fetchTableDisplay(level: TillDesignLevel, id: string): Promise<TableDisplayView> {
+  const { data } = await api.get<TableDisplayView>('/till-design/table-display', { params: { level, id } });
+  return data;
+}
+
+/** key → value; null — the level inherits it again. */
+export async function saveTableDisplay(level: TillDesignLevel, id: string, values: Record<string, unknown>): Promise<TableDisplayView> {
+  const { data } = await api.put<TableDisplayView>('/till-design/table-display', { values }, { params: { level, id } });
   return data;
 }
 

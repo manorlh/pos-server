@@ -162,7 +162,7 @@ CATEGORIES: Tuple[Category, ...] = (
               "support_z_produced", "z_forced_open_shifts", "z_forced_pending_cloud_refund", "shop_z_producer_forced",
               "training_mode", "training_dropped", "quicksupport_signer_mismatch")),
     Category("staff_actions", "עובדים ונוכחות",
-             "שינוי נוכחות ידני, שחרור עובד מקופה אחרת, הדפסה חוזרת וסגירה עם מכירות מושהות.",
+             "שינוי נוכחות ידני, שחרור עובד מחובר, הדפסה חוזרת וסגירה עם מכירות מושהות.",
              ("attendance_manual", "user_session_release", "reprint", "close_keep_held_sales")),
     Category("stock", "מלאי", "מוצר שהמלאי שלו נמוך או אזל, לפי הספים של המלאי.", ("stock_low", "stock_out")),
     # One "הזמנה ארוכה": an order longer than its exception rule (long_order, push-more §B — sent where
