@@ -1,5 +1,5 @@
 {
-  "_comment": "\"עיצוב בון\" — the kitchen ticket designs and the ticketStyle contract (P:/specs/kitchen-ticket-designs.md §1, §6–§9). Shared byte-for-byte by pos-server tests/fixtures (app/services/kitchen_ticket_style.py, client/src/lib/kitchenTicketStyle.ts — the dashboard preview) and pos-android app/src/test/resources (hardware/kitchen/KitchenTicketRenderer). `samples`: tickets in the till's KitchenTicketDto shape (+ `openedAt`, the table's opening, optional); each must show every string of `mustAppear.all` and `mustAppear.byTemplate[template]` when drawn with `styles[template]` at 58 and 80 mm — the drawn texts in order, joined by one space, bidi marks (U+200E, U+200F, U+2066–U+2069) removed, times in `timeZone`. `looks`: each template before the ink saver (no solid black but classic_legacy's: `blackParts`); `styles`: as the cloud sends it with nothing set (kitchenTicketInkSaver on); `metrics` + `textRules`: sizes per paper width and the one-line fitting; `resolveCases`: resolve_with_params(input) == expect. Items marked \"ללא בון\" never reach the ticket (the till's routing drops them).",
+  "_comment": "\"עיצוב בון\" — the kitchen ticket designs and the ticketStyle contract (P:/specs/kitchen-ticket-designs.md §1, §6–§10). Shared byte-for-byte by pos-server tests/fixtures (app/services/kitchen_ticket_style.py, client/src/lib/kitchenTicketStyle.ts — the dashboard preview) and pos-android app/src/test/resources (hardware/kitchen/KitchenTicketRenderer). `samples`: tickets in the till's KitchenTicketDto shape (+ `openedAt`, the table's opening, optional); each must show every string of `mustAppear.all` and `mustAppear.byTemplate[template]` when drawn with `styles[template]` at 58 and 80 mm — the drawn texts in order, joined by one space, bidi marks (U+200E, U+200F, U+2066–U+2069) removed, times in `timeZone`. `looks`: each template before the ink saver (no solid black but classic_legacy's: `blackParts`); `styles`: as the cloud sends it with nothing set (kitchenTicketInkSaver on); `metrics` + `textRules`: sizes per paper width and the one-line fitting; `resolveCases`: resolve_with_params(input) == expect. Items marked \"ללא בון\" never reach the ticket (the till's routing drops them).",
   "version": 1,
   "timeZone": "Asia/Jerusalem",
   "templates": ["classic", "classic_legacy", "large", "compact", "courses", "modern"],
@@ -13,6 +13,11 @@
     "maxTextSizes": ["s", "m", "l"],
     "headerSizes": ["s", "m", "l"],
     "fits": ["fit", "wrap"],
+    "orderBys": ["added", "course", "category", "custom"],
+    "groupHeaders": ["auto", "on", "off"],
+    "noCourse": ["last", "first"],
+    "orderListKinds": ["course", "category"],
+    "orderListMax": 40,
     "headerFills": ["none", "outline", "fill"],
     "lineLayouts": ["inline", "stacked"],
     "bandKeys": ["addition", "fire", "dining", "eatIn", "copy", "resent", "redirected", "tableNote", "notice", "training", "course"],
@@ -26,7 +31,7 @@
     "weights": ["thin", "normal", "thick"],
     "itemDividers": ["none", "thin", "dashed"],
     "spacing": ["tight", "normal"],
-    "grouping": ["inline", "course_seat"],
+    "grouping": ["none", "seat"],
     "heldCourse": ["plain", "dashed"],
     "fontScale": [80, 150],
     "feedLines": [0, 6],
@@ -54,6 +59,8 @@
     "modWith": "עם {text}",
     "modWithout": "בלי {text}",
     "bullet": "• {text}",
+    "groupHeader": "── {title} ──",
+    "groupHeaderLegacy": "— {title} —",
     "inlineSeparator": " · ",
     "held": "ממתין ל-FIRE"
   },
@@ -66,6 +73,7 @@
     "fit": "fit: an item line (quantity + name) at itemSize[paper][maxSize] × fontScale; while it does not fit one line, one fitStep smaller, down to itemSize[paper][minSize]; still too long — it wraps there, continuations under the name (hangingIndent). wrap: at maxSize, wrapping.",
     "inlineMods": "mods.layout inline: choices, removals and a short note (no important note, never allergies) join the item line after \" · \" when the whole line fits at the size the name took; else each on its own indented line at detailRatio × that size",
     "header": "header.layout inline: the headline at headerRatio[header.size] × itemSize[paper][maxSize], then the other fields after \" · \" on the same line as far as they fit; the rest on the next line",
+    "order": "order.by added: as added, a group runs while the course stays the same; course: by the courses' sortOrder (a course not among them after them, by name), no course first / last by order.noCourse; category: by the catalog tree, depth first, siblings by (sortOrder, name); custom: by the first order.list entry the line matches (its course by id or name, or its category or an ancestor), the rest at the end. Within a group as added; grouping seat: by seat (\"מ2\" before \"מ10\"), no seat last. order.groupHeaders: a heading per group in bands.course; without one a line's course prints beside its seat",
     "blackArea": "solid black = fills only (bands / header / qty box / allergy / important note set to fill); text and lines are not counted"
   },
   "noticeSeparator": " · ",
@@ -127,7 +135,8 @@
       "itemDivider": "thin",
       "spacing": "tight",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": "auto", "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -162,7 +171,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": false, "hangingIndent": false},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": "on", "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -197,7 +207,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": "auto", "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -232,7 +243,8 @@
       "itemDivider": "none",
       "spacing": "tight",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": "auto", "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -267,7 +279,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "course_seat",
+      "order": {"by": "course", "groupHeaders": "auto", "noCourse": "last", "list": []},
+      "grouping": "seat",
       "heldCourse": "dashed",
       "totals": true,
       "checkboxes": true,
@@ -302,7 +315,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": "auto", "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -352,7 +366,8 @@
       "itemDivider": "thin",
       "spacing": "tight",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -392,7 +407,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": false, "hangingIndent": false},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": true, "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -432,7 +448,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -472,7 +489,8 @@
       "itemDivider": "none",
       "spacing": "tight",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -512,7 +530,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "course_seat",
+      "order": {"by": "course", "groupHeaders": true, "noCourse": "last", "list": []},
+      "grouping": "seat",
       "heldCourse": "dashed",
       "totals": true,
       "checkboxes": true,
@@ -552,7 +571,8 @@
       "itemDivider": "none",
       "spacing": "normal",
       "layout": {"qtyColumn": true, "hangingIndent": true},
-      "grouping": "inline",
+      "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+      "grouping": "none",
       "heldCourse": "plain",
       "totals": false,
       "checkboxes": false,
@@ -597,7 +617,8 @@
         "itemDivider": "thin",
         "spacing": "tight",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
@@ -644,7 +665,8 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": false, "hangingIndent": false},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": true, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
@@ -688,7 +710,8 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": false, "hangingIndent": false},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": true, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
@@ -741,7 +764,8 @@
         "itemDivider": "thin",
         "spacing": "tight",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
@@ -788,7 +812,8 @@
         "itemDivider": "none",
         "spacing": "tight",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
@@ -839,7 +864,8 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
@@ -886,7 +912,8 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": true,
@@ -933,7 +960,8 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "course_seat",
+        "order": {"by": "course", "groupHeaders": true, "noCourse": "last", "list": []},
+        "grouping": "seat",
         "heldCourse": "dashed",
         "totals": true,
         "checkboxes": true,
@@ -989,13 +1017,123 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": false,
         "checkboxes": false,
         "elapsed": true,
         "footer": {"layout": "inline", "fields": ["printer"]},
         "feedLines": 0
+      }
+    },
+    {
+      "id": "order_parameters",
+      "input": {
+        "template": "classic",
+        "params": {
+          "kitchenTicketOrder": "custom",
+          "kitchenTicketOrderList": "category:a0000000-0000-4000-8000-000000000001,course:c0000000-0000-4000-8000-000000000003",
+          "kitchenTicketNoCourse": "first"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "template": "classic",
+        "designId": null,
+        "designName": null,
+        "inkSaver": true,
+        "fontScale": 100,
+        "fit": "fit",
+        "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
+        "bands": {
+          "addition": "double",
+          "fire": "outline",
+          "dining": "double",
+          "eatIn": "outline",
+          "copy": "outline",
+          "resent": "double",
+          "redirected": "outline",
+          "tableNote": "outline",
+          "notice": "outline",
+          "training": "double",
+          "course": "plain"
+        },
+        "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
+        "qty": "plain",
+        "mods": {"layout": "inline", "marks": "asis"},
+        "note": {"frame": true, "important": "outline"},
+        "allergy": "outline_warn",
+        "separators": "solid",
+        "separatorWeight": "thin",
+        "itemDivider": "thin",
+        "spacing": "tight",
+        "layout": {"qtyColumn": true, "hangingIndent": true},
+        "order": {
+          "by": "custom",
+          "groupHeaders": true,
+          "noCourse": "first",
+          "list": [
+            {"kind": "category", "id": "a0000000-0000-4000-8000-000000000001", "name": null},
+            {"kind": "course", "id": "c0000000-0000-4000-8000-000000000003", "name": null}
+          ]
+        },
+        "grouping": "none",
+        "heldCourse": "plain",
+        "totals": false,
+        "checkboxes": false,
+        "elapsed": false,
+        "footer": {"layout": "inline", "fields": ["order", "till", "printer"]},
+        "feedLines": 2
+      }
+    },
+    {
+      "id": "order_headers_auto_and_off",
+      "input": {
+        "template": "courses",
+        "params": {"kitchenTicketGroupHeaders": "off"},
+        "printer": {"order": "category"}
+      },
+      "expect": {
+        "version": 1,
+        "template": "courses",
+        "designId": null,
+        "designName": null,
+        "inkSaver": true,
+        "fontScale": 100,
+        "fit": "fit",
+        "header": {"size": "m", "fill": "none", "layout": "inline", "fields": ["table", "customer", "guests", "waiter", "time"]},
+        "bands": {
+          "addition": "double",
+          "fire": "outline",
+          "dining": "double",
+          "eatIn": "outline",
+          "copy": "outline",
+          "resent": "double",
+          "redirected": "outline",
+          "tableNote": "outline",
+          "notice": "outline",
+          "training": "double",
+          "course": "double"
+        },
+        "itemName": {"maxSize": "m", "minSize": "s", "maxLines": 0},
+        "qty": "plain",
+        "mods": {"layout": "inline", "marks": "asis"},
+        "note": {"frame": true, "important": "outline"},
+        "allergy": "outline_warn",
+        "separators": "solid",
+        "separatorWeight": "thin",
+        "itemDivider": "none",
+        "spacing": "normal",
+        "layout": {"qtyColumn": true, "hangingIndent": true},
+        "order": {"by": "category", "groupHeaders": false, "noCourse": "last", "list": []},
+        "grouping": "seat",
+        "heldCourse": "dashed",
+        "totals": true,
+        "checkboxes": true,
+        "elapsed": false,
+        "footer": {"layout": "inline", "fields": ["order", "till", "printer"]},
+        "feedLines": 2
       }
     },
     {
@@ -1038,7 +1176,8 @@
         "itemDivider": "none",
         "spacing": "normal",
         "layout": {"qtyColumn": true, "hangingIndent": true},
-        "grouping": "course_seat",
+        "order": {"by": "course", "groupHeaders": true, "noCourse": "last", "list": []},
+        "grouping": "seat",
         "heldCourse": "dashed",
         "totals": true,
         "checkboxes": false,
@@ -1046,6 +1185,118 @@
         "footer": {"layout": "inline", "fields": ["printer"]},
         "feedLines": 2
       }
+    }
+  ],
+  "orderData": {
+    "courses": [
+      {"id": "c0000000-0000-4000-8000-000000000002", "name": "עיקריות", "sortOrder": 1},
+      {"id": "c0000000-0000-4000-8000-000000000001", "name": "ראשונות", "sortOrder": 0},
+      {"id": "c0000000-0000-4000-8000-000000000003", "name": "קינוחים", "sortOrder": 2}
+    ],
+    "categories": [
+      {"id": "a0000000-0000-4000-8000-000000000001", "name": "שתייה", "parentId": null, "sortOrder": 0},
+      {"id": "a0000000-0000-4000-8000-000000000002", "name": "סלטים", "parentId": null, "sortOrder": 1},
+      {"id": "a0000000-0000-4000-8000-000000000003", "name": "מנות עיקריות", "parentId": null, "sortOrder": 2},
+      {"id": "a0000000-0000-4000-8000-000000000004", "name": "בשרים", "parentId": "a0000000-0000-4000-8000-000000000003", "sortOrder": 0},
+      {"id": "a0000000-0000-4000-8000-000000000005", "name": "מתוקים", "parentId": null, "sortOrder": 3}
+    ]
+  },
+  "orderCases": [
+    {
+      "id": "added",
+      "order": {"by": "added", "groupHeaders": false, "noCourse": "last", "list": []},
+      "grouping": "none",
+      "expect": [
+        {"kind": "course", "title": "קינוחים", "lines": [0], "names": ["עוגת שוקולד"]},
+        {"kind": "course", "title": "עיקריות", "lines": [1], "names": ["סטייק סינטה"]},
+        {"kind": "course", "title": "ראשונות", "lines": [2], "names": ["סלט יווני"]},
+        {"kind": "none", "title": null, "lines": [3], "names": ["לימונדה"]},
+        {"kind": "course", "title": "ראשונות", "lines": [4], "names": ["חומוס"]},
+        {"kind": "course", "title": "עיקריות", "lines": [5], "names": ["פסטה ארביאטה"]}
+      ]
+    },
+    {
+      "id": "course",
+      "order": {"by": "course", "groupHeaders": true, "noCourse": "last", "list": []},
+      "grouping": "none",
+      "expect": [
+        {"kind": "course", "title": "ראשונות", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
+        {"kind": "course", "title": "עיקריות", "lines": [1, 5], "names": ["סטייק סינטה", "פסטה ארביאטה"]},
+        {"kind": "course", "title": "קינוחים", "lines": [0], "names": ["עוגת שוקולד"]},
+        {"kind": "none", "title": null, "lines": [3], "names": ["לימונדה"]}
+      ]
+    },
+    {
+      "id": "course_no_course_first",
+      "order": {"by": "course", "groupHeaders": true, "noCourse": "first", "list": []},
+      "grouping": "none",
+      "expect": [
+        {"kind": "none", "title": null, "lines": [3], "names": ["לימונדה"]},
+        {"kind": "course", "title": "ראשונות", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
+        {"kind": "course", "title": "עיקריות", "lines": [1, 5], "names": ["סטייק סינטה", "פסטה ארביאטה"]},
+        {"kind": "course", "title": "קינוחים", "lines": [0], "names": ["עוגת שוקולד"]}
+      ]
+    },
+    {
+      "id": "course_by_seat",
+      "order": {"by": "course", "groupHeaders": true, "noCourse": "last", "list": []},
+      "grouping": "seat",
+      "expect": [
+        {"kind": "course", "title": "ראשונות", "lines": [4, 2], "names": ["חומוס", "סלט יווני"]},
+        {"kind": "course", "title": "עיקריות", "lines": [1, 5], "names": ["סטייק סינטה", "פסטה ארביאטה"]},
+        {"kind": "course", "title": "קינוחים", "lines": [0], "names": ["עוגת שוקולד"]},
+        {"kind": "none", "title": null, "lines": [3], "names": ["לימונדה"]}
+      ]
+    },
+    {
+      "id": "category",
+      "order": {"by": "category", "groupHeaders": true, "noCourse": "last", "list": []},
+      "grouping": "none",
+      "expect": [
+        {"kind": "category", "title": "שתייה", "lines": [3], "names": ["לימונדה"]},
+        {"kind": "category", "title": "סלטים", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
+        {"kind": "category", "title": "מנות עיקריות", "lines": [5], "names": ["פסטה ארביאטה"]},
+        {"kind": "category", "title": "בשרים", "lines": [1], "names": ["סטייק סינטה"]},
+        {"kind": "category", "title": "מתוקים", "lines": [0], "names": ["עוגת שוקולד"]}
+      ]
+    },
+    {
+      "id": "custom",
+      "order": {
+        "by": "custom",
+        "groupHeaders": true,
+        "noCourse": "last",
+        "list": [
+          {"kind": "category", "id": "a0000000-0000-4000-8000-000000000001", "name": null},
+          {"kind": "course", "id": "c0000000-0000-4000-8000-000000000003", "name": null},
+          {"kind": "course", "id": "c0000000-0000-4000-8000-000000000001", "name": null}
+        ]
+      },
+      "grouping": "none",
+      "expect": [
+        {"kind": "category", "title": "שתייה", "lines": [3], "names": ["לימונדה"]},
+        {"kind": "course", "title": "קינוחים", "lines": [0], "names": ["עוגת שוקולד"]},
+        {"kind": "course", "title": "ראשונות", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
+        {"kind": "none", "title": null, "lines": [1, 5], "names": ["סטייק סינטה", "פסטה ארביאטה"]}
+      ]
+    },
+    {
+      "id": "custom_parent_category",
+      "order": {
+        "by": "custom",
+        "groupHeaders": false,
+        "noCourse": "last",
+        "list": [
+          {"kind": "category", "id": "a0000000-0000-4000-8000-000000000003", "name": null},
+          {"kind": "category", "id": "a0000000-0000-4000-8000-000000000002", "name": null}
+        ]
+      },
+      "grouping": "none",
+      "expect": [
+        {"kind": "category", "title": "מנות עיקריות", "lines": [1, 5], "names": ["סטייק סינטה", "פסטה ארביאטה"]},
+        {"kind": "category", "title": "סלטים", "lines": [2, 4], "names": ["סלט יווני", "חומוס"]},
+        {"kind": "none", "title": null, "lines": [0, 3], "names": ["עוגת שוקולד", "לימונדה"]}
+      ]
     }
   ],
   "testPrint": {"notice": "הדפסת ניסיון — לא להכנה", "sampleId": "preview_table"},
@@ -1381,6 +1632,132 @@
       },
       "mustAppear": {
         "all": ["הדרכה", "לשבת", "2001", "קפה הפוך גדול", "חלב סויה", "קרואסון חמאה", "נועה", "09:05", "בר"],
+        "byTemplate": {}
+      }
+    },
+    {
+      "id": "order_three_courses",
+      "title": "שלושה קורסים ושתייה, שנוספו בלי סדר — הדוגמה של סדר הפריטים (§9)",
+      "printerName": "מטבח",
+      "copy": 1,
+      "copies": 1,
+      "ticket": {
+        "source": "table",
+        "tableName": "5",
+        "zoneName": null,
+        "guests": 3,
+        "waiterName": "דנה",
+        "createdAt": "2026-10-14T17:30:00Z",
+        "isAddition": false,
+        "lines": [
+          {
+            "productId": null,
+            "categoryId": "a0000000-0000-4000-8000-000000000005",
+            "name": "עוגת שוקולד",
+            "quantity": 1.0,
+            "notes": null,
+            "mods": null,
+            "removals": null,
+            "important": null,
+            "allergies": null,
+            "seat": "מ1",
+            "course": "קינוחים",
+            "mealName": null,
+            "refill": null,
+            "held": null
+          },
+          {
+            "productId": null,
+            "categoryId": "a0000000-0000-4000-8000-000000000004",
+            "name": "סטייק סינטה",
+            "quantity": 1.0,
+            "notes": null,
+            "mods": ["מדיום"],
+            "removals": null,
+            "important": null,
+            "allergies": null,
+            "seat": "מ2",
+            "course": "עיקריות",
+            "mealName": null,
+            "refill": null,
+            "held": null
+          },
+          {
+            "productId": null,
+            "categoryId": "a0000000-0000-4000-8000-000000000002",
+            "name": "סלט יווני",
+            "quantity": 1.0,
+            "notes": null,
+            "mods": null,
+            "removals": null,
+            "important": null,
+            "allergies": null,
+            "seat": "מ2",
+            "course": "ראשונות",
+            "mealName": null,
+            "refill": null,
+            "held": null
+          },
+          {
+            "productId": null,
+            "categoryId": "a0000000-0000-4000-8000-000000000001",
+            "name": "לימונדה",
+            "quantity": 2.0,
+            "notes": null,
+            "mods": null,
+            "removals": null,
+            "important": null,
+            "allergies": null,
+            "seat": null,
+            "course": null,
+            "mealName": null,
+            "refill": null,
+            "held": null
+          },
+          {
+            "productId": null,
+            "categoryId": "a0000000-0000-4000-8000-000000000002",
+            "name": "חומוס",
+            "quantity": 1.0,
+            "notes": null,
+            "mods": null,
+            "removals": null,
+            "important": null,
+            "allergies": null,
+            "seat": "מ1",
+            "course": "ראשונות",
+            "mealName": null,
+            "refill": null,
+            "held": null
+          },
+          {
+            "productId": null,
+            "categoryId": "a0000000-0000-4000-8000-000000000003",
+            "name": "פסטה ארביאטה",
+            "quantity": 1.0,
+            "notes": null,
+            "mods": null,
+            "removals": null,
+            "important": null,
+            "allergies": null,
+            "seat": "מ10",
+            "course": "עיקריות",
+            "mealName": null,
+            "refill": null,
+            "held": null
+          }
+        ],
+        "orderRef": "4490",
+        "sourceName": "קופה 1",
+        "fire": null,
+        "customerName": null,
+        "dining": null,
+        "notice": null,
+        "training": null,
+        "openedAt": "2026-10-14T17:00:00Z"
+      },
+      "mustAppear": {
+        "all": ["שולחן 5", "עוגת שוקולד", "סטייק סינטה", "מדיום", "סלט יווני", "לימונדה", "חומוס", "פסטה ארביאטה", "ראשונות", "עיקריות", "קינוחים"],
         "byTemplate": {}
       }
     }

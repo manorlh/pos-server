@@ -1,6 +1,6 @@
 """
 "עיצוב בון" — how a kitchen ticket ("בון") looks: the `ticketStyle` contract
-(P:/specs/kitchen-ticket-designs.md §1, §6–§9; the shared golden
+(P:/specs/kitchen-ticket-designs.md §1, §6–§10; the shared golden
 tests/fixtures/kitchen_ticket_designs_golden.json, byte-identical in pos-android).
 
 Pure rules, no database (app/services/kitchen_ticket_designs.py stores and assigns):
@@ -154,10 +154,28 @@ WEIGHT_LABELS = {"thin": "דק", "normal": "רגיל", "thick": "עבה"}
 ITEM_DIVIDERS: Tuple[str, ...] = ("none", "thin", "dashed")
 SPACINGS: Tuple[str, ...] = ("tight", "normal")
 SPACING_LABELS = {"tight": "צפוף", "normal": "רגיל"}
-#: `inline`: in the ticket's order, a course's name where it changes; `course_seat`: grouped by
-#: course (a band each), then by seat.
-GROUPINGS: Tuple[str, ...] = ("inline", "course_seat")
+#: Within each group of `order`: `none` — as added; `seat` — by seat ("מ1", "מ2"), as added within it.
+GROUPINGS: Tuple[str, ...] = ("none", "seat")
 HELD_COURSE_STYLES: Tuple[str, ...] = ("plain", "dashed")
+
+#: §9 "מה להציג קודם בבון": `added` — as added (today); `course` — by the courses' order (FIRE v2's
+#: menu courses), as added within each; `category` — by the catalog's category order; `custom` — by
+#: `order.list` (courses and categories as the manager dragged them), the rest at the end.
+ORDER_BYS: Tuple[str, ...] = ("added", "course", "category", "custom")
+ORDER_LABELS = {
+    "added": "לפי סדר ההוספה (כמו היום)",
+    "course": "לפי סדר הקורסים",
+    "category": "לפי סדר המחלקות בקטלוג",
+    "custom": "סדר שלי (גרירה)",
+}
+#: A thin heading for each group ("── ראשונות ──", in `bands.course`): `auto` — on unless `added`.
+GROUP_HEADERS: Tuple[str, ...] = ("auto", "on", "off")
+GROUP_HEADER_LABELS = {"auto": "אוטומטי (מופעל כשממיינים)", "on": "מופעל", "off": "כבוי"}
+#: Where an item with no course goes when ordering by course.
+NO_COURSE: Tuple[str, ...] = ("last", "first")
+NO_COURSE_LABELS = {"last": "בסוף", "first": "בהתחלה"}
+ORDER_LIST_KINDS: Tuple[str, ...] = ("course", "category")
+ORDER_LIST_MAX = 40
 
 FONT_SCALE_MIN, FONT_SCALE_MAX, FONT_SCALE_DEFAULT = 80, 150, 100
 FEED_LINES_MIN, FEED_LINES_MAX = 0, 6
@@ -237,7 +255,8 @@ def _look(**changes: Any) -> Dict[str, Any]:
         "itemDivider": "thin",
         "spacing": "tight",
         "layout": {"qtyColumn": True, "hangingIndent": True},
-        "grouping": "inline",
+        "order": {"by": "added", "groupHeaders": "auto", "noCourse": "last", "list": []},
+        "grouping": "none",
         "heldCourse": "plain",
         "totals": False,
         "checkboxes": False,
@@ -267,6 +286,8 @@ _TEMPLATE_LOOKS: Dict[str, Dict[str, Any]] = {
         itemDivider="none",
         spacing="normal",
         layout={"qtyColumn": False, "hangingIndent": False},
+        # Today's: as added, the course's name where it changes.
+        order={"groupHeaders": "on"},
         footer={"layout": "stacked", "fields": ["time", "waiter", "order", "till", "printer"]},
         feedLines=3,
     ),
@@ -294,7 +315,8 @@ _TEMPLATE_LOOKS: Dict[str, Dict[str, Any]] = {
         bands={"course": "double"},
         spacing="normal",
         itemDivider="none",
-        grouping="course_seat",
+        order={"by": "course"},
+        grouping="seat",
         heldCourse="dashed",
         totals=True,
         checkboxes=True,
@@ -345,6 +367,7 @@ _ENUM = "enum"
 _BOOL = "bool"
 _INT = "int"
 _FIELDS = "fields"
+_ORDER_LIST = "order_list"
 
 #: What a design may set, and how each value is checked. Groups are objects of the same.
 OVERRIDE_SPEC: Dict[str, Any] = {
@@ -372,6 +395,12 @@ OVERRIDE_SPEC: Dict[str, Any] = {
     "itemDivider": (_ENUM, ITEM_DIVIDERS),
     "spacing": (_ENUM, SPACINGS),
     "layout": {"qtyColumn": (_BOOL,), "hangingIndent": (_BOOL,)},
+    "order": {
+        "by": (_ENUM, ORDER_BYS),
+        "groupHeaders": (_ENUM, GROUP_HEADERS),
+        "noCourse": (_ENUM, NO_COURSE),
+        "list": (_ORDER_LIST,),
+    },
     "grouping": (_ENUM, GROUPINGS),
     "heldCourse": (_ENUM, HELD_COURSE_STYLES),
     "totals": (_BOOL,),
@@ -424,7 +453,47 @@ def _clean_leaf(rule: Tuple[Any, ...], value: Any, path: str) -> Any:
         if value not in rule[1]:
             raise StyleError(f"{path}: one of {', '.join(rule[1])}")
         return value
+    if kind == _ORDER_LIST:
+        return clean_order_list(value, path)
     return _clean_fields(value, path, rule[1])
+
+
+def clean_order_list(value: Any, path: str = "order.list") -> List[Dict[str, str]]:
+    """
+    `custom`'s order: `[{kind: course|category, id}]` (or "course:<id>,category:<id>" text), each
+    once, at most `ORDER_LIST_MAX`. StyleError otherwise.
+    """
+    if isinstance(value, str):
+        value = [part.strip() for part in value.split(",") if part.strip()]
+    if not isinstance(value, list):
+        raise StyleError(f"{path}: a list of courses and categories")
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for entry in value:
+        if isinstance(entry, str) and ":" in entry:
+            kind, _, ident = entry.partition(":")
+        elif isinstance(entry, dict):
+            kind, ident = entry.get("kind"), entry.get("id")
+        else:
+            raise StyleError(f"{path}: each entry a course or a category")
+        if kind not in ORDER_LIST_KINDS:
+            raise StyleError(f"{path}: kind one of {', '.join(ORDER_LIST_KINDS)}")
+        try:
+            ident = str(uuid.UUID(str(ident).strip()))
+        except ValueError as exc:
+            raise StyleError(f"{path}: an id") from exc
+        if (kind, ident) in seen:
+            raise StyleError(f"{path}: listed twice")
+        seen.add((kind, ident))
+        out.append({"kind": kind, "id": ident})
+    if len(out) > ORDER_LIST_MAX:
+        raise StyleError(f"{path}: at most {ORDER_LIST_MAX}")
+    return out
+
+
+def order_list_text(entries: Sequence[Dict[str, str]]) -> str:
+    """The till parameter's stored form: "course:<id>,category:<id>"."""
+    return ",".join(f"{e['kind']}:{e['id']}" for e in entries)
 
 
 def _clean_group(spec: Dict[str, Any], value: Any, path: str) -> Dict[str, Any]:
@@ -476,11 +545,16 @@ MIN_TEXT_KEY = "kitchenTicketMinTextSize"
 MAX_TEXT_KEY = "kitchenTicketMaxTextSize"
 HEADER_SIZE_KEY = "kitchenTicketHeaderSize"
 INLINE_MODS_KEY = "kitchenTicketInlineMods"
+ORDER_KEY = "kitchenTicketOrder"
+ORDER_LIST_KEY = "kitchenTicketOrderList"
+GROUP_HEADERS_KEY = "kitchenTicketGroupHeaders"
+NO_COURSE_KEY = "kitchenTicketNoCourse"
 #: Set at some level, they lay over the template; their defaults never do (a template's own
-#: checkboxes / elapsed / sizes / fields stay).
+#: checkboxes / elapsed / sizes / fields / order stay).
 LEVEL_OPTION_KEYS: Tuple[str, ...] = (
     FONT_SCALE_KEY, HEADER_KEY, CHECKBOXES_KEY, ELAPSED_KEY,
     FIT_KEY, MIN_TEXT_KEY, MAX_TEXT_KEY, HEADER_SIZE_KEY, INLINE_MODS_KEY,
+    ORDER_KEY, ORDER_LIST_KEY, GROUP_HEADERS_KEY, NO_COURSE_KEY,
 )
 PARAMETER_KEYS: Tuple[str, ...] = (DESIGN_KEY, INK_SAVER_KEY) + LEVEL_OPTION_KEYS
 #: The level / printer options by their short names (the printer's `ticket*` fields).
@@ -494,6 +568,10 @@ OPTION_NAMES: Dict[str, str] = {
     MAX_TEXT_KEY: "maxTextSize",
     HEADER_SIZE_KEY: "headerSize",
     INLINE_MODS_KEY: "inlineMods",
+    ORDER_KEY: "order",
+    ORDER_LIST_KEY: "orderList",
+    GROUP_HEADERS_KEY: "groupHeaders",
+    NO_COURSE_KEY: "noCourse",
 }
 _LEVELS_TEXT = "כשנקבע ברמה כלשהי, גובר על התבנית; עיצוב בון ומדפסת גוברים עליו. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
 
@@ -613,6 +691,50 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
             "אחרת בשורה מוזחת מתחת לשם. כבוי: תמיד בשורות מוזחות. " + _LEVELS_TEXT
         ),
     ),
+    dict(
+        key=ORDER_KEY,
+        label="בון מטבח — סדר הפריטים",
+        value_type="enum",
+        enum_options=ORDER_BYS,
+        enum_labels=ORDER_LABELS,
+        default_value="added",
+        description=(
+            "מה מופיע קודם בבון. «added» (ברירת מחדל): לפי סדר ההוספה, כמו היום. «course»: לפי סדר הקורסים "
+            "(ראשונות, עיקריות, קינוחים…). «category»: לפי סדר המחלקות בקטלוג. «custom»: לפי \"בון מטבח — סדר "
+            "שלי\". בתוך כל קבוצה — לפי סדר ההוספה. בון ביטול, העתק והדפסה חוזרת באותו סדר. " + _LEVELS_TEXT
+        ),
+    ),
+    dict(
+        key=ORDER_LIST_KEY,
+        label="בון מטבח — סדר שלי",
+        value_type="string",
+        default_value="",
+        description=(
+            "לסדר «custom»: קורסים ומחלקות בסדר הרצוי, רשימה מופרדת בפסיקים של course:<מזהה> ו-category:<מזהה> "
+            f"(עד {ORDER_LIST_MAX}). מה שלא ברשימה יורד לסוף. נוח יותר לסדר בגרירה במסך המדפסות. " + _LEVELS_TEXT
+        ),
+    ),
+    dict(
+        key=GROUP_HEADERS_KEY,
+        label="בון מטבח — כותרת לכל קבוצה",
+        value_type="enum",
+        enum_options=GROUP_HEADERS,
+        enum_labels=GROUP_HEADER_LABELS,
+        default_value="auto",
+        description=(
+            "כותרת דקה לכל קבוצה (\"── ראשונות ──\"), בלי שחור. «auto» (ברירת מחדל): מופעל כשהסדר לפי קורסים, "
+            "מחלקות או סדר שלי. כשאין כותרת, הקורס מודפס קטן ליד הפריט. " + _LEVELS_TEXT
+        ),
+    ),
+    dict(
+        key=NO_COURSE_KEY,
+        label="בון מטבח — פריט בלי קורס",
+        value_type="enum",
+        enum_options=NO_COURSE,
+        enum_labels=NO_COURSE_LABELS,
+        default_value="last",
+        description="בסדר לפי קורסים: פריט בלי קורס בסוף («last», ברירת מחדל) או בהתחלה («first»). " + _LEVELS_TEXT,
+    ),
 )
 VALIDATED_KEYS = frozenset(PARAMETER_KEYS)
 
@@ -651,6 +773,9 @@ _ENUM_PARAMS: Dict[str, Tuple[str, ...]] = {
     MIN_TEXT_KEY: MIN_TEXT_SIZES,
     MAX_TEXT_KEY: MAX_TEXT_SIZES,
     HEADER_SIZE_KEY: HEADER_SIZES,
+    ORDER_KEY: ORDER_BYS,
+    GROUP_HEADERS_KEY: GROUP_HEADERS,
+    NO_COURSE_KEY: NO_COURSE,
 }
 _BOOL_PARAMS = (INK_SAVER_KEY, CHECKBOXES_KEY, ELAPSED_KEY, INLINE_MODS_KEY)
 
@@ -669,6 +794,8 @@ def clean_value(key: str, value: Any) -> Any:
         return _whole(value, key, FONT_SCALE_MIN, FONT_SCALE_MAX)
     if key == HEADER_KEY:
         return ",".join(parse_header(value))
+    if key == ORDER_LIST_KEY:
+        return order_list_text(clean_order_list(value, key))
     if key in _ENUM_PARAMS:
         if value not in _ENUM_PARAMS[key]:
             raise StyleError(f"{key}: one of {', '.join(_ENUM_PARAMS[key])}")
@@ -706,6 +833,14 @@ def _apply_options(style: Dict[str, Any], options: Dict[str, Any]) -> None:
         style["header"]["size"] = options["headerSize"]
     if options.get("inlineMods") is not None:
         style["mods"]["layout"] = "inline" if options["inlineMods"] else "indent"
+    if options.get("order") in ORDER_BYS:
+        style["order"]["by"] = options["order"]
+    if options.get("orderList") is not None:
+        style["order"]["list"] = [dict(e) for e in options["orderList"]]
+    if options.get("groupHeaders") in GROUP_HEADERS:
+        style["order"]["groupHeaders"] = options["groupHeaders"]
+    if options.get("noCourse") in NO_COURSE:
+        style["order"]["noCourse"] = options["noCourse"]
 
 
 def apply_ink_saver(style: Dict[str, Any]) -> Dict[str, Any]:
@@ -737,7 +872,11 @@ def level_options(params: Dict[str, Any]) -> Dict[str, Any]:
             value = clean_value(key, value)
         except StyleError:
             continue  # a stored value the look no longer takes: inherit
-        out[name] = parse_header(value) if key == HEADER_KEY else value
+        if key == HEADER_KEY:
+            value = parse_header(value)
+        elif key == ORDER_LIST_KEY:
+            value = clean_order_list(value, key)
+        out[name] = value
     return out
 
 
@@ -750,12 +889,14 @@ def resolve_style(
     level: Optional[Dict[str, Any]] = None,
     ink_saver: bool = True,
     printer: Optional[Dict[str, Any]] = None,
+    names: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Dict[str, Any]:
     """
     The full `ticketStyle` the till draws by. `level`: the till parameters SET on the till's levels
     (`level_options` of them); `ink_saver`: `kitchenTicketInkSaver` as it resolves (default on);
     `overrides`: the design's; `printer`: the printer's own options (the short names of
-    `OPTION_NAMES`; None = inherit).
+    `OPTION_NAMES`; None = inherit); `names`: (kind, id) → the course's / category's name, for
+    `order.list` (an entry not found keeps a null name — the till matches by id).
     """
     if template not in TEMPLATES:
         template = DEFAULT_TEMPLATE
@@ -770,6 +911,12 @@ def resolve_style(
     item = look["itemName"]
     if TEXT_SIZES.index(item["minSize"]) > TEXT_SIZES.index(item["maxSize"]):
         item["minSize"] = item["maxSize"]
+    order = look["order"]
+    headers = order["groupHeaders"]
+    order["groupHeaders"] = headers == "on" or (headers == "auto" and order["by"] != "added")
+    order["list"] = [
+        {"kind": e["kind"], "id": e["id"], "name": (names or {}).get((e["kind"], e["id"]))} for e in order["list"]
+    ]
     if look["inkSaver"]:
         apply_ink_saver(look)
     meta = {
@@ -791,6 +938,7 @@ def resolve_with_params(
     design_id: Optional[str] = None,
     design_name: Optional[str] = None,
     printer: Optional[Dict[str, Any]] = None,
+    names: Optional[Dict[Tuple[str, str], str]] = None,
 ) -> Dict[str, Any]:
     """`resolve_style` from the till parameters SET on the till's levels (`params`, key → value)."""
     params = params or {}
@@ -803,7 +951,144 @@ def resolve_with_params(
         level=level_options(params),
         ink_saver=True if ink is None else bool(ink),
         printer=printer,
+        names=names,
     )
+
+
+# ── The order of the lines (§9) — the till's rule, and the dashboard's preview ──
+
+
+def category_positions(categories: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    """
+    Each category's place in the catalog: the tree depth first, siblings by (sortOrder, name).
+    `categories`: `[{id, name, parentId, sortOrder}]` as the till holds them.
+    """
+    children: Dict[Optional[str], List[Dict[str, Any]]] = {}
+    ids = {c["id"] for c in categories}
+    for c in categories:
+        parent = c.get("parentId") if c.get("parentId") in ids else None
+        children.setdefault(parent, []).append(c)
+    out: Dict[str, int] = {}
+
+    def walk(parent: Optional[str]) -> None:
+        for c in sorted(children.get(parent, []), key=lambda c: (c.get("sortOrder") or 0, c.get("name") or "")):
+            if c["id"] in out:
+                continue
+            out[c["id"]] = len(out)
+            walk(c["id"])
+
+    walk(None)
+    return out
+
+
+def seat_key(seat: Optional[str]) -> Tuple[Any, ...]:
+    """"מ2" before "מ10": the digits as a number, the rest as text."""
+    import re
+
+    parts = re.split(r"(\d+)", (seat or "").strip())
+    return tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in parts if p)
+
+
+def _ancestors(category_id: Optional[str], categories: Sequence[Dict[str, Any]]) -> List[str]:
+    parents = {c["id"]: c.get("parentId") for c in categories}
+    chain: List[str] = []
+    current = category_id
+    while current and current not in chain:
+        chain.append(current)
+        current = parents.get(current)
+    return chain
+
+
+def order_lines(
+    lines: Sequence[Dict[str, Any]],
+    style: Dict[str, Any],
+    courses: Sequence[Dict[str, Any]],
+    categories: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    The ticket's lines in the order the style prints them, in groups: `[{key, kind, title, lines:
+    [index…]}]` (`kind`: course | category | none). `courses`: the till's menu courses `[{id, name,
+    sortOrder}]`; `categories`: its catalog's `[{id, name, parentId, sortOrder}]`. A line's course is
+    its `course` name (or `courseId`); its category its `categoryId` (or an ancestor of it). Within a
+    group: as added, by seat when `grouping` is `seat`. Stable: a reprint prints in the same order.
+    """
+    order = style["order"]
+    by = order["by"]
+    course_rank = {}
+    course_by_name = {}
+    for c in sorted(courses, key=lambda c: (c.get("sortOrder") or 0, c.get("name") or "")):
+        course_rank[c["id"]] = len(course_rank)
+        course_by_name.setdefault(c["name"], c)
+    cat_rank = category_positions(categories)
+    cat_names = {c["id"]: c.get("name") for c in categories}
+    no_course_first = order.get("noCourse") == "first"
+
+    def course_of(line: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        cid = line.get("courseId")
+        if cid:
+            for c in courses:
+                if c["id"] == cid:
+                    return c
+        name = (line.get("course") or "").strip()
+        if not name:
+            return None
+        return course_by_name.get(name) or {"id": None, "name": name}
+
+    groups: List[Dict[str, Any]] = []
+
+    def group_for(key: Tuple[Any, ...], kind: str, title: Optional[str]) -> Dict[str, Any]:
+        for g in groups:
+            if g["key"] == key:
+                return g
+        g = {"key": key, "kind": kind, "title": title, "lines": []}
+        groups.append(g)
+        return g
+
+    keyed: List[Tuple[Tuple[Any, ...], str, Optional[str], Tuple[Any, ...], int]] = []
+    for index, line in enumerate(lines):
+        course = course_of(line)
+        if by == "added":
+            # As added; a group runs while the course stays the same (today's "— ראשונות —").
+            title = course["name"] if course else None
+            if keyed and keyed[-1][2] == title:
+                key = keyed[-1][0]
+            else:
+                key = ("run", len({k[0] for k in keyed}), title)
+            keyed.append((key, "course" if course else "none", title, (len(keyed),), index))
+        elif by == "course":
+            if course is None:
+                rank = (-1 if no_course_first else 10**6,)
+                keyed.append((("none",), "none", None, rank, index))
+            else:
+                rank = (course_rank.get(course["id"], 10**5), course["name"])
+                keyed.append((("course", course["name"]), "course", course["name"], rank, index))
+        elif by == "category":
+            cid = line.get("categoryId")
+            rank = (cat_rank.get(cid, 10**6),)
+            keyed.append((("category", cid), "category" if cid else "none", cat_names.get(cid), rank, index))
+        else:  # custom
+            chain = _ancestors(line.get("categoryId"), categories)
+            hit = None
+            for position, entry in enumerate(order.get("list") or []):
+                if entry["kind"] == "course" and course is not None and (
+                    entry["id"] == course.get("id") or (entry.get("name") and entry.get("name") == course["name"])
+                ):
+                    hit = (position, entry, course["name"])
+                    break
+                if entry["kind"] == "category" and entry["id"] in chain:
+                    hit = (position, entry, entry.get("name") or cat_names.get(entry["id"]))
+                    break
+            if hit is None:
+                keyed.append((("rest",), "none", None, (10**6,), index))
+            else:
+                position, entry, title = hit
+                keyed.append(((entry["kind"], entry["id"]), entry["kind"], title, (position,), index))
+    for key, kind, title, _rank, index in sorted(keyed, key=lambda k: (k[3], k[4])):
+        group_for(key, kind, title)["lines"].append(index)
+    if style.get("grouping") == "seat":
+        for g in groups:
+            g["lines"].sort(key=lambda i: (lines[i].get("seat") is None, seat_key(lines[i].get("seat")), i))
+    return [{"key": "|".join(str(p) for p in g["key"]), "kind": g["kind"], "title": g["title"], "lines": g["lines"]} for g in groups]
 
 
 # ── The notice's parts and the bands they print in ─────────────────────────────

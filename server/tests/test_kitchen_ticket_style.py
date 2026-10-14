@@ -1,5 +1,5 @@
 """
-"עיצוב בון" — the `ticketStyle` contract (P:/specs/kitchen-ticket-designs.md §1, §6–§9;
+"עיצוב בון" — the `ticketStyle` contract (P:/specs/kitchen-ticket-designs.md §1, §6–§10;
 app/services/kitchen_ticket_style.py), pinned by the shared golden
 tests/fixtures/kitchen_ticket_designs_golden.json (byte-identical in pos-android and read by the
 dashboard's preview tests).
@@ -100,7 +100,10 @@ def test_every_sample_is_in_the_till_s_ticket_shape_and_lists_what_every_templat
         "allergies", "seat", "course", "mealName", "refill", "held",
     ]
     ids = [s["id"] for s in GOLDEN["samples"]]
-    assert ids == ["preview_table", "addition_fire", "takeaway_customer", "reprint_redirect", "training_eat_in"]
+    assert ids == [
+        "preview_table", "addition_fire", "takeaway_customer", "reprint_redirect", "training_eat_in",
+        "order_three_courses",
+    ]
     for sample in GOLDEN["samples"]:
         assert list(sample["ticket"]) == ticket_keys, sample["id"]
         for line in sample["ticket"]["lines"]:
@@ -166,7 +169,8 @@ def test_the_ink_saver_leaves_no_filled_area():
     # Off: the legacy exactly as before.
     off = S.resolve_with_params("classic_legacy", params={"kitchenTicketInkSaver": False})
     look = S.template_style("classic_legacy")
-    assert {k: off[k] for k in look} == look
+    assert {k: off[k] for k in look if k != "order"} == {k: v for k, v in look.items() if k != "order"}
+    assert off["order"]["groupHeaders"] is True and look["order"]["groupHeaders"] == "on"
     assert off["bands"]["addition"] == "fill"
 
 
@@ -183,7 +187,8 @@ def test_a_fill_is_only_a_design_s_explicit_choice_with_the_ink_saver_off():
 
 def test_parameter_defaults_never_beat_a_template_s_own_look():
     courses = S.resolve_with_params("courses")
-    assert courses["checkboxes"] is True and courses["grouping"] == "course_seat" and courses["totals"] is True
+    assert courses["checkboxes"] is True and courses["grouping"] == "seat" and courses["totals"] is True
+    assert courses["order"]["by"] == "course"
     assert S.resolve_with_params("modern")["elapsed"] is True
     assert S.resolve_with_params("compact")["itemName"]["maxSize"] == "s"
     # Set at a level, they do.
@@ -281,6 +286,15 @@ def test_overrides_are_stored_in_a_stable_order_without_nulls():
         ("kitchenTicketMaxTextSize", "l", "l"),
         ("kitchenTicketHeaderSize", "s", "s"),
         ("kitchenTicketInlineMods", False, False),
+        ("kitchenTicketOrder", "custom", "custom"),
+        ("kitchenTicketGroupHeaders", "off", "off"),
+        ("kitchenTicketNoCourse", "first", "first"),
+        ("kitchenTicketOrderList", "", ""),
+        (
+            "kitchenTicketOrderList",
+            " course:C0000000-0000-4000-8000-000000000003 , category:a0000000-0000-4000-8000-000000000001",
+            "course:c0000000-0000-4000-8000-000000000003,category:a0000000-0000-4000-8000-000000000001",
+        ),
     ],
 )
 def test_parameter_values_the_till_parses(key, value, stored):
@@ -303,6 +317,12 @@ def test_parameter_values_the_till_parses(key, value, stored):
         ("kitchenTicketMaxTextSize", "xs"),
         ("kitchenTicketHeaderSize", "xl"),
         ("kitchenTicketInlineMods", "on"),
+        ("kitchenTicketOrder", "alphabet"),
+        ("kitchenTicketGroupHeaders", True),
+        ("kitchenTicketNoCourse", "middle"),
+        ("kitchenTicketOrderList", "dish:c0000000-0000-4000-8000-000000000003"),
+        ("kitchenTicketOrderList", "course:nope"),
+        ("kitchenTicketOrderList", "course:c0000000-0000-4000-8000-000000000003,course:c0000000-0000-4000-8000-000000000003"),
     ],
 )
 def test_parameter_values_the_till_cannot_parse_are_refused(key, value):
@@ -326,6 +346,10 @@ def test_the_parameters_are_built_in_with_the_owner_s_defaults():
         "kitchenTicketMaxTextSize": "m",
         "kitchenTicketHeaderSize": "m",
         "kitchenTicketInlineMods": True,
+        "kitchenTicketOrder": "added",
+        "kitchenTicketOrderList": "",
+        "kitchenTicketGroupHeaders": "auto",
+        "kitchenTicketNoCourse": "last",
     }
     for key, default in expected.items():
         assert built[key].default_value == default, key
@@ -354,3 +378,75 @@ def test_the_test_print_ticket_is_the_sample_now_and_marked_a_test():
     assert S.notice_parts(t["notice"])[0] == ("notice", S.TEST_PRINT_NOTICE)
     assert t["lines"] == S.SAMPLE_TICKET["lines"]
     assert S.SAMPLE_TICKET["notice"] == "הערה לשולחן: יום הולדת — להביא נר"  # the sample itself untouched
+
+
+# ── The order of the lines (§9) ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("case", GOLDEN["orderCases"], ids=[c["id"] for c in GOLDEN["orderCases"]])
+def test_the_order_cases(case):
+    sample = next(s for s in GOLDEN["samples"] if s["id"] == "order_three_courses")["ticket"]
+    style = {"order": case["order"], "grouping": case["grouping"]}
+    groups = S.order_lines(sample["lines"], style, GOLDEN["orderData"]["courses"], GOLDEN["orderData"]["categories"])
+    assert [{"kind": g["kind"], "title": g["title"], "lines": g["lines"]} for g in groups] == [
+        {"kind": g["kind"], "title": g["title"], "lines": g["lines"]} for g in case["expect"]
+    ]
+    # Every line once, whatever the order.
+    assert sorted(i for g in groups for i in g["lines"]) == list(range(len(sample["lines"])))
+
+
+def test_the_order_by_level_design_and_printer_and_its_headers():
+    assert S.resolve_with_params("classic")["order"] == {"by": "added", "groupHeaders": False, "noCourse": "last", "list": []}
+    # Today's ticket: as added, the course's name where it changes.
+    assert S.resolve_with_params("classic_legacy")["order"]["groupHeaders"] is True
+    # Sorting turns the headings on by itself ("auto"); off stays off.
+    assert S.resolve_with_params("classic", params={"kitchenTicketOrder": "course"})["order"]["groupHeaders"] is True
+    off = S.resolve_with_params("classic", params={"kitchenTicketOrder": "course", "kitchenTicketGroupHeaders": "off"})
+    assert off["order"]["groupHeaders"] is False
+    listed = "category:a0000000-0000-4000-8000-000000000001,course:c0000000-0000-4000-8000-000000000003"
+    style = S.resolve_with_params(
+        "classic",
+        params={"kitchenTicketOrder": "custom", "kitchenTicketOrderList": listed},
+        overrides={"order": {"noCourse": "first"}},
+        printer={"groupHeaders": "off"},
+        names={("course", "c0000000-0000-4000-8000-000000000003"): "קינוחים"},
+    )
+    assert style["order"] == {
+        "by": "custom",
+        "groupHeaders": False,
+        "noCourse": "first",
+        "list": [
+            {"kind": "category", "id": "a0000000-0000-4000-8000-000000000001", "name": None},
+            {"kind": "course", "id": "c0000000-0000-4000-8000-000000000003", "name": "קינוחים"},
+        ],
+    }
+    # The courses design: by course, by seat, with headings.
+    courses = S.resolve_with_params("courses")
+    assert courses["order"]["by"] == "course" and courses["grouping"] == "seat" and courses["order"]["groupHeaders"] is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [{"kind": "dish", "id": "c0000000-0000-4000-8000-000000000003"}],
+        [{"kind": "course", "id": "x"}],
+        [{"kind": "course"}],
+        "course",
+        [1],
+        [{"kind": "course", "id": f"c0000000-0000-4000-8000-{i:012d}"} for i in range(41)],
+    ],
+)
+def test_an_order_list_the_till_cannot_use_is_refused(value):
+    with pytest.raises(S.StyleError):
+        S.clean_overrides({"order": {"list": value}})
+
+
+def test_a_design_s_order_list_is_kept_in_its_order():
+    cleaned = S.clean_overrides({"order": {"by": "custom", "list": [
+        {"kind": "course", "id": "C0000000-0000-4000-8000-000000000002"},
+        "category:a0000000-0000-4000-8000-000000000002",
+    ]}})
+    assert cleaned == {"order": {"by": "custom", "list": [
+        {"kind": "course", "id": "c0000000-0000-4000-8000-000000000002"},
+        {"kind": "category", "id": "a0000000-0000-4000-8000-000000000002"},
+    ]}}
