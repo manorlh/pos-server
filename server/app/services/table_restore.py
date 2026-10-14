@@ -178,17 +178,20 @@ SCOPE_TYPES = ("company", "shop", "area", "machine")
 VALIDATED_KEYS = frozenset({PREFIX_KEY, WINDOW_KEY, PRINT_CREDIT_KEY, METHODS_KEY, TIP_BASE_KEY})
 
 #: The tables page's level card ("הגדרות שולחנות"): its groups, in the order it shows them — the staff /
-#: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), then these.
+#: managers' tables (app/services/table_policies.py, P:/specs/owner-decisions-1410.md §1), these, then the
+#: map's legend and display (app/services/table_map_display.py, P:/specs/table-map-decor-v3.md §3).
 STAFF_TABLES_GROUP = "staffTables"
 RESTORE_GROUP = "restore"
+MAP_DISPLAY_GROUP = "mapDisplay"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
-    from app.services import table_policies
+    from app.services import table_map_display, table_policies
 
     return (
         (STAFF_TABLES_GROUP, "שולחן עובדים / מנהלים", table_policies.LEVEL_KEYS),
         (RESTORE_GROUP, "שחזור שולחן ותשלומים בשולחן", LEVEL_KEYS),
+        (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
     )
 
 
@@ -267,7 +270,8 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
     """
     What one level sets itself (`own`), what it inherits from the levels above or the default
     (`inherited`), and the definitions — the tables page's "הגדרות שולחנות" card: the staff / managers'
-    tables' `staffTableDiscountCheck` and the eight of restoring and reversing, each with its `group`.
+    tables' `staffTableDiscountCheck`, the eight of restoring and reversing, and the map's four of legend
+    and display (`mapDecor`…), each with its `group`.
     """
     from sqlalchemy import and_, or_
 

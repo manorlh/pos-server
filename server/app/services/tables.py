@@ -58,7 +58,14 @@ from app.models.tables import (
     TableZone,
 )
 from app.models.user import User
-from app.schemas.tables import SKETCH_KIND_SINCE, SKETCH_SCHEMA, SKETCH_VARIANT_SINCE, SKETCH_VARIANTS
+from app.schemas.tables import (
+    SKETCH_AREA_FILL_DEFAULT,
+    SKETCH_AREA_OPACITY_DEFAULT,
+    SKETCH_KIND_SINCE,
+    SKETCH_SCHEMA,
+    SKETCH_VARIANT_SINCE,
+    SKETCH_VARIANTS,
+)
 from app.services.areas import as_utc
 
 logger = logging.getLogger(__name__)
@@ -2095,7 +2102,8 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["variant"] = e.variant or "straight"
             out["stools"] = e.stools
         elif e.kind in SKETCH_VARIANTS and e.variant:
-            # Restrooms (men / women / accessible) and a plain exit; none — the default.
+            # Restrooms (men / women / accessible), a plain exit, a bar's drink, which
+            # entrance, a plant's size; none — the default.
             out["variant"] = e.variant
         if e.points:
             out["points"] = e.points
@@ -2107,6 +2115,12 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["filled"] = e.filled
         if e.kind == "logo" and getattr(e, "src", None):
             out["src"] = e.src
+        if e.kind == "area":
+            # Always stored, so the till never guesses: the fill and its opacity (percent).
+            fill = getattr(e, "fill", None)
+            opacity = getattr(e, "opacity", None)
+            out["fill"] = (fill or SKETCH_AREA_FILL_DEFAULT).lower()
+            out["opacity"] = SKETCH_AREA_OPACITY_DEFAULT if opacity is None else opacity
         return out
 
     return {
@@ -2513,12 +2527,13 @@ def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: 
     A plan saved by a till whose map designer speaks an older sketch schema than this
     server ([till_schema]; a till that sends no `sketchSchema` speaks 1): what that till
     could not know is kept from the plan as it was. Its designer drops shapes of kinds it
-    does not know (a DJ booth) and turns variants it does not know into its own (a U bar
-    into a straight one, restrooms for men / women / accessible into the plain sign, a
-    plain exit into the emergency one) — the till never showed them, so it cannot have
-    meant to change them. Kept: every such shape it left out (after its own, in their
-    order), and such a variant on a shape it kept. A plan it cleared (null) stays cleared
-    — "ניקוי הסקיצה" is meant whole.
+    does not know (a DJ booth; with schema 3, a coffee station, a tree, an area…) and turns
+    variants it does not know into its own (a U bar into a straight one, restrooms for men /
+    women / accessible into the plain sign, a plain exit into the emergency one; a cocktail
+    bar into a plain one, the main entrance into "כניסה", a large plant into the usual pot)
+    — the till never showed them, so it cannot have meant to change them. Kept: every such
+    shape it left out (after its own, in their order), and such a variant on a shape it
+    kept. A plan it cleared (null) stays cleared — "ניקוי הסקיצה" is meant whole.
     """
     if saved is None or not isinstance(before, dict):
         return saved
@@ -2556,7 +2571,7 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
     "שמור" in a till's edit mode: zones and tables added, changed and removed — all of it,
     or (on any refusal) none of it. A zone may carry its whole floor plan (`sketch`, from
     the till's map designer — the dashboard's shape and validation; from a till that sends
-    no `sketchSchema` ≥ 2, the decor symbols it cannot know are kept,
+    a `sketchSchema` under the server's (or none), the decor symbols it cannot know are kept,
     keep_decor_unknown_to_till). Only the zones and tables this till sees. Refused:
     a table someone is at that would move, change its number or go (409 `table_in_use`);
     a number another live table of the shop has once the batch is applied (409
