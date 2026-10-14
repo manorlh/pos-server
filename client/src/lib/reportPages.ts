@@ -148,6 +148,7 @@ export const NOT_REPORT_PAGES: PageExclusion[] = [
   { route: 'companies/[id]', reason: "organization management: one company" },
   { route: 'compare', reason: "redirects to the home page's comparisons (/dashboard?view=compare), which export" },
   { route: 'customer-display', reason: "settings: the customer-facing screen" },
+  { route: 'deferred-terminals', reason: "a live control: switches the shop's card terminals to the deferred (offline) mode and back" },
   { route: 'demo-company', reason: "creates a demo company" },
   { route: 'digital-menu', reason: "settings: the QR digital menu" },
   { route: 'display-order', reason: "catalog editing: display order" },
