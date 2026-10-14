@@ -4,9 +4,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 #: The till's cart snapshot is opaque here, but bounded: a table of 200 lines is ~200 kB.
 CART_JSON_MAX = 1_000_000
@@ -354,7 +354,8 @@ SKETCH_VARIANT_VALUES = tuple(dict.fromkeys(v for values in SKETCH_VARIANTS.valu
 #: drops kinds and variants it does not know when it saves. Those are kept for it
 #: (app/services/tables.py, keep_decor_unknown_to_till). A new kind or variant: add it
 #: here with the schema it comes with, and raise SKETCH_SCHEMA (the till's too).
-SKETCH_SCHEMA = 3
+#: Schema 4 (P:/specs/table-map-decor-v3.md §8): a text's and a logo's style (SKETCH_FIELD_SINCE).
+SKETCH_SCHEMA = 4
 #: The schema each kind / variant came with (absent: 1, every till knows it).
 SKETCH_KIND_SINCE = {"dj_booth": 2, **{kind: 3 for kind in SKETCH_KINDS_3}}
 SKETCH_VARIANT_SINCE = {
@@ -378,6 +379,27 @@ SketchBackground = Literal["clean", "wood", "tiles", "light", "dark", "image"]
 SKETCH_SRC_MAX = 1000
 SKETCH_ELEMENTS_MAX = 600
 SKETCH_POINTS_MAX = 4000
+#: A text's words ("label", several lines) and any other shape's.
+SKETCH_LABEL_TEXT_MAX = 200
+SKETCH_TEXT_MAX = 60
+#: "טקסט ולוגו" (schema 4, P:/specs/table-map-decor-v3.md §8). A text's size: a named one or a
+#: whole number of canvas units (the zone's, like w / h).
+SKETCH_FONT_SIZES = {"s": 14, "m": 20, "l": 28, "xl": 40}
+SKETCH_FONT_SIZE_MIN = 10
+SKETCH_FONT_SIZE_MAX = 72
+SKETCH_LABEL_ALIGNS = ("left", "center", "right")
+SKETCH_BG_OPACITY_MIN = 10
+SKETCH_BG_OPACITY_MAX = 100
+SKETCH_BG_OPACITY_DEFAULT = 100
+SKETCH_LOGO_SOURCES = ("business", "image")
+SKETCH_LOGO_OPACITY_MIN = 20
+SKETCH_LOGO_OPACITY_MAX = 100
+#: The fields each kind gained with a schema (absent: every till knows them). A till of an
+#: older schema never sends them, so it never changed them: kept for it on a shape it kept.
+SKETCH_FIELD_SINCE = {
+    "label": {"fontSize": 4, "bold": 4, "bg": 4, "bgOpacity": 4, "align": 4},
+    "logo": {"source": 4, "opacity": 4, "keepAspect": 4},
+}
 
 
 class SketchElementIn(_Camel):
@@ -391,7 +413,8 @@ class SketchElementIn(_Camel):
     w: float = Field(..., ge=0, le=5200)
     h: float = Field(..., ge=0, le=5200)
     rotation: int = Field(0, ge=0, le=359)
-    text: Optional[str] = Field(None, max_length=60)
+    #: The words: a text's ("label") up to 200 characters on several lines; any other's up to 60.
+    text: Optional[str] = Field(None, max_length=SKETCH_LABEL_TEXT_MAX)
     #: A bar counter ("counter"): straight, L- or U-shaped, with this many stools in front.
     #: Restrooms: "men" / "women" / "accessible" (none: both). An exit: "plain" (none: the
     #: emergency exit). A bar: cocktail / beer / wine. An entrance: main / side / staff. A
@@ -410,14 +433,48 @@ class SketchElementIn(_Camel):
     #: A logo's own picture (an uploaded image's URL); none — the business's logo.
     src: Optional[str] = Field(None, max_length=SKETCH_SRC_MAX)
     #: An area ("אזור"): its fill ("#rrggbb", from the dashboard's palette) and how opaque it
-    #: is, in percent (10–60). On any other kind neither is kept.
+    #: is, in percent (10–60). A logo: how opaque it is (20–100). On any other kind neither is kept.
     fill: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
-    opacity: Optional[int] = Field(None, ge=SKETCH_AREA_OPACITY_MIN, le=SKETCH_AREA_OPACITY_MAX)
+    opacity: Optional[int] = Field(None, ge=SKETCH_AREA_OPACITY_MIN, le=SKETCH_LOGO_OPACITY_MAX)
+    #: Schema 4 (P:/specs/table-map-decor-v3.md §8). A text ("label"): its size (s / m / l / xl or
+    #: 10–72 canvas units; none — fitted to its box), bold, a chip behind it (`bg`, `bgOpacity`
+    #: 10–100) and its alignment in the box (none: centred).
+    font_size: Optional[Union[str, int]] = Field(None, alias="fontSize")
+    bold: Optional[StrictBool] = None
+    bg: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    bg_opacity: Optional[int] = Field(None, alias="bgOpacity", ge=SKETCH_BG_OPACITY_MIN, le=SKETCH_BG_OPACITY_MAX)
+    align: Optional[Literal[SKETCH_LABEL_ALIGNS]] = None  # type: ignore[valid-type]
+    #: A logo: the business's (`business`) or the uploaded picture in `src` (`image`); none —
+    #: `src` decides. `keepAspect` false: stretched to its box (none: fitted, its proportions kept).
+    source: Optional[Literal[SKETCH_LOGO_SOURCES]] = None  # type: ignore[valid-type]
+    keep_aspect: Optional[StrictBool] = Field(None, alias="keepAspect")
 
     @field_validator("text", mode="before")
     @classmethod
     def _text(cls, value):
-        return _clean_text(value, 60)
+        # Several lines (a text's): one kind of line break.
+        if isinstance(value, str):
+            value = value.replace("\r\n", "\n").replace("\r", "\n")
+        return _clean_text(value, SKETCH_LABEL_TEXT_MAX)
+
+    @field_validator("font_size", mode="before")
+    @classmethod
+    def _font_size(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if value not in SKETCH_FONT_SIZES:
+                raise ValueError(f"fontSize is {', '.join(SKETCH_FONT_SIZES)} or {SKETCH_FONT_SIZE_MIN}–{SKETCH_FONT_SIZE_MAX}")
+            return value
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("fontSize is a size name or a whole number")
+        if isinstance(value, float):
+            if not value.is_integer():
+                raise ValueError("fontSize is a whole number")
+            value = int(value)
+        if not SKETCH_FONT_SIZE_MIN <= value <= SKETCH_FONT_SIZE_MAX:
+            raise ValueError(f"fontSize is {SKETCH_FONT_SIZE_MIN}–{SKETCH_FONT_SIZE_MAX}")
+        return value
 
     @field_validator("src", mode="before")
     @classmethod
@@ -453,6 +510,15 @@ class SketchElementIn(_Camel):
         allowed = SKETCH_VARIANTS.get(self.kind)
         if allowed is not None and self.variant is not None and self.variant not in allowed:
             raise ValueError(f"a {self.kind} is {', '.join(allowed)}, not {self.variant}")
+        if self.kind != "label" and self.text is not None and len(self.text) > SKETCH_TEXT_MAX:
+            raise ValueError(f"text: at most {SKETCH_TEXT_MAX} characters")
+        if self.opacity is not None:
+            if self.kind == "area" and self.opacity > SKETCH_AREA_OPACITY_MAX:
+                raise ValueError(f"an area's opacity is {SKETCH_AREA_OPACITY_MIN}–{SKETCH_AREA_OPACITY_MAX}")
+            if self.kind == "logo" and self.opacity < SKETCH_LOGO_OPACITY_MIN:
+                raise ValueError(f"a logo's opacity is {SKETCH_LOGO_OPACITY_MIN}–{SKETCH_LOGO_OPACITY_MAX}")
+        if self.kind == "logo" and self.source == "image" and not self.src:
+            raise ValueError("a logo of an uploaded picture needs its src")
         return self
 
 

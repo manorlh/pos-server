@@ -20,6 +20,13 @@ GET  /till-design/targets?shopId=       the shop's points of sale and tills, for
                                         (each till's version and whether it shows phase 2)
 GET  /till-design/settings?level=company|shop|area|machine&id=
 PUT  /till-design/settings?level=&id=   `{overrides}` — replaces that level's partial layer
+GET  /till-design/table-display?level=&id=   "שולחנות ומפה" (P:/specs/till-design-tables.md §5): the
+                                        tables' look and the map's display — till parameters
+                                        (app/services/table_tile_look.py, table_map_display.py) —
+                                        what the level sets, inherits, the definitions, `canEdit`
+PUT  /till-design/table-display?level=&id=   `{values: {key: value|null}}` — null inherits again;
+                                        the same access as the design; the tills under the level
+                                        pull their parameters (`till_parameters_updated`)
 """
 from __future__ import annotations
 
@@ -63,6 +70,12 @@ class TillDesignSettingsIn(BaseModel):
     """`PUT /till-design/settings`: the whole partial layer of that level (replaces the stored one)."""
 
     overrides: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TableDisplayIn(BaseModel):
+    """`PUT /till-design/table-display`: key → value; null clears this level's own value (it inherits)."""
+
+    values: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ── The till ─────────────────────────────────────────────────────────────────
@@ -358,3 +371,68 @@ def put_settings(
     if background_tasks is not None:
         background_tasks.add_task(publish_design_notify, notify_targets(db, scope))
     return settings_view(db, scope)
+
+
+# ── "שולחנות ומפה": the tables' look and the map's display (till parameters) ──
+
+
+def table_display_view(db: Session, scope: Scope, *, can_edit: bool) -> Dict[str, Any]:
+    from app.services import table_restore, table_tile_look
+
+    view = table_restore.level_view(db, scope.level, scope.entity_id, groups=table_tile_look.till_design_groups())
+    view["canEdit"] = can_edit
+    return view
+
+
+@router.get("/table-display")
+def get_table_display(
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
+    scope_id: uuid.UUID = Query(..., alias="id"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שולחנות ומפה" at one level (P:/specs/till-design-tables.md §5): `tableTileStyle`, `tableTileInfo`,
+    `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize`, then `mapDecor`, `mapLegend`,
+    `mapSymbolLabels`, `mapSymbolScale` — what the level sets (`own`), what it inherits, the
+    definitions in their groups. Read and written by whoever reads and writes the till design.
+    """
+    scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
+    view = table_display_view(db, scope, can_edit=getattr(current_user, "role", None) in access.KIOSK_ROLES)
+    db.commit()  # `ensure_builtin_parameters` may have created them
+    return view
+
+
+@router.put("/table-display")
+def put_table_display(
+    body: TableDisplayIn,
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
+    scope_id: uuid.UUID = Query(..., alias="id"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Set or clear (null) the card's parameters at one level, each with its change-log row. 422
+    `{"code": "invalid_value", "message"}` on a value the till could not parse or a key not on the
+    card; nothing is written then. Every till under the level pulls its parameters.
+    """
+    from app.services import table_restore, table_tile_look
+    from app.services.till_parameters import TillParameterValueError, publish_parameters_notify
+
+    scope = resolve_scope(db, current_user, level, scope_id, active_tenant_id)
+    try:
+        targets = table_restore.save_values(
+            db, scope.level, scope.entity_id, body.values,
+            user=current_user, groups=table_tile_look.till_design_groups(),
+        )
+    except TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "invalid_value", "message": str(exc)},
+        )
+    db.commit()
+    publish_parameters_notify(targets)
+    return table_display_view(db, scope, can_edit=True)

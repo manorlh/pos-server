@@ -61,7 +61,10 @@ from app.models.user import User
 from app.schemas.tables import (
     SKETCH_AREA_FILL_DEFAULT,
     SKETCH_AREA_OPACITY_DEFAULT,
+    SKETCH_BG_OPACITY_DEFAULT,
+    SKETCH_FIELD_SINCE,
     SKETCH_KIND_SINCE,
+    SKETCH_LOGO_OPACITY_MAX,
     SKETCH_SCHEMA,
     SKETCH_VARIANT_SINCE,
     SKETCH_VARIANTS,
@@ -2113,8 +2116,30 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["stroke"] = e.stroke
         if e.filled is not None:
             out["filled"] = e.filled
-        if e.kind == "logo" and getattr(e, "src", None):
-            out["src"] = e.src
+        if e.kind == "logo":
+            # §8: the business's logo or the uploaded picture; how opaque; stretched or fitted.
+            source = getattr(e, "source", None)
+            if source:
+                out["source"] = source
+            if getattr(e, "src", None) and source != "business":
+                out["src"] = e.src
+            opacity = getattr(e, "opacity", None)
+            if opacity is not None and opacity != SKETCH_LOGO_OPACITY_MAX:
+                out["opacity"] = opacity
+            if getattr(e, "keep_aspect", None) is False:
+                out["keepAspect"] = False
+        if e.kind == "label":
+            # §8: only what differs from a plain text (fitted to its box, regular, no chip, centred).
+            if getattr(e, "font_size", None) is not None:
+                out["fontSize"] = e.font_size
+            if getattr(e, "bold", None):
+                out["bold"] = True
+            if getattr(e, "bg", None):
+                out["bg"] = e.bg.lower()
+                bg_opacity = getattr(e, "bg_opacity", None)
+                out["bgOpacity"] = SKETCH_BG_OPACITY_DEFAULT if bg_opacity is None else bg_opacity
+            if getattr(e, "align", None) in ("left", "right"):
+                out["align"] = e.align
         if e.kind == "area":
             # Always stored, so the till never guesses: the fill and its opacity (percent).
             fill = getattr(e, "fill", None)
@@ -2533,7 +2558,9 @@ def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: 
     bar into a plain one, the main entrance into "כניסה", a large plant into the usual pot)
     — the till never showed them, so it cannot have meant to change them. Kept: every such
     shape it left out (after its own, in their order), and such a variant on a shape it
-    kept. A plan it cleared (null) stays cleared — "ניקוי הסקיצה" is meant whole.
+    kept; with schema 4, a text's and a logo's style (SKETCH_FIELD_SINCE: size, bold, chip,
+    alignment; source, opacity, stretch) on one it kept and sent without them. A plan it
+    cleared (null) stays cleared — "ניקוי הסקיצה" is meant whole.
     """
     if saved is None or not isinstance(before, dict):
         return saved
@@ -2555,6 +2582,10 @@ def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: 
             coerced = "straight" if kind == "counter" else None
             if mine.get("variant") == coerced:
                 mine["variant"] = variant
+        if mine.get("kind") == kind:
+            for field, since in SKETCH_FIELD_SINCE.get(kind, {}).items():
+                if since > till_schema and field in o and field not in mine:
+                    mine[field] = o[field]
     return {**saved, "elements": elements}
 
 
