@@ -1361,20 +1361,31 @@ class TestTillLayout:
         e = self.refused(w, w.a, {"zones": [{"id": str(zone.id), "name": "X"}]})
         assert (e.status_code, e.detail) == (404, "zone_not_found")
 
-    def test_a_table_in_use_cannot_move_change_number_or_go_but_can_be_named(self, w):
+    def test_a_table_in_use_cannot_change_number_zone_or_go_but_can_be_named(self, w):
         opened(w, w.a, w.t[12], ("a",))
-        for change in ({"x": 500, "y": 500}, {"number": 99}, {"archive": True}):
+        garden = T.create_zone(w.db, w.shop, ZoneCreate(shopId=w.shop.id, name="גינה"))
+        w.db.commit()
+        for change in ({"number": 99}, {"archive": True}, {"zoneId": str(garden.id)}):
             e = self.refused(w, w.a, {"tables": [{"id": str(w.t[12].id), **change}]})
             assert (e.status_code, e.detail["code"], e.detail["table"]["number"]) == (409, "table_in_use", 12)
         self.save(w, w.a, {"tables": [{"id": str(w.t[12].id), "name": "VIP", "seats": 8}]})
         assert w.db.get(DiningTable, w.t[12].id).name == "VIP"
 
+    def test_a_table_in_use_moves_on_the_floor_like_any_other(self, w):
+        # The owner, 14.10: in the till's "עריכה" only a table just added could be dragged — one
+        # with guests was refused. Its place, size and turn change as on the dashboard's map editor.
+        opened(w, w.a, w.t[12], ("a",))
+        self.save(w, w.a, {"tables": [{"id": str(w.t[12].id), "x": 500, "y": 300, "width": 120, "height": 120, "rotation": 45}]})
+        t = w.db.get(DiningTable, w.t[12].id)
+        assert (t.x, t.y, t.width, t.height, t.rotation, t.number) == (500, 300, 120, 120, 45, 12)
+
     def test_a_table_another_till_is_inside_is_in_use(self, w):
         enter(w, w.b, w.t[2])
-        e = self.refused(w, w.a, {"tables": [{"id": str(w.t[2].id), "x": 10, "y": 10}]})
+        e = self.refused(w, w.a, {"tables": [{"id": str(w.t[2].id), "number": 77}]})
         assert e.detail["code"] == "table_in_use"
-        # The same place (the till's rounding) is not a move.
-        self.save(w, w.a, {"tables": [{"id": str(w.t[2].id), "x": w.t[2].x + 0.2, "y": w.t[2].y}]})
+        # Its place on the floor is not refused.
+        self.save(w, w.a, {"tables": [{"id": str(w.t[2].id), "x": 10, "y": 10}]})
+        assert (w.db.get(DiningTable, w.t[2].id).x, w.db.get(DiningTable, w.t[2].id).y) == (10, 10)
 
     def test_a_zone_goes_only_once_it_is_empty(self, w):
         e = self.refused(w, w.a, {"zones": [{"id": str(w.hall.id), "archive": True}]})
