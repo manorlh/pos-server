@@ -118,9 +118,9 @@ class PrinterIn(BaseModel):
                 raise ValueError("a receipt printer is reached by network, bluetooth, usb or through another till (cloud)")
             if kind == "usb" and self.machine_id is None:
                 raise ValueError("a USB printer hangs on one till: machineId is required")
-            if kind == "cloud" and self.cash_drawer:
-                # §5: the drawer never opens remotely — the cash stays at the sending till.
-                raise ValueError("a receipt printer of another till has no cash drawer: the drawer never opens remotely")
+            # A receipt printer of another till may have the drawer on its port (`cash_drawer`: the
+            # host's printer has it). It opens there only as §9 of bill-print-other-till lets it — a
+            # `drawer` job, by `remotePrintDrawer` and CASH_DRAWER.OPEN_REMOTE; never with a document.
         else:
             if kind == "usb":
                 raise ValueError("usb is for receipt printers")
@@ -250,38 +250,90 @@ class DocumentIn(BaseModel):
         return cleaned or None
 
 
+class DrawerPersonIn(BaseModel):
+    """Who asked, or who approved (a till user's id and name; how they approved)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: Optional[str] = Field(None, max_length=100)
+    name: Optional[str] = Field(None, max_length=DOCUMENT_TEXT_MAX)
+    #: approvedBy: `pin` (a manager's code at the till) | `remote` (an approval from the phone).
+    method: Optional[Literal["pin", "remote"]] = None
+
+
+class DrawerIn(BaseModel):
+    """
+    "פתיחת מגירה ב<קופה>" (P:/specs/bill-print-other-till.md §9ב–§9ג): open the drawer on another till's
+    printer. `payment` — with a cash payment whose document went there (`remotePrintDrawer` ask / auto);
+    `manual` — the menu's "פתיחת מגירה ב<קופה>" (CASH_DRAWER.OPEN_REMOTE, with the manual opening's rules).
+    Who asked and who approved are kept with the job and on the drawer's log.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    reason: Literal["payment", "manual"]
+    #: payment: the document it goes with.
+    document_type: Optional[str] = Field(None, alias="documentType", max_length=16)
+    document_number: Optional[str] = Field(None, alias="documentNumber", max_length=40)
+    #: The cash of the payment (payment), or what is taken / given (manual); for the log only.
+    amount: Optional[float] = Field(None, ge=-10_000_000, le=10_000_000)
+    #: manual: the drawer's reason code ("CHANGE", "TEST"…) and its note, as at a till.
+    reason_code: Optional[str] = Field(None, alias="reasonCode", max_length=32)
+    reason_note: Optional[str] = Field(None, alias="reasonNote", max_length=500)
+    requested_by: DrawerPersonIn = Field(alias="requestedBy")
+    approved_by: Optional[DrawerPersonIn] = Field(None, alias="approvedBy")
+    #: A phone approval's request (app/services/remote_approvals), when that is how it was approved.
+    approval_request_id: Optional[uuid.UUID] = Field(None, alias="approvalRequestId")
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
+
+
 class PrintJobIn(BaseModel):
     """
     `ticket` (the default): a kitchen ticket for `printerId`. `document`: a rendered bill / receipt for
     another till — a receipt printer of type cloud (`printerId`, its host prints it) or a till of the
-    shop by itself (`targetMachineId`, on its own receipt printer).
+    shop by itself (`targetMachineId`, on its own receipt printer). `drawer`: open the drawer there.
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
     #: Chosen by the till, so a retried upload is the same job.
     id: uuid.UUID
-    kind: Optional[Literal["ticket", "document"]] = None
+    kind: Optional[Literal["ticket", "document", "drawer"]] = None
     printer_id: Optional[uuid.UUID] = Field(None, alias="printerId")
     target_machine_id: Optional[uuid.UUID] = Field(None, alias="targetMachineId")
     ticket: Optional[TicketIn] = None
     document: Optional[DocumentIn] = None
+    drawer: Optional[DrawerIn] = None
 
     @model_validator(mode="after")
     def _kind(self):
         if self.kind is None:
-            self.kind = "document" if self.document is not None and self.ticket is None else "ticket"
+            if self.ticket is not None:
+                self.kind = "ticket"
+            elif self.document is not None:
+                self.kind = "document"
+            elif self.drawer is not None:
+                self.kind = "drawer"
+            else:
+                self.kind = "ticket"
         if self.kind == "ticket":
             if self.ticket is None or self.printer_id is None:
                 raise ValueError("a ticket needs printerId and ticket")
             self.document = None
+            self.drawer = None
             self.target_machine_id = None
-        else:
+            return self
+        if self.printer_id is None and self.target_machine_id is None:
+            raise ValueError(f"a {self.kind} job needs printerId or targetMachineId")
+        self.ticket = None
+        if self.kind == "document":
             if self.document is None:
                 raise ValueError("a document job needs document")
-            if self.printer_id is None and self.target_machine_id is None:
-                raise ValueError("a document job needs printerId or targetMachineId")
-            self.ticket = None
+            self.drawer = None
+        else:
+            if self.drawer is None:
+                raise ValueError("a drawer job needs drawer")
+            self.document = None
         return self
 
 
@@ -449,6 +501,7 @@ __all__ = [
     "TicketIn",
     "TicketLineIn",
     "DocumentIn",
+    "DrawerIn",
     "PrintJobIn",
     "PrintJobAckIn",
     "TillLocalPrinterIn",

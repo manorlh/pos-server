@@ -4,9 +4,13 @@ app/services/remote_print.py, app/services/printers.py).
 
 What each test pins, and how it could look fine while doing damage:
 
-* **The printer** — a receipt printer of type cloud saves with its host of the shop; never with a cash
-  drawer (the drawer never opens remotely — refused, not silently cleared); its host must be a build
-  that prints documents (`document_relay_v1`), the others "נדרש עדכון גרסה".
+* **The printer** — a receipt printer of type cloud saves with its host of the shop, its drawer on the
+  host's printer if it has one (§9: it opens only by a `drawer` job); its host must be a build that
+  prints documents (`document_relay_v1`), the others "נדרש עדכון גרסה".
+* **The drawer** (§9) — "בתשלום מזומן — לשאול" and its two parameters; `remotePrintDrawer` (never by
+  default) holds a payment's opening, the menu's needs a till with a drawer; offered tills
+  (`drawerHosts`); the opening on the sender's drawer log with who asked and who approved — one without a
+  sale "מגירה נפתחה ללא מכירה", as today; CASH_DRAWER.OPEN_REMOTE and its phone approval.
 * **Who gets it** — the tills it applies to (a receipt destination, never a ticket's), and its host,
   which so takes documents (`acceptsDocuments`); narrowed to a till, only that till and the host.
 * **The job** — `document` goes the relay's way: created once per id, handed only to its host and only
@@ -150,13 +154,15 @@ class TestThePrinter:
         with pytest.raises(ValidationError):  # "this till's printer" is the till's own setting
             printer_in(purpose="receipt", connectionType="till", host=None)
 
-    def test_the_drawer_never_opens_remotely(self):
-        with pytest.raises(ValidationError) as e:
-            printer_in(purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()), host=None,
-                       cashDrawer=True)
-        assert "drawer never opens remotely" in str(e.value)
-        # A drawer on a printer the till reaches itself stays as it was.
+    def test_the_drawer_on_the_hosts_printer(self):
+        # §9 (the owner, 14.10 — "דינמי"): the host's printer may have the drawer; it opens only by a
+        # `drawer` job. A kitchen printer never has one.
+        remote = printer_in(purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()), host=None,
+                            cashDrawer=True)
+        assert remote.cash_drawer is True
         assert printer_in(purpose="receipt", connectionType="network", cashDrawer=True).cash_drawer is True
+        assert printer_in(connectionType="cloud", hostMachineId=str(uuid.uuid4()), host=None,
+                          cashDrawer=True).cash_drawer is False
 
     def test_the_host_is_a_till_of_the_shop_whose_build_prints_documents(self, k):
         t1, t2 = k.tills
@@ -351,8 +357,9 @@ class TestTheParameters:
         assert {key: defs[key].default_value for key in RP.KEYS} == {
             "remotePrintEnabled": True, "remotePrintDocuments": "bill", "remotePrintFallback": "ask",
             "remotePrintTimeoutSec": 20, "remotePrintNotice": True, "remotePrintHosts": "",
-            "remotePrintFromDashboard": True,
+            "remotePrintFromDashboard": True, "remotePrintDrawer": "never",
         }
+        assert defs["remotePrintDrawer"].enum_options == ["never", "ask", "auto"]
         assert defs["remotePrintDocuments"].enum_options == ["bill", "bill_receipts", "all"]
         assert defs["remotePrintFallback"].enum_options == ["ask", "local", "none"]
         assert all(defs[key].label and "לפי חברה, סניף, נקודת מכירה או קופה" in defs[key].description for key in RP.KEYS)
@@ -505,6 +512,192 @@ class TestNotPrinted:
         assert entry.summary == "חשבון 1043 לא הודפס בקופה 2 (נשלח מקופה 1)" and entry.machine_id == t2.id
 
 
+# ── The drawer (§9) ──────────────────────────────────────────────────────────
+
+
+def send_drawer(w, sender, *, printer_id=None, target=None, job_id=None, **over):
+    drawer = {
+        "reason": "manual", "reasonCode": "CHANGE", "reasonNote": "פריטה",
+        "requestedBy": {"id": "pu-1", "name": "דנה"},
+        "approvedBy": {"id": "pu-9", "name": "רון", "method": "pin"},
+    }
+    drawer.update(over)
+    tasks = BackgroundTasks()
+    body = PrintJobIn.model_validate({
+        "id": str(job_id or uuid.uuid4()), "kind": "drawer", "printerId": printer_id,
+        "targetMachineId": str(target.id) if target is not None else None, "drawer": drawer,
+    })
+    out = R.post_print_job(str(sender.id), body, tasks, machine=sender, db=w.db)
+    _run(tasks)
+    return out
+
+
+@pytest.fixture
+def dd(d):
+    """"המדפסת של קופה 2" has the drawer on its port."""
+    tasks = BackgroundTasks()
+    R.update_printer(
+        uuid.UUID(d.receipt["id"]),
+        printer_in(name="המדפסת של קופה 2", purpose="receipt", connectionType="cloud", host=None,
+                   hostMachineId=str(d.tills[1].id), hostConnection="till", paperWidth=58, cashDrawer=True),
+        tasks, **_ctx(d),
+    )
+    return d
+
+
+class TestTheDrawer:
+    def test_asking_before_opening_the_drawer(self, k):
+        TP.ensure_builtin_parameters(k.db)
+        k.db.commit()
+        defs = {p.key: p for p in k.db.query(TillParameter).filter(
+            TillParameter.key.in_(["cashDrawer", "cashDrawerAskTimeoutSec", "cashDrawerAskDefault"])).all()}
+        assert defs["cashDrawer"].enum_options == ["כבוי", "בתשלום מזומן", "בתשלום מזומן — לשאול", "בתשלום מזומן + כפתור פתיחה"]
+        assert defs["cashDrawer"].default_value == "כבוי"  # unchanged
+        assert (defs["cashDrawerAskTimeoutSec"].default_value, defs["cashDrawerAskDefault"].default_value) == (8, "open")
+        assert defs["cashDrawerAskDefault"].enum_options == ["open", "skip"]
+        # On the printers page, with the drawer ("מגירה ותשלום").
+        assert {"cashDrawerAskTimeoutSec", "cashDrawerAskDefault"} < set(K.SETTING_KEYS)
+        out = put_options(k, "shop", k.shop.id, {"cashDrawer": "בתשלום מזומן — לשאול", "cashDrawerAskTimeoutSec": 12,
+                                                "cashDrawerAskDefault": "skip"})
+        assert out["shop"]["cashDrawerAskDefault"] == "skip"
+        params = TP.till_parameters_for_machine(k.db, k.tills[0]).parameters
+        assert (params["cashDrawer"], params["cashDrawerAskTimeoutSec"], params["cashDrawerAskDefault"]) == (
+            "בתשלום מזומן — לשאול", 12, "skip",
+        )
+        assert refused(put_options, k, "shop", k.shop.id, {"cashDrawerAskTimeoutSec": 2}).status_code == 422
+        assert refused(put_options, k, "shop", k.shop.id, {"cashDrawerAskDefault": "maybe"}).status_code == 422
+
+    def test_a_payments_opening_waits_for_remote_print_drawer(self, dd):
+        t1, t2 = dd.tills
+        e = refused(send_drawer, dd, t1, printer_id=dd.receipt["id"], reason="payment", documentType="320",
+                    documentNumber="1043", amount=120.0)
+        assert (e.status_code, e.detail["code"]) == (409, "drawer_remote_off")
+        put_options(dd, "shop", dd.shop.id, {"remotePrintDrawer": "ask"})
+        out = send_drawer(dd, t1, printer_id=dd.receipt["id"], reason="payment", documentType="320",
+                          documentNumber="1043", amount=120.0)
+        assert (out["kind"], out["status"], out["targetMachineId"]) == ("drawer", "pending", str(t2.id))
+        assert out["drawer"] == {"reason": "payment", "documentNumber": "1043", "requestedBy": "דנה",
+                                 "approvedBy": "רון", "sourceName": "קופה 1"}
+        # Off altogether: nothing remote.
+        put_options(dd, "machine", t1.id, {"remotePrintEnabled": False})
+        assert refused(send_drawer, dd, t1, printer_id=dd.receipt["id"]).detail["code"] == "remote_print_off"
+
+    def test_the_menus_opening_needs_a_till_with_a_drawer(self, d):
+        t1, t2 = d.tills
+        # The printer of till 2 has no drawer, nor has till 2 one of its own ("פתיחת מגירה" off).
+        assert refused(send_drawer, d, t1, printer_id=d.receipt["id"]).detail["code"] == "printer_has_no_drawer"
+        e = refused(send_drawer, d, t1, target=t2)
+        assert (e.detail["code"], e.detail["host"]) == ("host_has_no_drawer", "קופה 2")
+        assert pull(d, t1)["drawerHosts"] == []
+        # Till 2 drives a drawer itself: offered, and taken — whatever remotePrintDrawer says (never).
+        put_options(d, "machine", t2.id, {"cashDrawer": "בתשלום מזומן + כפתור פתיחה"})
+        [host] = pull(d, t1)["drawerHosts"]
+        assert (host["machineId"], host["label"], host["printerId"], host["lanAddress"]) == (str(t2.id), "קופה 2", None, None)
+        assert send_drawer(d, t1, target=t2)["status"] == "pending"
+        # Not to a till outside remotePrintHosts, nor an older build; nor from one.
+        put_options(d, "machine", t1.id, {"remotePrintHosts": str(t1.id)})
+        assert pull(d, t1)["drawerHosts"] == []
+        assert refused(send_drawer, d, t1, target=t2).detail["code"] == "host_not_allowed"
+        put_options(d, "machine", t1.id, {"remotePrintHosts": None})
+        t2.capabilities = []
+        d.db.commit()
+        assert pull(d, t1)["drawerHosts"] == []
+        t2.capabilities = [RP.CAPABILITY]
+        t1.capabilities = []
+        d.db.commit()
+        assert pull(d, t1)["drawerHosts"] == []
+
+    def test_offered_with_the_printer_that_has_the_drawer(self, dd):
+        t1, t2 = dd.tills
+        dd.db.add(K.KitchenPrintHost(machine_id=t2.id, shop_id=dd.shop.id, lan_address="192.168.1.22", port=8399))
+        dd.db.commit()
+        [host] = pull(dd, t1)["drawerHosts"]
+        assert (host["printerId"], host["lanAddress"], host["lanPort"]) == (dd.receipt["id"], "192.168.1.22", 8399)
+        [p] = [p for p in pull(dd, t1)["printers"] if p["id"] == dd.receipt["id"]]
+        assert p["cashDrawer"] is True
+        # The host itself is not offered its own drawer.
+        assert pull(dd, t2)["drawerHosts"] == []
+
+    def test_opened_on_another_till_is_on_the_senders_drawer_log(self, dd):
+        from app.models.cash_drawer import CashDrawerEvent
+
+        t1, t2 = dd.tills
+        job_id = send_drawer(dd, t1, printer_id=dd.receipt["id"], shiftId=str(uuid.uuid4()))["id"]
+        [job] = pending(dd, t2)
+        assert (job["kind"], job["ticket"], job["drawer"]["reason"]) == ("drawer", None, "manual")
+        assert job["drawer"]["requestedBy"] == {"id": "pu-1", "name": "דנה", "method": None}
+        assert job["drawer"]["approvedBy"] == {"id": "pu-9", "name": "רון", "method": "pin"}
+        assert job["printer"]["connection"] == "till"
+        dd.jobs_notified.clear()
+        tasks = BackgroundTasks()
+        R.ack_print_job(str(t2.id), job_id, PrintJobAckIn(status="done"), machine=t2, db=dd.db, background_tasks=tasks)
+        _run(tasks)
+        assert (str(t1.id), K.PRINT_JOB_EVENT) in dd.jobs_notified
+        dd.db.expire_all()
+        event = dd.db.get(CashDrawerEvent, uuid.UUID(job_id))
+        assert (event.machine_id, event.event_type, event.result, event.permission) == (
+            t1.id, "REMOTE_MANUAL", "approved", "CASH_DRAWER.OPEN_REMOTE",
+        )
+        assert (event.employee_name, event.approver_name, event.approver_method, event.decision) == ("דנה", "רון", "pin", "approval")
+        assert (event.reason, event.details["hostName"], event.details["remote"]) == ("CHANGE", "קופה 2", True)
+        # Without a sale: "מגירה נפתחה ללא מכירה", as today — on the sending till.
+        [exc] = dd.db.query(AuditException).filter(AuditException.exception_type == "drawer_open").all()
+        assert exc.machine_id == t1.id
+        # The sender's own upload of it is the same row.
+        from app.routers import cash_drawer as CR
+        from app.schemas.cash_drawer import DrawerEventIn
+        from fastapi import Response
+
+        upload = DrawerEventIn.model_validate({"id": job_id, "eventType": "REMOTE_MANUAL", "result": "approved",
+                                               "occurredAt": datetime.now(timezone.utc).isoformat()})
+        assert CR.post_drawer_event(str(t1.id), upload, Response(), machine=t1, db=dd.db).status == "duplicate"
+        assert unprinted(dd, job_id) == []  # a drawer is no document on "בעיות"
+
+    def test_a_payments_opening_is_no_exception_and_a_failed_one_is_logged(self, dd):
+        from app.models.cash_drawer import CashDrawerEvent
+
+        t1, t2 = dd.tills
+        put_options(dd, "shop", dd.shop.id, {"remotePrintDrawer": "auto"})
+        paid = send_drawer(dd, t1, printer_id=dd.receipt["id"], reason="payment", approvedBy=None, amount=50.0)["id"]
+        busy = send_drawer(dd, t1, printer_id=dd.receipt["id"], reason="payment", approvedBy=None)["id"]
+        pending(dd, t2)
+        ack(dd, t2, paid, "done")
+        ack(dd, t2, busy, "failed", "busy_payment")
+        dd.db.commit()
+        dd.db.expire_all()
+        ok, failed = dd.db.get(CashDrawerEvent, uuid.UUID(paid)), dd.db.get(CashDrawerEvent, uuid.UUID(busy))
+        assert (ok.event_type, ok.result, ok.decision, float(ok.amount)) == ("REMOTE_SALE", "approved", "allow", 50.0)
+        assert (failed.result, failed.result_reason) == ("failed", "busy_payment")
+        assert dd.db.query(AuditException).filter(AuditException.exception_type == "drawer_open").count() == 0
+
+    def test_a_drawer_opening_is_given_up_in_two_minutes(self, dd):
+        t1, t2 = dd.tills
+        job_id = send_drawer(dd, t1, printer_id=dd.receipt["id"])["id"]
+        pending(dd, t2)
+        row = dd.db.get(KitchenPrintJob, uuid.UUID(job_id))
+        K.expire_jobs(dd.db, [row], datetime.now(timezone.utc) + timedelta(minutes=3))
+        assert row.status == "expired"
+        # Never to an older build.
+        other = send_drawer(dd, t1, printer_id=dd.receipt["id"])["id"]
+        t2.capabilities = []
+        dd.db.commit()
+        assert all(j["id"] != other for j in pending(dd, t2))
+
+    def test_the_permission_and_its_phone_approval(self):
+        from app.services import till_permissions as TPerm
+        from app.services.remote_approvals import catalog as AC
+
+        spec = TPerm.PERMISSIONS_BY_CODE["CASH_DRAWER.OPEN_REMOTE"]
+        assert (spec.label, spec.group) == ("פתיחת מגירה בקופה אחרת", "drawer")
+        states = [TPerm.DEFAULTS[r]["CASH_DRAWER.OPEN_REMOTE"] for r in ("waiter", "cashier", "supervisor", "manager")]
+        assert states == ["approval", "approval", "allow", "allow"]
+        assert TPerm.DEFAULTS["legacy_cashier"]["CASH_DRAWER.OPEN_REMOTE"] == "approval"
+        assert TPerm.DEFAULTS["legacy_manager"]["CASH_DRAWER.OPEN_REMOTE"] == "allow"
+        t = AC.TYPES_BY_KEY["drawer_open_remote"]
+        assert (t.label, t.phase, t.base_code) == ("פתיחת מגירה בקופה אחרת", 1, "CASH_DRAWER.OPEN_REMOTE")
+        assert TPerm.DEFAULTS["manager"]["APPROVE_REMOTE.drawer_open_remote"] == "allow"
+
+
 # ── The migration ────────────────────────────────────────────────────────────
 
 
@@ -520,20 +713,62 @@ def test_the_migration_is_the_single_head_on_the_release():
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
     assert len(heads) == 1
-    assert "c4d8e2f6a1b9" in {r.revision for r in script.walk_revisions("base", heads[0])}
-    # On release 14.10b's merge (bb6205ba290c), nothing else.
+    line = {r.revision for r in script.walk_revisions("base", heads[0])}
+    assert {"c4d8e2f6a1b9", "e7b2d9f4a6c3", "bb6205ba290c"} <= line
+    # On release 14.10b's merge (bb6205ba290c), nothing else; the drawer's on top (§9).
     assert script.get_revision("c4d8e2f6a1b9").down_revision == "bb6205ba290c"
+    assert script.get_revision("e7b2d9f4a6c3").down_revision == "c4d8e2f6a1b9"
 
 
-def test_the_migration_takes_the_new_kind(monkeypatch):
+def _migration(revision: str):
     import importlib.util
     from pathlib import Path
 
     root = Path(__file__).absolute().parents[1]
-    path = next(root.glob("alembic/versions/c4d8e2f6a1b9_*.py"))
-    spec = importlib.util.spec_from_file_location("print_job_document_kind", path)
+    path = next(root.glob(f"alembic/versions/{revision}_*.py"))
+    spec = importlib.util.spec_from_file_location(f"migration_{revision}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def test_the_drawer_migration(monkeypatch):
+    import json
+
+    module = _migration("e7b2d9f4a6c3")
+    ask = "בתשלום מזומן — לשאול"
+    assert module.with_option(["כבוי", "בתשלום מזומן", "בתשלום מזומן + כפתור פתיחה"]) == [
+        "כבוי", "בתשלום מזומן", ask, "בתשלום מזומן + כפתור פתיחה",
+    ]
+    assert module.with_option(["כבוי"]) == ["כבוי", ask]
+    assert module.with_option(["כבוי", ask]) == ["כבוי", ask]
+    calls, written = [], []
+
+    class Conn:
+        def execute(self, statement, params=None):
+            if str(statement).startswith("SELECT"):
+                return SimpleNamespace(first=lambda: ("p-1", json.dumps(["כבוי", "בתשלום מזומן", "בתשלום מזומן + כפתור פתיחה"])))
+            written.append(params)
+
+    monkeypatch.setattr(module, "op", SimpleNamespace(
+        execute=lambda sql: calls.append(("execute", sql)),
+        create_check_constraint=lambda name, table, condition: calls.append(("check", name, table, condition)),
+        get_bind=lambda: Conn(),
+    ))
+    module.upgrade()
+    assert calls[1] == ("check", "ck_kitchen_print_jobs_kind", "kitchen_print_jobs",
+                        "kind IN ('ticket', 'test', 'document', 'drawer')")
+    [params] = written
+    assert params["id"] == "p-1" and json.loads(params["options"])[2] == ask
+    # The model says the same.
+    from app.models.printers import KitchenPrintJob as Job
+
+    checks = {c.name: str(c.sqltext) for c in Job.__table__.constraints if hasattr(c, "sqltext")}
+    assert checks["ck_kitchen_print_jobs_kind"] == "kind IN ('ticket', 'test', 'document', 'drawer')"
+
+
+def test_the_migration_takes_the_new_kind(monkeypatch):
+    module = _migration("c4d8e2f6a1b9")
     calls = []
     monkeypatch.setattr(module, "op", SimpleNamespace(
         execute=lambda sql: calls.append(("execute", sql)),
@@ -544,8 +779,3 @@ def test_the_migration_takes_the_new_kind(monkeypatch):
         ("execute", "ALTER TABLE kitchen_print_jobs DROP CONSTRAINT IF EXISTS ck_kitchen_print_jobs_kind"),
         ("check", "ck_kitchen_print_jobs_kind", "kitchen_print_jobs", "kind IN ('ticket', 'test', 'document')"),
     ]
-    # The model says the same.
-    from app.models.printers import KitchenPrintJob as Job
-
-    checks = {c.name: str(c.sqltext) for c in Job.__table__.constraints if hasattr(c, "sqltext")}
-    assert checks["ck_kitchen_print_jobs_kind"] == "kind IN ('ticket', 'test', 'document')"

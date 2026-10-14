@@ -1059,10 +1059,11 @@ class TestReceiptPrinters:
     def test_a_receipt_printer_is_reached_directly_and_may_have_a_drawer(self, k):
         out = create(k, name="קופה ראשית BTP-880", purpose="receipt", cashDrawer=True)
         assert out["purpose"] == "receipt" and out["cashDrawer"] is True
-        # Through another till ("המדפסת של <קופה>", bill-print-other-till): never with the drawer.
-        with pytest.raises(ValidationError):
-            printer_in(name="x", purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()),
-                       cashDrawer=True)
+        # Through another till ("המדפסת של <קופה>", bill-print-other-till), the drawer on the host's printer
+        # (it opens only by a `drawer` job, §9 there).
+        remote = printer_in(name="x", purpose="receipt", connectionType="cloud", hostMachineId=str(uuid.uuid4()),
+                            cashDrawer=True)
+        assert remote.cash_drawer is True and remote.host_connection == "till"
         with pytest.raises(ValidationError):
             printer_in(name="x", purpose="receipt", connectionType="till")
         # USB hangs on one till.

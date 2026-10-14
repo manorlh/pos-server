@@ -9,9 +9,10 @@ kind `document`.
   shop that says `document_relay_v1` on its heartbeat, `CAPABILITY`) and how the host reaches it
   (`host_connection`: its own head, USB, network, Bluetooth). Narrowed to a point of sale or a till
   like any printer; listed to the tills it applies to (their receipt destinations: "המדפסת של <קופה>")
-  and to its host, which then takes `document` jobs. Never a cash drawer: the drawer never opens
-  remotely (§5). From the dashboard's open tables (§7) a till may also be named by itself
-  (`printOn`): it prints on its own receipt printer.
+  and to its host, which then takes `document` jobs. Its drawer (`cash_drawer`, on the host's printer)
+  opens only by a `drawer` job (§9: `remotePrintDrawer`, CASH_DRAWER.OPEN_REMOTE) — never by a document.
+  From the dashboard's open tables (§7) a till may also be named by itself (`printOn`): it prints on its
+  own receipt printer.
 * **What travels** (§4) — the document as the sending till rendered it, at the host's paper width, one
   colour, compressed (`DocumentIn`): the host prints the image as it is and never reads the document.
   At most `IMAGE_MAX_BYTES` (413 `document_too_large`). The reference (type, number, copy, title) is
@@ -94,6 +95,19 @@ FALLBACK_LABELS = {
     FALLBACK_NONE: "רק התראה",
 }
 
+#: §9ב: the drawer of the host's printer with a document sent there — never (the default), asked at the
+#: sending till ("לפתוח את המגירה ב<קופה>?"), or opened by itself with a cash payment.
+DRAWER_KEY = "remotePrintDrawer"
+DRAWER_NEVER = "never"
+DRAWER_ASK = "ask"
+DRAWER_AUTO = "auto"
+DRAWER_OPTIONS = (DRAWER_NEVER, DRAWER_ASK, DRAWER_AUTO)
+DRAWER_LABELS = {
+    DRAWER_NEVER: "אף פעם (ברירת מחדל)",
+    DRAWER_ASK: "לשאול בקופה השולחת",
+    DRAWER_AUTO: "אוטומטית בתשלום מזומן",
+}
+
 TIMEOUT_DEFAULT = 20
 TIMEOUT_MIN = 5
 TIMEOUT_MAX = 120
@@ -110,10 +124,10 @@ ALLOWED_CATEGORIES: Dict[str, Tuple[str, ...]] = {
 
 #: The keys, in the order the printers page shows them.
 KEYS: Tuple[str, ...] = (
-    ENABLED_KEY, DOCUMENTS_KEY, FALLBACK_KEY, TIMEOUT_KEY, NOTICE_KEY, HOSTS_KEY, FROM_DASHBOARD_KEY,
+    ENABLED_KEY, DOCUMENTS_KEY, FALLBACK_KEY, TIMEOUT_KEY, NOTICE_KEY, HOSTS_KEY, FROM_DASHBOARD_KEY, DRAWER_KEY,
 )
 #: Checked beyond their type on every write (app/services/till_parameters.py `validate_keyed_value`).
-VALIDATED_KEYS = frozenset({DOCUMENTS_KEY, FALLBACK_KEY, TIMEOUT_KEY, HOSTS_KEY})
+VALIDATED_KEYS = frozenset({DOCUMENTS_KEY, FALLBACK_KEY, TIMEOUT_KEY, HOSTS_KEY, DRAWER_KEY})
 
 _LEVELS = "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה — כאן או בהגדרות ההדפסה בעמוד המדפסות."
 _WHAT = (
@@ -209,6 +223,22 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
             "השולחן, כמו היום. נקרא בקופה שמחזיקה את השולחן. " + _LEVELS
         ),
     ),
+    dict(
+        key=DRAWER_KEY,
+        label="הדפסה בקופה אחרת — מגירה במדפסת שם",
+        value_type="enum",
+        enum_options=DRAWER_OPTIONS,
+        enum_labels=DRAWER_LABELS,
+        default_value=DRAWER_NEVER,
+        description=(
+            "כשחשבון או קבלה נשלחים להדפסה בקופה אחרת, ולמדפסת שם יש מגירה (מדפסת חשבוניות מסוג \"ענן\" עם "
+            f"מגירה): «{DRAWER_LABELS[DRAWER_NEVER]}» — המגירה שם לא נפתחת, כמו היום. «{DRAWER_LABELS[DRAWER_ASK]}» — "
+            "בתשלום מזומן הקופה השולחת שואלת \"לפתוח את המגירה ב...?\". "
+            f"«{DRAWER_LABELS[DRAWER_AUTO]}» — נפתחת בכל תשלום מזומן. הפתיחה דורשת את ההרשאה \"פתיחת מגירה בקופה "
+            "אחרת\" (או אישור), נרשמת בקופה השולחת עם העובד והמאשר, והקופה שם פותחת רק כשאינה באמצע תשלום משלה. "
+            "\"פתיחת מגירה ב...\" מהתפריט (מסופון, P18, טלפון) לא תלויה בפרמטר הזה — רק בהרשאה. " + _LEVELS
+        ),
+    ),
 )
 
 
@@ -238,6 +268,8 @@ def clean_value(key: str, value: Any) -> Any:
         raise ValueError(f"{DOCUMENTS_KEY} must be one of {', '.join(DOCUMENTS_OPTIONS)}")
     if key == FALLBACK_KEY and value not in FALLBACK_OPTIONS:
         raise ValueError(f"{FALLBACK_KEY} must be one of {', '.join(FALLBACK_OPTIONS)}")
+    if key == DRAWER_KEY and value not in DRAWER_OPTIONS:
+        raise ValueError(f"{DRAWER_KEY} must be one of {', '.join(DRAWER_OPTIONS)}")
     if key == TIMEOUT_KEY and not (
         isinstance(value, int) and not isinstance(value, bool) and TIMEOUT_MIN <= value <= TIMEOUT_MAX
     ):
@@ -272,6 +304,7 @@ class Settings:
     #: Empty: any host configured.
     hosts: Tuple[str, ...] = ()
     from_dashboard: bool = True
+    drawer: str = DRAWER_NEVER
 
     def allows(self, category: str) -> bool:
         return category in ALLOWED_CATEGORIES.get(self.documents, ALLOWED_CATEGORIES[DOCUMENTS_BILL])
@@ -290,6 +323,7 @@ def settings_of(params: Dict[str, Any]) -> Settings:
     documents = params.get(DOCUMENTS_KEY)
     fallback = params.get(FALLBACK_KEY)
     timeout = params.get(TIMEOUT_KEY)
+    drawer = params.get(DRAWER_KEY)
     return Settings(
         enabled=flag(ENABLED_KEY, True),
         documents=documents if documents in DOCUMENTS_OPTIONS else DOCUMENTS_BILL,
@@ -301,6 +335,7 @@ def settings_of(params: Dict[str, Any]) -> Settings:
         notice=flag(NOTICE_KEY, True),
         hosts=tuple(parse_hosts(params.get(HOSTS_KEY))),
         from_dashboard=flag(FROM_DASHBOARD_KEY, True),
+        drawer=drawer if drawer in DRAWER_OPTIONS else DRAWER_NEVER,
     )
 
 
@@ -499,6 +534,212 @@ def check_send(db: Session, machine: POSMachine, host: POSMachine, category: str
     if not relays_documents(host):
         raise _refused("host_needs_update", host=till_label(host))
     return settings
+
+
+# ── The drawer on another till (§9ב–§9ג) ─────────────────────────────────────
+#
+# "פתיחת מגירה ב<קופה>": a `drawer` job, the relay's way (LAN first, else the cloud). `payment` — with a
+# cash payment whose document went there (`remotePrintDrawer` ask / auto); `manual` — the menu's opening
+# from a device with no drawer (CASH_DRAWER.OPEN_REMOTE, and the manual opening's rules). The host opens
+# only when its printer has the drawer and it is not in a payment of its own (else `failed`). Kept with
+# the job; on the host's answer the opening goes on the sending till's drawer log (`record_drawer_event`,
+# REMOTE_SALE / REMOTE_MANUAL — one without a sale is "מגירה נפתחה ללא מכירה", as today).
+
+#: A drawer job its host took and did not answer for is over soon: an opening minutes late is worse than none.
+DRAWER_TAKEN_TTL = timedelta(minutes=2)
+EVENT_REMOTE_SALE = "REMOTE_SALE"
+EVENT_REMOTE_MANUAL = "REMOTE_MANUAL"
+#: The till permission (app/services/till_permissions.py).
+OPEN_REMOTE = "CASH_DRAWER.OPEN_REMOTE"
+
+
+def _receipt_printers(db: Session, shop_id: Any) -> List[Any]:
+    from app.models.printers import KitchenPrinter
+
+    if shop_id is None:
+        return []
+    return (
+        db.query(KitchenPrinter)
+        .filter(KitchenPrinter.shop_id == shop_id, KitchenPrinter.purpose == "receipt", KitchenPrinter.is_active.is_(True))
+        .order_by(KitchenPrinter.sort_order, KitchenPrinter.name)
+        .all()
+    )
+
+
+def drawer_of(db: Session, machine: POSMachine, printers: Sequence[Any]) -> Tuple[bool, Optional[Any]]:
+    """
+    Whether `machine` opens a drawer, and its receipt printer of type cloud with the drawer (if any): one it
+    hosts with `cash_drawer`, a receipt printer of its own (narrowed to it) with the drawer, or its own
+    `cashDrawer` parameter on (its head's port, a printer of the parameter).
+    """
+    hosted = next(
+        (p for p in printers if is_document_printer(p) and p.cash_drawer and str(p.host_machine_id) == str(machine.id)),
+        None,
+    )
+    if hosted is not None:
+        return True, hosted
+    if any(
+        p.cash_drawer and p.connection_type != "cloud" and p.machine_id is not None and str(p.machine_id) == str(machine.id)
+        for p in printers
+    ):
+        return True, None
+    from app.services.till_parameters import CASH_DRAWER_KEY, CASH_DRAWER_OFF, till_parameters_for_machine
+
+    value = till_parameters_for_machine(db, machine).parameters.get(CASH_DRAWER_KEY)
+    return (value is not None and value != CASH_DRAWER_OFF), None
+
+
+def drawer_hosts(db: Session, machine: POSMachine) -> List[Dict[str, Any]]:
+    """
+    "פתיחת מגירה ב<קופה>" (§9ג): the tills `machine` may open a drawer on — of its shop, a build that relays
+    (`document_relay_v1`), with a drawer (`drawer_of`), within its `remotePrintHosts`. None for a till whose
+    own build does not relay, or with `remotePrintEnabled` off.
+    """
+    from app.services import printers as K
+    from app.services.exception_alerts.watch import till_label
+
+    if machine.shop_id is None or not relays_documents(machine):
+        return []
+    settings = settings_for(db, machine)
+    if not settings.enabled:
+        return []
+    printers = _receipt_printers(db, machine.shop_id)
+    out: List[Dict[str, Any]] = []
+    for m in K.shop_machines(db, machine.shop_id):
+        if str(m.id) == str(machine.id) or not relays_documents(m) or not settings.may_reach(m.id):
+            continue
+        has, printer = drawer_of(db, m, printers)
+        if not has:
+            continue
+        lan = lan_of(db, m, machine)
+        out.append({
+            "machineId": str(m.id),
+            "name": K.machine_label(m),
+            "label": till_label(m),
+            #: Its receipt printer of type cloud with the drawer — the job names it; null: the till's own.
+            "printerId": str(printer.id) if printer is not None else None,
+            "lanAddress": lan["address"] if lan else None,
+            "lanPort": lan["port"] if lan else None,
+        })
+    return out
+
+
+def check_drawer(db: Session, machine: POSMachine, host: POSMachine, printer: Optional[Any], drawer: Any) -> Settings:
+    """
+    The sender's parameters, the host's build and its drawer allow it, else 409: `remote_print_off`,
+    `drawer_remote_off` (a payment's while `remotePrintDrawer` is never), `host_not_allowed`,
+    `host_needs_update`, `printer_has_no_drawer` / `host_has_no_drawer`.
+    """
+    from app.services.exception_alerts.watch import till_label
+
+    settings = settings_for(db, machine)
+    if not settings.enabled:
+        raise _refused("remote_print_off")
+    if drawer.reason == "payment" and settings.drawer == DRAWER_NEVER:
+        raise _refused("drawer_remote_off")
+    if not settings.may_reach(host.id):
+        raise _refused("host_not_allowed", host=till_label(host))
+    if not relays_documents(host):
+        raise _refused("host_needs_update", host=till_label(host))
+    if printer is not None:
+        if not printer.cash_drawer:
+            raise _refused("printer_has_no_drawer")
+    elif not drawer_of(db, host, _receipt_printers(db, host.shop_id))[0]:
+        raise _refused("host_has_no_drawer", host=till_label(host))
+    return settings
+
+
+def _person(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    out = {"id": value.id, "name": value.name, "method": value.method}
+    return out if any(v is not None for v in out.values()) else None
+
+
+def drawer_payload_of(drawer: Any, machine: POSMachine) -> Dict[str, Any]:
+    """What a drawer job keeps, and the host gets: why, who asked, who approved, from which till."""
+    from app.services.exception_alerts.watch import till_label
+
+    return {
+        "reason": drawer.reason,
+        "documentType": drawer.document_type,
+        "documentNumber": drawer.document_number,
+        "amount": drawer.amount,
+        "reasonCode": drawer.reason_code,
+        "reasonNote": drawer.reason_note,
+        "requestedBy": _person(drawer.requested_by),
+        "approvedBy": _person(drawer.approved_by),
+        "approvalRequestId": str(drawer.approval_request_id) if drawer.approval_request_id else None,
+        "shiftId": str(drawer.shift_id) if drawer.shift_id else None,
+        "sourceMachineId": str(machine.id),
+        "sourceName": till_label(machine),
+    }
+
+
+def drawer_reference_of(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    p = payload if isinstance(payload, dict) else {}
+    return {
+        "reason": p.get("reason"),
+        "documentNumber": p.get("documentNumber"),
+        "requestedBy": (p.get("requestedBy") or {}).get("name"),
+        "approvedBy": (p.get("approvedBy") or {}).get("name"),
+        "sourceName": p.get("sourceName"),
+    }
+
+
+def _uuid_or_none(value: Any) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except ValueError:
+        return None
+
+
+def record_drawer_event(db: Session, job: Any, now: datetime) -> Tuple[Optional[Any], bool]:
+    """
+    The host answered a drawer job (done / failed): the opening on the sending till's drawer log — "מגירה
+    נפתחה מרחוק", who asked and who approved — under the job's id, so the sender's own upload of it is the
+    same row. `(event, created)`; the caller runs the drawer's exception detection once it is committed.
+    """
+    from types import SimpleNamespace
+
+    from app.models.cash_drawer import CashDrawerEvent
+    from app.services import cash_drawer
+    from app.services.exception_alerts.watch import till_label
+
+    if job.kind != "drawer" or job.status not in ("done", "failed") or job.source_machine_id is None:
+        return None, False
+    sender = db.get(POSMachine, job.source_machine_id)
+    if sender is None or sender.shop_id is None:
+        return None, False
+    existing = db.get(CashDrawerEvent, job.id)
+    if existing is not None:
+        return existing, False
+    p = job.payload if isinstance(job.payload, dict) else {}
+    by = p.get("requestedBy") or {}
+    approver = p.get("approvedBy") or {}
+    host = db.get(POSMachine, job.target_machine_id) if job.target_machine_id is not None else None
+    body = SimpleNamespace(
+        id=job.id, category="drawer",
+        event_type=EVENT_REMOTE_SALE if p.get("reason") == "payment" else EVENT_REMOTE_MANUAL,
+        permission=OPEN_REMOTE, decision="approval" if (approver.get("id") or approver.get("name")) else "allow",
+        result="approved" if job.status == "done" else "failed",
+        result_reason=job.error if job.status == "failed" else None,
+        drawer_id=str(job.printer_id or job.target_machine_id), drawer_name=job.printer_name,
+        device_id=None, shift_id=_uuid_or_none(p.get("shiftId")),
+        employee_id=by.get("id"), employee_name=by.get("name"), employee_role=None,
+        approver_id=approver.get("id"), approver_name=approver.get("name"), approver_method=approver.get("method"),
+        table_id=None, sale_id=None, payment_id=None, original_sale_id=None,
+        reason=p.get("reasonCode"), reason_note=p.get("reasonNote"), movement_id=None, cash_movement_type=None,
+        amount=p.get("amount"), expected_balance=None, offline=False, training=False,
+        details={
+            "remote": True, "jobId": str(job.id),
+            "hostMachineId": str(job.target_machine_id) if job.target_machine_id else None,
+            "hostName": till_label(host), "documentType": p.get("documentType"),
+            "documentNumber": p.get("documentNumber"), "approvalRequestId": p.get("approvalRequestId"),
+        },
+        occurred_at=job.completed_at or now,
+    )
+    return cash_drawer.record_event(db, sender, body)
 
 
 # ── "לא הודפס" on "בעיות" (§6) ────────────────────────────────────────────────

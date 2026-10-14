@@ -13,6 +13,8 @@ from app.schemas.transaction import meta_as_dict
 EventType = Literal[
     "CASH_SALE", "MANUAL", "CHANGE", "CASH_IN", "CASH_OUT", "DEPOSIT", "COUNT", "TEST", "REFUND",
     "AFTER_CLOSE", "PERMISSION",
+    # The drawer of another till's printer opened from this one (bill-print-other-till §9ב–§9ג).
+    "REMOTE_SALE", "REMOTE_MANUAL",
 ]
 
 

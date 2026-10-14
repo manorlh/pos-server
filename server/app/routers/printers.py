@@ -54,7 +54,8 @@ POST   /sync/{m}/print-host                      → the shop's print server: wh
 POST   /sync/{m}/print-jobs                      → relay a ticket to a cloud printer's host,
                                                     or to the shop's print server; or (`kind:
                                                     document`) a rendered bill / receipt to
-                                                    another till (app/services/remote_print.py)
+                                                    another till, (`kind: drawer`) open its
+                                                    drawer (app/services/remote_print.py)
 GET    /sync/{m}/print-jobs/pending              → jobs this till prints (handed out)
 POST   /sync/{m}/print-jobs/{id}/ack             → done / failed (a document's sender is woken)
 POST   /sync/{m}/print-jobs/{id}/cancel          → the sender takes back a job no till took yet
@@ -681,9 +682,17 @@ def ack_print_job(
 ):
     job = K.ack_job(db, machine, job_id, body)
     out = K.job_out(job, db=db)
-    # A document's sender hears its answer at once (`print-job` with `jobId`, `status`).
+    # A document's (a drawer's) sender hears its answer at once (`print-job` with `jobId`, `status`).
     senders = K.document_answer_targets(db, job)
+    # A drawer opened (or not) on another till: on the sending till's drawer log, who asked and who approved.
+    event, created = RP.record_drawer_event(db, job, K._now())
     db.commit()
+    if created:
+        from app.services import cash_drawer
+        from app.services import exceptions as exc_svc
+
+        sender = db.get(POSMachine, job.source_machine_id)
+        exc_svc.detect_safely(db, lambda d, e: cash_drawer.detect_event(d, sender, e), event)
     if senders and background_tasks is not None:
         background_tasks.add_task(K.publish_document_answer, senders, out["id"], out["status"])
     return out

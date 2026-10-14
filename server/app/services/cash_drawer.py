@@ -320,9 +320,13 @@ def scope_company(db, scope_type: str, scope_id: Any) -> Tuple[Optional[uuid.UUI
 EVENT_TYPES = (
     "CASH_SALE", "MANUAL", "CHANGE", "CASH_IN", "CASH_OUT", "DEPOSIT", "COUNT", "TEST", "REFUND",
     "AFTER_CLOSE", "PERMISSION",
+    # "מגירה נפתחה מרחוק" (P:/specs/bill-print-other-till.md §9ב–§9ג, app/services/remote_print.py): the
+    # drawer of another till's printer, opened from this till — with a cash payment, or without a sale.
+    "REMOTE_SALE", "REMOTE_MANUAL",
 )
-#: Openings without a sale or a movement of their own: the ones counted as "manual".
-MANUAL_TYPES = ("MANUAL", "CHANGE", "AFTER_CLOSE")
+#: Openings without a sale or a movement of their own: the ones counted as "manual" ("מגירה נפתחה ללא
+#: מכירה" — one opened on another till without a sale too, as the owner said: "כמו היום").
+MANUAL_TYPES = ("MANUAL", "CHANGE", "AFTER_CLOSE", "REMOTE_MANUAL")
 MOVEMENT_TYPES = ("cash_in", "cash_out", "deposit", "count")
 RESULTS = ("approved", "denied", "failed")
 

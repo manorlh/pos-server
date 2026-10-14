@@ -4,9 +4,9 @@
  * Add / edit one printer of the shop: a kitchen printer ("מדפסת בונים": network, Bluetooth,
  * through the cloud via a host till, the till's own) or a receipt printer ("מדפסת
  * חשבוניות": network, Bluetooth, or one till's USB — with the cash drawer on its port or
- * not — or another till's printer, "ענן": its host and how the host reaches it, never a
- * drawer; P:/specs/bill-print-other-till.md); where it applies (the whole shop, one point of
- * sale, one till), and how it prints.
+ * not — or another till's printer, "ענן": its host and how the host reaches it, and whether that
+ * printer has the drawer, which opens there only as §9 of P:/specs/bill-print-other-till.md lets
+ * it); where it applies (the whole shop, one point of sale, one till), and how it prints.
  */
 
 import { useState } from 'react';
@@ -187,7 +187,8 @@ export function PrinterDialog({
   const hosted = form.connectionType === 'cloud';
   const reach = hosted ? form.hostConnection : form.connectionType;
   const receipt = form.purpose === 'receipt';
-  // "המדפסת של <קופה>": a receipt printer another till prints on — never a drawer (it never opens remotely).
+  // "המדפסת של <קופה>": a receipt printer another till prints on — its drawer (if the printer there has one)
+  // opens only as `remotePrintDrawer` / CASH_DRAWER.OPEN_REMOTE let it (bill-print-other-till §9).
   const remoteReceipt = receipt && hosted;
 
   // A receipt printer is reached directly by the till that prints on it, or through another till.
@@ -207,7 +208,7 @@ export function PrinterDialog({
   const setPurpose = (next: PrinterPurpose) =>
     set({
       purpose: next,
-      cashDrawer: next === 'receipt' && form.connectionType !== 'cloud' ? form.cashDrawer : false,
+      cashDrawer: next === 'receipt' ? form.cashDrawer : false,
       connectionType:
         next === 'receipt' && form.connectionType === 'till'
           ? 'network'
@@ -215,8 +216,9 @@ export function PrinterDialog({
             ? 'network'
             : form.connectionType,
     });
+  // Another till's printer starts without the drawer: it is said on purpose, never carried over.
   const setConnection = (next: PrinterConnectionType) =>
-    set({ connectionType: next, cashDrawer: receipt && next === 'cloud' ? false : form.cashDrawer });
+    set({ connectionType: next, cashDrawer: receipt && next === 'cloud' && !hosted ? false : form.cashDrawer });
   const hostConnectionOptions: Option[] = [
     { value: 'till', label: t('hostConnections.till') },
     { value: 'network', label: t('hostConnections.network') },
@@ -262,7 +264,7 @@ export function PrinterDialog({
     onSave({
       name,
       purpose: form.purpose,
-      cashDrawer: receipt && !remoteReceipt && form.cashDrawer,
+      cashDrawer: receipt && form.cashDrawer,
       connectionType: form.connectionType,
       host: reach === 'network' ? form.host.trim() : null,
       port: reach === 'network' ? port : null,
@@ -481,10 +483,10 @@ export function PrinterDialog({
               <Switch checked={form.cutPaper} onCheckedChange={(v) => set({ cutPaper: v })} />
               {t('fields.cut')}
             </label>
-            {remoteReceipt ? null : receipt ? (
+            {receipt ? (
               <label className="flex items-center gap-2 text-sm">
                 <Switch checked={form.cashDrawer} onCheckedChange={(v) => set({ cashDrawer: v })} />
-                {t('fields.cashDrawer')}
+                {remoteReceipt ? t('fields.cashDrawerRemote') : t('fields.cashDrawer')}
               </label>
             ) : (
               <label className="flex items-center gap-2 text-sm">
@@ -501,7 +503,11 @@ export function PrinterDialog({
           {receipt && !remoteReceipt && form.cashDrawer && (
             <p className="text-xs text-muted-foreground">{t('cashDrawerHint')}</p>
           )}
-          {remoteReceipt && <p className="text-xs text-muted-foreground">{t('remoteReceiptHint')}</p>}
+          {remoteReceipt && (
+            <p className="text-xs text-muted-foreground">
+              {form.cashDrawer ? t('remoteReceiptDrawerHint') : t('remoteReceiptHint')}
+            </p>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 

@@ -88,6 +88,9 @@ SETTING_KEYS = (
     "receiptPrinterAddress",
     "receiptPrinterModel",
     "cashDrawer",
+    # "לשאול לפני פתיחה" (bill-print-other-till §9א): with cashDrawer «בתשלום מזומן — לשאול».
+    "cashDrawerAskTimeoutSec",
+    "cashDrawerAskDefault",
     "askBeforePrint",
     ON_SALE_KEY,
     ON_TILL_KEY,
@@ -1585,6 +1588,9 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
         #: This till hosts a receipt printer of type cloud: it takes `document` jobs (over the LAN with
         #: the print secret, and from the relay) and prints them as they are (bill-print-other-till §6).
         "acceptsDocuments": any(p["isHost"] and p["purpose"] == "receipt" for p in printers),
+        #: "פתיחת מגירה ב<קופה>" (bill-print-other-till §9ג): the tills this one may open a drawer on —
+        #: `[{machineId, name, label, printerId, lanAddress, lanPort}]`; [] for a build that does not relay.
+        "drawerHosts": RP.drawer_hosts(db, machine),
         #: The shop's print server ("שרת הדפסות", till parameter `printHostTill`), or null.
         "printHost": print_host,
         #: This till is it: it runs the LAN server and reports where.
@@ -1635,8 +1641,9 @@ def expire_jobs(db: Session, jobs: Iterable[KitchenPrintJob], now: Optional[date
         if job.status not in ("pending", "printing"):
             continue
         if was_taken(job):
-            # A document is no ticket the host keeps for hours: the sender may print it itself.
-            taken_ttl = RP.TAKEN_TTL if job.kind == "document" else TAKEN_JOB_TTL
+            # A document is no ticket the host keeps for hours: the sender may print it itself; a
+            # drawer opening minutes late is worse than none.
+            taken_ttl = {"document": RP.TAKEN_TTL, "drawer": RP.DRAWER_TAKEN_TTL}.get(job.kind, TAKEN_JOB_TTL)
             if as_utc(job.created_at) + taken_ttl > now:
                 continue
         elif as_utc(job.expires_at) > now:
@@ -1655,7 +1662,7 @@ def job_out(
 ) -> Dict[str, Any]:
     machines = machines or {}
     target = machines.get(job.target_machine_id) if job.target_machine_id else None
-    if target is None and job.target_machine_id is not None and job.kind == "document" and db is not None:
+    if target is None and job.target_machine_id is not None and job.kind in ("document", "drawer") and db is not None:
         # "הודפס ב<קופה>": the sender says where.
         target = db.get(POSMachine, job.target_machine_id)
     out = {
@@ -1677,6 +1684,8 @@ def job_out(
     if job.kind == "document":
         # The document's reference, never its image.
         out["document"] = RP.reference_of(job.payload)
+    elif job.kind == "drawer":
+        out["drawer"] = RP.drawer_reference_of(job.payload)
     return out
 
 
@@ -1723,6 +1732,8 @@ def create_job(db: Session, machine: POSMachine, body: PrintJobIn) -> Tuple[Kitc
     """
     if getattr(body, "kind", "ticket") == "document":
         return create_document_job(db, machine, body)
+    if getattr(body, "kind", "ticket") == "drawer":
+        return create_drawer_job(db, machine, body)
     existing = db.query(KitchenPrintJob).filter(KitchenPrintJob.id == body.id).first()
     if existing is not None:
         if is_dashboard_void(existing) and str(existing.shop_id) == str(machine.shop_id) \
@@ -1800,6 +1811,42 @@ def create_document_job(db: Session, machine: POSMachine, body: PrintJobIn) -> T
         source_machine_id=machine.id,
         status="pending",
         payload=RP.payload_of(document, machine, size),
+        created_at=now,
+        expires_at=now + timedelta(seconds=settings.timeout),
+    )
+    db.add(job)
+    db.flush()
+    return job, True
+
+
+def create_drawer_job(db: Session, machine: POSMachine, body: PrintJobIn) -> Tuple[KitchenPrintJob, bool]:
+    """
+    "פתיחת מגירה ב<קופה>" (P:/specs/bill-print-other-till.md §9ב–§9ג): open the drawer of another till's
+    printer — a receipt printer of type cloud with the drawer (`printerId`), or a till by itself
+    (`targetMachineId`). Idempotent by `body.id`. 404 the printer / `host_not_found`; 409 `printer_not_document`,
+    `printer_inactive`, `remote_print_off`, `drawer_remote_off`, `host_not_allowed`, `host_needs_update`,
+    `printer_has_no_drawer`, `host_has_no_drawer` (app/services/remote_print.py). It waits for its host the
+    sender's `remotePrintTimeoutSec`. `(job, created)`.
+    """
+    existing = db.query(KitchenPrintJob).filter(KitchenPrintJob.id == body.id).first()
+    if existing is not None:
+        if str(existing.source_machine_id) != str(machine.id) or existing.kind != "drawer":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="print_job_id_taken")
+        return existing, False
+    printer, host = RP.resolve_target(db, machine, body)
+    settings = RP.check_drawer(db, machine, host, printer, body.drawer)
+    now = _now()
+    job = KitchenPrintJob(
+        id=body.id,
+        tenant_id=machine.tenant_id,
+        shop_id=machine.shop_id,
+        printer_id=printer.id if printer is not None else None,
+        printer_name=printer.name if printer is not None else machine_label(host),
+        kind="drawer",
+        target_machine_id=host.id,
+        source_machine_id=machine.id,
+        status="pending",
+        payload=RP.drawer_payload_of(body.drawer, machine),
         created_at=now,
         expires_at=now + timedelta(seconds=settings.timeout),
     )
@@ -1946,11 +1993,14 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
         if job.status == "printing" and job.delivered_at is not None and as_utc(job.delivered_at) + JOB_LEASE > now:
             continue
         is_document = job.kind == "document"
+        is_drawer = job.kind == "drawer"
         if is_document:
             size = int((job.payload or {}).get("bytes") or 0)
             if not documents or (image_bytes and image_bytes + size > RP.PENDING_BYTES):
                 continue
             image_bytes += size
+        elif is_drawer and not documents:
+            continue
         job.status = "printing"
         job.delivered_at = now
         job.deliveries = (job.deliveries or 0) + 1
@@ -1961,10 +2011,13 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
             "kind": job.kind,
             "printerId": str(job.printer_id) if job.printer_id else None,
             "printer": _job_printer_block(printers.get(job.printer_id)),
-            "ticket": None if is_document else job.payload,
+            "ticket": None if (is_document or is_drawer) else job.payload,
             # A bill / receipt to print as it is (its own printer block above, or null: this till's
             # own receipt printer). Printed once per id, however often it is handed out.
             **({"document": job.payload} if is_document else {}),
+            # Open the drawer of that printer (§9 of bill-print-other-till): once per id, never past
+            # `expiresAt`, never in a payment of this till's own.
+            **({"drawer": job.payload} if is_drawer else {}),
             "createdAt": _iso(job.created_at),
             "expiresAt": _iso(job.expires_at),
             # Moved here from a print host that went silent holding it: maybe on paper there already.
@@ -2009,8 +2062,8 @@ def ack_job(db: Session, machine: POSMachine, job_id: Any, body: PrintJobAckIn) 
 
 
 def document_answer_targets(db: Session, job: KitchenPrintJob) -> List[NotifyTarget]:
-    """A document's sender, to wake when its host answered (its "הודפס" / "לא הודפס" without waiting)."""
-    if job.kind != "document" or job.source_machine_id is None or job.status not in ("done", "failed"):
+    """A document's (a drawer's) sender, to wake when its host answered ("הודפס" / "נפתחה" without waiting)."""
+    if job.kind not in ("document", "drawer") or job.source_machine_id is None or job.status not in ("done", "failed"):
         return []
     sender = db.get(POSMachine, job.source_machine_id)
     return _targets([sender]) if sender is not None else []

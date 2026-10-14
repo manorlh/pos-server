@@ -39,10 +39,10 @@ function status(over: Partial<ActionStatus>): ActionStatus {
 }
 
 describe('the parameters', () => {
-  it('are the server\'s seven, the list of tills among them', () => {
+  it('are the server\'s eight, the list of tills among them', () => {
     assert.deepEqual([...REMOTE_PRINT_KEYS], [
       'remotePrintEnabled', 'remotePrintDocuments', 'remotePrintFallback', 'remotePrintTimeoutSec',
-      'remotePrintNotice', 'remotePrintHosts', 'remotePrintFromDashboard',
+      'remotePrintNotice', 'remotePrintHosts', 'remotePrintFromDashboard', 'remotePrintDrawer',
     ]);
     assert.ok((REMOTE_PRINT_KEYS as readonly string[]).includes(REMOTE_PRINT_HOSTS_KEY));
   });

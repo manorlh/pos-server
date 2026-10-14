@@ -53,7 +53,8 @@ interface Level {
 
 const GROUPS = [
   { id: 'Receipt', keys: ['receiptPrinter', 'receiptPrinterAddress', 'receiptPrinterModel'] },
-  { id: 'Payment', keys: ['cashDrawer', 'askBeforePrint'] },
+  // "לשאול לפני פתיחה" (bill-print-other-till §9א): with cashDrawer «בתשלום מזומן — לשאול».
+  { id: 'Payment', keys: ['cashDrawer', 'cashDrawerAskTimeoutSec', 'cashDrawerAskDefault', 'askBeforePrint'] },
   { id: 'Kitchen', keys: ['kitchenTicketsOnSale', 'kitchenTicketsOnTill'] },
   // "הדפסה בקופה אחרת": a bill or a receipt on another till's printer.
   { id: 'Remote', keys: REMOTE_PRINT_KEYS },

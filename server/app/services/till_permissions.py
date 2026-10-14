@@ -199,6 +199,13 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "יומן פתיחות המגירה בקופה.", devices=_FIXED),
     PermissionSpec("CASH_DRAWER.VIEW_CASH_MOVEMENTS", "צפייה בתנועות מזומן", "drawer",
                    "תנועות המזומן במשמרת והיתרה הצפויה.", devices=_FIXED),
+    # P:/specs/bill-print-other-till.md §9ב–§9ג (the owner, 14.10.2026): the drawer of another till's printer —
+    # with a bill sent there (`remotePrintDrawer`), or "פתיחת מגירה ב<קופה>" from a device with no drawer.
+    PermissionSpec("CASH_DRAWER.OPEN_REMOTE", "פתיחת מגירה בקופה אחרת", "drawer",
+                   "פתיחת המגירה של המדפסת בקופה אחרת: עם חשבון ששולם במזומן ונשלח להדפסה שם (לפי הפרמטר "
+                   "\"מגירה במדפסת שם\"), או \"פתיחת מגירה ב...\" מהתפריט במכשיר בלי מגירה (מסופון, P18, טלפון) — "
+                   "בנוסף לכללי הפתיחה הידנית. נרשמת בקופה השולחת כ\"מגירה נפתחה מרחוק\" עם העובד והמאשר; "
+                   "פתיחה בלי מכירה נרשמת כחריגה \"מגירה נפתחה ללא מכירה\"."),
     # ── ניהול בקופה ──
     PermissionSpec("CATALOG_WRITE", "עריכת קטלוג מהקופה", "admin",
                    "עריכת מוצרים, עיצוב מסך, נעילת מוצר, שמות שולחנות ומפה, מדפסות ומסופון.",
@@ -380,6 +387,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "ITEM_BLOCK_WIDE",
     # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
     "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
+    # "פתיחת מגירה בקופה אחרת" (bill-print-other-till §9): new — a legacy cashier asks a manager.
+    "CASH_DRAWER.OPEN_REMOTE",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -440,6 +449,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CASH_DRAWER.OPEN_AFTER_CLOSE":      (D, D, P, A),
     "CASH_DRAWER.VIEW_LOG":              (D, D, A, A),
     "CASH_DRAWER.VIEW_CASH_MOVEMENTS":   (D, D, A, A),
+    # bill-print-other-till §9ב: a waiter or a cashier with a manager's code (or a phone approval).
+    "CASH_DRAWER.OPEN_REMOTE":           (P, P, A, A),
     "CATALOG_WRITE":                     (D, P, P, A),
     # "ניהול קטלוג" (specs/till-catalog-management.md §6.2).
     "CATALOG_VIEW":                      (A, A, A, A),

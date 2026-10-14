@@ -22,7 +22,8 @@ Three tables:
   receipt printer is reached directly (network, Bluetooth, USB) and may have the cash
   drawer on its port (`cash_drawer`) — or through another till (`cloud`: "המדפסת של <קופה>",
   P:/specs/bill-print-other-till.md): the sending till renders the document and relays it to
-  `host_machine_id` (LAN first, else the cloud relay below, as a `document` job). Never a drawer.
+  `host_machine_id` (LAN first, else the cloud relay below, as a `document` job). Its drawer
+  (`cash_drawer`: on the host's printer) opens only by a `drawer` job, as its §9 lets it.
 
 * `kitchen_printer_routes` — what prints where, per shop. A row routes a category or a
   product (`target_type`, `target_id`) to a printer. Several rows for one target print
@@ -35,7 +36,8 @@ Three tables:
   server). pending → printing → done | failed, or expired when nobody printed it in time.
   The ticket is sent structured (`payload`), the printing till renders it. A `document`
   (a bill or a receipt printed on another till, P:/specs/bill-print-other-till.md) is sent
-  rendered: the sending till's image, which the host prints as it is.
+  rendered: the sending till's image, which the host prints as it is. A `drawer` opens the
+  drawer on that till's printer (§9 there): who asked, who approved.
 
 * `kitchen_no_ticket_products` — "ללא בון" on the product itself: no kitchen ticket for it
   in any shop, whatever its category or its shops' rows say.
@@ -76,8 +78,9 @@ PRINTER_HOST_CONNECTIONS = ("till", "network", "bluetooth", "usb")
 PRINTER_PAPER_WIDTHS = (58, 80)
 ROUTE_TARGET_TYPES = ("category", "product")
 PRINT_JOB_STATUSES = ("pending", "printing", "done", "failed", "expired")
-#: `document`: a bill / receipt rendered by the sending till, printed by another (bill-print-other-till).
-PRINT_JOB_KINDS = ("ticket", "test", "document")
+#: `document`: a bill / receipt rendered by the sending till, printed by another (bill-print-other-till);
+#: `drawer`: open the drawer on another till's printer (its §9).
+PRINT_JOB_KINDS = ("ticket", "test", "document", "drawer")
 
 
 class KitchenPrinter(Base):
@@ -183,7 +186,7 @@ class KitchenPrintJob(Base):
             "status IN ('pending', 'printing', 'done', 'failed', 'expired')",
             name="ck_kitchen_print_jobs_status",
         ),
-        CheckConstraint("kind IN ('ticket', 'test', 'document')", name="ck_kitchen_print_jobs_kind"),
+        CheckConstraint("kind IN ('ticket', 'test', 'document', 'drawer')", name="ck_kitchen_print_jobs_kind"),
         Index("ix_kitchen_print_jobs_target_status", "target_machine_id", "status"),
         Index("ix_kitchen_print_jobs_source", "source_machine_id", "created_at"),
         Index("ix_kitchen_print_jobs_printer", "printer_id", "created_at"),

@@ -14,6 +14,8 @@ export const REMOTE_PRINT_KEYS = [
   'remotePrintNotice',
   'remotePrintHosts',
   'remotePrintFromDashboard',
+  // §9ב: the drawer of the printer there — never (default) / ask / auto.
+  'remotePrintDrawer',
 ] as const;
 
 /** The tills a till may send documents to: their ids, separated by commas; empty — any host configured. */
