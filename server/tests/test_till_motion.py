@@ -74,12 +74,14 @@ def test_no_motion_is_todays_till():
     assert r == _till({}) == _till({"preset": "legacy"})
     assert set(r) == set(M.TILL_EVENTS)
     # The screens as IosTransitions.kt plays them: a push / pop 300, payment and the windows 330, the tabs 140.
+    assert M.preset_values("legacy", "tableOpen", "till")["animationType"] == "zoom"
     page, sheet, pay, tab, table = (r[e] for e in ("pageTransition", "modalOpen", "payment", "tabSwitch", "tableOpen"))
     assert (page["animationType"], page["durationMs"], page["easing"]) == ("slideIn", 300, "ios")
     assert (pay["animationType"], pay["direction"], pay["durationMs"], pay["easing"]) == ("slideIn", "up", 330, "ios")
     assert (sheet["animationType"], sheet["direction"], sheet["durationMs"], sheet["easing"]) == ("slideIn", "up", 330, "ios")
     assert (tab["animationType"], tab["durationMs"]) == ("crossfade", 140)
-    assert (table["animationType"], table["durationMs"]) == ("fade", 140)
+    # A table opens in a zoom from its tile (the owner, 14.10: zoom by default, also with nothing set).
+    assert (table["animationType"], table["durationMs"], table["easing"]) == ("zoom", 300, "ios")
     assert M.EASING_CURVES["ios"] == (0.32, 0.72, 0.0, 1.0)
     # Nothing moves inside a screen.
     moving = {e for e, s in r.items() if s["animationType"] != "none"}

@@ -392,9 +392,10 @@ LEAVING_EVENTS: Tuple[str, ...] = ("remove", "soldOut")
 #   kiosk never plays and its config refuses;
 # * `payment` is the payment screen rising over the order, not the pay button filling
 #   (TILL_EVENT_TYPES, TILL_STANDARD);
-# * its presets (TILL_PRESETS): "legacy" is the default — exactly today's till (TILL_LEGACY: a push /
-#   pop of 300 ms, payment and the windows rising in 330 ms, the tabs cross-fading in 140 ms, on the
-#   iOS curve; nothing else moves) — and "none" switches every event off, whatever the levels set;
+# * its presets (TILL_PRESETS): "legacy" is the default — today's till (TILL_LEGACY: a push / pop of
+#   300 ms, payment and the windows rising in 330 ms, the tabs cross-fading in 140 ms, on the iOS
+#   curve; nothing else moves) with a table opening in a zoom from its tile (the owner's default) —
+#   and "none" switches every event off, whatever the levels set;
 # * no older per-transition keys (a till's design never had them): no LEGACY_KINDS, no
 #   LEGACY_DURATIONS by kind, the plain stagger cap;
 # * the light profile keeps opening a table and the payment screen seen (TILL_LIGHT).
@@ -429,8 +430,9 @@ TILL_STANDARD: Dict[str, Dict[str, Any]] = {
 
 #: The till's "legacy" over its Standard: today's screens (pos-android IosTransitions.kt — PUSH_MS 300,
 #: PRESENT_MS 330, FADE_MS 140, the iOS curve; reduced motion: none at all), and no motion inside a
-#: screen — each of those events off, at the fast pace when a level switches it on. Opening a table is
-#: today's change of tab, a 140 ms fade.
+#: screen — each of those events off, at the fast pace when a level switches it on. Opening a table zooms
+#: from its tile into the order, as a screen change (300 ms, the iOS curve), and leaving it plays the zoom
+#: back — the owner, 14.10.2026: zoom is the default, also with nothing set.
 TILL_LEGACY: Dict[str, Dict[str, Any]] = {
     "productPress": {"enabled": False, "durationMs": 350},
     "addToCart": {"enabled": False, "durationMs": 550, "holdMs": 800},
@@ -443,7 +445,7 @@ TILL_LEGACY: Dict[str, Dict[str, Any]] = {
     "pageTransition": {"animationType": "slideIn", "durationMs": 300, "easing": "ios", "reducedMotionFallback": "none"},
     "modalOpen": {"animationType": "slideIn", "direction": "up", "durationMs": 330, "easing": "ios",
                   "reducedMotionFallback": "none"},
-    "tableOpen": {"animationType": "fade", "durationMs": 140, "reducedMotionFallback": "none"},
+    "tableOpen": {"durationMs": 300, "easing": "ios", "reducedMotionFallback": "none"},
     "tabSwitch": {"durationMs": 140, "reducedMotionFallback": "none"},
     "payment": {"durationMs": 330, "easing": "ios", "reducedMotionFallback": "none"},
     "success": {"enabled": False, "durationMs": 800},

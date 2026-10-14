@@ -508,7 +508,8 @@ export const TILL_MOTION_STANDARD: Partial<Record<MotionEventKey, MotionEventVal
  * The till's "legacy" over its Standard: today's screens (IosTransitions.kt — a push / pop 300, payment and
  * the windows rising 330, the tabs 140, the iOS curve; reduced motion: none at all), and nothing moving
  * inside a screen — each of those events off, at the fast pace when a level switches it on. Opening a
- * table is today's change of tab, a 140 ms fade.
+ * table zooms from its tile into the order, as a screen change (300 ms, the iOS curve), and leaving it plays
+ * the zoom back — the owner, 14.10.2026: zoom is the default, also with nothing set.
  */
 export const TILL_MOTION_LEGACY: Partial<Record<MotionEventKey, Partial<MotionEventValues>>> = {
   productPress: { enabled: false, durationMs: 350 },
@@ -521,7 +522,7 @@ export const TILL_MOTION_LEGACY: Partial<Record<MotionEventKey, Partial<MotionEv
   itemsEnter: { enabled: false, durationMs: 350, staggerMs: 45 },
   pageTransition: { animationType: 'slideIn', durationMs: 300, easing: 'ios', reducedMotionFallback: 'none' },
   modalOpen: { animationType: 'slideIn', direction: 'up', durationMs: 330, easing: 'ios', reducedMotionFallback: 'none' },
-  tableOpen: { animationType: 'fade', durationMs: 140, reducedMotionFallback: 'none' },
+  tableOpen: { durationMs: 300, easing: 'ios', reducedMotionFallback: 'none' },
   tabSwitch: { durationMs: 140, reducedMotionFallback: 'none' },
   payment: { durationMs: 330, easing: 'ios', reducedMotionFallback: 'none' },
   success: { enabled: false, durationMs: 800 },

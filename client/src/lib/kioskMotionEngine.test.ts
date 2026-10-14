@@ -342,6 +342,8 @@ describe('the till: the same engine, surface "till" (P:/specs/till-motion.md), t
     assert.deepEqual([r.payment.animationType, r.payment.direction, r.payment.durationMs], ['slideIn', 'up', 330]);
     assert.deepEqual([r.modalOpen.animationType, r.modalOpen.durationMs], ['slideIn', 330]);
     assert.deepEqual([r.tabSwitch.animationType, r.tabSwitch.durationMs], ['crossfade', 140]);
+    // A table opens in a zoom from its tile (the owner, 14.10: zoom by default, also with nothing set).
+    assert.deepEqual([r.tableOpen.animationType, r.tableOpen.durationMs, r.tableOpen.easing], ['zoom', 300, 'ios']);
     const moving = TILL_MOTION_EVENTS.filter((e) => r[e].animationType !== 'none');
     assert.deepEqual(moving, ['pageTransition', 'modalOpen', 'tableOpen', 'tabSwitch', 'payment']);
     assert.equal(MOTION_EASING_CURVES.ios.join(','), '0.32,0.72,0,1');

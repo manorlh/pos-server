@@ -262,7 +262,7 @@ describe('the screen\'s Hebrew texts exist in he.json', () => {
 describe('the till\'s screen (surface "till", P:/specs/till-motion.md)', () => {
   it('its preset cards: today\'s first (only the screens move), Standard and the rest as the kiosk\'s', () => {
     assert.deepEqual([...TILL_PRESET_EXAMPLE_EVENTS], ['pageTransition', 'tableOpen', 'payment', 'addToCart']);
-    assert.deepEqual(presetExample('legacy', 'till'), { pageTransition: 300, tableOpen: 140, payment: 330, addToCart: 0 });
+    assert.deepEqual(presetExample('legacy', 'till'), { pageTransition: 300, tableOpen: 300, payment: 330, addToCart: 0 });
     assert.deepEqual(presetExample('standard', 'till'), { pageTransition: 650, tableOpen: 650, payment: 650, addToCart: 750 });
     assert.deepEqual(presetExample('fast', 'till'), { pageTransition: 450, tableOpen: 450, payment: 450, addToCart: 550 });
     assert.deepEqual(presetExample('none', 'till'), { pageTransition: 0, tableOpen: 0, payment: 0, addToCart: 0 });
