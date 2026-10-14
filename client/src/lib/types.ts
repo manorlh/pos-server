@@ -1774,8 +1774,20 @@ export interface Transaction {
    * ("A-17", or "17" with "מספר בלבד") and its business date (the number comes back every day).
    */
   kioskPickup?: { label: string; number: number; businessDate: string | null } | null;
-  /** List rows, with a free search: why it was found — its number or amount, or its kiosk order's pickup number. */
-  matchedBy?: Array<'document' | 'pickup'> | null;
+  /**
+   * List rows, with a free search: why it was found — its number or amount, its kiosk order's
+   * pickup number, or its table ("ש12", a table's name, the "שולחן" filter).
+   */
+  matchedBy?: Array<'document' | 'pickup' | 'table'> | null;
+  /**
+   * List rows: the table it paid (its bill, a part paid apart, a payment given back, a credit
+   * note of one of those) — the number and name the order froze, the order (a table opened twice
+   * a day is two orders) and when it was opened. Null for any other document.
+   */
+  tableNumber?: number | null;
+  tableName?: string | null;
+  tableOrderId?: string | null;
+  tableOpenedAt?: string | null;
   /**
    * "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
    * and whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").

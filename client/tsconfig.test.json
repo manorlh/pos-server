@@ -307,6 +307,8 @@
     "src/lib/displayProfile.test.ts",
     "src/lib/kioskPickupSearch.ts",
     "src/lib/kioskPickupSearch.test.ts",
+    "src/lib/tableSearch.ts",
+    "src/lib/tableSearch.test.ts",
     "src/lib/kdsBoard.ts",
     "src/lib/deviceLogs.ts",
     "src/lib/deviceLogs.test.ts",

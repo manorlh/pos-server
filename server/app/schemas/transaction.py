@@ -851,8 +851,15 @@ class TransactionListItem(BaseModel):
     #: order); null for any other document. Filled on dashboard reads only.
     kiosk_pickup: Optional[KioskPickupRef] = Field(None, alias="kioskPickup")
     #: Why the free search (`q`) found it: "document" (its number or amount) and / or "pickup"
-    #: (its kiosk order's pickup number). Null without a search.
-    matched_by: Optional[List[Literal["document", "pickup"]]] = Field(None, alias="matchedBy")
+    #: (its kiosk order's pickup number) and / or "table" (its table: "ש12", "שולחן 12", a table's
+    #: name, or the `table` filter). Null without a search.
+    matched_by: Optional[List[Literal["document", "pickup", "table"]]] = Field(None, alias="matchedBy")
+    #: The table it paid (app/services/table_documents.py): the number and name as the order froze
+    #: them, the order, and when it was opened. Null for any other document; dashboard reads only.
+    table_number: Optional[int] = Field(None, alias="tableNumber")
+    table_name: Optional[str] = Field(None, alias="tableName")
+    table_order_id: Optional[str] = Field(None, alias="tableOrderId")
+    table_opened_at: Optional[str] = Field(None, alias="tableOpenedAt")
 
     class Config:
         from_attributes = True

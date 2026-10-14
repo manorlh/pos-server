@@ -82,7 +82,8 @@ def test_shop_transactions_takes_no_scope_parameters_from_the_caller() -> None:
     """
     schema = app.openapi()["paths"]["/api/v1/reports/{machine_id}/shop-transactions"]["get"]
     names = {p["name"] for p in schema.get("parameters", [])}
-    assert names == {"machine_id", "hours", "q"}
+    # `table` (the till's "שולחן" chip) narrows within that scope; it names no shop or till.
+    assert names == {"machine_id", "hours", "q", "table"}
 
 
 def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
@@ -114,6 +115,12 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
         "pickupLabel",
         "pickupBusinessDate",
         "matchedBy",
+        # Its table ("היסטוריית עסקאות: חיפוש לפי מספר שולחן", P:/specs/history-table-search.md):
+        # number and name as the order froze them, the order and when it opened. Nullable, additive.
+        "tableNumber",
+        "tableName",
+        "tableOrderId",
+        "tableOpenedAt",
     }
 
 
