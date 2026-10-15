@@ -5,7 +5,8 @@
  * layer is, and — at a shop or a point of sale — which of its tills get each change (a till or
  * its point of sale that sets the value itself keeps its own). Phase 2: next to each till whose
  * version predates phase 2's templates, "גרסה 0.1.NNN — תציג 'נקי' עד עדכון"; and, for the
- * visual menu, "רוב המוצרים בלי תמונה — 'מגע גדול' יתאים יותר".
+ * visual menu, "רוב המוצרים בלי תמונה — 'מגע גדול' יתאים יותר". "זרימה" (P:/specs/flow-design.md §5.2): where
+ * it shows on a device, the same per till — "גרסה 0.1.NNN — תציג 'רגיל' עד עדכון".
  */
 
 import { useMemo, useState } from 'react';
@@ -21,8 +22,10 @@ import { isMotionEvent, type MotionDirection, type MotionEasing, type MotionFall
 import {
   ACCENT_BRAND,
   AS_BASE,
+  FLOW_DEFAULTS,
   actionLabelOf,
   diffConfigs,
+  flowOnProfiles,
   getPath,
   usesPhase2Template,
   type ActionItem,
@@ -50,6 +53,11 @@ const VOCAB_OF: Record<string, string> = {
   'tables.showChairs': 'showChairs',
   'night.hand': 'nightHand',
   'visual.dietary': 'visualDietary',
+  'flow.shell': 'flowShell',
+  'flow.home': 'flowHome',
+  'flow.firstStep': 'flowFirstStep',
+  'flow.askGuests': 'flowAskGuests',
+  'flow.pickupName': 'flowPickupName',
 };
 
 /** A config path in words ("profiles.handheld.template" → "מסופון F20 · תבנית"). */
@@ -72,6 +80,8 @@ export function useTillPathLabel() {
       }
       return parts[1] && t.has(`motion.${parts[1]}`) ? t(`motion.${parts[1]}`) : t('motion.events');
     }
+    // "סגנון מסכים · מסופון F20".
+    if (parts[0] === 'flow' && parts[1] === 'profiles' && parts[2]) return `${t('flow.profiles')} · ${tp.has(parts[2]) ? tp(parts[2]) : parts[2]}`;
     if (parts[0] === 'profiles' && parts.length >= 3) {
       const key = parts[2];
       const where = tp.has(parts[1]) ? tp(parts[1]) : parts[1];
@@ -93,8 +103,22 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
   const tr = useTranslations('tillDesign.review');
   const tm = useMotionText('till');
   const tpt = useTranslations('tillDesign.productText');
+  const tfl = useTranslations('tillDesign.flow');
   const parts = path.split('.');
   const last = parts[parts.length - 1];
+  // "זרימה": nothing set is the default in words (a device's: "כמו הבסיס"; the shell: "רגיל"; the background: ours).
+  if (parts[0] === 'flow') {
+    if (parts[1] === 'profiles') {
+      if (value === null || value === undefined) return <span className="text-muted-foreground">{tr('asBase')}</span>;
+      if (value === AS_BASE) return <span className="text-muted-foreground">{tr('asBaseOver')}</span>;
+      if (typeof value === 'string' && tv.has(`flowShell.${value}`)) return <span>{tv(`flowShell.${value}`)}</span>;
+    }
+    if (value === null || value === undefined) {
+      if (last === 'background') return <span className="text-muted-foreground">{tfl('backgroundDefault')}</span>;
+      const fallback = last === 'shell' ? 'classic' : (FLOW_DEFAULTS as Record<string, unknown>)[last];
+      if (fallback !== undefined && fallback !== null) return <TillValue path={path} value={fallback} cfg={cfg} />;
+    }
+  }
   // "מראה" — "שם פריט מלא ותג i": nothing / "base" = the till parameters'; a code in its words.
   if (parts[0] === 'look') {
     if (value === null || value === undefined || value === AS_BASE) return <span className="text-muted-foreground">{tpt('params')}</span>;
@@ -196,6 +220,7 @@ export function ReviewDialog({
   saving,
   onConfirm,
   phase2MinVersion,
+  flowMinVersion,
   mostlyWithoutPhotos = false,
 }: {
   open: boolean;
@@ -210,6 +235,8 @@ export function ReviewDialog({
   onConfirm: () => void;
   /** The first till version that shows phase 2's templates ("0.1.576"). */
   phase2MinVersion?: string | null;
+  /** The first till version that shows "זרימה" ("0.1.NNN"). */
+  flowMinVersion?: string | null;
   /** "תפריט ויזואלי" with fewer than 30% of the catalogue photographed. */
   mostlyWithoutPhotos?: boolean;
 }) {
@@ -249,6 +276,11 @@ export function ReviewDialog({
     newTemplates.length > 0 && m.phase2Templates === false ? t('oldVersion', { version: shownVersion(m.appVersion) ?? '?' }) : null;
   const thisTill = level === 'machine' ? targets?.machines.find((m) => m.id === targetId) : undefined;
   const oldTills = tills.filter((m) => m.phase2Templates === false).length;
+  // "זרימה" where a device shows it: an older till ignores it and shows "רגיל" until it updates.
+  const flowOn = flowOnProfiles(draft).length > 0;
+  const flowOld = (m: { appVersion?: string | null; flow?: boolean | null }) =>
+    flowOn && m.flow === false ? t('flowOldVersion', { version: shownVersion(m.appVersion) ?? '?' }) : null;
+  const flowOldTills = tills.filter((m) => m.flow === false).length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -272,6 +304,16 @@ export function ReviewDialog({
             </p>
             {thisTill && oldVersion(thisTill) ? <p>{`${thisTill.name}: ${oldVersion(thisTill)}`}</p> : null}
             {oldTills > 0 && (level === 'shop' || level === 'area') ? <p>{t('oldTills', { n: oldTills })}</p> : null}
+          </div>
+        ) : null}
+        {flowOn ? (
+          <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+            <p className="flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {t('flowNote', { version: flowMinVersion ?? '' })}
+            </p>
+            {thisTill && flowOld(thisTill) ? <p>{`${thisTill.name}: ${flowOld(thisTill)}`}</p> : null}
+            {flowOldTills > 0 && (level === 'shop' || level === 'area') ? <p>{t('oldTills', { n: flowOldTills })}</p> : null}
           </div>
         ) : null}
         {mostlyWithoutPhotos ? (
@@ -317,6 +359,7 @@ export function ReviewDialog({
                         <p className="mt-1 text-xs text-muted-foreground">{t('keepsOwn', { list: kept.map((c) => label(c.path)).join(' · ') })}</p>
                       ) : null}
                       {oldVersion(m) ? <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">{oldVersion(m)}</p> : null}
+                      {flowOld(m) ? <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">{flowOld(m)}</p> : null}
                     </li>
                   );
                 })}

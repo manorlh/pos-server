@@ -25,6 +25,11 @@
  * lib/productTileText.ts as the design's own fields under "מראה", every key optional (absent: the till
  * parameters'); a code wins over the parameter, "base" undoes a level above's value (pos-android
  * domain/TillDesignLook.kt reads the same).
+ *
+ * "זרימה" (P:/specs/flow-design.md §9): `flow` — the till's shell for every device (`shell`) or per profile
+ * (`profiles.<p>`, "base" = as `shell`), with its options; absent from the defaults like `look`. `flowView` /
+ * `flowForProfile` mirror the server's `flow_view` / `flow_for_profile`, pinned by the shared fixture
+ * tests/fixtures/flow_design_contract.json (pos-android domain/FlowDesign.kt reads the same).
  */
 
 import {
@@ -139,6 +144,29 @@ export const MAP_STYLES = ['auto', 'classic', 'modern'] as const;
 export type MapStyle = (typeof MAP_STYLES)[number];
 export const SHOW_HIDE = ['auto', 'show', 'hide'] as const;
 export type ShowHide = (typeof SHOW_HIDE)[number];
+
+/*
+ * "זרימה" (P:/specs/flow-design.md §9): the till's shell — a home of the open orders, a wizard for a new one,
+ * a side menu of big rows. Absent from the defaults like `look`; every key optional, null inherits.
+ */
+export const FLOW_SECTION = 'flow';
+/** `flow.shell` (every device at the level): "רגיל (כמו היום)" / "זרימה". Never "base" — that is a profile's. */
+export const FLOW_SHELLS = ['classic', 'flow'] as const;
+export type FlowShell = (typeof FLOW_SHELLS)[number];
+/** `flow.profiles.<p>`: classic, flow, or "base" ("כמו הבסיס" = as `shell`, also over a level above's value). */
+export const FLOW_PROFILE_VALUES = [...FLOW_SHELLS, AS_BASE] as const;
+/** The home's view: "auto" — the map when the till has tables. */
+export const FLOW_HOMES = ['auto', 'orders', 'tables'] as const;
+export type FlowHome = (typeof FLOW_HOMES)[number];
+/** The wizard's first step: ask table or pickup / straight to the table's number / straight to a pickup. */
+export const FLOW_FIRST_STEPS = ['type', 'table', 'pickup'] as const;
+export type FlowFirstStep = (typeof FLOW_FIRST_STEPS)[number];
+/** "כמה סועדים?": "auto" — the till parameter tablesAskGuests. */
+export const FLOW_ASK_GUESTS = ['auto', 'always', 'never'] as const;
+export type FlowAskGuests = (typeof FLOW_ASK_GUESTS)[number];
+/** A pickup's name: "auto" — as today (at payment, askOrderName) / none / asked in the wizard / required there. */
+export const FLOW_PICKUP_NAMES = ['auto', 'off', 'ask', 'required'] as const;
+export type FlowPickupName = (typeof FLOW_PICKUP_NAMES)[number];
 
 /** Phase 2 adds, at the end: a quick order's "עוד סבב", a table's "הוצא הבא" and its tenders. */
 export const QUICK_ACTIONS = [
@@ -296,7 +324,44 @@ export interface TillDesignConfig {
   look?: ProductTextDesign;
   /** "הסבר לעובד" (fire-restaurant-flow.md §5): absent — the till parameter `fireHints`. */
   hints?: { fireHints?: FireHints };
+  /** "זרימה" (flow-design.md §9): absent — "רגיל" on every device, every option its default. */
+  flow?: FlowSettings;
 }
+
+/** The `flow` section as the levels set it: every key optional (absent / null: inherit, else the default). */
+export interface FlowSettings {
+  shell?: FlowShell | null;
+  profiles?: Partial<Record<Profile, FlowShell | AsBase | null>>;
+  home?: FlowHome | null;
+  firstStep?: FlowFirstStep | null;
+  askGuests?: FlowAskGuests | null;
+  notes?: boolean | null;
+  pickupName?: FlowPickupName | null;
+  /** #RRGGBB; null — our palette (spec §5.3). */
+  background?: string | null;
+}
+
+/** `flow` with every key settled — the shared fixture's "expect". */
+export interface FlowView {
+  /** profile → "classic" / "flow", for every profile. */
+  shell: Record<Profile, FlowShell>;
+  home: FlowHome;
+  firstStep: FlowFirstStep;
+  askGuests: FlowAskGuests;
+  notes: boolean;
+  pickupName: FlowPickupName;
+  background: string | null;
+}
+
+/** Each option's value when no level sets it. */
+export const FLOW_DEFAULTS: Omit<FlowView, 'shell'> = {
+  home: 'auto',
+  firstStep: 'type',
+  askGuests: 'auto',
+  notes: true,
+  pickupName: 'auto',
+  background: null,
+};
 
 /** A partial layer as stored / sent (`{overrides}`). */
 export type TillDesignLayer = { [key: string]: unknown };
@@ -1140,6 +1205,19 @@ SCHEMA.fill.look = {};
 /** "הסבר לעובד" (the server's `hints`): optional, like `look`. */
 SCHEMA.fields.hints = new PartialObjNode({ fireHints: new EnumNode(FIRE_HINTS) });
 SCHEMA.fill.hints = {};
+/** "זרימה" (the server's `FLOW`): every key optional; a profile's value classic / flow / "base". */
+const FLOW_NODE = new PartialObjNode({
+  shell: new EnumNode(FLOW_SHELLS),
+  profiles: new PartialObjNode(Object.fromEntries(PROFILES.map((p) => [p, asBase(new EnumNode(FLOW_SHELLS))]))),
+  home: new EnumNode(FLOW_HOMES),
+  firstStep: new EnumNode(FLOW_FIRST_STEPS),
+  askGuests: new EnumNode(FLOW_ASK_GUESTS),
+  notes: new BoolNode(),
+  pickupName: new EnumNode(FLOW_PICKUP_NAMES),
+  background: new ColorNode(true),
+});
+SCHEMA.fields[FLOW_SECTION] = FLOW_NODE;
+SCHEMA.fill[FLOW_SECTION] = {};
 
 /* --------------------------------------------------------------- validation */
 
@@ -1361,6 +1439,101 @@ export function pruneEmptyLook<T>(cfg: T): T {
  */
 export function lookBaseValue(key: ProductTextKey, inherited: unknown): AsBase | undefined {
   return isProductTextCode(key, inherited) ? AS_BASE : undefined;
+}
+
+/* ------------------------------------------------------------ "זרימה" */
+
+/**
+ * The config without a `flow` an edit left empty or with keys cleared to inherit (`{}`, `profiles: {}` set
+ * nothing — the server prunes them), so a choice set and set back is no change.
+ */
+export function pruneEmptyFlow<T>(cfg: T): T {
+  if (!isDict(cfg) || !(FLOW_SECTION in cfg)) return cfg;
+  const own = isDict(cfg[FLOW_SECTION]) ? (cfg[FLOW_SECTION] as Dict) : {};
+  const kept: Dict = {};
+  for (const [k, v] of Object.entries(own)) {
+    if (v === undefined || v === null) continue;
+    if (k === 'profiles') {
+      const profiles = isDict(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined && x !== null)) : {};
+      if (Object.keys(profiles).length > 0) kept.profiles = profiles;
+      continue;
+    }
+    kept[k] = v;
+  }
+  const out: Dict = { ...cfg };
+  if (Object.keys(kept).length === 0) delete out[FLOW_SECTION];
+  else out[FLOW_SECTION] = kept;
+  return out as T;
+}
+
+/** The `flow` section of a config, or the section itself (a dict with none of the config's other keys). */
+function flowSection(cfgOrFlow: unknown): Dict {
+  if (!isDict(cfgOrFlow)) return {};
+  if (FLOW_SECTION in cfgOrFlow) return isDict(cfgOrFlow[FLOW_SECTION]) ? (cfgOrFlow[FLOW_SECTION] as Dict) : {};
+  if (Object.keys(cfgOrFlow).some((k) => k in SCHEMA.fields && !(k in FLOW_NODE.fields))) return {};
+  return cfgOrFlow;
+}
+
+function shellOf(flow: Dict, profile: string): FlowShell {
+  const profiles = isDict(flow.profiles) ? flow.profiles : {};
+  const own = profiles[profile];
+  if (typeof own === 'string' && (FLOW_SHELLS as readonly string[]).includes(own)) return own as FlowShell;
+  const shell = flow.shell;
+  if (typeof shell === 'string' && (FLOW_SHELLS as readonly string[]).includes(shell)) return shell as FlowShell;
+  return 'classic';
+}
+
+/** The shell a profile shows (Python `flow_shell`): `profiles[p]` when classic / flow, else `shell`, else classic. */
+export function flowShell(cfgOrFlow: unknown, profile: string): FlowShell {
+  return shellOf(flowSection(cfgOrFlow), profile);
+}
+
+/**
+ * `flow` with every key settled (Python `flow_view`, the shared fixture's "expect"): the shell per profile,
+ * every option its value or its default. Read tolerantly, as the till: a word not of its vocabulary is the default.
+ */
+export function flowView(cfgOrFlow: unknown): FlowView {
+  const flow = flowSection(cfgOrFlow);
+  const word = <V extends string>(key: keyof typeof FLOW_DEFAULTS, vocabulary: readonly V[]): V => {
+    const v = flow[key];
+    return typeof v === 'string' && (vocabulary as readonly string[]).includes(v) ? (v as V) : (FLOW_DEFAULTS[key] as V);
+  };
+  const bg = flow.background;
+  return {
+    shell: Object.fromEntries(PROFILES.map((p) => [p, shellOf(flow, p)])) as Record<Profile, FlowShell>,
+    home: word('home', FLOW_HOMES),
+    firstStep: word('firstStep', FLOW_FIRST_STEPS),
+    askGuests: word('askGuests', FLOW_ASK_GUESTS),
+    notes: typeof flow.notes === 'boolean' ? flow.notes : FLOW_DEFAULTS.notes,
+    pickupName: word('pickupName', FLOW_PICKUP_NAMES),
+    background: typeof bg === 'string' && HEX.test(bg) ? bg : null,
+  };
+}
+
+/** `flowView` as one profile shows it (Python `flow_for_profile`): `shell` is that profile's; an unknown one is the handheld. */
+export function flowForProfile(cfgOrFlow: unknown, rawProfile: string): Omit<FlowView, 'shell'> & { shell: FlowShell } {
+  const profile: Profile = (PROFILES as readonly string[]).includes(rawProfile) ? (rawProfile as Profile) : 'handheld';
+  const view = flowView(cfgOrFlow);
+  return { ...view, shell: view.shell[profile] };
+}
+
+/** The vocabularies and defaults of `flow` (Python `flow_catalog`, the shared fixture's `catalog`). */
+export function flowCatalog() {
+  return {
+    shells: [...FLOW_SHELLS],
+    profileValues: [...FLOW_PROFILE_VALUES],
+    profiles: [...PROFILES],
+    homes: [...FLOW_HOMES],
+    firstSteps: [...FLOW_FIRST_STEPS],
+    askGuests: [...FLOW_ASK_GUESTS],
+    pickupNames: [...FLOW_PICKUP_NAMES],
+    defaults: { ...FLOW_DEFAULTS },
+  };
+}
+
+/** The Android profiles that show "זרימה" (the review's "גרסה ישנה" warning: an older till shows "רגיל"). */
+export function flowOnProfiles(cfg: unknown): Profile[] {
+  return ANDROID_PROFILES.filter((p) => flowShell(cfg, p) === 'flow');
 }
 
 export interface ConfigChange {

@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "spec": "P:/specs/flow-design.md section 9",
+  "catalog": {
+    "shells": ["classic", "flow"],
+    "profileValues": ["classic", "flow", "base"],
+    "profiles": ["handheld", "tabletLandscape", "tabletPortrait", "ipadPortrait", "ipadLandscape"],
+    "homes": ["auto", "orders", "tables"],
+    "firstSteps": ["type", "table", "pickup"],
+    "askGuests": ["auto", "always", "never"],
+    "pickupNames": ["auto", "off", "ask", "required"],
+    "defaults": {"home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null}
+  },
+  "cases": [
+    {
+      "name": "nothing set",
+      "layers": [],
+      "expect": {
+        "shell": {"handheld": "classic", "tabletLandscape": "classic", "tabletPortrait": "classic", "ipadPortrait": "classic", "ipadLandscape": "classic"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "flow on every device",
+      "layers": [{"shell": "flow"}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "flow", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "the handheld only",
+      "layers": [{"profiles": {"handheld": "flow"}}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "classic", "tabletPortrait": "classic", "ipadPortrait": "classic", "ipadLandscape": "classic"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "the tablets kept classic under flow",
+      "layers": [{"shell": "flow", "profiles": {"tabletLandscape": "classic", "tabletPortrait": "classic"}}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "classic", "tabletPortrait": "classic", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "a lower level returns a profile to base",
+      "layers": [{"shell": "flow", "profiles": {"tabletLandscape": "classic"}}, {"profiles": {"tabletLandscape": "base"}}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "flow", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "a lower level switches it off",
+      "layers": [{"shell": "flow"}, {"shell": "classic"}],
+      "expect": {
+        "shell": {"handheld": "classic", "tabletLandscape": "classic", "tabletPortrait": "classic", "ipadPortrait": "classic", "ipadLandscape": "classic"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "a machine picks flow on a classic shop",
+      "layers": [{"shell": "classic"}, {"profiles": {"handheld": "flow"}}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "classic", "tabletPortrait": "classic", "ipadPortrait": "classic", "ipadLandscape": "classic"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "base with no shell is classic",
+      "layers": [{"profiles": {"handheld": "base"}}],
+      "expect": {
+        "shell": {"handheld": "classic", "tabletLandscape": "classic", "tabletPortrait": "classic", "ipadPortrait": "classic", "ipadLandscape": "classic"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "null in a layer inherits",
+      "layers": [{"shell": "flow", "home": "orders", "notes": false}, {"shell": null, "home": null, "firstStep": "table"}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "flow", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "orders", "firstStep": "table", "askGuests": "auto", "notes": false, "pickupName": "auto", "background": null
+      }
+    },
+    {
+      "name": "every option set",
+      "layers": [{"shell": "flow", "home": "tables", "firstStep": "pickup", "askGuests": "never", "notes": false, "pickupName": "required", "background": "#1E3A8A"}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "flow", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "tables", "firstStep": "pickup", "askGuests": "never", "notes": false, "pickupName": "required", "background": "#1E3A8A"
+      }
+    },
+    {
+      "name": "the options of two levels",
+      "layers": [{"askGuests": "always", "pickupName": "ask", "background": "#f3f5f8"}, {"shell": "flow", "askGuests": "auto", "pickupName": "off"}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "flow", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "off", "background": "#f3f5f8"
+      }
+    }
+  ],
+  "tolerant": [
+    {
+      "name": "the till reads what it does not know as the default",
+      "flow": {"shell": "bee", "profiles": {"handheld": "x", "tabletPortrait": "flow", "kiosk": "flow"}, "home": "x", "firstStep": 3, "askGuests": "sometimes", "notes": "yes", "pickupName": "maybe", "background": "blue"},
+      "expect": {
+        "shell": {"handheld": "classic", "tabletLandscape": "classic", "tabletPortrait": "flow", "ipadPortrait": "classic", "ipadLandscape": "classic"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    }
+  ],
+  "invalid": [
+    {"flow": {"shell": "bee"}, "path": "flow.shell", "code": "invalid_value"},
+    {"flow": {"shell": "base"}, "path": "flow.shell", "code": "invalid_value"},
+    {"flow": {"profiles": {"handheld": "x"}}, "path": "flow.profiles.handheld", "code": "invalid_value"},
+    {"flow": {"profiles": {"kiosk": "flow"}}, "path": "flow.profiles.kiosk", "code": "unknown_key"},
+    {"flow": {"home": "map"}, "path": "flow.home", "code": "invalid_value"},
+    {"flow": {"firstStep": "guests"}, "path": "flow.firstStep", "code": "invalid_value"},
+    {"flow": {"askGuests": true}, "path": "flow.askGuests", "code": "invalid_value"},
+    {"flow": {"notes": "yes"}, "path": "flow.notes", "code": "invalid_type"},
+    {"flow": {"pickupName": "maybe"}, "path": "flow.pickupName", "code": "invalid_value"},
+    {"flow": {"background": "#12345"}, "path": "flow.background", "code": "invalid_color"},
+    {"flow": {"background": "navy"}, "path": "flow.background", "code": "invalid_color"},
+    {"flow": {"palette": "bee"}, "path": "flow.palette", "code": "unknown_key"}
+  ]
+}
