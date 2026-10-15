@@ -22,6 +22,11 @@ POST   /menu/notes/{id}/image           → a note chip's picture (the same pipe
 DELETE /menu/notes/{id}/image
 GET    /menu/upsells | POST | PUT /{id} | DELETE /{id}   → upsell rules ("הגדלות מכירה")
 GET    /menu/courses | PUT              → the course list, per company
+GET    /menu/courses/quick-setup?companyId= → "הגדרה מהירה לשלבי הגשה": suggestions, levels, the
+                                          tab's status line, whether there is a setup to undo
+POST   /menu/courses/quick-setup        → apply (courses, category mapping, `coursesEnabled` at a level)
+POST   /menu/courses/quick-setup/undo   → put back what the quick setup changed
+PUT    /menu/courses/enabled            → the status line's switch (`{"companyId", "on"}`)
 GET    /reports/modifier-sales          → options chosen and their revenue
 GET    /reports/meal-sales              → meals and their components, money allocated
 GET    /reports/upsells                 → shown / taken / dismissed / revenue per rule
@@ -47,6 +52,7 @@ from app.database import get_db
 from app.middleware.auth import get_active_tenant_id, get_current_user, get_pos_machine_for_sync_path
 from app.models.pos_machine import POSMachine
 from app.models.user import User
+from app.schemas.courses_quick_setup import CoursesSwitchIn, QuickCompanyIn, QuickSetupIn
 from app.schemas.menu import (
     CategoryMenuIn,
     CoursesIn,
@@ -374,6 +380,101 @@ def put_courses(
     M.replace_courses(db, current_user, active_tenant_id, body)
     _changed(db, active_tenant_id, background_tasks)
     return M.list_courses(db, current_user, active_tenant_id)
+
+
+# ── "הגדרה מהירה לשלבי הגשה" (app/services/courses_quick_setup.py) ──────────────
+
+
+def _quick_done(db: Session, tenant_id, background_tasks: BackgroundTasks, out: dict) -> None:
+    """Commit, then wake the tills: the menu (catalog notify) and the parameters of the levels written."""
+    from app.services.till_parameters import publish_parameters_notify
+
+    targets = out.pop("notify", None) or []
+    if out.pop("menuChanged", True):
+        _changed(db, tenant_id, background_tasks)
+    else:
+        db.commit()
+    if targets:
+        background_tasks.add_task(publish_parameters_notify, targets)
+
+
+@router.get("/menu/courses/quick-setup")
+def get_courses_quick_setup(
+    company_id: uuid.UUID = Query(..., alias="companyId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import courses_quick_setup as Q
+
+    company = Q.company_of(db, active_tenant_id, company_id)
+    Q.check_readable(db, current_user, active_tenant_id, company)
+    out = Q.view(db, current_user, active_tenant_id, company)
+    db.commit()  # `ensure_builtin_parameters` may have created them
+    return out
+
+
+@router.post("/menu/courses/quick-setup")
+def post_courses_quick_setup(
+    body: QuickSetupIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import courses_quick_setup as Q
+
+    company = Q.company_of(db, active_tenant_id, body.company_id)
+    try:
+        out = Q.apply(db, current_user, active_tenant_id, company, body)
+    except Exception:
+        db.rollback()
+        raise
+    _quick_done(db, active_tenant_id, background_tasks, out)
+    return {"changes": out, "view": Q.view(db, current_user, active_tenant_id, company)}
+
+
+@router.post("/menu/courses/quick-setup/undo")
+def undo_courses_quick_setup(
+    body: QuickCompanyIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import courses_quick_setup as Q
+
+    company = Q.company_of(db, active_tenant_id, body.company_id)
+    try:
+        out = Q.undo(db, current_user, active_tenant_id, company)
+    except Exception:
+        db.rollback()
+        raise
+    _quick_done(db, active_tenant_id, background_tasks, out)
+    return {"result": out, "view": Q.view(db, current_user, active_tenant_id, company)}
+
+
+@router.put("/menu/courses/enabled")
+def put_courses_enabled(
+    body: CoursesSwitchIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import courses_quick_setup as Q
+    from app.services.till_parameters import publish_parameters_notify
+
+    company = Q.company_of(db, active_tenant_id, body.company_id)
+    try:
+        out = Q.set_enabled(db, current_user, active_tenant_id, company, body.on)
+    except Exception:
+        db.rollback()
+        raise
+    db.commit()
+    if out.get("notify"):
+        background_tasks.add_task(publish_parameters_notify, out["notify"])
+    return {"levels": out["levels"], "view": Q.view(db, current_user, active_tenant_id, company)}
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
