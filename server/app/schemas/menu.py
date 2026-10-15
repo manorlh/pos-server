@@ -282,6 +282,12 @@ class ProductMenuIn(_Body):
     #: `setSendSilently` is true; else left alone.
     send_silently: Optional[bool] = Field(None, alias="sendSilently")
     set_send_silently: bool = Field(False, alias="setSendSilently")
+    #: "itemScheduleRules" (P:/specs/fire-restaurant-flow.md §8.2), applied together when `setSchedule` is
+    #: true: X minutes after the send / after course Y is ready / both. Both null inherit the category's;
+    #: 0 minutes and no course — no rule here.
+    schedule_after_minutes: Optional[int] = Field(None, alias="scheduleAfterMinutes", ge=0, le=600)
+    schedule_after_course_ready: Optional[uuid.UUID] = Field(None, alias="scheduleAfterCourseReady")
+    set_schedule: bool = Field(False, alias="setSchedule")
     links: Optional[LinksIn] = None
     notes: Optional[NotesIn] = None
     meal: Optional[MealIn] = None
@@ -303,6 +309,10 @@ class CategoryMenuIn(_Body):
     #: "יוצא בלי בון": null inherits the parent category's (none at the top: off).
     send_silently: Optional[bool] = Field(None, alias="sendSilently")
     set_send_silently: bool = Field(False, alias="setSendSilently")
+    #: "itemScheduleRules": as on the product; both null inherit the parent category's.
+    schedule_after_minutes: Optional[int] = Field(None, alias="scheduleAfterMinutes", ge=0, le=600)
+    schedule_after_course_ready: Optional[uuid.UUID] = Field(None, alias="scheduleAfterCourseReady")
+    set_schedule: bool = Field(False, alias="setSchedule")
     links: Optional[LinksIn] = None
     notes: Optional[NotesIn] = None
 

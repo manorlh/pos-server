@@ -5,6 +5,9 @@
  * turned into a self-order station (pos-server app/routers/kiosks.py): its live status and
  * remote control here, and its look and behaviour per company → shop → kiosk with a live
  * preview. The kiosk itself keeps everything a till has (shifts, Z, documents, printing).
+ *
+ * The list has "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV
+ * of the kiosks as they stand now (kiosk-list-export.tsx).
  */
 
 import { useMemo, useState } from 'react';
@@ -21,6 +24,7 @@ import { useAuth } from '@/lib/auth';
 import { usePageScope } from '@/lib/scope';
 import { fetchKiosks, type KioskLevel, type KioskSummary } from '@/lib/kioskApi';
 import { KioskList } from '@/components/dashboard/kiosks/kiosk-list';
+import { KioskListExport } from '@/components/dashboard/kiosks/kiosk-list-export';
 import { KioskDetailDialog } from '@/components/dashboard/kiosks/kiosk-detail-dialog';
 import { ConvertDialog } from '@/components/dashboard/kiosks/convert-dialog';
 import { KioskSettingsEditor, useNowMs } from '@/components/dashboard/kiosks/kiosk-settings-editor';
@@ -143,11 +147,19 @@ export default function KiosksPage() {
           </div>
         ) : view === 'list' ? (
           <div className="space-y-3 animate-in fade-in duration-300">
-            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <RefreshCw className={cn('h-3.5 w-3.5', kiosksQuery.isFetching && 'animate-spin')} /> {t('list.refreshing')}
               </span>
-              {kiosks.length > 0 ? <span>{t('list.count', { n: kiosks.length })}</span> : null}
+              <span className="flex flex-wrap items-center gap-2">
+                {kiosks.length > 0 ? <span className="text-xs text-muted-foreground">{t('list.count', { n: kiosks.length })}</span> : null}
+                <KioskListExport
+                  kiosks={kiosks}
+                  nowMs={nowMs}
+                  place={shop?.name ?? null}
+                  disabled={!kiosksQuery.data || kiosks.length === 0}
+                />
+              </span>
             </div>
             {kiosksQuery.isLoading ? (
               <div className="space-y-2">

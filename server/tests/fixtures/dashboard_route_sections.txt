@@ -358,6 +358,8 @@ PUT /machines/{machine_id} -> devices:edit
 GET /machines/{machine_id}/catalog -> products:view
 PUT /machines/{machine_id}/catalog -> products:edit
 POST /machines/{machine_id}/close-shift -> z:edit
+GET /machines/{machine_id}/deferred-settings -> devices|terminals_offline:view
+PUT /machines/{machine_id}/deferred-settings -> devices|terminals_offline:edit
 PUT /machines/{machine_id}/device-profile -> devices:edit
 GET /machines/{machine_id}/document-prefix -> devices|reports:view
 POST /machines/{machine_id}/document-prefix/assign-free -> devices:edit
@@ -650,11 +652,13 @@ GET /reports/cash-variance -> reports:view
 GET /reports/cashiers -> reports:view
 GET /reports/compare -> reports|cockpit:view
 GET /reports/day-summary -> reports:view
+GET /reports/day-summary/pdf -> reports:view
 GET /reports/departments -> reports:view
 GET /reports/discounts -> reports|promotions:view
 GET /reports/document-sequence -> reports:view
 GET /reports/event-options -> reports|cockpit|live_event:view
 GET /reports/hourly -> reports|cockpit:view
+POST /reports/insights -> reference
 GET /reports/live-items -> reports|cockpit:view
 GET /reports/meal-sales -> reports|products:view
 GET /reports/menu-sales -> reports|products:view
@@ -665,6 +669,8 @@ GET /reports/payment-methods -> reports:view
 POST /reports/pdf -> reference
 GET /reports/prepaid-vouchers -> reports|prepaid_vouchers|cockpit:view
 GET /reports/products -> reports:view
+GET /reports/products-by-day -> reports:view
+GET /reports/products-by-day/pdf -> reports:view
 GET /reports/promotions -> reports|promotions:view
 GET /reports/sales-by-area -> reports:view
 GET /reports/side-by-side -> reports|cockpit:view
@@ -686,6 +692,9 @@ PUT /shops/{shop_id} -> organization:edit
 GET /shops/{shop_id}/active-log -> organization:view
 GET /shops/{shop_id}/areas -> reference
 POST /shops/{shop_id}/areas -> organization:edit
+GET /shops/{shop_id}/deferred-terminals -> terminals_offline:view
+PUT /shops/{shop_id}/deferred-terminals/controllers -> terminals_offline:edit
+POST /shops/{shop_id}/deferred-terminals/switch -> terminals_offline:edit
 PUT /shops/{shop_id}/kitchen-stations/{station_id}/printers -> printers:edit
 PUT /shops/{shop_id}/local-network -> devices:edit
 GET /shops/{shop_id}/local-server -> devices|local_server_switch:view
@@ -739,6 +748,7 @@ POST /shops/{shop_id}/product-overrides/{global_product_id} -> products:edit
 PUT /shops/{shop_id}/product-overrides/{global_product_id} -> products:edit
 GET /shops/{shop_id}/settings -> till_settings:view
 PATCH /shops/{shop_id}/settings -> till_settings:edit
+GET /shops/{shop_id}/shop-x -> reports:view
 POST /shops/{shop_id}/shop-z-conflicts/{z_id}/resolve -> z:edit
 GET /shops/{shop_id}/shop-z-producer -> z:view
 POST /shops/{shop_id}/shop-z-producer/handover -> z:edit
@@ -797,6 +807,7 @@ GET /sync/{machine_id}/customer-display -> till
 PUT /sync/{machine_id}/customer-display/lan -> till
 GET /sync/{machine_id}/customer-display/state -> till
 PUT /sync/{machine_id}/customer-display/state -> till
+GET /sync/{machine_id}/deferred-control -> till
 GET /sync/{machine_id}/device-commands -> till
 POST /sync/{machine_id}/device-commands/unlocked -> till
 POST /sync/{machine_id}/device-commands/{command_id}/ack -> till
@@ -835,6 +846,7 @@ PUT /sync/{machine_id}/machine-catalog -> till
 GET /sync/{machine_id}/parameters -> till
 PUT /sync/{machine_id}/payment-terminal -> till
 GET /sync/{machine_id}/pos-users -> till
+POST /sync/{machine_id}/pos-users/{pos_user_id}/hints -> till
 POST /sync/{machine_id}/print-host -> till
 POST /sync/{machine_id}/print-jobs -> till
 GET /sync/{machine_id}/print-jobs/pending -> till
@@ -856,6 +868,8 @@ GET /sync/{machine_id}/products/{product_id}/kitchen-printers -> till
 GET /sync/{machine_id}/promotions -> till
 GET /sync/{machine_id}/settings -> till
 POST /sync/{machine_id}/shifts/{shift_id}/close -> till
+GET /sync/{machine_id}/shop-x -> till
+POST /sync/{machine_id}/shop-x -> till
 GET /sync/{machine_id}/shop-z -> till
 POST /sync/{machine_id}/shop-z -> till
 GET /sync/{machine_id}/shop-z/cloud-refund-guard -> till
@@ -886,6 +900,9 @@ GET /system/dealer-types -> reference
 PUT /system/dealer-types -> super_admin
 GET /system/open-format -> reference
 PUT /system/open-format -> super_admin
+GET /tables/assignments -> tables|reports:view
+POST /tables/assignments -> tables:edit
+POST /tables/assignments/copy -> tables:edit
 GET /tables/cancel-reasons -> tables:view
 POST /tables/cancel-reasons -> tables:edit
 PATCH /tables/cancel-reasons/{reason_id} -> tables:edit

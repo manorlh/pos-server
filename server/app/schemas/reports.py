@@ -320,8 +320,17 @@ class ShopTransactionRow(BaseModel):
     pickup_label: Optional[str] = Field(None, alias="pickupLabel")
     pickup_business_date: Optional[str] = Field(None, alias="pickupBusinessDate")
     #: Why `q` found it: "document" (its number or amount) and / or "pickup" (its kiosk order's
-    #: pickup number — "17", "A17", "A-17"). Null without a search.
+    #: pickup number — "17", "A17", "A-17") and / or "table" (its table: "ש12", "שולחן 12", a
+    #: table's name, or the `table` filter). Null without a search.
     matched_by: Optional[List[str]] = Field(None, alias="matchedBy")
+    #: The table the document paid (its sale, a part paid on its own, a payment given back, or a
+    #: credit note of one of those — app/services/table_documents.py): the number and name as the
+    #: order froze them, the order (one table opened and closed twice a day is two orders) and
+    #: when it was opened. Additive and nullable like `basketId`: null for any other document.
+    table_number: Optional[int] = Field(None, alias="tableNumber")
+    table_name: Optional[str] = Field(None, alias="tableName")
+    table_order_id: Optional[str] = Field(None, alias="tableOrderId")
+    table_opened_at: Optional[str] = Field(None, alias="tableOpenedAt")
 
 
 class ShopTransactionsResponse(BaseModel):

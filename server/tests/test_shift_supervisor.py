@@ -38,6 +38,8 @@ class TestWhatItMayAuthoriseAtTheTill:
             {
                 Scope.REFUND, Scope.DISCOUNT, Scope.OTH, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE, Scope.TRANSMIT,
                 Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK, Scope.USER_SESSION_RELEASE,
+                # "דוח X סניפי" (P:/specs/shop-x-report.md §3): a cashier on a supervisor's code reads it.
+                Scope.SHOP_X_REPORT,
             }
         )
 

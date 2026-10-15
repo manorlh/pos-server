@@ -20,6 +20,7 @@ import { usePageScope } from '@/lib/scope';
 import { formatCurrency } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { cashVarianceTotals, varianceTone } from '@/lib/auditReports';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import {
   fetchCashVarianceReport,
   type CashVarianceCashier,
@@ -37,6 +38,15 @@ import {
 } from '@/components/dashboard/report-framework';
 
 const SPEC: ReportFilterSpec = { filters: ['search'], clientFilters: ['search'], defaultDaysBack: 29 };
+
+/** The card and the totals row as the designed PDF's cards (and the period before's), by KPI key. */
+function varianceFigures(r: CashVarianceReport): Record<string, number> {
+  const tot = cashVarianceTotals(r.byCashier, r.shifts.length, r.uncounted, r.totalVariance);
+  return { variance: r.totalVariance, over: tot.over, short: tot.short, shifts: tot.shifts, uncounted: r.uncounted };
+}
+
+/** Bars for the cashiers whose difference is largest either way (a shortage is the news). */
+const CHART_CASHIERS = 10;
 
 function Variance({ value, uncounted }: { value?: number | null; uncounted: string }) {
   if (value == null) return <span className="text-muted-foreground text-xs">{uncounted}</span>;
@@ -168,6 +178,35 @@ export default function CashVariancePage() {
 
   const tables = [byCashier, shifts] as ReportTableSpec<unknown>[];
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the card and the totals as cards, each
+  // cashier's net difference as a bar, and the cashiers of the period before.
+  const figures = data ? varianceFigures(data) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'variance', label: t('totalVariance'), value: figures.variance, kind: 'money', icon: 'cash' },
+        { key: 'over', label: t('col.over'), value: figures.over, kind: 'money' },
+        { key: 'short', label: t('col.short'), value: figures.short, kind: 'money', icon: 'alert' },
+        { key: 'shifts', label: t('col.shifts'), value: figures.shifts, kind: 'count' },
+        { key: 'uncounted', label: t('uncountedShifts'), value: figures.uncounted, kind: 'count', better: 'down' },
+      ]
+    : [];
+  const ranked = [...(data?.byCashier ?? [])].sort((a, b) => Math.abs(b.net) - Math.abs(a.net)).slice(0, CHART_CASHIERS);
+  const chart: ReportChart | null = ranked.length
+    ? {
+        type: 'hbar',
+        title: t('byCashierTitle'),
+        labels: ranked.map((r) => r.cashier || t('unknownCashier')),
+        series: [{ name: t('col.net'), values: ranked.map((r) => r.net) }],
+        kind: 'money',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchCashVarianceReport({ ...params, ...w });
+    return { rows: before.byCashier, kpis: varianceFigures(before), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="cash-variance"
@@ -179,7 +218,20 @@ export default function CashVariancePage() {
       query={reportQueryState(query)}
       prompt={t('selectFilters')}
       loading="table"
-      export={data ? { tables, from: data.window.from, to: data.window.to } : null}
+      export={
+        data
+          ? {
+              tables,
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'cash-variance',
+              kpis,
+              chart,
+              insightKeys: { label: 'cashier', value: 'net', employee: 'cashier' },
+              previous,
+            }
+          : null
+      }
     >
       {data ? (
         <>

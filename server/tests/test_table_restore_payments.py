@@ -183,11 +183,18 @@ class TestParameters:
         assert got["canEdit"] is False and got["inherited"]["reverseAllButton"] is False
         # The card's restore group (after the staff tables' `staffTableDiscountCheck`, owner-decisions-1410 §1).
         assert [p["key"] for p in got["parameters"] if p["group"] == "restore"] == list(DEFAULTS)
-        # Then the map's legend and display (P:/specs/table-map-decor-v3.md §3), a group of their own, and
-        # last the courses' auto-fire (P:/specs/courses-fire-v2.md §1), a group of its own.
+        # Then the map's legend and display (P:/specs/table-map-decor-v3.md §3), a group of their own, the
+        # waiters' assignment and the busy table (P:/specs/table-waiter-assignment.md), the send from the table
+        # (P:/specs/tables-send-selected-stay.md §1, §2), the courses' auto-fire (P:/specs/courses-fire-v2.md §1),
+        # a group of its own, and last "מתי עיקריות?", scheduled items and the hints (P:/specs/fire-restaurant-flow.md §8.1).
         assert [p["key"] for p in got["parameters"]] == [
             "staffTableDiscountCheck", *DEFAULTS, "mapDecor", "mapLegend", "mapSymbolLabels", "mapSymbolScale",
+            "tableAssignmentMode", "tableAssignmentUnassigned", "tableAssignmentOwner", "tableAssignmentReset",
+            "tableAssignmentOnClockOut", "tableAssignmentMulti", "tableAssignmentNotify", "tableBusyEntry",
+            "tableBusyShowHolder",
+            "tablesSendSelected", "tablesAfterSend", "tablesSendStayButton",
             "autoFire", "autoFireMinutesOverride",
+            "fireAskOnSend", "fireAskMinutes", "fireHints", "itemScheduleMinutes", "itemScheduleOnClose", "kdsShowScheduled",
         ]
         assert {m["key"] for m in got["methods"]} == {"cash", "card", "voucher", "external"}
         assert refused(put, w, "shop", w.shop.id, {"reverseAllButton": True}, supervisor).status_code == 403

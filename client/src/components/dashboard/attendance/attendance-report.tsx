@@ -10,7 +10,8 @@
  * title and the employee live in the URL (`?tab=report&from=&to=&role=&employee=`), so a
  * link is the report. It runs at once on the last 7 days, as it always did. Both tables
  * sort, choose their columns and turn into cards on a phone; Excel (the same two sheets,
- * same columns and totals), a PDF of the shifts, print, and the CSV.
+ * same columns and totals), the designed PDF of the shifts (the counts against the days before,
+ * hours per employee, subtotals by shop), print, and the CSV — the report's own, in the menu.
  *
  * Its own frame rather than `ReportPage`: it is a tab of "נוכחות עובדים", whose heading and
  * tabs sit right above it — a second page heading would only repeat the tab's name.
@@ -22,7 +23,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
-import { Download } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { fetchEmployees, fetchReport, fetchRoles } from '@/lib/attendanceApi';
 import {
@@ -48,18 +48,21 @@ import {
 } from '@/lib/reportFilters';
 import { todayIso } from '@/lib/reportWindow';
 import { usePageScope } from '@/lib/scope';
+import { previousWindow } from '@/lib/designedReport';
 import {
   ReportExportBar,
   ReportFilterBar,
   ReportTable,
   useReportExportScope,
   useReportFilters,
+  type PreviousPeriod,
+  type ReportChart,
+  type ReportKpi,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PickSelect } from './attendance-filters';
 import { ShiftDetailDialog } from './shift-detail-dialog';
@@ -298,6 +301,42 @@ export function AttendanceReport() {
     downloadCsv(`attendance-${data.window.from}-${data.window.to}.csv`, toCsv(header, rows));
   };
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the counts the page shows (hours as a
+  // duration), the hours per employee, subtotals by shop, and the same days before — one more
+  // run of the report's own request, on the click; its totals are what the cards compare.
+  const exportKpis: ReportKpi[] = data
+    ? [
+        { key: 'shifts', label: t('report.shiftsCol'), value: data.totals.shifts, kind: 'count', icon: 'calendar' },
+        { key: 'workedTime', label: t('col.hours'), value: data.totals.workedSeconds, kind: 'duration', icon: 'clock' },
+        { key: 'employees', label: t('report.employees'), value: data.byEmployee.length, kind: 'count', icon: 'users' },
+        { key: 'breakTime', label: t('col.breakTime'), value: data.totals.breakSeconds, kind: 'duration', icon: 'clock' },
+      ]
+    : [];
+  const topEmployees = [...(data?.byEmployee ?? [])].sort((a, b) => b.workedSeconds - a.workedSeconds).slice(0, 12);
+  const exportChart: ReportChart | null = topEmployees.length
+    ? {
+        type: 'hbar',
+        title: t('report.hoursByEmployee'),
+        labels: topEmployees.map((e) => e.posUserName ?? ''),
+        series: [{ name: t('col.hours'), values: topEmployees.map((e) => decimalHours(e.workedSeconds)) }],
+        kind: 'number',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = previousWindow(data?.window.from, data?.window.to);
+    if (!before) return null;
+    const prev = await fetchReport({ ...params, ...before });
+    return {
+      kpis: {
+        shifts: prev.totals.shifts,
+        workedTime: prev.totals.workedSeconds,
+        employees: prev.byEmployee.length,
+        breakTime: prev.totals.breakSeconds,
+      },
+      ...before,
+    };
+  };
+
   return (
     <div className="min-w-0 space-y-4">
       <ScopeGate resolution={resolution}>
@@ -341,12 +380,13 @@ export function AttendanceReport() {
               companyId={exportScope.companyId}
               companyName={exportScope.companyName}
               disabled={data.rows.length === 0}
-              actions={
-                <Button variant="outline" size="sm" onClick={exportCsv} disabled={data.rows.length === 0}>
-                  <Download className="size-4" />
-                  CSV
-                </Button>
-              }
+              reportType="attendance"
+              kpis={exportKpis}
+              chart={exportChart}
+              groupBy={['shop']}
+              insightKeys={{ label: 'employee', value: 'hours', employee: 'employee' }}
+              previous={previous}
+              csv={exportCsv}
             />
             <ReportTable table={shifts} reportKey={REPORT_KEY} />
             {data.byEmployee.length > 0 ? <ReportTable table={byEmployee} reportKey={REPORT_KEY} /> : null}

@@ -5,7 +5,7 @@ The server decides what is on the paper (and in which words); the client only la
 out. So a reprint reads the same whichever screen asks for it, and a test can assert
 the content without a browser.
 """
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,9 @@ class PrintDocumentOut(BaseModel):
     subtitle: List[str] = Field(default_factory=list)
     sections: List[PrintSection] = Field(default_factory=list)
     footer: List[str] = Field(default_factory=list)
+    #: "שולחן 12 · גן · 4 סועדים · מלצר: דנה" under the title of a table's document (`receiptTableInfo`,
+    #: app/services/receipt_table_info.py); None — none asked, or no table's.
+    table_line: Optional[str] = Field(None, alias="tableLine")
 
     class Config:
         populate_by_name = True

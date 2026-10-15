@@ -429,9 +429,9 @@ describe('PDF body (§4.5)', () => {
     assert.equal(body.orientation, 'portrait');
     assert.equal('companyId' in body, false);
   });
-  it('a datetime goes as a date kind (the server writes the time)', () => {
+  it('a datetime goes as a datetime (the server writes the date and the time, §7.1)', () => {
     const body = exportTablePdfBody(table, null, { title: 't', subtitleLines: [], filterLines: [], fileName: 'f' });
-    assert.equal(body.columns[1].kind, 'date');
+    assert.equal(body.columns[1].kind, 'datetime');
     assert.equal(exportTableSheet(table, null).columns.length, 3);
   });
 });

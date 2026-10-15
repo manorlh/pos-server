@@ -36,6 +36,7 @@ from app.models.till_parameter import (
 )
 from app.services.ably_notify import publish_settings_notify
 from app.services.areas import as_utc
+from app.services.auto_close_cart import PARAMETER_SPECS as _AUTO_CLOSE_SPECS
 
 #: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): above this sale amount before VAT the
 #: till requires the buyer's name and ח.פ. / ע.מ.; and how many days back an invoice may be
@@ -200,6 +201,8 @@ PRINTERS_PAGE_KEYS = (
     "receiptPrinterAddress",
     "receiptPrinterModel",
     "cashDrawer",
+    "cashDrawerAskTimeoutSec",
+    "cashDrawerAskDefault",
     "askBeforePrint",
     "kitchenTicketsOnSale",
     "kitchenTicketsOnTill",
@@ -383,6 +386,23 @@ CASH_DRAWER_KEY = "cashDrawer"
 CASH_DRAWER_OFF = "כבוי"
 CASH_DRAWER_ON_CASH = "בתשלום מזומן"
 CASH_DRAWER_WITH_BUTTON = "בתשלום מזומן + כפתור פתיחה"
+#: "לשאול לפני פתיחה" (P:/specs/bill-print-other-till.md §9א): at the end of a cash payment the till asks
+#: "לפתוח מגירה?" ("פתח" / "לא"); unanswered for `cashDrawerAskTimeoutSec` it does `cashDrawerAskDefault`.
+#: A "לא" is logged at the till, no exception. Existing databases: alembic e7b2d9f4a6c3 adds the option.
+CASH_DRAWER_ASK = "בתשלום מזומן — לשאול"
+CASH_DRAWER_OPTIONS = (CASH_DRAWER_OFF, CASH_DRAWER_ON_CASH, CASH_DRAWER_ASK, CASH_DRAWER_WITH_BUTTON)
+CASH_DRAWER_ASK_TIMEOUT_KEY = "cashDrawerAskTimeoutSec"
+CASH_DRAWER_ASK_TIMEOUT_DEFAULT = 8
+CASH_DRAWER_ASK_TIMEOUT_MIN = 3
+CASH_DRAWER_ASK_TIMEOUT_MAX = 60
+CASH_DRAWER_ASK_DEFAULT_KEY = "cashDrawerAskDefault"
+CASH_DRAWER_ASK_OPEN = "open"
+CASH_DRAWER_ASK_SKIP = "skip"
+CASH_DRAWER_ASK_DEFAULTS = (CASH_DRAWER_ASK_OPEN, CASH_DRAWER_ASK_SKIP)
+CASH_DRAWER_ASK_DEFAULT_LABELS = {
+    CASH_DRAWER_ASK_OPEN: "לפתוח (ברירת מחדל)",
+    CASH_DRAWER_ASK_SKIP: "לא לפתוח",
+}
 #: Where a value came from when it is a device's default, not the parameter's (the dashboard).
 DEVICE_DEFAULT_SOURCE = "device_default"
 
@@ -548,6 +568,26 @@ TABLES_SHOW_CHAIRS_KEY = "tablesShowChairs"
 #: reads these exact words — domain/TablePolicy.kt `TableLabelSize`; anything else is normal).
 TABLES_LABEL_SIZE_KEY = "tablesLabelSize"
 TABLES_LABEL_SIZES = ("קטן", "רגיל", "גדול")
+
+#: "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2). Read by the till only;
+#: on the dashboard's tables page too (app/services/table_restore.py `page_keys`, group `send`).
+#: `tablesSendSelected`: the table's order screen sends only the lines picked ("בחירה"); on by default.
+#: `tablesAfterSend`: after "הזמן" and "שגר נבחרים" — `leave` back to the tables screen (today's, the
+#: default) or `stay` in the table. Stored as the code; the till takes `stay` (or a value starting
+#: "נשאר") as stay and anything else as leave.
+#: `tablesSendStayButton`: the second button beside "הזמן" — "שגר והמשך" (leave) / "שגר וצא" (stay); on.
+TABLES_SEND_SELECTED_KEY = "tablesSendSelected"
+TABLES_AFTER_SEND_KEY = "tablesAfterSend"
+TABLES_AFTER_SEND_LEAVE = "leave"
+TABLES_AFTER_SEND_STAY = "stay"
+TABLES_AFTER_SEND_OPTIONS = (TABLES_AFTER_SEND_LEAVE, TABLES_AFTER_SEND_STAY)
+TABLES_AFTER_SEND_LABELS = {
+    TABLES_AFTER_SEND_LEAVE: "חזרה למסך השולחנות",
+    TABLES_AFTER_SEND_STAY: "נשארים בשולחן",
+}
+TABLES_SEND_STAY_BUTTON_KEY = "tablesSendStayButton"
+#: The three, in the order the dashboard lists them.
+TABLES_SEND_KEYS = (TABLES_SEND_SELECTED_KEY, TABLES_AFTER_SEND_KEY, TABLES_SEND_STAY_BUTTON_KEY)
 
 #: "גודל ריבוע מוצר": the sizes, smallest first, and "as the size it falls back to".
 TILE_SIZES = ("קטן מאוד", "קטן", "בינוני", "גדול")
@@ -1006,16 +1046,44 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         key="cashDrawer",
         label="פתיחת מגירה",
         value_type="enum",
-        enum_options=("כבוי", "בתשלום מזומן", "בתשלום מזומן + כפתור פתיחה"),
+        enum_options=CASH_DRAWER_OPTIONS,
         default_value="כבוי",
         description=(
             "מגירת כסף שמחוברת למדפסת החשבוניות (שקע RJ-11). «בתשלום מזומן» — נפתחת אוטומטית בכל "
-            "תשלום שבו עבר מזומן (כולל עודף והחזר כספי). «+ כפתור פתיחה» — בנוסף, \"פתיחת מגירה\" "
+            "תשלום שבו עבר מזומן (כולל עודף והחזר כספי). «בתשלום מזומן — לשאול» — בסיום תשלום שעבר בו "
+            "מזומן הקופה שואלת \"לפתוח מגירה?\" (\"פתח\" / \"לא\"); בלי תשובה — לפי \"מגירה — מה לעשות "
+            "כשלא ענו\". «+ כפתור פתיחה» — בנוסף, \"פתיחת מגירה\" "
             "בתפריט הקופה; כל פתיחה ידנית נרשמת בענן כחריגה \"מגירה נפתחה ללא מכירה\". "
             "חל על מדפסת החשבוניות שבפרמטר; מגירה של מדפסת חשבוניות מדף \"מדפסות\" נפתחת תמיד בתשלום מזומן "
             "ויש לה כפתור — וכשיש לקופה כמה מגירות, היא שואלת איזו לפתוח. "
             "ברירת מחדל לפי המכשיר: בקופה שהמגירה מחוברת אליה ישירות (שקע מגירה במכשיר — SUNMI / iMin "
             "שולחניות) — «בתשלום מזומן + כפתור פתיחה»; בכל מכשיר אחר — «כבוי». ערך שנקבע בכל רמה גובר."
+        ),
+    ),
+    # "לשאול לפני פתיחה" (P:/specs/bill-print-other-till.md §9א): with `cashDrawer` «בתשלום מזומן — לשאול».
+    BuiltinParameter(
+        key=CASH_DRAWER_ASK_TIMEOUT_KEY,
+        label="מגירה — זמן לשאלה \"לפתוח מגירה?\" (שניות)",
+        value_type="integer",
+        default_value=CASH_DRAWER_ASK_TIMEOUT_DEFAULT,
+        description=(
+            f"כש\"פתיחת מגירה\" היא «{CASH_DRAWER_ASK}»: כמה שניות השאלה \"לפתוח מגירה?\" מחכה לתשובה "
+            f"({CASH_DRAWER_ASK_TIMEOUT_MIN}–{CASH_DRAWER_ASK_TIMEOUT_MAX}, ברירת מחדל {CASH_DRAWER_ASK_TIMEOUT_DEFAULT}). "
+            "אחרי זה הקופה פועלת לפי \"מגירה — מה לעשות כשלא ענו\". ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=CASH_DRAWER_ASK_DEFAULT_KEY,
+        label="מגירה — מה לעשות כשלא ענו",
+        value_type="enum",
+        enum_options=CASH_DRAWER_ASK_DEFAULTS,
+        enum_labels=CASH_DRAWER_ASK_DEFAULT_LABELS,
+        default_value=CASH_DRAWER_ASK_OPEN,
+        description=(
+            f"כש\"פתיחת מגירה\" היא «{CASH_DRAWER_ASK}» ואף אחד לא ענה על \"לפתוח מגירה?\" בזמן: "
+            f"«{CASH_DRAWER_ASK_DEFAULT_LABELS[CASH_DRAWER_ASK_OPEN]}» — המגירה נפתחת כמו היום; "
+            f"«{CASH_DRAWER_ASK_DEFAULT_LABELS[CASH_DRAWER_ASK_SKIP]}» — לא נפתחת. \"לא\" נרשם ביומן הקופה ואינו "
+            "חריגה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     BuiltinParameter(
@@ -1051,10 +1119,15 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         default_value=None,
         description=(
             "שעה בפורמט HH:MM (למשל 23:30). בשעה הזו הקופה סוגרת לבד את המשמרת — רק אם יש משמרת פתוחה, "
-            "ולא באמצע עסקה או תשלום (אז מיד אחריהם). המזומן נספר לפי הצפוי במערכת, והסגירה נרשמת כאוטומטית. "
+            "ולא באמצע תשלום (אז מיד אחריו, או אחרי \"המתנה מקסימלית לתשלום\"). מה נעשה בעגלה עם פריטים, "
+            "בעסקאות מושהות ובשולחנות פתוחים — לפי הפרמטרים \"סגירת משמרת אוטומטית — …\" שאחריו. "
+            "המזומן נספר לפי הצפוי במערכת, והסגירה נרשמת כאוטומטית (\"נסגרה אוטומטית ב-HH:MM\" ביומן ובדוח המשמרת). "
             "ריק — כבוי. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): the basket, the held
+    # sales, the payment's wait, the open tables — read by the till at its automatic close.
+    *tuple(BuiltinParameter(**spec) for spec in _AUTO_CLOSE_SPECS),
     # Table management ("ניהול שולחנות") — app/services/tables.py reads these keys.
     BuiltinParameter(
         key="tablesMode",
@@ -1210,6 +1283,45 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל (ברירת המחדל) — פתיחת שולחן פנוי שואלת כמה סועדים יושבים בו. כשכבוי — הקופה "
             "נכנסת ישר להזמנה בלי לשאול; מספר הסועדים נשאר ריק, ואפשר לקבוע אותו אחר כך מסרגל "
             "השולחן (\"סועדים\")."
+        ),
+    ),
+    # "שגר נבחרים" / "שגר והמשך" (P:/specs/tables-send-selected-stay.md §1, §2) — read by the till only.
+    BuiltinParameter(
+        key=TABLES_SEND_SELECTED_KEY,
+        label="שגר נבחרים",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): במסך ההזמנה של שולחן אפשר \"בחירה\" (בתפריט או בלחיצה ארוכה על פריט "
+            "שלא שוגר) ושיגור רק של הפריטים המסומנים — \"שגר נבחרים (N)\". השאר נשארים \"טרם שוגר\". "
+            "פריט מסומן מקורס מעוכב יוצא, ושאר הקורס נשאר מעוכב. אותן הרשאות של שליחה. \"הזמן\" לא משתנה. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TABLES_AFTER_SEND_KEY,
+        label="אחרי שיגור (הזמן)",
+        value_type="enum",
+        enum_options=TABLES_AFTER_SEND_OPTIONS,
+        enum_labels=TABLES_AFTER_SEND_LABELS,
+        default_value=TABLES_AFTER_SEND_LEAVE,
+        description=(
+            "מה קורה אחרי \"הזמן\" ואחרי \"שגר נבחרים\": "
+            f"«{TABLES_AFTER_SEND_LABELS[TABLES_AFTER_SEND_LEAVE]}» (ברירת מחדל) — כמו היום; "
+            f"«{TABLES_AFTER_SEND_LABELS[TABLES_AFTER_SEND_STAY]}» — הקופה נשארת בשולחן עם הודעה "
+            "\"שוגרו N פריטים\", והפריטים מסומנים כמשוגרים. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TABLES_SEND_STAY_BUTTON_KEY,
+        label="כפתור שגר והמשך / שגר וצא",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): כפתור משני ליד \"הזמן\" (בטאבלט), או בלחיצה ארוכה על \"הזמן\" ובתפריט "
+            "(בטלפון ובמכשיר נייד): \"שגר והמשך\" כשאחרי שיגור = חזרה למסך השולחנות, \"שגר וצא\" כשנשארים "
+            "בשולחן. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     # Kitchen printers ("מדפסות בונים") — app/services/printers.py; also set by the shop's
@@ -2084,6 +2196,14 @@ from app.services.course_auto_fire import PARAMETER_SPECS as _COURSE_FIRE_SPECS 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _COURSE_FIRE_SPECS)
 
+# "FIRE כמו במסעדות" + "שיגור מתוזמן של פריט" (P:/specs/fire-restaurant-flow.md §8.1, app/services/fire_flow.py):
+# `fireAskOnSend` (ask / never / default:<choice>), `fireAskMinutes` ("10,15,20"), `fireHints` (on / first_time /
+# off), `itemScheduleMinutes` ("5,10,15,20,30"), `itemScheduleOnClose` (ask / send / cancel), `kdsShowScheduled`
+# (true). Read by the till; `kdsShowScheduled` also by the cloud's pass. Edited on the tables page too.
+from app.services.fire_flow import PARAMETER_SPECS as _FIRE_FLOW_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FIRE_FLOW_SPECS)
+
 # "שם פריט מלא על הכפתור, ותג i" (P:/specs/product-tile-text.md §3–§5, app/services/product_tile_text.py):
 # `productNameFit` (fit / wrap / clip), `productNameMaxLines` (1–4), `productNameMinTextSize` (s / m / l),
 # `productInfoBadge` (auto / always / off) — fit, 3, s, auto. Read by the till, the web till and the
@@ -2091,6 +2211,14 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 from app.services.product_tile_text import PARAMETER_SPECS as _PRODUCT_TILE_TEXT_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _PRODUCT_TILE_TEXT_SPECS)
+
+# "הדפסה בקופה אחרת" (P:/specs/bill-print-other-till.md §7א, app/services/remote_print.py): a bill or a receipt
+# printed on another till's printer — on / off, which documents, what when it did not print, how long to wait, the
+# sender's notice, which tills, and the dashboard's choice. Read by the till; the cloud holds a relayed document to
+# them. Defaults change nothing. On the parameters page (every level) and the printers page (shop, point of sale, till).
+from app.services.remote_print import PARAMETER_SPECS as _REMOTE_PRINT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_PRINT_SPECS)
 
 # "מצב סנכרון של מכשיר" (P:/specs/device-sync-status.md §5.6, app/services/sync_status.py): after how long
 # a device online but not up to date is a problem on "בעיות". Read by the cloud only.
@@ -2114,6 +2242,156 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "דוח X סניפי" (P:/specs/shop-x-report.md §3, app/services/shop_x.py): the shop-wide interim X — where it
+# shows, which tills, how long the pre-build refresh waits, and its per-till / per-employee sections. Read by
+# the cloud (the report) and the till (its menu: "דוחות" → "דוח X סניפי").
+SHOP_X_TILLS_KEY = "shopXTills"
+SHOP_X_TILL_IDS_KEY = "shopXTillIds"
+SHOP_X_REFRESH_SEC_KEY = "shopXRefreshSec"
+SHOP_X_PER_TILL_KEY = "shopXPerTill"
+SHOP_X_PER_EMPLOYEE_KEY = "shopXPerEmployee"
+SHOP_X_REFRESH_SEC_DEFAULT = 10
+SHOP_X_REFRESH_SEC_MIN = 0
+SHOP_X_REFRESH_SEC_MAX = 60
+SHOP_X_TILLS_LABELS = {
+    "all": "בכל קופות הסניף",
+    "selected": "רק בקופות שנבחרו",
+    "master": "רק בקופה הראשית של ה-Z הסניפי",
+    "off": "לא מופיע",
+}
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=SHOP_X_TILLS_KEY,
+        label="דוח X סניפי — באילו קופות מופיע",
+        value_type="enum",
+        enum_options=tuple(SHOP_X_TILLS_LABELS),
+        enum_labels=SHOP_X_TILLS_LABELS,
+        default_value="all",
+        description=(
+            "\"דוח X סניפי\" (בתפריט הקופה, תחת \"דוחות\") — דוח ביניים של כל קופות הסניף לתקופה הפתוחה, "
+            "שאינו סוגר משמרות ואינו מקבל מספר. «בכל קופות הסניף» — בכל קופה, למי שיש לו הרשאה \"דוח X סניפי\". "
+            "«רק בקופות שנבחרו» — בקופות שברשימה \"דוח X סניפי — קופות נבחרות\" (או שסומנו בכרטיס הקופה). "
+            "«רק בקופה הראשית של ה-Z הסניפי» — רק בקופה שמפיקה את ה-Z הסניפי. «לא מופיע» — בשום קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=SHOP_X_TILL_IDS_KEY,
+        label="דוח X סניפי — קופות נבחרות",
+        value_type="string",
+        default_value=None,
+        description=(
+            "כשהפרמטר \"דוח X סניפי — באילו קופות מופיע\" הוא «רק בקופות שנבחרו»: הקופות שבהן הדוח מופיע "
+            "(מזהי קופה מופרדים בפסיקים; נערך כרשימה בדשבורד ובכרטיס הקופה). בדרך כלל ברמת סניף."
+        ),
+    ),
+    BuiltinParameter(
+        key=SHOP_X_REFRESH_SEC_KEY,
+        label="דוח X סניפי — המתנה לרענון הקופות (שניות)",
+        value_type="integer",
+        default_value=SHOP_X_REFRESH_SEC_DEFAULT,
+        description=(
+            "לפני בניית הדוח כל הקופות המחוברות מקבלות \"שלח עכשיו\", והענן מחכה להן עד מספר השניות הזה "
+            f"({SHOP_X_REFRESH_SEC_MIN}–{SHOP_X_REFRESH_SEC_MAX}, ברירת מחדל {SHOP_X_REFRESH_SEC_DEFAULT}). "
+            "קופה שלא ענתה, או שיש לה מסמכים שעוד לא נשלחו, מסומנת בדוח — והדוח נבנה בכל זאת."
+        ),
+    ),
+    BuiltinParameter(
+        key=SHOP_X_PER_TILL_KEY,
+        label="דוח X סניפי — פירוט לכל קופה",
+        value_type="boolean",
+        default_value=True,
+        description="כשמופעל, אחרי הסיכום לסניף מוצג ומודפס פירוט לכל קופה: אותם סכומים, מצב המשמרת ומתי הקופה עודכנה לאחרונה.",
+    ),
+    BuiltinParameter(
+        key=SHOP_X_PER_EMPLOYEE_KEY,
+        label="דוח X סניפי — פירוט לכל עובד",
+        value_type="boolean",
+        default_value=False,
+        description="כשמופעל, הדוח מציג ומדפיס גם פירוט לכל עובד: מכירות וטיפים.",
+    ),
+)
+
+# "חסימת הזמנות כשאין אינטרנט" on a kiosk (the kiosk setting `general.blockWhenOffline`): what it blocks while
+# the kiosk is offline. `all` — every way to pay, the kiosk rests on its "offline" screen (the Windows kiosk as
+# it was); `pay_at_till` — only "תשלום בקופה" (the Android web kiosk as it was). Read by kiosk-desktop (the
+# Windows kiosk from `GET /sync/{m}/parameters`; the Android web bundle from its kiosk config, where
+# `kiosk_offline_block_overlay` puts a value other than the default as `general.offlineBlockScope`).
+KIOSK_OFFLINE_BLOCK_SCOPE_KEY = "kioskOfflineBlockScope"
+KIOSK_OFFLINE_BLOCK_ALL = "all"
+KIOSK_OFFLINE_BLOCK_PAY_AT_TILL = "pay_at_till"
+KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS = (KIOSK_OFFLINE_BLOCK_ALL, KIOSK_OFFLINE_BLOCK_PAY_AT_TILL)
+KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT = KIOSK_OFFLINE_BLOCK_ALL
+KIOSK_OFFLINE_BLOCK_SCOPE_LABELS = {
+    KIOSK_OFFLINE_BLOCK_ALL: "כל אמצעי התשלום (ברירת מחדל)",
+    KIOSK_OFFLINE_BLOCK_PAY_AT_TILL: "תשלום בקופה בלבד",
+}
+#: Where the kiosk's config carries a scope other than the default (`general.offlineBlockScope`).
+KIOSK_OFFLINE_BLOCK_CONFIG_FIELD = "offlineBlockScope"
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=KIOSK_OFFLINE_BLOCK_SCOPE_KEY,
+        label="קיוסק — מה נחסם כשאין אינטרנט",
+        value_type="enum",
+        enum_options=KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS,
+        enum_labels=KIOSK_OFFLINE_BLOCK_SCOPE_LABELS,
+        default_value=KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT,
+        description=(
+            "בקיוסק שמוגדרת בו \"חסימת הזמנות כשאין אינטרנט\": מה נחסם כל עוד הקיוסק לא מחובר לאינטרנט. "
+            f"«{KIOSK_OFFLINE_BLOCK_SCOPE_LABELS[KIOSK_OFFLINE_BLOCK_ALL]}» — הקיוסק לא מקבל הזמנות בכלל "
+            "(לא באשראי, לא בשובר ולא בתשלום בקופה) ומציג את מסך \"אין חיבור לאינטרנט\" עד שהחיבור חוזר. "
+            f"«{KIOSK_OFFLINE_BLOCK_SCOPE_LABELS[KIOSK_OFFLINE_BLOCK_PAY_AT_TILL]}» — רק \"תשלום בקופה\" נחסם; "
+            "אמצעי תשלום אחרים נשארים פתוחים. "
+            "בלי \"חסימת הזמנות כשאין אינטרנט\" הפרמטר לא משפיע. חל על קיוסק Windows ועל מסכי הקיוסק "
+            "באנדרואיד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
+
+def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
+    """
+    `kioskOfflineBlockScope` as it resolves for this kiosk (till → area → shop → company → default).
+    A missing or inactive definition, or a value that is not an option: the default (`all`).
+    """
+    parameter = db.query(TillParameter).filter(TillParameter.key == KIOSK_OFFLINE_BLOCK_SCOPE_KEY).first()
+    if parameter is None or not parameter.is_active:
+        return KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT
+    chain = scope_chain_for_machine(db, machine)
+    scopes = chain.scopes()
+    values = (
+        db.query(TillParameterValue)
+        .filter(
+            TillParameterValue.parameter_id == parameter.id,
+            or_(*[and_(TillParameterValue.scope_type == k, TillParameterValue.scope_id == i) for k, i in scopes]),
+        )
+        .all()
+        if scopes
+        else []
+    )
+    value = resolve_till_parameters([parameter], values, chain).parameters.get(KIOSK_OFFLINE_BLOCK_SCOPE_KEY)
+    return value if value in KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS else KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT
+
+
+def kiosk_offline_block_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The kiosk's effective config with `general.offlineBlockScope` when `kioskOfflineBlockScope` resolves to
+    something other than the default (a new dict) — the Android web kiosk reads it there (its APK hands the
+    screens the config, not the parameters). At the default the config is left exactly as it was.
+    """
+    try:
+        scope = kiosk_offline_block_scope(db, machine)
+    except Exception:  # noqa: BLE001 - a missing table (an older test world) changes nothing
+        return cfg
+    if scope == KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT:
+        return cfg
+    out = dict(cfg)
+    general = dict(out.get("general") or {})
+    general[KIOSK_OFFLINE_BLOCK_CONFIG_FIELD] = scope
+    out["general"] = general
+    return out
+
 # "עיצוב השולחנות" (P:/specs/till-design-tables.md §5, app/services/table_tile_look.py): `tableTileStyle`,
 # `tableTileInfo`, `tableStateColors`, `tableOverdueMinutes`, `tableNumberSize` — read by the till only.
 # Edited in "עיצוב קופה → שולחנות ומפה" (app/routers/till_design.py `/till-design/table-display`).
@@ -2128,6 +2406,30 @@ from app.services.kitchen_ticket_style import PARAMETER_SPECS as _TICKET_STYLE_S
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TICKET_STYLE_SPECS)
 
+# "שיוך שולחנות למלצרים" and "שולחן תפוס" (P:/specs/table-waiter-assignment.md §1, §5, §8,
+# app/services/table_assignments.py): `tableAssignmentMode` (off by default) and its six, `tableBusyEntry`
+# (block — on by default) and `tableBusyShowHolder` (on). Edited on the dashboard's tables page too
+# (app/services/table_restore.py `_page_groups`, group `waiters`).
+from app.services.table_assignments import PARAMETER_SPECS as _TABLE_ASSIGNMENT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_ASSIGNMENT_SPECS)
+
+# "מספר שולחן על החשבונית" (P:/specs/receipt-table-number.md, app/services/receipt_table_info.py):
+# `receiptTableInfo` — what of the table (table, zone, guests, waiter) a table's document prints under
+# its title; empty by default (no line). Read by the till and by the cloud's copy of a document; edited
+# in "עיצוב קופה → שולחנות ומפה" too (table_tile_look.till_design_groups).
+from app.services.receipt_table_info import PARAMETER_SPECS as _RECEIPT_TABLE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _RECEIPT_TABLE_SPECS)
+
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1, §8.1, app/services/deferred_control.py):
+# `deferredControlTills` (which tills show the screen; empty — off in the whole shop), kiosks, the return to
+# online when the connection is back, unknown Nayax models and the commands' life. Read by the till and the
+# cloud (the dashboard's "מסופונים — מצב לא מקוון", `GET /sync/{m}/deferred-control`). Defaults change nothing.
+from app.services.deferred_control import PARAMETER_SPECS as _DEFERRED_CONTROL_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _DEFERRED_CONTROL_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -2141,6 +2443,13 @@ def enum_labels(key: str) -> Optional[Dict[str, str]]:
     """What the dashboard shows for each option of this parameter, when its options are codes."""
     labels = _ENUM_LABELS.get(key)
     return dict(labels) if labels else None
+
+
+def option_warnings(key: str) -> Optional[Dict[str, str]]:
+    """The dashboard's warning next to an option once chosen (`tableBusyEntry` = off), if any."""
+    from app.services.table_assignments import option_warnings as _warnings
+
+    return _warnings(key)
 
 
 def validate_keyed_value(key: str, value: Any) -> Any:
@@ -2212,6 +2521,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
             return course_auto_fire.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
+    # "FIRE כמו במסעדות" / "שיגור מתוזמן": the codes and minute lists the till parses.
+    from app.services import fire_flow
+
+    if key in fire_flow.VALIDATED_KEYS and value is not None:
+        try:
+            return fire_flow.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
     # "שחזור שולחן עם התשלומים שלו": the codes the till parses (`restoreWindow`, `reverseMethods`…).
     from app.services import table_restore
 
@@ -2250,6 +2567,56 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in kitchen_ticket_style.VALIDATED_KEYS and value is not None:
         try:
             return kitchen_ticket_style.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "לשאול לפני פתיחה" of the drawer (bill-print-other-till §9א): the seconds 3–60, open / skip.
+    if key == CASH_DRAWER_ASK_TIMEOUT_KEY and value is not None and not (
+        isinstance(value, int) and not isinstance(value, bool)
+        and CASH_DRAWER_ASK_TIMEOUT_MIN <= value <= CASH_DRAWER_ASK_TIMEOUT_MAX
+    ):
+        raise TillParameterValueError(
+            f"{CASH_DRAWER_ASK_TIMEOUT_KEY} must be {CASH_DRAWER_ASK_TIMEOUT_MIN}–{CASH_DRAWER_ASK_TIMEOUT_MAX} seconds"
+        )
+    if key == CASH_DRAWER_ASK_DEFAULT_KEY and value is not None and value not in CASH_DRAWER_ASK_DEFAULTS:
+        raise TillParameterValueError(f"{CASH_DRAWER_ASK_DEFAULT_KEY} must be one of {', '.join(CASH_DRAWER_ASK_DEFAULTS)}")
+    # "הדפסה בקופה אחרת": the codes the till knows, the seconds 5–120, the tills as canonical ids.
+    from app.services import remote_print
+
+    if key in remote_print.VALIDATED_KEYS and value is not None:
+        try:
+            return remote_print.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "סגירת משמרת אוטומטית — …": the codes the till knows, the minutes 0–240.
+    from app.services import auto_close_cart
+
+    if key in auto_close_cart.VALIDATED_KEYS and value is not None:
+        try:
+            return auto_close_cart.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "שיוך שולחנות למלצרים" / "שולחן תפוס": the codes the till knows, whatever the options were re-edited to.
+    from app.services import table_assignments
+
+    if key in table_assignments.VALIDATED_KEYS and value is not None:
+        try:
+            return table_assignments.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מספר שולחן על החשבונית": table / zone / guests / waiter in the line's order, or `none`.
+    from app.services import receipt_table_info
+
+    if key in receipt_table_info.VALIDATED_KEYS and value is not None:
+        try:
+            return receipt_table_info.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מצב לא מקוון לכל המסופונים": the tills as canonical ids, ask / auto / never, the minutes' ranges.
+    from app.services import deferred_control
+
+    if key in deferred_control.VALIDATED_KEYS and value is not None:
+        try:
+            return deferred_control.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

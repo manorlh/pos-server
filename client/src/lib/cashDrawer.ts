@@ -15,10 +15,14 @@ export type DrawerEventType =
   | 'TEST'
   | 'REFUND'
   | 'AFTER_CLOSE'
-  | 'PERMISSION';
+  | 'PERMISSION'
+  // "מגירה נפתחה מרחוק" (P:/specs/bill-print-other-till.md §9): another till's drawer, opened from this one.
+  | 'REMOTE_SALE'
+  | 'REMOTE_MANUAL';
 
 export const DRAWER_EVENT_TYPES: DrawerEventType[] = [
   'CASH_SALE', 'MANUAL', 'CHANGE', 'CASH_IN', 'CASH_OUT', 'DEPOSIT', 'COUNT', 'TEST', 'REFUND', 'AFTER_CLOSE',
+  'REMOTE_SALE', 'REMOTE_MANUAL',
 ];
 
 export const DRAWER_REASONS = [

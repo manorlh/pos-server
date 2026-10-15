@@ -105,6 +105,7 @@ const ACTION_LABELS: Record<string, string> = {
   reboot: 'הפעלה מחדש של המכשיר',
   till_message: 'הודעה לקופות',
   upload_logs: 'בקשת לוגים',
+  terminal_offline: 'מצב לא מקוון במסופון',
 };
 
 export function actionLabelOf(action: string): string {
@@ -122,6 +123,10 @@ const REASONS: Record<string, string> = {
   manager_code: 'שוחרר בקוד מנהל בקופה',
   after_sale: 'אחרי המכירה',
   not_answered: 'נמסר ולא נענה',
+  timeout_busy: 'המסופון היה עסוק עד שפג התוקף',
+  no_line: 'אין קו — נשאר לא מקוון',
+  conflict: 'פקודה מהסניף גברה',
+  stale: 'כבר בוצעה הוראה מאוחרת יותר',
 };
 
 export function reasonLabel(detail: string | null | undefined): string | null {

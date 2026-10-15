@@ -875,6 +875,12 @@ def post_my_heartbeat(
         from app.services import remote_support
 
         remote_support.apply_heartbeat(db, machine, body.remote_support)
+    # "מצב לא מקוון לכל המסופונים" (app/services/deferred_control.py): the card terminal as the till read it,
+    # kept in `device_info["deferredTerminal"]`; absent leaves it as it was. Never fails a beat.
+    if body is not None and body.deferred_terminal is not None:
+        from app.services import deferred_control
+
+        deferred_control.apply_heartbeat(machine, body.deferred_terminal)
     # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
     if body is not None and body.capabilities is not None:
         from app.services import device_logs

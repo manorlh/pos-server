@@ -8,7 +8,8 @@
  * On the report framework (P:\specs\reports-upgrade.md §5): a `ReportTable` (sort within the page,
  * columns, phone cards) and the framework's export bar (`prepaid-vouchers-vouchers`): Excel / PDF of
  * every row the filters match — all of them, never just the page on screen (lib/fetchAllPages.ts) —
- * print, export columns, the filters in words in the header.
+ * print, export columns, the filters in words in the header; the designed PDF's card is how many
+ * the filters match (the serial is the voucher's id, never a figure to rank).
  */
 
 import { useState } from 'react';
@@ -217,6 +218,11 @@ export function VoucherRowsTable({
         companyId={scope.companyId}
         companyName={scope.companyName}
         disabled={!list.data?.total}
+        reportType="prepaid-vouchers.all"
+        kpis={list.data ? [{ key: 'vouchers', label: t('sheet'), value: list.data.total, kind: 'count', icon: 'voucher' }] : []}
+        insightKeys={{ label: 'batch', id: 'serial' }}
+        // One row per voucher: nothing to plot (the serial is the only number column).
+        chart={null}
       />
       {list.isPending ? (
         <Skeleton className="h-40 w-full rounded-xl" />

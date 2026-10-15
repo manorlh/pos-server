@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Literal, Optional, Union
 
@@ -64,6 +64,9 @@ class TableSaveIn(_Versioned, WaiterRef):
     #: save — keep it (autosave, before payment); send — "הזמן", then leave;
     #: bill — the bill was printed; leave — back to the tables screen.
     action: Literal["save", "send", "bill", "leave"] = "save"
+    #: With `send`: the till stays in the table ("שגר והמשך", `tablesAfterSend` = stay,
+    #: P:/specs/tables-send-selected-stay.md §2) — the send is recorded, the lock kept.
+    stay: Optional[bool] = None
     guests: Optional[int] = Field(None, ge=0, le=999)
     cart_json: str = Field(..., alias="cartJson", max_length=CART_JSON_MAX)
     extras_json: Optional[str] = Field(None, alias="extrasJson", max_length=EXTRAS_JSON_MAX)
@@ -832,3 +835,93 @@ class TableActionIn(_Camel):
     #: print-bill: the till, and its receipt printer (none: the till's own).
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     printer_id: Optional[uuid.UUID] = Field(None, alias="printerId")
+    #: print-bill on another till (P:/specs/bill-print-other-till.md §7): the till that holds the table
+    #: reckons it and relays it to this one, which prints it on its own receipt printer.
+    print_on: Optional[uuid.UUID] = Field(None, alias="printOn")
+    #: set-waiter: "גם שיוך" — the table's assignment moves to the new waiter too
+    #: (P:/specs/table-waiter-assignment.md §4).
+    also_assignment: bool = Field(False, alias="alsoAssignment")
+
+
+# ── "שיוך שולחנות למלצרים" (P:/specs/table-waiter-assignment.md; app/services/table_assignments.py) ──
+
+
+class AssignmentChangeIn(_Camel):
+    """One tap of the assignment mode: a waiter on (or off) a zone or a table — one of the two."""
+
+    action: Literal["assign", "unassign"] = "assign"
+    #: The waiter; for `unassign`, none — everyone's assignment of the target.
+    pos_user_id: Optional[uuid.UUID] = Field(None, alias="posUserId")
+    table_id: Optional[uuid.UUID] = Field(None, alias="tableId")
+    zone_id: Optional[uuid.UUID] = Field(None, alias="zoneId")
+
+    @model_validator(mode="after")
+    def _one_target(self):
+        if (self.table_id is None) == (self.zone_id is None):
+            raise ValueError("exactly one of tableId, zoneId")
+        if self.action == "assign" and self.pos_user_id is None:
+            raise ValueError("posUserId is required to assign")
+        return self
+
+
+class TableAssignmentsIn(PosUserRef):
+    """`POST /sync/{m}/tables/assignments`: the taps in order, after "נקה הכל" when `clear`."""
+
+    clear: bool = False
+    changes: List[AssignmentChangeIn] = Field(default_factory=list, max_length=500)
+
+
+class TableAssignmentCopyIn(PosUserRef):
+    """"העתק שיוך מאתמול" / "מהמשמרת הקודמת"."""
+
+    source: Literal["yesterday", "previous_shift"] = Field(..., alias="from")
+
+
+class AssignmentReportRowIn(_Camel):
+    """One row of a LAN host's (or a single till's) copy, as it holds it — its own id."""
+
+    id: uuid.UUID
+    zone_id: Optional[uuid.UUID] = Field(None, alias="zoneId")
+    table_id: Optional[uuid.UUID] = Field(None, alias="tableId")
+    pos_user_id: uuid.UUID = Field(..., alias="posUserId")
+    business_day: Optional[date] = Field(None, alias="businessDay")
+    assigned_by: Optional[str] = Field(None, alias="assignedBy", max_length=200)
+    assigned_by_pos_user_id: Optional[uuid.UUID] = Field(None, alias="assignedByPosUserId")
+    created_at: Optional[datetime] = Field(None, alias="createdAt")
+    released_at: Optional[datetime] = Field(None, alias="releasedAt")
+    released_reason: Optional[
+        Literal["unassigned", "replaced", "z", "clear", "clock_out", "copy", "target_gone", "expired"]
+    ] = Field(None, alias="releasedReason")
+    released_by: Optional[str] = Field(None, alias="releasedBy", max_length=200)
+
+
+class TableAssignmentsReportIn(_Camel):
+    """`POST /sync/{m}/tables/assignments/report`: the host's rows — live ones and those released lately."""
+
+    assignments: List[AssignmentReportRowIn] = Field(default_factory=list, max_length=2000)
+
+
+class DashboardAssignmentsIn(_Camel):
+    """`POST /tables/assignments`: the dashboard's assignment mode, as the till's."""
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    clear: bool = False
+    changes: List[AssignmentChangeIn] = Field(default_factory=list, max_length=500)
+
+
+class DashboardAssignmentCopyIn(_Camel):
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    source: Literal["yesterday", "previous_shift"] = Field(..., alias="from")
+
+
+# ── "שולחן תפוס" (P:/specs/table-waiter-assignment.md §8; app/services/table_notices.py) ──
+
+
+class TableEntryRequestIn(PosUserRef):
+    """"בקש מדנה לצאת": who asks (the employee signed in at the asking till)."""
+
+
+class TableNoticeAnswerIn(PosUserRef):
+    """leaving — "שמור וצא"; ignored — "התעלם"; seen — a notice read."""
+
+    answer: Literal["leaving", "ignored", "seen"]

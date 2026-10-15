@@ -2116,8 +2116,11 @@ def effective_config(db: Session, machine) -> Dict[str, Any]:
     # "שליטה מרחוק בקיוסקים": the shop's quick hides and the kiosk's banner, over its settings
     # (app/services/kiosk_live.py) — every kiosk already applies both.
     from app.services import kiosk_live
+    from app.services.till_parameters import kiosk_offline_block_overlay
 
-    return kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.machine))
+    # "קיוסק — מה נחסם כשאין אינטרנט" (till parameter `kioskOfflineBlockScope`): other than the default, in
+    # `general.offlineBlockScope` — the Android web kiosk reads the config, not the parameters.
+    return kiosk_offline_block_overlay(db, machine, kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.machine)))
 
 
 def effective_bundle(db: Session, machine) -> Dict[str, Any]:

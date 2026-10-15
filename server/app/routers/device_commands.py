@@ -36,7 +36,8 @@ POST /device-commands/cancel-held-sales               {machineId, runId?, saleId
 Till (`get_pos_machine_for_sync_path`):
 
 GET  /sync/{machine_id}/device-commands                → {state, commands} (pending → delivered)
-POST /sync/{machine_id}/device-commands/{id}/ack       {status: done|refused|failed, detail?, log_id?}
+POST /sync/{machine_id}/device-commands/{id}/ack       {status: done|refused|failed, detail?, log_id?, result?}
+                                                       (`received` — not final — for `terminal_offline` only)
 POST /sync/{machine_id}/device-commands/unlocked       {posUserId?, posUserName?} — a manager code released the lock
 """
 from __future__ import annotations
@@ -45,7 +46,7 @@ import uuid
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response, status
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -96,11 +97,20 @@ class CommandIn(BaseModel):
 class AckIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    status: Literal["done", "refused", "failed"]
-    detail: Optional[str] = Field(None, max_length=300)
+    #: `received` — "קיבלתי" (not an answer): `terminal_offline` only (app/services/deferred_control.py).
+    status: Literal["done", "refused", "failed", "received"]
+    #: The reason or the error as the device says it — clipped to 300, never a 422 for its length.
+    detail: Optional[str] = None
     #: "בקש לוגים": the upload that answered it (`POST /sync/{m}/device-logs`), as {"log_id": …}.
     log_id: Optional[uuid.UUID] = Field(None, validation_alias=AliasChoices("log_id", "logId"))
     result: Optional[Dict[str, Any]] = None
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _clip_detail(cls, value):
+        if value is None:
+            return None
+        return (value if isinstance(value, str) else str(value))[:300]
 
     def result_out(self) -> Optional[Dict[str, Any]]:
         log_id = self.log_id

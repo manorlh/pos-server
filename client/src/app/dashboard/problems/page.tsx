@@ -10,6 +10,9 @@
  * A group can be hidden (kept on the user, every device: `PUT /problems/preferences`); refreshed
  * every 30 seconds. A tap on a phone alert lands here on its own card (`?focus=<log row>`, and
  * `&code=` for the log entry should it be handled by then).
+ *
+ * "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV of the problems
+ * open now — the shown groups' cards, the counts by severity and the groups as a chart.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -35,6 +38,9 @@ import {
 } from 'lucide-react';
 import { usePageScope } from '@/lib/scope';
 import { formatShortDate, formatTimeAgo } from '@/lib/format';
+import { EXCEL_FILL } from '@/lib/excelExport';
+import type { ReportChart, ReportKpi } from '@/lib/designedReport';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import {
   PROBLEM_SEVERITIES,
   findFocus,
@@ -53,6 +59,7 @@ import {
 import { problemsKey, resolveProblem, saveProblemsHidden, useCanSeeProblems, useProblems } from '@/lib/problemsApi';
 import { cn } from '@/lib/utils';
 import { Card, InsightsSurface, Muted, SkeletonCard } from '@/components/dashboard/insights/ios';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 
 const SEVERITY_COLOR: Record<ProblemSeverity, string> = { high: '#FF3B30', medium: '#FF9500', low: '#8E8E93' };
@@ -76,7 +83,7 @@ export default function ProblemsPage() {
   const focus = params.get('focus');
   const focusCode = (params.get('code') ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16);
   const allowed = useCanSeeProblems();
-  const { effective } = usePageScope({ maxLevel: 'shop', silent: true });
+  const { effective, scope: shared } = usePageScope({ maxLevel: 'shop', silent: true });
   const scope = { companyId: effective.companyId ?? null, shopId: effective.shopId ?? null };
   const key = problemsKey(scope);
   const query = useProblems(scope);
@@ -151,16 +158,19 @@ export default function ProblemsPage() {
           </h1>
           <Muted>{t('subtitle')}</Muted>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void query.refetch()}
-          disabled={query.isFetching}
-          aria-label={t('refresh')}
-        >
-          <RefreshCw className={cn('size-4', query.isFetching && 'animate-spin')} aria-hidden />
-          <span className="max-sm:sr-only">{t('refresh')}</span>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ProblemsExport data={data} place={effective.shopId ? (shared.shop?.name ?? null) : null} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+            aria-label={t('refresh')}
+          >
+            <RefreshCw className={cn('size-4', query.isFetching && 'animate-spin')} aria-hidden />
+            <span className="max-sm:sr-only">{t('refresh')}</span>
+          </Button>
+        </div>
       </div>
 
       {/* The open problems by severity: red, orange, grey. */}
@@ -231,6 +241,80 @@ export default function ProblemsPage() {
         ) : null}
       </div>
     </InsightsSurface>
+  );
+}
+
+type ExportRow = { group: ProblemGroupKey; item: ProblemItem };
+
+/**
+ * "ייצוא": a snapshot of the screen as it stands — the problems open now (the screen refreshes
+ * every 30 seconds), the counts by severity as the tiles show them, and every group that is not
+ * hidden with its cards. A hidden group is left out, as the counts leave it out; a group that
+ * lists only its first cards says how many more it has, as the screen does.
+ */
+function ProblemsExport({ data, place }: { data: ProblemsResponse | undefined; place: string | null }) {
+  const t = useTranslations('problems');
+  const shown = useMemo(() => (data?.groups ?? []).filter((g) => !g.hidden), [data]);
+  const table = useMemo<ReportTableSpec<ExportRow>>(
+    () => ({
+      id: 'main',
+      title: t('title'),
+      rows: shown.flatMap((g) => g.items.map((item) => ({ group: g.key, item }))),
+      rowKey: (r) => r.item.id,
+      rowFill: (r) => (r.item.severity === 'high' ? EXCEL_FILL.missing : r.item.severity === 'medium' ? EXCEL_FILL.difference : null),
+      columns: [
+        { key: 'group', header: t('export.group'), width: 14, value: (r) => t(`groups.${r.group}`) },
+        { key: 'severity', header: t('export.severity'), width: 10, value: (r) => t(`severity.${r.item.severity}`) },
+        { key: 'problem', header: t('export.problem'), width: 34, required: true, value: (r) => r.item.title },
+        { key: 'detail', header: t('export.detail'), width: 40, value: (r) => r.item.detail },
+        { key: 'shop', header: t('export.shop'), width: 18, value: (r) => r.item.shopName },
+        {
+          key: 'till',
+          header: t('export.till'),
+          width: 14,
+          value: (r) => r.item.machineName || (r.item.posNumber ? t('register', { n: r.item.posNumber }) : null),
+        },
+        // A plain day ("2026-10-11") for a problem of a business day; Excel shows it as that day.
+        { key: 'since', header: t('export.since'), kind: 'datetime', value: (r) => r.item.since },
+      ],
+    }),
+    [shown, t],
+  );
+  const kpis: ReportKpi[] = data
+    ? [
+        { key: 'problems', label: t('export.total'), value: data.total, kind: 'count', icon: 'alert', better: 'down' },
+        ...PROBLEM_SEVERITIES.map(
+          (s): ReportKpi => ({ key: `severity_${s}`, label: t(`export.${s}`), value: data.counts[s], kind: 'count', better: 'down' }),
+        ),
+      ]
+    : [];
+  const chart: ReportChart | null = shown.length
+    ? {
+        type: 'donut',
+        title: t('export.byGroup'),
+        labels: shown.map((g) => t(`groups.${g.key}`)),
+        series: [{ name: t('export.total'), values: shown.map((g) => g.total) }],
+        kind: 'number',
+      }
+    : null;
+  const notListed = shown.reduce((n, g) => n + Math.max(0, g.total - g.items.length), 0);
+  const hiddenNames = (data?.groups ?? []).filter((g) => g.hidden).map((g) => t(`groups.${g.key}`));
+  const filterLines: ReportFilterLine[] = [
+    ...(hiddenNames.length ? [{ label: t('export.hiddenGroups'), value: hiddenNames.join(', ') }] : []),
+    ...(notListed > 0 ? [{ label: t('export.listLabel'), value: t('export.notListed', { n: notListed }) }] : []),
+  ];
+  return (
+    <StandaloneExportBar
+      reportKey="problems"
+      reportType="exceptions.problems"
+      title={t('title')}
+      tables={[table as ReportTableSpec<unknown>]}
+      place={place}
+      filterLines={filterLines}
+      kpis={kpis}
+      chart={chart}
+      disabled={!data}
+    />
   );
 }
 

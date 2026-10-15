@@ -4,7 +4,9 @@
  * Transactions (עסקאות) — every document the tills synced, newest first, 50 to a page, with
  * the search that finds one: its number or amount, a kiosk pickup number, the buyer, a card's
  * last four digits, a product, the tender, several tills, document types, employees and
- * statuses, an amount range, a document number (docs/SPEC_REPORTS.md §1).
+ * statuses, an amount range, a document number (docs/SPEC_REPORTS.md §1), a table ("שולחן":
+ * the filter, or "ש12" / "שולחן 12" / a table's name in the search — lib/tableSearch.ts; each
+ * row says its table beside its number, P:\specs\history-table-search.md).
  *
  * On the report framework (P:\specs\reports-upgrade.md §5): the days and the search in the
  * report bar, the list's own filters beside them (`lib/transactionsFilters.ts`), all in the URL —
@@ -53,6 +55,7 @@ import {
   printReceiptDocuments,
 } from '@/components/print/receipt-print-document';
 import { KioskPickupBadges } from '@/components/dashboard/kiosks/kiosk-pickup-badges';
+import { tableLabel } from '@/lib/tableSearch';
 import { FailedPaymentsTable } from '@/components/dashboard/failed-payments/failed-payments-table';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { fetchTransactionsExport, type TransactionExportRow } from '@/lib/reportCenterApi';
@@ -135,6 +138,23 @@ function useDocumentTypeLabel() {
 }
 
 const tipOf = (tx: Transaction): number => Number(tx.tipAmount ?? 0) || 0;
+
+/**
+ * Beside the number: the table the document paid ("שולחן 12", "שולחן 9012 · ש-12") and when its
+ * order was opened — a table opened twice a day is two orders. Filled when the search found it by
+ * its table ("ש12", a name, the "שולחן" filter).
+ */
+function TableBadge({ tx }: { tx: Transaction }) {
+  const t = useTranslations('transactions');
+  const label = tableLabel(t('tableWord'), tx.tableNumber, tx.tableName);
+  if (!label) return null;
+  return (
+    <Badge variant={tx.matchedBy?.includes('table') ? 'default' : 'outline'} className="ms-2 font-sans" title={t('tableTitle')}>
+      <bdi>{label}</bdi>
+      {tx.tableOpenedAt ? <span className="ms-1 opacity-80">· {formatDateTime(tx.tableOpenedAt)}</span> : null}
+    </Badge>
+  );
+}
 
 export default function TransactionsPage() {
   const t = useTranslations('transactions');
@@ -278,6 +298,17 @@ export default function TransactionsPage() {
           onKeyDown={runOnEnter}
         />
       </div>
+      {/* "שולחן": "12" is table 12 (never a document number or an amount), other text a table's
+          name ("VIP", "ש-12"). As typed (a name has spaces): the query trims it. */}
+      <div className="min-w-0 space-y-1">
+        <Label className="text-xs">{t('filterTable')}</Label>
+        <Input
+          value={filters.draftExtras.table ?? ''}
+          placeholder={t('filterTablePlaceholder')}
+          onChange={(e) => setDraft('table', e.target.value.slice(0, 60))}
+          onKeyDown={runOnEnter}
+        />
+      </div>
       <div className="grid min-w-0 grid-cols-2 gap-2">
         <div className="min-w-0 space-y-1">
           <Label className="text-xs">{t('filterAmountMin')}</Label>
@@ -391,6 +422,7 @@ export default function TransactionsPage() {
     if (/^\d{4}$/.test(extras.card)) lines.push({ label: t('searchCard'), value: extras.card });
     if (extras.item) lines.push({ label: t('searchItem'), value: extras.item });
     if (extras.doc) lines.push({ label: t('filterDocumentNumber'), value: extras.doc });
+    if (extras.table) lines.push({ label: t('filterTable'), value: extras.table });
     if (extras.amountMin) lines.push({ label: t('filterAmountMin'), value: extras.amountMin });
     if (extras.amountMax) lines.push({ label: t('filterAmountMax'), value: extras.amountMax });
     if (extras.basket) lines.push({ label: t('basket'), value: extras.basket.slice(0, 8) });
@@ -417,6 +449,7 @@ export default function TransactionsPage() {
               <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
             )}
             <KioskPickupBadges pickup={tx.kioskPickup} matchedBy={tx.matchedBy} query={q} className="ms-2" />
+            <TableBadge tx={tx} />
             {tx.reissueOfTransactionId && (
               <Badge variant="outline" className="ms-2 font-sans">{t('reissueBadge')}</Badge>
             )}
@@ -556,6 +589,12 @@ export default function TransactionsPage() {
                 to: parsed.applied ? parsed.values.to : null,
                 filterLines: extraLines,
                 disabled: !data || data.total === 0,
+                // The designed PDF (P:\specs\reports-designed-pdf.md §7): no cards of the page's own
+                // (it shows one page of documents) — the server makes them from the export's totals —
+                // and no period before: a list of documents has no figure to set against another.
+                reportType: 'transactions',
+                insightKeys: { label: 'till', value: 'totalAmount', employee: 'employee' },
+                groupBy: ['shop', 'till'],
               }
         }
       >

@@ -6,7 +6,8 @@
  * table and the bill with a balance — and, in a group of its own first, the staff / managers' tables'
  * `staffTableDiscountCheck` (P:/specs/owner-decisions-1410.md §1), then the till's map — its legend and
  * display (`mapDecor`, `mapLegend`, `mapSymbolLabels`, `mapSymbolScale`; P:/specs/table-map-decor-v3.md
- * §3) — and last the courses' auto-fire (`autoFire`, `autoFireMinutesOverride`: P:/specs/courses-fire-v2.md
+ * §3) — the waiters' assignment and the busy table (`tableAssignment*`, `tableBusyEntry`, `tableBusyShowHolder`;
+ * P:/specs/table-waiter-assignment.md, with the warning on `tableBusyEntry` = off) — and last the courses' auto-fire (`autoFire`, `autoFireMinutesOverride`: P:/specs/courses-fire-v2.md
  * §1, §5; a course's own minutes are set in "שלבי הגשה") — at one level: company, shop, point of sale or
  * till. A level shows what it inherits and what it sets itself; "ירושה" inherits. Stored as till
  * parameters: the till gets the resolved value with the rest of its parameters. Who restores and
@@ -21,6 +22,7 @@ import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { api, fetchShopAreas } from '@/lib/api';
 import { useScope } from '@/lib/scope';
+import { optionWarning } from '@/lib/tableAssignment';
 import { sameId } from '@/lib/entityLookup';
 import {
   METHODS,
@@ -179,6 +181,8 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
     const inherited = data.inherited[p.key] ?? p.defaultValue;
     const text = shown(p.key);
     const own = data.own[p.key] !== undefined && data.own[p.key] !== null;
+    // "שולחן תפוס" = off (P:/specs/table-waiter-assignment.md §8): the dashboard warns once it is chosen.
+    const warning = optionWarning(p.optionWarnings, text !== '' ? text : inherited);
     return (
       <div key={p.key} className="flex flex-wrap items-start gap-3 p-3">
         <div className="min-w-[16rem] flex-1 space-y-0.5">
@@ -200,6 +204,11 @@ function LevelCard({ companyId, level }: { companyId: string; level: Level }) {
             methodLabel={methodLabel}
             describe={(v) => describe(p, v)}
           />
+          {warning ? (
+            <p role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+              {warning}
+            </p>
+          ) : null}
         </div>
       </div>
     );

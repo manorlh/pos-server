@@ -323,6 +323,22 @@ RULES = RULES + (
     RuleSpec("quicksupport_signer_mismatch", True, (), "medium", "machine_status", push_default=False, push_only=True),
 )
 
+# "הדפסה בקופה אחרת" (P:/specs/bill-print-other-till.md §6, app/services/remote_print.py): a bill or a receipt
+# relayed to another till that failed or expired there — "חשבון לא הודפס בקופה X" on "בעיות". Read at the
+# host's levels; on by default, switched off here like any rule. Closed by itself when it prints after all.
+RULES = RULES + (
+    RuleSpec("document_unprinted", True, (), "medium", "print_relay", push_default=False),
+)
+
+# "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): a basket the automatic close held
+# or discarded, and the held sales it cancelled — from the till's events, each with its items and amount. The
+# manager is alerted on the phone (on by default: the owner asked for it).
+RULES = RULES + (
+    RuleSpec("auto_close_cart_discarded", True, (), "medium", "till_event"),
+    RuleSpec("auto_close_cart_held", True, (), "low", "till_event"),
+    RuleSpec("auto_close_held_sales_cancelled", True, (), "medium", "till_event"),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
@@ -353,6 +369,23 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("payment_reversed", "table_restored")
 #: reported by the till that fired it (one till, the LAN host), written by the cloud for its own tables
 #: (app/services/course_auto_fire.py). Recorded, feeds no rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
+#: "דוח X סניפי" (P:/specs/shop-x-report.md §4 "רישום"): who ran the shop's interim X, from which till, when —
+#: written by the cloud for its runs (app/services/shop_x.py), reported by a till that built it on the LAN.
+#: Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("shop_x_report",)
+#: "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (app/services/auto_close_cart.py): a basket held or discarded and
+#: the held sales cancelled by the automatic close — each feeds its own rule — and the close's journal line
+#: (`shift_auto_closed`, recorded, feeds no rule).
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("auto_close_cart_held", "auto_close_cart_discarded",
+                                       "auto_close_held_sales_cancelled", "shift_auto_closed")
+#: "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §3 "רישום", §8.5 "יומן"): a till's terminal
+#: switched to deferred / back — who, from which till, by which way (lan / cloud / direct / auto / local), and
+#: on the way back how many were approved and declined. Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("deferred_mode_on", "deferred_mode_off")
+#: "זיהוי אין קו" (P:/specs/nayax-deferred-all.md §12 "למידה"): a card failure and whether the till read it as
+#: "no line to the card company" — its code and raw message, for completing the words from the field.
+#: Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("card_failure_verdict",)
 
 
 class RuleValueError(ValueError):
@@ -814,6 +847,14 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
             if minutes >= limit:
                 return [Found(type="long_order", key=f"long_order:{event.id}", amount=amount, value=minutes,
                               threshold=limit, details=details, **common)]
+    elif kind in ("auto_close_cart_held", "auto_close_cart_discarded", "auto_close_held_sales_cancelled"):
+        # The automatic close's basket / held sales (app/services/auto_close_cart.py): the line the list shows.
+        rule = rules.get(kind)
+        if rule and rule.enabled:
+            from app.services import auto_close_cart
+
+            details["summary"] = auto_close_cart.summary(kind, details)
+            return [Found(type=kind, key=f"{kind}:{event.id}", amount=amount, details=details, **common)]
     elif kind in ("payment_reversed", "table_restored"):
         # A table's payment reversed / a table restored (app/services/table_restore.py).
         from app.services import table_restore

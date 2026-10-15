@@ -28,7 +28,13 @@ import { formatCurrency, formatDateTime } from '@/lib/format';
 import { defaultReportFilters, reportApiParams, scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { todayIso } from '@/lib/reportWindow';
 import { offlineDeclinedRows } from '@/lib/auditReports';
-import type { OfflineAuthorizationReport, OfflineAuthorizationRun, OfflineDeclinedLeg } from '@/lib/types';
+import { kpiNumber, previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
+import type {
+  OfflineAuthorizationReport,
+  OfflineAuthorizationRun,
+  OfflineAuthorizationTotals,
+  OfflineDeclinedLeg,
+} from '@/lib/types';
 import { RemoteCreditQuickButton } from '@/components/dashboard/remote-credit/remote-credit-actions';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
 import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
@@ -46,6 +52,17 @@ import {
 const SPEC: ReportFilterSpec = { filters: ['search'], clientFilters: ['search'] };
 
 type DeclinedRow = { key: string; run: OfflineAuthorizationRun; leg: OfflineDeclinedLeg };
+
+/** The cards as the designed PDF shows them (and the period before's), by KPI key. */
+function totalsFigures(tot: OfflineAuthorizationTotals): Record<string, number | null> {
+  return {
+    approved: tot.approvedCount,
+    approvedAmount: kpiNumber(tot.approvedAmount),
+    declined: tot.declinedCount,
+    declinedAmount: kpiNumber(tot.declinedAmount),
+    runs: tot.authorizationCount,
+  };
+}
 
 /** The documents one run declined (the run's drill-down). */
 function DeclinedList({ run }: { run: OfflineAuthorizationRun }) {
@@ -215,6 +232,24 @@ export default function OfflineTransactionsPage() {
 
   const declinedTone = data && data.totals.declinedCount > 0;
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the cards — the declined figures are
+  // the news — and the runs of the period before.
+  const figures = data ? totalsFigures(data.totals) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'declined', label: t('totals.declined'), value: figures.declined, kind: 'count', better: 'down', icon: 'alert' },
+        { key: 'declinedAmount', label: t('totals.declinedAmount'), value: figures.declinedAmount, kind: 'money', better: 'down' },
+        { key: 'approved', label: t('totals.approved'), value: figures.approved, kind: 'count', icon: 'card' },
+        { key: 'approvedAmount', label: t('col.approvedAmount'), value: figures.approvedAmount, kind: 'money' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!w) return null;
+    const before = await fetchOfflineAuthorizationsReport({ ...params, ...w });
+    return { rows: before.items, kpis: totalsFigures(before.totals), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="offline-transactions"
@@ -227,7 +262,16 @@ export default function OfflineTransactionsPage() {
       ready
       export={
         data
-          ? { tables: [runs, declined] as ReportTableSpec<unknown>[], from: data.window.from, to: data.window.to }
+          ? {
+              tables: [runs, declined] as ReportTableSpec<unknown>[],
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'offline-transactions',
+              kpis,
+              insightKeys: { label: 'till', value: 'declinedAmount', count: 'declined' },
+              groupBy: ['shop', 'till'],
+              previous,
+            }
           : null
       }
     >

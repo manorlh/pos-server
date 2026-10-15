@@ -164,18 +164,21 @@ LEVEL_KEYS: Tuple[str, ...] = tuple(spec["key"] for spec in PARAMETER_SPECS)
 VALIDATED_KEYS = frozenset(LEVEL_KEYS)
 
 #: The till design's "שולחנות ומפה" card (`/till-design/table-display`): these, then the map's legend
-#: and display (app/services/table_map_display.py, the tables page's `mapDisplay` group too).
+#: and display (app/services/table_map_display.py, the tables page's `mapDisplay` group too), then the
+#: table's line on its documents (`receiptTableInfo`, app/services/receipt_table_info.py).
 TILE_LOOK_GROUP = "tileLook"
 
 
 def till_design_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
     """(key, label, keys) of each group of the till design's card, in its order."""
-    from app.services import table_map_display
+    from app.services import receipt_table_info, table_map_display
     from app.services.table_restore import MAP_DISPLAY_GROUP
 
     return (
         (TILE_LOOK_GROUP, "עיצוב השולחנות", LEVEL_KEYS),
         (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
+        # "מספר שולחן על החשבונית" (P:/specs/receipt-table-number.md): the table's line on its documents.
+        (receipt_table_info.TILL_DESIGN_GROUP, receipt_table_info.TILL_DESIGN_GROUP_LABEL, receipt_table_info.LEVEL_KEYS),
     )
 
 

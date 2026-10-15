@@ -25,8 +25,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Banknote, Coins, CreditCard, Wallet } from 'lucide-react';
 import { fetchTipsRangeReport, fetchTipsReport } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatHashNumber } from '@/lib/format';
+import { formatCurrency, formatDate, formatHashNumber } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import type {
   TipCashierRow,
   TipMethod,
@@ -49,6 +50,7 @@ import {
   reportQueryState,
   useReportFilters,
   type ReportColumn,
+  type ReportExportConfig,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 
@@ -69,6 +71,37 @@ const RANGE_SPEC: ReportFilterSpec = {
 };
 
 type Figures = Pick<TipsSliceFigures, 'tipsTotal' | 'tipsCash' | 'tipsCard' | 'tipsOther' | 'tippedDocumentCount' | 'salesNet'>;
+
+/** The distribution's totals as the designed PDF's cards (and the period before's), by KPI key. */
+function distributionFigures(r: TipsReport): Record<string, number> {
+  return {
+    tips: r.totalTips,
+    cashTips: r.totalCashTips,
+    cardTips: r.totalCardTips,
+    owed: r.cashiers.reduce((sum, c) => sum + c.amountOwed, 0),
+  };
+}
+
+/** The range's totals (the cards on top), by KPI key; an older server's counts summed from the cashiers. */
+function rangeFigures(d: TipsRangeReport): Record<string, number> {
+  const sum = (pick: (r: TipsByCashierRow) => number) => d.byCashier.reduce((s, r) => s + pick(r), 0);
+  return {
+    tips: d.tipsTotal,
+    cashTips: d.tipsCash,
+    cardTips: d.tipsCard,
+    otherTips: d.tipsOther,
+    tippedDocuments: d.tippedDocumentCount ?? sum((r) => r.tippedDocumentCount),
+    salesNet: d.salesNet ?? sum((r) => r.salesNet),
+  };
+}
+
+/** The rows of the range report's table the PDF takes, per view. */
+function viewRows(d: TipsRangeReport, view: View): unknown[] {
+  if (view === 'day') return d.byDay ?? [];
+  if (view === 'till') return d.byMachine ?? [];
+  if (view === 'shift') return d.byShift ?? [];
+  return d.byCashier;
+}
 
 export default function TipsReportPage() {
   const t = useTranslations('tips');
@@ -343,6 +376,23 @@ export default function TipsReportPage() {
   );
 
   if (mode === 'distribution') {
+    // The designed PDF (P:\specs\reports-designed-pdf.md §7): the totals as cards, what each one
+    // is owed as bars, and the same days before (one shift's tips have no period before).
+    const figures = report ? distributionFigures(report) : null;
+    const kpis: ReportKpi[] = figures
+      ? [
+          { key: 'tips', label: t('tipsCollected'), value: figures.tips, kind: 'money', icon: 'tip' },
+          { key: 'cashTips', label: t('cashTips'), value: figures.cashTips, kind: 'money', icon: 'cash' },
+          { key: 'cardTips', label: t('cardTips'), value: figures.cardTips, kind: 'money', icon: 'card' },
+          { key: 'owed', label: t('amountOwed'), value: figures.owed, kind: 'money', icon: 'users' },
+        ]
+      : [];
+    const previous = async (): Promise<PreviousPeriod | null> => {
+      const w = shiftId ? null : previousWindow(distParams?.from, distParams?.to);
+      if (!shopId || !w) return null;
+      const before = await fetchTipsReport(shopId, w);
+      return { rows: before.cashiers, kpis: distributionFigures(before), ...w };
+    };
     return (
       <ReportPage
         reportKey="tips-distribution"
@@ -363,6 +413,10 @@ export default function TipsReportPage() {
                 tables: [distTable],
                 from: shiftId ? (report.fromDate ?? null) : distParams?.from,
                 to: shiftId ? (report.toDate ?? null) : distParams?.to,
+                reportType: 'tips-distribution',
+                kpis,
+                chartFrom: { label: 'cashier', value: 'amountOwed', type: 'hbar' },
+                previous,
               }
             : null
         }
@@ -396,6 +450,47 @@ export default function TipsReportPage() {
       ] as ReportTableSpec<unknown>[])
     : [];
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the cards on top, the view on screen
+  // (the PDF's table) as bars — its days as a line — subtotals where it has shops and tills, and
+  // the same view of the period before.
+  const rangeKpis: ReportKpi[] = (() => {
+    if (!d) return [];
+    const f = rangeFigures(d);
+    return [
+      { key: 'tips', label: t('tipsTotal'), value: f.tips, kind: 'money', icon: 'tip' },
+      { key: 'cashTips', label: t('cashTips'), value: f.cashTips, kind: 'money', icon: 'cash' },
+      { key: 'cardTips', label: t('cardTips'), value: f.cardTips, kind: 'money', icon: 'card' },
+      { key: 'otherTips', label: t('otherTips'), value: f.otherTips, kind: 'money' },
+      { key: 'tippedDocuments', label: t('tippedDocuments'), value: f.tippedDocuments, kind: 'count', icon: 'receipt' },
+      { key: 'salesNet', label: t('salesNet'), value: f.salesNet, kind: 'money', icon: 'sales' },
+    ];
+  })();
+  const viewDesign: Pick<ReportExportConfig, 'chart' | 'chartFrom' | 'groupBy' | 'insightKeys'> =
+    shownView === 'cashier'
+      ? { chartFrom: { label: 'cashier', value: 'tipsTotal', type: 'hbar' } }
+      : shownView === 'day'
+        ? {
+            insightKeys: { label: 'day', value: 'tipsTotal' },
+            chart: d?.byDay?.length
+              ? {
+                  type: 'line',
+                  title: t('view.day'),
+                  labels: d.byDay.map((r) => formatDate(r.day)),
+                  series: [{ name: t('tipsTotal'), values: d.byDay.map((r) => r.tipsTotal) }],
+                  kind: 'money',
+                }
+              : null,
+          }
+        : shownView === 'till'
+          ? { chartFrom: { label: 'till', value: 'tipsTotal', type: 'hbar' }, groupBy: ['shop'] }
+          : { insightKeys: { label: 'shift', value: 'tipsTotal' }, groupBy: ['shop', 'till'] };
+  const rangePrevious = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(d?.window.from, d?.window.to);
+    if (!rangeParams || !w) return null;
+    const before = await fetchTipsRangeReport({ ...rangeParams, ...w });
+    return { rows: viewRows(before, shownView), kpis: rangeFigures(before), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="tips"
@@ -415,6 +510,10 @@ export default function TipsReportPage() {
               pdfTableId,
               from: d.window.from,
               to: d.window.to,
+              reportType: 'tips',
+              kpis: rangeKpis,
+              ...viewDesign,
+              previous: rangePrevious,
             }
           : null
       }

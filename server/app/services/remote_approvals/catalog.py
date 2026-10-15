@@ -93,6 +93,9 @@ TYPES: Tuple[RequestType, ...] = (
     RequestType("oth", "על חשבון הבית", 1, _A, "פריטים, שולחן, סכום",
                 scopes=("discount",), reasons=DISCOUNT_REASONS),
     RequestType("drawer_open", "פתיחת מגירה בלי מכירה", 1, None, "קופה", reasons=DRAWER_REASONS),
+    # P:/specs/bill-print-other-till.md §9ב–§9ג: the drawer of another till's printer (CASH_DRAWER.OPEN_REMOTE).
+    RequestType("drawer_open_remote", "פתיחת מגירה בקופה אחרת", 1, None, "הקופה שבה תיפתח המגירה, הסיבה",
+                base_code="CASH_DRAWER.OPEN_REMOTE", reasons=DRAWER_REASONS),
     RequestType("cash_out", "הוצאת מזומן או הפקדה", 1, _A, "סכום",
                 base_code="CASH_DRAWER.CASH_OUT", reasons=DRAWER_REASONS, allow_partial=True),
     RequestType("shift_close", "סגירת משמרת או שידור", 1, _A, "צפוי מול נספר (תקרה: ההפרש)",
@@ -109,6 +112,14 @@ TYPES: Tuple[RequestType, ...] = (
                 scopes=("user-session:release",), approver_code="USER_SESSION_RELEASE",
                 approver_section="user_sessions_release"),
     RequestType("z_close", "הפקת Z", 1, None, "קופה, משמרות פתוחות", scopes=("day:close",)),
+    # "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1, §8.1): from the controlling till, only
+    # while it is connected (offline — a manager's code, checked at the till). The approver must be allowed
+    # to do it (TERMINAL_OFFLINE_ALL; a dashboard role: `terminals_offline` at edit). Nothing in the cloud
+    # is gated by it — no scopes.
+    RequestType("terminal_offline_all", "מצב לא מקוון לכל המסופונים", 1, None,
+                "הקופה המנהלת, הפעלה או כיבוי, כמה קופות",
+                base_code="TERMINAL_OFFLINE_ALL", approver_code="TERMINAL_OFFLINE_ALL",
+                approver_section="terminals_offline"),
     # ── §3ב: phase 2 ──
     RequestType("refund_no_receipt", "זיכוי בלי מסמך מקורי", 2, _A, "סכום, שורות",
                 base_code="REFUND", scopes=("refund",), reasons=REFUND_REASONS, reason_required=True,

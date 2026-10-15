@@ -148,6 +148,10 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "כניסה למסך השולחנות, פתיחת שולחן ועבודה עליו."),
     PermissionSpec("TABLES.OPEN_OTHERS", "עבודה על שולחן של מלצר אחר", "tables",
                    "כניסה לשולחן שפתח (או משויך ל) מלצר אחר."),
+    # P:/specs/table-waiter-assignment.md §3: the "שיוך מלצרים" button on the tables screen.
+    PermissionSpec("TABLES.ASSIGN", "שיוך שולחנות למלצרים", "tables",
+                   "שיוך אזורים ושולחנות למלצר לפני שהם נפתחים (כפתור \"שיוך מלצרים\" במסך השולחנות), "
+                   "\"נקה הכל\" והעתקת שיוך מאתמול או מהמשמרת הקודמת."),
     PermissionSpec("TABLE_CANCEL", "ביטול שולחן", "tables",
                    "ביטול הזמנה פתוחה של שולחן, עם סיבה.", scope="table:cancel"),
     PermissionSpec("TABLE_VOID", "ביטול פריט שנשלח למטבח", "tables",
@@ -168,6 +172,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "שידור ידני של עסקאות האשראי לשב\"א ופעולות מצב לא מקוון של המסוף.", scope="transmit"),
     PermissionSpec("VIEW_REPORTS", "דוחות בקופה", "shift",
                    "תפריט \"דוחות\" בקופה: מכירות מוצרים, עובדים, שולחנות, טיפים והיסטוריית משמרות."),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): the shop-wide interim X — a cashier on a manager's code.
+    # The cloud checks it on `GET/POST /sync/{m}/shop-x` (the signed-in user, or a grant for `report:shop-x`).
+    PermissionSpec("SHOP_X_REPORT", "דוח X סניפי", "shift",
+                   "\"דוח X סניפי\" בתפריט \"דוחות\": דוח ביניים של כל קופות הסניף לתקופה הפתוחה — לא סוגר משמרות, "
+                   "לא מקבל מספר. מופיע בקופות לפי הפרמטר \"דוח X סניפי — באילו קופות מופיע\".",
+                   scope="report:shop-x"),
     # ── מגירת מזומן (spec §2) ──
     PermissionSpec("CASH_DRAWER.OPEN_ON_CASH_SALE", "פתיחה בעסקת מזומן", "drawer",
                    "פתיחה אוטומטית אחרי שתשלום המזומן נרשם והעסקה הושלמה.", devices=_FIXED),
@@ -199,6 +209,13 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "יומן פתיחות המגירה בקופה.", devices=_FIXED),
     PermissionSpec("CASH_DRAWER.VIEW_CASH_MOVEMENTS", "צפייה בתנועות מזומן", "drawer",
                    "תנועות המזומן במשמרת והיתרה הצפויה.", devices=_FIXED),
+    # P:/specs/bill-print-other-till.md §9ב–§9ג (the owner, 14.10.2026): the drawer of another till's printer —
+    # with a bill sent there (`remotePrintDrawer`), or "פתיחת מגירה ב<קופה>" from a device with no drawer.
+    PermissionSpec("CASH_DRAWER.OPEN_REMOTE", "פתיחת מגירה בקופה אחרת", "drawer",
+                   "פתיחת המגירה של המדפסת בקופה אחרת: עם חשבון ששולם במזומן ונשלח להדפסה שם (לפי הפרמטר "
+                   "\"מגירה במדפסת שם\"), או \"פתיחת מגירה ב...\" מהתפריט במכשיר בלי מגירה (מסופון, P18, טלפון) — "
+                   "בנוסף לכללי הפתיחה הידנית. נרשמת בקופה השולחת כ\"מגירה נפתחה מרחוק\" עם העובד והמאשר; "
+                   "פתיחה בלי מכירה נרשמת כחריגה \"מגירה נפתחה ללא מכירה\"."),
     # ── ניהול בקופה ──
     PermissionSpec("CATALOG_WRITE", "עריכת קטלוג מהקופה", "admin",
                    "עריכת מוצרים, עיצוב מסך, נעילת מוצר, שמות שולחנות ומפה, מדפסות ומסופון.",
@@ -322,6 +339,19 @@ PERMISSIONS = PERMISSIONS + (
 )
 # fmt: on
 
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1, §8.1, app/services/deferred_control.py): the
+# screen "מסופונים ברשת — מצב לא מקוון" on a controlling till (`deferredControlTills`) — every terminal of the
+# shop to deferred and back. Checked at the till (offline too, against the roster); no elevation scope. Its
+# phone approval is `APPROVE_REMOTE.terminal_offline_all` (remote_approvals/catalog.py).
+# fmt: off
+PERMISSIONS = PERMISSIONS + (
+    PermissionSpec("TERMINAL_OFFLINE_ALL", "מצב לא מקוון לכל המסופונים", "shift",
+                   "המסך \"מסופונים ברשת — מצב לא מקוון\" בהגדרות הקופה (רק בקופות שבפרמטר \"מסופונים ברשת — "
+                   "קופות מנהלות\"): העברת המסופונים של כל הקופות בסניף למצב לא מקוון והחזרתם למקוון — הכל או "
+                   "קופה אחת. העסקאות מאושרות רק כשהחיבור חוזר. כל שינוי נרשם ביומן של כל קופה."),
+)
+# fmt: on
+
 PERMISSIONS_BY_CODE: Dict[str, PermissionSpec] = {p.code: p for p in PERMISSIONS}
 CODES: Tuple[str, ...] = tuple(PERMISSIONS_BY_CODE)
 
@@ -387,10 +417,16 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
     "SELL_RESTRICTED_ITEMS",
     "HELD_SALE_CANCEL",
+    # "דוח X סניפי": a legacy cashier asks a manager, a legacy manager runs it alone.
+    "SHOP_X_REPORT",
     "ITEM_BLOCK",
     "ITEM_BLOCK_WIDE",
     # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
     "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
+    # "פתיחת מגירה בקופה אחרת" (bill-print-other-till §9): new — a legacy cashier asks a manager.
+    "CASH_DRAWER.OPEN_REMOTE",
+    # "שיוך שולחנות למלצרים": arranging the floor is a manager's — a legacy cashier asks one.
+    "TABLES.ASSIGN",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -401,6 +437,9 @@ LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "
 LEGACY_CASHIER_DENIED = LEGACY_CASHIER_DENIED | {"MULTI_DEVICE_LOGIN"}
 #: A payment reversed inside a table hands money back, as a refund did: a legacy cashier asks a manager.
 LEGACY_APPROVAL_CODES = LEGACY_APPROVAL_CODES | TABLE_PAYMENT_REVERSE_CODES
+#: "מצב לא מקוון לכל המסופונים" (nayax-deferred-all §8.1): never a legacy cashier's; a legacy shop manager's
+#: (everything allowed).
+LEGACY_CASHIER_DENIED = LEGACY_CASHIER_DENIED | {"TERMINAL_OFFLINE_ALL"}
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -431,6 +470,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "SELL_RESTRICTED_ITEMS":             (P, P, A, A),
     "TABLES.USE":                        (A, A, A, A),
     "TABLES.OPEN_OTHERS":                (P, A, A, A),
+    # "שיוך שולחנות למלצרים" (P:/specs/table-waiter-assignment.md §3): the shift supervisor and the manager.
+    "TABLES.ASSIGN":                     (D, D, A, A),
     "TABLE_CANCEL":                      (P, P, A, A),
     "TABLE_VOID":                        (P, P, A, A),
     "TABLE_RESTORE":                     (D, P, A, A),
@@ -441,6 +482,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "Z":                                 (D, P, A, A),
     "TRANSMIT":                          (D, P, A, A),
     "VIEW_REPORTS":                      (D, A, A, A),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): waiter never, cashier with a manager's code.
+    "SHOP_X_REPORT":                     (D, P, A, A),
     # spec §3 — פתיחה בעסקת מזומן / ידנית / פריטה / Cash Out / הפקדה / ספירה / בדיקה / אחרי Z / לוג
     "CASH_DRAWER.OPEN_ON_CASH_SALE":     (A, A, A, A),
     "CASH_DRAWER.OPEN_MANUALLY":         (P, P, A, A),
@@ -455,6 +498,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CASH_DRAWER.OPEN_AFTER_CLOSE":      (D, D, P, A),
     "CASH_DRAWER.VIEW_LOG":              (D, D, A, A),
     "CASH_DRAWER.VIEW_CASH_MOVEMENTS":   (D, D, A, A),
+    # bill-print-other-till §9ב: a waiter or a cashier with a manager's code (or a phone approval).
+    "CASH_DRAWER.OPEN_REMOTE":           (P, P, A, A),
     "CATALOG_WRITE":                     (D, P, P, A),
     # "ניהול קטלוג" (specs/till-catalog-management.md §6.2).
     "CATALOG_VIEW":                      (A, A, A, A),
@@ -493,6 +538,11 @@ _SPEC_MATRIX.update({
     "PAYMENT_REVERSE_CASH":              (D, P, A, A),
     "PAYMENT_REVERSE_CARD":              (D, P, A, A),
     "PAYMENT_REVERSE_OTHER":             (D, P, A, A),
+})
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §1): the manager alone, a shift supervisor with a
+# manager's code (or a phone approval), a waiter and a cashier never.
+_SPEC_MATRIX.update({
+    "TERMINAL_OFFLINE_ALL":              (D, D, P, A),
 })
 
 #: The spec's example (§7): a supervisor takes cash out up to ₪200 alone (and approves it

@@ -19,6 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { previousWindow, type KpiIcon, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import {
   fetchPaymentMethodsReport,
   type PaymentMethodRow,
@@ -47,6 +48,27 @@ const SPEC: ReportFilterSpec = {
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** The methods with a card of their own in the designed PDF (the largest), beside the total and the tips. */
+const KPI_METHODS = 4;
+const METHOD_ICON: Partial<Record<string, KpiIcon>> = { cash: 'cash', card: 'card', production_voucher: 'voucher' };
+/** A payment method as a KPI key (`[A-Za-z0-9_.-]`). */
+const methodKey = (m: string) => `method.${m.replace(/[^A-Za-z0-9_.-]+/g, '_')}`;
+
+/**
+ * The report as the designed PDF's cards see it — the rows and the methods narrowed by the page's
+ * method filter, the total of what is left, each method's amount and the tips — by KPI key.
+ */
+function paymentFigures(r: PaymentMethodsReport, method: string) {
+  const rows = r.rows.filter((x) => !method || x.method === method);
+  const methods = r.totals.filter((m) => !method || m.method === method);
+  const figures: Record<string, number | null> = {
+    net: method ? round2(rows.reduce((s, x) => s + x.amount, 0)) : r.total,
+    tips: r.tipsTotal ?? null,
+  };
+  for (const m of methods) figures[methodKey(m.method)] = m.amount;
+  return { rows, figures };
+}
 
 export default function SalesByPaymentPage() {
   const t = useTranslations('paymentReport');
@@ -145,6 +167,42 @@ export default function SalesByPaymentPage() {
 
   const tables = [byMethod, breakdown, ...(tips ? [tips] : [])] as ReportTableSpec<unknown>[];
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the total and the method cards, the
+  // methods as a ring, and the breakdown (the PDF's table) of the period before.
+  const top = [...methodTotals].sort((a, b) => b.amount - a.amount).slice(0, KPI_METHODS);
+  const kpis: ReportKpi[] = data
+    ? [
+        { key: 'net', label: t('total'), value: total, kind: 'money', icon: 'sales' },
+        ...top.map(
+          (m): ReportKpi => ({
+            key: methodKey(m.method),
+            label: methodLabel(m.method),
+            value: m.amount,
+            kind: 'money',
+            ...(METHOD_ICON[m.method] ? { icon: METHOD_ICON[m.method] } : {}),
+          }),
+        ),
+        ...(data.tipsTotal !== undefined
+          ? [{ key: 'tips', label: tt('tipsTotal'), value: data.tipsTotal, kind: 'money', icon: 'tip' } satisfies ReportKpi]
+          : []),
+      ]
+    : [];
+  const chart: ReportChart | null = methodTotals.length
+    ? {
+        type: 'donut',
+        title: t('totalsTitle'),
+        labels: methodTotals.map((m) => methodLabel(m.method)),
+        series: [{ name: t('col.amount'), values: methodTotals.map((m) => m.amount) }],
+        kind: 'money',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = paymentFigures(await fetchPaymentMethodsReport({ ...params, ...w }), method);
+    return { rows: before.rows, kpis: before.figures, ...w };
+  };
+
   return (
     <ReportPage
       reportKey="sales-by-payment"
@@ -156,7 +214,23 @@ export default function SalesByPaymentPage() {
       query={reportQueryState(query)}
       prompt={t('selectFilters')}
       loading="table"
-      export={data ? { tables, pdfTableId: 'main', from: data.window.from, to: data.window.to } : null}
+      export={
+        data
+          ? {
+              tables,
+              pdfTableId: 'main',
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'sales-by-payment',
+              kpis,
+              chart,
+              // The breakdown's first text column is the shop: the method is what it is about.
+              insightKeys: { label: 'method', value: 'amount', count: 'documents' },
+              groupBy: ['shop', 'till'],
+              previous,
+            }
+          : null
+      }
     >
       {data ? (
         <>

@@ -7,7 +7,8 @@
  *
  * One sortable table (the report framework's `ReportTable`, P:\specs\reports-upgrade.md §5): each
  * reset's day, location and trigger are columns of its rows. The day picked lives in the URL
- * (`?day=`); the export is the framework's (`stock-leftover`) with the Excel's columns as before.
+ * (`?day=`); the export is the framework's (`stock-leftover`) with the Excel's columns as before,
+ * and the designed PDF's counts, what was left most and subtotals by location.
  */
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -15,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { dmy } from '@/lib/reportExport';
 import { cn } from '@/lib/utils';
-import { ReportExportBar, ReportTable, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { ReportExportBar, ReportTable, useReportExportScope, type ReportChart, type ReportKpi, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { formatQty, locationLabel } from '@/lib/stockLive';
 import { fetchLeftover, stockKeys, type LeftoverRow } from '@/lib/stockLiveApi';
 import { useStockUrlParams } from './quick-stock-tab';
@@ -70,6 +71,29 @@ export function LeftoverTab({ scope }: { scope: { companyId?: string | null; sho
     ],
   };
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the resets and their lines, the
+  // shortfalls, what was left most (a product's every location and day summed), subtotals by location.
+  const leftByProduct = new Map<string, number>();
+  for (const r of rows) {
+    const name = r.productName ?? '';
+    if (name) leftByProduct.set(name, (leftByProduct.get(name) ?? 0) + r.leftover);
+  }
+  const mostLeft = [...leftByProduct].sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const exportChart: ReportChart | null = mostLeft.length
+    ? {
+        type: 'hbar',
+        title: 'נשאר',
+        labels: mostLeft.map(([name]) => name),
+        series: [{ name: 'נשאר', values: mostLeft.map(([, n]) => n) }],
+        kind: 'number',
+      }
+    : null;
+  const exportKpis: ReportKpi[] = [
+    { key: 'resets', label: 'איפוסים', value: new Set(rows.map((r) => r.resetId)).size, kind: 'count', icon: 'calendar' },
+    { key: 'lines', label: 'מוצרים שנספרו', value: rows.length, kind: 'count', icon: 'box' },
+    { key: 'shortfalls', label: 'חוסר במחסן', value: rows.filter((r) => (r.shortfall ?? 0) > 0).length, kind: 'count', icon: 'alert', better: 'down' },
+  ];
+
   return (
     <section className="space-y-3">
       <label className="block space-y-1 text-sm">
@@ -86,6 +110,11 @@ export function LeftoverTab({ scope }: { scope: { companyId?: string | null; sho
         companyId={exportScope.companyId}
         companyName={exportScope.companyName}
         disabled={rows.length === 0}
+        reportType="stock.leftover"
+        kpis={exportKpis}
+        chart={exportChart}
+        insightKeys={{ label: 'product', value: 'leftover' }}
+        groupBy={['location']}
       />
       {data.isPending ? (
         <div className="h-40 animate-pulse rounded-2xl bg-muted" />

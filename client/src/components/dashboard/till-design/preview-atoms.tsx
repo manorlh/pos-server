@@ -138,12 +138,12 @@ export function MoreChip({ m, n }: { m: PreviewModel; n: number }) {
   );
 }
 
-/** A line's status with words: "חדש" / "שודר" / "ממתין" / "נכשל · נסה שוב". */
+/** A line's status with words: "חדש" / "שוגר" / "ממתין" / "נכשל · נסה שוב". */
 export function StatusChip({ m, status }: { m: PreviewModel; status: LineStatus }) {
   const t = m.t;
   const look: Record<LineStatus, { fg: string; bg: string; border: string; label: string }> = {
     new: { fg: t.accent, bg: t.tint, border: t.tint, label: m.text('newSuffix') },
-    sent: { fg: t.ink2, bg: t.surface, border: t.border, label: 'שודר' },
+    sent: { fg: t.ink2, bg: t.surface, border: t.border, label: 'שוגר' },
     pending: { fg: t.amberInk, bg: t.amberBg, border: t.amberBg, label: 'ממתין' },
     failed: { fg: t.red, bg: t.redBg, border: t.redBg, label: 'נכשל · נסה שוב' },
   };

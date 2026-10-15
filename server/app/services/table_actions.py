@@ -22,7 +22,10 @@ own deadline (app/services/device_commands.py `DEADLINE_ACTIONS`): a late pull n
 
 "הדפס חשבון" is always a command (§6.1): the bill — promotions, the table's discount, parts paid, payments
 given back, the suggested tip — is the till's own reckoning. In the cloud mode it goes to the till that
-prints on the printer chosen (`bill_printers`, §6.4).
+prints on the printer chosen (`bill_printers`, §6.4). "בקופה אחרת" (P:/specs/bill-print-other-till.md §7):
+the command goes to the till that holds the table (`bill_owner`) with `printOn` — the till whose printer
+prints it; the owner renders the bill and relays it there, LAN first, else the cloud relay (a `document`
+job, app/services/remote_print.py). The tills offered: `remote_print.dashboard_targets`.
 
 **A till inside the table** (§4): the actions that change it are refused (409 `table_in_use`, with the
 till's name); printing the bill, a kitchen reprint and releasing the lock stay. In the LAN mode the host
@@ -83,6 +86,8 @@ REFUSALS = (
     "table_in_use", "table_not_open", "order_changed", "not_host", "payment_in_progress",
     "course_not_held", "course_already_out", "nothing_sent", "waiter_not_found", "target_not_free",
     "target_not_found", "source_not_open", "merge_basket_discount", "printer_not_found",
+    # "הדפס חשבון" on another till (bill-print-other-till §7): it did not print there, and nothing printed it.
+    "print_target_unavailable",
 )
 #: A command sent on to the new host carries the first one's id here: it is never sent on again.
 RETARGET_OF = "retargetOf"
@@ -570,7 +575,20 @@ def _set_waiter(db, user, shop, table, order, body, now) -> Dict[str, Any]:
     _touch(order, now)
     db.flush()
     _record(db, "waiter", table, order, user, now, fromName=before, toName=name, toPosUserId=str(pu.id))
-    return {"waiterName": name}
+    out: Dict[str, Any] = {"waiterName": name}
+    if getattr(body, "also_assignment", False):
+        # "גם שיוך" (P:/specs/table-waiter-assignment.md §4): the table's own assignment moves with it.
+        from app.services import table_assignments as TAS
+
+        ctx = TAS._Ctx.of(db, shop, now)
+        TAS.sweep(ctx)
+        who = TAS.Who(name=_name(user), user_id=getattr(user, "id", None), source="dashboard")
+        others = [r for r in TAS.live_rows(ctx) if r.table_id == table.id and r.pos_user_id != pu.id]
+        TAS._release(others, "replaced", now, who.name)
+        TAS.assign(ctx, table, None, pu, who)
+        db.flush()
+        out["assignment"] = True
+    return out
 
 
 def _other_table(db: Session, shop: Shop, table_id: Any) -> DiningTable:
@@ -802,11 +820,51 @@ def bill_printers(db: Session, shop: Shop, table: DiningTable, order: TableOrder
     return out
 
 
+def bill_owner(db: Session, order: TableOrder, table: DiningTable, route: Route) -> Optional[POSMachine]:
+    """
+    The till that holds the table — it reckons the bill and, for "בקופה אחרת" (§7 of bill-print-other-till),
+    relays it: the LAN host or the single till; in the cloud mode the till that worked the table, when its
+    build takes the table commands. None: nobody (blocked).
+    """
+    from app.services import table_void_tickets as VT
+
+    if route.mode in (LAN, SINGLE):
+        return route.target
+    if route.mode != CLOUD:
+        return None
+    till = VT.routing_machine(db, order, table, order.updated_machine_id)
+    return till if till is not None and till.is_active and capable(till) else None
+
+
+def bill_targets(db: Session, shop: Shop, table: DiningTable, order: TableOrder, route: Optional[Route] = None) -> Dict[str, Any]:
+    """"הדפס חשבון" in another till (`remote_print.dashboard_targets`, for the till that holds the table)."""
+    from app.services import remote_print as RP
+
+    route = route or route_for(db, shop, order)
+    return RP.dashboard_targets(db, shop, bill_owner(db, order, table, route))
+
+
+def _print_on_params(db: Session, owner: POSMachine, target: POSMachine, paper: Optional[int]) -> Dict[str, Any]:
+    """`printOn` and how the owner reaches that till: its name, its paper, its LAN address (else the cloud)."""
+    from app.services import remote_print as RP
+    from app.services.exception_alerts.watch import till_label
+
+    return {
+        "printOn": str(target.id),
+        "printOnName": till_label(target),
+        "printOnPaperWidth": paper,
+        "printOnLan": RP.lan_of(db, target, owner),
+    }
+
+
 def _print_bill(db, user, shop, table, order, route, body, now) -> Dict[str, Any]:
+    from app.services import remote_print as RP
     from app.services.printers import machine_label
 
     if route.mode == BLOCKED:
         raise _conflict("remote_action_blocked", why=route.why, host=machine_label(route.target))
+    if getattr(body, "print_on", None) is not None:
+        return _print_bill_on(db, user, shop, table, order, route, body, now)
     printer_id = getattr(body, "printer_id", None)
     machine_id = getattr(body, "machine_id", None)
     choices = bill_printers(db, shop, table, order, route)
@@ -825,7 +883,43 @@ def _print_bill(db, user, shop, table, order, route, body, now) -> Dict[str, Any
     target = db.get(POSMachine, uuid.UUID(chosen["machineId"]))
     if route.mode == CLOUD:
         route = Route(CLOUD, target, None, timeout_for(db, target))
-    params = {"printerId": chosen["printerId"], "printerName": chosen["name"]}
+    params: Dict[str, Any] = {"printerId": chosen["printerId"], "printerName": chosen["name"]}
+    if chosen["printerId"] is not None:
+        from app.models.printers import KitchenPrinter
+
+        printer = db.get(KitchenPrinter, uuid.UUID(chosen["printerId"]))
+        host = db.get(POSMachine, printer.host_machine_id) if printer is not None and printer.host_machine_id else None
+        if printer is not None and RP.is_document_printer(printer) and host is not None and host.id != target.id:
+            # "המדפסת של <קופה>": the till that holds the table relays it to that printer's host.
+            params.update(_print_on_params(db, target, host, printer.paper_width))
+    return _request(db, user, table, order, route, "print-bill", params, body, now)
+
+
+def _print_bill_on(db, user, shop, table, order, route, body, now) -> Dict[str, Any]:
+    """
+    "הדפס חשבון" in another till (bill-print-other-till §7): a command for the till that holds the table,
+    with `printOn`. 409 `remote_action_blocked` (nobody holds it that takes the command), `remote_print_off`
+    (its `remotePrintEnabled` / `remotePrintFromDashboard`, or its build: `why`), `print_target_not_found`
+    (not one of the tills offered), `print_target_needs_update` (that till's build cannot print it).
+    """
+    from app.services import remote_print as RP
+
+    owner = bill_owner(db, order, table, route)
+    if owner is None:
+        raise _conflict("remote_action_blocked", why="no_capability", host=None)
+    info = RP.dashboard_targets(db, shop, owner)
+    if not info["available"]:
+        raise _conflict("remote_print_off", why=info["why"])
+    wanted = str(getattr(body, "print_on", None))
+    chosen = next((t for t in info["targets"] if t["machineId"] == wanted), None)
+    if chosen is None:
+        raise _conflict("print_target_not_found")
+    if not chosen["available"]:
+        raise _conflict("print_target_needs_update", till=chosen["label"])
+    target = db.get(POSMachine, uuid.UUID(chosen["machineId"]))
+    if route.mode == CLOUD:
+        route = Route(CLOUD, owner, None, timeout_for(db, owner))
+    params = {"printerId": None, "printerName": None, **_print_on_params(db, owner, target, chosen["paperWidth"])}
     return _request(db, user, table, order, route, "print-bill", params, body, now)
 
 
@@ -864,7 +958,11 @@ def _command_params(db: Session, shop: Shop, order: TableOrder, action: str, bod
         pu = waiter_of(db, shop, getattr(body, "waiter_pos_user_id", None))
         if pu is None:
             raise _conflict("waiter_not_found")
-        return {"waiter": {"posUserId": str(pu.id), "name": pos_user_name(pu)}}
+        out = {"waiter": {"posUserId": str(pu.id), "name": pos_user_name(pu)}}
+        if getattr(body, "also_assignment", False):
+            # "גם שיוך" (P:/specs/table-waiter-assignment.md §4): the host moves its copy's assignment too.
+            out["alsoAssignment"] = True
+        return out
     if action == "move":
         target = _other_table(db, shop, getattr(body, "target_table_id", None))
         return {"targetTableId": str(target.id), "targetLabel": table_title(target.number, target.name)}
@@ -957,6 +1055,8 @@ def requested_out(db: Session, row: DeviceCommand, route: Optional[Route] = None
         "hostName": machine_label(host),
         "timeoutSeconds": int((expires - created).total_seconds()) if expires and created else (route.timeout if route else 20),
         "expiresAt": DC._iso(row.expires_at),
+        # "הדפס חשבון" in another till: where it is to print ("נשלח להדפסה ב<קופה>").
+        "printOnName": params.get("printOnName"),
     }
 
 
@@ -990,13 +1090,14 @@ def clean_answer(command: str, ack_status: str, detail: Optional[str], raw: Any)
     if ack_status != "done":
         return detail, None
     out = {}
-    for key in ("printerName", "toTableId", "toLabel"):
+    # `printOn`, `via` (lan | cloud), `jobId`, `fallback` (local), `printed`: "הדפס חשבון" in another till.
+    for key in ("printerName", "toTableId", "toLabel", "printOn", "via", "jobId", "fallback"):
         if _text(raw.get(key)):
             out[key] = _text(raw.get(key))
     for key in ("printers", "jobIds", "mergedOrderIds"):
         if key in raw:
             out[key] = _texts(raw.get(key))
-    for key in ("marked", "kds"):
+    for key in ("marked", "kds", "printed"):
         if isinstance(raw.get(key), bool):
             out[key] = raw[key]
     for key in ("lines", "version"):
@@ -1079,6 +1180,7 @@ def view(db: Session, row: DeviceCommand, now: datetime) -> Dict[str, Any]:
         "result": result,
         "hostName": machine_label(db.get(POSMachine, current.machine_id)),
         "tableLabel": (current.params or {}).get("tableLabel"),
+        "printOnName": (current.params or {}).get("printOnName"),
     })
     return out
 

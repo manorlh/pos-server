@@ -11,6 +11,7 @@
  * (sort, columns, phone cards, totals) and each has the framework's export bar
  * (`prepaid-vouchers-reports.<report>`): Excel, PDF, print, export columns, with the vouchers'
  * filters — and the report's own (a kind of exception, "רק פריטים חסומים") — in words in the header.
+ * The designed PDF's cards are each report's tiles (the exceptions: how many, by kind as a chart).
  */
 
 import { useState } from 'react';
@@ -38,6 +39,9 @@ import {
   ReportExportBar,
   ReportTable,
   useReportExportScope,
+  type ReportChart,
+  type ReportExportBarProps,
+  type ReportKpi,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -81,15 +85,17 @@ function Loading() {
 /**
  * The framework's export bar for one of these reports: the vouchers' filters in words (and the
  * report's own [extraLines]); the redemption days as the range, unless [withRange] is false.
+ * The designed PDF (P:\specs\reports-designed-pdf.md §7): the report's tiles as its cards
+ * ([kpis]), and its [chart] or [chartFrom] the main table.
  */
-function ExportBar({ kind, filters, tables, extraLines = [], withRange = true, disabled }: {
+function ExportBar({ kind, filters, tables, extraLines = [], withRange = true, disabled, kpis, chart, chartFrom, insightKeys }: {
   kind: ReportKind;
   filters: VoucherFilters;
   tables: ReportTableSpec<unknown>[];
   extraLines?: ReportFilterLine[];
   withRange?: boolean;
   disabled?: boolean;
-}) {
+} & Pick<ReportExportBarProps, 'kpis' | 'chart' | 'chartFrom' | 'insightKeys'>) {
   const t = useTranslations('prepaidVouchers.extraReports');
   const scope = useReportExportScope();
   const lines = useVoucherFilterLines(filters, withRange ? ['from', 'to'] : []);
@@ -106,6 +112,11 @@ function ExportBar({ kind, filters, tables, extraLines = [], withRange = true, d
       companyId={scope.companyId}
       companyName={scope.companyName}
       disabled={disabled}
+      reportType="prepaid-vouchers.extras"
+      kpis={kpis}
+      chart={chart}
+      chartFrom={chartFrom}
+      insightKeys={insightKeys}
     />
   );
 }
@@ -180,10 +191,20 @@ function SettlementReportView({ filters }: { filters: VoucherFilters }) {
       { key: 'productionPrice', header: ts('productionPrice'), kind: 'money', value: (b) => shekelsOf(b.productionPriceAgorot) },
     ],
   };
+  // The tiles above the tables.
+  const kpis: ReportKpi[] = d
+    ? [
+        { key: 'chargeable', label: ts('chargeable'), value: d.totals.chargeable, kind: 'count', icon: 'voucher' },
+        { key: 'amount', label: ts('amount'), value: shekelsOf(d.totals.amountAgorot), kind: 'money', icon: 'sales' },
+        { key: 'invoices', label: ts('gap.invoices'), value: shekelsOf(d.totals.invoicesAmountAgorot), kind: 'money', icon: 'receipt' },
+        { key: 'uninvoiced', label: ts('uninvoiced'), value: d.totals.uninvoiced, kind: 'count', icon: 'alert', better: 'down' },
+      ]
+    : [];
 
   return (
     <div className="space-y-3">
-      <ExportBar kind="settlement" filters={filters} tables={[agreements, unassigned] as ReportTableSpec<unknown>[]} disabled={!d} />
+      <ExportBar kind="settlement" filters={filters} tables={[agreements, unassigned] as ReportTableSpec<unknown>[]} disabled={!d}
+        kpis={kpis} chartFrom={{ label: 'name', value: 'amount', type: 'hbar' }} insightKeys={{ label: 'name', value: 'amount', count: 'chargeable' }} />
       {r.isPending ? <Loading /> : r.isError ? <p className="text-sm text-destructive">{errorText(r.error)}</p> : (
         <>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -275,10 +296,25 @@ function ExceptionsReportView({ filters }: { filters: VoucherFilters }) {
     ],
   };
 
+  // How many, and by kind as the chips count them.
+  const shownCount = only ? (r.data?.counts[only] ?? rows.length) : (r.data?.total ?? rows.length);
+  const kpis: ReportKpi[] = r.data ? [{ key: 'exceptions', label: t('kinds.exceptions'), value: shownCount, kind: 'count', icon: 'alert', better: 'down' }] : [];
+  const byKind = only ? chips.filter((c) => c.kind === only) : chips;
+  const chart: ReportChart | null = byKind.length
+    ? {
+        type: 'hbar',
+        title: t('exceptions.kind'),
+        labels: byKind.map((c) => kindText(c.kind)),
+        series: [{ name: t('kinds.exceptions'), values: byKind.map((c) => c.count) }],
+        kind: 'number',
+      }
+    : null;
+
   return (
     <div className="space-y-3">
       <ExportBar kind="exceptions" filters={filters} tables={[table] as ReportTableSpec<unknown>[]} disabled={!rows.length}
-        extraLines={only ? [{ label: t('exceptions.kind'), value: kindText(only) }] : []} />
+        extraLines={only ? [{ label: t('exceptions.kind'), value: kindText(only) }] : []}
+        kpis={kpis} chart={chart} insightKeys={{ label: 'kind', employee: 'employee' }} />
       {r.isPending ? <Loading /> : r.isError ? <p className="text-sm text-destructive">{errorText(r.error)}</p> : (
         <>
           <div className="flex flex-wrap gap-1.5 print:hidden">
@@ -355,9 +391,21 @@ function OverridesReportView({ filters }: { filters: VoucherFilters }) {
     ],
   };
 
+  // The tiles above the table (once the overrides are recorded).
+  const totals = r.data?.recorded ? r.data.totals : null;
+  const kpis: ReportKpi[] = totals
+    ? [
+        { key: 'units', label: t('overrides.units'), value: totals.units ?? rows.length, kind: 'count', icon: 'items' },
+        { key: 'reduction', label: t('overrides.reduction'), value: shekelsOf(totals.reductionAgorot ?? null), kind: 'money', icon: 'discount' },
+        { key: 'preset', label: t('overrides.preset'), value: totals.preset ?? 0, kind: 'count', icon: 'gift' },
+        { key: 'approved', label: t('overrides.approved'), value: totals.approved ?? 0, kind: 'count', icon: 'user' },
+      ]
+    : [];
+
   return (
     <div className="space-y-3">
-      <ExportBar kind="overrides" filters={filters} tables={[table] as ReportTableSpec<unknown>[]} disabled={!rows.length} />
+      <ExportBar kind="overrides" filters={filters} tables={[table] as ReportTableSpec<unknown>[]} disabled={!rows.length}
+        kpis={kpis} insightKeys={{ label: 'product', value: 'reduction', employee: 'employee' }} />
       {r.isPending ? <Loading /> : r.isError ? <p className="text-sm text-destructive">{errorText(r.error)}</p> : !r.data.recorded ? (
         <div className="rounded-xl border border-dashed p-6 text-center">
           <p className="text-sm font-medium">{t('overrides.notRecorded')}</p>
@@ -477,12 +525,23 @@ function CatalogReportView({ filters }: { filters: VoucherFilters }) {
       { key: 'policy', header: t('overrides.policy'), exportOnly: true, value: (x) => policyText(x.policyMode) },
     ],
   };
+  // The tiles above the table.
+  const totals = r.data?.totals;
+  const kpis: ReportKpi[] = totals
+    ? [
+        { key: 'batches', label: t('catalog.batches'), value: totals.batches, kind: 'count', icon: 'voucher' },
+        { key: 'entries', label: t('catalog.entries'), value: totals.entries, kind: 'count', icon: 'items' },
+        { key: 'blocked', label: t('catalog.blockedN'), value: totals.blocked, kind: 'count', icon: 'void', better: 'down' },
+        { key: 'noDiscount', label: t('catalog.noDiscountN'), value: totals.noDiscount, kind: 'count', icon: 'discount' },
+      ]
+    : [];
 
   return (
     <div className="space-y-3">
       {/* As before: the catalog is the batches' eligibility now — no redemption range. */}
       <ExportBar kind="catalog" filters={filters} tables={[table] as ReportTableSpec<unknown>[]} disabled={!rows.length} withRange={false}
-        extraLines={blockedOnly ? [{ label: t('catalog.status'), value: t('catalog.blockedOnly') }] : []} />
+        extraLines={blockedOnly ? [{ label: t('catalog.status'), value: t('catalog.blockedOnly') }] : []}
+        kpis={kpis} insightKeys={{ label: 'name', value: 'quantity' }} />
       {r.isPending ? <Loading /> : r.isError ? <p className="text-sm text-destructive">{errorText(r.error)}</p> : (
         <>
           <div className="grid gap-2 sm:grid-cols-4">

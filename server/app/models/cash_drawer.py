@@ -40,7 +40,7 @@ class CashDrawerEvent(Base):
     #: drawer | permission
     category = Column(String(16), nullable=False, default="drawer")
     #: CASH_SALE | MANUAL | CHANGE | CASH_IN | CASH_OUT | DEPOSIT | COUNT | TEST | REFUND |
-    #: AFTER_CLOSE | PERMISSION
+    #: AFTER_CLOSE | PERMISSION | REMOTE_SALE | REMOTE_MANUAL (another till's drawer, opened from here)
     event_type = Column(String(24), nullable=False)
     permission = Column(String(64), nullable=True)
     #: allow | approval | deny — what the role said.

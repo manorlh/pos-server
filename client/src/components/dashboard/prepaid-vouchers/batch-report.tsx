@@ -9,7 +9,8 @@
  * On the report framework (P:\specs\reports-upgrade.md §5): the tables are `ReportTable`s (sort,
  * columns, phone cards, the days' totals) and the export bar is the framework's
  * (`prepaid-vouchers-batch`): Excel — the usage and the summary first, then every table, the hours
- * too — the goods' PDF, print, and the export columns.
+ * too — the goods' PDF (designed: the vouchers by state as its cards, the hours as its chart),
+ * print, and the export columns.
  */
 
 import { useTranslations } from 'next-intl';
@@ -31,7 +32,9 @@ import {
   ReportExportBar,
   ReportTable,
   useReportExportScope,
+  type ReportChart,
   type ReportColumn,
+  type ReportKpi,
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
@@ -217,6 +220,25 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
   const shops = groupTable(t, 'shops', t('byShop'), r.byShop, t('col.shop'), labels.units, labels.unknownShop);
   const tills = groupTable(t, 'tills', t('byTill'), r.byTill, t('col.till'), labels.units, labels.unknownTill, true);
   const employees = groupTable(t, 'employees', t('byEmployee'), r.byEmployee, t('col.employee'), labels.units, labels.unknownEmployee);
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the vouchers by state and the
+  // redemptions as its cards, the goods as its table, the hours' bars as its chart.
+  const exportKpis: ReportKpi[] = [
+    { key: 'vouchers', label: t('vouchers.total'), value: r.vouchers.total, kind: 'count', icon: 'voucher' },
+    { key: 'active', label: t('vouchers.active'), value: r.vouchers.active, kind: 'count', icon: 'gift' },
+    { key: 'partiallyUsed', label: t('vouchers.partiallyUsed'), value: r.vouchers.partiallyUsed, kind: 'count', icon: 'chart' },
+    { key: 'used', label: t('vouchers.used'), value: r.vouchers.used, kind: 'count', icon: 'star' },
+    { key: 'cancelled', label: t('vouchers.cancelled'), value: r.vouchers.cancelled, kind: 'count', icon: 'void' },
+    { key: 'redemptions', label: t('col.redemptions'), value: r.totals.redemptions, kind: 'count', icon: 'receipt' },
+  ];
+  const exportChart: ReportChart | null = r.byHour.length
+    ? {
+        type: 'bar',
+        title: t('byHour'),
+        labels: r.byHour.map((h) => formatHour(h.hour)),
+        series: [{ name: labels.units, values: r.byHour.map((h) => h.units) }],
+        kind: 'number',
+      }
+    : null;
 
   return (
     <div className="space-y-4">
@@ -243,6 +265,10 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
         filterLines={[]}
         companyId={batch.companyId || scope.companyId}
         companyName={batch.companyName ?? scope.companyName}
+        reportType="prepaid-vouchers.batch"
+        kpis={exportKpis}
+        chart={exportChart}
+        insightKeys={{ label: 'product', value: 'taken' }}
       />
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">

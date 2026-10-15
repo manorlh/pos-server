@@ -7,16 +7,23 @@
  * with the usual window and shop / till scope (as the other menu reports).
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatQuantity } from '@/lib/format';
+import type { ReportWindowParams } from '@/lib/api';
+import { previousWindow } from '@/lib/designedReport';
+import { formatCurrency, formatHour, formatQuantity } from '@/lib/format';
 import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
 import { fetchMenuSalesReport, type MenuSalesReport, type MenuSalesRow } from '@/lib/catalogMenusApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  type PreviousPeriod,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { ReportErrorState, ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -58,19 +65,30 @@ export function ReportTab() {
           <Skeleton className="h-64 w-full" />
         ) : report.isError ? (
           <ReportErrorState message={errorText(report.error)} />
-        ) : report.data ? (
-          <ReportView data={report.data} />
+        ) : report.data && params ? (
+          <ReportView data={report.data} params={params} />
         ) : null}
       </ScopeGate>
     </div>
   );
 }
 
-function ReportView({ data }: { data: MenuSalesReport }) {
+/** The report's figures by KPI key (the footer's totals). */
+function menuKpis(data: MenuSalesReport) {
+  return {
+    net: data.totals.net,
+    gross: data.totals.gross,
+    units: data.totals.units,
+    discounts: data.rows.reduce((s, r) => s + r.discounts, 0),
+    refunds: data.totals.refunds,
+  };
+}
+
+function ReportView({ data, params }: { data: MenuSalesReport; params: ReportWindowParams }) {
   const t = useTranslations('catalogMenus.report');
   const menus = useCatalogMenus();
   const colors = useMemo(() => new Map((menus.data?.menus ?? []).map((m) => [m.id, m.color])), [menus.data]);
-  const nameOf = (r: MenuSalesRow) => (r.menuId === null ? t('noMenu') : (r.menuName ?? t('deleted')));
+  const nameOf = useCallback((r: MenuSalesRow) => (r.menuId === null ? t('noMenu') : (r.menuName ?? t('deleted'))), [t]);
   const share = (r: { menuPricedGross: number; gross: number }) =>
     r.gross > 0 ? `${Math.round((r.menuPricedGross / r.gross) * 100)}%` : '—';
   const totals = useMemo(
@@ -87,50 +105,62 @@ function ReportView({ data }: { data: MenuSalesReport }) {
     [data.rows],
   );
 
+  /** The table as the export writes it, with the footer's totals. */
+  const exportTable = useMemo<ReportTableSpec<MenuSalesRow>>(
+    () => ({
+      id: 'main',
+      title: t('title'),
+      columns: [
+        { key: 'menu', header: t('col.menu'), value: nameOf, required: true },
+        { key: 'unitsSold', header: t('col.unitsSold'), kind: 'number', value: (r) => r.unitsSold, total: data.totals.units },
+        { key: 'unitsRefunded', header: t('col.unitsRefunded'), kind: 'number', value: (r) => r.unitsRefunded, total: totals.unitsRefunded },
+        { key: 'gross', header: t('col.gross'), kind: 'money', value: (r) => r.gross, total: data.totals.gross },
+        { key: 'discounts', header: t('col.discounts'), kind: 'money', value: (r) => r.discounts, total: totals.discounts },
+        { key: 'refunds', header: t('col.refunds'), kind: 'money', value: (r) => r.refunds, total: data.totals.refunds },
+        { key: 'net', header: t('col.net'), kind: 'money', value: (r) => r.net, total: data.totals.net },
+        { key: 'menuPricedUnits', header: t('col.menuPricedUnits'), kind: 'number', value: (r) => r.menuPricedUnits, total: totals.menuPricedUnits },
+        { key: 'menuPricedGross', header: t('col.menuPricedGross'), kind: 'money', value: (r) => r.menuPricedGross, total: totals.menuPricedGross },
+      ],
+      rows: data.rows,
+      rowKey: (r, i) => r.menuId ?? `none-${i}`,
+      totalsLabel: t('total'),
+    }),
+    [data, nameOf, t, totals],
+  );
+  const figures = menuKpis(data);
+  const exportKpis: ReportKpi[] = [
+    { key: 'net', label: t('col.net'), value: figures.net, kind: 'money', icon: 'sales' },
+    { key: 'gross', label: t('col.gross'), value: figures.gross, kind: 'money', icon: 'receipt' },
+    { key: 'units', label: t('col.unitsSold'), value: figures.units, kind: 'count', icon: 'items' },
+    { key: 'discounts', label: t('col.discounts'), value: figures.discounts, kind: 'money', icon: 'discount' },
+    { key: 'refunds', label: t('col.refunds'), value: figures.refunds, kind: 'money', icon: 'refund' },
+  ];
+  const { fromHour, toHour } = data.window;
+  const hours =
+    fromHour != null && toHour != null && !(fromHour === 0 && toHour === 24)
+      ? `${formatHour(fromHour)}–${formatHour(toHour)}`
+      : null;
+  /** The same report (scope and hours) for the period before. */
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = previousWindow(params.from, params.to);
+    if (!before) return null;
+    const prev = await fetchMenuSalesReport({ ...params, ...before });
+    return { rows: prev.rows, kpis: menuKpis(prev), ...before };
+  };
+
   return (
     <div className="space-y-4">
-      <ReportExportToolbar
+      <StandaloneExportBar
+        reportKey="menu-sales"
+        reportType="menus"
         title={t('title')}
+        tables={[exportTable as ReportTableSpec<unknown>]}
         from={data.window.from}
         to={data.window.to}
-        getSheets={() => [
-          {
-            name: t('title'),
-            columns: [
-              { header: t('col.menu') },
-              { header: t('col.unitsSold'), kind: 'number' as const },
-              { header: t('col.unitsRefunded'), kind: 'number' as const },
-              { header: t('col.gross'), kind: 'money' as const },
-              { header: t('col.discounts'), kind: 'money' as const },
-              { header: t('col.refunds'), kind: 'money' as const },
-              { header: t('col.net'), kind: 'money' as const },
-              { header: t('col.menuPricedUnits'), kind: 'number' as const },
-              { header: t('col.menuPricedGross'), kind: 'money' as const },
-            ],
-            rows: data.rows.map((r) => [
-              nameOf(r),
-              r.unitsSold,
-              r.unitsRefunded,
-              r.gross,
-              r.discounts,
-              r.refunds,
-              r.net,
-              r.menuPricedUnits,
-              r.menuPricedGross,
-            ]),
-            totals: [
-              t('total'),
-              data.totals.units,
-              totals.unitsRefunded,
-              data.totals.gross,
-              totals.discounts,
-              data.totals.refunds,
-              data.totals.net,
-              totals.menuPricedUnits,
-              totals.menuPricedGross,
-            ],
-          },
-        ]}
+        hours={hours}
+        kpis={exportKpis}
+        chartFrom={{ label: 'menu', value: 'net' }}
+        previous={previous}
       />
       <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
       {data.rows.length === 0 ? (

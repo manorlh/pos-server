@@ -30,6 +30,7 @@ import { fetchCashierSalesReport } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatQuantity } from '@/lib/format';
 import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import { previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import type { CashierSalesReport, CashierSalesRow } from '@/lib/types';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
 import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
@@ -83,6 +84,18 @@ function TenderBar({ row, className = '' }: { row: CashierSalesRow; className?: 
       <div className="bg-amber-500" style={{ width: pct(row.otherNet) }} />
     </div>
   );
+}
+
+/** The cards' figures, as the designed PDF shows and compares them, by KPI key. */
+function totalsFigures(tot: CashierSalesRow): Record<string, number> {
+  return {
+    net: tot.net,
+    gross: tot.gross,
+    refunds: tot.refunds,
+    transactions: tot.documentCount,
+    avgTicket: tot.averageBasket,
+    tips: tot.tips,
+  };
 }
 
 function cashierLabel(row: CashierSalesRow, unknownLabel: string): string {
@@ -194,6 +207,26 @@ export default function CashierSalesReportPage() {
     };
   }, [data, t]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the cards, a bar per cashier, and
+  // the cashiers of the period before.
+  const figures = data ? totalsFigures(data.totals) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'net', label: t('totals.net'), value: figures.net, kind: 'money', icon: 'sales' },
+        { key: 'gross', label: t('totals.gross'), value: figures.gross, kind: 'money' },
+        { key: 'refunds', label: t('totals.refunds'), value: figures.refunds, kind: 'money', icon: 'refund' },
+        { key: 'transactions', label: t('totals.documents'), value: figures.transactions, kind: 'count', icon: 'receipt' },
+        { key: 'avgTicket', label: t('totals.averageBasket'), value: figures.avgTicket, kind: 'money', icon: 'basket' },
+        { key: 'tips', label: t('col.tips'), value: figures.tips, kind: 'money', icon: 'tip' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchCashierSalesReport({ ...params, ...w });
+    return { rows: before.rows, kpis: totalsFigures(before.totals), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="cashier-sales"
@@ -204,7 +237,19 @@ export default function CashierSalesReportPage() {
       bar={{ shopId: effective.shopId }}
       query={reportQueryState(query)}
       prompt={t('selectFilters')}
-      export={data ? { tables: [table], from: data.window.from, to: data.window.to } : null}
+      export={
+        data
+          ? {
+              tables: [table],
+              from: data.window.from,
+              to: data.window.to,
+              reportType: 'cashier-sales',
+              kpis,
+              chartFrom: { label: 'cashier', value: 'net', type: 'hbar' },
+              previous,
+            }
+          : null
+      }
     >
       {data ? (
         <>

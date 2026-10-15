@@ -35,7 +35,7 @@ const golden = JSON.parse(
   readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'till_menu_items_golden.json'), 'utf8'),
 ) as { key: string; label: string; also: string | null; critical: boolean; warning: string | null; report: boolean }[];
 
-const REPORTS = ['recent', 'shift_history', 'till_z_history', 'product_sales', 'workers', 'tips', 'tables_reports', 'z_reports'];
+const REPORTS = ['recent', 'shift_history', 'till_z_history', 'product_sales', 'workers', 'tips', 'tables_reports', 'z_reports', 'shop_x'];
 
 /** The keys of the preview's rows, a folder as `folder:<its keys>`. */
 function shown(groups: PreviewGroup[]): string[] {
@@ -59,10 +59,10 @@ describe('the items', () => {
     );
   });
 
-  it('three critical, 41 in all, each key once, every group in use', () => {
-    assert.equal(TILL_MENU_ITEMS.length, 41);
-    assert.equal(new Set(TILL_MENU_ITEMS.map((i) => i.key)).size, 41);
-    assert.deepEqual(TILL_MENU_ITEMS.slice(-3).map((i) => i.key), ['training', 'quick_order', 'signed_in_users']);
+  it('three critical, 42 in all, each key once, every group in use', () => {
+    assert.equal(TILL_MENU_ITEMS.length, 42);
+    assert.equal(new Set(TILL_MENU_ITEMS.map((i) => i.key)).size, 42);
+    assert.deepEqual(TILL_MENU_ITEMS.slice(-4).map((i) => i.key), ['training', 'quick_order', 'signed_in_users', 'shop_x']);
     assert.deepEqual(TILL_MENU_ITEMS.filter((i) => i.critical).map((i) => i.key), ['shift_close', 'till_z', 'settings']);
     assert.deepEqual(TILL_MENU_ITEMS.filter((i) => i.report).map((i) => i.key), REPORTS);
     for (const g of MENU_GROUPS) assert.ok(TILL_MENU_ITEMS.some((i) => i.group === g.id), g.id);
@@ -158,7 +158,7 @@ describe('the preview', () => {
     assert.deepEqual(groups.map((g) => g.id), MENU_GROUPS.map((g) => g.id));
     const keys = shown(groups);
     assert.ok(keys.includes(`folder:${REPORTS.join('+')}`));
-    assert.equal(keys.filter((k) => !k.startsWith('folder:')).length, 41 - REPORTS.length);
+    assert.equal(keys.filter((k) => !k.startsWith('folder:')).length, 42 - REPORTS.length);
     assert.equal(keys.indexOf('history') + 1, keys.indexOf(`folder:${REPORTS.join('+')}`));
   });
 
@@ -171,7 +171,7 @@ describe('the preview', () => {
 
   it('the folder keeps what is left of the reports, and goes with the last of them', () => {
     const some = shown(menuPreview(['recent', 'tips']));
-    assert.ok(some.includes('folder:shift_history+till_z_history+product_sales+workers+tables_reports+z_reports'));
+    assert.ok(some.includes('folder:shift_history+till_z_history+product_sales+workers+tables_reports+z_reports+shop_x'));
     const none = shown(menuPreview(REPORTS));
     assert.ok(!none.some((k) => k.startsWith('folder:')));
     assert.ok(none.includes('history'));

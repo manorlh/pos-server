@@ -8,6 +8,14 @@ import type { Sketch } from './tableSketch';
 import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
 import type { RemoteCancelRequested, RemoteCancelStatus, TableCancelRoute } from './remoteTableCancel';
 import type { ActionStatus, NextCourse } from './liveTables';
+import type {
+  AssignmentChange,
+  AssignmentConfig,
+  AssignmentRow,
+  AssignmentWaiter,
+  CopySource,
+  TableAssignmentRef,
+} from './tableAssignment';
 
 export type ZoneLayout = 'map' | 'grid';
 export type TableShape = 'round' | 'square' | 'rect';
@@ -92,6 +100,28 @@ export interface TableLock {
   posUserName: string | null;
   acquiredAt: string | null;
   expiresAt: string | null;
+  /** "שולחן תפוס" (P:/specs/table-waiter-assignment.md §8): since when this device holds it, its last word. */
+  since?: string | null;
+  lastSeenAt?: string | null;
+  /** "קופה 3 (בר)", "ק3", "ד.כ", "קופה 3 (בר) · דנה", "ק3 · ד.כ". */
+  deviceLabel?: string | null;
+  deviceShort?: string | null;
+  posUserInitials?: string | null;
+  holderText?: string | null;
+  holderShort?: string | null;
+}
+
+/** A lock that ran out unreleased: the device stopped reporting (§8 "המכשיר לא מדווח מאז…"). */
+export interface StaleLock {
+  machineId: string;
+  machineName: string | null;
+  posNumber: string | null;
+  posUserName: string | null;
+  since: string | null;
+  lastSeenAt: string | null;
+  expiredAt: string | null;
+  holderText?: string | null;
+  holderShort?: string | null;
 }
 
 export interface LiveTable extends DiningTable {
@@ -105,6 +135,11 @@ export interface LiveTable extends DiningTable {
   nextCourse?: NextCourse | null;
   /** "2 (דנה)": the till inside it. */
   heldBy?: string | null;
+  /** "פתוח כעת: קופה 3 · דנה" — with `tableBusyShowHolder` on (§8); null otherwise. */
+  holder?: { text: string | null; short: string | null; since: string | null } | null;
+  staleLock?: StaleLock | null;
+  /** "שיוך מלצרים" (§2): its own or its zone's waiters; null — assigned to nobody. */
+  assignment?: TableAssignmentRef | null;
   lock: TableLock | null;
   state: TableStateCode;
   minutesOpen?: number | null;
@@ -145,6 +180,38 @@ export interface TablesLive {
   voidTickets?: VoidTicket[];
   /** The till's seated-time marks: amber, then red ("חריגת זמן"). */
   thresholds?: { warnMinutes: number; alertMinutes: number };
+  /** "שיוך מלצרים" as the shop reads it: its parameters, the live rows, the waiters with their colours. */
+  assignment?: AssignmentConfig & { businessDay?: string | null; rows: AssignmentRow[]; waiters: AssignmentWaiter[] };
+  /** "שולחן תפוס": `tableBusyEntry`, `tableBusyShowHolder`. */
+  busy?: BusyConfig;
+}
+
+export interface BusyConfig {
+  entry: 'block' | 'request' | 'view' | 'off';
+  showHolder: boolean;
+}
+
+/** `GET /tables/assignments`: the assignment mode's data. */
+export interface TableAssignmentsView {
+  serverTime: string;
+  businessDay: string;
+  config: AssignmentConfig & { busy: BusyConfig };
+  assignments: AssignmentRow[];
+  waiters: AssignmentWaiter[];
+  /** tableId → its effective assignment. */
+  tables: Record<string, TableAssignmentRef>;
+  copySources: { yesterday: CopySource | null; previous_shift: CopySource | null };
+  /** `tables_manage` at edit: may change it. */
+  canManage: boolean;
+}
+
+/** `POST /tables/assignments` and `/copy`: the live rows after it. */
+export interface TableAssignmentsResult {
+  changed?: number;
+  copied?: number;
+  released?: number;
+  businessDay: string;
+  assignments: AssignmentRow[];
 }
 
 // ── "כרטיס שולחן" (P:/specs/live-tables-cloud.md §2, §6.8) ─────────────────────
@@ -242,6 +309,35 @@ export interface BillPrinterOption {
   tillName: string | null;
 }
 
+/**
+ * "הדפס חשבון" in another till (P:/specs/bill-print-other-till.md §7): the till that holds the table
+ * reckons the bill and relays it to the till chosen. `why` when not `available`: off (the holder's
+ * `remotePrintFromDashboard` / `remotePrintEnabled`), owner_needs_update, no_owner.
+ */
+export interface BillRemotePrint {
+  ownerMachineId: string | null;
+  ownerName: string | null;
+  available: boolean;
+  why: 'off' | 'owner_needs_update' | 'no_owner' | null;
+  targets: BillPrintTarget[];
+}
+
+export interface BillPrintTarget {
+  machineId: string;
+  tillName: string | null;
+  /** "קופה 2". */
+  label: string | null;
+  paperWidth: number | null;
+  /** False: its build cannot print it yet — shown, not offered ("נדרש עדכון גרסה"). */
+  available: boolean;
+  why: 'needs_update' | null;
+}
+
+export interface BillChoices {
+  printers: BillPrinterOption[];
+  remotePrint: BillRemotePrint | null;
+}
+
 export interface TableWaiter {
   posUserId: string;
   name: string | null;
@@ -259,11 +355,15 @@ export interface TableActionBody {
   roundId?: string;
   picks?: { roundId: string; lineId: string }[];
   waiterPosUserId?: string;
+  /** set-waiter: "גם שיוך" — the table's assignment moves to the new waiter too. */
+  alsoAssignment?: boolean;
   targetTableId?: string;
   sources?: { tableId: string; orderId?: string; expectedVersion?: number }[];
   text?: string | null;
   machineId?: string;
   printerId?: string | null;
+  /** print-bill on another till: the till whose printer prints it. */
+  printOn?: string;
 }
 
 /** 200 (the cloud's tables, done here) or 202 (sent to a till, followed by `fetchTableCommand`). */
@@ -276,6 +376,8 @@ export type TableActionResult =
       hostName: string | null;
       timeoutSeconds: number;
       expiresAt: string | null;
+      /** print-bill on another till: where it is to print. */
+      printOnName?: string | null;
     };
 
 /** The dashboard's cancel: the order, and how the kitchen was told. */
@@ -504,6 +606,18 @@ export const updateCancelReason = (
 export const fetchTablesLive = (shopId: string) =>
   api.get<TablesLive>('/tables/live', { params: { shopId } }).then((r) => r.data);
 
+/** "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §3): the mode's data. */
+export const fetchTableAssignments = (shopId: string) =>
+  api.get<TableAssignmentsView>('/tables/assignments', { params: { shopId } }).then((r) => r.data);
+
+/** The taps, in order (after "נקה הכל" when `clear`). `tables_manage` at edit. */
+export const postTableAssignments = (shopId: string, changes: AssignmentChange[], clear = false) =>
+  api.post<TableAssignmentsResult>('/tables/assignments', { shopId, changes, clear }).then((r) => r.data);
+
+/** "העתק שיוך מאתמול" / "מהמשמרת הקודמת" — 409 `nothing_to_copy`. */
+export const copyTableAssignments = (shopId: string, from: 'yesterday' | 'previous_shift') =>
+  api.post<TableAssignmentsResult>('/tables/assignments/copy', { shopId, from }).then((r) => r.data);
+
 /** The live view's realtime: a subscribe-only Ably token for the shop's tables signal (else poll). */
 export const fetchTablesLivePush = (shopId: string) =>
   api
@@ -516,7 +630,9 @@ export const fetchTableCard = (tableId: string) =>
   api.get<TableCard>(`/tables/tables/${tableId}/card`).then((r) => r.data);
 
 export const fetchBillPrinters = (tableId: string) =>
-  api.get<{ printers: BillPrinterOption[] }>(`/tables/tables/${tableId}/bill-printers`).then((r) => r.data.printers);
+  api
+    .get<BillChoices>(`/tables/tables/${tableId}/bill-printers`)
+    .then((r) => ({ printers: r.data.printers ?? [], remotePrint: r.data.remotePrint ?? null }));
 
 export const fetchTableWaiters = (shopId: string) =>
   api.get<{ waiters: TableWaiter[] }>('/tables/waiters', { params: { shopId } }).then((r) => r.data.waiters);

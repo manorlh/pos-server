@@ -25,6 +25,7 @@ import { AREA_NONE } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { exceptionScopeParams } from '@/lib/exceptionAlerts';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { parseReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
@@ -144,6 +145,12 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   table_restored: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
   // "תמיכה מרחוק": QuickSupport signed by another certificate.
   quicksupport_signer_mismatch: 'bg-violet-200 text-violet-950 dark:bg-violet-900 dark:text-violet-100',
+  // "הדפסה בקופה אחרת": a bill that did not print on another till — the printers' family.
+  document_unprinted: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
+  // "סגירת משמרת אוטומטית גם עם עגלה פתוחה": a basket voided (the cancels' family) or parked, held sales cancelled.
+  auto_close_cart_discarded: 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200',
+  auto_close_cart_held: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  auto_close_held_sales_cancelled: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
@@ -200,6 +207,11 @@ function FilterSelect({
 
 const isType = (v: string): v is ExceptionType => (EXCEPTION_TYPES as readonly string[]).includes(v);
 const isStatus = (v: string): v is ExceptionStatus => (STATUSES as string[]).includes(v);
+
+/** The summary's tiles as the designed PDF's cards (and the period before's), by KPI key. */
+function summaryFigures(s: ExceptionSummary): Record<string, number> {
+  return { exceptions: s.total, new: s.new, reviewed: s.reviewed, dismissed: s.dismissed };
+}
 
 export default function ExceptionsPage() {
   const t = useTranslations('exceptions');
@@ -533,6 +545,33 @@ export default function ExceptionsPage() {
   const pickLabel = (r: ExceptionSummary['byType'][number]) =>
     r.label || (r.key ? t('unknownEmployee') : t('noEmployee'));
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the summary's tiles as cards, the
+  // types as bars, the tiles against the period before (an exception has no row to set against another).
+  const s = summary.data;
+  const kpis: ReportKpi[] = s
+    ? [
+        { key: 'exceptions', label: t('total'), value: s.total, kind: 'count', better: 'down', icon: 'alert' },
+        { key: 'new', label: t('status.new'), value: s.new, kind: 'count', better: 'down' },
+        { key: 'reviewed', label: t('status.reviewed'), value: s.reviewed, kind: 'count' },
+        { key: 'dismissed', label: t('status.dismissed'), value: s.dismissed, kind: 'count' },
+      ]
+    : [];
+  const byType = s ? [...s.byType].sort((a, b) => b.total - a.total) : [];
+  const chart: ReportChart | null = byType.length
+    ? {
+        type: 'hbar',
+        title: t('byType'),
+        labels: byType.map((r) => (r.key ? t(`types.${r.key}`) : '—')),
+        series: [{ name: t('total'), values: byType.map((r) => r.total) }],
+        kind: 'number',
+      }
+    : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(from, to);
+    if (!w) return null;
+    return { kpis: summaryFigures(await fetchExceptionSummary({ ...apiFilters, ...w })), ...w };
+  };
+
   return (
     <ReportPage
       reportKey="exceptions"
@@ -589,6 +628,12 @@ export default function ExceptionsPage() {
               filterLines,
               from,
               to,
+              reportType: 'exceptions',
+              kpis,
+              chart,
+              insightKeys: { label: 'type', value: 'amount', employee: 'employee' },
+              groupBy: ['shop', 'area', 'till'],
+              previous,
             }
           : null
       }

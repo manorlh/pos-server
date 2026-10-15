@@ -12,7 +12,8 @@
  * the day "הרץ התאמה עכשיו" offers, as the cockpit links it). The runs list loads at once, as it
  * always has. Excel: the runs, and with a run open its category summary, deposits and items (the
  * items as the list shows them — the chosen categories, open only, the search; every one of them,
- * not just the 300 on screen); PDF: the items with a run open, else the runs; the CSV stays.
+ * not just the 300 on screen); PDF: the items with a run open, else the runs; with a run open the
+ * items' CSV is the export's CSV.
  *
  * Read-only toward Z-Credit; the terminal is shown by its last four digits, a card by its last four.
  * Server: `/zcredit-reconciliation/*`.
@@ -23,7 +24,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Loader2, Play, RotateCcw, Undo2 } from 'lucide-react';
+import { Loader2, Play, RotateCcw, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { canAccess } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { downloadCsv, toCsv } from '@/lib/csv';
+import { previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import { EXCEL_FILL, type ExcelCellKind } from '@/lib/excelExport';
 import { formatDate, formatDateTime, formatQuantity } from '@/lib/format';
 import { parseReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
@@ -106,6 +108,16 @@ const SPEC: ReportFilterSpec = {
   filters: [],
   extras: { terminal: '', run: '', cats: '', open: '', q: '' },
 };
+
+/** The categories with a card in the designed PDF (the errors first), beside the open errors. */
+const KPI_CATEGORIES: ReconCategory[] = ['zcredit_only', 'ours_only', 'amount_mismatch', 'status_mismatch', 'matched'];
+
+/** The runs' (or one run's) open errors and counts per category, by KPI key. */
+function reconFigures(runs: readonly ReconRun[]): Record<string, number> {
+  const out: Record<string, number> = { openErrors: runs.reduce((s, r) => s + (r.openHard ?? 0), 0) };
+  for (const c of RECON_CATEGORIES) out[c] = runs.reduce((s, r) => s + (r.summary[c]?.count ?? 0), 0);
+  return out;
+}
 
 function CategoryBadge({ category, label }: { category: ReconCategory; label: string }) {
   const severity = CATEGORY_SEVERITY[category];
@@ -618,6 +630,36 @@ function ZCreditReconciliation() {
     return lines;
   }, [filter, run, runTitle, t, terminalKey, terminals.data, tf]);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the open errors and the categories'
+  // counts as cards — of the open run, else of every run listed — the categories as bars, and the
+  // runs of the period before (an open run's items have no period before).
+  const figures = reconFigures(run ? [run] : (runs.data ?? []));
+  const kpis: ReportKpi[] = [
+    { key: 'openErrors', label: t('kpiOpenErrors'), value: figures.openErrors, kind: 'count', better: 'down', icon: 'alert' },
+    ...KPI_CATEGORIES.map(
+      (c): ReportKpi => ({
+        key: c,
+        label: t(`category.${c}`),
+        value: figures[c],
+        kind: 'count',
+        ...(c === 'matched' ? {} : { better: 'down' as const }),
+      }),
+    ),
+  ];
+  const chart: ReportChart = {
+    type: 'hbar',
+    title: t('summary'),
+    labels: RECON_CATEGORIES.map((c) => t(`category.${c}`)),
+    series: [{ name: t('cols.count'), values: RECON_CATEGORIES.map((c) => figures[c]) }],
+    kind: 'number',
+  };
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = run ? null : previousWindow(from, to);
+    if (!w) return null;
+    const before = await fetchReconRuns({ ...w, terminalKey, shopId });
+    return { rows: before, kpis: reconFigures(before), ...w };
+  };
+
   // Terminals, and the Z-Credit tills whose terminal cannot be read.
   const terminalsSection = (
     <Section title={t('terminals')} note={t('terminalsNote')}>
@@ -729,12 +771,12 @@ function ZCreditReconciliation() {
                 filterLines,
                 from,
                 to,
-                actions: run ? (
-                  <Button size="sm" variant="outline" onClick={exportCsv} disabled={!shown.length}>
-                    <Download className="h-4 w-4" aria-hidden />
-                    {t('exportCsv')}
-                  </Button>
-                ) : undefined,
+                // With a run open, the items' CSV the page always offered is the export's CSV.
+                csv: run ? exportCsv : undefined,
+                reportType: 'zcredit-reconciliation',
+                kpis,
+                chart,
+                previous,
               }
             : null
         }

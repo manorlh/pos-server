@@ -36,6 +36,7 @@ import {
   type Pick,
 } from '@/lib/liveTables';
 import { remoteCancelView, stillSending } from '@/lib/remoteTableCancel';
+import { billPrintOnView } from '@/lib/remotePrint';
 import { tableDisplay } from '@/lib/tableRestore';
 import {
   cancelOpenTable,
@@ -93,6 +94,8 @@ interface Following {
   startedAt: number;
   timeoutSeconds: number;
   hostName: string | null;
+  /** "הדפס חשבון" on another till: where it is to print. */
+  printOnName: string | null;
 }
 
 export function TableCardSheet({
@@ -140,7 +143,11 @@ export function TableCardSheet({
         : false,
   });
   const followView = following
-    ? actionView(status ?? null, following.startedAt, following.timeoutSeconds, Math.max(dataUpdatedAt, following.startedAt))
+    ? billPrintOnView(
+        actionView(status ?? null, following.startedAt, following.timeoutSeconds, Math.max(dataUpdatedAt, following.startedAt)),
+        status ?? null,
+        following.printOnName,
+      )
     : null;
   const followRefresh = followView !== null && !stillWaiting(followView) && followView.refresh;
   useEffect(() => {
@@ -167,6 +174,7 @@ export function TableCardSheet({
           startedAt: Date.now(),
           timeoutSeconds: out.timeoutSeconds,
           hostName: out.hostName,
+          printOnName: out.printOnName ?? null,
         });
         setPanel(null);
         return;
@@ -216,7 +224,12 @@ export function TableCardSheet({
               <div className="flex items-start gap-2 rounded-lg border border-violet-500 bg-violet-50 p-2 text-violet-900 dark:bg-violet-950/40 dark:text-violet-100">
                 <Lock className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
-                  <div className="font-semibold">{t('heldBanner', { till: card.heldBy })}</div>
+                  <div className="font-semibold">
+                    {/* §8: the device and the employee in it now, since when ("פתוח כעת: קופה 3 (בר) · דנה"). */}
+                    {card.lock?.holderText
+                      ? t('heldNow', { holder: card.lock.holderText, since: formatTime(card.lock.since ?? card.lock.acquiredAt) })
+                      : t('heldBanner', { till: card.heldBy })}
+                  </div>
                   <div className="text-xs">{t('heldHint')}</div>
                 </div>
               </div>
@@ -331,10 +344,10 @@ function ResultLine({ view, action, hostName }: { view: ActionView; action: stri
   const text =
     view.phase === 'done'
       ? t.has(`result.${view.key}`)
-        ? t(`result.${view.key}`)
+        ? t(`result.${view.key}`, view.values ?? {})
         : t('result.done.other')
       : view.phase === 'sending'
-        ? t(`result.${view.key}`, { host: hostName ?? '?' })
+        ? t(`result.${view.key}`, { host: hostName ?? '?', ...(view.values ?? {}) })
         : t.has(`result.${view.key}`)
           ? t(`result.${view.key}`, view.values ?? {})
           : t('result.refused.other', { reason: view.key });
@@ -457,6 +470,9 @@ function PanelFoot({ busy, onBack, onConfirm, confirmLabel, disabled }: {
   );
 }
 
+/** "הדפס חשבון" where the table is held (the default, as before) — or on another till (bill-print-other-till §7). */
+const ON_OWNER = 'owner';
+
 function BillPanel({ card, busy, onSend, onBack }: {
   card: TableCard;
   busy: boolean;
@@ -464,36 +480,77 @@ function BillPanel({ card, busy, onSend, onBack }: {
   onBack: () => void;
 }) {
   const t = useTranslations('tables.card');
-  const { data: printers = [], isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['bill-printers', card.table.id],
     queryFn: () => fetchBillPrinters(card.table.id),
   });
+  const printers = data?.printers ?? [];
+  const remote = data?.remotePrint ?? null;
+  // Another till: offered only where the till that holds the table may relay it (its parameters, its build).
+  const targets = remote?.available ? remote.targets : [];
   const [key, setKey] = useState<string | null>(null);
+  const [where, setWhere] = useState<string>(ON_OWNER);
   const chosen = printers.find((p) => p.key === key) ?? printers[0] ?? null;
+  const target = where === ON_OWNER ? null : (targets.find((x) => x.machineId === where && x.available) ?? null);
+  const onOwner = where === ON_OWNER || target === null;
   return (
     <div className="space-y-2">
-      <div className="font-medium">{t('billTitle')}</div>
-      <p className="text-xs text-muted-foreground">{t('billHint')}</p>
-      {isLoading ? (
-        <Skeleton className="h-16 w-full" />
-      ) : printers.length === 0 ? (
-        <p className="text-xs text-amber-700 dark:text-amber-400">{t('noPrinters')}</p>
-      ) : (
+      {targets.length > 0 ? (
         <div className="space-y-1">
-          {printers.map((p) => (
-            <label key={p.key} className="flex cursor-pointer items-center gap-2 rounded border bg-background p-2">
-              <input type="radio" name="bill-printer" checked={chosen?.key === p.key} onChange={() => setKey(p.key)} />
-              <span>{p.name ?? t('ownPrinter')}</span>
-              <span className="text-xs text-muted-foreground">{p.tillName}</span>
+          <div className="font-medium">{t('billWhere')}</div>
+          <label className="flex cursor-pointer items-center gap-2 rounded border bg-background p-2">
+            <input type="radio" name="bill-where" checked={onOwner} onChange={() => setWhere(ON_OWNER)} />
+            <span>{t('billOnOwner', { till: remote?.ownerName ?? '?' })}</span>
+            <span className="text-xs text-muted-foreground">{t('billOwnerDefault')}</span>
+          </label>
+          {targets.map((x) => (
+            <label
+              key={x.machineId}
+              className={`flex items-center gap-2 rounded border bg-background p-2 ${x.available ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
+            >
+              <input
+                type="radio"
+                name="bill-where"
+                disabled={!x.available}
+                checked={!onOwner && where === x.machineId}
+                onChange={() => setWhere(x.machineId)}
+              />
+              <span>{t('billOnTill', { till: x.label ?? x.tillName ?? '?' })}</span>
+              {x.available ? null : <span className="text-xs text-amber-700 dark:text-amber-400">{t('needsUpdate')}</span>}
             </label>
           ))}
+          <p className="text-xs text-muted-foreground">{t('billOnHint')}</p>
         </div>
-      )}
+      ) : null}
+      {onOwner ? (
+        <>
+          <div className="font-medium">{t('billTitle')}</div>
+          <p className="text-xs text-muted-foreground">{t('billHint')}</p>
+          {isLoading ? (
+            <Skeleton className="h-16 w-full" />
+          ) : printers.length === 0 ? (
+            <p className="text-xs text-amber-700 dark:text-amber-400">{t('noPrinters')}</p>
+          ) : (
+            <div className="space-y-1">
+              {printers.map((p) => (
+                <label key={p.key} className="flex cursor-pointer items-center gap-2 rounded border bg-background p-2">
+                  <input type="radio" name="bill-printer" checked={chosen?.key === p.key} onChange={() => setKey(p.key)} />
+                  <span>{p.name ?? t('ownPrinter')}</span>
+                  <span className="text-xs text-muted-foreground">{p.tillName}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </>
+      ) : null}
       <PanelFoot
         busy={busy}
         onBack={onBack}
-        disabled={!chosen}
-        onConfirm={() => chosen && onSend('print-bill', { machineId: chosen.machineId, printerId: chosen.printerId })}
+        disabled={onOwner ? !chosen : false}
+        onConfirm={() => {
+          if (!onOwner && target) onSend('print-bill', { printOn: target.machineId });
+          else if (chosen) onSend('print-bill', { machineId: chosen.machineId, printerId: chosen.printerId });
+        }}
       />
     </div>
   );
@@ -633,10 +690,16 @@ function WaiterPanel({ card, shopId, busy, onSend, onBack }: {
   const { data: waiters = [], isLoading } = useQuery({ queryKey: ['table-waiters', shopId], queryFn: () => fetchTableWaiters(shopId) });
   const current = card.order?.waiterPosUserId ?? null;
   const anyOnShift = waiters.some((w) => w.onShift);
+  // "גם שיוך" (P:/specs/table-waiter-assignment.md §4): the table's assignment moves with the order.
+  const [alsoAssignment, setAlsoAssignment] = useState(false);
   return (
     <div className="space-y-2">
       <div className="font-medium">{t('waiterTitle')}</div>
       {!isLoading && !anyOnShift ? <p className="text-xs text-muted-foreground">{t('noOnShift')}</p> : null}
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={alsoAssignment} onChange={(e) => setAlsoAssignment(e.target.checked)} />
+        {t('alsoAssignment')}
+      </label>
       {isLoading ? (
         <Skeleton className="h-16 w-full" />
       ) : (
@@ -647,7 +710,7 @@ function WaiterPanel({ card, shopId, busy, onSend, onBack }: {
               size="sm"
               variant={w.posUserId === current ? 'default' : 'outline'}
               disabled={busy || w.posUserId === current}
-              onClick={() => onSend('set-waiter', { waiterPosUserId: w.posUserId })}
+              onClick={() => onSend('set-waiter', { waiterPosUserId: w.posUserId, ...(alsoAssignment ? { alsoAssignment: true } : {}) })}
             >
               {w.name ?? '?'}
               {w.onShift ? <span className="ms-1 text-[10px] text-green-700 dark:text-green-400">● {t('onShift')}</span> : null}

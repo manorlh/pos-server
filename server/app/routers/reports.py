@@ -21,6 +21,7 @@ from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -287,6 +288,9 @@ def get_tips_range_report(
 def get_shop_transactions(
     hours: int = Query(24, ge=1, le=SHOP_TRANSACTIONS_MAX_HOURS),
     q: Optional[str] = Query(None, max_length=100),
+    # The till's "שולחן" chip: "12" is table 12 (never a document number or an amount), other
+    # text a table's name — app/services/table_documents.py `parse_table_query(chip=True)`.
+    table: Optional[str] = Query(None, max_length=60),
     # Same authentication as every other /sync/{machine_id}/... till endpoint:
     # a machine JWT whose `sub` equals machine_id, or a dashboard user who passes
     # the machine RBAC check. Decommissioned machines are locked out here.
@@ -306,11 +310,13 @@ def get_shop_transactions(
     documents to read. A machine with no shop assigned gets an empty list, never a
     `shop_id IS NULL` filter (which would match unassigned machines tenant-wide).
 
-    Capped at 200 rows, newest first.
+    Capped at 200 rows, newest first. Each row carries its table (`tableNumber`, `tableName`,
+    `tableOrderId`, `tableOpenedAt`); `table` and a `q` like "ש12" keep one table's documents
+    (P:/specs/history-table-search.md).
     """
     from app.services import area_lock
 
-    rows, _truncated = load_shop_transactions_for_machine(db, machine, hours=hours, q=q)
+    rows, _truncated = load_shop_transactions_for_machine(db, machine, hours=hours, q=q, table=table)
     return ShopTransactionsResponse(
         server_time=datetime.now(timezone.utc).isoformat(),
         transactions=rows,
@@ -320,20 +326,42 @@ def get_shop_transactions(
     )
 
 
+_DAY_DESC = (
+    "The business day (04:00 to 04:00 local, P:/specs/reports-designed-pdf.md §7.3). Given — or "
+    "with neither from nor to — the answer is the day summary v2; from/to without it: the Z roll-up."
+)
+_AREAS_DESC = "Points of sale (area ids, or `none`). Repeatable. Narrows like shopIds and machineIds."
+
+
+def _day_summary_scope(company_id, shop_ids, area_ids, machine_ids):
+    from app.services import day_summary
+
+    return day_summary.parse_scope(
+        company_id=_uuid_or_none(company_id),
+        shop_ids=shop_ids if isinstance(shop_ids, list) else None,
+        area_ids=area_ids if isinstance(area_ids, list) else None,
+        machine_ids=machine_ids if isinstance(machine_ids, list) else None,
+    )
+
+
 @router.get(
     "/day-summary",
-    response_model=DaySummaryReportResponse,
-    response_model_by_alias=True,
+    response_model=None,
+    responses={200: {"model": DaySummaryReportResponse,
+                     "description": "v2 (with `date`): the day summary of §7.3. Else: the Z roll-up."}},
 )
 def get_day_summary_report(
+    day: Optional[date] = Query(None, alias="date", description=_DAY_DESC),
     from_date: Optional[date] = Query(None, alias="from", description=_FROM_DESC),
     to_date: Optional[date] = Query(None, alias="to", description=_TO_DESC),
     tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
     shop_ids: Optional[List[uuid.UUID]] = Query(
         None,
         alias="shopIds",
         description="Restrict to these shops. Repeatable. Combines with machineIds as an intersection.",
     ),
+    area_ids: Optional[List[str]] = Query(None, alias="areaIds", description=_AREAS_DESC),
     machine_ids: Optional[List[uuid.UUID]] = Query(
         None,
         alias="machineIds",
@@ -344,7 +372,14 @@ def get_day_summary_report(
     db: Session = Depends(get_db),
 ):
     """
-    Several tills' closed days rolled into one figure per trading day (סיכום יומי).
+    **v2** (`date`, or no `from`/`to`): one business day of the scope (§7.3) — KPIs against
+    the same weekday last week and the last four weeks' average, the day's insights, sales by
+    hour, shop › point of sale › till, payment methods, departments, top items, risers and
+    fallers, tables, staff, risks and kiosks. Scope: `companyId` (with its subsidiaries — also
+    with no shop picked), `shopIds`, `areaIds`, `machineIds`; each only narrows the role's.
+
+    **The Z roll-up** (`from`/`to`, no `date`): several tills' closed days rolled into one
+    figure per trading day (סיכום יומי), as before; `companyId` narrows it too.
 
     Dashboard-only (Clerk/user JWT). Built from Z reports, so it agrees with the Zs the
     shop filed — and so a day no Z covers yet is **absent rather than zero**, because
@@ -368,14 +403,162 @@ def get_day_summary_report(
     shop-local date of its latest shift) — a shift past midnight belongs to the day it
     started.
     """
+    from app.services import day_summary
+
+    has_range = isinstance(from_date, date) or isinstance(to_date, date)
+    if isinstance(day, date) or not has_range:
+        return day_summary.build(
+            db, current_user, active_tenant_id,
+            day=day if isinstance(day, date) else None, tz=_str_or_none(tz),
+            scope=_day_summary_scope(company_id, shop_ids, area_ids, machine_ids),
+        )
     window = resolve_report_window(
         db, active_tenant_id,
         from_date=from_date, to_date=to_date, tz=tz,
     )
     return build_day_summary_report(
         db, current_user, active_tenant_id, window,
-        shop_ids=shop_ids, machine_ids=machine_ids,
+        shop_ids=shop_ids if isinstance(shop_ids, list) else None,
+        machine_ids=machine_ids if isinstance(machine_ids, list) else None,
+        company_id=_uuid_or_none(company_id),
     )
+
+
+def _report_branding(db: Session, user: User, tenant_id, scope) -> dict:
+    """
+    The business's logo, accent and name for a scope's PDF: the company asked for, else the
+    company of the scope's first till — only one the caller may read; none otherwise.
+    """
+    from app.models.company import Company
+    from app.services import report_export_defaults as access
+    from app.services import report_pdf
+    from app.services.day_summary import scope_machines
+
+    company = None
+    if scope.company_id is not None:
+        company = db.get(Company, scope.company_id)
+    if company is None:
+        for m in scope_machines(db, user, tenant_id, scope)[:1]:
+            shop = db.get(Shop, m.shop_id) if m.shop_id else None
+            company = db.get(Company, shop.company_id) if shop and shop.company_id else None
+    if company is None or (tenant_id is not None and str(company.tenant_id) != str(tenant_id)):
+        return {}
+    try:
+        access.require_read(db, user, company)
+    except HTTPException:
+        return {}
+    return report_pdf.company_branding(db, company)
+
+
+@router.get(
+    "/day-summary/pdf",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}, "description": "The day summary as a designed PDF."}},
+)
+def get_day_summary_pdf(
+    day: Optional[date] = Query(None, alias="date", description=_DAY_DESC),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
+    shop_ids: Optional[List[uuid.UUID]] = Query(None, alias="shopIds"),
+    area_ids: Optional[List[str]] = Query(None, alias="areaIds", description=_AREAS_DESC),
+    machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The day summary v2 (§7.3) as the full designed PDF: cover, KPIs, insights, charts, every section."""
+    from app.routers.report_pdf import pdf_response
+    from app.services import day_summary
+
+    scope = _day_summary_scope(company_id, shop_ids, area_ids, machine_ids)
+    data = day_summary.build(
+        db, current_user, active_tenant_id,
+        day=day if isinstance(day, date) else None, tz=_str_or_none(tz), scope=scope,
+    )
+    branding = _report_branding(db, current_user, active_tenant_id, scope)
+    pdf = day_summary.render_pdf(data, branding=branding, user_name=getattr(current_user, "username", "") or "")
+    return pdf_response(pdf, f"סיכום יום {date.fromisoformat(data['date']).strftime('%d.%m.%Y')}")
+
+
+def _products_by_day(db, user, tenant_id, from_date, to_date, tz, company_id, shop_ids, area_ids, machine_ids,
+                     category_ids, amounts, hide_empty_days, sort, meals):
+    from app.services import products_by_day
+
+    if not isinstance(from_date, date) or not isinstance(to_date, date):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="from and to are required")
+    window = resolve_report_window(db, tenant_id, from_date=from_date, to_date=to_date, tz=_str_or_none(tz))
+    scope = _day_summary_scope(company_id, shop_ids, area_ids, machine_ids)
+    data = products_by_day.build(
+        db, user, tenant_id, window, scope=scope,
+        category_ids=products_by_day.parse_categories(category_ids if isinstance(category_ids, list) else None),
+        amounts=amounts if isinstance(amounts, bool) else True,
+        hide_empty_days=hide_empty_days if isinstance(hide_empty_days, bool) else False,
+        sort=sort if isinstance(sort, str) else "qty",
+        meals=meals if isinstance(meals, str) else "components",
+    )
+    return data, scope
+
+
+@router.get("/products-by-day")
+def get_products_by_day(
+    from_date: Optional[date] = Query(None, alias="from", description="First day (inclusive), required."),
+    to_date: Optional[date] = Query(None, alias="to", description="Last day (inclusive), required; up to 366 days."),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
+    shop_ids: Optional[List[uuid.UUID]] = Query(None, alias="shopIds"),
+    area_ids: Optional[List[str]] = Query(None, alias="areaIds", description=_AREAS_DESC),
+    machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds"),
+    category_ids: Optional[List[str]] = Query(None, alias="categoryIds", description="Departments (ids, or `none`)."),
+    amounts: bool = Query(True, description="false: quantities only (the PDF shows no ₪)."),
+    hide_empty_days: bool = Query(False, alias="hideEmptyDays"),
+    sort: str = Query("qty", pattern="^(qty|amount)$"),
+    meals: str = Query("components", pattern="^(components|meals)$"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    מכירות מוצרים לפי ימים (§7.6): each day's products, the days side by side, the range summed
+    up, a product × day (or × week, past 14 days) matrix of quantities and the insights. The
+    product report's figures, so the summary equals `GET /reports/products` over the range.
+    """
+    data, _scope = _products_by_day(db, current_user, active_tenant_id, from_date, to_date, tz, company_id, shop_ids,
+                                    area_ids, machine_ids, category_ids, amounts, hide_empty_days, sort, meals)
+    return data
+
+
+@router.get(
+    "/products-by-day/pdf",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}, "description": "The report as a designed PDF."}},
+)
+def get_products_by_day_pdf(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
+    shop_ids: Optional[List[uuid.UUID]] = Query(None, alias="shopIds"),
+    area_ids: Optional[List[str]] = Query(None, alias="areaIds", description=_AREAS_DESC),
+    machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds"),
+    category_ids: Optional[List[str]] = Query(None, alias="categoryIds"),
+    amounts: bool = Query(True),
+    hide_empty_days: bool = Query(False, alias="hideEmptyDays"),
+    sort: str = Query("qty", pattern="^(qty|amount)$"),
+    meals: str = Query("components", pattern="^(components|meals)$"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The same report (§7.6) as a designed PDF: a section per day (a page each when long), the summary, the matrix."""
+    from app.routers.report_pdf import pdf_response
+    from app.services import products_by_day
+
+    data, scope = _products_by_day(db, current_user, active_tenant_id, from_date, to_date, tz, company_id, shop_ids,
+                                   area_ids, machine_ids, category_ids, amounts, hide_empty_days, sort, meals)
+    branding = _report_branding(db, current_user, active_tenant_id, scope)
+    pdf = products_by_day.render_pdf(data, branding=branding, user_name=getattr(current_user, "username", "") or "")
+    w = data["window"]
+    return pdf_response(pdf, f"מכירות מוצרים לפי ימים {w['from']}–{w['to']}")
 
 
 @router.get(

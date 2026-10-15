@@ -272,7 +272,10 @@ class TestPolicy:
             assert tp["timeoutSeconds"] == 180 and tp["selfApprove"] is True and tp["pickApprover"] == "optional"
             assert tp["quickApprove"] is False and tp["detailsInPush"] is True and tp["escalateAfterSeconds"] is None
             assert tp["approverRoles"] == ["till:manager", "till:legacy_manager", "dash:shop_manager", "dash:company_manager"]
-        assert len(C.TYPES) == 33 and len(C.PHASE_1) == 16
+        # 33 + "פתיחת מגירה בקופה אחרת" (P:/specs/bill-print-other-till.md §9ב, phase 1) + "מצב לא מקוון לכל
+        # המסופונים" (P:/specs/nayax-deferred-all.md §8.1, phase 1).
+        assert len(C.TYPES) == 35 and len(C.PHASE_1) == 18
+        assert C.TYPES_BY_KEY["drawer_open_remote"].base_code == "CASH_DRAWER.OPEN_REMOTE"
         assert C.on_shift_only(refund, "till:supervisor") and C.on_shift_only(refund, "dash:shift_supervisor")
         assert not C.on_shift_only(refund, "till:manager")
 
@@ -342,7 +345,7 @@ class TestPolicy:
                                "approvalStyle": {}}
         assert body["effective"]["types"]["refund"]["timeoutSeconds"] == 90
         assert body["inherited"]["types"]["refund"]["timeoutSeconds"] == 180
-        assert body["canWrite"] is True and len(body["catalog"]["types"]) == 33
+        assert body["canWrite"] is True and len(body["catalog"]["types"]) == 35  # + drawer_open_remote, terminal_offline_all
         assert (str(w.machine.id), "settings", {"reason": "approval_requests"}) in w.ably
         assert not any(m == str(w.machine2.id) for m, *_ in w.ably)  # no capability: not told
         r = w.client.put(f"/api/v1/approvals/policy?level=shop&id={w.shop.id}", headers=_dash(w, w.cm),

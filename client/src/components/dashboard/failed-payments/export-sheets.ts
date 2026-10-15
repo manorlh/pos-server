@@ -18,6 +18,7 @@ import {
   maskedCard,
   reasonText,
   summarize,
+  type FailedPaymentAttempt,
   type FailedPaymentsQuery,
   type FailedPaymentsResponse,
 } from '@/lib/failedPayments';
@@ -26,7 +27,12 @@ import { useFailedPaymentLabels } from './parts';
 /** The server's largest page (`PAGE_SIZE_MAX` in app/services/failed_payments.py). */
 const EXPORT_PAGE_SIZE = 500;
 
-export function useFailedPaymentsSheets() {
+/**
+ * The two sheets from rows already in hand: the attempts given (with their "סה״כ") and the
+ * cancelled sales block (null when it has none). The transactions page's export builds its
+ * table from the page on screen with these, and fetches every page on the click.
+ */
+export function useFailedPaymentsSheetBuilders() {
   const t = useTranslations('failedPayments');
   const labels = useFailedPaymentLabels();
   const brands = useCardBrandLabels();
@@ -35,115 +41,122 @@ export function useFailedPaymentsSheets() {
     [row.machineName, row.posNumber ? t('tillValue', { till: row.posNumber }) : null].filter(Boolean).join(' · ') ||
     null;
 
+  const attempts = (items: FailedPaymentAttempt[]): ExcelSheet => {
+    const summary = summarize(items);
+    return {
+      name: t('title'),
+      columns: [
+        { key: 'time', header: t('col.time'), kind: 'datetime' },
+        { key: 'shop', header: t('export.shop'), width: 16 },
+        { key: 'till', header: t('col.till'), width: 18 },
+        { key: 'employee', header: t('col.employee'), width: 16 },
+        { key: 'amount', header: t('col.amount'), kind: 'money' },
+        { key: 'method', header: t('col.method'), width: 12 },
+        { key: 'kind', header: t('export.kind'), width: 14 },
+        { key: 'outcome', header: t('col.outcome'), width: 20 },
+        { key: 'reason', header: t('export.reason'), width: 28 },
+        { key: 'card', header: t('col.card'), width: 18 },
+        { key: 'lines', header: t('col.lines'), kind: 'number', width: 8 },
+        { key: 'paidLater', header: t('col.paidLater'), width: 20 },
+        { key: 'paidLaterDocument', header: t('export.paidLaterDocument'), width: 16 },
+        { key: 'voided', header: t('col.voided'), width: 16 },
+      ],
+      rows: items.map((a) => {
+        const terminal = labels.terminal(a.terminalType);
+        return [
+          a.occurredAt,
+          a.shopName ?? null,
+          till(a),
+          a.employeeName ?? a.posUserId ?? null,
+          agorotToShekels(a.amountAgorot),
+          labels.method(a.method),
+          [
+            a.kind === 'payout' ? t('payoutBadge') : a.kind === 'keyed' ? t('keyedBadge') : null,
+            a.channel === 'kiosk' ? t('kioskBadge') : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || null,
+          labels.outcome(a.outcome),
+          [reasonText(a), terminal ? `${terminal}${a.terminalId ? ` ${a.terminalId}` : ''}` : null]
+            .filter(Boolean)
+            .join(' · ') || null,
+          [a.cardBrand ? brands.brand(a.cardBrand) : null, maskedCard(a.cardLast4)].filter(Boolean).join(' ') ||
+            null,
+          a.lineCount ?? null,
+          a.paidByTransactionId || a.paidByMethod ? labels.paidLater(a.paidByMethod) : null,
+          a.paidByTransactionNumber ?? null,
+          a.transactionNumber ?? null,
+        ];
+      }),
+      // As the page's "סה״כ": the failed sales; payouts to a card are counted apart.
+      totals: [
+        t('totalAmount'),
+        null,
+        null,
+        `${t('attempts')}: ${summary.count}`,
+        agorotToShekels(summary.totalAgorot),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        `${t('paidLaterCount')}: ${summary.paidLaterCount}`,
+        null,
+        null,
+      ],
+    };
+  };
+
+  const cancelled = (block: FailedPaymentsResponse['cancelledSales'] | null | undefined): ExcelSheet | null =>
+    block && block.count > 0
+      ? {
+          name: t('cancelled.title'),
+          heading:
+            block.items.length < block.count
+              ? [t('export.cancelledTruncated', { shown: block.items.length, count: block.count })]
+              : undefined,
+          columns: [
+            { key: 'time', header: t('col.time'), kind: 'datetime' },
+            { key: 'document', header: t('cancelled.number'), width: 16 },
+            { key: 'till', header: t('col.till'), width: 18 },
+            { key: 'cashier', header: t('cancelled.cashier'), width: 16 },
+            { key: 'amount', header: t('col.amount'), kind: 'money' },
+          ],
+          rows: block.items.map((tx) => [
+            tx.createdAt,
+            tx.documentNumber ?? tx.transactionNumber,
+            till(tx),
+            tx.cashierName ?? null,
+            tx.totalAmount,
+          ]),
+          totals: [t('totalAmount'), null, null, null, agorotToShekels(block.totalAgorot)],
+        }
+      : null;
+
+  return { attempts, cancelled };
+}
+
+export function useFailedPaymentsSheets() {
+  const build = useFailedPaymentsSheetBuilders();
+
   /**
    * The attempts sheet (always) and the cancelled sales sheet (when there are any), for
    * [query] without its page — every row of it.
    */
   return async (query: Omit<FailedPaymentsQuery, 'page' | 'pageSize'>): Promise<ExcelSheet[]> => {
-    let cancelled: FailedPaymentsResponse['cancelledSales'] | null = null;
+    let block: FailedPaymentsResponse['cancelledSales'] | null = null;
     const items = await fetchAllPages(
       async (page, pageSize) => {
         const data: FailedPaymentsResponse = await api
           .get('/failed-payments', { params: failedPaymentsParams({ ...query, page, pageSize }) })
           .then((r) => r.data);
-        cancelled ??= data.cancelledSales;
+        block ??= data.cancelledSales;
         return data;
       },
       { pageSize: EXPORT_PAGE_SIZE },
     );
-    const summary = summarize(items);
-
-    const sheets: ExcelSheet[] = [
-      {
-        name: t('title'),
-        columns: [
-          { header: t('col.time'), kind: 'datetime' },
-          { header: t('export.shop'), width: 16 },
-          { header: t('col.till'), width: 18 },
-          { header: t('col.employee'), width: 16 },
-          { header: t('col.amount'), kind: 'money' },
-          { header: t('col.method'), width: 12 },
-          { header: t('export.kind'), width: 14 },
-          { header: t('col.outcome'), width: 20 },
-          { header: t('export.reason'), width: 28 },
-          { header: t('col.card'), width: 18 },
-          { header: t('col.lines'), kind: 'number', width: 8 },
-          { header: t('col.paidLater'), width: 20 },
-          { header: t('export.paidLaterDocument'), width: 16 },
-          { header: t('col.voided'), width: 16 },
-        ],
-        rows: items.map((a) => {
-          const terminal = labels.terminal(a.terminalType);
-          return [
-            a.occurredAt,
-            a.shopName ?? null,
-            till(a),
-            a.employeeName ?? a.posUserId ?? null,
-            agorotToShekels(a.amountAgorot),
-            labels.method(a.method),
-            [
-              a.kind === 'payout' ? t('payoutBadge') : a.kind === 'keyed' ? t('keyedBadge') : null,
-              a.channel === 'kiosk' ? t('kioskBadge') : null,
-            ]
-              .filter(Boolean)
-              .join(' · ') || null,
-            labels.outcome(a.outcome),
-            [reasonText(a), terminal ? `${terminal}${a.terminalId ? ` ${a.terminalId}` : ''}` : null]
-              .filter(Boolean)
-              .join(' · ') || null,
-            [a.cardBrand ? brands.brand(a.cardBrand) : null, maskedCard(a.cardLast4)].filter(Boolean).join(' ') ||
-              null,
-            a.lineCount ?? null,
-            a.paidByTransactionId || a.paidByMethod ? labels.paidLater(a.paidByMethod) : null,
-            a.paidByTransactionNumber ?? null,
-            a.transactionNumber ?? null,
-          ];
-        }),
-        // As the page's "סה״כ": the failed sales; payouts to a card are counted apart.
-        totals: [
-          t('totalAmount'),
-          null,
-          null,
-          `${t('attempts')}: ${summary.count}`,
-          agorotToShekels(summary.totalAgorot),
-          null,
-          null,
-          null,
-          null,
-          null,
-          null,
-          `${t('paidLaterCount')}: ${summary.paidLaterCount}`,
-          null,
-          null,
-        ],
-      },
-    ];
-
-    const block = cancelled as FailedPaymentsResponse['cancelledSales'] | null;
-    if (block && block.count > 0) {
-      sheets.push({
-        name: t('cancelled.title'),
-        heading:
-          block.items.length < block.count
-            ? [t('export.cancelledTruncated', { shown: block.items.length, count: block.count })]
-            : undefined,
-        columns: [
-          { header: t('col.time'), kind: 'datetime' },
-          { header: t('cancelled.number'), width: 16 },
-          { header: t('col.till'), width: 18 },
-          { header: t('cancelled.cashier'), width: 16 },
-          { header: t('col.amount'), kind: 'money' },
-        ],
-        rows: block.items.map((tx) => [
-          tx.createdAt,
-          tx.documentNumber ?? tx.transactionNumber,
-          till(tx),
-          tx.cashierName ?? null,
-          tx.totalAmount,
-        ]),
-        totals: [t('totalAmount'), null, null, null, agorotToShekels(block.totalAgorot)],
-      });
-    }
-    return sheets;
+    const sheet = build.cancelled(block);
+    return sheet ? [build.attempts(items), sheet] : [build.attempts(items)];
   };
 }

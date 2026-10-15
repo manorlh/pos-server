@@ -1302,10 +1302,17 @@ def load_shop_transactions_for_machine(
     *,
     hours: int,
     q: Optional[str] = None,
+    table: Optional[str] = None,
 ) -> Tuple[List[ShopTransactionRow], bool]:
     """
     Recent documents from every terminal in the authenticated machine's own shop — of its
     point of sale only while the till is locked to it (app/services/area_lock.py).
+
+    Each row says its table (`tableNumber`, `tableName`, `tableOrderId`, `tableOpenedAt`,
+    app/services/table_documents.py), searched or not. `table` (the till's "שולחן" chip) keeps
+    that table's documents only — "12" is table 12, other text a table's name; `q` in the
+    explicit form ("ש12", "שולחן 12", "t12") does the same in place of the number / amount /
+    pickup search, and a `q` with a letter also finds the tables whose name holds it ("VIP 1").
 
     Scope is derived **solely** from the authenticated machine row: `machine.shop_id`
     and `machine.tenant_id`. The caller cannot name a shop, tenant, or machine list —
@@ -1337,6 +1344,7 @@ def load_shop_transactions_for_machine(
             Transaction.basket_id,
             Transaction.document_prefix,
             Transaction.pos_number,
+            Transaction.refund_of_transaction_id,
             POSMachine.name.label("machine_name"),
         )
         .join(POSMachine, POSMachine.id == Transaction.machine_id)
@@ -1374,11 +1382,34 @@ def load_shop_transactions_for_machine(
     if scope.locked:
         query = query.filter(POSMachine.area_id == scope.area_id)
 
-    from app.services import kiosk_pickup
+    from app.services import kiosk_pickup, table_documents
 
-    pickup = kiosk_pickup.parse_pickup_query(q) if q else None
-    if q:
-        needle = q.strip()
+    def table_ids(tq):
+        return table_documents.transaction_ids_for_table(
+            db, tq, tenant_id=tenant_id, shop_id=machine.shop_id, since=since,
+        )
+
+    # "שולחן" chip: that table's documents, whatever else is searched.
+    by_chip = table_documents.parse_table_query(table, chip=True) if table else None
+    if by_chip is not None:
+        query = query.filter(Transaction.id.in_(table_ids(by_chip)))
+    # "ש12", "שולחן 12", "t12": the table's documents only — not a document number, an amount
+    # or a pickup number ("ש12" would read as one).
+    by_table = table_documents.parse_table_query(q) if q else None
+    if by_table is not None and by_table.explicit:
+        query = query.filter(Transaction.id.in_(table_ids(by_table)))
+        q_rest = None
+    else:
+        q_rest = q
+    # Text with a letter may be a table's name ("VIP 1", "בר 3"): its documents too.
+    by_name = []
+    if by_table is not None and not by_table.explicit:
+        name_ids = table_ids(by_table)
+        by_name = [Transaction.id.in_(name_ids)] if name_ids else []
+
+    pickup = kiosk_pickup.parse_pickup_query(q_rest) if q_rest else None
+    if q_rest:
+        needle = q_rest.strip()
         # "17", "A17", "A-17", "a-17": the documents of the shop's kiosk orders of that pickup
         # number (the kiosk's own sale, or the till's that took a pay-at-till order).
         pickup_ids = (
@@ -1390,7 +1421,7 @@ def load_shop_transactions_for_machine(
         # `20000057`: number 57 of the till whose prefix is 2 (docs/SPEC_DOCUMENT_PREFIX.md).
         prefixed = prefixed_number_clause(needle) if needle else None
         if prefixed is not None:
-            query = query.filter(or_(prefixed, *by_pickup))
+            query = query.filter(or_(prefixed, *by_pickup, *by_name))
             needle = ""
         if needle:
             like = f"%{needle}%"
@@ -1403,6 +1434,7 @@ def load_shop_transactions_for_machine(
                     Transaction.transaction_number.ilike(like),
                     cast(Transaction.total_amount, String).like(like),
                     *by_pickup,
+                    *by_name,
                 )
             )
 
@@ -1416,11 +1448,17 @@ def load_shop_transactions_for_machine(
 
     pos_users = _load_cashier_names(db, [r.cashier_id for r in rows])
     pickups = kiosk_pickup.pickups_by_transaction(db, [r.id for r in rows])
+    tables = table_documents.tables_by_transaction(db, machine.shop_id, rows)
 
     out: List[ShopTransactionRow] = []
     for r in rows:
         found = pickups.get(str(r.id))
-        matched_by = kiosk_pickup.search_matches(q, r.transaction_number, r.total_amount, found)
+        at_table = tables.get(str(r.id)) or {}
+        matched_by = table_documents.search_matches(
+            q, kiosk_pickup.search_matches(q_rest, r.transaction_number, r.total_amount, found), at_table or None,
+        )
+        if by_chip is not None and "table" not in (matched_by or []):
+            matched_by = [*(matched_by or []), "table"]
         status_val = r.status.value if hasattr(r.status, "value") else (
             str(r.status) if r.status is not None else None
         )
@@ -1441,6 +1479,10 @@ def load_shop_transactions_for_machine(
                 pickup_label=found["label"] if found else None,
                 pickup_business_date=found["businessDate"] if found else None,
                 matched_by=matched_by,
+                table_number=at_table.get("tableNumber"),
+                table_name=at_table.get("tableName"),
+                table_order_id=at_table.get("tableOrderId"),
+                table_opened_at=at_table.get("tableOpenedAt"),
             )
         )
     return out, truncated
@@ -1728,6 +1770,7 @@ def build_day_summary_report(
     *,
     shop_ids: Optional[Sequence[uuid_mod.UUID]] = None,
     machine_ids: Optional[Sequence[uuid_mod.UUID]] = None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> DaySummaryReportResponse:
     """
     Z reports in the range, grouped by the business date they were filed under.
@@ -1740,7 +1783,9 @@ def build_day_summary_report(
 
     `shop_ids` and `machine_ids` narrow the selection and combine as an intersection —
     asking for a shop and a machine outside it is a contradiction and correctly returns
-    nothing, rather than quietly widening to either.
+    nothing, rather than quietly widening to either. `company_id` narrows to that company and
+    its subsidiaries — also when no shop is picked (a company scope is never "everything the
+    role sees").
     """
     query = (
         db.query(ZReport)
@@ -1766,6 +1811,11 @@ def build_day_summary_report(
         )
     query = scoped
 
+    if isinstance(company_id, uuid_mod.UUID):
+        from app.services.company_hierarchy import descendant_company_ids
+
+        group = descendant_company_ids(db, company_id)
+        query = query.filter(ZReport.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
     if shop_ids:
         query = query.filter(ZReport.shop_id.in_(list(shop_ids)))
     if machine_ids:

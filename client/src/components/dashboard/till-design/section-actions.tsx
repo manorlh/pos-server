@@ -4,7 +4,7 @@
  * "סרגל פעולות": the table's and the quick order's buttons — "auto" (the table: the template's;
  * the quick order: the till parameters' two quick-pay buttons and "תשלום", shown as they are now)
  * until "התאם" starts a list from it — add, remove, reorder, a label per button, the required one
- * ("שדר למטבח" / "תשלום") locked in; the banknotes ("שטרות": the next round amounts or chosen
+ * ("שגר" / "תשלום") locked in; the banknotes ("שטרות": the next round amounts or chosen
  * notes, how many, with a live "₪120 / עודף ₪2.80"); the bar's quantity presets and "עוד סבב".
  *
  * Phase 2 §3.4: "לכל המכשירים / רק ב<פרופיל>" — a device profile's own bars

@@ -98,6 +98,8 @@ const PROBLEM_KINDS = new Set([
   'till_idle', 'table_open_long', 'kds_ticket_late', 'shop_not_opened',
   // "תמיכה מרחוק": a till's QuickSupport signed by a certificate other than the allowed one.
   'quicksupport_signer_mismatch',
+  // "הדפסה בקופה אחרת": a bill relayed to another till's printer that did not print there.
+  'document_unprinted',
   'document_refused', 'document_number_conflict', 'z_totals_mismatch', 'shift_totals_mismatch',
   'local_shop_z_mismatch', 'offline_z_gap', 'offline_z_conflict',
 ]);

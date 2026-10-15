@@ -93,6 +93,15 @@ def _is_general(p: Product) -> bool:
     return general_item.is_general(getattr(p, "global_product", None))
 
 
+def _schedule_fields(row: Any) -> Dict[str, Any]:
+    """"itemScheduleRules" of a product / category row (P:/specs/fire-restaurant-flow.md §8.2)."""
+    course = getattr(row, "schedule_after_course_ready", None)
+    return {
+        "scheduleAfterMinutes": getattr(row, "schedule_after_minutes", None),
+        "scheduleAfterCourseReady": str(course) if course else None,
+    }
+
+
 def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[str, Any]:
     if shop_listed is None:
         in_stock = p.in_stock
@@ -147,6 +156,8 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
         # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): true / false, null — the category's.
         "sendSilently": getattr(p, "send_silently", None),
+        # "itemScheduleRules" (P:/specs/fire-restaurant-flow.md §8.2): both null — the category's.
+        **_schedule_fields(p),
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
         "refillable": bool(getattr(p, "refillable", False)),
@@ -314,6 +325,7 @@ def _serialize_merged_product(
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         # "יוצא בלי בון", from the global row like the course.
         "sendSilently": getattr(global_p, "send_silently", None),
+        **_schedule_fields(global_p),
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
         "maxRefills": getattr(global_p, "max_refills", None),
@@ -374,6 +386,8 @@ def _serialize_category(
         "courseId": str(c.course_id) if getattr(c, "course_id", None) else None,
         # "יוצא בלי בון" (P:/specs/courses-fire-v2.md §2): true / false, null — the parent's (none: off).
         "sendSilently": getattr(c, "send_silently", None),
+        # "itemScheduleRules": both null — the parent's (none at the top: no rule).
+        **_schedule_fields(c),
         # "מחייב אישור מנהל במכירה": the category's own flag; the till applies it to every
         # product beneath it (its tree is parentId).
         "requiresManagerApproval": bool(getattr(c, "requires_manager_approval", False)),

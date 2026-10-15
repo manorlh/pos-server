@@ -252,6 +252,16 @@ def _pending_count(db: Session, shift_id: Any) -> int:
     )
 
 
+def _release_table_assignments(db: Session, shift: AttendanceShift, now: datetime) -> None:
+    """
+    "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §1 `tableAssignmentOnClockOut` = release): an open
+    shift just ended — the waiter's table assignments made before it are released. Never raising.
+    """
+    from app.services.table_assignments import on_clock_out
+
+    on_clock_out(db, shift, shift.clock_out_at, now=now)
+
+
 def refresh_status(db: Session, shift: AttendanceShift, breaks: Optional[Sequence[AttendanceBreak]] = None) -> str:
     """
     The state, from the times rather than from the order actions arrived in: finished
@@ -615,6 +625,7 @@ def apply_till_action(db: Session, machine: POSMachine, body, *, now: Optional[d
                 _add_flag(shift, FLAG_OPEN_TABLES)
                 _report_till_exception(db, machine, shift, pos_user, approval, tables, now)
             changed = True
+            _release_table_assignments(db, shift, now)
         db.flush()
 
     _note_skew(shift, getattr(body, "sent_at", None), now)
@@ -979,7 +990,8 @@ def apply_adjustment(
         elif field == "clock_out":
             if approved_time is None:
                 raise AttendanceError("time_required")
-            if shift.clock_out_at is None:
+            ends_now = shift.clock_out_at is None
+            if ends_now:
                 # A missing clock-out: the manager's decision ends the shift.
                 shift.closed_by = "manager"
                 shift.closed_by_user_id = decider.get("user_id")
@@ -992,6 +1004,8 @@ def apply_adjustment(
                         b.end_at = approved_time
                         b.end_server_at = now
             shift.clock_out_at = approved_time
+            if ends_now:
+                _release_table_assignments(db, shift, now)
         else:
             raise AttendanceError("field_required")
         db.flush()
@@ -1161,6 +1175,7 @@ def manager_close(
         _set_detail(shift, "openTablesAtClockOut", tables)
         _add_flag(shift, FLAG_OPEN_TABLES)
     db.flush()
+    _release_table_assignments(db, shift, now)
     _validate(db, shift, now)
     adj.old_value = old
     db.add(adj)

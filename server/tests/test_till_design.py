@@ -165,7 +165,7 @@ def test_default_view_per_profile_is_todays_layout():
         assert view["template"] == "clean"
         # A table's order is a sheet over the dishes on every device, as today.
         assert view["billPosition"]["table"] == "sheet"
-        # Today's table bar: the mini cart and "שלח למטבח"; the quick bar from the parameters.
+        # Today's table bar: the mini cart and "שגר"; the quick bar from the parameters.
         assert view["actions"] == {"table": [{"action": "send", "label": ""}], "quick": []}
         assert view["tileSize"] == "auto"
     quick = {p: T.for_profile(cfg, p)["billPosition"]["quick"] for p in T.ANDROID_PROFILES}
@@ -292,6 +292,20 @@ def test_contract_defaults_and_catalog(contract):
     assert contract["defaults"] == T.default_config()
     assert contract["defaultsVersion"] == T.config_version(T.default_config())
     assert contract["catalog"] == json.loads(json.dumps(T.catalog()))
+
+
+def test_the_send_labels_default_to_shager(contract):
+    """"שגר" for "שלח למטבח" (P:/specs/tables-send-selected-stay.md §0); `texts` still rewords it."""
+    assert T.ACTION_LABELS["send"] == T.TEXT_DEFAULTS["sendToKitchen"] == "שגר"
+    assert T.TEXT_DEFAULTS["allSent"] == "הכול שוגר"
+    catalog = contract["catalog"]
+    assert catalog["actionLabels"]["send"] == catalog["textDefaults"]["sendToKitchen"] == "שגר"
+    assert catalog["textDefaults"]["allSent"] == "הכול שוגר"
+    words = json.dumps({"labels": T.ACTION_LABELS, "texts": T.TEXT_DEFAULTS}, ensure_ascii=False)
+    assert "למטבח" not in words and "שודר" not in words
+    layer, errors = T.validate_layer({"texts": {"sendToKitchen": "שלח למטבח", "allSent": "הכל נשלח"}})
+    assert errors == [] and layer["texts"] == {"sendToKitchen": "שלח למטבח", "allSent": "הכל נשלח"}
+    assert T.resolve(layer)["texts"]["sendToKitchen"] == "שלח למטבח"
 
 
 def test_contract_for_profile(contract):

@@ -11,6 +11,8 @@
  *   `tableNumberSize` — and the map's display (`mapDecor`, `mapLegend`, `mapSymbolLabels`,
  *   `mapSymbolScale`, #101): till parameters at the level being designed
  *   (`/till-design/table-display`), with what each inherits; the same people edit them as the design;
+ * * "פרטי השולחן בחשבונית" (`receiptTableInfo`, P:/specs/receipt-table-number.md): what of the table a
+ *   table's invoice prints under its title, with the top of the invoice as a preview;
  * * the way to the table-opening animation ("הנפשות", `tableOpen`);
  * * who: the parameters are the till design's to edit; the floor itself needs "עריכת מפה ושולחנות"
  *   (`tables_layout`, as on the tables page — `canEditFloorLayout`); without it, the saved floor;
@@ -52,6 +54,16 @@ import {
   withStateColor,
   type TileStyle,
 } from '@/lib/tableTileLook';
+import {
+  RECEIPT_TABLE_FIELDS,
+  RECEIPT_TABLE_FIELD_NAMES,
+  RECEIPT_TABLE_INFO_KEY,
+  SAMPLE_RECEIPT_TABLE,
+  parseReceiptTableInfo,
+  receiptTableLine,
+  toggleReceiptTableInfo,
+  type ReceiptTableField,
+} from '@/lib/receiptTableInfo';
 import type { TableDisplayView, TillDesignLevel } from '@/lib/tillDesignApi';
 import { TablesEditor, type FloorLive } from '@/components/dashboard/tables/tables-editor';
 import { DeviceButtons, DeviceFloor, MAP_DISPLAY_INITIAL, StateStrip, type MapDisplayValues } from '@/components/dashboard/tables/sketch-preview';
@@ -215,6 +227,9 @@ export function FloorSection({
   const colors = parseStateColors(effective.tableStateColors);
   const overdueText = String(effective.tableOverdueMinutes ?? '');
   const display = mapDisplayOf(effective);
+  // "פרטי השולחן בחשבונית" (`receiptTableInfo`): only when the server's card has it.
+  const hasReceiptTable = !!view?.parameters?.some((p) => p.key === RECEIPT_TABLE_INFO_KEY);
+  const receiptFields = parseReceiptTableInfo(effective[RECEIPT_TABLE_INFO_KEY]);
 
   return (
     <div className="space-y-4">
@@ -417,6 +432,43 @@ export function FloorSection({
         </CardContent>
       </Card>
 
+      {hasReceiptTable ? (
+        <Card className="rounded-xl">
+          <CardHeader className="space-y-1">
+            <CardTitle className="text-base">{t('receiptTitle')}</CardTitle>
+            <CardDescription>{t('receiptHint')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Row
+              label={t('receiptFields')}
+              hint={t('receiptFieldsHint')}
+              own={sets(RECEIPT_TABLE_INFO_KEY)}
+              onReset={() => reset(RECEIPT_TABLE_INFO_KEY)}
+              disabled={disabled}
+            >
+              <div className="flex flex-wrap gap-2">
+                {RECEIPT_TABLE_FIELDS.map((f) => {
+                  const on = receiptFields.includes(f);
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      aria-pressed={on}
+                      disabled={disabled}
+                      onClick={() => onEdit(RECEIPT_TABLE_INFO_KEY, toggleReceiptTableInfo(effective[RECEIPT_TABLE_INFO_KEY], f))}
+                      className={`rounded-full border px-3 py-1 text-sm transition-colors disabled:opacity-50 ${on ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-muted'}`}
+                    >
+                      {RECEIPT_TABLE_FIELD_NAMES[f]}
+                    </button>
+                  );
+                })}
+              </div>
+            </Row>
+            <ReceiptTablePreview fields={receiptFields} />
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="rounded-xl">
         <CardContent className="flex flex-wrap items-center gap-3 py-4">
           <Clapperboard className="h-5 w-5 shrink-0 text-primary" />
@@ -429,6 +481,37 @@ export function FloorSection({
           </Button>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * "פרטי השולחן בחשבונית": the top of a table's invoice as the till prints it — the business, the
+ * document's title, then the table's line (the till's and the cloud's rule, lib/receiptTableInfo.ts),
+ * for a sample table, with every change before any save.
+ */
+function ReceiptTablePreview({ fields }: { fields: ReceiptTableField[] }) {
+  const t = useTranslations('tillDesign.floor');
+  const line = receiptTableLine(fields, SAMPLE_RECEIPT_TABLE);
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs text-muted-foreground">{t('receiptPreview')}</p>
+      <div
+        dir="rtl"
+        className="mx-auto w-full max-w-[18rem] rounded border bg-white px-4 py-3 text-center text-[12px] leading-5 text-black shadow-sm"
+      >
+        <div className="text-sm font-bold">{t('receiptBusiness')}</div>
+        <div className="my-1.5 border-t border-black/60" />
+        <div className="text-[13px] font-bold">{t('receiptDocTitle')}</div>
+        <div className="text-[11px]">{t('receiptDocSource')}</div>
+        {line ? <div className="mt-0.5 font-medium">{line}</div> : null}
+        <div className="my-1.5 border-t border-black/60" />
+        <div className="flex justify-between text-[11px]">
+          <span>{t('receiptDocNumber')}</span>
+          <span dir="ltr">20000057</span>
+        </div>
+      </div>
+      {line ? null : <p className="text-center text-xs text-muted-foreground">{t('receiptPreviewNone')}</p>}
     </div>
   );
 }

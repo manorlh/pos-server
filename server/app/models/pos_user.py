@@ -67,6 +67,9 @@ class PosUser(Base):
     )
     #: Per-user exceptions to the role: `{"states": {code: state}, "limits": {code: {...}}}`.
     permission_overrides = Column(JSONB, nullable=True)
+    #: The "how it works" hints the employee chose not to see again ("אל תציג שוב",
+    #: P:/specs/fire-restaurant-flow.md §5, §8.5): a list of hint keys; null — none.
+    hints_dismissed = Column(JSONB, nullable=True)
 
     #: Wrong PINs typed at an *elevation* prompt, and the lockout they earn.
     #:
@@ -77,6 +80,10 @@ class PosUser(Base):
     #: prompt from a till that is online, which is otherwise unlimited.
     pin_failed_count = Column(Integer, nullable=False, default=0, server_default="0")
     pin_locked_until = Column(DateTime(timezone=True), nullable=True)
+
+    #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb` on the tables they are assigned;
+    #: null — chosen automatically (app/services/table_assignments.py `waiter_color`).
+    table_color = Column(String(9), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

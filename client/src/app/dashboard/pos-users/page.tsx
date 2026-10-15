@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { fetchTillRoles } from '@/lib/tillRolesApi';
 import { visibleRoles } from '@/lib/tillRoles';
+import { WAITER_PALETTE, cleanColor } from '@/lib/tableAssignment';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { SignedInNowCard } from '@/components/dashboard/signed-in-now-card';
@@ -46,6 +47,10 @@ interface UserForm {
   tillRoleId: string;
   pin: string;
   isActive: boolean;
+  /** "צבע מלצר": `#rrggbb`, or '' — automatic. */
+  tableColor: string;
+  /** The colour the floor shows now (their own, else the automatic one). */
+  tableColorEffective?: string | null;
 }
 
 const EMPTY: UserForm = {
@@ -57,6 +62,7 @@ const EMPTY: UserForm = {
   tillRoleId: '',
   pin: '',
   isActive: true,
+  tableColor: '',
 };
 
 const PIN_RE = /^\d{4,6}$/;
@@ -116,6 +122,7 @@ export default function PosUsersPage() {
           isActive: u.isActive,
           // The till role decides `role` on the server; the legacy select only without roles.
           ...(u.tillRoleId ? { tillRoleId: u.tillRoleId } : roleChoices.length ? {} : { role: u.role }),
+          tableColor: cleanColor(u.tableColor) ?? '',
         };
         if (u.pin) payload.pin = u.pin;
         return api.put(`/shops/${shopId}/pos-users/${u.id}`, payload);
@@ -128,6 +135,7 @@ export default function PosUsersPage() {
         role: u.role,
         ...(u.tillRoleId ? { tillRoleId: u.tillRoleId } : {}),
         pin: u.pin,
+        ...(cleanColor(u.tableColor) ? { tableColor: cleanColor(u.tableColor) } : {}),
       };
       return api.post(`/shops/${shopId}/pos-users`, payload);
     },
@@ -182,6 +190,8 @@ export default function PosUsersPage() {
       tillRoleId: u.tillRoleId ?? '',
       pin: '',
       isActive: u.isActive,
+      tableColor: u.tableColor ?? '',
+      tableColorEffective: u.tableColorEffective ?? null,
     });
     setOpenEdit(true);
   };
@@ -268,7 +278,18 @@ export default function PosUsersPage() {
               ) : (
                 users.map((u) => (
                   <TableRow key={u.id}>
-                    <TableCell className="font-medium">{u.username}</TableCell>
+                    <TableCell className="font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {u.tableColorEffective ? (
+                          <span
+                            className="inline-block h-3 w-3 rounded-full border"
+                            style={{ background: u.tableColorEffective }}
+                            title={t('tableColor')}
+                          />
+                        ) : null}
+                        {u.username}
+                      </span>
+                    </TableCell>
                     <TableCell>{u.firstName ?? ''}</TableCell>
                     <TableCell>{u.lastName ?? ''}</TableCell>
                     <TableCell>{u.workerNumber ?? '—'}</TableCell>
@@ -409,6 +430,11 @@ export default function PosUsersPage() {
               />
               <p className="text-xs text-muted-foreground">{t('pinHint')}</p>
             </div>
+            <TableColorField
+              value={editing.tableColor}
+              shown={editing.tableColorEffective ?? null}
+              onChange={(v) => setEditing((u) => ({ ...u, tableColor: v }))}
+            />
             {!isNew && (
               <div className="flex items-center gap-2">
                 <Switch
@@ -468,6 +494,50 @@ export default function PosUsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): the colour the waiter's tables are marked in on the
+ * floor — the till's and "שולחנות פתוחים". Automatic (by the order of the shop's employees) unless chosen.
+ */
+function TableColorField({ value, shown, onChange }: { value: string; shown: string | null; onChange: (v: string) => void }) {
+  const t = useTranslations('posUsers');
+  const own = cleanColor(value);
+  const current = own ?? shown ?? null;
+  return (
+    <div className="space-y-1">
+      <Label>{t('tableColor')}</Label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {WAITER_PALETTE.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onChange(c)}
+            aria-label={c}
+            aria-pressed={own === c}
+            className={`h-6 w-6 rounded-full border-2 ${own === c ? 'border-foreground' : 'border-transparent'}`}
+            style={{ background: c }}
+          />
+        ))}
+        <input
+          type="color"
+          aria-label={t('tableColorCustom')}
+          className="h-7 w-9 cursor-pointer rounded border bg-background p-0.5"
+          value={current ?? '#2563eb'}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <Button type="button" size="sm" variant={own ? 'outline' : 'secondary'} className="h-7" onClick={() => onChange('')}>
+          {t('tableColorAuto')}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {own ? t('tableColorOwnHint') : t('tableColorAutoHint')}
+        {!own && current ? (
+          <span className="ms-1 inline-block h-3 w-3 rounded-full border align-middle" style={{ background: current }} />
+        ) : null}
+      </p>
     </div>
   );
 }

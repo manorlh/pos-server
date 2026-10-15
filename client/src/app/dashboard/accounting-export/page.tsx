@@ -20,6 +20,11 @@
  * at once), so a link opens the same form; the Zs and the past batches as `ReportTable`s
  * (sortable, columns, phone cards) with their checkboxes and download buttons. The export
  * itself — preview, problems, the re-export confirmation, the downloads — is as it was.
+ *
+ * "ייצוא" beside the heading (P:\specs\reports-designed-pdf.md §2) is a summary to read, not a
+ * file for the bookkeeping software: the designed PDF, Excel and CSV of the Zs listed (net, VAT,
+ * whether each was exported) with the period's totals, and the past batches. The MOVEIN /
+ * Priority / Excel journal batches above are untouched.
  */
 
 import { useMemo, useState } from 'react';
@@ -57,9 +62,12 @@ import {
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ZDateBasisToggle } from '@/components/dashboard/z-report/by-date/z-date-basis-toggle';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
+import type { ReportChart, ReportKpi } from '@/lib/designedReport';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import {
   ReportFilterBar,
   ReportTable,
+  StandaloneExportBar,
   useReportFilters,
   type ReportColumn,
   type ReportTableSpec,
@@ -399,6 +407,64 @@ export default function AccountingExportPage() {
     noExport: true,
   };
 
+  // ── "ייצוא": a summary to read — the Zs listed with the period's totals, and the past batches ──
+  const sumOf = (all: AccountingZRow[], of: (z: AccountingZRow) => number | null | undefined) =>
+    all.reduce((n, z) => n + (of(z) ?? 0), 0);
+  const zExport: ReportTableSpec<AccountingZRow> = {
+    ...zTable,
+    title: t('summaryExport.zs'),
+    noExport: false,
+    onRowClick: undefined,
+    // Every Z listed, not only the chosen ones (the screen's footer is the choice's).
+    totalsLabel: tc('total'),
+    columns: zColumns.map((c): ReportColumn<AccountingZRow> =>
+      c.key === 'net'
+        ? { ...c, total: undefined, totalCell: undefined, totalOf: (all: AccountingZRow[]) => sumOf(all, (z) => z.netSales) }
+        : c.key === 'vat'
+          ? { ...c, totalOf: (all: AccountingZRow[]) => sumOf(all, (z) => z.vatTotal) }
+          : c,
+    ),
+  };
+  const batchExport: ReportTableSpec<ExportBatch> = {
+    ...batchTable,
+    noExport: false,
+    // The range as two dates in the sheet (the screen writes "from – to" in one cell).
+    columns: batchColumns.flatMap((c): ReportColumn<ExportBatch>[] =>
+      c.key === 'range' ? [c, { key: 'dateTo', header: t('to'), kind: 'date', value: (b) => b.dateTo ?? null }] : [c],
+    ),
+  };
+  const exportTables = [
+    zExport as ReportTableSpec<unknown>,
+    ...((batches.data ?? []).length ? [batchExport as ReportTableSpec<unknown>] : []),
+  ];
+  const netByDay = new Map<string, number>();
+  for (const z of rows) {
+    const day = (zDateBasis === 'production' ? z.productionDate : null) ?? z.businessDate;
+    netByDay.set(day, (netByDay.get(day) ?? 0) + (z.netSales ?? 0));
+  }
+  const days = [...netByDay.keys()].sort();
+  const exportChart: ReportChart | null = days.length
+    ? {
+        type: 'bar',
+        title: t('summaryExport.netByDay'),
+        labels: days.map((d) => formatDate(d)),
+        series: [{ name: t('col.net'), values: days.map((d) => Math.round((netByDay.get(d) ?? 0) * 100) / 100) }],
+        kind: 'money',
+      }
+    : null;
+  const exportKpis: ReportKpi[] = [
+    { key: 'zs', label: t('summaryExport.zs'), value: rows.length, kind: 'count', icon: 'receipt' },
+    { key: 'net', label: t('col.net'), value: sumOf(rows, (z) => z.netSales), kind: 'money', icon: 'sales' },
+    { key: 'vat', label: t('col.vat'), value: sumOf(rows, (z) => z.vatTotal), kind: 'money', icon: 'percent' },
+    { key: 'notExported', label: t('summaryExport.notExported'), value: rows.filter((z) => z.exported.length === 0).length, kind: 'count', better: 'down' },
+    { key: 'batches', label: t('summaryExport.batches'), value: (batches.data ?? []).length, kind: 'count', icon: 'box' },
+  ];
+  const exportLines: ReportFilterLine[] = [
+    { label: tb('basisLabel').replace(/:$/, ''), value: tb(`basis.${zDateBasis === 'production' ? 'production' : 'business'}`) },
+    ...(onlyUnexported ? [{ label: t('onlyUnexported'), value: tc('yes') }] : []),
+    ...(zs.data?.truncated ? [{ label: t('summaryExport.zs'), value: t('truncated') }] : []),
+  ];
+
   return (
     <div className="min-w-0 space-y-4 max-sm:px-1">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -406,9 +472,27 @@ export default function AccountingExportPage() {
           <h1 className="text-2xl font-bold">{t('exportTitle')}</h1>
           <p className="text-muted-foreground text-sm">{t('exportSubtitle')}</p>
         </div>
-        <Link href="/dashboard/accounting-settings" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-          <Settings2 className="h-4 w-4" aria-hidden /> {t('settingsTitle')}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {companyId ? (
+            <StandaloneExportBar
+              reportKey={REPORT_KEY}
+              reportType="transactions.accounting"
+              title={t('summaryExport.title')}
+              tables={exportTables}
+              from={from}
+              to={to}
+              place={scope.shop?.name ?? null}
+              companyId={companyId}
+              filterLines={exportLines}
+              kpis={exportKpis}
+              chart={exportChart}
+              disabled={!zs.data || rows.length === 0}
+            />
+          ) : null}
+          <Link href="/dashboard/accounting-settings" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <Settings2 className="h-4 w-4" aria-hidden /> {t('settingsTitle')}
+          </Link>
+        </div>
       </div>
 
       <ScopeGate resolution={resolution}>

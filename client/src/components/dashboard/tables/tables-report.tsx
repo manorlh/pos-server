@@ -10,20 +10,155 @@
  * ("שולחנות למלצר").
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { previousWindow } from '@/lib/designedReport';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { fetchTablesReport, type TablesReport, type TablesReportRow } from '@/lib/tablesApi';
 import type { ExcelSheet } from '@/lib/excelExport';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  sheetAsTable,
+  type PreviousPeriod,
+  type ReportChart,
+  type ReportKpi,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+
+type T = ReturnType<typeof useTranslations>;
+
+/**
+ * Every table of the report as its own sheet, its columns keyed for the export's choice.
+ * "שולחנות למלצר" follows the waiter picked above it (all waiters when none is).
+ */
+function reportSheets(d: TablesReport, t: T, tc: T, waiter: string) {
+  const mins = (m: number | null | undefined) => (m == null ? null : Math.round(m));
+  const tableLabel = (n: number | null | undefined, name: string | null | undefined) =>
+    [n, name].filter((v) => v != null && v !== '').join(' ');
+  const figureColumns: ExcelSheet['columns'] = [
+    { key: 'orders', header: t('orders'), kind: 'number' },
+    { key: 'revenue', header: t('revenue'), kind: 'money' },
+    { key: 'guests', header: t('guests'), kind: 'number' },
+    { key: 'avgMinutes', header: t('export.avgMinutes'), kind: 'number' },
+  ];
+  const figures = (r: TablesReportRow) => [r.orders, r.revenue, r.guests, mins(r.avgMinutes)];
+  const byWaiter: ExcelSheet | null = d.byWaiter
+    ? {
+        name: t('byWaiter'),
+        columns: [
+          { key: 'waiter', header: t('waiter') },
+          { key: 'tables', header: t('waiterTables'), kind: 'number' },
+          { key: 'guests', header: t('guests'), kind: 'number' },
+          { key: 'revenue', header: t('revenue'), kind: 'money' },
+          { key: 'avgCheck', header: t('avgCheck'), kind: 'money' },
+          { key: 'avgPerGuest', header: t('avgPerGuest'), kind: 'money' },
+          { key: 'avgMinutes', header: t('export.avgMinutes'), kind: 'number' },
+          { key: 'tips', header: t('tips'), kind: 'money' },
+          { key: 'cancelled', header: t('cancelledOrders'), kind: 'number' },
+          { key: 'cancelledTotal', header: t('export.cancelledTotal'), kind: 'money' },
+        ],
+        rows: d.byWaiter.map((r) => [
+          r.waiter, r.tables, r.guests, r.revenue, r.avgCheck, r.avgPerGuest, mins(r.avgMinutes), r.tips,
+          r.cancelled, r.cancelledTotal,
+        ]),
+      }
+    : null;
+  const waiterTables: ExcelSheet | null = d.waiterTables
+    ? {
+        name: t('tablesOfWaiter'),
+        columns: [
+          { key: 'waiter', header: t('waiter') },
+          { key: 'table', header: t('table') },
+          { key: 'zone', header: t('zone') },
+          { key: 'opened', header: t('opened'), kind: 'datetime' },
+          { key: 'closed', header: t('closed'), kind: 'datetime' },
+          { key: 'minutes', header: t('export.minutes'), kind: 'number' },
+          { key: 'guests', header: t('guests'), kind: 'number' },
+          { key: 'total', header: tc('total'), kind: 'money' },
+          { key: 'tip', header: t('tips'), kind: 'money' },
+          { key: 'receipt', header: t('receipt') },
+          { key: 'status', header: tc('status'), width: 10 },
+        ],
+        rows: d.waiterTables
+          .filter((r) => !waiter || r.waiter === waiter)
+          .map((r) => [
+            r.waiter, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.openedAt, r.closedAt, mins(r.minutes),
+            r.guests, r.total, r.tip, r.transactionNumber, r.status === 'cancelled' ? t('cancelledShort') : null,
+          ]),
+      }
+    : null;
+  return {
+    byWaiter,
+    waiterTables,
+    byZone: {
+      name: t('byZone'),
+      columns: [{ key: 'zone', header: t('zone') }, ...figureColumns],
+      rows: d.byZone.map((r) => [r.zoneName, ...figures(r)]),
+    } satisfies ExcelSheet,
+    byTable: {
+      name: t('byTable'),
+      columns: [{ key: 'table', header: t('table') }, { key: 'zone', header: t('zone') }, ...figureColumns],
+      rows: d.byTable.map((r) => [tableLabel(r.number, r.name), r.zoneName, ...figures(r)]),
+    } satisfies ExcelSheet,
+    byReason: {
+      name: t('cancelByReason'),
+      columns: [
+        { key: 'reason', header: t('reason') },
+        { key: 'cancelled', header: t('cancelledOrders'), kind: 'number' },
+        { key: 'total', header: tc('total'), kind: 'money' },
+      ],
+      rows: d.cancellations.byReason.map((r) => [r.reason, r.count, r.total]),
+    } satisfies ExcelSheet,
+    byEmployee: {
+      name: t('cancelByEmployee'),
+      columns: [
+        { key: 'employee', header: t('cancelledBy') },
+        { key: 'cancelled', header: t('cancelledOrders'), kind: 'number' },
+        { key: 'total', header: tc('total'), kind: 'money' },
+      ],
+      rows: d.cancellations.byEmployee.map((r) => [r.employee, r.count, r.total]),
+    } satisfies ExcelSheet,
+    cancellations: {
+      name: t('cancelRows'),
+      columns: [
+        { key: 'when', header: t('when'), kind: 'datetime' },
+        { key: 'table', header: t('table') },
+        { key: 'zone', header: t('zone') },
+        { key: 'reason', header: t('reason') },
+        { key: 'reasonText', header: t('reasonText') },
+        { key: 'cancelledBy', header: t('cancelledBy') },
+        { key: 'approvedBy', header: t('approvedBy') },
+        { key: 'items', header: t('items'), width: 40 },
+        { key: 'total', header: tc('total'), kind: 'money' },
+      ],
+      rows: d.cancellations.rows.map((r) => [
+        r.closedAt, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.reason, r.reasonText, r.cancelledBy,
+        r.approvedBy, r.items.map((it) => `${it.quantity} × ${it.name}`).join(', '), r.total,
+      ]),
+    } satisfies ExcelSheet,
+  };
+}
+
+/** The stat tiles (and the old summary sheet's figures), by KPI key. */
+function summaryKpis(s: TablesReport['summary']) {
+  return {
+    paidOrders: s.paidOrders,
+    revenue: s.revenue,
+    guests: s.guests,
+    avgSeatingMinutes: s.avgSeatingMinutes,
+    cancelledOrders: s.cancelledOrders,
+    cancelledTotal: s.cancelledTotal,
+    payConflicts: s.payConflicts,
+  };
+}
 
 export function TablesReportView({ shopId }: { shopId: string }) {
   const t = useTranslations('tables');
@@ -52,140 +187,56 @@ export function TablesReportView({ shopId }: { shopId: string }) {
     ));
 
   /**
-   * Every table of the report as its own sheet, plus the stat tiles as a one-row summary.
-   * "שולחנות למלצר" follows the waiter picked above it (all waiters when none is).
+   * The export: the per-table figures are the designed PDF's table, every other table its own
+   * sheet (in the screen's order); the stat tiles are the KPIs ("סיכום ותובנות" in Excel).
    */
-  const exportSheets = (d: TablesReport): ExcelSheet[] => {
-    const mins = (m: number | null | undefined) => (m == null ? null : Math.round(m));
-    const tableLabel = (n: number | null | undefined, name: string | null | undefined) =>
-      [n, name].filter((v) => v != null && v !== '').join(' ');
-    const figureColumns: ExcelSheet['columns'] = [
-      { header: t('orders'), kind: 'number' },
-      { header: t('revenue'), kind: 'money' },
-      { header: t('guests'), kind: 'number' },
-      { header: t('export.avgMinutes'), kind: 'number' },
-    ];
-    const figures = (r: TablesReportRow) => [r.orders, r.revenue, r.guests, mins(r.avgMinutes)];
-    const sheets: ExcelSheet[] = [
-      {
-        name: t('export.summary'),
-        columns: [
-          { header: t('paidOrders'), kind: 'number' },
-          { header: t('revenue'), kind: 'money' },
-          { header: t('guests'), kind: 'number' },
-          { header: t('export.avgMinutes'), kind: 'number' },
-          { header: t('cancelledOrders'), kind: 'number' },
-          { header: t('export.cancelledTotal'), kind: 'money' },
-          { header: t('export.payConflicts'), kind: 'number' },
-        ],
-        rows: [
-          [
-            d.summary.paidOrders,
-            d.summary.revenue,
-            d.summary.guests,
-            mins(d.summary.avgSeatingMinutes),
-            d.summary.cancelledOrders,
-            d.summary.cancelledTotal,
-            d.summary.payConflicts,
-          ],
-        ],
-        autoFilter: false,
-      },
-    ];
-    if (d.byWaiter) {
-      sheets.push({
-        name: t('byWaiter'),
-        columns: [
-          { header: t('waiter') },
-          { header: t('waiterTables'), kind: 'number' },
-          { header: t('guests'), kind: 'number' },
-          { header: t('revenue'), kind: 'money' },
-          { header: t('avgCheck'), kind: 'money' },
-          { header: t('avgPerGuest'), kind: 'money' },
-          { header: t('export.avgMinutes'), kind: 'number' },
-          { header: t('tips'), kind: 'money' },
-          { header: t('cancelledOrders'), kind: 'number' },
-          { header: t('export.cancelledTotal'), kind: 'money' },
-        ],
-        rows: d.byWaiter.map((r) => [
-          r.waiter, r.tables, r.guests, r.revenue, r.avgCheck, r.avgPerGuest, mins(r.avgMinutes), r.tips,
-          r.cancelled, r.cancelledTotal,
-        ]),
-      });
-    }
-    if (d.waiterTables) {
-      sheets.push({
-        name: t('tablesOfWaiter'),
-        columns: [
-          { header: t('waiter') },
-          { header: t('table') },
-          { header: t('zone') },
-          { header: t('opened'), kind: 'datetime' },
-          { header: t('closed'), kind: 'datetime' },
-          { header: t('export.minutes'), kind: 'number' },
-          { header: t('guests'), kind: 'number' },
-          { header: tc('total'), kind: 'money' },
-          { header: t('tips'), kind: 'money' },
-          { header: t('receipt') },
-          { header: tc('status'), width: 10 },
-        ],
-        rows: d.waiterTables
-          .filter((r) => !waiter || r.waiter === waiter)
-          .map((r) => [
-            r.waiter, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.openedAt, r.closedAt, mins(r.minutes),
-            r.guests, r.total, r.tip, r.transactionNumber, r.status === 'cancelled' ? t('cancelledShort') : null,
-          ]),
-      });
-    }
-    sheets.push(
-      {
-        name: t('byZone'),
-        columns: [{ header: t('zone') }, ...figureColumns],
-        rows: d.byZone.map((r) => [r.zoneName, ...figures(r)]),
-      },
-      {
-        name: t('byTable'),
-        columns: [{ header: t('table') }, { header: t('zone') }, ...figureColumns],
-        rows: d.byTable.map((r) => [tableLabel(r.number, r.name), r.zoneName, ...figures(r)]),
-      },
-      {
-        name: t('cancelByReason'),
-        columns: [
-          { header: t('reason') },
-          { header: t('cancelledOrders'), kind: 'number' },
-          { header: tc('total'), kind: 'money' },
-        ],
-        rows: d.cancellations.byReason.map((r) => [r.reason, r.count, r.total]),
-      },
-      {
-        name: t('cancelByEmployee'),
-        columns: [
-          { header: t('cancelledBy') },
-          { header: t('cancelledOrders'), kind: 'number' },
-          { header: tc('total'), kind: 'money' },
-        ],
-        rows: d.cancellations.byEmployee.map((r) => [r.employee, r.count, r.total]),
-      },
-      {
-        name: t('cancelRows'),
-        columns: [
-          { header: t('when'), kind: 'datetime' },
-          { header: t('table') },
-          { header: t('zone') },
-          { header: t('reason') },
-          { header: t('reasonText') },
-          { header: t('cancelledBy') },
-          { header: t('approvedBy') },
-          { header: t('items'), width: 40 },
-          { header: tc('total'), kind: 'money' },
-        ],
-        rows: d.cancellations.rows.map((r) => [
-          r.closedAt, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.reason, r.reasonText, r.cancelledBy,
-          r.approvedBy, r.items.map((it) => `${it.quantity} × ${it.name}`).join(', '), r.total,
-        ]),
-      },
-    );
-    return sheets;
+  const exportTables = useMemo(() => {
+    if (!data) return [];
+    const s = reportSheets(data, t, tc, waiter);
+    return [
+      s.byWaiter ? sheetAsTable(s.byWaiter, 'waiters') : null,
+      s.waiterTables ? sheetAsTable(s.waiterTables, 'waiterTables') : null,
+      sheetAsTable(s.byZone, 'zones'),
+      sheetAsTable(s.byTable, 'main'),
+      sheetAsTable(s.byReason, 'reasons'),
+      sheetAsTable(s.byEmployee, 'employees'),
+      sheetAsTable(s.cancellations, 'cancellations'),
+    ].filter((x) => x !== null) as ReportTableSpec<unknown>[];
+  }, [data, t, tc, waiter]);
+  const exportKpis: ReportKpi[] = data
+    ? [
+        { key: 'paidOrders', label: t('paidOrders'), value: data.summary.paidOrders, kind: 'count', icon: 'table' },
+        { key: 'revenue', label: t('revenue'), value: data.summary.revenue, kind: 'money', icon: 'sales' },
+        { key: 'guests', label: t('guests'), value: data.summary.guests, kind: 'count', icon: 'users' },
+        { key: 'avgSeatingMinutes', label: t('avgSeating'), value: data.summary.avgSeatingMinutes, kind: 'minutes', icon: 'clock' },
+        { key: 'cancelledOrders', label: t('cancelledOrders'), value: data.summary.cancelledOrders, kind: 'count', icon: 'void' },
+        { key: 'cancelledTotal', label: t('export.cancelledTotal'), value: data.summary.cancelledTotal, kind: 'money', icon: 'void' },
+        ...(data.summary.payConflicts > 0
+          ? [{ key: 'payConflicts', label: t('export.payConflicts'), value: data.summary.payConflicts, kind: 'count' as const, icon: 'alert' as const, better: 'down' as const }]
+          : []),
+      ]
+    : [];
+  // Revenue by zone when there are zones to compare; else the tables' (the PDF's table).
+  const zoneChart: ReportChart | null =
+    data && data.byZone.length > 1
+      ? {
+          type: 'hbar',
+          title: t('byZone'),
+          labels: data.byZone.map((r) => r.zoneName ?? '—'),
+          series: [{ name: t('revenue'), values: data.byZone.map((r) => r.revenue) }],
+          kind: 'money',
+        }
+      : null;
+  /** The same report for the period before (one day: the same weekday a week before). */
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const before = data ? previousWindow(data.from, data.to) : null;
+    if (!before) return null;
+    const prev = await fetchTablesReport(shopId, before.from, before.to);
+    return {
+      rows: sheetAsTable(reportSheets(prev, t, tc, waiter).byTable, 'main').rows,
+      kpis: summaryKpis(prev.summary),
+      ...before,
+    };
   };
 
   return (
@@ -203,12 +254,19 @@ export function TablesReportView({ shopId }: { shopId: string }) {
           {t('show')}
         </Button>
       </div>
-      <ReportExportToolbar
+      <StandaloneExportBar
+        reportKey="tables-report"
+        reportType="tables"
         title={t('sectionReport')}
+        tables={exportTables}
+        pdfTableId="main"
         from={data?.from ?? applied.from}
         to={data?.to ?? applied.to}
         disabled={!data}
-        getSheets={() => (data ? exportSheets(data) : [])}
+        kpis={exportKpis}
+        chart={zoneChart}
+        chartFrom={{ label: 'table', value: 'revenue' }}
+        previous={previous}
       />
 
       {isLoading ? (

@@ -122,6 +122,14 @@ SECTIONS: Tuple[Section, ...] = (
         "נעילת קופה, סנכרון, ניתוק משתמש, הפעלה מחדש והתקנת עדכון; עצירת קיוסק, הודעה על המסך והסתרה מהירה.",
         (),
     ),
+    # "מצב לא מקוון לכל המסופונים" from the cloud (P:/specs/nayax-deferred-all.md §9): the shop's card
+    # terminals to deferred and back. By default the super admin, a company manager and a shop manager.
+    Section(
+        "terminals_offline", "מסופונים — מצב לא מקוון",
+        "המסופונים של כל הקופות בסניף: מקוון או לא מקוון, כמה עסקאות דחויות ותוצאת הפקודה האחרונה. עריכה: "
+        "\"העבר הכל ללא מקוון\", \"החזר הכל למקוון\", מתג לכל קופה, וסימון \"קופה מנהלת\" בכרטיס הקופה.",
+        ("/dashboard/deferred-terminals",),
+    ),
     # "מצב אירוע חי" and "התראות" — their pages and texts are feat/event-live's (one definition each).
     Section(
         "live_event", "מצב אירוע חי",
@@ -325,15 +333,19 @@ BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
     # "מחוברים כעת במכשירים" and its release (exclusive login v2 §2) — on for a shop's manager, off for
     # the area manager (below).
     "user_sessions_release": EDIT,
+    # "מסופונים — מצב לא מקוון" (P:/specs/nayax-deferred-all.md §9: a shop's manager by default) — the whole
+    # shop's terminals, so off for the area manager (below).
+    "terminals_offline": EDIT,
 }
 #: "מנהל אזור" — the same, meant for a user scoped to a point of sale. Dashboard users cannot be
 #: scoped to one yet (Saturday): until then the label says so and the template is `hidden` — not
 #: offered where admins assign templates.
 AREA_MANAGER_TEMPLATE = "area_manager"
 AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)"
-#: Less one: "שחרור עובד מחובר במכשיר" is off for the area manager (P:/specs/exclusive-login-v2.md §2).
+#: Less two: "שחרור עובד מחובר במכשיר" is off for the area manager (P:/specs/exclusive-login-v2.md §2), and
+#: so is "מסופונים — מצב לא מקוון" (the whole shop's terminals, P:/specs/nayax-deferred-all.md §9).
 AREA_MANAGER_SECTIONS: Dict[str, str] = {
-    k: v for k, v in BRANCH_MANAGER_SECTIONS.items() if k != "user_sessions_release"
+    k: v for k, v in BRANCH_MANAGER_SECTIONS.items() if k not in ("user_sessions_release", "terminals_offline")
 }
 #: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
 MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
@@ -617,6 +629,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # The report PDF (P:/specs/reports-upgrade.md §4.5): it draws only what the caller already
     # sees and sends (any report page exports — the drawer's, a Z's), so anyone signed in.
     ("POST", "/reports/pdf", REFERENCE),
+    # Its summary as JSON (P:/specs/reports-designed-pdf.md §7.2): the Excel export's first sheet.
+    ("POST", "/reports/insights", REFERENCE),
     # "ברירת מחדל לייצוא" (§4.3): read beside any report; set by whoever edits reports, and
     # then only by the company's manager, a distributor or a super admin (the route checks).
     (_GET, "/report-export-defaults*", REFERENCE),
@@ -710,11 +724,17 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines/{}/local-server", S("devices", "device_control", level=VIEW)),
     ("POST", "/machines/{}/local-server/commands", S("devices", "device_control")),
     ("POST", "/machines/{}/transmit", S("z")),
+    # "מצב לא מקוון" on the device page (P:/specs/nayax-deferred-all.md §10): the till's own auto-on values —
+    # with the devices or with "מסופונים — מצב לא מקוון".
+    (_GET, "/machines/{}/deferred-settings", S("devices", "terminals_offline", level=VIEW)),
+    ("PUT", "/machines/{}/deferred-settings", S("devices", "terminals_offline", level=EDIT)),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──
     (_ALL, "/shops/{}/kitchen-stations/*", S("printers")),
     ("PUT", "/shops/{}/local-network", S("devices")),
     (_ALL, "/shops/{}/local-shop-z*", S("z")),
+    # "דוח X סניפי" (P:/specs/shop-x-report.md §3): the shop's interim X, with the reports.
+    (_GET, "/shops/{}/shop-x", S("reports")),
     (_ALL, "/shops/{}/main-till", S("devices")),
     # "העברת שרת מקומי" (app/routers/local_server.py): read with the card; the switch is the
     # grantable permission's (the route then checks the profile itself).
@@ -736,6 +756,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # the permission's alone (no longer "edit the employees" — exclusive login v2 §2).
     (_GET, "/shops/{}/user-sessions", S("pos_users", "user_sessions_release", level=VIEW)),
     ("POST", "/shops/{}/user-sessions/{}/release", S("user_sessions_release", level=EDIT)),
+    # "מסופונים — מצב לא מקוון" (P:/specs/nayax-deferred-all.md §9, app/routers/deferred_terminals.py): read
+    # with the section; the switch and the controlling tills are its edit.
+    (_GET, "/shops/{}/deferred-terminals", S("terminals_offline", level=VIEW)),
+    ("POST", "/shops/{}/deferred-terminals/switch", S("terminals_offline", level=EDIT)),
+    ("PUT", "/shops/{}/deferred-terminals/controllers", S("terminals_offline", level=EDIT)),
     (_ALL, "/shops/{}/printer-routing/products/*", S("products", "printers")),
     (_ALL, "/shops/{}/printer-routing/categories*", S("products", "printers")),
     (_ALL, "/shops/{}/printer-scan", S("printers", "products")),
@@ -784,6 +809,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/tables/live", S("tables", "reports", level=VIEW)),
     # The live view's realtime (P:/specs/live-tables-cloud.md §6.8): whoever reads the live view.
     (_GET, "/tables/live/push", S("tables", "reports", level=VIEW)),
+    # "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §3): read with the live view; a write is the
+    # tables' at edit and `tables_manage` at edit (the route checks the second, as for "החלף מלצר").
+    (_GET, "/tables/assignments", S("tables", "reports", level=VIEW)),
+    ("POST", "/tables/assignments", S("tables")),
+    ("POST", "/tables/assignments/copy", S("tables")),
     (_GET, "/tables/report", S("tables", "reports", level=VIEW)),
     (_GET, "/tables/meals-report", S("tables", "reports", level=VIEW)),
     (_ALL, "/tables/*", S("tables")),

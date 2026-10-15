@@ -20,6 +20,7 @@ import {
   groupText,
   isCancelled,
   isHeld,
+  scheduledText,
   isReady,
   itemTapButton,
   orderButtons,
@@ -314,12 +315,16 @@ export function KdsCard({
         {held.length > 0 ? (
           <div className="rounded-lg border border-dashed border-[var(--k-line)] px-3 py-2">
             <div className="text-sm font-bold text-[var(--k-faint)]">בהמתנה (טרם הוצא)</div>
-            {held.map((t) => (
-              <div key={t.id} className="text-lg text-[var(--k-faint)]">
-                {qtyText(t.activeQty)} × {t.name}
-                {show('course') && t.course ? ` · ${t.course}` : ''}
-              </div>
-            ))}
+            {held.map((t) => {
+              const scheduled = scheduledText(t);
+              return (
+                <div key={t.id} className="text-lg text-[var(--k-faint)]" data-scheduled={scheduled ? 'true' : undefined}>
+                  {qtyText(t.activeQty)} × {t.name}
+                  {show('course') && t.course ? ` · ${t.course}` : ''}
+                  {scheduled ? <span className="ms-2 text-base italic opacity-80">⏱ {scheduled}</span> : null}
+                </div>
+              );
+            })}
           </div>
         ) : null}
 

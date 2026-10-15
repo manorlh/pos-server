@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ReportContext } from './report-context';
-import { ReportExportBar } from './report-export-bar';
+import { ReportExportBar, type ReportExportBarProps } from './report-export-bar';
 import { ReportFilterBar, type ReportFilterBarProps } from './report-filter-bar';
 import { useFilterDescription } from './use-filter-options';
 import type { ReportFiltersController } from './use-report-filters';
@@ -68,6 +68,8 @@ export interface ReportExportConfig {
   title?: string;
   /** Excel only (no PDF / print): a page that prints its own documents. */
   excelOnly?: boolean;
+  /** The designed PDF, Excel and CSV but no print template (a page that prints its own documents). */
+  noPrint?: boolean;
   /**
    * The report's own filters (its `extras`, not in the unified bar: a status, a list of tills…)
    * as the export header's "סינון:" line names them, after the bar's ("סטטוס: פתוחות").
@@ -75,6 +77,24 @@ export interface ReportExportConfig {
   filterLines?: ReportFilterLine[];
   /** No rows yet: the buttons wait. */
   disabled?: boolean;
+  /**
+   * The designed PDF (P:\specs\reports-designed-pdf.md §6): the server's report type, the KPI
+   * cards, the chart (or `chartFrom` the main table), the subtotal grouping and the previous
+   * period (fetched on the click). See `ReportExportBarProps`.
+   */
+  reportType?: ReportExportBarProps['reportType'];
+  kpis?: ReportExportBarProps['kpis'];
+  chart?: ReportExportBarProps['chart'];
+  chartFrom?: ReportExportBarProps['chartFrom'];
+  insightKeys?: ReportExportBarProps['insightKeys'];
+  groupBy?: ReportExportBarProps['groupBy'];
+  previous?: ReportExportBarProps['previous'];
+  /** The page's own CSV instead of the main table's. */
+  csv?: ReportExportBarProps['csv'];
+  /** A designed PDF the server builds whole (instead of the main table's). */
+  pdf?: ReportExportBarProps['pdf'];
+  /** The server's insights the page already has (the Excel's summary sheet uses them). */
+  insights?: ReportExportBarProps['insights'];
 }
 
 export interface ReportPageProps {
@@ -238,7 +258,18 @@ export function ReportPage({
                   companyId={companyId}
                   companyName={companyName}
                   excelOnly={exportConfig.excelOnly}
+                  noPrint={exportConfig.noPrint}
                   disabled={exportConfig.disabled}
+                  reportType={exportConfig.reportType}
+                  kpis={exportConfig.kpis}
+                  chart={exportConfig.chart}
+                  chartFrom={exportConfig.chartFrom}
+                  insightKeys={exportConfig.insightKeys}
+                  groupBy={exportConfig.groupBy}
+                  previous={exportConfig.previous}
+                  csv={exportConfig.csv}
+                  pdf={exportConfig.pdf}
+                  insights={exportConfig.insights}
                 />
               ) : null}
               {children}

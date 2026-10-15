@@ -21,6 +21,7 @@ import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatDate, formatDateTime, formatQuantity } from '@/lib/format';
 import { EXCEL_FILL } from '@/lib/excelExport';
 import type { ReportFilterSpec } from '@/lib/reportFilters';
+import { kpiNumber, previousWindow, type PreviousPeriod, type ReportKpi } from '@/lib/designedReport';
 import {
   fetchTransmissionsReport,
   type RefusedDocument,
@@ -55,6 +56,18 @@ type Till = TransmissionsReport['tills'][number];
 
 /** Card legs no transmission covered, or sales the till says still wait. */
 const behind = (r: Till) => r.untransmittedCardLegs > 0 || (r.tillPendingCount ?? 0) > 0;
+
+/** The tills' columns summed, as the designed PDF's cards (and the period before's), by KPI key. */
+function transmissionFigures(r: TransmissionsReport): Record<string, number> {
+  return {
+    reports: r.count,
+    failed: r.byTill.reduce((s, x) => s + x.failed, 0),
+    untransmittedLegs: r.tills.reduce((s, x) => s + x.untransmittedCardLegs, 0),
+    untransmittedAmount:
+      Math.round(r.tills.reduce((s, x) => s + (kpiNumber(x.untransmittedCardAmount) ?? 0), 0) * 100) / 100,
+    refused: (r.refusedDocuments ?? []).length,
+  };
+}
 
 export default function TransmissionsPage() {
   const t = useTranslations('reportCenter.transmissions');
@@ -201,6 +214,31 @@ export default function TransmissionsPage() {
 
   const filterLines = useCenterScopeLines(applied?.extras, effective, scope);
 
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the tills' figures summed as cards, and
+  // the tills (the main table) of the period before.
+  const figures = data ? transmissionFigures(data) : null;
+  const kpis: ReportKpi[] = figures
+    ? [
+        { key: 'reports', label: tc('transmissionsCount'), value: figures.reports, kind: 'count', icon: 'card' },
+        { key: 'failed', label: tc('failed'), value: figures.failed, kind: 'count', icon: 'alert' },
+        { key: 'untransmittedLegs', label: tc('untransmittedLegs'), value: figures.untransmittedLegs, kind: 'count' },
+        { key: 'untransmittedAmount', label: tc('untransmittedAmount'), value: figures.untransmittedAmount, kind: 'money' },
+        { key: 'refused', label: t('refusedSheet'), value: figures.refused, kind: 'count', better: 'down' },
+      ]
+    : [];
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = previousWindow(data?.window.from, data?.window.to);
+    if (!params || !w) return null;
+    const before = await fetchTransmissionsReport({ ...params, ...w });
+    // The tills sheet as the page builds it (fixed columns: its rows line up with the main table's).
+    const [tillsSheet] = keyedSheets(transmissionsSheets(before, KEY), transmissionsSheets(before, tc));
+    return {
+      rows: sheetTable<Till>(tillsSheet, { id: 'main', src: before.tills }).rows,
+      kpis: transmissionFigures(before),
+      ...w,
+    };
+  };
+
   return (
     <ReportPage
       reportKey="transmissions"
@@ -223,6 +261,10 @@ export default function TransmissionsPage() {
               filterLines,
               from: data.window.from,
               to: data.window.to,
+              reportType: 'transmissions',
+              kpis,
+              insightKeys: { label: 'till', value: 'amount', count: 'attempts' },
+              previous,
             }
           : null
       }

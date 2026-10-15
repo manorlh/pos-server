@@ -448,6 +448,10 @@ def upload(db: Session, machine: POSMachine, body: LocalShopZIn, *, now: Optiona
     from app.services.availability_reopen import after_z
 
     after_z(db, z, part_machines)
+    # "שיוך מלצרים" (P:/specs/table-waiter-assignment.md §6): the shop Z releases the day's assignments.
+    from app.services.table_assignments import after_z as release_assignments_after_z
+
+    release_assignments_after_z(db, z, part_machines)
     return z, "created"
 
 

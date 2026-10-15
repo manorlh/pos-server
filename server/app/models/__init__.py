@@ -91,6 +91,8 @@ from app.models import prepaid_voucher_extras  # noqa: F401,E402
 from app.models.promotion import Promotion, TransactionPromotion
 from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
 from app.models.tables_state import TablesStateVersion  # noqa: F401
+# "שיוך שולחנות למלצרים" and the floor's notices (P:/specs/table-waiter-assignment.md).
+from app.models.table_assignment import TableAssignment, TableNotice  # noqa: F401
 from app.models.platform_setting import PlatformSetting
 from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob, KitchenTicketDesign
 from app.models.menu import (

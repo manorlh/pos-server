@@ -8,6 +8,9 @@
  *
  * The till shown is the login ("POS Session"), never the attendance: an employee on shift
  * may be signed in nowhere at this moment (between tills, on the floor) and is still on shift.
+ *
+ * "ייצוא" (P:\specs\reports-designed-pdf.md §2): the designed PDF, Excel and CSV of the board —
+ * a snapshot of who is on shift at that moment, with the durations as the cards show them.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -17,15 +20,18 @@ import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { Monitor, RefreshCw, UtensilsCrossed } from 'lucide-react';
 import { fetchLive } from '@/lib/attendanceApi';
-import { cardAlerts, cardStatus, formatHours, liveSeconds, type AttendanceShift } from '@/lib/attendance';
+import { cardAlerts, cardStatus, decimalHours, formatHours, liveSeconds, type AttendanceShift } from '@/lib/attendance';
 import { useAuth } from '@/lib/auth';
+import type { ReportChart, ReportKpi } from '@/lib/designedReport';
 import { formatTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { StandaloneExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AttendanceFilters, EMPTY_ATTENDANCE_SCOPE, scopeParams, type AttendanceScope } from './attendance-filters';
+import { useAttendanceExportScope } from './attendance-export-scope';
 import { CloseShiftDialog } from './close-shift-dialog';
 
 const REFRESH_MS = 30_000;
@@ -68,6 +74,78 @@ export function LiveBoard() {
   }, [shifts]);
   const serverTime = query.data?.serverTime ?? null;
 
+  // ── "ייצוא": who is on shift at this moment, the durations as the cards show them ──
+  const tc = useTranslations('common');
+  const exportScope = useAttendanceExportScope(scope);
+  const table = useMemo<ReportTableSpec<AttendanceShift>>(() => {
+    const worked = (s: AttendanceShift) => (s.status === 'on_break' ? s.workedSeconds : liveSeconds(s.workedSeconds, serverTime, now));
+    return {
+      id: 'main',
+      title: t('tabs.live'),
+      rows: shifts,
+      rowKey: (s) => s.id,
+      totalsLabel: tc('total'),
+      columns: [
+        { key: 'employee', header: t('col.employee'), width: 20, required: true, value: (s) => s.posUserName ?? null },
+        { key: 'workerNumber', header: t('col.workerNumber'), width: 10, value: (s) => s.workerNumber ?? null },
+        { key: 'role', header: t('col.role'), width: 14, value: (s) => s.roleName || t('live.noRole') },
+        { key: 'shop', header: t('col.shop'), width: 16, value: (s) => s.shopName ?? null },
+        { key: 'status', header: t('col.status'), width: 12, value: (s) => t(`status.${cardStatus(s)}`) },
+        { key: 'clockIn', header: t('live.clockIn'), kind: 'datetime', value: (s) => s.clockInAt },
+        {
+          key: 'duration',
+          header: t('liveExport.duration'),
+          kind: 'number',
+          value: (s) => decimalHours(liveSeconds(s.durationSeconds ?? 0, serverTime, now)),
+        },
+        {
+          key: 'worked',
+          header: t('liveExport.worked'),
+          kind: 'number',
+          value: (s) => decimalHours(worked(s)),
+          totalOf: (rows) => decimalHours(rows.reduce((n, s) => n + worked(s), 0)),
+        },
+        { key: 'breakSince', header: t('liveExport.breakSince'), kind: 'datetime', value: (s) => (s.status === 'on_break' ? (s.breakSince ?? null) : null) },
+        {
+          key: 'till',
+          header: t('liveExport.till'),
+          width: 18,
+          value: (s) =>
+            s.currentMachine ? (s.currentMachine.posNumber ? `${s.currentMachine.name ?? ''} (${s.currentMachine.posNumber})` : (s.currentMachine.name ?? null)) : null,
+        },
+        {
+          key: 'openTables',
+          header: t('liveExport.openTables'),
+          kind: 'number',
+          value: (s) => s.openTables ?? 0,
+          totalOf: (rows) => rows.reduce((n, s) => n + (s.openTables ?? 0), 0),
+        },
+        { key: 'alerts', header: t('liveExport.alerts'), width: 28, value: (s) => cardAlerts(s).map((a) => t(`flags.${a}`)).join(' · ') || null },
+      ],
+    };
+  }, [now, serverTime, shifts, t, tc]);
+  const exportKpis: ReportKpi[] = [
+    { key: 'onShift', label: t('liveExport.onShift'), value: shifts.length, kind: 'count', icon: 'users' },
+    { key: 'working', label: t('liveExport.working'), value: counts.working, kind: 'count', icon: 'user' },
+    { key: 'onBreak', label: t('liveExport.onBreak'), value: counts.on_break, kind: 'count', icon: 'clock' },
+    { key: 'pending', label: t('liveExport.pending'), value: counts.pending, kind: 'count', icon: 'alert', better: 'down' },
+    { key: 'openTables', label: t('liveExport.openTables'), value: shifts.reduce((n, s) => n + (s.openTables ?? 0), 0), kind: 'count', icon: 'table' },
+  ];
+  const byRole = new Map<string, number>();
+  for (const s of shifts) {
+    const role = s.roleName || t('live.noRole');
+    byRole.set(role, (byRole.get(role) ?? 0) + 1);
+  }
+  const exportChart: ReportChart | null = byRole.size
+    ? {
+        type: 'hbar',
+        title: t('liveExport.byRole'),
+        labels: [...byRole.keys()],
+        series: [{ name: t('liveExport.onShift'), values: [...byRole.values()] }],
+        kind: 'number',
+      }
+    : null;
+
   return (
     <div className="space-y-4">
       <Card className="print:hidden">
@@ -88,6 +166,18 @@ export function LiveBoard() {
             ? t('live.updated', { ago: formatDistanceToNow(query.dataUpdatedAt, { locale: he, addSuffix: true }) })
             : null}
         </span>
+        <StandaloneExportBar
+          reportKey="attendance-live"
+          reportType="attendance.live"
+          title={t('tabs.live')}
+          tables={[table as ReportTableSpec<unknown>]}
+          place={exportScope.place}
+          companyId={exportScope.companyId}
+          filterLines={exportScope.filterLines}
+          kpis={exportKpis}
+          chart={exportChart}
+          disabled={!query.data}
+        />
         <Button variant="outline" size="sm" onClick={() => query.refetch()} disabled={query.isFetching}>
           <RefreshCw className={cn('size-4', query.isFetching && 'animate-spin')} />
           {t('live.refresh')}

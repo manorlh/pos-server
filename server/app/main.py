@@ -64,6 +64,7 @@ from app.routers import (
     prepaid_voucher_extras as prepaid_voucher_extras_router,
     prepaid_voucher_manual as prepaid_voucher_manual_router,
     till_shop_z as till_shop_z_router,
+    till_shop_x as till_shop_x_router,
     main_till as main_till_router,
     local_server as local_server_router,
     lan_server as lan_server_router,
@@ -252,6 +253,8 @@ app.include_router(prepaid_voucher_extras_router.router, prefix=_prefix)
 # "מימוש ידני מהענן": manual redemption from the dashboard, one, many, and its undo.
 app.include_router(prepaid_voucher_manual_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
+# "דוח X סניפי" (P:/specs/shop-x-report.md): the till's and the dashboard's.
+app.include_router(till_shop_x_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
 # "העברת שרת מקומי" and "סגירת משמרת מהענן" (P:/specs/local-server-switch.md §8).
 app.include_router(local_server_router.router, prefix=_prefix)
@@ -406,6 +409,19 @@ def start_course_auto_fire_worker():
     from app.services.course_auto_fire_worker import start_background_worker as start_fire_worker
 
     start_fire_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_table_notices_worker():
+    """
+    "שולחן מתעכב" for the assigned waiter (P:/specs/table-waiter-assignment.md §5), every 30 s
+    (app/services/table_notices_worker.py); it tells waiters only where `tableAssignmentNotify` is on.
+    TABLE_NOTICES_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.table_notices_worker import start_background_worker as start_notices_worker
+
+    start_notices_worker(SessionLocal)
 
 
 @app.on_event("startup")
@@ -603,6 +619,13 @@ from app.routers import till_menu as till_menu_router  # noqa: E402
 
 app.include_router(till_menu_router.router, prefix=_prefix)
 app.include_router(till_menu_router.design_router, prefix=_prefix)
+
+# "מצב לא מקוון לכל המסופונים" (P:/specs/nayax-deferred-all.md §8.4, §9, app/routers/deferred_terminals.py): the
+# dashboard's "מסופונים — מצב לא מקוון" and the controlling till's list of the shop's tills.
+from app.routers import deferred_terminals as deferred_terminals_router  # noqa: E402
+
+app.include_router(deferred_terminals_router.router, prefix=_prefix)
+app.include_router(deferred_terminals_router.till_router, prefix=_prefix)
 
 
 @app.on_event("startup")

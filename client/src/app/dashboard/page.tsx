@@ -37,6 +37,9 @@
  * * **without "דוחות"** (or with the board hidden from the role) the board still opens — every
  *   sign-in lands here — and shows what the user may see: the tills' state, built from the
  *   look-ups (lib/boardStructure.ts), with no money anywhere.
+ *
+ * The board view has "ייצוא" with its shortcuts (board-export.tsx; the comparisons have their
+ * own): the designed PDF, Excel and CSV of what the board shows at that moment.
  */
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
@@ -83,6 +86,7 @@ import {
   scopeFigures,
 } from '@/lib/controlBoard';
 import type { AppReleaseRolloutRow, PosMachine } from '@/lib/types';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import { cn } from '@/lib/utils';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ExceptionsTodayChip } from '@/components/dashboard/exceptions-today-chip';
@@ -104,6 +108,7 @@ import { CockpitScopeHeader } from '@/components/dashboard/cockpit/scope-header'
 import type { CockpitScope } from '@/components/dashboard/cockpit/registry';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
 import { BoardVouchers } from '@/components/dashboard/control-board/board-vouchers';
+import { BoardExport } from '@/components/dashboard/control-board/board-export';
 import { HomeTabs } from '@/components/dashboard/control-board/home-tabs';
 import { CompareView } from '@/components/dashboard/control-board/compare-view';
 import { EventPicker, useEventWhen } from '@/components/dashboard/control-board/event-picker';
@@ -637,6 +642,14 @@ export default function DashboardPage() {
   const chip =
     'inline-flex min-h-11 items-center gap-1.5 rounded-full border border-cb-line bg-cb-card px-3 text-sm text-cb-ink hover:bg-cb-soft';
 
+  // "ייצוא" of the board view: what it shows now — the comparison, the event, the tree's search and filter.
+  const exportLines: ReportFilterLine[] = [
+    ...(labelB ? [{ label: t('filters.compare'), value: labelB }] : []),
+    ...(event ? [{ label: tEvent('label'), value: event.name }] : []),
+    ...(query.trim() ? [{ label: t('boardExport.search'), value: query.trim() }] : []),
+    ...(filter !== 'all' ? [{ label: tO('filter.label'), value: tO(`filter.${filter}`) }] : []),
+  ];
+
   return (
     // The board's own surface, edge to edge over the shell's padding; light or dark is the app's (lib/theme).
     <div
@@ -713,6 +726,27 @@ export default function DashboardPage() {
               shopId={effective.shopId ?? undefined}
               machineId={effective.machineId ?? undefined}
             />
+          ) : null}
+          {view === 'board' ? (
+            <div className="ms-auto flex items-center">
+              <BoardExport
+                tree={visible}
+                showSales={salesAllowed}
+                showTillMoney={!eventId}
+                a={figA}
+                b={figB}
+                labelA={labelA}
+                labelB={labelB}
+                points={points}
+                items={items}
+                tills={tillStats}
+                from={event ? event.startDate : eventId ? null : dayA}
+                to={event ? event.endDate : eventId ? null : dayA}
+                place={scopeName ?? null}
+                filterLines={exportLines}
+                disabled={resolution.status !== 'ok' || structureLoading || (salesAllowed && salesLoading)}
+              />
+            </div>
           ) : null}
         </div>
 

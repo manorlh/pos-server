@@ -99,8 +99,33 @@ def post_till_event(
     db.commit()
     if created:
         svc.detect_safely(db, lambda d, e: svc.Detector(d).event(e), event)
+    if created and body.type == "deferred_mode_on":
+        _deferred_auto_all(db, machine, event)
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return TillEventOut(id=event.id, status="accepted" if created else "duplicate")
+
+
+def _deferred_auto_all(db: Session, machine: POSMachine, event: TillEvent) -> None:
+    """
+    "מעבר אוטומטי" of the whole shop (P:/specs/nayax-deferred-all.md §8.6, app/services/deferred_control.py
+    `on_till_event`): a till that went offline by itself, with `deferredAutoOnAll`, takes the shop's other
+    tills along through the cloud. Once per event (a resent one is no new event); never fails the event.
+    """
+    import logging
+
+    from app.services import deferred_control
+    from app.services import device_commands
+
+    try:
+        rows = deferred_control.on_till_event(db, machine, event)
+        db.commit()
+    except Exception:  # noqa: BLE001 - the event is recorded whatever happens here
+        db.rollback()
+        logging.getLogger(__name__).exception("deferred auto-all after event %s failed", event.id)
+        return
+    if rows:
+        targets = db.query(POSMachine).filter(POSMachine.id.in_([r.machine_id for r in rows])).all()
+        device_commands.wake(targets)
 
 
 # ── Scoping and filters ──────────────────────────────────────────────────────

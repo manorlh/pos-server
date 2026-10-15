@@ -17,9 +17,9 @@
  * report bar; the origin, the Z types and the closing time range beside them (the report's
  * extras); the date basis and the list / month view as the page's own switches — all in the
  * URL. A first visit lists the server's last 90 days, as always. The list is a ReportTable
- * (sort, column chooser) in runs of one day; "טבלת זדים מרוכזת" (Excel) takes every Z the
- * filters match with export columns (lib/listExportColumns.ts — a column per payment method of
- * the data); the CSV and the A4 / 80 mm sequence printing stay.
+ * (sort, column chooser) in runs of one day; "טבלת זדים מרוכזת" (Excel, the designed PDF) takes
+ * every Z the filters match with export columns (lib/listExportColumns.ts — a column per payment
+ * method of the data); the list's CSV is the export's CSV; the A4 / 80 mm sequence printing stays.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -33,6 +33,8 @@ import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { AreaName } from '@/components/dashboard/areas/area-filter';
 import { businessToday, formatDate, formatDateTime } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { kpiNumber, previousWindow, type PreviousPeriod, type ReportChart, type ReportKpi } from '@/lib/designedReport';
 import type { ZReport, ZReportListResponse } from '@/lib/types';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { OverShort, usePaymentMethodLabel } from '@/components/dashboard/shifts/shift-parts';
@@ -56,12 +58,16 @@ import type { ReportFilterLine } from '@/lib/reportExport';
 import { todayIso } from '@/lib/reportWindow';
 import {
   DEFAULT_Z_DATE_BASIS,
+  csvFileName,
+  listWindow,
   productionTimeOf,
   summaryWindow,
   zKindOf,
+  zLinesCsv,
+  type ZByDateTotals,
   type ZDateBasis,
 } from '@/lib/zByDate';
-import type { ZByDateFilters } from '@/lib/zByDateApi';
+import { fetchZSummaryByDate, type ZByDateFilters } from '@/lib/zByDateApi';
 import {
   ZDateBasisToggle,
   ZListViewToggle,
@@ -70,7 +76,6 @@ import {
 import { ZDaySummaryCard, useZSummaryByDate } from '@/components/dashboard/z-report/by-date/z-day-summary-card';
 import { ZDayGroupLabel } from '@/components/dashboard/z-report/by-date/z-day-group-row';
 import { ZMonthView } from '@/components/dashboard/z-report/by-date/z-month-view';
-import { ZListCsvButton } from '@/components/dashboard/z-report/by-date/z-list-csv-button';
 import { ZKindBadge, useZKindLabel } from '@/components/dashboard/z-report/by-date/z-by-date-parts';
 import {
   ReportPage,
@@ -117,6 +122,18 @@ function localInputToIso(value: string): string | undefined {
 }
 
 const isZType = (v: string): v is ZType => (Z_TYPES as readonly string[]).includes(v);
+
+/** The day card's totals as the designed PDF's cards (and the period before's), by KPI key. */
+function zFigures(tot: ZByDateTotals): Record<string, number | null> {
+  return {
+    zs: tot.count,
+    net: kpiNumber(tot.netSales),
+    sales: kpiNumber(tot.totalSales),
+    refunds: kpiNumber(tot.totalRefunds),
+    transactions: tot.documents,
+    tips: kpiNumber(tot.totalTips),
+  };
+}
 
 /** The payment methods of a Z table's rows, cash and card first (as the server orders them). */
 function methodsOf(rows: { payments: Record<string, string> }[]): string[] {
@@ -167,6 +184,7 @@ export default function ZReportsPage() {
   const tp = useTranslations('zReports.tillPrint');
   const tb = useTranslations('zByDate');
   const tr = useTranslations('zReports.report');
+  const tcsv = useTranslations('zByDate.csv');
   const zNumberLabel = useZNumberLabel();
   const kindLabel = useZKindLabel();
   const paymentLabel = usePaymentMethodLabel();
@@ -569,6 +587,47 @@ export default function ZReportsPage() {
     ...(closedTo ? [{ label: t('filterClosedTo'), value: formatDateTime(localInputToIso(closedTo)) }] : []),
   ];
 
+  /** "ייצוא הרשימה (CSV)", the file its button always made: every Z of the list's filters, in the list's own window. */
+  const listCsv = async () => {
+    const span = listWindow(from, to, businessToday());
+    const summary = await fetchZSummaryByDate({ ...byDateFilters, ...span, ...closedRange });
+    downloadCsv(csvFileName('list', summary.window), zLinesCsv(summary.zs, tcsv, kindLabel));
+  };
+
+  // The designed PDF (P:\specs\reports-designed-pdf.md §7): the day card's totals as cards when
+  // the card covers the list's own days (a range run — with none the list is the last 90 days and
+  // the card today), its days as bars, and the same totals for the days before (not with a closing
+  // time range: its instants do not move with the days).
+  const designedSummary = from && to ? daySummary.data : undefined;
+  const designedTotals = designedSummary ? zFigures(designedSummary.totals) : null;
+  const kpis: ReportKpi[] = designedTotals
+    ? [
+        { key: 'zs', label: tb('totals.count'), value: designedTotals.zs, kind: 'count', icon: 'calendar' },
+        { key: 'net', label: tb('totals.netSales'), value: designedTotals.net, kind: 'money', icon: 'sales' },
+        { key: 'sales', label: tb('totals.totalSales'), value: designedTotals.sales, kind: 'money' },
+        { key: 'refunds', label: tb('totals.totalRefunds'), value: designedTotals.refunds, kind: 'money', icon: 'refund' },
+        { key: 'transactions', label: tb('totals.documents'), value: designedTotals.transactions, kind: 'count', icon: 'receipt' },
+        { key: 'tips', label: tb('totals.totalTips'), value: designedTotals.tips, kind: 'money', icon: 'tip' },
+      ]
+    : [];
+  const summaryDays = designedSummary?.byDay ?? [];
+  const chart: ReportChart | null =
+    summaryDays.length > 1
+      ? {
+          type: 'bar',
+          title: dateBasis === 'production' ? tb('byProductionDay') : tb('byBusinessDay'),
+          labels: summaryDays.map((d) => (d.date ? formatDate(d.date) : '—')),
+          series: [{ name: tb('totals.netSales'), values: summaryDays.map((d) => kpiNumber(d.netSales)) }],
+          kind: 'money',
+        }
+      : null;
+  const previous = async (): Promise<PreviousPeriod | null> => {
+    const w = closedFrom || closedTo ? null : previousWindow(from, to);
+    if (!w) return null;
+    const before = await fetchZSummaryByDate({ ...byDateFilters, ...w });
+    return { kpis: zFigures(before.totals), ...w };
+  };
+
   const monthQuery = { isLoading: false, isFetching: false, isError: false, hasData: true };
 
   return (
@@ -613,9 +672,17 @@ export default function ZReportsPage() {
                   from: from || null,
                   to: to || null,
                   filterLines: extraLines,
-                  // The Z list prints its own documents (A4 / 80 mm, below): the table goes to Excel.
-                  excelOnly: true,
+                  // The Z list prints its own documents (A4 / 80 mm, below): the table goes to the
+                  // designed PDF, Excel and CSV, with no print template of its own.
+                  noPrint: true,
                   disabled: !data || data.total === 0,
+                  csv: listCsv,
+                  reportType: 'z-reports',
+                  kpis,
+                  chart,
+                  insightKeys: { label: 'shop', value: 'netSales', count: 'documents' },
+                  groupBy: ['shop'],
+                  previous,
                 }
           }
         >
@@ -647,16 +714,6 @@ export default function ZReportsPage() {
                   <ListOrdered className="h-4 w-4 me-1" aria-hidden />
                   {tp('printRange')}
                 </Button>
-                {/* The whole list (every page) as CSV: both dates, kind, time produced, totals. */}
-                <ZListCsvButton
-                  className="ms-auto"
-                  from={from}
-                  to={to}
-                  closedFrom={closedRange.closedFrom}
-                  closedTo={closedRange.closedTo}
-                  filters={byDateFilters}
-                  disabled={!data || data.total === 0}
-                />
               </div>
 
               <ReportTable

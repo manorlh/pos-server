@@ -75,6 +75,7 @@ import { MachineLanServerCard } from '@/components/dashboard/machines/machine-la
 import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
 import { ItemBlockRoleCard } from '@/components/dashboard/machines/item-block-role-card';
 import { TillMenuCard } from '@/components/dashboard/machines/till-menu-card';
+import { DeferredTerminalCard } from '@/components/dashboard/machines/deferred-terminal-card';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
@@ -676,6 +677,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           where it comes from, and a quick switch. Tills only: not a kiosk, a screen or a local server. */}
       {machine.shopId && !isLocalServer(machine) && !display && !removed && machine.deviceRole !== 'kiosk' ? (
         <ItemBlockRoleCard machineId={machine.id} />
+      ) : null}
+
+      {/* "מצב לא מקוון" (P:/specs/nayax-deferred-all.md §1, §10): "קופה מנהלת מצב לא מקוון" (kept at the shop's
+          level) and the till's own automatic switch to offline. A kiosk too — it may have a Nayax terminal. */}
+      {machine.shopId && !isLocalServer(machine) && !display && !removed ? (
+        <DeferredTerminalCard machineId={machine.id} shopId={machine.shopId} />
       ) : null}
 
       {/* "תפריט הקופה" (P:/specs/till-menu-hide.md §3): the menu items this till hides from everyone,
