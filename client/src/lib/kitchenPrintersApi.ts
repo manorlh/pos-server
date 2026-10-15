@@ -197,6 +197,8 @@ export interface KitchenPrintersPage {
     hasPrinter: boolean;
     /** Its build prints relayed documents (`document_relay_v1`): it may host "המדפסת של <קופה>". */
     documentRelay?: boolean;
+    /** Its model drives a drawer port of its own (SUNMI / iMin desktops) — "מגירות לפי קופה". */
+    cashDrawerPort?: boolean;
   }[];
   options: KitchenOptions;
   /** The shop's print server ("שרת הדפסות", till parameter printHostTill), or null. */

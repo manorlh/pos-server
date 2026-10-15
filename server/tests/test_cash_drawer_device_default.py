@@ -138,6 +138,16 @@ class TestTheDashboard:
         # Still the device's default below every level, for the page to show under an override.
         assert out["deviceDefaults"] == {str(d.drawer_till.id): {KEY: BUTTON}}
 
+    def test_the_printers_page_says_which_till_has_a_drawer_port(self, d):
+        # "מגירות לפי קופה": the card tells a till whose "פתיחת מגירה" opens nothing of its own.
+        machines = {m["id"]: m for m in R.list_printers(d.shop.id, **_ctx(d))["machines"]}
+        assert machines[str(d.drawer_till.id)]["cashDrawerPort"] is True
+        assert machines[str(d.plain_till.id)]["cashDrawerPort"] is False
+        d.plain_till.device_model = None
+        d.db.commit()
+        machines = {m["id"]: m for m in R.list_printers(d.shop.id, **_ctx(d))["machines"]}
+        assert machines[str(d.plain_till.id)]["cashDrawerPort"] is False
+
     def test_the_roles_drawer_card_inherits_the_device_default(self, d):
         view = CD.level_view(d.db, "machine", d.drawer_till.id)
         assert view["inherited"][KEY] == BUTTON and view["inheritedSources"] == {KEY: "device_default"}
