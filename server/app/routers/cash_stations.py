@@ -9,8 +9,9 @@ GET    /cash-stations/{id}                                  → the station in d
                                                               queue, active tx, settings, alert tills, commands)
 PUT    /cash-stations/{id}                                  {name?, location?, serial?, hostMachineId?, settings?,
                                                               isActive?} → the station
-PUT    /cash-stations/{id}/clients/{machineId}              {assigned: true|false} — the device's own cashEnabled
-                                                              (+ cashStation) → the station (detail)
+PUT    /cash-stations/{id}/clients/{machineId}              {assigned: true|false, route?: lan|cloud|auto} — the
+                                                              device's own cashEnabled (+ cashStation, + cashRoute
+                                                              §14.2) → the station (detail)
 DELETE /cash-stations/{id}                                  → taken out of use (its journal and drawer stay)
 GET    /cash-stations/{id}/journal?from=&to=&state=&outcome=&owed=&limit=&offset=
 GET    /cash-stations/{id}/movements?from=&to=&kind=&limit=&offset=
@@ -61,6 +62,8 @@ class ClientIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     assigned: bool
+    #: §14.2: its way to the station, at the device's own level (absent — unchanged).
+    route: Optional[str] = Field(None, max_length=8)
 
 
 class ResolveIn(BaseModel):
@@ -214,7 +217,7 @@ def put_cash_station_client(
 
     station = A.station_in_scope(db, current_user, station_id, active_tenant_id)
     try:
-        targets = A.assign_client(db, current_user, station, machine_id, body.assigned)
+        targets = A.assign_client(db, current_user, station, machine_id, body.assigned, route=body.route)
         db.commit()
     except Exception:
         db.rollback()

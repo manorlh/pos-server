@@ -157,6 +157,24 @@ class TestRouteParameter:
         assert A.station_out(w.db, w.station)["clients"][0]["route"] == "auto"
 
 
+    def test_the_station_page_sets_a_kiosks_route(self, w):
+        from fastapi import BackgroundTasks
+
+        out = CR.put_cash_station_client(w.station.id, w.kiosk.id, CR.ClientIn(assigned=True, route="cloud"),
+                                         BackgroundTasks(), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        assert out["clients"][0]["route"] == "cloud"
+        assert CS.client_view(w.db, w.kiosk)["settings"]["cashRoute"] == "cloud"
+        assert CRL.relay_wanted(w.db, w.host) is True
+        # Assigned again without a route: the route stays.
+        out = CR.put_cash_station_client(w.station.id, w.kiosk.id, CR.ClientIn(assigned=True), BackgroundTasks(),
+                                         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        assert out["clients"][0]["route"] == "cloud"
+        with pytest.raises(HTTPException) as e:
+            CR.put_cash_station_client(w.station.id, w.kiosk.id, CR.ClientIn(assigned=True, route="wifi"),
+                                       BackgroundTasks(), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+        assert e.value.status_code == 422 and e.value.detail["code"] == "invalid_route"
+
+
 # ── The host kiosk (§14.1) ────────────────────────────────────────────────────
 
 

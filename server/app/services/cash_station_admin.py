@@ -451,12 +451,14 @@ def resolve(db: Session, user: User, station: CashStation, tx_id: Any, body: Dic
     return {"ok": True, "item": CS.owed_item(tx, station, CS._client_names(db, [tx.client_machine_id]).get(tx.client_machine_id))}
 
 
-def assign_client(db: Session, user: User, station: CashStation, machine_id: Any, assigned: bool) -> List[Any]:
+def assign_client(db: Session, user: User, station: CashStation, machine_id: Any, assigned: bool, *,
+                  route: Optional[str] = None) -> List[Any]:
     """
     "שיוך קיוסק לעמדה" from the station's page: the device's own till parameter values — `cashEnabled` true and
     `cashStation` this station, or `cashEnabled` false (its `cashStation` left as it is) — each with its row in the
     parameters' change log, as the parameters page writes them. Only an active kiosk or till of the station's shop
-    (404 `client_not_found`). The tills to tell (`publish_parameters_notify` after the commit); the caller commits.
+    (404 `client_not_found`). With `route` (§14.2, only when assigned): the device's own `cashRoute` too (422
+    `invalid_route`). The tills to tell (`publish_parameters_notify` after the commit); the caller commits.
     """
     from app.services import till_parameters as TP
     from app.models.pos_machine import PairingStatus
@@ -471,15 +473,19 @@ def assign_client(db: Session, user: User, station: CashStation, machine_id: Any
         raise _refuse(status.HTTP_404_NOT_FOUND, "client_not_found", "הקיוסק לא נמצא בסניף של העמדה.")
     if assigned and not station.is_active:
         raise _refuse(status.HTTP_409_CONFLICT, "station_inactive", "העמדה לא פעילה.")
+    if route is not None and route not in CP.ROUTE_OPTIONS:
+        raise _refuse(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_route", "route: lan | cloud | auto.")
     TP.ensure_builtin_parameters(db)
     params = {p.key: p for p in db.query(TillParameter).filter(
-        TillParameter.key.in_([CP.ENABLED_KEY, CP.STATION_KEY])).all()}
+        TillParameter.key.in_([CP.ENABLED_KEY, CP.STATION_KEY, CP.ROUTE_KEY])).all()}
     now = CS._now()
     changed = TP.write_value(db, params[CP.ENABLED_KEY], "machine", machine.id, bool(assigned), user=user, now=now)
     if assigned:
         changed = TP.write_value(
             db, params[CP.STATION_KEY], "machine", machine.id, str(station.id), user=user, now=now,
         ) or changed
+        if route is not None:
+            changed = TP.write_value(db, params[CP.ROUTE_KEY], "machine", machine.id, route, user=user, now=now) or changed
     db.flush()
     if not changed:
         return []
