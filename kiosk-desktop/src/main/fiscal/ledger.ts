@@ -401,6 +401,8 @@ export class Ledger {
     voucherDiscounts?: DocVoucherDiscount[];
     voucherReleases?: string[];
     voucherLegs?: DocVoucherLeg[];
+    /** Cash credits redeemed for the sale (§11.15א): `cash_credit` legs. */
+    creditLegs?: DocCreditLeg[];
     now?: Date;
   }): DocDraft | null {
     return this.db.tx(() => {
@@ -429,6 +431,7 @@ export class Ledger {
         ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
         ...(input.voucherDiscounts && input.voucherDiscounts.length > 0 ? { voucherDiscounts: input.voucherDiscounts } : {}),
         ...(input.voucherLegs && input.voucherLegs.length > 0 ? { voucherLegs: input.voucherLegs } : {}),
+        ...(input.creditLegs && input.creditLegs.length > 0 ? { creditLegs: input.creditLegs } : {}),
         ...(input.voucherReleases && input.voucherReleases.length > 0 ? { voucherReleases: input.voucherReleases } : {}),
         card: null,
         paymentId: randomUUID(),

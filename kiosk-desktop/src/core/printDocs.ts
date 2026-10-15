@@ -23,6 +23,8 @@ export type ReceiptOp =
   | { t: 'sub'; label: string; value: string }
   | { t: 'divider'; gap: number }
   | { t: 'footerRule' }
+  /** A QR code (centred): a cash credit's "CC:<code>" (P:/specs/cash-paylink.md §11.15א). */
+  | { t: 'qr'; value: string; size: number }
   | { t: 'end' };
 
 export interface ReceiptDoc {
@@ -76,8 +78,22 @@ export interface ReceiptInput {
   /** The goods vouchers that paid part of it: each a "שובר הפקה" leg in the payment (the card's leg is the rest). */
   voucherLegs?: Array<{ amountAgorot: number }>;
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
-  /** "מזומן" at the cash station (`cashReceiptLines`): שולם / עודף, what is owed and its code, the rounding. */
-  cash?: { receivedAgorot: number; changeAgorot: number; changeOwedAgorot: number; roundingAgorot: number; slipCode: string | null; lines: boolean } | null;
+  /**
+   * "מזומן" at the cash station (`cashReceiptLines`): שולם / עודף, what is owed and its code, the rounding; what the
+   * customer chose for change owed (§11.15א: a slip, a credit, a tip) and a split's cash part (§11.15ב).
+   */
+  cash?: {
+    receivedAgorot: number;
+    changeAgorot: number;
+    changeOwedAgorot: number;
+    roundingAgorot: number;
+    slipCode: string | null;
+    lines: boolean;
+    changeOwedAs?: 'slip' | 'credit' | 'tip' | null;
+    splitAgorot?: number;
+  } | null;
+  /** Cash credits redeemed towards it ("זיכוי מזומן C-K7Q3MX"), legs of the payment. */
+  creditLegs?: Array<{ code: string; amountAgorot: number }>;
   footer: [string | null, string | null];
   logoUrl: string | null;
   /** Where it was issued — the shop, the till's number and name ([placeLine]); absent: no line. */
@@ -203,10 +219,13 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   ops.push({ t: 'row', label: 'סה"כ לתשלום', value: formatShekelSign(grand), style: 'grand' });
   ops.push({ t: 'divider', gap: 8 });
   // The goods vouchers' legs ("שובר הפקה"), then the card's: what they did not pay, and the tip.
-  const legs = (r.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);
-  for (const l of legs) ops.push({ t: 'row', label: 'שובר הפקה', value: formatAgorot(l.amountAgorot), style: 'body' });
+  const legs = [...(r.voucherLegs ?? []), ...(r.creditLegs ?? [])].filter((l) => l.amountAgorot > 0);
+  for (const l of (r.voucherLegs ?? []).filter((x) => x.amountAgorot > 0)) ops.push({ t: 'row', label: 'שובר הפקה', value: formatAgorot(l.amountAgorot), style: 'body' });
+  for (const l of (r.creditLegs ?? []).filter((x) => x.amountAgorot > 0)) ops.push({ t: 'row', label: `זיכוי מזומן ${ltr(l.code)}`, value: formatAgorot(l.amountAgorot), style: 'body' });
+  // Cash + card (§11.15ב): the cash part first, the card the rest (and the tip).
+  const splitCash = r.cash && r.card ? Math.max(0, r.cash.splitAgorot ?? 0) : 0;
   if (r.card) {
-    ops.push({ t: 'row', label: 'כרטיס אשראי', value: formatAgorot(grand - legs.reduce((s, l) => s + l.amountAgorot, 0)), style: 'body' });
+    ops.push({ t: 'row', label: 'כרטיס אשראי', value: formatAgorot(grand - legs.reduce((s, l) => s + l.amountAgorot, 0) - splitCash), style: 'body' });
     const brand = BRAND_LABEL_HE[r.card.brand];
     const masked = r.card.last4 ? `**** ${r.card.last4}` : '';
     const cardText = [brand, masked].filter(Boolean).join(' ');
@@ -222,15 +241,17 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
     }
   }
   if (r.cash) {
-    const due = grand - legs.reduce((s, l) => s + l.amountAgorot, 0);
+    const due = splitCash > 0 ? splitCash : grand - legs.reduce((s, l) => s + l.amountAgorot, 0);
     ops.push({ t: 'row', label: 'מזומן', value: formatAgorot(due), style: 'body' });
     if (r.cash.lines) {
       if (r.cash.roundingAgorot !== 0) ops.push({ t: 'row', label: 'עיגול מזומן', value: formatAgorot(r.cash.roundingAgorot), style: 'small' });
       ops.push({ t: 'row', label: 'שולם במזומן', value: formatAgorot(r.cash.receivedAgorot), style: 'small' });
       ops.push({ t: 'row', label: 'עודף', value: formatAgorot(r.cash.changeAgorot), style: 'small' });
     }
-    if (r.cash.changeOwedAgorot > 0) {
-      ops.push({ t: 'row', label: 'עודף חייב', value: formatAgorot(r.cash.changeOwedAgorot), style: 'bodyBold' });
+    // Change owed (§11.15א): a slip for the till, a credit for the next order; left as a tip it is the "תשר" row above.
+    if (r.cash.changeOwedAgorot > 0 && r.cash.changeOwedAs !== 'tip') {
+      const credit = r.cash.changeOwedAs === 'credit';
+      ops.push({ t: 'row', label: credit ? 'זיכוי להזמנה הבאה' : 'עודף חייב', value: formatAgorot(r.cash.changeOwedAgorot), style: 'bodyBold' });
       if (r.cash.slipCode) ops.push({ t: 'row', label: 'קוד', value: ltr(r.cash.slipCode), style: 'small' });
     }
   }
@@ -552,7 +573,7 @@ export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc;
  * went silent: the transaction, what went in, "פנו לצוות". Drawn as a receipt page (ops).
  */
 export function cashSlipDoc(input: {
-  kind: 'change_owed' | 'fault';
+  kind: 'change_owed' | 'credit' | 'fault';
   businessName: string | null;
   amountAgorot: number;
   orderLabel: string | null;
@@ -572,6 +593,18 @@ export function cashSlipDoc(input: {
     ops.push({ t: 'divider', gap: 8 });
     ops.push({ t: 'text', text: 'מכשיר המזומן לא יכול היה לתת את כל העודף.', style: 'small', align: 'center' });
     ops.push({ t: 'text', text: 'גשו עם הפתק לקופה ותקבלו את העודף.', style: 'bodyBold', align: 'center' });
+  } else if (input.kind === 'credit') {
+    // "זיכוי להזמנה הבאה" (§11.15א): the code and its QR ("CC:" + the code), redeemed at a till or a kiosk.
+    ops.push({ t: 'text', text: 'זיכוי להזמנה הבאה', style: 'heading', align: 'center' });
+    ops.push({ t: 'text', text: ltr(formatShekelSign(input.amountAgorot)), style: 'number', align: 'center' });
+    if (input.slipCode) {
+      ops.push({ t: 'qr', value: `CC:${input.slipCode}`, size: 200 });
+      ops.push({ t: 'row', label: 'קוד', value: ltr(input.slipCode), style: 'bodyBold' });
+    }
+    if (input.orderLabel) ops.push({ t: 'row', label: 'הזמנה', value: ltr(input.orderLabel), style: 'body' });
+    ops.push({ t: 'divider', gap: 8 });
+    ops.push({ t: 'text', text: 'מכשיר המזומן לא יכול היה לתת את כל העודף.', style: 'small', align: 'center' });
+    ops.push({ t: 'text', text: 'הציגו את הפתק בקופה או סרקו אותו בקיוסק בהזמנה הבאה.', style: 'bodyBold', align: 'center' });
   } else {
     ops.push({ t: 'text', text: 'תקלה במזומן — פנו לצוות', style: 'heading', align: 'center' });
     if (input.amountAgorot > 0) ops.push({ t: 'row', label: 'הוכנסו', value: formatAgorot(input.amountAgorot), style: 'body' });

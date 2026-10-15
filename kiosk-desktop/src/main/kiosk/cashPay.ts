@@ -18,8 +18,8 @@ import type { Api } from '../sync/api';
 import type { Kv } from '../db/schema';
 import { LEASE_RENEW_MS, STATUS_POLL_MS, type StationStatus } from '../../core/cash/lanProtocol';
 import { cashSettingsOf, type CashSettings } from '../../core/cash/settings';
-import type { TxView } from '../../core/cash/tx';
-import { CashLanClient, clientConfigOf, type CashStationRef } from '../cash/client';
+import type { OwedChoice, TxView } from '../../core/cash/tx';
+import { CashLanClient, clientConfigOf, type CashReply, type CashStationRef } from '../cash/client';
 
 export interface CashPending {
   txId: string;
@@ -34,9 +34,14 @@ export interface CashPending {
   started: boolean;
   /** Final at the station; only the acknowledgement is left. */
   finalState: 'DONE' | 'HELD' | null;
+  /**
+   * Cash + card (§11.15ב): the cash part the station holds (PARTIAL) and what the card's outcome made of it — `finish`
+   * (approved, or unknown: the cash is kept and the card decides) or `cancel` (refunded). A restart goes on from here.
+   */
+  split?: { cashAgorot: number; decision: 'finish' | 'cancel' | null } | null;
 }
 
-export type CashStage = 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding';
+export type CashStage = 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'split_card';
 
 export interface CashProgress {
   stage: CashStage;
@@ -80,8 +85,11 @@ export class CashPay {
   private cfg: ClientConfig | null;
   private status: StationStatus | null = null;
   private statusAt = 0;
+  /** Since when the station has not answered on the LAN (null: it answers / no station). */
+  private silentSince: number | null = null;
   private lan: CashLanClient | null = null;
   private cancelRequested = false;
+  private splitRequested = false;
   private running = false;
   private stopped = false;
   private timer: NodeJS.Timeout | null = null;
@@ -165,10 +173,14 @@ export class CashPay {
     const before = this.usable();
     if (!c) {
       this.status = null;
+      this.silentSince = null;
     } else {
       const r = await c.status();
       this.status = r.kind === 'ok' ? r.body : null;
       this.statusAt = this.now();
+      // Any answer (a refusal too) is the station there; only silence counts.
+      if (r.kind === 'offline') this.silentSince ??= this.now();
+      else this.silentSince = null;
     }
     if (this.usable() !== before) this.changed();
   }
@@ -176,6 +188,22 @@ export class CashPay {
   /** The "מזומן" tile may be offered: configured, and the station answered ready lately. */
   usable(): boolean {
     return this.configured() && !!this.status?.ready && this.now() - this.statusAt < 3 * STATUS_POLL_MS;
+  }
+
+  /**
+   * "אין קשר לעמדת המזומן" (P:/specs/cash-paylink.md §11.8, §11.15ג): the kiosk's own alert for the cloud while its
+   * station has been silent on the LAN this long — the station, by id and name. Null while it answers.
+   */
+  unreachableAlert(afterMs = 60_000): Record<string, unknown> | null {
+    const st = this.cfg?.station;
+    if (!this.configured() || !st || this.silentSince === null || this.now() - this.silentSince < afterMs) return null;
+    return {
+      kind: 'cash',
+      key: 'cash:unreachable',
+      reason: 'unreachable',
+      text: `אין קשר לעמדת המזומן ${st.name}`,
+      detail: { stationId: st.stationId, stationName: st.name },
+    };
   }
 
   offReason(): string | null {
@@ -217,11 +245,27 @@ export class CashPay {
     this.cancelRequested = true;
   }
 
-  async pay(input: { orderId: string; docId: string; amountAgorot: number; orderLabel: string | null }, onProgress: (p: CashProgress) => void): Promise<CashOutcome> {
+  /** "להשלים באשראי" (§11.15ב): the payment in flight asks the station for its cash part so far. */
+  requestSplit(): boolean {
+    if (!this.running) return false;
+    this.splitRequested = true;
+    return true;
+  }
+
+  /**
+   * [hooks.partial]: the station holds the cash part (PARTIAL) — the card is charged for the rest meanwhile (the lease
+   * renewed all along) and its word decides: `finish` (the cash part paid) or `cancel` (all of it back).
+   */
+  async pay(
+    input: { orderId: string; docId: string; amountAgorot: number; orderLabel: string | null },
+    onProgress: (p: CashProgress) => void,
+    hooks: { partial?: (tx: TxView) => Promise<'finish' | 'cancel'> } = {},
+  ): Promise<CashOutcome> {
     const c = this.client();
     if (!c || !this.cfg?.station) return { kind: 'refunded', tx: null, message: 'מכשיר המזומן לא זמין' };
     this.running = true;
     this.cancelRequested = false;
+    this.splitRequested = false;
     const poll = this.d.pollMs ?? POLL_MS;
     const renewEvery = Math.min(LEASE_RENEW_MS, poll * 5);
     const settings = this.settings();
@@ -288,6 +332,8 @@ export class CashPay {
       }
       // 3. Following it to the end.
       let cancelSent = false;
+      let splitSent = false;
+      let decisionSent = false;
       let lastRenew = this.now();
       silentSince = null;
       for (;;) {
@@ -295,6 +341,42 @@ export class CashPay {
           const r = await c.cancel(txId, 'customer');
           if (r.kind !== 'offline') cancelSent = true;
           if (r.kind === 'ok') tx = r.body;
+        }
+        if (this.splitRequested && !splitSent && !this.cancelRequested && tx.state === 'ACCEPTING') {
+          const r = await c.split(txId);
+          if (r.kind !== 'offline') splitSent = true;
+          if (r.kind === 'ok') tx = r.body;
+          else if (r.kind === 'refused') this.splitRequested = false;
+        }
+        if (tx.state === 'PARTIAL') {
+          if (!pending.split) {
+            pending.split = { cashAgorot: tx.splitAgorot, decision: null };
+            this.savePending(pending);
+          }
+          if (pending.split.decision === null) {
+            onProgress({ stage: 'split_card', position: 0, tx, message: tx.message ?? '' });
+            // The card is charged meanwhile: the lease is renewed all along (the station would refund a silent kiosk).
+            const lease = pending.leaseId;
+            const renew = setInterval(() => void c.lease(lease, txId), renewEvery);
+            let decision: 'finish' | 'cancel' = 'cancel';
+            try {
+              decision = hooks.partial ? await hooks.partial(tx) : 'cancel';
+            } catch (e) {
+              this.d.log(`cash split: ${e instanceof Error ? e.message : String(e)}`);
+            } finally {
+              clearInterval(renew);
+            }
+            pending.split = { ...pending.split, decision };
+            this.savePending(pending);
+            lastRenew = this.now();
+          }
+          if (!decisionSent) {
+            const r: CashReply<TxView> = pending.split.decision === 'finish' ? await c.finish(txId) : await c.cancel(txId, 'customer');
+            if (r.kind === 'ok') {
+              decisionSent = true;
+              tx = r.body;
+            } else if (r.kind === 'refused') decisionSent = true;
+          }
         }
         if (this.now() - lastRenew >= renewEvery) {
           await c.lease(pending.leaseId, txId);
@@ -326,11 +408,14 @@ export class CashPay {
     }
   }
 
-  /** The document is written (or the failure handled): the station may let the lease go. Kept until it answers. */
-  async ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null): Promise<boolean> {
+  /**
+   * The document is written (or the failure handled): the station may let the lease go. Kept until it answers.
+   * [extra]: the customer's choice for the change owed (§11.15א); `void` — a split sale's document voided (§11.15ב).
+   */
+  async ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null, extra: { changeOwedAs?: OwedChoice | null; void?: boolean } = {}): Promise<boolean> {
     const c = this.client();
     if (!c) return false;
-    const r = await c.ack(txId, documentId, documentNumber, orderLabel);
+    const r = await c.ack(txId, documentId, documentNumber, orderLabel, extra);
     if (r.kind === 'ok' || (r.kind === 'refused' && r.status === 404)) {
       this.forget(txId);
       return true;
@@ -353,6 +438,16 @@ export class CashPay {
   async cancelAt(txId: string): Promise<void> {
     await this.client()?.cancel(txId, 'kiosk');
   }
+
+  /** A split left in PARTIAL by a restart whose card decided (or may have): the cash part is paid (§11.15ב). */
+  async finishAt(txId: string): Promise<void> {
+    await this.client()?.finish(txId);
+  }
+
+  /** What a restart left of a payment's split (§11.15ב). */
+  splitOf(txId: string): CashPending['split'] {
+    return this.pending().find((p) => p.txId === txId)?.split ?? null;
+  }
 }
 
 export function stageOf(tx: TxView): CashStage {
@@ -363,6 +458,8 @@ export function stageOf(tx: TxView): CashStage {
       return 'change';
     case 'REFUNDING':
       return 'refunding';
+    case 'PARTIAL':
+      return 'split_card';
     default:
       return 'insert';
   }

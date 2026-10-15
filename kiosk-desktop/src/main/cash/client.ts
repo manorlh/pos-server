@@ -5,7 +5,7 @@
  */
 
 import { stationPath, type LeaseView, type StationStatus } from '../../core/cash/lanProtocol';
-import type { TxView } from '../../core/cash/tx';
+import type { OwedChoice, TxView } from '../../core/cash/tx';
 import { signedHeaders } from './auth';
 
 export interface CashStationRef {
@@ -100,8 +100,24 @@ export class CashLanClient {
     return this.request<TxView>('POST', `tx/${txId}/cancel`, { reason });
   }
 
-  ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null) {
-    return this.request<TxView>('POST', `tx/${txId}/ack`, { ...(documentId ? { documentId } : {}), ...(documentNumber ? { documentNumber } : {}), ...(orderLabel ? { orderLabel } : {}) });
+  ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null, extra: { changeOwedAs?: OwedChoice | null; void?: boolean } = {}) {
+    return this.request<TxView>('POST', `tx/${txId}/ack`, {
+      ...(documentId ? { documentId } : {}),
+      ...(documentNumber ? { documentNumber } : {}),
+      ...(orderLabel ? { orderLabel } : {}),
+      ...(extra.changeOwedAs ? { changeOwedAs: extra.changeOwedAs } : {}),
+      ...(extra.void ? { void: true } : {}),
+    });
+  }
+
+  /** "להשלים באשראי" (§11.15ב): the cash part so far, the rest by card. */
+  split(txId: string) {
+    return this.request<TxView>('POST', `tx/${txId}/split`, {});
+  }
+
+  /** The card paid the rest: the cash part is paid. */
+  finish(txId: string) {
+    return this.request<TxView>('POST', `tx/${txId}/finish`, {});
   }
 }
 

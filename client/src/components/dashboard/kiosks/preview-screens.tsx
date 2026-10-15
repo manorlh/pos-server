@@ -277,6 +277,10 @@ export interface KioskLive {
     onCancel: () => void;
     onRetry: () => void;
     onBack: () => void;
+    /** "חסר עודף במכשיר" (P:/specs/cash-paylink.md §11.15א): the customer's choice. */
+    onCashOwedChoice?: (choice: CashOwedChoice) => void;
+    /** "להשלים באשראי" (§11.15ב). */
+    onCashSplit?: () => void;
   };
   /** The success screen's real order. */
   success?: {
@@ -3436,9 +3440,19 @@ export function WaitLogo({ m }: { m: PreviewModel }) {
   );
 }
 
+/** What the customer does with change the cash station could not pay (§11.15א). */
+export type CashOwedChoice = 'slip' | 'credit' | 'tip';
+
+/** "חסר עודף" — each choice's words. */
+export const CASH_OWED_CHOICE_TEXT: Record<CashOwedChoice, { title: string; sub: string }> = {
+  slip: { title: 'פתק — מקבלים את העודף בקופה', sub: 'מדפיסים פתק עם קוד; בקופה מקבלים את העודף' },
+  credit: { title: 'זיכוי להזמנה הבאה', sub: 'מדפיסים פתק עם קוד; סורקים אותו בהזמנה הבאה' },
+  tip: { title: 'להשאיר כטיפ', sub: 'תודה! העודף יירשם כטיפ' },
+};
+
 /** The cash station's side of a live payment (the Windows kiosk's PayProgress.cash). */
 export interface LiveCashPay {
-  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault';
+  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
   position: number | null;
   stationName: string | null;
   insertedAgorot: number;
@@ -3450,6 +3464,14 @@ export interface LiveCashPay {
   accepts: { coins: number[]; notes: number[] } | null;
   slipCode: string | null;
   txShort: string | null;
+  /** owed_choice: what may be chosen, and when a slip is taken by itself (epoch ms). */
+  owedChoices?: CashOwedChoice[];
+  owedDeadlineAt?: number | null;
+  /** "להשלים באשראי" may be offered now. */
+  canSplit?: boolean;
+  /** split_card: the cash part paid, and what the card is charged. */
+  splitAgorot?: number;
+  cardRestAgorot?: number;
 }
 
 /** "מזומן" at the cash station: the words of each stage (no kiosk text of its own yet — plain Hebrew). */
@@ -3471,15 +3493,90 @@ function cashHeadline(cash: LiveCashPay): string {
       return 'שולם';
     case 'refunded':
       return 'הכסף הוחזר';
+    case 'owed_choice':
+      return 'חסר עודף במכשיר';
+    case 'split_card':
+      return 'השלימו את התשלום באשראי';
     default:
       return 'תקלה — פנו לצוות';
   }
+}
+
+/** "חסר עודף במכשיר: 13 ₪ — מה תרצו לעשות?" — one button per choice (§11.15א). */
+function LiveCashOwedChoice({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskLive['pay']>; cash: LiveCashPay }) {
+  const shekels = (agorot: number) => m.money(agorot / 100);
+  const choices = cash.owedChoices && cash.owedChoices.length > 0 ? cash.owedChoices : (['slip'] as CashOwedChoice[]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!cash.owedDeadlineAt) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [cash.owedDeadlineAt]);
+  const left = cash.owedDeadlineAt ? Math.max(0, Math.ceil((cash.owedDeadlineAt - now) / 1000)) : null;
+  return (
+    <ScreenBody m={m}>
+      <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+        <h2 className="text-xl font-extrabold">חסר עודף במכשיר: {shekels(cash.changeOwedAgorot)}</h2>
+        <p className="text-sm" style={{ color: m.c.mutedText }}>
+          המכשיר החזיר {shekels(cash.changeAgorot)} ולא יכול היה לתת את כל העודף. מה תרצו לעשות?
+        </p>
+        <div className="flex w-full max-w-sm flex-col gap-2">
+          {choices.map((c) => (
+            <BigButton key={c} m={m} variant={c === 'slip' ? undefined : 'soft'} onClick={() => live.onCashOwedChoice?.(c)}>
+              <span className="flex flex-col items-center">
+                <span>{CASH_OWED_CHOICE_TEXT[c].title}</span>
+                <span className="kt-11 font-normal">{CASH_OWED_CHOICE_TEXT[c].sub}</span>
+              </span>
+            </BigButton>
+          ))}
+        </div>
+        {left !== null ? (
+          <p className="kt-11" style={{ color: m.c.mutedText }}>
+            בלי בחירה — פתק לקופה בעוד {left} שניות
+          </p>
+        ) : null}
+      </div>
+    </ScreenBody>
+  );
 }
 
 function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskLive['pay']>; cash: LiveCashPay }) {
   const shekels = (agorot: number) => m.money(agorot / 100);
   const fault = live.phase === 'unknown' || cash.stage === 'fault';
   const remaining = Math.max(0, cash.dueAgorot - cash.insertedAgorot);
+  if (cash.stage === 'owed_choice' && !fault) return <LiveCashOwedChoice m={m} live={live} cash={cash} />;
+  if (cash.stage === 'split_card' && !fault && live.phase !== 'declined' && live.phase !== 'blocked') {
+    // Cash + card (§11.15ב): the cash part is in; the card on the kiosk's terminal pays the rest.
+    return (
+      <ScreenBody m={m}>
+        <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+          <WaitLogo m={m} />
+          <h2 className="text-xl font-extrabold">השלימו את התשלום באשראי</h2>
+          <div className="w-full max-w-sm p-4" style={cardStyle(m)}>
+            <div className="text-sm font-bold" style={{ color: m.c.mutedText }}>
+              שולם במזומן {shekels(cash.splitAgorot ?? cash.insertedAgorot)}
+            </div>
+            <div className="text-5xl font-black tabular-nums" style={{ color: m.c.primary }}>
+              {shekels(cash.cardRestAgorot ?? 0)}
+            </div>
+            <div className="mt-1 text-base font-bold">הציגו כרטיס במסופון האשראי</div>
+          </div>
+          {live.message ? (
+            <p className="text-sm" style={{ color: m.c.mutedText }}>
+              {live.message}
+            </p>
+          ) : null}
+          {live.canCancel ? (
+            <div className="mt-auto w-full">
+              <BigButton m={m} variant="soft" onClick={live.onCancel} disabledLook={live.cancelling}>
+                {live.cancelling ? m.t('payCancelling') : m.t('payCancel')}
+              </BigButton>
+            </div>
+          ) : null}
+        </div>
+      </ScreenBody>
+    );
+  }
   return (
     <ScreenBody m={m}>
       <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
@@ -3547,6 +3644,13 @@ function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskL
             ) : null}
             {cash.stage === 'connecting' || cash.stage === 'queued' || cash.stage === 'settling' ? (
               <span aria-hidden className="inline-block h-10 w-10 animate-spin rounded-full border-4" style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />
+            ) : null}
+            {cash.stage === 'insert' && cash.canSplit && live.onCashSplit ? (
+              <div className="w-full max-w-sm">
+                <BigButton m={m} onClick={live.onCashSplit}>
+                  להשלים באשראי (נותרו {shekels(remaining)})
+                </BigButton>
+              </div>
             ) : null}
             {live.canCancel ? (
               <div className="mt-auto w-full">

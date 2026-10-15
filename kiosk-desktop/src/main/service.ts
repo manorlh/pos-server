@@ -20,9 +20,12 @@ import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, ty
 import { OfflineTracker } from '../core/kioskHealth';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
+import { CashCredits } from './kiosk/cashCredits';
+import { creditLegsOf } from '../core/cash/credit';
 import { cashSlipDoc } from '../core/printDocs';
-import { shortTx } from '../core/cash/tx';
-import type { DocCashLeg } from './fiscal/ledger';
+import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cash/tx';
+import { shekelText } from '../core/cash/settings';
+import { cardPrincipalAgorot, type DocCashLeg, type DocCreditLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
@@ -108,6 +111,8 @@ import type {
   BasketChange,
   KioskEvents,
   KioskView,
+  CashCreditResult,
+  PayPhase,
   PayProgress,
   PlaceOrderIn,
   PlaceOrderOut,
@@ -237,6 +242,15 @@ export class KioskService extends EventEmitter {
   private viewCache: KioskView | null = null;
   private viewDirty = true;
   private payProgress: PayProgress | null = null;
+  /** "חסר עודף" (P:/specs/cash-paylink.md §11.15א): the customer's choice the pay screen waits for. */
+  private owedChoiceWait: { resolve: (c: OwedChoice) => void; choices: OwedChoice[] } | null = null;
+  /** Cash + card (§11.15ב): the card's word on the rest, by document, until the station's part is settled. */
+  private splitCards = new Map<
+    string,
+    { kind: 'approved'; card: NonNullable<DocDraft['card']> } | { kind: 'unknown'; message: string } | { kind: 'declined'; message: string; voidMeta: Record<string, unknown> | null }
+  >();
+  /** Cash credits taken for orders (§11.15א). */
+  readonly cashCredits: CashCredits;
   private adminUntil = 0;
   private adminName: string | null = null;
   /** The shop manager who opened the admin (their till user id): the authority of a SynqPay pairing. */
@@ -286,6 +300,7 @@ export class KioskService extends EventEmitter {
     this.funnel = new FunnelStore(this.kv);
     this.payAtTill = new PayAtTill({ kv: this.kv, api: this.api, machineId: () => this.machineId, operator: () => this.operator(), log: this.log });
     this.cashPay = new CashPay({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log, fetch: opts.fetch });
+    this.cashCredits = new CashCredits({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log });
     this.cashPay.onChange(() => this.dirty());
     this.providers = opts.providers ?? PROVIDERS;
     this.tillZ = new TillZService({
@@ -825,6 +840,8 @@ export class KioskService extends EventEmitter {
         if (id && this.isKiosk()) {
           await this.cashPay.pull().catch((e) => this.log(`cash: ${String(e)}`));
           if (!this.cashPay.inFlight && this.cashPay.pending().length > 0) await this.settleCash();
+          // Cash credits taken for orders that were not paid: back on the credit.
+          await this.cashCredits.flush().catch((e) => this.log(`cash credits: ${String(e)}`));
         }
       },
       sideRequest: (row: OutboxRow) => this.sideRequest(row),
@@ -850,6 +867,9 @@ export class KioskService extends EventEmitter {
     if (this.pay.monitor.state === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
     else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
     if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
+    // "אין קשר לעמדת המזומן" (§11.15ג): its station silent on the LAN a minute — the cloud routes it as a cash alert.
+    const cashSilent = this.cashPay.unreachableAlert();
+    if (cashSilent) alerts.push(cashSilent);
     const help = this.kv.getJson<{ requestId: string; at: number; screen: string }>(HELP);
     if (help && Date.now() - help.at < 10 * 60_000) alerts.push({ kind: 'help', key: 'help', reason: 'help', requestId: help.requestId, detail: { screen: help.screen } });
     return {
@@ -1210,6 +1230,8 @@ export class KioskService extends EventEmitter {
         if (this.liveUnknown(a.orderId)) this.progress({ ...this.payProgress!, phase: 'declined', message: 'העסקה לא חויבה' });
       },
     });
+    // A split sale's card settled (§11.15ב): the cash station told — its part paid with the document, or held (voided).
+    if (this.cashPay.pending().length > 0 && !this.cashPay.inFlight) await this.settleCash();
     this.dirty();
   }
 
@@ -1358,7 +1380,10 @@ export class KioskService extends EventEmitter {
     // browser kiosk's bridge sends them over HTTP.
     const vouchers = input.vouchers === undefined ? null : startVouchersOf(input.vouchers);
     if (input.vouchers !== undefined && !vouchers) return { ok: false, reason: 'error', message: 'השוברים של ההזמנה אינם תקינים' };
-    const withVouchers = !!vouchers && vouchers.legs.length + vouchers.discounts.length > 0;
+    // Cash credits ("זיכוי להזמנה הבאה", §11.15א) taken for the order: legs towards the goods, like the goods vouchers.
+    const credits = creditLegsOf(input.credits);
+    if (!credits) return { ok: false, reason: 'error', message: 'הזיכויים של ההזמנה אינם תקינים' };
+    const withVouchers = (!!vouchers && vouchers.legs.length + vouchers.discounts.length > 0) || credits.length > 0;
     const terminalRefusal = (): StartPaymentOut | null => {
       // "מזומן" at the cash station: the station must be there (its own refusal); the card's terminal is not asked.
       if (byCash) return this.cashPay.configured() ? null : { ok: false, reason: 'terminal', message: this.cashPay.offReason() ?? 'מכשיר המזומן לא זמין' };
@@ -1397,7 +1422,10 @@ export class KioskService extends EventEmitter {
       if (mark) l.voucherMark = mark;
     }
     const totals = saleTotals(lines, this.vatRate(), tip);
-    const principal = Math.max(0, goods - legs.reduce((s, l) => s + l.amountAgorot, 0));
+    const afterVouchers = Math.max(0, goods - legs.reduce((s, l) => s + l.amountAgorot, 0));
+    const creditSum = credits.reduce((s, c) => s + c.amountAgorot, 0);
+    if (creditSum > afterVouchers) return { ok: false, reason: 'error', message: 'הזיכויים עולים על ההזמנה' };
+    const principal = afterVouchers - creditSum;
     const chargeAgorot = principal + tip;
     if (goods + tip < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
     if (withVouchers && chargeAgorot > 0) {
@@ -1449,6 +1477,7 @@ export class KioskService extends EventEmitter {
       // A discount voucher that took nothing off this basket (it fell under its minimum): held, and given back once the sale is written.
       voucherReleases: voucherOutcomes.filter((o) => o.amountAgorot <= 0).map((o) => o.voucher.reservationId),
       voucherLegs: legs,
+      creditLegs: credits,
     });
     if (!doc) return { ok: false, reason: 'no_shift', message: 'אין משמרת פתוחה' };
     this.orders.update(order.localId, (o) => ({ ...o, transactionId: doc.id }));
@@ -1559,8 +1588,8 @@ export class KioskService extends EventEmitter {
     };
   }
 
-  /** The cash leg of a paid transaction (the document's, §11.7). */
-  private cashLegOf(tx: NonNullable<CashProgress['tx']>): DocCashLeg {
+  /** The cash leg of a paid transaction (the document's, §11.7; a split's cash part, §11.15ב). */
+  private cashLegOf(tx: NonNullable<CashProgress['tx']>, changeOwedAs: OwedChoice | null = null): DocCashLeg {
     return {
       txId: tx.txId,
       stationId: tx.stationId,
@@ -1570,11 +1599,118 @@ export class KioskService extends EventEmitter {
       changeOwedAgorot: tx.changeOwedAgorot,
       roundingAgorot: tx.roundingAgorot,
       slipCode: tx.slipCode,
+      ...(changeOwedAs ? { changeOwedAs } : {}),
+      ...((tx.splitAgorot ?? 0) > 0 ? { splitAgorot: tx.splitAgorot } : {}),
     };
   }
 
-  /** A cash slip ("עודף חייב" / the fault slip) on the receipt printer. */
-  private printCashSlip(kind: 'change_owed' | 'fault', orderId: string, amountAgorot: number, slipCode: string | null, txId: string) {
+  /** "להשלים באשראי" may be offered (§11.15ב): the kiosk's parameter, a terminal that can charge, something in, the goods not yet. */
+  private splitOffered(doc: DocDraft, tx: TxView | null): boolean {
+    if (!tx || tx.state !== 'ACCEPTING' || tx.insertedAgorot <= 0) return false;
+    if (!this.cashPay.settings().splitWithCard || !this.pay.configured || this.pay.noCard || this.pay.blocked()) return false;
+    return tx.insertedAgorot < cardPrincipalAgorot(doc);
+  }
+
+  /** "חסר עודף במכשיר" (§11.15א): what the customer may choose — a slip always, a credit online, a tip where tips are on. */
+  private owedChoices(): OwedChoice[] {
+    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && this.cloudOnline()) || (c === 'tip' && this.config().payment.tipEnabled === true));
+  }
+
+  /** The pay screen asks what to do with the change owed; a slip when nobody chooses in `cashOwedChoiceSec`. */
+  private askOwedChoice(orderId: string, tx: TxView, amount: number): Promise<OwedChoice> {
+    const choices = this.owedChoices();
+    const cur = this.payProgress;
+    if (choices.length < 2 || !cur || cur.orderId !== orderId) return Promise.resolve('slip');
+    const ms = this.cashPay.settings().owedChoiceSec * 1000;
+    return new Promise<OwedChoice>((resolve) => {
+      let timer: NodeJS.Timeout | null = null;
+      const done = (c: OwedChoice) => {
+        if (timer) clearTimeout(timer);
+        if (this.owedChoiceWait?.resolve === done) this.owedChoiceWait = null;
+        resolve(c);
+      };
+      timer = setTimeout(() => done('slip'), ms);
+      this.owedChoiceWait = { resolve: done, choices };
+      this.progress({
+        ...cur,
+        phase: 'charging',
+        message: `חסר עודף במכשיר: ${shekelText(tx.changeOwedAgorot)}`,
+        canCancel: false,
+        cancelling: false,
+        cash: { ...this.cashView(tx, amount, 'owed_choice'), owedChoices: choices, owedDeadlineAt: Date.now() + ms },
+      });
+    });
+  }
+
+  /** The customer's choice on "חסר עודף" (the screen's button). */
+  async cashOwedChoice(raw: unknown): Promise<void> {
+    const w = this.owedChoiceWait;
+    if (!w || typeof raw !== 'string' || !(w.choices as string[]).includes(raw)) return;
+    w.resolve(raw as OwedChoice);
+  }
+
+  /** "להשלים באשראי" (the screen's button, §11.15ב): the station is asked for its part so far. */
+  async cashSplit(): Promise<{ ok: boolean; message?: string }> {
+    const p = this.payProgress;
+    if (!p?.cash?.canSplit) return { ok: false, message: 'אי אפשר להשלים באשראי כעת' };
+    if (!this.cashPay.requestSplit()) return { ok: false, message: 'אין תשלום מזומן פעיל' };
+    this.progress({ ...p, canCancel: false, message: 'רגע…', cash: { ...p.cash, canSplit: false, stage: 'settling' } });
+    return { ok: true };
+  }
+
+  /** A cash credit taken for this order (§11.15א): the screen holds it as a leg and sends it with the payment. */
+  async redeemCashCredit(input: unknown): Promise<CashCreditResult> {
+    if (!this.fiscalRole || !this.isKiosk()) return { ok: false, error: 'המכשיר אינו קיוסק פעיל' };
+    return this.cashCredits.redeem(input);
+  }
+
+  async releaseCashCredit(redemptionId: string): Promise<void> {
+    this.cashCredits.release(redemptionId);
+  }
+
+  /**
+   * The station holds the cash part (PARTIAL, §11.15ב): kept on the pending document, the card charged for the rest
+   * and the tip. Its word decides the cash part: approved / unknown → `finish` (kept; an unknown card decides the
+   * document later), declined / refused → `cancel` (all of it back at the station).
+   */
+  private async chargeRest(orderId: string, doc: DocDraft, amountAgorot: number, tx: TxView): Promise<'finish' | 'cancel'> {
+    const rest = Math.max(0, amountAgorot - tx.splitAgorot);
+    this.ledger.attachCashPart(doc.id, { ...this.cashLegOf(tx), changeAgorot: 0, roundingAgorot: 0, splitAgorot: tx.splitAgorot });
+    const view = { ...this.cashView(tx, amountAgorot, 'split_card'), splitAgorot: tx.splitAgorot, cardRestAgorot: rest };
+    const say = (message: string | null, phase: PayPhase, canCancel: boolean) => {
+      const cur = this.payProgress;
+      if (cur && cur.orderId === orderId) this.progress({ ...cur, phase, message, canCancel, cancelling: false, cash: view });
+    };
+    const headline = `שולם במזומן ${shekelText(tx.splitAgorot)} · השלימו ${shekelText(rest)} באשראי`;
+    say(headline, 'charging', true);
+    const outcome = await this.pay.charge({
+      transactionId: doc.id,
+      orderId,
+      amountAgorot: rest,
+      tipAgorot: doc.totals.tipAgorot,
+      onSent: () => say(headline, 'charging', true),
+      onProgress: (message) => say(message ?? headline, 'charging', true),
+    });
+    if (outcome.kind === 'approved') {
+      this.splitCards.set(doc.id, { kind: 'approved', card: outcome.card });
+      return 'finish';
+    }
+    if (outcome.kind === 'unknown') {
+      this.splitCards.set(doc.id, { kind: 'unknown', message: outcome.message });
+      return 'finish';
+    }
+    if (outcome.kind === 'declined') this.pay.forgetAttempt(this.lastReferenceOf(doc.id) ?? '');
+    this.splitCards.set(doc.id, {
+      kind: 'declined',
+      message: outcome.kind === 'declined' ? outcome.message : 'מסופון האשראי לא זמין כרגע.',
+      voidMeta: outcome.kind === 'declined' ? (outcome.voidMeta as Record<string, unknown> | null) : null,
+    });
+    say('האשראי לא אושר — מחזיר את המזומן…', 'charging', false);
+    return 'cancel';
+  }
+
+  /** A cash slip ("עודף חייב" / "זיכוי להזמנה הבאה" / the fault slip) on the receipt printer. */
+  private printCashSlip(kind: 'change_owed' | 'credit' | 'fault', orderId: string, amountAgorot: number, slipCode: string | null, txId: string) {
     const o = this.orders.get(orderId);
     this.printQueue.enqueue(
       'slip',
@@ -1600,14 +1736,15 @@ export class KioskService extends EventEmitter {
         const cur = this.payProgress;
         if (!cur || cur.orderId !== orderId) return;
         const insertPhase = p.stage === 'insert' || p.stage === 'settling' || p.stage === 'change' || p.stage === 'refunding';
+        if (p.stage === 'split_card') return; // the card's own progress (chargeRest)
         this.progress({
           ...cur,
           phase: insertPhase ? 'charging' : 'starting',
           message: p.message,
           canCancel: p.stage === 'connecting' || p.stage === 'queued' || (p.stage === 'insert' && (p.tx?.remainingAgorot ?? 1) > 0),
-          cash: this.cashView(p.tx, amountAgorot, p.stage, p.position),
+          cash: { ...this.cashView(p.tx, amountAgorot, p.stage, p.position), canSplit: p.stage === 'insert' && this.splitOffered(doc, p.tx) },
         });
-      });
+      }, { partial: (tx) => this.chargeRest(orderId, doc, amountAgorot, tx) });
     } catch (e) {
       this.log(`cash payment: ${e instanceof Error ? e.message : String(e)}`);
       outcome = { kind: 'lost', txId: this.cashPay.pending().find((x) => x.docId === doc.id)?.txId ?? '', insertedAgorot: 0 };
@@ -1621,25 +1758,36 @@ export class KioskService extends EventEmitter {
     if (this.stopped) return;
     const live = !recovered && this.payProgress?.orderId === orderId;
     const amount = this.payProgress?.amountAgorot ?? 0;
+    if (outcome.kind === 'paid' && (outcome.tx.splitAgorot ?? 0) > 0) return this.applySplitPaid(orderId, docId, outcome.tx, recovered, live, amount);
     if (outcome.kind === 'paid') {
       const tx = outcome.tx;
-      const done = this.ledger.completeCashSale(docId, this.cashLegOf(tx));
+      // "חסר עודף" (§11.15א): the customer's choice — asked now (`ask`, live), the station's word, or a slip.
+      const owed = tx.changeOwedAgorot > 0;
+      let owedAs: OwedChoice | null = owed ? (tx.changeOwedAs ?? null) : null;
+      if (owed && !owedAs) owedAs = tx.changeOwedAsk && live ? await this.askOwedChoice(orderId, tx, amount) : 'slip';
+      if (this.stopped) return;
+      const done = this.ledger.completeCashSale(docId, this.cashLegOf(tx, owedAs), new Date(), owedAs === 'tip' ? tx.changeOwedAgorot : 0);
       if (done && done.status === 'completed') {
-        if (live) this.progress({ ...this.payProgress!, cash: this.cashView(tx, amount, 'done') });
+        if (live) this.progress({ ...this.payProgress!, phase: 'charging', canCancel: false, cash: this.cashView(tx, amount, 'done') });
         await this.afterApproval(orderId, done, recovered);
-        if (tx.changeOwedAgorot > 0 && !recovered) this.printCashSlip('change_owed', orderId, tx.changeOwedAgorot, tx.slipCode, tx.txId);
-        if (!recovered && this.cashPay.settings().receiptLines && this.config().payment.receiptPolicy !== 'always' && tx.changeOwedAgorot > 0) {
-          // The receipt carries the change owed and its code: printed whatever the policy when something is owed.
+        if (owed && !recovered && owedAs !== 'tip') this.printCashSlip(owedAs === 'credit' ? 'credit' : 'change_owed', orderId, tx.changeOwedAgorot, tx.slipCode, tx.txId);
+        if (!recovered && this.cashPay.settings().receiptLines && this.config().payment.receiptPolicy !== 'always' && owed && owedAs !== 'tip') {
+          // The receipt carries the change owed (or the credit) and its code: printed whatever the policy when something is owed.
           this.printReceipt(orderId, false);
         }
       }
-      await this.cashPay.ack(tx.txId, docId, done ? formatDocNumber(done.prefix, String(done.number)) : null, this.orders.get(orderId)?.pickupLabel ?? null);
+      await this.cashPay.ack(tx.txId, docId, done ? formatDocNumber(done.prefix, String(done.number)) : null, this.orders.get(orderId)?.pickupLabel ?? null, { changeOwedAs: owedAs });
       void this.sync.flush();
       return;
     }
     if (outcome.kind === 'refunded') {
-      this.ledger.voidCardSale(docId, { cashTxId: outcome.tx?.txId ?? null, outcome: outcome.tx?.outcome ?? 'cancelled' });
-      if (live) this.progress({ ...this.payProgress!, phase: 'declined', message: outcome.message, canCancel: false, cancelling: false, cash: this.cashView(outcome.tx, amount, 'refunded') });
+      // A split whose card was not approved: its words, and the card's evidence on the voided document.
+      const card = this.splitCards.get(docId);
+      this.splitCards.delete(docId);
+      const declined = card?.kind === 'declined' ? card : null;
+      this.ledger.voidCardSale(docId, { ...(declined?.voidMeta ?? {}), cashTxId: outcome.tx?.txId ?? null, outcome: outcome.tx?.outcome ?? 'cancelled' });
+      const message = declined ? `${declined.message} — ${outcome.message}` : outcome.message;
+      if (live) this.progress({ ...this.payProgress!, phase: 'declined', message, canCancel: false, cancelling: false, cash: this.cashView(outcome.tx, amount, 'refunded') });
       if (outcome.tx) await this.cashPay.ack(outcome.tx.txId, null, null);
       void this.sync.flush();
       return;
@@ -1664,6 +1812,51 @@ export class KioskService extends EventEmitter {
   }
 
   /**
+   * A split's cash part paid (§11.15ב): with the card approved — the document with both legs (the cash part was kept on
+   * it), then the station's acknowledgement. The card's word not known (unknown, a restart): the document waits for it
+   * (settleOrphans), the station keeps its part until then (settleCash acknowledges or voids).
+   */
+  private async applySplitPaid(orderId: string, docId: string, tx: TxView, recovered: boolean, live: boolean, amount: number) {
+    const card = this.splitCards.get(docId);
+    this.splitCards.delete(docId);
+    const label = this.orders.get(orderId)?.pickupLabel ?? null;
+    this.ledger.attachCashPart(docId, { ...this.cashLegOf(tx), changeAgorot: 0, roundingAgorot: 0 });
+    const view = { ...this.cashView(tx, amount, 'split_card'), splitAgorot: tx.splitAgorot, cardRestAgorot: Math.max(0, amount - tx.splitAgorot) };
+    if (card?.kind === 'approved') {
+      const done = this.ledger.completeCardSale(docId, card.card);
+      const ref = this.lastReferenceOf(docId);
+      if (ref) this.pay.forgetAttempt(ref);
+      if (done && done.status === 'completed') {
+        if (live) this.progress({ ...this.payProgress!, cash: { ...view, stage: 'done' } });
+        await this.afterApproval(orderId, done, recovered);
+      }
+      await this.cashPay.ack(tx.txId, docId, done ? formatDocNumber(done.prefix, String(done.number)) : null, label);
+      void this.sync.flush();
+      return;
+    }
+    const doc = this.ledger.doc(docId);
+    if (doc?.status === 'completed') {
+      await this.cashPay.ack(tx.txId, docId, formatDocNumber(doc.prefix, String(doc.number)), label);
+      return;
+    }
+    if (doc?.status === 'cancelled') {
+      await this.cashPay.ack(tx.txId, null, null, null, { void: true });
+      return;
+    }
+    if (live) {
+      this.progress({
+        ...this.payProgress!,
+        phase: 'unknown',
+        message: card?.kind === 'unknown' ? card.message : 'התשלום באשראי לא הוכרע. אנא פנו לצוות.',
+        canCancel: false,
+        cancelling: false,
+        cash: view,
+      });
+    }
+    this.dirty();
+  }
+
+  /**
    * Payments the station never finished telling (a restart, a lost station): its word now — paid →
    * the document (no paper: the customer is gone), refunded / held → the document voided; still open
    * → cancelled there (refunded at the device); silent → next time.
@@ -1680,13 +1873,31 @@ export class KioskService extends EventEmitter {
         continue;
       }
       const tx = r.tx;
+      const split = (tx.splitAgorot ?? 0) > 0;
+      if (tx.state === 'PARTIAL') {
+        // Cash + card left mid-way (§11.15ב): a card that decided (or may have) keeps the cash part; else it goes back.
+        const decision = this.cashPay.splitOf(tx.txId)?.decision ?? null;
+        const carded = this.pay.attempts().some((a) => a.transactionId === p.docId);
+        if (decision === 'finish' || (decision === null && carded)) await this.cashPay.finishAt(tx.txId);
+        else await this.cashPay.cancelAt(tx.txId);
+        continue;
+      }
       if (tx.state !== 'DONE' && tx.state !== 'HELD') {
         await this.cashPay.cancelAt(tx.txId);
         continue;
       }
       if (doc?.status !== 'pending') {
-        // Already written (or voided): only the acknowledgement was left.
-        await this.cashPay.ack(tx.txId, doc?.status === 'completed' ? doc.id : null, doc?.status === 'completed' ? formatDocNumber(doc.prefix, String(doc.number)) : null);
+        // Already written (or voided): only the acknowledgement was left. A split whose document was voided — the card
+        // was not charged — leaves its cash part held for the customer (§11.15ב).
+        const voided = split && tx.state === 'DONE' && tx.outcome === 'paid' && doc?.status === 'cancelled';
+        await this.cashPay.ack(tx.txId, doc?.status === 'completed' ? doc.id : null, doc?.status === 'completed' ? formatDocNumber(doc.prefix, String(doc.number)) : null, null, voided ? { void: true } : {});
+        continue;
+      }
+      if (split && tx.state === 'DONE' && tx.outcome === 'paid') {
+        // The card decides the document (its unknown is settled by settleOrphans); with no card at all, it is voided.
+        if (this.pay.attempts().some((a) => a.transactionId === p.docId)) continue;
+        this.ledger.voidCardSale(p.docId, { cashTxId: tx.txId, outcome: 'split_without_card' });
+        await this.cashPay.ack(tx.txId, null, null, null, { void: true });
         continue;
       }
       const outcome: CashOutcome =
@@ -1977,6 +2188,11 @@ export class KioskService extends EventEmitter {
     const p = this.payProgress;
     if (!p || (p.phase !== 'starting' && p.phase !== 'charging')) return;
     this.progress({ ...p, cancelling: true, message: 'מבטלים…' });
+    // Cash + card: the card's charge is cancelled — then the station gives the cash part back (§11.15ב).
+    if (p.cash?.stage === 'split_card') {
+      await this.pay.cancel();
+      return;
+    }
     // "מזומן": the station gives back what went in (or the queue is left).
     if (p.cash) {
       this.cashPay.cancel();
@@ -2284,8 +2500,12 @@ export class KioskService extends EventEmitter {
               roundingAgorot: doc.cash.roundingAgorot,
               slipCode: doc.cash.slipCode,
               lines: this.cashPay.settings().receiptLines,
+              changeOwedAs: doc.cash.changeOwedAs ?? null,
+              splitAgorot: doc.cash.splitAgorot ?? 0,
             }
           : null,
+        // "זיכוי מזומן C-K7Q3MX" among the payments (§11.15א).
+        creditLegs: (doc.creditLegs ?? []).map((l) => ({ code: l.code, amountAgorot: l.amountAgorot })),
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).

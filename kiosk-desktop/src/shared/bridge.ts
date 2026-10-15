@@ -167,7 +167,22 @@ export interface StartPaymentIn {
   vouchers?: StartVouchers;
   /** How the rest is paid: the card (default) or "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6). */
   method?: 'card' | 'cash_device';
+  /** Cash credits ("זיכוי להזמנה הבאה", P:/specs/cash-paylink.md §11.15א) redeemed for this order: legs towards the goods. */
+  credits?: CashCreditLegIn[];
 }
+
+/** A cash credit redeemed towards the order (the cloud's redemption): its code and what it pays. */
+export interface CashCreditLegIn {
+  redemptionId: string;
+  code: string;
+  amountAgorot: number;
+}
+
+/** `redeemCashCredit`: the credit taken for this order, or why not (Hebrew). */
+export type CashCreditResult = { ok: true; credit: CashCreditLegIn & { remainingAgorot: number } } | { ok: false; error: string };
+
+/** §11.15א: what the customer does with change the cash station could not pay. */
+export type CashOwedChoice = 'slip' | 'credit' | 'tip';
 
 /** "voucherApply" (Android, pos-android KioskWebProtocol.parseVoucher): the code scanned or typed, and the basket as "לתשלום" sends it. */
 export interface VoucherApplyIn {
@@ -232,7 +247,8 @@ export interface PayProgress {
 
 /** The cash station's side of a payment, as the pay screen draws it (§11.6). */
 export interface CashPayView {
-  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault';
+  /** `owed_choice`: the change owed — the customer chooses (§11.15א); `split_card`: the cash part paid, the card the rest (§11.15ב). */
+  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
   /** In the queue: the place (1 = next). */
   position: number | null;
   stationName: string | null;
@@ -246,6 +262,14 @@ export interface CashPayView {
   accepts: { coins: number[]; notes: number[] } | null;
   slipCode: string | null;
   txShort: string | null;
+  /** owed_choice: what may be chosen, and when a slip is taken by itself (epoch ms). */
+  owedChoices?: CashOwedChoice[];
+  owedDeadlineAt?: number | null;
+  /** "להשלים באשראי (נותרו X ₪)" may be offered now (§11.15ב). */
+  canSplit?: boolean;
+  /** split_card: the cash part, and what the card is charged (the rest and the tip). */
+  splitAgorot?: number;
+  cardRestAgorot?: number;
 }
 
 /** "צימוד מסוף SynqPay" (pos-server docs/SPEC_SYNQPAY.md §2.2): where the pairing stands. */
@@ -382,6 +406,14 @@ export interface KioskBridge {
   voucherApply?(input: VoucherApplyIn): Promise<VoucherAnswer | null>;
   voucherRemove?(serial: number): Promise<VoucherAnswer | null>;
   cancelPayment(): Promise<void>;
+  /** "חסר עודף": the customer's choice (§11.15א); absent where the host has no cash station. */
+  cashOwedChoice?(choice: CashOwedChoice): Promise<void>;
+  /** "להשלים באשראי": the cash part so far, the rest by card (§11.15ב). */
+  cashSplit?(): Promise<{ ok: boolean; message?: string }>;
+  /** A cash credit's code (scanned "CC:…" or typed) taken for this order — up to [dueAgorot] of the goods. */
+  redeemCashCredit?(input: { code: string; dueAgorot: number; clientRequestId: string }): Promise<CashCreditResult>;
+  /** A credit taken for an order that was not paid: back on the credit (kept and retried until the cloud answers). */
+  releaseCashCredit?(redemptionId: string): Promise<void>;
   receiptChoice(orderId: string, print: boolean): Promise<void>;
   /** "עזרה": a help request to the tills (an alert on the next sync). */
   helpRequest(): Promise<void>;

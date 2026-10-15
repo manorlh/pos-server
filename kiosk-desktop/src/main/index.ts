@@ -302,6 +302,10 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:reverseVoucher', (_e, id: string) => svc.reverseVoucher(id));
   ipcMain.handle('kiosk:releaseDiscounts', (_e, vouchers: Array<{ reservationId: string }>) => svc.releaseDiscounts(vouchers));
   ipcMain.handle('kiosk:cancelPayment', () => svc.cancelPayment());
+  ipcMain.handle('kiosk:cashOwedChoice', (_e, choice: unknown) => svc.cashOwedChoice(choice));
+  ipcMain.handle('kiosk:cashSplit', () => svc.cashSplit());
+  ipcMain.handle('kiosk:redeemCashCredit', (_e, input: unknown) => svc.redeemCashCredit(input));
+  ipcMain.handle('kiosk:releaseCashCredit', (_e, id: unknown) => svc.releaseCashCredit(typeof id === 'string' ? id : ''));
   ipcMain.handle('kiosk:receiptChoice', (_e, orderId: string, print: boolean) => svc.receiptChoice(orderId, print));
   ipcMain.handle('kiosk:helpRequest', () => svc.helpRequest());
   ipcMain.handle('kiosk:adminUnlock', (_e, pin: string) => svc.adminUnlock(pin));
