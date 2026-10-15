@@ -10,7 +10,3 @@ tests/test_kitchen_ticket_designs.py::TestMigration::test_upgrade_adds_the_table
 tests/test_register_number.py::TestMigration
 tests/test_register_number.py::TestCallSites::test_pairing_with_a_code_pre_assigned_to_a_shop
 tests/test_register_number.py::TestCallSites::test_field_install_claim
-# A REAL FINDING, not noise: POST /sync/{machine_id}/user-sessions/{session_id}/release (exclusive login v2,
-# already deployed) is neither guarded (FISCAL_SYNC_PATH / FISCAL_MACHINE_TOKEN) nor listed in OPEN_WRITES, so a
-# display device could call it (a manager's approval is still required). Guard it or list it, then remove this line.
-tests/test_display_devices.py::TestFiscalEndpoints::test_every_till_write_is_classified_and_every_fiscal_one_guarded
