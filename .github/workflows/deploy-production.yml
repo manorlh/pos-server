@@ -1,0 +1,252 @@
+# Checks on every merge to main, and a button that deploys production.
+#
+#   every push / pull request to main   the checks only (server and client): you see at once whether
+#                                       main is deployable, nothing is deployed
+#   "Run workflow" (manual)             the checks, then the deploy of main as it is NOW, so several
+#                                       merges in a row are released once, as the latest state
+#
+# Manual run: GitHub > Actions > "Checks and production deploy" > Run workflow
+#             or `gh workflow run deploy-production.yml --ref main`
+#   inputs:   api (deploy the Fly API), dashboard (deploy the Vercel dashboard),
+#             skip_checks (urgent fix: deploy without re-running the checks)
+#
+#   deploy-api        `flyctl deploy`: `alembic upgrade head` runs as the release command, a failing
+#                     migration aborts the release and nothing is switched; then /health is checked
+#   deploy-dashboard  Vercel production deployment, then pos-cloud-app.vercel.app is pointed at it
+#
+# The API deploys before the dashboard, so a new dashboard never calls an API that does not have its
+# routes yet. Repository secrets: FLY_API_TOKEN (deploy token for pos-cloud-api), VERCEL_TOKEN.
+# The till (pos-android) is not part of this: its CI publishes the signed APK, devices are updated
+# by hand.
+name: Checks and production deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      api:
+        description: Deploy the API (Fly, with its migrations)
+        type: boolean
+        default: true
+      dashboard:
+        description: Deploy the dashboard (Vercel)
+        type: boolean
+        default: true
+      skip_checks:
+        description: Skip the checks (urgent fix only)
+        type: boolean
+        default: false
+
+# One production deploy at a time and never cancelled halfway. Check runs of a pull request are
+# superseded by a newer push to the same branch.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && 'production-deploy' || format('checks-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  server-checks:
+    name: Server checks
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_checks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: server
+    env:
+      # Only two settings are required; the tests use in-memory SQLite.
+      DATABASE_URL: sqlite:///./ci.db
+      JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+      # Test names that are generated from sets must come out the same on every run.
+      PYTHONHASHSEED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Poetry packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('server/poetry.lock') }}
+
+      - name: Install dependencies
+        run: |
+          pip install poetry==1.8.4
+          poetry install --no-interaction --no-ansi
+          poetry run pip install pytest-rerunfailures==14.0
+
+      - name: One Alembic head
+        run: |
+          heads=$(poetry run alembic heads | grep -c '(head)' || true)
+          poetry run alembic heads
+          if [ "$heads" != "1" ]; then
+            echo "::error title=Alembic::expected exactly one head, found $heads. Add a merge revision."
+            exit 1
+          fi
+
+      - name: Tests
+        run: |
+          # `python -m pytest`, not `pytest`: the server folder must be on the import path (`import app`).
+          # The whole suite runs, in ONE process (the tests share module state and a SQLite file, so
+          # parallel workers collide). A failing test is retried up to twice at once, in the same run
+          # (timing-sensitive tests). Tests that fail in a clean environment are listed in
+          # ci-known-failures.txt, with the reason, and left out.
+          deselect=$(grep -v -e '^#' -e '^$' ci-known-failures.txt | sed 's/^/--deselect /' | tr '\n' ' ')
+          if ! poetry run python -m pytest -q --reruns 2 --reruns-delay 1 $deselect tests; then
+            echo "Some tests failed; running only those again in a fresh process (order-dependent tests pass alone)."
+            # One process, so "last failed" is exactly the failures. If the first run died without recording
+            # failures, nothing is selected and this step fails too.
+            poetry run python -m pytest -q --last-failed --last-failed-no-failures none $deselect tests
+          fi
+
+  server-migrations-postgres:
+    name: Migration tests on Postgres (informational)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_checks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+      PYTHONHASHSEED: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install poetry==1.8.4
+          poetry install --no-interaction --no-ansi
+
+      - name: Migration tests that need a real Postgres (informational, they show how the SQLite exclusions behave on Postgres)
+        run: poetry run python -m pytest -q tests/test_till_roles.py tests/test_kitchen_ticket_designs.py tests/test_register_number.py
+
+  client-checks:
+    name: Client checks
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.skip_checks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install (the lockfile must match package.json)
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npm test
+
+  deploy-api:
+    name: Deploy API (Fly)
+    needs: [server-checks, client-checks]
+    # Only a manual run deploys; the checks must have passed (or been skipped on purpose).
+    if: >-
+      ${{ always() && github.event_name == 'workflow_dispatch' && inputs.api
+      && contains(fromJSON('["success","skipped"]'), needs.server-checks.result)
+      && contains(fromJSON('["success","skipped"]'), needs.client-checks.result) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Deploy pos-cloud-api (runs the migrations as the release command)
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Health
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS https://pos-cloud-api.fly.dev/health; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "::error title=Health::the API did not answer /health after the deploy"
+          exit 1
+
+  deploy-dashboard:
+    name: Deploy dashboard (Vercel)
+    needs: [server-checks, client-checks, deploy-api]
+    if: >-
+      ${{ always() && github.event_name == 'workflow_dispatch' && inputs.dashboard
+      && contains(fromJSON('["success","skipped"]'), needs.server-checks.result)
+      && contains(fromJSON('["success","skipped"]'), needs.client-checks.result)
+      && contains(fromJSON('["success","skipped"]'), needs.deploy-api.result) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: client
+    env:
+      VERCEL_ORG_ID: team_HPmzNBavpmCWmFSMx8tKlzbn
+      VERCEL_PROJECT_ID: prj_kvvlLUx1hWcUAQcuGfjiUFR6GUh2
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Vercel token present
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error title=VERCEL_TOKEN::the repository secret VERCEL_TOKEN is not set; the dashboard was not deployed."
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@63.1.2
+
+      - name: Deploy to Vercel production (the remote build once failed on a Google Fonts fetch, so it is retried)
+        id: deploy
+        run: |
+          for i in 1 2 3; do
+            if url=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN"); then
+              echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Vercel deploy attempt $i failed"; sleep 20
+          done
+          exit 1
+
+      - name: Point pos-cloud-app.vercel.app at it
+        run: vercel alias set "${{ steps.deploy.outputs.deployment_url }}" pos-cloud-app.vercel.app --token="$VERCEL_TOKEN"
+
+      - name: Smoke test
+        run: curl -fsS -o /dev/null https://pos-cloud-app.vercel.app/sign-in
