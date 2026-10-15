@@ -48,6 +48,7 @@ function SummaryFigures({ s }: { s: CashDrawerSummary }) {
         <Figure label={t('change')} value={agorotText(-s.changeAgorot)} />
         <Figure label={t('refunds')} value={agorotText(-s.refundsAgorot)} />
         <Figure label={t('net')} value={agorotText(s.netAgorot)} strong />
+        {s.splitCashAgorot ? <Figure label={t('splitCash', { n: s.splitCount ?? 0 })} value={agorotText(s.splitCashAgorot)} /> : null}
       </div>
       <div>
         <Figure label={t('float')} value={agorotText(s.floatAgorot)} />
@@ -60,7 +61,7 @@ function SummaryFigures({ s }: { s: CashDrawerSummary }) {
   );
 }
 
-function Reconciliation({ r }: { r: CashReconciliation }) {
+function Reconciliation({ r, owed }: { r: CashReconciliation; owed?: Pick<CashDrawerSummary, 'owedSlipAgorot' | 'owedCreditAgorot' | 'owedTipAgorot'> | null }) {
   const t = useTranslations('cashStations.drawer');
   const diff = reconciliationDifference(r);
   const state = reconciliationState(diff);
@@ -68,6 +69,13 @@ function Reconciliation({ r }: { r: CashReconciliation }) {
     <div className="space-y-1">
       <Figure label={t('kioskCash', { n: r.kioskDocuments })} value={agorotText(r.kioskCashAgorot)} />
       <Figure label={t('plusChangeOwed')} value={agorotText(r.changeOwedAgorot)} />
+      {owed ? (
+        <div className="ps-4 text-muted-foreground">
+          {owed.owedSlipAgorot ? <Figure label={t('owedSlip')} value={agorotText(owed.owedSlipAgorot)} /> : null}
+          {owed.owedCreditAgorot ? <Figure label={t('owedCredit')} value={agorotText(owed.owedCreditAgorot)} /> : null}
+          {owed.owedTipAgorot ? <Figure label={t('owedTip')} value={agorotText(owed.owedTipAgorot)} /> : null}
+        </div>
+      ) : null}
       <Figure label={t('plusHeld')} value={agorotText(r.heldAgorot)} />
       <Figure label={t('expectedNet')} value={agorotText(r.kioskCashAgorot + r.changeOwedAgorot + r.heldAgorot)} />
       <Figure label={t('stationNet')} value={agorotText(r.stationNetAgorot)} />
@@ -174,7 +182,7 @@ export function DrawerTab({ stationId }: { stationId: string }) {
                 <p className="text-xs text-muted-foreground">{t('reconciliationHint')}</p>
               </CardHeader>
               <CardContent>
-                <Reconciliation r={d.reconciliation} />
+                <Reconciliation r={d.reconciliation} owed={d.summary} />
               </CardContent>
             </Card>
           </div>
@@ -206,7 +214,7 @@ export function DrawerTab({ stationId }: { stationId: string }) {
                       {z.station ? (
                         <div className="grid gap-3 lg:grid-cols-2">
                           <SummaryFigures s={z.station} />
-                          <Reconciliation r={z.station.reconciliation} />
+                          <Reconciliation r={z.station.reconciliation} owed={z.station} />
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">{t('zNoBlock')}</p>

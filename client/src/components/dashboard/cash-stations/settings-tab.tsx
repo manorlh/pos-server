@@ -42,7 +42,7 @@ import { cn } from '@/lib/utils';
 import { NativeSelect } from './parts';
 
 const TIMER_KEYS: StationSettingKey[] = ['cashInsertTimeoutSec', 'cashIdleTimeoutSec', 'cashQueueTimeoutSec', 'cashRefundGraceSec'];
-const ADVANCED_INT_KEYS: StationSettingKey[] = ['cashSettleMs', 'cashPayoutTimeoutSec', 'cashUnackedHoldMin'];
+const ADVANCED_INT_KEYS: StationSettingKey[] = ['cashSettleMs', 'cashPayoutTimeoutSec', 'cashUnackedHoldMin', 'cashSplitWaitSec'];
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (

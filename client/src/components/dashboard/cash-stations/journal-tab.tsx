@@ -19,8 +19,10 @@ import {
   TX_STATES,
   agorotText,
   journalParams,
+  owedChoiceOf,
   pageInfo,
   piecesText,
+  splitOf,
   txTone,
   type CashTx,
   type JournalFilters,
@@ -158,7 +160,10 @@ export function JournalTab({ stationId }: { stationId: string }) {
                             {tx.orderLabel ? t('orderLabel', { label: tx.orderLabel }) : '—'}
                             {tx.documentNumber ? <span className="block text-muted-foreground">{t('document', { n: String(tx.documentNumber) })}</span> : null}
                           </TableCell>
-                          <TableCell className="text-end tabular-nums">{agorotText(tx.dueAgorot ?? tx.amountAgorot)}</TableCell>
+                          <TableCell className="text-end tabular-nums">
+                            {agorotText(tx.dueAgorot ?? tx.amountAgorot)}
+                            {splitOf(tx) ? <span className="block text-xs text-muted-foreground">{t('split')}</span> : null}
+                          </TableCell>
                           <TableCell className="text-end tabular-nums">{agorotText(tx.insertedAgorot)}</TableCell>
                           <TableCell className="text-end tabular-nums">
                             {agorotText(tx.changePaidAgorot)}
@@ -168,6 +173,7 @@ export function JournalTab({ stationId }: { stationId: string }) {
                           </TableCell>
                           <TableCell className="text-end tabular-nums">
                             {tx.changeOwedAgorot ? <span className="font-medium text-amber-700 dark:text-amber-400">{agorotText(tx.changeOwedAgorot)}</span> : '—'}
+                            {owedChoiceOf(tx) ? <span className="block text-xs text-muted-foreground">{tr(`owedChoice.${owedChoiceOf(tx)}`)}</span> : null}
                           </TableCell>
                           <TableCell className="text-end tabular-nums">
                             {tx.heldAgorot ? <span className="font-medium text-destructive">{agorotText(tx.heldAgorot)}</span> : '—'}
@@ -206,6 +212,20 @@ export function JournalTab({ stationId }: { stationId: string }) {
                                     <dd className="inline">{t('detail.refundOf', { paid: agorotText(tx.refundPaidAgorot), due: agorotText(tx.refundDueAgorot) })}</dd>
                                   </div>
                                 ) : null}
+                                {splitOf(tx) ? (
+                                  <div>
+                                    <dt className="inline text-muted-foreground">{t('split')}: </dt>
+                                    <dd className="inline">
+                                      {t('detail.split', { cash: agorotText(splitOf(tx)!.cashAgorot), card: agorotText(splitOf(tx)!.cardAgorot) })}
+                                    </dd>
+                                  </div>
+                                ) : null}
+                                {owedChoiceOf(tx) ? (
+                                  <div>
+                                    <dt className="inline text-muted-foreground">{t('detail.owedChoice')}: </dt>
+                                    <dd className="inline">{tr(`owedChoice.${owedChoiceOf(tx)}`)}</dd>
+                                  </div>
+                                ) : null}
                                 {tx.heldReason ? (
                                   <div>
                                     <dt className="inline text-muted-foreground">{t('detail.heldReason')}: </dt>
@@ -234,7 +254,7 @@ export function JournalTab({ stationId }: { stationId: string }) {
                                   <div className="sm:col-span-2">
                                     <dt className="inline text-muted-foreground">{t('detail.owedItem')}: </dt>
                                     <dd className="inline">
-                                      {tr(`owedKind.${tx.owed.kind === 'held_credit' ? 'held_credit' : 'change_owed'}`)} · {agorotText(tx.owed.amountAgorot)} ·{' '}
+                                      {tr(`owedKind.${tx.owed.kind === 'held_credit' || tx.owed.kind === 'change_credit' ? tx.owed.kind : 'change_owed'}`)} · {agorotText(tx.owed.amountAgorot)} ·{' '}
                                       {tx.owed.status === 'resolved'
                                         ? t('detail.resolved', {
                                             how: tx.owed.resolution && tr.has(`resolution.${tx.owed.resolution}`) ? tr(`resolution.${tx.owed.resolution}`) : tx.owed.resolution ?? '',

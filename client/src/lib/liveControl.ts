@@ -466,6 +466,10 @@ export interface DeviceRow {
   name: string;
   posNumber?: string | null;
   isKiosk: boolean;
+  /** "שרת מזומן" (P:/specs/cash-paylink.md §11.15ד): a restart and a logs request only (`actions`). */
+  isCashHost?: boolean;
+  /** The actions this device takes when only some (null / absent: every action). */
+  actions?: string[] | null;
   online: boolean;
   state: { locked: boolean; message: string | null; lockedAt: string | null; lockedBy: string | null };
   open: DeviceCommandRow[];

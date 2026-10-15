@@ -14,6 +14,9 @@ import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatDateTime } from '@/lib/format';
 import { RESOLVE_CHOICES, agorotText, shortTxId, type CashOwedItem, type ResolveChoice } from '@/lib/cashStations';
+
+/** A credit for a next order is redeemed by its code, never paid out: only written off by hand. */
+const CREDIT_CHOICES: readonly ResolveChoice[] = ['written_off'];
 import { cashStationKey, fetchCashOwed, resolveCashOwed } from '@/lib/cashStationsApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -87,6 +90,26 @@ export function OwedTab({ stationId, canEdit }: { stationId: string; canEdit: bo
                         </>
                       ) : null}
                     </p>
+                    {item.credit ? (
+                      <p className="text-xs">
+                        <ToneBadge tone={item.credit.status === 'open' ? 'info' : 'muted'}>
+                          {t.has(`creditStatus.${item.credit.status}`) ? t(`creditStatus.${item.credit.status}`) : item.credit.status}
+                        </ToneBadge>{' '}
+                        <span className="tabular-nums">{t('remaining', { amount: agorotText(item.credit.remainingAgorot) })}</span>
+                      </p>
+                    ) : null}
+                    {item.redemptions && item.redemptions.length > 0 ? (
+                      <ul className="text-xs text-muted-foreground">
+                        <li className="font-medium">{t('redemptions')}</li>
+                        {item.redemptions.map((r) => (
+                          <li key={r.id} className="tabular-nums">
+                            {t('redemption', { amount: agorotText(r.amountAgorot), at: r.at ? formatDateTime(r.at) : '—' })}
+                            {' · '}
+                            {t.has(`redemptionStatus.${r.status}`) ? t(`redemptionStatus.${r.status}`) : r.status}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                     {resolved ? (
                       <p className="text-xs">
                         <ToneBadge tone="ok">
@@ -100,7 +123,7 @@ export function OwedTab({ stationId, canEdit }: { stationId: string; canEdit: bo
                   </div>
                   {!resolved && canEdit ? (
                     <div className="flex flex-wrap gap-1">
-                      {RESOLVE_CHOICES.map((r) => (
+                      {(item.kind === 'change_credit' ? CREDIT_CHOICES : RESOLVE_CHOICES).map((r) => (
                         <Button
                           key={r}
                           size="sm"
@@ -146,6 +169,7 @@ export function OwedTab({ stationId, canEdit }: { stationId: string; canEdit: bo
         <>
           {section(tr('owedKind.change_owed'), t('changeOwedHint'), query.data.changeOwed)}
           {section(tr('owedKind.held_credit'), t('heldCreditHint'), query.data.heldCredit)}
+          {section(tr('owedKind.change_credit'), t('creditHint'), query.data.credits ?? [])}
         </>
       )}
 

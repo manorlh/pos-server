@@ -9,12 +9,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  CASH_HOST_ACTIONS,
   COMMAND_OPS,
   DUMP_NOTES_MAX,
   EMPTY_JOURNAL_FILTERS,
   ILS_DENOMINATIONS,
   MOVEMENT_KINDS,
   NO_ARG_OPS,
+  OWED_CHOICES,
+  OWED_KINDS,
   RESOLUTIONS,
   STATION_SETTING_KEYS,
   TX_OUTCOMES,
@@ -27,10 +30,12 @@ import {
   commandDraftTotal,
   denominationList,
   denominationText,
+  deviceActionsOf,
   effectiveText,
   emptyCommandDraft,
   idList,
   journalParams,
+  owedChoiceOf,
   pageInfo,
   piecesText,
   piecesTotal,
@@ -38,6 +43,7 @@ import {
   reconciliationState,
   settingsBody,
   settingsDraftOf,
+  splitOf,
   shekelsToAgorot,
   shortTxId,
   signedAgorotText,
@@ -189,9 +195,35 @@ describe('the journal query', () => {
   });
 
   it('every state, outcome and movement kind the server knows (app/models/cash_station.py)', () => {
-    assert.deepEqual([...TX_STATES], ['LEASED', 'ACCEPTING', 'SETTLING', 'PAYING_CHANGE', 'REFUNDING', 'DONE', 'HELD']);
+    assert.deepEqual([...TX_STATES], ['LEASED', 'ACCEPTING', 'SETTLING', 'PAYING_CHANGE', 'PARTIAL', 'REFUNDING', 'DONE', 'HELD']);
     assert.deepEqual([...TX_OUTCOMES], ['paid', 'refunded', 'nothing_inserted']);
     assert.deepEqual([...MOVEMENT_KINDS], ['float', 'refill', 'collect', 'count', 'dump', 'adjust']);
+  });
+});
+
+describe('stage 2 (P:/specs/cash-paylink.md §11.15)', () => {
+  it('the customer’s choice for change owed, as the journal shows it', () => {
+    assert.equal(owedChoiceOf({ changeOwedAgorot: 0, changeOwedAs: null, changeOwedAsk: true, acked: false }), null);
+    assert.equal(owedChoiceOf({ changeOwedAgorot: 260, changeOwedAs: 'credit', changeOwedAsk: true, acked: true }), 'credit');
+    assert.equal(owedChoiceOf({ changeOwedAgorot: 260, changeOwedAs: null, changeOwedAsk: true, acked: false }), 'waiting');
+    // Before stage 2 (no field) or acknowledged with none: a slip.
+    assert.equal(owedChoiceOf({ changeOwedAgorot: 260, acked: true }), 'slip');
+    assert.deepEqual([...OWED_CHOICES], ['slip', 'credit', 'tip']);
+    assert.ok((OWED_KINDS as readonly string[]).includes('change_credit'));
+  });
+
+  it('cash + card: the cash part and the card’s', () => {
+    assert.deepEqual(splitOf({ splitAgorot: 4000, amountAgorot: 8900 }), { cashAgorot: 4000, cardAgorot: 4900 });
+    assert.equal(splitOf({ splitAgorot: 0, amountAgorot: 8900 }), null);
+    assert.equal(splitOf({ amountAgorot: 8900 }), null);
+  });
+
+  it('a cash host takes a restart and a logs request only', () => {
+    const all = ['lock', 'unlock', 'sign_out', 'sync_now', 'restart_app', 'install_update'];
+    assert.deepEqual(deviceActionsOf({ isCashHost: true }, all), ['restart_app']);
+    assert.deepEqual(deviceActionsOf({ isCashHost: true, actions: ['restart_app', 'upload_logs'] }, [...all, 'upload_logs']), ['restart_app', 'upload_logs']);
+    assert.deepEqual(deviceActionsOf({ isCashHost: false }, all), all);
+    assert.deepEqual([...CASH_HOST_ACTIONS], ['restart_app', 'upload_logs']);
   });
 });
 
@@ -334,7 +366,7 @@ describe('the station settings form', () => {
   });
 
   it('the keys a station overrides are cash_params.py STATION_KEYS', () => {
-    assert.equal(STATION_SETTING_KEYS.length, 21);
+    assert.equal(STATION_SETTING_KEYS.length, 22);
     assert.ok(!(STATION_SETTING_KEYS as readonly string[]).includes('cashReceiptLines'), 'a kiosk key');
     assert.ok(!(STATION_SETTING_KEYS as readonly string[]).includes('cashEnabled'), 'a kiosk key');
   });
@@ -359,6 +391,13 @@ describe('he.json', () => {
     }
     for (const s of ['pending', 'done', 'refused', 'failed']) assert.ok(cs.commandStatus[s], `commandStatus.${s}`);
     for (const k of STATION_SETTING_KEYS) assert.ok(cs.settings.keys[k], `settings.keys.${k}`);
+    for (const c of [...OWED_CHOICES, 'waiting']) assert.ok(cs.owedChoice[c], `owedChoice.${c}`);
+    for (const k of OWED_KINDS) assert.ok(cs.owedKind[k], `owedKind.${k}`);
+    for (const k of ['split_timeout', 'split_void']) assert.ok(cs.heldReason[k], `heldReason.${k}`);
+    for (const k of ['creditHint', 'remaining', 'redemptions', 'redemption']) assert.ok(cs.owed[k], `owed.${k}`);
+    for (const k of ['owedSlip', 'owedCredit', 'owedTip', 'splitCash']) assert.ok(cs.drawer[k], `drawer.${k}`);
+    for (const k of ['remoteTitle', 'restart', 'restartConfirm', 'requestLogs', 'logsMinutes']) assert.ok(cs.hostCard[k], `hostCard.${k}`);
+    assert.ok(cs.journal.split && cs.journal.detail.split && cs.journal.detail.owedChoice);
     for (const tab of ['status', 'journal', 'movements', 'owed', 'drawer', 'maintenance', 'settings', 'kiosks']) {
       assert.ok(cs.tabs[tab], `tabs.${tab}`);
     }

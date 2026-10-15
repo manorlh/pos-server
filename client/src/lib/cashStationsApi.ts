@@ -86,6 +86,8 @@ export interface OwedAnswer {
   items: CashOwedItem[];
   changeOwed: CashOwedItem[];
   heldCredit: CashOwedItem[];
+  /** Credits for a next order (§11.15א) — absent from a server before stage 2. */
+  credits?: CashOwedItem[];
 }
 
 export async function fetchCashOwed(id: string, status: 'open' | 'resolved' | 'all'): Promise<OwedAnswer> {

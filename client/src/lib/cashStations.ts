@@ -91,22 +91,25 @@ export function piecesText(pieces: readonly Pieces[] | null | undefined): string
 export const STATION_STATES = ['ready', 'busy', 'maintenance', 'fault', 'starting'] as const;
 export type StationState = (typeof STATION_STATES)[number];
 
-export const TX_STATES = ['LEASED', 'ACCEPTING', 'SETTLING', 'PAYING_CHANGE', 'REFUNDING', 'DONE', 'HELD'] as const;
+export const TX_STATES = ['LEASED', 'ACCEPTING', 'SETTLING', 'PAYING_CHANGE', 'PARTIAL', 'REFUNDING', 'DONE', 'HELD'] as const;
 export type TxState = (typeof TX_STATES)[number];
 export const TX_OUTCOMES = ['paid', 'refunded', 'nothing_inserted'] as const;
 export type TxOutcome = (typeof TX_OUTCOMES)[number];
-export const HELD_REASONS = ['power_loss', 'refund_short', 'client_gone_short', 'unacked', 'device_fault', 'consistency'] as const;
+export const HELD_REASONS = ['power_loss', 'refund_short', 'client_gone_short', 'unacked', 'device_fault', 'consistency', 'split_timeout', 'split_void'] as const;
+/** What the customer chose for change the station could not pay (P:/specs/cash-paylink.md §11.15א). */
+export const OWED_CHOICES = ['slip', 'credit', 'tip'] as const;
+export type OwedChoice = (typeof OWED_CHOICES)[number];
 export const MOVEMENT_KINDS = ['float', 'refill', 'collect', 'count', 'dump', 'adjust'] as const;
 export type MovementKind = (typeof MOVEMENT_KINDS)[number];
 export const OWED_FILTERS = ['open', 'resolved', 'any'] as const;
 export type OwedFilter = (typeof OWED_FILTERS)[number];
-export const OWED_KINDS = ['change_owed', 'held_credit'] as const;
+export const OWED_KINDS = ['change_owed', 'held_credit', 'change_credit'] as const;
 export type OwedKind = (typeof OWED_KINDS)[number];
 /** What the dashboard may close an owed item as (cash_station_admin.py RESOLVE_CHOICES). */
 export const RESOLVE_CHOICES = ['paid_out', 'applied', 'written_off'] as const;
 export type ResolveChoice = (typeof RESOLVE_CHOICES)[number];
 /** Every resolution the server writes (the two last by itself). */
-export const RESOLUTIONS = ['paid_out', 'applied', 'written_off', 'matched_document', 'host_resolved'] as const;
+export const RESOLUTIONS = ['paid_out', 'applied', 'written_off', 'matched_document', 'host_resolved', 'redeemed', 'tip'] as const;
 export const COMMAND_STATUSES = ['pending', 'done', 'refused', 'failed'] as const;
 export type CommandStatus = (typeof COMMAND_STATUSES)[number];
 
@@ -285,6 +288,10 @@ export interface CashTx {
   heldAgorot: number | null;
   heldReason: string | null;
   cancelReason: string | null;
+  /** Stage 2 (§11.15): `ask` — the customer chose what to do with the change owed; cash + card — the cash part. */
+  changeOwedAsk?: boolean;
+  changeOwedAs?: OwedChoice | string | null;
+  splitAgorot?: number;
   slipCode: string | null;
   orderRef: string | null;
   orderLabel: string | null;
@@ -331,6 +338,29 @@ export interface CashOwedItem {
   resolution?: string | null;
   resolvedBy?: string | null;
   movementId?: string | null;
+  /** A credit for a next order (`change_credit`, §11.15א): what is left of it, and where it was redeemed. */
+  credit?: CashCredit | null;
+  redemptions?: CashCreditRedemption[];
+}
+
+export interface CashCredit {
+  code: string | null;
+  amountAgorot: number;
+  remainingAgorot: number;
+  status: 'open' | 'used' | 'written_off' | string;
+  stationName: string | null;
+  orderLabel: string | null;
+  createdAt: string | null;
+}
+
+export interface CashCreditRedemption {
+  id: string;
+  code: string;
+  amountAgorot: number;
+  status: 'redeemed' | 'released' | 'confirmed' | string;
+  machineId: string | null;
+  documentId: string | null;
+  at: string | null;
 }
 
 export interface Page<T> {
@@ -362,6 +392,12 @@ export interface CashDrawerSummary {
   expectedAgorot: number;
   heldAgorot: number;
   changeOwedAgorot: number;
+  /** Stage 2 (§11.15): the change owed by the customer's choice, and the cash parts of cash + card. */
+  owedSlipAgorot?: number;
+  owedCreditAgorot?: number;
+  owedTipAgorot?: number;
+  splitCashAgorot?: number;
+  splitCount?: number;
   txCount: number;
   paidCount: number;
   refundedCount: number;
@@ -395,6 +431,31 @@ export interface CashDrawer {
   reconciliation: CashReconciliation;
   balanceAgorot: number;
   zReports: { zReportId: string; zNumber: number | string | null; closedAt: string | null; station: CashZBlock | null }[];
+}
+
+// ── Stage 2 (P:/specs/cash-paylink.md §11.15) ─────────────────────────────────
+
+/** A transaction's choice for change owed, as the journal shows it (null: none owed / not chosen). */
+export function owedChoiceOf(tx: Pick<CashTx, 'changeOwedAgorot' | 'changeOwedAs' | 'changeOwedAsk' | 'acked'>): OwedChoice | 'waiting' | null {
+  if (!tx.changeOwedAgorot) return null;
+  if (tx.changeOwedAs === 'slip' || tx.changeOwedAs === 'credit' || tx.changeOwedAs === 'tip') return tx.changeOwedAs;
+  if (tx.changeOwedAsk && !tx.acked) return 'waiting';
+  return 'slip';
+}
+
+/** Cash + card: the cash part and what the card paid of the order (null: not a split). */
+export function splitOf(tx: Pick<CashTx, 'splitAgorot' | 'amountAgorot'>): { cashAgorot: number; cardAgorot: number } | null {
+  const cash = tx.splitAgorot ?? 0;
+  if (cash <= 0) return null;
+  return { cashAgorot: cash, cardAgorot: Math.max(0, (tx.amountAgorot ?? 0) - cash) };
+}
+
+/** The remote-control actions a device takes: a cash host only a restart and a logs request (§11.15ד). */
+export const CASH_HOST_ACTIONS = ['restart_app', 'upload_logs'] as const;
+export function deviceActionsOf(device: { isCashHost?: boolean | null; actions?: readonly string[] | null }, all: readonly string[]): string[] {
+  if (Array.isArray(device.actions)) return all.filter((a) => device.actions!.includes(a));
+  if (device.isCashHost) return all.filter((a) => (CASH_HOST_ACTIONS as readonly string[]).includes(a));
+  return [...all];
 }
 
 // ── States and tones ─────────────────────────────────────────────────────────
@@ -657,6 +718,7 @@ export const STATION_SETTING_KEYS = [
   'cashExtendedEscrow',
   'cashHopperFeeds',
   'cashUnackedHoldMin',
+  'cashSplitWaitSec',
   'cashInsertTimeoutSec',
   'cashIdleTimeoutSec',
   'cashQueueTimeoutSec',
@@ -683,6 +745,7 @@ export const INT_RANGES: Partial<Record<StationSettingKey, [number, number]>> = 
   cashSettleMs: [0, 10_000],
   cashPayoutTimeoutSec: [5, 600],
   cashUnackedHoldMin: [1, 1440],
+  cashSplitWaitSec: [60, 1800],
 };
 export const MONEY_KEYS: readonly StationSettingKey[] = ['cashMaxChangeAgorot', 'cashExactChangeBelowAgorot'];
 export const BOOL_KEYS: readonly StationSettingKey[] = ['cashSimulator', 'cashExtendedEscrow'];
