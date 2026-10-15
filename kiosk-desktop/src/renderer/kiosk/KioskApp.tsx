@@ -1381,7 +1381,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
       {scanNote}
       {shopLockUp ? <KioskShopLock m={m} closeDay={view.closeDay ?? null} /> : null}
-      <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} />
+      <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} onResetCustomer={() => dispatch({ type: 'reset' })} />
     </div>
   );
 }

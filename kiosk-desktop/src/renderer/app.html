@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <!-- The one app bundle (r2m-app): no remote script, no inline script, no third party (§9.3). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' ws: wss: http://127.0.0.1:47615; worker-src 'self'; base-uri 'none'; form-action 'none'" />
+    <title>R2M POS</title>
+    <style>
+      html, body, #root { margin: 0; height: 100%; overflow: hidden; background: #f3f4f6; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./app/main.tsx"></script>
+  </body>
+</html>
