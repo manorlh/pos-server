@@ -89,6 +89,9 @@ def test_the_keys_are_the_tills_and_every_default_is_todays():
         assert not spec.admin_only
     assert len({s.label for s in specs.values()}) == len(specs)
     assert TP.enum_labels(CM.PROTOCOL_KEY) == CM.PROTOCOL_LABELS
+    # The till speaks json itself (pos-android CashMagJsonDriver, the Windows kiosk's client); RLP not yet.
+    assert "עוד לא נתמך" not in CM.PROTOCOL_LABELS[CM.PROTOCOL_JSON]
+    assert "עוד לא נתמך" in CM.PROTOCOL_LABELS[CM.PROTOCOL_RLP]
 
 
 def test_they_are_created_with_the_others(world):
