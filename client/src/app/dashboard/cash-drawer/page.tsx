@@ -50,6 +50,7 @@ import {
   isNotable,
   isShiftId,
   runningExpected,
+  type CashWalletsPage,
   type DrawerEventRow,
   type DrawerEventsPage,
   type DrawerExtraKey,
@@ -63,6 +64,7 @@ import {
   fetchAllCashMovements,
   fetchAllDrawerEvents,
   fetchCashMovements,
+  fetchCashWallets,
   fetchDrawerEvents,
   fetchShiftTimeline,
 } from '@/lib/cashDrawerApi';
@@ -848,11 +850,41 @@ function DrawerLists({
               );
             })}
           </div>
+          <CashWithStaff filters={listFilters} />
           <ReportTable table={movementsTable} actions={pager} />
           {pages > 1 ? <p className="text-muted-foreground text-xs">{t('pagedNote')}</p> : null}
         </>
       ) : null}
     </ReportPage>
+  );
+}
+
+/** "מזומן אצל עובדים (טרם הופקד)" (P:/specs/drawer-away.md §5.6): every open wallet in the shops in scope, now. */
+function CashWithStaff({ filters }: { filters: Parameters<typeof fetchCashWallets>[0] }) {
+  const t = useTranslations('cashDrawer');
+  const q = useQuery<CashWalletsPage>({
+    queryKey: ['cash-wallets', filters],
+    queryFn: () => fetchCashWallets(filters),
+  });
+  const wallets = q.data?.wallets ?? [];
+  if (!q.data || wallets.length === 0) return null;
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">{t('wallets.title')}</h2>
+        <span className="text-sm font-semibold tabular-nums">{money(q.data.total)}</span>
+      </div>
+      <p className="text-muted-foreground mb-2 text-xs">{t('wallets.hint')}</p>
+      <ul className="divide-y text-sm">
+        {wallets.map((w) => (
+          <li key={w.employeeId} className="flex items-center justify-between gap-3 py-1.5">
+            <span>{w.employeeName ?? w.employeeId}</span>
+            <span className="text-muted-foreground text-xs">{t('wallets.accruals', { count: w.accruals })}</span>
+            <span className="tabular-nums font-medium">{money(w.balance)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

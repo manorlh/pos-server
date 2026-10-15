@@ -210,6 +210,8 @@
     "src/lib/drawerTips.test.ts",
     "src/lib/zCashMovements.ts",
     "src/lib/zCashMovements.test.ts",
+    "src/lib/zCashWallets.ts",
+    "src/lib/zCashWallets.test.ts",
     "src/lib/desktopIdleReturn.ts",
     "src/lib/desktopIdleReturn.test.ts",
     "src/lib/kioskMotionEngine.ts",

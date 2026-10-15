@@ -191,7 +191,13 @@ class _ShiftView:
     now and its movements from what its till uploaded (`cash_movements`).
     """
 
-    def __init__(self, shift: Shift, totals: Optional[DocumentTotals] = None, movements: Optional[ZEC.Movements] = None):
+    def __init__(
+        self,
+        shift: Shift,
+        totals: Optional[DocumentTotals] = None,
+        movements: Optional[ZEC.Movements] = None,
+        wallets: Optional[Tuple[Decimal, Decimal]] = None,
+    ):
         self._shift = shift
         self.id = shift.id
         self.sequence_number = shift.sequence_number
@@ -214,6 +220,11 @@ class _ShiftView:
             cash_in, cash_out, deposits = movements
             for key, amount in ((ZEC.CASH_IN, cash_in), (ZEC.CASH_OUT, cash_out), (ZEC.DEPOSITS, deposits)):
                 till[key] = str(amount)
+        if wallets is not None:
+            # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): an open shift's wallets, as its till uploaded them.
+            from app.services import cash_wallets as CW
+
+            till[CW.WALLET_IN_KEY], till[CW.WALLET_DEPOSITS_KEY] = str(wallets[0]), str(wallets[1])
         self.till_totals = till
 
 
@@ -234,6 +245,29 @@ def cash_movements(db: Session, shift_ids: Sequence[uuid.UUID]) -> Dict[Any, ZEC
         acc = out.setdefault(row.shift_id, [ZERO, ZERO, ZERO])
         acc[slot] += abs(Decimal(str(row.amount or 0)))
     return {k: (v[0], v[1], v[2]) for k, v in out.items()}
+
+
+def wallet_movements(db: Session, shift_ids: Sequence[uuid.UUID]) -> Dict[Any, Tuple[Decimal, Decimal]]:
+    """
+    {shift id: (cash left with employees, deposited by them)} from the wallet movements the tills uploaded
+    ("הכסף אצלי", P:/specs/drawer-away.md §5.6; training ones left out) — an open shift's, as its close would freeze.
+    """
+    from app.models.cash_drawer import CashMovement
+    from app.services import cash_wallets as CW
+
+    ids = [i for i in shift_ids if i is not None]
+    if not ids:
+        return {}
+    out: Dict[Any, List[Decimal]] = {}
+    rows = db.query(CashMovement).filter(
+        CashMovement.shift_id.in_(ids), CashMovement.movement_type.in_(CW.WALLET_TYPES),
+    ).all()
+    for row in rows:
+        if getattr(row, "training", False):
+            continue
+        acc = out.setdefault(row.shift_id, [ZERO, ZERO])
+        acc[0 if row.movement_type == CW.WALLET_IN else 1] += abs(Decimal(str(row.amount or 0)))
+    return {k: (v[0], v[1]) for k, v in out.items()}
 
 
 def till_period(db: Session, machine: POSMachine, shop_id: uuid.UUID) -> List[Shift]:
@@ -520,8 +554,10 @@ def _part(db: Session, machine: POSMachine, shop_id: uuid.UUID) -> TillPart:
     shifts = till_period(db, machine, shop_id)
     open_ids = [s.id for s in shifts if s.status != ShiftStatus.CLOSED]
     moved = cash_movements(db, open_ids)
+    wallets = wallet_movements(db, open_ids)
     views = [
-        _ShiftView(s, compute_totals(db, [s.id]), moved.get(s.id, ZEC.NONE)) if s.status != ShiftStatus.CLOSED else _ShiftView(s)
+        _ShiftView(s, compute_totals(db, [s.id]), moved.get(s.id, ZEC.NONE), wallets.get(s.id, (ZERO, ZERO)))
+        if s.status != ShiftStatus.CLOSED else _ShiftView(s)
         for s in shifts
     ]
     totals = compute_totals(db, [s.id for s in shifts]) if shifts else DocumentTotals()
@@ -670,8 +706,13 @@ def build(
                 "cashOut": _money(movements[1]),
                 "deposits": _money(movements[2]),
                 "betweenShifts": _money(cash["between_shifts"]),
+                # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): in the expected, always — zero when none.
+                "walletIn": _money(cash["cash_wallets"][0]),
+                "walletDeposits": _money(cash["cash_wallets"][1]),
                 "expected": _money(cash["expected"]),
             },
+            # "מזומן אצל עובדים (טרם הופקד)", per employee, now — null when nobody holds any.
+            "cashWithStaff": _cash_with_staff(db, shop.id, [p.machine.id for p in parts], now),
             "openTables": open_tables(db, shop),
             "untransmitted": untransmitted,
         },
@@ -682,6 +723,12 @@ def build(
     # read them), dropped from the paper with `perTill` off.
     report["_sections"] = sections
     return report
+
+
+def _cash_with_staff(db: Session, shop_id: Any, machine_ids: Sequence[Any], now: datetime) -> Optional[Dict[str, Any]]:
+    from app.services import cash_wallets as CW
+
+    return CW.staff_for_z(db, shop_id, machine_ids, as_of=now)
 
 
 def _pos_order(machine: POSMachine):
@@ -786,6 +833,14 @@ class _ReportAsZ:
         self.amended_documents = 0
         # The drawer block prints the movements that went into the expected cash.
         self.header[ZEC.BLOCK] = ZEC.block((_dec(drawer["cashIn"]), _dec(drawer["cashOut"]), _dec(drawer["deposits"])))
+        # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the wallet lines and the cash with staff, when any.
+        from app.services import cash_wallets as CW
+
+        wallets = CW.block((_dec(drawer.get("walletIn")), _dec(drawer.get("walletDeposits"))))
+        if wallets:
+            self.header[CW.BLOCK] = wallets
+        if summary.get("cashWithStaff"):
+            self.header[CW.STAFF] = summary["cashWithStaff"]
         if report.get("employees"):
             self.header["byWaiter"] = report["employees"]
 

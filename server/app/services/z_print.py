@@ -385,6 +385,49 @@ def _movement_rows(movements: Optional[ZEC.Movements]) -> List[Optional[dict]]:
     ]
 
 
+def cash_wallets_of(z: ZReport):
+    """
+    "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the wallets in a Z's expected cash — its header's
+    `cashWallets` block, else the sum of its sections'. (0, 0) when none.
+    """
+    from app.services import cash_wallets as CW
+
+    header = getattr(z, "header", None) or {}
+    if isinstance(header.get(CW.BLOCK), dict):
+        return CW.wallets_of_block(header.get(CW.BLOCK))
+    total = CW.NONE
+    for s in _sections_of(z):
+        total = CW.add(total, CW.wallets_of_block(s.get(CW.BLOCK)))
+    return total
+
+
+def _wallet_rows(wallets) -> List[Optional[dict]]:
+    """The cash left with employees (−) and their deposits (+), each only when not zero."""
+    from app.services import cash_wallets as CW
+
+    wallet_in, deposits = wallets
+    return [
+        row(CW.WALLET_IN_LABEL, signed(-wallet_in)) if wallet_in else None,
+        row(CW.WALLET_DEPOSITS_LABEL, signed(deposits)) if deposits else None,
+    ]
+
+
+def staff_section(z: ZReport) -> Optional[dict]:
+    """"מזומן אצל עובדים (טרם הופקד)": per employee, as the Z froze it; None when nobody held any."""
+    from app.services import cash_wallets as CW
+
+    staff = (getattr(z, "header", None) or {}).get(CW.STAFF)
+    if not isinstance(staff, dict) or not staff.get("employees"):
+        return None
+    return section(CW.STAFF_LABEL, [
+        *[
+            row(_clip(str(e.get("employeeName") or e.get("employeeId") or DASH)), money(e.get("amount")))
+            for e in staff.get("employees") or [] if isinstance(e, dict)
+        ],
+        row(CW.STAFF_TOTAL_LABEL, money(staff.get("total")), emphasis=True),
+    ])
+
+
 def _cash_rows(z: ZReport) -> List[Optional[dict]]:
     adjustments = None
     sections = _sections_of(z)
@@ -401,6 +444,7 @@ def _cash_rows(z: ZReport) -> List[Optional[dict]]:
         row("תנועות בין משמרות", signed(adjustments)) if adjustments else None,
         # Only on a Z the parameter applied to: the movements that are part of the expected cash.
         *_movement_rows(cash_movements_of(z)),
+        *_wallet_rows(cash_wallets_of(z)),
         row("מזומן צפוי", money(z.expected_cash), emphasis=True),
         row("מזומן שנספר", counted),
         # Withheld, not a balanced zero, when any drawer was not counted.
@@ -546,6 +590,12 @@ def _document_rows(s: dict) -> List[Dict[str, Any]]:
     return [row("מסמכים", docs)] if docs else []
 
 
+def _section_wallets(s: dict):
+    from app.services import cash_wallets as CW
+
+    return CW.wallets_of_block(s.get(CW.BLOCK))
+
+
 def _till_section(s: dict) -> dict:
     first, last = s.get("firstShiftSequence"), s.get("lastShiftSequence")
     shifts = _count(s.get("shiftCount"))
@@ -567,6 +617,7 @@ def _till_section(s: dict) -> dict:
             row("מזומן", money(s.get("totalCash"))),
             row("אשראי", money(s.get("totalCard"))),
             *_movement_rows(ZEC.movements_of_block(s.get(ZEC.BLOCK))),
+            *_wallet_rows(_section_wallets(s)),
             row("מזומן צפוי", money(s.get("expectedCash"))),
             row("הפרש", "לא נספר" if uncounted else signed(s.get("overShort"))),
             *_drawer_tips_rows(_section_drawer_tips(s)),
@@ -871,6 +922,9 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
         section("תשר", _tips_rows(z)),
         section("קופה", _cash_rows(z)),
     ]
+    staff = staff_section(z)
+    if staff is not None:
+        sections.append(staff)
     sections += _card_brand_sections(z)
     sections += _cash_station_sections(z)
     transmission = _transmission_section(z, tzinfo)

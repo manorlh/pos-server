@@ -29,6 +29,7 @@ import { fetchZPrintDocument, fetchZReport } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { cashMovementRows } from '@/lib/zCashMovements';
+import { cashWalletRows, cashWithStaffRows } from '@/lib/zCashWallets';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, Shift, TablePaymentReversals, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -280,6 +281,12 @@ function TillCard({
             ) : null}
             {/* "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": only on a Z the parameter applied to. */}
             {cashMovementRows(s.cashMovements).map((r) => (
+              <MoneyRow key={r.key} label={t(r.key)}>
+                <SignedMoney value={r.value} />
+              </MoneyRow>
+            ))}
+            {/* "הכסף אצלי" (P:/specs/drawer-away.md §5.6): only when this till had any. */}
+            {cashWalletRows(s.cashWallets).map((r) => (
               <MoneyRow key={r.key} label={t(r.key)}>
                 <SignedMoney value={r.value} />
               </MoneyRow>
@@ -596,6 +603,11 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
                   <SignedMoney value={r.value} />
                 </MoneyRow>
               ))}
+              {cashWalletRows(z.cashWallets).map((r) => (
+                <MoneyRow key={r.key} label={t(r.key)}>
+                  <SignedMoney value={r.value} />
+                </MoneyRow>
+              ))}
               <MoneyRow label={t('expectedCash')} value={z.expectedCash} />
               <MoneyRow label={t('actualCash')}>
                 {withheld ? (
@@ -616,6 +628,16 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
                 </>
               ) : null}
               {withheld ? <p className="text-muted-foreground pt-1 text-xs">{t('cashWithheldHint')}</p> : null}
+              {/* "מזומן אצל עובדים (טרם הופקד)" (drawer-away §5.6): as frozen when the Z was built. */}
+              {cashWithStaffRows(z.cashWithStaff).rows.length > 0 ? (
+                <div className="mt-2 space-y-1 border-t pt-2">
+                  <p className="text-xs font-medium">{t('cashWithStaff')}</p>
+                  {cashWithStaffRows(z.cashWithStaff).rows.map((r) => (
+                    <MoneyRow key={r.employeeId} label={r.name} value={r.amount} />
+                  ))}
+                  <MoneyRow label={t('cashWithStaffTotal')} value={cashWithStaffRows(z.cashWithStaff).total} strong />
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </div>

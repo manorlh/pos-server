@@ -5,12 +5,15 @@ Till (machine token), idempotent by the client's id:
 
     POST /sync/{machine_id}/cash-drawer/events      a drawer opening attempt, or a permission
                                                      override / refusal (§14)
-    POST /sync/{machine_id}/cash-drawer/movements   Cash In / Cash Out / Deposit / a count (§7, §9)
+    POST /sync/{machine_id}/cash-drawer/movements   Cash In / Cash Out / Deposit / a count (§7, §9), and the
+                                                     wallets' wallet_in / wallet_deposit (drawer-away §5.4)
+    GET  /sync/{machine_id}/cash-wallets            the shop's employees holding cash (drawer-away §5.5)
 
 Dashboard (§16), scoped like the exceptions (every role but the cashier):
 
     GET /cash-drawer/events                 the openings report + its KPIs, with the filters of §16
     GET /cash-drawer/movements              the cash movements + their totals
+    GET /cash-drawer/wallets                the cash with employees, not deposited (drawer-away §5.6)
     GET /cash-drawer/shifts/{id}/timeline   one shift's drawer story: openings, movements,
                                              counts, the expected balance and the exceptions
 """
@@ -96,6 +99,31 @@ def post_cash_movement(
         exc_svc.detect_safely(db, lambda d, m: svc.detect_movement(d, machine, m), movement)
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return IngestOut(id=movement.id, status="accepted" if created else "duplicate")
+
+
+@till_router.get("/{machine_id}/cash-wallets", dependencies=FISCAL_MACHINE_TOKEN)
+def get_cash_wallets(
+    machine_id: str,
+    employee_id: Optional[str] = Query(None, alias="employeeId", max_length=100),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "הכסף אצלי" (P:/specs/drawer-away.md §5.5): the employees of this till's shop holding cash not deposited
+    yet, largest first — or, with `employeeId`, that one (its balance even when 0). Read only.
+    """
+    from datetime import datetime, timezone
+
+    from app.services import cash_wallets as CW
+
+    _assigned(machine)
+    rows = CW.balances(db, shop_ids=[machine.shop_id], employee_id=employee_id, tenant_id=machine.tenant_id)
+    if employee_id is None:
+        rows = [w for w in rows if w["balance"] > 0]
+    elif not rows:
+        rows = [{"employeeId": employee_id, "employeeName": None, "balance": CW.ZERO, "accruals": 0,
+                 "firstAt": None, "lastAt": None}]
+    return {"asOf": datetime.now(timezone.utc).isoformat(), "wallets": [CW.wallet_out(w) for w in rows]}
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -277,6 +305,73 @@ def list_cash_movements(
         "page": page,
         "pageSize": page_size,
         "rows": [svc.movement_out(m, labels) for m in rows],
+        "totals": totals,
+        "window": {"from": str(window.from_date), "to": str(window.to_date)},
+    }
+
+
+@router.get("/wallets")
+def list_cash_wallets(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId"),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    employee: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "מזומן אצל עובדים (טרם הופקד)" (P:/specs/drawer-away.md §5.6): every employee's open wallet in the shops
+    the filters cover (now, whatever the window), and the wallet movements in the window — the accruals
+    ("הכסף אצל העובד") and the deposits ("הפקדה מעובד") with their gaps. Scoped like the movements report.
+    """
+    from app.services import cash_wallets as CW
+
+    query, window = _base(
+        db, current_user, active_tenant_id, CashMovement, from_date=from_date, to_date=to_date,
+        company_id=company_id, shop_id=shop_id, machine_id=machine_id, employee=employee, shift_id=None,
+    )
+    empty = {"wallets": [], "total": 0.0, "rows": [], "totals": {},
+             "window": {"from": str(window.from_date), "to": str(window.to_date)}}
+    if query is None:
+        return empty
+    rows = (
+        query.filter(CashMovement.movement_type.in_(CW.WALLET_TYPES))
+        .order_by(CashMovement.occurred_at.desc(), CashMovement.id)
+        .all()
+    )
+    # The open balances: over all time, in the shops in scope (a wallet outlives the window).
+    scoped = scope_query_by_user(
+        db.query(CashMovement.shop_id).filter(CashMovement.tenant_id == active_tenant_id), current_user, db,
+        shop_column=CashMovement.shop_id, machine_column=CashMovement.machine_id,
+    )
+    shop_ids: List[Any] = []
+    if scoped is not None:
+        scoped = scoped.filter(CashMovement.movement_type.in_(CW.WALLET_TYPES))
+        if company_id is not None:
+            scoped = scoped.filter(CashMovement.company_id.in_([company_id, *descendant_company_ids(db, company_id)]))
+        if shop_id is not None:
+            scoped = scoped.filter(CashMovement.shop_id == shop_id)
+        if machine_id is not None:
+            scoped = scoped.filter(CashMovement.machine_id == machine_id)
+        shop_ids = sorted({r[0] for r in scoped.distinct().all() if r[0] is not None}, key=str)
+    wallets = [
+        w for w in CW.balances(db, shop_ids=shop_ids, employee_id=employee or None, tenant_id=active_tenant_id)
+        if w["balance"] > 0
+    ]
+    totals: Dict[str, Dict[str, float]] = {}
+    for m in rows:
+        t = totals.setdefault(m.movement_type, {"count": 0, "amount": 0.0, "variance": 0.0})
+        t["count"] += 1
+        t["amount"] += float(m.amount or 0)
+        t["variance"] += float(m.variance or 0)
+    labels = _labels(db, rows[:PAGE_SIZE_MAX])
+    return {
+        "wallets": [CW.wallet_out(w) for w in wallets],
+        "total": float(sum((w["balance"] for w in wallets), CW.ZERO)),
+        "rows": [svc.movement_out(m, labels) for m in rows[:PAGE_SIZE_MAX]],
         "totals": totals,
         "window": {"from": str(window.from_date), "to": str(window.to_date)},
     }

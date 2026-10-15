@@ -115,6 +115,12 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     movements = z_print.cash_movements_of(z)
     if movements is not None:
         item.cash_movements = ZEC.block(movements)
+    # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the wallets in the expected cash, and the cash with staff.
+    from app.services import cash_wallets as CW
+
+    item.cash_wallets = CW.block(z_print.cash_wallets_of(z))
+    staff = (z.header or {}).get(CW.STAFF)
+    item.cash_with_staff = staff if isinstance(staff, dict) else None
     item.produced_by_support = (z.header or {}).get("producedBySupport")
     item.late_from_earlier = (z.header or {}).get("lateFromEarlier")
     item.late_carried_out = (z.header or {}).get("lateCarriedOut")

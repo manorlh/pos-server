@@ -71,6 +71,7 @@ GET /business-cards/{card_id}/stats -> business_cards:view
 GET /cash-drawer/events -> reports:view
 GET /cash-drawer/movements -> reports:view
 GET /cash-drawer/shifts/{shift_id}/timeline -> reports|z:view
+GET /cash-drawer/wallets -> reports:view
 GET /cash-stations -> devices|kiosks:view
 POST /cash-stations -> devices:edit
 DELETE /cash-stations/{station_id} -> devices:edit

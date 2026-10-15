@@ -86,6 +86,13 @@ class ZReportOut(BaseModel):
     #: the parameter applied to). Null when it was off: `expectedCash` then does not move with them,
     #: as ever. A management figure: no sales, VAT or document total ever moves with it.
     cash_movements: Optional[Dict[str, Any]] = Field(None, alias="cashMovements")
+    #: "הכסף אצלי" (P:/specs/drawer-away.md §5.6): `{walletIn, walletDeposits}` — the cash the tills' payments
+    #: left with employees (out of `expectedCash`) and what employees deposited into the drawers (in it), as
+    #: the shifts' closes froze them. Null when none.
+    cash_wallets: Optional[Dict[str, Any]] = Field(None, alias="cashWallets")
+    #: "מזומן אצל עובדים (טרם הופקד)": `{total, employees: [{employeeId, employeeName, amount}]}` as frozen
+    #: when the Z was built. Null when nobody held any.
+    cash_with_staff: Optional[Dict[str, Any]] = Field(None, alias="cashWithStaff")
     #: Σ of the per-till `offline` blocks: offline-approved card sales that went through an
     #: authorization run, and those of them the acquirer declined. Null on a Z built before
     #: the block was stored, and on a legacy Z.

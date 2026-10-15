@@ -18,19 +18,40 @@ export type DrawerEventType =
   | 'PERMISSION'
   // "מגירה נפתחה מרחוק" (P:/specs/bill-print-other-till.md §9): another till's drawer, opened from this one.
   | 'REMOTE_SALE'
-  | 'REMOTE_MANUAL';
+  | 'REMOTE_MANUAL'
+  // "הפקדת מזומן מעובד" (P:/specs/drawer-away.md §5.4): an employee's cash counted into this drawer.
+  | 'WALLET_DEPOSIT';
 
 export const DRAWER_EVENT_TYPES: DrawerEventType[] = [
   'CASH_SALE', 'MANUAL', 'CHANGE', 'CASH_IN', 'CASH_OUT', 'DEPOSIT', 'COUNT', 'TEST', 'REFUND', 'AFTER_CLOSE',
-  'REMOTE_SALE', 'REMOTE_MANUAL',
+  'REMOTE_SALE', 'REMOTE_MANUAL', 'WALLET_DEPOSIT',
 ];
 
 export const DRAWER_REASONS = [
   'CHANGE', 'GIVE_CHANGE', 'CASH_IN', 'CASH_OUT', 'DEPOSIT', 'COUNT', 'CORRECTION', 'TEST', 'OTHER',
 ] as const;
 
-export type MovementType = 'cash_in' | 'cash_out' | 'deposit' | 'count';
-export const MOVEMENT_TYPES: MovementType[] = ['cash_in', 'cash_out', 'deposit', 'count'];
+/**
+ * "הכסף אצלי" (P:/specs/drawer-away.md §5.4): `wallet_in` — a cash payment kept by the employee;
+ * `wallet_deposit` — counted into a drawer ("הפקדה מעובד"), its gap in `variance`.
+ */
+export type MovementType = 'cash_in' | 'cash_out' | 'deposit' | 'count' | 'wallet_in' | 'wallet_deposit';
+export const MOVEMENT_TYPES: MovementType[] = ['cash_in', 'cash_out', 'deposit', 'count', 'wallet_in', 'wallet_deposit'];
+
+/** One employee's cash not deposited yet (`GET /cash-drawer/wallets`). */
+export interface CashWallet {
+  employeeId: string;
+  employeeName: string | null;
+  balance: number;
+  accruals: number;
+  firstAt: string | null;
+  lastAt: string | null;
+}
+
+export interface CashWalletsPage {
+  wallets: CashWallet[];
+  total: number;
+}
 
 export interface DrawerEventRow {
   id: string;
