@@ -139,6 +139,7 @@ import { noteEntry, type EntryRequest } from './EntryWindow';
 import { StaffLayer } from '../staff/StaffLayer';
 import { AdminHoldBar, useAdminCornerHold } from '../staff/adminHold';
 import { kioskCornerArmed } from '../../core/adminCorner';
+import { noPaymentBodyHe, noPaymentCause } from '../../core/noPaymentText';
 import { KioskShopLock } from './KioskShopLock';
 import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
@@ -1113,6 +1114,10 @@ export function KioskApp({ view }: { view: KioskView }) {
   } as CSSProperties;
   const onAttractService = serviceOnAttract(cfgIn);
   const chrome = chromeRoot(m);
+  // "התשלום אינו זמין": its default line says why — the terminal, the cash device, both (core/noPaymentText.ts); the
+  // business's own text wins, and another language keeps the registry's.
+  const noPayBody = lang === 'he' && !configuredText(cfg, 'he', 'noPaymentBody') ? noPaymentBodyHe(noPaymentCause(payInfo)) : null;
+  const mRest: PreviewModel = noPayBody ? { ...m, txt: (k: KioskTextKey) => (k === 'noPaymentBody' ? noPayBody : m.txt(k)) } : m;
 
   return (
     <div
@@ -1232,7 +1237,7 @@ export function KioskApp({ view }: { view: KioskView }) {
             ) : (
               // "יצאתי לנוח… תכף אשוב" (paused / closed): the pause's own message and end, as the cloud sent them.
               <PausedScreen
-                m={m}
+                m={mRest}
                 variant={s === 'closed' ? 'closed' : s === 'no_payment' ? (view.state.noPaymentReason === 'offline' ? 'offline' : 'noPayment') : 'paused'}
                 pause={{ message: view.state.pausedMessage, until: view.state.pausedUntil }}
               />
