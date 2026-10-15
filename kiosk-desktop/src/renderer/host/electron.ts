@@ -42,6 +42,8 @@ export function createElectronHost(bridge: R2mAppBridge, info: AppHostInfo): Til
       keepAwake: (on) => bridge.keepAwake(on),
       // The window is the shell's (full screen, kiosk mode); nothing to do from the page.
       fullscreen: () => undefined,
+      // A shell that predates the manager's corner over the till has no door for it: the corner stays unarmed.
+      ...(bridge.openAdmin ? { openAdmin: () => bridge.openAdmin!() } : {}),
     },
   };
 }

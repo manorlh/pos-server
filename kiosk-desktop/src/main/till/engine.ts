@@ -318,6 +318,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return this.buildState();
   }
 
+  /**
+   * A payment is on — the checkout taking tenders or waiting on the card, or a card at the terminal: the manager's corner
+   * ("ניהול הקיוסק", main/roles/tillElectron.ts) waits, as the kiosk's does on its pay screen.
+   */
+  paying(): boolean {
+    return this.checkout.phase === 'tender' || this.checkout.phase === 'card_waiting' || this.svc.pay.cardInFlight;
+  }
+
   get currentSeq(): number {
     return this.seq;
   }

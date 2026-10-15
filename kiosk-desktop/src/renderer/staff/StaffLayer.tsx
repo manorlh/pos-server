@@ -46,6 +46,7 @@ export function StaffLayer({
   onClose,
   home = false,
   onResetCustomer,
+  alerts: showAlerts = true,
 }: {
   m: PreviewModel;
   view: KioskView;
@@ -55,13 +56,21 @@ export function StaffLayer({
   home?: boolean;
   /** "איפוס מסך הלקוח": the customer's order started over (never over a payment) — the way past "לקוח באמצע הזמנה" on the way to the till. */
   onResetCustomer?: () => void;
+  /** The small red label of what needs staff (the kiosk's screens); off on the screens around it (staff/ShellStaff.tsx). */
+  alerts?: boolean;
 }) {
   const [unlocked, setUnlocked] = useState(false);
   const [exitOpen, setExitOpen] = useState(false);
+  /** "בדיקות ומידע" from the manager's menu: the technician's own pad and screen, then back out. */
+  const [techFromAdmin, setTechFromAdmin] = useState(false);
   useEffect(() => {
-    if (open === 'none') setUnlocked(false);
+    if (open === 'none') {
+      setUnlocked(false);
+      setTechFromAdmin(false);
+    }
   }, [open]);
-  const alerts = [
+  const openNow: 'none' | 'admin' | 'technician' = open === 'admin' && techFromAdmin ? 'technician' : open;
+  const alerts = !showAlerts ? [] : [
     view.state.offline ? t('staffOffline') : null,
     view.state.noPayment ? t('staffTerminal') : null,
     view.state.cardBlocked ? t('staffCard') : null,
@@ -75,13 +84,13 @@ export function StaffLayer({
           {alerts.join(' · ')}
         </div>
       ) : null}
-      {open !== 'none' && !unlocked ? (
+      {openNow !== 'none' && !unlocked ? (
         <PinPad
           m={m}
-          title={open === 'admin' ? 'כניסה לניהול הקיוסק — קוד מנהל' : 'בדיקות ומידע קיוסק — קוד טכנאי'}
+          title={openNow === 'admin' ? 'כניסה לניהול הקיוסק — קוד מנהל' : 'בדיקות ומידע קיוסק — קוד טכנאי'}
           onCancel={onClose}
           onSubmit={async (code) => {
-            if (open === 'admin') {
+            if (openNow === 'admin') {
               const r = await kiosk.adminUnlock(code);
               if (r.ok) setUnlocked(true);
               return r.ok ? null : r.error;
@@ -96,8 +105,20 @@ export function StaffLayer({
           }}
         />
       ) : null}
-      {open === 'admin' && unlocked ? <AdminScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} onResetCustomer={onResetCustomer} /> : null}
-      {open === 'technician' && unlocked ? <TechnicianScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} /> : null}
+      {openNow === 'admin' && unlocked ? (
+        <AdminScreen
+          m={m}
+          onClose={onClose}
+          onDesktopExit={() => setExitOpen(true)}
+          onResetCustomer={onResetCustomer}
+          onTechnician={() => {
+            // The technician's checks ask for the technician's own code, as from the corner's six taps.
+            setUnlocked(false);
+            setTechFromAdmin(true);
+          }}
+        />
+      ) : null}
+      {openNow === 'technician' && unlocked ? <TechnicianScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} /> : null}
       {home && open === 'none' && !exitOpen ? <DesktopExitButton onOpen={() => setExitOpen(true)} /> : null}
       {exitOpen ? (
         <DesktopExitPad
@@ -205,12 +226,24 @@ function useNote(): [string | null, (r: { ok: boolean; message?: string }) => vo
   return [note, (r) => setNote(r.message ?? (r.ok ? 'בוצע' : 'לא בוצע'))];
 }
 
-function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: PreviewModel; onClose: () => void; onDesktopExit: () => void; onResetCustomer?: () => void }) {
+function AdminScreen({
+  m,
+  onClose,
+  onDesktopExit,
+  onResetCustomer,
+  onTechnician,
+}: {
+  m: PreviewModel;
+  onClose: () => void;
+  onDesktopExit: () => void;
+  onResetCustomer?: () => void;
+  onTechnician?: () => void;
+}) {
   const [info, setInfo] = useState<AdminInfo | null>(null);
   const [note, show] = useNote();
   const [exiting, setExiting] = useState(false);
-  /** "מצב עבודה": the manager's code pad, when the switch needs one. */
-  const [workPad, setWorkPad] = useState(false);
+  /** "מצב עבודה": the manager's code pad, when the switch needs one (to the till, or back to the kiosk). */
+  const [workPad, setWorkPad] = useState<'none' | 'till' | 'kiosk'>('none');
   const [workRefusal, setWorkRefusal] = useState<{ code: string; text: string } | null>(null);
   const refresh = () => void kiosk.adminInfo().then(setInfo).catch(() => undefined);
   useEffect(refresh, []);
@@ -219,24 +252,29 @@ function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: Previe
     refresh();
   };
   if (!info) return <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>…</Shell>;
-  /** To the till: refused → its words; a code is needed → the pad; done → this menu closes (the screen is the till's now). */
-  const goTill = async (code?: string): Promise<string | null> => {
-    const r: AdminActionResult = await kiosk.adminAction({ type: 'workMode', mode: 'till', ...(code ? { code } : {}) }).catch((e: unknown) => ({ ok: false, message: String(e) }));
+  /**
+   * To the till (or, from the corner over the till, back to the kiosk): refused → its words; a code is needed → the pad;
+   * done → this menu closes (the screen is the other mode's now).
+   */
+  const switchMode = async (mode: 'till' | 'kiosk', code?: string): Promise<string | null> => {
+    const r: AdminActionResult = await kiosk.adminAction({ type: 'workMode', mode, ...(code ? { code } : {}) }).catch((e: unknown) => ({ ok: false, message: String(e) }));
     if (r.ok) {
-      setWorkPad(false);
+      setWorkPad('none');
       onClose();
       return null;
     }
     if (r.needsCode) {
       setWorkRefusal(null);
-      setWorkPad(true);
+      setWorkPad(mode);
       // Asked for the first time: the pad says it; a code that was refused: why.
       return code ? (r.message ?? 'קוד שגוי') : null;
     }
-    setWorkPad(false);
+    setWorkPad('none');
     setWorkRefusal({ code: r.refusal ?? '', text: r.message ?? 'המעבר נכשל' });
     return null;
   };
+  const goTill = (code?: string) => switchMode('till', code);
+  const goKiosk = (code?: string) => switchMode('kiosk', code);
   return (
     <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>
       {note ? <div className="rounded-lg bg-black/5 p-2 text-center text-xs font-semibold">{note}</div> : null}
@@ -246,6 +284,7 @@ function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: Previe
           info={info.workMode}
           refusal={workRefusal}
           onTill={() => void goTill()}
+          onKiosk={() => void goKiosk()}
           onResetCustomer={
             onResetCustomer
               ? () => {
@@ -379,6 +418,9 @@ function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: Previe
         </Btn>
       </Panel>
       <Panel m={m} title="הזמנות היום">
+        <Btn m={m} onClick={() => act({ type: 'reprintLast' })}>
+          הדפס עסקה אחרונה (העתק)
+        </Btn>
         {info.orders.length === 0 ? <div>אין הזמנות היום</div> : null}
         {info.orders.map((o) => (
           <div key={o.localId} className="flex items-center gap-2 border-t py-1 text-xs" style={{ borderColor: m.c.border }}>
@@ -405,6 +447,16 @@ function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: Previe
           </div>
         ))}
       </Panel>
+      {onTechnician ? (
+        <Panel m={m} title="טכנאי">
+          <div className="text-xs" style={{ color: m.c.mutedText }}>
+            שיוך המכשיר, רשת, מדפסת, בדיקת מסופון, עדכונים ותמיכה מרחוק — בקוד טכנאי.
+          </div>
+          <Btn m={m} onClick={onTechnician}>
+            בדיקות ומידע קיוסק (טכנאי)
+          </Btn>
+        </Panel>
+      ) : null}
       {/* Leaving the kiosk: the manager who opened this menu, if their role holds DESKTOP_EXIT —
           no second code; otherwise another manager's code on the pad (the desktop only). */}
       {info.desktopExit?.allowed ? (
@@ -435,9 +487,14 @@ function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: Previe
         </div>
       )}
       {/* "מצב עבודה": always a manager's code with KIOSK_TILL_MODE (checked on the device, five wrong codes lock it for a minute). */}
-      {workPad ? (
+      {workPad !== 'none' ? (
         <div className="contents">
-          <PinPad m={m} title={`${WORK_TEXT.approve} — קוד מנהל`} onCancel={() => setWorkPad(false)} onSubmit={(code) => goTill(code)} />
+          <PinPad
+            m={m}
+            title={`${workPad === 'kiosk' ? WORK_TEXT.approveToKiosk : WORK_TEXT.approve} — קוד מנהל`}
+            onCancel={() => setWorkPad('none')}
+            onSubmit={(code) => (workPad === 'kiosk' ? goKiosk(code) : goTill(code))}
+          />
         </div>
       ) : null}
     </Shell>

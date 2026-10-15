@@ -47,6 +47,7 @@ import type {
   VoucherApplyIn,
 } from '../../shared/bridge';
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
+import { SIDE_DP as ADMIN_CORNER_SIDE } from '../../core/adminCorner';
 import { configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
 import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
@@ -499,8 +500,8 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
 
 /* ------------------------------------------------------------- the screens' own pieces */
 
-/** The admin's corner of the screens (KioskApp.tsx ADMIN_ZONE, CSS px from the physical top-right). */
-export const WEB_ADMIN_ZONE = 48;
+/** The admin's corner of the screens (core/adminCorner.ts — the Android KioskAdminCorner's square, CSS px from the top right). */
+export const WEB_ADMIN_ZONE = ADMIN_CORNER_SIDE;
 
 /** The technician's zone of the screens (core/technician.ts ZONE), the physical top-left. */
 function inTechZone(x: number, y: number): boolean {
@@ -513,7 +514,7 @@ function inTechZone(x: number, y: number): boolean {
  * own PIN pad as well.
  */
 export function inWebStaffCorner(x: number, y: number, width: number): boolean {
-  return (x > width - WEB_ADMIN_ZONE && y < WEB_ADMIN_ZONE && y >= 0) || inTechZone(x, y);
+  return (width - x >= 0 && width - x <= WEB_ADMIN_ZONE && y <= WEB_ADMIN_ZONE && y >= 0) || inTechZone(x, y);
 }
 
 interface PointerLike {

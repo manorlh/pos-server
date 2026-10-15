@@ -341,6 +341,8 @@ function bridge(svc: KioskService) {
   ipcMain.handle('shell:kds', () => roles?.kdsView());
   ipcMain.handle('shell:kdsAction', (_e, a: KdsActionInput) => roles?.kdsAction(a) ?? { ok: false });
   ipcMain.on('shell:activity', () => roles?.touch());
+  // The manager's menu opened from the till's corner is closed: the till's view comes back over the window.
+  ipcMain.on('shell:adminClosed', () => tillView?.resume());
   // "שרת מזומן": the staff screen (shared/cash.ts) — its view, a manager's code, an action.
   ipcMain.handle('shell:cash', () => roles?.cashView() ?? null);
   ipcMain.handle('shell:cashUnlock', (_e, pin: unknown) => roles?.cashUnlock(typeof pin === 'string' ? pin.slice(0, 12) : '') ?? { ok: false });
@@ -563,7 +565,19 @@ void app.whenReady().then(async () => {
     caps: () => windowsTillCaps(svc),
     log: (m) => console.log(`[shell] ${m}`),
   });
-  tillView = attachTillRole({ role: tillRole, main: () => main, preload: path.join(__dirname, '..', 'preload', 'app.js'), isDev, enabled: () => true, log: (m) => console.log(`[shell] ${m}`) });
+  tillView = attachTillRole({
+    role: tillRole,
+    main: () => main,
+    preload: path.join(__dirname, '..', 'preload', 'app.js'),
+    isDev,
+    enabled: () => true,
+    log: (m) => console.log(`[shell] ${m}`),
+    // "ניהול הקיוסק" from the till's corner: never during a payment; the shell's window shows the menu (staff/ShellStaff.tsx).
+    admin: {
+      allowed: () => !tillEngine?.paying(),
+      open: () => sendShell('shell:admin', { from: 'till' }),
+    },
+  });
   roles.on('view', (v) => tillView?.onRole(v.role));
 
   registerKioskProtocol();

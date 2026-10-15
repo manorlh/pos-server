@@ -380,6 +380,11 @@ export interface AdminWorkMode {
   mode: 'kiosk' | 'till';
   /** The "קופה" button exists: kiosk mode, the gate open. */
   toTill: boolean;
+  /**
+   * The "קיוסק" button exists: till mode (a kiosk by role always; a till by role where the owner allowed it) — the
+   * manager's corner over the till opens this menu too (staff/ShellStaff.tsx). Absent from an older service: false.
+   */
+  toKiosk?: boolean;
   /** The manager who opened this menu holds KIOSK_TILL_MODE: their code counts, no second one is asked. */
   openerHolds: boolean;
 }
@@ -482,6 +487,8 @@ export type AdminAction =
   | { type: 'pause'; paused: boolean }
   | { type: 'reprintBon'; orderId: string }
   | { type: 'reprintReceipt'; orderId: string }
+  /** "הדפס עסקה אחרונה" (the Android admin's quick reprint): today's last document, kiosk or till, as a copy. */
+  | { type: 'reprintLast' }
   | { type: 'testPrint' }
   | { type: 'checkTerminal' }
   | { type: 'recheckPayment'; reference: string }
@@ -495,7 +502,7 @@ export type AdminAction =
    * "מצב עבודה": to the till. Refused (`refusal`) over a customer's order or payment; always a manager's code with
    * KIOSK_TILL_MODE — the one that opened this menu counts when it holds it, else `needsCode` asks for another (`code`).
    */
-  | { type: 'workMode'; mode: 'till'; code?: string }
+  | { type: 'workMode'; mode: 'till' | 'kiosk'; code?: string }
   /** "צימוד מסוף SynqPay": `pair` (the first code, or "שלח קוד חדש"); the serial when the kiosk cannot tell it. */
   | { type: 'synqpayPair'; serialNumber?: string | null }
   /** The 6 digits from the terminal's screen. */

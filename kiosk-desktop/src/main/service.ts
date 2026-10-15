@@ -218,6 +218,9 @@ const WORK_MODE_LOG = 'workMode.log';
 /** A till event of the device's (`POST /sync/{m}/events`, pos-server TillEventIn): a desktop exit or a mode switch. */
 type TillEventRecord = DesktopExitEvent | WorkModeEvent;
 
+/** "ניהול הקיוסק" on a device with no staff synced yet (the manager's code is checked on the device, never online). */
+export const NO_ROSTER_TEXT = 'אין עדיין עובדים במכשיר — נדרש חיבור לענן פעם אחת. כניסת טכנאי: 6 הקשות בפינה השמאלית העליונה';
+
 export class KioskService extends EventEmitter {
   readonly db: Db;
   readonly kv: Kv;
@@ -3238,6 +3241,8 @@ export class KioskService extends EventEmitter {
    * by the legacy role: a shop manager, as before.
    */
   async adminUnlock(pin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+    // A device that never synced its staff (pairing, the first start offline): no manager can be checked here yet.
+    if (this.cloud.posUsers().length === 0) return { ok: false, error: NO_ROSTER_TEXT };
     const candidates = usersAllowed(this.cloud.posUsers(), this.shopIdHere(), KIOSK_UNLOCK);
     if (candidates.length === 0) return { ok: false, error: `אין בסניף מנהל עם הרשאת "${KIOSK_UNLOCK_LABEL}"` };
     const u = await findByPin(candidates, typeof pin === 'string' ? pin : '', (p, h) => bcrypt.compare(p, h));
@@ -3324,6 +3329,7 @@ export class KioskService extends EventEmitter {
             enabled: this.workMode.view().enabled,
             mode: this.workMode.mode(),
             toTill: this.workMode.offered().toTill,
+            toKiosk: this.workMode.offered().toKiosk,
             openerHolds: this.workMode.holds(this.adminUserId),
           }
         : undefined,
@@ -3375,6 +3381,13 @@ export class KioskService extends EventEmitter {
       case 'reprintReceipt':
         this.printReceipt(a.orderId, true);
         return { ok: true };
+      case 'reprintLast': {
+        // Today's last document — a kiosk order's or a till sale's — on paper again, marked "העתק" (never a new number).
+        const last = this.ledger.todaysDocs(localDate(Date.now()))[0];
+        if (!last) return { ok: false, message: 'אין עסקאות היום' };
+        this.printDocReceipt(last, true);
+        return { ok: true, message: `נשלח להדפסה: ${formatDocNumber(last.prefix, String(last.number))} (העתק)` };
+      }
       case 'testPrint':
         await this.lookForPrinter();
         this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
@@ -3418,6 +3431,24 @@ export class KioskService extends EventEmitter {
       // code with KIOSK_TILL_MODE: the one that opened this menu counts when it holds it, else the code typed on the pad.
       case 'workMode': {
         const wm = this.workMode;
+        // Back to the kiosk from the corner over the till: the till side's checks (an open sale, a payment), the same code.
+        if (a.mode === 'kiosk') {
+          if (!wm || !wm.offered().toKiosk) return { ok: false, refusal: 'disabled', message: REFUSAL_TEXT.disabled };
+          const back = wm.mayReturn();
+          if (back) return { ok: false, refusal: back.wire, message: back.text };
+          let who: string | null = this.adminName;
+          let whoId: string | null = this.adminUserId;
+          if (!wm.holds(this.adminUserId)) {
+            if (typeof a.code !== 'string' || a.code.trim() === '') return { ok: false, needsCode: true, message: WORK_TEXT.needsManagerToKiosk };
+            const c = await wm.checkManagerCode(a.code);
+            if (!c.ok) return { ok: false, needsCode: true, message: c.message };
+            who = c.name;
+            whoId = c.id;
+          }
+          const refusedBack = await wm.returnToKiosk('manual', who, whoId);
+          if (refusedBack) return { ok: false, refusal: refusedBack.wire, message: refusedBack.text };
+          return { ok: true };
+        }
         if (!wm || !wm.offered().toTill) return { ok: false, refusal: 'disabled', message: REFUSAL_TEXT.disabled };
         const refusal = wm.mayEnter();
         if (refusal) return { ok: false, refusal: refusal.wire, message: refusal.text };

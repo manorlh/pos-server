@@ -543,11 +543,13 @@ describe('the staff stay native', () => {
     expect(sends).toHaveLength(0);
   });
 
-  it('the corners: the admin\'s top-right square and the technician\'s top-left strip', () => {
+  it("the corners: the admin's top-right square (96, the APK's KioskAdminCorner) and the technician's top-left strip", () => {
     expect(inWebStaffCorner(1050, 10, 1080)).toBe(true);
     expect(inWebStaffCorner(1033, 47, 1080)).toBe(true);
-    expect(inWebStaffCorner(1000, 10, 1080)).toBe(false);
-    expect(inWebStaffCorner(1050, 60, 1080)).toBe(false);
+    expect(inWebStaffCorner(1000, 10, 1080)).toBe(true);
+    expect(inWebStaffCorner(1050, 90, 1080)).toBe(true);
+    expect(inWebStaffCorner(980, 10, 1080)).toBe(false);
+    expect(inWebStaffCorner(1050, 100, 1080)).toBe(false);
     expect(inWebStaffCorner(5, 60, 1080)).toBe(true);
     expect(inWebStaffCorner(60, 5, 1080)).toBe(true);
     expect(inWebStaffCorner(60, 40, 1080)).toBe(false);

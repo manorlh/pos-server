@@ -9,7 +9,10 @@
  *  - the capability tiles are greyed with their reasons (§2.5);
  *  - at rest / busy goes to the host (no update mid-sale, §2.6, §8.2);
  *  - light for Chromium 108 and a Celeron (§13.3, §13.4): plain CSS, hex colours, no blur, no
- *    backdrop-filter, a virtualised grid, and "lite" (`data-lite`) turns transitions off.
+ *    backdrop-filter, a virtualised grid, and "lite" (`data-lite`) turns transitions off;
+ *  - "ניהול הקיוסק" (staff/adminHold.tsx — the Android KioskAdminCorner): two seconds held in the top-right corner asks
+ *    the Windows shell for its manager's menu (a manager's code, the work mode, the technician, status, reprints, the
+ *    desktop) — never during a payment; a host without that menu (a browser) leaves the corner unarmed.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -18,6 +21,7 @@ import { capabilityTiles, NO_CAPS } from '../../host/caps';
 import type { HostCaps, TillHost } from '../../host/TillHost';
 import type { DisplayProfile } from './layout/displayProfileAdapter';
 import { tillLayout } from './layout/tillLayout';
+import { AdminHoldBar, useAdminCornerHold } from '../../staff/adminHold';
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
@@ -99,9 +103,26 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
 
   const loadHistory = useCallback(async () => (await run('doc.history', {})) as HistoryRow[] | undefined, [run]);
 
+  // "ניהול הקיוסק": the shell's manager's menu from the till's corner — never while paying, never over a dialog.
+  const adminHold = useAdminCornerHold({
+    rtl: true,
+    armed: () => !!host.ui.openAdmin && !!state && state.checkout.phase !== 'tender' && state.checkout.phase !== 'card_waiting' && state.dialog === null,
+    onOpen: () => host.ui.openAdmin?.(),
+  });
+
   const root = (children: ReactNode) => (
-    <div className="t-root" dir="rtl" lang="he" data-lite={host.device.lite ? '1' : '0'} data-layout={layout.cls} style={profile.scale !== 1 ? { zoom: profile.scale } : undefined} onPointerDown={touch}>
+    <div
+      className="t-root"
+      dir="rtl"
+      lang="he"
+      data-lite={host.device.lite ? '1' : '0'}
+      data-layout={layout.cls}
+      style={profile.scale !== 1 ? { zoom: profile.scale } : undefined}
+      onPointerDown={touch}
+      {...adminHold.handlers}
+    >
       {children}
+      <AdminHoldBar progress={adminHold.progress} rtl={adminHold.rtl} />
     </div>
   );
 

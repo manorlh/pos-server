@@ -25,6 +25,7 @@ const bridge: R2mAppBridge = {
   reportReady: () => ipcRenderer.send(APP_IPC.ready),
   reportIdle: (idle, busy) => ipcRenderer.send(APP_IPC.idle, idle === true, busy === true),
   keepAwake: (on) => ipcRenderer.send(APP_IPC.keepAwake, on === true),
+  openAdmin: () => ipcRenderer.send(APP_IPC.admin),
 };
 
 contextBridge.exposeInMainWorld('r2mApp', bridge);

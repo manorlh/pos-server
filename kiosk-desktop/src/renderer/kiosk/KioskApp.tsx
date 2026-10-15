@@ -136,15 +136,14 @@ import { BatteryAlerts } from './BatteryAlerts';
 import { Dialog } from './Dialog';
 import { noteEntry, type EntryRequest } from './EntryWindow';
 import { StaffLayer } from '../staff/StaffLayer';
+import { AdminHoldBar, useAdminCornerHold } from '../staff/adminHold';
+import { kioskCornerArmed } from '../../core/adminCorner';
 import { KioskShopLock } from './KioskShopLock';
 import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
 
 /** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
 const FOOTER_PX = 18;
-
-/** The admin's corner (CSS px from the physical top-right). */
-const ADMIN_ZONE = 48;
 
 type FlowAction = { event: KioskEvent; cartEmpty: boolean };
 
@@ -295,8 +294,13 @@ export function KioskApp({ view }: { view: KioskView }) {
   }, []);
   const flightSeq = useRef(0);
   const taps = useRef(new TapSequence());
-  const longPress = useRef<number | null>(null);
-  const swallowClick = useRef(false);
+  // "ניהול הקיוסק": two seconds held on the top-start square — the top right, the staff's Hebrew — as the Android kiosk's
+  // KioskAdminCorner (core/adminCorner.ts); never during a payment, never over a pad or a menu already up.
+  const adminHold = useAdminCornerHold({
+    rtl: true,
+    armed: () => kioskCornerArmed({ screen: flowRef.current.screen, busy: flowBusy(flowRef.current), staffOpen: staffOpen !== 'none' }),
+    onOpen: () => setStaffOpen('admin'),
+  });
   const size = useWindowSize();
 
   /* ---------------------------------------------------------- the catalog */
@@ -1117,31 +1121,22 @@ export function KioskApp({ view }: { view: KioskView }) {
       style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
-        // "ניהול הקיוסק": a 2 s press in the physical top-right corner (nothing drawn over it).
-        if (e.clientX > window.innerWidth - ADMIN_ZONE && e.clientY < ADMIN_ZONE) {
-          longPress.current = window.setTimeout(() => {
-            longPress.current = null;
-            swallowClick.current = true;
-            if (technicianMayOpen({ screen: flowRef.current.screen, busy: flowBusy(flowRef.current) }, false)) setStaffOpen('admin');
-          }, 2000);
-        }
+        // "ניהול הקיוסק": the corner's hold (adminHold.tsx) — nothing taken before its claim.
+        adminHold.handlers.onPointerDownCapture(e);
         // The technician's corner: the physical top-left, whatever the language.
         if (inTechnicianZone(e.clientX, e.clientY) && taps.current.tap(Date.now()) && technicianMayOpen({ screen: flow.screen, busy: flowBusy(flow) }, flowBusy(flow))) {
           setStaffOpen('technician');
         }
       }}
-      onPointerUpCapture={() => {
-        if (longPress.current) window.clearTimeout(longPress.current);
-        longPress.current = null;
-      }}
-      onPointerCancelCapture={() => {
-        if (longPress.current) window.clearTimeout(longPress.current);
-        longPress.current = null;
-      }}
+      onPointerMoveCapture={adminHold.handlers.onPointerMoveCapture}
+      onPointerUpCapture={adminHold.handlers.onPointerUpCapture}
+      onPointerCancelCapture={adminHold.handlers.onPointerCancelCapture}
+      onContextMenuCapture={adminHold.handlers.onContextMenuCapture}
       onClickCapture={(e) => {
-        // The technician's corner is for its taps only, and the press that opened the admin is not a tap.
-        if (inTechnicianZone(e.clientX, e.clientY) || swallowClick.current) {
-          swallowClick.current = false;
+        // The press the corner took is not a tap.
+        adminHold.handlers.onClickCapture(e);
+        // The technician's corner is for its taps only.
+        if (inTechnicianZone(e.clientX, e.clientY)) {
           e.stopPropagation();
           e.preventDefault();
         }
@@ -1382,6 +1377,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       {scanNote}
       {shopLockUp ? <KioskShopLock m={m} closeDay={view.closeDay ?? null} /> : null}
       <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} onResetCustomer={() => dispatch({ type: 'reset' })} />
+      <AdminHoldBar progress={adminHold.progress} rtl={adminHold.rtl} />
     </div>
   );
 }

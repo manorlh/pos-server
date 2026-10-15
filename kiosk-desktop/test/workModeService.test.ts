@@ -381,7 +381,7 @@ describe('"ניהול הקיוסק" → "מצב עבודה" — the manager’s 
     const w = world();
     try {
       await w.svc.adminUnlock('7001');
-      expect(w.svc.adminInfo().workMode).toEqual({ enabled: true, mode: 'kiosk', toTill: true, openerHolds: true });
+      expect(w.svc.adminInfo().workMode).toEqual({ enabled: true, mode: 'kiosk', toTill: true, toKiosk: false, openerHolds: true });
       expect(await w.svc.adminAction({ type: 'workMode', mode: 'till' })).toEqual({ ok: true });
       expect(w.runtime.mode()).toBe('till');
       expect(w.svc.workSessions.till()).toMatchObject({ by: 'רונית מנהלת', byId: 'boss', source: 'manual' });

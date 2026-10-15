@@ -109,6 +109,8 @@ export interface ShellEvents {
   kds: KdsView;
   /** The cash host's staff screen (shared/cash.ts). */
   cash: CashHostView;
+  /** "ניהול הקיוסק" asked by the till's own corner (its view is set aside until `adminClosed`). */
+  admin: { from: 'till' };
 }
 
 /**
@@ -142,5 +144,7 @@ export interface ShellBridge {
   cash?(): Promise<CashHostView | null>;
   cashUnlock?(pin: string): Promise<{ ok: boolean; name?: string; message?: string }>;
   cashAction?(a: CashStaffAction): Promise<CashStaffResult>;
+  /** The manager's menu opened for the till is closed: the till's view comes back (main/roles/tillElectron.ts). */
+  adminClosed?(): void;
   on<K extends keyof ShellEvents>(event: K, fn: (payload: ShellEvents[K]) => void): () => void;
 }

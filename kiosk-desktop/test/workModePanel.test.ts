@@ -63,4 +63,17 @@ describe('the section "מצב עבודה" in the manager’s menu', () => {
     // No reset on a screen that cannot do it.
     expect(html({ refusal: { code: 'customer_ordering', text: REFUSAL_TEXT.customer_ordering } })).not.toContain(WORK_TEXT.resetCustomer);
   });
+  it('opened from the corner over the till: "קופה" is the mode now, "קיוסק" goes back; its own hint and code line', () => {
+    const out = html({ info: info({ mode: 'till', toTill: false, toKiosk: true }), onKiosk: () => undefined });
+    expect(out).toContain('data-mode="till"');
+    expect(out).toMatch(/<button[^>]*>קיוסק<\/button>/);
+    expect(out).not.toMatch(/<button[^>]*>קופה<\/button>/);
+    expect(out).not.toContain('disabled=""');
+    expect(out).toContain(esc(WORK_TEXT.hintToKiosk));
+    expect(html({ info: info({ mode: 'till', toTill: false, toKiosk: true, openerHolds: false }), onKiosk: () => undefined })).toContain(esc(WORK_TEXT.needsManagerToKiosk));
+    // A kiosk by role is never trapped as a till: the way back shows with the owner's gate closed too.
+    expect(html({ info: info({ enabled: false, mode: 'till', toTill: false, toKiosk: true }), onKiosk: () => undefined })).toContain('>קיוסק<');
+    // No way back offered: off.
+    expect(html({ info: info({ mode: 'till', toTill: false, toKiosk: false }), onKiosk: () => undefined })).toMatch(/<button[^>]*disabled=""[^>]*>קיוסק<\/button>/);
+  });
 });

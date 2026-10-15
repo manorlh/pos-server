@@ -32,6 +32,8 @@ export interface R2mAppBridge {
   reportReady(): void;
   reportIdle(idle: boolean, busy: boolean): void;
   keepAwake(on: boolean): void;
+  /** "ניהול הקיוסק" from the till's corner: the shell sets the till's view aside and opens its manager's menu. */
+  openAdmin?(): void;
 }
 
 /** The IPC channel names (one place, for the preload and the main process). */
@@ -44,4 +46,5 @@ export const APP_IPC = {
   ready: 'app:ready',
   idle: 'app:idle',
   keepAwake: 'app:keepAwake',
+  admin: 'app:admin',
 } as const;

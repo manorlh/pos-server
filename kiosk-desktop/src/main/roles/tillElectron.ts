@@ -44,11 +44,19 @@ export interface TillElectronOptions {
   /** Whether the till preview is on (kiosk.json `tillPreview`, `--till-preview`). */
   enabled(): boolean;
   log(m: string): void;
+  /**
+   * "ניהול הקיוסק" from the till's corner: `allowed` — never during a payment (the engine's checkout, a card at the
+   * terminal); `open` — the shell's window shows its manager's menu (renderer staff/ShellStaff.tsx) while the till's view
+   * is set aside, until `resume`.
+   */
+  admin?: { allowed(): boolean; open(): void };
 }
 
 export interface TillElectron {
   /** The role the cloud gives the device (roles/manager.ts view): shows / hides the till. */
   onRole(role: string | null): void;
+  /** The manager's menu over the till is closed: the till's view is laid back over the window. */
+  resume(): void;
   stop(): void;
 }
 
@@ -78,6 +86,8 @@ function detach(win: BrowserWindow, view: ViewLike) {
 export function attachTillRole(o: TillElectronOptions): TillElectron {
   let view: ViewLike | null = null;
   let watchdog: NodeJS.Timeout | null = null;
+  /** Set aside (zero size, no input) while the shell's manager's menu is up; the renderer and its state stay. */
+  let parked = false;
   const role = o.role;
 
   protocol.handle('r2m', (request) => {
@@ -104,6 +114,17 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   });
   ipcMain.on(APP_IPC.idle, (e, idle: unknown, busy: unknown) => fromTill(e) && role.reportIdle(idle === true, busy === true));
   ipcMain.on(APP_IPC.keepAwake, () => undefined); // the shell already keeps the display on (powerSaveBlocker)
+  // The till's corner: the shell's manager's menu, never during a payment.
+  ipcMain.on(APP_IPC.admin, (e) => {
+    if (!fromTill(e) || !o.admin || parked) return;
+    if (!o.admin.allowed()) {
+      o.log('till: the manager corner waits — a payment is on');
+      return;
+    }
+    parked = true;
+    fit();
+    o.admin.open();
+  });
 
   const offEngine = role.onEngineEvent(
     (ev: EngineEvent) => view?.webContents.send(APP_IPC.event, ev),
@@ -118,7 +139,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     const win = o.main();
     if (!win || !view) return;
     const b = win.getContentBounds();
-    view.setBounds({ x: 0, y: 0, width: b.width, height: b.height });
+    view.setBounds(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
   };
 
   const show = () => {
@@ -168,6 +189,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     if (wc.close) wc.close();
     else wc.destroy?.();
     view = null;
+    parked = false;
   };
 
   return {
@@ -176,6 +198,12 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
       if (wanted) show();
       else hide();
       if (view && r) view.webContents.send(APP_IPC.role, r as DeviceRoleName);
+    },
+    resume: () => {
+      if (!parked) return;
+      parked = false;
+      fit();
+      view?.webContents.focus();
     },
     stop: () => {
       hide();

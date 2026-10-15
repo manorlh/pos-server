@@ -89,7 +89,16 @@ export interface TillHost {
   engine: EngineLink;
   bundle: BundleControl;
   device: DeviceInfo;
-  ui: { keepAwake(on: boolean): void; fullscreen(): void; lockOrientation?(o: Orientation): void };
+  ui: {
+    keepAwake(on: boolean): void;
+    fullscreen(): void;
+    lockOrientation?(o: Orientation): void;
+    /**
+     * "ניהול הקיוסק" from the till's corner (core/adminCorner.ts): the Windows shell sets the till aside and shows its
+     * manager's menu (staff/ShellStaff.tsx). Absent: a host with no such menu (a browser) — the corner is not armed.
+     */
+    openAdmin?(): void;
+  };
   /** A demo engine: the screens say so on every screen. */
   demo: boolean;
 }
