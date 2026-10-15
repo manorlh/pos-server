@@ -39,7 +39,9 @@ export function ShiftScreen({ state, layout, actions }: { state: TillState; layo
   const others = state.mode.rolesAllowed.filter((r) => r !== state.mode.current);
   const tillZ = state.z.zMode === 'till';
   const perms = state.session.permissions;
-  const can = (code: string) => perms.includes(code);
+  // "הסתרת פריטים בתפריט" (core/till/menuHide.ts): a hidden "הפק Z" / "סגירת משמרת" is not offered here either (Android).
+  const hidden = new Set(state.menuHidden ?? []);
+  const can = (code: string) => perms.includes(code) && !(code === 'Z' && hidden.has('till_z')) && !(code === 'SHIFT_CLOSE' && hidden.has('shift_close'));
   const figures = x ?? closed;
   // An independent till has no shifts: only "הפק Z" (count the cash, the internal shift closes, the Z, the paper).
   if (s.hidden) {

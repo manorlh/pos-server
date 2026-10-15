@@ -35,6 +35,8 @@ import { zModeOf } from '../../core/tillZ';
 import { parameterOn } from '../sync/cloud';
 import { PERM, TEXT, approve, displayName, permLabel, stateOf, tryLogin, type RosterUser } from '../../core/till/staff';
 import { cardLast, dueOf, handedTotal, paidOf, quickNotes, takeCash, validCashAmount, type TenderLeg } from '../../core/till/tender';
+import { HIDDEN_MENU_PARAM, parseHiddenMenu } from '../../core/till/menuHide';
+import { tileTextOf } from '../../core/till/tileText';
 import { NO_LOCK, type BcryptCompare, type ExitLock } from '../../core/desktopExit';
 import type { StartPaymentIn } from '../../shared/bridge';
 import {
@@ -135,6 +137,7 @@ const WORDS = {
   cancel: 'ביטול',
   insufficient: 'הסכום שהתקבל קטן מהסכום לתשלום',
   noPaymentOptions: 'אין אמצעי תשלום זמינים – פנו למנהל',
+  noCard: 'הקופה מוגדרת ללא אשראי',
   cardPending: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.',
   presentCard: 'הצמד, הכנס או העבר את הכרטיס',
   cancelling: 'מבטל… ממתין לתשובת המסוף',
@@ -639,7 +642,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
             ...(p.barcode ? { barcode: p.barcode } : {}),
             ...(p.sku ? { sku: p.sku } : {}),
             ...(sale ? { sale } : {}),
+            ...(sale && p.sale?.reason ? { saleReason: p.sale.reason } : {}),
             ...(p.restricted ? { restricted: true } : {}),
+            // The "i" window's (P:/specs/product-tile-text.md §4): the description, allergens, dietary tags.
+            ...(p.description ? { description: p.description } : {}),
+            ...(p.allergens.length > 0 ? { allergens: p.allergens } : {}),
+            ...(p.dietaryTags.length > 0 ? { dietary: [...p.dietaryTags] } : {}),
           };
         }),
     };
@@ -872,6 +880,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.tenderOpen();
     const pay = this.svc.pay;
     if (pay.cardInFlight) refuse('checkout_busy');
+    // "ללא אשראי" (payment integration none): no card on this till, whatever a screen sends.
+    if (pay.noCard) refuse('terminal_unavailable', WORDS.noCard);
     if (!pay.configured) refuse('terminal_unavailable', WORDS.noPaymentOptions);
     if (pay.blocked() || pay.unresolved()) refuse('terminal_unavailable', WORDS.cardPending);
     const f = this.checkout.frozen!;
@@ -1424,9 +1434,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         cloud: this.svc.isOffline ? 'offline' : 'online',
         printer: health === 'ok' ? 'ok' : health === 'unknown' ? 'none' : 'error',
         terminal,
+        ...(this.svc.pay.noCard ? { noCard: true } : {}),
         outbox: this.svc.outbox.count(),
       },
       dialog,
+      menuHidden: parseHiddenMenu(this.svc.cloud.parameters()[HIDDEN_MENU_PARAM]),
+      tileText: tileTextOf(this.svc.cloud.parameters()),
       mode: {
         role: (homeTill ? 'till' : 'kiosk') as DeviceRoleName,
         current: 'till',

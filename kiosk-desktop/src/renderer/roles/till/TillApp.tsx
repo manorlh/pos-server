@@ -138,6 +138,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           checkout={s.checkout}
           layout={layout}
           cardTile={cardTile}
+          noCard={s.health.noCard === true}
           demo={s.session.demo}
           actions={{
             cash: (amountAgorot) => void run('checkout.cash', { amountAgorot }),
@@ -228,9 +229,13 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           <button type="button" className={`t-nav-btn${view === 'sell' ? ' t-nav-on' : ''}`} onClick={() => setView('sell')}>
             {T.sell}
           </button>
-          <button type="button" className={`t-nav-btn${view === 'shift' ? ' t-nav-on' : ''}`} onClick={() => setView('shift')}>
-            {s.shift.hidden ? T.produceZ : T.shift}
-          </button>
+          {/* "הסתרת פריטים בתפריט": `shift` (or, on a till with no shifts, `till_z`) hides the way in; a till with no shift open
+              still reaches it from the sell screen. */}
+          {(s.menuHidden ?? []).includes(s.shift.hidden ? 'till_z' : 'shift') ? null : (
+            <button type="button" className={`t-nav-btn${view === 'shift' ? ' t-nav-on' : ''}`} onClick={() => setView('shift')}>
+              {s.shift.hidden ? T.produceZ : T.shift}
+            </button>
+          )}
           {host.demo ? (
             <button type="button" className={`t-nav-btn${view === 'caps' ? ' t-nav-on' : ''}`} onClick={() => setView('caps')}>
               {T.caps}
@@ -244,7 +249,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         <div className="t-health" aria-label="מצב">
           <span className={`t-dot ${s.health.cloud === 'online' ? 't-dot-ok' : s.health.cloud === 'demo' ? 't-dot-demo' : 't-dot-off'}`} title={s.health.cloud === 'offline' ? T.offline : T.online} />
           <span className={`t-dot ${s.health.printer === 'ok' ? 't-dot-ok' : s.health.printer === 'error' ? 't-dot-bad' : 't-dot-off'}`} title={T.printer} />
-          <span className={`t-dot ${s.health.terminal === 'none' ? 't-dot-off' : 't-dot-ok'}`} title={T.terminal} />
+          {s.health.noCard ? null : <span className={`t-dot ${s.health.terminal === 'none' ? 't-dot-off' : 't-dot-ok'}`} title={T.terminal} />}
           <span className="t-cashier">{s.session.cashier?.name ?? ''}</span>
           {s.session.cashier ? (
             <button type="button" className="t-btn t-btn-ghost t-btn-small" onClick={() => void run('session.logout', {})}>

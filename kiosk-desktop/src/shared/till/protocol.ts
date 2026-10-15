@@ -235,12 +235,29 @@ export interface Product {
   sale?: 'sold_out' | 'blocked' | 'unavailable';
   /** "מחייב אישור מנהל במכירה": a manager's code on the sale unless the user holds the right. */
   restricted?: boolean;
+  /** The item's description, its allergens and dietary tags (the "i" window, P:/specs/product-tile-text.md §4). */
+  description?: string;
+  allergens?: string[];
+  dietary?: string[];
+  /** Why it is "חסום" / "אזל" now, when the rules say. */
+  saleReason?: string;
 }
 
 export interface Catalog {
   version: number;
   departments: Department[];
   products: Product[];
+}
+
+/**
+ * "שם פריט מלא על הכפתור, ותג i" (core/till/tileText.ts): `productNameFit`, `productNameMaxLines`, `productNameMinTextSize`,
+ * `productInfoBadge` from the till's parameters.
+ */
+export interface TileTextState {
+  fit: 'fit' | 'wrap' | 'clip';
+  maxLines: number;
+  minSize: 's' | 'm' | 'l';
+  infoBadge: 'auto' | 'always' | 'off';
 }
 
 export interface CartLine {
@@ -329,6 +346,11 @@ export interface HealthState {
   /** The receipt printer as the print queue last saw it. */
   printer: 'ok' | 'none' | 'error';
   terminal: 'ok' | 'none' | 'busy';
+  /**
+   * "ללא אשראי" — the business's payment integration is "none" (P:/specs/payment-integration-none.md, the Android
+   * PaymentIntegration.NONE): the till takes no card at all — no card tender, no terminal check. Absent: false.
+   */
+  noCard?: boolean;
   outbox: number;
 }
 
@@ -368,6 +390,13 @@ export interface TillState {
   health: HealthState;
   dialog: EngineDialog | null;
   mode: ModeState;
+  /**
+   * "הסתרת פריטים בתפריט הקופה" (`hiddenMenuItems`, core/till/menuHide.ts — the Android MenuHide keys): the menu items
+   * this till does not show. Hiding only hides — the engine's rules are untouched. Absent: none.
+   */
+  menuHidden?: string[];
+  /** The tiles' text (TileTextState); absent: the defaults (fit, 3 lines, s, auto). */
+  tileText?: TileTextState;
 }
 
 export interface XReport {

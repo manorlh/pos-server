@@ -24,7 +24,22 @@ export interface CheckoutActions {
   markNotApproved(): void;
 }
 
-export function CheckoutScreen({ checkout, layout, cardTile, demo, actions }: { checkout: CheckoutState; layout: TillLayout; cardTile: CapabilityTile; demo: boolean; actions: CheckoutActions }) {
+export function CheckoutScreen({
+  checkout,
+  layout,
+  cardTile,
+  demo,
+  actions,
+  noCard = false,
+}: {
+  checkout: CheckoutState;
+  layout: TillLayout;
+  cardTile: CapabilityTile;
+  demo: boolean;
+  actions: CheckoutActions;
+  /** "ללא אשראי": the business takes no card (payment integration none). */
+  noCard?: boolean;
+}) {
   const [padOpen, setPadOpen] = useState(false);
   const style = layout.checkoutMaxWidthDp ? { maxWidth: layout.checkoutMaxWidthDp } : undefined;
 
@@ -169,10 +184,13 @@ export function CheckoutScreen({ checkout, layout, cardTile, demo, actions }: { 
             <span>{T.cashWithChange}</span>
             <small className="t-reason">{T.cashChangeCaption}</small>
           </button>
-          <button type="button" className={`t-tender${cardTile.available ? '' : ' t-tender-off'}`} disabled={!cardTile.available} onClick={actions.card} title={cardTile.reason}>
-            <span>{T.cardPay}</span>
-            <small className="t-reason">{cardTile.available ? (checkout.cardError ? T.retry : money(checkout.dueAgorot)) : cardTile.reason}</small>
-          </button>
+          {/* "ללא אשראי" (payment integration none): no card tender at all, as the Android till. */}
+          {noCard ? null : (
+            <button type="button" className={`t-tender${cardTile.available ? '' : ' t-tender-off'}`} disabled={!cardTile.available} onClick={actions.card} title={cardTile.reason}>
+              <span>{T.cardPay}</span>
+              <small className="t-reason">{cardTile.available ? (checkout.cardError ? T.retry : money(checkout.dueAgorot)) : cardTile.reason}</small>
+            </button>
+          )}
         </div>
       )}
       <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>

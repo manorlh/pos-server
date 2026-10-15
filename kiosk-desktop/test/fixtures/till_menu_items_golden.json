@@ -1,0 +1,338 @@
+[
+  {
+    "key": "catalog_admin",
+    "label": "ניהול קטלוג",
+    "also": "\"פתח בניהול קטלוג\" מלחיצה ארוכה על מוצר במסך המכירה",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "shop_z",
+    "label": "סגירת Z סניפי",
+    "also": "כניסה מ\"סגירת משמרת ו-Z\" במסך \"סניף לא פעיל\"",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "shift",
+    "label": "משמרת (דו״ח X)",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "shift_close",
+    "label": "סגירת משמרת",
+    "also": "כניסה מ\"סגירת משמרת ו-Z\" במסך \"סניף לא פעיל\"",
+    "critical": true,
+    "warning": "בקופה הזו לא יהיה אפשר לסגור משמרת. ודאו שהמשמרות נסגרות בקופה אחרת או בענן.",
+    "report": false
+  },
+  {
+    "key": "till_z",
+    "label": "הפק Z",
+    "also": "כפתור \"הפק Z\" במסך המשמרת; כניסה מ\"סגירת משמרת ו-Z\"",
+    "critical": true,
+    "warning": "בקופה הזו לא יהיה אפשר לבצע Z. ודאו ש-Z נעשה בקופה אחרת או בענן.",
+    "report": false
+  },
+  {
+    "key": "open_cash_drawer",
+    "label": "פתיחת מגירה",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "cash_menu",
+    "label": "מזומן במגירה (הכנסה, הוצאה, הפקדה, ספירה, יומן)",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "refund",
+    "label": "זיכוי",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "transmission",
+    "label": "פעולות אשראי (שידור)",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "attendance",
+    "label": "נוכחות",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "sync_now",
+    "label": "סנכרון מול הענן",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "ready_orders",
+    "label": "הזמנות להכנה",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "kiosk_orders",
+    "label": "הזמנות קיוסק לתשלום",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "voucher_station",
+    "label": "עמדת שובר: יציאה למסך רגיל / חזרה לעמדת שובר",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "voucher_balance",
+    "label": "בירור יתרת שובר",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "app_update",
+    "label": "עדכון גרסה",
+    "also": "התקנה אוטומטית ופקודה מהדשבורד ממשיכות לעבוד",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "history",
+    "label": "היסטוריה",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "recent",
+    "label": "24 השעות האחרונות",
+    "also": "הכפתור במסך ההיסטוריה",
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "shift_history",
+    "label": "היסטוריית משמרות",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "till_z_history",
+    "label": "דוחות Z של הקופה",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "product_sales",
+    "label": "מכירות לפי מוצר",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "workers",
+    "label": "דוח לפי עובד",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "tips",
+    "label": "דוח תשר",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "tables_reports",
+    "label": "דוחות שולחנות",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "z_reports",
+    "label": "דוחות Z (מהענן)",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  },
+  {
+    "key": "settings",
+    "label": "הגדרות",
+    "also": null,
+    "critical": true,
+    "warning": "בקופה הזו ההגדרות יהיו נגישות רק בקוד טכנאי, דרך \"אבחון\" (מסך הטכנאי).",
+    "report": false
+  },
+  {
+    "key": "printers",
+    "label": "מדפסות",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "print_queue",
+    "label": "תור הדפסה",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "screen_edit",
+    "label": "עריכת מסך",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "diagnostics",
+    "label": "אבחון (מסך טכנאי)",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "kiosk_mode",
+    "label": "חזרה למצב קיוסק / מעבר לקיוסק",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "alerts",
+    "label": "התראות",
+    "also": "הפעמון בסרגל",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "blocks_now",
+    "label": "חסומים כעת",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "managed_kiosks",
+    "label": "קיוסקים (קופה שולטת)",
+    "also": "\"קיוסקים\" מתוך התראה",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "lock",
+    "label": "נעילת קופה: יציאה מנעילת קופה / נעילת הקופה מחדש",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "support",
+    "label": "תמיכה מרחוק",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "switch_user",
+    "label": "יציאה מהמשתמש (החלפת משתמש)",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "tables",
+    "label": "שולחנות (בסרגל, לא בתפריט)",
+    "also": "פתיחה אוטומטית על השולחנות; חזרה לשולחנות אחרי תשלום",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "training",
+    "label": "מצב הדרכה: \"הפק Z\" של הדרכה",
+    "also": "הפס הכתום לא מוסתר. בקופה אין כניסה להדרכה מהתפריט, הענן מדליק אותה",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "quick_order",
+    "label": "הזמנה מהירה (בסרגל, לא בתפריט)",
+    "also": "הקופה נפתחת על מסך השולחנות; הלשונית \"הזמנה מהירה\", כל מעבר למסך המכירה שלא דרך שולחן, \"מכירה מהירה\" במסך השולחנות ו\"החזר הזמנה\"",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "signed_in_users",
+    "label": "עובדים מחוברים",
+    "also": "המסך שממנו מנהל משחרר עובד מחובר; \"שחרור באישור מנהל\" במסך הכניסה נשאר",
+    "critical": false,
+    "warning": null,
+    "report": false
+  },
+  {
+    "key": "shop_x",
+    "label": "דוח X סניפי",
+    "also": null,
+    "critical": false,
+    "warning": null,
+    "report": true
+  }
+]

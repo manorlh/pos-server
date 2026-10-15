@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import type { Catalog, TillState } from '../../../../shared/till/protocol';
+import type { Catalog, Product, TillState } from '../../../../shared/till/protocol';
 import type { TillLayout } from '../layout/tillLayout';
 import { CartPane, type CartActions } from '../parts/CartPane';
 import { ProductGrid } from '../parts/ProductGrid';
@@ -46,6 +46,8 @@ export function SellScreen({
   goShift?(): void;
 }) {
   const [cartOpen, setCartOpen] = useState(false);
+  /** The "i" window's item (P:/specs/product-tile-text.md §4). */
+  const [info, setInfo] = useState<Product | null>(null);
   const sell = state.sell;
   const products = catalog ? filterProducts(catalog, sell.departmentId, sell.search) : [];
   const catalogPane = (
@@ -91,7 +93,26 @@ export function SellScreen({
           ) : null}
         </div>
       ) : null}
-      <ProductGrid products={products} departments={catalog?.departments ?? []} columns={layout.columns} tileHeight={layout.tileHeightDp} onAdd={onAdd} />
+      <ProductGrid
+        products={products}
+        departments={catalog?.departments ?? []}
+        columns={layout.columns}
+        tileHeight={layout.tileHeightDp}
+        onAdd={onAdd}
+        onInfo={setInfo}
+        tileText={state.tileText}
+      />
+      {info ? (
+        <ItemInfo
+          product={info}
+          department={(catalog?.departments ?? []).find((d) => d.id === info.departmentId)?.name ?? null}
+          onAdd={() => {
+            onAdd(info.id);
+            setInfo(null);
+          }}
+          onClose={() => setInfo(null)}
+        />
+      ) : null}
     </section>
   );
 
@@ -133,6 +154,49 @@ export function SellScreen({
           <strong>{money(sell.totalAgorot)}</strong>
         </button>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The "i" window (P:/specs/product-tile-text.md §4): the full name and its department, the full description, the price,
+ * the dietary tags and allergens, "אזל" / "חסום" with why, and "הוסף לסל" — which is a tap on the tile (the engine's gates
+ * and approvals as always).
+ */
+export function ItemInfo({ product: p, department, onAdd, onClose }: { product: Product; department: string | null; onAdd(): void; onClose(): void }) {
+  const state = p.sale === 'blocked' ? T.blockedBadge : p.sale === 'unavailable' ? T.unavailableBadge : p.sale === 'sold_out' ? T.soldOutBadge : null;
+  return (
+    <div className="t-overlay" role="dialog" aria-modal="true" aria-label={T.itemInfo} onClick={onClose}>
+      <div className="t-dialog t-item-info" onClick={(e) => e.stopPropagation()}>
+        <h2 className="t-dialog-title">{p.name}</h2>
+        {department ? <p className="t-muted t-small">{department}</p> : null}
+        <p className="t-dialog-body t-item-desc">{p.description ?? T.infoNoDescription}</p>
+        <p className="t-item-price">{money(p.priceAgorot)}</p>
+        {p.dietary && p.dietary.length > 0 ? (
+          <p className="t-small">
+            {T.infoDietary}: {p.dietary.join(' · ')}
+          </p>
+        ) : null}
+        {p.allergens && p.allergens.length > 0 ? (
+          <p className="t-small">
+            {T.infoAllergens}: {p.allergens.join(' · ')}
+          </p>
+        ) : null}
+        {state ? (
+          <p className="t-warn t-small" role="note">
+            {state}
+            {p.saleReason ? ` — ${p.saleReason}` : ''}
+          </p>
+        ) : null}
+        <button type="button" className="t-btn t-btn-primary t-btn-wide" onClick={onAdd}>
+          {T.infoAdd}
+        </button>
+        <div className="t-dialog-actions">
+          <button type="button" className="t-btn t-btn-ghost" onClick={onClose}>
+            {T.infoClose}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

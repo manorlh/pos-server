@@ -829,7 +829,7 @@
 .t-tile-badge {
   position: absolute;
   top: 6px;
-  inset-inline-end: 6px;
+  right: 6px;
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--t-danger-soft);
@@ -1028,4 +1028,51 @@
 /* A number pad reads left to right whatever the page's direction (1 2 3 on the top row). */
 .t-pin-keys {
   direction: ltr;
+}
+
+/* "שם פריט מלא על הכפתור, ותג i" (P:/specs/product-tile-text.md): the price never cut, the "i" at the top left with a
+   32px touch area (the right corner is the badge's). */
+.t-tile-price {
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.t-tile-has-info .t-tile-name {
+  padding-left: 18px;
+}
+
+.t-tile-info {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.t-tile-info-dot {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1.5px solid var(--t-muted);
+  background: var(--t-surface);
+  color: var(--t-muted);
+  font: italic 700 13px/1 Georgia, 'Times New Roman', serif;
+}
+
+.t-item-info .t-item-desc {
+  white-space: pre-line;
+  color: inherit;
+}
+
+.t-item-price {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
 }

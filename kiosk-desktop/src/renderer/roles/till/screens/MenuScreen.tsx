@@ -10,6 +10,8 @@ import { T } from '../text';
 export type MenuTarget = 'shift' | 'history' | 'caps';
 
 interface Row {
+  /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
+  key?: string;
   label: string;
   sub?: string;
   to?: MenuTarget;
@@ -25,32 +27,38 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
   {
     title: 'משמרת',
     rows: [
-      { label: 'משמרת (דו״ח X)', to: 'shift', shiftRow: true },
-      { label: 'סגירת משמרת', to: 'shift', perm: 'SHIFT_CLOSE', shiftRow: true },
-      { label: 'הפק Z', to: 'shift', perm: 'Z', onlyTillZ: true },
-      { label: 'פתיחת מגירה' },
-      { label: 'מזומן במגירה', sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות' },
-      { label: 'זיכוי' },
-      { label: 'נוכחות' },
-      { label: 'סנכרון מול הענן' },
-      { label: 'הזמנות קיוסק לתשלום' },
+      { key: 'shift', label: 'משמרת (דו״ח X)', to: 'shift', shiftRow: true },
+      { key: 'shift_close', label: 'סגירת משמרת', to: 'shift', perm: 'SHIFT_CLOSE', shiftRow: true },
+      { key: 'till_z', label: 'הפק Z', to: 'shift', perm: 'Z', onlyTillZ: true },
+      { key: 'open_cash_drawer', label: 'פתיחת מגירה' },
+      { key: 'cash_menu', label: 'מזומן במגירה', sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות' },
+      { key: 'refund', label: 'זיכוי' },
+      { key: 'attendance', label: 'נוכחות' },
+      { key: 'sync_now', label: 'סנכרון מול הענן' },
+      { key: 'kiosk_orders', label: 'הזמנות קיוסק לתשלום' },
       { label: 'מכירות בהמתנה' },
-      { label: 'שולחנות' },
+      { key: 'tables', label: 'שולחנות' },
     ],
   },
   {
     title: 'דוחות',
     rows: [
-      { label: 'היסטוריה', to: 'history' },
-      { label: 'מכירות לפי מוצר' },
-      { label: 'דוח לפי עובד' },
-      { label: 'דוח תשר' },
-      { label: 'דוחות שולחנות' },
+      { key: 'history', label: 'היסטוריה', to: 'history' },
+      { key: 'product_sales', label: 'מכירות לפי מוצר' },
+      { key: 'workers', label: 'דוח לפי עובד' },
+      { key: 'tips', label: 'דוח תשר' },
+      { key: 'tables_reports', label: 'דוחות שולחנות' },
     ],
   },
   {
     title: 'ניהול',
-    rows: [{ label: 'עריכת מסך' }, { label: 'הגדרות' }, { label: 'אבחון' }, { label: 'תמיכה מרחוק' }],
+    // "הגדרות" hidden stays reachable: the manager's corner → "ניהול הקיוסק" → the technician (the Android safety rule).
+    rows: [
+      { key: 'screen_edit', label: 'עריכת מסך' },
+      { key: 'settings', label: 'הגדרות' },
+      { key: 'diagnostics', label: 'אבחון' },
+      { key: 'support', label: 'תמיכה מרחוק' },
+    ],
   },
 ];
 
@@ -59,7 +67,8 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
   const tillZ = state.z.zMode === 'till';
   // An independent till has no shifts: no "משמרת (דו״ח X)", no "סגירת משמרת" — only "הפק Z".
   const noShifts = state.shift.hidden === true;
-  const canSwitch = state.mode.rolesAllowed.includes('kiosk');
+  const hidden = new Set(state.menuHidden ?? []);
+  const canSwitch = state.mode.rolesAllowed.includes('kiosk') && !hidden.has('kiosk_mode');
   return (
     <div className="t-report">
       <div className="t-report-head">
@@ -73,7 +82,7 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
           <h2 className="t-menu-title">{g.title}</h2>
           <ul className="t-menu">
             {g.rows
-              .filter((r) => (!r.perm || perms.includes(r.perm)) && (!r.onlyTillZ || tillZ) && !(noShifts && r.shiftRow))
+              .filter((r) => (!r.perm || perms.includes(r.perm)) && (!r.onlyTillZ || tillZ) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
               .map((r) => (
                 <li key={r.label}>
                   {r.to ? (
@@ -106,11 +115,13 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
               </button>
             </li>
           ) : null}
-          <li>
-            <button type="button" className="t-menu-row t-menu-danger" onClick={signOut}>
-              <span>{T.signOut}</span>
-            </button>
-          </li>
+          {hidden.has('switch_user') ? null : (
+            <li>
+              <button type="button" className="t-menu-row t-menu-danger" onClick={signOut}>
+                <span>{T.signOut}</span>
+              </button>
+            </li>
+          )}
         </ul>
       </section>
     </div>
