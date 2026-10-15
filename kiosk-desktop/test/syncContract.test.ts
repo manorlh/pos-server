@@ -238,6 +238,55 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
     golden('transaction_cash_device_sale_320', { transactions: [wire] });
   });
 
+  it('cash + card (§11.15ב): the cash part first, then the card for the rest; `mixed`; the tip the card’s', () => {
+    const d = draft('completed');
+    const totals = saleTotals([line1, line2], 0.18, 500);
+    const wire = documentWire({
+      ...d,
+      totals,
+      card: { ...d.card!, chargedAgorot: 5400, meta: { ...d.card!.meta, chargedAmount: 5400 } },
+      cash: { txId: '7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5c', stationId: 'st-1', hostId: 'a1b2c3d4-0000-4000-8000-0000000000aa', receivedAgorot: 4000, changeAgorot: 0, changeOwedAgorot: 0, roundingAgorot: 0, slipCode: null, splitAgorot: 4000 },
+    });
+    expect(wire.paymentMethod).toBe('mixed');
+    expect(wire.tipPaymentMethod).toBe('card');
+    const legs = wire.payments as Array<Record<string, unknown>>;
+    expect(legs.map((l) => [l.method, l.amount, l.sequence])).toEqual([
+      ['cash', 40, 1],
+      ['card', 49, 2],
+    ]);
+    expect(legs[0].cashDevice).toMatchObject({ splitAgorot: 4000, roundingAgorot: 0 });
+    expect(legs[0].id).not.toBe(legs[1].id);
+    golden('transaction_cash_split_card_320', { transactions: [wire] });
+  });
+
+  it('a cash credit redeemed (§11.15א): a `cash_credit` leg with its code and redemption, the card the rest', () => {
+    const d = draft('completed');
+    const wire = documentWire({ ...d, creditLegs: [{ redemptionId: '9d3c1f00-5a6b-4c7d-8e9f-0a1b2c3d4e5f', code: 'C-K7Q3MX', amountAgorot: 1300 }] });
+    expect(wire.paymentMethod).toBe('card');
+    const legs = wire.payments as Array<Record<string, unknown>>;
+    expect(legs.map((l) => [l.method, l.amount, l.sequence])).toEqual([
+      ['cash_credit', 13, 1],
+      ['card', 76, 2],
+    ]);
+    expect(legs[0].cashCredit).toEqual({ code: 'C-K7Q3MX', redemptionId: '9d3c1f00-5a6b-4c7d-8e9f-0a1b2c3d4e5f' });
+    golden('transaction_cash_credit_redeem_320', { transactions: [wire] });
+  });
+
+  it('change owed left as a tip (§11.15א): the document’s tip in cash, `changeOwedAs: tip`', () => {
+    const d = draft('completed');
+    const totals = { ...d.totals, tipAgorot: 260, chargeAgorot: d.totals.chargeAgorot + 260 };
+    const wire = documentWire({
+      ...d,
+      totals,
+      card: null,
+      cash: { txId: '7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5d', stationId: 'st-1', hostId: 'a1b2c3d4-0000-4000-8000-0000000000aa', receivedAgorot: 10000, changeAgorot: 840, changeOwedAgorot: 260, roundingAgorot: 0, slipCode: 'C-K7Q3MX', changeOwedAs: 'tip' },
+    });
+    expect(wire).toMatchObject({ paymentMethod: 'cash', tipAmount: 2.6, tipPaymentMethod: 'cash' });
+    const leg = (wire.payments as Array<Record<string, unknown>>)[0];
+    expect(leg).toMatchObject({ method: 'cash', amount: 89, cashDevice: { changeOwedAgorot: 260, changeOwedAs: 'tip' } });
+    golden('transaction_cash_owed_tip_320', { transactions: [wire] });
+  });
+
   it('a declined sale: cancelled, its number kept, no tender', () => {
     const wire = documentWire(draft('cancelled'));
     expect(wire.status).toBe('cancelled');
