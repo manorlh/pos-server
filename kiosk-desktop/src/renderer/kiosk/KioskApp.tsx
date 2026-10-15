@@ -729,6 +729,8 @@ export function KioskApp({ view }: { view: KioskView }) {
         ? {
             phase: payBlocked ? 'blocked' : flow.pay === 'idle' ? 'starting' : flow.pay === 'approved' ? 'charging' : flow.pay,
             message: payBlocked ?? pay?.message ?? null,
+            // The terminal in offline mode (nayax-deferred-all §13): the cards that will not go through.
+            notice: payBlocked ? null : (pay?.notice ?? null),
             amount: amount / 100,
             canCancel: mayCancelPayment(flow) && !!pay?.canCancel,
             cancelling: !!pay?.cancelling,

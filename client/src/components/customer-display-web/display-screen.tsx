@@ -374,6 +374,10 @@ export function CustomerScreen({
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="text-[4.5vmin] font-extrabold">{headline}</div>
           <div className="text-[3.5vmin]">{t.due}: <span dir="ltr">{money(state.payment.due)}</span></div>
+          {/* The till's terminal in offline mode (nayax-deferred-all §13): no debit / direct / foreign card now. */}
+          {state.payment.method === 'card' && state.payment.notice ? (
+            <div className="text-[2.6vmin] font-semibold" role="status">{state.payment.notice}</div>
+          ) : null}
         </div>
       );
     }

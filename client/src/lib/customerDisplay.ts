@@ -346,7 +346,17 @@ export interface CdState {
   total: number;
   itemCount: number;
   tip: { presets: number[]; selectedPercent: number | null; amount: number } | null;
-  payment: { method: 'card' | 'cash' | 'other'; status: 'choose' | 'waiting_card' | 'processing' | 'declined' | 'approved'; due: number; paid: number } | null;
+  payment: {
+    method: 'card' | 'cash' | 'other';
+    status: 'choose' | 'waiting_card' | 'processing' | 'declined' | 'approved';
+    due: number;
+    paid: number;
+    /**
+     * The till's terminal is in offline mode (P:/specs/nayax-deferred-all.md §13, `deferredCustomerNotice`):
+     * "בתשלום באשראי: לא ניתן לשלם בכרטיס דביט / דיירקט / כרטיס זר כרגע". Only when the till sent one.
+     */
+    notice?: string;
+  } | null;
   cash: { tendered: number; change: number } | null;
   thanks: { total: number; change: number; tip: number; receiptUrl: string | null } | null;
 }
@@ -405,6 +415,7 @@ export function parseState(raw: unknown): CdState {
           status: (['choose', 'waiting_card', 'processing', 'declined', 'approved'] as const).find((s) => s === pay.status) ?? 'choose',
           due: num(pay.due),
           paid: num(pay.paid),
+          ...(typeof pay.notice === 'string' && pay.notice.trim() ? { notice: pay.notice.trim().slice(0, 300) } : {}),
         }
       : null,
     cash: cash ? { tendered: num(cash.tendered), change: num(cash.change) } : null,
