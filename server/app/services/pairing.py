@@ -235,6 +235,8 @@ def validate_pairing_code(
             platform=device_platform,
             # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.1): non-fiscal, and the shop's host-to-be.
             is_local_server=getattr(pairing_code, "device_role", None) == display_devices.ROLE_LOCAL_SERVER,
+            # "שרת מזומן" (P:/specs/cash-paylink.md §2): non-fiscal, the shop's cash units' host.
+            is_cash_host=getattr(pairing_code, "device_role", None) == display_devices.ROLE_CASH_HOST,
         )
 
     pairing_code.is_used = True
@@ -337,6 +339,7 @@ def create_pos_machine(
     is_fiscal: bool = True,
     platform: Optional[str] = None,
     is_local_server: bool = False,
+    is_cash_host: bool = False,
 ) -> POSMachine:
     """
     Create a new POS machine row in PAIRED status (not yet assigned to a shop).
@@ -377,9 +380,10 @@ def create_pos_machine(
         serial_number=serial_from_device_info(device_info),
         # Where it came from: the vendor SDK, Android's own, or `ro.serialno` (device_identity).
         serial_source=_serial_source(device_info),
-        is_fiscal=bool(is_fiscal) and not is_local_server,
+        is_fiscal=bool(is_fiscal) and not is_local_server and not is_cash_host,
         platform=platform or platform_of_device_info(device_info),
         is_local_server=bool(is_local_server),
+        is_cash_host=bool(is_cash_host),
     )
     db.add(pos_machine)
     db.flush()

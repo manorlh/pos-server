@@ -15,6 +15,8 @@ import type { AppRole, BoardView, KdsActionInput, KdsView, ShellEvents, ShellVie
 import { BoardModule } from './board';
 import { KdsModule } from './kds';
 import type { RoleContext } from './types';
+import { CashHostModule, type CashModuleOptions } from '../cash/module';
+import type { CashHostView, CashStaffAction, CashStaffResult } from '../../shared/cash';
 
 /**
  * Whether the service may act as a till: the cloud's `machines/me` `fiscal: false` (a KDS / board
@@ -41,11 +43,17 @@ export class RoleManager extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private lastViewJson = '';
   private readonly ctx: RoleContext;
+  /** The cash host's module (role `cash_host`). */
+  private cash: CashHostModule | null = null;
+  private cashTimer: NodeJS.Timeout | null = null;
+  private staffUntil = 0;
+  private staffName: string | null = null;
 
   constructor(
     private readonly svc: KioskService,
     private readonly updates: () => UpdateView,
     private readonly log: (m: string) => void = () => undefined,
+    private readonly cashOptions: Omit<CashModuleOptions, 'log'> = {},
   ) {
     super();
     this.kdsDevice = svc.kv.getJson<KdsDeviceFact>(KDS_DEVICE) ?? null;
@@ -71,6 +79,15 @@ export class RoleManager extends EventEmitter {
     this.timer = null;
     this.kds?.stop();
     this.board?.stop();
+    void this.stopCash();
+  }
+
+  private async stopCash() {
+    if (this.cashTimer) clearInterval(this.cashTimer);
+    this.cashTimer = null;
+    const c = this.cash;
+    this.cash = null;
+    await c?.stop();
   }
 
   role(): AppRole | null {
@@ -142,6 +159,67 @@ export class RoleManager extends EventEmitter {
       this.board.start();
     }
     if (role !== 'order_status_board') this.svc.setScreenMedia([]);
+    if (role !== 'cash_host' && this.cash) void this.stopCash();
+    if (role === 'cash_host' && !this.cash) {
+      this.cash = new CashHostModule(this.svc, { ...this.cashOptions, log: this.log });
+      void this.cash.start().catch((e) => this.log(`cash host: ${e instanceof Error ? e.message : String(e)}`));
+      // The staff screen follows the stations (once a second).
+      this.cashTimer = setInterval(() => {
+        const v = this.cashView();
+        if (v) this.emitEvent('cash', v);
+      }, 1_000);
+    }
+  }
+
+  /* ------------------------------------------------------------- the cash host's staff screen */
+
+  cashView(): CashHostView | null {
+    if (!this.cash) return null;
+    const v = this.cash.host.staffView();
+    const unlocked = Date.now() < this.staffUntil;
+    return { ...v, unlocked, staffName: unlocked ? this.staffName : null } as CashHostView;
+  }
+
+  /** A manager's code (KIOSK_UNLOCK, offline against the roster) opens the actions for 5 minutes. */
+  async cashUnlock(pin: string): Promise<{ ok: boolean; name?: string; message?: string }> {
+    const r = await this.svc.adminUnlock(pin);
+    if (!r.ok) return { ok: false, message: r.error };
+    this.staffUntil = Date.now() + 5 * 60_000;
+    this.staffName = r.name;
+    return { ok: true, name: r.name };
+  }
+
+  async cashAction(a: CashStaffAction): Promise<CashStaffResult> {
+    const cash = this.cash;
+    if (!cash) return { ok: false, message: 'המכשיר אינו שרת מזומן' };
+    const st = cash.station(a.stationId);
+    if (!st) return { ok: false, message: 'העמדה לא נמצאה' };
+    // The simulator's customer buttons need no code (they move no real money).
+    if (a.op === 'sim_insert' || a.op === 'sim_take') {
+      const sim = cash.simulator(a.stationId);
+      if (!sim) return { ok: false, message: 'העמדה אינה סימולטור' };
+      if (a.op === 'sim_take') return { ok: sim.takeBill(), message: 'נלקח' };
+      const r = sim.insert(Number(a.valueAgorot ?? 0));
+      return { ok: r !== 'rejected', message: r === 'rejected' ? 'נדחה' : 'התקבל' };
+    }
+    if (Date.now() >= this.staffUntil) return { ok: false, message: 'נדרש קוד מנהל' };
+    this.staffUntil = Date.now() + 5 * 60_000;
+    const by = { userId: null, name: this.staffName };
+    const pieces = (a.pieces ?? []).filter((p) => Number.isInteger(p.valueAgorot) && Number.isInteger(p.count) && p.count > 0);
+    switch (a.op) {
+      case 'refill_via_start':
+      case 'refill_via_stop':
+        return st.refillViaAcceptor(a.op === 'refill_via_start', by, null);
+      default: {
+        const r = await cash.host.runCommand({ id: `local-${Date.now()}`, stationId: a.stationId, op: a.op, args: { pieces, countedAgorot: a.countedAgorot ?? null, valueAgorot: a.valueAgorot ?? undefined, notes: a.notes ?? undefined, note: a.note ?? null }, by, createdAt: null });
+        return { ok: r.status === 'done', message: r.message };
+      }
+    }
+  }
+
+  /** The cash host is busy: a lease or a transaction is open at a station. */
+  cashBusy(): boolean {
+    return this.cash?.busy() ?? false;
   }
 
   private localBoard(v: BoardView): BoardView {
@@ -203,6 +281,11 @@ export class RoleManager extends EventEmitter {
   /** What the updater asks: the kiosk's flow for a kiosk, the last touch for a screen. */
   activity(): Activity {
     if (this.current === 'kiosk' || this.current === null) return { ...this.svc.activity(), role: this.current };
+    if (this.current === 'cash_host') {
+      // Never restarted under a customer at a cash station (a lease or a transaction open).
+      const busy = this.cashBusy();
+      return { role: this.current, screen: '', busy, idle: !busy, cardInFlight: false, cardBlocked: false, lastActivityAt: this.lastTouchAt };
+    }
     return { role: this.current, screen: '', busy: false, idle: true, cardInFlight: false, cardBlocked: false, lastActivityAt: this.lastTouchAt };
   }
 }

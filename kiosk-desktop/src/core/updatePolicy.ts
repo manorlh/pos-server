@@ -123,6 +123,8 @@ export const QUIET_MS: Record<AppRole | 'unknown', number> = {
   kds: 3 * 60_000,
   order_status_board: 0,
   customer_display: 0,
+  // The cash host: `busy` (a lease or a transaction open at a station) is what holds it.
+  cash_host: 0,
   unknown: 60_000,
 };
 

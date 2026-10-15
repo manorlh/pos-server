@@ -199,6 +199,11 @@ def alert_text(kiosk_name: str, kind: str, reason: str, detail: Dict[str, Any], 
         else:
             tail = f" ({amount})" if amount else ""
         return f"{name} — {label}{tail}"[:300]
+    if kind == CASH_KIND:
+        # "קיוסק 3 — עמדת המזומן קופה ראשית לא עונה": the kiosk's own words, else the station it names.
+        station = _str(detail.get("stationName"), 60)
+        said = fallback or (f"עמדת המזומן {station} לא עונה" if station else "לא מגיע לעמדת המזומן")
+        return f"{name} — {said}"[:300]
     # help
     parts = [f"{name} מבקש עזרה"]
     screen = SCREEN_LABELS.get(str(detail.get("screen") or ""))
@@ -250,8 +255,13 @@ def targets(db: Session, kiosk: POSMachine, cfg: Dict[str, Any], kind: str) -> L
     """
     The tills an alert of [kind] goes to, by the kiosk's (the device's) `alerts.<kind>`. Never a
     kiosk, never the device itself; none at all for "self" ("רק המכשיר עצמו", battery only).
+    A kiosk's "cash" alert goes as a cash alert instead (app/services/cash_alerts.py: the station's
+    `cashAlertTills` and the manager) — never twice on a till, so none here.
     """
     from app.services.kiosk_config import ALERT_TILLS_SELF
+
+    if kind == CASH_KIND:
+        return []
 
     route = route_of(cfg, kind)
     if route["tills"] == ALERT_TILLS_SELF:
@@ -336,6 +346,12 @@ def _wake(tills: Iterable[POSMachine]) -> None:
 # ── The kiosk's report ───────────────────────────────────────────────────────
 
 
+#: "מכשיר מזומן" (P:/specs/cash-paylink.md §11.8): a kiosk's own word that its cash station does not answer.
+CASH_KIND = "cash"
+#: What a kiosk may report: the routed kinds, and "cash" (routed as a cash alert).
+REPORTED_KINDS = KIOSK_ALERT_KINDS + (CASH_KIND,)
+
+
 def _clean_reported(raw: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     seen = set()
@@ -345,7 +361,7 @@ def _clean_reported(raw: Any) -> List[Dict[str, Any]]:
         kind = item.get("kind")
         key = _str(item.get("key"), 40)
         reason = _str(item.get("reason"), 40)
-        if kind not in KIOSK_ALERT_KINDS or not key or not reason or key in seen:
+        if kind not in REPORTED_KINDS or not key or not reason or key in seen:
             continue
         seen.add(key)
         detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
@@ -468,6 +484,20 @@ def reconcile(
         bon_alerts.kiosk_alert_raised(db, kiosk, row, now=now)
     for row in cleared:
         bon_alerts.kiosk_alert_cleared(db, row, now=now)
+    # "מכשיר מזומן": the kiosk cannot reach its cash station — the station's cash alert (the manager and its alert
+    # tills); closed once the kiosk stops saying so. Never fails the kiosk's sync.
+    if any(r.kind == CASH_KIND for r in raised) or any(r.kind == CASH_KIND for r in cleared):
+        try:
+            from app.services import cash_alerts
+
+            with db.begin_nested():
+                for row in raised:
+                    if row.kind == CASH_KIND:
+                        cash_alerts.open_kiosk_alert(db, kiosk, device.name, row, now=now)
+                if not any(r.kind == CASH_KIND for r in _open_alerts(db, kiosk.id).values()):
+                    cash_alerts.resolve_kiosk_alerts(db, kiosk, now=now)
+        except Exception:  # noqa: BLE001 - the kiosk's sync goes on
+            logger.exception("kiosk cash alert failed for %s", kiosk.id)
     for tills in to_wake.values():
         _wake(tills)
 
@@ -629,6 +659,15 @@ def offline_alerts_for_till(db: Session, till: POSMachine, *, now: Optional[date
         out.extend(battery_alerts.alerts_for_till(db, till, now=now))
     except Exception:  # noqa: BLE001 - an alert never fails the till's fetch
         logger.exception("battery alerts failed for till %s", till.id)
+    # "מכשיר מזומן" (app/services/cash_alerts.py, P:/specs/cash-paylink.md §11.8): the cash stations' alerts, to
+    # the tills of their `cashAlertTills` (none set: the main till) — ids `cash:`, kind "cash".
+    try:
+        from app.services import cash_alerts
+
+        with db.no_autoflush:
+            out.extend(cash_alerts.alerts_for_till(db, till, now=now))
+    except Exception:  # noqa: BLE001 - an alert never fails the till's fetch
+        logger.exception("cash alerts failed for till %s", till.id)
     return out
 
 
@@ -649,6 +688,11 @@ def acknowledge(
         from app.services import battery_alerts
 
         return battery_alerts.acknowledge(db, till, str(alert_id), pos_user_name=pos_user_name, now=now)
+    if str(alert_id).startswith("cash:"):
+        # "מכשיר מזומן" (app/services/cash_alerts.py): "הבנתי" marks it; it clears when the unit recovers.
+        from app.services import cash_alerts
+
+        return cash_alerts.acknowledge(db, till, str(alert_id), pos_user_name=pos_user_name, now=now)
     try:
         aid = uuid.UUID(str(alert_id))
     except ValueError:

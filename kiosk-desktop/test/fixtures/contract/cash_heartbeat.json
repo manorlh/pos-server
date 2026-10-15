@@ -1,0 +1,60 @@
+{
+  "cash": {
+    "api": 1,
+    "lanAddress": "192.168.1.40",
+    "port": 47630,
+    "version": "0.5.0",
+    "uploadError": null,
+    "stations": [
+      {
+        "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+        "serial": "AE000001",
+        "deviceSerial": "SIM00001",
+        "firmware": "4.1.12.6",
+        "simulator": true,
+        "state": "ready",
+        "reason": null,
+        "driver": 1,
+        "des": -1,
+        "changeAvailableAgorot": 20300,
+        "exactOnly": false,
+        "denominations": [
+          {
+            "valueAgorot": 100,
+            "kind": "coin",
+            "count": 3,
+            "accurate": true,
+            "level": null,
+            "isLow": true
+          },
+          {
+            "valueAgorot": 1000,
+            "kind": "coin",
+            "count": 20,
+            "accurate": true,
+            "level": null,
+            "isLow": false
+          }
+        ],
+        "cashbox": {
+          "notes": 0,
+          "coins": 0,
+          "valueAgorot": 0,
+          "nearFull": false,
+          "full": false
+        },
+        "queue": 0,
+        "activeTxId": null,
+        "heldCount": 0,
+        "alerts": [
+          {
+            "code": "hopper_low",
+            "unit": "coin:100",
+            "message": "עמדת מזומן 2 (ליד קיוסק 3): עודף נמוך: 1 ₪",
+            "since": 1791010800000
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -48,6 +48,25 @@ CARD_TIPS_FROM_DRAWER_KEY = "cashDrawer.cardTipsFromDrawer"
 #: default ("ברירת מחדל שלא יופיע"). Resolved per till (company → shop → area → till) when a Z is
 #: produced — never read again for a Z already made (app/services/z_expected_cash.py).
 Z_EXPECTED_CASH_MOVEMENTS_KEY = "cashDrawer.zExpectedCashMovements"
+#: "מגירה כשהעובד לא ליד המגירה" (P:/specs/drawer-away.md §5.1, the owner 15.10.2026: "שישאל, ואם העובד לא
+#: נמצא ליד המגירה? דינמי"): a cash payment on a device away from a drawer, read by the till only. Default
+#: `none` — today's behaviour: a new feature never changes what a shop sees on deploy; the owner turns `ask`
+#: on per level (decision 15.10.2026, spec §5.1).
+AWAY_POLICY_KEY = "drawerAwayPolicy"
+AWAY_POLICY_OPTIONS = ("ask", "remote", "wallet", "none")
+AWAY_POLICY_LABELS = {
+    "ask": "לשאול",
+    "remote": "לפתוח את המגירה שהוגדרה",
+    "wallet": "הכסף אצל העובד",
+    "none": "רישום בלבד, בלי מגירה (ברירת מחדל)",
+}
+NEAR_KEY = "drawerNear"
+NEAR_OPTIONS = ("auto", "near", "away")
+NEAR_LABELS = {"auto": "לפי סוג המכשיר (ברירת מחדל)", "near": "ליד מגירה", "away": "רחוק מהמגירה"}
+AWAY_TARGET_KEY = "drawerAwayTarget"
+WALLET_CLOCK_OUT_KEY = "walletBlockClockOut"
+WALLET_CLOCK_OUT_OPTIONS = ("warn", "block")
+WALLET_CLOCK_OUT_LABELS = {"warn": "אזהרה (ברירת מחדל)", "block": "חסימה"}
 #: Not the drawer's only: how the till shows an action the user's role denies.
 DENIED_UI_KEY = "permissionsDeniedUi"
 DENIED_UI_HIDE = "הסתר"
@@ -159,6 +178,42 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         ),
     ),
     dict(
+        key=AWAY_POLICY_KEY, label="מגירה — תשלום מזומן במכשיר רחוק מהמגירה", value_type="enum",
+        enum_options=AWAY_POLICY_OPTIONS, default_value="none", enum_labels=AWAY_POLICY_LABELS,
+        description=(
+            "מה קורה בתשלום מזומן במכשיר שאינו ליד מגירה (מסופון, טלפון, מכשיר בלי מגירה משלו). "
+            "«לשאול» — חלון אחד: \"פתח מגירה ב...\" (מרחוק, לפי ההרשאה \"פתיחת מגירה בקופה אחרת\"), "
+            "\"הכסף אצלי, אפקיד אחר כך\" או \"בלי מגירה (רישום בלבד)\". «לפתוח את המגירה שהוגדרה» — המגירה של "
+            "\"מגירה למכשיר רחוק\" נפתחת בלי שאלה, עם הודעה בקופה שליד המגירה. «הכסף אצל העובד» — הכסף נרשם "
+            "אצל העובד בלי פתיחת מגירה, ומופקד אחר כך בקופה עם מגירה (\"הפקדת מזומן מעובד\"). «רישום בלבד» — "
+            "כמו היום (ברירת המחדל). כסף אצל עובדים לא נכלל במזומן הצפוי במגירה עד שהוא מופקד, ומופיע ב-Z "
+            "ובדוחות לפי עובד."
+        ),
+    ),
+    dict(
+        key=NEAR_KEY, label="מגירה — המכשיר ליד מגירה?", value_type="enum",
+        enum_options=NEAR_OPTIONS, default_value="auto", enum_labels=NEAR_LABELS,
+        description=(
+            "«לפי סוג המכשיר» — מסופון וטלפון, ומכשיר בלי מגירה משלו, נחשבים רחוקים מהמגירה; קופה עם מגירה "
+            "משלה — ליד. אפשר לקבוע במפורש לכל קופה."
+        ),
+    ),
+    dict(
+        key=AWAY_TARGET_KEY, label="מגירה — מגירה למכשיר רחוק", value_type="string", default_value="",
+        description=(
+            "המגירה שנפתחת ממכשיר רחוק מהמגירה: מזהה הקופה שהמגירה שלה (או מזהה מדפסת החשבוניות של המכשיר). "
+            "ריק — אם יש מגירה אחת אפשרית היא נפתחת, ואם יש כמה העובד בוחר."
+        ),
+    ),
+    dict(
+        key=WALLET_CLOCK_OUT_KEY, label="מגירה — יציאה ממשמרת עם כסף שלא הופקד", value_type="enum",
+        enum_options=WALLET_CLOCK_OUT_OPTIONS, default_value="warn", enum_labels=WALLET_CLOCK_OUT_LABELS,
+        description=(
+            "כשלעובד יש מזומן שלא הופקד (\"הכסף אצלי\") והוא יוצא ממשמרת בנוכחות: «אזהרה» — \"יש בידך ₪... "
+            "להפקדה\" ואפשר לסיים בכל זאת; «חסימה» — לא ניתן לסיים עד ההפקדה, או באישור מנהל."
+        ),
+    ),
+    dict(
         key=DENIED_UI_KEY, label="פעולה אסורה לעובד — הסתר או הצג מושבת", value_type="enum",
         enum_options=(DENIED_UI_HIDE, DENIED_UI_DISABLE), default_value=DENIED_UI_HIDE,
         description=(
@@ -167,6 +222,10 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         ),
     ),
 )
+
+_ENUM_LABELS: Dict[str, Dict[str, str]] = {
+    spec["key"]: spec["enum_labels"] for spec in CASH_DRAWER_PARAMETER_SPECS if spec.get("enum_labels")
+}
 
 #: The level editor's keys, in the order the roles page shows them.
 LEVEL_KEYS: Tuple[str, ...] = (HARDWARE_KEY,) + tuple(spec["key"] for spec in CASH_DRAWER_PARAMETER_SPECS)
@@ -237,6 +296,8 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
                 "description": by_key[key].description,
                 "valueType": by_key[key].value_type,
                 "enumOptions": by_key[key].enum_options,
+                # An option's Hebrew where its stored value is a code the till reads (drawer-away §5.1).
+                "enumLabels": _ENUM_LABELS.get(key),
                 "defaultValue": by_key[key].default_value,
             }
             for key in LEVEL_KEYS
@@ -323,11 +384,13 @@ EVENT_TYPES = (
     # "מגירה נפתחה מרחוק" (P:/specs/bill-print-other-till.md §9ב–§9ג, app/services/remote_print.py): the
     # drawer of another till's printer, opened from this till — with a cash payment, or without a sale.
     "REMOTE_SALE", "REMOTE_MANUAL",
+    # "הפקדת מזומן מעובד" (P:/specs/drawer-away.md §5.4): an employee's cash counted into this drawer.
+    "WALLET_DEPOSIT",
 )
 #: Openings without a sale or a movement of their own: the ones counted as "manual" ("מגירה נפתחה ללא
 #: מכירה" — one opened on another till without a sale too, as the owner said: "כמו היום").
 MANUAL_TYPES = ("MANUAL", "CHANGE", "AFTER_CLOSE", "REMOTE_MANUAL")
-MOVEMENT_TYPES = ("cash_in", "cash_out", "deposit", "count")
+MOVEMENT_TYPES = ("cash_in", "cash_out", "deposit", "count", "wallet_in", "wallet_deposit")
 RESULTS = ("approved", "denied", "failed")
 
 
@@ -569,6 +632,18 @@ def detect_movement(db, machine, movement) -> List[Any]:
         if limit > 0 and float(movement.amount or 0) > limit and on("cash_out_over_threshold"):
             out.append(_found("cash_out_over_threshold", f"cash_out_over_threshold:{movement.id}", occurred,
                               amount=_money(movement.amount), threshold=_money(limit), details=base, **common))
+    # "הפקדת מזומן מעובד" (drawer-away §5.4): any gap between the count and the wallet's balance.
+    if movement.movement_type == "wallet_deposit" and movement.variance is not None and on("cash_wallet_variance"):
+        variance = float(movement.variance)
+        if abs(variance) >= 0.005:
+            out.append(_found(
+                "cash_wallet_variance", f"cash_wallet_variance:{movement.id}", occurred,
+                amount=_money(variance), value=_money(variance),
+                details={**base, "counted": float(movement.amount), "expected": float(movement.expected_before or 0),
+                         "employeeName": movement.employee_name, "receivedBy": movement.approver_name,
+                         "receivedById": movement.approver_id},
+                severity="high" if variance < 0 else "medium", **common,
+            ))
     if movement.movement_type == "count" and movement.variance is not None:
         limit = _num(params, VARIANCE_ALERT_AMOUNT_KEY, 50)
         variance = float(movement.variance)
@@ -611,7 +686,8 @@ def detect_movement(db, machine, movement) -> List[Any]:
 
 def movement_sign(movement_type: str) -> int:
     """How a movement moves the expected balance: in +1, out / deposit −1, a count 0."""
-    return {"cash_in": 1, "cash_out": -1, "deposit": -1}.get(movement_type, 0)
+    # "הכסף אצלי" (drawer-away §5.6): cash left with an employee is out of the drawer; a deposit is in it.
+    return {"cash_in": 1, "cash_out": -1, "deposit": -1, "wallet_in": -1, "wallet_deposit": 1}.get(movement_type, 0)
 
 
 def expected_balance(opening, cash_sales, cash_refunds, cash_in, cash_out, deposits):
@@ -628,8 +704,12 @@ def kpis(events: Sequence[Any], movements: Sequence[Any], exception_event_ids: O
 
     drawer = [e for e in events if e.category == "drawer"]
     approved = [e for e in drawer if e.result == "approved"]
-    sums: Dict[str, Decimal] = {"cash_in": Decimal(0), "cash_out": Decimal(0), "deposit": Decimal(0)}
-    counts: Dict[str, int] = {"cash_in": 0, "cash_out": 0, "deposit": 0, "count": 0}
+    sums: Dict[str, Decimal] = {
+        "cash_in": Decimal(0), "cash_out": Decimal(0), "deposit": Decimal(0),
+        "wallet_in": Decimal(0), "wallet_deposit": Decimal(0),
+    }
+    counts: Dict[str, int] = {"cash_in": 0, "cash_out": 0, "deposit": 0, "count": 0, "wallet_in": 0, "wallet_deposit": 0}
+    wallet_variance = Decimal(0)
     variance_total = Decimal(0)
     variances = 0
     for m in movements:
@@ -639,6 +719,8 @@ def kpis(events: Sequence[Any], movements: Sequence[Any], exception_event_ids: O
         if m.movement_type == "count" and m.variance is not None and Decimal(str(m.variance)) != 0:
             variances += 1
             variance_total += Decimal(str(m.variance))
+        if m.movement_type == "wallet_deposit" and m.variance is not None:
+            wallet_variance += Decimal(str(m.variance))
     return {
         "openings": len(approved),
         "saleOpenings": sum(1 for e in approved if e.event_type == "CASH_SALE"),
@@ -655,6 +737,12 @@ def kpis(events: Sequence[Any], movements: Sequence[Any], exception_event_ids: O
         "failedOpenings": sum(1 for e in drawer if e.result == "failed"),
         "countVariances": variances,
         "countVarianceTotal": float(variance_total),
+        # "הכסף אצלי" (drawer-away §5.6): cash left with employees, deposited by them, and the deposits' gaps.
+        "walletInCount": counts["wallet_in"],
+        "walletIn": float(sums["wallet_in"]),
+        "walletDepositCount": counts["wallet_deposit"],
+        "walletDeposits": float(sums["wallet_deposit"]),
+        "walletVarianceTotal": float(wallet_variance),
         "exceptions": len(exception_event_ids or ()),
     }
 

@@ -15,6 +15,8 @@ EventType = Literal[
     "AFTER_CLOSE", "PERMISSION",
     # The drawer of another till's printer opened from this one (bill-print-other-till §9ב–§9ג).
     "REMOTE_SALE", "REMOTE_MANUAL",
+    # "הפקדת מזומן מעובד" (P:/specs/drawer-away.md §5.4).
+    "WALLET_DEPOSIT",
 ]
 
 
@@ -63,10 +65,15 @@ class DrawerEventIn(BaseModel):
 
 
 class CashMovementIn(BaseModel):
-    """Cash In / Cash Out / Deposit / a count. Client id; idempotent."""
+    """
+    Cash In / Cash Out / Deposit / a count — and "הכסף אצלי" (P:/specs/drawer-away.md §5.4): `wallet_in` (a cash
+    payment kept by the employee) and `wallet_deposit` (counted into a drawer; `expectedBefore` = the wallet's
+    balance shown, `variance` = counted − it; `employee*` = whose wallet, `approver*` = who received it).
+    Client id; idempotent.
+    """
 
     id: uuid.UUID
-    type: Literal["cash_in", "cash_out", "deposit", "count"]
+    type: Literal["cash_in", "cash_out", "deposit", "count", "wallet_in", "wallet_deposit"]
     amount: Decimal = Field(..., ge=0, le=10_000_000)
     expected_before: Optional[Decimal] = Field(None, alias="expectedBefore", ge=-10_000_000, le=10_000_000)
     expected_after: Optional[Decimal] = Field(None, alias="expectedAfter", ge=-10_000_000, le=10_000_000)

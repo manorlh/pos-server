@@ -32,6 +32,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MenuItemsField } from '@/components/dashboard/till-menu/menu-items-field';
 import { HIDDEN_MENU_ITEMS_KEY, hiddenSummary, parseHidden, serializeHidden } from '@/lib/tillMenu';
+import { CashParameterField, isCashWidgetKey } from './cash-fields';
 
 export interface ValueDraft {
   text: string;
@@ -142,6 +143,7 @@ export function ParameterValueInput({
   onChange,
   id,
   disabled,
+  shopId,
 }: {
   type: TillParameterValueType;
   enumOptions?: string[] | null;
@@ -157,11 +159,26 @@ export function ParameterValueInput({
   onChange: (draft: ValueDraft) => void;
   id?: string;
   disabled?: boolean;
+  /** The level's shop, when it names one: a cash parameter lists that shop's tills / stations. */
+  shopId?: string | null;
 }) {
   const t = useTranslations('tillParameters');
   const tc = useTranslations('common');
   const tb = useTranslations('branding');
   const enumLabel = useEnumLabel();
+
+  // "מכשיר מזומן" (P:/specs/cash-paylink.md §11.10): coins / notes, alert tills, the station — not free text.
+  if (type === 'string' && isCashWidgetKey(parameterKey)) {
+    return (
+      <CashParameterField
+        parameterKey={parameterKey as string}
+        value={draft.text}
+        onChange={(text) => onChange({ ...draft, text })}
+        shopId={shopId}
+        disabled={disabled}
+      />
+    );
+  }
 
   if (widget === 'menu_items' && type === 'string') {
     return (

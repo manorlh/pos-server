@@ -7,8 +7,9 @@
  * and what "פיצול תשלום בכרטיסים" offers (payment.splitCard — the Android kiosk only).
  */
 
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { Banknote, CreditCard, Ticket, WalletCards } from 'lucide-react';
+import { Banknote, Coins, CreditCard, Ticket, WalletCards } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -24,13 +25,15 @@ import {
 import { useKioskField } from './editor-context';
 import { FieldShell, MoveButtons, NumberInput, SwitchField } from './fields';
 
-const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, split_card: WalletCards };
+const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, cash_device: Coins, split_card: WalletCards };
 /** Each method's name and line under it (kiosks.payment). */
-const LABEL: Record<PaymentMethod, string> = { card: 'methodCard', voucher: 'methodVoucher', cash_at_till: 'methodCash', split_card: 'methodSplitCard' };
+const LABEL: Record<PaymentMethod, string> = { card: 'methodCard', voucher: 'methodVoucher', cash_at_till: 'methodCash', cash_device: 'methodCashDevice', split_card: 'methodSplitCard' };
 const HINT: Record<PaymentMethod, string> = {
   card: 'methodCardHint',
   voucher: 'methodVoucherHint',
   cash_at_till: 'methodCashHint',
+  // "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6).
+  cash_device: 'methodCashDeviceHint',
   split_card: 'methodSplitCardHint',
 };
 
@@ -73,6 +76,17 @@ export function PaymentMethodsField() {
           );
         })}
       </ol>
+      {/* "מזומן במכשיר" (P:/specs/cash-paylink.md §11.6): shown on the kiosk only when cash is on for it
+          (`cashEnabled`) and its cash station answers ready — set on the cash stations page. */}
+      {on.includes('cash_device') ? (
+        <p className="mt-2 flex flex-wrap items-center gap-x-1 rounded-lg bg-emerald-50 p-2 text-xs text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+          <Coins className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>{t('cashDeviceStationsNote')}</span>
+          <Link href="/dashboard/cash-stations" className="font-medium underline underline-offset-2">
+            {t('cashDeviceStationsLink')}
+          </Link>
+        </p>
+      ) : null}
       {/* The browser kiosk (`/k`, docs/SPEC_KIOSK.md §27) takes what a browser can: never the card. */}
       <p className={`mt-2 rounded-lg p-2 text-xs ${on.includes('cash_at_till') ? 'bg-muted/50 text-muted-foreground' : 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'}`}>
         {t('webKioskNote')}

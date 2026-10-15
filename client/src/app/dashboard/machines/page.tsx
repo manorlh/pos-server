@@ -186,7 +186,9 @@ export default function MachinesPage() {
   const [pairMirrorTill, setPairMirrorTill] = useState('');
   /** "מסך — לא קופה": a KDS or the board gets no register number, no sales, no Z. */
   // "שרת מקומי" (P:/specs/dedicated-local-server.md) is not a till either, but no screen: its own notes.
-  const pairIsServer = pairDeviceRole === 'local_server';
+  // "שרת מזומן" (P:/specs/cash-paylink.md) is a server too: Windows, a shop, a name, no work config.
+  const pairIsCashHost = pairDeviceRole === 'cash_host';
+  const pairIsServer = pairDeviceRole === 'local_server' || pairIsCashHost;
   const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole) && !pairIsServer;
   /**
    * "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): "לפי הסניף" unless chosen; the code carries
@@ -491,7 +493,9 @@ export default function MachinesPage() {
       : pairMissing === 'model'
         ? t('deviceModel.required')
         : pairMissing === 'shop'
-          ? pairIsServer
+          ? pairIsCashHost
+            ? t('deviceRole.cashHostNeedsShop')
+            : pairIsServer
             ? t('deviceRole.localServerNeedsShop')
             : pairIsDisplay
               ? t('deviceRole.displayNeedsShop')
@@ -1053,7 +1057,9 @@ export default function MachinesPage() {
                 <p className="text-sm text-muted-foreground">{t('deviceRole.displayReady')}</p>
               ) : null}
               {pairIsServer ? (
-                <p className="text-sm text-muted-foreground">{t('deviceRole.localServerReady')}</p>
+                <p className="text-sm text-muted-foreground">
+                  {pairIsCashHost ? t('deviceRole.cashHostReady') : t('deviceRole.localServerReady')}
+                </p>
               ) : null}
               {/* A peek, not a reservation: shown only until the device pairs, since the
                   shop's next number moves on the moment this one is taken. A screen gets none. */}
@@ -1089,8 +1095,8 @@ export default function MachinesPage() {
                   onChange={(role) => {
                     setPairDeviceRole(role);
                     setPairWorkConfig(EMPTY_WORK_CONFIG);
-                    // The browser runs a kiosk, a KDS or a board — never a till.
-                    if (!platformsFor(role).includes(pairPlatform)) setPairPlatform('android');
+                    // The browser runs a kiosk, a KDS or a board — never a till; a cash server is Windows only.
+                    if (!platformsFor(role).includes(pairPlatform)) setPairPlatform(platformsFor(role)[0] ?? 'android');
                   }}
                 />
                 {pairIsDisplay ? (
@@ -1098,9 +1104,14 @@ export default function MachinesPage() {
                     {t('deviceRole.kdsNote')}
                   </p>
                 ) : null}
-                {pairIsServer ? (
+                {pairIsServer && !pairIsCashHost ? (
                   <p className="rounded-md bg-violet-50 p-2 text-xs text-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
                     {t('deviceRole.localServerNote')}
+                  </p>
+                ) : null}
+                {pairIsCashHost ? (
+                  <p className="rounded-md bg-emerald-50 p-2 text-xs text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+                    {t('deviceRole.cashHostNote')}
                   </p>
                 ) : null}
               </div>
@@ -1147,7 +1158,9 @@ export default function MachinesPage() {
                     maxLength={DEVICE_NAME_MAX}
                     onChange={(e) => setPairName(e.target.value)}
                     placeholder={
-                      pairIsServer
+                      pairIsCashHost
+                        ? t('deviceRole.cash_host')
+                        : pairIsServer
                         ? t('deviceRole.local_server')
                         : pairExpectedNumber !== null
                           ? t('registerLabel', { number: pairExpectedNumber })
@@ -1163,7 +1176,9 @@ export default function MachinesPage() {
                   <p className="text-sm font-medium">
                     {pairDeviceRole === 'kiosk'
                       ? t('deviceRole.kioskNeedsShop')
-                      : pairIsServer
+                      : pairIsCashHost
+                        ? t('deviceRole.cashHostNeedsShop')
+                        : pairIsServer
                         ? t('deviceRole.localServerNeedsShop')
                         : roleNeedsShop(pairDeviceRole)
                         ? t('deviceRole.displayNeedsShop')

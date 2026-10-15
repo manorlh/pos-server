@@ -50,6 +50,7 @@ import {
   type ValueDraft,
 } from './value-input';
 import { useTillParameterErrorText } from './errors';
+import { CashParameterValue, isCashWidgetKey } from './cash-fields';
 import { GlobalSignerPin } from '../remote-support/signer-pin';
 import { SIGNER_KEY as REMOTE_SUPPORT_SIGNER_KEY } from '@/lib/remoteSupport';
 import { useShopAreas } from '../areas/use-shop-areas';
@@ -303,6 +304,8 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
                     <TableCell className="font-medium" dir="auto">
                       {imageKind ? (
                         <ParameterImageThumb url={String(row.value)} alt={parameter.label} />
+                      ) : isCashWidgetKey(parameter.key) ? (
+                        <CashParameterValue parameterKey={parameter.key} value={row.value} />
                       ) : (
                         formatValue(row.value, parameter.key, parameter.enumLabels)
                       )}
@@ -458,6 +461,7 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
                 draft={draft}
                 onChange={setDraft}
                 disabled={save.isPending}
+                shopId={!editing && (level === 'shop' || level === 'area' || level === 'machine') ? shopId || null : null}
               />
             </div>
           ) : null}

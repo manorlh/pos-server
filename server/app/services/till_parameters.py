@@ -1996,6 +1996,14 @@ from app.services.till_menu import PARAMETER_SPECS as _TILL_MENU_SPECS  # noqa: 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TILL_MENU_SPECS)
 
+# "מכשיר מזומן" (app/services/cash_params.py, P:/specs/cash-paylink.md §11.10): the kiosks' cash stations —
+# whether a kiosk takes cash and at which station, what a station accepts, its change policy, timers,
+# float levels, lamps and switches, and the cash host's driver paths. Delivered resolved and typed by
+# `GET /sync/{m}/cash`; a station overrides its own on the "עמדות מזומן" page.
+from app.services.cash_params import PARAMETER_SPECS as _CASH_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CASH_SPECS)
+
 # "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
 # what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
 # מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).
@@ -2350,14 +2358,38 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
 )
 
 
-def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
-    """
-    `kioskOfflineBlockScope` as it resolves for this kiosk (till → area → shop → company → default).
-    A missing or inactive definition, or a value that is not an option: the default (`all`).
-    """
-    parameter = db.query(TillParameter).filter(TillParameter.key == KIOSK_OFFLINE_BLOCK_SCOPE_KEY).first()
+# "מזומן עובד בלי אינטרנט" (P:/specs/cash-paylink.md §13, the owner 14.10: "תשאיר את זה כבוי, שימשיך לעבוד בלי
+# אינטרנט, כי מזומן זה מקומי"): the cash station ("עמדת מזומן", `cash_device` in `payment.methods`) is on the
+# shop's LAN, so even with "חסימת הזמנות כשאין אינטרנט" on it stays open — unless this is set. Off by default.
+# The Windows kiosk reads the parameter; the Android web bundle its config, where `kiosk_offline_block_overlay`
+# puts `general.offlineBlockCash: true` only when it resolves on (off: the config and its version as they were).
+KIOSK_OFFLINE_BLOCK_CASH_KEY = "kioskOfflineBlockCash"
+KIOSK_OFFLINE_BLOCK_CASH_DEFAULT = False
+KIOSK_OFFLINE_BLOCK_CASH_CONFIG_FIELD = "offlineBlockCash"
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=KIOSK_OFFLINE_BLOCK_CASH_KEY,
+        label="קיוסק — לחסום מזומן (עמדת מזומן) כשאין אינטרנט",
+        value_type="boolean",
+        default_value=KIOSK_OFFLINE_BLOCK_CASH_DEFAULT,
+        description=(
+            "בקיוסק שמוגדרת בו \"חסימת הזמנות כשאין אינטרנט\": האם גם התשלום במזומן דרך עמדת המזומן נחסם כשאין "
+            "אינטרנט. כבוי (ברירת מחדל) — מזומן נשאר פתוח: עמדת המזומן ושרת המזומן ברשת המקומית, הקיוסק משתמש "
+            "בכתובת העמדה ששמורה אצלו, המסמכים נשמרים בקיוסק ונשלחים לענן כשהחיבור חוזר, ושרת המזומן מעלה את "
+            "היומן שלו אז. מופעל — מזומן נחסם כמו שאר אמצעי התשלום. בלי \"חסימת הזמנות כשאין אינטרנט\" הפרמטר "
+            "לא משפיע. חל על קיוסק Windows ועל מסכי הקיוסק באנדרואיד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה "
+            "או קופה."
+        ),
+    ),
+)
+
+
+def _kiosk_parameter(db: Session, machine: POSMachine, key: str) -> Any:
+    """`key` as it resolves for this kiosk (till → area → shop → company → default); None: no active definition."""
+    parameter = db.query(TillParameter).filter(TillParameter.key == key).first()
     if parameter is None or not parameter.is_active:
-        return KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT
+        return None
     chain = scope_chain_for_machine(db, machine)
     scopes = chain.scopes()
     values = (
@@ -2370,25 +2402,43 @@ def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
         if scopes
         else []
     )
-    value = resolve_till_parameters([parameter], values, chain).parameters.get(KIOSK_OFFLINE_BLOCK_SCOPE_KEY)
+    return resolve_till_parameters([parameter], values, chain).parameters.get(key)
+
+
+def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
+    """
+    `kioskOfflineBlockScope` as it resolves for this kiosk (till → area → shop → company → default).
+    A missing or inactive definition, or a value that is not an option: the default (`all`).
+    """
+    value = _kiosk_parameter(db, machine, KIOSK_OFFLINE_BLOCK_SCOPE_KEY)
     return value if value in KIOSK_OFFLINE_BLOCK_SCOPE_OPTIONS else KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT
+
+
+def kiosk_offline_block_cash(db: Session, machine: POSMachine) -> bool:
+    """`kioskOfflineBlockCash` for this kiosk: true only when a level (or a re-defaulted definition) says so."""
+    return _kiosk_parameter(db, machine, KIOSK_OFFLINE_BLOCK_CASH_KEY) is True
 
 
 def kiosk_offline_block_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
     The kiosk's effective config with `general.offlineBlockScope` when `kioskOfflineBlockScope` resolves to
-    something other than the default (a new dict) — the Android web kiosk reads it there (its APK hands the
-    screens the config, not the parameters). At the default the config is left exactly as it was.
+    something other than the default, and `general.offlineBlockCash: true` when `kioskOfflineBlockCash` resolves
+    on (a new dict) — the Android web kiosk reads them there (its APK hands the screens the config, not the
+    parameters). At the defaults the config is left exactly as it was.
     """
     try:
         scope = kiosk_offline_block_scope(db, machine)
+        block_cash = kiosk_offline_block_cash(db, machine)
     except Exception:  # noqa: BLE001 - a missing table (an older test world) changes nothing
         return cfg
-    if scope == KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT:
+    if scope == KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT and not block_cash:
         return cfg
     out = dict(cfg)
     general = dict(out.get("general") or {})
-    general[KIOSK_OFFLINE_BLOCK_CONFIG_FIELD] = scope
+    if scope != KIOSK_OFFLINE_BLOCK_SCOPE_DEFAULT:
+        general[KIOSK_OFFLINE_BLOCK_CONFIG_FIELD] = scope
+    if block_cash:
+        general[KIOSK_OFFLINE_BLOCK_CASH_CONFIG_FIELD] = True
     out["general"] = general
     return out
 
@@ -2617,6 +2667,15 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in deferred_control.VALIDATED_KEYS and value is not None:
         try:
             return deferred_control.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מכשיר מזומן" (P:/specs/cash-paylink.md §11.10): the station id, the coins / notes in agorot, the alert
+    # tills, the JSON maps, the ranges and the codes the cash host and the kiosks read — stored canonical.
+    from app.services import cash_params
+
+    if key in cash_params.VALIDATED_KEYS and value is not None:
+        try:
+            return cash_params.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value

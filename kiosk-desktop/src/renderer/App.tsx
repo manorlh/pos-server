@@ -23,6 +23,7 @@ import { kiosk } from './bridge';
 import { KioskApp } from './kiosk/KioskApp';
 import { Pairing } from './pairing/Pairing';
 import { OrderStatusBoard } from './roles/board/OrderStatusBoard';
+import { CashHostScreen } from './roles/cash/CashHostScreen';
 import { KdsScreen } from './roles/kds/KdsScreen';
 import { RolePlaceholder } from './roles/RolePlaceholder';
 import { ShopLocked } from './roles/ShopLocked';
@@ -38,6 +39,8 @@ export function App({ initial, initialShell }: { initial: KioskView; initialShel
   const role = shellView?.role ?? null;
   // "סניף לא פעיל": every screen here but the kiosk's sells nothing — locked at once.
   const shopActive = view.shopActive !== false && shellView?.shopActive !== false;
+  // "שרת מזומן" (P:/specs/cash-paylink.md): its staff screen, never a kiosk — and never locked (it sells nothing; the kiosks are).
+  if (role === 'cash_host') return <CashHostScreen shellView={shellView!} />;
   const kioskScreen = role !== 'kds' && role !== 'order_status_board' && role !== 'till' && role !== 'customer_display' && view.phase === 'kiosk' && !!view.config;
   if (!kioskScreen && shopLockShown({ shopActive, surface: role === 'order_status_board' ? 'board' : role === 'customer_display' ? 'customer_display' : 'kds' })) {
     return <ShopLocked shellView={shellView} />;

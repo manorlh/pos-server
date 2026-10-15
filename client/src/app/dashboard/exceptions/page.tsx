@@ -126,6 +126,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   drawer_manual_over_max: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
   cash_out_over_threshold: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
   drawer_count_variance: 'bg-fuchsia-200 text-fuchsia-950 dark:bg-fuchsia-900 dark:text-fuchsia-100',
+  cash_wallet_variance: 'bg-fuchsia-200 text-fuchsia-950 dark:bg-fuchsia-900 dark:text-fuchsia-100',
   drawer_open_near_variance: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   drawer_open_no_reason: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200',
   drawer_open_denied: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
@@ -151,6 +152,8 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   auto_close_cart_discarded: 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200',
   auto_close_cart_held: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
   auto_close_held_sales_cancelled: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
+  // "מכשיר מזומן": a kiosk cash station's alert (no change, jam, door, host offline, credit held…).
+  cash_unit: 'bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

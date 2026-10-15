@@ -53,6 +53,8 @@ export interface BridgePayProgress {
   amountAgorot: number;
   canCancel: boolean;
   cancelling: boolean;
+  /** The terminal in offline mode (P:/specs/nayax-deferred-all.md §13): the cards that will not go through. */
+  notice?: string | null;
   pickupLabel?: string;
   documentNumber?: string;
   receipt?: 'ask' | 'printing' | 'printed' | 'declined' | 'none' | 'failed';

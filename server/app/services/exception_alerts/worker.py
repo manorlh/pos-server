@@ -49,12 +49,15 @@ def run_watches(session_factory: Callable[[], Session]) -> None:
     is not checked here: "יעדים ותחרות" records it (app/services/sales_targets.py `evaluate_due`,
     its own minute, app/services/sales_targets_worker.py) — the one source of `target_reached`.
     """
+    from app.services import cash_alerts
     from app.services.exception_alerts import push, status_watch, till_watch
     from app.services.exception_alerts import daily_summary, service_watch, shop_watch, till_activity
     from app.services.exception_alerts.hooks import SKIP
 
     jobs = [
         ("till offline watch", lambda db: till_watch.scan(db), False),
+        # "שרת מזומן לא מחובר" (app/services/cash_alerts.py): a cash host with stations silent 3 minutes.
+        ("cash host offline watch", lambda db: cash_alerts.scan_offline(db), False),
         ("push retry", lambda db: push.retry_stale(db), True),
         # "זיהויים חדשים" (P:/specs/push-more.md §C, §B2) — each off until a level switches it on;
         # the exception rows they write reach the log and the alerts through the hooks.

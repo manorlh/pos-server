@@ -23,6 +23,24 @@ export const OFFLINE_BLOCK_SCOPES = ['all', 'pay_at_till'] as const;
 export type OfflineBlockScope = (typeof OFFLINE_BLOCK_SCOPES)[number];
 export const OFFLINE_BLOCK_SCOPE_DEFAULT: OfflineBlockScope = 'all';
 
+/**
+ * "מזומן עובד בלי אינטרנט" (P:/specs/cash-paylink.md §13, the owner: "כי מזומן זה מקומי"): the cash
+ * station is on the LAN — even with the block on, `cash_device` stays, unless the till parameter
+ * `kioskOfflineBlockCash` (default false) says to block it too. Windows reads the parameter; the Android
+ * bundle its config (`general.offlineBlockCash`, put there by the cloud only when true).
+ */
+export const OFFLINE_BLOCK_CASH_KEY = 'kioskOfflineBlockCash';
+export const OFFLINE_BLOCK_CASH_FIELD = 'offlineBlockCash';
+
+/** Whether the offline block takes the cash station too: the parameter, else the config's field; default no. */
+export function offlineBlockCashOf(param: unknown, config: unknown): boolean {
+  const on = (v: unknown) => v === true || v === 'true' || v === 1 || v === '1';
+  if (param !== undefined && param !== null && param !== '') return on(param);
+  if (!config || typeof config !== 'object') return false;
+  const general = (config as { general?: unknown }).general;
+  return !!general && typeof general === 'object' && on((general as Record<string, unknown>)[OFFLINE_BLOCK_CASH_FIELD]);
+}
+
 /** The first of [values] that is a scope; none — the default (`all`). */
 export function offlineBlockScopeOf(...values: unknown[]): OfflineBlockScope {
   for (const v of values) {
@@ -42,13 +60,17 @@ export function configOfflineBlockScope(config: unknown): unknown {
  * What is still usable while "חסימת הזמנות כשאין אינטרנט" holds the kiosk ([blocked]): nothing (`all`), or
  * everything but the till (`pay_at_till`). Not blocked: [usable] as it is.
  */
-export function offlineUsable(usable: readonly PaymentMethod[], blocked: boolean, scope: OfflineBlockScope): PaymentMethod[] {
+export function offlineUsable(usable: readonly PaymentMethod[], blocked: boolean, scope: OfflineBlockScope, blockCash = false): PaymentMethod[] {
   if (!blocked) return [...usable];
-  return scope === 'all' ? [] : usable.filter((m) => m !== 'cash_at_till');
+  // The cash station is local (§13): it stays unless `kioskOfflineBlockCash`.
+  const cashStays = (m: PaymentMethod) => m === 'cash_device' && !blockCash;
+  return scope === 'all' ? usable.filter(cashStays) : usable.filter((m) => m !== 'cash_at_till' && (m !== 'cash_device' || !blockCash));
 }
 
 /** Whether the kiosk rests on its "offline" screen for it: blocked with `all` (with `pay_at_till`, only when nothing is left). */
 export function offlineRests(blocked: boolean, scope: OfflineBlockScope, usableLeft: readonly PaymentMethod[]): boolean {
   if (!blocked) return false;
+  // The cash station still takes the order (§13): no "offline" rest while it is usable.
+  if (usableLeft.includes('cash_device')) return false;
   return scope === 'all' || !usableLeft.some((m) => m === 'card' || m === 'cash_at_till');
 }

@@ -251,6 +251,22 @@ function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: 
           </div>
         ))}
       </Panel>
+      {info.cash ? (
+        <Panel m={m} title="מכשיר מזומן">
+          <div>
+            {info.cash.station ?? 'עמדה לא ידועה'} {info.cash.address ? <span dir="ltr">({info.cash.address})</span> : null}
+          </div>
+          <div className={info.cash.usable ? 'text-emerald-700' : 'text-red-600'}>{info.cash.usable ? 'זמין' : (info.cash.reason ?? 'לא זמין')}</div>
+          {info.cash.pending.map((p) => (
+            <div key={p.txShort} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
+              תשלום מזומן לבירור · {shekels(p.amountAgorot)} · {new Date(p.startedAt).toLocaleTimeString('he-IL')} · עסקה <span dir="ltr">{p.txShort}</span>
+            </div>
+          ))}
+          <Btn m={m} onClick={() => act({ type: 'cashRecheck' })}>
+            בדיקה מול מכשיר המזומן
+          </Btn>
+        </Panel>
+      ) : null}
       <Panel m={m} title="מדפסת">
         {info.printer.usb ? <div className="font-semibold">{info.printer.usb}</div> : null}
         <div>{info.printer.target}</div>

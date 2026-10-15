@@ -1662,6 +1662,11 @@ def post_transactions(
         from app.services.exceptions import detect_safely, detect_transactions
 
         detect_safely(db, detect_transactions, [r.id for r in results if r.status == "accepted"])
+        # "מכשיר מזומן" (P:/specs/cash-paylink.md §11.7): a kiosk document paid at a cash station names its
+        # transaction — linked, and a credit held for it closes. After the commit, never failing the push.
+        from app.services.cash_stations import match_documents_safely
+
+        match_documents_safely(db, [r.id for r in results if r.status == "accepted" and isinstance(r.id, uuid.UUID)])
 
     if training:
         # The training answers too, in the order the till sent them.

@@ -664,6 +664,18 @@ class POSMachine(Base):
     #: The device's LAN identity for discovery (§11.6): `{publicKey, alg, keyId, at}` — an EC P-256
     #: public key from its heartbeat's `lanIdentity`. Tills verify a discovered host against it.
     lan_identity = Column(JSONB, nullable=True)
+    # ── "שרת מזומן" (P:/specs/cash-paylink.md §2, §11, §12) ─────────────────────────
+    #: A headless Windows box running the kiosk app in its `cash_host` role: it drives one or more
+    #: PayLink cash units ("עמדות מזומן", `cash_stations`) for the shop's kiosks over the LAN. Always
+    #: non-fiscal (`is_fiscal` false): no shifts, documents or sales of its own; never in the shop's
+    #: LAN group, never a host of it, never counted as a till license (app/services/cash_host.py).
+    #: Set at pairing only.
+    is_cash_host = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    #: Its last heartbeat's `cash` block (§11.9), cleaned: `lanAddress` / `port` (what the kiosks are
+    #: given), the version, and per station its state, change on hand, cashbox, queue and alerts.
+    #: `cash_status_at`: when it arrived. Null: never said.
+    cash_status = Column(JSONB, nullable=True)
+    cash_status_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

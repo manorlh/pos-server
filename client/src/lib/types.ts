@@ -809,10 +809,11 @@ export interface PosMachine {
   hasBuiltinTerminal?: boolean;
   /**
    * "סוג מכשיר (תפקיד)": `till`, `kiosk` (a self-order kiosk), `kds` (a kitchen screen) or
-   * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
-   * it. `kioskEnabled` false: a kiosk switched off, working as a till.
+   * `order_status_board` (the "מוכן / לא מוכן" board), `local_server` ("שרת מקומי") or `cash_host`
+   * ("שרת מזומן", P:/specs/cash-paylink.md). Null where the server did not compute it. `kioskEnabled`
+   * false: a kiosk switched off, working as a till.
    */
-  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | 'local_server' | null;
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | 'local_server' | 'cash_host' | null;
   kioskEnabled?: boolean | null;
   /**
    * False for a display device (a KDS / the board): not a till, not an accounting system —
@@ -2268,6 +2269,13 @@ export interface ZReport {
    */
   cashMovements?: import('./zCashMovements').ZCashMovements | null;
   /**
+   * "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the cash the tills' payments left with employees (out of
+   * `expectedCash`) and what employees deposited into the drawers (in it). Null/absent when none.
+   */
+  cashWallets?: import('./zCashWallets').ZCashWallets | null;
+  /** "מזומן אצל עובדים (טרם הופקד)" per employee, as frozen when the Z was built. Null/absent: nobody. */
+  cashWithStaff?: import('./zCashWallets').ZCashWithStaff | null;
+  /**
    * Σ of the tills' `offline` blocks. Null on a Z built before the block was stored (and
    * on a legacy Z): shown as nothing, never as zero.
    */
@@ -2480,6 +2488,8 @@ export interface ZReportMachineSection {
   drawerCash?: Money | null;
   /** This till's Cash In / Cash Out / deposits inside expectedCash; absent when the parameter was off for it. */
   cashMovements?: import('./zCashMovements').ZCashMovements | null;
+  /** "הכסף אצלי": this till's wallets inside expectedCash (drawer-away §5.6); absent when none. */
+  cashWallets?: import('./zCashWallets').ZCashWallets | null;
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;

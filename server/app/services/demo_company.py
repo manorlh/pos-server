@@ -162,6 +162,7 @@ DEVICES: Dict[str, Tuple[Tuple[str, str, str], ...]] = {
 }
 ROLE_LABELS = {
     "till": "קופה", "kiosk": "קיוסק", "customer_display": "מסך לקוח", "kds": "מסך מטבח",
+    "cash_host": "שרת מזומן",
 }
 
 KITCHEN_STATION = "מטבח"

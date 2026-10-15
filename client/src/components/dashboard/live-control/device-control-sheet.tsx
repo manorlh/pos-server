@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { DEVICE_ACTIONS, actionLabel, commandStatusLabel, commandTone, type DeviceAction, type DeviceRow } from '@/lib/liveControl';
+import { deviceActionsOf } from '@/lib/cashStations';
 import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, requestRemoteClose } from '@/lib/liveControlApi';
 import { sendDeviceCommand, trackRemoteClose } from '@/lib/deviceCommandsStore';
 import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
@@ -210,6 +211,9 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
 
   // Fire-and-forget (lib/deviceCommandsStore.ts): the confirm closes at once, the status follows in
   // the background (the row's chip, "פקודות שנשלחו"); more commands can be sent meanwhile.
+  // A cash host takes a restart only here ("בקש לוגים" is on its device page): the other actions skip it.
+  const cashHostsOnly = chosen.length > 0 && chosen.every((id) => tills.find((d) => d.machineId === id)?.isCashHost);
+  const takes = (action: DeviceAction) => !cashHostsOnly || deviceActionsOf({ isCashHost: true }, [action]).length > 0;
   const send = (action: DeviceAction) => {
     const names = Object.fromEntries(tills.map((d) => [d.machineId, d.name]));
     sendDeviceCommand({
@@ -276,6 +280,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
                     {d.state.locked ? (
                       <Badge variant="destructive" className="gap-1"><Lock className="size-3" aria-hidden />נעולה</Badge>
                     ) : null}
+                    {d.isCashHost ? <Badge variant="outline">שרת מזומן · הפעלה מחדש ולוגים בלבד</Badge> : null}
                     <DeviceCommandChip machineId={d.machineId} />
                   </div>
                   {d.state.locked && d.state.message ? <p className="text-sm">“{d.state.message}”</p> : null}
@@ -289,7 +294,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
                     </p>
                   ) : null}
                 </div>
-                {features.data?.remoteTillZ ? (
+                {features.data?.remoteTillZ && !d.isCashHost ? (
                   <Button
                     type="button"
                     size="sm"
@@ -317,7 +322,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
             key={a.action}
             variant={a.danger ? 'outline' : 'secondary'}
             className={cn('min-h-12 whitespace-normal', a.danger && 'border-destructive/40 text-destructive')}
-            disabled={chosen.length === 0}
+            disabled={chosen.length === 0 || !takes(a.action)}
             onClick={() => setConfirming(a.action)}
             title={a.hint}
           >

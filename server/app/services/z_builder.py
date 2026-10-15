@@ -34,6 +34,7 @@ is drawn. Its shifts stay closed and in no Z; a later Z with activity takes them
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -48,6 +49,7 @@ from app.models.z_report import ZOrigin, ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals, till_totals_mismatch
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
+from app.services import cash_wallets as CW
 from app.services import z_expected_cash as ZEC
 from app.services.offline_authorizations import offline_block
 from app.services.transmissions import period_block
@@ -323,6 +325,9 @@ def _shift_expected(shift: Shift, with_movements: bool = False) -> Decimal:
     )
     if with_movements:
         expected += ZEC.net(ZEC.movements_of(shift))
+    # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the cash its payments left with employees is in no
+    # drawer, what they deposited into this one is — as its till froze them; always (zero when none).
+    expected += CW.net(CW.wallets_of(shift))
     return expected
 
 
@@ -387,6 +392,7 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
             "uncounted": 0, "cash_sales": ZERO, "cash_tips": ZERO, "between_shifts": ZERO,
             "card_tips_from_drawer": None, "drawer_cash": None,
             "cash_movements": ZEC.NONE if with_movements else None,
+            "cash_wallets": CW.NONE,
         }
     first, last = shifts[0], shifts[-1]
     uncounted = sum(1 for s in shifts if s.counted_cash is None)
@@ -410,12 +416,17 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
         movements = ZEC.NONE
         for s in shifts:
             movements = ZEC.add(movements, ZEC.movements_of(s))
+    # "הכסף אצלי" (drawer-away §5.6): always in the expected (each shift's is in its own expected above).
+    wallets = CW.NONE
+    for s in shifts:
+        wallets = CW.add(wallets, CW.wallets_of(s))
     opening = _dec(first.opening_cash)
     return {
         "opening": opening,
         "expected": (
             opening + cash_sales + cash_tips - (tips_from_drawer or ZERO) + between_shifts
             + (ZEC.net(movements) if movements is not None else ZERO)
+            + CW.net(wallets)
         ),
         "counted": None if last.counted_cash is None else _dec(last.counted_cash),
         "over_short": over_short,
@@ -426,6 +437,7 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
         "card_tips_from_drawer": tips_from_drawer,
         "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
         "cash_movements": movements,
+        "cash_wallets": wallets,
     }
 
 
@@ -461,6 +473,9 @@ def z_cash_summary(
     tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
     cash_sales = sum((t["cash_sales"] for t in tills), ZERO)
     cash_tips = sum((t["cash_tips"] for t in tills), ZERO)
+    wallets = CW.NONE
+    for t in tills:
+        wallets = CW.add(wallets, t["cash_wallets"])
     return {
         "opening": sum((t["opening"] for t in tills), ZERO),
         "expected": sum((t["expected"] for t in tills), ZERO),
@@ -473,6 +488,7 @@ def z_cash_summary(
         "card_tips_from_drawer": tips_from_drawer,
         "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
         "cash_movements": movements,
+        "cash_wallets": wallets,
     }
 
 
@@ -575,6 +591,9 @@ def machine_section(
             if cash["card_tips_from_drawer"] is not None
             else {}
         ),
+        # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the cash left with employees and their deposits here
+        # that are in `expectedCash` — only when there were any; absent, the section reads as before.
+        **({CW.BLOCK: CW.block(cash["cash_wallets"])} if CW.block(cash["cash_wallets"]) else {}),
         "uncountedShiftCount": cash["uncounted"],
         "reconstructedShiftCount": sum(1 for s in shifts if s.reconstructed),
         "unattendedShiftCount": sum(1 for s in shifts if s.unattended),
@@ -769,6 +788,20 @@ def build_z(
     for section, part in zip(sections, till_table_reversals):
         if part is not None:
             section[table_restore.Z_KEY] = part
+    # "עמדות מזומן" (app/services/cash_station_drawer.py, P:/specs/cash-paylink.md §11.9): a shop Z takes the
+    # kiosk cash stations' transactions and movements not yet in a Z — per station its drawer and the
+    # reconciliation against this Z's kiosk documents. Only a shop with stations; presentation only, and never a
+    # condition on the Z: a failure leaves the block out.
+    cash_part = None
+    if not till_z:
+        from app.services import cash_station_drawer
+
+        try:
+            with db.begin_nested():
+                cash_part = cash_station_drawer.z_part(db, shop_id=shop_id, shift_ids=[s.id for s in all_shifts], now=now)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("cash stations block of the Z of shop %s failed", shop_id)
+            cash_part = None
 
     # 4. Number, write, claim.
     if business_date is None:
@@ -861,6 +894,11 @@ def build_z(
         # "זיכויים וביטולי תשלום בשולחנות" — only when there were any.
         if table_reversals is not None:
             z.header = {**z.header, table_restore.Z_KEY: table_reversals}
+        # "עמדות מזומן" — only in a shop with cash stations.
+        if cash_part is not None and cash_part.block is not None:
+            from app.services.cash_station_drawer import Z_KEY as CASH_Z_KEY
+
+            z.header = {**z.header, CASH_Z_KEY: cash_part.block}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
         # "טיפ באשראי משולם מהמזומן": the card tips the tills paid out of their drawers (already
@@ -870,6 +908,16 @@ def build_z(
         # absent is off, and a Z without it is byte for byte what it was before the parameter.
         if cash["cash_movements"] is not None:
             z.header = {**z.header, ZEC.BLOCK: ZEC.block(cash["cash_movements"])}
+        # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): the wallets in `expected_cash`, and "מזומן אצל עובדים
+        # (טרם הופקד)" per employee as the ledger stands now — frozen; each only when there is any.
+        wallet_block = CW.block(cash["cash_wallets"])
+        if wallet_block:
+            z.header = {**z.header, CW.BLOCK: wallet_block}
+        staff = CW.staff_for_z(db, shop_id, [m.id for m, _s in per_machine], as_of=now)
+        if staff:
+            z.header = {**z.header, CW.STAFF: staff}
+            if isinstance(z.header.get("reportSections"), dict):
+                z.header = {**z.header, "reportSections": {**z.header["reportSections"], CW.STAFF: staff}}
         if cash["card_tips_from_drawer"] is not None:
             z.header = {
                 **z.header,
@@ -912,6 +960,9 @@ def build_z(
     db.flush()
     for shift in all_shifts:
         shift.z_report_id = z.id
+    if cash_part is not None:
+        # Each station transaction and movement in exactly one shop Z.
+        cash_part.claim(z.id)
     db.flush()
     # "פתיחת פריטים אוטומטית אחרי Z" (docs/SPEC_AVAILABILITY.md): own savepoint, never raises.
     from app.services.availability_reopen import after_z

@@ -17,8 +17,24 @@ export const ANDROID_WIRE_API = 2;
 /** The first bridge API with "placeOpenOrder" ("תשלום בקופה" from the web screens, as the Windows kiosk's call). */
 export const ANDROID_PLACE_OPEN_ORDER_API = 2;
 
-/** Calls that are answered ("placeOpenOrder": bridgeApi 2 only). */
-export const ANDROID_CALLS = ['bootstrap', 'shellView', 'startPayment', 'cancelPayment', 'receiptChoice', 'helpRequest', 'voucherApply', 'voucherRemove', 'placeOpenOrder'] as const;
+/**
+ * Calls that are answered ("placeOpenOrder": bridgeApi 2 only). "cashOwedChoice" / "cashSplit" (P:/specs/cash-paylink.md
+ * §11.15, bridgeApi stays 2): called only on what the APK's `pay.cash` offers (`stage: "owed_choice"`, `canSplit`) — an
+ * older APK never offers them.
+ */
+export const ANDROID_CALLS = [
+  'bootstrap',
+  'shellView',
+  'startPayment',
+  'cancelPayment',
+  'receiptChoice',
+  'helpRequest',
+  'voucherApply',
+  'voucherRemove',
+  'placeOpenOrder',
+  'cashOwedChoice',
+  'cashSplit',
+] as const;
 /** One-way messages to the APK. */
 export const ANDROID_SENDS = ['reportFlow', 'funnel', 'activity', 'ready', 'error'] as const;
 /** What the APK pushes. */

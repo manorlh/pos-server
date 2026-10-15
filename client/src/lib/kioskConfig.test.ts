@@ -1948,7 +1948,7 @@ describe('"אפשר לבטל גם כפתור ברוכים הבאים": the attra
 describe('"איך תרצו לשלם?" — card, voucher, cash at the till (docs/SPEC_KIOSK.md §23)', () => {
   const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
   it('the methods: card, voucher and cash at the till; a voucher never alone; bare cash refused', () => {
-    assert.deepEqual(PAYMENT_METHODS, ['card', 'voucher', 'cash_at_till', 'split_card']);
+    assert.deepEqual(PAYMENT_METHODS, ['card', 'voucher', 'cash_at_till', 'cash_device', 'split_card']);
     assert.deepEqual(KIOSK_DEFAULTS.payment.methods, ['card']);
     assert.equal(KIOSK_DEFAULTS.payment.cashAtTillExpiryMin, 30);
     assert.equal(KIOSK_DEFAULTS.payment.cashAtTillKitchenBeforePay, false);

@@ -151,6 +151,9 @@ describe('the attention feed', () => {
     assert.equal(alertHref({ kind: 'refund', code: 'c', details: null }), '/x/c');
     assert.equal(alertHref({ kind: 'refund', code: 'c', details: null }, false), null);
     assert.equal(alertHref({ kind: 'target_reached', code: 'c', details: { eventId: 'e9' } }, false), '/dashboard/live-event/e9');
+    // "מכשיר מזומן": the station's page.
+    assert.equal(alertHref({ kind: 'cash_unit', code: 'c', details: { stationId: 's1' } }, false), '/dashboard/cash-stations/s1');
+    assert.equal(alertHref({ kind: 'cash_unit', code: 'c', details: null }), '/x/c');
   });
 
   it('colours the history', () => {

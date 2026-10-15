@@ -210,6 +210,8 @@
     "src/lib/drawerTips.test.ts",
     "src/lib/zCashMovements.ts",
     "src/lib/zCashMovements.test.ts",
+    "src/lib/zCashWallets.ts",
+    "src/lib/zCashWallets.test.ts",
     "src/lib/desktopIdleReturn.ts",
     "src/lib/desktopIdleReturn.test.ts",
     "src/lib/kioskMotionEngine.ts",
@@ -344,6 +346,8 @@
     "src/lib/remoteSupport.test.ts",
     "src/lib/courseFire.ts",
     "src/lib/courseFire.test.ts",
+    "src/lib/coursesQuickSetup.ts",
+    "src/lib/coursesQuickSetup.test.ts",
     "src/lib/liveTables.ts",
     "src/lib/liveTables.test.ts",
     "src/lib/syncStatus.ts",
@@ -373,6 +377,8 @@
     "src/lib/deferredTerminals.ts",
     "src/lib/deferredTerminals.test.ts",
     "src/lib/tillDrawers.ts",
-    "src/lib/tillDrawers.test.ts"
+    "src/lib/tillDrawers.test.ts",
+    "src/lib/cashStations.ts",
+    "src/lib/cashStations.test.ts"
   ]
 }

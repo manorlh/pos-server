@@ -33,7 +33,8 @@ DeviceModel = Literal[
 #: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
 #: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
 #: and not accounting systems (app/services/display_devices.py).
-DeviceRole = Literal["till", "kiosk", "kds", "order_status_board", "customer_display", "local_server"]
+#: "cash_host" ("שרת מזומן", app/services/cash_host.py): a Windows box driving the kiosks' cash units.
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board", "customer_display", "local_server", "cash_host"]
 
 #: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
 #: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).
@@ -248,6 +249,10 @@ class MachineHeartbeatBody(BaseModel):
     #: The device's LAN identity for discovery (§11.6): `{publicKey, alg: "ES256"}`, an EC P-256 key;
     #: one that is not is dropped. Absent: as it was.
     lan_identity: Optional[Dict[str, Any]] = Field(None, alias="lanIdentity")
+    #: "שרת מזומן" (P:/specs/cash-paylink.md §11.9): the cash host's LAN address and port, and per cash
+    #: station its state, change on hand, cashbox, queue and alerts — cleaned field by field in
+    #: app/services/cash_stations.py `clean_status` (never a 422). Absent: as it was.
+    cash: Optional[Any] = None
     #: "תמיכה מרחוק" (app/services/remote_support.py): `{installed, package, signerSha256: [..],
     #: installedFrom}` — TeamViewer QuickSupport on the device, kept in `device_info["remoteSupport"]`,
     #: cleaned key by key in `remote_support.clean_report` (never a 422). Absent: as it was.

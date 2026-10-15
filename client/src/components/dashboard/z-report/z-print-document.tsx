@@ -25,6 +25,7 @@ import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
 import { hasDrawerTips } from '@/lib/drawerTips';
 import { cashMovementRows } from '@/lib/zCashMovements';
+import { cashWalletRows, cashWithStaffRows } from '@/lib/zCashWallets';
 import { zSectionLines, type ZReportSections, type ZSectionsLabels } from '@/lib/zReportSections';
 import {
   hasBetweenShiftAdjustments,
@@ -229,6 +230,10 @@ function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?:
           {cashMovementRows(s.cashMovements).map((r) => (
             <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
           ))}
+          {/* "הכסף אצלי" (P:/specs/drawer-away.md §5.6): only when this till had any. */}
+          {cashWalletRows(s.cashWallets).map((r) => (
+            <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
+          ))}
           <Row label={t('expectedCash')} value={formatCurrency(s.expectedCash)} />
           <Row
             label={t('countedCash')}
@@ -378,6 +383,9 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
             {cashMovementRows(z.cashMovements).map((r) => (
               <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
             ))}
+            {cashWalletRows(z.cashWallets).map((r) => (
+              <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
+            ))}
             <Row label={t('expectedCash')} value={formatCurrency(z.expectedCash)} />
             <Row
               label={t('countedCash')}
@@ -403,6 +411,19 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
           </tbody>
         </table>
       </Section>
+      {/* "מזומן אצל עובדים (טרם הופקד)" (drawer-away §5.6): as frozen when the Z was built. */}
+      {cashWithStaffRows(z.cashWithStaff).rows.length > 0 ? (
+        <Section title={t('cashWithStaff')}>
+          <table className="w-full text-xs">
+            <tbody>
+              {cashWithStaffRows(z.cashWithStaff).rows.map((r) => (
+                <Row key={r.employeeId} label={r.name} value={formatCurrency(r.amount)} />
+              ))}
+              <Row label={t('cashWithStaffTotal')} value={formatCurrency(cashWithStaffRows(z.cashWithStaff).total)} />
+            </tbody>
+          </table>
+        </Section>
+      ) : null}
       </>
       )}
 

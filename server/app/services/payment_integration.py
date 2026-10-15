@@ -190,6 +190,10 @@ CARD_OFF: Dict[str, bool] = {o.allowed_key: False for o in PAYMENT_OPTIONS if o.
 #: בקופה", `cash_at_till` in its `payment.methods`). Without it the save says so — a warning
 #: beside the saved answer, never a refusal (`kiosk_warnings`).
 KIOSK_PAY_AT_TILL = "cash_at_till"
+#: "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6) takes payment with no card too.
+KIOSK_CASH_DEVICE = "cash_device"
+#: The kiosk methods that take payment with no card at all.
+KIOSK_NON_CARD_METHODS = (KIOSK_PAY_AT_TILL, KIOSK_CASH_DEVICE)
 KIOSK_NO_PAYMENT_CODE = "kiosk_no_payment_method"
 KIOSK_NO_PAYMENT_HE = "לקיוסק לא יישאר אמצעי תשלום"
 
@@ -576,10 +580,13 @@ def without_card(merged: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def kiosk_pays_at_till(cfg: Any) -> bool:
-    """A kiosk config that takes payment with no card: "תשלום בקופה" (`cash_at_till`) is on."""
+    """
+    A kiosk config that takes payment with no card: "תשלום בקופה" (`cash_at_till`) or "מזומן" at the cash
+    station (`cash_device`) is on.
+    """
     payment = cfg.get("payment") if isinstance(cfg, dict) else None
     methods = payment.get("methods") if isinstance(payment, dict) else None
-    return isinstance(methods, list) and KIOSK_PAY_AT_TILL in methods
+    return isinstance(methods, list) and any(m in methods for m in KIOSK_NON_CARD_METHODS)
 
 
 def kiosk_warnings(db: Any, machines: Sequence[Any]) -> List[Dict[str, Any]]:

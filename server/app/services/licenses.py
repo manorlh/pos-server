@@ -18,6 +18,7 @@ closed (shift close, X / Z, card transmission), so no money is left unaccounted 
 * **Not a till license** (`countsAsTillLicense: false`): a dedicated local server ("שרת מקומי",
   P:/specs/dedicated-local-server.md §10.4) and a display device. A license's end never stops a
   local server: it sells nothing, and the tills need it to close the day.
+  A cash host ("שרת מזומן", P:/specs/cash-paylink.md §2) is non-fiscal too: never a till license.
 """
 from __future__ import annotations
 

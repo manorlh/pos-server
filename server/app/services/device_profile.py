@@ -50,7 +50,11 @@ ROLE_ORDER_STATUS_BOARD = DD.ROLE_ORDER_STATUS_BOARD
 ROLE_CUSTOMER_DISPLAY = DD.ROLE_CUSTOMER_DISPLAY
 #: "שרת מקומי" (app/services/local_server_device.py): not a till, the shop's preferred host.
 ROLE_LOCAL_SERVER = DD.ROLE_LOCAL_SERVER
-ROLES = (ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY, ROLE_LOCAL_SERVER)
+#: "שרת מזומן" (app/services/cash_host.py): not a till, drives the kiosks' PayLink cash units.
+ROLE_CASH_HOST = DD.ROLE_CASH_HOST
+ROLES = (
+    ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY, ROLE_LOCAL_SERVER, ROLE_CASH_HOST,
+)
 
 INVALID_CONTROLLER_MESSAGE = (
     "אחת הקופות השולטות שנבחרו אינה קופה פעילה של אותה חברה (או שהיא קיוסק בעצמה). בחרו שוב."

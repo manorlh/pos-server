@@ -24,6 +24,7 @@ import {
   injectScan,
   localMediaOnly,
   normalizeView,
+  payOf,
   placeAnswerOf,
   scanKeys,
   voucherAnswerOf,
@@ -182,6 +183,27 @@ describe('calls and answers', () => {
     b.inbox.reply(calls[1].id, false, '"too late"');
     b.inbox.reply(calls[2].id, true, '{}');
     await expect(Promise.all([r, c, h])).resolves.toEqual([undefined, undefined, undefined]);
+  });
+
+  it('cash stage 2 (§11.15): the owed choice and "להשלים באשראי" — their arguments, never a rejection', async () => {
+    expect(fixture.calls).toEqual(expect.arrayContaining(['cashOwedChoice', 'cashSplit']));
+    const { native, calls } = fakeNative(2);
+    const b = createAndroidBridges(native);
+    const choice = b.kiosk.cashOwedChoice!('tip');
+    const split = b.kiosk.cashSplit!();
+    const refused = b.kiosk.cashSplit!();
+    const broken = b.kiosk.cashOwedChoice!('credit');
+    expect(calls.map((x) => [x.method, x.args])).toEqual([
+      ['cashOwedChoice', { choice: 'tip' }],
+      ['cashSplit', {}],
+      ['cashSplit', {}],
+      ['cashOwedChoice', { choice: 'credit' }],
+    ]);
+    b.inbox.reply(calls[0].id, true, 'null');
+    b.inbox.reply(calls[1].id, true, '{"ok":true}');
+    b.inbox.reply(calls[2].id, true, '{"ok":false}');
+    b.inbox.reply(calls[3].id, false, '"unknown call cashOwedChoice"');
+    await expect(Promise.all([choice, split, refused, broken])).resolves.toEqual([undefined, { ok: true }, { ok: false }, undefined]);
   });
 
   it('one-way messages: the flow, the funnel, a touch', () => {
@@ -576,6 +598,21 @@ describe('the APK\'s news', () => {
     offPay();
     b.inbox.event('pay', JSON.stringify(fixture.samples.pay));
     expect(pays).toHaveLength(1);
+  });
+
+  it('the pay event\'s cash, stage 2: the card\'s part of a split as the screens name it; the choices and the split as they came', () => {
+    const b = createAndroidBridges(fakeNative(2).native);
+    const pays: PayProgress[] = [];
+    b.kiosk.on('pay', (p) => pays.push(p));
+    const base = { orderId: 'o-1', phase: 'charging', message: null, amountAgorot: 7470, canCancel: true, cancelling: false };
+    const insert = { stage: 'insert', insertedAgorot: 2000, dueAgorot: 7470, canSplit: true, splitRestAgorot: 5470 };
+    const split = { stage: 'split_card', splitAgorot: 2000, cardAgorot: 5470, insertedAgorot: 2000, dueAgorot: 2000 };
+    const owed = { stage: 'owed_choice', owedChoices: ['slip', 'tip'], owedDeadlineAt: 1791364212000, changeOwedAgorot: 1300 };
+    for (const cash of [insert, split, owed]) b.inbox.event('pay', JSON.stringify({ ...base, cash }));
+    expect(pays.map((p) => p.cash)).toEqual([insert, { ...split, cardRestAgorot: 5470 }, owed]);
+    // Nothing to map, or no cash at all: as it came.
+    expect(payOf({ ...base, cash: null })).toEqual({ ...base, cash: null });
+    expect(payOf(fixture.samples.pay)).toEqual(fixture.samples.pay);
   });
 
   it('a newer APK\'s unknown news, broken JSON or a failing listener harm nothing', () => {

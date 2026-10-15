@@ -828,6 +828,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           // As the Windows kiosk: "הצמידו כרטיס", the terminal's own lines, cancel while the card is out.
           phase: payBlocked ? 'blocked' : flow.pay === 'idle' ? 'starting' : flow.pay === 'approved' ? 'charging' : flow.pay,
           message: payBlocked ?? cardPay?.message ?? null,
+          // The terminal in offline mode (nayax-deferred-all §13): the cards that will not go through.
+          notice: payBlocked ? null : (cardPay?.notice ?? null),
           amount: (cardPay?.amountAgorot ?? dueNow) / 100,
           canCancel: mayCancelPayment(flow) && !!cardPay?.canCancel,
           cancelling: !!cardPay?.cancelling,

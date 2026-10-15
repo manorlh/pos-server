@@ -141,6 +141,8 @@ export const NOT_REPORT_PAGES: PageExclusion[] = [
   { route: 'business-cards', reason: "digital business cards editor" },
   { route: 'business-cards/[id]', reason: "one business card editor" },
   { route: 'business-cards/enquiries', reason: "an inbox of leads from the digital cards, answered one by one, not a sales report" },
+  { route: 'cash-stations', reason: "device management: the kiosks' cash stations (PayLink units), their hosts, kiosks and state" },
+  { route: 'cash-stations/[id]', reason: "one cash station's device page: its state, change, journal, drawer and maintenance actions" },
   { route: 'catalog-admin', reason: "super-admin catalog maintenance tools" },
   { route: 'categories', reason: "catalog editing: departments" },
   { route: 'club', reason: "settings: the customer club" },

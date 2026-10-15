@@ -440,7 +440,8 @@ def test_a_voucher_is_never_counted_twice_nor_anothers(w):
 
 
 def test_the_methods_and_the_choice_step(w):
-    assert C.PAYMENT_METHODS == ("card", "voucher", "cash_at_till", "split_card")
+    # "cash_device": "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6).
+    assert C.PAYMENT_METHODS == ("card", "voucher", "cash_at_till", "cash_device", "split_card")
     _c, errors = C.validate_layer({"payment": {"methods": ["card", "voucher", "cash_at_till"]}})
     assert errors == []
     assert C.validate_config(C.resolve({"payment": {"methods": ["cash_at_till", "voucher"]}})) == []
