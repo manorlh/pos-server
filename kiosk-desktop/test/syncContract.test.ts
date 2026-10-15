@@ -462,6 +462,11 @@ function cashTx(over: Partial<CashTx>): CashTx {
     changeDueAgorot: 1260,
     changePaidAgorot: 1000,
     changeOwedAgorot: 260,
+    changeOwedAsk: false,
+    changeOwedAs: 'slip',
+    splitAsked: false,
+    splitAgorot: 0,
+    partialSince: null,
     refundDueAgorot: 0,
     refundPaidAgorot: 0,
     heldAgorot: 0,
@@ -508,6 +513,7 @@ describe('what the cash host sends (golden, applied by the server: tests/test_ca
       changeDueAgorot: 0,
       changePaidAgorot: 0,
       changeOwedAgorot: 0,
+      changeOwedAs: null,
       heldAgorot: 2000,
       heldReason: 'power_loss',
       paidOut: [],
@@ -534,6 +540,66 @@ describe('what the cash host sends (golden, applied by the server: tests/test_ca
       commandId: null,
     };
     golden('cash_journal', { entries: [journalTxEntry(cashTx({}), 'SIM00001'), journalTxEntry(held, 'SIM00001'), journalMoveEntry(refill)] });
+  });
+
+  it('the journal, stage 2 (§11.15): change owed as a credit / a tip, cash + card, a voided split held', () => {
+    const credit = cashTx({ txId: '6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e01', changeOwedAsk: true, changeOwedAs: 'credit', message: 'חסר עודף 2.6 ₪', seq: 11 });
+    const tip = cashTx({ txId: '6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e02', changeOwedAsk: true, changeOwedAs: 'tip', slipCode: 'C-9QXR4T', owedId: '6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e02', message: 'תודה!', seq: 10 });
+    const split = cashTx({
+      txId: '6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e03',
+      amountAgorot: 8900,
+      dueAgorot: 4000,
+      roundingAgorot: 0,
+      insertedAgorot: 4000,
+      inserted: [{ valueAgorot: 2000, kind: 'note', count: 2 }],
+      changeDueAgorot: 0,
+      changePaidAgorot: 0,
+      changeOwedAgorot: 0,
+      changeOwedAs: null,
+      splitAsked: true,
+      splitAgorot: 4000,
+      partialSince: CASH_T0 + 15_000,
+      paidOut: [],
+      error: null,
+      message: 'תודה!',
+      owedId: null,
+      slipCode: null,
+      seq: 12,
+    });
+    const voided = cashTx({
+      txId: '6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e04',
+      state: 'HELD',
+      outcome: 'paid',
+      amountAgorot: 8900,
+      dueAgorot: 2000,
+      roundingAgorot: 0,
+      insertedAgorot: 2000,
+      inserted: [{ valueAgorot: 2000, kind: 'note', count: 1 }],
+      changeDueAgorot: 0,
+      changePaidAgorot: 0,
+      changeOwedAgorot: 0,
+      changeOwedAs: null,
+      splitAsked: true,
+      splitAgorot: 2000,
+      heldAgorot: 2000,
+      heldReason: 'split_void',
+      paidOut: [],
+      error: { code: 'split_void', message: 'האשראי לא חויב — המזומן שהוכנס מוחזק ללקוח' },
+      message: 'תקלה — פנה לצוות',
+      owedId: '6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e04',
+      slipCode: 'C-HV7M3K',
+      documentId: null,
+      documentNumber: null,
+      seq: 14,
+    });
+    const entries = [credit, tip, split, voided].map((t) => journalTxEntry(t, 'SIM00001'));
+    expect(entries.map((e) => [e.changeOwedAsk, e.changeOwedAs, e.splitAgorot, e.state, e.heldReason])).toEqual([
+      [true, 'credit', 0, 'DONE', null],
+      [true, 'tip', 0, 'DONE', null],
+      [false, null, 4000, 'DONE', null],
+      [false, null, 2000, 'HELD', 'split_void'],
+    ]);
+    golden('cash_journal_stage2', { entries });
   });
 
   it('the heartbeat’s `cash` block: a station read from its device', async () => {

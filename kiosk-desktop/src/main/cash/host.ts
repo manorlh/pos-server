@@ -517,6 +517,13 @@ export class CashHost implements CashLanHost {
         return st.cancelTx(clientId, route.txId, body.reason);
       case 'tx_ack':
         return st.ackTx(clientId, route.txId, body);
+      case 'tx_split': {
+        const r = st.splitTx(clientId, route.txId);
+        if (r.status === 200) void st.tick();
+        return r;
+      }
+      case 'tx_finish':
+        return st.finishTx(clientId, route.txId);
     }
   }
 

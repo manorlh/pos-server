@@ -35,7 +35,7 @@ export interface CashSettings {
   maxChangeAgorot: number;
   /** "סכום מדויק" below this much change on hand. */
   exactChangeBelowAgorot: number;
-  /** "מדיניות חוסר עודף" — prevent always runs first; notify (default) owes and alerts; ask: stage 2. */
+  /** "מדיניות חוסר עודף" — prevent always runs first; notify (default) owes and alerts; ask: the customer chooses (§11.15א). */
   shortfall: ShortfallPolicy;
   /** Tills that get the cash alerts and the change owed ("שולם ללקוח"); [] = the shop's main till. */
   alertTills: string[];
@@ -45,8 +45,12 @@ export interface CashSettings {
   /** A kiosk that vanished mid-transaction: the host waits this long before refunding at the device. */
   refundGraceSec: number;
   rounding: CashRounding;
-  /** Cash + card for the rest (stage 2: read, not acted on yet). */
+  /** "להשלים באשראי" (§11.15ב, the kiosk's): cash first, the rest by card on the kiosk's terminal. */
   splitWithCard: boolean;
+  /** The station waits this long in PARTIAL for the card; then HELD (`split_timeout`) — never refunded (the card may be charged). */
+  splitWaitSec: number;
+  /** The kiosk's "חסר עודף" choice screen waits this long; then a slip (§11.15א). */
+  owedChoiceSec: number;
   /** By denomination (agorot): float target and low level. */
   floatLevels: Record<string, FloatLevel>;
   cashboxCapacity: { notes: number; coins: number };
@@ -86,6 +90,8 @@ export const DEFAULT_CASH_SETTINGS: CashSettings = {
   refundGraceSec: 120,
   rounding: 'nearest_10',
   splitWithCard: false,
+  splitWaitSec: 300,
+  owedChoiceSec: 45,
   floatLevels: {},
   cashboxCapacity: { notes: 500, coins: 1500 },
   lampMap: { busy: null, fault: null, ready: null, clients: {} },
@@ -117,6 +123,8 @@ export const CASH_PARAM_KEYS = {
   refundGraceSec: 'cashRefundGraceSec',
   rounding: 'cashRounding',
   splitWithCard: 'cashSplitWithCard',
+  splitWaitSec: 'cashSplitWaitSec',
+  owedChoiceSec: 'cashOwedChoiceSec',
   floatLevels: 'cashFloatLevels',
   cashboxCapacity: 'cashCashboxCapacity',
   lampMap: 'cashLampMap',
@@ -237,6 +245,8 @@ export function cashSettingsOf(raw: Record<string, unknown> | null | undefined):
     refundGraceSec: int(p[K.refundGraceSec], D.refundGraceSec, 10, 1_800),
     rounding: rounding === 'none' || rounding === 'nearest_10' ? rounding : D.rounding,
     splitWithCard: bool(p[K.splitWithCard], D.splitWithCard),
+    splitWaitSec: int(p[K.splitWaitSec], D.splitWaitSec, 60, 1_800),
+    owedChoiceSec: int(p[K.owedChoiceSec], D.owedChoiceSec, 10, 300),
     floatLevels: floats,
     cashboxCapacity: { notes: int(cap?.notes, D.cashboxCapacity.notes, 1, 100_000), coins: int(cap?.coins, D.cashboxCapacity.coins, 1, 100_000) },
     lampMap: { busy: output(lamps?.busy), fault: output(lamps?.fault), ready: output(lamps?.ready), clients },

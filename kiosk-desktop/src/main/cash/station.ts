@@ -63,7 +63,7 @@ import {
 } from '../../core/cash/paylinkApi';
 import { cashDue } from '../../core/cash/change';
 import { shekelText, type CashSettings } from '../../core/cash/settings';
-import { isOpen, piecesBetween, slipCodeOf, txView, type CancelReason, type CashTx, type Counters, type HeldReason, type Piece, type TxView } from '../../core/cash/tx';
+import { isOpen, OWED_CHOICES, piecesBetween, slipCodeOf, txView, type CancelReason, type CashTx, type Counters, type HeldReason, type OwedChoice, type Piece, type TxView } from '../../core/cash/tx';
 import type { CashJournal, CashMove, MoveKind, StationState } from './journal';
 
 export interface StationConfig {
@@ -108,6 +108,7 @@ const MESSAGES = {
   nothing: 'לא הוכנס כסף',
   held: 'תקלה — פנה לצוות',
   gone: 'הקיוסק לא מגיב — הכסף יוחזר בעוד רגע',
+  partial: 'השלימו את התשלום באשראי',
 } as const;
 
 /** How long a payout may report "ongoing" without progress before we look again (bills: settings.payoutTimeoutSec). */
@@ -395,7 +396,7 @@ export class CashStation {
       const t = l.txId ? this.d.journal.tx(l.txId) : null;
       if (t && isOpen(t.state)) {
         // The client vanished mid-transaction: acceptance closes now, refund after the grace (§4).
-        if (t.graceUntil === null && (t.state === 'LEASED' || t.state === 'ACCEPTING')) {
+        if (t.graceUntil === null && (t.state === 'LEASED' || t.state === 'ACCEPTING' || t.state === 'PARTIAL')) {
           t.graceUntil = now + this.cfg.settings.refundGraceSec * 1000;
           t.message = MESSAGES.gone;
           this.save(t, now);
@@ -427,7 +428,7 @@ export class CashStation {
         // Back in time: the transaction goes on.
         t.graceUntil = null;
         t.closedForGrace = false;
-        t.message = MESSAGES.insert;
+        t.message = t.state === 'PARTIAL' ? MESSAGES.partial : MESSAGES.insert;
         this.lastAcceptance = '';
         this.save(t, now);
       }
@@ -500,6 +501,11 @@ export class CashStation {
       changeDueAgorot: 0,
       changePaidAgorot: 0,
       changeOwedAgorot: 0,
+      changeOwedAsk: false,
+      changeOwedAs: null,
+      splitAsked: false,
+      splitAgorot: 0,
+      partialSince: null,
       refundDueAgorot: 0,
       refundPaidAgorot: 0,
       heldAgorot: 0,
@@ -548,7 +554,7 @@ export class CashStation {
     const t = this.d.journal.tx(txId);
     if (!t || t.stationId !== this.id || t.clientId !== clientId) return err(404, 'unknown_tx');
     const now = this.d.now();
-    if (t.state === 'LEASED' || t.state === 'ACCEPTING') {
+    if (t.state === 'LEASED' || t.state === 'ACCEPTING' || t.state === 'PARTIAL') {
       this.beginRefund(t, reason === 'timeout' ? 'timeout' : reason === 'kiosk' ? 'kiosk' : 'customer', now);
       return { status: 200, body: txView(t) };
     }
@@ -556,11 +562,27 @@ export class CashStation {
     return err(409, 'too_late', { message: 'הסכום כבר שולם', tx: txView(t) });
   }
 
-  ackTx(clientId: string, txId: string, body: { documentId?: unknown; documentNumber?: unknown; orderLabel?: unknown }): Reply {
+  ackTx(clientId: string, txId: string, body: { documentId?: unknown; documentNumber?: unknown; orderLabel?: unknown; changeOwedAs?: unknown; void?: unknown }): Reply {
     const t = this.d.journal.tx(txId);
     if (!t || t.stationId !== this.id || t.clientId !== clientId) return err(404, 'unknown_tx');
     if (t.state !== 'DONE' && t.state !== 'HELD') return err(409, 'not_final', { tx: txView(t) });
     const now = this.d.now();
+    // §11.15א: the customer's choice for the change owed — kept once; without `ask` always a slip.
+    if (t.state === 'DONE' && t.outcome === 'paid' && t.changeOwedAgorot > 0 && !t.changeOwedAs) {
+      const chosen = typeof body.changeOwedAs === 'string' && (OWED_CHOICES as readonly string[]).includes(body.changeOwedAs) ? (body.changeOwedAs as OwedChoice) : 'slip';
+      t.changeOwedAs = t.changeOwedAsk ? chosen : 'slip';
+      t.message = t.changeOwedAs === 'tip' ? MESSAGES.done : t.message;
+      t.acked = false; // saved below with the rest of the acknowledgement
+    }
+    // §11.15ב: the split sale's document was voided (the card was not charged) — the cash part is the customer's: held.
+    if (body.void === true && t.state === 'DONE' && t.outcome === 'paid' && (t.splitAgorot ?? 0) > 0) {
+      t.acked = true;
+      t.error = { code: 'split_void', message: 'האשראי לא חויב — המזומן שהוכנס מוחזק ללקוח' };
+      this.hold(t, 'split_void', t.splitAgorot, now);
+      this.leases = this.leases.filter((l) => l.txId !== txId);
+      for (const q of this.queue()) this.emit({ type: 'lease', lease: this.leaseView(q) }, q.clientId);
+      return { status: 200, body: txView(t) };
+    }
     if (!t.acked || (typeof body.documentId === 'string' && t.documentId !== body.documentId)) {
       t.acked = true;
       if (typeof body.documentId === 'string') t.documentId = body.documentId.slice(0, 80);
@@ -571,6 +593,43 @@ export class CashStation {
     }
     this.leases = this.leases.filter((l) => l.txId !== txId);
     for (const q of this.queue()) this.emit({ type: 'lease', lease: this.leaseView(q) }, q.clientId);
+    return { status: 200, body: txView(t) };
+  }
+
+  /**
+   * "להשלים באשראי" (§11.15ב): only while accepting with something in and something left — closed to money, settled
+   * (a coin in the air, the escrowed notes stacked), then PARTIAL unless the amount was completed meanwhile.
+   */
+  splitTx(clientId: string, txId: string): Reply {
+    const t = this.d.journal.tx(txId);
+    if (!t || t.stationId !== this.id || t.clientId !== clientId) return err(404, 'unknown_tx');
+    if (t.splitAsked || t.state === 'PARTIAL') return { status: 200, body: txView(t) };
+    if (t.state !== 'ACCEPTING') return err(409, 'not_accepting', { message: 'אי אפשר לפצל כעת', tx: txView(t) });
+    if (t.insertedAgorot <= 0) return err(409, 'nothing_inserted', { message: 'עוד לא הוכנס כסף' });
+    if (t.insertedAgorot >= t.dueAgorot) return err(409, 'not_accepting', { message: 'הסכום כבר הושלם', tx: txView(t) });
+    const now = this.d.now();
+    t.splitAsked = true;
+    t.state = 'SETTLING';
+    t.step = 'closing';
+    t.settleUntil = now + this.cfg.settings.settleMs;
+    t.message = MESSAGES.settling;
+    this.lastAcceptance = '';
+    this.save(t, now);
+    this.d.log(`[cash ${this.cfg.name}] tx ${txId}: split asked at ${t.insertedAgorot} of ${t.dueAgorot}`);
+    return { status: 200, body: txView(t) };
+  }
+
+  /** The card paid the rest (§11.15ב): the cash part is paid — DONE, no change. Repeats harmlessly. */
+  finishTx(clientId: string, txId: string): Reply {
+    const t = this.d.journal.tx(txId);
+    if (!t || t.stationId !== this.id || t.clientId !== clientId) return err(404, 'unknown_tx');
+    if (t.state === 'DONE' && t.outcome === 'paid' && (t.splitAgorot ?? 0) > 0) return { status: 200, body: txView(t) };
+    if (t.state !== 'PARTIAL') return err(409, 'not_partial', { message: 'העסקה אינה ממתינה לאשראי', tx: txView(t) });
+    const now = this.d.now();
+    t.changeDueAgorot = 0;
+    this.finishPaid(t, now);
+    this.save(t, now);
+    this.d.log(`[cash ${this.cfg.name}] tx ${txId}: split finished, cash ${t.splitAgorot}`);
     return { status: 200, body: txView(t) };
   }
 
@@ -705,6 +764,9 @@ export class CashStation {
       case 'PAYING_CHANGE':
         await this.payingChange(t, now);
         break;
+      case 'PARTIAL':
+        await this.partial(t, now);
+        break;
       case 'REFUNDING':
         await this.refunding(t, now);
         break;
@@ -811,6 +873,17 @@ export class CashStation {
       if (b && b.state === EXT_ESCROW_STACKING_PROBLEM) t.error = { code: 'device', message: 'בעיה בהעברת השטרות לקופסה' };
     }
     this.refreshMoney(t);
+    if (t.splitAsked && t.insertedAgorot < t.dueAgorot) {
+      // Cash + card: what went in is the cash part (no rounding on it); the card pays the rest.
+      t.state = 'PARTIAL';
+      t.step = null;
+      t.splitAgorot = t.insertedAgorot;
+      t.dueAgorot = t.insertedAgorot;
+      t.roundingAgorot = 0;
+      t.partialSince = now;
+      t.message = MESSAGES.partial;
+      return;
+    }
     t.changeDueAgorot = Math.max(0, t.insertedAgorot - t.dueAgorot);
     if (t.changeDueAgorot === 0) return this.finishPaid(t, now);
     t.state = 'PAYING_CHANGE';
@@ -907,9 +980,22 @@ export class CashStation {
       t.slipCode = slipCodeOf(t.txId);
       t.owedId = t.txId;
       t.error = { code: 'change_short', message: `עודף חייב ${shekelText(t.changeOwedAgorot)}` };
-      this.d.log(`[cash ${this.cfg.name}] tx ${t.txId}: change owed ${t.changeOwedAgorot}`);
+      // `ask` (§11.15א): the client asks the customer — a slip, a credit or a tip — before its document.
+      t.changeOwedAsk = this.cfg.settings.shortfall === 'ask';
+      this.d.log(`[cash ${this.cfg.name}] tx ${t.txId}: change owed ${t.changeOwedAgorot}${t.changeOwedAsk ? ' (the customer chooses)' : ''}`);
     }
     this.finishPaid(t, now);
+  }
+
+  /** PARTIAL: waiting for the card on the kiosk (renewing its lease); gone → refunded after the grace; too long → held. */
+  private async partial(t: CashTx, now: number) {
+    await this.applyAcceptance(t, null);
+    this.refreshMoney(t);
+    if (t.graceUntil !== null && now >= t.graceUntil) return this.beginRefund(t, 'client_gone', now);
+    if (t.partialSince !== null && now - t.partialSince > this.cfg.settings.splitWaitSec * 1000) {
+      t.error = { code: 'timeout', message: 'האשראי לא הושלם בזמן — המזומן מוחזק' };
+      this.hold(t, 'split_timeout', t.splitAgorot, now);
+    }
   }
 
   private finishPaid(t: CashTx, now: number) {
@@ -917,7 +1003,12 @@ export class CashStation {
     t.outcome = 'paid';
     t.step = null;
     t.doneAt = now;
-    t.message = t.changeOwedAgorot > 0 ? `עודף חייב ${shekelText(t.changeOwedAgorot)} — הפתק יודפס` : MESSAGES.done;
+    t.message =
+      t.changeOwedAgorot > 0
+        ? this.cfg.settings.shortfall === 'ask'
+          ? `חסר עודף ${shekelText(t.changeOwedAgorot)}`
+          : `עודף חייב ${shekelText(t.changeOwedAgorot)} — הפתק יודפס`
+        : MESSAGES.done;
   }
 
   private async refunding(t: CashTx, now: number) {

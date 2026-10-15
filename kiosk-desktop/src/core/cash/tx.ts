@@ -7,6 +7,8 @@
  *   LEASED ──start──▶ ACCEPTING ──due reached──▶ SETTLING ──▶ PAYING_CHANGE ──▶ DONE (paid)
  *                         │                          (no change) ─────────────────▶ DONE (paid)
  *                         └─cancel / timeout / client gone─▶ REFUNDING ──▶ DONE (refunded | nothing_inserted)
+ *   cash + card (§11.15ב): ACCEPTING ──split──▶ SETTLING ──▶ PARTIAL ──finish──▶ DONE (paid, splitAgorot)
+ *                                                               └─cancel / client gone─▶ REFUNDING
  *   any state ──power cut / crash / refund failed──▶ HELD (heldAgorot = what the customer is owed)
  *
  * Never auto-paid after a power cut: an open transaction found at start becomes HELD (§4).
@@ -14,12 +16,15 @@
  * Pure.
  */
 
-export type TxState = 'LEASED' | 'ACCEPTING' | 'SETTLING' | 'PAYING_CHANGE' | 'REFUNDING' | 'DONE' | 'HELD';
+export type TxState = 'LEASED' | 'ACCEPTING' | 'SETTLING' | 'PAYING_CHANGE' | 'PARTIAL' | 'REFUNDING' | 'DONE' | 'HELD';
 export type TxOutcome = 'paid' | 'refunded' | 'nothing_inserted';
 export type CancelReason = 'customer' | 'timeout' | 'idle' | 'client_gone' | 'kiosk' | 'device' | 'staff';
-export type HeldReason = 'power_loss' | 'refund_short' | 'client_gone_short' | 'unacked' | 'device_fault' | 'consistency';
+export type HeldReason = 'power_loss' | 'refund_short' | 'client_gone_short' | 'unacked' | 'device_fault' | 'consistency' | 'split_timeout' | 'split_void';
+/** §11.15א: what the customer chose for change the station could not pay. */
+export type OwedChoice = 'slip' | 'credit' | 'tip';
+export const OWED_CHOICES: readonly OwedChoice[] = ['slip', 'credit', 'tip'];
 
-export const OPEN_STATES: readonly TxState[] = ['LEASED', 'ACCEPTING', 'SETTLING', 'PAYING_CHANGE', 'REFUNDING'];
+export const OPEN_STATES: readonly TxState[] = ['LEASED', 'ACCEPTING', 'SETTLING', 'PAYING_CHANGE', 'PARTIAL', 'REFUNDING'];
 export const FINAL_STATES: readonly TxState[] = ['DONE', 'HELD'];
 
 export function isOpen(s: TxState): boolean {
@@ -70,6 +75,15 @@ export interface CashTx {
   changePaidAgorot: number;
   /** Change that could not be paid (notify policy: a "עודף חייב" slip, the manager and the alert tills told). */
   changeOwedAgorot: number;
+  /** `ask` (§11.15א): the client asks the customer what to do with the change owed before its document. */
+  changeOwedAsk: boolean;
+  /** The customer's choice as the client acknowledged it (null: not yet / none owed). */
+  changeOwedAs: OwedChoice | null;
+  /** Cash + card (§11.15ב): the client asked to pay the rest by card (`split`) — what the cash paid once PARTIAL. */
+  splitAsked: boolean;
+  splitAgorot: number;
+  /** When it became PARTIAL (the `cashSplitWaitSec` limit). */
+  partialSince: number | null;
   refundDueAgorot: number;
   refundPaidAgorot: number;
   /** What the customer is owed and the device kept (power cut, a refund that could not be paid). */
@@ -130,6 +144,9 @@ export interface TxView {
   changeDueAgorot: number;
   changePaidAgorot: number;
   changeOwedAgorot: number;
+  changeOwedAsk: boolean;
+  changeOwedAs: OwedChoice | null;
+  splitAgorot: number;
   refundDueAgorot: number;
   refundPaidAgorot: number;
   heldAgorot: number;
@@ -171,6 +188,9 @@ export function txView(t: CashTx): TxView {
     changeDueAgorot: t.changeDueAgorot,
     changePaidAgorot: t.changePaidAgorot,
     changeOwedAgorot: t.changeOwedAgorot,
+    changeOwedAsk: t.changeOwedAsk ?? false,
+    changeOwedAs: t.changeOwedAs ?? null,
+    splitAgorot: t.splitAgorot ?? 0,
     refundDueAgorot: t.refundDueAgorot,
     refundPaidAgorot: t.refundPaidAgorot,
     heldAgorot: t.heldAgorot,

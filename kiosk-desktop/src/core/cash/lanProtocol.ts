@@ -88,6 +88,9 @@ export const CASH_ERRORS = {
   tx_conflict: 409,
   too_late: 409,
   not_final: 409,
+  not_accepting: 409,
+  nothing_inserted: 409,
+  not_partial: 409,
   amount: 400,
   json: 400,
   too_large: 413,
@@ -103,7 +106,7 @@ export type CashRoute =
   | { kind: 'lease'; stationId: string }
   | { kind: 'release'; stationId: string; leaseId: string }
   | { kind: 'tx_get'; stationId: string; txId: string }
-  | { kind: 'tx_start' | 'tx_cancel' | 'tx_ack'; stationId: string; txId: string }
+  | { kind: 'tx_start' | 'tx_cancel' | 'tx_ack' | 'tx_split' | 'tx_finish'; stationId: string; txId: string }
   | { kind: 'events'; stationId: string };
 
 /** "METHOD /path" → the route (null: not one). */
@@ -127,6 +130,9 @@ export function matchRoute(method: string, path: string): CashRoute | null {
     if (m === 'POST' && rest.length === 3 && rest[2] === 'start') return { kind: 'tx_start', stationId, txId };
     if (m === 'POST' && rest.length === 3 && rest[2] === 'cancel') return { kind: 'tx_cancel', stationId, txId };
     if (m === 'POST' && rest.length === 3 && rest[2] === 'ack') return { kind: 'tx_ack', stationId, txId };
+    // Cash + card (§11.15ב).
+    if (m === 'POST' && rest.length === 3 && rest[2] === 'split') return { kind: 'tx_split', stationId, txId };
+    if (m === 'POST' && rest.length === 3 && rest[2] === 'finish') return { kind: 'tx_finish', stationId, txId };
   }
   return null;
 }
