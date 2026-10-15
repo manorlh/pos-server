@@ -184,15 +184,27 @@ def test_the_migration_is_the_single_head_on_the_release():
     assert script.get_revision("c5e8a2f19d47").down_revision == "4ff6c2ab6d7c"
 
 
+_NO_PROXY = object()
+
+
 def _render(*args) -> str:
     """`alembic upgrade --sql` from this checkout's own path — `absolute()`, never `resolve()` (a subst drive such
-    as P: resolves to the long path, where Windows cannot open the revisions)."""
+    as P: resolves to the long path, where Windows cannot open the revisions).
+
+    Always in PostgreSQL's dialect (production's), whatever database the tests run on: env.py takes the URL from
+    the settings, and CI's SQLite would render UUID as CHAR(32). Offline, nothing connects to it. Afterwards
+    alembic's `context` / `op` proxies are put back as they were: left as None, other tests' migrations that ask
+    `context.is_offline_mode()` outside an environment get AttributeError instead of the NameError they expect."""
     import io
     import logging
     from pathlib import Path
 
+    import alembic.context
+    import alembic.op
     from alembic import command
     from alembic.config import Config
+
+    from app.config import get_settings
 
     here = Path(__file__).absolute().parents[1]
     buf = io.StringIO()
@@ -201,9 +213,19 @@ def _render(*args) -> str:
     root = logging.getLogger()
     saved = {n: lg.disabled for n, lg in logging.Logger.manager.loggerDict.items() if isinstance(lg, logging.Logger)}
     handlers, level = list(root.handlers), root.level
+    settings = get_settings()
+    url = settings.database_url
+    proxies = {m: vars(m).get("_proxy", _NO_PROXY) for m in (alembic.context, alembic.op)}
     try:
+        settings.database_url = "postgresql://render-only/offline"
         command.upgrade(cfg, *args, sql=True)
     finally:
+        settings.database_url = url
+        for module, proxy in proxies.items():
+            if proxy is _NO_PROXY:
+                vars(module).pop("_proxy", None)
+            else:
+                vars(module)["_proxy"] = proxy
         for n, disabled in saved.items():
             logging.getLogger(n).disabled = disabled
         root.handlers[:] = handlers
