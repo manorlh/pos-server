@@ -1,20 +1,25 @@
 /**
  * Temporary events ("אירועים", docs/SPEC_EVENTS.md) — the pure rules the dashboard
  * applies to the event report: re-bucketing the 15-minute timeline into 30 / 60 minutes,
- * clock labels in the event's timezone, the create form's validation, insight ordering.
+ * clock labels in the event's timezone, the create form's validation, insight ordering, and
+ * the reconciliation as the designed PDF draws it.
  *
  * Kept free of React and of the `@/` alias so `npm test` can compile and run them on
  * their own (src/lib/eventReport.test.ts).
  */
 
 import { formatShortDateTime, formatTime } from './format';
+import type { ReportReconcile } from './designedReport';
 import type {
   BucketMinutes,
   EventFormValues,
   EventInsight,
   EventThresholds,
   InsightLevel,
+  ReconcileStatus,
   TimelineBucket,
+  TransmissionReconciliation,
+  ZReconciliation,
 } from './eventTypes';
 
 export const MAX_EVENT_DAYS = 14;
@@ -168,4 +173,48 @@ export function countByLevel(insights: EventInsight[]): Record<InsightLevel, num
 export function compareIds(selected: Iterable<string>): string | null {
   const ids = [...new Set(selected)].filter(Boolean);
   return ids.length >= 2 ? ids.join(',') : null;
+}
+
+/** The words of the designed PDF's reconciliation (he.json `events.report.pdf`). */
+export interface EventPdfReconcileWords {
+  title: string;
+  note: string;
+  docs: string;
+  docsSub: (count: number) => string;
+  inZ: string;
+  inZSub: (zs: number, pendingNet: number) => string;
+  card: string;
+  cardSub: (cardAmount: number) => string;
+  docsVsZ: string;
+  cardVsTx: string;
+  status: (status: ReconcileStatus) => string;
+}
+
+const cents = (values: number[]) => Math.round(values.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) * 100) / 100;
+
+/**
+ * The event's own reconciliation as the designed PDF's section (P:\specs\reports-designed-pdf.md §9):
+ * the same money in three layers — the event's documents, what is already in a Z, the card
+ * legs transmitted — and the server's two verdicts (documents vs Z, card vs transmissions).
+ */
+export function eventPdfReconcile(
+  rec: { z: ZReconciliation; transmissions: TransmissionReconciliation },
+  salesCount: number,
+  words: EventPdfReconcileWords,
+): ReportReconcile {
+  const pending = cents(rec.z.tills.map((t) => t.pendingZ.net));
+  const card = cents(rec.transmissions.tills.map((t) => t.cardLegs.amount));
+  return {
+    title: words.title,
+    note: words.note,
+    cards: [
+      { label: words.docs, value: cents(rec.z.tills.map((t) => t.eventNet)), kind: 'money', sub: words.docsSub(salesCount), icon: 'receipt' },
+      { label: words.inZ, value: cents(rec.z.tills.map((t) => t.inZ.net)), kind: 'money', sub: words.inZSub(rec.z.zReports.length, pending), icon: 'calendar' },
+      { label: words.card, value: cents(rec.transmissions.tills.map((t) => t.transmitted.amount)), kind: 'money', sub: words.cardSub(card), icon: 'card' },
+    ],
+    checks: [
+      { label: words.docsVsZ, status: rec.z.status, text: words.status(rec.z.status) },
+      { label: words.cardVsTx, status: rec.transmissions.status, text: words.status(rec.transmissions.status) },
+    ],
+  };
 }

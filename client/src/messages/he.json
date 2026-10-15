@@ -12860,7 +12860,8 @@
       "perActiveHour": "לשעה פעילה",
       "activeMinutes": "זמן פעיל (דק׳)",
       "tipPct": "אחוז טיפ",
-      "refundsCount": "מס׳ זיכויים"
+      "refundsCount": "מס׳ זיכויים",
+      "pdf": {"duration": "משך", "tills": "קופות", "zs": "סגירות Z", "reconTitle": "התאמה: עסקאות, Z ואשראי", "reconNote": "אותו כסף בשלוש שכבות: מה שנרשם כעסקאות באירוע, מה שכבר נסגר ב-Z, והאשראי ששודר. עסקאות שעוד לא נסגרו ב-Z מופיעות כ״ממתין״.", "docs": "עסקאות האירוע", "docsSub": "{count} עסקאות", "inZ": "נסגר ב-Z", "inZSub": "{zs} סגירות · ממתין {pending}", "card": "אשראי ששודר", "cardSub": "מתוך {amount} באשראי", "docsVsZ": "עסקאות מול Z", "cardVsTx": "אשראי מול שידורים"}
     },
     "listExport": {"event": "אירוע", "duration": "משך (דק׳)", "tills": "קופות", "tillNames": "שמות הקופות", "alerts": "התראות", "confirmedAt": "אושר ב", "events": "אירועים", "confirmed": "מאושרים", "drafts": "טיוטות", "net": "מכירות נטו (מאושרים)", "sales": "עסקאות (מאושרים)", "noteLabel": "הערה", "draftsNote": "טיוטה מחושבת חי — הסכומים שלה בדוח האירוע", "netByEvent": "מכירות נטו לפי אירוע"}
   },
