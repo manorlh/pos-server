@@ -582,12 +582,14 @@ def test_an_independent_kiosk_is_told_to_reach_the_shops_printers_through_the_cl
 
 
 def _paid_order(w, local_id="o1", label="A-1", bon="failed"):
-    from datetime import date
     from app.schemas.kiosk import KioskOrdersIn
+    from app.services.kiosk_control import business_today
 
+    # The shop's business day, as the summary reads it — not the machine's date.today(): on a UTC
+    # runner the two differ between local midnight and UTC midnight (00:00–03:00 in Israel).
     body = {
         "localId": local_id, "transactionId": "t1", "transactionNumber": "30000001",
-        "pickupNumber": 1, "pickupLabel": label, "businessDate": date.today().isoformat(),
+        "pickupNumber": 1, "pickupLabel": label, "businessDate": business_today(w.db, w.kiosk.tenant_id).isoformat(),
         "serviceType": "take_away", "fulfillmentMode": "BON", "configVersion": "abc",
         "customerName": None, "customerPhone": None, "itemCount": 1, "totalAgorot": 100,
         "tipAgorot": 0, "paidAt": datetime.now(timezone.utc).isoformat(), "bonStatus": bon,
