@@ -25,6 +25,14 @@ import { updateLine } from '../roles/updateText';
 import { DESKTOP_EXIT_LABEL, DesktopExitButton, DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
 import { PERMISSION_LABEL } from '../../core/desktopExit';
 
+/** CashMag on the manager's screen: where the server's address came from, what an unclear payment was. */
+const CASHMAG_SOURCE: Record<string, string> = { cloud: 'מהענן', local: 'מקומי (kiosk.json)', default: 'לא מוגדר' };
+const CASHMAG_OUTCOME: Record<string, string> = {
+  held: 'נשאר כסף במכשיר בלי מכירה',
+  unknown: 'התשובה מהשרת אבדה — לא ידוע מה המכשיר עשה',
+  interrupted: 'הקיוסק נסגר באמצע התשלום',
+};
+
 export function StaffLayer({
   m,
   view,
@@ -264,6 +272,37 @@ function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: 
           ))}
           <Btn m={m} onClick={() => act({ type: 'cashRecheck' })}>
             בדיקה מול מכשיר המזומן
+          </Btn>
+        </Panel>
+      ) : null}
+      {info.cashmag ? (
+        <Panel m={m} title="מכשיר מזומן CashMag">
+          <div>
+            שרת <span dir="ltr">{info.cashmag.address}</span> · {CASHMAG_SOURCE[info.cashmag.sources.host] ?? ''}
+          </div>
+          <div className="text-xs">
+            שם הקיוסק בשרת: {info.cashmag.terminal} · קוד משתמש: {info.cashmag.userCodeSet ? 'מוגדר' : 'לא מוגדר'} · פרוטוקול {info.cashmag.protocol}
+          </div>
+          <div className={info.cashmag.usable ? 'text-emerald-700' : 'text-red-600'}>{info.cashmag.usable ? 'זמין' : (info.cashmag.reason ?? 'לא זמין')}</div>
+          {info.cashmag.lastError ? <div className="text-xs text-red-600">{info.cashmag.lastError}</div> : null}
+          {info.cashmag.unresolved.map((u) => (
+            <div key={u.txId} className="space-y-1 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
+              <div className="font-bold">
+                תשלום CashMag לבירור · {shekels(u.amountAgorot)} · {new Date(u.startedAt).toLocaleTimeString('he-IL')} · עסקה <span dir="ltr">{u.txShort}</span>
+              </div>
+              <div>
+                {CASHMAG_OUTCOME[u.outcome ?? ''] ?? u.outcome}
+                {u.heldAgorot > 0 ? ` · במכשיר ${shekels(u.heldAgorot)}` : ''}
+                {u.reason ? <span dir="ltr"> ({u.reason})</span> : null}
+              </div>
+              <div>בדקו במכשיר אם נשאר כסף, טפלו בלקוח, ואז סמנו "טופל" — עד אז אין תשלום ב-CashMag בקיוסק.</div>
+              <Btn m={m} onClick={() => act({ type: 'cashmagAcknowledge', txId: u.txId })}>
+                טופל
+              </Btn>
+            </div>
+          ))}
+          <Btn m={m} onClick={() => act({ type: 'cashmagCheck' })}>
+            בדיקת חיבור לשרת CashMag
           </Btn>
         </Panel>
       ) : null}

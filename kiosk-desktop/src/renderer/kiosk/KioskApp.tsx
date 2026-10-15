@@ -801,6 +801,8 @@ export function KioskApp({ view }: { view: KioskView }) {
             // "חסר עודף במכשיר" and "להשלים באשראי" (P:/specs/cash-paylink.md §11.15).
             onCashOwedChoice: kiosk.cashOwedChoice ? (choice) => void kiosk.cashOwedChoice?.(choice) : undefined,
             onCashSplit: kiosk.cashSplit ? () => void kiosk.cashSplit?.() : undefined,
+            // CashMag's question (P:/specs/cashmag-windows.md): the customer's answer.
+            onCashQuestion: kiosk.cashQuestion ? (confirm) => void kiosk.cashQuestion?.(confirm) : undefined,
           }
         : undefined,
     success:
