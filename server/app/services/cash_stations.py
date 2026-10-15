@@ -44,7 +44,9 @@ from app.models.cash_station import (
     FINAL_STATES,
     MOVEMENT_KINDS,
     OUTCOMES,
+    OWED_CHOICES,
     TX_STATES,
+    CashCreditRedemption,
     CashHostCommand,
     CashStation,
     CashStationMovement,
@@ -656,6 +658,11 @@ def _apply_tx(db: Session, host: POSMachine, stations: Dict[Any, CashStation], e
     row.document_id = _str(entry.get("documentId"), 64) or row.document_id
     row.document_number = _str(entry.get("documentNumber"), 64) or row.document_number
     row.acked = entry.get("acked") is True
+    # Stage 2 (§11.15): the customer's choice for change owed under `ask`, and a split's cash part.
+    row.change_owed_ask = entry.get("changeOwedAsk") is True
+    choice = entry.get("changeOwedAs")
+    row.change_owed_as = choice if choice in OWED_CHOICES else None
+    row.split_agorot = _int(entry.get("splitAgorot"))
     row.seq = seq
     row.data = _tx_data(entry)
     if state in FINAL_STATES:
@@ -742,9 +749,24 @@ def apply_journal(db: Session, host: POSMachine, entries: Sequence[Any], *, now:
 # ── Owed items (§11.8) ─────────────────────────────────────────────────────────
 
 
+#: `owed_wanted`: the customer has not chosen yet (`ask`, the kiosk's ack still to come) — nothing changes.
+WAIT_CHOICE = ("wait", 0)
+
+
 def owed_wanted(tx: CashStationTx) -> Optional[Tuple[str, int]]:
-    """What the transaction leaves owed to the customer now: change owed (paid) or a held credit."""
+    """
+    What the transaction leaves owed to the customer now: change owed (paid) — as a slip for a till, or kept as a
+    credit (`change_credit`), or nothing when left as a tip (§11.15א) — or a held credit. `WAIT_CHOICE` while the
+    customer is still choosing (`ask`, not acknowledged).
+    """
     if tx.state == "DONE" and tx.outcome == "paid" and (tx.change_owed_agorot or 0) > 0:
+        choice = tx.change_owed_as
+        if choice == "tip":
+            return None
+        if choice == "credit":
+            return "change_credit", int(tx.change_owed_agorot)
+        if tx.change_owed_ask and choice is None and not tx.acked:
+            return WAIT_CHOICE
         return "change_owed", int(tx.change_owed_agorot)
     if tx.state == "HELD" and (tx.held_agorot or 0) > 0:
         return "held_credit", int(tx.held_agorot)
@@ -763,9 +785,14 @@ def sync_owed(db: Session, tx: CashStationTx, station: Optional[CashStation], *,
     if tx.owed_status == "resolved":
         return
     wanted = owed_wanted(tx)
+    if wanted == WAIT_CHOICE:
+        return
     if wanted is None:
         if tx.owed_status == "open":
-            resolve_owed(db, tx, resolution="host_resolved", now=now, note="שרת המזומן סגר את העסקה")
+            if tx.change_owed_as == "tip":
+                resolve_owed(db, tx, resolution="tip", now=now, note="הלקוח השאיר את העודף כטיפ")
+            else:
+                resolve_owed(db, tx, resolution="host_resolved", now=now, note="שרת המזומן סגר את העסקה")
         return
     kind, amount = wanted
     if tx.owed_status == "open" and tx.owed_kind == kind:
@@ -816,6 +843,8 @@ RESOLUTION_LABELS = {
     "written_off": "נמחק",
     "matched_document": "מסמך הקיוסק התקבל",
     "host_resolved": "נסגר בשרת המזומן",
+    "redeemed": "מומש בהזמנה",
+    "tip": "הושאר כטיפ",
 }
 
 
@@ -903,7 +932,11 @@ def owed_items_for_till(db: Session, till: POSMachine) -> List[Dict[str, Any]]:
         return []
     rows = (
         db.query(CashStationTx)
-        .filter(CashStationTx.station_id.in_(list(stations)), CashStationTx.owed_status == "open")
+        .filter(
+            CashStationTx.station_id.in_(list(stations)), CashStationTx.owed_status == "open",
+            # A credit for a next order is redeemed by its code, never paid out of a till's drawer (§11.15א).
+            CashStationTx.owed_kind != "change_credit",
+        )
         .order_by(CashStationTx.owed_at, CashStationTx.tx_id)
         .all()
     )
@@ -927,7 +960,7 @@ def heartbeat_owed(db: Session, till: POSMachine) -> Optional[Dict[str, Any]]:
     if not db.query(CashStation.id).filter(CashStation.shop_id == till.shop_id).first():
         return None
     if not db.query(CashStationTx.tx_id).filter(
-        CashStationTx.shop_id == till.shop_id, CashStationTx.owed_status == "open",
+        CashStationTx.shop_id == till.shop_id, CashStationTx.owed_status == "open", CashStationTx.owed_kind != "change_credit",
     ).first():
         return {"count": 0, "etag": owed_etag([])}
     if not stations_alerting(db, till):
@@ -1058,12 +1091,45 @@ def match_documents(db: Session, transaction_ids: Sequence[Any], *, now: Optiona
     return closed
 
 
+def confirm_credit_legs(db: Session, transaction_ids: Sequence[Any], *, now: Optional[datetime] = None) -> int:
+    """
+    Documents just stored: each `cash_credit` leg (`cashCredit {code, redemptionId}`, §11.15א) confirms its redemption —
+    linked to the document, never released after. Returns how many were confirmed. The caller commits.
+    """
+    from app.models.transaction_payment import TransactionPayment
+
+    ids = [i for i in transaction_ids if i is not None]
+    if not ids:
+        return 0
+    now = _now(now)
+    confirmed = 0
+    for leg in db.query(TransactionPayment).filter(TransactionPayment.transaction_id.in_(ids), TransactionPayment.method == "cash_credit").all():
+        meta = leg.nayax_meta if isinstance(leg.nayax_meta, dict) else {}
+        block = meta.get("cashCredit") if isinstance(meta.get("cashCredit"), dict) else {}
+        ident = _uuid(block.get("redemptionId"))
+        row = db.get(CashCreditRedemption, ident) if ident is not None else None
+        if row is None or row.status == "confirmed":
+            continue
+        tx = db.get(CashStationTx, row.tx_id)
+        if row.status == "released" and tx is not None:
+            # Released and then paid with all the same: taken again (it was spent).
+            row.status = "confirmed"
+            _credit_settle(db, tx, now)
+        row.status = "confirmed"
+        row.document_id = leg.transaction_id
+        row.confirmed_at = now
+        confirmed += 1
+    db.flush()
+    return confirmed
+
+
 def match_documents_safely(db: Session, transaction_ids: Sequence[Any]) -> None:
     """`match_documents` after a push committed; never fails it (a later journal entry finds it again)."""
     try:
         if not ids_with_cash(db, transaction_ids):
             return
         match_documents(db, transaction_ids)
+        confirm_credit_legs(db, transaction_ids)
         db.commit()
     except Exception:  # noqa: BLE001
         db.rollback()
@@ -1078,9 +1144,9 @@ def ids_with_cash(db: Session, transaction_ids: Sequence[Any]) -> bool:
     if not ids:
         return False
     for leg in db.query(TransactionPayment).filter(
-        TransactionPayment.transaction_id.in_(ids), TransactionPayment.method == "cash",
+        TransactionPayment.transaction_id.in_(ids), TransactionPayment.method.in_(("cash", "cash_credit")),
     ).all():
-        if cash_device_of(leg) is not None:
+        if leg.method == "cash_credit" or cash_device_of(leg) is not None:
             return True
     return False
 
@@ -1112,7 +1178,185 @@ def clean_cash_device(raw: Any) -> Optional[Dict[str, Any]]:
         "changeOwedAgorot": _int(raw.get("changeOwedAgorot")),
         "roundingAgorot": _int(raw.get("roundingAgorot"), -99, 99),
         "slipCode": _str(raw.get("slipCode"), 32),
+        # Stage 2 (§11.15): what the customer chose for change owed; a split's cash part.
+        **({"changeOwedAs": raw["changeOwedAs"]} if raw.get("changeOwedAs") in OWED_CHOICES else {}),
+        **({"splitAgorot": _int(raw.get("splitAgorot"))} if _int(raw.get("splitAgorot")) > 0 else {}),
     }
+
+
+def clean_cash_credit(raw: Any) -> Optional[Dict[str, Any]]:
+    """A document leg's `cashCredit` ({code, redemptionId}, §11.15א), field by field; nothing usable — None."""
+    if not isinstance(raw, dict):
+        return None
+    code = credit_code_of(raw.get("code"))
+    ident = _uuid(raw.get("redemptionId"))
+    if code is None and ident is None:
+        return None
+    return {"code": code, "redemptionId": str(ident) if ident else None}
+
+
+# ── Cash credits (§11.15א) ─────────────────────────────────────────────────────
+
+_CREDIT_BODY = re.compile(r"^[A-Z0-9]{6}$")
+
+
+def credit_code_of(raw: Any) -> Optional[str]:
+    """"CC:C-K7Q3MX", "C-K7Q3MX", "ck7q3mx" → "C-K7Q3MX"; anything else None."""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip().upper()
+    if text.startswith("CC:"):
+        text = text[3:].strip()
+    text = text.replace(" ", "").replace("_", "")
+    if not text.startswith("C"):
+        return None
+    body = text[2:] if text[1:2] == "-" else text[1:]
+    return f"C-{body}" if _CREDIT_BODY.match(body) else None
+
+
+def _company_of_shop(db: Session, shop_id: Any) -> Any:
+    from app.models.shop import Shop
+
+    shop = db.get(Shop, shop_id) if shop_id is not None else None
+    return shop.company_id if shop is not None else None
+
+
+def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStationTx, CashStation]:
+    """The credit [code] for a till / kiosk of the same company as its station; 404 `credit_not_found` otherwise."""
+    norm = credit_code_of(code)
+    row = None
+    if norm is not None:
+        row = (
+            db.query(CashStationTx)
+            .filter(CashStationTx.tenant_id == machine.tenant_id, CashStationTx.slip_code == norm,
+                    CashStationTx.owed_kind == "change_credit", CashStationTx.owed_status != "none")
+            .order_by(CashStationTx.owed_at.desc())
+            .first()
+        )
+    station = db.get(CashStation, row.station_id) if row is not None else None
+    if row is None or station is None:
+        raise _refuse(status.HTTP_404_NOT_FOUND, "credit_not_found", "הזיכוי לא נמצא.")
+    company = station.company_id or _company_of_shop(db, station.shop_id)
+    if company is not None and _company_of_shop(db, machine.shop_id) != company:
+        raise _refuse(status.HTTP_404_NOT_FOUND, "credit_not_found", "הזיכוי לא נמצא.")
+    return row, station
+
+
+def credit_taken(db: Session, tx: CashStationTx) -> int:
+    rows = db.query(CashCreditRedemption).filter(CashCreditRedemption.tx_id == tx.tx_id, CashCreditRedemption.status != "released").all()
+    return sum(int(r.amount_agorot or 0) for r in rows)
+
+
+def credit_remaining(db: Session, tx: CashStationTx) -> int:
+    if tx.owed_kind != "change_credit" or (tx.owed_status == "resolved" and tx.resolution != "redeemed"):
+        return 0
+    return max(0, int(tx.owed_agorot or 0) - credit_taken(db, tx))
+
+
+def credit_out(db: Session, tx: CashStationTx, station: Optional[CashStation]) -> Dict[str, Any]:
+    remaining = credit_remaining(db, tx)
+    if tx.owed_status == "resolved" and tx.resolution not in ("redeemed",):
+        state = "written_off" if tx.resolution == "written_off" else "used"
+    else:
+        state = "open" if remaining > 0 else "used"
+    return {
+        "code": tx.slip_code,
+        "amountAgorot": int(tx.owed_agorot or 0),
+        "remainingAgorot": remaining,
+        "status": state,
+        "stationName": station.name if station is not None else None,
+        "orderLabel": tx.order_label,
+        "createdAt": _iso(tx.owed_at or tx.created_at),
+    }
+
+
+def redemption_out(row: CashCreditRedemption) -> Dict[str, Any]:
+    return {
+        "id": str(row.id), "code": row.code, "amountAgorot": int(row.amount_agorot or 0), "status": row.status,
+        "machineId": str(row.machine_id) if row.machine_id else None,
+        "documentId": str(row.document_id) if row.document_id else None,
+        "at": _iso(row.created_at),
+    }
+
+
+def _credit_settle(db: Session, tx: CashStationTx, now: datetime) -> None:
+    """Nothing left: the credit is used (`redeemed`); something back on it (a release): open again."""
+    left = max(0, int(tx.owed_agorot or 0) - credit_taken(db, tx))
+    if left == 0 and tx.owed_status == "open":
+        resolve_owed(db, tx, resolution="redeemed", now=now, note="הזיכוי מומש בהזמנה")
+    elif left > 0 and tx.owed_status == "resolved" and tx.resolution == "redeemed":
+        tx.owed_status = "open"
+        tx.resolved_at = None
+        tx.resolution = None
+        tx.resolution_note = None
+        db.flush()
+
+
+def lookup_credit(db: Session, machine: POSMachine, code: Any) -> Dict[str, Any]:
+    """`GET /sync/{m}/cash/credits/{code}` (§11.15א)."""
+    tx, station = _credit_of(db, machine, code)
+    return {"credit": credit_out(db, tx, station)}
+
+
+def redeem_credit(db: Session, machine: POSMachine, code: Any, body: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    `POST /sync/{m}/cash/credits/{code}/redeem` (§11.15א): [amountAgorot] of the credit for an order, by the device's
+    `redemptionId` (the same again → the same answer). The caller commits.
+    """
+    now = _now(now)
+    ident = _uuid(body.get("redemptionId"))
+    if ident is None:
+        raise _refuse(status.HTTP_422_UNPROCESSABLE_ENTITY, "redemption_id", "חסר מזהה מימוש (redemptionId).")
+    amount = _opt_int(body.get("amountAgorot"), 0, AGOROT_MAX)
+    tx, station = _credit_of(db, machine, code)
+    existing = db.get(CashCreditRedemption, ident)
+    if existing is not None:
+        if existing.tx_id != tx.tx_id or (amount is not None and int(existing.amount_agorot or 0) != amount):
+            raise _refuse(status.HTTP_409_CONFLICT, "redemption_conflict", "מזהה המימוש כבר שימש לזיכוי אחר.")
+        return {"ok": True, "redemption": redemption_out(existing), "credit": credit_out(db, tx, station)}
+    if amount is None or amount < 1:
+        raise _refuse(status.HTTP_400_BAD_REQUEST, "amount", "סכום לא תקין.")
+    remaining = credit_remaining(db, tx)
+    if remaining <= 0:
+        raise _refuse(status.HTTP_409_CONFLICT, "credit_used", "הזיכוי כבר נוצל.")
+    if amount > remaining:
+        raise _refuse(status.HTTP_409_CONFLICT, "amount_exceeds", "הסכום גדול מיתרת הזיכוי.", remainingAgorot=remaining)
+    row = CashCreditRedemption(
+        id=ident, tenant_id=tx.tenant_id, tx_id=tx.tx_id, station_id=tx.station_id, code=tx.slip_code or "",
+        machine_id=machine.id, amount_agorot=amount, status="redeemed",
+        document_id=_uuid(body.get("documentId")), created_at=now,
+    )
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        raise _refuse(status.HTTP_409_CONFLICT, "redemption_conflict", "מזהה המימוש כבר שימש לזיכוי אחר.")
+    _credit_settle(db, tx, now)
+    return {"ok": True, "redemption": redemption_out(row), "credit": credit_out(db, tx, station)}
+
+
+def release_redemption(db: Session, machine: POSMachine, redemption_id: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    `POST /sync/{m}/cash/credits/redemptions/{id}/release` (§11.15א): the order was not paid — the amount back on the
+    credit. Repeats harmlessly; 409 `confirmed` once a document carries it. The caller commits.
+    """
+    now = _now(now)
+    ident = _uuid(redemption_id)
+    row = db.get(CashCreditRedemption, ident) if ident is not None else None
+    if row is None or row.tenant_id != machine.tenant_id:
+        raise _refuse(status.HTTP_404_NOT_FOUND, "redemption_not_found", "המימוש לא נמצא.")
+    tx = db.get(CashStationTx, row.tx_id)
+    station = db.get(CashStation, row.station_id)
+    if row.status == "confirmed":
+        raise _refuse(status.HTTP_409_CONFLICT, "confirmed", "הזיכוי כבר נרשם במסמך.")
+    if row.status != "released":
+        row.status = "released"
+        row.released_at = now
+        db.flush()
+        if tx is not None:
+            _credit_settle(db, tx, now)
+    return {"ok": True, "credit": credit_out(db, tx, station) if tx is not None else None}
 
 
 # ── Commands ───────────────────────────────────────────────────────────────────

@@ -14,6 +14,11 @@ GET  /sync/{till_id}/cash/owed                             → {items: [...]} �
 POST /sync/{till_id}/cash/owed/{owed_id}/pay               {movementId, shiftId, userId, userName, amountAgorot}
                                                              → {ok, item}; the same movementId again → the same;
                                                              409 already_resolved {resolvedBy, resolvedAt}
+GET  /sync/{m}/cash/credits/{code}                         → {credit} — a till / kiosk of the credit's company (§11.15א)
+POST /sync/{m}/cash/credits/{code}/redeem                  {redemptionId, amountAgorot, documentId?} → {ok, redemption,
+                                                             credit}; the same redemptionId → the same; 409 credit_used /
+                                                             amount_exceeds / redemption_conflict, 400 amount, 404
+POST /sync/{m}/cash/credits/redemptions/{id}/release       → {ok, credit}; repeats harmlessly; 409 confirmed
 """
 from __future__ import annotations
 
@@ -54,6 +59,14 @@ class CommandAckIn(BaseModel):
     status: str = Field(..., max_length=16)
     message: Optional[str] = Field(None, max_length=1000)
     movement_id: Optional[str] = Field(None, alias="movementId", max_length=64)
+
+
+class CreditRedeemIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    redemption_id: Optional[str] = Field(None, alias="redemptionId", max_length=64)
+    amount_agorot: Optional[int] = Field(None, alias="amountAgorot")
+    document_id: Optional[str] = Field(None, alias="documentId", max_length=64)
 
 
 class OwedPayIn(BaseModel):
@@ -148,3 +161,41 @@ def post_cash_owed_pay(
     out = CS.pay_owed(db, machine, owed_id, payload)
     db.commit()
     return out
+
+
+@router.get("/{machine_id}/cash/credits/{code}", dependencies=FISCAL_MACHINE_TOKEN)
+def get_cash_credit(
+    machine_id: str,
+    code: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """§11.15א: a cash credit ("זיכוי להזמנה הבאה") by its code — what is left of it."""
+    return {"api": CS.API, **CS.lookup_credit(db, machine, code)}
+
+
+@router.post("/{machine_id}/cash/credits/{code}/redeem", dependencies=FISCAL_MACHINE_TOKEN)
+def post_cash_credit_redeem(
+    machine_id: str,
+    code: str,
+    body: CreditRedeemIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """§11.15א: part (or all) of a cash credit taken for an order, by the device's own redemption id."""
+    out = CS.redeem_credit(db, machine, code, body.model_dump(by_alias=True))
+    db.commit()
+    return {"api": CS.API, **out}
+
+
+@router.post("/{machine_id}/cash/credits/redemptions/{redemption_id}/release", dependencies=FISCAL_MACHINE_TOKEN)
+def post_cash_credit_release(
+    machine_id: str,
+    redemption_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """§11.15א: the order was not paid — the amount back on the credit."""
+    out = CS.release_redemption(db, machine, redemption_id)
+    db.commit()
+    return {"api": CS.API, **out}

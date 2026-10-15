@@ -27,6 +27,7 @@ import { KioskService } from './service';
 import type { PageRenderer } from './printer/printQueue';
 import { UpdateManager } from './update/updater';
 import { RoleManager } from './roles/manager';
+import { RollingLog } from './deviceLog';
 import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
@@ -442,6 +443,9 @@ void app.whenReady().then(async () => {
     idleMinutes,
   );
   const dataDir = path.join(app.getPath('userData'), 'data');
+  // The app's rolling log on the disk ("בקש לוגים", P:/specs/device-logs-api.md): every console line, 4 × 1 MB.
+  const rollingLog = new RollingLog(path.join(app.getPath('userData'), 'logs'));
+  rollingLog.install();
   service = new KioskService({
     // "שיתאים את עצמו": the primary display, for the dashboard (displayReport.ts).
     displayInfo: () => {
@@ -495,6 +499,12 @@ void app.whenReady().then(async () => {
     // "שרת מזומן": the vendor's DLL in a utility process per PayLink unit (main/cash/paylinkWorker.ts).
     spawnWorker: paylinkWorker,
     port: typeof install.cashPort === 'number' ? install.cashPort : undefined,
+    // "שליטה מרחוק" (P:/specs/cash-paylink.md §11.15ד): a restart and a logs request from the dashboard.
+    logs: rollingLog,
+    restartApp: () => {
+      app.relaunch();
+      app.exit(0);
+    },
   });
   updater.onChange(() => roles?.emitView());
   const sendShell = (channel: string, payload: unknown) => {

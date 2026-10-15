@@ -459,13 +459,16 @@ def _leg_meta(leg: TransactionPaymentIn) -> Optional[dict]:
     """
     credit_payments = getattr(leg, "credit_payments", None)
     cash_device = getattr(leg, "cash_device", None)
-    if credit_payments is None and cash_device is None:
+    cash_credit = getattr(leg, "cash_credit", None)
+    if credit_payments is None and cash_device is None and cash_credit is None:
         return leg.nayax_meta
     out = dict(leg.nayax_meta or {})
     if credit_payments is not None:
         out["creditPayments"] = credit_payments
     if cash_device is not None:
         out["cashDevice"] = cash_device
+    if cash_credit is not None:
+        out["cashCredit"] = cash_credit
     return out
 
 

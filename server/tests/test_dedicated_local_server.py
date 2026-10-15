@@ -304,7 +304,8 @@ class TestRefused:
                 calls(d, out)
             return out
 
-        host = {auth.require_host_machine, auth.require_host_machine_token}
+        # A device command's answer admits a cash host too (P:/specs/cash-paylink.md §11.15ד) — a host's route all the same.
+        host = {auth.require_host_machine, auth.require_host_machine_token, auth.require_command_device}
         found = set()
         for route in app.routes:
             if isinstance(route, APIRoute) and calls(route.dependant, set()) & host:

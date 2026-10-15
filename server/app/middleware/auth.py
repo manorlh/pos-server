@@ -297,8 +297,22 @@ def require_host_machine_token(
     return _refuse_unless_till_or_server(machine)
 
 
+def require_command_device(machine: POSMachine = Depends(get_pos_machine_for_sync_path)) -> POSMachine:
+    """
+    A device command's answer: a till, a dedicated local server — or a cash host ("שרת מזומן", its restart and logs
+    request, P:/specs/cash-paylink.md §11.15ד). A display device stays refused.
+    """
+    from app.services.cash_host import is_cash_host
+
+    if is_cash_host(machine):
+        return machine
+    return _refuse_unless_till_or_server(machine)
+
+
 #: A host's endpoint whose machine comes from `get_pos_machine_for_sync_path`.
 HOST_SYNC_PATH = [Depends(require_host_machine)]
+#: A device command's answer (`require_command_device`).
+COMMAND_SYNC_PATH = [Depends(require_command_device)]
 #: A host's endpoint whose machine comes from `get_pos_machine_from_sync_machine_token`.
 HOST_MACHINE_TOKEN = [Depends(require_host_machine_token)]
 

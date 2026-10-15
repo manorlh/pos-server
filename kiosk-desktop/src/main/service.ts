@@ -266,7 +266,7 @@ export class KioskService extends EventEmitter {
   private shopZPart: (LanCloseRequest & { payingSinceMs: number | null }) | null = null;
   private shopZPartBusy = false;
   /** Role modules' own heartbeat blocks (the cash host's `cash`, contract §11.9). */
-  private readonly heartbeatParts = new Map<string, () => Record<string, unknown>>();
+  private readonly heartbeatParts = new Map<string, () => unknown>();
 
   constructor(private readonly opts: ServiceOptions) {
     super();
@@ -341,7 +341,7 @@ export class KioskService extends EventEmitter {
   }
 
   /** A role module's block on every heartbeat (null removes it). */
-  setHeartbeatPart(key: string, part: (() => Record<string, unknown>) | null): void {
+  setHeartbeatPart(key: string, part: (() => unknown) | null): void {
     if (part) this.heartbeatParts.set(key, part);
     else this.heartbeatParts.delete(key);
   }

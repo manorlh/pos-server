@@ -341,7 +341,7 @@ class TestParameters:
             "cashCashboxCapacity": '{"coins":1500,"notes":500}', "cashLampMap": "{}", "cashSwitchMap": "{}",
             "cashReceiptLines": True, "cashSimulator": False, "cashDriverPath": "", "cashDllPath": "",
             "cashSettleMs": 1000, "cashPayoutTimeoutSec": 60, "cashExtendedEscrow": True, "cashHopperFeeds": "auto",
-            "cashUnackedHoldMin": 30, "kioskOfflineBlockCash": False,
+            "cashUnackedHoldMin": 30, "cashOwedChoiceSec": 45, "cashSplitWaitSec": 300, "kioskOfflineBlockCash": False,
         }
         assert set(CP.ALL_KEYS) == set(defaults) - {"kioskOfflineBlockCash"}
         for key, default in defaults.items():
@@ -1199,6 +1199,41 @@ class TestDashboard:
 # ── The migration ─────────────────────────────────────────────────────────────
 
 
+class TestStage2Migration:
+    def test_idempotent_additive_and_on_the_single_head(self):
+        import importlib.util
+
+        import sqlalchemy as sa
+        from alembic.config import Config
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        root = Path(__file__).absolute().parents[1]
+        path = root / "alembic" / "versions" / "e5a9c3d1f7b2_cash_stage2_credits_split.py"
+        spec = importlib.util.spec_from_file_location("migration_e5a9c3d1f7b2", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert (module.revision, module.down_revision) == ("e5a9c3d1f7b2", "d2c7a5e9f1b3")
+        engine = sa.create_engine("sqlite://")
+        with engine.begin() as conn:
+            conn.execute(sa.text("CREATE TABLE cash_station_txs (tx_id CHAR(32) PRIMARY KEY)"))
+            conn.execute(sa.text("INSERT INTO cash_station_txs (tx_id) VALUES ('a')"))
+            with Operations.context(MigrationContext.configure(conn)):
+                module.upgrade()
+                module.upgrade()  # idempotent
+            insp = sa.inspect(conn)
+            cols = {c["name"] for c in insp.get_columns("cash_station_txs")}
+            assert {"change_owed_ask", "change_owed_as", "split_agorot"} <= cols
+            assert insp.has_table("cash_credit_redemptions")
+            row = conn.execute(sa.text("SELECT change_owed_ask, change_owed_as, split_agorot FROM cash_station_txs")).one()
+            assert (bool(row[0]), row[1], row[2]) == (False, None, 0)
+        config = Config(str(root / "alembic.ini"))
+        config.set_main_option("script_location", str(root / "alembic"))
+        script = ScriptDirectory.from_config(config)
+        assert script.get_heads() == ["e5a9c3d1f7b2"]
+
+
 class TestMigration:
     def _module(self):
         import importlib.util
@@ -1282,6 +1317,226 @@ def _as_world(w, value):
     for old, new in ((FIXTURE_STATION, w.station.id), (FIXTURE_HOST, w.host.id), (FIXTURE_KIOSK, w.kiosk.id)):
         text = text.replace(old, str(new))
     return json.loads(text)
+
+
+# ── Stage 2 (P:/specs/cash-paylink.md §11.15) ──────────────────────────────────
+
+
+def _ask_entry(w, tx_id, *, choice=None, acked=False, owed=1300, seq=2, slip="C-K7Q3MX"):
+    entry = tx_entry(w, tx_id, change_paid=1260 - owed, change_owed=owed, slip=slip, seq=seq)
+    entry.update({"changeOwedAsk": True, "changeOwedAs": choice, "acked": acked})
+    return entry
+
+
+def _company_world_machine(w):
+    """A till of another company of the same tenant."""
+    from app.models.company import Company
+    from app.models.shop import Shop
+
+    company = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="Other Co", vat_number="516161616")
+    w.db.add(company)
+    w.db.flush()
+    shop = Shop(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=company.id, name="Elsewhere", settings={})
+    w.db.add(shop)
+    w.db.flush()
+    till = POSMachine(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=shop.id, distributor_id=w.admin.id, name="Else 1",
+                      machine_code="E-1", pos_number="1", is_active=True, pairing_status=PairingStatus.ASSIGNED)
+    w.db.add(till)
+    w.db.commit()
+    return till
+
+
+class TestOwedChoice:
+    def test_ask_waits_for_the_choice_then_a_slip_is_owed_at_the_tills(self, w):
+        tx_id = uuid.uuid4()
+        journal(w, _ask_entry(w, tx_id, seq=1))
+        row = w.db.get(CashStationTx, tx_id)
+        assert (row.change_owed_ask, row.change_owed_as, row.owed_status) == (True, None, "none")
+        assert CS.owed_items_for_till(w.db, w.till1) == [] and cash_rows(w, "change_owed") == []
+        journal(w, _ask_entry(w, tx_id, choice="slip", acked=True, seq=2))
+        assert [i["kind"] for i in CS.owed_items_for_till(w.db, w.till1)] == ["change_owed"]
+        assert len(cash_rows(w, "change_owed")) == 1
+
+    def test_a_credit_is_kept_by_its_code_never_at_the_tills_and_no_alert(self, w):
+        tx_id = uuid.uuid4()
+        journal(w, _ask_entry(w, tx_id, choice="credit", acked=True))
+        row = w.db.get(CashStationTx, tx_id)
+        assert (row.owed_status, row.owed_kind, row.owed_agorot, row.change_owed_as) == ("open", "change_credit", 1300, "credit")
+        assert CS.owed_items_for_till(w.db, w.till1) == []
+        assert machines_router.post_my_heartbeat(None, machine=w.till1, db=w.db)["cashOwed"]["count"] == 0
+        assert cash_rows(w) == []
+
+    def test_a_tip_owes_nothing_and_closes_an_item_already_open(self, w):
+        tx_id = uuid.uuid4()
+        journal(w, _ask_entry(w, tx_id, choice="tip", acked=True))
+        assert w.db.get(CashStationTx, tx_id).owed_status == "none"
+        # Opened as a slip (an older kiosk acked first), then the choice says tip: closed as a tip.
+        other = uuid.uuid4()
+        journal(w, _ask_entry(w, other, acked=True, seq=2))
+        assert w.db.get(CashStationTx, other).owed_status == "open"
+        journal(w, _ask_entry(w, other, choice="tip", acked=True, seq=3))
+        row = w.db.get(CashStationTx, other)
+        assert (row.owed_status, row.resolution) == ("resolved", "tip")
+        assert cash_rows(w, "change_owed") == []
+
+    def test_notify_unchanged_and_a_split_part_stored(self, w):
+        tx_id = _owe(w)
+        assert w.db.get(CashStationTx, tx_id).owed_kind == "change_owed"
+        split = uuid.uuid4()
+        entry = tx_entry(w, split, amount=8900, due=4000, inserted=4000, change_due=0, change_paid=0, change_owed=0)
+        entry.update({"splitAgorot": 4000, "roundingAgorot": 0})
+        journal(w, entry)
+        assert w.db.get(CashStationTx, split).split_agorot == 4000
+        partial = uuid.uuid4()
+        entry = tx_entry(w, partial, state="PARTIAL", outcome=None, amount=8900, due=2000, inserted=2000, change_due=0, change_paid=0, change_owed=0)
+        entry["splitAgorot"] = 2000
+        assert journal(w, entry)["rejected"] == []
+        assert w.db.get(CashStationTx, partial).state == "PARTIAL"
+
+
+class TestCashCredits:
+    def _credit(self, w, owed=1300, slip="C-K7Q3MX"):
+        tx_id = uuid.uuid4()
+        journal(w, _ask_entry(w, tx_id, choice="credit", acked=True, owed=owed, slip=slip))
+        return tx_id
+
+    def test_lookup_by_any_spelling_of_its_code(self, w):
+        self._credit(w)
+        for code in ("C-K7Q3MX", "ck7q3mx", "CC:C-K7Q3MX", " c-k7q3mx "):
+            out = CSR.get_cash_credit(str(w.kiosk.id), code, machine=w.kiosk, db=w.db)
+            assert out["credit"] == {
+                "code": "C-K7Q3MX", "amountAgorot": 1300, "remainingAgorot": 1300, "status": "open",
+                "stationName": "עמדת מזומן 2", "orderLabel": "57", "createdAt": out["credit"]["createdAt"],
+            }
+        for code in ("C-NOPE00", "PV:ABC", ""):
+            assert refusal(CS.lookup_credit, w.db, w.kiosk, code).detail["code"] == "credit_not_found"
+        # Another company's till never finds it; the same company's other shop does.
+        assert refusal(CS.lookup_credit, w.db, _company_world_machine(w), "C-K7Q3MX").status_code == 404
+        assert CS.lookup_credit(w.db, w.other_till, "C-K7Q3MX")["credit"]["remainingAgorot"] == 1300
+
+    def test_redeem_in_parts_idempotent_release_and_used(self, w):
+        tx_id = self._credit(w)
+        first = str(uuid.uuid4())
+        out = CS.redeem_credit(w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": first, "amountAgorot": 800})
+        w.db.commit()
+        assert (out["redemption"]["amountAgorot"], out["credit"]["remainingAgorot"]) == (800, 500)
+        # The same id again: the same answer, nothing more taken; another amount under it — a conflict.
+        assert CS.redeem_credit(w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": first, "amountAgorot": 800})["credit"]["remainingAgorot"] == 500
+        assert refusal(CS.redeem_credit, w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": first, "amountAgorot": 100}).detail["code"] == "redemption_conflict"
+        e = refusal(CS.redeem_credit, w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": str(uuid.uuid4()), "amountAgorot": 900})
+        assert (e.status_code, e.detail["code"], e.detail["remainingAgorot"]) == (409, "amount_exceeds", 500)
+        assert refusal(CS.redeem_credit, w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": str(uuid.uuid4()), "amountAgorot": 0}).detail["code"] == "amount"
+        second = str(uuid.uuid4())
+        CS.redeem_credit(w.db, w.till1, "C-K7Q3MX", {"redemptionId": second, "amountAgorot": 500})
+        w.db.commit()
+        row = w.db.get(CashStationTx, tx_id)
+        assert (row.owed_status, row.resolution) == ("resolved", "redeemed")
+        assert CS.lookup_credit(w.db, w.kiosk, "C-K7Q3MX")["credit"]["status"] == "used"
+        assert refusal(CS.redeem_credit, w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": str(uuid.uuid4()), "amountAgorot": 1}).detail["code"] == "credit_used"
+        # The order was not paid: back on the credit — open again; twice is harmless.
+        out = CS.release_redemption(w.db, w.kiosk, second)
+        CS.release_redemption(w.db, w.kiosk, second)
+        w.db.commit()
+        assert out["credit"]["remainingAgorot"] == 500 and w.db.get(CashStationTx, tx_id).owed_status == "open"
+        assert refusal(CS.release_redemption, w.db, w.kiosk, str(uuid.uuid4())).detail["code"] == "redemption_not_found"
+
+    def test_the_documents_leg_confirms_it_and_the_routes(self, w):
+        from app.models.cash_station import CashCreditRedemption
+
+        self._credit(w)
+        rid = str(uuid.uuid4())
+        out = CSR.post_cash_credit_redeem(str(w.kiosk.id), "C-K7Q3MX", CSR.CreditRedeemIn.model_validate({"redemptionId": rid, "amountAgorot": 1300}), machine=w.kiosk, db=w.db)
+        assert out["ok"] and out["credit"]["remainingAgorot"] == 0
+        shift = w.shift(w.kiosk, 1)
+        doc = w.doc(w.kiosk, shift, "13.00")
+        (leg,) = w.db.query(TransactionPayment).filter(TransactionPayment.transaction_id == doc.id).all()
+        leg.method = "cash_credit"
+        leg.nayax_meta = {"cashCredit": CS.clean_cash_credit({"code": "c-k7q3mx", "redemptionId": rid})}
+        w.db.commit()
+        CS.match_documents_safely(w.db, [doc.id])
+        row = w.db.get(CashCreditRedemption, uuid.UUID(rid))
+        assert (row.status, row.document_id) == ("confirmed", doc.id)
+        e = refusal(CSR.post_cash_credit_release, str(w.kiosk.id), rid, machine=w.kiosk, db=w.db)
+        assert (e.status_code, e.detail["code"]) == (409, "confirmed")
+
+    def test_the_leg_keeps_cash_credit_and_the_tender_label(self):
+        from app.services.print_documents import TENDER_LABELS
+        from app.services.transactions import _leg_meta
+
+        rid = str(uuid.uuid4())
+        leg = TransactionPaymentIn.model_validate({"id": str(uuid.uuid4()), "method": "cash_credit", "amount": "13",
+                                                   "cashCredit": {"code": "CC:C-K7Q3MX", "redemptionId": rid.upper(), "x": 1}})
+        assert _leg_meta(leg) == {"cashCredit": {"code": "C-K7Q3MX", "redemptionId": rid}}
+        assert TransactionPaymentIn.model_validate({"id": str(uuid.uuid4()), "method": "cash_credit", "amount": 1, "cashCredit": 7}).cash_credit is None
+        assert TENDER_LABELS["cash_credit"] == "זיכוי מזומן"
+
+    def test_the_dashboard_lists_credits_with_their_redemptions(self, w):
+        from app.services import cash_station_admin as CSA
+
+        self._credit(w)
+        CS.redeem_credit(w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": str(uuid.uuid4()), "amountAgorot": 300})
+        w.db.commit()
+        out = CSA.owed(w.db, w.station, which="open")
+        (credit,) = out["credits"]
+        assert credit["credit"]["remainingAgorot"] == 1000 and [r["amountAgorot"] for r in credit["redemptions"]] == [300]
+        assert out["changeOwed"] == []
+
+
+class TestStage2DrawerAndContract:
+    def test_the_reconciliation_holds_with_credits_tips_and_splits(self, w):
+        from app.services.cash_station_drawer import summarize
+
+        credit, tip, split = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        journal(w, _ask_entry(w, credit, choice="credit", acked=True, owed=300))
+        journal(w, _ask_entry(w, tip, choice="tip", acked=True, owed=200, slip="C-TTTTTT"))
+        entry = tx_entry(w, split, amount=8900, due=4000, inserted=4000, change_due=0, change_paid=0, change_owed=0)
+        entry.update({"splitAgorot": 4000, "roundingAgorot": 0})
+        journal(w, entry)
+        rows = w.db.query(CashStationTx).all()
+        s = summarize(rows, [])
+        assert (s["owedCreditAgorot"], s["owedTipAgorot"], s["owedSlipAgorot"], s["splitCashAgorot"], s["splitCount"]) == (300, 200, 0, 4000, 1)
+        assert s["changeOwedAgorot"] == 500
+
+    def test_the_kiosk_desktop_stage2_journal_is_taken_whole(self, w):
+        body = _as_world(w, json.loads((KIOSK_DESKTOP / "cash_journal_stage2.json").read_text(encoding="utf-8")))
+        out = journal(w, *body["entries"])
+        assert out["rejected"] == [] and len(out["accepted"]) == 4
+        by = {str(r.tx_id): r for r in w.db.query(CashStationTx).all()}
+        credit = by["6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e01"]
+        assert (credit.change_owed_as, credit.owed_kind, credit.owed_status) == ("credit", "change_credit", "open")
+        assert by["6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e02"].owed_status == "none"  # a tip
+        assert by["6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e03"].split_agorot == 4000
+        voided = by["6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e04"]
+        assert (voided.state, voided.held_reason, voided.owed_kind, voided.owed_agorot) == ("HELD", "split_void", "held_credit", 2000)
+        assert CS.lookup_credit(w.db, w.kiosk, "C-K7Q3MX")["credit"]["remainingAgorot"] == 260
+
+
+class TestCashHostDeviceCommands:
+    def test_only_a_restart_and_logs_for_a_cash_host(self, w):
+        from app.services import device_commands as DC
+
+        with pytest.raises(HTTPException) as e:
+            DC.create(w.db, [w.host], "lock", user=w.admin)
+        assert e.value.detail["code"] == "invalid_action"
+        # In a batch it is skipped.
+        rows = DC.create(w.db, [w.host, w.till1], "sync_now", user=w.admin)
+        assert [r.machine_id for r in rows] == [w.till1.id]
+        (restart,) = DC.create(w.db, [w.host], "restart_app", user=w.admin)
+        (logs,) = DC.create(w.db, [w.host], "upload_logs", user=w.admin, params={"minutes": 60})
+        w.db.commit()
+        (row,) = DC.devices_status(w.db, [w.host])
+        assert (row["isCashHost"], row["actions"]) == (True, ["restart_app", "upload_logs"])
+        assert {c["action"] for c in row["open"]} == {"restart_app", "upload_logs"}
+        assert DC.devices_status(w.db, [w.till1])[0]["actions"] is None
+        # It pulls them, and may answer (a till's endpoint guard lets a cash host through).
+        pulled = DC.pull(w.db, w.host)
+        assert {c["action"] for c in pulled["commands"]} == {"restart_app", "upload_logs"}
+        from app.middleware.auth import require_command_device
+
+        assert require_command_device(w.host) is w.host
+        DC.ack(w.db, w.host, str(restart.id), "refused", "payment_in_progress")
+        w.db.commit()
+        assert w.db.get(type(restart), restart.id).status == "refused"
 
 
 class TestTheKioskDesktopHost:

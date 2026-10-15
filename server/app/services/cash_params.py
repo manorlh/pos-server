@@ -54,6 +54,9 @@ PAYOUT_TIMEOUT_KEY = "cashPayoutTimeoutSec"
 ESCROW_KEY = "cashExtendedEscrow"
 HOPPER_FEEDS_KEY = "cashHopperFeeds"
 UNACKED_KEY = "cashUnackedHoldMin"
+#: Stage 2 (P:/specs/cash-paylink.md §11.15): the kiosk's "חסר עודף" choice wait, the station's wait for the card.
+OWED_CHOICE_KEY = "cashOwedChoiceSec"
+SPLIT_WAIT_KEY = "cashSplitWaitSec"
 
 #: The shekel's coins and notes, in agorot (10 אג' – 10 ₪; 20 / 50 / 100 / 200 ₪).
 ILS_COINS: Tuple[int, ...] = (10, 50, 100, 200, 500, 1000)
@@ -66,7 +69,7 @@ SHORTFALL_OPTIONS = (SHORTFALL_PREVENT, SHORTFALL_NOTIFY, SHORTFALL_ASK)
 SHORTFALL_LABELS = {
     SHORTFALL_PREVENT: "חסימה מראש בלבד (\"סכום מדויק\" כשהעודף נמוך)",
     SHORTFALL_NOTIFY: "פתק \"עודף חייב\" + התראה למנהל ולקופה (ברירת מחדל)",
-    SHORTFALL_ASK: "לשאול את הלקוח (שלב 2 — בינתיים כמו התראה)",
+    SHORTFALL_ASK: "לשאול את הלקוח: פתק לקופה, זיכוי להזמנה הבאה או טיפ",
 }
 ROUNDING_NONE = "none"
 ROUNDING_NEAREST_10 = "nearest_10"
@@ -87,14 +90,14 @@ CASHBOX_MEANS = ("present", "removed")
 IO_MAX = 63
 
 #: A kiosk's (or a till's) own: whether it takes cash, at which station, its receipt lines.
-KIOSK_KEYS: Tuple[str, ...] = (ENABLED_KEY, STATION_KEY, SPLIT_KEY, RECEIPT_LINES_KEY)
+KIOSK_KEYS: Tuple[str, ...] = (ENABLED_KEY, STATION_KEY, SPLIT_KEY, RECEIPT_LINES_KEY, OWED_CHOICE_KEY)
 #: Read by both the station (on the host) and the kiosk.
 SHARED_KEYS: Tuple[str, ...] = (INSERT_TIMEOUT_KEY, IDLE_TIMEOUT_KEY, QUEUE_TIMEOUT_KEY, REFUND_GRACE_KEY)
 #: A station's: overridable on the station itself.
 STATION_ONLY_KEYS: Tuple[str, ...] = (
     COINS_KEY, NOTES_KEY, MAX_CHANGE_KEY, EXACT_BELOW_KEY, SHORTFALL_KEY, ALERT_TILLS_KEY, ROUNDING_KEY,
     FLOAT_LEVELS_KEY, CASHBOX_KEY, LAMP_MAP_KEY, SWITCH_MAP_KEY, SIMULATOR_KEY, SETTLE_KEY, PAYOUT_TIMEOUT_KEY,
-    ESCROW_KEY, HOPPER_FEEDS_KEY, UNACKED_KEY,
+    ESCROW_KEY, HOPPER_FEEDS_KEY, UNACKED_KEY, SPLIT_WAIT_KEY,
 )
 STATION_KEYS: Tuple[str, ...] = STATION_ONLY_KEYS + SHARED_KEYS
 #: The host box's own: where the maker's driver and DLL are ('' = the maker's install path).
@@ -105,6 +108,7 @@ ALL_KEYS: Tuple[str, ...] = (
     INSERT_TIMEOUT_KEY, IDLE_TIMEOUT_KEY, QUEUE_TIMEOUT_KEY, REFUND_GRACE_KEY, ROUNDING_KEY, SPLIT_KEY,
     FLOAT_LEVELS_KEY, CASHBOX_KEY, LAMP_MAP_KEY, SWITCH_MAP_KEY, RECEIPT_LINES_KEY, SIMULATOR_KEY,
     DRIVER_PATH_KEY, DLL_PATH_KEY, SETTLE_KEY, PAYOUT_TIMEOUT_KEY, ESCROW_KEY, HOPPER_FEEDS_KEY, UNACKED_KEY,
+    OWED_CHOICE_KEY, SPLIT_WAIT_KEY,
 )
 
 #: Integer keys and their ranges.
@@ -118,6 +122,8 @@ RANGES: Dict[str, Tuple[int, int]] = {
     SETTLE_KEY: (0, 10_000),
     PAYOUT_TIMEOUT_KEY: (5, 600),
     UNACKED_KEY: (1, 1440),
+    OWED_CHOICE_KEY: (10, 300),
+    SPLIT_WAIT_KEY: (60, 1800),
 }
 ENUMS: Dict[str, Tuple[str, ...]] = {
     SHORTFALL_KEY: SHORTFALL_OPTIONS,
@@ -177,7 +183,8 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
           f"«{SHORTFALL_LABELS[SHORTFALL_PREVENT]}» — רק החסימה. "
           f"«{SHORTFALL_LABELS[SHORTFALL_NOTIFY]}» — הקיוסק מדפיס פתק \"עודף חייב\" עם קוד, והמנהל והקופות של "
           "\"מזומן — קופות להתראות\" מקבלים התראה; בקופה \"שולם ללקוח\" רושם הוצאת מזומן ומבטל את החוב. "
-          f"«{SHORTFALL_LABELS[SHORTFALL_ASK]}». {_STATION}",
+          f"«{SHORTFALL_LABELS[SHORTFALL_ASK]}» — הקיוסק שואל את הלקוח: פתק \"עודף חייב\" לקופה, זיכוי להזמנה "
+          f"הבאה (פתק עם קוד ו-QR, ממומש בקופה או בקיוסק) או טיפ (רק כשטיפים מופעלים בקיוסק). {_STATION}",
           options=SHORTFALL_OPTIONS, labels=SHORTFALL_LABELS),
     _spec(ALERT_TILLS_KEY, "מזומן — קופות להתראות ולעודף חייב", "string", "",
           "אילו קופות מקבלות את התראות עמדת המזומן (עודף נמוך, קופסה מלאה, תקיעה, דלת פתוחה, שרת מנותק, זיכוי "
@@ -198,7 +205,15 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
           f"«{ROUNDING_LABELS[ROUNDING_NONE]}». {_STATION}",
           options=ROUNDING_OPTIONS, labels=ROUNDING_LABELS),
     _spec(SPLIT_KEY, "מזומן — מזומן + אשראי ליתרה", "boolean", False,
-          f"שלב 2: הלקוח משלם חלק במזומן ואת היתרה באשראי. כבוי (ברירת מחדל). {_KIOSK}"),
+          "כשמופעל, בזמן הכנסת הכסף הקיוסק מציע \"להשלים באשראי\": מה שהוכנס נשאר במכשיר, והיתרה (והטיפ) "
+          "מחויבת במסופון האשראי של הקיוסק; המסמך יוצא עם שתי רגלי תשלום. נדחה — המזומן מוחזר. דורש מסופון "
+          f"אשראי בקיוסק. כבוי (ברירת מחדל). {_KIOSK}"),
+    _spec(OWED_CHOICE_KEY, "מזומן — זמן לבחירה כשחסר עודף (שניות)", "integer", 45,
+          "במדיניות \"לשאול את הלקוח\": כמה זמן מסך \"חסר עודף\" ממתין לבחירה; בלי בחירה — פתק \"עודף חייב\" "
+          f"לקופה (10–300). {_KIOSK}"),
+    _spec(SPLIT_WAIT_KEY, "מזומן — המתנה לאשראי במזומן + אשראי (שניות)", "integer", 300,
+          "כמה זמן העמדה מחזיקה את המזומן שהוכנס בזמן שהקיוסק מחייב את היתרה באשראי; אחרי זה המזומן נשמר "
+          f"כ\"זיכוי מוחזק\" עם התראה (לא מוחזר — ייתכן שהאשראי חויב) (60–1800). {_STATION}"),
     _spec(FLOAT_LEVELS_KEY, "מזומן — מלאי עודף לכל ערך (JSON)", "string", "{}",
           "לכל ערך (באגורות) — היעד והרף הנמוך במכונת העודף, למשל {\"100\":{\"target\":200,\"low\":30}}. מתחת "
           f"לרף: התראת \"עודף נמוך\". ריק {{}} — לפי המכשיר. {_STATION}"),

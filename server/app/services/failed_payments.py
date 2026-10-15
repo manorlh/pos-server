@@ -98,7 +98,7 @@ UNRESOLVED_EXPLANATION = (
     "המסמכים בקופה ממתינים עד ההכרעה."
 )
 METHOD_LABELS = {
-    "card": "אשראי", "cash": "מזומן", "voucher": "שובר הפקה", "production_voucher": "שובר הפקה", "mixed": "מעורב",
+    "card": "אשראי", "cash": "מזומן", "voucher": "שובר הפקה", "production_voucher": "שובר הפקה", "cash_credit": "זיכוי מזומן", "mixed": "מעורב",
 }
 #: "שולם בהמשך במזומן / באשראי / בשובר / (מעורב)".
 PAID_LATER_WORDS = {

@@ -165,6 +165,10 @@ class TransactionPaymentIn(BaseModel):
     #: Cleaned field by field (app/services/cash_stations.py `clean_cash_device`); unreadable — dropped, never a
     #: rejected document.
     cash_device: Optional[dict] = Field(None, alias="cashDevice")
+    #: A `cash_credit` leg (P:/specs/cash-paylink.md §11.15א): the cash credit ("זיכוי להזמנה הבאה") it redeemed —
+    #: `{code, redemptionId}`, kept in the leg's `nayax_meta` as `cashCredit`; the document confirms the redemption.
+    #: Cleaned field by field (app/services/cash_stations.py `clean_cash_credit`); unreadable — dropped.
+    cash_credit: Optional[dict] = Field(None, alias="cashCredit")
 
     class Config:
         populate_by_name = True
@@ -175,6 +179,13 @@ class TransactionPaymentIn(BaseModel):
         from app.services.cash_stations import clean_cash_device
 
         return clean_cash_device(value)
+
+    @field_validator("cash_credit", mode="before")
+    @classmethod
+    def _cash_credit(cls, value):
+        from app.services.cash_stations import clean_cash_credit
+
+        return clean_cash_credit(value)
 
     @field_validator("card_brand", "card_acquirer", "card_issuer", mode="before")
     @classmethod

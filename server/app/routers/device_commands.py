@@ -51,7 +51,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import (
     FISCAL_SYNC_PATH,
-    HOST_SYNC_PATH,
+    COMMAND_SYNC_PATH,
     get_active_tenant_id,
     get_current_machine_admin,
     get_current_user,
@@ -143,9 +143,10 @@ def _devices(db: Session, user: User, tenant_id, *, machine_ids=None, shop_id=No
         q = kiosk_control._scoped_machine_query(db, user, tenant_id)
     from app.services.local_server_device import is_local_server
 
-    # Tills and kiosks — and a dedicated local server ("שרת מקומי"), which takes remote commands too.
+    # Tills and kiosks — and a dedicated local server ("שרת מקומי") and a cash host ("שרת מזומן", a restart and a logs
+    # request only), which take remote commands too.
     machines = [m for m in q.order_by(POSMachine.shop_id, POSMachine.pos_number, POSMachine.name).all()
-                if (getattr(m, "is_fiscal", True) is not False or is_local_server(m)) and m.shop_id is not None]
+                if (getattr(m, "is_fiscal", True) is not False or is_local_server(m) or svc.is_cash_host(m)) and m.shop_id is not None]
     narrow = _narrowing(db, user)
     allowed = []
     for m in machines:
@@ -878,7 +879,7 @@ def till_unlocked(
 
 
 # A dedicated local server answers its commands too (P:/specs/dedicated-local-server.md §11.5).
-@till_router.post("/{machine_id}/device-commands/{command_id}/ack", dependencies=HOST_SYNC_PATH)
+@till_router.post("/{machine_id}/device-commands/{command_id}/ack", dependencies=COMMAND_SYNC_PATH)
 def till_ack(
     machine_id: str,
     command_id: str,

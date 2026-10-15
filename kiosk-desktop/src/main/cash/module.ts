@@ -15,6 +15,8 @@ import { SimulatedPaylink, type SimConfig } from './simulator';
 import { PaylinkDevice, type WorkerLink } from './paylinkDevice';
 import { PaylinkDriver, windowsDriverPlatform, type DriverPlatform } from './driver';
 import type { CashStation } from './station';
+import { DeviceCommands, DEVICE_LOGS_CAPABILITY } from '../deviceCommands';
+import type { RollingLog } from '../deviceLog';
 
 /** The simulator's unit when no hardware is used: an Israeli coin set, a note acceptor with escrow and a 20/50 recycler. */
 export const DEFAULT_SIM: SimConfig = {
@@ -39,6 +41,9 @@ export interface CashModuleOptions {
   driverPlatform?: DriverPlatform;
   port?: number;
   log: (m: string) => void;
+  /** "שליטה מרחוק" (§11.15ד): the app's rolling log ("בקש לוגים") and its restart ("הפעלה מחדש"). */
+  logs?: RollingLog | null;
+  restartApp?: () => void;
 }
 
 const DRIVER_EVERY_MS = 15_000;
@@ -48,6 +53,8 @@ export class CashHostModule {
   private readonly sims = new Map<string, SimulatedPaylink>();
   private readonly drivers = new Map<string, { driver: PaylinkDriver; device: PaylinkDevice }>();
   private driverTimer: NodeJS.Timeout | null = null;
+  /** The dashboard's generic commands for this box: a restart, a logs request (§11.15ד). */
+  readonly commands: DeviceCommands;
 
   constructor(
     private readonly svc: KioskService,
@@ -66,6 +73,16 @@ export class CashHostModule {
       cloudOnline: () => svc.cloudOnline(),
       createDevice: (s, settings) => this.createDevice(s, settings),
       port: o.port,
+    });
+    this.commands = new DeviceCommands({
+      api: svc.api,
+      machineId: () => svc.machineId,
+      log: o.log,
+      logs: o.logs ?? null,
+      appVersion: svc.appVersion,
+      // Never mid-payment: an open transaction at any station holds the restart off.
+      busy: () => (this.host.busy() ? 'payment_in_progress' : null),
+      restart: () => (o.restartApp ? o.restartApp() : o.log('device command: restart_app — no restart hook here')),
     });
   }
 
@@ -97,7 +114,10 @@ export class CashHostModule {
 
   async start(): Promise<void> {
     this.svc.setHeartbeatPart('cash', () => this.host.heartbeatBlock());
+    // "בקש לוגים" is offered to a device that says it can (device-logs-api.md §2).
+    if (this.o.logs) this.svc.setHeartbeatPart('capabilities', () => [DEVICE_LOGS_CAPABILITY]);
     await this.host.start();
+    this.commands.start();
     this.driverTimer = setInterval(() => void this.superviseDrivers(), DRIVER_EVERY_MS);
     void this.superviseDrivers();
   }
@@ -106,6 +126,8 @@ export class CashHostModule {
     if (this.driverTimer) clearInterval(this.driverTimer);
     this.driverTimer = null;
     this.svc.setHeartbeatPart('cash', null);
+    this.svc.setHeartbeatPart('capabilities', null);
+    this.commands.stop();
     await this.host.stop();
   }
 

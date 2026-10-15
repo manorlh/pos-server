@@ -17,6 +17,7 @@ from app.models.cash_station import (
     MOVEMENT_KINDS,
     OUTCOMES,
     TX_STATES,
+    CashCreditRedemption,
     CashHostCommand,
     CashStation,
     CashStationMovement,
@@ -187,6 +188,8 @@ def tx_out(tx: CashStationTx, client_name: Optional[str] = None) -> Dict[str, An
         "changePaidAgorot": tx.change_paid_agorot, "changeOwedAgorot": tx.change_owed_agorot,
         "refundDueAgorot": tx.refund_due_agorot, "refundPaidAgorot": tx.refund_paid_agorot,
         "heldAgorot": tx.held_agorot, "heldReason": tx.held_reason, "cancelReason": tx.cancel_reason,
+        # Stage 2 (§11.15): the customer's choice for change owed, a split's cash part.
+        "changeOwedAsk": bool(tx.change_owed_ask), "changeOwedAs": tx.change_owed_as, "splitAgorot": int(tx.split_agorot or 0),
         "slipCode": tx.slip_code, "orderRef": tx.order_ref, "orderLabel": tx.order_label,
         "deviceSerial": tx.device_serial, "documentId": tx.document_id, "documentNumber": tx.document_number,
         "acked": bool(tx.acked), "seq": tx.seq,
@@ -401,10 +404,21 @@ def owed(db: Session, station: CashStation, *, which: str = "open") -> Dict[str,
     rows = q.order_by(CashStationTx.owed_at, CashStationTx.tx_id).limit(500).all()
     names = CS._client_names(db, [r.client_machine_id for r in rows])
     items = [CS.owed_item(r, station, names.get(r.client_machine_id)) for r in rows]
+    # Credits for a next order (§11.15א): what is left of each and its redemptions.
+    by_id = {str(r.tx_id): r for r in rows}
+    for item in items:
+        if item["kind"] == "change_credit":
+            tx = by_id[item["id"]]
+            item["credit"] = CS.credit_out(db, tx, station)
+            item["redemptions"] = [
+                CS.redemption_out(x)
+                for x in db.query(CashCreditRedemption).filter(CashCreditRedemption.tx_id == tx.tx_id).order_by(CashCreditRedemption.created_at).all()
+            ]
     return {
         "items": items,
         "changeOwed": [i for i in items if i["kind"] == "change_owed"],
         "heldCredit": [i for i in items if i["kind"] == "held_credit"],
+        "credits": [i for i in items if i["kind"] == "change_credit"],
     }
 
 

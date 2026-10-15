@@ -12,6 +12,8 @@ keeps its own drawer, from its journal (the transactions) and its movements —
   whose `nayax_meta.cashDevice.stationId` is the station, plus each leg's `roundingAgorot` — against what the
   station kept net. The station's net also holds what it owes back: the change owed (paid out at a till) and the
   credits held in the unit. So: `difference = net − (kiosk cash + change owed + held)`; 0 when they agree.
+  Stage 2 (§11.15): change owed is shown by what the customer chose — a slip for a till, a credit for a next
+  order, a tip — all of it still in the station's net; a split's cash part is its leg (no rounding).
 * **The shop Z.** A shop Z takes every station transaction and movement of its shop not yet in a Z (each in
   exactly one: `z_report_id`) and freezes a "cash stations" block on its header (`cashStations`): per station
   the figures above and the reconciliation against that Z's own kiosk documents. Only a shop with cash
@@ -39,6 +41,8 @@ COUNTED_STATUSES = ("completed", "refunded", "partial_refund")
 FIGURES = (
     "acceptedAgorot", "changeAgorot", "refundsAgorot", "netAgorot", "floatAgorot", "refillsAgorot",
     "collectionsAgorot", "adjustmentsAgorot", "expectedAgorot", "heldAgorot", "changeOwedAgorot",
+    # Stage 2 (§11.15): the change owed by the customer's choice, and the cash parts of cash + card.
+    "owedSlipAgorot", "owedCreditAgorot", "owedTipAgorot", "splitCashAgorot",
 )
 
 
@@ -52,7 +56,7 @@ def _agorot(amount: Any) -> int:
 def summarize(txs: Iterable[CashStationTx], movements: Iterable[CashStationMovement]) -> Dict[str, Any]:
     """The drawer of a set of (final) transactions and movements — pure."""
     out: Dict[str, Any] = {k: 0 for k in FIGURES}
-    counts = {"txCount": 0, "paidCount": 0, "refundedCount": 0, "heldCount": 0, "nothingInsertedCount": 0}
+    counts = {"txCount": 0, "paidCount": 0, "refundedCount": 0, "heldCount": 0, "nothingInsertedCount": 0, "splitCount": 0}
     for tx in txs:
         if tx.state not in FINAL_STATES:
             continue
@@ -62,7 +66,13 @@ def summarize(txs: Iterable[CashStationTx], movements: Iterable[CashStationMovem
             out["heldAgorot"] += int(tx.held_agorot or 0)
         elif tx.outcome == "paid":
             counts["paidCount"] += 1
-            out["changeOwedAgorot"] += int(tx.change_owed_agorot or 0)
+            owed = int(tx.change_owed_agorot or 0)
+            out["changeOwedAgorot"] += owed
+            choice = getattr(tx, "change_owed_as", None)
+            out["owedCreditAgorot" if choice == "credit" else "owedTipAgorot" if choice == "tip" else "owedSlipAgorot"] += owed
+            if int(getattr(tx, "split_agorot", 0) or 0) > 0:
+                counts["splitCount"] += 1
+                out["splitCashAgorot"] += int(tx.split_agorot or 0)
         elif tx.outcome == "refunded":
             counts["refundedCount"] += 1
         elif tx.outcome == "nothing_inserted":
@@ -305,7 +315,7 @@ def _money(agorot: Any) -> Decimal:
 def print_rows(block: Dict[str, Any]) -> List[Tuple[str, Decimal]]:
     """One station's lines (label, ₪), in the order the paper lists them."""
     rec = block.get("reconciliation") or {}
-    return [
+    rows = [
         ("התקבל", _money(block.get("acceptedAgorot"))),
         ("עודף", _money(block.get("changeAgorot"))),
         ("החזרים", _money(block.get("refundsAgorot"))),
@@ -315,6 +325,14 @@ def print_rows(block: Dict[str, Any]) -> List[Tuple[str, Decimal]]:
         ("צפוי בעמדה", _money(block.get("expectedAgorot"))),
         ("מוחזק", _money(block.get("heldAgorot"))),
         ("עודף חייב", _money(block.get("changeOwedAgorot"))),
+    ]
+    # Stage 2 (§11.15): only when there is any — a Z without them prints as before.
+    for key, label in (("owedCreditAgorot", "מתוכו זיכויים להזמנה הבאה"), ("owedTipAgorot", "מתוכו טיפים"),
+                       ("splitCashAgorot", "מזומן בתשלומים משולבים")):
+        if int(block.get(key) or 0):
+            rows.append((label, _money(block.get(key))))
+    rows += [
         ("מזומן בקיוסקים", _money(rec.get("kioskCashAgorot"))),
         ("הפרש", _money(rec.get("differenceAgorot"))),
     ]
+    return rows

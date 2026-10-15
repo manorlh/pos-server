@@ -14,6 +14,8 @@
   adjust (§11.9), by their host-made id.
 * `CashHostCommand` — what the dashboard asks a host to do at a station (refill, count, collect,
   dump, deliver_pending, float), delivered with `GET /sync/{host}/cash`, acknowledged once.
+* `CashCreditRedemption` — stage 2 (§11.15א): a cash credit (change owed the customer kept for a next order, an
+  owed item of kind `change_credit`) redeemed towards an order at a till or a kiosk, by the device's own id.
 
 Amounts are integer agorot throughout, as on the LAN (§11 preamble).
 """
@@ -25,7 +27,7 @@ from sqlalchemy.sql import func
 
 from app.database import Base
 
-TX_STATES = ("LEASED", "ACCEPTING", "SETTLING", "PAYING_CHANGE", "REFUNDING", "DONE", "HELD")
+TX_STATES = ("LEASED", "ACCEPTING", "SETTLING", "PAYING_CHANGE", "PARTIAL", "REFUNDING", "DONE", "HELD")
 FINAL_STATES = ("DONE", "HELD")
 OUTCOMES = ("paid", "refunded", "nothing_inserted")
 MOVEMENT_KINDS = ("float", "refill", "collect", "count", "dump", "adjust")
@@ -38,12 +40,18 @@ COMMAND_OPS = (
 #: The ops that take no arguments (anything sent with them is dropped).
 NO_ARG_OPS = ("deliver_pending", "maintenance_on", "maintenance_off", "reset_alerts", "ext_return", "ext_stack")
 COMMAND_STATUSES = ("pending", "done", "refused", "failed")
-OWED_KINDS = ("change_owed", "held_credit")
+#: `change_credit` (§11.15א): change owed the customer chose to keep as a credit for a next order — redeemed by its
+#: code at a till or a kiosk, never paid out from a drawer.
+OWED_KINDS = ("change_owed", "held_credit", "change_credit")
+#: What the customer chose for change owed (§11.15א).
+OWED_CHOICES = ("slip", "credit", "tip")
+#: `cash_credit_redemptions.status`.
+REDEMPTION_STATUSES = ("redeemed", "released", "confirmed")
 OWED_STATUSES = ("none", "open", "resolved")
 #: How an owed item ended: a till paid it ("שולם ללקוח"), the dashboard marked it applied to an
 #: order ("קוזז") or written off, a kiosk document of the same transaction arrived, or the host
 #: itself settled it (a later journal entry with nothing held any more).
-RESOLUTIONS = ("paid_out", "applied", "written_off", "matched_document", "host_resolved")
+RESOLUTIONS = ("paid_out", "applied", "written_off", "matched_document", "host_resolved", "redeemed", "tip")
 
 
 class CashStation(Base):
@@ -102,6 +110,11 @@ class CashStationTx(Base):
     held_agorot = Column(BigInteger, nullable=False, default=0, server_default="0")
     held_reason = Column(String(32), nullable=True)
     cancel_reason = Column(String(32), nullable=True)
+    #: `ask` (§11.15א): the kiosk asks the customer what to do with the change owed; what was chosen (slip | credit | tip).
+    change_owed_ask = Column(Boolean, nullable=False, default=False, server_default="false")
+    change_owed_as = Column(String(8), nullable=True)
+    #: Cash + card (§11.15ב): what the cash paid; the card paid the rest. 0: cash alone.
+    split_agorot = Column(BigInteger, nullable=False, default=0, server_default="0")
     #: "C-K7Q3MX" — on the "עודף חייב" slip.
     slip_code = Column(String(32), nullable=True)
     order_ref = Column(String(100), nullable=True)
@@ -168,6 +181,29 @@ class CashStationMovement(Base):
     at = Column(DateTime(timezone=True), nullable=False)
     received_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     z_report_id = Column(UUID(as_uuid=True), nullable=True)
+
+
+class CashCreditRedemption(Base):
+    """A cash credit taken for an order (§11.15א), by the device's own id; released when the order was not paid."""
+
+    __tablename__ = "cash_credit_redemptions"
+    __table_args__ = (Index("ix_cash_credit_redemptions_tx", "tx_id", "status"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    tx_id = Column(UUID(as_uuid=True), ForeignKey("cash_station_txs.tx_id", ondelete="CASCADE"), nullable=False)
+    station_id = Column(UUID(as_uuid=True), ForeignKey("cash_stations.id", ondelete="CASCADE"), nullable=False)
+    code = Column(String(32), nullable=False)
+    #: The till / kiosk that took it.
+    machine_id = Column(UUID(as_uuid=True), nullable=True)
+    amount_agorot = Column(BigInteger, nullable=False, default=0, server_default="0")
+    #: redeemed | released | confirmed.
+    status = Column(String(12), nullable=False, default="redeemed", server_default="redeemed")
+    #: The document whose `cash_credit` leg confirmed it.
+    document_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    released_at = Column(DateTime(timezone=True), nullable=True)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class CashHostCommand(Base):

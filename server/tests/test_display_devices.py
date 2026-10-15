@@ -258,6 +258,8 @@ def _machine_routes():
         # "שרת מזומן" (P:/specs/cash-paylink.md §11.9): the cash host's journal and command acks admit a cash host
         # only — a display device (and a till) refused too.
         auth.require_cash_host, auth.require_cash_host_token,
+        # A device command's answer: a till, a local server or a cash host (§11.15ד) — a display device refused.
+        auth.require_command_device,
     }
 
     def calls(dependant, out):
@@ -320,6 +322,9 @@ FISCAL_ROUTES = {
     ("POST", "/sync/{machine_id}/tables/take-over"),
     # "שולם ללקוח" (P:/specs/cash-paylink.md §11.8): cash out of the till's drawer for a cash station's debt.
     ("POST", "/sync/{machine_id}/cash/owed/{owed_id}/pay"),
+    # A cash credit redeemed for an order, or given back (P:/specs/cash-paylink.md §11.15א): a tender of a sale.
+    ("POST", "/sync/{machine_id}/cash/credits/{code}/redeem"),
+    ("POST", "/sync/{machine_id}/cash/credits/redemptions/{redemption_id}/release"),
 }
 
 #: Till writes a display device may make — none of them fiscal: its heartbeat, the KDS
