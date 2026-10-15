@@ -5,6 +5,7 @@
  */
 import { api, type ReportWindowParams } from './api';
 import type { ReportWindowOut } from './types';
+import type { QuickSetupBody, QuickSetupView } from './coursesQuickSetup';
 
 /** The fixed allergen list: the main eight first, then the rest of the EU's fourteen. */
 export const ALLERGENS_MAIN = ['gluten', 'milk', 'nuts', 'eggs', 'peanuts', 'fish', 'soy', 'sesame'] as const;
@@ -340,6 +341,44 @@ export async function saveCourses(
   courses: { id?: string; name: string; isActive: boolean; autoFireMinutes?: number }[],
 ): Promise<CourseList> {
   return (await api.put<CourseList>('/menu/courses', { companyId, courses })).data;
+}
+
+/* ---------------- "הגדרה מהירה לשלבי הגשה" (lib/coursesQuickSetup.ts) ---------------- */
+
+/** GET /menu/courses/quick-setup: the wizard's suggestions, the levels, the tab's status line. */
+export async function fetchCoursesQuickSetup(companyId: string): Promise<QuickSetupView> {
+  return (await api.get<QuickSetupView>('/menu/courses/quick-setup', { params: { companyId } })).data;
+}
+
+export interface QuickSetupChanges {
+  courses: { id: string; name: string; created: boolean }[];
+  categories: { id: string; name: string; field: 'courseId' | 'sendSilently'; before: unknown; after: unknown }[];
+  params: { scopeType: string; scopeId: string; key: string; before: unknown; after: unknown }[];
+}
+
+/** POST /menu/courses/quick-setup: courses, the category mapping and `coursesEnabled` at a level — one transaction. */
+export async function applyCoursesQuickSetup(body: QuickSetupBody): Promise<{ changes: QuickSetupChanges; view: QuickSetupView }> {
+  return (await api.post('/menu/courses/quick-setup', body)).data;
+}
+
+export interface QuickSetupUndoResult {
+  restored: { categories: unknown[]; params: unknown[]; coursesRemoved: { id: string; name: string }[] };
+  /** Left as they are: edited by hand since, or (courses) still named by a product, a category or an open order. */
+  kept: {
+    categories: { id: string; name: string; field: string }[];
+    params: { scopeType: string; scopeId: string; key: string }[];
+    courses: { id: string; name: string; references: Partial<Record<'products' | 'categories' | 'orders', number>> }[];
+  };
+}
+
+/** POST /menu/courses/quick-setup/undo: puts back what the quick setup changed. */
+export async function undoCoursesQuickSetup(companyId: string): Promise<{ result: QuickSetupUndoResult; view: QuickSetupView }> {
+  return (await api.post('/menu/courses/quick-setup/undo', { companyId })).data;
+}
+
+/** PUT /menu/courses/enabled: the status line's switch — off clears `coursesEnabled` where it is on, on puts it back. */
+export async function setCoursesEnabled(companyId: string, on: boolean): Promise<{ levels: string[]; view: QuickSetupView }> {
+  return (await api.put('/menu/courses/enabled', { companyId, on })).data;
 }
 
 /* ---------------- upsells ---------------- */

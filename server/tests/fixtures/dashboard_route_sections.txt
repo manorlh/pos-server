@@ -395,6 +395,10 @@ GET /menu/categories/{category_id} -> products:view
 PUT /menu/categories/{category_id} -> products:edit
 GET /menu/courses -> products:view
 PUT /menu/courses -> products:edit
+PUT /menu/courses/enabled -> products:edit
+GET /menu/courses/quick-setup -> products:view
+POST /menu/courses/quick-setup -> products:edit
+POST /menu/courses/quick-setup/undo -> products:edit
 GET /menu/groups -> products:view
 POST /menu/groups -> products:edit
 PUT /menu/groups-order -> products:edit

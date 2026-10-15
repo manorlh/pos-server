@@ -34,6 +34,7 @@ import { useAuth } from '@/lib/auth';
 import { useScope } from '@/lib/scope';
 import { GroupEditorDialog } from '@/components/dashboard/menu/group-editor';
 import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
+import { CoursesQuickSetup } from '@/components/dashboard/menu/courses-quick-setup';
 import { NotePictureButton, NotePicturePanel } from '@/components/dashboard/menu/note-picture';
 import {
   IosCanvas,
@@ -477,6 +478,8 @@ function CoursesTab() {
       ),
     onSuccess: (out) => {
       qc.setQueryData(['menu-courses'], out);
+      // The quick setup's status line counts categories that reach a course.
+      qc.invalidateQueries({ queryKey: ['courses-quick-setup'] });
       setEdit(null);
       toast.success(t('saved'));
     },
@@ -493,6 +496,8 @@ function CoursesTab() {
 
   return (
     <>
+      {/* "הגדרה מהירה לשלבי הגשה": the status line, its switch, the wizard and its undo. */}
+      <CoursesQuickSetup companyId={own.companyId} />
       <IosSectionHeader>{own.label ? t('headerCompany', { name: own.label }) : t('headerOrg')}</IosSectionHeader>
       {isLoading ? (
         <Skeleton className="h-24 w-full rounded-[22px]" />
