@@ -20,7 +20,7 @@ class AttendanceApprovalIn(_Camel):
 
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
     name: Optional[str] = Field(None, max_length=200)
-    #: open_tables | require_manager | on_behalf
+    #: open_tables | require_manager | on_behalf | wallet (cash not deposited, P:/specs/drawer-away.md §5.5)
     reason: Optional[str] = Field(None, max_length=60)
 
 

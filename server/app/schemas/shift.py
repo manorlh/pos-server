@@ -101,6 +101,9 @@ class ShiftCloseIn(BaseModel):
     #: `deposits` — what the shift's movements came to (only the types that moved anything) — which
     #: a Z's expected cash takes in only when "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" is on when
     #: that Z is produced (app/services/z_expected_cash.py); not compared either.
+    #: Two more, always in a Z's expected cash (P:/specs/drawer-away.md §5.6, app/services/cash_wallets.py):
+    #: `walletIn` (the cash the shift's payments left with employees) and `walletDeposits` (what employees
+    #: deposited into this drawer) — only when not zero.
     till: Optional[Dict[str, Any]] = None
     close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
     #: A training shift's close ("מצב הדרכה"): quarantined, answered like a real close.

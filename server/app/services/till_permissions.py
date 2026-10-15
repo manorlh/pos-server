@@ -216,6 +216,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "\"מגירה במדפסת שם\"), או \"פתיחת מגירה ב...\" מהתפריט במכשיר בלי מגירה (מסופון, P18, טלפון) — "
                    "בנוסף לכללי הפתיחה הידנית. נרשמת בקופה השולחת כ\"מגירה נפתחה מרחוק\" עם העובד והמאשר; "
                    "פתיחה בלי מכירה נרשמת כחריגה \"מגירה נפתחה ללא מכירה\"."),
+    # P:/specs/drawer-away.md §5.7 (the owner, 15.10.2026): "הכסף אצלי" — at a till with a drawer, the cash an
+    # employee kept from payments on a device away from the drawer is counted into it ("הפקדת מזומן מעובד").
+    PermissionSpec("CASH_DRAWER.WALLET_DEPOSIT", "קבלת הפקדת מזומן מעובד", "drawer",
+                   "בקופה עם מגירה: קבלת המזומן שעובד שמר אצלו (\"הכסף אצלי, אפקיד אחר כך\" במכשיר נייד או רחוק "
+                   "מהמגירה). רואים את הסכום הצפוי, סופרים ומפקידים במגירה; ההפקדה נרשמת כהכנסה למגירה עם העובד "
+                   "ומי שקיבל, ופער נרשם כחריגה.", devices=_FIXED),
     # ── ניהול בקופה ──
     PermissionSpec("CATALOG_WRITE", "עריכת קטלוג מהקופה", "admin",
                    "עריכת מוצרים, עיצוב מסך, נעילת מוצר, שמות שולחנות ומפה, מדפסות ומסופון.",
@@ -500,6 +506,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CASH_DRAWER.VIEW_CASH_MOVEMENTS":   (D, D, A, A),
     # bill-print-other-till §9ב: a waiter or a cashier with a manager's code (or a phone approval).
     "CASH_DRAWER.OPEN_REMOTE":           (P, P, A, A),
+    # drawer-away §5.7: receiving an employee's cash deposit — the waiter never, everyone else alone.
+    "CASH_DRAWER.WALLET_DEPOSIT":        (D, A, A, A),
     "CATALOG_WRITE":                     (D, P, P, A),
     # "ניהול קטלוג" (specs/till-catalog-management.md §6.2).
     "CATALOG_VIEW":                      (A, A, A, A),

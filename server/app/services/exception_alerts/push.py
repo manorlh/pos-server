@@ -120,7 +120,7 @@ CATEGORIES: Tuple[Category, ...] = (
              "פתיחת מגירה ללא מכירה, אחרי סגירה, ריבוי פתיחות ידניות, ניסיון פתיחה שנחסם, הוצאת מזומן מעל הסף ופער בספירה.",
              ("drawer_open", "drawer_after_close", "drawer_manual_burst", "drawer_manual_over_max",
               "drawer_open_near_variance", "drawer_open_no_reason", "drawer_open_denied", "cash_out_over_threshold",
-              "drawer_count_variance")),
+              "drawer_count_variance", "cash_wallet_variance")),
     Category("till_low_sales", "קופה כמעט לא מוכרת",
              "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות), או שלא מכרה זמן רב בזמן שהאחרות מוכרות.",
              ("till_low_sales", "till_idle")),

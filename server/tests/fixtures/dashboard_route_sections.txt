@@ -71,6 +71,7 @@ GET /business-cards/{card_id}/stats -> business_cards:view
 GET /cash-drawer/events -> reports:view
 GET /cash-drawer/movements -> reports:view
 GET /cash-drawer/shifts/{shift_id}/timeline -> reports|z:view
+GET /cash-drawer/wallets -> reports:view
 POST /catalog-import/commit -> products:edit
 POST /catalog-import/preview -> products:edit
 POST /catalog-import/share-link -> products:edit
