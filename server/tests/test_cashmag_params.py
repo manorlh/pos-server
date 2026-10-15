@@ -77,7 +77,8 @@ def test_the_keys_are_the_tills_and_every_default_is_todays():
     assert specs[CM.PROTOCOL_KEY].enum_options == ("jar", "rlp") and specs[CM.PROTOCOL_KEY].default_value == "jar"
     assert specs[CM.CURRENCY_KEY].default_value == "ILS"
     assert specs[CM.ROUNDING_KEY].enum_options == ("nearest_10", "none") and specs[CM.ROUNDING_KEY].default_value == "nearest_10"
-    assert specs[CM.QUEUE_TIMEOUT_KEY].default_value == 120
+    # First come, first served: the other client waits until the machine is free (0 = no limit).
+    assert specs[CM.QUEUE_TIMEOUT_KEY].default_value == 0
     assert specs[CM.AUTO_CANCEL_KEY].default_value == 0
     assert specs[CM.CALL_TIMEOUT_KEY].default_value == 30
     for key in (CM.HOST_KEY, CM.PORT_KEY, CM.TERMINAL_KEY, CM.USER_CODE_KEY):
