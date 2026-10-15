@@ -43,6 +43,7 @@ import { OptionsCard } from '@/components/dashboard/kitchen-printers/options-car
 import { TicketDesignsCard } from '@/components/dashboard/kitchen-printers/ticket-designs-card';
 import { StationsCard } from '@/components/dashboard/kitchen-printers/stations-card';
 import { PrintServerCard } from '@/components/dashboard/kitchen-printers/print-server-card';
+import { DrawersCard } from '@/components/dashboard/kitchen-printers/drawers-card';
 
 export default function KitchenPrintersPage() {
   const t = useTranslations('kitchenPrinters');
@@ -291,6 +292,9 @@ export default function KitchenPrintersPage() {
               <p className="text-sm text-muted-foreground">{t('receiptHint')}</p>
               {table(receipts, t('receiptEmpty'))}
             </section>
+
+            {/* "מגירות לפי קופה": which till has a drawer — its own port, or a receipt printer's. */}
+            <DrawersCard page={page} onEditPrinter={(p) => setDialog({ printer: p, purpose: p.purpose ?? 'receipt' })} />
 
             <NetworkScanCard
               shopId={shopId}

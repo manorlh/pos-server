@@ -169,6 +169,9 @@ def _page(db: Session, user: User, shop: Shop) -> dict:
                 # Its build prints relayed documents (`document_relay_v1`): it may host a receipt
                 # printer of type cloud ("המדפסת של <קופה>"); else "נדרש עדכון גרסה".
                 "documentRelay": RP.relays_documents(m),
+                # Its model drives a drawer port of its own (SUNMI / iMin desktops): "מגירות לפי קופה"
+                # says whether "פתיחת מגירה" opens anything there.
+                "cashDrawerPort": bool(m.has_cash_drawer_port),
             }
             for m in machines
         ],

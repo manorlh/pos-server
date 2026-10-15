@@ -386,6 +386,9 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("deferred_mode_on", "deferred_mode_off")
 #: "no line to the card company" — its code and raw message, for completing the words from the field.
 #: Recorded, feeds no rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("card_failure_verdict",)
+#: "שיגור מתוזמן של פריט" (P:/specs/item-scheduled-send.md, P:/specs/fire-restaurant-flow.md §8.3): a line's scheduled
+#: send that went on its time — reported by the till that owns the order (one till, the LAN host). Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("item_scheduled_sent",)
 
 
 class RuleValueError(ValueError):
