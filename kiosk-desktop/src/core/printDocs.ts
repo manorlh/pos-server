@@ -428,6 +428,48 @@ export function slipDoc(input: { businessName: string | null; pickupLabel: strin
   };
 }
 
+/* ------------------------------------------------------- "לתשלום בקופה" (an order no till can see yet) */
+
+/**
+ * The Android kiosk's cash slip (pos-android domain/KioskPayAtTill.kt KioskCashSlip, KioskCashSlipRenderer): the
+ * business, "לתשלום בקופה", the number big, what to pay, the items, what the amount already counts (vouchers, the
+ * tip), the order's QR ("KO:<id>"), the time, the footer — and "הזמנה ממתינה לסנכרון" while neither the cloud nor
+ * the shop's LAN host has the order. The words come from the kiosk's texts (the caller). Drawn as a receipt page.
+ */
+export function payAtTillSlipDoc(input: {
+  businessName: string | null;
+  title: string;
+  label: string;
+  amountLabel: string;
+  dueAgorot: number;
+  lines: ReadonlyArray<{ name: string; quantity: number; totalAgorot: number }>;
+  notes: readonly string[];
+  code: string;
+  at: Date;
+  footer: string;
+  pending: string | null;
+}): ReceiptDoc {
+  const ops: ReceiptOp[] = [];
+  ops.push({ t: 'text', text: nonBlank(input.businessName) ?? 'R2M', style: 'title', align: 'center' });
+  ops.push({ t: 'divider', gap: 8 });
+  ops.push({ t: 'text', text: input.title, style: 'heading', align: 'center' });
+  ops.push({ t: 'text', text: ltr(input.label), style: 'number', align: 'center' });
+  ops.push({ t: 'row', label: input.amountLabel, value: ltr(formatShekelSign(input.dueAgorot)), style: 'grand' });
+  ops.push({ t: 'divider', gap: 8 });
+  for (const l of input.lines) {
+    const q = Number.isInteger(l.quantity) ? String(l.quantity) : l.quantity.toFixed(3);
+    ops.push({ t: 'row', label: `${q} × ${l.name}`, value: formatAgorot(l.totalAgorot), style: 'body' });
+  }
+  for (const n of input.notes) ops.push({ t: 'text', text: n, style: 'small', align: 'center' });
+  ops.push({ t: 'divider', gap: 8 });
+  ops.push({ t: 'qr', value: input.code, size: 200 });
+  ops.push({ t: 'text', text: stamp(input.at), style: 'small', align: 'center' });
+  ops.push({ t: 'text', text: input.footer, style: 'bodyBold', align: 'center' });
+  if (input.pending) ops.push({ t: 'text', text: input.pending, style: 'bodyBold', align: 'center' });
+  ops.push({ t: 'end' });
+  return { kind: 'receipt', logoUrl: null, ops };
+}
+
 /* ------------------------------------------------------- an item ticket */
 
 /** An item ticket ("שובר", pos-android hardware/printer/ItemTicketRenderer.kt), drawn at 384 and scaled. */

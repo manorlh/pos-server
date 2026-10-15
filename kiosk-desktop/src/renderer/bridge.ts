@@ -91,6 +91,8 @@ function demoCheckout(): Record<string, unknown> {
   // `&service=take_away|eat_in`: one service type — never asked, never shown.
   const one = q.get('service');
   if (one === 'take_away' || one === 'eat_in') general.serviceTypes = [one];
+  // `&offline=1`: no internet, with "הודעה ללקוח כשאין אינטרנט" on (the line at the top while it still sells).
+  if (q.get('offline') === '1') general.offlineNotice = true;
   // `&topbar=all` (with `?layout=restaurant_rail`): every top-bar button — the club on, the search on, two languages.
   if (q.get('topbar') === 'all') {
     general.searchEnabled = true;
@@ -188,7 +190,7 @@ function demoView(): KioskView {
       promotions: [],
     },
     // `?nopay=1`: "התשלום אינו זמין" — nothing to charge on.
-    state: { ...rest.state, noPayment: nopay, terminal: 'ready', offline: false, offlineSince: null, cardBlocked: false },
+    state: { ...rest.state, noPayment: nopay, terminal: 'ready', offline: new URLSearchParams(window.location.search).get('offline') === '1', offlineSince: null, cardBlocked: false },
     staff: { unprintedBons: 0, printer: 'ok', pendingUploads: 0, mediaMissing: 0 },
     pay: { methods, usable: nopay ? [] : methods, cardOff: null },
   };

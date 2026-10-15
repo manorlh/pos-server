@@ -74,3 +74,20 @@ export function offlineRests(blocked: boolean, scope: OfflineBlockScope, usableL
   if (usableLeft.includes('cash_device')) return false;
   return scope === 'all' || !usableLeft.some((m) => m === 'card' || m === 'cash_at_till');
 }
+
+/** The screens a customer orders on (and the welcome): where the offline notice may show. */
+const NOTICE_SCREENS: ReadonlySet<string> = new Set(['attract', 'service', 'catalog', 'cart', 'confirm', 'details', 'success']);
+
+/**
+ * "הודעה ללקוח כשאין אינטרנט" (`general.offlineNotice`, off by default; docs/SPEC_KIOSK.md §17 — the Android kiosk's
+ * KioskPayBlock.offlineNoticeShown / KioskOfflineNotice): a quiet line at the top while the kiosk is offline and still
+ * selling — never on a rest screen (it says why itself), never over the payment.
+ */
+export function offlineNoticeShown(f: { enabled: boolean; offline: boolean; sells: boolean; screen: string }): boolean {
+  return f.enabled && f.offline && f.sells && NOTICE_SCREENS.has(f.screen);
+}
+
+/** Its words when the kiosk set none (`texts.offlineNotice`): the Android kiosk's (kalert_offline_notice) — without the terminal on a kiosk that takes no card now. */
+export function offlineNoticeText(cardUsable: boolean): string {
+  return cardUsable ? 'אין כרגע חיבור לאינטרנט. ההזמנה והתשלום במסופון ממשיכים כרגיל.' : 'אין כרגע חיבור לאינטרנט. אפשר להמשיך להזמין כרגיל.';
+}

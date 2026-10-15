@@ -260,6 +260,21 @@ def test_the_windows_kiosks_open_order_validates():
     assert [line["id"] for line in codec["lines"]] == ["L1", "L2"]
 
 
+def test_the_windows_kiosks_open_order_paid_on_the_lan_validates():
+    """
+    "תשלום בקופה" with the cloud away (docs/SPEC_KIOSK.md §17.1, kiosk-desktop core/lanOpenOrders.ts): the order was
+    handed to the shop's LAN host and its till took the money; back online the Windows kiosk uploads it as that till
+    left it — `paid`, with who, the till's document and when — as the Android kiosk does (KioskOpenOrder.wire).
+    """
+    from app.schemas.kiosk_open_orders import KioskOpenOrderIn
+
+    order = KioskOpenOrderIn.model_validate(load("open_order_lan_paid"))
+    assert order.state == "paid"
+    assert order.paid_by_name and order.paid_transaction_id and order.paid_transaction_number
+    assert order.paid_at is not None
+    assert order.due_agorot == order.total_agorot + order.tip_agorot - order.voucher_agorot
+
+
 def test_the_desktop_exit_event_validates():
     """
     "יציאה לשולחן העבודה" (kiosk-desktop core/desktopExit.ts, permission DESKTOP_EXIT): who left the

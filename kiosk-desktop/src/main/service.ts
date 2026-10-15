@@ -11,7 +11,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
-import { legMarks, orderCode, orderDue, recountLegs, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { legMarks, openLines, orderCode, orderDue, recountLegs, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { kioskTextOf } from '@dash-lib/kioskTexts';
 import { DISCOUNT_PAY_HERE, startVouchersOf } from '@dash-lib/kioskVoucherClient';
 import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '@dash-lib/kioskVouchers';
 import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
@@ -19,6 +20,7 @@ import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promoti
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
+import { lanTargetOf, type LanHost, type LanTarget } from '../core/lanOpenOrders';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
 import { CashCredits } from './kiosk/cashCredits';
 import { CashMagPay, CASHMAG_STATION_NAME, txViewOf as cashmagTxView, type CashMagEntry, type CashMagLocalConfig, type CashMagProgress } from './kiosk/cashmagPay';
@@ -28,7 +30,8 @@ import type { CashRecyclerDriver } from './cash/recycler';
 import type { CashMagFunctions } from '../core/cash/cashmagWire';
 import type { SessionStore } from './cash/cashmagClient';
 import { creditLegsOf } from '../core/cash/credit';
-import { cashSlipDoc } from '../core/printDocs';
+import { cashSlipDoc, payAtTillSlipDoc } from '../core/printDocs';
+import { formatShekelSign, ltr } from '../core/money';
 import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cash/tx';
 import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
 import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
@@ -210,6 +213,13 @@ const SHOP_Z_CLOSE_RESULT = 'shopZClose.result';
 const DESKTOP_LOCK = 'desktopExit.lock';
 const DESKTOP_STATE = 'desktopExit.state';
 const DESKTOP_LOG = 'desktopExit.log';
+/**
+ * "תשלום בקופה" with no cloud (core/lanOpenOrders.ts): the shop's LAN host — its print server — and the shop's print secret
+ * (sealed), as `GET /sync/{m}/printers` last gave them, with its ETag. Read only by a kiosk that offers the till.
+ */
+const LAN_HOST = 'lan.host';
+const LAN_HOST_PULL_MS = 5 * 60_000;
+type KeptLanHost = { etag: string | null; host: LanHost | null; secret: string | null; sealed: boolean };
 
 export class KioskService extends EventEmitter {
   readonly db: Db;
@@ -318,7 +328,16 @@ export class KioskService extends EventEmitter {
     this.printQueue = new PrintQueue(this.db, this.transport, () => this.printerResolution().target, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
-    this.payAtTill = new PayAtTill({ kv: this.kv, api: this.api, machineId: () => this.machineId, operator: () => this.operator(), log: this.log });
+    this.payAtTill = new PayAtTill({
+      kv: this.kv,
+      api: this.api,
+      machineId: () => this.machineId,
+      operator: () => this.operator(),
+      log: this.log,
+      // The cloud away: the shop's LAN host takes the orders (its print server; never for an independent kiosk).
+      lanTarget: () => this.lanTarget(),
+      kioskName: () => this.operator().name,
+    });
     this.cashPay = new CashPay({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log, fetch: opts.fetch });
     this.cashCredits = new CashCredits({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log });
     this.cashPay.onChange(() => this.dirty());
@@ -870,7 +889,9 @@ export class KioskService extends EventEmitter {
         if (id && this.isKiosk()) await this.orders.push(this.api, id);
         // "ביצועי קיוסקים": the funnel's events, after the orders.
         if (id && this.isKiosk()) await this.funnel.push(this.api, id).catch(() => false);
-        // "מזומן בקופה": the open orders the cloud has not taken, the vouchers to give back.
+        // "מזומן בקופה": where the shop's LAN host is (for the offline days), then the open orders the cloud has not
+        // taken — with what a LAN till did with them — and the vouchers to give back.
+        if (id && this.isKiosk()) await this.pullLanHost().catch((e) => this.log(`LAN host: ${String(e)}`));
         if (id && this.isKiosk()) await this.payAtTill.flush().catch((e) => this.log(`pay at till: ${String(e)}`));
         // "מזומן" at the cash station: which station and its secret (ETag), and payments still to settle.
         if (id && this.isKiosk()) {
@@ -2076,7 +2097,9 @@ export class KioskService extends EventEmitter {
     if (!order) return;
     const cfg = this.config();
     const rules: PickupRules = { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat };
-    const pickup = order.pickupNumber ? { number: order.pickupNumber, label: order.pickupLabel ?? String(order.pickupNumber) } : await allocatePickup(this.kv, this.api, this.machineId, order, rules);
+    const pickup = order.pickupNumber
+      ? { number: order.pickupNumber, label: order.pickupLabel ?? String(order.pickupNumber) }
+      : await allocatePickup(this.kv, this.api, this.machineId, order, rules, { offline: this.offlineNow });
     order = this.orders.update(orderId, (o) => ({ ...o, pickupNumber: pickup.number, pickupLabel: pickup.label }))!;
     const policy = cfg.payment.receiptPolicy;
     const receipt: PayProgress['receipt'] = policy === 'always' ? 'printing' : policy === 'ask' ? 'ask' : 'none';
@@ -2117,6 +2140,44 @@ export class KioskService extends EventEmitter {
   /** Offline with "חסימת הזמנות כשאין אינטרנט" on: what it blocks is [offlineScope]'s. */
   private offlineBlocked(cfg: { general?: { blockWhenOffline?: boolean } } | null): boolean {
     return !!cfg && kioskOfflineBlocks(cfg.general, this.offlineNow);
+  }
+
+  /** The shop's LAN host for "תשלום בקופה" with no cloud, as last kept (the secret opened); null: none known. */
+  lanTarget(): LanTarget | null {
+    const kept = this.kv.getJson<KeptLanHost>(LAN_HOST);
+    if (!kept?.host || !kept.secret) return null;
+    try {
+      return { ...kept.host, secret: kept.sealed ? (this.opts.secretBox ?? PLAIN_BOX).open(kept.secret) : kept.secret };
+    } catch {
+      return null;
+    }
+  }
+
+  private lanHostPulledAt = 0;
+
+  /**
+   * Where the shop's LAN host is and the shop's print secret (`GET /sync/{m}/printers`, ETag), kept for the days the
+   * cloud is away — every 5 minutes after a good beat, only on a kiosk that offers "תשלום בקופה" (the browser kiosk's
+   * bridge: the page hands its orders over itself). An independent kiosk is given no LAN address: none kept.
+   */
+  async pullLanHost(force = false): Promise<void> {
+    const id = this.machineId;
+    if (!id || !this.fiscalRole || this.opts.bridge || !this.isKiosk()) return;
+    if (!kioskPayMethods(this.config().payment.methods).includes('cash_at_till')) return;
+    if (!force && Date.now() - this.lanHostPulledAt < LAN_HOST_PULL_MS) return;
+    this.lanHostPulledAt = Date.now();
+    const kept = this.kv.getJson<KeptLanHost>(LAN_HOST);
+    // The ETag only while what it stands for is still readable here (a secret that no longer opens is asked again).
+    const etag = kept?.etag && (kept.host === null || this.lanTarget() !== null) ? kept.etag : null;
+    const r = await this.api.get<Record<string, unknown>>(`sync/${id}/printers${etag ? `?etag=${encodeURIComponent(etag)}` : ''}`, { timeoutMs: 20_000 });
+    if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object' || r.body.syncType === 'unchanged') return;
+    const t = lanTargetOf(r.body);
+    const box = this.opts.secretBox ?? PLAIN_BOX;
+    const host: LanHost | null = t ? { address: t.address, port: t.port, machineId: t.machineId, name: t.name } : null;
+    if (JSON.stringify(host) !== JSON.stringify(kept?.host ?? null)) {
+      this.log(host ? `pay at till: the shop's LAN host is ${host.name ?? host.machineId ?? '?'} at ${host.address}:${host.port}` : 'pay at till: no LAN host for this kiosk');
+    }
+    this.kv.setJson(LAN_HOST, { etag: typeof r.body.etag === 'string' ? r.body.etag : null, host, secret: t ? box.seal(t.secret) : null, sealed: box !== PLAIN_BOX } satisfies KeptLanHost);
   }
 
   /** "קיוסק — מה נחסם כשאין אינטרנט" (`kioskOfflineBlockScope`): the parameter, else the config's, else `all`. */
@@ -2272,7 +2333,16 @@ export class KioskService extends EventEmitter {
     const now = Date.now();
     const localId = randomUUID();
     const businessDate = localDate(now);
-    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat });
+    // The cloud known to be away: nothing waited for — the local number (tagged L), the LAN host at once.
+    const offline = this.offlineNow;
+    const pickup = await allocatePickup(
+      this.kv,
+      this.api,
+      this.machineId,
+      { localId, businessDate },
+      { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat },
+      { offline },
+    );
     const order: OpenOrder = {
       localId,
       createdAtMs: now,
@@ -2298,7 +2368,7 @@ export class KioskService extends EventEmitter {
     // במדפסת הקיוסק" off it never prints here: the till that takes the money prints it.
     const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && windowsBonRoute(cfg.printing) !== 'none';
     order.kitchenSent = kitchenFirst;
-    const placed = await this.payAtTill.place(order);
+    const placed = await this.payAtTill.place(order, { offline });
     if (placed.rejected === PRICE_CHANGED) {
       // The cloud prices it otherwise: never placed. The catalog caught up, the customer shown the change.
       this.payAtTill.forget(localId);
@@ -2332,11 +2402,39 @@ export class KioskService extends EventEmitter {
         }, kioskBonStyle(this.cloud.parameters())),
       );
     }
-    if (cfg.printing.pickupSlip) {
+    // "הזמנה ממתינה לסנכרון" only while no till can see it: neither the cloud nor the shop's LAN host has it.
+    const pending = placed.cloudState === null && !this.payAtTill.lanDelivered(localId);
+    if (pending) {
+      // No till can find it by its number or QR yet: the customer takes it to the till on paper — the Android kiosk's
+      // cash slip (the number, what to pay, the items, the QR, "ממתינה לסנכרון"), in place of the pickup slip.
+      this.printQueue.enqueue('slip', localId, this.payAtTillSlip(placed, cfg, now, true));
+    } else if (cfg.printing.pickupSlip) {
       this.printQueue.enqueue('slip', localId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: lines.reduce((n, l) => n + l.qty, 0), totalAgorot: orderDue(placed) }));
     }
     this.dirty();
-    return { ok: true, localId, pickupLabel: pickup.label, vouchers, dueAgorot: orderDue(placed), pending: placed.cloudState === null, code: orderCode(localId) };
+    return { ok: true, localId, pickupLabel: pickup.label, vouchers, dueAgorot: orderDue(placed), pending, code: orderCode(localId) };
+  }
+
+  /** "לתשלום בקופה" on paper (core/printDocs.ts payAtTillSlipDoc), in the kiosk's own words (its texts, else the defaults). */
+  private payAtTillSlip(o: OpenOrder, cfg: ReturnType<typeof resolveKioskConfig>, at: number, pending: boolean): PrintDoc {
+    const text = (key: string, values?: Record<string, string | number>) => kioskTextOf(cfg, 'he', key, values);
+    const notes = [
+      ...o.vouchers.map((v) => `${text('paySlipVoucher', { number: v.serial })} — ${ltr(formatShekelSign(v.amountAgorot))}`),
+      ...(o.tipAgorot > 0 ? [`${text('paySlipTip')} ${ltr(formatShekelSign(o.tipAgorot))}`] : []),
+    ];
+    return payAtTillSlipDoc({
+      businessName: this.business().companyName,
+      title: text('cashSlipTitle'),
+      label: o.pickupLabel,
+      amountLabel: text('paySlipAmount'),
+      dueAgorot: orderDue(o),
+      lines: openLines(o.lines),
+      notes,
+      code: orderCode(o.localId),
+      at: new Date(at),
+      footer: text('cashSlipFooter'),
+      pending: pending ? text('cashSlipPending') : null,
+    });
   }
 
   async cancelPayment(): Promise<void> {
@@ -2945,6 +3043,11 @@ export class KioskService extends EventEmitter {
     const op = this.operator();
     // The main till's shop Z part: a payment waited out, an answer the cloud did not take yet.
     if (this.shopZPart) await this.runShopZPart();
+    // "תשלום בקופה" with the cloud away: the orders it has not taken handed to the shop's LAN host (again), and what its
+    // till did with them asked (the Android kiosk's 15 s loop; the cloud's own turn is the next good beat).
+    if (this.offlineNow && this.fiscalRole && !this.opts.bridge && this.isKiosk() && this.payAtTill.pending() > 0) {
+      await this.payAtTill.lanRetry().catch((e) => this.log(`pay at till (LAN): ${String(e)}`));
+    }
     // The pinpad that moved (a DHCP change): looked for by who it is, "לפי המאק" first (PinpadRelocator).
     if (this.fiscalRole && !this.opts.bridge) await this.relocateTick().catch(() => undefined);
     // "סגירה יחד עם ה-Z הסניפי": carried out first, on an idle tick (KioskRepository.autoCloseTick).
