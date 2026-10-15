@@ -1,7 +1,7 @@
 """
 "מכשיר מזומן (CashMag)" — the till parameters of the CashMag (CMC Monetic) cash recycler (P:/specs/cashmag.md §4.1).
 
-The till pays at the vendor's own software on a Windows PC on the shop's LAN — no cash host of ours — so these are
+The till pays at the vendor's own software on the CashMag box (Linux or Windows, vendor-supplied) on the shop's LAN — no cash host of ours — so these are
 read by the till alone (pos-android `domain/CashMag.kt` `CashMagConfig`, as `param.<key>`), resolved like every
 till parameter (company → shop → point of sale → till). Every default keeps today's till: CashMag OFF, nothing
 of the vendor's touched. A device's own settings (`cashmag.local.*`, never
@@ -74,7 +74,7 @@ def _spec(key: str, label: str, value_type: str, default: Any, description: str,
 PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     _spec(ENABLED_KEY, "מכשיר מזומן CashMag — פעיל בקופה", "boolean", False,
           "כשמופעל, במסך התשלום של הקופה יש \"מזומן במכשיר\": הלקוח משלם ומקבל עודף במכונת המזומן של CashMag "
-          "(CMC Monetic), דרך תוכנת היצרן במחשב Windows ברשת המקומית. כבוי (ברירת מחדל) — הקופה כמו היום, בלי שום "
+          "(CMC Monetic), דרך תוכנת היצרן בקופסת CashMag ברשת המקומית. כבוי (ברירת מחדל) — הקופה כמו היום, בלי שום "
           f"פנייה למכונה. דורש גרסת קופה שכוללת את ספריית היצרן. {_LEVELS}"),
     _spec(PROTOCOL_KEY, "מכשיר מזומן CashMag — פרוטוקול", "enum", PROTOCOL_JAR,
           f"איך הקופה מדברת עם תוכנת היצרן במחשב CashMag. «{PROTOCOL_LABELS[PROTOCOL_JAR]}» (ברירת מחדל). "
