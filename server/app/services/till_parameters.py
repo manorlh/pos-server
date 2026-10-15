@@ -2004,6 +2004,13 @@ from app.services.cash_params import PARAMETER_SPECS as _CASH_SPECS  # noqa: E40
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CASH_SPECS)
 
+# "מכשיר מזומן (CashMag)" (app/services/cashmag_params.py, P:/specs/cashmag.md §4.1): the CashMag recycler at a
+# till — on / off, the protocol, the vendor's server, the user code, the currency (ILS), the rounding and the
+# waits. Read by the till (and, stage 2, the kiosks); off by default.
+from app.services.cashmag_params import PARAMETER_SPECS as _CASHMAG_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CASHMAG_SPECS)
+
 # "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
 # what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
 # מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).
@@ -2676,6 +2683,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in cash_params.VALIDATED_KEYS and value is not None:
         try:
             return cash_params.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "מכשיר מזומן (CashMag)" (P:/specs/cashmag.md §4.1): the user code digits, the currency three letters, the ranges.
+    from app.services import cashmag_params
+
+    if key in cashmag_params.VALIDATED_KEYS and value is not None:
+        try:
+            return cashmag_params.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value
