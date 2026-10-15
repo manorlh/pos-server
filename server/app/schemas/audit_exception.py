@@ -53,7 +53,11 @@ class TillEventIn(BaseModel):
                   # "זיהוי אין קו" (§12 "למידה"): a card failure and the till's verdict (details: statusCode,
                   # statusMessage, outcome, kind, model, verdict no_line | other, why, deviceOnline,
                   # cloudOnline, autoOn, streak). No rule.
-                  "card_failure_verdict"]
+                  "card_failure_verdict",
+                  # "שיגור מתוזמן של פריט" (P:/specs/item-scheduled-send.md): a line's scheduled send that went on
+                  # its time, by the till that owns the order (details: orderId, tableNumber, tableName, scheduleId,
+                  # seed, lineIds, lines, by manual | rule). Kept for the record, no rule.
+                  "item_scheduled_sent"]
     occurred_at: datetime = Field(..., alias="occurredAt")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
