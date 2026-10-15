@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   cleanIntegration,
+  cleanTapToPayEnvironment,
   cleanNayaxUsbDevice,
   cleanPinpadId,
   cleanSynqpayConnection,
@@ -82,13 +83,14 @@ describe('values', () => {
 describe('integrationOptions', () => {
   const byValue = (opts: ReturnType<typeof integrationOptions>) => Object.fromEntries(opts.map((o) => [o.value, o]));
 
-  it('offers everything but Tap to Pay on a till with its own terminal', () => {
+  it('offers everything on a till with its own terminal and NFC, Tap to Pay too', () => {
     const o = byValue(integrationOptions({ hasBuiltinTerminal: true, hasNfc: true }));
     assert.equal(o.auto.selectable, true);
     assert.equal(o.agamento.selectable, true);
     assert.equal(o.nayax_lan.selectable, true);
     assert.equal(o.zcredit.selectable, true);
-    assert.equal(o.tap_to_pay.selectable, false);
+    assert.equal(o.tap_to_pay.selectable, true);
+    assert.equal(o.tap_to_pay.label, INTEGRATION_LABELS.tap_to_pay);
   });
 
   it('disables the built-in terminal, with why, on a till without one', () => {
@@ -100,17 +102,21 @@ describe('integrationOptions', () => {
     assert.equal(o.zcredit.selectable, true);
   });
 
-  it('never lets Tap to Pay be picked, and hides it on a device without NFC', () => {
+  it('lets Tap to Pay be picked, but hides it on a device without NFC and on a kiosk', () => {
     for (const device of [null, { hasBuiltinTerminal: true, hasNfc: true }, { hasBuiltinTerminal: false, hasNfc: null }]) {
       const o = byValue(integrationOptions(device));
-      assert.equal(o.tap_to_pay.selectable, false);
-      assert.equal(o.tap_to_pay.reason, 'soon');
+      assert.equal(o.tap_to_pay.selectable, true);
+      assert.equal(o.tap_to_pay.reason, null);
       assert.equal(o.tap_to_pay.hidden, false);
-      assert.match(o.tap_to_pay.label, /בקרוב/);
+      assert.doesNotMatch(o.tap_to_pay.label, /בקרוב/);
     }
     const noNfc = byValue(integrationOptions({ hasBuiltinTerminal: false, hasNfc: false }));
     assert.equal(noNfc.tap_to_pay.reason, 'needs_nfc');
     assert.equal(noNfc.tap_to_pay.hidden, true);
+    const kiosk = byValue(integrationOptions({ hasBuiltinTerminal: false, hasNfc: true, isKiosk: true }));
+    assert.equal(kiosk.tap_to_pay.reason, 'not_on_kiosk');
+    assert.equal(kiosk.tap_to_pay.explanation, PI_TEXT.tapToPayNotOnKiosk);
+    assert.equal(kiosk.tap_to_pay.hidden, true);
   });
 
   it('offers the built-in terminal on an upper layer (no device known)', () => {
@@ -120,13 +126,17 @@ describe('integrationOptions', () => {
 
   it('lets the server take a choice away, never add one', () => {
     const o = byValue(
-      integrationOptions({ hasBuiltinTerminal: null }, [
+      integrationOptions({ hasBuiltinTerminal: null, hasNfc: false }, [
         { value: 'agamento', selectable: false, reason: 'needs_builtin_terminal' },
         { value: 'tap_to_pay', selectable: true },
+        { value: 'zcredit', selectable: false, reason: 'not_on_kiosk' },
       ]),
     );
     assert.equal(o.agamento.selectable, false);
+    // The device says no NFC: the server's "yes" does not add it back.
     assert.equal(o.tap_to_pay.selectable, false);
+    assert.equal(o.zcredit.selectable, false);
+    assert.equal(o.zcredit.reason, 'not_on_kiosk');
   });
 });
 
@@ -318,9 +328,48 @@ describe('validatePaymentIntegration — the choice itself', () => {
     assert.equal(errors.paymentIntegration, PI_TEXT.agamentoNeedsBuiltin);
     assert.deepEqual(validatePaymentIntegration({ paymentIntegration: 'agamento' }, {}, noSecrets, { hasBuiltinTerminal: true }), {});
   });
-  it('refuses Tap to Pay', () => {
-    const errors = validatePaymentIntegration({ paymentIntegration: 'tap_to_pay' }, {}, noSecrets);
-    assert.equal(errors.paymentIntegration, PI_TEXT.tapToPayReserved);
+  it('refuses Tap to Pay on a kiosk or a device without NFC only', () => {
+    const kiosk = validatePaymentIntegration({ paymentIntegration: 'tap_to_pay' }, {}, noSecrets, { isKiosk: true, requireAll: false });
+    assert.equal(kiosk.paymentIntegration, PI_TEXT.tapToPayNotOnKiosk);
+    const noNfc = validatePaymentIntegration({ paymentIntegration: 'tap_to_pay' }, {}, noSecrets, { hasNfc: false, requireAll: false });
+    assert.equal(noNfc.paymentIntegration, PI_TEXT.needsNfc);
+    const ok = validatePaymentIntegration({ paymentIntegration: 'tap_to_pay' }, {}, noSecrets, { hasNfc: true, requireAll: false });
+    assert.equal(ok.paymentIntegration, undefined);
+  });
+  it('asks Tap to Pay for its TPN, merchant code and environment, and checks their format', () => {
+    const errors = validatePaymentIntegration({ paymentIntegration: 'tap_to_pay' }, {}, noSecrets, { hasNfc: true });
+    assert.equal(errors.tapToPayTpn, PI_TEXT.required);
+    assert.equal(errors.tapToPayMerchantCode, PI_TEXT.required);
+    assert.equal(errors.tapToPayEnvironment, PI_TEXT.tapToPayEnvRequired);
+    const full = {
+      paymentIntegration: 'tap_to_pay',
+      tapToPayTpn: 'T2PTEST00001',
+      tapToPayMerchantCode: '123456789012',
+      tapToPayEnvironment: 'sandbox',
+    };
+    assert.deepEqual(validatePaymentIntegration(full, {}, noSecrets, { hasNfc: true }), {});
+    // A stored code (here or above) counts; the environment may be inherited.
+    const stored = { tapToPayMerchantCode: { set: true, source: 'shop', own: false } };
+    assert.deepEqual(
+      validatePaymentIntegration({ paymentIntegration: 'tap_to_pay', tapToPayTpn: 'T2PTEST00001' }, { tapToPayEnvironment: 'production' }, stored),
+      {},
+    );
+    const bad = validatePaymentIntegration(
+      { ...full, tapToPayTpn: '12-34', tapToPayMerchantCode: '12 34', tapToPayEnvironment: 'live' },
+      {},
+      noSecrets,
+    );
+    assert.equal(bad.tapToPayTpn, PI_TEXT.tapToPayTpnInvalid);
+    assert.equal(bad.tapToPayMerchantCode, PI_TEXT.tapToPayCodeInvalid);
+    assert.equal(bad.tapToPayEnvironment, PI_TEXT.tapToPayEnvRequired);
+    assert.equal(cleanTapToPayEnvironment(' UAT '), 'sandbox');
+    assert.equal(cleanTapToPayEnvironment('Production'), 'production');
+    assert.equal(cleanTapToPayEnvironment('live'), null);
+  });
+  it('words the server refusals of Tap to Pay', () => {
+    const err = (code: string) => ({ response: { status: 422, data: { detail: { code } } } });
+    assert.equal(paymentIntegrationErrorMessage(err('tap_to_pay_needs_nfc')), PI_TEXT.needsNfc);
+    assert.equal(paymentIntegrationErrorMessage(err('tap_to_pay_not_on_kiosk')), PI_TEXT.tapToPayNotOnKiosk);
   });
   it('needs nothing for automatic or the built-in terminal', () => {
     assert.deepEqual(validatePaymentIntegration({ paymentIntegration: 'auto' }, {}, noSecrets), {});

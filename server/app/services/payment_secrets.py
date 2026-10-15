@@ -11,8 +11,8 @@ Card-integration secrets (the Z-Credit terminal password) on the settings layers
   development server works out of the box, and production can rotate the JWT key
   without losing every stored password once it sets its own.
 * **Read in the clear by one caller only:** the till's authenticated settings sync
-  (`GET /sync/{machine_id}/settings`), for a till that charges on Z-Credit
-  (app/services/payment_integration.py).
+  (`GET /sync/{machine_id}/settings`), for a till that charges on the secret's integration —
+  Z-Credit's password, SynqPay's key, Tap to Pay's merchant code (app/services/payment_integration.py).
 * **Layered like the settings:** the most specific layer that has a secret wins, so a
   shop's password reaches all its tills and one till can still have its own.
 * **SynqPay's key comes from the till** (docs/SPEC_SYNQPAY.md §2.2): the till pairs with its
@@ -44,10 +44,17 @@ ZCREDIT_PASSWORD = "zcreditPassword"
 ZCREDIT_KEY = "zcreditKey"
 #: The SynqPay terminal's API key, from its pairing (docs/SPEC_SYNQPAY.md).
 SYNQPAY_API_KEY = "synqpayApiKey"
-SECRET_KEYS: Tuple[str, ...] = (ZCREDIT_PASSWORD, ZCREDIT_KEY, SYNQPAY_API_KEY)
+#: Tap to Pay (iPOSpays In-App SDK, P:/specs/tap-to-pay.md): the merchant code the portal issues
+#: per TPN ("Merchant Keys / Ecom Token"). With the TPN it registers a device for the merchant,
+#: so it is kept like the Z-Credit password: write-only, encrypted, to a till on Tap to Pay only.
+TAP_TO_PAY_MERCHANT_CODE = "tapToPayMerchantCode"
+SECRET_KEYS: Tuple[str, ...] = (ZCREDIT_PASSWORD, ZCREDIT_KEY, SYNQPAY_API_KEY, TAP_TO_PAY_MERCHANT_CODE)
 
 #: A SynqPay API key as its pairing hands it out ("1234abcd" in the docs): letters and digits.
 _SYNQPAY_API_KEY = re.compile(r"^[A-Za-z0-9]{1,64}$")
+#: A Tap to Pay merchant code: the docs say 12 digits; letters are let through in case a portal
+#: issues them (the SDK refuses a wrong one at registration, codes 3/4).
+_TAP_TO_PAY_MERCHANT_CODE = re.compile(r"^[A-Za-z0-9]{6,32}$")
 
 #: A secret's longest accepted value.
 SECRET_MAX = 200
@@ -137,6 +144,7 @@ def secret_patch(data: Any) -> Dict[str, Optional[str]]:
         ("zcredit_password", ZCREDIT_PASSWORD),
         ("zcredit_key", ZCREDIT_KEY),
         ("synqpay_api_key", SYNQPAY_API_KEY),
+        ("tap_to_pay_merchant_code", TAP_TO_PAY_MERCHANT_CODE),
     ):
         if field not in sent:
             continue
@@ -145,6 +153,8 @@ def secret_patch(data: Any) -> Dict[str, Optional[str]]:
             continue
         value = clean_secret(raw)
         if key == SYNQPAY_API_KEY and value is not None and not _SYNQPAY_API_KEY.match(value):
+            raise PaymentSecretError("secret_invalid")
+        if key == TAP_TO_PAY_MERCHANT_CODE and value is not None and not _TAP_TO_PAY_MERCHANT_CODE.match(value):
             raise PaymentSecretError("secret_invalid")
         out[key] = value
     return out

@@ -7,7 +7,8 @@ secrets. This read says what the form cannot work out from the settings alone:
 
 * whether the layer, or one above it, holds each secret (never the value);
 * what the layer inherits, and from where;
-* for a till: whether it has a terminal of its own and NFC (which choices it may have),
+* for a till: whether it has a terminal of its own and NFC, and whether it is a kiosk (which
+  choices it may have: Tap to Pay needs NFC and is not on a kiosk yet),
   what it resolves to and which fields it still lacks;
 * for a kiosk: whether its config takes payment at the till (`kioskPaysAtTill`), for the
   "ללא אשראי" warning.
@@ -84,6 +85,7 @@ def _options(machine: Any) -> List[Dict[str, Any]]:
     """The select's choices, each with whether it may be picked here and why not."""
     builtin = True if machine is None else bool(getattr(machine, "has_builtin_terminal", True))
     nfc = None if machine is None else PI.device_has_nfc(machine)
+    tap_to_pay = PI.tap_to_pay_reason(machine)
     # On a SynqPay terminal the built-in terminal is SynqPay's own (docs/SPEC_SYNQPAY.md §1.5).
     from app.models.synqpay_devices import synqpay_device_model
 
@@ -95,6 +97,9 @@ def _options(machine: Any) -> List[Dict[str, Any]]:
             reason = "soon" if nfc is not False else "needs_nfc"
         elif value == PI.AGAMENTO and not builtin:
             reason = "needs_builtin_terminal"
+        elif value == PI.TAP_TO_PAY and tap_to_pay is not None:
+            # A kiosk (stage 1 is the till only), or a device that reported no NFC.
+            reason = tap_to_pay
         label = PI.BUILTIN_SYNQPAY_LABEL_HE if value == PI.AGAMENTO and synqpay_device else PI.LABELS_HE[value]
         out.append({"value": value, "label": label, "selectable": reason is None, "reason": reason})
     return out
@@ -152,6 +157,7 @@ def get_payment_integration_context(
         "targetId": target_id,
         "hasBuiltinTerminal": None if machine is None else bool(machine.has_builtin_terminal),
         "hasNfc": None if machine is None else PI.device_has_nfc(machine),
+        "isKiosk": None if machine is None else bool(getattr(machine, "is_kiosk", False)),
         "options": _options(machine),
         "inherited": {"integration": inherited_value, "source": inherited_source},
         "secrets": secrets,
