@@ -766,3 +766,23 @@ export function cashSlipDoc(input: {
   ops.push({ t: 'end' });
   return { kind: 'receipt', logoUrl: null, ops };
 }
+
+/**
+ * "דוח X סניפי" on paper (P:/specs/shop-x-report.md §4): the cloud's `printDocument` as it wrote it — the title, the
+ * business, the subtitle ("דוח ביניים, אינו סוגר יום"), each section's rows (an emphasised row in bold), the footer —
+ * in the till's X format. No number: it is not a document.
+ */
+export function shopXPrintDoc(d: { title: string; businessName: string | null; subtitle: string | null; sections: Array<{ title: string | null; rows: Array<{ label: string; value: string; emphasis: boolean }> }>; footer: string | null }, logoUrl: string | null): ZDoc {
+  const ops: ZOp[] = [];
+  if (d.businessName) ops.push({ t: 'centred', text: d.businessName, size: 24, bold: true });
+  ops.push({ t: 'centred', text: d.title, size: 26, bold: true });
+  if (d.subtitle) ops.push({ t: 'centred', text: d.subtitle, size: 18, bold: false });
+  for (const s of d.sections) {
+    ops.push({ t: 'divider' });
+    if (s.title) ops.push({ t: 'centred', text: s.title, size: 20, bold: true });
+    for (const r of s.rows) ops.push({ t: 'row', label: r.label, value: r.value, bold: r.emphasis });
+  }
+  ops.push({ t: 'divider' });
+  if (d.footer) ops.push({ t: 'centred', text: d.footer, size: 16, bold: false });
+  return { kind: 'z', logoUrl, ops };
+}

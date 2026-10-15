@@ -1076,3 +1076,9 @@
   font-size: 18px;
   font-weight: 700;
 }
+
+/* "דוח X סניפי": an emphasised row of the cloud's report. */
+.t-strong dt,
+.t-strong dd {
+  font-weight: 700;
+}

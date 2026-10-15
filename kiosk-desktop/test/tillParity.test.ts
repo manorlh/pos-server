@@ -11,10 +11,12 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MENU_ITEM_KEYS, parseHiddenMenu } from '../src/core/till/menuHide';
+import { SHOP_X_TEXT, shopXDocumentOf, shopXOffered, shopXRefusal } from '../src/core/till/shopX';
+import { shopXPrintDoc } from '../src/core/printDocs';
 import { linesAt, nameLayout, priceLayout, showsInfo, TILE_TEXT_DEFAULTS, tileTextOf } from '../src/core/till/tileText';
 import type { Catalog, TillState } from '../src/shared/till/protocol';
 import { ItemInfo } from '../src/renderer/roles/till/screens/SellScreen';
-import { readyTill } from './tillEngineHarness';
+import { MACHINE, MANAGER_PIN, readyTill, roster } from './tillEngineHarness';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -141,6 +143,106 @@ describe('the product tile: the whole name, the price never cut, the "i" (P:/spe
       }),
     );
     for (const text of ['פלטת גבינות', 'מנות', 'גבינות וזיתים', '168.00', 'חלב', 'חסום', 'נגמר בצק', 'הוסף לסל']) expect(html).toContain(text);
+  });
+});
+
+const SHOP_X_DOC = {
+  title: 'דוח X סניפי',
+  number: null,
+  businessName: 'בדיקה בע״מ',
+  subtitle: 'דוח X סניפי — דוח ביניים, אינו סוגר יום',
+  sections: [
+    { title: 'אזהרות', rows: [{ label: 'קופה 3', value: 'לא עודכנה מאז 20:10, 4 מסמכים ממתינים', emphasis: true }] },
+    { title: 'סיכום', rows: [{ label: 'מכירות נטו', value: '₪1,234.00', emphasis: true }, { label: 'מזומן', value: '₪400.00', emphasis: false }] },
+  ],
+  footer: 'הופק ע״י אבי לוי בקופה 2, 21:03',
+};
+
+describe('"דוח X סניפי" on the till (P:/specs/shop-x-report.md, cloud route)', () => {
+  it('on which tills: all (default), selected by id, the shop Z’s main till, off', () => {
+    expect(shopXOffered({}, MACHINE)).toBe(true);
+    expect(shopXOffered({ shopXTills: 'all' }, MACHINE)).toBe(true);
+    expect(shopXOffered({ shopXTills: 'off' }, MACHINE)).toBe(false);
+    expect(shopXOffered({ shopXTills: 'selected', shopXTillIds: `x, ${MACHINE.toUpperCase()}` }, MACHINE)).toBe(true);
+    expect(shopXOffered({ shopXTills: 'selected', shopXTillIds: 'x,y' }, MACHINE)).toBe(false);
+    expect(shopXOffered({ shopXTills: 'master', shopZMasterTill: MACHINE }, MACHINE)).toBe(true);
+    expect(shopXOffered({ shopXTills: 'master', shopZMasterTill: 'other' }, MACHINE)).toBe(false);
+  });
+
+  it('the paper is the cloud’s document as written: title, business, subtitle, sections (bold where emphasised), footer — no number', () => {
+    const doc = shopXDocumentOf(SHOP_X_DOC)!;
+    expect(doc.sections).toHaveLength(2);
+    const paper = shopXPrintDoc(doc, null);
+    const text = JSON.stringify(paper.ops);
+    for (const t of ['בדיקה בע״מ', 'דוח X סניפי', 'דוח ביניים', 'קופה 3', 'מכירות נטו', '₪1,234.00', 'הופק ע״י']) expect(text).toContain(t);
+    expect(paper.ops).toContainEqual({ t: 'row', label: 'מכירות נטו', value: '₪1,234.00', bold: true });
+    expect(text).not.toContain('מס׳');
+    expect(shopXDocumentOf(null)).toBeNull();
+    expect(shopXRefusal(403, { detail: { code: 'shop_x_not_available', reason: 'off' } })).toBe(SHOP_X_TEXT.notHere);
+  });
+
+  it('a manager: brought from the cloud with their id, shown in the state, printed on asking, gone at sign-out', async () => {
+    const asked: Array<Record<string, unknown> | null> = [];
+    const h = await readyTill({ answers: { 'GET sync/m/shop-x': (b) => (asked.push(b), { available: true, report: {}, printDocument: SHOP_X_DOC }) } }, MANAGER_PIN);
+    try {
+      expect(h.state().shopX?.offered).toBe(true);
+      expect(h.state().session.permissions).toContain('SHOP_X_REPORT');
+      await h.ok('report.shopX');
+      expect(asked).toHaveLength(1);
+      expect(h.state().shopX?.report?.sections[1].rows[0].label).toBe('מכירות נטו');
+      const before = h.printer.sent.length;
+      await h.ok('report.shopX', { print: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(h.printer.sent.length).toBeGreaterThanOrEqual(before);
+      await h.ok('session.logout');
+      expect(h.state().shopX?.report).toBeNull();
+    } finally {
+      h.stop();
+    }
+  });
+
+  it('a cashier whose role asks for a manager: the code first; denied: "אין לך הרשאה"; offline: the till’s own X stays', async () => {
+    const users = roster().map((u) => (u.id === 'u-cashier' ? { ...u, permissions: { SELL: 'allow', SHIFT_OPEN: 'allow', SHOP_X_REPORT: 'approval' } } : u));
+    const h = await readyTill({ users, answers: { 'GET sync/m/shop-x': () => ({ available: true, printDocument: SHOP_X_DOC }) } });
+    try {
+      const r = await h.ok<{ dialogId: string }>('report.shopX');
+      expect(r.dialogId).toBeTruthy();
+      expect(h.state().shopX?.report).toBeNull();
+      await h.ok('dialog.answer', { dialogId: r.dialogId, action: 'approve', answers: { pin: MANAGER_PIN } });
+      expect(h.state().shopX?.report?.title).toBe('דוח X סניפי');
+    } finally {
+      h.stop();
+    }
+    const denied = roster().map((u) => (u.id === 'u-cashier' ? { ...u, permissions: { SELL: 'allow', SHIFT_OPEN: 'allow', SHOP_X_REPORT: 'deny' } } : u));
+    const d = await readyTill({ users: denied });
+    try {
+      expect((await d.fail('report.shopX')).message).toBe('אין לך הרשאה: דוח X סניפי');
+    } finally {
+      d.stop();
+    }
+    const off = await readyTill({
+      answers: {
+        'GET sync/m/shop-x': () => {
+          throw new TypeError('fetch failed');
+        },
+      },
+    }, MANAGER_PIN);
+    try {
+      expect((await off.fail('report.shopX')).message).toBe(SHOP_X_TEXT.needsCloud);
+      expect(off.state().shopX?.error).toBe(SHOP_X_TEXT.needsCloud);
+    } finally {
+      off.stop();
+    }
+  });
+
+  it('not on this till (shopXTills off): no menu row, and the op says so', async () => {
+    const h = await readyTill({ parameters: { shopXTills: 'off' } }, MANAGER_PIN);
+    try {
+      expect(h.state().shopX?.offered).toBe(false);
+      expect((await h.fail('report.shopX')).message).toBe(SHOP_X_TEXT.notHere);
+    } finally {
+      h.stop();
+    }
   });
 });
 

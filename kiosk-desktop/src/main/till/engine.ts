@@ -37,6 +37,7 @@ import { PERM, TEXT, approve, displayName, permLabel, stateOf, tryLogin, type Ro
 import { cardLast, dueOf, handedTotal, paidOf, quickNotes, takeCash, validCashAmount, type TenderLeg } from '../../core/till/tender';
 import { HIDDEN_MENU_PARAM, parseHiddenMenu } from '../../core/till/menuHide';
 import { tileTextOf } from '../../core/till/tileText';
+import { SHOP_X_TEXT, shopXDocumentOf, shopXOffered, shopXRefusal, type ShopXDocument } from '../../core/till/shopX';
 import { NO_LOCK, type BcryptCompare, type ExitLock } from '../../core/desktopExit';
 import type { StartPaymentIn } from '../../shared/bridge';
 import {
@@ -114,7 +115,7 @@ const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2
 const LOGIN_LOCK = 'till.loginLock';
 const APPROVAL_LOCK = 'till.approvalLock';
 /** The codes the screens show or hide by. */
-const SESSION_CODES = [PERM.SELL, PERM.SHIFT_OPEN, PERM.SHIFT_CLOSE, PERM.X, PERM.Z, PERM.REPRINT, PERM.DRAWER_ON_CASH_SALE, PERM.KIOSK_TILL_MODE];
+const SESSION_CODES = [PERM.SELL, PERM.SHIFT_OPEN, PERM.SHIFT_CLOSE, PERM.X, PERM.Z, PERM.REPRINT, PERM.DRAWER_ON_CASH_SALE, PERM.KIOSK_TILL_MODE, PERM.SHOP_X];
 
 const sh = (agorot: number) => formatShekelSign(agorot);
 
@@ -262,6 +263,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private lastActivityAt: number;
   private lastZNumber: number | null = null;
   private toasts: Array<{ tone: 'info' | 'error' | 'ok'; text: string }> = [];
+  /** "דוח X סניפי": the report last brought, while the user who asked is signed in. */
+  private shopXDoc: { doc: ShopXDocument; at: number } | null = null;
+  private shopXBusy = false;
+  private shopXError: string | null = null;
   private offView: (() => void) | null = null;
   private offMode: (() => void) | null = null;
   private tick: NodeJS.Timeout | null = null;
@@ -487,6 +492,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.shiftClose(a.countedCashAgorot);
       case 'report.x':
         return this.reportX();
+      case 'report.shopX':
+        return this.shopX(a.refresh === true, a.print === true);
       case 'z.produce':
         return this.zProduce(a.countedCashAgorot);
       case 'mode.switch':
@@ -546,6 +553,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.cashier = null;
     this.locked = true;
     this.pending = null;
+    // The shop's figures were for the user who asked: gone with them.
+    this.shopXDoc = null;
+    this.shopXError = null;
     return undefined;
   }
 
@@ -1238,6 +1248,64 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     };
   }
 
+  /** "דוח X סניפי" is on this till (`shopXTills`, core/till/shopX.ts). */
+  private shopXHere(): boolean {
+    return shopXOffered(this.svc.cloud.parameters(), this.svc.cloud.credentials()?.machineId ?? null);
+  }
+
+  /**
+   * "דוח X סניפי" (P:/specs/shop-x-report.md §6): the cloud's report — `GET` as it stands, `POST` with `refresh` (the
+   * till's own documents sent first, the other tills asked) — on SHOP_X_REPORT (a manager's code where the role asks for
+   * one: the cloud hears the approver as `X-Pos-User-Id`). `print`: the one on screen to the receipt printer. Offline:
+   * the till's own X stays (§2.4). Nothing changes here — not a document, no number.
+   */
+  private shopX(refresh: boolean, print: boolean) {
+    const user = this.signedIn();
+    if (!this.shopXHere()) return refuse('permission_denied', SHOP_X_TEXT.notHere);
+    if (print) {
+      if (!this.shopXDoc) return refuse('invalid_args');
+      this.svc.printShopX(this.shopXDoc.doc, `shopx:${this.shopXDoc.at}`);
+      this.toast(SHOP_X_TEXT.printed, 'ok');
+      return { printed: true };
+    }
+    if (this.shopXBusy) return refuse('checkout_busy', 'הדוח כבר בדרך');
+    return this.gate(PERM.SHOP_X, async (approver) => {
+      const who = approver ?? { id: user.id, name: displayName(user) };
+      const machine = this.svc.cloud.credentials()?.machineId;
+      if (!machine) return refuse('permission_denied', SHOP_X_TEXT.needsCloud);
+      this.shopXBusy = true;
+      this.shopXError = null;
+      this.refresh();
+      try {
+        if (refresh) await this.svc.sync.flush().catch(() => undefined);
+        const headers = { 'X-Pos-User-Id': who.id };
+        const path = `sync/${machine}/shop-x`;
+        const r = refresh
+          ? await this.svc.api.post(path, { posUserName: displayName(user), refresh: true, outbox: { documents: this.svc.outbox.count() } }, { headers, timeoutMs: 90_000 })
+          : await this.svc.api.get(path, { headers, timeoutMs: 45_000 });
+        if (r.kind === 'offline') {
+          this.shopXError = SHOP_X_TEXT.needsCloud;
+          return refuse('permission_denied', SHOP_X_TEXT.needsCloud);
+        }
+        if (r.kind === 'refused') {
+          this.shopXError = shopXRefusal(r.status, r.body);
+          return refuse('permission_denied', this.shopXError);
+        }
+        const body = (r.body ?? {}) as Record<string, unknown>;
+        const doc = shopXDocumentOf(body.printDocument);
+        if (!doc || body.available === false) {
+          this.shopXError = SHOP_X_TEXT.failed;
+          return refuse('permission_denied', SHOP_X_TEXT.failed);
+        }
+        this.shopXDoc = { doc, at: this.nowFn() };
+        return { ok: true };
+      } finally {
+        this.shopXBusy = false;
+        this.refresh();
+      }
+    });
+  }
+
   private reportX() {
     const user = this.signedIn();
     if (this.shiftsHidden()) this.noShiftsHere();
@@ -1440,6 +1508,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       dialog,
       menuHidden: parseHiddenMenu(this.svc.cloud.parameters()[HIDDEN_MENU_PARAM]),
       tileText: tileTextOf(this.svc.cloud.parameters()),
+      shopX: {
+        offered: this.shopXHere(),
+        report: this.shopXDoc?.doc ?? null,
+        at: this.shopXDoc?.at ?? null,
+        busy: this.shopXBusy,
+        error: this.shopXError,
+      },
       mode: {
         role: (homeTill ? 'till' : 'kiosk') as DeviceRoleName,
         current: 'till',

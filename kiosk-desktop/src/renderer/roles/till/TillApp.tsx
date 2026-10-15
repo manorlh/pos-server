@@ -31,13 +31,14 @@ import { LockScreen } from './screens/LockScreen';
 import { MenuScreen } from './screens/MenuScreen';
 import { SellScreen } from './screens/SellScreen';
 import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
+import { ShopXScreen } from './screens/ShopXScreen';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx';
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -174,10 +175,20 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return (
         <MenuScreen
           state={s}
-          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : 'caps')}
+          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : 'caps')}
           signOut={() => void run('session.logout', {})}
           switchTo={() => void run('mode.switch', { to: 'kiosk' })}
           back={() => setView('sell')}
+        />
+      );
+    }
+    if (view === 'shopx') {
+      return (
+        <ShopXScreen
+          shopX={s.shopX}
+          load={(refresh) => void run('report.shopX', refresh ? { refresh: true } : {})}
+          print={() => void run('report.shopX', { print: true })}
+          back={() => setView('menu')}
         />
       );
     }
@@ -241,7 +252,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               {T.caps}
             </button>
           ) : (
-            <button type="button" className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' ? ' t-nav-on' : ''}`} onClick={() => setView('menu')}>
+            <button type="button" className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' || view === 'shopx' ? ' t-nav-on' : ''}`} onClick={() => setView('menu')}>
               {T.menu}
             </button>
           )}

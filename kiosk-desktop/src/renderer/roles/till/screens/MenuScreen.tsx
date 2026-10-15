@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -21,6 +21,8 @@ interface Row {
   onlyTillZ?: boolean;
   /** A shift row: not on an independent till (no shifts in its UI). */
   shiftRow?: boolean;
+  /** "דוח X סניפי": only where the till's parameters put it (`shopXTills`). */
+  onlyShopX?: boolean;
 }
 
 const GROUPS: Array<{ title: string; rows: Row[] }> = [
@@ -44,6 +46,7 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
     title: 'דוחות',
     rows: [
       { key: 'history', label: 'היסטוריה', to: 'history' },
+      { key: 'shop_x', label: 'דוח X סניפי', to: 'shopx', perm: 'SHOP_X_REPORT', onlyShopX: true },
       { key: 'product_sales', label: 'מכירות לפי מוצר' },
       { key: 'workers', label: 'דוח לפי עובד' },
       { key: 'tips', label: 'דוח תשר' },
@@ -82,7 +85,7 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
           <h2 className="t-menu-title">{g.title}</h2>
           <ul className="t-menu">
             {g.rows
-              .filter((r) => (!r.perm || perms.includes(r.perm)) && (!r.onlyTillZ || tillZ) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
+              .filter((r) => (!r.perm || perms.includes(r.perm)) && (!r.onlyTillZ || tillZ) && (!r.onlyShopX || state.shopX?.offered === true) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
               .map((r) => (
                 <li key={r.label}>
                   {r.to ? (

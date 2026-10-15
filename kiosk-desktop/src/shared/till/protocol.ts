@@ -83,6 +83,9 @@ export const TILL_OPS = [
   // A card whose answer is not known (never a second charge): ask the terminal again; or a manager marks it not approved.
   'checkout.recheckCard',
   'checkout.markNotApproved',
+  // "דוח X סניפי" (core/till/shopX.ts): the cloud's interim report of the shop — `refresh` asks the other tills first,
+  // `print` prints the one on screen. Nothing changes: not a document.
+  'report.shopX',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -138,6 +141,7 @@ export interface OpArgs {
   'shift.open': { openingCashAgorot: number };
   'shift.close': { countedCashAgorot: number };
   'report.x': Record<string, never>;
+  'report.shopX': { refresh?: boolean; print?: boolean };
   /** `countedCashAgorot`: the drawer's count when the shift is still open (it is closed first). */
   'z.produce': { countedCashAgorot?: number };
   'mode.switch': { to: DeviceRoleName; managerCode?: string };
@@ -397,6 +401,24 @@ export interface TillState {
   menuHidden?: string[];
   /** The tiles' text (TileTextState); absent: the defaults (fit, 3 lines, s, auto). */
   tileText?: TileTextState;
+  /** "דוח X סניפי" (core/till/shopX.ts): offered on this till, and the report last brought (until sign-out). */
+  shopX?: ShopXState;
+}
+
+export interface ShopXState {
+  /** The till's parameters put it on this till (`shopXTills`); the user's right is in `session.permissions`. */
+  offered: boolean;
+  report: {
+    title: string;
+    businessName: string | null;
+    subtitle: string | null;
+    sections: Array<{ title: string | null; rows: Array<{ label: string; value: string; emphasis: boolean }> }>;
+    footer: string | null;
+  } | null;
+  /** When it was brought (epoch ms). */
+  at: number | null;
+  busy: boolean;
+  error: string | null;
 }
 
 export interface XReport {

@@ -36,7 +36,7 @@ import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cas
 import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
 import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type XInput } from '../core/printDocs';
+import { bonDoc, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type XInput } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
@@ -3090,6 +3090,11 @@ export class KioskService extends EventEmitter {
    * The X report on paper (the till role: an interim X, and the X of a shift's close): the Android till's report drawn in the
    * Z's own ops (core/printDocs.ts xDoc), queued like any page. Returns the print job's id.
    */
+  /** "דוח X סניפי" (core/till/shopX.ts): the cloud's paper on the receipt printer, as the till's X. */
+  printShopX(doc: Parameters<typeof shopXPrintDoc>[0], refId: string): string {
+    return this.printQueue.enqueue('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null));
+  }
+
   printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash'> & { refId: string }): string {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
