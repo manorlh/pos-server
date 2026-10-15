@@ -190,11 +190,11 @@ export class CashMagPay {
   /** The driver for the protocol set now — made on first need only (CashMag off: never). */
   private driver(cfg: CashMagConfig): CashRecyclerDriver {
     const fns = this.functions();
-    const key = `${cfg.protocol}|${JSON.stringify(fns)}`;
+    const key = `${cfg.wire}|${JSON.stringify(fns)}`;
     if (this.driverNow?.key === key) return this.driverNow.driver;
     const driver =
-      cfg.protocol === 'rlp'
-        ? new UnavailableRecycler(CASHMAG_ERRORS.RLP_NOT_AVAILABLE)
+      cfg.wire !== 'json'
+        ? new UnavailableRecycler(CASHMAG_ERRORS.PROTOCOL_NOT_AVAILABLE)
         : this.d.driverFor
           ? this.d.driverFor(cfg, fns, this.session())
           : new CashMagWsDriver({ ...this.d.driverOptions, functions: fns, session: this.session(), log: this.d.log });
@@ -220,7 +220,7 @@ export class CashMagPay {
   /** A knock on the server's port (never a WebSocket: nobody's machine taken). Nothing at all while off. */
   async probe(): Promise<void> {
     const cfg = this.config();
-    if (!cfg.enabled || cfg.protocol !== 'jar' || cashmagMissing(cfg).length > 0) {
+    if (!cfg.enabled || cfg.wire !== 'json' || cashmagMissing(cfg).length > 0) {
       const had = this.silentSince !== null || this.lastOkAt > 0;
       this.silentSince = null;
       this.lastOkAt = 0;
@@ -245,7 +245,7 @@ export class CashMagPay {
   offReason(): string | null {
     const cfg = this.config();
     if (!cfg.enabled) return cashmagUnavailableText(CASHMAG_ERRORS.NOT_CONFIGURED);
-    if (cfg.protocol !== 'jar') return cashmagUnavailableText(CASHMAG_ERRORS.RLP_NOT_AVAILABLE);
+    if (cfg.wire !== 'json') return cashmagUnavailableText(CASHMAG_ERRORS.PROTOCOL_NOT_AVAILABLE);
     if (cashmagMissing(cfg).length > 0) return cashmagUnavailableText(CASHMAG_ERRORS.NOT_CONFIGURED);
     if (this.unresolved().length > 0) return cashmagUnavailableText(CASHMAG_ERRORS.UNRESOLVED);
     if (this.running) return null;
@@ -261,7 +261,7 @@ export class CashMagPay {
   refusal(): string | null {
     const cfg = this.config();
     if (!cfg.enabled || cashmagMissing(cfg).length > 0) return cashmagUnavailableText(CASHMAG_ERRORS.NOT_CONFIGURED);
-    if (cfg.protocol !== 'jar') return cashmagUnavailableText(CASHMAG_ERRORS.RLP_NOT_AVAILABLE);
+    if (cfg.wire !== 'json') return cashmagUnavailableText(CASHMAG_ERRORS.PROTOCOL_NOT_AVAILABLE);
     if (this.unresolved().length > 0) return cashmagUnavailableText(CASHMAG_ERRORS.UNRESOLVED);
     if (this.running) return cashmagUnavailableText(CASHMAG_ERRORS.BUSY);
     return null;

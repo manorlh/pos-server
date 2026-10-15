@@ -3138,7 +3138,7 @@ export class KioskService extends EventEmitter {
     const st = this.cashMag.driverState();
     return {
       address: `${cfg.host || '—'}:${cfg.port || '—'}`,
-      protocol: cfg.protocol,
+      protocol: cfg.protocol === cfg.wire ? cfg.wire : `${cfg.wire} (מהענן: ${cfg.protocol})`,
       terminal: cfg.terminal,
       userCodeSet: cfg.userCode !== '',
       sources: cfg.sources,

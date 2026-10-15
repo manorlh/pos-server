@@ -1,6 +1,6 @@
 /**
  * A cash recycler the kiosk pays at (P:/specs/cashmag-windows.md §4) — the same line as pos-android's
- * `hardware/cash/CashRecyclerDriver.kt`: CashMag over its WebSocket (main/cash/cashmagDriver.ts), nothing at all
+ * `hardware/cash/CashRecyclerDriver.kt`: CashMag over its WebSocket JSON-RPC (`json`, main/cash/cashmagDriver.ts), nothing at all
  * for a protocol we cannot speak ([UnavailableRecycler] — RLP until the vendor gives its wire format), a fake in the
  * tests. No wire format crosses it: what the server answered is a [CashRecyclerReply] (core/cash/cashmag.ts), what
  * it says meanwhile a [CashRecyclerSignal].
@@ -75,7 +75,7 @@ export interface CashRecyclerDriver {
 /** Nothing to call, every call says why (RLP before the vendor's wire format). */
 export class UnavailableRecycler implements CashRecyclerDriver {
   readonly installed = false;
-  constructor(readonly notInstalledReason: string = CASHMAG_ERRORS.RLP_NOT_AVAILABLE) {}
+  constructor(readonly notInstalledReason: string = CASHMAG_ERRORS.PROTOCOL_NOT_AVAILABLE) {}
   state(): CashRecyclerState {
     return IDLE_STATE;
   }

@@ -244,7 +244,7 @@ describe('the Windows kiosk pays at a CashMag machine', () => {
     // The manager's screen: the payment to look at, then "טופל".
     (k.svc as unknown as { adminUntil: number }).adminUntil = Date.now() + 60_000;
     const info = k.svc.adminInfo().cashmag!;
-    expect(info).toMatchObject({ address: `127.0.0.1:${s.port}`, protocol: 'jar', userCodeSet: false, sources: { host: 'cloud', port: 'cloud', terminal: 'default', userCode: 'default' } });
+    expect(info).toMatchObject({ address: `127.0.0.1:${s.port}`, protocol: 'json (מהענן: jar)', userCodeSet: false, sources: { host: 'cloud', port: 'cloud', terminal: 'default', userCode: 'default' } });
     expect(info.unresolved).toMatchObject([{ outcome: 'held', heldAgorot: 2000, reason: 'HELD' }]);
     expect(await k.svc.adminAction({ type: 'cashmagAcknowledge', txId: info.unresolved[0].txId })).toMatchObject({ ok: true });
     expect(k.svc.adminInfo().cashmag!.unresolved).toEqual([]);

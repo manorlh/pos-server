@@ -20,11 +20,21 @@ import { halfUpScaled } from '../money';
 export type CashMagRounding = 'none' | 'nearest_10';
 
 /**
- * `cashmagProtocol` (pos-server app/services/cashmag_params.py): `jar` — the CMCMonetic API, the protocol the
- * vendor's client jar speaks (on Windows this kiosk speaks it itself over the WebSocket, core/cash/cashmagWire.ts);
- * `rlp` — the vendor's "Full Protocol", whose wire format we do not have: "not available", never guessed.
+ * `cashmagProtocol` as the cloud sets it (pos-server app/services/cashmag_params.py, pos-android `CashMagProtocol`):
+ * `jar` — the vendor's client library (Android); `json` — the vendor's WebSocket JSON-RPC (what its JS connector
+ * speaks, core/cash/cashmagWire.ts); `rlp` — the vendor's "Full Protocol", whose wire format we do not have.
  */
-export type CashMagProtocol = 'jar' | 'rlp';
+export type CashMagProtocol = 'jar' | 'json' | 'rlp';
+
+/**
+ * What this Windows kiosk speaks for the cloud's value: `json` itself; `jar` — the default vendor protocol, and there
+ * is no jar on Windows — the same JSON-RPC; `rlp` — "not available", never guessed.
+ */
+export type CashMagWire = 'json' | 'rlp';
+
+export function cashmagWireOf(protocol: CashMagProtocol): CashMagWire {
+  return protocol === 'rlp' ? 'rlp' : 'json';
+}
 
 /** The vendor's documented RLP port (unused until RLP exists). */
 export const RLP_DEFAULT_PORT = 55110;
@@ -62,7 +72,10 @@ export type CashMagSource = 'cloud' | 'local' | 'default';
 
 export interface CashMagConfig {
   enabled: boolean;
+  /** As the cloud set it. */
   protocol: CashMagProtocol;
+  /** What this kiosk speaks for it ([cashmagWireOf]). */
+  wire: CashMagWire;
   host: string;
   port: number;
   /** This kiosk's name at the CashMag server. */
@@ -124,7 +137,8 @@ export function cashmagConfigOf(params: Record<string, unknown> | null | undefin
     const cv = text(cloudValue);
     return cv !== null ? { v: cv, source: 'cloud' } : { v: null, source: 'default' };
   };
-  const protocol: CashMagProtocol = text(p[K.protocol])?.toLowerCase() === 'rlp' ? 'rlp' : 'jar';
+  const raw = text(p[K.protocol])?.toLowerCase();
+  const protocol: CashMagProtocol = raw === 'rlp' ? 'rlp' : raw === 'json' ? 'json' : 'jar';
   const host = pick(l.host, p[K.host]);
   const port = pick(l.port, p[K.port]);
   const terminal = pick(l.terminal, p[K.terminal]);
@@ -133,6 +147,7 @@ export function cashmagConfigOf(params: Record<string, unknown> | null | undefin
   return {
     enabled: on(p[K.enabled]),
     protocol,
+    wire: cashmagWireOf(protocol),
     host: (host.v ?? '').slice(0, 253),
     // RLP has a documented port; the API server's port is the shop's own (no default).
     port: whole(port.v, protocol === 'rlp' ? RLP_DEFAULT_PORT : 0, 1, 65535),
@@ -165,7 +180,7 @@ export function cashmagUsable(c: CashMagConfig): boolean {
 
 /** The config as a log line may show it: never the user code. */
 export function cashmagConfigText(c: CashMagConfig): string {
-  return `cashmag enabled=${c.enabled} protocol=${c.protocol} ${c.host}:${c.port} terminal=${c.terminal} currency=${c.currency} rounding=${c.rounding} user=${c.userCode ? 'set' : 'none'}`;
+  return `cashmag enabled=${c.enabled} protocol=${c.protocol}→${c.wire} ${c.host}:${c.port} terminal=${c.terminal} currency=${c.currency} rounding=${c.rounding} user=${c.userCode ? 'set' : 'none'}`;
 }
 
 /* ------------------------------------------------------------------ the cash leg's ids */
@@ -293,7 +308,10 @@ export const CASHMAG_ERRORS = {
   AMOUNT: 'AMOUNT',
   TIMEOUT: 'TIMEOUT',
   EXCEPTION: 'EXCEPTION',
-  RLP_NOT_AVAILABLE: 'RLP_NOT_AVAILABLE',
+  /** `cashmagProtocol` with no driver here (RLP): never guessed (pos-android's name). */
+  PROTOCOL_NOT_AVAILABLE: 'PROTOCOL_NOT_AVAILABLE',
+  /** The server says the service is another client's ("Service occupé !" — its close, or a refusal saying so). */
+  SERVICE_BUSY: 'SERVICE_BUSY',
   WAIT_CANCELLED: 'WAIT_CANCELLED',
   /** The server refused the user code (`setUserName`). */
   USER_REFUSED: 'USER_REFUSED',
@@ -317,14 +335,14 @@ export const BEFORE_MONEY: ReadonlySet<string> = new Set([
   'INVALID_REQUEST', 'INVALID_JSON_GENERATION', 'DUPLICATE_EXEC_FUNCTION', 'OFFLINE_REQUEST', 'API_IS_BUSY',
   'HARDWARE_MISSING', 'INVALID_LICENSE', 'NOT_INSTALLED', 'NO_ACTIVITY', 'NOT_TRAINING',
   E.NOT_CONFIGURED, E.NOT_CONNECTED, E.NOT_STARTED, E.CLAIMED_BY_ANOTHER, E.BUSY, E.UNRESOLVED, E.AMOUNT,
-  E.RLP_NOT_AVAILABLE, E.WAIT_CANCELLED, E.USER_REFUSED,
+  E.PROTOCOL_NOT_AVAILABLE, E.WAIT_CANCELLED, E.USER_REFUSED, E.SERVICE_BUSY,
 ]);
 
 /** "Pay transaction has been interrupted": called off at the device. */
 export const CANCELLED_ERRORS: ReadonlySet<string> = new Set(['PAY_TRANSACTION_FAILED']);
 
 /** The machine is another client's now (first come, first served): asked again after a while. */
-export const WAIT_FOR: ReadonlySet<string> = new Set([E.CLAIMED_BY_ANOTHER, 'API_IS_BUSY']);
+export const WAIT_FOR: ReadonlySet<string> = new Set([E.CLAIMED_BY_ANOTHER, E.SERVICE_BUSY, 'API_IS_BUSY']);
 
 /** Every few seconds while the machine is another client's. */
 export const WAIT_POLL_MS = 3_000;
@@ -420,7 +438,7 @@ export function cashmagUnavailableText(reason: string | null): string {
   switch (reason) {
     case E.NOT_CONFIGURED:
       return 'מכשיר המזומן לא מוגדר לקיוסק';
-    case E.RLP_NOT_AVAILABLE:
+    case E.PROTOCOL_NOT_AVAILABLE:
       return 'פרוטוקול CashMag שנבחר עוד לא נתמך';
     case E.NOT_CONNECTED:
     case 'OFFLINE_REQUEST':
@@ -434,6 +452,7 @@ export function cashmagUnavailableText(reason: string | null): string {
     case 'HARDWARE_MISSING':
       return 'מכשיר המזומן לא הופעל';
     case E.CLAIMED_BY_ANOTHER:
+    case E.SERVICE_BUSY:
     case 'API_IS_BUSY':
     case E.BUSY:
       return 'עמדת המזומן בשימוש כרגע על ידי לקוח אחר — נסו שוב';

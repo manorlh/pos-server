@@ -342,6 +342,15 @@ describe('a CashMag payment at the Windows kiosk', () => {
     expect(r.pay.unreachableAlert()).toBeNull();
   });
 
+  it('cashmagProtocol: json is this protocol; jar (the default vendor protocol — no jar on Windows) is json too', async () => {
+    for (const protocol of ['json', 'jar', 'JSON', undefined]) {
+      const s = await server({ handlers: { [FN.pay]: (c, conn) => conn.result(c.jobId, c.fn, 0, payResult({ balance: '0', deposits: [['57.30', 1]] })) } });
+      const r = rig(s.port, protocol === undefined ? {} : { cashmagProtocol: protocol });
+      expect(r.pay.config().wire).toBe('json');
+      expect((await r.pay.pay(order(), () => undefined)).kind).toBe('paid');
+    }
+  });
+
   it('RLP: "not available" — never guessed', async () => {
     const r = rig(1, { cashmagProtocol: 'rlp' });
     expect(r.pay.offReason()).toBe('פרוטוקול CashMag שנבחר עוד לא נתמך');
@@ -401,7 +410,7 @@ describe('CashMag idle, alerts and restarts (a fake recycler)', () => {
       log: () => undefined,
     });
     const c = pay.config();
-    expect(c).toMatchObject({ enabled: true, host: '192.168.1.40', port: 65001, terminal: 'קיוסק ליד המכונה', userCode: '22', currency: 'ILS', protocol: 'jar', rounding: 'nearest_10', queueTimeoutSec: 0 });
+    expect(c).toMatchObject({ enabled: true, host: '192.168.1.40', port: 65001, terminal: 'קיוסק ליד המכונה', userCode: '22', currency: 'ILS', protocol: 'jar', wire: 'json', rounding: 'nearest_10', queueTimeoutSec: 0 });
     expect(c.sources).toEqual({ host: 'local', port: 'local', terminal: 'local', userCode: 'local' });
     expect(pay.stationId()).toBe('cashmag:192.168.1.40:65001');
   });

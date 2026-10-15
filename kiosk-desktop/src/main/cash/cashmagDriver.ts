@@ -21,7 +21,7 @@ import {
   type CashMagConfig,
   type CashRecyclerReply,
 } from '../../core/cash/cashmag';
-import { CASHMAG_FUNCTIONS, CASHMAG_SIGNALS, claimOf, payReplyOf, piecesOf, questionOf, statusName, totalOf, type CashMagFunctions } from '../../core/cash/cashmagWire';
+import { CASHMAG_FUNCTIONS, CASHMAG_SIGNALS, claimOf, isBusyClose as isBusyText, payReplyOf, piecesOf, questionOf, statusName, totalOf, type CashMagFunctions } from '../../core/cash/cashmagWire';
 import { CashMagWsClient, memorySession, type CallOutcome, type SessionStore, type WsFactory } from './cashmagClient';
 import { IDLE_STATE, type CashRecyclerDriver, type CashRecyclerSignal, type CashRecyclerState } from './recycler';
 
@@ -149,9 +149,9 @@ export class CashMagWsDriver implements CashRecyclerDriver {
     });
     const out = await client.connect();
     if (out.kind === 'busy') {
-      this.st = { ...this.st, connection: 'busy', lastError: CASHMAG_ERRORS.CLAIMED_BY_ANOTHER };
+      this.st = { ...this.st, connection: 'busy', lastError: CASHMAG_ERRORS.SERVICE_BUSY };
       await this.disconnect('busy');
-      return refusedReply(CASHMAG_ERRORS.CLAIMED_BY_ANOTHER, 'Service occupé');
+      return refusedReply(CASHMAG_ERRORS.SERVICE_BUSY, 'Service occupé');
     }
     if (out.kind !== 'ready') {
       const reason = out.reason;
@@ -183,10 +183,12 @@ export class CashMagWsDriver implements CashRecyclerDriver {
       }
       const name = statusName(r.status.code);
       this.st = { ...this.st, lastError: r.status.message ?? name };
+      // A refusal saying the service is occupied is busy, whatever its code (as pos-android's `fromVendor`).
+      if (isBusyText(r.status.message)) return refusedReply(CASHMAG_ERRORS.SERVICE_BUSY, r.status.message);
       return refusedReply(name.startsWith('CM_STATUS_') ? refusedAs : name, r.status.message ?? name);
     }
     if (r.kind === 'timeout') return refusedReply(CASHMAG_ERRORS.TIMEOUT);
-    if (r.kind === 'disconnected' && r.busy) return refusedReply(CASHMAG_ERRORS.CLAIMED_BY_ANOTHER);
+    if (r.kind === 'disconnected' && r.busy) return refusedReply(CASHMAG_ERRORS.SERVICE_BUSY);
     return refusedReply(CASHMAG_ERRORS.NOT_CONNECTED);
   }
 
@@ -210,6 +212,10 @@ export class CashMagWsDriver implements CashRecyclerDriver {
     this.st = { ...this.st, question: null };
     if (r.kind === 'answer') {
       const reply = payReplyOf({ status: r.status, result: r.result }, dueAgorot);
+      // Refused as "Service occupé", nothing went in: the machine another client's — a wait.
+      if (!reply.valid && isBusyText(reply.message) && this.st.insertedAgorot === 0 && (reply.balance?.cashInAgorot ?? 0) === 0 && reply.error !== CASHMAG_ERRORS.INCONSISTENT) {
+        return { ...refusedReply(CASHMAG_ERRORS.SERVICE_BUSY, reply.message), fields: reply.fields };
+      }
       // Refused while the claim signal says the machine is another client's, and nothing went in (no figures, no
       // deposit seen): the machine was not ours to take money with — a wait, never a fault.
       if (!reply.valid && this.st.claim === 'other' && this.st.insertedAgorot === 0 && (reply.balance?.cashInAgorot ?? 0) === 0 && reply.error !== CASHMAG_ERRORS.INCONSISTENT) {

@@ -66,6 +66,7 @@ describe('the wire', () => {
     expect(isBusyClose(' Service occupé ! ')).toBe(true);
     expect(isBusyClose('Service occupe\u0301 !')).toBe(true);
     expect(isBusyClose('bye')).toBe(false);
+    expect(isBusyClose('Service occupé ! (another client)')).toBe(true);
     // One table; a kiosk may name a server's other hashes, a malformed name is ignored.
     expect(CASHMAG_FUNCTIONS.transferToCassette).toBe('API.crCashRecycler.transferFromRecyclerToCassette_d4697ee5');
     const f = cashmagFunctionsOf({ pay: 'API.crCashRecycler.payTransaction_deadbeef', start: 'bad name; drop', nope: 'x' });
