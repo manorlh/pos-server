@@ -84,8 +84,18 @@ export class OrderStore {
   }
 }
 
-/** The pickup number of a paid order (allocatePickup). */
-export async function allocatePickup(kv: Kv, api: Api | null, machineId: string | null, order: Pick<KioskOrder, 'localId' | 'businessDate'>, rules: PickupRules): Promise<{ number: number; label: string }> {
+/**
+ * The pickup number of a paid order (allocatePickup). [opts.offline]: the kiosk knows the cloud is away — a shop-scope
+ * number is not waited for (up to SHOP_PICKUP_TIMEOUT_MS on the customer's success screen): the local one, tagged L, at once.
+ */
+export async function allocatePickup(
+  kv: Kv,
+  api: Api | null,
+  machineId: string | null,
+  order: Pick<KioskOrder, 'localId' | 'businessDate'>,
+  rules: PickupRules,
+  opts: { offline?: boolean } = {},
+): Promise<{ number: number; label: string }> {
   const local = (key: string) => {
     const lastDate = kv.get(`${key}.date`);
     const last = kv.getNumber(`${key}.last`);
@@ -96,12 +106,14 @@ export async function allocatePickup(kv: Kv, api: Api | null, machineId: string 
     return n;
   };
   if (rules.scope === 'shop' && api && machineId) {
-    const reply = await api.post<{ number?: number; label?: string }>(
-      `sync/${machineId}/kiosk/pickup-number`,
-      { orderKey: order.localId, businessDate: order.businessDate },
-      { timeoutMs: SHOP_PICKUP_TIMEOUT_MS },
-    );
-    if (reply.kind === 'ok' && typeof reply.body?.number === 'number' && reply.body.number > 0) {
+    const reply = opts.offline
+      ? null
+      : await api.post<{ number?: number; label?: string }>(
+          `sync/${machineId}/kiosk/pickup-number`,
+          { orderKey: order.localId, businessDate: order.businessDate },
+          { timeoutMs: SHOP_PICKUP_TIMEOUT_MS },
+        );
+    if (reply?.kind === 'ok' && typeof reply.body?.number === 'number' && reply.body.number > 0) {
       return { number: reply.body.number, label: reply.body.label?.trim() || pickupLabel(rules.prefix, reply.body.number, rules.labelFormat) };
     }
     const n = local('pickup.fallback');

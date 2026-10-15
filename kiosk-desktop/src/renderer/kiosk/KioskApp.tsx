@@ -125,6 +125,7 @@ import {
   type KioskFlowState,
 } from '../../core/kioskFlow';
 import { inTechnicianZone, mayOpen as technicianMayOpen, TapSequence } from '../../core/technician';
+import { offlineNoticeShown, offlineNoticeText } from '../../core/offlineBlock';
 import type { BasketChange, CashCreditLegIn, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn, VoucherAnswer } from '../../shared/bridge';
 import { scannedVoucherCode } from '../../core/kioskScan';
 import { cashCreditCodeOf } from '../../core/cash/credit';
@@ -1372,6 +1373,10 @@ export function KioskApp({ view }: { view: KioskView }) {
         />
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}
+      {/* "הודעה ללקוח כשאין אינטרנט" (general.offlineNotice, off): offline and still selling — a quiet line at the top. */}
+      {offlineNoticeShown({ enabled: cfg.general.offlineNotice === true, offline: view.state.offline === true, sells, screen: flow.screen }) ? (
+        <OfflineNotice m={m} text={configuredText(cfg, 'he', 'offlineNotice') ?? offlineNoticeText(usable.has('card'))} />
+      ) : null}
       {/* "סוללה חלשה": the strip and the alarm — never over a payment (BatteryAlerts.tsx). */}
       <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
       {scanNote}
@@ -1463,6 +1468,18 @@ function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: st
       <p className="text-sm" style={{ color: m.c.mutedText }}>
         {body}
       </p>
+    </div>
+  );
+}
+
+/** "הודעה ללקוח כשאין אינטרנט": the line at the top (the Android kiosk's KioskOfflineNotice) — it takes no tap. */
+function OfflineNotice({ m, text }: { m: PreviewModel; text: string }) {
+  return (
+    // Clear of the corners (back, help, the logo): the line wraps rather than covering a button.
+    <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-[55] flex justify-center px-24">
+      <div className="max-w-[560px] px-4 py-1.5 text-center text-[13px] font-semibold leading-snug shadow-md animate-in fade-in duration-300" style={{ background: m.c.surface, color: m.c.text, borderRadius: 18, border: `1px solid ${m.c.border}` }}>
+        {text}
+      </div>
     </div>
   );
 }

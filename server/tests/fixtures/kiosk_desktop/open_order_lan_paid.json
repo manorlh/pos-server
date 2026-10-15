@@ -1,0 +1,42 @@
+{
+  "localId": "open-order-lan-1",
+  "pickupNumber": 1,
+  "pickupLabel": "K-1",
+  "businessDate": "2026-10-16",
+  "serviceType": "take_away",
+  "tableRef": null,
+  "fulfillmentMode": "BON",
+  "configVersion": "v1",
+  "customerName": null,
+  "customerPhone": null,
+  "itemCount": 1,
+  "totalAgorot": 4200,
+  "tipAgorot": 0,
+  "voucherAgorot": 0,
+  "dueAgorot": 4200,
+  "createdAt": "2026-10-16T09:25:00.000Z",
+  "lines": [
+    {
+      "name": "המבורגר",
+      "quantity": 1,
+      "totalAgorot": 4200
+    }
+  ],
+  "cart": {
+    "codec": "{\"cartId\":\"open-order-lan-1\",\"lines\":[{\"id\":\"L1\",\"quantity\":1,\"unitPrice\":4200,\"discount\":0,\"discountType\":null,\"notes\":null,\"product\":\"{\\\"id\\\":\\\"p-burger\\\",\\\"cloudId\\\":\\\"p-burger\\\",\\\"name\\\":\\\"המבורגר\\\",\\\"sku\\\":\\\"1001\\\",\\\"categoryId\\\":\\\"c-main\\\",\\\"price\\\":4200,\\\"barcode\\\":null,\\\"imageUrl\\\":null,\\\"localImagePath\\\":null,\\\"isAvailable\\\":true,\\\"inStock\\\":true,\\\"trackStock\\\":false,\\\"isOpenPrice\\\":false,\\\"isWeighed\\\":false,\\\"isGeneral\\\":false,\\\"unitLabel\\\":null,\\\"voucherId\\\":null,\\\"noDiscount\\\":false,\\\"allergens\\\":[],\\\"courseId\\\":null}\",\"details\":null}]}",
+    "bon": {
+      "mode": "routing",
+      "printerId": null,
+      "copies": 1
+    },
+    "fulfillment": "BON"
+  },
+  "vouchers": [],
+  "kitchenSent": false,
+  "state": "paid",
+  "paidByName": "דנה (קופה 1)",
+  "paidTransactionId": "tx-host-9",
+  "paidTransactionNumber": "30000012",
+  "paidAt": "2026-10-16T09:30:00.000Z",
+  "closeReason": null
+}
