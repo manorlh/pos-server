@@ -49,14 +49,16 @@ CARD_TIPS_FROM_DRAWER_KEY = "cashDrawer.cardTipsFromDrawer"
 #: produced — never read again for a Z already made (app/services/z_expected_cash.py).
 Z_EXPECTED_CASH_MOVEMENTS_KEY = "cashDrawer.zExpectedCashMovements"
 #: "מגירה כשהעובד לא ליד המגירה" (P:/specs/drawer-away.md §5.1, the owner 15.10.2026: "שישאל, ואם העובד לא
-#: נמצא ליד המגירה? דינמי"): a cash payment on a device away from a drawer, read by the till only.
+#: נמצא ליד המגירה? דינמי"): a cash payment on a device away from a drawer, read by the till only. Default
+#: `none` — today's behaviour: a new feature never changes what a shop sees on deploy; the owner turns `ask`
+#: on per level (decision 15.10.2026, spec §5.1).
 AWAY_POLICY_KEY = "drawerAwayPolicy"
 AWAY_POLICY_OPTIONS = ("ask", "remote", "wallet", "none")
 AWAY_POLICY_LABELS = {
-    "ask": "לשאול (ברירת מחדל)",
+    "ask": "לשאול",
     "remote": "לפתוח את המגירה שהוגדרה",
     "wallet": "הכסף אצל העובד",
-    "none": "רישום בלבד, בלי מגירה",
+    "none": "רישום בלבד, בלי מגירה (ברירת מחדל)",
 }
 NEAR_KEY = "drawerNear"
 NEAR_OPTIONS = ("auto", "near", "away")
@@ -177,14 +179,15 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     ),
     dict(
         key=AWAY_POLICY_KEY, label="מגירה — תשלום מזומן במכשיר רחוק מהמגירה", value_type="enum",
-        enum_options=AWAY_POLICY_OPTIONS, default_value="ask", enum_labels=AWAY_POLICY_LABELS,
+        enum_options=AWAY_POLICY_OPTIONS, default_value="none", enum_labels=AWAY_POLICY_LABELS,
         description=(
             "מה קורה בתשלום מזומן במכשיר שאינו ליד מגירה (מסופון, טלפון, מכשיר בלי מגירה משלו). "
             "«לשאול» — חלון אחד: \"פתח מגירה ב...\" (מרחוק, לפי ההרשאה \"פתיחת מגירה בקופה אחרת\"), "
             "\"הכסף אצלי, אפקיד אחר כך\" או \"בלי מגירה (רישום בלבד)\". «לפתוח את המגירה שהוגדרה» — המגירה של "
             "\"מגירה למכשיר רחוק\" נפתחת בלי שאלה, עם הודעה בקופה שליד המגירה. «הכסף אצל העובד» — הכסף נרשם "
             "אצל העובד בלי פתיחת מגירה, ומופקד אחר כך בקופה עם מגירה (\"הפקדת מזומן מעובד\"). «רישום בלבד» — "
-            "כמו היום. כסף אצל עובדים לא נכלל במזומן הצפוי במגירה עד שהוא מופקד, ומופיע ב-Z ובדוחות לפי עובד."
+            "כמו היום (ברירת המחדל). כסף אצל עובדים לא נכלל במזומן הצפוי במגירה עד שהוא מופקד, ומופיע ב-Z "
+            "ובדוחות לפי עובד."
         ),
     ),
     dict(

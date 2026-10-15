@@ -97,7 +97,9 @@ class TestParameters:
     def test_the_four_are_built_in_with_their_defaults_and_hebrew(self):
         by_key = {p.key: p for p in BUILTIN_PARAMETERS}
         policy = by_key["drawerAwayPolicy"]
-        assert (policy.value_type, policy.default_value, policy.enum_options) == ("enum", "ask", ("ask", "remote", "wallet", "none"))
+        # `none` by default: a new feature never changes what a shop sees on deploy (spec §5.1).
+        assert (policy.value_type, policy.default_value, policy.enum_options) == ("enum", "none", ("ask", "remote", "wallet", "none"))
+        assert policy.enum_labels["none"] == "רישום בלבד, בלי מגירה (ברירת מחדל)"
         assert policy.enum_labels["wallet"] == "הכסף אצל העובד" and policy.label.startswith("מגירה")
         near = by_key["drawerNear"]
         assert (near.default_value, near.enum_options) == ("auto", ("auto", "near", "away"))
@@ -112,14 +114,17 @@ class TestParameters:
             assert key in S.LEVEL_KEYS
         view = S.level_view(w.db, "shop", w.shop.id)
         params = {p["key"]: p for p in view["parameters"]}
-        assert params["drawerAwayPolicy"]["enumLabels"]["ask"] == "לשאול (ברירת מחדל)"
+        assert params["drawerAwayPolicy"]["enumLabels"]["ask"] == "לשאול"
         assert params["drawerAwayTarget"]["enumLabels"] is None
 
     def test_a_till_gets_them_resolved_and_a_level_may_set_them(self, w):
         from app.services.till_parameters import till_parameters_for_machine
 
         resolved = till_parameters_for_machine(w.db, w.handheld).parameters
-        assert (resolved["drawerAwayPolicy"], resolved["drawerNear"], resolved["walletBlockClockOut"]) == ("ask", "auto", "warn")
+        assert (resolved["drawerAwayPolicy"], resolved["drawerNear"], resolved["walletBlockClockOut"]) == ("none", "auto", "warn")
+        # The owner turns `ask` on per level.
+        S.save_values(w.db, "shop", w.shop.id, {"drawerAwayPolicy": "ask"}, user=w.admin)
+        assert till_parameters_for_machine(w.db, w.handheld).parameters["drawerAwayPolicy"] == "ask"
         S.save_values(w.db, "machine", w.handheld.id, {"drawerAwayPolicy": "wallet", "drawerNear": "away"}, user=w.admin)
         resolved = till_parameters_for_machine(w.db, w.handheld).parameters
         assert (resolved["drawerAwayPolicy"], resolved["drawerNear"]) == ("wallet", "away")
