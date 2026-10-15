@@ -25,6 +25,7 @@ const api: KioskBridge = {
   cancelPayment: () => ipcRenderer.invoke('kiosk:cancelPayment'),
   cashOwedChoice: (choice) => ipcRenderer.invoke('kiosk:cashOwedChoice', choice),
   cashSplit: () => ipcRenderer.invoke('kiosk:cashSplit'),
+  cashQuestion: (confirm) => ipcRenderer.invoke('kiosk:cashQuestion', confirm),
   redeemCashCredit: (input) => ipcRenderer.invoke('kiosk:redeemCashCredit', input),
   releaseCashCredit: (id) => ipcRenderer.invoke('kiosk:releaseCashCredit', id),
   receiptChoice: (orderId, print) => ipcRenderer.invoke('kiosk:receiptChoice', orderId, print),

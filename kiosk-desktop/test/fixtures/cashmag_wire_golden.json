@@ -1,0 +1,734 @@
+{
+  "_comment": "CashMag WebSocket JSON-RPC (the CMCMonetic API as the vendor's JavaScript connector speaks it; P:/specs/cashmag-windows.md): a payment's raw answer (cm_ws_rpc_result status + result) -> the contract's outcome (cashmag_outcomes_golden.json, P:/specs/cashmag.md §12); the claim signal's parameters -> who has the machine; the deposits signal -> what went in; isDispensePossible's parameters. Owned by pos-server kiosk-desktop (CashMagWireGolden); a native Android client of this protocol copies it byte-equal. Amounts in agorot. adc_transaction_amount_balance: above 0 still to pay, below 0 change owed to the customer.",
+  "version": 1,
+  "pay": [
+    {
+      "name": "paid exactly: 57.30 in coins and a note, rounded down from 57.34",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "0",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "50",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": "5",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": "2",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": "0.10",
+              "ib_manual": true,
+              "ii_qty": 3,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "paid",
+        "receivedAgorot": 5730,
+        "changeAgorot": 0,
+        "changeOwedAgorot": 0,
+        "roundingAgorot": -4
+      }
+    },
+    {
+      "name": "paid with change: 100 in, 42.70 back (decimal comma)",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "0",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "100",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [
+            {
+              "idc_value": "20",
+              "ib_manual": true,
+              "ii_qty": 2,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": "2",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": "0,50",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": "0,10",
+              "ib_manual": true,
+              "ii_qty": 2,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "paid",
+        "receivedAgorot": 10000,
+        "changeAgorot": 4270,
+        "changeOwedAgorot": 0,
+        "roundingAgorot": -4
+      }
+    },
+    {
+      "name": "balance below zero: change still owed to the customer",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "-2,70",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "100",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [
+            {
+              "idc_value": "20",
+              "ib_manual": true,
+              "ii_qty": 2,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "paid",
+        "receivedAgorot": 10000,
+        "changeAgorot": 4000,
+        "changeOwedAgorot": 270,
+        "roundingAgorot": -4
+      }
+    },
+    {
+      "name": "amounts as numbers, warnings on a success",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [
+            "low coins"
+          ],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": 0,
+          "alst_transaction_deposits": [
+            {
+              "idc_value": 50,
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": 10,
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [
+            {
+              "idc_value": 2,
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": 0.5,
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            },
+            {
+              "idc_value": 0.2,
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "paid",
+        "receivedAgorot": 6000,
+        "changeAgorot": 270,
+        "changeOwedAgorot": 0,
+        "roundingAgorot": -4
+      }
+    },
+    {
+      "name": "balance above zero after the dialog ended: not paid, money kept — the staff",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "7.30",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "50",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 5000,
+        "reason": "HELD",
+        "lost": false
+      }
+    },
+    {
+      "name": "cancelled, everything given back",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "57.30",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "20",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [
+            {
+              "idc_value": "20",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "cancelled",
+        "refundedAgorot": 2000
+      }
+    },
+    {
+      "name": "cancelled before any money",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "57.30",
+          "alst_transaction_deposits": [],
+          "alst_transaction_dispensed": [],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "cancelled",
+        "refundedAgorot": 0
+      }
+    },
+    {
+      "name": "an error status, money kept",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 5,
+          "ilst_warnings": [],
+          "is_message": "Transaction error"
+        },
+        "result": {
+          "adc_transaction_amount_balance": "7.30",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "50",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 5000,
+        "reason": "CM_STATUS_5",
+        "lost": false
+      }
+    },
+    {
+      "name": "an error status, the figures say all came back",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 5,
+          "ilst_warnings": [],
+          "is_message": "Transaction ended by cashier"
+        },
+        "result": {
+          "adc_transaction_amount_balance": "57.30",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "5",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [
+            {
+              "idc_value": "5",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 2,
+              "is_currency": "ILS",
+              "is_data": ""
+            }
+          ],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "cancelled",
+        "refundedAgorot": 500
+      }
+    },
+    {
+      "name": "an error status without figures: no telling",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 7,
+          "ilst_warnings": [],
+          "is_message": "?"
+        }
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 0,
+        "reason": "CM_STATUS_7",
+        "lost": true
+      }
+    },
+    {
+      "name": "a fatal status without figures: no telling",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": -3,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {}
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 0,
+        "reason": "CM_STATUS_-3",
+        "lost": true
+      }
+    },
+    {
+      "name": "invalid session (after the client's one retry): refused before money",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": -100000001,
+          "ilst_warnings": [],
+          "is_message": "Invalid session"
+        }
+      },
+      "expect": {
+        "outcome": "unavailable",
+        "reason": "INVALID_SESSION"
+      }
+    },
+    {
+      "name": "function not supported: refused before money",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": -100000004,
+          "ilst_warnings": [],
+          "is_message": ""
+        }
+      },
+      "expect": {
+        "outcome": "unavailable",
+        "reason": "FUNCTION_NOT_IMPLEMENTED"
+      }
+    },
+    {
+      "name": "success without the deposits list: no figures, never 'nothing went in'",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "0",
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 0,
+        "reason": "NO_BALANCE",
+        "lost": true
+      }
+    },
+    {
+      "name": "a balance the lists contradict (settled, nothing in): untrusted",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "0",
+          "alst_transaction_deposits": [],
+          "alst_transaction_dispensed": [],
+          "is_currency": "ILS"
+        }
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 0,
+        "reason": "INCONSISTENT",
+        "lost": true
+      }
+    },
+    {
+      "name": "another currency",
+      "request": {
+        "amountAgorot": 5734,
+        "dueAgorot": 5730,
+        "currency": "ILS"
+      },
+      "answer": {
+        "status": {
+          "ii_status": 0,
+          "ilst_warnings": [],
+          "is_message": ""
+        },
+        "result": {
+          "adc_transaction_amount_balance": "0",
+          "alst_transaction_deposits": [
+            {
+              "idc_value": "57.30",
+              "ib_manual": true,
+              "ii_qty": 1,
+              "ie_fund_type": 3,
+              "is_currency": "EUR",
+              "is_data": ""
+            }
+          ],
+          "alst_transaction_dispensed": [],
+          "is_currency": "EUR"
+        }
+      },
+      "expect": {
+        "outcome": "failed",
+        "heldAgorot": 5730,
+        "reason": "CURRENCY",
+        "lost": false
+      }
+    }
+  ],
+  "claims": [
+    {
+      "params": {
+        "ie_claim_state": 3
+      },
+      "claim": "other"
+    },
+    {
+      "params": {
+        "ie_claim_state": "1"
+      },
+      "claim": "free"
+    },
+    {
+      "params": {
+        "claim_state": "IN_USE_BY_MYSELF"
+      },
+      "claim": "mine"
+    },
+    {
+      "params": {
+        "state": 3
+      },
+      "claim": "other"
+    },
+    {
+      "params": {
+        "value": 1
+      },
+      "claim": "free"
+    },
+    {
+      "params": {
+        "ie_claim_state": 0
+      },
+      "claim": "unknown"
+    },
+    {
+      "params": {
+        "ie_claim_state": 9
+      },
+      "claim": "unknown"
+    },
+    {
+      "params": {
+        "a": 1,
+        "b": 3
+      },
+      "claim": "unknown"
+    }
+  ],
+  "deposits": [
+    {
+      "params": {
+        "deposits": [
+          {
+            "idc_value": "20",
+            "ib_manual": true,
+            "ii_qty": 2,
+            "ie_fund_type": 3,
+            "is_currency": "ILS",
+            "is_data": ""
+          },
+          {
+            "idc_value": "0,50",
+            "ib_manual": true,
+            "ii_qty": "3",
+            "ie_fund_type": 2,
+            "is_currency": "ILS",
+            "is_data": ""
+          }
+        ]
+      },
+      "insertedAgorot": 4150
+    },
+    {
+      "params": {
+        "deposits": []
+      },
+      "insertedAgorot": 0
+    },
+    {
+      "params": {
+        "deposits": [
+          {
+            "idc_value": "x",
+            "ib_manual": true,
+            "ii_qty": 1,
+            "ie_fund_type": 3,
+            "is_currency": "ILS",
+            "is_data": ""
+          },
+          {
+            "idc_value": "10",
+            "ib_manual": true,
+            "ii_qty": 0,
+            "ie_fund_type": 3,
+            "is_currency": "ILS",
+            "is_data": ""
+          },
+          {
+            "idc_value": 5,
+            "ib_manual": true,
+            "ii_qty": 2,
+            "ie_fund_type": 2,
+            "is_currency": "ILS",
+            "is_data": ""
+          }
+        ]
+      },
+      "insertedAgorot": 1000
+    }
+  ],
+  "dispensePossible": [
+    {
+      "amountAgorot": 4270,
+      "currency": "ILS",
+      "params": {
+        "ahash_amounts_to_dispense": [
+          {
+            "idc_amount": 42.7,
+            "is_currency": "ILS"
+          }
+        ]
+      }
+    }
+  ]
+}
