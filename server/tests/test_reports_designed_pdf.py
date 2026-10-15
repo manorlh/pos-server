@@ -64,6 +64,21 @@ def _has(content: bytes, text: str, *, bold: bool = False) -> bool:
     return font.encode(P.visual(text)).encode() in content
 
 
+def _bold(content: bytes, text: str) -> bool:
+    """`text` drawn in the bold face (F2) — a figure inside a sentence, a section's name."""
+    hexed = BOLD.encode(P.visual(text)).encode()
+    return re.search(rb"/F2 [\d.]+ Tf [^<]*<" + re.escape(hexed) + rb">", content) is not None
+
+
+def _shading(data: bytes, name: str):
+    """A page shading's two colours (C0 → C1), by its resource name."""
+    ref = re.search(rb"/" + name.encode() + rb" (\d+) 0 R", data).group(1)
+    body = re.search(rb"\n" + ref + rb" 0 obj\n(.*?)\nendobj", data, re.S).group(1)
+    c0, c1 = (tuple(round(float(v), 3) for v in re.search(rb"/" + k + rb" \[([^\]]*)\]", body).group(1).split())
+              for k in (b"C0", b"C1"))
+    return c0, c1
+
+
 def _valid(data: bytes) -> None:
     assert data.startswith(b"%PDF-1.4") and data.rstrip().endswith(b"%%EOF")
     assert b"/FontFile2" in data and b"/ToUnicode" in data and b"/Identity-H" in data
@@ -244,9 +259,112 @@ class TestTheDesign:
         monkeypatch.setattr(P, "load_logo", lambda url: Image.new("RGB", (100, 40), "white"))
         data = _post(world, dict(body_for("generic", I.GENERIC), companyId=str(world.company.id))).body
         assert b"/Subtype /Image" in data
-        assert b"0.882 0.114 0.282 rg" in b"\n".join(_pages(data))  # the accent stripe
+        # The light design (§9): the brand's colour is the data's — the bars' gradient ends in
+        # it — while the header band stays R2M's navy → blue.
+        assert b"/C1 [0.882 0.114 0.282]" in data
+        assert _shading(data, "GBand") == (_r3(D.T.NAVY), _r3(D.T.BAND_END))
         world.company.settings = {}
         world.db.commit()
+
+
+def _r3(rgb):
+    return tuple(round(v, 3) for v in rgb)
+
+
+def _labels_on(content: bytes, labels) -> list:
+    return [x for x in labels if _has(content, x)]
+
+
+class TestTheLightDesign:
+    """§9 (the owner 16.10): white pages, the navy → blue band, section bars, light cards and tables."""
+
+    def body(self, **extra):
+        body = body_for("product-sales", I.RANKING, rows=10)
+        body.update(
+            kpis=[{"key": "net", "label": "מכירות נטו", "value": 23410.5, "kind": "money", "compare": 21000,
+                   "compareLabel": "שבוע שעבר"},
+                  {"key": "cash", "label": "מזומן", "value": 6900, "kind": "money", "sub": "29.5% מהסה״כ"}],
+            totals={"net": 9000, "unitsNet": 41},
+            **extra,
+        )
+        return body
+
+    def test_white_pages_one_band_and_section_bars(self, world):
+        data = _post(world, self.body()).body
+        pages = _pages(data)
+        first, everything = pages[0], b"\n".join(pages)
+        # The band and the section bars are the page's only dark fills, and they are gradients.
+        assert first.count(b"/GBand sh") == 1 and first.count(b"/GSection sh") >= 2
+        assert _shading(data, "GSection") == (_r3(D.T.NAVY), _r3(D.T.SECTION_END))
+        assert b"0.090 0.090 0.090" not in everything  # the old all-dark band (#171717)
+        for name in ("תמונת מצב", "תובנות — מה חשוב לדעת", "הפירוט המלא"):
+            assert _bold(everything, name), name
+        assert _has(first, "29.5% מהסה״כ")  # the card's own small line
+        # Every page's footer: who made it, where and when, and the page count.
+        n = len(pages)
+        for k, page in enumerate(pages, start=1):
+            assert _has(page, "הופק ממערכת R2M") and _has(page, f"עמוד {k} מתוך {n}")
+
+    def test_the_key_facts_in_the_band(self, world):
+        facts = [{"label": "תאריך האירוע", "value": "14.10.26"}, {"label": "קופות", "value": "18"}]
+        first = _pages(_post(world, self.body(facts=facts)).body)[0]
+        assert _has(first, "תאריך האירוע") and _bold(first, "14.10.26") and _bold(first, "18")
+        # None sent: the period, the scope and how many rows.
+        first = _pages(_post(world, self.body()).body)[0]
+        assert _has(first, "תקופה") and _bold(first, "01.10.2026 – 14.10.2026") and _has(first, "שורות")
+
+    def test_a_reconciliation_its_cards_and_its_pills(self, world):
+        recon = {"title": "התאמה משולשת", "note": "שלוש שכבות של אותו כסף",
+                 "cards": [{"label": "סגירות Z", "value": 84732, "sub": "23 סגירות", "icon": "receipt"},
+                           {"label": "עסקאות", "value": 84732, "icon": "card"},
+                           {"label": "פריטים", "value": 84569, "icon": "box"}],
+                 "checks": [{"label": "סגירות מול עסקאות", "status": "match"},
+                            {"label": "עסקאות מול פריטים", "status": "mismatch", "text": "פער ₪ 163"}]}
+        first = _pages(_post(world, self.body(reconcile=recon)).body)[0]
+        assert _bold(first, "בקרה והתאמות") and _bold(first, "התאמה משולשת")
+        for text in ("סגירות Z", "עסקאות", "פריטים"):
+            assert _bold(first, text), text
+        assert _bold(first, "₪ 84,732") and _has(first, "23 סגירות")
+        assert _bold(first, "סגירות מול עסקאות:") and _has(first, "תואם") and _has(first, "פער ₪ 163")
+        from pydantic import ValidationError
+
+        for bad in ({**recon, "cards": recon["cards"] * 2}, {**recon, "cards": []},
+                    {**recon, "checks": [{"label": "x", "status": "maybe"}]}):
+            with pytest.raises(ValidationError):
+                pdf_router.ReportPdfIn.model_validate(self.body(reconcile=bad))
+        with pytest.raises(ValidationError):
+            pdf_router.ReportPdfIn.model_validate(self.body(facts=[{"label": "x", "value": "1"}] * 7))
+
+    def test_insights_are_callouts_by_tone_figures_bold(self, world):
+        body = self.body(insights=[{"type": "tip", "text": "שקלו מבצע בשעה החלשה: 1,234 בלבד"},
+                                   {"type": "alert", "text": "קופה 7 נסגרה בלי אף עסקה"}])
+        content = b"\n".join(_pages(_post(world, body).body))
+        for title in ("מה עובד טוב", "כדאי לבדוק", "המלצות"):  # green, yellow, blue
+            assert _bold(content, title) or _has(content, title), title
+        assert _has(content, "איך לקרוא:")
+        assert _bold(content, "1,234") and _bold(content, "7")  # a figure in a sentence is bold
+
+    @pytest.mark.parametrize("n", (2, 5, 33, 47, 61))
+    @pytest.mark.parametrize("filler", range(0, 22, 3))
+    def test_a_table_breaks_between_rows_its_header_again(self, n, filler):
+        """Never a header alone at a page's foot, never the totals alone at the next page's top."""
+        cols = [P.column_of({"key": "name", "label": "שורת בדיקה"}), P.column_of({"key": "v", "label": "ערך", "kind": "number"})]
+        rows = [[f"פריט {i:03d}", P.format_number(i)] for i in range(n)]
+        lead = [D.Note(f"שורת מילוי {k}") for k in range(filler)]  # the table starts lower and lower
+        doc = D.Document(title="בדיקה", blocks=lead + [D.Table(cols, rows, totals=[P.TOTAL_LABEL, "1"])], cover="never")
+        lay = D._Layout(doc)
+        lay.run()
+        names = [r[0] for r in rows]
+        seen = []
+        for canvas in lay.pages:
+            content = canvas.stream()
+            here = _labels_on(content, names)
+            if _bold(content, "שורת בדיקה"):  # the header is on this page: rows come with it
+                assert len(here) >= min(3, n), (n, filler, len(here))
+            if _bold(content, P.TOTAL_LABEL):  # the totals never alone
+                assert len(here) >= min(2, n), (n, filler)
+            seen += here
+        assert seen == names  # every row once, in order
 
 
 class TestBackwardCompatible:

@@ -120,18 +120,31 @@ def build(body: Any, *, tz_name: str, branding: Optional[Dict[str, Any]] = None,
     subs = list(report.subtitle_lines)
     period = P.clean(body.period or "") or (subs.pop(0) if subs else "")
     scope = P.clean(body.scope or "") or (subs.pop(0) if subs else "")
+    recon = D.recon_of(body.reconcile.model_dump()) if body.reconcile else None
+    # The chapters, as the owner's sample has them (§9): the picture, the checks, what to know,
+    # then everything.
     blocks: List[Any] = []
     if kpis:
-        blocks.append(D.KpiBlock(kpis))
+        blocks += [D.Section("תמונת מצב", "chart"), D.KpiBlock(kpis)]
+    if recon is not None:
+        blocks += [D.Section("בקרה והתאמות", "shield"), recon]
     if insights:
-        blocks.append(D.InsightBlock(insights))
+        blocks += [D.Section("תובנות — מה חשוב לדעת", "tip_bulb"), D.InsightBlock(insights)]
+    if blocks:
+        blocks.append(D.Section("הפירוט המלא", "list"))
     if charts:
         blocks.append(D.ChartBlock(charts))
     blocks.append(D.Table(columns=report.columns, rows=cells, styles=styles, totals=report.totals))
+    facts = [(P.clean(f.label), P.clean(f.value)) for f in body.facts if P.clean(f.label) or P.clean(f.value)]
+    if not facts:
+        facts = [(label, value) for label, value in (("תקופה", period), ("היקף", scope)) if value]
+        if facts:
+            facts.append(("שורות", P.format_number(len(rows))))
     doc = D.Document(
         title=report.title,
         period=period,
         scope=scope,
+        facts=facts[:6],
         extra_lines=subs,
         filter_lines=list(report.filter_lines),
         generated_at=report.generated.replace("הופק:", "").strip(),
