@@ -233,7 +233,8 @@ describe('the Windows kiosk pays at the cash station', () => {
     await until(() => host.station('st-1')!.recentTxs(1)[0]?.acked);
     expect(host.station('st-1')!.recentTxs(1)[0].documentId).toBe(doc.id);
     expect(host.busy()).toBe(false);
-    expect(k.svc.cashPay.pending()).toEqual([]);
+    // The kiosk forgets it once the station's answer to its ack is in (a moment after the station saved it).
+    await until(() => k.svc.cashPay.pending().length === 0);
   });
 
   it('change the station cannot pay: owed — the slip with its code, the receipt says it', async () => {

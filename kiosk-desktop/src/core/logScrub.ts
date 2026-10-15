@@ -30,11 +30,11 @@ function luhn(digits: string): boolean {
 
 export function scrubLogText(text: string): string {
   let out = text;
-  // "key": "value" / key=value / key: value, for keys naming a secret.
-  out = out.replace(new RegExp(`("?[A-Za-z_]*(?:${SECRET_KEYS})[A-Za-z_]*"?\\s*[:=]\\s*)("[^"]*"|[^\\s,;&}]+)`, 'gi'), (_m, key: string, value: string) =>
-    value === '"***"' || value === '***' ? `${key}${value}` : `${key}${value.startsWith('"') ? '"***"' : '***'}`,
-  );
+  // "Bearer <token>" first (the value of an "Authorization:" too), then "key": "value" / key=value / key: value.
   out = out.replace(/\bBearer\s+(?!\*\*\*)[A-Za-z0-9._~+/=-]+/g, 'Bearer ***');
+  out = out.replace(new RegExp(`("?[A-Za-z_]*(?:${SECRET_KEYS})[A-Za-z_]*"?\\s*[:=]\\s*)("[^"]*"|Bearer \\*\\*\\*|[^\\s,;&}]+)`, 'gi'), (_m, key: string, value: string) =>
+    value === '"***"' || value === '***' || value === 'Bearer ***' ? `${key}${value}` : `${key}${value.startsWith('"') ? '"***"' : '***'}`,
+  );
   // Track 2 (";4580…=2512…?") before the card numbers.
   out = out.replace(/;?\d{13,19}=\d{4,}[\d]*\??/g, (m) => {
     const pan = m.replace(/^;/, '').split('=')[0];

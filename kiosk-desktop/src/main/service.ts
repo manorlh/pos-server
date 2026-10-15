@@ -25,7 +25,7 @@ import { creditLegsOf } from '../core/cash/credit';
 import { cashSlipDoc } from '../core/printDocs';
 import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cash/tx';
 import { shekelText } from '../core/cash/settings';
-import { cardPrincipalAgorot, type DocCashLeg, type DocCreditLeg } from './fiscal/ledger';
+import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
