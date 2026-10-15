@@ -266,6 +266,11 @@ export interface KioskLive {
     phase: LivePayPhase;
     /** The status line under the instruction (the terminal's progress, or why it is blocked). */
     message: string | null;
+    /**
+     * The terminal is in offline (deferred) mode (P:/specs/nayax-deferred-all.md §13): which cards will not
+     * go through, shown before the card is presented. Absent or null: nothing.
+     */
+    notice?: string | null;
     amount: number;
     canCancel: boolean;
     cancelling: boolean;
@@ -3454,6 +3459,11 @@ function LivePay({ m, live }: { m: PreviewModel; live: NonNullable<KioskLive['pa
         <div className="text-4xl font-black tabular-nums" style={{ color: m.c.text }}>
           {m.money(live.amount)}
         </div>
+        {live.notice && live.phase !== 'unknown' ? (
+          <div className="w-full rounded-xl px-4 py-3 text-sm font-bold" style={{ background: '#FF9500', color: '#FFFFFF' }} role="status">
+            {live.notice}
+          </div>
+        ) : null}
         {live.phase === 'unknown' ? (
           <div className="flex w-full flex-col items-center gap-3 p-4" style={cardStyle(m)}>
             {spinner}

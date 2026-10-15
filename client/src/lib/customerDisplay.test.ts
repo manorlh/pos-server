@@ -89,6 +89,17 @@ test('the screen state from the wire: safe to render, unknown is idle', () => {
   assert.equal(phaseHeadline({ ...IDLE_STATE, phase: 'thanks' }, 'he'), 'תודה רבה!');
 });
 
+test('the card screen carries the offline-mode notice only when the till sent one (nayax-deferred-all §13)', () => {
+  const notice = 'בתשלום באשראי: לא ניתן לשלם בכרטיס דביט / דיירקט / כרטיס זר כרגע';
+  const s = parseState({ v: 1, seq: 3, phase: 'paying', payment: { method: 'card', status: 'waiting_card', due: 5400, paid: 0, notice } });
+  assert.equal(s.payment?.notice, notice);
+  const plain = parseState({ v: 1, seq: 3, phase: 'paying', payment: { method: 'card', status: 'waiting_card', due: 5400, paid: 0 } });
+  assert.equal(plain.payment?.notice, undefined);
+  assert.equal('notice' in (plain.payment ?? {}), false);
+  assert.equal(parseState({ v: 1, seq: 3, phase: 'paying', payment: { method: 'card', status: 'choose', due: 1, paid: 0, notice: '  ' } }).payment?.notice, undefined);
+  assert.equal(parseState({ v: 1, seq: 3, phase: 'paying', payment: { method: 'card', status: 'choose', due: 1, paid: 0, notice: 7 } }).payment?.notice, undefined);
+});
+
 test('money, language and the web link', () => {
   assert.equal(money(4500), '₪45.00');
   assert.equal(money(-505), '-₪5.05');

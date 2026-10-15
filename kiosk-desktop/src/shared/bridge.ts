@@ -214,6 +214,11 @@ export interface PayProgress {
   amountAgorot: number;
   canCancel: boolean;
   cancelling: boolean;
+  /**
+   * The terminal is in offline (deferred) mode (P:/specs/nayax-deferred-all.md §13): "כרטיסי תייר, דיירקט
+   * ודביט לא יעברו" on the card screen, before the card is presented. Absent or null: nothing to say.
+   */
+  notice?: string | null;
   /** On approval. */
   pickupLabel?: string;
   documentNumber?: string;
