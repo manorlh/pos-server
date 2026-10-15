@@ -3,6 +3,7 @@ import { api } from './api';
 import {
   DRAWER_PAGE_SIZE_MAX,
   drawerQuery,
+  type CashWalletsPage,
   type DrawerEventRow,
   type DrawerEventsPage,
   type DrawerFilters,
@@ -24,6 +25,10 @@ export const fetchCashMovements = (filters: DrawerFilters & { type?: MovementTyp
       params: { ...drawerQuery(filters), ...(filters.type?.length ? { type: filters.type.join(',') } : {}), page, pageSize },
     })
     .then((r) => r.data);
+
+/** "מזומן אצל עובדים (טרם הופקד)" (P:/specs/drawer-away.md §5.6): the open wallets in the shops in scope. */
+export const fetchCashWallets = (filters: DrawerFilters) =>
+  api.get<CashWalletsPage>('/cash-drawer/wallets', { params: drawerQuery(filters) }).then((r) => r.data);
 
 export const fetchShiftTimeline = (shiftId: string) =>
   api.get<ShiftTimeline>(`/cash-drawer/shifts/${shiftId}/timeline`).then((r) => r.data);

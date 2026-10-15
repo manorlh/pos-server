@@ -69,7 +69,12 @@ export interface ZReportSections {
     showCount: boolean;
     counted: Money;
     gap: Money;
+    /** "הכסף אצלי" (P:/specs/drawer-away.md §5.6): only when not zero. */
+    walletIn?: Money;
+    walletDeposits?: Money;
   } | null;
+  /** "מזומן אצל עובדים (טרם הופקד)" — the whole Z's, as frozen when it was built (drawer-away §5.6). */
+  cashWithStaff?: { total: Money; employees: { employeeId: string; employeeName: string | null; amount: Money }[] } | null;
   sold: { documents: number; units: string; average: Money };
   orderTypes: { rows: { type: string; count: number; total: Money; average: Money }[]; count: number; total: Money; average: Money };
   employees: ZSectionsEmployee[] | null;
@@ -227,12 +232,23 @@ export function zSectionLines(s: ZReportSections | null | undefined, L: ZSection
     if (ag(d.cashIn)) rows.push([l('drawerCashIn'), fmt(d.cashIn), false]);
     if (ag(d.expenses)) rows.push([l('drawerExpenses'), fmt(neg(d.expenses)), false]);
     if (ag(d.safeDrop)) rows.push([l('drawerSafeDrop'), fmt(neg(d.safeDrop)), false]);
+    if (ag(d.walletIn)) rows.push([l('drawerWalletIn'), fmt(neg(d.walletIn ?? null)), false]);
+    if (ag(d.walletDeposits)) rows.push([l('drawerWalletDeposits'), fmt(d.walletDeposits ?? null), false]);
     rows.push([l('drawerExpected'), fmt(d.expected), true]);
     if (d.showCount) {
       rows.push([l('drawerCounted'), d.counted !== null && d.counted !== undefined ? fmt(d.counted) : l('drawerNotCounted'), false]);
       rows.push([l('drawerGap'), d.gap !== null && d.gap !== undefined ? signed(d.gap) : l('drawerGapWithheld'), true]);
     }
     out.push([l('drawer'), rows]);
+  }
+
+  // "מזומן אצל עובדים (טרם הופקד)" (drawer-away §5.6): by employee, as the Z froze it.
+  const staff = s.cashWithStaff;
+  if (staff && staff.employees?.length) {
+    out.push([l('cashWithStaff'), [
+      ...staff.employees.map((e): ZSectionRow => [clip(e.employeeName || e.employeeId || '—'), fmt(e.amount), false]),
+      [l('cashWithStaffTotal'), fmt(staff.total), true],
+    ]]);
   }
 
   const tr = s.transmission;

@@ -25,8 +25,13 @@ interface DrawerParam {
   description: string | null;
   valueType: 'boolean' | 'integer' | 'decimal' | 'string' | 'enum';
   enumOptions: string[] | null;
+  /** An option's Hebrew where the stored value is a code the till reads (drawer-away §5.1). */
+  enumLabels?: Record<string, string> | null;
   defaultValue: unknown;
 }
+
+/** "מגירה למכשיר רחוק" (P:/specs/drawer-away.md §5.1): picked from the shop's tills, stored as the till's id. */
+const AWAY_TARGET_KEY = 'drawerAwayTarget';
 
 interface LevelView {
   scopeType: string;
@@ -120,6 +125,7 @@ export function DrawerParamsTab({
         level={level}
         canEditCompany={canEditCompany}
         sectionAllowsEdit={sectionAllowsEdit}
+        tills={shopMachines.map((m) => ({ id: String(m.id), name: m.name }))}
       />
     </div>
   );
@@ -130,11 +136,14 @@ function LevelCard({
   level,
   canEditCompany,
   sectionAllowsEdit,
+  tills,
 }: {
   companyId: string;
   level: Level;
   canEditCompany: boolean;
   sectionAllowsEdit: boolean;
+  /** The shop's tills: "מגירה למכשיר רחוק" names one of them. */
+  tills: Array<{ id: string; name: string }>;
 }) {
   const t = useTranslations('tillRoles.drawer');
   const tr = useTranslations('tillRoles');
@@ -179,7 +188,11 @@ function LevelCard({
         ? value
           ? t('on')
           : t('off')
-        : String(value);
+        : p.key === AWAY_TARGET_KEY
+          ? String(value) === ''
+            ? t('awayTargetAny')
+            : (tills.find((m) => m.id === String(value))?.name ?? String(value))
+          : (p.enumLabels?.[String(value)] ?? String(value));
   const dirty = Object.keys(edits).length > 0;
 
   return (
@@ -218,9 +231,27 @@ function LevelCard({
                     <option value="">{t('clear')}</option>
                     {(p.enumOptions ?? []).map((o) => (
                       <option key={o} value={o}>
-                        {o}
+                        {p.enumLabels?.[o] ?? o}
                       </option>
                     ))}
+                  </select>
+                ) : p.key === AWAY_TARGET_KEY ? (
+                  <select
+                    className={SELECT}
+                    aria-label={p.label}
+                    disabled={!canEdit}
+                    value={shown(p.key)}
+                    onChange={(e) => setEdits((m) => ({ ...m, [p.key]: e.target.value }))}
+                  >
+                    <option value="">{t('clear')}</option>
+                    {tills.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                    {shown(p.key) && !tills.some((m) => m.id === shown(p.key)) ? (
+                      <option value={shown(p.key)}>{shown(p.key)}</option>
+                    ) : null}
                   </select>
                 ) : (
                   <input
