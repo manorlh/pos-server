@@ -138,7 +138,7 @@ jobs:
           pip install poetry==1.8.4
           poetry install --no-interaction --no-ansi
 
-      - name: Migration tests that need a real Postgres (not blocking: they show what the SQLite exclusions would do on Postgres)
+      - name: Migration tests that need a real Postgres (informational, they show how the SQLite exclusions behave on Postgres)
         run: poetry run python -m pytest -q tests/test_till_roles.py tests/test_kitchen_ticket_designs.py tests/test_register_number.py
 
   client-checks:
