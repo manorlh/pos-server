@@ -8,6 +8,7 @@
  */
 import { api } from './api';
 import {
+  type EmbeddedHost,
   type CashCommandRecord,
   type CashDrawer,
   type CashMovement,
@@ -123,5 +124,19 @@ export async function fetchCashDrawer(id: string, params: Record<string, string>
  */
 export async function setStationClient(stationId: string, machineId: string, assigned: boolean): Promise<CashStation> {
   const { data } = await api.put<CashStation>(`/cash-stations/${stationId}/clients/${machineId}`, { assigned });
+  return data;
+}
+
+export const embeddedHostKey = (machineId: string) => ['cash-embedded-host', machineId] as const;
+
+/** "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): whether this device runs its cash station(s), and which. */
+export async function fetchEmbeddedHost(machineId: string): Promise<EmbeddedHost> {
+  const { data } = await api.get<EmbeddedHost>(`/cash-stations/embedded-hosts/${machineId}`);
+  return data;
+}
+
+/** On / off. 409 `embedded_host_not_allowed` (not a Windows kiosk…) / `host_has_stations` (move them first). */
+export async function setEmbeddedHost(machineId: string, embedded: boolean): Promise<EmbeddedHost> {
+  const { data } = await api.put<EmbeddedHost>(`/cash-stations/embedded-hosts/${machineId}`, { embedded });
   return data;
 }

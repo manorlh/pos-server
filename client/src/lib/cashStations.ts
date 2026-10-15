@@ -2,7 +2,9 @@
  * "עמדות מזומן" — the kiosks' cash stations on the dashboard (P:/specs/cash-paylink.md §5, §6, §9, §11, §12;
  * pos-server app/routers/cash_stations.py, app/services/cash_station_admin.py, cash_station_drawer.py,
  * cash_params.py). A station is one PayLink unit (by its USB serial), run by a "שרת מזומן" (device role
- * `cash_host`); kiosks are assigned to it by the till parameters `cashEnabled` + `cashStation`.
+ * `cash_host`) or by a "קיוסק מארח" (a Windows kiosk with the PayLink on USB, §14.1); kiosks are assigned to it by
+ * the till parameters `cashEnabled` + `cashStation`, and reach it over the LAN or through the cloud (`cashRoute`,
+ * §14.2).
  *
  * The shapes the server answers, and the pure rules the pages use: money in agorot as words, the state
  * pills, the reconciliation's difference, the maintenance commands' bodies, the station settings form
@@ -151,12 +153,16 @@ export interface CashStationHost {
   port: number | null;
   version: string | null;
   reportedAt: string | null;
+  /** A kiosk that runs the station itself ("קיוסק מארח", §14.1). Absent on an older server. */
+  embedded?: boolean;
 }
 
 export interface CashStationClient {
   machineId: string;
   name: string | null;
   kind: 'kiosk' | 'till' | string;
+  /** How it reaches the station's host (§14.2). Absent on an older server: the LAN. */
+  route?: CashRoute | string;
 }
 
 export interface CashDenomination {
@@ -1038,4 +1044,40 @@ export function stationOfClient(stations: readonly Pick<CashStation, 'stationId'
 export function stationLabel(s: Pick<CashStation, 'name' | 'location'> & { label?: string | null }): string {
   if (s.label) return s.label;
   return s.location ? `${s.name} (${s.location})` : s.name;
+}
+
+// ── The host kiosk and the route (P:/specs/cash-paylink.md §14) ───────────────
+
+/** `cashRoute` (§14.2): over the shop's LAN (default), through the cloud relay, or the LAN first. */
+export const CASH_ROUTE_KEY = 'cashRoute';
+export const CASH_ROUTES = ['lan', 'cloud', 'auto'] as const;
+export type CashRoute = (typeof CASH_ROUTES)[number];
+
+/** A route as read: anything unknown is the LAN (as the devices read it). */
+export function cashRouteOf(raw: unknown): CashRoute {
+  return typeof raw === 'string' && (CASH_ROUTES as readonly string[]).includes(raw) ? (raw as CashRoute) : 'lan';
+}
+
+/** The device page's "מארח עמדת מזומן" card: `GET/PUT /cash-stations/embedded-hosts/{machineId}`. */
+export interface EmbeddedHost {
+  machineId: string;
+  name: string | null;
+  embedded: boolean;
+  /** May it be one (a Windows kiosk of a shop, not a dedicated cash host or a screen); why not, in Hebrew. */
+  allowed: boolean;
+  reason: string | null;
+  /** The flag on a device that may be one: the cloud gives it its stations. */
+  active: boolean;
+  shopId: string | null;
+  stations: { stationId: string; name: string; label: string; isActive: boolean }[];
+}
+
+/** May run a station (the station's "השרת שמנהל אותה" list): a dedicated cash host, or a host kiosk (§14.1). */
+export function runsStations(m: { deviceRole?: unknown; cashHostEmbedded?: boolean | null }): boolean {
+  return m.deviceRole === 'cash_host' || m.cashHostEmbedded === true;
+}
+
+/** Where the card is offered: a Windows device that is no dedicated cash host and no screen. */
+export function mayHostEmbedded(m: { deviceRole?: unknown; platform?: string | null; fiscal?: boolean }): boolean {
+  return m.platform === 'windows' && m.deviceRole !== 'cash_host' && m.fiscal !== false;
 }

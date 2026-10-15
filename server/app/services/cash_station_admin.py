@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -29,7 +29,8 @@ from app.models.user import User, UserRole
 from app.services import cash_alerts as CA
 from app.services import cash_params as CP
 from app.services import cash_stations as CS
-from app.services.cash_host import is_cash_host
+from app.services import cash_host as CH
+from app.services.cash_host import hosts_cash, is_embedded_host
 
 #: A station's report older than this is shown "as of", not live.
 STATUS_FRESH = timedelta(minutes=3)
@@ -101,6 +102,8 @@ def host_out(db: Session, host: Optional[POSMachine], now: datetime) -> Optional
         "port": report.get("port"),
         "version": report.get("version"),
         "reportedAt": CS._iso(getattr(host, "cash_status_at", None)),
+        # "קיוסק מארח" (P:/specs/cash-paylink.md §14.1): a kiosk that runs the station itself.
+        "embedded": is_embedded_host(host),
     }
 
 
@@ -135,12 +138,12 @@ def status_out(host: Optional[POSMachine], station: CashStation, now: datetime, 
 
 
 def station_out(db: Session, station: CashStation, *, detail: bool = False,
-                clients: Optional[Dict[Any, List[POSMachine]]] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
+                clients: Optional[Dict[Any, List[Tuple[POSMachine, str]]]] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = CS._now(now)
     host = db.get(POSMachine, station.host_machine_id) if station.host_machine_id else None
     shop = db.get(Shop, station.shop_id)
     if clients is None:
-        clients = CS.clients_by_station(db, station.shop_id)
+        clients = CS.client_routes(db, station.shop_id)
     open_owed = (
         db.query(CashStationTx).filter(CashStationTx.station_id == station.id, CashStationTx.owed_status == "open").all()
     )
@@ -155,7 +158,8 @@ def station_out(db: Session, station: CashStation, *, detail: bool = False,
         "serial": station.serial or "",
         "isActive": bool(station.is_active),
         "host": host_out(db, host, now),
-        "clients": [CS.client_ref(db, m) for m in clients.get(station.id, [])],
+        # Each with its way to the station (§14.2: lan | cloud | auto).
+        "clients": [CS.client_ref(db, m, route) for m, route in clients.get(station.id, [])],
         "status": status_out(host, station, now, detail=detail),
         "alerts": CA.open_alerts_of(db, station),
         "owed": {"count": len(open_owed), "amountAgorot": sum(int(t.owed_agorot or 0) for t in open_owed)},
@@ -233,11 +237,11 @@ def list_stations(db: Session, user: User, tenant_id: Any, *, shop_id: Any = Non
     if not include_inactive:
         q = q.filter(CashStation.is_active.is_(True))
     stations = q.order_by(CashStation.shop_id, CashStation.name, CashStation.id).all()
-    by_shop: Dict[Any, Dict[Any, List[POSMachine]]] = {}
+    by_shop: Dict[Any, Dict[Any, List[Tuple[POSMachine, str]]]] = {}
     out = []
     for station in stations:
         if station.shop_id not in by_shop:
-            by_shop[station.shop_id] = CS.clients_by_station(db, station.shop_id)
+            by_shop[station.shop_id] = CS.client_routes(db, station.shop_id)
         out.append(station_out(db, station, clients=by_shop[station.shop_id]))
     return {"stations": out}
 
@@ -247,8 +251,10 @@ def _check_host(db: Session, shop: Shop, host_id: Any) -> Optional[POSMachine]:
         return None
     ident = CS._uuid(str(host_id))
     host = db.get(POSMachine, ident) if ident is not None else None
-    if host is None or not host.is_active or host.shop_id != shop.id or not is_cash_host(host):
-        raise _refuse(status.HTTP_409_CONFLICT, "not_a_cash_host", "המכשיר שנבחר אינו שרת מזומן פעיל של הסניף.")
+    # A dedicated cash host, or a host kiosk ("מארח עמדת מזומן", §14.1) of the same shop.
+    if host is None or not host.is_active or host.shop_id != shop.id or not hosts_cash(host):
+        raise _refuse(status.HTTP_409_CONFLICT, "not_a_cash_host",
+                      "המכשיר שנבחר אינו שרת מזומן פעיל או קיוסק מארח של הסניף.")
     return host
 
 
@@ -493,3 +499,68 @@ def parse_moment(value: Optional[str], field: str) -> Optional[datetime]:
     except ValueError:
         raise _refuse(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_date", f"{field}: ISO date or date-time.") from None
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+# ── "מארח עמדת מזומן" — the host kiosk (P:/specs/cash-paylink.md §14.1) ─────────────────────
+
+
+def machine_in_scope(db: Session, user: User, machine_id: Any, tenant_id: Any) -> POSMachine:
+    """A device of the tenant this user may manage (its shop in scope); 404 `machine_not_found` otherwise."""
+    from app.services import kiosk_control
+
+    ident = machine_id if isinstance(machine_id, uuid.UUID) else CS._uuid(str(machine_id))
+    machine = db.get(POSMachine, ident) if ident is not None else None
+    if machine is None or (tenant_id is not None and str(machine.tenant_id) != str(tenant_id)):
+        raise _refuse(status.HTTP_404_NOT_FOUND, "machine_not_found", "המכשיר לא נמצא.")
+    if machine.shop_id is not None:
+        shop_in_scope(db, user, machine.shop_id, tenant_id)
+    else:
+        kiosk_control.require_kiosk_role(user)
+        if user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
+            raise _refuse(status.HTTP_404_NOT_FOUND, "machine_not_found", "המכשיר לא נמצא.")
+    return machine
+
+
+def embedded_host_out(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    """The device page's card: whether it is a host kiosk, whether it may be one (why not), and its stations."""
+    reason = CH.embedded_refusal(machine)
+    stations = CS.stations_of_host(db, machine.id, active_only=False)
+    return {
+        "machineId": str(machine.id),
+        "name": machine.name,
+        "embedded": getattr(machine, "cash_host_embedded", False) is True,
+        "allowed": reason is None,
+        "reason": reason,
+        # The flag on a device that may be one: the cloud gives it its stations (§11.2 `host`).
+        "active": is_embedded_host(machine),
+        "shopId": str(machine.shop_id) if machine.shop_id else None,
+        "stations": [
+            {"stationId": str(s.id), "name": s.name, "label": CS.station_label(s), "isActive": bool(s.is_active)}
+            for s in stations
+        ],
+    }
+
+
+def set_embedded_host(db: Session, user: User, machine: POSMachine, embedded: bool) -> POSMachine:
+    """
+    "מארח עמדת מזומן" on / off (§14.1). On: only a device that may be one (409 `embedded_host_not_allowed` with the
+    reason). Off: only once no active station names it its host (409 `host_has_stations` with them) — the stations
+    move to another host first. The device is woken (its next §11.2 pull starts or stops its stations). The caller
+    commits.
+    """
+    if embedded:
+        reason = CH.embedded_refusal(machine)
+        if reason is not None:
+            raise _refuse(status.HTTP_409_CONFLICT, CH.EMBEDDED_NOT_ALLOWED, reason)
+    else:
+        active = [s for s in CS.stations_of_host(db, machine.id) if s.is_active]
+        if active and getattr(machine, "cash_host_embedded", False) is True:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "code": CH.EMBEDDED_HAS_STATIONS,
+                "message": "הקיוסק מנהל עמדות מזומן פעילות — העבירו אותן לשרת אחר (או הוציאו משימוש) לפני הכיבוי.",
+                "stations": [{"stationId": str(s.id), "name": s.name, "label": CS.station_label(s)} for s in active],
+            })
+    machine.cash_host_embedded = bool(embedded)
+    db.flush()
+    CS.wake(machine, "cash_stations")
+    return machine

@@ -74,6 +74,8 @@ GET /cash-drawer/shifts/{shift_id}/timeline -> reports|z:view
 GET /cash-drawer/wallets -> reports:view
 GET /cash-stations -> devices|kiosks:view
 POST /cash-stations -> devices:edit
+GET /cash-stations/embedded-hosts/{machine_id} -> devices|kiosks:view
+PUT /cash-stations/embedded-hosts/{machine_id} -> devices:edit
 DELETE /cash-stations/{station_id} -> devices:edit
 GET /cash-stations/{station_id} -> devices|kiosks:view
 PUT /cash-stations/{station_id} -> devices:edit

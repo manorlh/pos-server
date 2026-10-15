@@ -823,6 +823,11 @@ export interface PosMachine {
   /** "android" | "windows" | "web" (the browser kiosk, docs/SPEC_KIOSK.md §27) — what the device runs. */
   platform?: 'android' | 'windows' | 'web' | null;
   /**
+   * "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): a Windows kiosk whose PC has the PayLink on USB runs its
+   * cash station(s) too. Absent on an older server: no.
+   */
+  cashHostEmbedded?: boolean;
+  /**
    * Its KDS screen, or null. On a fiscal till: a screen paired on the KDS page before
    * display devices existed (flagged "מסך מטבח על קופה").
    */

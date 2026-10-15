@@ -14,7 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2, MonitorSmartphone } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { stationOfClient, type CashStation } from '@/lib/cashStations';
+import { cashRouteOf, stationOfClient, type CashStation } from '@/lib/cashStations';
 import { cashStationKey, cashStationsKey, fetchCashStations, setStationClient } from '@/lib/cashStationsApi';
 import type { PosMachine } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -52,6 +52,11 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
   });
 
   const nameOf = (id: string | null) => stations.find((s) => s.stationId === id)?.label ?? null;
+  // Its way to the station (P:/specs/cash-paylink.md §14.2): the LAN, the cloud, or the LAN first.
+  const routeWords = (id: string) => {
+    const c = station.clients.find((x) => x.machineId.toLowerCase() === id.toLowerCase());
+    return c?.route ? t(`route.${cashRouteOf(c.route)}`) : null;
+  };
 
   return (
     <div className="space-y-3">
@@ -81,6 +86,7 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
                       </Link>
                       <span className="block text-xs text-muted-foreground">
                         {here ? t('servedHere') : elsewhere ? t('servedElsewhere', { station: elsewhere }) : t('noCash')}
+                        {here && routeWords(k.id) ? ` · ${routeWords(k.id)}` : ''}
                         {k.kioskEnabled === false ? ` · ${t('kioskOff')}` : ''}
                       </span>
                     </span>
@@ -106,7 +112,10 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
                     <Link href={`/dashboard/machines/${c.machineId}`} className="font-medium hover:underline">
                       {c.name ?? c.machineId.slice(0, 8)}
                     </Link>
-                    <span className="block text-xs text-muted-foreground">{c.kind === 'till' ? t('till') : t('servedHere')}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {c.kind === 'till' ? t('till') : t('servedHere')}
+                      {routeWords(c.machineId) ? ` · ${routeWords(c.machineId)}` : ''}
+                    </span>
                   </span>
                   <ToneBadge tone="ok">{t('assignedBadge')}</ToneBadge>
                 </li>
@@ -114,6 +123,7 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
             </ul>
           )}
           <p className="mt-2 text-xs text-muted-foreground">{t('howItResolves')}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t('routeHint')}</p>
         </CardContent>
       </Card>
     </div>

@@ -39,7 +39,15 @@ WINDOWS_ONLY_MESSAGE = (
 )
 REQUIRES_SHOP_MESSAGE = "שרת מזומן משרת סניף מסוים: בחרו חברה וסניף לפני יצירת הקוד."
 ONLY_A_CASH_HOST = "cash_host_only"
-ONLY_A_CASH_HOST_MESSAGE = "רק שרת מזומן מדווח יומן מזומן ומאשר פקודות מזומן."
+ONLY_A_CASH_HOST_MESSAGE = "רק שרת מזומן (או קיוסק מארח) מדווח יומן מזומן ומאשר פקודות מזומן."
+
+# ── "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1) ─────────────────────────────────────────
+# The owner, 16.10: the PayLink on USB at a Windows kiosk's PC — that kiosk runs the station too, and the other
+# kiosks reach it (over the LAN or through the cloud, `cashRoute`). It stays a kiosk (fiscal); the flag
+# `pos_machines.cash_host_embedded` is set on the dashboard's device page, off by default.
+EMBEDDED_LABEL = "קיוסק מארח"
+EMBEDDED_NOT_ALLOWED = "embedded_host_not_allowed"
+EMBEDDED_HAS_STATIONS = "host_has_stations"
 
 
 def is_cash_host(machine: Any) -> bool:
@@ -47,6 +55,38 @@ def is_cash_host(machine: Any) -> bool:
     if machine is None:
         return False
     return getattr(machine, "is_cash_host", False) is True and getattr(machine, "is_fiscal", True) is False
+
+
+def embedded_refusal(machine: Any) -> Optional[str]:
+    """Why this device may not be a host kiosk (Hebrew), or None: a Windows till / kiosk of a shop, active, paired."""
+    from app.models.pos_machine import PairingStatus
+    from app.services.display_devices import PLATFORM_WINDOWS
+
+    if machine is None:
+        return "המכשיר לא נמצא."
+    if is_cash_host(machine):
+        return "המכשיר הוא שרת מזומן ייעודי — הוא כבר מנהל עמדות."
+    if getattr(machine, "is_fiscal", True) is False:
+        return "מסך או שרת מקומי אינו יכול לנהל עמדת מזומן — רק קיוסק Windows."
+    if (getattr(machine, "platform", None) or "").lower() != PLATFORM_WINDOWS:
+        return "רק קיוסק Windows יכול לנהל עמדת מזומן: הדרייבר של PayLink רץ רק ב-Windows."
+    if getattr(machine, "shop_id", None) is None:
+        return "המכשיר אינו משויך לסניף."
+    if not getattr(machine, "is_active", True) or getattr(machine, "pairing_status", PairingStatus.ASSIGNED) != PairingStatus.ASSIGNED:
+        return "המכשיר אינו פעיל."
+    return None
+
+
+def is_embedded_host(machine: Any) -> bool:
+    """A host kiosk: the flag on, on a device that may be one (`embedded_refusal`)."""
+    if machine is None or getattr(machine, "cash_host_embedded", False) is not True:
+        return False
+    return embedded_refusal(machine) is None
+
+
+def hosts_cash(machine: Any) -> bool:
+    """Runs cash stations: a dedicated cash host, or a host kiosk (§14.1)."""
+    return is_cash_host(machine) or is_embedded_host(machine)
 
 
 def platform_refusal(platform: Optional[str], role: Optional[str]) -> Optional[Dict[str, str]]:

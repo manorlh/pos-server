@@ -93,7 +93,18 @@ interface Lease {
   createdAt: number;
   renewedAt: number;
   txId: string | null;
+  /** Gone after this long unrenewed, renewed this often: the LAN's 6 / 2 s, a lease through the cloud 20 / 5 s (§14.4). */
+  ttlMs: number;
+  renewMs: number;
 }
+
+/** How a lease is kept: the way its last call came (§14.4 — the cloud relay is slower than the LAN). */
+export interface LeaseTiming {
+  ttlMs: number;
+  renewMs: number;
+}
+
+export const LAN_LEASE: LeaseTiming = { ttlMs: LEASE_TTL_MS, renewMs: LEASE_RENEW_MS };
 
 export type Reply = { status: number; body: unknown };
 
@@ -384,15 +395,15 @@ export class CashStation {
       leaseId: l.leaseId,
       state: position === 0 ? 'granted' : 'queued',
       position,
-      renewMs: LEASE_RENEW_MS,
-      expiresAt: l.renewedAt + LEASE_TTL_MS,
+      renewMs: l.renewMs,
+      expiresAt: l.renewedAt + l.ttlMs,
       estimatedWaitSec: position === 0 ? 0 : position * 60,
     };
   }
 
   private expireLeases(now: number) {
     for (const l of [...this.leases]) {
-      if (now - l.renewedAt <= LEASE_TTL_MS) continue;
+      if (now - l.renewedAt <= l.ttlMs) continue;
       const t = l.txId ? this.d.journal.tx(l.txId) : null;
       if (t && isOpen(t.state)) {
         // The client vanished mid-transaction: acceptance closes now, refund after the grace (§4).
@@ -417,26 +428,42 @@ export class CashStation {
     return this.cfg.clients.some((c) => c.machineId === clientId);
   }
 
-  lease(clientId: string, body: { leaseId?: unknown; txId?: unknown }): Reply {
+  /** A lease renewed (its timing: the way this call came); a client back in its grace — its transaction goes on. */
+  private renew(l: Lease, now: number, timing: LeaseTiming) {
+    l.renewedAt = now;
+    l.ttlMs = timing.ttlMs;
+    l.renewMs = timing.renewMs;
+    const t = l.txId ? this.d.journal.tx(l.txId) : null;
+    if (t && t.graceUntil !== null && isOpen(t.state)) {
+      // Back in time: the transaction goes on.
+      t.graceUntil = null;
+      t.closedForGrace = false;
+      t.message = t.state === 'PARTIAL' ? MESSAGES.partial : MESSAGES.insert;
+      this.lastAcceptance = '';
+      this.save(t, now);
+    }
+  }
+
+  /**
+   * §14.4: any call of a client through the cloud renews its lease here — its own `GET tx` every second or so keeps
+   * it, no extra lease calls through the relay. No lease — nothing.
+   */
+  touchLease(clientId: string, timing: LeaseTiming): void {
+    const l = this.leases.find((x) => x.clientId === clientId);
+    if (l) this.renew(l, this.d.now(), timing);
+  }
+
+  lease(clientId: string, body: { leaseId?: unknown; txId?: unknown }, timing: LeaseTiming = LAN_LEASE): Reply {
     const now = this.d.now();
     const existing = typeof body.leaseId === 'string' && body.leaseId ? this.leases.find((l) => l.leaseId === body.leaseId) : this.leases.find((l) => l.clientId === clientId);
     if (typeof body.leaseId === 'string' && body.leaseId && (!existing || existing.clientId !== clientId)) return err(404, 'unknown_lease', { message: 'הנעילה פגה — מצטרפים שוב לתור' });
     if (existing) {
-      existing.renewedAt = now;
-      const t = existing.txId ? this.d.journal.tx(existing.txId) : null;
-      if (t && t.graceUntil !== null && isOpen(t.state)) {
-        // Back in time: the transaction goes on.
-        t.graceUntil = null;
-        t.closedForGrace = false;
-        t.message = t.state === 'PARTIAL' ? MESSAGES.partial : MESSAGES.insert;
-        this.lastAcceptance = '';
-        this.save(t, now);
-      }
+      this.renew(existing, now, timing);
       return { status: 200, body: this.leaseView(existing) };
     }
     const status = this.status(clientId);
     if (!status.ready) return err(409, 'not_ready', { message: status.reason ?? 'מכשיר המזומן אינו זמין' });
-    const l: Lease = { leaseId: this.d.newId(), clientId, createdAt: now, renewedAt: now, txId: null };
+    const l: Lease = { leaseId: this.d.newId(), clientId, createdAt: now, renewedAt: now, txId: null, ttlMs: timing.ttlMs, renewMs: timing.renewMs };
     this.leases.push(l);
     this.d.log(`[cash ${this.cfg.name}] lease ${l.leaseId} for ${clientId} (position ${this.queue().indexOf(l)})`);
     return { status: 200, body: this.leaseView(l) };

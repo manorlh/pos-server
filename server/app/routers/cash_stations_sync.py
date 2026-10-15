@@ -19,14 +19,27 @@ POST /sync/{m}/cash/credits/{code}/redeem                  {redemptionId, amount
                                                              credit}; the same redemptionId → the same; 409 credit_used /
                                                              amount_exceeds / redemption_conflict, 400 amount, 404
 POST /sync/{m}/cash/credits/redemptions/{id}/release       → {ok, credit}; repeats harmlessly; 409 confirmed
+
+The cloud relay (§14.4, app/services/cash_relay.py) — for a client whose `cashRoute` is cloud / auto:
+POST /sync/{client_id}/cash/relay                          {requestId, stationId, method, path, client, ts, nonce, sig,
+                                                             body, waitMs} → {api, requestId, state: pending | done |
+                                                             expired | lost, reply?: {status, body, hostTime}}; 403
+                                                             not_assigned, 409 cloud_route_off / no_host / relay_conflict,
+                                                             422 bad_request
+GET  /sync/{client_id}/cash/relay/{request_id}?waitMs=     → the same answer; 404 relay_not_found
+POST /sync/{host_id}/cash/relay/poll                       {replies: [{requestId, status, body, hostTime}], waitMs} →
+                                                             {api, relay, requests: [...]} — a cash host or a host kiosk;
+                                                             a long poll (the Windows app has no realtime channel)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -38,6 +51,7 @@ from app.middleware.auth import (
     get_pos_machine_from_sync_machine_token,
 )
 from app.models.pos_machine import POSMachine
+from app.services import cash_relay as CRL
 from app.services import cash_stations as CS
 
 logger = logging.getLogger(__name__)
@@ -199,3 +213,147 @@ def post_cash_credit_release(
     out = CS.release_redemption(db, machine, redemption_id)
     db.commit()
     return {"api": CS.API, **out}
+
+
+# ── The cloud relay (§14.4) ────────────────────────────────────────────────────
+
+
+class RelayIn(BaseModel):
+    """A client's LAN call as it signed it (§11.3) — checked by app/services/cash_relay.py `submit`."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    request_id: Optional[str] = Field(None, alias="requestId", max_length=64)
+    station_id: Optional[str] = Field(None, alias="stationId", max_length=64)
+    method: Optional[str] = Field(None, max_length=8)
+    path: Optional[str] = Field(None, max_length=300)
+    client: Optional[str] = Field(None, max_length=64)
+    ts: Optional[Union[int, str]] = None
+    nonce: Optional[str] = Field(None, max_length=64)
+    sig: Optional[str] = Field(None, max_length=64)
+    #: The exact JSON text signed ('' — none).
+    body: Optional[str] = Field(None, max_length=2 * CRL.BODY_MAX)
+    wait_ms: Optional[int] = Field(None, alias="waitMs")
+
+
+class RelayPollIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: The answers to the calls taken last time: [{requestId, status, body, hostTime}] — checked one by one.
+    replies: List[Any] = Field(default_factory=list, max_length=CRL.REPLIES_MAX)
+    wait_ms: Optional[int] = Field(None, alias="waitMs")
+
+
+def _relay_submit(db: Session, machine: POSMachine, raw: Dict[str, Any]) -> uuid.UUID:
+    try:
+        row = CRL.submit(db, machine, raw)
+        ident = row.id
+        db.commit()
+        return ident
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _relay_look(db: Session, machine: POSMachine, request_id: Any):
+    """The call's state now (a fresh read), lapses marked; the connection back to the pool between looks."""
+    db.rollback()
+    try:
+        row = CRL.get_for_client(db, machine, request_id)
+        if CRL.settle(row):
+            db.commit()
+            row = CRL.get_for_client(db, machine, request_id)
+        body = CRL.out(row)
+        return body, body["state"] in ("done", "expired", "lost")
+    finally:
+        db.rollback()
+
+
+async def _relay_wait(db: Session, machine: POSMachine, request_id: Any, wait_ms: int) -> Dict[str, Any]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait_ms / 1000
+    while True:
+        body, final = await run_in_threadpool(_relay_look, db, machine, request_id)
+        left = deadline - loop.time()
+        if final or left <= 0:
+            return body
+        await asyncio.sleep(min(CRL.CLIENT_CHECK_S, left))
+
+
+@router.post("/{machine_id}/cash/relay", dependencies=FISCAL_MACHINE_TOKEN)
+async def post_cash_relay(
+    machine_id: str,
+    body: RelayIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    §14.4: a client's LAN call for its station's host, kept by its `requestId`, and its answer awaited up to `waitMs`
+    (`pending` — asked again by GET). The same `requestId` again is the same call.
+    """
+    raw = body.model_dump(by_alias=True)
+    wait = CRL.wait_ms_of(raw.pop("waitMs", None), CRL.CLIENT_WAIT_DEFAULT_MS, CRL.CLIENT_WAIT_MAX_MS)
+    request_id = await run_in_threadpool(_relay_submit, db, machine, raw)
+    return await _relay_wait(db, machine, request_id, wait)
+
+
+@router.get("/{machine_id}/cash/relay/{request_id}", dependencies=FISCAL_MACHINE_TOKEN)
+async def get_cash_relay(
+    machine_id: str,
+    request_id: str,
+    wait_ms: Optional[int] = Query(None, alias="waitMs"),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """§14.4: the call's state, its answer awaited up to `waitMs`."""
+    wait = CRL.wait_ms_of(wait_ms, CRL.CLIENT_WAIT_DEFAULT_MS, CRL.CLIENT_WAIT_MAX_MS)
+    return await _relay_wait(db, machine, request_id, wait)
+
+
+def _poll_begin(db: Session, host: POSMachine, replies: List[Any]):
+    """The host's answers stored, old rows purged; whether it should listen at all, and how often to look."""
+    try:
+        CRL.store_replies(db, host, replies)
+        CRL.purge(db)
+        db.commit()
+        return CRL.relay_wanted(db, host), CRL.host_active(db, host)
+    finally:
+        db.rollback()
+
+
+def _poll_take(db: Session, host: POSMachine) -> List[Dict[str, Any]]:
+    db.rollback()
+    try:
+        rows = CRL.take(db, host)
+        now = CRL._now()
+        out = [CRL.request_out(r, now) for r in rows]
+        db.commit()
+        return out
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/{machine_id}/cash/relay/poll", dependencies=CASH_HOST_MACHINE_TOKEN)
+async def post_cash_relay_poll(
+    machine_id: str,
+    body: RelayPollIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    §14.4, a cash host / a host kiosk: its answers to the calls it took, then the calls waiting for its stations —
+    each handed over once — or a wait for one up to `waitMs` (a long poll). `relay: false` — no client of its
+    stations routes through the cloud: it stops listening.
+    """
+    wait = CRL.wait_ms_of(body.wait_ms, 0, CRL.HOST_WAIT_MAX_MS)
+    wanted, active = await run_in_threadpool(_poll_begin, db, machine, body.replies)
+    every = CRL.HOST_CHECK_ACTIVE_S if active else CRL.HOST_CHECK_IDLE_S
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + (wait / 1000 if wanted else 0)
+    while True:
+        requests = await run_in_threadpool(_poll_take, db, machine)
+        left = deadline - loop.time()
+        if requests or left <= 0:
+            return {"api": CRL.API, "relay": wanted, "requests": requests}
+        await asyncio.sleep(min(every, left))

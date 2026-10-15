@@ -676,6 +676,10 @@ class POSMachine(Base):
     #: `cash_status_at`: when it arrived. Null: never said.
     cash_status = Column(JSONB, nullable=True)
     cash_status_at = Column(DateTime(timezone=True), nullable=True)
+    #: "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): a Windows kiosk whose PC has the PayLink on USB is also
+    #: the cash host of the station(s) it is set to run — the kiosk, its stations and their LAN API in one app. It
+    #: stays a till (fiscal); its heartbeat then carries the `cash` block like a dedicated host's. Off by default.
+    cash_host_embedded = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

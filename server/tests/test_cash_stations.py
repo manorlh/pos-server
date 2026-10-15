@@ -342,6 +342,8 @@ class TestParameters:
             "cashReceiptLines": True, "cashSimulator": False, "cashDriverPath": "", "cashDllPath": "",
             "cashSettleMs": 1000, "cashPayoutTimeoutSec": 60, "cashExtendedEscrow": True, "cashHopperFeeds": "auto",
             "cashUnackedHoldMin": 30, "cashOwedChoiceSec": 45, "cashSplitWaitSec": 300, "kioskOfflineBlockCash": False,
+            # §14.2: how the client reaches its station's host.
+            "cashRoute": "lan",
         }
         assert set(CP.ALL_KEYS) == set(defaults) - {"kioskOfflineBlockCash"}
         for key, default in defaults.items():
@@ -351,6 +353,7 @@ class TestParameters:
             assert TP.validate_keyed_value(key, default) == default, key
         assert specs["cashChangeShortfall"].enum_options == ("prevent", "notify", "ask")
         assert specs["cashRounding"].enum_options == ("none", "nearest_10")
+        assert specs["cashRoute"].enum_options == ("lan", "cloud", "auto")
         assert specs["cashAlertTills"].value_type == "string" and specs["cashEnabled"].value_type == "boolean"
 
     def test_created_at_startup(self, w):
@@ -459,7 +462,9 @@ class TestSyncCash:
         (station,) = out["stations"]
         assert (station["stationId"], station["serial"], station["simulator"]) == (str(w.station.id), "AE000001", True)
         assert station["settings"]["cashRounding"] == "none" and station["settings"]["cashCoinsAccepted"][0] == 10
-        assert station["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk"}]
+        # Each client with its way here (§14.2), and whether the host listens to the cloud relay (§14.4).
+        assert station["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk", "route": "lan"}]
+        assert station["relay"] is False
         (command,) = out["commands"]
         assert (command["op"], command["args"], command["stationId"]) == (
             "refill", {"pieces": [{"valueAgorot": 100, "count": 200}]}, str(w.station.id),
@@ -1051,7 +1056,7 @@ class TestDashboard:
         out = CR.get_cash_station(w.station.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
         assert out["status"]["state"] == "ready" and out["status"]["changeAvailableAgorot"] == 45600
         assert out["status"]["denominations"][0]["count"] == 180 and out["status"]["queue"] == 1
-        assert out["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk"}]
+        assert out["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk", "route": "lan"}]
         assert {a["code"] for a in out["alerts"]} == {"hopper_low", "change_owed"}
         assert out["owed"] == {"count": 1, "amountAgorot": 1300}
         assert out["host"]["online"] is True and out["host"]["lanAddress"] == "192.168.1.40"
@@ -1125,7 +1130,7 @@ class TestDashboard:
                                          current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
         for task in tasks.tasks:
             task.func(*task.args, **task.kwargs)
-        assert out["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk"}]
+        assert out["clients"] == [{"machineId": str(KIOSK_ID), "name": "קיוסק 3", "kind": "kiosk", "route": "lan"}]
         params = CS.machine_params(w.db, w.kiosk)
         assert (params["cashEnabled"], params["cashStation"]) == (True, str(w.station.id))
         assert told == [[(str(w.tenant.id), str(w.kiosk.id))]]  # the kiosk re-pulls its parameters
@@ -1231,7 +1236,9 @@ class TestStage2Migration:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["e5a9c3d1f7b2"]
+        heads = script.get_heads()
+        assert len(heads) == 1
+        assert "e5a9c3d1f7b2" in {r.revision for r in script.walk_revisions("base", heads[0])}
 
 
 class TestMigration:

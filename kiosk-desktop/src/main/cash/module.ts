@@ -3,6 +3,10 @@
  * the same pairing, sync, heartbeat and updates as every role (P:/specs/cash-paylink.md §2). It
  * owns the stations' devices: the simulator where the cloud says so (`cashSimulator`), else the
  * vendor's DLL in a utility process per unit with its driver supervised (driver.ts).
+ *
+ * In a host kiosk ("מארח עמדת מזומן", §14.1, `embedded`) the same module runs beside the kiosk: the stations, their
+ * LAN API, the relay, the journal and the heartbeat's `cash` block — but not the box's own remote commands (the
+ * kiosk's are its own).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -44,6 +48,8 @@ export interface CashModuleOptions {
   /** "שליטה מרחוק" (§11.15ד): the app's rolling log ("בקש לוגים") and its restart ("הפעלה מחדש"). */
   logs?: RollingLog | null;
   restartApp?: () => void;
+  /** Inside a host kiosk (§14.1): no device commands of its own here. */
+  embedded?: boolean;
 }
 
 const DRIVER_EVERY_MS = 15_000;
@@ -115,9 +121,9 @@ export class CashHostModule {
   async start(): Promise<void> {
     this.svc.setHeartbeatPart('cash', () => this.host.heartbeatBlock());
     // "בקש לוגים" is offered to a device that says it can (device-logs-api.md §2).
-    if (this.o.logs) this.svc.setHeartbeatPart('capabilities', () => [DEVICE_LOGS_CAPABILITY]);
+    if (this.o.logs && !this.o.embedded) this.svc.setHeartbeatPart('capabilities', () => [DEVICE_LOGS_CAPABILITY]);
     await this.host.start();
-    this.commands.start();
+    if (!this.o.embedded) this.commands.start();
     this.driverTimer = setInterval(() => void this.superviseDrivers(), DRIVER_EVERY_MS);
     void this.superviseDrivers();
   }
@@ -126,8 +132,10 @@ export class CashHostModule {
     if (this.driverTimer) clearInterval(this.driverTimer);
     this.driverTimer = null;
     this.svc.setHeartbeatPart('cash', null);
-    this.svc.setHeartbeatPart('capabilities', null);
-    this.commands.stop();
+    if (!this.o.embedded) {
+      this.svc.setHeartbeatPart('capabilities', null);
+      this.commands.stop();
+    }
     await this.host.stop();
   }
 

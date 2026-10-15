@@ -7,6 +7,8 @@
  * Pure.
  */
 
+import { routeOf, type CashRouteName } from './route';
+
 export const ILS_COINS: readonly number[] = [10, 50, 100, 200, 500, 1000];
 export const ILS_NOTES: readonly number[] = [2000, 5000, 10000, 20000];
 
@@ -73,6 +75,8 @@ export interface CashSettings {
   hopperFeeds: HopperFeeds;
   /** A paid transaction the kiosk never acknowledged becomes a held credit after this long. */
   unackedHoldMin: number;
+  /** A client's way to its station's host (§14.2): the LAN (default), the cloud relay, or the LAN first. */
+  route: CashRouteName;
 }
 
 export const DEFAULT_CASH_SETTINGS: CashSettings = {
@@ -105,6 +109,7 @@ export const DEFAULT_CASH_SETTINGS: CashSettings = {
   extendedEscrow: true,
   hopperFeeds: 'auto',
   unackedHoldMin: 30,
+  route: 'lan',
 };
 
 /** The parameter keys (till parameters / `GET /sync/{m}/cash` settings) → the field above. */
@@ -138,6 +143,7 @@ export const CASH_PARAM_KEYS = {
   extendedEscrow: 'cashExtendedEscrow',
   hopperFeeds: 'cashHopperFeeds',
   unackedHoldMin: 'cashUnackedHoldMin',
+  route: 'cashRoute',
 } as const satisfies Record<keyof CashSettings, string>;
 
 const bool = (v: unknown, d: boolean): boolean => {
@@ -263,6 +269,7 @@ export function cashSettingsOf(raw: Record<string, unknown> | null | undefined):
     extendedEscrow: bool(p[K.extendedEscrow], D.extendedEscrow),
     hopperFeeds: feeds === 'all' || feeds === 'none' || feeds === 'auto' ? feeds : D.hopperFeeds,
     unackedHoldMin: int(p[K.unackedHoldMin], D.unackedHoldMin, 5, 1_440),
+    route: routeOf(p[K.route]),
   };
 }
 
