@@ -164,6 +164,12 @@ describe('the cloud client (§14.4)', () => {
     expect(await new CashCloudClient(KIOSK, ref(), refused.cloud).status()).toMatchObject({ kind: 'refused', status: 409, error: 'not_holder' });
     const cloudSaysNo = scriptedCloud([{ kind: 'refused', status: 409, body: { detail: { code: 'cloud_route_off', message: 'x' } }, detail: null, headers: new Headers() }]);
     expect(await new CashCloudClient(KIOSK, ref(), cloudSaysNo.cloud).status()).toMatchObject({ kind: 'refused', status: 409, error: 'cloud_route_off' });
+    // The cloud's 404 (`relay_not_found`, or a cloud without the relay) is no answer — never the station's "unknown tx".
+    const cloud404 = scriptedCloud([{ kind: 'refused', status: 404, body: { detail: { code: 'relay_not_found' } }, detail: null, headers: new Headers() }]);
+    expect(await new CashCloudClient(KIOSK, ref(), cloud404.cloud).tx('7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b')).toMatchObject({ kind: 'offline' });
+    // The station's own 404 through the relay stays a refusal.
+    const station404 = scriptedCloud([ok({ api: 1, state: 'done', reply: { status: 404, body: { error: 'unknown_tx' }, hostTime: 1 } })]);
+    expect(await new CashCloudClient(KIOSK, ref(), station404.cloud).tx('7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b')).toMatchObject({ kind: 'refused', status: 404, error: 'unknown_tx' });
     for (const state of ['expired', 'lost'] as const) {
       const s = scriptedCloud([ok(golden.answers[state])]);
       expect((await new CashCloudClient(KIOSK, ref(), s.cloud).status()).kind).toBe('offline');

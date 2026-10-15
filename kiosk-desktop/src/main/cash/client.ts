@@ -234,10 +234,14 @@ export class CashCloudClient extends CashCalls {
     for (;;) {
       if (reply.kind === 'offline') return { kind: 'offline', reason: `cloud: ${reply.reason}` };
       if (reply.kind === 'refused') {
-        // The cloud's own refusal (§11.11: FastAPI's `detail`).
+        // The cloud's own refusal (§11.11: FastAPI's `detail`): not assigned, the route is the LAN, no host, a bad call.
         const raw = reply.body && typeof reply.body === 'object' ? (reply.body as Record<string, unknown>).detail : null;
         const d = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-        return { kind: 'refused', status: reply.status, error: typeof d.code === 'string' ? d.code : `http_${reply.status}`, body: d };
+        const code = typeof d.code === 'string' ? d.code : null;
+        if (reply.status === 403 || reply.status === 409 || reply.status === 422) return { kind: 'refused', status: reply.status, error: code ?? `http_${reply.status}`, body: d };
+        // Anything else is no answer — a 404 above all (`relay_not_found`, a cloud without the relay) must never read as
+        // the station's own 404, which would close a pending payment as "nothing happened".
+        return { kind: 'offline', reason: `${reply.status === 401 ? 'cloud' : 'relay'}: HTTP ${reply.status}${code ? ` ${code}` : ''}` };
       }
       const a = reply.body ?? {};
       if (a.state === 'done') {
