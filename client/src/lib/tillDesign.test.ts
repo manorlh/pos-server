@@ -615,7 +615,7 @@ interface FlowFixture {
 }
 
 const FLOW_FIXTURE_PATH = join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'flow_design_contract.json');
-const FLOW_GOLDEN_SHA256 = '179c94f3058f143669cc158829fdcad48ed0902a594106c48bb850693e557831';
+const FLOW_GOLDEN_SHA256 = '5737da6c0855c4cd80e9451f212ef9894c2fa185d89f5ad3800ad5e1b8541b9e';
 const flowText = readFileSync(FLOW_FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
 const flowFixture = JSON.parse(flowText) as FlowFixture;
 
@@ -681,5 +681,13 @@ describe('"זרימה": the flow section of the till design (P:/specs/flow-desig
     assert.deepEqual(diffConfigs({}, pruneOverrides(TILL_DESIGN_DEFAULTS, setPath(TILL_DESIGN_DEFAULTS, 'flow.shell', 'flow'))), [
       { path: 'flow.shell', before: null, after: 'flow' },
     ]);
+    // "ברירת המחדל שלנו" over a level above's background: "base", read as our palette.
+    const coloured = resolveTillDesign({ flow: { background: '#1E3A8A' } });
+    assert.equal(asBaseValue(coloured.flow?.background), AS_BASE);
+    const ours = setPath(coloured, 'flow.background', AS_BASE);
+    assert.deepEqual(pruneOverrides(coloured, ours), { flow: { background: AS_BASE } });
+    assert.deepEqual(validateTillDesign(ours), []);
+    assert.equal(flowView(ours).background, null);
+    assert.deepEqual(validateTillDesignLayer({ flow: { background: 'brand' } }).errors.map((e) => `${e.path}|${e.code}`), ['flow.background|invalid_color']);
   });
 });

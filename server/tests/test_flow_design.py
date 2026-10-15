@@ -33,7 +33,7 @@ from shift_world import accept_str_uuids, make_world
 FIXTURE = Path(__file__).parent / "fixtures" / "flow_design_contract.json"
 #: The fixture's SHA-256 (line endings read as LF) — the same constant in pos-android's FlowDesignContractTest.
 #: Change the fixture in both repositories, and both constants, together.
-GOLDEN_SHA256 = "179c94f3058f143669cc158829fdcad48ed0902a594106c48bb850693e557831"
+GOLDEN_SHA256 = "5737da6c0855c4cd80e9451f212ef9894c2fa185d89f5ad3800ad5e1b8541b9e"
 #: pos-android beside pos-server (as on the developers' machines): the two copies must be equal.
 SIBLING = Path(__file__).resolve().parents[3] / "pos-android" / "app" / "src" / "test" / "resources" / FIXTURE.name
 #: till_design_contract.json: nothing set must still be its defaults, byte for byte.
@@ -170,9 +170,14 @@ def test_levels_merge_per_key_and_base_follows_the_shell():
     assert {p: T.flow_shell(eff, p) for p in T.ANDROID_PROFILES} == {
         "handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "classic",
     }
-    # `shell` has no "base" (that is a profile's word); a background is #RRGGBB, any case.
+    # `shell` has no "base" (that is a profile's word); a background is #RRGGBB, any case, or "base".
     assert [(e.path, e.code) for e in T.validate_layer({"flow": {"shell": "base"}})[1]] == [("flow.shell", "invalid_value")]
     assert T.validate_layer({"flow": {"background": "#abcdef"}}) == ({"flow": {"background": "#abcdef"}}, [])
+    # "ברירת המחדל שלנו" over the company's colour: the till keeps "base" and reads it as our palette.
+    ours = T.resolve(company, shop, {}, {"flow": {"background": "base"}})
+    assert ours["flow"]["background"] == "base"
+    assert T.flow_view(ours)["background"] is None and T.validate_config(ours) == []
+    assert [(e.path, e.code) for e in T.validate_layer({"flow": {"background": "brand"}})[1]] == [("flow.background", "invalid_color")]
 
 
 # ── Through the router ────────────────────────────────────────────────────────

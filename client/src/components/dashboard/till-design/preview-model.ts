@@ -163,8 +163,9 @@ export function readableOn(color: string, bg: string, min = 4.5): string {
 
 /**
  * "זרימה"'s palette (P:/specs/flow-design.md §5.3): ours — the design's light / dark tokens, the accent the
- * design's `colors.accent` or the brand colour, lightened on dark until it reads 4.5:1 — or, with a chosen
- * `flow.background`, the surface, the border and the text derived from its luminance (text always 4.5:1).
+ * design's `colors.accent` or the brand colour, lightened on dark until it reads 4.5:1 (no background, or "base")
+ * — or, with a chosen `flow.background`, the surface, the border and the text derived from its luminance (text
+ * always 4.5:1).
  * The text on the accent is white or ink, whichever reads better. Never the competitor's navy and yellow.
  */
 export function flowTokens(cfg: Pick<TillDesignConfig, 'colors' | 'flow'>, brandColor?: string | null): Tokens {

@@ -113,6 +113,7 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
       if (value === AS_BASE) return <span className="text-muted-foreground">{tr('asBaseOver')}</span>;
       if (typeof value === 'string' && tv.has(`flowShell.${value}`)) return <span>{tv(`flowShell.${value}`)}</span>;
     }
+    if (last === 'background' && value === AS_BASE) return <span className="text-muted-foreground">{tfl('backgroundDefaultOver')}</span>;
     if (value === null || value === undefined) {
       if (last === 'background') return <span className="text-muted-foreground">{tfl('backgroundDefault')}</span>;
       const fallback = last === 'shell' ? 'classic' : (FLOW_DEFAULTS as Record<string, unknown>)[last];

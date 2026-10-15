@@ -337,8 +337,8 @@ export interface FlowSettings {
   askGuests?: FlowAskGuests | null;
   notes?: boolean | null;
   pickupName?: FlowPickupName | null;
-  /** #RRGGBB; null — our palette (spec §5.3). */
-  background?: string | null;
+  /** #RRGGBB; null — inherit (none set: our palette, spec §5.3); "base" — our palette over a level above's colour. */
+  background?: string | AsBase | null;
 }
 
 /** `flow` with every key settled — the shared fixture's "expect". */
@@ -1214,7 +1214,7 @@ const FLOW_NODE = new PartialObjNode({
   askGuests: new EnumNode(FLOW_ASK_GUESTS),
   notes: new BoolNode(),
   pickupName: new EnumNode(FLOW_PICKUP_NAMES),
-  background: new ColorNode(true),
+  background: asBase(new ColorNode(true)),
 });
 SCHEMA.fields[FLOW_SECTION] = FLOW_NODE;
 SCHEMA.fill[FLOW_SECTION] = {};
@@ -1490,7 +1490,8 @@ export function flowShell(cfgOrFlow: unknown, profile: string): FlowShell {
 
 /**
  * `flow` with every key settled (Python `flow_view`, the shared fixture's "expect"): the shell per profile,
- * every option its value or its default. Read tolerantly, as the till: a word not of its vocabulary is the default.
+ * every option its value or its default. Read tolerantly, as the till: a word not of its vocabulary is the default
+ * (a background "base", or anything not #RRGGBB, is null — our palette).
  */
 export function flowView(cfgOrFlow: unknown): FlowView {
   const flow = flowSection(cfgOrFlow);

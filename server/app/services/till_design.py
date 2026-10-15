@@ -175,7 +175,8 @@ FLOW_FIRST_STEPS = ("type", "table", "pickup")
 FLOW_ASK_GUESTS = ("auto", "always", "never")
 #: A pickup's name: "auto" — as today (at payment, `askOrderName`); none; asked in the wizard; required there.
 FLOW_PICKUP_NAMES = ("auto", "off", "ask", "required")
-#: Each option's value when no level sets it (`background` null: our palette, spec §5.3).
+#: Each option's value when no level sets it (`background` null: our palette, spec §5.3; "base" says it over a
+#: level above's colour).
 FLOW_DEFAULTS: Dict[str, Any] = {
     "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": True, "pickupName": "auto", "background": None,
 }
@@ -559,7 +560,8 @@ LOOK = PartialObj({
 })
 
 #: "זרימה" (P:/specs/flow-design.md §9): every key optional, null inherits, merged per key (`profiles` too).
-#: Refused on save: a value not of its vocabulary (`invalid_value`), a background not #RRGGBB (`invalid_color`).
+#: Refused on save: a value not of its vocabulary (`invalid_value`), a background neither #RRGGBB nor "base"
+#: (`invalid_color`). `background: "base"` is "ברירת המחדל שלנו" — our palette also over a level above's colour.
 FLOW = PartialObj({
     "shell": Enum(FLOW_SHELLS),
     "profiles": PartialObj({p: OrLiteral(Enum(FLOW_SHELLS), AS_BASE) for p in PROFILES}),
@@ -568,7 +570,7 @@ FLOW = PartialObj({
     "askGuests": Enum(FLOW_ASK_GUESTS),
     "notes": Bool(),
     "pickupName": Enum(FLOW_PICKUP_NAMES),
-    "background": Color(nullable=True),
+    "background": OrLiteral(Color(nullable=True), AS_BASE),
 })
 
 SCHEMA = Obj({
@@ -983,7 +985,8 @@ def flow_view(cfg_or_flow: Any) -> Dict[str, Any]:
     """
     The `flow` section with every key settled — the shared fixture's "expect": `shell` per profile (all of
     PROFILES), every option its value or its default (FLOW_DEFAULTS). Read tolerantly, as the till reads it:
-    a value not of its vocabulary is the default. Pure.
+    a value not of its vocabulary is the default — a background "base" (or anything not #RRGGBB) is null, our
+    palette. Pure.
     """
     flow = _flow_section(cfg_or_flow)
 

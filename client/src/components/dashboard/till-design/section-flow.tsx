@@ -17,12 +17,14 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import {
   ANDROID_PROFILES,
+  AS_BASE,
   FLOW_ASK_GUESTS,
   FLOW_DEFAULTS,
   FLOW_FIRST_STEPS,
   FLOW_HOMES,
   FLOW_PICKUP_NAMES,
   FLOW_SHELLS,
+  asBaseValue,
   flowView,
 } from '@/lib/tillDesign';
 import { useTillEditor, useTillField } from './editor-context';
@@ -88,16 +90,14 @@ function BackgroundField() {
   const t = useTranslations('tillDesign.flow');
   const f = useTillField<string | null | undefined>('flow.background');
   const own = typeof f.value === 'string' && HEX.test(f.value) ? f.value.toUpperCase() : null;
-  const above = typeof f.inheritedValue === 'string' && HEX.test(f.inheritedValue) ? f.inheritedValue.toUpperCase() : null;
+  /** "ברירת המחדל שלנו": "base" over a colour the level above set (so it is undone), else inherit (null). */
+  const toOurs = () => f.set(asBaseValue(f.inheritedValue));
   return (
     <FieldShell path="flow.background" label={t('background')} hint={t('backgroundHint')}>
       <div className="flex flex-wrap items-center gap-2">
-        {!above ? (
-          // "ברירת המחדל שלנו": nothing set — our palette (§5.3).
-          <Button type="button" size="xs" variant={own ? 'outline' : 'secondary'} disabled={f.disabled} aria-pressed={!own} onClick={() => f.set(null)}>
-            {t('backgroundDefault')}
-          </Button>
-        ) : null}
+        <Button type="button" size="xs" variant={own ? 'outline' : 'secondary'} disabled={f.disabled} aria-pressed={!own} onClick={toOurs}>
+          {t('backgroundDefault')}
+        </Button>
         {BACKGROUNDS.map((hex) => (
           <button
             key={hex}
@@ -122,17 +122,16 @@ function BackgroundField() {
           dir="ltr"
           className="w-28 font-mono"
           disabled={f.disabled}
-          value={typeof f.value === 'string' ? f.value : ''}
+          value={typeof f.value === 'string' && f.value !== AS_BASE ? f.value : ''}
           placeholder={t('backgroundDefault')}
           aria-label={t('background')}
           onChange={(e) => {
             const v = e.target.value.trim();
-            if (v === '') f.set(null);
+            if (v === '') toOurs();
             else f.set(v.startsWith('#') ? v : `#${v}`);
           }}
         />
       </div>
-      {above ? <p className="text-xs text-muted-foreground">{t('backgroundAbove', { color: above })}</p> : null}
     </FieldShell>
   );
 }

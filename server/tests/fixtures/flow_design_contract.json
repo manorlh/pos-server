@@ -93,6 +93,14 @@
       }
     },
     {
+      "name": "a lower level returns the background to ours",
+      "layers": [{"shell": "flow", "background": "#1E3A8A"}, {"background": "base"}],
+      "expect": {
+        "shell": {"handheld": "flow", "tabletLandscape": "flow", "tabletPortrait": "flow", "ipadPortrait": "flow", "ipadLandscape": "flow"},
+        "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": true, "pickupName": "auto", "background": null
+      }
+    },
+    {
       "name": "the options of two levels",
       "layers": [{"askGuests": "always", "pickupName": "ask", "background": "#f3f5f8"}, {"shell": "flow", "askGuests": "auto", "pickupName": "off"}],
       "expect": {
@@ -123,6 +131,7 @@
     {"flow": {"pickupName": "maybe"}, "path": "flow.pickupName", "code": "invalid_value"},
     {"flow": {"background": "#12345"}, "path": "flow.background", "code": "invalid_color"},
     {"flow": {"background": "navy"}, "path": "flow.background", "code": "invalid_color"},
+    {"flow": {"background": "brand"}, "path": "flow.background", "code": "invalid_color"},
     {"flow": {"palette": "bee"}, "path": "flow.palette", "code": "unknown_key"}
   ]
 }
