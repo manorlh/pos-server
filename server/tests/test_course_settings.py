@@ -120,6 +120,17 @@ class TestParameters:
 
         assert "course_auto_fired" in TILL_EVENT_TYPES
 
+    def test_the_till_reports_a_scheduled_send(self):
+        """`item_scheduled_sent` (P:/specs/item-scheduled-send.md): the till that owns the order reports a line's send on its time."""
+        body = TillEventIn.model_validate({
+            "id": str(uuid.uuid4()), "type": "item_scheduled_sent", "occurredAt": "2026-10-14T18:25:00Z",
+            "details": {"orderId": "o", "tableNumber": 12, "scheduleId": "s", "seed": "x", "lineIds": ["l1"], "lines": ["קפה"], "by": "rule"},
+        })
+        assert body.type == "item_scheduled_sent"
+        from app.services.exceptions import TILL_EVENT_TYPES
+
+        assert "item_scheduled_sent" in TILL_EVENT_TYPES
+
 
 # ── A course's minutes ────────────────────────────────────────────────────────
 

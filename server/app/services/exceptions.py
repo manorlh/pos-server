@@ -360,6 +360,9 @@ TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("payment_reversed", "table_restored")
 #: reported by the till that fired it (one till, the LAN host), written by the cloud for its own tables
 #: (app/services/course_auto_fire.py). Recorded, feeds no rule.
 TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("course_auto_fired",)
+#: "שיגור מתוזמן של פריט" (P:/specs/item-scheduled-send.md, P:/specs/fire-restaurant-flow.md §8.3): a line's scheduled
+#: send that went on its time — reported by the till that owns the order (one till, the LAN host). Recorded, feeds no rule.
+TILL_EVENT_TYPES = TILL_EVENT_TYPES + ("item_scheduled_sent",)
 
 
 class RuleValueError(ValueError):
