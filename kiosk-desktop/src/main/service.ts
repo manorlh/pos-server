@@ -1742,7 +1742,10 @@ export class KioskService extends EventEmitter {
           phase: insertPhase ? 'charging' : 'starting',
           message: p.message,
           canCancel: p.stage === 'connecting' || p.stage === 'queued' || (p.stage === 'insert' && (p.tx?.remainingAgorot ?? 1) > 0),
-          cash: { ...this.cashView(p.tx, amountAgorot, p.stage, p.position), canSplit: p.stage === 'insert' && this.splitOffered(doc, p.tx) },
+          cash: (() => {
+            const canSplit = p.stage === 'insert' && this.splitOffered(doc, p.tx);
+            return { ...this.cashView(p.tx, amountAgorot, p.stage, p.position), canSplit, ...(canSplit ? { splitRestAgorot: amountAgorot - (p.tx?.insertedAgorot ?? 0) } : {}) };
+          })(),
         });
       }, { partial: (tx) => this.chargeRest(orderId, doc, amountAgorot, tx) });
     } catch (e) {

@@ -310,7 +310,9 @@ describe('cash + card (§11.15ב)', () => {
     // Nothing in yet: not offered.
     expect(k.progress.some((p) => p.cash?.canSplit)).toBe(false);
     expect(device.insert(2000)).toBe('escrow');
-    await until(() => k.progress.find((p) => p.cash?.stage === 'insert' && p.cash.insertedAgorot === 2000 && p.cash.canSplit));
+    const offered = await until(() => k.progress.find((p) => p.cash?.stage === 'insert' && p.cash.insertedAgorot === 2000 && p.cash.canSplit));
+    // What the card would be charged (the rest and the tip), as the Android kiosk says it too (`splitRestAgorot`).
+    expect(offered.cash!.splitRestAgorot).toBe(7470 - 2000);
     expect(await k.svc.cashSplit()).toEqual({ ok: true });
     return { host, device, k, orderId: (r as { orderId: string }).orderId };
   }

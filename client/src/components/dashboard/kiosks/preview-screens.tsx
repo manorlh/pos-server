@@ -3467,8 +3467,9 @@ export interface LiveCashPay {
   /** owed_choice: what may be chosen, and when a slip is taken by itself (epoch ms). */
   owedChoices?: CashOwedChoice[];
   owedDeadlineAt?: number | null;
-  /** "להשלים באשראי" may be offered now. */
+  /** "להשלים באשראי" may be offered now, and what the card would be charged (the rest and the tip). */
   canSplit?: boolean;
+  splitRestAgorot?: number;
   /** split_card: the cash part paid, and what the card is charged. */
   splitAgorot?: number;
   cardRestAgorot?: number;
@@ -3648,7 +3649,7 @@ function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskL
             {cash.stage === 'insert' && cash.canSplit && live.onCashSplit ? (
               <div className="w-full max-w-sm">
                 <BigButton m={m} onClick={live.onCashSplit}>
-                  להשלים באשראי (נותרו {shekels(remaining)})
+                  להשלים באשראי (נותרו {shekels(cash.splitRestAgorot ?? remaining)})
                 </BigButton>
               </div>
             ) : null}

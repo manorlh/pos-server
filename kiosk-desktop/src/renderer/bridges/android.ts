@@ -33,9 +33,12 @@ import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
 import type {
   AppliedVoucher,
   BasketChange,
+  CashOwedChoice,
+  CashPayView,
   KioskBridge,
   KioskEvents,
   KioskView,
+  PayProgress,
   PlaceOrderIn,
   PlaceOrderOut,
   StartPaymentIn,
@@ -81,6 +84,9 @@ export const CALL_TIMEOUT_MS: Record<AndroidCall, number> = {
   voucherRemove: 15_000,
   // The APK checks the basket, then waits up to 20 s on its pay-at-till path (KioskWebSession START_WAIT_MS).
   placeOpenOrder: 30_000,
+  // §11.15: a choice / a split the APK answers at once.
+  cashOwedChoice: 15_000,
+  cashSplit: 15_000,
 };
 
 /** The staff's screens are the APK's on Android (its corners, its PIN, its admin). */
@@ -286,6 +292,20 @@ function basketChangeOf(v: unknown): BasketChange | null {
 }
 
 /**
+ * The APK's `pay` event as the screens read the Windows kiosk's (shared/bridge.ts PayProgress). Its `cash` (P:/specs/
+ * cash-paylink.md §11.13, §11.15) names the card's part of a split `cardAgorot` (the screens' `cardRestAgorot`); the rest
+ * passes as is. Anything that is not an object stays as it came.
+ */
+export function payOf(v: unknown): PayProgress {
+  if (!v || typeof v !== 'object') return v as PayProgress;
+  const p = v as PayProgress & { cash?: (CashPayView & { cardAgorot?: unknown }) | null };
+  const cash = p.cash;
+  if (!cash || typeof cash !== 'object') return p;
+  const card = typeof cash.cardRestAgorot === 'number' ? cash.cardRestAgorot : typeof cash.cardAgorot === 'number' ? cash.cardAgorot : undefined;
+  return card === undefined ? p : { ...p, cash: { ...cash, cardRestAgorot: card } };
+}
+
+/**
  * The APK's answer to placeOpenOrder as the screens read the Windows kiosk's (shared/bridge.ts PlaceOrderOut): placed —
  * the number (`pickupLabel`, else `orderNumber`), what the till collects, the order's code, the vouchers taken with it;
  * "changed" — what changed in the basket and the total now; else not placed, in the APK's words. Anything not of the
@@ -400,6 +420,8 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
           fire(kioskOn, name, viewOf(payload as KioskView));
           return;
         case 'pay':
+          fire(kioskOn, name, payOf(payload));
+          return;
         case 'toast':
           fire(kioskOn, name, payload);
           return;
@@ -430,6 +452,13 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
       // Never a rejection: the screen awaits it with no catch, and a stuck "starting" is worse than a message.
       call<StartPaymentOut>('startPayment', input).catch((): StartPaymentOut => ({ ok: false, reason: 'error', message: PAY_NO_ANSWER })),
     cancelPayment: () => call<unknown>('cancelPayment', {}).then(noop, noop),
+    // "מזומן" at the cash station, stage 2 (§11.15): only on what the APK's `pay.cash` offers — never a rejection.
+    cashOwedChoice: (choice: CashOwedChoice) => call<unknown>('cashOwedChoice', { choice }).then(noop, noop),
+    cashSplit: () =>
+      call<unknown>('cashSplit', {}).then(
+        (r) => ({ ok: !!r && typeof r === 'object' && (r as { ok?: unknown }).ok === true }),
+        () => ({ ok: false }),
+      ),
     receiptChoice: (orderId, print) => call<unknown>('receiptChoice', { orderId, print }).then(noop, noop),
     helpRequest: () => call<unknown>('helpRequest', {}).then(noop, noop),
     // Production vouchers: the APK redeems and holds them; its answer is the order's vouchers now.

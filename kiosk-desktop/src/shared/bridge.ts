@@ -265,8 +265,9 @@ export interface CashPayView {
   /** owed_choice: what may be chosen, and when a slip is taken by itself (epoch ms). */
   owedChoices?: CashOwedChoice[];
   owedDeadlineAt?: number | null;
-  /** "להשלים באשראי (נותרו X ₪)" may be offered now (§11.15ב). */
+  /** "להשלים באשראי (נותרו X ₪)" may be offered now (§11.15ב), and what the card would be charged (the rest and the tip). */
   canSplit?: boolean;
+  splitRestAgorot?: number;
   /** split_card: the cash part, and what the card is charged (the rest and the tip). */
   splitAgorot?: number;
   cardRestAgorot?: number;
