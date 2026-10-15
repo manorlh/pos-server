@@ -74,7 +74,7 @@ def test_the_keys_are_the_tills_and_every_default_is_todays():
         "cashmagCurrency", "cashmagRounding", "cashmagQueueTimeoutSec", "cashmagAutoCancelSec", "cashmagCallTimeoutSec",
     )
     assert specs[CM.ENABLED_KEY].value_type == "boolean" and specs[CM.ENABLED_KEY].default_value is False
-    assert specs[CM.PROTOCOL_KEY].enum_options == ("jar", "rlp") and specs[CM.PROTOCOL_KEY].default_value == "jar"
+    assert specs[CM.PROTOCOL_KEY].enum_options == ("jar", "json", "rlp") and specs[CM.PROTOCOL_KEY].default_value == "jar"
     assert specs[CM.CURRENCY_KEY].default_value == "ILS"
     assert specs[CM.ROUNDING_KEY].enum_options == ("nearest_10", "none") and specs[CM.ROUNDING_KEY].default_value == "nearest_10"
     # First come, first served: the other client waits until the machine is free (0 = no limit).

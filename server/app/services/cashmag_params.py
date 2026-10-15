@@ -30,11 +30,13 @@ AUTO_CANCEL_KEY = "cashmagAutoCancelSec"
 CALL_TIMEOUT_KEY = "cashmagCallTimeoutSec"
 
 PROTOCOL_JAR = "jar"
+PROTOCOL_JSON = "json"
 PROTOCOL_RLP = "rlp"
-PROTOCOL_OPTIONS: Tuple[str, ...] = (PROTOCOL_JAR, PROTOCOL_RLP)
+PROTOCOL_OPTIONS: Tuple[str, ...] = (PROTOCOL_JAR, PROTOCOL_JSON, PROTOCOL_RLP)
 PROTOCOL_LABELS: Dict[str, str] = {
     PROTOCOL_JAR: "ספריית היצרן (jar)",
-    PROTOCOL_RLP: "RLP (JSON ברשת) — עוד לא נתמך",
+    PROTOCOL_JSON: "JSON-RPC ברשת (בלי ספריית היצרן) — עוד לא נתמך",
+    PROTOCOL_RLP: "RLP — עוד לא נתמך",
 }
 
 ROUNDING_NEAREST_10 = "nearest_10"
@@ -75,8 +77,9 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
           "(CMC Monetic), דרך תוכנת היצרן במחשב Windows ברשת המקומית. כבוי (ברירת מחדל) — הקופה כמו היום, בלי שום "
           f"פנייה למכונה. דורש גרסת קופה שכוללת את ספריית היצרן. {_LEVELS}"),
     _spec(PROTOCOL_KEY, "מכשיר מזומן CashMag — פרוטוקול", "enum", PROTOCOL_JAR,
-          f"איך הקופה מדברת עם תוכנת היצרן. «{PROTOCOL_LABELS[PROTOCOL_JAR]}» (ברירת מחדל). "
-          f"«{PROTOCOL_LABELS[PROTOCOL_RLP]}» — יופעל כשהיצרן ימסור את פורמט ההודעות; עד אז התשלום \"לא זמין\". {_LEVELS}",
+          f"איך הקופה מדברת עם תוכנת היצרן במחשב CashMag. «{PROTOCOL_LABELS[PROTOCOL_JAR]}» (ברירת מחדל). "
+          f"«{PROTOCOL_LABELS[PROTOCOL_JSON]}» ו-«{PROTOCOL_LABELS[PROTOCOL_RLP]}» — יופעלו כשיהיה להם דרייבר; עד אז "
+          f"התשלום \"לא זמין\". {_LEVELS}",
           enum_options=PROTOCOL_OPTIONS, enum_labels=PROTOCOL_LABELS),
     _spec(HOST_KEY, "מכשיר מזומן CashMag — כתובת השרת", "string", None,
           f"כתובת המחשב של היצרן ברשת המקומית (IP או שם), למשל 192.168.1.40. ריק — לא מוגדר. {_LEVELS}"),
