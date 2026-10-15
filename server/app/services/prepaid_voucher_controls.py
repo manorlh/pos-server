@@ -273,13 +273,14 @@ def _staff_denied(db: Session, machine: POSMachine) -> bool:
     Whether the till user signed in at [machine] right now may not redeem a test voucher
     (`VOUCHER_TEST_REDEEM` denied). Known only when the cloud tracks who is signed in there
     (`pos_user_sessions`); otherwise the till's own permission check stands alone. "Approval"
-    passes here — the till asks a manager for it.
+    passes here — the till asks a manager for it; and so does "אסור" where the till asks a manager's
+    code for it ("כשאין הרשאה" = code, P:/specs/denied-actions-ui.md: `till_roles.operator_state`).
     """
     try:
         from app.models.pos_user import PosUser
         from app.models.pos_user_session import PosUserSession
         from app.services import till_permissions as TP
-        from app.services.till_roles import effective_for_pos_user
+        from app.services.till_roles import operator_state
 
         # In a savepoint: a failed statement must not abort the redemption's own transaction (Postgres).
         with db.begin_nested():
@@ -290,9 +291,10 @@ def _staff_denied(db: Session, machine: POSMachine) -> bool:
                 .order_by(PosUserSession.last_seen_at.desc())
                 .first()
             )
-        if row is None:
-            return False
-        return effective_for_pos_user(row).state(TEST_PERMISSION) == TP.DENY
+            if row is None:
+                return False
+            state = operator_state(db, row, TEST_PERMISSION, machine)
+        return state == TP.DENY
     except Exception:  # noqa: BLE001 — never let this check break a redemption
         log.exception("prepaid voucher controls: the signed-in user's test permission could not be read")
         return False

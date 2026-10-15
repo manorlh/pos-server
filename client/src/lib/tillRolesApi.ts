@@ -1,6 +1,7 @@
 /** "תפקידים והרשאות" — the API of app/routers/till_roles.py. */
 import { api } from './api';
 import type {
+  DeniedUi,
   LimitMap,
   MatrixSaveRole,
   PermState,
@@ -22,6 +23,7 @@ export interface TillRoleCreate {
   description?: string | null;
   baseKey?: string | null;
   copyFromRoleId?: string | null;
+  deniedUi?: DeniedUi | null;
 }
 
 export const createTillRole = (companyId: string, body: TillRoleCreate) =>
@@ -30,7 +32,13 @@ export const createTillRole = (companyId: string, body: TillRoleCreate) =>
 export const updateTillRole = (
   companyId: string,
   roleId: string,
-  body: { name?: string; description?: string | null; permissions?: Record<string, PermState>; limits?: LimitMap },
+  body: {
+    name?: string;
+    description?: string | null;
+    permissions?: Record<string, PermState>;
+    limits?: LimitMap;
+    deniedUi?: DeniedUi | null;
+  },
 ) => api.put<TillRole>(`/companies/${companyId}/till-roles/${roleId}`, body).then((r) => r.data);
 
 export const saveTillRoleMatrix = (companyId: string, roles: MatrixSaveRole[]) =>
@@ -61,5 +69,9 @@ export const fetchTillRoleUsers = (companyId: string, shopId?: string | null, in
 export const assignTillRole = (
   shopId: string,
   posUserId: string,
-  body: { tillRoleId: string; overrides?: { states: Record<string, PermState> } | null; clearOverrides?: boolean },
+  body: {
+    tillRoleId: string;
+    overrides?: { states: Record<string, PermState>; deniedUi?: DeniedUi } | null;
+    clearOverrides?: boolean;
+  },
 ) => api.put(`/shops/${shopId}/pos-users/${posUserId}/till-role`, body).then((r) => r.data);

@@ -608,6 +608,64 @@ DEFAULT_LIMITS: Dict[str, Dict[str, Dict[str, float]]] = {
 CUSTOM_TEMPLATE = CASHIER
 
 
+# ── "כשאין הרשאה" (P:/specs/denied-actions-ui.md) ─────────────────────────────
+#
+# What the till does with an option the operator's role DENIES ("אסור"):
+#   show — shown; a tap says "אין הרשאה" (today, the default);
+#   hide — not shown at all (menus, sheets, action buttons);
+#   code — a tap asks for a manager's code, exactly as "דורש אישור מנהל" does, and is recorded so.
+# Per level (the till parameter `deniedActionUi`, company → shop → area → till), per role
+# (`till_roles.denied_ui`) and per employee (`pos_users.permission_overrides.deniedUi`), most specific
+# first: employee → role → level → show. Only "אסור" is touched: "מותר" and "דורש אישור מנהל" stay as
+# they are, and a code never becomes "מותר" — nobody may do more, only see less or ask a manager.
+
+DENIED_UI_SHOW = "show"
+DENIED_UI_HIDE = "hide"
+DENIED_UI_CODE = "code"
+DENIED_UI_OPTIONS: Tuple[str, ...] = (DENIED_UI_SHOW, DENIED_UI_HIDE, DENIED_UI_CODE)
+DENIED_UI_LABELS: Dict[str, str] = {
+    DENIED_UI_SHOW: "להציג (כמו היום)",
+    DENIED_UI_HIDE: "להסתיר",
+    DENIED_UI_CODE: "לבקש קוד מנהל",
+}
+#: Codes "כשאין הרשאה" never touches: rules and capabilities rather than options an employee taps —
+#: who may work on several devices at once, who may approve for others (at the drawer, from a phone),
+#: the drawer opening by itself on a cash sale, leaving the Windows app (asked on the PC with nobody
+#: signed in), and a restricted item (always a manager's code already). The till's
+#: `DeniedActions.UNTOUCHED` is the same list.
+DENIED_UI_UNTOUCHED: FrozenSet[str] = frozenset({
+    "MULTI_DEVICE_LOGIN",
+    "CASH_DRAWER.APPROVE_OPEN",
+    "CASH_DRAWER.OPEN_ON_CASH_SALE",
+    "DESKTOP_EXIT",
+    "SELL_RESTRICTED_ITEMS",
+}) | REMOTE_APPROVAL_CODES
+
+
+def clean_denied_ui(value: Any) -> Optional[str]:
+    """`show` / `hide` / `code`, or None (inherit: null, "" or "inherit"); anything else refused."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise PermissionValueError("deniedUi must be one of show, hide, code (or null)")
+    cleaned = value.strip().lower()
+    if cleaned in ("", "inherit"):
+        return None
+    if cleaned not in DENIED_UI_OPTIONS:
+        raise PermissionValueError("deniedUi must be one of show, hide, code (or null)")
+    return cleaned
+
+
+def denied_ui_state(state: str, code: str, mode: Optional[str]) -> str:
+    """
+    A state as the till acts on it under `mode`: "אסור" asks for a manager's code under `code`
+    (except the untouched codes); every other state, and every other mode, as it is.
+    """
+    if state == DENY and mode == DENIED_UI_CODE and code not in DENIED_UI_UNTOUCHED:
+        return APPROVAL
+    return state
+
+
 # ── Validation ─────────────────────────────────────────────────────────────────
 
 
@@ -686,6 +744,11 @@ class EffectivePermissions:
     role_name: Optional[str] = None
     #: Per code, where the state came from: override | role | template.
     sources: Dict[str, str] = field(default_factory=dict)
+    #: "כשאין הרשאה" from the employee's override, else the role's: show | hide | code; None — the
+    #: role says nothing, the till's level parameter (`deniedActionUi`) decides.
+    denied_ui: Optional[str] = None
+    #: Where `denied_ui` came from: override | role; None with it.
+    denied_ui_source: Optional[str] = None
 
     def state(self, code: str) -> str:
         return self.states.get(code, DENY)
@@ -715,10 +778,13 @@ def effective_permissions(
     role_id: Optional[str] = None,
     role_key: Optional[str] = None,
     role_name: Optional[str] = None,
+    role_denied_ui: Optional[str] = None,
 ) -> EffectivePermissions:
     """
     Pure: user override → role value → the role's template → deny, per code; the same
     order per limit key. Unknown codes in any input are ignored (never granted).
+    "כשאין הרשאה": the user's `deniedUi` override → the role's → None (the level decides);
+    a value the catalogue does not know is ignored, as an unknown code is.
     """
     own_states = clean_states(role_states or {}, allow_unknown=True)
     own_limits = clean_limits(role_limits or {}, allow_unknown=True)
@@ -753,8 +819,18 @@ def effective_permissions(
                     break
         if merged:
             limits[code] = merged
+    denied_ui, denied_ui_source = None, None
+    for value, source in ((ov.get("deniedUi"), "override"), (role_denied_ui, "role")):
+        try:
+            cleaned = clean_denied_ui(value)
+        except PermissionValueError:
+            cleaned = None
+        if cleaned is not None:
+            denied_ui, denied_ui_source = cleaned, source
+            break
     return EffectivePermissions(
         states=states, limits=limits, role_id=role_id, role_key=role_key, role_name=role_name, sources=sources,
+        denied_ui=denied_ui, denied_ui_source=denied_ui_source,
     )
 
 
@@ -849,4 +925,10 @@ def catalogue_out() -> Dict[str, Any]:
             for r in BUILTIN_ROLES
         ],
         "specRoleKeys": list(SPEC_ROLE_KEYS),
+        # "כשאין הרשאה" (P:/specs/denied-actions-ui.md): the options a role / an employee may set
+        # (null = inherit), and the codes the setting never touches.
+        "deniedUi": {
+            "options": [{"key": k, "label": DENIED_UI_LABELS[k]} for k in DENIED_UI_OPTIONS],
+            "untouched": sorted(DENIED_UI_UNTOUCHED),
+        },
     }
