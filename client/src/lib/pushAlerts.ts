@@ -42,6 +42,8 @@ export type AlertCategory =
   | 'daily_summary'
   // A payment reversed inside a table, and a closed table restored (P:/specs/table-restore-payments.md §3).
   | 'payment_reversals'
+  // "מכשיר מזומן" (P:/specs/cash-paylink.md §9א): every kiosk cash station alert (`cash_unit`), on by default.
+  | 'cash'
   // "שלמות נתונים" (§1): a super admin's only — the server lists it to them alone.
   | 'integrity';
 
@@ -72,6 +74,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'sales_pace',
   'daily_summary',
   'payment_reversals',
+  'cash',
 ];
 
 export const INTEGRITY_CATEGORY: AlertCategory = 'integrity';
@@ -303,6 +306,9 @@ export function alertHref(a: Pick<FeedAlert, 'kind' | 'code' | 'details'>, canOp
   // "התאמת אשראי מול Z-Credit": the run's page, where the row is handled.
   const runId = a.details && typeof a.details.runId === 'string' ? a.details.runId : null;
   if (a.kind === 'zcredit_recon' && runId) return `/dashboard/zcredit-reconciliation?run=${runId}`;
+  // "מכשיר מזומן": the cash station's page (P:/specs/cash-paylink.md §12).
+  const stationId = a.details && typeof a.details.stationId === 'string' ? a.details.stationId : null;
+  if (a.kind === 'cash_unit' && stationId) return `/dashboard/cash-stations/${encodeURIComponent(stationId)}`;
   return canOpenLog && a.code ? `/x/${a.code}` : null;
 }
 

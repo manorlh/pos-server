@@ -302,6 +302,15 @@ export const NAV_SECTIONS: NavSection[] = [
       // "מסופונים — מצב לא מקוון" (P:/specs/nayax-deferred-all.md §9): every card terminal of a shop to the
       // deferred mode and back — the section `terminals_offline`, the shop's managers.
       { href: '/dashboard/deferred-terminals', labelKey: 'deferredTerminals', icon: CloudOff, gate: 'shopManagers' },
+      // "עמדות מזומן" (P:/specs/cash-paylink.md §12): the kiosks' cash stations (PayLink units) — each one's
+      // host, serial, kiosks, state, change, journal, drawer and maintenance; the kiosk pages' roles.
+      {
+        href: '/dashboard/cash-stations',
+        labelKey: 'cashStations',
+        icon: Coins,
+        gate: 'settingsWrite',
+        matchPrefixes: ['/dashboard/cash-stations/'],
+      },
       // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
       // Every role but the cashier reads (the server scopes it); managers correct.
       { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },

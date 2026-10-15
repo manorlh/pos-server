@@ -23,6 +23,10 @@ const api: KioskBridge = {
   reverseVoucher: (id) => ipcRenderer.invoke('kiosk:reverseVoucher', id),
   releaseDiscounts: (vouchers) => ipcRenderer.invoke('kiosk:releaseDiscounts', vouchers),
   cancelPayment: () => ipcRenderer.invoke('kiosk:cancelPayment'),
+  cashOwedChoice: (choice) => ipcRenderer.invoke('kiosk:cashOwedChoice', choice),
+  cashSplit: () => ipcRenderer.invoke('kiosk:cashSplit'),
+  redeemCashCredit: (input) => ipcRenderer.invoke('kiosk:redeemCashCredit', input),
+  releaseCashCredit: (id) => ipcRenderer.invoke('kiosk:releaseCashCredit', id),
   receiptChoice: (orderId, print) => ipcRenderer.invoke('kiosk:receiptChoice', orderId, print),
   helpRequest: () => ipcRenderer.invoke('kiosk:helpRequest'),
   adminUnlock: (pin) => ipcRenderer.invoke('kiosk:adminUnlock', pin),
@@ -43,7 +47,7 @@ const api: KioskBridge = {
 contextBridge.exposeInMainWorld('kiosk', api);
 
 /** The shell (shared/roles.ts): the device's role, the update status, the KDS and board screens. */
-const shellChannels: Record<keyof ShellEvents, string> = { view: 'shell:view', board: 'shell:board', kds: 'shell:kds' };
+const shellChannels: Record<keyof ShellEvents, string> = { view: 'shell:view', board: 'shell:board', kds: 'shell:kds', cash: 'shell:cash' };
 const shellApi: ShellBridge = {
   view: () => ipcRenderer.invoke('shell:view'),
   board: () => ipcRenderer.invoke('shell:board'),
@@ -52,6 +56,9 @@ const shellApi: ShellBridge = {
   activity: () => ipcRenderer.send('shell:activity'),
   becomeBridge: () => ipcRenderer.invoke('shell:becomeBridge'),
   desktopExit: (pin) => ipcRenderer.invoke('shell:desktopExit', pin),
+  cash: () => ipcRenderer.invoke('shell:cash'),
+  cashUnlock: (pin) => ipcRenderer.invoke('shell:cashUnlock', pin),
+  cashAction: (a) => ipcRenderer.invoke('shell:cashAction', a),
   on: (event, fn) => {
     const channel = shellChannels[event];
     const listener = (_e: unknown, payload: unknown) => (fn as (p: unknown) => void)(payload);

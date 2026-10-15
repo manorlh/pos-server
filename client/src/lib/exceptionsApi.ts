@@ -123,6 +123,10 @@ export const EXCEPTION_TYPES = [
   'auto_close_cart_discarded',
   'auto_close_cart_held',
   'auto_close_held_sales_cancelled',
+  // "מכשיר מזומן" (pos-server app/services/cash_alerts.py, P:/specs/cash-paylink.md §9א, §11.9): a kiosk cash
+  // station's alert, naming the station (details: summary, stationId, stationName, code, unit, hostId, txId,
+  // source heartbeat | journal | watch, resolvedAt — closed by itself when it is over).
+  'cash_unit',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

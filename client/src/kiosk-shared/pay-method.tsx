@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Banknote, Check, CreditCard, Ticket, Trash2, WalletCards } from 'lucide-react';
+import { Banknote, Check, Coins, CreditCard, Ticket, Trash2, WalletCards } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { checkoutBar, MONO_FIGURES_STACK, railMotionColors, type CheckoutStep, type KioskTextKey, type PaymentMethod } from '@/lib/kioskConfig';
 import { payMethodSheet } from '@/lib/kioskLayout';
@@ -78,8 +78,8 @@ export interface KioskLivePayMethod {
   skip?: { method: PaymentMethod; onSkip: () => void } | null;
 }
 
-const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, split_card: WalletCards };
-type TextMethod = Exclude<PaymentMethod, 'split_card'>;
+const ICONS: Record<PaymentMethod, typeof CreditCard> = { card: CreditCard, voucher: Ticket, cash_at_till: Banknote, cash_device: Coins, split_card: WalletCards };
+type TextMethod = Exclude<PaymentMethod, 'split_card' | 'cash_device'>;
 const LABEL: Record<TextMethod, KioskTextKey> = { card: 'payCardLabel', voucher: 'payVoucherLabel', cash_at_till: 'payCashLabel' };
 const SUB: Record<TextMethod, KioskTextKey> = { card: 'payCardSub', voucher: 'payVoucherSub', cash_at_till: 'payCashSub' };
 /**
@@ -88,16 +88,18 @@ const SUB: Record<TextMethod, KioskTextKey> = { card: 'payCardSub', voucher: 'pa
  * one card per document and leave it out (singleCardPayMethods); the words are here for a host that
  * would draw it.
  */
-const PLAIN: Record<'split_card', { label: string; sub: string }> = {
+const PLAIN: Record<'split_card' | 'cash_device', { label: string; sub: string }> = {
   split_card: { label: 'פיצול בין כרטיסים', sub: 'תשלום בכמה כרטיסי אשראי' },
+  // "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6): no kiosk text of its own yet either.
+  cash_device: { label: 'מזומן', sub: 'במכשיר המזומן · עודף במקום' },
 };
 
 /** A tile's name and its line under it, in the business's words where it has them. */
 function methodLabel(m: PreviewModel, method: PaymentMethod): string {
-  return method === 'split_card' ? PLAIN[method].label : m.txt(LABEL[method]);
+  return method === 'split_card' || method === 'cash_device' ? PLAIN[method].label : m.txt(LABEL[method]);
 }
 function methodSub(m: PreviewModel, method: PaymentMethod): string {
-  return method === 'split_card' ? PLAIN[method].sub : m.txt(SUB[method]);
+  return method === 'split_card' || method === 'cash_device' ? PLAIN[method].sub : m.txt(SUB[method]);
 }
 
 /** A kiosk text with its placeholders ("{amount}", "{number}"), the business's words first. */

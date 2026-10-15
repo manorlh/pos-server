@@ -12,6 +12,9 @@
  * The 1-bit threshold and the ESC/POS bytes are the main process's (core/escpos.ts).
  */
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { QRCodeSVG } from 'qrcode.react';
 import type { BonDoc, PrintDoc, ReceiptDoc, SlipDoc, TicketDoc, ZDoc } from '../../core/printDocs';
 import { layoutTicket } from '../../core/kitchenTicketStyle';
 
@@ -93,8 +96,17 @@ const STYLES: Record<string, { size: number; bold: boolean }> = {
   number: { size: 56, bold: true },
 };
 
+/** A QR as an image (qrcode.react's SVG, black on white, quiet zone included). */
+function qrImage(value: string, size: number): Promise<HTMLImageElement | null> {
+  const svg = renderToStaticMarkup(createElement(QRCodeSVG, { value, size, level: 'M', marginSize: 2, bgColor: '#FFFFFF', fgColor: '#000000' }));
+  return loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
+}
+
 async function drawReceiptAt384(doc: ReceiptDoc): Promise<HTMLCanvasElement> {
   const logo = doc.logoUrl ? await loadImage(doc.logoUrl) : null;
+  // The QR codes (a cash credit's "CC:<code>"), drawn ahead so the page is measured once.
+  const qrs = new Map<string, HTMLImageElement | null>();
+  for (const op of doc.ops) if (op.t === 'qr' && !qrs.has(op.value)) qrs.set(op.value, await qrImage(op.value, op.size));
   const run = (ctx: Ctx | null): number => {
     let y = 0;
     const line = (yy: number) => {
@@ -168,6 +180,14 @@ async function drawReceiptAt384(doc: ReceiptDoc): Promise<HTMLCanvasElement> {
           line(y);
           y += 4;
           break;
+        case 'qr': {
+          const img = qrs.get(op.value);
+          const size = Math.min(op.size, W - 2 * PAD);
+          y += 8;
+          if (ctx && img) ctx.drawImage(img, (W - size) / 2, y, size, size);
+          y += (img ? size : 0) + 8;
+          break;
+        }
         case 'end':
           y += 24;
           break;

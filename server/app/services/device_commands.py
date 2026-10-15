@@ -157,6 +157,20 @@ def command_out(row: DeviceCommand) -> Dict[str, Any]:
 
 #: What a kiosk never takes (its own pause is the kiosks' tab).
 KIOSK_REFUSES = ("lock", "unlock", "sign_out")
+#: A cash host ("שרת מזומן", P:/specs/cash-paylink.md §11.15ד) — a headless box with no sale and no cashier: only
+#: these (a restart waits for no open cash transaction at any of its stations).
+CASH_HOST_ACTIONS = ("restart_app", "upload_logs")
+
+
+def is_cash_host(machine: Any) -> bool:
+    return getattr(machine, "is_cash_host", False) is True
+
+
+def actions_of(machine: Any, is_kiosk: bool = False) -> Optional[List[str]]:
+    """The actions the panel offers a device that takes only some; None — every action."""
+    if is_cash_host(machine):
+        return list(CASH_HOST_ACTIONS)
+    return None
 
 #: Words an older build wrote in `detail` for the state before a lock / unlock (never shown).
 WAS_LOCKED, WAS_UNLOCKED = "was_locked", "was_unlocked"
@@ -263,6 +277,11 @@ def create(
         raise _bad("invalid_action", "פעולה לא מוכרת")
     if not machines:
         raise _bad("no_devices", "לא נבחרו מכשירים")
+    if action not in CASH_HOST_ACTIONS and any(is_cash_host(m) for m in machines):
+        # A cash host takes a restart and a logs request only (a batch skips it).
+        machines = [m for m in machines if not is_cash_host(m)]
+        if not machines:
+            raise _bad("invalid_action", "שרת מזומן מקבל רק הפעלה מחדש ובקשת לוגים")
     if action in KIOSK_REFUSES:
         # A kiosk is paused from the kiosks' tab, never locked or signed out (a batch skips them).
         from app.models.kiosk import KioskDevice
@@ -615,6 +634,9 @@ def devices_status(db: Session, machines: Sequence[POSMachine], *, now: Optional
             "shopId": str(m.shop_id) if m.shop_id else None,
             "areaId": str(m.area_id) if getattr(m, "area_id", None) else None,
             "isKiosk": m.id in kiosks,
+            # A cash host: only a restart and a logs request (§11.15ד).
+            "isCashHost": is_cash_host(m),
+            "actions": actions_of(m),
             "online": is_online(m.last_heartbeat_at, now=now),
             "lastSeenAt": _iso(m.last_heartbeat_at),
             "state": state_out(states.get(m.id)),

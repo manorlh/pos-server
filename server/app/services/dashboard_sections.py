@@ -200,7 +200,8 @@ SECTIONS: Tuple[Section, ...] = (
     Section(
         "devices", "מכשירים",
         "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, תצורת עבודה, קופה ראשית ורשת מקומית.",
-        ("/dashboard/machines",),
+        # "עמדות מזומן" (P:/specs/cash-paylink.md §12): the kiosks' cash stations are devices too.
+        ("/dashboard/machines", "/dashboard/cash-stations"),
     ),
     # "העברת שרת מקומי" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §7):
     # the support's permission, without a role of its own. Only the super admin grants it, and
@@ -694,6 +695,12 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # ── Devices ──
     ("POST", "/device-management/*", S("devices")),
     (_ALL, "/pairing/*", S("devices")),
+    # "עמדות מזומן" (app/routers/cash_stations.py, P:/specs/cash-paylink.md §12): the kiosks' cash stations — read by
+    # the devices' or the kiosks' people, changed (a station, an owed item resolved) by the devices'; a command to
+    # the cash host (refill, count, collect…) is remote control, like the local server's.
+    ("POST", "/cash-stations/{}/commands", S("devices", "device_control")),
+    (_GET, "/cash-stations*", S("devices", "kiosks", level=VIEW)),
+    (_ALL, "/cash-stations*", S("devices")),
     (_GET, "/payment-integration/context", S("till_settings", "devices", "organization", level=VIEW)),
     # "מכשירי תשלום": a shop's card terminals, set on the till-settings page.
     (_ALL, "/payment-devices/*", S("till_settings")),

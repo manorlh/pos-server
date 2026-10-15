@@ -51,6 +51,11 @@ describe('sectionForPath — which section a page belongs to', () => {
     assert.equal(sectionForPath('/dashboard/catalog-admin'), 'products');
     assert.equal(sectionForPath('/dashboard/shops/123'), 'organization');
     assert.equal(sectionForPath('/dashboard/machines/123'), 'devices');
+    // "עמדות מזומן" (P:/specs/cash-paylink.md §12): devices — and the kiosks' people may read them.
+    assert.equal(sectionForPath('/dashboard/cash-stations'), 'devices');
+    assert.equal(sectionForPath('/dashboard/cash-stations/abc'), 'devices');
+    assert.equal(pageAccess({ restricted: true, sections: { kiosks: 'view' } }, '/dashboard/cash-stations/abc'), 'ok');
+    assert.equal(pageAccess({ restricted: true, sections: { reports: 'view' } }, '/dashboard/cash-stations'), 'denied');
     assert.equal(sectionForPath('/dashboard/kiosks/health'), 'kiosks');
     assert.equal(sectionForPath('/dashboard/workflow'), 'kds');
   });

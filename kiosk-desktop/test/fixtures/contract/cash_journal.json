@@ -1,0 +1,160 @@
+{
+  "entries": [
+    {
+      "type": "tx",
+      "id": "7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b",
+      "txId": "7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "hostId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "clientId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "leaseId": "lease-1",
+      "state": "DONE",
+      "outcome": "paid",
+      "amountAgorot": 5735,
+      "dueAgorot": 5740,
+      "roundingAgorot": 5,
+      "insertedAgorot": 7000,
+      "remainingAgorot": 0,
+      "escrowAgorot": 0,
+      "changeDueAgorot": 1260,
+      "changePaidAgorot": 1000,
+      "changeOwedAgorot": 260,
+      "changeOwedAsk": false,
+      "changeOwedAs": "slip",
+      "splitAgorot": 0,
+      "refundDueAgorot": 0,
+      "refundPaidAgorot": 0,
+      "heldAgorot": 0,
+      "heldReason": null,
+      "cancelReason": null,
+      "inserted": [
+        {
+          "valueAgorot": 5000,
+          "kind": "note",
+          "count": 1
+        },
+        {
+          "valueAgorot": 1000,
+          "kind": "coin",
+          "count": 2
+        }
+      ],
+      "paidOut": [
+        {
+          "valueAgorot": 1000,
+          "kind": "coin",
+          "count": 1
+        }
+      ],
+      "accepting": {
+        "coins": [],
+        "notes": []
+      },
+      "exactOnly": false,
+      "deadlineAt": 1791010980000,
+      "idleDeadlineAt": 1791010860000,
+      "message": "עודף חייב 2.6 ₪ — הפתק יודפס",
+      "error": {
+        "code": "change_short",
+        "message": "עודף חייב 2.6 ₪"
+      },
+      "owedId": "7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b",
+      "slipCode": "C-K7Q3MX",
+      "acked": true,
+      "documentId": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+      "documentNumber": "457",
+      "createdAt": 1791010800000,
+      "updatedAt": 1791010821000,
+      "seq": 9,
+      "orderRef": "order-1",
+      "orderLabel": "K-57",
+      "clientName": "קיוסק Windows",
+      "deviceSerial": "SIM00001",
+      "doneAt": 1791010820000
+    },
+    {
+      "type": "tx",
+      "id": "8d1f6b2c-3e4a-4d6f-9b0c-1d2e3f4a5b6c",
+      "txId": "8d1f6b2c-3e4a-4d6f-9b0c-1d2e3f4a5b6c",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "hostId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "clientId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "leaseId": "lease-1",
+      "state": "HELD",
+      "outcome": null,
+      "amountAgorot": 5735,
+      "dueAgorot": 5740,
+      "roundingAgorot": 5,
+      "insertedAgorot": 2000,
+      "remainingAgorot": 3740,
+      "escrowAgorot": 0,
+      "changeDueAgorot": 0,
+      "changePaidAgorot": 0,
+      "changeOwedAgorot": 0,
+      "changeOwedAsk": false,
+      "changeOwedAs": null,
+      "splitAgorot": 0,
+      "refundDueAgorot": 0,
+      "refundPaidAgorot": 0,
+      "heldAgorot": 2000,
+      "heldReason": "power_loss",
+      "cancelReason": null,
+      "inserted": [
+        {
+          "valueAgorot": 2000,
+          "kind": "note",
+          "count": 1
+        }
+      ],
+      "paidOut": [],
+      "accepting": {
+        "coins": [],
+        "notes": []
+      },
+      "exactOnly": false,
+      "deadlineAt": 1791010980000,
+      "idleDeadlineAt": 1791010860000,
+      "message": "תקלה — פנה לצוות",
+      "error": {
+        "code": "device",
+        "message": "זיכוי מוחזק — יש לפנות לצוות"
+      },
+      "owedId": "8d1f6b2c-3e4a-4d6f-9b0c-1d2e3f4a5b6c",
+      "slipCode": "C-3TQWEA",
+      "acked": true,
+      "documentId": null,
+      "documentNumber": null,
+      "createdAt": 1791010800000,
+      "updatedAt": 1791010821000,
+      "seq": 4,
+      "orderRef": "order-1",
+      "orderLabel": null,
+      "clientName": "קיוסק Windows",
+      "deviceSerial": "SIM00001",
+      "doneAt": 1791010820000
+    },
+    {
+      "type": "movement",
+      "id": "9e2a7c3d-4f5b-4e7a-8c1d-2e3f4a5b6c7d",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "kind": "refill",
+      "amountAgorot": 20000,
+      "pieces": [
+        {
+          "valueAgorot": 100,
+          "kind": "coin",
+          "count": 200
+        }
+      ],
+      "expectedAgorot": null,
+      "countedAgorot": null,
+      "by": {
+        "userId": null,
+        "name": "דנה"
+      },
+      "note": null,
+      "at": 1791007200000,
+      "commandId": null
+    }
+  ]
+}

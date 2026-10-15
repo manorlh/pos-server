@@ -339,6 +339,14 @@ RULES = RULES + (
     RuleSpec("auto_close_held_sales_cancelled", True, (), "medium", "till_event"),
 )
 
+# "מכשיר מזומן" (app/services/cash_alerts.py, P:/specs/cash-paylink.md §9א, §11.9): a cash station's alert —
+# the host disconnected, the driver down, a jam, fraud, the cashbox full or removed, change low or out, the door
+# open, a credit held, change owed — "עמדת מזומן 2 (ליד קיוסק 3): עודף נמוך". Recorded always (the owner: "תודיע
+# למנהל ולקופה מסויימת"), closed by itself when it is over; only "שלח התראה לטלפון" is offered — on by default.
+RULES = RULES + (
+    RuleSpec("cash_unit", True, (), "high", "cash_station", push_only=True),
+)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 

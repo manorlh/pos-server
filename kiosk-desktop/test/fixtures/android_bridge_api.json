@@ -5,7 +5,7 @@
   "inbox": "__r2mAndroid",
   "origin": "https://appassets.androidplatform.net",
   "manifestKind": "r2m-kiosk-web",
-  "calls": ["bootstrap", "shellView", "startPayment", "cancelPayment", "receiptChoice", "helpRequest", "voucherApply", "voucherRemove", "placeOpenOrder"],
+  "calls": ["bootstrap", "shellView", "startPayment", "cancelPayment", "receiptChoice", "helpRequest", "voucherApply", "voucherRemove", "placeOpenOrder", "cashOwedChoice", "cashSplit"],
   "sends": ["reportFlow", "funnel", "activity", "ready", "error"],
   "events": ["view", "pay", "toast", "shell", "scan"],
   "fallbackReasons": ["ready_timeout", "render_gone", "js_errors", "no_bundle", "bridge_api", "load_error", "webview_old"],

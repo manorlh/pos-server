@@ -33,9 +33,12 @@ import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
 import type {
   AppliedVoucher,
   BasketChange,
+  CashOwedChoice,
+  CashPayView,
   KioskBridge,
   KioskEvents,
   KioskView,
+  PayProgress,
   PlaceOrderIn,
   PlaceOrderOut,
   StartPaymentIn,
@@ -44,7 +47,7 @@ import type {
   VoucherApplyIn,
 } from '../../shared/bridge';
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
-import { configOfflineBlockScope, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
+import { configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
 import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
 export { ANDROID_BRIDGE_API, ANDROID_CALLS, ANDROID_EVENTS, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, ANDROID_SENDS, ANDROID_WIRE_API } from './androidWire';
@@ -81,6 +84,9 @@ export const CALL_TIMEOUT_MS: Record<AndroidCall, number> = {
   voucherRemove: 15_000,
   // The APK checks the basket, then waits up to 20 s on its pay-at-till path (KioskWebSession START_WAIT_MS).
   placeOpenOrder: 30_000,
+  // §11.15: a choice / a split the APK answers at once.
+  cashOwedChoice: 15_000,
+  cashSplit: 15_000,
 };
 
 /** The staff's screens are the APK's on Android (its corners, its PIN, its admin). */
@@ -202,7 +208,8 @@ export function normalizeView(view: KioskView, opts: { payAtTill?: boolean } = {
   const blocked = kioskOfflineBlocks(resolved.general, view.state?.offline === true);
   const scope = offlineBlockScopeOf(configOfflineBlockScope(view.config));
   const base = opts.payAtTill ? tillPay(configured, androidNoCard(view), blocked) : androidNoCard(view) ? noCardPay(configured) : cardPay(configured);
-  const pay = { ...base, usable: offlineUsable(base.usable, blocked, scope) };
+  // "מזומן עובד בלי אינטרנט" (§13): the cash station stays unless the config says `general.offlineBlockCash`.
+  const pay = { ...base, usable: offlineUsable(base.usable, blocked, scope, offlineBlockCashOf(undefined, view.config)) };
   // Resting for it: the "offline" screen's words (the Windows kiosk's noPaymentReason), not the terminal's.
   const state = view.state && offlineRests(blocked, scope, pay.usable) ? { ...view.state, noPayment: true, noPaymentReason: 'offline' as const } : view.state;
   return { ...view, state, pay, config };
@@ -282,6 +289,20 @@ function basketChangeOf(v: unknown): BasketChange | null {
   const to = num(c.to);
   if (c.kind === 'repriced' && from !== null && to !== null) return { kind: 'repriced', productId, name, ...(key !== null ? { key } : {}), from, to };
   return null;
+}
+
+/**
+ * The APK's `pay` event as the screens read the Windows kiosk's (shared/bridge.ts PayProgress). Its `cash` (P:/specs/
+ * cash-paylink.md §11.13, §11.15) names the card's part of a split `cardAgorot` (the screens' `cardRestAgorot`); the rest
+ * passes as is. Anything that is not an object stays as it came.
+ */
+export function payOf(v: unknown): PayProgress {
+  if (!v || typeof v !== 'object') return v as PayProgress;
+  const p = v as PayProgress & { cash?: (CashPayView & { cardAgorot?: unknown }) | null };
+  const cash = p.cash;
+  if (!cash || typeof cash !== 'object') return p;
+  const card = typeof cash.cardRestAgorot === 'number' ? cash.cardRestAgorot : typeof cash.cardAgorot === 'number' ? cash.cardAgorot : undefined;
+  return card === undefined ? p : { ...p, cash: { ...cash, cardRestAgorot: card } };
 }
 
 /**
@@ -399,6 +420,8 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
           fire(kioskOn, name, viewOf(payload as KioskView));
           return;
         case 'pay':
+          fire(kioskOn, name, payOf(payload));
+          return;
         case 'toast':
           fire(kioskOn, name, payload);
           return;
@@ -429,6 +452,13 @@ export function createAndroidBridges(native: AndroidNative, opts: { onScan?: (co
       // Never a rejection: the screen awaits it with no catch, and a stuck "starting" is worse than a message.
       call<StartPaymentOut>('startPayment', input).catch((): StartPaymentOut => ({ ok: false, reason: 'error', message: PAY_NO_ANSWER })),
     cancelPayment: () => call<unknown>('cancelPayment', {}).then(noop, noop),
+    // "מזומן" at the cash station, stage 2 (§11.15): only on what the APK's `pay.cash` offers — never a rejection.
+    cashOwedChoice: (choice: CashOwedChoice) => call<unknown>('cashOwedChoice', { choice }).then(noop, noop),
+    cashSplit: () =>
+      call<unknown>('cashSplit', {}).then(
+        (r) => ({ ok: !!r && typeof r === 'object' && (r as { ok?: unknown }).ok === true }),
+        () => ({ ok: false }),
+      ),
     receiptChoice: (orderId, print) => call<unknown>('receiptChoice', { orderId, print }).then(noop, noop),
     helpRequest: () => call<unknown>('helpRequest', {}).then(noop, noop),
     // Production vouchers: the APK redeems and holds them; its answer is the order's vouchers now.

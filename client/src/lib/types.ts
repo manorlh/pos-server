@@ -809,10 +809,11 @@ export interface PosMachine {
   hasBuiltinTerminal?: boolean;
   /**
    * "סוג מכשיר (תפקיד)": `till`, `kiosk` (a self-order kiosk), `kds` (a kitchen screen) or
-   * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
-   * it. `kioskEnabled` false: a kiosk switched off, working as a till.
+   * `order_status_board` (the "מוכן / לא מוכן" board), `local_server` ("שרת מקומי") or `cash_host`
+   * ("שרת מזומן", P:/specs/cash-paylink.md). Null where the server did not compute it. `kioskEnabled`
+   * false: a kiosk switched off, working as a till.
    */
-  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | 'local_server' | null;
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | 'local_server' | 'cash_host' | null;
   kioskEnabled?: boolean | null;
   /**
    * False for a display device (a KDS / the board): not a till, not an accounting system —

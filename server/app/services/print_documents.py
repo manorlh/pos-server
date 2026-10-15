@@ -66,6 +66,8 @@ TENDER_LABELS = {
     "voucher": "שובר הפקה",
     "vouchers": "שובר הפקה",
     "production_voucher": "שובר הפקה",
+    # A cash credit redeemed (P:/specs/cash-paylink.md §11.15א): not cash in a drawer.
+    "cash_credit": "זיכוי מזומן",
     "mixed": "משולב",
     "other": "אחר",
 }

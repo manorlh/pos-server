@@ -503,6 +503,13 @@ def resolve_target(db: Session, ctx: Context, plan: Dict[str, Any]) -> Target:
             "שרת מקומי לא מקבל תצורת עבודה של קופה. בחרו \"שרת מקומי: מכשיר ייעודי\" בתצורת העבודה של "
             "הסניף, או העבירו אליו את השרת ב\"העברת שרת מקומי\".",
         )
+    if ctx.role == "cash_host":
+        # "שרת מזומן" (P:/specs/cash-paylink.md §2): no Z, no tables, no LAN role — it drives the cash units.
+        raise _refuse(
+            "work_config_cash_host",
+            "שרת מזומן לא מקבל תצורת עבודה של קופה: הוא מנהל את עמדות המזומן של הקיוסקים. את העמדות שלו קובעים "
+            "בעמוד \"עמדות מזומן\".",
+        )
     if ctx.display:
         # A KDS / the board makes no Z and keeps no tables: only its own preset, which writes nothing.
         from app.services.display_devices import NOT_FISCAL, NOT_FISCAL_MESSAGE

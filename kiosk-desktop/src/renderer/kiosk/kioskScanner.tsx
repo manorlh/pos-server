@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObjec
 import { cardStyle, type PProduct, type PreviewModel } from '@kiosk-shared/index';
 import { ORDERING, type KioskScreen } from '../../core/kioskFlow';
 import { decideScan, IDLE_END_MS, keyLeftAlone, parseScan, scannedVoucherCode, ScanDedupe, ScanKeyReader, type ScanProduct } from '../../core/kioskScan';
+import { scannedCashCreditCode } from '../../core/cash/credit';
 
 export interface KioskScanInput {
   m: PreviewModel;
@@ -45,6 +46,8 @@ export interface KioskScanInput {
   touch: () => void;
   /** "איך תרצו לשלם?" is on the screen with a voucher to take: a voucher scan is redeemed. */
   onVoucher?: ((code: string) => void) | null;
+  /** A cash credit's QR ("CC:…", P:/specs/cash-paylink.md §11.15א) on the payment method step. */
+  onCashCredit?: ((code: string) => void) | null;
 }
 
 type Shown = ScanProduct & { p: PProduct };
@@ -90,6 +93,15 @@ export function useKioskScanner(input: KioskScanInput): ReactNode {
       const i = latest.current;
       const code = parseScan(raw);
       const duplicate = !dedupe.accept(code.text, performance.now());
+      // A cash credit's QR on the payment method step: taken there (the cloud checks it).
+      const credit = scannedCashCreditCode(raw);
+      if (credit && i.onCashCredit && !i.staff) {
+        if (!duplicate) {
+          i.touch();
+          i.onCashCredit(credit);
+        }
+        return;
+      }
       // A voucher on the payment method step: redeemed there (the cloud checks it).
       const voucher = scannedVoucherCode(raw);
       if (voucher && i.onVoucher && !i.staff) {

@@ -110,6 +110,11 @@ TENDER_TOLERANCE_PER_LEG = Decimal("0.01")
 PRODUCTION_VOUCHER_BUCKET = "production_voucher"
 PRODUCTION_VOUCHER_METHODS = frozenset({"voucher", "vouchers", PRODUCTION_VOUCHER_BUCKET})
 
+#: A cash credit ("זיכוי מזומן", P:/specs/cash-paylink.md §11.15א): change a cash station owed the customer, kept for
+#: a next order and redeemed as a tender. Never cash in a drawer (the money went in at the station): the tender
+#: splits file it under `other`, the X/Z breakdown by its own method.
+CASH_CREDIT_METHOD = "cash_credit"
+
 
 def is_production_voucher(method: Optional[str]) -> bool:
     return (method or "").strip().lower() in PRODUCTION_VOUCHER_METHODS

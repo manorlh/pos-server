@@ -274,13 +274,17 @@ MESSAGE_SCREENS = ("attract", "service", "catalog", "cart", "pay", "success", "p
 MESSAGE_STYLES = ("info", "promo", "warning", "success")
 #: "card" on the external pinpad; "voucher" — a prepaid voucher redeemed online, the rest by
 #: another method; "cash_at_till" — no document on the kiosk: a slip, and the till takes the
-#: money (§23). Bare "cash" is refused (`cash_not_supported`): a kiosk has no cash hardware.
+#: money (§23). Bare "cash" is refused (`cash_not_supported`): a kiosk has no cash hardware of its own.
+#: "cash_device" — "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.6): the customer pays
+#: into a PayLink unit run by a cash host on the LAN; the kiosk files the document with a `cash` leg. Shown
+#: only while the till parameters give it a station that is ready (`GET /sync/{m}/cash`); it pays the whole
+#: sale, or what a voucher leaves. A kiosk that does not know it leaves it out of its tiles.
 #: "split_card" — "פיצול תשלום בכרטיסים" (§23.7): the order paid on several cards, each its own
 #: charge on the terminal, one sale with several card tenders. The Android kiosk only: the Windows
 #: and browser kiosks hold one card per document and never offer it. Off unless listed.
-PAYMENT_METHODS = ("card", "voucher", "cash_at_till", "split_card")
+PAYMENT_METHODS = ("card", "voucher", "cash_at_till", "cash_device", "split_card")
 #: The methods that can pay what a voucher leaves: a voucher alone is never enough.
-REMAINDER_METHODS = ("card", "cash_at_till", "split_card")
+REMAINDER_METHODS = ("card", "cash_at_till", "cash_device", "split_card")
 #: "פיצול תשלום בכרטיסים" (`payment.splitCard`): the numbers of equal cards it may offer (stored
 #: sorted), and the least one card may pay, in agorot (₪1–₪1000).
 SPLIT_CARD_COUNTS = (2, 3, 4)
@@ -1365,7 +1369,7 @@ SCHEMA = Obj({
     }),
     "payment": Obj({
         # "cash" is refused with its own code (`_cross_field`), before the enum would.
-        "methods": UList(Str(32, min_len=1), min_len=1, max_len=4, unique=True),
+        "methods": UList(Str(32, min_len=1), min_len=1, max_len=len(PAYMENT_METHODS), unique=True),
         "tipEnabled": Bool(),
         "tipPresets": UList(Int(1, 50), max_len=TIP_PRESETS_MAX, unique=True),
         "receiptPolicy": Enum(RECEIPT_POLICIES),
@@ -1688,7 +1692,7 @@ def _cross_field(cfg: Dict[str, Any], errors: List[Issue]) -> None:
         # A voucher pays what it covers; the rest needs card, the till or a split (§23).
         if "voucher" in methods and not any(m in REMAINDER_METHODS for m in methods):
             errors.append(Issue(
-                "payment.methods", "voucher_needs_method", "voucher needs card, cash_at_till or split_card too"
+                "payment.methods", "voucher_needs_method", "voucher needs card, cash_at_till, cash_device or split_card too"
             ))
 
     # "פיצול תשלום בכרטיסים": something to offer — a number of cards, or "סכום אחר".

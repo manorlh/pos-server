@@ -22,6 +22,7 @@
   | מסך מטבח (KDS) | `src/main/roles/kds.ts`, `src/core/kdsBoard.ts`, `src/renderer/roles/kds` |
   | מסך מוכן / לא מוכן | `src/main/roles/board.ts`, `src/core/pickupBoard.ts`, `src/renderer/roles/board` |
   | קופה, מסך לקוח | `src/renderer/roles/RolePlaceholder.tsx` ("תפקיד זה יגיע בגרסה הבאה") |
+  | שרת מזומן (`cash_host`) | `src/main/cash/*`, `src/core/cash/*`, `src/renderer/roles/cash/CashHostScreen.tsx` — ראו "שרת מזומן" למטה |
 
   התפקיד: `deviceRole` של `machines/me` (קופה / קיוסק / `kds` / `order_status_board`); קיוסק פעיל (`kiosk/sync` → `kiosk: true`)
   תמיד קיוסק; מכשיר שהוגדר מעמוד מסכי המטבח (`kds/device`, תפקיד `pickup` = מסך מוכן). המסכים מקבלים אותו דרך `window.r2m`
@@ -188,3 +189,14 @@ SynqPay, ספר המסמכים של הקיוסק), להדפסה (ESC/POS), למ�
   פרופיל הדפדפן `browser-profile\`).
 - **בדיקות:** `test/bridge.test.ts` (השרת והלקוח של הדפדפן מול מסופון ומדפסת מדומים).
 - `kiosk.json`: `{ "bridgeOrigins": ["https://dashboard.example"], "bridgePort": 47615 }` (הדף מחפש רק את הפורט הקבוע).
+
+## שרת מזומן (`cash_host`)
+
+המפרט והחוזה: `P:\specs\cash-paylink.md` (§11 — ה-API ברשת, הקיוסק, הקופה והענן; §12 — כמה עמדות; §13 — בלי אינטרנט). מדריך ההתקנה: `P:\specs\cash-paylink-install.md`.
+
+- **התפקיד:** קופסת Windows בלי מסך קיוסק שמנהלת "עמדות מזומן" — יחידת PayLink אחת לכל עמדה. נקבע בענן ("הוספת מכשיר" ← שרת מזומן). לא פיסקלי.
+- **חבילת היצרן** (`Paylink.exe`, `AESImhei64.dll`) מותקנת בנפרד ולעולם לא נכללת באפליקציה. הספרייה נטענת דרך `koffi` רק בתהליך עזר (`utilityProcess`, `src/main/cash/paylinkWorker.ts`) — אחד לכל יחידה; תקלה בה לא מפילה את האפליקציה.
+- **הכסף:** `src/core/cash/*` — מונים מצטברים, יומן לפני כל פקודה (`src/main/cash/journal.ts`), עסקה `LEASED → ACCEPTING → SETTLING → PAYING_CHANGE → DONE`, ביטול `REFUNDING`, ונפילה `HELD` (לעולם לא תשלום אוטומטי אחרי הפסקת חשמל). מניעה (`prevent`): שטר שאין עליו עודף נחסם מראש; "סכום מדויק" כשהעודף נמוך; עודף שלא שולם — "עודף חייב".
+- **ברשת:** `src/main/cash/lanServer.ts` על 47630, כל קריאה חתומה בסוד של הלקוח (`src/main/cash/auth.ts`). הקיוסק: `src/main/kiosk/cashPay.ts`.
+- **סימולטור:** `src/main/cash/simulator.ts` — כל משפחות המכשירים של PayLink בזיכרון; לבדיקות, ולעמדה שהענן הגדיר `cashSimulator`.
+- **בדיקות:** `test/cashCore.test.ts`, `test/cashStation.test.ts`, `test/cashLan.test.ts`, `test/cashPaylink.test.ts`, `test/cashKiosk.test.ts`.

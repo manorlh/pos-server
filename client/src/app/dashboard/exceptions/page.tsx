@@ -151,6 +151,8 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   auto_close_cart_discarded: 'bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200',
   auto_close_cart_held: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
   auto_close_held_sales_cancelled: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
+  // "מכשיר מזומן": a kiosk cash station's alert (no change, jam, door, host offline, credit held…).
+  cash_unit: 'bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-100',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {

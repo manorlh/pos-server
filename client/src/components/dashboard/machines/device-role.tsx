@@ -35,6 +35,7 @@ import {
   Tv,
   X,
   Server,
+  Coins,
 } from 'lucide-react';
 import { api, fetchMachines } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -90,6 +91,7 @@ const ROLE_ICONS: Record<DeviceRole, typeof Store> = {
   order_status_board: Tv,
   customer_display: Monitor,
   local_server: Server,
+  cash_host: Coins,
 };
 
 /** קופה / קיוסק / מסך מטבח / מסך מוכן-לא מוכן, each with its one line (`roles`: the ones offered). */
@@ -422,6 +424,15 @@ export function DisplayDeviceNote({ m }: { m: Pick<PosMachine, 'fiscal' | 'devic
       </div>
     );
   }
+  if (m.deviceRole === 'cash_host') {
+    // "שרת מזומן": not a till, not a screen — it runs the shop's cash stations (P:/specs/cash-paylink.md).
+    return (
+      <div className="space-y-1 rounded-md bg-emerald-50 p-2 text-xs text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200">
+        <p className="font-medium">{t('cashHostNotTill')}</p>
+        <p>{t('cashHostNotTillHint')}</p>
+      </div>
+    );
+  }
   if (isDisplayDevice(m)) {
     return (
       <div className="space-y-1 rounded-md bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
@@ -461,6 +472,18 @@ export function DeviceRoleBadge({
       >
         <Server className="h-2.5 w-2.5" aria-hidden />
         {t('badge.local_server')}
+      </Badge>
+    );
+  }
+  if (m.deviceRole === 'cash_host') {
+    return (
+      <Badge
+        variant="secondary"
+        className="h-4 gap-0.5 bg-emerald-100 px-1 text-[10px] font-normal text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+        title={t('cashHostNotTillHint')}
+      >
+        <Coins className="h-2.5 w-2.5" aria-hidden />
+        {t('badge.cash_host')}
       </Badge>
     );
   }
@@ -626,10 +649,13 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
   // A display device trades places with the other screen only; a till with a kiosk only —
   // between the two kinds it is a new pairing (the server says so too).
   const display = isDisplayDevice(machine);
-  // "שרת מקומי" keeps its role (a new pairing makes it anything else); only its model changes here.
-  const server = machine.deviceRole === 'local_server';
+  // "שרת מקומי" / "שרת מזומן" keep their role (a new pairing makes them anything else); only the model
+  // changes here.
+  const server = machine.deviceRole === 'local_server' || machine.deviceRole === 'cash_host';
   const currentRole: DeviceRole = server
-    ? 'local_server'
+    ? machine.deviceRole === 'cash_host'
+      ? 'cash_host'
+      : 'local_server'
     : display
       ? machine.deviceRole === 'order_status_board'
         ? 'order_status_board'
@@ -638,7 +664,7 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
         ? 'kiosk'
         : 'till';
   const roles: readonly DeviceRole[] = server
-    ? ['local_server']
+    ? [currentRole]
     : display
       ? ['kds', 'order_status_board']
       : ['till', 'kiosk'];

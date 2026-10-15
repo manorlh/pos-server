@@ -16,7 +16,7 @@ import { decideExit, displayName, NO_LOCK, type ExitLock, type RosterUser } from
 function demoRole(): AppRole {
   const r = new URLSearchParams(window.location.search).get('role') ?? '';
   if (r === 'board' || r === 'order_status_board') return 'order_status_board';
-  if (r === 'kds' || r === 'till' || r === 'customer_display') return r;
+  if (r === 'kds' || r === 'till' || r === 'customer_display' || r === 'cash_host') return r;
   return 'kiosk';
 }
 

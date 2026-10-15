@@ -1,0 +1,267 @@
+{
+  "entries": [
+    {
+      "type": "tx",
+      "id": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e01",
+      "txId": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e01",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "hostId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "clientId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "leaseId": "lease-1",
+      "state": "DONE",
+      "outcome": "paid",
+      "amountAgorot": 5735,
+      "dueAgorot": 5740,
+      "roundingAgorot": 5,
+      "insertedAgorot": 7000,
+      "remainingAgorot": 0,
+      "escrowAgorot": 0,
+      "changeDueAgorot": 1260,
+      "changePaidAgorot": 1000,
+      "changeOwedAgorot": 260,
+      "changeOwedAsk": true,
+      "changeOwedAs": "credit",
+      "splitAgorot": 0,
+      "refundDueAgorot": 0,
+      "refundPaidAgorot": 0,
+      "heldAgorot": 0,
+      "heldReason": null,
+      "cancelReason": null,
+      "inserted": [
+        {
+          "valueAgorot": 5000,
+          "kind": "note",
+          "count": 1
+        },
+        {
+          "valueAgorot": 1000,
+          "kind": "coin",
+          "count": 2
+        }
+      ],
+      "paidOut": [
+        {
+          "valueAgorot": 1000,
+          "kind": "coin",
+          "count": 1
+        }
+      ],
+      "accepting": {
+        "coins": [],
+        "notes": []
+      },
+      "exactOnly": false,
+      "deadlineAt": 1791010980000,
+      "idleDeadlineAt": 1791010860000,
+      "message": "חסר עודף 2.6 ₪",
+      "error": {
+        "code": "change_short",
+        "message": "עודף חייב 2.6 ₪"
+      },
+      "owedId": "7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b",
+      "slipCode": "C-K7Q3MX",
+      "acked": true,
+      "documentId": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+      "documentNumber": "457",
+      "createdAt": 1791010800000,
+      "updatedAt": 1791010821000,
+      "seq": 11,
+      "orderRef": "order-1",
+      "orderLabel": "K-57",
+      "clientName": "קיוסק Windows",
+      "deviceSerial": "SIM00001",
+      "doneAt": 1791010820000
+    },
+    {
+      "type": "tx",
+      "id": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e02",
+      "txId": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e02",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "hostId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "clientId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "leaseId": "lease-1",
+      "state": "DONE",
+      "outcome": "paid",
+      "amountAgorot": 5735,
+      "dueAgorot": 5740,
+      "roundingAgorot": 5,
+      "insertedAgorot": 7000,
+      "remainingAgorot": 0,
+      "escrowAgorot": 0,
+      "changeDueAgorot": 1260,
+      "changePaidAgorot": 1000,
+      "changeOwedAgorot": 260,
+      "changeOwedAsk": true,
+      "changeOwedAs": "tip",
+      "splitAgorot": 0,
+      "refundDueAgorot": 0,
+      "refundPaidAgorot": 0,
+      "heldAgorot": 0,
+      "heldReason": null,
+      "cancelReason": null,
+      "inserted": [
+        {
+          "valueAgorot": 5000,
+          "kind": "note",
+          "count": 1
+        },
+        {
+          "valueAgorot": 1000,
+          "kind": "coin",
+          "count": 2
+        }
+      ],
+      "paidOut": [
+        {
+          "valueAgorot": 1000,
+          "kind": "coin",
+          "count": 1
+        }
+      ],
+      "accepting": {
+        "coins": [],
+        "notes": []
+      },
+      "exactOnly": false,
+      "deadlineAt": 1791010980000,
+      "idleDeadlineAt": 1791010860000,
+      "message": "תודה!",
+      "error": {
+        "code": "change_short",
+        "message": "עודף חייב 2.6 ₪"
+      },
+      "owedId": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e02",
+      "slipCode": "C-9QXR4T",
+      "acked": true,
+      "documentId": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+      "documentNumber": "457",
+      "createdAt": 1791010800000,
+      "updatedAt": 1791010821000,
+      "seq": 10,
+      "orderRef": "order-1",
+      "orderLabel": "K-57",
+      "clientName": "קיוסק Windows",
+      "deviceSerial": "SIM00001",
+      "doneAt": 1791010820000
+    },
+    {
+      "type": "tx",
+      "id": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e03",
+      "txId": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e03",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "hostId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "clientId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "leaseId": "lease-1",
+      "state": "DONE",
+      "outcome": "paid",
+      "amountAgorot": 8900,
+      "dueAgorot": 4000,
+      "roundingAgorot": 0,
+      "insertedAgorot": 4000,
+      "remainingAgorot": 0,
+      "escrowAgorot": 0,
+      "changeDueAgorot": 0,
+      "changePaidAgorot": 0,
+      "changeOwedAgorot": 0,
+      "changeOwedAsk": false,
+      "changeOwedAs": null,
+      "splitAgorot": 4000,
+      "refundDueAgorot": 0,
+      "refundPaidAgorot": 0,
+      "heldAgorot": 0,
+      "heldReason": null,
+      "cancelReason": null,
+      "inserted": [
+        {
+          "valueAgorot": 2000,
+          "kind": "note",
+          "count": 2
+        }
+      ],
+      "paidOut": [],
+      "accepting": {
+        "coins": [],
+        "notes": []
+      },
+      "exactOnly": false,
+      "deadlineAt": 1791010980000,
+      "idleDeadlineAt": 1791010860000,
+      "message": "תודה!",
+      "error": null,
+      "owedId": null,
+      "slipCode": null,
+      "acked": true,
+      "documentId": "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77",
+      "documentNumber": "457",
+      "createdAt": 1791010800000,
+      "updatedAt": 1791010821000,
+      "seq": 12,
+      "orderRef": "order-1",
+      "orderLabel": "K-57",
+      "clientName": "קיוסק Windows",
+      "deviceSerial": "SIM00001",
+      "doneAt": 1791010820000
+    },
+    {
+      "type": "tx",
+      "id": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e04",
+      "txId": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e04",
+      "stationId": "5a7c0000-0000-4000-8000-0000000000c1",
+      "hostId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "clientId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "leaseId": "lease-1",
+      "state": "HELD",
+      "outcome": "paid",
+      "amountAgorot": 8900,
+      "dueAgorot": 2000,
+      "roundingAgorot": 0,
+      "insertedAgorot": 2000,
+      "remainingAgorot": 0,
+      "escrowAgorot": 0,
+      "changeDueAgorot": 0,
+      "changePaidAgorot": 0,
+      "changeOwedAgorot": 0,
+      "changeOwedAsk": false,
+      "changeOwedAs": null,
+      "splitAgorot": 2000,
+      "refundDueAgorot": 0,
+      "refundPaidAgorot": 0,
+      "heldAgorot": 2000,
+      "heldReason": "split_void",
+      "cancelReason": null,
+      "inserted": [
+        {
+          "valueAgorot": 2000,
+          "kind": "note",
+          "count": 1
+        }
+      ],
+      "paidOut": [],
+      "accepting": {
+        "coins": [],
+        "notes": []
+      },
+      "exactOnly": false,
+      "deadlineAt": 1791010980000,
+      "idleDeadlineAt": 1791010860000,
+      "message": "תקלה — פנה לצוות",
+      "error": {
+        "code": "split_void",
+        "message": "האשראי לא חויב — המזומן שהוכנס מוחזק ללקוח"
+      },
+      "owedId": "6b2d4f10-1a2b-4c3d-8e4f-5a6b7c8d9e04",
+      "slipCode": "C-HV7M3K",
+      "acked": true,
+      "documentId": null,
+      "documentNumber": null,
+      "createdAt": 1791010800000,
+      "updatedAt": 1791010821000,
+      "seq": 14,
+      "orderRef": "order-1",
+      "orderLabel": "K-57",
+      "clientName": "קיוסק Windows",
+      "deviceSerial": "SIM00001",
+      "doneAt": 1791010820000
+    }
+  ]
+}

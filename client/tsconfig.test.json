@@ -375,6 +375,8 @@
     "src/lib/deferredTerminals.ts",
     "src/lib/deferredTerminals.test.ts",
     "src/lib/tillDrawers.ts",
-    "src/lib/tillDrawers.test.ts"
+    "src/lib/tillDrawers.test.ts",
+    "src/lib/cashStations.ts",
+    "src/lib/cashStations.test.ts"
   ]
 }

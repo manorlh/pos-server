@@ -35,7 +35,10 @@ def load(name: str) -> dict:
     return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("name", ["transaction_card_sale_320", "transaction_cancelled_320"])
+@pytest.mark.parametrize("name", [
+    "transaction_card_sale_320", "transaction_cancelled_320", "transaction_cash_device_sale_320",
+    "transaction_cash_split_card_320", "transaction_cash_credit_redeem_320", "transaction_cash_owed_tip_320",
+])
 def test_documents_validate_one_by_one_without_dropping_a_link(name):
     env = TransactionsBatchEnvelope.model_validate(load(name))
     valid, rejected, unidentified = validate_documents(env.transactions)
@@ -67,6 +70,66 @@ def test_the_card_leg_reconciles_and_the_tip_stays_out_of_it():
     meta = tx.payments[0].nayax_meta
     meta = json.loads(meta) if isinstance(meta, str) else meta
     assert meta["uid"]
+
+
+def test_a_sale_paid_at_the_cash_station_is_a_cash_leg_that_keeps_its_cash_device():
+    """
+    "מזומן" at the shop's cash station (P:/specs/cash-paylink.md §11.7): one `cash` leg — reconciled like any —
+    whose `cashDevice` the server keeps in the leg's `nayax_meta` (app/services/transactions.py `_leg_meta`).
+    """
+    from app.services.transactions import _leg_meta
+
+    env = TransactionsBatchEnvelope.model_validate(load("transaction_cash_device_sale_320"))
+    (_, tx, _), = validate_documents(env.transactions)[0]
+    expected = expected_tender_total(
+        total_amount=tx.total_amount,
+        document_discount=tx.document_discount,
+        document_type=tx.document_type,
+        refund_of_transaction_id=tx.refund_of_transaction_id,
+    )
+    assert reconciliation_error(expected, [p.amount for p in tx.payments]) is None
+    assert [p.method for p in tx.payments] == ["cash"] and tx.payment_method == "cash"
+    raw = load("transaction_cash_device_sale_320")["transactions"][0]["payments"][0]["cashDevice"]
+    stored = _leg_meta(tx.payments[0])
+    assert stored["cashDevice"] == {
+        "txId": raw["txId"], "stationId": raw["stationId"], "hostId": raw["hostId"],
+        "receivedAgorot": raw["receivedAgorot"], "changeAgorot": raw["changeAgorot"],
+        "changeOwedAgorot": raw["changeOwedAgorot"], "roundingAgorot": raw["roundingAgorot"], "slipCode": raw["slipCode"],
+    }
+    assert (stored["cashDevice"]["receivedAgorot"] - stored["cashDevice"]["changeAgorot"]) == int(tx.payments[0].amount * 100)
+
+
+@pytest.mark.parametrize("name,methods", [
+    ("transaction_cash_split_card_320", ["cash", "card"]),
+    ("transaction_cash_credit_redeem_320", ["cash_credit", "card"]),
+    ("transaction_cash_owed_tip_320", ["cash"]),
+])
+def test_stage2_legs_reconcile_and_keep_their_blocks(name, methods):
+    """
+    Cash stage 2 (P:/specs/cash-paylink.md §11.15): cash + card (`mixed`, the cash part's `splitAgorot`), a cash credit's
+    `cash_credit` leg (`cashCredit`), change owed left as a cash tip (the tip apart from the legs).
+    """
+    from app.services.transactions import _leg_meta
+
+    env = TransactionsBatchEnvelope.model_validate(load(name))
+    (_, tx, _), = validate_documents(env.transactions)[0]
+    expected = expected_tender_total(
+        total_amount=tx.total_amount,
+        document_discount=tx.document_discount,
+        document_type=tx.document_type,
+        refund_of_transaction_id=tx.refund_of_transaction_id,
+    )
+    assert reconciliation_error(expected, [p.amount for p in tx.payments]) is None
+    assert [p.method for p in tx.payments] == methods
+    metas = [_leg_meta(p) or {} for p in tx.payments]
+    if name == "transaction_cash_split_card_320":
+        assert tx.payment_method == "mixed" and tx.tip_payment_method == "card"
+        assert metas[0]["cashDevice"]["splitAgorot"] == 4000 and int(tx.payments[0].amount * 100) == 4000
+    if name == "transaction_cash_credit_redeem_320":
+        assert metas[0]["cashCredit"] == {"code": "C-K7Q3MX", "redemptionId": "9d3c1f00-5a6b-4c7d-8e9f-0a1b2c3d4e5f"}
+    if name == "transaction_cash_owed_tip_320":
+        assert tx.tip_payment_method == "cash" and str(tx.tip_amount) in ("2.6", "2.60")
+        assert metas[0]["cashDevice"]["changeOwedAs"] == "tip"
 
 
 def test_a_declined_sale_keeps_its_number_and_carries_no_tender():

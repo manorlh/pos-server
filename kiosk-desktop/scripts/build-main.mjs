@@ -1,6 +1,7 @@
 /**
  * Bundles the main process and the preload (esbuild → CommonJS for Electron), and the smoke
- * tool. Only `electron` and `sharp` (native) stay outside the bundle.
+ * tool, and the PayLink utility process (the cash host's vendor DLL, main/cash/paylinkWorker.ts).
+ * Only `electron`, `sharp` and `koffi` (native) stay outside the bundle.
  *
  *   node scripts/build-main.mjs           production build
  *   node scripts/build-main.mjs --dev     with source maps
@@ -17,6 +18,7 @@ const root = path.resolve(here, '..');
 const client = path.resolve(root, '../client/src');
 const dev = process.argv.includes('--dev');
 const smoke = process.argv.includes('--smoke');
+const cashSim = process.argv.includes('--cash-sim');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const common = {
@@ -33,12 +35,16 @@ const common = {
     '@kiosk-shared': path.join(client, 'kiosk-shared'),
   },
   define: { 'process.env.KIOSK_VERSION': JSON.stringify(pkg.version) },
-  external: ['electron', 'sharp'],
+  external: ['electron', 'sharp', 'koffi'],
 };
 
-if (smoke) {
+if (cashSim) {
+  // A cash host with a simulated PayLink, under Node (scripts/cash-sim.ts): a kiosk's cash client tested against the real LAN API.
+  await build({ ...common, entryPoints: [path.join(root, 'scripts/cash-sim.ts')], outfile: path.join(root, 'dist/cash-sim/cash-sim.js'), minify: false, sourcemap: true });
+} else if (smoke) {
   await build({ ...common, entryPoints: [path.join(root, 'scripts/smoke.ts')], outfile: path.join(root, 'dist/smoke/smoke.js'), minify: false, sourcemap: true });
 } else {
   await build({ ...common, entryPoints: [path.join(root, 'src/main/index.ts')], outfile: path.join(root, 'dist/main/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/index.ts')], outfile: path.join(root, 'dist/preload/index.js') });
+  await build({ ...common, entryPoints: [path.join(root, 'src/main/cash/paylinkWorker.ts')], outfile: path.join(root, 'dist/main/paylinkWorker.js') });
 }
