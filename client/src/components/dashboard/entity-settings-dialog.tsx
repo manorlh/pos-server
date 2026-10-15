@@ -159,6 +159,7 @@ export function EntityPosSettingsDialog({
       delete patch.zcreditPassword;
       delete patch.zcreditKey;
     }
+    if (payment.integration.effective !== 'tap_to_pay') delete patch.tapToPayMerchantCode;
     delete patch.tipsEnabled;
     delete patch.cashTipsEnabled;
     // Never sent by someone who may not change it, nor from below the organization —

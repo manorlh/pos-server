@@ -53,6 +53,10 @@ MANAGED_SETTING_KEYS = (
     "synqpayTls",
     "synqpayUsbDevice",
     "synqpaySerialNumber",
+    # Tap to Pay's non-secret fields (P:/specs/tap-to-pay.md); its merchant code is a secret
+    # like the Z-Credit password, added by the till's sync only.
+    "tapToPayTpn",
+    "tapToPayEnvironment",
     # "מכשירי תשלום" (app/services/payment_devices.py): whether a till without built-in
     # clearing works with several devices, and how it picks one (a fixed device, or a group to
     # choose from). The devices themselves (`paymentDevices`), their secrets and the group as
