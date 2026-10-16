@@ -189,10 +189,9 @@ describe('the Windows kiosk pays at a CashMag machine', () => {
     expect(s.calls.map((c) => c.fn)).toEqual([FN.user, FN.start, FN.pay]);
   });
 
-  it('change owed: the kiosk asks — a slip or a tip, never a credit (online too); the slip printed with its code', async () => {
+  it('change owed: the kiosk asks — offline a slip or a tip (no credit); the slip printed with its code', async () => {
     const s = await server({ handlers: { [FN.pay]: (c, conn) => conn.result(c.jobId, c.fn, 0, payResult({ balance: '-2.60', deposits: [['50', 1]], dispensed: [['10', 1, 2]] })) } });
     const k = kiosk({ params: ON(s.port), tipEnabled: true });
-    k.online();
     const r = await k.svc.startPayment(basket());
     const ask = await until(() => k.progress.find((p) => p.cash?.stage === 'owed_choice'));
     expect(ask.cash).toMatchObject({ device: 'cashmag', changeOwedAgorot: 260, owedChoices: ['slip', 'tip'] });
@@ -207,6 +206,25 @@ describe('the Windows kiosk pays at a CashMag machine', () => {
     expect(doc.cash!.slipCode).toMatch(/^C-/);
     const slip = await until(() => k.printed.find((d) => textOf(d).includes('גשו עם הפתק') && textOf(d).includes(doc.cash!.slipCode!)));
     expect(textOf(slip)).toContain('"label":"עמדה","value":"CashMag"');
+  });
+
+  it('change owed online: "זיכוי להזמנה הבאה" — the credit slip with its code and the CC: QR, the leg says credit', async () => {
+    const s = await server({ handlers: { [FN.pay]: (c, conn) => conn.result(c.jobId, c.fn, 0, payResult({ balance: '-2.60', deposits: [['50', 1]], dispensed: [['10', 1, 2]] })) } });
+    const k = kiosk({ params: ON(s.port) });
+    k.online();
+    const r = await k.svc.startPayment(basket());
+    const ask = await until(() => k.progress.find((p) => p.cash?.stage === 'owed_choice'));
+    expect(ask.cash!.owedChoices).toEqual(['slip', 'credit']);
+    await k.svc.cashOwedChoice('credit');
+    await until(() => k.progress.find((p) => p.phase === 'approved'));
+    const doc = k.svc.ledger.doc(k.svc.orders.get((r as { orderId: string }).orderId)!.transactionId!)!;
+    expect(doc.cash).toMatchObject({ hostId: 'cashmag', changeOwedAgorot: 260, changeOwedAs: 'credit' });
+    const wire = documentWire(doc);
+    expect(wire.payments).toEqual([expect.objectContaining({ method: "cash", cashDevice: expect.objectContaining({ hostId: "cashmag", changeOwedAgorot: 260, changeOwedAs: "credit", slipCode: doc.cash!.slipCode }) })]);
+    const slip = await until(() => k.printed.find((d) => textOf(d).includes('הציגו את הפתק בקופה או סרקו אותו בקיוסק')));
+    expect(textOf(slip)).toContain(`"t":"qr","value":"CC:${doc.cash!.slipCode}"`);
+    const receipt = await until(() => k.printed.find((d) => d.kind === 'receipt' && textOf(d).includes('זיכוי להזמנה הבאה') && textOf(d).includes('שולם במזומן')));
+    expect(textOf(receipt)).not.toContain('עודף חייב');
   });
 
   it('"ביטול" while inserting: dialogCancel, the money back, the document voided — no fault', async () => {

@@ -22,6 +22,11 @@ The same routing as the owner set for every cash alert (§9א): the manager (the
 of the station's `cashAlertTills` ('' = the main till) — in the kiosk alerts list they already fetch
 (`GET /sync/{till}/kiosk/alerts`, ids `cash:<row>`, kind `cash`, `alerts_for_till`), woken when one opens;
 "הבנתי" there marks it (`acknowledge`) — it stays open until the unit recovers.
+
+A kiosk paying at a CashMag machine (P:/specs/cashmag-windows.md §8) has no station: its own `cash` alert (`detail.device`
+"cashmag") is a `cash_unit` alert of its CashMag unit ([CashMagUnit], key `cashmag:<kiosk id>`) — the same exception
+kind (the manager's push category `cash`, the problems screen) and the tills of the kiosk's own `cashAlertTills`. A
+kiosk's alert about a PayLink station keeps the station's routing.
 """
 from __future__ import annotations
 
@@ -81,6 +86,8 @@ CODE_LABELS: Dict[str, str] = {
     # A kiosk's own report (kiosk/sync `status.alerts`, kind "cash"): it cannot reach its station on the LAN.
     "unreachable": "הקיוסק לא מגיע לעמדת המזומן",
 }
+#: A CashMag kiosk's own `unreachable` when it sent no words (its server, not a station of ours).
+CASHMAG_UNREACHABLE = "הקיוסק לא מגיע לשרת CashMag"
 SEVERITIES: Dict[str, str] = {
     "offline": "high", "driver_missing": "high", "driver_down": "high", "device_offline": "high",
     "consistency": "high", "jam": "high", "fraud": "high", "stacker_full": "high", "cashbox_removed": "high",
@@ -330,6 +337,55 @@ def reconcile_heartbeat(db: Session, host: POSMachine, report: Dict[str, Any], *
 
 # ── A kiosk's own report ───────────────────────────────────────────────────────
 
+CASHMAG_DEVICE = "cashmag"
+CASHMAG_UNIT_PREFIX = "cashmag:"
+
+
+class CashMagUnit:
+    """
+    A CashMag kiosk's cash unit, as the alerts name a station (no `cash_stations` row): `id` "cashmag:<kiosk id>",
+    the kiosk's shop, "CashMag (<kiosk>)" in every text; its tills — the kiosk's own `cashAlertTills`.
+    """
+
+    is_cashmag = True
+    host_machine_id = None
+    is_active = True
+
+    def __init__(self, kiosk: POSMachine, company_id: Any):
+        self.id = f"{CASHMAG_UNIT_PREFIX}{kiosk.id}"
+        self.kiosk_id = kiosk.id
+        self.tenant_id = kiosk.tenant_id
+        self.company_id = company_id
+        self.shop_id = kiosk.shop_id
+        self.name = "CashMag"
+        self.location = kiosk.name
+
+
+def cashmag_unit(db: Session, kiosk: Optional[POSMachine]) -> Optional[CashMagUnit]:
+    from app.models.shop import Shop
+
+    if kiosk is None or kiosk.shop_id is None:
+        return None
+    shop = db.get(Shop, kiosk.shop_id)
+    return CashMagUnit(kiosk, shop.company_id if shop is not None else None)
+
+
+def _cashmag_unit_of(db: Session, details: Dict[str, Any]) -> Optional[CashMagUnit]:
+    """The unit an alert row names (`cashmag:<kiosk id>`), its kiosk still a device of ours."""
+    from app.services.cash_stations import _uuid
+
+    sid = str(details.get("stationId") or "")
+    if not sid.startswith(CASHMAG_UNIT_PREFIX):
+        return None
+    ident = _uuid(sid[len(CASHMAG_UNIT_PREFIX):])
+    return cashmag_unit(db, db.get(POSMachine, ident)) if ident is not None else None
+
+
+def is_cashmag_alert(alert: Any) -> bool:
+    """A kiosk's `cash` alert about its CashMag server (`detail.device` "cashmag", or a `cashmag:` station id)."""
+    detail = alert.detail if isinstance(getattr(alert, "detail", None), dict) else {}
+    return detail.get("device") == CASHMAG_DEVICE or str(detail.get("stationId") or "").startswith(CASHMAG_UNIT_PREFIX)
+
 
 def _kiosk_station(db: Session, kiosk: POSMachine, detail: Dict[str, Any]) -> Any:
     """The station the kiosk names (an active station of its shop), else the one it resolves to."""
@@ -349,6 +405,17 @@ def open_kiosk_alert(db: Session, kiosk: POSMachine, kiosk_name: str, alert: Any
     cash alert (§9א). One per (station, kiosk) while it lasts. The caller commits.
     """
     detail = alert.detail if isinstance(getattr(alert, "detail", None), dict) else {}
+    if is_cashmag_alert(alert):
+        # A CashMag kiosk: its own unit (no station) — the manager and the kiosk's alert tills.
+        unit = cashmag_unit(db, kiosk)
+        if unit is None:
+            return None
+        message = (getattr(alert, "text", None) or "").strip() or f"{kiosk_name or 'קיוסק'} — {CASHMAG_UNREACHABLE}"
+        return open_alert(
+            db, unit, code=KIOSK_CODE, unit=f"kiosk:{kiosk.id}", message=message, source=SOURCE_KIOSK, now=now, host=kiosk,
+            extra={"kioskMachineId": str(kiosk.id), "kioskName": kiosk_name, "kioskReason": getattr(alert, "reason", None),
+                   "device": CASHMAG_DEVICE, "cashmagServer": detail.get("stationId")},
+        )
     station = _kiosk_station(db, kiosk, detail)
     if station is None:
         return None
@@ -366,8 +433,11 @@ def resolve_kiosk_alerts(db: Session, kiosk: POSMachine, *, now: Optional[dateti
 
     closed = 0
     unit = f"kiosk:{kiosk.id}"
-    for station in stations_of_shop(db, kiosk.shop_id, active_only=False) if kiosk.shop_id is not None else []:
-        for row in rows_of_station(db, station.id):
+    ids = [s.id for s in (stations_of_shop(db, kiosk.shop_id, active_only=False) if kiosk.shop_id is not None else [])]
+    # Its CashMag unit's too.
+    ids.append(f"{CASHMAG_UNIT_PREFIX}{kiosk.id}")
+    for station_id in ids:
+        for row in rows_of_station(db, station_id):
             details = row.details or {}
             if details.get("source") == SOURCE_KIOSK and details.get("unit") == unit:
                 resolve(row, _now(now), "הקיוסק מגיע שוב לעמדת המזומן")
@@ -466,7 +536,16 @@ def alerts_for_till(db: Session, till: POSMachine, *, now: Optional[datetime] = 
     ]
     if not rows:
         return []  # nothing open: which tills they would go to is not worked out
-    stations = {str(s.id): s for s in stations_alerting(db, till)}
+    from app.services.cash_stations import alert_tills
+
+    stations: Dict[str, Any] = {str(s.id): s for s in stations_alerting(db, till)}
+    # CashMag kiosks' units: those whose kiosk names this till in its `cashAlertTills` (or whose main till it is).
+    for r in rows:
+        sid = (r.details or {}).get("stationId")
+        if isinstance(sid, str) and sid.startswith(CASHMAG_UNIT_PREFIX) and sid not in stations:
+            unit = _cashmag_unit_of(db, r.details or {})
+            if unit is not None and till.id in {m.id for m in alert_tills(db, unit)}:
+                stations[sid] = unit
     return [alert_out(r, stations[(r.details or {}).get("stationId")]) for r in rows
             if (r.details or {}).get("stationId") in stations]
 
@@ -481,7 +560,9 @@ def acknowledge(db: Session, till: POSMachine, alert_id: str, *, pos_user_name: 
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert_not_found")
     row = db.get(AuditException, rid)
-    station = get_station(db, (row.details or {}).get("stationId")) if row is not None else None
+    station = None
+    if row is not None:
+        station = _cashmag_unit_of(db, row.details or {}) or get_station(db, (row.details or {}).get("stationId"))
     if row is None or row.exception_type != EXCEPTION_TYPE or station is None or station.shop_id != till.shop_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert_not_found")
     if till.id not in {m.id for m in alert_tills(db, station)}:

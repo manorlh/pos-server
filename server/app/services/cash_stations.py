@@ -33,6 +33,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
@@ -861,7 +862,13 @@ def default_alert_till(db: Session, shop_id: Any) -> Optional[POSMachine]:
 
 
 def alert_tills(db: Session, station: CashStation, settings: Optional[Dict[str, Any]] = None) -> List[POSMachine]:
-    """The tills of `cashAlertTills` for this station (active tills of its shop); none valid — the main till."""
+    """
+    The tills of `cashAlertTills` for this station (active tills of its shop); none valid — the main till. A CashMag
+    kiosk's unit (cash_alerts.CashMagUnit — no station): the kiosk's own resolved `cashAlertTills`.
+    """
+    if settings is None and getattr(station, "is_cashmag", False):
+        kiosk = db.get(POSMachine, station.kiosk_id)
+        settings = CP.typed(machine_params(db, kiosk)) if kiosk is not None else {}
     settings = settings if settings is not None else station_settings(db, station)
     wanted = [_uuid(x) for x in settings.get(CP.ALERT_TILLS_KEY) or []]
     wanted = [w for w in wanted if w is not None]
@@ -1123,12 +1130,95 @@ def confirm_credit_legs(db: Session, transaction_ids: Sequence[Any], *, now: Opt
     return confirmed
 
 
+# ── CashMag credits (P:/specs/cashmag-windows.md §6) ─────────────────────────────
+
+#: `cashDevice.hostId` of a CashMag leg, and `cash_station_txs.device` of the credits made from one.
+CASHMAG_DEVICE = "cashmag"
+CASHMAG_NAME = "CashMag"
+
+
+def _leg_agorot(leg: Any) -> int:
+    """A document leg's amount (shekels, Decimal) in agorot."""
+    try:
+        return max(0, int((Decimal(str(leg.amount)) * 100).to_integral_value()))
+    except Exception:  # noqa: BLE001 - an unreadable amount: none
+        return 0
+
+
+def cashmag_credits_from_documents(db: Session, transaction_ids: Sequence[Any], *, now: Optional[datetime] = None) -> int:
+    """
+    Documents just stored: a CashMag kiosk's cash leg whose change owed the customer kept as a credit (`cashDevice`
+    with `hostId` "cashmag", `changeOwedAs` "credit", `changeOwedAgorot` > 0, its slip code) becomes the credit — a
+    `change_credit` owed item with no station (`device` "cashmag"), redeemed by its code like a station's (any shop of
+    the company, in parts, released when the order is not paid), never at the tills' "שולם ללקוח". Once per
+    transaction id (the same document again, or another with the same leg: nothing new). Returns how many were made.
+    The caller commits.
+    """
+    from app.models.transaction import Transaction, TransactionStatus
+    from app.models.transaction_payment import TransactionPayment
+
+    ids = [i for i in transaction_ids if i is not None]
+    if not ids:
+        return 0
+    now = _now(now)
+    made = 0
+    rows = (
+        db.query(TransactionPayment, Transaction)
+        .join(Transaction, Transaction.id == TransactionPayment.transaction_id)
+        .filter(TransactionPayment.transaction_id.in_(ids), TransactionPayment.method == "cash")
+        .all()
+    )
+    for leg, doc in rows:
+        block = cash_device_of(leg)
+        if not block or block.get("hostId") != CASHMAG_DEVICE or block.get("changeOwedAs") != "credit":
+            continue
+        tx_id = _uuid(block.get("txId"))
+        owed = _int(block.get("changeOwedAgorot"), 0, AGOROT_MAX)
+        code = credit_code_of(block.get("slipCode"))
+        status_value = getattr(doc.status, "value", doc.status)
+        if tx_id is None or owed < 1 or code is None or doc.shop_id is None or status_value != TransactionStatus.COMPLETED.value:
+            continue
+        existing = db.get(CashStationTx, tx_id)
+        if existing is not None:
+            if existing.device == CASHMAG_DEVICE:
+                existing.document_id = existing.document_id or str(doc.id)
+                existing.document_number = existing.document_number or doc.transaction_number
+            continue
+        row = CashStationTx(
+            tx_id=tx_id, tenant_id=doc.tenant_id or getattr(db.get(POSMachine, doc.machine_id), "tenant_id", None),
+            station_id=None, host_machine_id=None, client_machine_id=doc.machine_id, shop_id=doc.shop_id,
+            device=CASHMAG_DEVICE, state="DONE", outcome="paid",
+            amount_agorot=_leg_agorot(leg), due_agorot=_leg_agorot(leg) + _int(block.get("roundingAgorot"), -99, 99),
+            rounding_agorot=_int(block.get("roundingAgorot"), -99, 99),
+            inserted_agorot=_int(block.get("receivedAgorot"), 0, AGOROT_MAX),
+            change_due_agorot=_int(block.get("changeAgorot"), 0, AGOROT_MAX) + owed,
+            change_paid_agorot=_int(block.get("changeAgorot"), 0, AGOROT_MAX), change_owed_agorot=owed,
+            change_owed_ask=True, change_owed_as="credit", slip_code=code,
+            document_id=str(doc.id), document_number=doc.transaction_number, acked=True, seq=0,
+            data={"cashDevice": block, "stationId": block.get("stationId")},
+            created_at=now, done_at=now, received_at=now,
+            owed_status="open", owed_kind="change_credit", owed_agorot=owed, owed_at=now,
+        )
+        if row.tenant_id is None:
+            continue
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+            made += 1
+        except IntegrityError:
+            continue
+    db.flush()
+    return made
+
+
 def match_documents_safely(db: Session, transaction_ids: Sequence[Any]) -> None:
     """`match_documents` after a push committed; never fails it (a later journal entry finds it again)."""
     try:
         if not ids_with_cash(db, transaction_ids):
             return
         match_documents(db, transaction_ids)
+        cashmag_credits_from_documents(db, transaction_ids)
         confirm_credit_legs(db, transaction_ids)
         db.commit()
     except Exception:  # noqa: BLE001
@@ -1221,8 +1311,11 @@ def _company_of_shop(db: Session, shop_id: Any) -> Any:
     return shop.company_id if shop is not None else None
 
 
-def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStationTx, CashStation]:
-    """The credit [code] for a till / kiosk of the same company as its station; 404 `credit_not_found` otherwise."""
+def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStationTx, Optional[CashStation]]:
+    """
+    The credit [code] for a till / kiosk of the same company as its station (a CashMag credit, no station: as its
+    shop); 404 `credit_not_found` otherwise.
+    """
     norm = credit_code_of(code)
     row = None
     if norm is not None:
@@ -1233,10 +1326,10 @@ def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStation
             .order_by(CashStationTx.owed_at.desc())
             .first()
         )
-    station = db.get(CashStation, row.station_id) if row is not None else None
-    if row is None or station is None:
+    station = db.get(CashStation, row.station_id) if row is not None and row.station_id is not None else None
+    if row is None or (station is None and row.device != CASHMAG_DEVICE):
         raise _refuse(status.HTTP_404_NOT_FOUND, "credit_not_found", "הזיכוי לא נמצא.")
-    company = station.company_id or _company_of_shop(db, station.shop_id)
+    company = (station.company_id or _company_of_shop(db, station.shop_id)) if station is not None else _company_of_shop(db, row.shop_id)
     if company is not None and _company_of_shop(db, machine.shop_id) != company:
         raise _refuse(status.HTTP_404_NOT_FOUND, "credit_not_found", "הזיכוי לא נמצא.")
     return row, station
@@ -1264,7 +1357,7 @@ def credit_out(db: Session, tx: CashStationTx, station: Optional[CashStation]) -
         "amountAgorot": int(tx.owed_agorot or 0),
         "remainingAgorot": remaining,
         "status": state,
-        "stationName": station.name if station is not None else None,
+        "stationName": station.name if station is not None else (CASHMAG_NAME if tx.device == CASHMAG_DEVICE else None),
         "orderLabel": tx.order_label,
         "createdAt": _iso(tx.owed_at or tx.created_at),
     }
@@ -1347,7 +1440,7 @@ def release_redemption(db: Session, machine: POSMachine, redemption_id: Any, *, 
     if row is None or row.tenant_id != machine.tenant_id:
         raise _refuse(status.HTTP_404_NOT_FOUND, "redemption_not_found", "המימוש לא נמצא.")
     tx = db.get(CashStationTx, row.tx_id)
-    station = db.get(CashStation, row.station_id)
+    station = db.get(CashStation, row.station_id) if row.station_id is not None else None
     if row.status == "confirmed":
         raise _refuse(status.HTTP_409_CONFLICT, "confirmed", "הזיכוי כבר נרשם במסמך.")
     if row.status != "released":

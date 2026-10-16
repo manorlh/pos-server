@@ -1659,11 +1659,10 @@ export class KioskService extends EventEmitter {
   }
 
   /** "חסר עודף במכשיר" (§11.15א): what the customer may choose — a slip always, a credit online, a tip where tips are on. */
-  private owedChoices(tx?: TxView): OwedChoice[] {
-    // CashMag (P:/specs/cashmag-windows.md §6): no credit yet — the cloud makes credits from a cash station's journal
-    // only, so a CashMag credit's code could not be redeemed. A slip, or a tip.
-    const cashmag = tx?.hostId === CASHMAG_HOST_ID;
-    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && !cashmag && this.cloudOnline()) || (c === 'tip' && this.config().payment.tipEnabled === true));
+  private owedChoices(): OwedChoice[] {
+    // A credit online only: the cloud keeps it — from the station's journal, or (CashMag, P:/specs/cashmag-windows.md §6)
+    // from this document's cash leg (`changeOwedAs` "credit") once it reaches the cloud.
+    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && this.cloudOnline()) || (c === 'tip' && this.config().payment.tipEnabled === true));
   }
 
   /** The cash settings of the device paying now: CashMag reads the till parameters themselves (`cashOwedChoiceSec`, `cashReceiptLines`). */
@@ -1688,7 +1687,7 @@ export class KioskService extends EventEmitter {
 
   /** The pay screen asks what to do with the change owed; a slip when nobody chooses in `cashOwedChoiceSec`. */
   private askOwedChoice(orderId: string, tx: TxView, amount: number): Promise<OwedChoice> {
-    const choices = this.owedChoices(tx);
+    const choices = this.owedChoices();
     const cur = this.payProgress;
     if (choices.length < 2 || !cur || cur.orderId !== orderId) return Promise.resolve('slip');
     const ms = this.cashSettings().owedChoiceSec * 1000;
