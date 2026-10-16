@@ -397,7 +397,7 @@ describe('the owner’s gate closes — back home as soon as nothing is open', (
 describe('"סוג רישיון" — the work mode only for kiosk_till, whatever the gate parameter says', () => {
   it('"קיוסק בלבד" with the gate on: nothing offered, the switch refused by the license (named)', async () => {
     const { rt, w } = world({ gate: true, license: 'kiosk' });
-    expect(rt.params()).toEqual({ enabled: false, idleReturnMinutes: 3, licenseProduct: 'kiosk' });
+    expect(rt.params()).toEqual({ enabled: false, idleReturnMinutes: 3, startMode: 'last', licenseProduct: 'kiosk' });
     expect(rt.offered()).toEqual({ toTill: false, toKiosk: false });
     expect(code(rt.mayEnter())).toBe('license');
     const refused = await rt.enterTill('מנהל', 'm', 'manual');
