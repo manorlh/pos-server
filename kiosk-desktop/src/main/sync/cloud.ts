@@ -196,6 +196,11 @@ export class CloudStore {
     return this.read<Record<string, unknown>>(K.params) ?? {};
   }
 
+  /** The till parameters were pulled for this pairing (an unpairing forgets them): their word, not the defaults. */
+  parametersKnown(): boolean {
+    return this.read<Record<string, unknown>>(K.params) !== null;
+  }
+
   parametersEtag(): string | null {
     return this.kv.get(K.paramsEtag);
   }

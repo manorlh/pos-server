@@ -610,9 +610,15 @@ def post_kiosk_command(
 
 
 class TillModeGateIn(BaseModel):
-    """`kioskTillModeEnabled` at the kiosk's own level: on, off, or null — back to what it inherits."""
+    """
+    `kioskTillModeEnabled` at the kiosk's own level: on, off, or null — back to what it inherits; and
+    `startMode` ("מצב עבודה בהפעלה", `kioskTillModeStartMode`): last / home / kiosk / till, or null — back
+    to what it inherits. A body that names only `startMode` leaves the gate as it is (an older dashboard
+    sends `enabled` alone, and an empty body clears the gate as before).
+    """
 
     enabled: Optional[bool] = None
+    startMode: Optional[str] = None
 
 
 @router.put("/{machine_id}/till-mode")
@@ -624,14 +630,19 @@ def put_kiosk_till_mode_gate(
     db: Session = Depends(get_db),
 ):
     """
-    "קיוסק — מצב קופה" for this kiosk (app/services/kiosk_till_mode.py): the owner's gate, a super
-    admin or a distributor only (403 `till_parameter_admin_only`). Recorded in the parameters' log;
-    the kiosk hears it on its next parameters pull (notified at once).
+    "קיוסק — מצב קופה" for this kiosk (app/services/kiosk_till_mode.py): the owner's gate and the mode
+    the device starts in ("מצב עבודה בהפעלה"), a super admin or a distributor only (403
+    `till_parameter_admin_only`; 422 for an unknown start mode). Recorded in the parameters' log; the
+    kiosk hears it on its next parameters pull (notified at once).
     """
     from app.services import kiosk_till_mode
 
     machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
-    kiosk_till_mode.set_gate(db, machine, body.enabled, current_user)
+    named = body.model_fields_set
+    if "enabled" in named or "startMode" not in named:
+        kiosk_till_mode.set_gate(db, machine, body.enabled, current_user)
+    if "startMode" in named:
+        kiosk_till_mode.set_start_mode(db, machine, body.startMode, current_user)
     db.commit()
     svc.notify_device_lock(machine)
     return svc.summary(db, device)

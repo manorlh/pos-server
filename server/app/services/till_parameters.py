@@ -1966,7 +1966,7 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 
 
 # "מצב עבודה: קיוסק / קופה" and "כיוון מסך" (app/services/kiosk_till_mode.py): the owner's gate (admin
-# only), the idle return, the manager's code, the kiosk's orientation lock.
+# only), the idle return, the kiosk's orientation lock, the mode a device starts in (admin only).
 from app.services.kiosk_till_mode import PARAMETER_SPECS as _KIOSK_TILL_MODE_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KIOSK_TILL_MODE_SPECS)
@@ -2521,7 +2521,7 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         except till_menu.MenuKeysError as exc:
             raise TillParameterValueError(str(exc)) from exc
 
-    if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY):
+    if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY, kiosk_till_mode.START_MODE_KEY):
         try:
             return kiosk_till_mode.clean_value(key, value)
         except ValueError as exc:

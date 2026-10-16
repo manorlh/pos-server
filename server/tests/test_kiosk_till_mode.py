@@ -6,6 +6,9 @@ app/services/kiosk_till_mode.py).
   values checked (minutes 0–240, the three orientations).
 * The owner's gate `kioskTillModeEnabled`: a super admin or a distributor only — on the parameters
   page's routes and on the kiosk's own switch (`PUT /kiosks/{id}/till-mode`), recorded.
+* "מצב עבודה בהפעלה" `kioskTillModeStartMode` (last / home / kiosk / till, default last): admin only as the
+  gate, set beside it on the same route (a body with `startMode` alone leaves the gate), in the summary;
+  the shared golden `work_mode_start_golden.json` pinned (the same bytes in kiosk-desktop and pos-android).
 * The dashboard's switch (`enter_till` / `return_kiosk`): refused while the gate is closed, handed to the kiosk on
   kiosk/sync (the latest only; an older one superseded, a day-old one expired), done by the kiosk's
   `commandsDone`; the same sections as a pause.
@@ -42,6 +45,8 @@ from app.services import till_parameters as TP
 from test_kiosks import _user, convert, dashboard_command, out_of, put, sync, till_command, w  # noqa: F401 - the fixture
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+#: SHA-256 of work_mode_start_golden.json (LF bytes) — the same pinned in kiosk-desktop and pos-android.
+WORK_MODE_START_GOLDEN_SHA256 = "7a52267775df6450c8ab77d9ad520120fb4cd5e25ee7757768b5703f3dcea258"
 
 
 def _param(w, key):
@@ -74,8 +79,14 @@ def test_the_parameters_are_built_in_with_safe_defaults():
     assert by_key[KTM.ORIENTATION_KEY].value_type == "enum"
     assert by_key[KTM.ORIENTATION_KEY].enum_options == ("auto", "portrait", "landscape")
     assert by_key[KTM.ORIENTATION_KEY].default_value == "auto"
-    # Only the owner's gate is admin only.
-    assert TP.ADMIN_ONLY_KEYS == frozenset({KTM.ENABLED_KEY})
+    # "מצב עבודה בהפעלה": an enum, `last` (as before) by default, set beside the gate by the same people.
+    start = by_key[KTM.START_MODE_KEY]
+    assert start.value_type == "enum" and start.enum_options == ("last", "home", "kiosk", "till")
+    assert start.default_value == "last" and start.admin_only is True
+    assert TP.enum_labels(KTM.START_MODE_KEY) == KTM.START_MODE_LABELS
+    assert "מצב עבודה בהפעלה" in start.label
+    # Only the owner's gate and the start mode are admin only.
+    assert TP.ADMIN_ONLY_KEYS == frozenset({KTM.ENABLED_KEY, KTM.START_MODE_KEY})
     # No "screen size" parameter: the device works it out (§1).
     assert not any("screensize" in k.lower() or "screen_size" in k.lower() for k in by_key)
 
@@ -89,15 +100,23 @@ def test_values_beyond_their_type():
     assert TP.validate_keyed_value(KTM.ORIENTATION_KEY, "landscape") == "landscape"
     with pytest.raises(TP.TillParameterValueError):
         TP.validate_keyed_value(KTM.ORIENTATION_KEY, "sideways")
+    for mode in ("last", "home", "kiosk", "till"):
+        assert TP.validate_keyed_value(KTM.START_MODE_KEY, mode) == mode
+    for bad in ("first", "KIOSK", "", 1, True):
+        with pytest.raises(TP.TillParameterValueError):
+            TP.validate_keyed_value(KTM.START_MODE_KEY, bad)
 
 
 def test_the_layers_company_shop_area_device(w):
     convert(w)
-    assert KTM.effective(w.db, w.kiosk) == {"enabled": False, "idleReturnMinutes": 3, "orientation": "auto"}
+    assert KTM.effective(w.db, w.kiosk) == {"enabled": False, "idleReturnMinutes": 3, "orientation": "auto", "startMode": "last"}
     _enable(w, scope="company")
     _set(w, KTM.IDLE_KEY, "shop", w.shop.id, 3)
     _set(w, KTM.ORIENTATION_KEY, "machine", w.kiosk.id, "landscape")
-    assert KTM.effective(w.db, w.kiosk) == {"enabled": True, "idleReturnMinutes": 3, "orientation": "landscape"}
+    _set(w, KTM.START_MODE_KEY, "shop", w.shop.id, "home")
+    assert KTM.effective(w.db, w.kiosk) == {"enabled": True, "idleReturnMinutes": 3, "orientation": "landscape", "startMode": "home"}
+    _set(w, KTM.START_MODE_KEY, "machine", w.kiosk.id, "till")
+    assert KTM.effective(w.db, w.kiosk)["startMode"] == "till"
     _set(w, KTM.IDLE_KEY, "machine", w.kiosk.id, 0)
     assert KTM.effective(w.db, w.kiosk)["idleReturnMinutes"] == 0
     # The device's own level wins over the company's.
@@ -106,6 +125,13 @@ def test_the_layers_company_shop_area_device(w):
     # The till receives them on its parameters pull like any other.
     resolved = TP.till_parameters_for_machine(w.db, w.kiosk).parameters
     assert resolved[KTM.ORIENTATION_KEY] == "landscape" and resolved[KTM.IDLE_KEY] == 0
+    assert resolved[KTM.START_MODE_KEY] == "till"
+
+
+def test_a_stored_start_mode_no_longer_known_reads_as_last():
+    assert KTM.settings_for({KTM.START_MODE_KEY: "first"})["startMode"] == "last"
+    assert KTM.settings_for({})["startMode"] == "last"
+    assert KTM.settings_for({KTM.START_MODE_KEY: "kiosk"})["startMode"] == "kiosk"
 
 
 # ── The owner's gate: a super admin or a distributor only ───────────────────
@@ -145,6 +171,74 @@ def test_the_kiosk_page_switch_over_the_route(w, monkeypatch):
     assert caught.value.status_code == 403
 
 
+def test_the_start_mode_is_a_super_admins_or_a_distributors_beside_the_gate(w):
+    convert(w)
+    distributor = _user(w, "dist3", UserRole.DISTRIBUTOR)
+    for user in (w.manager, w.company_manager, w.supervisor, w.cashier):
+        with pytest.raises(HTTPException) as caught:
+            KTM.set_start_mode(w.db, w.kiosk, "kiosk", user)
+        assert caught.value.status_code == 403 and caught.value.detail == KTM.ADMIN_ONLY_DETAIL
+    with pytest.raises(HTTPException) as caught:
+        KTM.set_start_mode(w.db, w.kiosk, "sideways", w.admin)
+    assert caught.value.status_code == 422
+    assert KTM.set_start_mode(w.db, w.kiosk, "home", distributor)["startMode"] == "home"
+    assert KTM.set_start_mode(w.db, w.kiosk, "till", w.admin)["startMode"] == "till"
+    # Null: back to what it inherits (nothing above → last).
+    assert KTM.set_start_mode(w.db, w.kiosk, None, w.admin)["startMode"] == "last"
+    log = w.db.query(TillParameterChange).filter(TillParameterChange.parameter_key == KTM.START_MODE_KEY).all()
+    assert [(c.action, c.user_role) for c in log] == [("set", "distributor"), ("set", "super_admin"), ("clear", "super_admin")]
+    # The gate is left as it was.
+    assert w.db.query(TillParameterChange).filter(TillParameterChange.parameter_key == KTM.ENABLED_KEY).count() == 0
+
+
+def test_the_kiosk_page_sets_the_start_mode_over_the_route(w, monkeypatch):
+    convert(w)
+    monkeypatch.setattr(S, "notify_device_lock", lambda m: None)
+
+    def put(body, user=None):
+        return R.put_kiosk_till_mode_gate(
+            machine_id=w.kiosk.id, body=body, current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+
+    out = put(R.TillModeGateIn(enabled=True))
+    assert out["tillMode"]["enabled"] is True and out["tillMode"]["startMode"] == "last"
+    # The start mode alone: the gate stays on.
+    out = put(R.TillModeGateIn.model_validate({"startMode": "kiosk"}))
+    assert out["tillMode"]["enabled"] is True and out["tillMode"]["startMode"] == "kiosk"
+    # Both in one body.
+    out = put(R.TillModeGateIn.model_validate({"enabled": False, "startMode": "home"}))
+    assert out["tillMode"]["enabled"] is False and out["tillMode"]["startMode"] == "home"
+    # An older dashboard's body (the gate alone) leaves the start mode.
+    out = put(R.TillModeGateIn(enabled=True))
+    assert out["tillMode"]["startMode"] == "home"
+    # Null start mode: back to what it inherits.
+    out = put(R.TillModeGateIn.model_validate({"startMode": None}))
+    assert out["tillMode"]["enabled"] is True and out["tillMode"]["startMode"] == "last"
+    with pytest.raises(HTTPException) as caught:
+        put(R.TillModeGateIn.model_validate({"startMode": "first"}))
+    assert caught.value.status_code == 422
+    with pytest.raises(HTTPException) as caught:
+        put(R.TillModeGateIn.model_validate({"startMode": "till"}), user=w.manager)
+    assert caught.value.status_code == 403
+
+
+def test_the_start_mode_golden_is_pinned_and_speaks_the_cloud_s_options():
+    import json
+
+    raw = (FIXTURES / "kiosk_desktop" / "work_mode_start_golden.json").read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(raw).hexdigest() == WORK_MODE_START_GOLDEN_SHA256
+    golden = json.loads(raw.decode("utf-8"))
+    assert golden["parameter"] == KTM.START_MODE_KEY
+    assert tuple(golden["options"]) == KTM.START_MODES and golden["default"] == KTM.DEFAULT_START_MODE
+    # Every case names a mode the cloud offers, and a refusal the cloud can word (BLOCKED_TEXTS).
+    for case in golden["cases"]:
+        assert case["startMode"] in KTM.START_MODES, case["name"]
+        blocked = case["step"].get("blocked")
+        assert blocked is None or blocked in KTM.BLOCKED_TEXTS, case["name"]
+    for row in golden["parse"]:
+        assert row["mode"] in KTM.START_MODES
+
+
 def test_the_parameters_page_refuses_the_gate_to_anyone_but_an_admin(w):
     p = _param(w, KTM.ENABLED_KEY)
     body = TillParameterValueIn(scopeType="company", scopeId=w.company.id, value=True)
@@ -154,6 +248,12 @@ def test_the_parameters_page_refuses_the_gate_to_anyone_but_an_admin(w):
     assert caught.value.status_code == 403 and caught.value.detail == KTM.ADMIN_ONLY_DETAIL
     TPR._refuse_restricted(p.key, _user(w, "dist2", UserRole.DISTRIBUTOR))
     TPR._refuse_restricted(p.key, w.admin)
+    # "מצב עבודה בהפעלה" likewise: set beside the gate, by the same people.
+    with pytest.raises(HTTPException) as caught:
+        TPR._refuse_restricted(KTM.START_MODE_KEY, w.company_manager)
+    assert caught.value.status_code == 403 and caught.value.detail == KTM.ADMIN_ONLY_DETAIL
+    TPR._refuse_restricted(KTM.START_MODE_KEY, w.admin)
+    assert TPR._out(_param(w, KTM.START_MODE_KEY), 0).admin_only is True
     # Any other key: as before.
     TPR._refuse_restricted(KTM.IDLE_KEY, w.company_manager)
     out = TPR._out(p, 0)
@@ -229,6 +329,7 @@ def test_till_mode_in_the_status_the_summary_and_the_health(w):
     assert summary["flowState"] == "till_mode"
     till = summary["tillMode"]
     assert till["enabled"] is True and till["mode"] == "till" and till["employee"] == "דנה"
+    assert till["startMode"] == "last"
     assert till["blocked"] == "basket_open" and till["blockedText"] == KTM.BLOCKED_TEXTS["basket_open"]
     assert summary["display"]["widthDp"] == 1488
     part = kiosk_health.app_part(summary, {}, True, datetime.now(timezone.utc))
@@ -252,6 +353,13 @@ def test_the_till_event_is_accepted():
     e = TillEventIn(id=uuid.uuid4(), type="kiosk_till_mode", occurredAt=datetime.now(timezone.utc),
                     details={"action": "enter", "reason": "manual", "by": "מנהל"})
     assert e.type == "kiosk_till_mode"
+    # "מצב עבודה בהפעלה": a switch made by the start mode says `reason: start`; the status `source: start`.
+    s = TillEventIn(id=uuid.uuid4(), type="kiosk_till_mode", occurredAt=datetime.now(timezone.utc),
+                    details={"action": "exit", "mode": "kiosk", "reason": "start", "by": None})
+    assert s.details["reason"] == "start"
+    assert KTM.clean_till_mode({"since": "2026-10-16T06:00:00.000Z", "source": "start"}) == {
+        "since": "2026-10-16T06:00:00.000Z", "source": "start",
+    }
 
 
 # ── A controlling till's quick reprints ─────────────────────────────────────

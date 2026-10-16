@@ -1706,6 +1706,7 @@ server). X / Z ושוברי פריט כבר נושאים סניף וקופה.
   - במכשיר — תמיד קוד מנהל עם `KIOSK_TILL_MODE`.
   - מהדשבורד — `enter_till` / `return_kiosk`, לא חוסם.
   - המצב נשמר אחרי הפעלה מחדש.
+  - "מצב עבודה בהפעלה" (16.10): `kioskTillModeStartMode` = `last` (ברירת מחדל — כמו היום) / `home` / `kiosk` / `till` — מנהל-על או מפיץ, כמו השער. חל בהפעלה ובצימוד מחדש, רק כשהשער פתוח, לעולם לא באמצע מכירה (אז ברגע הפנוי הבא). קובץ זהב משותף `work_mode_start_golden.json` (P:\specs\kiosk-landscape-till-mode.md §5.14).
   - מכירות מושהות לא חוסמות.
   - `flowState: till_mode` + `tillMode` + `display` ב-`kiosk/sync`.
   - חזרה אוטומטית: `kioskTillModeIdleReturnMinutes` (3).
