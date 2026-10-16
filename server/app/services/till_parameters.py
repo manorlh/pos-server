@@ -2487,6 +2487,13 @@ from app.services.deferred_control import PARAMETER_SPECS as _DEFERRED_CONTROL_S
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _DEFERRED_CONTROL_SPECS)
 
+# "גודל תצוגה" (P:/specs/display-scale.md, app/services/display_scale.py): `displayScale` — auto (the default, as
+# today) or a percent 70–150 of the size each till / kiosk computes for its screen. Read by the devices only (Android
+# `param.displayScale`, Windows `GET /sync/{m}/parameters`); a device's own local choice wins over every level.
+from app.services.display_scale import PARAMETER_SPECS as _DISPLAY_SCALE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _DISPLAY_SCALE_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
