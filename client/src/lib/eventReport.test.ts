@@ -11,6 +11,7 @@ import {
   countByLevel,
   cumulative,
   durationText,
+  eventPdfReconcile,
   formDurationMinutes,
   rebucket,
   sortInsights,
@@ -150,5 +151,62 @@ describe('compareIds', () => {
     assert.equal(compareIds(['a']), null);
     assert.equal(compareIds(['a', 'a']), null);
     assert.equal(compareIds(['a', 'b']), 'a,b');
+  });
+});
+
+describe('eventPdfReconcile (the designed PDF, §9)', () => {
+  const till = (eventNet: number, inZ: number, pending: number) => ({
+    machineId: 'm',
+    name: 'קופה',
+    eventNet,
+    inZ: { count: 1, net: inZ },
+    pendingZ: { count: pending ? 1 : 0, net: pending },
+    zLabels: [],
+  });
+  const tx = (card: number, sent: number) => ({
+    machineId: 'm',
+    name: 'קופה',
+    trackingStartedAt: null,
+    cardLegs: { count: 1, amount: card },
+    transmitted: { count: 1, amount: sent },
+    untransmitted: { count: 0, amount: 0, oldestAt: null },
+    untracked: { count: 0, amount: 0 },
+    batches: [],
+    tillPending: { count: null, amount: null, reportedAt: null },
+  });
+  const words = {
+    title: 'התאמה',
+    note: 'הסבר',
+    docs: 'עסקאות',
+    docsSub: (n: number) => `${n} עסקאות`,
+    inZ: 'ב-Z',
+    inZSub: (zs: number, p: number) => `${zs} · ${p}`,
+    card: 'אשראי',
+    cardSub: (a: number) => `מתוך ${a}`,
+    docsVsZ: 'עסקאות מול Z',
+    cardVsTx: 'אשראי מול שידורים',
+    status: (s: string) => `[${s}]`,
+  };
+  it('the three layers summed in agorot, and the server’s two verdicts', () => {
+    const r = eventPdfReconcile(
+      {
+        z: { status: 'pending', zReports: [{} as never, {} as never], rows: [], tills: [till(100.1, 60.1, 40), till(0.2, 0.2, 0)] },
+        transmissions: { status: 'match', tills: [tx(70.1, 70.1), tx(0.2, 0.2)] },
+      },
+      12,
+      words,
+    );
+    assert.deepEqual(
+      r.cards.map((c) => [c.label, c.value, c.sub]),
+      [
+        ['עסקאות', 100.3, '12 עסקאות'],
+        ['ב-Z', 60.3, '2 · 40'],
+        ['אשראי', 70.3, 'מתוך 70.3'],
+      ],
+    );
+    assert.deepEqual(r.checks, [
+      { label: 'עסקאות מול Z', status: 'pending', text: '[pending]' },
+      { label: 'אשראי מול שידורים', status: 'match', text: '[match]' },
+    ]);
   });
 });

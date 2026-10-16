@@ -84,6 +84,60 @@ function icon(size, textWidth) {
   ]);
 }
 
+/**
+ * The notification badge (public/sw.js `BADGE`): Android draws it in the status bar as a white
+ * mask of its alpha, so a full-colour square icon becomes a white square — this is a white bell
+ * on a transparent background (RGBA).
+ */
+const BELL = [
+  '000001100000',
+  '000011110000',
+  '000111111000',
+  '001111111100',
+  '001111111100',
+  '001111111100',
+  '001111111100',
+  '011111111110',
+  '111111111111',
+  '000000000000',
+  '000011110000',
+  '000001100000',
+];
+
+function badge(size) {
+  const scale = Math.floor((size * 0.75) / BELL.length);
+  const x0 = Math.floor((size - BELL[0].length * scale) / 2);
+  const y0 = Math.floor((size - BELL.length * scale) / 2);
+  const lit = (x, y) => {
+    const col = Math.floor((x - x0) / scale);
+    const row = Math.floor((y - y0) / scale);
+    return row >= 0 && col >= 0 && row < BELL.length && col < BELL[0].length && BELL[row][col] === '1';
+  };
+  const raw = Buffer.alloc(size * (size * 4 + 1));
+  let i = 0;
+  for (let y = 0; y < size; y++) {
+    raw[i++] = 0;
+    for (let x = 0; x < size; x++) {
+      const on = lit(x, y);
+      raw[i++] = 0xff;
+      raw[i++] = 0xff;
+      raw[i++] = 0xff;
+      raw[i++] = on ? 0xff : 0x00;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // truecolour with alpha
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
 const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'icons');
 mkdirSync(out, { recursive: true });
 // A maskable icon is cropped to as little as a centred circle of 80%: its text is kept
@@ -94,6 +148,7 @@ const files = {
   'maskable-192.png': icon(192, 0.5),
   'maskable-512.png': icon(512, 0.5),
   'apple-touch-icon.png': icon(180, 0.6),
+  'badge-96.png': badge(96),
 };
 for (const [name, png] of Object.entries(files)) {
   writeFileSync(join(out, name), png);

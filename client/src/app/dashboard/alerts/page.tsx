@@ -17,7 +17,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { BellRing, Check, ExternalLink, RotateCcw } from 'lucide-react';
+import { BellRing, Check, ExternalLink, RotateCcw, Send } from 'lucide-react';
 import { usePageScope } from '@/lib/scope';
 import { alertHref, canAcknowledgeAlerts, historyTone, type AlertsFeed, type FeedAlert, type HistoryRow } from '@/lib/pushAlerts';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
@@ -154,6 +154,11 @@ export default function AlertsPage() {
             chart={exportChart}
             disabled={!feed.data}
           />
+          {/* "בדיקת התראות" (fix/pwa-push): the same sheet — the check sits right under this device. */}
+          <Button variant="outline" onClick={() => setSheet(true)}>
+            <Send className="size-4" aria-hidden />
+            {t('diag.title')}
+          </Button>
           <Button onClick={() => setSheet(true)}>
             <BellRing className="size-4" aria-hidden />
             {t('openSheet')}

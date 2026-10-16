@@ -286,6 +286,8 @@ export interface KioskLive {
     onCashOwedChoice?: (choice: CashOwedChoice) => void;
     /** "להשלים באשראי" (§11.15ב). */
     onCashSplit?: () => void;
+    /** CashMag: the customer's answer to the machine's question (P:/specs/cashmag-windows.md). */
+    onCashQuestion?: (confirm: boolean) => void;
   };
   /** The success screen's real order. */
   success?: {
@@ -3457,8 +3459,15 @@ export const CASH_OWED_CHOICE_TEXT: Record<CashOwedChoice, { title: string; sub:
 
 /** The cash station's side of a live payment (the Windows kiosk's PayProgress.cash). */
 export interface LiveCashPay {
-  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
+  /** CashMag (P:/specs/cashmag-windows.md): `busy` — the machine is another customer's; `question` — the machine asks. */
+  stage: 'connecting' | 'queued' | 'busy' | 'insert' | 'question' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
+  /** The cash station (PayLink, absent) or a CashMag machine. */
+  device?: 'paylink' | 'cashmag';
+  /** question: the machine's title and text. */
+  question?: { title: string; text: string } | null;
   position: number | null;
+  /** In the queue past `cashQueueTimeoutSec` (P:/specs/cash-paylink.md §14.3) — Windows and Android both send it. */
+  longWait?: boolean;
   stationName: string | null;
   insertedAgorot: number;
   dueAgorot: number;
@@ -3480,15 +3489,23 @@ export interface LiveCashPay {
   cardRestAgorot?: number;
 }
 
+/** CashMag's busy machine, exactly as the owner set it (P:/specs/cashmag.md §0 9). */
+export const CASH_BUSY_TEXT = 'עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום';
+
 /** "מזומן" at the cash station: the words of each stage (no kiosk text of its own yet — plain Hebrew). */
 function cashHeadline(cash: LiveCashPay): string {
   switch (cash.stage) {
     case 'connecting':
       return 'מתחבר למכשיר המזומן…';
     case 'queued':
-      return `מכשיר המזומן תפוס — ממתין… (מקום ${cash.position ?? 1})`;
+      // P:/specs/cash-paylink.md §14.3: the same words on every route; the place in line from 2 on.
+      return `עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום${(cash.position ?? 1) >= 2 ? ` · מקום ${cash.position} בתור` : ''}${cash.longWait ? ' · ההמתנה ארוכה מהרגיל' : ''}`;
+    case 'busy':
+      return CASH_BUSY_TEXT;
+    case 'question':
+      return cash.question?.title || 'מכשיר המזומן שואל';
     case 'insert':
-      return 'הכניסו כסף במכשיר המזומן';
+      return cash.device === 'cashmag' ? 'הכנס מזומן' : 'הכניסו כסף במכשיר המזומן';
     case 'settling':
       return 'רגע…';
     case 'change':
@@ -3551,6 +3568,58 @@ function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskL
   const fault = live.phase === 'unknown' || cash.stage === 'fault';
   const remaining = Math.max(0, cash.dueAgorot - cash.insertedAgorot);
   if (cash.stage === 'owed_choice' && !fault) return <LiveCashOwedChoice m={m} live={live} cash={cash} />;
+  if (cash.stage === 'busy' && !fault && live.phase !== 'declined' && live.phase !== 'blocked') {
+    // CashMag, first come first served: another customer is at the machine — the payment starts by itself once it is
+    // free; a small "חזרה" (nothing was charged).
+    return (
+      <ScreenBody m={m}>
+        <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+          <WaitLogo m={m} />
+          <h2 className="text-xl font-extrabold">{CASH_BUSY_TEXT}</h2>
+          <div className="w-full max-w-sm p-4" style={cardStyle(m)}>
+            <div className="text-sm font-bold" style={{ color: m.c.mutedText }}>
+              לתשלום
+            </div>
+            <div className="text-5xl font-black tabular-nums" style={{ color: m.c.primary }}>
+              {shekels(cash.dueAgorot)}
+            </div>
+            <div className="mt-2 text-base font-bold">התשלום יתחיל לבד כשהעמדה תתפנה</div>
+          </div>
+          <span aria-hidden className="inline-block h-10 w-10 animate-spin rounded-full border-4" style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />
+          {live.canCancel ? (
+            <button type="button" className="mt-auto text-sm font-bold underline" style={{ color: m.c.mutedText }} onClick={live.onCancel}>
+              חזרה
+            </button>
+          ) : null}
+        </div>
+      </ScreenBody>
+    );
+  }
+  if (cash.stage === 'question' && !fault && live.phase !== 'declined' && live.phase !== 'blocked') {
+    // CashMag asks (its own words): the customer confirms or cancels — the machine goes on from the answer.
+    return (
+      <ScreenBody m={m}>
+        <div className="flex min-h-full flex-col items-center gap-4 p-4 text-center">
+          <WaitLogo m={m} />
+          <h2 className="text-xl font-extrabold">{cashHeadline(cash)}</h2>
+          <div className="w-full max-w-sm p-4" style={cardStyle(m)}>
+            {cash.question?.text ? <div className="text-lg font-bold">{cash.question.text}</div> : null}
+            <div className="mt-2 text-sm" style={{ color: m.c.mutedText }}>
+              הוכנסו {shekels(cash.insertedAgorot)} מתוך {shekels(cash.dueAgorot)}
+            </div>
+          </div>
+          <div className="grid w-full max-w-sm grid-cols-2 gap-2">
+            <BigButton m={m} variant="soft" onClick={() => live.onCashQuestion?.(false)}>
+              ביטול
+            </BigButton>
+            <BigButton m={m} onClick={() => live.onCashQuestion?.(true)}>
+              אישור
+            </BigButton>
+          </div>
+        </div>
+      </ScreenBody>
+    );
+  }
   if (cash.stage === 'split_card' && !fault && live.phase !== 'declined' && live.phase !== 'blocked') {
     // Cash + card (§11.15ב): the cash part is in; the card on the kiosk's terminal pays the rest.
     return (

@@ -9,8 +9,9 @@ GET    /cash-stations/{id}                                  → the station in d
                                                               queue, active tx, settings, alert tills, commands)
 PUT    /cash-stations/{id}                                  {name?, location?, serial?, hostMachineId?, settings?,
                                                               isActive?} → the station
-PUT    /cash-stations/{id}/clients/{machineId}              {assigned: true|false} — the device's own cashEnabled
-                                                              (+ cashStation) → the station (detail)
+PUT    /cash-stations/{id}/clients/{machineId}              {assigned: true|false, route?: lan|cloud|auto} — the
+                                                              device's own cashEnabled (+ cashStation, + cashRoute
+                                                              §14.2) → the station (detail)
 DELETE /cash-stations/{id}                                  → taken out of use (its journal and drawer stay)
 GET    /cash-stations/{id}/journal?from=&to=&state=&outcome=&owed=&limit=&offset=
 GET    /cash-stations/{id}/movements?from=&to=&kind=&limit=&offset=
@@ -20,6 +21,10 @@ POST   /cash-stations/{id}/commands                         {op: refill|count|co
                                                               args?} → the command (delivered with the host's pull)
 GET    /cash-stations/{id}/drawer?from=&to=                 → the period's drawer, the reconciliation, the
                                                               balance, and the Zs that took it
+GET    /cash-stations/embedded-hosts/{machineId}            → "מארח עמדת מזומן" (§14.1): {machineId, name, embedded,
+                                                              allowed, reason, active, shopId, stations}
+PUT    /cash-stations/embedded-hosts/{machineId}            {embedded} → the same; 409 embedded_host_not_allowed /
+                                                              host_has_stations
 """
 from __future__ import annotations
 
@@ -57,6 +62,8 @@ class ClientIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     assigned: bool
+    #: §14.2: its way to the station, at the device's own level (absent — unchanged).
+    route: Optional[str] = Field(None, max_length=8)
 
 
 class ResolveIn(BaseModel):
@@ -64,6 +71,12 @@ class ResolveIn(BaseModel):
 
     resolution: str = Field(..., max_length=20)
     note: Optional[str] = Field(None, max_length=1000)
+
+
+class EmbeddedHostIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    embedded: bool
 
 
 class CommandIn(BaseModel):
@@ -104,6 +117,38 @@ def create_cash_station(
     try:
         station = A.create_station(db, current_user, active_tenant_id, _body(body))
         out = A.station_out(db, station, detail=True)
+    except Exception:
+        db.rollback()
+        raise
+    db.commit()
+    return out
+
+
+@router.get("/embedded-hosts/{machine_id}")
+def get_embedded_host(
+    machine_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): the device page's card."""
+    machine = A.machine_in_scope(db, current_user, machine_id, active_tenant_id)
+    return A.embedded_host_out(db, machine)
+
+
+@router.put("/embedded-hosts/{machine_id}")
+def put_embedded_host(
+    machine_id: uuid.UUID,
+    body: EmbeddedHostIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """A Windows kiosk whose PC has the PayLink on USB runs its station(s) too — on / off (§14.1)."""
+    machine = A.machine_in_scope(db, current_user, machine_id, active_tenant_id)
+    try:
+        A.set_embedded_host(db, current_user, machine, body.embedded)
+        out = A.embedded_host_out(db, machine)
     except Exception:
         db.rollback()
         raise
@@ -172,7 +217,7 @@ def put_cash_station_client(
 
     station = A.station_in_scope(db, current_user, station_id, active_tenant_id)
     try:
-        targets = A.assign_client(db, current_user, station, machine_id, body.assigned)
+        targets = A.assign_client(db, current_user, station, machine_id, body.assigned, route=body.route)
         db.commit()
     except Exception:
         db.rollback()

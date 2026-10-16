@@ -8,6 +8,8 @@
  */
 import { api } from './api';
 import {
+  type CashRoute,
+  type EmbeddedHost,
   type CashCommandRecord,
   type CashDrawer,
   type CashMovement,
@@ -118,10 +120,25 @@ export async function fetchCashDrawer(id: string, params: Record<string, string>
 
 /**
  * "משויך לעמדה": `PUT /cash-stations/{id}/clients/{machineId}` `{assigned}` → the station (detail). On: the device's
- * own `cashEnabled` true and `cashStation` this station; off: `cashEnabled` false. 404 `client_not_found` (not an
+ * own `cashEnabled` true and `cashStation` this station (and, with `route`, its own `cashRoute`, §14.2); off:
+ * `cashEnabled` false. 404 `client_not_found` (not an
  * active kiosk / till of the station's shop), 409 `station_inactive`.
  */
-export async function setStationClient(stationId: string, machineId: string, assigned: boolean): Promise<CashStation> {
-  const { data } = await api.put<CashStation>(`/cash-stations/${stationId}/clients/${machineId}`, { assigned });
+export async function setStationClient(stationId: string, machineId: string, assigned: boolean, route?: CashRoute): Promise<CashStation> {
+  const { data } = await api.put<CashStation>(`/cash-stations/${stationId}/clients/${machineId}`, { assigned, ...(route ? { route } : {}) });
+  return data;
+}
+
+export const embeddedHostKey = (machineId: string) => ['cash-embedded-host', machineId] as const;
+
+/** "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): whether this device runs its cash station(s), and which. */
+export async function fetchEmbeddedHost(machineId: string): Promise<EmbeddedHost> {
+  const { data } = await api.get<EmbeddedHost>(`/cash-stations/embedded-hosts/${machineId}`);
+  return data;
+}
+
+/** On / off. 409 `embedded_host_not_allowed` (not a Windows kiosk…) / `host_has_stations` (move them first). */
+export async function setEmbeddedHost(machineId: string, embedded: boolean): Promise<EmbeddedHost> {
+  const { data } = await api.put<EmbeddedHost>(`/cash-stations/embedded-hosts/${machineId}`, { embedded });
   return data;
 }

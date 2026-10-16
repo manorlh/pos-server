@@ -27,7 +27,8 @@ import { ArrowRight, GitCompareArrows, Lock, Pencil, RefreshCw, ShieldCheck, Tic
 import { useAuth } from '@/lib/auth';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
 import { downloadEventExcel, eventErrorMessage, fetchEventReport, type BucketMinutes, type EventReport } from '@/lib/eventsApi';
-import { clockLabel, countByLevel, durationText } from '@/lib/eventReport';
+import { clockLabel, countByLevel, durationText, eventPdfReconcile } from '@/lib/eventReport';
+import { formatCurrency } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Card, IOS, InsightsSurface, Muted, SkeletonCard } from '@/components/dashboard/insights/ios';
 import { EventFormDialog } from '@/components/dashboard/events/event-form-dialog';
@@ -85,6 +86,7 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
   const te = useTranslations('events');
   const tr = useTranslations('events.report');
   const tk = useTranslations('events.kpi');
+  const tp = useTranslations('events.report.pdf');
   const router = useRouter();
   const role = useAuth((s) => s.user?.role);
   const canWrite = !!role && WRITE_ROLES.has(role);
@@ -181,6 +183,26 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
     { key: 'tips', label: tk('tips'), value: k.tips, kind: 'money', icon: 'tip' },
     { key: 'refunds', label: tk('refunds'), value: k.refunds, kind: 'money', icon: 'refund' },
   ];
+  // The PDF's band (§9): the event's window, length, tills and Zs; and its reconciliation as cards.
+  const exportFacts = [
+    { label: tr('window'), value: `${clockLabel(event.startsAt, tz, true)} – ${clockLabel(event.endsAt, tz, true)}` },
+    { label: tp('duration'), value: durationText(event.durationMinutes) },
+    { label: tp('tills'), value: String(event.machines.length) },
+    { label: tp('zs'), value: String(report.reconciliation.z.zReports.length) },
+  ];
+  const exportReconcile = eventPdfReconcile(report.reconciliation, k.salesCount, {
+    title: tp('reconTitle'),
+    note: tp('reconNote'),
+    docs: tp('docs'),
+    docsSub: (count) => tp('docsSub', { count }),
+    inZ: tp('inZ'),
+    inZSub: (zs, pending) => tp('inZSub', { zs, pending: formatCurrency(pending) }),
+    card: tp('card'),
+    cardSub: (amount) => tp('cardSub', { amount: formatCurrency(amount) }),
+    docsVsZ: tp('docsVsZ'),
+    cardVsTx: tp('cardVsTx'),
+    status: (s) => te(`reconcile.status.${s}`),
+  });
 
   return (
     <InsightsSurface className="print:mx-0 print:rounded-none print:bg-white print:p-0">
@@ -222,6 +244,8 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
           companyName={exportScope.companyName}
           reportType="events"
           kpis={exportKpis}
+          facts={exportFacts}
+          reconcile={exportReconcile}
           chartFrom={{ label: 'till', value: 'net', type: 'hbar' }}
           insightKeys={{ label: 'till', value: 'net', count: 'sales' }}
           actions={

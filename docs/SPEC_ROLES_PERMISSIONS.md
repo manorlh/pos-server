@@ -222,6 +222,11 @@
 הסבר"). חלון אישור המנהל (`ElevationSheet`, `LocalManagerSheet`) מציג "אין הרשאה" במקום רשימת מאשרים כשהתפקיד
 אוסר — אין עקיפה.
 
+**"כשאין הרשאה"** (16.10.2026, P:/specs/denied-actions-ui.md): הפרמטר `deniedActionUi` לכל רמה (`show` — כמו
+למעלה, ברירת המחדל / `hide` — מוסתר בכל מקום / `code` — "אסור" מבקש קוד מנהל כמו "דורש אישור"), עם קביעה לתפקיד
+(`till_roles.denied_ui`) ולעובד (`permission_overrides.deniedUi`): עובד → תפקיד → רמה → `show`. `permissionsDeniedUi`
+נקרא רק תחת `show`.
+
 **"דורש אישור"**: `PermissionGate` (shell) מציג את חלון ה-PIN המקומי עם המאשרים האפשריים בלבד; אחרי אישור
 הפעולה רצה פעם אחת, והאישור (או הסירוב) נרשם ב-audit (`category = permission`).
 
@@ -304,7 +309,7 @@ Offline" שמדלג על בדיקה.
 הפרמטר הקיים `cashDrawer` (כבוי / בתשלום מזומן / + כפתור פתיחה). השאר: `cashDrawer.requireReason`,
 `requireNoteForOther`, `requireManagerApproval`, `cashMovementsEnabled`, `cashOutApprovalAmount`,
 `allowOpenAfterClose`, `blindCount`, `maxManualOpensPerShift`, `alertOpensCount`, `alertOpensWithinMinutes`,
-`cashOutAlertAmount`, `varianceAlertAmount`, `nearVarianceMinutes`, `cardTipsFromDrawer` (§6.5), `zExpectedCashMovements` (§6.5), ו-`permissionsDeniedUi`.
+`cashOutAlertAmount`, `varianceAlertAmount`, `nearVarianceMinutes`, `cardTipsFromDrawer` (§6.5), `zExpectedCashMovements` (§6.5), `deniedActionUi` (P:/specs/denied-actions-ui.md) ו-`permissionsDeniedUi`.
 
 ## 7. מיפוי לאפיון המגירה, סעיף אחר סעיף
 

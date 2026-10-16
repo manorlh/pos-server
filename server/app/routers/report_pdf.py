@@ -68,6 +68,45 @@ class PdfKpi(BaseModel):
     spark: Optional[List[Number]] = Field(None, max_length=31)
     better: Optional[Literal["up", "down"]] = None
     icon: Optional[str] = Field(None, max_length=20)
+    #: The card's small grey line under the number ("70.9%", "18 קופות").
+    sub: Optional[str] = Field(None, max_length=80)
+
+
+class PdfFact(BaseModel):
+    """One of the header band's key facts ("תאריך", "שעות", "קופות")."""
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = Field("", max_length=40)
+    value: str = Field("", max_length=120)
+
+
+class PdfReconCard(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = Field(..., min_length=1, max_length=60)
+    value: Union[float, int, str, None] = None
+    kind: Literal["money", "number", "percent", "text"] = "money"
+    sub: str = Field("", max_length=80)
+    icon: Optional[str] = Field(None, max_length=20)
+
+
+class PdfReconCheck(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    label: str = Field(..., min_length=1, max_length=60)
+    status: Literal["match", "mismatch", "pending", "none"] = "none"
+    #: What the pill says after the label (default by the status: תואם / פער / ממתין / אין נתונים).
+    text: str = Field("", max_length=60)
+
+
+class PdfReconcile(BaseModel):
+    """The same money in two to four layers, and whether they agree (§9.2)."""
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = Field("", max_length=80)
+    note: str = Field("", max_length=300)
+    cards: List[PdfReconCard] = Field(..., min_length=1, max_length=4)
+    checks: List[PdfReconCheck] = Field(default_factory=list, max_length=4)
 
 
 class PdfSeries(BaseModel):
@@ -136,6 +175,11 @@ class ReportPdfIn(BaseModel):
     insights: List[PdfInsight] = Field(default_factory=list, max_length=5)
     no_insights: bool = Field(False, alias="noInsights")
     cover: Literal["auto", "always", "never"] = "auto"
+    # ── The light design (§9) ──
+    #: The header band's key facts, right to left; none: the period, the scope and the rows.
+    facts: List[PdfFact] = Field(default_factory=list, max_length=6)
+    #: A reconciliation section: equal cards and a ✓ / פער pill per check.
+    reconcile: Optional[PdfReconcile] = None
 
 
 def too_many_rows(count: int) -> HTTPException:
@@ -208,10 +252,12 @@ def post_report_pdf(
     db: Session = Depends(get_db),
 ):
     """
-    The report as a designed PDF (§7.1): the dark header band with the business's and R2M's
-    logos, the KPI cards, the server's insights for the report's type, a chart, the table (zebra,
-    group subtotals, totals, trend arrows), "עמוד X מתוך Y" — and a cover page past three pages.
-    `orientation: auto` is landscape above 7 columns. Money prints as `₪ 1,234.50`.
+    The report as a designed PDF (§7.1, light §9): the navy → blue header band with the title,
+    the key facts and the business's and R2M's logos, section bars, the KPI cards, a
+    reconciliation when sent, the server's insights for the report's type as pastel callouts, a
+    chart, the table (navy header, zebra, group subtotals, totals, share bars, trend arrows),
+    "עמוד X מתוך Y" — and a cover page past three pages. `orientation: auto` is landscape above 7
+    columns. Money prints as `₪ 1,234.50`.
     """
     from app.services import report_design
 

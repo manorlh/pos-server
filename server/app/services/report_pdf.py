@@ -361,15 +361,16 @@ class Column:
 
     @property
     def anchor(self) -> str:
-        """'right', 'left' or 'center' on the page (start = right: the report is RTL)."""
+        """
+        'right', 'left' or 'center' on the page (start = right: the report is RTL). Numbers too
+        stand at the start, so their last digits line up down the column.
+        """
         a = (self.align or "").lower()
-        if a in ("right", "start"):
-            return "right"
         if a in ("left", "end"):
             return "left"
         if a == "center":
             return "center"
-        return "left" if self.numeric else "right"
+        return "right"
 
 
 @dataclass
@@ -494,13 +495,16 @@ def _fit(font: _Font, text: str, size: float, width: float) -> str:
 
 
 def column_widths(columns: Sequence[Column], rows: Sequence[Sequence[str]], totals: Optional[Sequence[str]],
-                  regular: _Font, bold: _Font, available: float) -> Tuple[float, List[float]]:
+                  regular: _Font, bold: _Font, available: float,
+                  extras: Optional[Sequence[float]] = None) -> Tuple[float, List[float]]:
     """
     (body size, widths in points), first column first, for a table of `rows` (each its cells as
     they print) in `available` points. Numbers are never cut; text columns share what is left.
-    A trend column (▲/▼) gets the arrow's room too.
+    A trend column (▲/▼) gets the arrow's room too; `extras` adds fixed points to a column (a
+    share column's bar).
     """
     n = len(columns)
+    extra = [float(extras[i]) if extras and i < len(extras) else 0.0 for i in range(n)]
     # Natural widths at 1pt, then scaled with the size.
     content = [0.0] * n
     for row in rows:
@@ -524,7 +528,7 @@ def column_widths(columns: Sequence[Column], rows: Sequence[Sequence[str]], tota
             body = content[i]
             if not col.numeric:
                 body = min(body, TEXT_COLUMN_CAP / size)
-            w = max(body, head) * size + 2 * PAD
+            w = max(body, head) * size + 2 * PAD + extra[i]
             natural.append(w)
             minimum.append(w if col.numeric else max(min(w, 42.0), label_word[i] * size + 2 * PAD))
         if sum(natural) <= available:
@@ -610,23 +614,35 @@ class _Canvas:
         parts.append("Q")
         self.ops.append(" ".join(parts))
 
-    def round_rect_path(self, x: float, y: float, w: float, h: float, r: float) -> str:
+    def round_rect_path(self, x: float, y: float, w: float, h: float, r: float,
+                        corners: Optional[Sequence[bool]] = None) -> str:
+        """
+        A rectangle with rounded corners; `corners` (top-left, top-right, bottom-right,
+        bottom-left) picks which are rounded — a chart's bar, rounded at its top only.
+        """
         r = max(0.0, min(r, w / 2, h / 2))
-        if r <= 0.01:
+        tl, tr, br, bl = (r if on else 0.0 for on in (corners or (True, True, True, True)))
+        if r <= 0.01 or not (tl or tr or br or bl):
             return f"{x:.2f} {self.page_h - y - h:.2f} {w:.2f} {h:.2f} re"
-        k = _KAPPA * r
         p = self._p
-        return " ".join([
-            f"{p(x + r, y)} m",
-            f"{p(x + w - r, y)} l",
-            f"{p(x + w - r + k, y)} {p(x + w, y + r - k)} {p(x + w, y + r)} c",
-            f"{p(x + w, y + h - r)} l",
-            f"{p(x + w, y + h - r + k)} {p(x + w - r + k, y + h)} {p(x + w - r, y + h)} c",
-            f"{p(x + r, y + h)} l",
-            f"{p(x + r - k, y + h)} {p(x, y + h - r + k)} {p(x, y + h - r)} c",
-            f"{p(x, y + r)} l",
-            f"{p(x, y + r - k)} {p(x + r - k, y)} {p(x + r, y)} c h",
-        ])
+        parts = [f"{p(x + tl, y)} m", f"{p(x + w - tr, y)} l"]
+        if tr:
+            k = _KAPPA * tr
+            parts.append(f"{p(x + w - tr + k, y)} {p(x + w, y + tr - k)} {p(x + w, y + tr)} c")
+        parts.append(f"{p(x + w, y + h - br)} l")
+        if br:
+            k = _KAPPA * br
+            parts.append(f"{p(x + w, y + h - br + k)} {p(x + w - br + k, y + h)} {p(x + w - br, y + h)} c")
+        parts.append(f"{p(x + bl, y + h)} l")
+        if bl:
+            k = _KAPPA * bl
+            parts.append(f"{p(x + bl - k, y + h)} {p(x, y + h - bl + k)} {p(x, y + h - bl)} c")
+        parts.append(f"{p(x, y + tl)} l")
+        if tl:
+            k = _KAPPA * tl
+            parts.append(f"{p(x, y + tl - k)} {p(x + tl - k, y)} {p(x + tl, y)} c")
+        parts.append("h")
+        return " ".join(parts)
 
     # ── Shapes ──
 
@@ -643,8 +659,22 @@ class _Canvas:
         )
 
     def round_rect(self, x: float, y: float, w: float, h: float, r: float, *, fill: Optional[Color] = None,
-                   stroke: Optional[Color] = None, width: float = 0.6) -> None:
-        self._paint(self.round_rect_path(x, y, w, h, r), fill, stroke, width)
+                   stroke: Optional[Color] = None, width: float = 0.6,
+                   corners: Optional[Sequence[bool]] = None) -> None:
+        self._paint(self.round_rect_path(x, y, w, h, r, corners), fill, stroke, width)
+
+    def gradient(self, name: str, x: float, y: float, w: float, h: float, r: float = 0.0,
+                 corners: Optional[Sequence[bool]] = None) -> None:
+        """
+        Fill a (rounded) rectangle with the left-to-right axial shading `name` — a page
+        resource (/Shading) whose Coords run 0 → 1, stretched here over the rectangle.
+        """
+        if w <= 0 or h <= 0:
+            return
+        self.ops.append(
+            f"q {self.round_rect_path(x, y, w, h, r, corners)} W n "
+            f"{w:.4f} 0 0 {h:.4f} {x:.2f} {self.page_h - y - h:.2f} cm /{name} sh Q"
+        )
 
     def polygon(self, points: Sequence[Tuple[float, float]], *, fill: Optional[Color] = None,
                 stroke: Optional[Color] = None, width: float = 0.6) -> None:
@@ -707,9 +737,10 @@ class _Canvas:
     def restore(self) -> None:
         self.ops.append("Q")
 
-    def clip_round_rect(self, x: float, y: float, w: float, h: float, r: float) -> None:
+    def clip_round_rect(self, x: float, y: float, w: float, h: float, r: float,
+                        corners: Optional[Sequence[bool]] = None) -> None:
         """Clip what follows (until `restore`) to a rounded rectangle; call `save` first."""
-        self.ops.append(f"{self.round_rect_path(x, y, w, h, r)} W n")
+        self.ops.append(f"{self.round_rect_path(x, y, w, h, r, corners)} W n")
 
     # ── Text and pictures ──
 

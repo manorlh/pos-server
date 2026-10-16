@@ -46,8 +46,11 @@ def charges_on_external_pinpad(machine: Any, merged: Dict[str, Any]) -> bool:
     if merged.get("nayaxEnabled") is True:
         return True
     # Z-Credit, SynqPay (docs/SPEC_SYNQPAY.md) and a Nayax C4 on the till's USB (`nayax_usb`)
-    # are external terminals too; "ללא אשראי" has none.
-    return str(merged.get("paymentIntegration") or "").strip().lower() in ("zcredit", "synqpay", "nayax_usb", "none")
+    # are external terminals too; "ללא אשראי" has none; Tap to Pay (P:/specs/tap-to-pay.md)
+    # charges on the device's NFC through iPOSpays, never on a terminal set up from here.
+    return str(merged.get("paymentIntegration") or "").strip().lower() in (
+        "zcredit", "synqpay", "nayax_usb", "tap_to_pay", "none",
+    )
 
 
 def sources(layers: Sequence[Tuple[str, Any]]) -> Dict[str, str]:

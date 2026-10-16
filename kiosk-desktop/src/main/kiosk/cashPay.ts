@@ -6,20 +6,25 @@
  *    kiosk with no internet still reaches the station on the LAN (§13);
  *  - the station's status every 10 s while idle: the "מזומן" tile only while it answers ready;
  *  - a payment: the transaction id made here and written to the disk BEFORE anything is asked;
- *    the lease (queue: "מכשיר המזומן תפוס — ממתין… (מקום N)"), renewed every 2 s; the start
+ *    the lease (queue: "עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום", §14.3), renewed; the start
  *    (idempotent by the id); the transaction followed to DONE / HELD; cancel at the customer's word;
  *    the station silent longer than `cashRefundGraceSec` → "lost" (fault slip, staff);
  *  - the acknowledgement once the document is written (or the failure handled), kept and retried
  *    until the station takes it; a kiosk restarted mid-payment settles from the station's word.
+ *
+ * The way to the station (§14.2 `cashRoute`): the LAN (default), the cloud relay, or `auto` — the LAN while it answers.
+ * A payment keeps the way it started on to its end (written with it on the disk); its recovery may try both in
+ * `auto`. A host kiosk's own payments at its own station run in this app (§14.1, `setLocalHost`).
  */
 
 import { randomUUID } from 'node:crypto';
 import type { Api } from '../sync/api';
 import type { Kv } from '../db/schema';
 import { LEASE_RENEW_MS, STATUS_POLL_MS, type StationStatus } from '../../core/cash/lanProtocol';
+import { paymentVia, recoveryVia, type CashVia } from '../../core/cash/route';
 import { cashSettingsOf, type CashSettings } from '../../core/cash/settings';
 import type { OwedChoice, TxView } from '../../core/cash/tx';
-import { CashLanClient, clientConfigOf, type CashReply, type CashStationRef } from '../cash/client';
+import { CashCloudClient, CashLanClient, CashLocalClient, clientConfigOf, type CashCalls, type CashReply, type CashStationRef, type LocalCashHost } from '../cash/client';
 
 export interface CashPending {
   txId: string;
@@ -39,6 +44,8 @@ export interface CashPending {
    * (approved, or unknown: the cash is kept and the card decides) or `cancel` (refunded). A restart goes on from here.
    */
   split?: { cashAgorot: number; decision: 'finish' | 'cancel' | null } | null;
+  /** The way its calls go (§14.2), fixed when it started; absent — written before routes (the LAN). */
+  via?: CashVia;
 }
 
 export type CashStage = 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'split_card';
@@ -49,6 +56,8 @@ export interface CashProgress {
   tx: TxView | null;
   /** Hebrew, as is. */
   message: string;
+  /** In the queue past `cashQueueTimeoutSec` ("ההמתנה ארוכה מהרגיל", §14.3). */
+  longWait?: boolean;
 }
 
 export type CashOutcome =
@@ -64,10 +73,14 @@ interface ClientConfig {
   enabled: boolean;
   station: CashStationRef | null;
   settings: Record<string, unknown>;
+  /** A host kiosk (§14.1): the cloud gave it the host's part too. */
+  hostsStations?: boolean;
 }
 
 const K = { config: 'cash.clientConfig', etag: 'cash.clientConfigEtag', pending: 'cash.pending' } as const;
 const POLL_MS = 400;
+/** Through the cloud: the next look as soon as the previous answer is in (each call is itself ~0.5 s, §14.5). */
+const CLOUD_POLL_MS = 100;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface CashPayDeps {
@@ -88,6 +101,14 @@ export class CashPay {
   /** Since when the station has not answered on the LAN (null: it answers / no station). */
   private silentSince: number | null = null;
   private lan: CashLanClient | null = null;
+  private cloud: CashCloudClient | null = null;
+  private local: CashLocalClient | null = null;
+  /** The host running in this app (a host kiosk, §14.1), for its own payments. */
+  private localHost: LocalCashHost | null = null;
+  /** When the station last answered on the LAN (`auto` chooses by it). */
+  private lastLanAt: number | null = null;
+  /** Payments whose own loop ended in this run: their ack goes their own way (§14.2.2), not a recovery's. */
+  private readonly endedHere = new Set<string>();
   private cancelRequested = false;
   private splitRequested = false;
   private running = false;
@@ -141,6 +162,8 @@ export class CashPay {
     if (tag) this.d.kv.set(K.etag, tag);
     if (JSON.stringify(c) !== before) {
       this.lan = null;
+      this.cloud = null;
+      this.local = null;
       this.changed();
       void this.refreshStatus();
     }
@@ -154,35 +177,111 @@ export class CashPay {
     return this.cfg?.station ?? null;
   }
 
-  /** The cloud set this kiosk to take cash at a station that reported where it listens. */
+  /**
+   * The cloud set this kiosk to take cash at a station it can reach: on the LAN — one that reported where it listens;
+   * through the cloud — any with a host; its own (a host kiosk) — always.
+   */
   configured(): boolean {
-    return !!this.cfg?.enabled && !!this.cfg.station?.lanAddress;
+    const st = this.cfg?.station;
+    if (!this.cfg?.enabled || !st) return false;
+    if (this.ownHost()) return true;
+    return this.settings().route === 'lan' ? !!st.lanAddress : !!st.hostId;
   }
 
-  private client(): CashLanClient | null {
+  /** A host kiosk (§14.1): the cloud gave it stations to run. */
+  hostsStations(): boolean {
+    return this.cfg?.hostsStations === true;
+  }
+
+  /** The station's host runs in this app (a host kiosk) — its own payments call it directly. */
+  setLocalHost(host: LocalCashHost | null): void {
+    if (this.localHost === host) return;
+    this.localHost = host;
+    this.local = null;
+    void this.refreshStatus();
+  }
+
+  /** This kiosk's station is run by this kiosk. */
+  private ownHost(): boolean {
     const st = this.cfg?.station;
     const me = this.d.machineId();
-    if (!st || !me || !st.lanAddress) return null;
+    return !!st && !!me && !!st.hostId && st.hostId.toLowerCase() === me.toLowerCase();
+  }
+
+  /** The station's calls one way (null: that way is not there — no address, no cloud, no host in the app). */
+  private transport(via: CashVia): CashCalls | null {
+    const st = this.cfg?.station;
+    const me = this.d.machineId();
+    if (!st || !me) return null;
+    if (via === 'local') {
+      if (!this.ownHost()) return null;
+      if (!this.local) this.local = new CashLocalClient(me, st, () => this.localHost);
+      else this.local.setStation(st);
+      return this.local;
+    }
+    if (via === 'cloud') {
+      if (!st.hostId) return null;
+      if (!this.cloud) this.cloud = new CashCloudClient(me, st, this.d.api, this.now);
+      else this.cloud.setStation(st);
+      return this.cloud;
+    }
+    if (!st.lanAddress) return null;
     if (!this.lan) this.lan = new CashLanClient(me, st, this.d.fetch, this.now);
     else this.lan.setStation(st);
     return this.lan;
   }
 
+  /** The station's status the way the tile is fed (§14.2): its own — in the app; `auto` — the LAN, else the cloud. */
+  private async probe(): Promise<CashReply<StationStatus> | null> {
+    if (this.ownHost()) return (await this.transport('local')?.status()) ?? null;
+    const route = this.settings().route;
+    if (route !== 'cloud') {
+      const lan = this.transport('lan');
+      const r = lan ? await lan.status() : null;
+      if (r && r.kind !== 'offline') this.lastLanAt = this.now();
+      if (route === 'lan' || (r && r.kind !== 'offline')) return r;
+    }
+    const cloud = this.transport('cloud');
+    return cloud ? cloud.status() : null;
+  }
+
   async refreshStatus(): Promise<void> {
-    const c = this.configured() ? this.client() : null;
     const before = this.usable();
-    if (!c) {
+    const r = this.configured() ? await this.probe() : null;
+    if (!r) {
       this.status = null;
       this.silentSince = null;
     } else {
-      const r = await c.status();
       this.status = r.kind === 'ok' ? r.body : null;
       this.statusAt = this.now();
-      // Any answer (a refusal too) is the station there; only silence counts.
-      if (r.kind === 'offline') this.silentSince ??= this.now();
-      else this.silentSince = null;
+      // Any answer (a refusal too) is the station there; only silence counts — not this kiosk's own way to the cloud.
+      if (r.kind === 'offline' && !r.reason.startsWith('cloud:')) this.silentSince ??= this.now();
+      else if (r.kind !== 'offline') this.silentSince = null;
     }
     if (this.usable() !== before) this.changed();
+  }
+
+  /** The way a payment starting now goes (§14.2). */
+  viaForPayment(): CashVia {
+    return paymentVia(this.settings().route, this.ownHost(), this.lastLanAt === null ? null : this.now() - this.lastLanAt);
+  }
+
+  /**
+   * A call for a payment whose own loop is over: the ack right after it — its own way only (§14.2.2; not answered —
+   * the ack is retried later as a recovery); a recovery (a restart's look, an ack still owed, a cancel or finish) —
+   * the ways of §14.2.3 in order (`auto`: the LAN, then the cloud); the first that answers.
+   */
+  private async settleCall<T>(txId: string, fn: (c: CashCalls) => Promise<CashReply<T>>, own = false): Promise<CashReply<T> | null> {
+    const p = this.pending().find((x) => x.txId === txId);
+    const ways = own && p?.via ? [p.via] : recoveryVia(this.settings().route, this.ownHost());
+    let last: CashReply<T> | null = null;
+    for (const via of ways) {
+      const c = this.transport(via);
+      if (!c) continue;
+      last = await fn(c);
+      if (last.kind !== 'offline') return last;
+    }
+    return last;
   }
 
   /** The "מזומן" tile may be offered: configured, and the station answered ready lately. */
@@ -261,18 +360,24 @@ export class CashPay {
     onProgress: (p: CashProgress) => void,
     hooks: { partial?: (tx: TxView) => Promise<'finish' | 'cancel'> } = {},
   ): Promise<CashOutcome> {
-    const c = this.client();
+    const via = this.viaForPayment();
+    const c = this.transport(via);
     if (!c || !this.cfg?.station) return { kind: 'refunded', tx: null, message: 'מכשיר המזומן לא זמין' };
     this.running = true;
     this.cancelRequested = false;
     this.splitRequested = false;
-    const poll = this.d.pollMs ?? POLL_MS;
-    const renewEvery = Math.min(LEASE_RENEW_MS, poll * 5);
+    // Through the cloud each call is itself ~0.5 s: the next look follows at once (§14.5).
+    const poll = this.d.pollMs ?? (via === 'cloud' ? CLOUD_POLL_MS : POLL_MS);
+    // The queue asked every 2 s (its place on the screen); the holder's lease renewed the way's own pace — through the
+    // cloud every 5 s, and every relayed call renews it anyway (§14.4).
+    const queueEvery = Math.min(LEASE_RENEW_MS, Math.max(poll, POLL_MS) * 5);
+    const renewEvery = via === 'cloud' ? c.renewMs : queueEvery;
     const settings = this.settings();
     const graceMs = settings.refundGraceSec * 1000;
     const txId = randomUUID();
-    const pending: CashPending = { txId, stationId: this.cfg.station.stationId, leaseId: null, orderId: input.orderId, docId: input.docId, amountAgorot: input.amountAgorot, orderLabel: input.orderLabel, startedAt: this.now(), started: false, finalState: null };
+    const pending: CashPending = { txId, stationId: this.cfg.station.stationId, leaseId: null, orderId: input.orderId, docId: input.docId, amountAgorot: input.amountAgorot, orderLabel: input.orderLabel, startedAt: this.now(), started: false, finalState: null, via };
     this.savePending(pending);
+    this.d.log(`cash: payment ${txId} via ${via}`);
     try {
       // 1. The lease: the head of the station's queue.
       onProgress({ stage: 'connecting', position: null, tx: null, message: 'מתחבר למכשיר המזומן…' });
@@ -293,7 +398,7 @@ export class CashPay {
           }
           if (r.body.state === 'granted') break;
           const long = this.now() - queueStart > settings.queueTimeoutSec * 1000;
-          onProgress({ stage: 'queued', position: r.body.position, tx: null, message: `מכשיר המזומן תפוס — ממתין… (מקום ${r.body.position})${long ? ' · ההמתנה ארוכה מהרגיל' : ''}` });
+          onProgress({ stage: 'queued', position: r.body.position, tx: null, message: queuedMessage(r.body.position, long), longWait: long });
         } else if (r.kind === 'refused') {
           if (r.error === 'unknown_lease') pending.leaseId = null;
           else {
@@ -307,7 +412,7 @@ export class CashPay {
             return { kind: 'refunded', tx: null, message: 'מכשיר המזומן לא זמין' };
           }
         }
-        await sleep(renewEvery);
+        await sleep(queueEvery);
       }
       // 2. The start (idempotent: sent again until the station answers).
       pending.started = true;
@@ -391,6 +496,7 @@ export class CashPay {
           if (tx.state === 'DONE' || tx.state === 'HELD') {
             pending.finalState = tx.state;
             this.savePending(pending);
+            this.endedHere.add(txId);
             if (tx.state === 'HELD') return { kind: 'held', tx };
             if (tx.outcome === 'paid') return { kind: 'paid', tx };
             return { kind: 'refunded', tx, message: tx.outcome === 'nothing_inserted' ? 'לא הוכנס כסף' : 'הכסף הוחזר' };
@@ -413,9 +519,9 @@ export class CashPay {
    * [extra]: the customer's choice for the change owed (§11.15א); `void` — a split sale's document voided (§11.15ב).
    */
   async ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null, extra: { changeOwedAs?: OwedChoice | null; void?: boolean } = {}): Promise<boolean> {
-    const c = this.client();
-    if (!c) return false;
-    const r = await c.ack(txId, documentId, documentNumber, orderLabel, extra);
+    const own = this.endedHere.delete(txId);
+    const r = await this.settleCall(txId, (c) => c.ack(txId, documentId, documentNumber, orderLabel, extra), own);
+    if (!r) return false;
     if (r.kind === 'ok' || (r.kind === 'refused' && r.status === 404)) {
       this.forget(txId);
       return true;
@@ -427,27 +533,34 @@ export class CashPay {
 
   /** The station's word on a pending payment (recovery after a restart / a lost station). */
   async lookUp(txId: string): Promise<{ kind: 'tx'; tx: TxView } | { kind: 'none' } | { kind: 'offline' }> {
-    const c = this.client();
-    if (!c) return { kind: 'offline' };
-    const r = await c.tx(txId);
+    const r = await this.settleCall(txId, (c) => c.tx(txId));
+    if (!r) return { kind: 'offline' };
     if (r.kind === 'ok') return { kind: 'tx', tx: r.body };
     if (r.kind === 'refused' && r.status === 404) return { kind: 'none' };
     return { kind: 'offline' };
   }
 
   async cancelAt(txId: string): Promise<void> {
-    await this.client()?.cancel(txId, 'kiosk');
+    await this.settleCall(txId, (c) => c.cancel(txId, 'kiosk'));
   }
 
   /** A split left in PARTIAL by a restart whose card decided (or may have): the cash part is paid (§11.15ב). */
   async finishAt(txId: string): Promise<void> {
-    await this.client()?.finish(txId);
+    await this.settleCall(txId, (c) => c.finish(txId));
   }
 
   /** What a restart left of a payment's split (§11.15ב). */
   splitOf(txId: string): CashPending['split'] {
     return this.pending().find((p) => p.txId === txId)?.split ?? null;
   }
+}
+
+/**
+ * The queue's words (§14.3, every route): "עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום", its place from 2
+ * on, and "ההמתנה ארוכה מהרגיל" past `cashQueueTimeoutSec`.
+ */
+export function queuedMessage(position: number, long: boolean): string {
+  return `עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום${position >= 2 ? ` · מקום ${position} בתור` : ''}${long ? ' · ההמתנה ארוכה מהרגיל' : ''}`;
 }
 
 export function stageOf(tx: TxView): CashStage {

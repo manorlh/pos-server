@@ -282,7 +282,8 @@ describe('the Windows kiosk pays at the cash station', () => {
     stoppers.push(() => clearInterval(renew));
     await k.svc.startPayment(basket());
     const queued = await until(() => k.progress.find((p) => p.cash?.stage === 'queued'));
-    expect(queued.message).toContain('מכשיר המזומן תפוס — ממתין… (מקום 1)');
+    // §14.3: the same words on every route; the place only from 2 on.
+    expect(queued.message).toBe('עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום');
     expect(queued.canCancel).toBe(true);
     clearInterval(renew);
     host.station('st-1')!.release(OTHER, (other.body as { leaseId: string }).leaseId);

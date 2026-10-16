@@ -19,6 +19,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.services import till_permissions as _TP
+
 # ── Parameters (spec §17) ─────────────────────────────────────────────────────
 
 #: The existing "פתיחת מגירה" parameter (printers page): whether a drawer is connected,
@@ -67,7 +69,21 @@ AWAY_TARGET_KEY = "drawerAwayTarget"
 WALLET_CLOCK_OUT_KEY = "walletBlockClockOut"
 WALLET_CLOCK_OUT_OPTIONS = ("warn", "block")
 WALLET_CLOCK_OUT_LABELS = {"warn": "אזהרה (ברירת מחדל)", "block": "חסימה"}
-#: Not the drawer's only: how the till shows an action the user's role denies.
+#: "כשאין הרשאה" (P:/specs/denied-actions-ui.md, the owner 16.10.2026: "מלצר שאין לו הרשאה אפשר להסתיר
+#: או לשים קוד"): what the till does with an option the operator's role denies — `show` (today: shown, a
+#: tap says "אין הרשאה"), `hide`, or `code` (a manager's code, as "דורש אישור מנהל"). Per level here; a
+#: role and an employee may override it on the roles page (app/services/till_permissions.py). Default
+#: `show`: a new feature never changes what a shop sees on deploy.
+DENIED_ACTION_UI_KEY = "deniedActionUi"
+DENIED_ACTION_UI_OPTIONS = _TP.DENIED_UI_OPTIONS
+DENIED_ACTION_UI_LABELS = {
+    _TP.DENIED_UI_SHOW: "להציג (כמו היום — ברירת מחדל)",
+    _TP.DENIED_UI_HIDE: _TP.DENIED_UI_LABELS[_TP.DENIED_UI_HIDE],
+    _TP.DENIED_UI_CODE: _TP.DENIED_UI_LABELS[_TP.DENIED_UI_CODE],
+}
+#: Not the drawer's only: how the till shows an action the user's role denies — older than
+#: `deniedActionUi`, read by the till only under its `show` and only by the entries that always read
+#: it (the bar's tabs, "פתיחת מגירה", "ניהול קטלוג", "דוחות", "דוח X סניפי", the block sheet's options).
 DENIED_UI_KEY = "permissionsDeniedUi"
 DENIED_UI_HIDE = "הסתר"
 DENIED_UI_DISABLE = "הצג מושבת עם הסבר"
@@ -211,6 +227,18 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
         description=(
             "כשלעובד יש מזומן שלא הופקד (\"הכסף אצלי\") והוא יוצא ממשמרת בנוכחות: «אזהרה» — \"יש בידך ₪... "
             "להפקדה\" ואפשר לסיים בכל זאת; «חסימה» — לא ניתן לסיים עד ההפקדה, או באישור מנהל."
+        ),
+    ),
+    dict(
+        key=DENIED_ACTION_UI_KEY, label="כשאין הרשאה לעובד — להציג, להסתיר או לבקש קוד מנהל", value_type="enum",
+        enum_options=DENIED_ACTION_UI_OPTIONS, default_value="show", enum_labels=DENIED_ACTION_UI_LABELS,
+        description=(
+            "מה הקופה עושה עם אפשרות שהתפקיד של העובד אוסר (\"אסור\"). «להציג (כמו היום)» — האפשרות מוצגת "
+            "ולחיצה עליה אומרת \"אין הרשאה\". «להסתיר» — האפשרות לא מופיעה לעובד בתפריטים, בחלונות ובכפתורים. "
+            "«לבקש קוד מנהל» — לחיצה מבקשת קוד של מי שמותר לו, בדיוק כמו \"דורש אישור מנהל\", ונרשמת כאישור "
+            "מנהל. אפשר לקבוע אחרת לתפקיד או לעובד בלשונית \"מטריצת הרשאות\" ובהרשאות האישיות — שם הקביעה "
+            "גוברת. לא מוסתרים לעולם: יציאה, החלפת משתמש, נעילה, ומה שנדרש להשלמת תשלום או סגירה שכבר "
+            "התחילו. מנהל שנכנס לקופה רואה את כל מה שמותר לו. \"מותר\" ו\"דורש אישור מנהל\" לא משתנים."
         ),
     ),
     dict(

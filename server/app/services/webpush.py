@@ -7,16 +7,25 @@ Keys: the VAPID key pair identifies this server to the push services. Configure 
 `WEBPUSH_VAPID_PUBLIC_KEY` / `WEBPUSH_VAPID_PRIVATE_KEY` (base64url: the 65-byte uncompressed
 public point and the 32-byte private scalar — `python -m scripts.generate_vapid_keys` prints a
 fresh pair) and `WEBPUSH_VAPID_SUBJECT` (a `mailto:` or `https:` contact). The private key
-lives only in the environment, never in the repository. Without both keys push is off.
+lives only in the environment, never in the repository. Without the private key push is off.
+
+The keys are read forgivingly (fix/pwa-push): surrounding quotes and whitespace, standard base64
+or padding, and a PEM / DER private key are all accepted, and the public key handed to browsers
+is always the one DERIVED from the private key — a public key in the environment that does not
+match it (pasted from another pair) is logged and ignored instead of turning push off without
+a word. `config_problem()` names what is wrong (codes only, never a key).
 
 Only Web Push. Nothing here sends SMS or WhatsApp.
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import json
+import logging
 import os
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
@@ -37,6 +46,10 @@ DEFAULT_TTL = 6 * 60 * 60
 MAX_PAYLOAD = 3000
 #: One push service answering slowly must not hold the sender for long.
 SEND_TIMEOUT = 5
+#: The Topic header's alphabet (RFC 8030 §5.4: URL-safe base64).
+_TOPIC_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+
+logger = logging.getLogger(__name__)
 
 
 def b64u(data: bytes) -> str:
@@ -44,8 +57,18 @@ def b64u(data: bytes) -> str:
 
 
 def b64u_decode(text: str) -> bytes:
-    text = (text or "").strip()
+    """base64url — or standard base64 — with or without padding."""
+    text = "".join((text or "").split()).replace("+", "-").replace("/", "_").rstrip("=")
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _clean_env(text: Optional[str]) -> str:
+    """An environment value as pasted: whitespace and one pair of surrounding quotes removed."""
+    text = (text or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        text = text[1:-1].strip()
+    # A PEM pasted into one line keeps literal "\n".
+    return text.replace("\\n", "\n")
 
 
 # ── Keys ─────────────────────────────────────────────────────────────────────
@@ -60,10 +83,31 @@ def generate_vapid_keys() -> Tuple[str, str]:
 
 
 def private_key_from(b64: str) -> ec.EllipticCurvePrivateKey:
-    raw = b64u_decode(b64)
-    if len(raw) != 32:
-        raise ValueError("VAPID private key must be 32 bytes (base64url)")
-    return ec.derive_private_key(int.from_bytes(raw, "big"), ec.SECP256R1())
+    """
+    The VAPID private key: the raw 32-byte scalar (base64url, what `generate_vapid_keys` and the
+    `web-push` CLI print) — or a PEM / base64 DER (PKCS#8 or SEC1) P-256 key, as other tools write it.
+    """
+    text = _clean_env(b64)
+    if text.startswith("-----BEGIN"):
+        key = serialization.load_pem_private_key(text.encode("ascii"), password=None)
+        return _p256(key)
+    try:
+        raw = b64u_decode(text)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("VAPID private key is not base64") from exc
+    if len(raw) == 32:
+        return ec.derive_private_key(int.from_bytes(raw, "big"), ec.SECP256R1())
+    try:
+        key = serialization.load_der_private_key(raw, password=None)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("VAPID private key must be 32 bytes (base64url), PEM or DER") from exc
+    return _p256(key)
+
+
+def _p256(key: Any) -> ec.EllipticCurvePrivateKey:
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(key.curve, ec.SECP256R1):
+        raise ValueError("VAPID private key must be a P-256 (prime256v1) key")
+    return key
 
 
 def public_key_of(private: ec.EllipticCurvePrivateKey) -> str:
@@ -165,27 +209,129 @@ class SendResult:
     #: The subscription is gone for good (404 / 410): never send to it again.
     gone: bool = False
     error: Optional[str] = None
+    #: What the push service said, shortened (its reason for a 4xx: a VAPID mismatch, a bad
+    #: token…) — diagnosis only; never the endpoint or a key.
+    detail: Optional[str] = None
 
 
-def config() -> Optional[VapidConfig]:
-    """The server's VAPID keys, or None (push off) when either is missing or unreadable."""
+#: The browsers' push services by host (the host itself or any subdomain) — named in logs and
+#: in the diagnosis.
+SERVICES = (
+    ("fcm.googleapis.com", "fcm"),         # Chrome (Windows, Android), Samsung Internet, Opera
+    ("notify.windows.com", "wns"),         # Edge on Windows
+    ("push.services.mozilla.com", "mozilla"),
+    ("push.apple.com", "apple"),
+)
+
+
+def service_of(endpoint: str) -> str:
+    """"fcm" / "wns" / "mozilla" / "apple" / "other" — which push service an endpoint belongs to."""
+    try:
+        host = (urlsplit(endpoint or "").hostname or "").lower()
+    except ValueError:
+        return "other"
+    for domain, name in SERVICES:
+        if host == domain or host.endswith("." + domain):
+            return name
+    return "other"
+
+
+#: Problems already logged by this process (each once, not on every send).
+_logged: set = set()
+_log_lock = threading.Lock()
+
+
+def _log_once(code: str, message: str, level: int = logging.WARNING) -> None:
+    with _log_lock:
+        if code in _logged:
+            return
+        _logged.add(code)
+    logger.log(level, message)
+
+
+def _settings_keys() -> Tuple[str, str, str]:
     from app.config import get_settings
 
     s = get_settings()
-    public = (getattr(s, "webpush_vapid_public_key", "") or "").strip()
-    private = (getattr(s, "webpush_vapid_private_key", "") or "").strip()
-    if not public or not private:
+    return (
+        _clean_env(getattr(s, "webpush_vapid_public_key", "") or ""),
+        _clean_env(getattr(s, "webpush_vapid_private_key", "") or ""),
+        _clean_env(getattr(s, "webpush_vapid_subject", "") or ""),
+    )
+
+
+def config_problem() -> Optional[str]:
+    """
+    What keeps push from working as configured, as a code (never a key): "missing_private_key",
+    "private_key_unreadable" (push is off), "public_key_mismatch" / "public_key_missing" (push
+    works with the public key derived from the private one), "subject_localhost" (Safari refuses
+    it), or None.
+    """
+    public, private, subject = _settings_keys()
+    if not private:
+        return "missing_private_key"
+    try:
+        derived = public_key_of(private_key_from(private))
+    except ValueError:
+        return "private_key_unreadable"
+    if not public:
+        return "public_key_missing"
+    try:
+        if b64u(b64u_decode(public)) != derived:
+            return "public_key_mismatch"
+    except (binascii.Error, ValueError):
+        return "public_key_mismatch"
+    if _subject(subject).endswith("@localhost"):
+        return "subject_localhost"
+    return None
+
+
+def _subject(configured: str) -> str:
+    if configured:
+        return configured if configured.startswith(("mailto:", "https://")) else f"mailto:{configured}"
+    from app.config import get_settings
+
+    s = get_settings()
+    base = (getattr(s, "exception_alerts_link_base_url", "") or "").strip() or (
+        getattr(s, "pairing_mobile_app_base_url", "") or "")
+    return base if base.startswith("https://") else "mailto:admin@localhost"
+
+
+def config() -> Optional[VapidConfig]:
+    """
+    The server's VAPID keys, or None (push off) when the private key is missing or unreadable.
+    The public key is always the one derived from the private key: a public key in the
+    environment that differs (padding, standard base64, or from another pair) is logged once and
+    never handed to a browser — a browser subscribed with it could never verify our tokens.
+    """
+    public, private, subject = _settings_keys()
+    if not private:
+        if public:
+            _log_once("missing_private_key",
+                      "push: WEBPUSH_VAPID_PUBLIC_KEY is set but WEBPUSH_VAPID_PRIVATE_KEY is not — phone alerts are off")
         return None
     try:
-        if public_key_of(private_key_from(private)) != public:
-            return None  # a mismatched pair would sign tokens the browser's key cannot verify
+        derived = public_key_of(private_key_from(private))
     except ValueError:
+        _log_once("private_key_unreadable", "push: WEBPUSH_VAPID_PRIVATE_KEY is not a P-256 key (base64url 32 bytes, "
+                  "PEM or DER) — phone alerts are off", logging.ERROR)
         return None
-    subject = (getattr(s, "webpush_vapid_subject", "") or "").strip()
-    if not subject:
-        base = (getattr(s, "exception_alerts_link_base_url", "") or "").strip() or s.pairing_mobile_app_base_url
-        subject = base if base.startswith("https://") else "mailto:admin@localhost"
-    return VapidConfig(public_key=public, private_key=private, subject=subject)
+    if public:
+        try:
+            same = b64u(b64u_decode(public)) == derived
+        except (binascii.Error, ValueError):
+            same = False
+        if not same:
+            _log_once("public_key_mismatch", "push: WEBPUSH_VAPID_PUBLIC_KEY does not belong to WEBPUSH_VAPID_PRIVATE_KEY — "
+                      "using the public key derived from the private key", logging.ERROR)
+    else:
+        _log_once("public_key_missing", "push: WEBPUSH_VAPID_PUBLIC_KEY is not set — using the public key derived from "
+                  "the private key", logging.INFO)
+    resolved_subject = _subject(subject)
+    if resolved_subject.endswith("@localhost"):
+        _log_once("subject_localhost", "push: WEBPUSH_VAPID_SUBJECT is not set (mailto:admin@localhost) — Safari / iPhone "
+                  "refuse it; set a real mailto: or https: contact")
+    return VapidConfig(public_key=derived, private_key=private, subject=resolved_subject)
 
 
 def send(
@@ -199,6 +345,7 @@ def send(
     urgency: str = "high",
     topic: Optional[str] = None,
     client: Any = None,
+    timeout: float = SEND_TIMEOUT,
 ) -> SendResult:
     """Encrypt and post one message. Never raises: a failure is a result."""
     try:
@@ -216,18 +363,40 @@ def send(
         }
         if topic:
             # ≤ 32 characters of the URL-safe base64 alphabet: a newer message of the same topic
-            # replaces an undelivered older one (a till offline → back → offline again).
-            headers["Topic"] = "".join(ch for ch in topic if ch.isalnum() or ch in "-_")[:32]
+            # replaces an undelivered older one (a till offline → back → offline again). ASCII only:
+            # a Hebrew letter passes str.isalnum() and would break the header.
+            cleaned = "".join(ch for ch in topic if ch in _TOPIC_CHARS)[:32]
+            if cleaned:
+                headers["Topic"] = cleaned
         content = encrypt(body, p256dh, auth)
         if client is None:
             import httpx
 
-            response = httpx.post(endpoint, content=content, headers=headers, timeout=SEND_TIMEOUT)
+            response = httpx.post(endpoint, content=content, headers=headers, timeout=timeout)
         else:
-            response = client.post(endpoint, content=content, headers=headers, timeout=SEND_TIMEOUT)
+            response = client.post(endpoint, content=content, headers=headers, timeout=timeout)
     except Exception as exc:  # noqa: BLE001 - see the docstring
         return SendResult(ok=False, status=None, error=type(exc).__name__)
     status = getattr(response, "status_code", None)
     if status in (200, 201, 202):
         return SendResult(ok=True, status=status)
-    return SendResult(ok=False, status=status, gone=status in (404, 410), error=f"http_{status}")
+    return SendResult(ok=False, status=status, gone=status in (404, 410), error=f"http_{status}",
+                      detail=_answer(response))
+
+
+def _answer(response: Any) -> Optional[str]:
+    """The push service's reason, one short line (FCM / WNS / Mozilla put it in the body or a header)."""
+    try:
+        text = getattr(response, "text", None)
+        text = text() if callable(text) else text
+    except Exception:  # noqa: BLE001 - a reason is a nicety
+        text = None
+    if not text:
+        headers = getattr(response, "headers", None) or {}
+        try:
+            text = headers.get("X-WNS-Error-Description") or headers.get("x-wns-error-description") or headers.get("X-WNS-Status")
+        except Exception:  # noqa: BLE001
+            text = None
+    if not text:
+        return None
+    return " ".join(str(text).split())[:200] or None

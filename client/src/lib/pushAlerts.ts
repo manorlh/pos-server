@@ -101,6 +101,8 @@ export function minAmountApplies(config: Pick<PushConfig, 'categories'> | null |
 export interface PushConfig {
   enabled: boolean;
   publicKey: string | null;
+  /** fix/pwa-push: what is wrong with the server's keys, as a code (lib/pushDiagnosis.ts `configProblem`). */
+  problem?: string | null;
   categories: { key: AlertCategory; label: string; hint: string; amount: boolean }[];
   defaults: { minAmount: number; rateLimitMinutes: number };
 }
@@ -128,6 +130,9 @@ export interface PushDevice {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   lastError: string | null;
+  /** fix/pwa-push: failures in a row, and the push service (fcm / wns / mozilla / apple). */
+  failureCount?: number;
+  service?: string;
   active: boolean;
   /** A super admin only: "שלמות נתונים" arrives on this device. */
   integrity?: boolean;

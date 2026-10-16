@@ -252,10 +252,20 @@ export interface PayProgress {
 
 /** The cash station's side of a payment, as the pay screen draws it (§11.6). */
 export interface CashPayView {
-  /** `owed_choice`: the change owed — the customer chooses (§11.15א); `split_card`: the cash part paid, the card the rest (§11.15ב). */
-  stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
+  /**
+   * `owed_choice`: the change owed — the customer chooses (§11.15א); `split_card`: the cash part paid, the card the rest (§11.15ב).
+   * CashMag (P:/specs/cashmag-windows.md): `busy` — the machine is another client's ("…יש להמתין לסיום", going on by
+   * itself once free); `question` — the server asks (`question`), answered with `cashQuestion`.
+   */
+  stage: 'connecting' | 'queued' | 'busy' | 'insert' | 'question' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
+  /** Which cash device: the shop's cash station (PayLink, absent) or a CashMag machine. */
+  device?: 'paylink' | 'cashmag';
+  /** question: the server's title and text. */
+  question?: { title: string; text: string } | null;
   /** In the queue: the place (1 = next). */
   position: number | null;
+  /** In the queue past `cashQueueTimeoutSec` ("ההמתנה ארוכה מהרגיל", P:/specs/cash-paylink.md §14.3). */
+  longWait?: boolean;
   stationName: string | null;
   insertedAgorot: number;
   dueAgorot: number;
@@ -344,6 +354,22 @@ export interface AdminInfo {
     reason: string | null;
     pending: Array<{ txShort: string; amountAgorot: number; startedAt: number; final: string | null }>;
   } | null;
+  /**
+   * "מכשיר מזומן CashMag" (P:/specs/cashmag-windows.md §7): the settings in force and where each came from, the
+   * server's state, and the payments the staff must look at ("טופל"). Absent / null: CashMag off and nothing left.
+   */
+  cashmag?: {
+    address: string;
+    protocol: string;
+    terminal: string;
+    userCodeSet: boolean;
+    sources: Record<string, string>;
+    usable: boolean;
+    reason: string | null;
+    connection: string | null;
+    lastError: string | null;
+    unresolved: Array<{ txId: string; txShort: string; amountAgorot: number; startedAt: number; outcome: string | null; heldAgorot: number; reason: string | null }>;
+  } | null;
 }
 
 export interface TechnicianInfo {
@@ -416,6 +442,8 @@ export interface KioskBridge {
   cashOwedChoice?(choice: CashOwedChoice): Promise<void>;
   /** "להשלים באשראי": the cash part so far, the rest by card (§11.15ב). */
   cashSplit?(): Promise<{ ok: boolean; message?: string }>;
+  /** CashMag: the customer's answer to the server's question (confirm: dialogValid, else dialogCancel). */
+  cashQuestion?(confirm: boolean): Promise<void>;
   /** A cash credit's code (scanned "CC:…" or typed) taken for this order — up to [dueAgorot] of the goods. */
   redeemCashCredit?(input: { code: string; dueAgorot: number; clientRequestId: string }): Promise<CashCreditResult>;
   /** A credit taken for an order that was not paid: back on the credit (kept and retried until the cloud answers). */
@@ -458,7 +486,11 @@ export type AdminAction =
   /** The paired key to the cloud again. */
   | { type: 'synqpayRetryUpload' }
   /** "מכשיר מזומן": ask the cash station again about payments it has not finished telling (settleCash). */
-  | { type: 'cashRecheck' };
+  | { type: 'cashRecheck' }
+  /** CashMag: a manager dealt with an unclear payment at the machine ("טופל"). */
+  | { type: 'cashmagAcknowledge'; txId: string }
+  /** CashMag: is the server there now (a knock on its port, the machine not taken). */
+  | { type: 'cashmagCheck' };
 
 export interface AdminActionResult {
   ok: boolean;

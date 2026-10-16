@@ -404,9 +404,16 @@ class POSMachineResponse(POSMachineBase):
     is_fiscal: bool = Field(True, alias="fiscal")
     #: "android" | "windows" (null on a plain PUT answer of a machine paired before the column).
     platform: Optional[str] = None
+    #: "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): a Windows kiosk that runs its cash station(s) too.
+    cash_host_embedded: bool = Field(False, alias="cashHostEmbedded")
     #: Its KDS screen (`role`, `name`, `isActive`, `shopId`), or null. On a fiscal till: a
     #: screen paired on the KDS page before display devices existed — flagged.
     kds_screen: Optional[Dict[str, Any]] = Field(None, alias="kdsScreen")
+
+    @field_validator("cash_host_embedded", mode="before")
+    @classmethod
+    def _unset_cash_host_embedded(cls, value):
+        return value is True
 
     @field_validator("is_fiscal", mode="before")
     @classmethod

@@ -116,9 +116,11 @@ def test_a_till_without_a_terminal_skips_an_inherited_agamento():
     assert (res.integration, res.automatic, res.missing) == ("nayax_lan", True, ["nayaxDeviceHost"])
 
 
-def test_tap_to_pay_is_reserved_and_never_resolves():
+def test_tap_to_pay_resolves_and_asks_for_its_fields():
+    # Selectable since 16.10.2026 (P:/specs/tap-to-pay.md): no longer reserved.
     res = PI.resolve([("shop", {"paymentIntegration": "tap_to_pay"})], True)
-    assert res.integration == "agamento"
+    assert (res.integration, res.source) == ("tap_to_pay", "shop")
+    assert res.missing == ["tapToPayTpn", "tapToPayMerchantCode", "tapToPayEnvironment"]
 
 
 # ── Per-type validation ──────────────────────────────────────────────────────
@@ -156,7 +158,7 @@ def test_a_pinpad_id_is_stored_without_its_prefix(raw, clean):
 
 
 @pytest.mark.parametrize("body", [{"zcreditPinpadId": "PINPAD 1"}, {"zcreditMode": "sandbox"},
-                                  {"paymentIntegration": "tap_to_pay"}, {"paymentIntegration": "visa"}])
+                                  {"tapToPayEnvironment": "live"}, {"paymentIntegration": "visa"}])
 def test_bad_values_are_refused(body):
     with pytest.raises(ValidationError):
         PosSettingsV1Patch(**body)
@@ -326,7 +328,8 @@ def test_the_context_says_what_a_p18_may_choose_and_where_secrets_are(w):
     assert options["agamento"]["selectable"] is False
     assert options["agamento"]["reason"] == "needs_builtin_terminal"
     assert options["zcredit"]["selectable"] and options["nayax_lan"]["selectable"]
-    assert (options["tap_to_pay"]["selectable"], options["tap_to_pay"]["reason"]) == (False, "soon")
+    # A P18 has NFC: Tap to Pay may be picked (P:/specs/tap-to-pay.md).
+    assert (options["tap_to_pay"]["selectable"], options["tap_to_pay"]["reason"]) == (True, None)
     assert ctx["inherited"] == {"integration": "zcredit", "source": "shop"}
     assert ctx["secrets"]["zcreditPassword"] == {"set": True, "source": "shop", "own": False, "updatedAt": None}
     assert ctx["resolved"]["integration"] == "zcredit"
@@ -338,8 +341,9 @@ def test_a_new_shop_can_open_with_an_integration_type():
     data = ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="zcredit")
     assert data.payment_integration == "zcredit"
     assert ShopCreate(name="S", companyId=uuid.uuid4()).payment_integration is None
+    assert ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="tap_to_pay").payment_integration == "tap_to_pay"
     with pytest.raises(ValidationError):
-        ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="tap_to_pay")
+        ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="visa")
     assert ShopCreate(name="S", companyId=uuid.uuid4(), paymentIntegration="nayax_usb").payment_integration == "nayax_usb"
 
 

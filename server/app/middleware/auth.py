@@ -319,14 +319,15 @@ HOST_MACHINE_TOKEN = [Depends(require_host_machine_token)]
 
 # ── "שרת מזומן" (P:/specs/cash-paylink.md §11.2, §11.9) ─────────────────────────────────────
 # A cash host is not a till (403 `cash_host_not_a_till` on every fiscal endpoint above), and no other
-# device may write in its name: its journal and its commands' acknowledgements admit a cash host only
-# (403 `cash_host_only` — a till, a kiosk, a screen alike).
+# device may write in its name: its journal and its commands' acknowledgements admit a cash host only — or a host
+# kiosk (§14.1), which runs stations too (403 `cash_host_only` for a till, any other kiosk, a screen alike).
 
 
 def _refuse_unless_cash_host(machine: POSMachine) -> POSMachine:
-    from app.services.cash_host import ONLY_A_CASH_HOST, ONLY_A_CASH_HOST_MESSAGE, is_cash_host
+    from app.services.cash_host import ONLY_A_CASH_HOST, ONLY_A_CASH_HOST_MESSAGE, hosts_cash
 
-    if not is_cash_host(machine):
+    # A dedicated cash host, or a host kiosk ("מארח עמדת מזומן", P:/specs/cash-paylink.md §14.1).
+    if not hosts_cash(machine):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": ONLY_A_CASH_HOST, "message": ONLY_A_CASH_HOST_MESSAGE},

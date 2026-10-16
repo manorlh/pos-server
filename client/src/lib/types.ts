@@ -263,6 +263,10 @@ export interface PosSettingsV1 {
   /** USB serial: "" = detect, "VVVV:PPPP" (hex) or "COMn" (Windows). */
   synqpayUsbDevice?: string;
   synqpaySerialNumber?: string;
+  /** Tap to Pay (P:/specs/tap-to-pay.md): the TPN of the merchant's Tap on Phone terminal. */
+  tapToPayTpn?: string;
+  /** Tap to Pay: `sandbox` | `production`. */
+  tapToPayEnvironment?: string;
   /**
    * "מכשירי תשלום" (lib/paymentDevices.ts): a till without built-in clearing works with several
    * payment devices of its shop. Unset = inherit (off when no level sets it).
@@ -642,6 +646,8 @@ export type PosSettingsPatch = Partial<
   synqpayTls?: boolean | null;
   synqpayUsbDevice?: string | null;
   synqpaySerialNumber?: string | null;
+  tapToPayTpn?: string | null;
+  tapToPayEnvironment?: string | null;
   nayaxEnabled?: boolean | null;
   nayaxDeviceHost?: string | null;
   nayaxDevicePort?: string | null;
@@ -654,6 +660,8 @@ export type PosSettingsPatch = Partial<
   zcreditKey?: string | null;
   /** The SynqPay API key: write-only, as the Z-Credit password. */
   synqpayApiKey?: string | null;
+  /** Tap to Pay's merchant code: write-only, as the Z-Credit password. */
+  tapToPayMerchantCode?: string | null;
 } & {
   [K in ResettableSwitchKey]?: boolean | null;
 };
@@ -673,6 +681,8 @@ export type PaymentIntegrationSettingKey =
   | 'synqpayTls'
   | 'synqpayUsbDevice'
   | 'synqpaySerialNumber'
+  | 'tapToPayTpn'
+  | 'tapToPayEnvironment'
   | 'nayaxEnabled'
   | 'nayaxDeviceHost'
   | 'nayaxDevicePort'
@@ -822,6 +832,11 @@ export interface PosMachine {
   fiscal?: boolean;
   /** "android" | "windows" | "web" (the browser kiosk, docs/SPEC_KIOSK.md §27) — what the device runs. */
   platform?: 'android' | 'windows' | 'web' | null;
+  /**
+   * "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): a Windows kiosk whose PC has the PayLink on USB runs its
+   * cash station(s) too. Absent on an older server: no.
+   */
+  cashHostEmbedded?: boolean;
   /**
    * Its KDS screen, or null. On a fiscal till: a screen paired on the KDS page before
    * display devices existed (flagged "מסך מטבח על קופה").
@@ -1013,7 +1028,7 @@ export interface PosMachine {
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
   /** "סוג אינטגרציית אשראי" the till charges on (`none`: "ללא אשראי"); null on an older server. */
-  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'none' | null;
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay' | 'none' | null;
   /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
   paymentIntegrationSource?: SettingsLevel | null;
   paymentIntegrationAutomatic?: boolean | null;

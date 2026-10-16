@@ -14,6 +14,19 @@ export type PermState = 'allow' | 'approval' | 'deny';
 
 export const PERM_STATES: PermState[] = ['allow', 'approval', 'deny'];
 
+/**
+ * "כשאין הרשאה" (P:/specs/denied-actions-ui.md): what the till does with an option the role denies —
+ * show (today: shown, a tap says "אין הרשאה"), hide, or code (a manager's code, as "דורש אישור מנהל").
+ * Per role and per employee; null / '' = inherit (the employee → the role → the level's `deniedActionUi`).
+ */
+export type DeniedUi = 'show' | 'hide' | 'code';
+
+export const DENIED_UI: DeniedUi[] = ['show', 'hide', 'code'];
+
+export function isDeniedUi(value: unknown): value is DeniedUi {
+  return typeof value === 'string' && (DENIED_UI as string[]).includes(value);
+}
+
 export interface CatalogueLimit {
   key: string;
   label: string;
@@ -50,6 +63,8 @@ export interface PermissionCatalogue {
   permissions: CataloguePermission[];
   builtinRoles: CatalogueBuiltinRole[];
   specRoleKeys: string[];
+  /** "כשאין הרשאה": the options and the codes it never touches (absent from an older server). */
+  deniedUi?: { options: { key: DeniedUi; label: string }[]; untouched: string[] };
 }
 
 export interface TillRole {
@@ -68,6 +83,8 @@ export interface TillRole {
   legacyRole: 'cashier' | 'shop_manager';
   users: number;
   updatedAt: string | null;
+  /** "כשאין הרשאה" — the role's own; null = as the level says. */
+  deniedUi?: DeniedUi | null;
 }
 
 export interface TillRolesResponse {
@@ -88,9 +105,12 @@ export interface TillRoleUser {
   role: 'cashier' | 'shop_manager';
   tillRoleId: string | null;
   tillRoleName: string | null;
-  overrides: { states?: Record<string, PermState>; limits?: LimitMap } | null;
+  overrides: { states?: Record<string, PermState>; limits?: LimitMap; deniedUi?: DeniedUi } | null;
   permissions: Record<string, PermState>;
   limits: LimitMap;
+  /** "כשאין הרשאה" as this employee gets it (their own, else their role's); null = as the level says. */
+  deniedUi?: DeniedUi | null;
+  deniedUiSource?: 'override' | 'role' | null;
 }
 
 export interface TillRoleChange {
@@ -159,18 +179,33 @@ export interface MatrixDraft {
   states: Record<string, Record<string, PermState>>;
   /** roleId → code → limit key → value (null: no limit). */
   limits: Record<string, Record<string, Record<string, number | null>>>;
+  /** roleId → "כשאין הרשאה" (null: as the level says), the matrix's first row. */
+  deniedUi?: Record<string, DeniedUi | null>;
 }
 
 /** The editor's starting point: every role's effective matrix. */
 export function draftFromRoles(roles: TillRole[]): MatrixDraft {
   const states: MatrixDraft['states'] = {};
   const limits: MatrixDraft['limits'] = {};
+  const deniedUi: Record<string, DeniedUi | null> = {};
   for (const r of roles) {
     states[r.id] = { ...r.permissions };
     limits[r.id] = {};
     for (const [code, values] of Object.entries(r.limits ?? {})) limits[r.id][code] = { ...values };
+    deniedUi[r.id] = r.deniedUi ?? null;
   }
-  return { states, limits };
+  return { states, limits, deniedUi };
+}
+
+/** "כשאין הרשאה" for one role in the draft (null: as the level says). */
+export function setDeniedUi(draft: MatrixDraft, roleId: string, value: DeniedUi | null): MatrixDraft {
+  return { ...draft, deniedUi: { ...(draft.deniedUi ?? {}), [roleId]: value } };
+}
+
+/** Did the draft change this role's "כשאין הרשאה"? */
+export function deniedUiChanged(role: TillRole, draft: MatrixDraft): boolean {
+  if (!draft.deniedUi || !(role.id in draft.deniedUi)) return false;
+  return (draft.deniedUi[role.id] ?? null) !== (role.deniedUi ?? null);
 }
 
 export function setCell(draft: MatrixDraft, roleId: string, code: string, state: PermState): MatrixDraft {
@@ -204,6 +239,8 @@ export interface MatrixSaveRole {
   id: string;
   permissions: Record<string, PermState>;
   limits: Record<string, Record<string, number | null>>;
+  /** Sent only when changed: show | hide | code, or null to inherit again. */
+  deniedUi?: DeniedUi | null;
 }
 
 /**
@@ -241,13 +278,16 @@ export function matrixPayload(
         }
       }
     }
-    out.push({ id: role.id, permissions, limits });
+    const item: MatrixSaveRole = { id: role.id, permissions, limits };
+    if (deniedUiChanged(role, draft)) item.deniedUi = draft.deniedUi?.[role.id] ?? null;
+    out.push(item);
   }
   return out;
 }
 
 /** Does the draft show this role differently from what the server has? */
 export function roleChanged(role: TillRole, draft: MatrixDraft): boolean {
+  if (deniedUiChanged(role, draft)) return true;
   const states = draft.states[role.id] ?? {};
   for (const [code, state] of Object.entries(states)) {
     if (role.permissions[code] !== state) return true;
@@ -266,6 +306,7 @@ export function roleChanged(role: TillRole, draft: MatrixDraft): boolean {
 export function changedCells(roles: TillRole[], draft: MatrixDraft): number {
   let n = 0;
   for (const role of roles) {
+    if (deniedUiChanged(role, draft)) n += 1;
     for (const [code, state] of Object.entries(draft.states[role.id] ?? {})) {
       if (role.permissions[code] !== state) n += 1;
     }
@@ -300,10 +341,45 @@ export function overridesDraft(user: Pick<TillRoleUser, 'overrides'>): Record<st
   return out;
 }
 
-export function overridesPayload(draft: Record<string, PermState | ''>): { states: Record<string, PermState> } | null {
+/** A user's own "כשאין הרשאה" as the editor keeps it ('' = as the role). */
+export function overridesDeniedUi(user: Pick<TillRoleUser, 'overrides'>): DeniedUi | '' {
+  const value = user.overrides?.deniedUi;
+  return isDeniedUi(value) ? value : '';
+}
+
+export function overridesPayload(
+  draft: Record<string, PermState | ''>,
+  deniedUi: DeniedUi | '' = '',
+): { states: Record<string, PermState>; deniedUi?: DeniedUi } | null {
   const states: Record<string, PermState> = {};
   for (const [code, state] of Object.entries(draft)) if (state) states[code] = state;
+  if (deniedUi) return { states, deniedUi };
   return Object.keys(states).length ? { states } : null;
+}
+
+/** How many personal exceptions a user has (their states, and their own "כשאין הרשאה"). */
+export function overridesCount(user: Pick<TillRoleUser, 'overrides'>): number {
+  return Object.keys(user.overrides?.states ?? {}).length + (overridesDeniedUi(user) ? 1 : 0);
+}
+
+/**
+ * The audit's line for a "כשאין הרשאה" change ("כשאין הרשאה: כמו בהגדרה → להסתיר"), or null when it did not
+ * move. Reads role snapshots and user overrides alike (`deniedUi` in either).
+ */
+export function describeDeniedUiChange(
+  oldValue: unknown,
+  newValue: unknown,
+  label: (value: DeniedUi | null) => string,
+  title: string,
+): string | null {
+  const pick = (v: unknown): DeniedUi | null => {
+    const d = v && typeof v === 'object' ? (v as { deniedUi?: unknown }).deniedUi : undefined;
+    return isDeniedUi(d) ? d : null;
+  };
+  const before = pick(oldValue);
+  const after = pick(newValue);
+  if (before === after) return null;
+  return `${title}: ${label(before)} → ${label(after)}`;
 }
 
 /**

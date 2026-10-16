@@ -1207,8 +1207,12 @@ def _release_of(db: Session, machine: POSMachine, mark: SoldOutMark, rules, user
     verdict = control.release_verdict(rules, machine, level, svc.channels_of(mark))
     if not verdict.ok:
         return {"releasable": False, "releaseNeeds": None, "releaseHint": verdict.message}
+    # "כשאין הרשאה" (P:/specs/denied-actions-ui.md): under "לבקש קוד מנהל" a denied user's release asks a
+    # manager on the till, so it is offered here as "דורש אישור מנהל" would be (till_roles.operator_state).
+    from app.services.till_roles import operator_state
+
     if user is not None and control.DENY in (
-        control.permission_state(user, control.NARROW), control.permission_state(user, verdict.needs),
+        operator_state(db, user, control.NARROW, machine), operator_state(db, user, verdict.needs, machine),
     ):
         return {"releasable": False, "releaseNeeds": None, "releaseHint": _HINT_NO_PERMISSION}
     return {"releasable": True, "releaseNeeds": verdict.needs, "releaseHint": None}

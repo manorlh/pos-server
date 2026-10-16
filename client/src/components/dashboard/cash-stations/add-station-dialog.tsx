@@ -3,7 +3,8 @@
 /**
  * "הוספת עמדה" (P:/specs/cash-paylink.md §12): a cash station is one PayLink unit — its shop, name, where it
  * stands, its USB serial ('' = the unit's default, AE000001) and the cash server that runs it (a `cash_host`
- * device of that shop; none yet = chosen later). `POST /cash-stations`.
+ * device of that shop, or a "קיוסק מארח" — a Windows kiosk with the PayLink on USB, §14.1; none yet = chosen later).
+ * `POST /cash-stations`.
  */
 
 import { useMemo, useState } from 'react';
@@ -13,6 +14,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { createCashStation } from '@/lib/cashStationsApi';
+import { runsStations } from '@/lib/cashStations';
 import type { PosMachine, Shop } from '@/lib/types';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -42,7 +44,7 @@ export function AddStationDialog({
   const [hostId, setHostId] = useState('');
 
   const hosts = useMemo(
-    () => machines.filter((m) => m.deviceRole === 'cash_host' && !!shopId && String(m.shopId ?? '').toLowerCase() === shopId.toLowerCase()),
+    () => machines.filter((m) => runsStations(m) && !!shopId && String(m.shopId ?? '').toLowerCase() === shopId.toLowerCase()),
     [machines, shopId],
   );
 
@@ -124,7 +126,7 @@ export function AddStationDialog({
           value={hostId}
           onChange={setHostId}
           disabled={!shopId}
-          options={[{ value: '', label: t('noHost') }, ...hosts.map((m) => ({ value: m.id, label: m.name }))]}
+          options={[{ value: '', label: t('noHost') }, ...hosts.map((m) => ({ value: m.id, label: m.cashHostEmbedded ? t('embeddedHost', { name: m.name }) : m.name }))]}
         />
         <p className="text-xs text-muted-foreground">{shopId && hosts.length === 0 ? t('noHostsInShop') : t('hostHint')}</p>
       </div>

@@ -33,6 +33,7 @@ import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
@@ -54,7 +55,7 @@ from app.models.cash_station import (
 )
 from app.models.pos_machine import PairingStatus, POSMachine
 from app.services import cash_params as CP
-from app.services.cash_host import is_cash_host
+from app.services.cash_host import hosts_cash, is_cash_host, is_embedded_host
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +189,9 @@ def station_label(station: Any) -> str:
 
 
 def host_of(db: Session, station: CashStation) -> Optional[POSMachine]:
+    """The station's host: a dedicated cash host or a host kiosk (§14.1), active — else None (no kiosk is given it)."""
     host = db.get(POSMachine, station.host_machine_id) if station.host_machine_id else None
-    if host is None or not host.is_active or not is_cash_host(host):
+    if host is None or not host.is_active or not hosts_cash(host):
         return None
     return host
 
@@ -384,11 +386,11 @@ def clean_status(raw: Any) -> Optional[Dict[str, Any]]:
 
 def apply_heartbeat(db: Session, machine: POSMachine, raw: Any, *, now: Optional[datetime] = None) -> bool:
     """
-    A cash host's `cash` block: kept on the machine (`cash_status`), and its stations' alerts reconciled
-    (cash_alerts.py) — opened when reported, closed when no longer. Another device's block is ignored.
-    The caller commits; never raises for a bad block (it is cleaned).
+    A cash host's `cash` block — a dedicated one's or a host kiosk's (§14.1): kept on the machine (`cash_status`),
+    and its stations' alerts reconciled (cash_alerts.py) — opened when reported, closed when no longer. Another
+    device's block is ignored. The caller commits; never raises for a bad block (it is cleaned).
     """
-    if not is_cash_host(machine):
+    if not hosts_cash(machine):
         return False
     cleaned = clean_status(raw)
     if cleaned is None:
@@ -440,10 +442,15 @@ def _shop_devices(db: Session, shop_id: Any) -> List[POSMachine]:
     )
 
 
-def clients_by_station(db: Session, shop_id: Any, stations: Optional[Sequence[CashStation]] = None) -> Dict[Any, List[POSMachine]]:
-    """The shop's kiosks and tills that take cash, by the station each is assigned (resolved)."""
+def client_routes(
+    db: Session, shop_id: Any, stations: Optional[Sequence[CashStation]] = None,
+) -> Dict[Any, List[Tuple[POSMachine, str]]]:
+    """
+    The shop's kiosks and tills that take cash, by the station each is assigned (resolved), each with its
+    `cashRoute` (§14.2: lan | cloud | auto; anything else — lan).
+    """
     stations = list(stations) if stations is not None else stations_of_shop(db, shop_id)
-    out: Dict[Any, List[POSMachine]] = {s.id: [] for s in stations}
+    out: Dict[Any, List[Tuple[POSMachine, str]]] = {s.id: [] for s in stations}
     if not stations:
         return out
     for machine in _shop_devices(db, shop_id):
@@ -456,12 +463,20 @@ def clients_by_station(db: Session, shop_id: Any, stations: Optional[Sequence[Ca
             continue
         station = resolve_station(stations, params.get(CP.STATION_KEY))
         if station is not None:
-            out.setdefault(station.id, []).append(machine)
+            out.setdefault(station.id, []).append((machine, CP.route_of(params.get(CP.ROUTE_KEY))))
     return out
 
 
-def client_ref(db: Session, machine: POSMachine) -> Dict[str, Any]:
-    return {"machineId": str(machine.id), "name": machine.name, "kind": kind_of(db, machine)}
+def clients_by_station(db: Session, shop_id: Any, stations: Optional[Sequence[CashStation]] = None) -> Dict[Any, List[POSMachine]]:
+    """The shop's kiosks and tills that take cash, by the station each is assigned (resolved)."""
+    return {sid: [m for m, _ in items] for sid, items in client_routes(db, shop_id, stations).items()}
+
+
+def client_ref(db: Session, machine: POSMachine, route: Optional[str] = None) -> Dict[str, Any]:
+    out = {"machineId": str(machine.id), "name": machine.name, "kind": kind_of(db, machine)}
+    if route is not None:
+        out["route"] = route
+    return out
 
 
 # ── GET /sync/{m}/cash (§11.2) ─────────────────────────────────────────────────
@@ -539,14 +554,19 @@ def lan_alert_targets(db: Session, host: POSMachine) -> List[Dict[str, Any]]:
 
 
 def host_view(db: Session, host: POSMachine) -> Dict[str, Any]:
-    """The cash host's answer (`role: "host"`)."""
+    """
+    The cash host's answer (`role: "host"`) — a dedicated host's, or the `host` block of a host kiosk (§14.1). Each
+    client with its `route` and each station's `relay` (§14.2: a client of it not on the LAN — the host then
+    listens to the cloud relay, §14.4; the host kiosk's own payments never go through it).
+    """
     base = machine_params(db, host)
     stations = stations_of_host(db, host.id)
-    clients = clients_by_station(db, host.shop_id, stations_of_shop(db, host.shop_id)) if host.shop_id else {}
+    clients = client_routes(db, host.shop_id, stations_of_shop(db, host.shop_id)) if host.shop_id else {}
     host_settings = CP.typed(base, CP.HOST_KEYS)
     out_stations = []
     for station in stations:
         eff = station_settings(db, station, host, base=base)
+        mine = clients.get(station.id, [])
         out_stations.append({
             "stationId": str(station.id),
             "name": station.name,
@@ -554,7 +574,8 @@ def host_view(db: Session, host: POSMachine) -> Dict[str, Any]:
             "serial": station.serial or "",
             "simulator": eff.get(CP.SIMULATOR_KEY) is True,
             "settings": eff,
-            "clients": [client_ref(db, m) for m in clients.get(station.id, [])],
+            "clients": [client_ref(db, m, route) for m, route in mine],
+            "relay": any(route != CP.ROUTE_LAN for m, route in mine if m.id != host.id),
         })
     return {
         "api": API,
@@ -569,7 +590,16 @@ def host_view(db: Session, host: POSMachine) -> Dict[str, Any]:
 
 
 def view_for(db: Session, machine: POSMachine) -> Dict[str, Any]:
-    return host_view(db, machine) if is_cash_host(machine) else client_view(db, machine)
+    """
+    §11.2: a dedicated cash host — the host's answer; a kiosk / till — the client's; a host kiosk (§14.1) — the
+    client's with the host's answer in `host`.
+    """
+    if is_cash_host(machine):
+        return host_view(db, machine)
+    out = client_view(db, machine)
+    if is_embedded_host(machine):
+        out["host"] = host_view(db, machine)
+    return out
 
 
 def etag_of(body: Dict[str, Any]) -> str:
@@ -861,7 +891,13 @@ def default_alert_till(db: Session, shop_id: Any) -> Optional[POSMachine]:
 
 
 def alert_tills(db: Session, station: CashStation, settings: Optional[Dict[str, Any]] = None) -> List[POSMachine]:
-    """The tills of `cashAlertTills` for this station (active tills of its shop); none valid — the main till."""
+    """
+    The tills of `cashAlertTills` for this station (active tills of its shop); none valid — the main till. A CashMag
+    kiosk's unit (cash_alerts.CashMagUnit — no station): the kiosk's own resolved `cashAlertTills`.
+    """
+    if settings is None and getattr(station, "is_cashmag", False):
+        kiosk = db.get(POSMachine, station.kiosk_id)
+        settings = CP.typed(machine_params(db, kiosk)) if kiosk is not None else {}
     settings = settings if settings is not None else station_settings(db, station)
     wanted = [_uuid(x) for x in settings.get(CP.ALERT_TILLS_KEY) or []]
     wanted = [w for w in wanted if w is not None]
@@ -1123,12 +1159,95 @@ def confirm_credit_legs(db: Session, transaction_ids: Sequence[Any], *, now: Opt
     return confirmed
 
 
+# ── CashMag credits (P:/specs/cashmag-windows.md §6) ─────────────────────────────
+
+#: `cashDevice.hostId` of a CashMag leg, and `cash_station_txs.device` of the credits made from one.
+CASHMAG_DEVICE = "cashmag"
+CASHMAG_NAME = "CashMag"
+
+
+def _leg_agorot(leg: Any) -> int:
+    """A document leg's amount (shekels, Decimal) in agorot."""
+    try:
+        return max(0, int((Decimal(str(leg.amount)) * 100).to_integral_value()))
+    except Exception:  # noqa: BLE001 - an unreadable amount: none
+        return 0
+
+
+def cashmag_credits_from_documents(db: Session, transaction_ids: Sequence[Any], *, now: Optional[datetime] = None) -> int:
+    """
+    Documents just stored: a CashMag kiosk's cash leg whose change owed the customer kept as a credit (`cashDevice`
+    with `hostId` "cashmag", `changeOwedAs` "credit", `changeOwedAgorot` > 0, its slip code) becomes the credit — a
+    `change_credit` owed item with no station (`device` "cashmag"), redeemed by its code like a station's (any shop of
+    the company, in parts, released when the order is not paid), never at the tills' "שולם ללקוח". Once per
+    transaction id (the same document again, or another with the same leg: nothing new). Returns how many were made.
+    The caller commits.
+    """
+    from app.models.transaction import Transaction, TransactionStatus
+    from app.models.transaction_payment import TransactionPayment
+
+    ids = [i for i in transaction_ids if i is not None]
+    if not ids:
+        return 0
+    now = _now(now)
+    made = 0
+    rows = (
+        db.query(TransactionPayment, Transaction)
+        .join(Transaction, Transaction.id == TransactionPayment.transaction_id)
+        .filter(TransactionPayment.transaction_id.in_(ids), TransactionPayment.method == "cash")
+        .all()
+    )
+    for leg, doc in rows:
+        block = cash_device_of(leg)
+        if not block or block.get("hostId") != CASHMAG_DEVICE or block.get("changeOwedAs") != "credit":
+            continue
+        tx_id = _uuid(block.get("txId"))
+        owed = _int(block.get("changeOwedAgorot"), 0, AGOROT_MAX)
+        code = credit_code_of(block.get("slipCode"))
+        status_value = getattr(doc.status, "value", doc.status)
+        if tx_id is None or owed < 1 or code is None or doc.shop_id is None or status_value != TransactionStatus.COMPLETED.value:
+            continue
+        existing = db.get(CashStationTx, tx_id)
+        if existing is not None:
+            if existing.device == CASHMAG_DEVICE:
+                existing.document_id = existing.document_id or str(doc.id)
+                existing.document_number = existing.document_number or doc.transaction_number
+            continue
+        row = CashStationTx(
+            tx_id=tx_id, tenant_id=doc.tenant_id or getattr(db.get(POSMachine, doc.machine_id), "tenant_id", None),
+            station_id=None, host_machine_id=None, client_machine_id=doc.machine_id, shop_id=doc.shop_id,
+            device=CASHMAG_DEVICE, state="DONE", outcome="paid",
+            amount_agorot=_leg_agorot(leg), due_agorot=_leg_agorot(leg) + _int(block.get("roundingAgorot"), -99, 99),
+            rounding_agorot=_int(block.get("roundingAgorot"), -99, 99),
+            inserted_agorot=_int(block.get("receivedAgorot"), 0, AGOROT_MAX),
+            change_due_agorot=_int(block.get("changeAgorot"), 0, AGOROT_MAX) + owed,
+            change_paid_agorot=_int(block.get("changeAgorot"), 0, AGOROT_MAX), change_owed_agorot=owed,
+            change_owed_ask=True, change_owed_as="credit", slip_code=code,
+            document_id=str(doc.id), document_number=doc.transaction_number, acked=True, seq=0,
+            data={"cashDevice": block, "stationId": block.get("stationId")},
+            created_at=now, done_at=now, received_at=now,
+            owed_status="open", owed_kind="change_credit", owed_agorot=owed, owed_at=now,
+        )
+        if row.tenant_id is None:
+            continue
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+            made += 1
+        except IntegrityError:
+            continue
+    db.flush()
+    return made
+
+
 def match_documents_safely(db: Session, transaction_ids: Sequence[Any]) -> None:
     """`match_documents` after a push committed; never fails it (a later journal entry finds it again)."""
     try:
         if not ids_with_cash(db, transaction_ids):
             return
         match_documents(db, transaction_ids)
+        cashmag_credits_from_documents(db, transaction_ids)
         confirm_credit_legs(db, transaction_ids)
         db.commit()
     except Exception:  # noqa: BLE001
@@ -1221,8 +1340,11 @@ def _company_of_shop(db: Session, shop_id: Any) -> Any:
     return shop.company_id if shop is not None else None
 
 
-def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStationTx, CashStation]:
-    """The credit [code] for a till / kiosk of the same company as its station; 404 `credit_not_found` otherwise."""
+def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStationTx, Optional[CashStation]]:
+    """
+    The credit [code] for a till / kiosk of the same company as its station (a CashMag credit, no station: as its
+    shop); 404 `credit_not_found` otherwise.
+    """
     norm = credit_code_of(code)
     row = None
     if norm is not None:
@@ -1233,10 +1355,10 @@ def _credit_of(db: Session, machine: POSMachine, code: Any) -> Tuple[CashStation
             .order_by(CashStationTx.owed_at.desc())
             .first()
         )
-    station = db.get(CashStation, row.station_id) if row is not None else None
-    if row is None or station is None:
+    station = db.get(CashStation, row.station_id) if row is not None and row.station_id is not None else None
+    if row is None or (station is None and row.device != CASHMAG_DEVICE):
         raise _refuse(status.HTTP_404_NOT_FOUND, "credit_not_found", "הזיכוי לא נמצא.")
-    company = station.company_id or _company_of_shop(db, station.shop_id)
+    company = (station.company_id or _company_of_shop(db, station.shop_id)) if station is not None else _company_of_shop(db, row.shop_id)
     if company is not None and _company_of_shop(db, machine.shop_id) != company:
         raise _refuse(status.HTTP_404_NOT_FOUND, "credit_not_found", "הזיכוי לא נמצא.")
     return row, station
@@ -1264,7 +1386,7 @@ def credit_out(db: Session, tx: CashStationTx, station: Optional[CashStation]) -
         "amountAgorot": int(tx.owed_agorot or 0),
         "remainingAgorot": remaining,
         "status": state,
-        "stationName": station.name if station is not None else None,
+        "stationName": station.name if station is not None else (CASHMAG_NAME if tx.device == CASHMAG_DEVICE else None),
         "orderLabel": tx.order_label,
         "createdAt": _iso(tx.owed_at or tx.created_at),
     }
@@ -1347,7 +1469,7 @@ def release_redemption(db: Session, machine: POSMachine, redemption_id: Any, *, 
     if row is None or row.tenant_id != machine.tenant_id:
         raise _refuse(status.HTTP_404_NOT_FOUND, "redemption_not_found", "המימוש לא נמצא.")
     tx = db.get(CashStationTx, row.tx_id)
-    station = db.get(CashStation, row.station_id)
+    station = db.get(CashStation, row.station_id) if row.station_id is not None else None
     if row.status == "confirmed":
         raise _refuse(status.HTTP_409_CONFLICT, "confirmed", "הזיכוי כבר נרשם במסמך.")
     if row.status != "released":

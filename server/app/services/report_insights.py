@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services import report_pdf as P
 from app.services.insights.anomalies import median, robust_z
-from app.services.report_design import Chart, Insight, Kpi, Series, better_of, format_value, icon_of
+from app.services.report_design import Chart, Insight, Kpi, Series, better_of, compared_with, format_value, icon_of
 
 MAX_INSIGHTS = 7
 #: The modified z-score from which a row is "far from the rest" (anomalies.py's default).
@@ -295,7 +295,7 @@ def kpi_findings(kpis: Sequence[Kpi]) -> List[_Found]:
         pct = k.change_pct
         if pct is None or abs(pct) < 5 or k.direction in (None, "flat"):
             continue
-        against = k.compare_label or "התקופה הקודמת"
+        against = compared_with(k.compare_label)
         move = "עלייה" if k.direction == "up" else "ירידה"
         text = (f"{k.label}: {move} של {_p(pct)} מול {against} "
                 f"(מ-{format_value(k.compare, k.kind, short=True)} ל-{format_value(k.value, k.kind, short=True)})")
@@ -494,7 +494,7 @@ def _compare_findings(columns, items, previous_rows, roles: Roles, kind: str, me
             continue
         cur[k] = cur.get(k, 0.0) + v
         names.setdefault(k, label)
-    against = previous_label or "התקופה הקודמת"
+    against = compared_with(previous_label)
     t_cur, t_prev = sum(cur.values()), sum(prev.values())
     if t_prev > 0 and t_cur >= 0:
         pct = _pct(t_cur - t_prev, t_prev)
