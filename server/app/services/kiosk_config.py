@@ -45,6 +45,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.services import kiosk_landscape as landscape_rules
 from app.services import kiosk_layout as layouts
 from app.services import kiosk_motion as motion_engine
 
@@ -1251,6 +1252,38 @@ HOURS_RANGE = Obj(
     merges=False,
 )
 
+def _landscape_node() -> PartialObj:
+    """`landscape`: every key optional, also in a complete config; each one the normal design's vocabulary."""
+    theme = {
+        "categoryLayout": Enum(CATEGORY_LAYOUTS),
+        "cartStyle": Enum(CART_STYLES),
+        "gridDensity": Enum(GRID_DENSITIES),
+        "categoryStyle": Enum(CATEGORY_STYLES),
+        "imageRatio": Enum(IMAGE_RATIOS),
+        "typeScale": Enum(TYPE_SCALES),
+        "backgroundImage": Media(("image",), nullable=True),
+    }
+    layout = {
+        "catalog": Enum(layouts.LAYOUT_CATALOGS),
+        "basket": Enum(layouts.LAYOUT_BASKETS),
+        "railSize": Enum(layouts.LAYOUT_RAIL_SIZES),
+        "productSize": Enum(layouts.LAYOUT_PRODUCT_SIZES),
+        "categoryIcons": Enum(layouts.LAYOUT_CATEGORY_ICONS),
+        "card": Enum(layouts.LAYOUT_CARDS),
+    }
+    attract = {"playlist": UList(PLAYLIST_ITEM, max_len=PLAYLIST_MAX)}
+    assert tuple(theme) == landscape_rules.OVERRIDE_KEYS["theme"]
+    assert tuple(layout) == landscape_rules.OVERRIDE_KEYS["layout"]
+    assert tuple(attract) == landscape_rules.OVERRIDE_KEYS["attract"]
+    sizes = {key: Int(lo, hi, step=step) for key, (_d, lo, hi, step) in landscape_rules.SIZE_SPECS.items()}
+    return PartialObj({
+        "theme": PartialObj(theme),
+        "layout": PartialObj(layout),
+        "attract": PartialObj(attract),
+        "sizes": PartialObj(sizes),
+    })
+
+
 SCHEMA = Obj({
     "general": Obj({
         "fulfillmentMode": Enum(FULFILLMENT_MODES),
@@ -1513,7 +1546,10 @@ SCHEMA = Obj({
         "doneScreen": Enum(layouts.LAYOUT_DONE_SCREENS),
         "payMethodView": Enum(layouts.LAYOUT_PAY_METHOD_VIEWS),
     }),
-})
+    # "עיצוב לרוחב" (kiosk_landscape.py, P:/specs/kiosk-landscape-design.md): optional — the design keys that win
+    # only on a screen on its side, and the landscape sizes. Absent (DEFAULT_CONFIG has none): today's kiosk.
+    "landscape": _landscape_node(),
+}, fill={"landscape": {}})
 
 
 def limits() -> Dict[str, Any]:
@@ -1537,6 +1573,14 @@ def limits() -> Dict[str, Any]:
             "idPattern": _MESSAGE_ID.pattern,
         },
         "texts": {"max": TEXT_MAX},
+        # "גדלים לרוחב": the defaults (the kiosk's own when unset) and the ranges.
+        "landscape": {
+            "sizes": {
+                key: {"default": d, "min": lo, "max": hi, "step": step}
+                for key, (d, lo, hi, step) in landscape_rules.SIZE_SPECS.items()
+            },
+            "overrideKeys": {k: list(v) for k, v in landscape_rules.OVERRIDE_KEYS.items()},
+        },
         "hours": {"rangesMax": HOURS_RANGES_MAX},
         "upsell": {"maxShown": {"min": 1, "max": UPSELL_MAX_SHOWN}},
         "success": {"messageMax": SUCCESS_MESSAGE_MAX},
@@ -2037,6 +2081,8 @@ def _media_refs(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     refs += [m.get("image") for m in (_get(cfg, "messages") or []) if isinstance(m, dict)]
     refs.append(_get(cfg, "success", "image"))
     refs.append(_get(cfg, "payment", "waitLogo", "media"))
+    # "עיצוב לרוחב": its background and its attract playlist, downloaded as the normal design's.
+    refs += landscape_rules.media_refs(cfg.get("landscape"))
     return [r for r in refs if isinstance(r, dict) and r.get("url")]
 
 
