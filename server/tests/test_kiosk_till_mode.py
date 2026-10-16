@@ -370,3 +370,54 @@ def test_the_controlling_till_reads_the_kiosk_s_history(w):
     with pytest.raises(HTTPException) as caught:
         R.get_till_kiosk_orders(machine_id=str(w.other_till.id), kiosk_machine_id=str(w.kiosk.id), days=1, machine=w.other_till, db=w.db)
     assert caught.value.status_code == 403
+
+
+# ── "היסטוריית עסקאות" in the kiosk's own manager menu: the days it no longer keeps ──
+
+
+def _own(w, machine=None, **kw):
+    machine = machine or w.kiosk
+    return R.get_own_kiosk_orders(machine_id=str(machine.id), machine=machine, db=w.db, **kw)
+
+
+def test_the_kiosk_reads_its_own_older_history_from_the_cloud(w):
+    from test_kiosks import order, post_orders
+
+    convert(w)
+    today = S.business_today(w.db, w.tenant.id)
+    day = lambda n: (today - timedelta(days=n)).isoformat()  # noqa: E731
+    post_orders(
+        w,
+        w.kiosk,
+        order("o-today", businessDate=day(0), pickupLabel="A-17", pickupNumber=17),
+        order("o-8", businessDate=day(8), pickupLabel="A-12", pickupNumber=12, transactionNumber="40000057", customerName="רונית", totalAgorot=4500, tipAgorot=50),
+        order("o-20", businessDate=day(20), pickupLabel="B-3", pickupNumber=3, customerName="משה", totalAgorot=1200),
+        order("o-40", businessDate=day(40), pickupLabel="A-9", pickupNumber=9),
+    )
+    # The month by default, newest first; the phone masked.
+    month = _own(w)
+    assert [o["localId"] for o in month] == ["o-today", "o-8", "o-20"]
+    assert all(o["customerPhone"] != "0501234567" for o in month)
+    # The days before the week the kiosk keeps: up to `until`, `days` of them.
+    older = _own(w, until=today - timedelta(days=7), days=30)
+    assert [o["localId"] for o in older] == ["o-8", "o-20"]
+    assert [o["localId"] for o in _own(w, until=today - timedelta(days=7), days=1)] == []
+    assert [o["localId"] for o in _own(w, days=31, until=today - timedelta(days=10))] == ["o-20", "o-40"]
+    # The kiosk's own search: a pickup number or its letters, a document number, a name, an amount with the tip.
+    for q in ("A12", "a 12", "A-12", "0000057", "רונית", "45.50", "45,5", "₪45.50"):
+        assert [o["localId"] for o in _own(w, q=q)] == ["o-8"], q
+    assert [o["localId"] for o in _own(w, q="12")] == ["o-8", "o-20"]  # pickup 12, and ₪12.00
+    assert _own(w, q="אין כזה") == []
+
+
+def test_the_own_history_is_only_the_machine_s_own(w):
+    from test_kiosks import order, post_orders
+
+    convert(w)
+    today = S.business_today(w.db, w.tenant.id)
+    post_orders(w, w.kiosk, order("mine", businessDate=today.isoformat()))
+    # Another machine (the controlling till) asking for its own: none of the kiosk's.
+    assert _own(w, machine=w.till) == []
+    # The days are capped at a month (the route's own bound is 1..31 too).
+    assert S.OWN_HISTORY_MAX_DAYS == 31
+    assert [o["localId"] for o in S.own_order_history(w.db, w.kiosk, days=999)] == ["mine"]

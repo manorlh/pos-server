@@ -854,6 +854,7 @@ POST /sync/{machine_id}/kiosk/open-orders/{ref}/cancel -> till
 POST /sync/{machine_id}/kiosk/open-orders/{ref}/lock -> till
 POST /sync/{machine_id}/kiosk/open-orders/{ref}/paid -> till
 POST /sync/{machine_id}/kiosk/open-orders/{ref}/release -> till
+GET /sync/{machine_id}/kiosk/orders -> till
 POST /sync/{machine_id}/kiosk/orders -> till
 POST /sync/{machine_id}/kiosk/pickup-number -> till
 POST /sync/{machine_id}/kiosk/sync -> till

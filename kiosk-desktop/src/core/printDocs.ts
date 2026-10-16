@@ -565,6 +565,11 @@ export interface TicketDoc {
   items: Array<{ name: string; qty: string }>;
   /** The time, the till ("קופה: … · מס' קופה: …"), the sale's number. */
   foot: string[];
+  /** Which of the sale's tickets this is (1-based) and of how many: the history's "לא הודפס" per ticket. */
+  index?: number;
+  count?: number;
+  /** "הדפסה חוזרת": a band at the head of a ticket printed again (a person's reprint, core/kioskReprint.ts). */
+  notice?: string | null;
 }
 
 export function ticketDoc(input: {
@@ -577,6 +582,7 @@ export function ticketDoc(input: {
   items: Array<{ name: string; quantity: number; unitLabel?: string | null; entry?: number | null; entries?: number | null }>;
   index: number;
   count: number;
+  notice?: string | null;
 }): TicketDoc {
   const business = nonBlank(input.businessName) ?? nonBlank(input.shopName) ?? 'POS';
   const shop = nonBlank(input.shopName);
@@ -596,7 +602,15 @@ export function ticketDoc(input: {
       qty: i.entry && i.entries ? `כניסה ${ltr(`${i.entry}/${i.entries}`)}` : ltr(`× ${qty(i)}`),
     })),
     foot: [stamp(input.issuedAt), ...(till ? [till] : []), ...(nonBlank(input.transactionNumber) ? [`עסקה ${ltr(`#${input.transactionNumber!.trim()}`)}`] : [])],
+    index: input.index,
+    count: input.count,
+    ...(nonBlank(input.notice ?? null) ? { notice: input.notice!.trim() } : {}),
   };
+}
+
+/** A ticket printed again: the same page, "הדפסה חוזרת" at its head. */
+export function reprintedTicket(doc: TicketDoc, notice: string): TicketDoc {
+  return { ...doc, notice };
 }
 
 /* ------------------------------------------------------------ the Z */

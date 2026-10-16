@@ -115,6 +115,8 @@ const PAGE_ADMIN_ACTIONS: ReadonlySet<AdminAction['type']> = new Set([
   'syncNow',
   'reprintBon',
   'reprintReceipt',
+  // "הדפסה חוזרת" of a sale (under REPRINT, recorded, like the two above).
+  'reprint',
   'testPrint',
   'checkTerminal',
   'recheckPayment',
