@@ -36,7 +36,7 @@ export function Pairing() {
           <h1 className="mt-2 text-xl font-extrabold">צימוד מכשיר</h1>
           <p className="text-sm text-neutral-500">הזינו את כתובת השרת ואת קוד הצימוד מהדשבורד (הוספת מכשיר).</p>
           <p className="mt-1 text-xs text-neutral-400">סוג המכשיר — קיוסק, קופה, מסך מטבח או מסך מוכן / לא מוכן — נקבע בענן עם הקוד.</p>
-          <p className="mt-1 text-xs text-neutral-400">גם סוג הרישיון — קופה בלבד, קיוסק בלבד או קיוסק + קופה (משולב) — נקבע עם הקוד, ומוצג אחרי הצימוד.</p>
+          <p className="mt-1 text-xs text-neutral-400">גם סוג הרישיון — קופה בלבד, קיוסק בלבד או משולב — נקבע עם הקוד, ומוצג אחרי הצימוד.</p>
         </div>
         <label className="block space-y-1">
           <span className="text-sm font-semibold">כתובת השרת</span>

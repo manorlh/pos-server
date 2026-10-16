@@ -2,7 +2,7 @@
 
 /**
  * "סוג רישיון" of a till / kiosk device (lib/deviceLicense.ts, pos-server app/services/device_license.py,
- * P:/specs/device-license-type.md): "קופה בלבד", "קיוסק בלבד" or "קיוסק + קופה (משולב)".
+ * P:/specs/device-license-type.md): "קופה בלבד", "קיוסק בלבד" or "משולב".
  *
  * * The add-device dialog picks it beside the role (`DeviceLicensePicker`, the role's default first).
  * * Lists show `DeviceLicenseBadge`; the machine page `DeviceLicenseValue` (with "שינוי סוג רישיון" for a
@@ -103,7 +103,7 @@ export function DeviceLicensePicker({
   );
 }
 
-/** "קופה בלבד" / "קיוסק בלבד" / "קיוסק + קופה" on a list row; a warning when it does not fit the role. */
+/** "קופה בלבד" / "קיוסק בלבד" / "משולב" on a list row; a warning when it does not fit the role. */
 export function DeviceLicenseBadge({ m }: { m: Pick<PosMachine, 'licenseProduct' | 'licenseMismatch'> }) {
   const t = useTranslations('machines.license');
   const product = parseLicenseProduct(m.licenseProduct);

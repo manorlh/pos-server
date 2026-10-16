@@ -2029,7 +2029,7 @@ def update_license_product(
 ):
     """
     "שינוי סוג רישיון" on the machine page (P:/specs/device-license-type.md §2): "till" (קופה בלבד),
-    "kiosk" (קיוסק בלבד) or "kiosk_till" (קיוסק + קופה). A super admin, or the device's distributor (403
+    "kiosk" (קיוסק בלבד) or "kiosk_till" (משולב). A super admin, or the device's distributor (403
     `license_product_admin_only`); a till / kiosk only (409 `license_product_not_applicable`); one its role
     fits (409 `license_product_role_mismatch` — the device-profile dialog changes both at once). Recorded
     in the machine's license history; the device pulls its gate at once.

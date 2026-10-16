@@ -1,6 +1,6 @@
 /**
  * "סוג רישיון למכשיר" — what a till / kiosk device is licensed as (pos-server app/services/device_license.py,
- * P:/specs/device-license-type.md): "קופה בלבד" (`till`), "קיוסק בלבד" (`kiosk`) or "קיוסק + קופה (משולב)"
+ * P:/specs/device-license-type.md): "קופה בלבד" (`till`), "קיוסק בלבד" (`kiosk`) or "משולב"
  * (`kiosk_till`, the only one with the kiosk ↔ till work mode). The other roles (screens, servers) have none.
  * Set by a super admin or a distributor: in the add-device dialog (by role), then on the machine page.
  * The rules are the shared golden fixture's (server/tests/fixtures/device_license_golden.json).

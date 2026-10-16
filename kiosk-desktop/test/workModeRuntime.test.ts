@@ -396,7 +396,7 @@ describe('"סוג רישיון" — the work mode only for kiosk_till, whatever 
     expect(w.events).toEqual([]);
   });
 
-  it('"קיוסק + קופה" with the gate off (parameters from before the change): offered', () => {
+  it('"משולב" with the gate off (parameters from before the change): offered', () => {
     const { rt } = world({ gate: false, license: 'kiosk_till' });
     expect(rt.params().enabled).toBe(true);
     expect(rt.offered()).toEqual({ toTill: true, toKiosk: false });

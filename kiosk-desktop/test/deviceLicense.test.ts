@@ -26,7 +26,7 @@ import { CloudStore } from '../src/main/sync/cloud';
 const RAW = readFileSync(join(__dirname, 'fixtures', 'device_license_golden.json'));
 const GOLDEN = JSON.parse(RAW.toString('utf8'));
 /** LF SHA-256 — the same in pos-server server/tests/test_device_license.py and the Android DeviceLicenseTest. */
-const GOLDEN_SHA256 = '04756d90565b492c08b6410a279e3f10565c7f26cfe072eedc40e5da92e24c9a';
+const GOLDEN_SHA256 = 'e509efe1b2ebe7007a5d0605aca75b75f6d33963e8c9869bca97e73ce27db70d';
 
 describe('the shared golden fixture', () => {
   it('is pinned', () => {

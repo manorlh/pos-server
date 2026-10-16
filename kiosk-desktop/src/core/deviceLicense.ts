@@ -3,7 +3,7 @@
  * the Android app's domain/DeviceLicense.kt): what the cloud licensed this till / kiosk as —
  *  - `till` "קופה בלבד": only a till, no kiosk mode;
  *  - `kiosk` "קיוסק בלבד": only a kiosk, no till mode;
- *  - `kiosk_till` "קיוסק + קופה (משולב)": both, and "מצב עבודה: קיוסק / קופה" between them.
+ *  - `kiosk_till` "משולב": both, and "מצב עבודה: קיוסק / קופה" between them.
  * A screen / server has none (null), and an older cloud says nothing (null): then the owner's gate
  * `kioskTillModeEnabled` decides, as before. The cloud already sends a licensed device the gate its license
  * gives; this is the device's own second check (parameters kept from before a change say otherwise).
@@ -19,13 +19,13 @@ export const LICENSE_PRODUCTS: readonly LicenseProduct[] = ['till', 'kiosk', 'ki
 export const LICENSE_LABELS: Readonly<Record<LicenseProduct, string>> = {
   till: 'קופה בלבד',
   kiosk: 'קיוסק בלבד',
-  kiosk_till: 'קיוסק + קופה (משולב)',
+  kiosk_till: 'משולב',
 };
 
 export const LICENSE_SHORT_LABELS: Readonly<Record<LicenseProduct, string>> = {
   till: 'קופה בלבד',
   kiosk: 'קיוסק בלבד',
-  kiosk_till: 'קיוסק + קופה',
+  kiosk_till: 'משולב',
 };
 
 /** The two roles a license speaks of, as the device names them. */

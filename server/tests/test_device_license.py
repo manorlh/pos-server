@@ -49,7 +49,7 @@ from shift_world import accept_str_uuids, make_world
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 GOLDEN = FIXTURES / "device_license_golden.json"
 #: LF SHA-256 of device_license_golden.json — the same in kiosk-desktop and pos-android (change all three together).
-GOLDEN_SHA256 = "04756d90565b492c08b6410a279e3f10565c7f26cfe072eedc40e5da92e24c9a"
+GOLDEN_SHA256 = "e509efe1b2ebe7007a5d0605aca75b75f6d33963e8c9869bca97e73ce27db70d"
 
 
 @pytest.fixture
@@ -267,7 +267,7 @@ class TestPairing:
         _seat(monkeypatch)
         code = _code(w, role="till", product=DL.KIOSK_TILL, shop_id=w.shop.id)
         out = PR.validate_pairing(pairing_data=PairingCodeValidate(code=code.code, device_info={}), db=w.db)
-        assert out["licenseProduct"] == DL.KIOSK_TILL and out["licenseProductLabel"] == "קיוסק + קופה (משולב)"
+        assert out["licenseProduct"] == DL.KIOSK_TILL and out["licenseProductLabel"] == "משולב"
         assert out["deviceRole"] == "till"
 
     def test_a_replacement_keeps_the_rows_own(self, w):
@@ -291,7 +291,7 @@ class TestMachinePage:
         out = _set_license(w, w.till, "kiosk_till")
         page = POSMachineResponse.model_validate(out).model_dump(by_alias=True)
         assert page["licenseProduct"] == "kiosk_till" and page["licenseProductStored"] == "kiosk_till"
-        assert page["licenseProductLabel"] == "קיוסק + קופה (משולב)" and page["licenseMismatch"] is False
+        assert page["licenseProductLabel"] == "משולב" and page["licenseMismatch"] is False
         last = page["licenseProductHistory"][-1]
         assert (last["from"], last["to"], last["source"]) == ("till", "kiosk_till", "dashboard")
         assert w.notified == [w.till.id]
@@ -428,7 +428,7 @@ class TestKiosksPage:
             machine_id=w.till.id, body=KR.TillModeGateIn(enabled=True), current_user=w.admin,
             active_tenant_id=w.tenant.id, db=w.db,
         ))
-        assert (status_code, body["detail"]) == (409, DL.TILL_MODE_BY_LICENSE) and "קיוסק + קופה" in body["message"]
+        assert (status_code, body["detail"]) == (409, DL.TILL_MODE_BY_LICENSE) and "משולב" in body["message"]
         assert w.db.query(TillParameterValue).filter(TillParameterValue.scope_id == w.till.id).count() == 0
 
     def test_the_summary_shows_the_license(self, w):
@@ -436,7 +436,7 @@ class TestKiosksPage:
         _convert(w, w.till)
         till_mode = kiosk_control.summary(w.db, w.db.get(KioskDevice, w.till.id))["tillMode"]
         assert till_mode["enabled"] is True and till_mode["byLicense"] is True
-        assert till_mode["licenseProduct"] == "kiosk_till" and till_mode["licenseProductLabel"] == "קיוסק + קופה (משולב)"
+        assert till_mode["licenseProduct"] == "kiosk_till" and till_mode["licenseProductLabel"] == "משולב"
 
     def test_the_dashboards_work_mode_commands(self, w):
         _store(w, w.till, DL.KIOSK_TILL)
@@ -570,7 +570,7 @@ class TestCounts:
         assert shops["Center"] == {"till": 1, "kiosk": 0, "kiosk_till": 1, "total": 2}
         assert shops["North"] == {"till": 0, "kiosk": 1, "kiosk_till": 0, "total": 1}
         assert out["unassigned"] == [{"tenantId": str(w.tenant.id), "counts": {"till": 1, "kiosk": 0, "kiosk_till": 0, "total": 1}}]
-        assert out["labels"]["kiosk_till"] == "קיוסק + קופה (משולב)"
+        assert out["labels"]["kiosk_till"] == "משולב"
 
     def test_a_derived_machine_counts_by_its_derivation(self, w):
         kiosk_control.convert(w.db, w.admin, w.other)

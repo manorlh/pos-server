@@ -8,7 +8,7 @@ The owner (16.10.2026): "זה מודול רישיוני — תבדוק שיש ה
 * `till` — "קופה בלבד": only ever a till; no kiosk mode ("מצב עבודה" off whatever the gate says).
 * `kiosk` — "קיוסק בלבד": only ever an enabled kiosk; never a till (not even a "disabled" kiosk, which
   works as a till), no till mode.
-* `kiosk_till` — "קיוסק + קופה (משולב)": a kiosk or a till, and the work-mode switch between them is on.
+* `kiosk_till` — "משולב": a kiosk or a till, and the work-mode switch between them is on.
 
 The other roles (KDS, the board, a customer display, a local server, a cash host) are not fiscal and
 have no license product (`None`), exactly as they never count as a till license. The time license
@@ -44,8 +44,8 @@ KIOSK = "kiosk"
 KIOSK_TILL = "kiosk_till"
 PRODUCTS = (TILL, KIOSK, KIOSK_TILL)
 
-LABELS = {TILL: "קופה בלבד", KIOSK: "קיוסק בלבד", KIOSK_TILL: "קיוסק + קופה (משולב)"}
-SHORT_LABELS = {TILL: "קופה בלבד", KIOSK: "קיוסק בלבד", KIOSK_TILL: "קיוסק + קופה"}
+LABELS = {TILL: "קופה בלבד", KIOSK: "קיוסק בלבד", KIOSK_TILL: "משולב"}
+SHORT_LABELS = {TILL: "קופה בלבד", KIOSK: "קיוסק בלבד", KIOSK_TILL: "משולב"}
 ROLE_LABELS = {"till": "קופה", "kiosk": "קיוסק"}
 
 #: The product a pairing code of each fiscal role gets when none was chosen.
@@ -76,7 +76,7 @@ BLOCKED_TEXT = "רישיון המכשיר אינו כולל מעבר בין קי
 
 MESSAGES = {
     ADMIN_ONLY: "רק מנהל-על או מפיץ קובעים את סוג הרישיון של מכשיר.",
-    INVALID: "סוג רישיון: till (קופה בלבד), kiosk (קיוסק בלבד) או kiosk_till (קיוסק + קופה).",
+    INVALID: "סוג רישיון: till (קופה בלבד), kiosk (קיוסק בלבד) או kiosk_till (משולב).",
 }
 
 _UNSET = object()
@@ -280,17 +280,17 @@ def mismatch_message(product: str, role: str, kiosk_enabled: Optional[bool] = Tr
     if role == "till" and product == KIOSK:
         return (
             "רישיון \"קיוסק בלבד\" לא מתאים לקופה: המכשיר יוכל לעבוד רק כקיוסק. בחרו תפקיד קיוסק, "
-            "או רישיון \"קופה בלבד\" / \"קיוסק + קופה (משולב)\"."
+            "או רישיון \"קופה בלבד\" / \"משולב\"."
         )
     if role == "kiosk" and product == TILL:
         return (
             "רישיון \"קופה בלבד\" לא מתאים לקיוסק: המכשיר יוכל לעבוד רק כקופה. בחרו תפקיד קופה, "
-            "או רישיון \"קיוסק בלבד\" / \"קיוסק + קופה (משולב)\"."
+            "או רישיון \"קיוסק בלבד\" / \"משולב\"."
         )
     if role == "kiosk" and product == KIOSK and kiosk_enabled is False:
         return (
             "רישיון \"קיוסק בלבד\" לא מתאים לקיוסק כבוי: קיוסק כבוי עובד כקופה. הפעילו את הקיוסק קודם, "
-            "או בחרו \"קיוסק + קופה (משולב)\"."
+            "או בחרו \"משולב\"."
         )
     return f"סוג הרישיון \"{LABELS.get(product, product)}\" לא מתאים לתפקיד המכשיר."
 
