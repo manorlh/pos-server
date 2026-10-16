@@ -16,6 +16,17 @@ export function filterProducts(catalog: Catalog, departmentId: string | null, se
   return catalog.products.filter((p) => (departmentId === null || p.departmentId === departmentId) && (q === '' || p.name.includes(q) || p.barcode === q || p.sku === q));
 }
 
+/**
+ * A scanned (or typed) text that is a voucher's code — its QR's "PV:" + code, or the code itself as printed ("ABCD-EFGH-
+ * 2345-6789": 16 of the cloud's unambiguous alphabet, a letter among them) — tried as a voucher when no product has it.
+ */
+export function looksLikeVoucher(text: string): boolean {
+  const t = text.trim();
+  if (/^pv:/i.test(t)) return true;
+  const code = t.replace(/[\s-]+/g, '').toUpperCase();
+  return /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{16}$/.test(code) && /[A-Z]/.test(code);
+}
+
 /** What a scanner typed + Enter: the product whose barcode, then SKU, is exactly that (core/kioskScan.ts's order). */
 export function scanned(catalog: Catalog, text: string) {
   const q = text.trim();
@@ -30,6 +41,7 @@ export function SellScreen({
   onAdd,
   onDepartment,
   onSearch,
+  onVoucher,
   cart,
   shiftOpen = true,
   goShift,
@@ -41,6 +53,8 @@ export function SellScreen({
   onAdd(productId: string): void;
   onDepartment(id: string | null): void;
   onSearch(text: string): void;
+  /** A voucher scanned with items in the order: the payment opens and applies it (`sell.voucher`); absent — none here. */
+  onVoucher?(code: string): void;
   cart: CartActions;
   /** No shift: the till says why it cannot charge and offers the way to open one (Android sell_no_shift). */
   shiftOpen?: boolean;
@@ -79,6 +93,10 @@ export function SellScreen({
             const p = scanned(catalog, sell.search);
             if (p) {
               onAdd(p.id);
+              onSearch('');
+            } else if (onVoucher && sell.lines.some((l) => !l.refund) && looksLikeVoucher(sell.search)) {
+              // "בחרתי פריטים > סרקתי שובר": to the payment, where the voucher is applied.
+              onVoucher(sell.search.trim());
               onSearch('');
             }
           }}

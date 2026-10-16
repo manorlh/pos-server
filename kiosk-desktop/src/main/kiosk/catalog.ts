@@ -134,6 +134,8 @@ export interface KProduct {
   restricted?: boolean;
   /** The till's catalog only: the sale state by the shared rules (lib/kioskSoldOut.ts decideSoldOut) with this till's clock and stock. */
   sale?: { state: SoldOutState; reason: string | null; note: string | null; untilMs: number | null };
+  /** The till's catalog only: the product IS a voucher (the cloud's `voucherId`) — credited from its receipt only. */
+  voucherId?: string | null;
 }
 
 export interface KioskCatalogData {
@@ -299,6 +301,7 @@ export function buildKioskCatalog(
       trackStock: p.trackStock === true,
       meal: mealIds.has(String(p.id)),
       ...(till ? { restricted: restrictedRow(p, restricted), sale: tillSaleState(p, sale, catalogSettings(settings)) } : {}),
+      ...(till && str(p.voucherId) ? { voucherId: str(p.voucherId) } : {}),
     };
   };
   const products: KProduct[] = onKiosk.map(productOf);

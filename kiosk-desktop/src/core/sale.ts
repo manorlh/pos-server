@@ -78,6 +78,12 @@ export interface SaleLine {
   /** "כלול בשובר #7 (1)": the goods voucher that paid for the line, as the till's document marks it (coverByVoucher); never printed in the kitchen. */
   voucherMark?: string;
   /**
+   * "קיזוז שובר הפקה" (core/till/vouchers.ts, accounting `discount`): the production vouchers' deduction from this line — inside
+   * the document's discount (the total and its VAT base are after it), on the wire `items[].prepaidDeduction`; never a tender,
+   * never a "הנחה" on paper or in the X. Absent: none.
+   */
+  prepaidDeductionAgorot?: number;
+  /**
    * "תפריטים": the menu active when the line was added and where its price came from (`menu` / `catalog`) — the document's
    * item carries them (`menuId` / `menuName` / `priceSource`) for the sales-by-menu report. Absent: no menu.
    */
@@ -139,6 +145,8 @@ export interface SaleTotals {
   discountAgorot: number;
   /** What discount vouchers took off, inside [discountAgorot]. */
   voucherDiscountAgorot: number;
+  /** The production vouchers' deductions ("קיזוז שובר הפקה"), inside [discountAgorot]. Absent: none. */
+  prepaidDeductionAgorot?: number;
   /** What the goods cost: gross − discounts. The card tender. */
   totalAgorot: number;
   netAgorot: number;
@@ -160,13 +168,16 @@ export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgoro
   const voucher = lines.reduce((s, l) => s + Math.max(0, l.voucherAgorot ?? 0), 0);
   // A till's manual line discounts (and OTH) and its basket discount: the same document discount.
   const manual = lines.reduce((s, l) => s + manualDiscount(l), 0);
-  const discount = promotion + voucher + manual + Math.max(0, basketDiscountAgorot);
+  // The production vouchers' deductions ("קיזוז שובר הפקה"): fiscally the same discount (Cart.totals prepaidDeduction).
+  const deduction = lines.reduce((s, l) => s + Math.max(0, l.prepaidDeductionAgorot ?? 0), 0);
+  const discount = promotion + voucher + manual + Math.max(0, basketDiscountAgorot) + deduction;
   const total = gross - discount;
   const net = vatNet(total, vatRate);
   return {
     grossAgorot: gross,
     discountAgorot: discount,
     voucherDiscountAgorot: voucher,
+    ...(deduction > 0 ? { prepaidDeductionAgorot: deduction } : {}),
     totalAgorot: total,
     netAgorot: net,
     vatAgorot: total - net,
@@ -291,6 +302,12 @@ export interface XDoc {
   vatRate: number | null;
   tipAgorot: number;
   tipPaymentMethod: string | null;
+  /**
+   * Production vouchers (core/till/vouchers.ts): the document's deductions ("קיזוז שובר הפקה" — out of the gross and out of the
+   * discounts alike, their own section), and its ₪0 voucher units (no items of the shift). Absent: none.
+   */
+  prepaidDeductionAgorot?: number;
+  offVoucherUnits?: number;
 }
 
 const REPORTABLE = new Set(['completed', 'refunded', 'partial_refund']);
@@ -326,6 +343,10 @@ export interface XTill {
   deposits?: number;
   walletIn?: number;
   walletDeposits?: number;
+  /** "שוברי הפקה": what production vouchers paid as a tender — only when not zero; never cash, card or the drawer. */
+  totalVouchers?: number;
+  /** The X's production vouchers sections (core/till/vouchers.ts voucherInfoJson) — information, in no figure above. */
+  prepaidVouchersInfo?: Record<string, unknown>;
 }
 
 export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, currentRate: number): { till: XTill; reportableIds: string[] } {
@@ -341,7 +362,8 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     items = 0,
     count = 0,
     exchangeIn = 0,
-    exchangeOut = 0;
+    exchangeOut = 0,
+    vouchers = 0;
   let vatComplete = true;
   const ids: string[] = [];
   for (const d of docs) {
@@ -351,9 +373,12 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     const credit = CREDIT_TYPES.has(d.documentType);
     if (credit) refunds += d.grossAgorot;
     else {
-      sales += d.grossAgorot;
-      items += Math.trunc(d.itemsQty);
-      discounts += d.documentDiscountAgorot;
+      // A production voucher's deduction is out of the gross and out of the discounts alike (XReport.kt); a ₪0 voucher's goods
+      // are no items of the shift.
+      const deduction = Math.min(Math.max(0, d.prepaidDeductionAgorot ?? 0), d.documentDiscountAgorot);
+      sales += d.grossAgorot - deduction;
+      items += Math.max(0, Math.trunc(d.itemsQty) - Math.max(0, d.offVoucherUnits ?? 0));
+      discounts += d.documentDiscountAgorot - deduction;
     }
     const sign = credit ? -1 : 1;
     const legs = d.payments.length > 0 ? d.payments : [{ method: d.paymentMethod ?? 'cash', amountAgorot: credit ? d.grossAgorot : d.grossAgorot - d.documentDiscountAgorot }];
@@ -365,6 +390,8 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
         if (credit) exchangeOut += leg.amountAgorot;
         else exchangeIn += leg.amountAgorot;
       }
+      // "שוברי הפקה", whichever code wrote the leg: its own line, never the drawer.
+      else if (leg.method === 'production_voucher' || leg.method === 'voucher') vouchers += sign * leg.amountAgorot;
     }
     if (d.vatAgorot === null) {
       vatComplete = false;
@@ -394,6 +421,7 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
   // Only a shift with a mixed basket carries them (ShiftClose.kt: totalExchange takeIf moved, exchangeReceived when not zero).
   if (exchangeIn !== 0 || exchangeIn - exchangeOut !== 0) till.totalExchange = s(exchangeIn - exchangeOut);
   if (exchangeIn !== 0) till.exchangeReceived = s(exchangeIn);
+  if (vouchers !== 0) till.totalVouchers = s(vouchers);
   return { till, reportableIds: ids };
 }
 

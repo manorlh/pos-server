@@ -12,6 +12,7 @@ import { BRAND_LABEL_HE, type CardBrand } from './nayax';
 import { formatAgorot, formatShekelSign, ltr } from './money';
 import { isTemplate, resolveStyle, type KitchenTicket, type TicketStyle } from './kitchenTicketStyle';
 import type { KitchenDoc } from './kitchen/doc';
+import { voucherInfoFromJson, voucherInfoLines } from './till/vouchers';
 
 /* ---------------------------------------------------------- the receipt */
 
@@ -57,6 +58,10 @@ export interface ReceiptLine {
   paid: Array<{ text: string; priceAgorot: number }>;
   /** OTH ("על חשבון הבית"): printed at ₪0 with "OTH — <reason>" under it. */
   oth?: string | null;
+  /** "כלול בשובר #12 · שובר ארוחה" under the line (a production voucher covered it). */
+  voucher?: string | null;
+  /** A ₪0 voucher line: "₪25.00 · כלול בשובר #12 · שובר ארוחה" — its value, outside every total. */
+  memo?: string | null;
 }
 
 export interface ReceiptInput {
@@ -80,6 +85,10 @@ export interface ReceiptInput {
   voucherDiscounts?: Array<{ label: string; amountAgorot: number }>;
   /** The goods vouchers that paid part of it: each a "שובר הפקה" leg in the payment (the card's leg is the rest). */
   voucherLegs?: Array<{ amountAgorot: number }>;
+  /** "קיזוז שובר הפקה מס׳ 0008  −40.00": the production vouchers' deductions — fiscally a discount, never "הנחה". */
+  prepaidDeductions?: Array<{ label: string; amountAgorot: number }>;
+  /** "שווי הפריטים בשובר: ₪80.00 · שולם בשובר הפקה": the ₪0 vouchers' goods, outside every total. */
+  voucherGoodsValueAgorot?: number;
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
   /**
    * "מזומן" at the cash station (`cashReceiptLines`): שולם / עודף, what is owed and its code, the rounding; what the
@@ -230,13 +239,22 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
     // A line given free ("על חשבון הבית"): its list price above, ₪0 here, and why.
     ops.push({ t: 'row', label: `${receiptQty(l.qty)} × ${formatAgorot(l.unitAgorot)}`, value: formatAgorot(l.oth ? 0 : l.totalAgorot), style: 'small' });
     if (l.oth) ops.push({ t: 'text', text: `OTH — ${l.oth}`, style: 'small', align: 'start' });
+    // A production voucher's line: its memo (a ₪0 line's value) or its mark ("כלול בשובר #12").
+    if (l.memo) ops.push({ t: 'text', text: l.memo, style: 'small', align: 'start' });
+    else if (l.voucher) ops.push({ t: 'text', text: l.voucher, style: 'small', align: 'start' });
   }
+  // The ₪0 vouchers' goods at their menu prices — information, outside every total.
+  if ((r.voucherGoodsValueAgorot ?? 0) > 0) ops.push({ t: 'text', text: `שווי הפריטים בשובר: ₪${formatAgorot(r.voucherGoodsValueAgorot!)} · שולם בשובר הפקה`, style: 'small', align: 'start' });
   ops.push({ t: 'divider', gap: 8 });
   for (const p of r.promotions ?? []) {
     if (p.discountAgorot > 0) ops.push({ t: 'row', label: `הנחת מבצע: ${p.name}`, value: formatAgorot(-p.discountAgorot), style: 'body' });
   }
   // Each discount voucher ("שובר #12 — <סדרה>"): part of the discount, never a payment (the till's receipt).
   for (const v of r.voucherDiscounts ?? []) {
+    if (v.amountAgorot > 0) ops.push({ t: 'row', label: v.label, value: formatAgorot(-v.amountAgorot), style: 'body' });
+  }
+  // "קיזוז שובר הפקה מס׳ 0008": each production voucher's deduction — its own row, never "הנחה".
+  for (const v of r.prepaidDeductions ?? []) {
     if (v.amountAgorot > 0) ops.push({ t: 'row', label: v.label, value: formatAgorot(-v.amountAgorot), style: 'body' });
   }
   // The till's discounts by hand: the gross first, then what came off, then the payable (ReceiptRenderer).
@@ -605,6 +623,10 @@ const neg = (v: unknown): string => {
   return n === 0 ? '₪0.00' : formatShekelSign(-Math.abs(Math.round(n * 100)));
 };
 
+/** The tenders a till Z shows on their own rows; the rest by [Z_METHOD_NAMES] (TillZRenderer `methodNames`). */
+const Z_BREAKDOWN_APART = new Set(['cash', 'card', 'exchange']);
+const Z_METHOD_NAMES: Record<string, string> = { voucher: 'שוברי הפקה', production_voucher: 'שוברי הפקה', cash_credit: 'זיכוי מזומן', check: 'המחאה', credit: 'זיכוי', other: 'אחר' };
+
 /** The till Z on paper (TillZRenderer), from the cloud's zReport (POST till-z answer). */
 export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo; shopName: string | null; posNumber: string | null; machineName: string | null; copy: boolean; logoUrl: string | null; printedAt: Date }): ZDoc {
   const ops: ZOp[] = [];
@@ -648,9 +670,24 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
   d();
   r('מזומן', money(z.totalCashSales));
   r('כרטיס אשראי', money(z.totalCardSales));
+  // The other tenders the cloud counted (TillZ.otherPayments): "שוברי הפקה", "זיכוי מזומן"…, each only when not zero.
+  const breakdown = (per.paymentBreakdown ?? z.paymentBreakdown) as Record<string, unknown> | undefined;
+  if (breakdown && typeof breakdown === 'object') {
+    for (const key of Object.keys(breakdown).filter((k) => !Z_BREAKDOWN_APART.has(k)).sort()) {
+      const v = Number(breakdown[key]);
+      if (Number.isFinite(v) && v !== 0) r(Z_METHOD_NAMES[key] ?? key, money(v));
+    }
+  }
   r('מע"מ', money(z.vatTotal));
   const tips = Number(z.totalTips ?? 0);
   if (Number.isFinite(tips) && tips !== 0) r('תשר', money(z.totalTips));
+  // "שוברי הפקה שמומשו" by type and production, and the ₪0 vouchers' goods — information, in no figure above.
+  const pv = (per.prepaidVouchers ?? z.prepaidVouchers) as Record<string, unknown> | undefined;
+  const pvLines = pv && typeof pv === 'object' ? voucherInfoLines(voucherInfoFromJson(pv)) : [];
+  if (pvLines.length > 0) {
+    d();
+    for (const v of pvLines) r(v.label, v.value, v.title === true);
+  }
   d();
   c('מגירה', 20, true);
   r('קופה פותחת', money(z.openingCash));
@@ -702,6 +739,10 @@ export interface XInput {
     deposits?: number;
     walletIn?: number;
     walletDeposits?: number;
+    /** "שוברי הפקה": what production vouchers paid as a tender (core/sale.ts buildXTill) — only when not zero. */
+    totalVouchers?: number;
+    /** The production vouchers' sections (core/till/vouchers.ts voucherInfoJson): information, in no figure above. */
+    prepaidVouchersInfo?: Record<string, unknown>;
   };
   /** Counted cash on the close (shekels), null on an interim X or an uncounted close. */
   countedCash: number | null;
@@ -742,11 +783,18 @@ export function xDoc(x: XInput): ZDoc {
   d();
   r('מזומן', money(t.totalCash));
   r('כרטיס אשראי', money(t.totalCard));
+  if (t.totalVouchers) r('שוברי הפקה', money(t.totalVouchers));
   if (b.dealerType === 'exempt') r('מע"מ', 'עוסק פטור — ללא מע״מ');
   else r('מע"מ', money(t.vatTotal ?? 0));
   if (t.totalTips !== 0) r('תשר', money(t.totalTips));
   r('סה"כ פריטים', String(t.itemsCount));
   r('מסמכים', String(t.transactionsCount));
+  // "שוברי הפקה" and "שוברי הפקה (לא כלול בסה״כ)" (VoucherRedemption.kt voucherInfoLines): information, added to nothing.
+  const vouchers = t.prepaidVouchersInfo ? voucherInfoLines(voucherInfoFromJson(t.prepaidVouchersInfo)) : [];
+  if (vouchers.length > 0) {
+    d();
+    for (const v of vouchers) r(v.label, v.value, v.title === true);
+  }
   d();
   r('קופה פותחת', money(t.openingCash));
   // The drawer's movements and the employees' cash (drawer spec §8, drawer-away §5.6): each only when it moved something.

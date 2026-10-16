@@ -12,6 +12,8 @@ import {
   DISCOUNT_PAY_HERE,
   VOUCHER_SHOW_AT_TILL,
   confirmDiscount,
+  lookupVoucher,
+  redeemLookedUp,
   redeemVoucherCode,
   releaseDiscount,
   settleDiscounts,
@@ -243,6 +245,36 @@ describe('a goods voucher ("שובר פריטים")', () => {
   it('a voucher that needs a till that books it is the till\'s: the cloud\'s words for the cashier are not the customer\'s', async () => {
     const c = cloud({ 'prepaid-vouchers/lookup': ok(goodsDto({ redeemable: false, reason: 'prepaid_voucher_update_required', message: 'יש לעדכן את גרסת הקופה' })) });
     assert.deepEqual(await redeemVoucherCode(c.post, input()), { kind: 'refused', reason: 'prepaid_voucher_update_required' });
+  });
+});
+
+describe('what a till adds to every call (the Windows till)', () => {
+  it('the lookup, the hold and the redemption carry its features and "מצב בדיקה"; the kiosks send none', async () => {
+    const extras = { features: ['accounting', 'groups'], testModeAware: true };
+    const d = cloud({ 'prepaid-vouchers/lookup': ok(discountDto()), 'prepaid-vouchers/reserve': ok({ reservationId: 'res-1', uses: 1 }) });
+    await redeemVoucherCode(d.post, input({ extras }));
+    for (const c of d.calls) {
+      assert.deepEqual(c.body.features, ['accounting', 'groups'], c.path);
+      assert.equal(c.body.testModeAware, true, c.path);
+    }
+    const g = cloud({ 'prepaid-vouchers/lookup': ok(goodsDto()), 'prepaid-vouchers/redeem': ok({ redemptionId: 'red-1', redeemed: [{ productId: 'p-cola', quantity: 1 }], voucher: { serial: 5 } }) });
+    await redeemVoucherCode(g.post, input({ extras }));
+    assert.deepEqual(g.calls.map((c) => c.path), ['prepaid-vouchers/lookup', 'prepaid-vouchers/redeem']);
+    for (const c of g.calls) assert.equal(c.body.testModeAware, true, c.path);
+    const k = cloud({ 'prepaid-vouchers/lookup': ok(discountDto()), 'prepaid-vouchers/reserve': ok({ reservationId: 'res-1', uses: 1 }) });
+    await redeemVoucherCode(k.post, input());
+    for (const c of k.calls) assert.equal('features' in c.body || 'testModeAware' in c.body, false, c.path);
+  });
+
+  it('a voucher looked up once is redeemed from that answer — never a second lookup', async () => {
+    const c = cloud({ 'prepaid-vouchers/lookup': ok(discountDto()), 'prepaid-vouchers/reserve': ok({ reservationId: 'res-1', uses: 1 }) });
+    const looked = await lookupVoucher(c.post, 'ABCD1234EFGH5678', { features: ['groups'] });
+    assert.equal(looked.kind, 'ok');
+    const r = await redeemLookedUp(c.post, input(), (looked as { dto: Record<string, unknown> }).dto);
+    assert.equal(r.kind, 'discount');
+    assert.deepEqual(c.calls.map((x) => x.path), ['prepaid-vouchers/lookup', 'prepaid-vouchers/reserve']);
+    assert.deepEqual(await lookupVoucher(cloud().post, 'X'), { kind: 'offline' });
+    assert.deepEqual(await lookupVoucher(cloud({ 'prepaid-vouchers/lookup': refused('prepaid_voucher_not_found', 404) }).post, 'X'), { kind: 'refused', reason: 'prepaid_voucher_not_found' });
   });
 });
 
