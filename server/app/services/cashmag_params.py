@@ -35,7 +35,7 @@ PROTOCOL_RLP = "rlp"
 PROTOCOL_OPTIONS: Tuple[str, ...] = (PROTOCOL_JAR, PROTOCOL_JSON, PROTOCOL_RLP)
 PROTOCOL_LABELS: Dict[str, str] = {
     PROTOCOL_JAR: "ספריית היצרן (jar)",
-    PROTOCOL_JSON: "JSON-RPC ברשת (בלי ספריית היצרן) — עוד לא נתמך",
+    PROTOCOL_JSON: "JSON-RPC ברשת (בלי ספריית היצרן)",
     PROTOCOL_RLP: "RLP — עוד לא נתמך",
 }
 
@@ -75,11 +75,13 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     _spec(ENABLED_KEY, "מכשיר מזומן CashMag — פעיל בקופה", "boolean", False,
           "כשמופעל, במסך התשלום של הקופה יש \"מזומן במכשיר\": הלקוח משלם ומקבל עודף במכונת המזומן של CashMag "
           "(CMC Monetic), דרך תוכנת היצרן בקופסת CashMag ברשת המקומית. כבוי (ברירת מחדל) — הקופה כמו היום, בלי שום "
-          f"פנייה למכונה. דורש גרסת קופה שכוללת את ספריית היצרן. {_LEVELS}"),
+          "פנייה למכונה. בפרוטוקול ספריית היצרן (jar) — דורש גרסת קופה שכוללת אותה; ב-JSON-RPC — לא. "
+          f"{_LEVELS}"),
     _spec(PROTOCOL_KEY, "מכשיר מזומן CashMag — פרוטוקול", "enum", PROTOCOL_JAR,
           f"איך הקופה מדברת עם תוכנת היצרן במחשב CashMag. «{PROTOCOL_LABELS[PROTOCOL_JAR]}» (ברירת מחדל). "
-          f"«{PROTOCOL_LABELS[PROTOCOL_JSON]}» ו-«{PROTOCOL_LABELS[PROTOCOL_RLP]}» — יופעלו כשיהיה להם דרייבר; עד אז "
-          f"התשלום \"לא זמין\". {_LEVELS}",
+          f"«{PROTOCOL_LABELS[PROTOCOL_JSON]}» — לקוח שלנו לשרת CashMag: מסכי תשלום שלנו, מתחבר רק לזמן התשלום "
+          "(כמו קיוסק Windows — שם אין ספרייה, ו-jar ו-JSON-RPC שניהם JSON-RPC). "
+          f"«{PROTOCOL_LABELS[PROTOCOL_RLP]}» — עד שהיצרן ימסור את פורמט ההודעות התשלום \"לא זמין\". {_LEVELS}",
           enum_options=PROTOCOL_OPTIONS, enum_labels=PROTOCOL_LABELS),
     _spec(HOST_KEY, "מכשיר מזומן CashMag — כתובת השרת", "string", None,
           f"כתובת המחשב של היצרן ברשת המקומית (IP או שם), למשל 192.168.1.40. ריק — לא מוגדר. {_LEVELS}"),
