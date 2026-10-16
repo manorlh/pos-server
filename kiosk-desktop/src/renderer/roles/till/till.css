@@ -247,6 +247,10 @@
 }
 
 .t-chip {
+  /* A one-sign chip ("%", "₪") is still a 48 dp target (layout audit 16.10); never narrower than its words — an explicit
+     min-width drops flex's content minimum, so the department bar's chips would shrink into each other. */
+  min-width: var(--t-touch);
+  flex-shrink: 0;
   padding: 0 14px;
   white-space: nowrap;
   border: 1px solid var(--t-line);
@@ -329,6 +333,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Too short for its head, two lines and its foot (a stacked cart under the strips): it scrolls whole — "לתשלום" never
+     falls off the window (layout audit 16.10). */
+  overflow-y: auto;
   background: var(--t-surface);
   border-inline-start: 1px solid var(--t-line);
 }
@@ -348,7 +355,8 @@
 
 .t-lines {
   flex: 1;
-  min-height: 0;
+  /* Two lines at least: five strips on a 768 px window had left the basket's lines no room at all. */
+  min-height: 96px;
   margin: 0;
   padding: 0;
   overflow-y: auto;
@@ -495,15 +503,36 @@
 }
 
 .t-btn-small {
+  position: relative;
   min-height: 40px;
   padding: 0 10px;
   font-size: 14px;
 }
 
+/* Drawn 40 px, touched at 48 (--t-touch; layout audit 16.10: 6.8 mm on a 10" panel). */
+.t-btn-small::before {
+  content: '';
+  position: absolute;
+  top: min(0px, calc(50% - var(--t-touch) / 2));
+  bottom: min(0px, calc(50% - var(--t-touch) / 2));
+  left: 0;
+  right: 0;
+}
+
 /* ------------------------------------------------------------- checkout */
 
+/* A report / the payment scrolls; its parts keep their height (flex-shrink 0) — a list with overflow: hidden (the blocks,
+   the drawer's reasons) was squeezed to nothing and its rows cut off instead of scrolling (layout audit 16.10). */
+.t-checkout > *,
+.t-report > * {
+  flex-shrink: 0;
+}
+
+/* border-box: `width: 100%` and the padding inside it — content-box made every report and the payment 32 px wider than
+   the window, its far (left) side cut off ("חזרה" half out; layout audit 16.10). */
 .t-checkout,
 .t-report {
+  box-sizing: border-box;
   width: 100%;
   margin: 0 auto;
   padding: 16px;
@@ -686,8 +715,10 @@
 .t-lock {
   margin: auto;
   padding: 16px;
+  box-sizing: border-box;
   width: 100%;
-  max-width: 360px;
+  /* 360 px of content as before, the padding inside (a narrow window no longer pushes it out). */
+  max-width: 392px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -739,8 +770,10 @@
 }
 
 .t-dialog {
+  box-sizing: border-box;
   width: 100%;
-  max-width: 380px;
+  /* 380 px of content as before; border-box keeps a tall dialog inside the window (max-height 100%, its padding in). */
+  max-width: 412px;
   max-height: 100%;
   overflow-y: auto;
   padding: 16px;
@@ -826,10 +859,11 @@
   color: var(--t-muted);
 }
 
+/* At the tile's bottom end corner, beside the price — at the top start it covered the name's first line (layout audit 16.10). */
 .t-tile-badge {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  bottom: 6px;
+  left: 6px;
   padding: 1px 8px;
   border-radius: 999px;
   background: var(--t-danger-soft);
@@ -944,6 +978,8 @@
 }
 
 .t-menu-row {
+  /* A row that is not a button (a "בקרוב" one) is a div: border-box as a button is, or it is 32 px too wide. */
+  box-sizing: border-box;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1053,6 +1089,16 @@
   cursor: pointer;
 }
 
+/* The "i" drawn 32 px in the tile's corner, touched over 48 × 48 of it (inside the tile; layout audit 16.10). */
+.t-tile-info::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--t-touch);
+  height: var(--t-touch);
+}
+
 .t-tile-info-dot {
   width: 20px;
   height: 20px;
@@ -1097,7 +1143,9 @@
 .t-dialog-wide {
   max-width: 720px;
   width: 100%;
-  max-height: 90vh;
+  /* The overlay's height, not 90vh: under the root's zoom (a 4K screen ×2) vh counted twice and the picker ran off the
+     window (layout audit 16.10). */
+  max-height: 100%;
   overflow-y: auto;
 }
 .t-row-input {
@@ -1130,6 +1178,20 @@
 }
 
 /* A notice about the employee's sign-in / the change owed (userSessions, tillCash): above the till, not over it. */
+/*
+ * The strips over the screen (demo, work mode, owed change, kitchen tickets, redirects, the deferred terminal, signed in
+ * elsewhere): at most a third of the height, scrolling past it — five of them on a 768 px window had left the basket no
+ * room at all (layout audit 16.10).
+ */
+.t-notices {
+  flex: 0 1 auto;
+  max-height: 34%;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
 .t-notice {
   display: flex;
   align-items: center;
@@ -1320,7 +1382,8 @@
   border-color: #dc2626;
 }
 .t-block-sheet {
-  max-height: 90vh;
+  /* The overlay's height (vh counts twice under the root's zoom — layout audit 16.10). */
+  max-height: 100%;
   overflow-y: auto;
 }
 .t-block-form fieldset {
@@ -1333,7 +1396,8 @@
   margin-bottom: 4px;
 }
 .t-picker {
-  max-height: 50vh;
+  /* Half the window in the root's own px (vh counts twice under the root's zoom — layout audit 16.10). */
+  max-height: calc(50vh / var(--t-zoom, 1));
   overflow-y: auto;
 }
 

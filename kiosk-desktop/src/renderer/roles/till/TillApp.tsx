@@ -15,7 +15,7 @@
  *    desktop) — never during a payment; a host without that menu (a browser) leaves the corner unarmed.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { tillBusy, type OpArgs, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
 import { capabilityTiles, NO_CAPS } from '../../host/caps';
 import type { HostCaps, TillHost } from '../../host/TillHost';
@@ -211,7 +211,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       lang="he"
       data-lite={host.device.lite ? '1' : '0'}
       data-layout={layout.cls}
-      style={profile.scale !== 1 ? { zoom: profile.scale } : undefined}
+      style={profile.scale !== 1 ? ({ zoom: profile.scale, '--t-zoom': String(profile.scale) } as CSSProperties) : undefined}
       onPointerDown={touch}
       {...adminHold.handlers}
     >
@@ -488,86 +488,89 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           ) : null}
         </div>
       </header>
-      {host.demo ? (
-        <div className="t-demo" role="note">
-          {T.demoBadge}
-        </div>
-      ) : null}
-      {!host.demo && s.mode.role === 'kiosk' ? (
-        // A kiosk working as a till today (Android KioskTillModeBanner): the way back, and the idle return's notice.
-        <div className="t-worknote" role="note">
-          <span className="t-worknote-text">{T.workModeBanner}</span>
-          {s.mode.countdownSec ? (
-            <>
-              <span className="t-worknote-count">{T.workModeCountdown(s.mode.countdownSec)}</span>
-              <button type="button" className="t-pill" onClick={touch}>
-                {T.workModeStay}
+      {/* The strips over the screen: at most a third of its height, scrolling past it (till.css .t-notices). */}
+      <div className="t-notices">
+        {host.demo ? (
+          <div className="t-demo" role="note">
+            {T.demoBadge}
+          </div>
+        ) : null}
+        {!host.demo && s.mode.role === 'kiosk' ? (
+          // A kiosk working as a till today (Android KioskTillModeBanner): the way back, and the idle return's notice.
+          <div className="t-worknote" role="note">
+            <span className="t-worknote-text">{T.workModeBanner}</span>
+            {s.mode.countdownSec ? (
+              <>
+                <span className="t-worknote-count">{T.workModeCountdown(s.mode.countdownSec)}</span>
+                <button type="button" className="t-pill" onClick={touch}>
+                  {T.workModeStay}
+                </button>
+              </>
+            ) : null}
+            {s.mode.rolesAllowed.includes('kiosk') ? (
+              <button type="button" className="t-pill t-pill-light" onClick={() => void run('mode.switch', { to: 'kiosk' })}>
+                {s.mode.switchLabel ?? 'חזרה לקיוסק'}
               </button>
-            </>
-          ) : null}
-          {s.mode.rolesAllowed.includes('kiosk') ? (
-            <button type="button" className="t-pill t-pill-light" onClick={() => void run('mode.switch', { to: 'kiosk' })}>
-              {s.mode.switchLabel ?? 'חזרה לקיוסק'}
+            ) : null}
+          </div>
+        ) : null}
+        {s.owed && s.owed.items.length > 0 && !s.session.locked && view !== 'owed' && s.checkout.phase === 'idle' ? (
+          // "עודף חייב ללקוח": urgent on the till (Android's alerts list) — the way to "שולם ללקוח".
+          <div className="t-notice" role="status">
+            <span className="t-notice-text">
+              עודף חייב ללקוח · {s.owed.items.length}
+            </span>
+            <button type="button" className="t-pill" onClick={() => setView('owed')}>
+              שולם ללקוח
             </button>
-          ) : null}
-        </div>
-      ) : null}
-      {s.owed && s.owed.items.length > 0 && !s.session.locked && view !== 'owed' && s.checkout.phase === 'idle' ? (
-        // "עודף חייב ללקוח": urgent on the till (Android's alerts list) — the way to "שולם ללקוח".
-        <div className="t-notice" role="status">
-          <span className="t-notice-text">
-            עודף חייב ללקוח · {s.owed.items.length}
-          </span>
-          <button type="button" className="t-pill" onClick={() => setView('owed')}>
-            שולם ללקוח
+          </div>
+        ) : null}
+        {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
+          // "בון לא הודפס במדפסת מטבח" (KitchenPrintBanner): never quieted; a tap opens the queue.
+          <button type="button" className="t-banner t-banner-button" role="alert" onClick={() => setView('printQueue')}>
+            {s.printQueue.banner}
           </button>
-        </div>
-      ) : null}
-      {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
-        // "בון לא הודפס במדפסת מטבח" (KitchenPrintBanner): never quieted; a tap opens the queue.
-        <button type="button" className="t-banner t-banner-button" role="alert" onClick={() => setView('printQueue')}>
-          {s.printQueue.banner}
-        </button>
-      ) : null}
-      {view === 'sell' && !s.session.locked
-        ? (s.printQueue?.redirects ?? []).map((r) => (
-            <div key={r.fromId} className="t-notice t-redirect" role="status">
-              <span className="t-notice-text">{r.text}</span>
-              <button type="button" className="t-pill" onClick={() => void run('printQueue.endRedirect', { fromId: r.fromId })}>
-                {FAILOVER_TEXT.endRedirect}
-              </button>
-            </div>
-          ))
-        : null}
-      {s.terminalOffline && !s.session.locked && s.checkout.phase === 'idle' && view === 'sell' ? (
-        // The terminal works deferred (Android TerminalOfflineChip): amber, the cards that do not pass on the second line.
-        <div className="t-notice t-deferred-banner" role="status">
-          <span className="t-notice-text">
-            {s.terminalOffline.text.split('\n').map((line, i) => (
-              <span key={i} style={{ display: 'block' }}>
-                {line}
-              </span>
-            ))}
-          </span>
-          <button type="button" className="t-pill" onClick={() => setView('transmission')}>
-            {T.transmissionOpen}
-          </button>
-        </div>
-      ) : null}
-      {s.users?.notice ? (
-        // "עובד מחובר בקופה אחת בלבד": signed in elsewhere too, signing out at the end of the action, signed out (exclusive login v2).
-        <div className="t-notice" role="status">
-          <span className="t-notice-text">{s.users.notice}</span>
-          <button type="button" className="t-pill" onClick={() => void run('session.dismissNotice', {})}>
-            {T.close}
-          </button>
-        </div>
-      ) : null}
-      {status === 'offline' ? (
-        <div className="t-banner" role="alert">
-          {T.engineOffline}
-        </div>
-      ) : null}
+        ) : null}
+        {view === 'sell' && !s.session.locked
+          ? (s.printQueue?.redirects ?? []).map((r) => (
+              <div key={r.fromId} className="t-notice t-redirect" role="status">
+                <span className="t-notice-text">{r.text}</span>
+                <button type="button" className="t-pill" onClick={() => void run('printQueue.endRedirect', { fromId: r.fromId })}>
+                  {FAILOVER_TEXT.endRedirect}
+                </button>
+              </div>
+            ))
+          : null}
+        {s.terminalOffline && !s.session.locked && s.checkout.phase === 'idle' && view === 'sell' ? (
+          // The terminal works deferred (Android TerminalOfflineChip): amber, the cards that do not pass on the second line.
+          <div className="t-notice t-deferred-banner" role="status">
+            <span className="t-notice-text">
+              {s.terminalOffline.text.split('\n').map((line, i) => (
+                <span key={i} style={{ display: 'block' }}>
+                  {line}
+                </span>
+              ))}
+            </span>
+            <button type="button" className="t-pill" onClick={() => setView('transmission')}>
+              {T.transmissionOpen}
+            </button>
+          </div>
+        ) : null}
+        {s.users?.notice ? (
+          // "עובד מחובר בקופה אחת בלבד": signed in elsewhere too, signing out at the end of the action, signed out (exclusive login v2).
+          <div className="t-notice" role="status">
+            <span className="t-notice-text">{s.users.notice}</span>
+            <button type="button" className="t-pill" onClick={() => void run('session.dismissNotice', {})}>
+              {T.close}
+            </button>
+          </div>
+        ) : null}
+        {status === 'offline' ? (
+          <div className="t-banner" role="alert">
+            {T.engineOffline}
+          </div>
+        ) : null}
+      </div>
       <main className="t-main">{main}</main>
       {s.session.cashier && s.sell.refundChooser && !s.dialog && sheet?.kind !== 'receipt' ? (
         <RefundChooser onCatalog={() => void run('refund.catalog', {})} onReceipt={() => setSheet({ kind: 'receipt' })} onClose={() => void run('refund.end', {})} />

@@ -24,8 +24,9 @@ export function Pairing() {
   };
   const field = 'w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 text-lg outline-none focus:border-blue-600';
   return (
-    <div dir="rtl" className="flex h-screen w-screen items-center justify-center bg-gradient-to-br from-blue-50 to-white p-6">
-      <div className="w-full max-w-md space-y-4 rounded-3xl bg-white p-8 shadow-xl">
+    // Scrolls on a short window (a 14" laptop at 125%, 960×540 at the kiosk's zoom): centred by its own margins, never cut.
+    <div dir="rtl" className="flex h-screen w-screen flex-col items-center overflow-y-auto bg-gradient-to-br from-blue-50 to-white p-6">
+      <div className="my-auto w-full max-w-md shrink-0 space-y-4 rounded-3xl bg-white p-8 shadow-xl">
         <div className="text-center">
           <div className="text-3xl font-black tracking-tight">
             R2M <span className="font-bold text-blue-600">POS</span>

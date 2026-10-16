@@ -9,6 +9,8 @@
  *   &badge=0                                         no count badge on the dishes (layout.cartCountBadge)
  *   &welcome=top|middle|bottom[&align=center]        "ברוכים הבאים" (attract.welcome)
  *   &rich=0                                          the small menu of before
+ *   &stress=1                                        the layout audit's stress menu (stressCatalog below): long Hebrew and
+ *                                                    English names, 14 categories, a dish with 34 modifiers, ₪99,999.90
  *
  * With `?layout=` the demo shows a fuller menu — eight categories, their dishes with pictures (an
  * emoji on its colour, drawn here, never fetched), a meal for the burgers — so each layout can be
@@ -42,7 +44,88 @@ export function demoLayoutLayer(q: URLSearchParams): Record<string, unknown> {
 
 /** Whether the demo shows the fuller menu. */
 export function demoRich(q: URLSearchParams): boolean {
-  return q.has('layout') && q.get('rich') !== '0';
+  return (q.has('layout') && q.get('rich') !== '0') || q.get('stress') === '1';
+}
+
+/** The menu the demo shows: `&stress=1` the layout audit's (P:/specs/layout-audit-1610/README.md), else the fuller one. */
+export function demoCatalog(q: URLSearchParams): Catalog {
+  return q.get('stress') === '1' ? stressCatalog() : richCatalog();
+}
+
+/**
+ * The layout audit's stress menu: the fuller menu, and on top of it what breaks layouts — long names in Hebrew, in
+ * English and mixed, long category names, more categories than a rail shows, a dish with 34 modifiers in five groups
+ * (long option names, prices), and amounts up to ₪99,999.90. Demo only.
+ */
+export function stressCatalog(): Catalog {
+  const base = richCatalog();
+  const cats = [
+    { id: 'k-long', name: 'מנות עיקריות מיוחדות של השף', imageUrl: null },
+    { id: 'k-en', name: 'Chef’s Specials & Signature Dishes', imageUrl: null },
+    ...base.categories,
+    { id: 'k-events', name: 'מגשי אירוח לאירועים', imageUrl: null },
+    { id: 'k-bar', name: 'בר קוקטיילים', imageUrl: null },
+    { id: 'k-vegan', name: 'טבעוני', imageUrl: null },
+    { id: 'k-break', name: 'ארוחות בוקר', imageUrl: null },
+  ];
+  const tmpl = base.products.find((p) => p.id === 'b1')!;
+  const dish = (id: string, categoryId: string, name: string, price: number, description: string | null = null) => ({
+    ...tmpl,
+    id,
+    categoryId,
+    name,
+    price,
+    priceAgorot: Math.round(price * 100),
+    description,
+    meal: false,
+  });
+  const products = [
+    dish('x1', 'k-long', 'שניצל עוף בציפוי פנקו עם פירה תפוחי אדמה ורוטב פטריות שמנת', 89.9, 'מוגש עם סלט ירוק, לחם הבית ושלושה רטבים לבחירה — מנה גדולה במיוחד'),
+    dish('x2', 'k-en', 'Double Smash Burger with Caramelized Onions, Aged Cheddar & Truffle Mayo', 124.5, 'Two 120 g patties, brioche bun, house pickles and a side of fries'),
+    dish('x3', 'k-long', 'Ultimate בורגר XXL Special Edition', 159.9, 'בורגר 400 גרם, ביצת עין, צ׳דר כפול ובייקון טלה'),
+    dish('x4', 'k-events', 'מגש אירוח ענק לאירועים — Party Platter Deluxe', 99999.9, 'ל-200 סועדים: כריכים, סלטים, קינוחים ושתייה'),
+    dish('x5', 'k-events', 'מגש פירות העונה', 4890, null),
+    dish('x6', 'k-bar', 'קוקטייל הבית', 58, 'Gin, elderflower, cucumber, tonic'),
+    dish('x7', 'k-vegan', 'קערת בודהה', 64, null),
+    dish('x8', 'k-break', 'ארוחת בוקר ישראלית לשניים', 168, 'שתי ביצים לבחירה, סלט, גבינות, לחם, שתייה חמה וקרה'),
+    ...base.products,
+  ];
+  const opt = (id: string, name: string, price: number, isDefault = false) => ({ id, name, price, priceAgorot: Math.round(price * 100), isDefault, maxQty: null });
+  const options = (prefix: string, names: string[], price: (i: number) => number) => names.map((n, i) => opt(`${prefix}${i}`, n, price(i)));
+  const groups = {
+    ...base.groups,
+    x1: [
+      { id: 'xg1', name: 'בחירת תוספת עיקרית (חובה)', kind: 'choice', min: 1, max: 1, freeCount: 0, allowQuantity: false, allowPre: false, options: options('xa', ['פירה תפוחי אדמה', 'צ׳יפס בלגי', 'אורז לבן', 'Sweet potato fries', 'סלט ירוק גדול', 'ירקות מוקפצים בווק', 'פתיתים ברוטב עגבניות'], (i) => (i > 2 ? 6 : 0)) },
+      { id: 'xg2', name: 'Sauces — pick up to three', kind: 'addon', min: 0, max: 3, freeCount: 1, allowQuantity: true, allowPre: true, options: options('xb', ['איולי שום קונפי', 'צ׳ילי מתוק', 'BBQ Smoky Chipotle', 'טחינה גולמית', 'Honey mustard', 'סחוג ירוק חריף מאוד'], () => 3) },
+      { id: 'xg3', name: 'תוספות על המנה', kind: 'addon', min: 0, max: 8, freeCount: 0, allowQuantity: true, allowPre: false, options: options('xc', ['ביצת עין', 'פטריות פורטובלו', 'בצל מקורמל', 'גבינת צ׳דר מיושנת', 'אבוקדו', 'בייקון טלה', 'Jalapeño', 'אננס צלוי', 'חלומי'], (i) => 4 + i) },
+      { id: 'xg4', name: 'בלי…', kind: 'removal', min: 0, max: 6, freeCount: 0, allowQuantity: false, allowPre: false, options: options('xd', ['בלי בצל', 'בלי עגבנייה', 'בלי חסה', 'בלי מלפפון חמוץ', 'בלי רוטב', 'No gluten bun'], () => 0) },
+      { id: 'xg5', name: 'שתייה לארוחה', kind: 'choice', min: 0, max: 1, freeCount: 0, allowQuantity: false, allowPre: false, options: options('xe', ['קולה', 'קולה זירו', 'ספרייט', 'מים מינרליים', 'Fresh orange juice', 'לימונדה נענע'], (i) => (i > 3 ? 9 : 5)) },
+    ],
+  } as unknown as Catalog['groups'];
+  // "הגדלת מכירה" (the upsell window, kiosk-shared/upsell-window.ts) with a long prompt and six offers, on every order.
+  const upsellRules = [
+    {
+      id: 'up-stress',
+      name: 'תוספות לכל הזמנה',
+      triggerType: 'order',
+      triggerIds: [],
+      action: 'add' as const,
+      choices: ['t1', 't2', 't3', 'r2', 'x6', 'q2'].map((id) => ({ type: 'product' as const, id })),
+      prompt: 'רוצים להוסיף משהו קטן לצד ההזמנה? Something on the side?',
+      message: 'מבחר תוספות, שתייה וקינוחים — הכי מתאים להזמנה שלכם',
+      showPrice: true,
+      startTime: null,
+      endTime: null,
+      weekdays: [],
+      priority: 1,
+      display: 'popup' as const,
+      places: ['kiosk' as const],
+      imageUrl: null,
+      skipIfPresent: false,
+      oncePerOrder: true,
+    },
+  ];
+  return { ...base, categories: cats, products, groups, upsellRules, quickNotes: { ...base.quickNotes, x1: ['בלי בצל', 'רוטב בצד', 'מנה ללא גלוטן', 'Well done, please'] } };
 }
 
 /** A dish's picture for the demo: its emoji on a soft tile of its colour (an SVG data URL). */

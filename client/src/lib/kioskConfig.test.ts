@@ -2606,7 +2606,8 @@ describe('"רקע הקיוסק" and "גודל טקסט" — the shared golden (k
     assert.equal(c.dark, false);
     assert.equal(c.text, '#111827');
     assert.equal(c.surface, '#FFFFFF');
-    assert.equal(c.mutedText, '#6B7280');
+    // #646B76 since the layout audit (16.10): #6B7280 was 4.47:1 on the light background.
+    assert.equal(c.mutedText, '#646B76');
     const ch = bgChrome(t, c, { reduceMotion: false });
     assert.equal(ch.backdropInk, '#1118270F');
     assert.equal(ch.outline, bgMix('#FFFFFF', '#111827', 0.14));

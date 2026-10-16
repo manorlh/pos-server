@@ -14,7 +14,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { ArrowBigUp, ArrowLeft, ChevronRight, Delete, HandCoins, Hash, MessageSquareText, Pencil, Phone, Search, UserRound, X } from 'lucide-react';
-import { contrastText, type KioskConfig } from '@/lib/kioskConfig';
+import { contrastText, mixHex, readableInk, type KioskConfig } from '@/lib/kioskConfig';
 import {
   BOTTOM_ROW,
   DIGIT_ROWS,
@@ -111,7 +111,8 @@ function KeyButton({ m, cap, page, h, gap, onKey }: { m: PreviewModel; cap: Kios
     ) : k.kind === 'space' ? (
       <span style={{ fontSize: Math.round(h * 0.3), color: m.c.mutedText }}>{m.txt(SPACE_TEXT_KEY)}</span>
     ) : k.kind === 'lang' ? (
-      <span className="font-bold" style={{ fontSize: Math.round(h * 0.32), color: m.c.primary }}>
+      // Readable on its tint over the tray's (layout audit 16.10: the primary on them was 3.87:1).
+      <span className="font-bold" style={{ fontSize: Math.round(h * 0.32), color: dark ? m.c.primary : readableInk(m.c.primary, [m.c.surface, m.c.background, '#E5E7EB'].map((g) => mixHex(g, m.c.primary, 0x24 / 255))) }}>
         {m.txt(langTextKey(page))}
       </span>
     ) : k.kind === 'page' ? (
@@ -304,7 +305,7 @@ export function EntryHeader({
           type="button"
           aria-label={m.t('close')}
           onClick={onClose}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
+          className="k-hit flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
           style={{ background: `${m.c.text}0F`, color: m.c.text }}
         >
           <X className="h-5 w-5" />
@@ -622,7 +623,7 @@ export function DetailsPage({
             type="button"
             aria-label={m.t('back')}
             onClick={onBack}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
+            className="k-hit flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
             style={{ background: `${m.c.button}1A`, color: m.c.button }}
           >
             <ChevronRight className="h-5 w-5" />

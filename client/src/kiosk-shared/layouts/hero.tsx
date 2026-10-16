@@ -92,7 +92,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
             e.stopPropagation();
             tap(p, true, e.currentTarget.closest('[data-dish]')?.querySelector('[data-pic]')?.getBoundingClientRect() ?? null);
           }}
-          className="flex shrink-0 items-center justify-center rounded-full font-bold shadow-md"
+          className="k-hit flex shrink-0 items-center justify-center rounded-full font-bold shadow-md"
           style={{ width: 38 * u, height: 38 * u, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         >
           {added ? <Check className="h-1/2 w-1/2" /> : <Plus className="h-1/2 w-1/2" />}

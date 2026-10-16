@@ -179,7 +179,7 @@ export function StepsProductSheet({
                         {o.name}
                       </span>
                       {free ? (
-                        <span className="kt-11 font-bold" style={{ color: m.c.accent }}>
+                        <span className="kt-11 font-bold" style={{ color: m.c.accentInk }}>
                           {m.t('free')}
                         </span>
                       ) : o.price > 0 ? (

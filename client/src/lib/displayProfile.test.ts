@@ -10,6 +10,7 @@ import {
   displayProfile,
   kioskDisplay,
   kioskDisplayTheme,
+  kioskTargetCssPx,
   tillLayoutOf,
   type DisplayFacts,
 } from './displayProfile';
@@ -80,4 +81,36 @@ test('the landscape kiosk: side cart from 1300, the rail or the tabs; portrait a
   assert.deepEqual(upright, AS_TODAY);
   const theme = { cartStyle: 'bar', categoryLayout: 'side' };
   assert.equal(kioskDisplayTheme(theme, upright), theme);
+});
+
+test("the smallest control in CSS px: 48 dp at the app's scale (layout audit 16.10)", () => {
+  // The Windows kiosk's 1080p window at its page zoom ×2: half the CSS px; ×1.48 (10.1" 1280×800): 32.4.
+  assert.equal(kioskTargetCssPx(0.5), 24);
+  assert.equal(kioskTargetCssPx(1 / 1.4815), 32.4);
+  // The Android WebView and a browser at ratio 1: 48 CSS px; a 4K screen laid out as full HD (root zoom ×2): 24.
+  assert.equal(kioskTargetCssPx(1), 48);
+  assert.equal(kioskTargetCssPx(1 / 2), 24);
+  // Nonsense in: the dp itself.
+  assert.equal(kioskTargetCssPx(0), 48);
+  assert.equal(kioskTargetCssPx(Number.NaN), 48);
+});
+
+test('a believable 9" or more is never a handheld; a square is corrected at both ends (layout audit 16.10, as pos-android)', () => {
+  // 15.6" 1366×768 at 150% (240 dpi), its real 100.5 dpi: no longer the handheld's 910×512 — S15, the density corrected.
+  const pitch = Math.hypot(1366, 768) / 15.6;
+  const counter = displayProfile({ widthPx: 1366, heightPx: 768, densityDpi: 240, xdpi: pitch, ydpi: pitch });
+  assert.equal(counter.physicalTrusted, true);
+  assert.equal(counter.sizeClass, '15');
+  assert.ok(counter.widthDp > 1100 && counter.heightDp >= 600, `${counter.widthDp}×${counter.heightDp}`);
+  // The same panel with no physical claim (an HDMI box): the vendor's density, a handheld as before.
+  const hdmi = displayProfile({ widthPx: 1366, heightPx: 768, densityDpi: 240, xdpi: 0, ydpi: 0 });
+  assert.equal(hdmi.sizeClass, 'handheld');
+  // A 10.1" square 720×720 at 150%: corrected at both ends like a panel on its side (480 → 640 dp), not like today's portrait.
+  const sq = Math.hypot(720, 720) / 10.1;
+  const square = displayProfile({ widthPx: 720, heightPx: 720, densityDpi: 240, xdpi: sq, ydpi: sq });
+  assert.equal(square.landscape, false);
+  assert.equal(square.widthDp, square.heightDp);
+  assert.ok(square.widthDp >= 600, String(square.widthDp));
+  // A browser (never believable) is untouched by either rule.
+  assert.deepEqual(displayProfile(browserFacts(683, 480, 1)).sizeClass, 'handheld');
 });

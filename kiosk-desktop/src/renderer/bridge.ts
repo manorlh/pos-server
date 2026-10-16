@@ -5,12 +5,12 @@
  */
 
 import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
-import type { KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
+import type { CashPayView, KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
 
 /** The demo's tips: on, with "סכום אחר" (the demo config's checkout asks both). */
 const DEMO_TIPS = { tipEnabled: true, tipOther: true } as const;
-import { demoLayoutLayer, demoRich, richCatalog } from './demoLayouts';
+import { demoCatalog, demoLayoutLayer, demoRich } from './demoLayouts';
 import { demoAdminAction, demoAdminInfo, demoHistory } from './staff/historyDemo';
 
 /** `?style=ios|wolt|classic|minimal_dark|tech` picks the demo's look, as a kiosk's `theme.uiStyle` would. */
@@ -80,7 +80,7 @@ function demoCheckout(): Record<string, unknown> {
   // `&pay=card,cash_at_till,voucher`: the methods offered ("איך תרצו לשלם?"); `&paymode=off|optional|required`.
   const pay = q.get('pay');
   if (pay) {
-    const methods = pay.split(',').filter((m): m is PaymentMethod => m === 'card' || m === 'cash_at_till' || m === 'voucher');
+    const methods = pay.split(',').filter((m): m is PaymentMethod => m === 'card' || m === 'cash_at_till' || m === 'voucher' || m === 'cash_device');
     const mode = q.get('paymode');
     out.payment = { ...((out.payment as Record<string, unknown>) ?? {}), methods, ...(mode === 'off' || mode === 'optional' || mode === 'required' ? { stepModes: { payMethod: mode } } : {}) };
   }
@@ -147,7 +147,8 @@ function demoView(): KioskView {
     meal: false,
   });
   return {
-    phase: 'kiosk',
+    // `?unpaired=1`: the pairing screen (the layout audit's).
+    phase: new URLSearchParams(window.location.search).get('unpaired') === '1' ? 'unpaired' : 'kiosk',
     appVersion: 'dev',
     machine: { machineId: 'demo', name: 'קיוסק הדגמה', shopName: 'סניף הדגמה', companyName: 'עסק הדגמה', posNumber: '9', serverUrl: null },
     // `?layout=` (demoLayouts.ts): the layout's template, the accessible mode, "ברוכים הבאים".
@@ -156,7 +157,7 @@ function demoView(): KioskView {
     fontFace: null,
     fontFamily: null,
     brandName: 'R2M',
-    catalog: demoRich(new URLSearchParams(window.location.search)) ? richCatalog() : {
+    catalog: demoRich(new URLSearchParams(window.location.search)) ? demoCatalog(new URLSearchParams(window.location.search)) : {
       categories: cats,
       products: [
         p('p1', 'c1', 'המבורגר קלאסי', 54, false, '200 גרם בקר, חסה, עגבנייה ורוטב הבית'),
@@ -197,6 +198,37 @@ function demoView(): KioskView {
   };
 }
 
+/** The demo's cash device at one stage (`&cash=`), for looking at the pay screen's cash look. */
+function demoCashView(stage: string, dueAgorot: number): CashPayView {
+  const cashmag = new URLSearchParams(window.location.search).get('cashdev') === 'cashmag';
+  const known: CashPayView['stage'][] = ['connecting', 'queued', 'busy', 'insert', 'question', 'settling', 'change', 'refunding', 'done', 'refunded', 'fault', 'owed_choice', 'split_card'];
+  const s = (known as string[]).includes(stage) ? (stage as CashPayView['stage']) : 'insert';
+  const inserted = s === 'insert' ? Math.floor(dueAgorot / 3) : s === 'change' || s === 'owed_choice' ? dueAgorot + 4000 : 0;
+  return {
+    stage: s,
+    device: cashmag ? 'cashmag' : 'paylink',
+    question: s === 'question' ? { title: 'אישור החזר', text: 'המכונה לא יכולה להחזיר את כל העודף — להמשיך ולקבל שובר על היתרה?' } : null,
+    position: s === 'queued' ? 3 : null,
+    longWait: s === 'queued',
+    stationName: cashmag ? 'CashMag · עמדת מזומן 1' : 'עמדת מזומן ראשית',
+    insertedAgorot: inserted,
+    dueAgorot,
+    changeAgorot: s === 'change' ? 4000 : 0,
+    changeOwedAgorot: s === 'owed_choice' ? 3990 : 0,
+    exactOnly: false,
+    escrowAgorot: s === 'insert' ? 20000 : 0,
+    accepts: { coins: [100, 200, 500, 1000], notes: [2000, 5000, 10000, 20000] },
+    slipCode: null,
+    txShort: 'A7F3',
+    owedChoices: s === 'owed_choice' ? ['slip', 'credit', 'tip'] : undefined,
+    owedDeadlineAt: s === 'owed_choice' ? Date.now() + 60_000 : null,
+    canSplit: s === 'insert',
+    splitRestAgorot: dueAgorot - inserted,
+    splitAgorot: s === 'split_card' ? inserted : undefined,
+    cardRestAgorot: s === 'split_card' ? dueAgorot - inserted : undefined,
+  };
+}
+
 function webBridge(): KioskBridge {
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const fire = <K extends keyof KioskEvents>(k: K, p: KioskEvents[K]) => listeners.get(k)?.forEach((fn) => fn(p));
@@ -222,6 +254,13 @@ function webBridge(): KioskBridge {
       // The tip on top, as the real service charges it.
       const amount = shown + tipToCharge(DEMO_TIPS, shown, input.tipPct, input.tipAgorot);
       const base: PayProgress = { orderId, phase: 'starting', message: null, amountAgorot: amount, canCancel: true, cancelling: false };
+      // "מזומן" at a cash device in the demo (`&cash=insert|queued|busy|question|change|owed_choice|split_card|fault`,
+      // `&cashdev=cashmag`): the pay screen's cash look held at that stage — nothing is ever paid.
+      const cashStage = new URLSearchParams(window.location.search).get('cash');
+      if (input.method === 'cash_device' && cashStage) {
+        setTimeout(() => fire('pay', { ...base, phase: 'charging', cash: demoCashView(cashStage, amount) }), 400);
+        return { ok: true, orderId, amountAgorot: amount };
+      }
       setTimeout(() => fire('pay', { ...base, phase: 'charging' }), 400);
       setTimeout(() => fire('pay', { ...base, phase: 'approved', canCancel: false, pickupLabel: String(order), documentNumber: `9000000${order}`, receipt: 'ask' }), 2500);
       return { ok: true, orderId, amountAgorot: amount };
@@ -249,9 +288,24 @@ function webBridge(): KioskBridge {
     adminHistory: async (input) => demoHistory(input),
     adminAction: async (a) => demoAdminAction(a),
     technicianUnlock: async (code) => (code === '1995' ? { outcome: 'granted', triesLeft: 0, lockedForMs: 0 } : { outcome: 'wrong', triesLeft: 4, lockedForMs: 0 }),
+    // The technician's screen with demo data (the printer and the terminal of the manager's demo).
     technicianInfo: async () => {
-      throw new Error('web demo');
+      const admin = await demoAdminInfo();
+      return {
+        machine: demoView().machine,
+        deviceRole: 'kiosk',
+        shopName: 'סניף הדגמה',
+        companyName: 'עסק הדגמה',
+        network: { online: true, lastBeatOkAt: Date.now() - 20_000, serverUrl: 'https://api.example.invalid', interfaces: [{ name: 'Ethernet', address: '192.168.1.57' }, { name: 'Wi-Fi', address: '10.0.0.12' }] },
+        printer: admin.printer,
+        terminal: admin.terminal,
+        update: { current: '0.5.7', available: '0.5.8', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
+        quickSupport: null,
+      };
     },
+    cashOwedChoice: async () => undefined,
+    cashSplit: async () => ({ ok: false, message: 'web demo' }),
+    cashQuestion: async () => undefined,
     technicianAction: async () => ({ ok: false, message: 'web demo' }),
     on: (event, fn) => {
       const set = listeners.get(event) ?? new Set();
