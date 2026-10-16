@@ -93,6 +93,8 @@ KPI_DEFS = (
     ("oth", "על חשבון הבית", "money", "gift"),
     ("tips", "טיפים", "money", "tip"),
 )
+#: The PDF card's small line under a sum that has a count: "4 זיכויים".
+COUNT_WORDS = {"refunds": "זיכויים", "voids": "ביטולים", "discounts": "הנחות", "oth": "פריטים"}
 
 
 def _r(value: Any) -> float:
@@ -1081,13 +1083,16 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
     blocks: List[Any] = []
     kpis = [
         D.Kpi(key=k["key"], label=k["label"], value=k["value"], kind=k["kind"], compare=k["lastWeek"],
-              compare_label="שבוע שעבר", spark=[float(v or 0) for v in k["spark"]], better=k["better"], icon=k["icon"])
+              compare_label="שבוע שעבר", spark=[float(v or 0) for v in k["spark"]], better=k["better"], icon=k["icon"],
+              sub=f"{P.format_number(k['count'])} {COUNT_WORDS[k['key']]}" if k.get("count") else "")
         for k in data["kpis"]
     ]
+    blocks.append(D.Section("תמונת מצב", "chart"))
     blocks.append(D.Heading("מדדי היום", f"מול {data['weekday']} {last_week.strftime('%d.%m')} ומול ממוצע 4 השבועות"))
     blocks.append(D.KpiBlock(kpis))
     if data["insights"]:
-        blocks.append(D.InsightBlock([D.Insight(i["type"], i["text"]) for i in data["insights"]], title="תובנות היום"))
+        blocks.append(D.Section("תובנות היום", "tip_bulb"))
+        blocks.append(D.InsightBlock([D.Insight(i["type"], i["text"]) for i in data["insights"]]))
 
     hours = [r for r in data["hourly"]]
     active = [i for i, r in enumerate(hours) if r["net"] or r["lastWeekNet"]]
@@ -1101,6 +1106,7 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
         charts.append(D.Chart("donut", [p["label"] for p in data["paymentMethods"]],
                               [D.Series("", [max(0.0, p["amount"]) for p in data["paymentMethods"]])], "אמצעי תשלום", "money"))
     if charts:
+        blocks.append(D.Section("מכירות לאורך היום", "clock"))
         blocks.append(D.ChartBlock(charts))
     second: List[D.Chart] = []
     for level, title in (("shop", "מכירות לפי סניף"), ("area", "לפי נקודת מכירה"), ("till", "לפי קופה")):
@@ -1119,6 +1125,7 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
         blocks.append(D.ChartBlock(second))
 
     # The comparisons, figure by figure.
+    blocks.append(D.Section("השוואות ופירוט", "list"))
     cmp_cols = [_col("label", "מדד"), _col("value", "היום", "text"), _col("lastWeek", "שבוע שעבר", "text"),
                 _col("change", "שינוי", "trend"), _col("avg4w", "ממוצע 4 שבועות", "text"), _col("changeAvg", "מול הממוצע", "trend")]
     cmp_rows = []
@@ -1151,6 +1158,7 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
                                   P.format_number(_kpi(data, "documents")["value"]), "", P.format_money(total["lastWeek"] if total else 0), ""],
                           title="פירוט: סניף › נקודת מכירה › קופה", subtitle="מכירות נטו, מול אותו יום בשבוע שעבר"))
 
+    blocks.append(D.Section("תשלומים, מחלקות ופריטים", "card"))
     pay_cols = [_col("label", "אמצעי תשלום"), _col("amount", "סכום", "money"), _col("share", "%", "percent"),
                 _col("documents", "מסמכים", "number")]
     pay_rows = _cells(pay_cols, data["paymentMethods"])
@@ -1179,6 +1187,7 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
         blocks.append(D.Table(mover_cols, _cells(mover_cols, data["fallers"]), title="ירדו"))
 
     t = data["tables"]
+    blocks.append(D.Section("שולחנות ועובדים" if t else "עובדים", "users"))
     if t:
         blocks.append(D.Heading("שולחנות"))
         cards = [
@@ -1215,6 +1224,7 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
     notes.append(f"פתיחות מגירה ללא מכירה: {r['drawerOpensNoSale']}")
     if r["cancelledDocuments"]["count"]:
         notes.append(f"מסמכים שבוטלו: {r['cancelledDocuments']['count']} ({P.format_money(r['cancelledDocuments']['amount'])})")
+    blocks.append(D.Section("בקרה וסיכונים", "shield"))
     blocks.append(D.Heading("סיכונים", new_page=False))
     blocks.append(D.Note(" · ".join(notes), "alert" if r["untransmittedCard"]["count"] else "info"))
     blocks.append(D.Table(risk_cols, _cells(risk_cols, r["byEmployee"]), title="לפי עובד",
@@ -1225,7 +1235,7 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
 
     k = data["kiosks"]
     if k:
-        blocks.append(D.Heading("קיוסקים"))
+        blocks.append(D.Section("קיוסקים", "kiosk"))
         blocks.append(D.KpiBlock([
             D.Kpi("net", "מכירות", k["net"], "money", icon="kiosk"),
             D.Kpi("orders", "הזמנות", k["orders"], "number", icon="receipt"),
@@ -1238,10 +1248,18 @@ def document(data: Dict[str, Any], *, branding: Optional[Dict[str, Any]] = None,
 
     by_key = {x.key: x for x in kpis}
     cover = [by_key[x] for x in ("net", "documents", "averageTicket", "items") if x in by_key]
+    facts = [("תאריך", f"{data['weekday']} {day.strftime('%d.%m.%Y')}"),
+             ("יום עסקים", f"{start_h:02d}:00–{start_h:02d}:00"),
+             ("היקף", data["scope"]["label"])]
+    if "net" in by_key:
+        facts.append(("מכירות נטו", by_key["net"].display(short=True)))
+    if "documents" in by_key:
+        facts.append(("עסקאות", by_key["documents"].display()))
     return D.Document(
         title="סיכום יום",
         period=f"{data['weekday']} {day.strftime('%d.%m.%Y')}  ·  יום עסקים {start_h:02d}:00–{start_h:02d}:00",
         scope=data["scope"]["label"],
+        facts=facts,
         generated_at=D.now_label(tz),
         generated_by=user_name,
         business_name=branding.get("name") or "",

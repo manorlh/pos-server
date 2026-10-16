@@ -30,7 +30,9 @@ import { downloadCsv } from '@/lib/csv';
 import {
   chartFromTable,
   cleanChart,
+  cleanFacts,
   cleanKpis,
+  cleanReconcile,
   summarySheet,
   tableCsv,
   withCompare,
@@ -38,8 +40,10 @@ import {
   type PreviousPeriod,
   type ReportChart,
   type ReportChartType,
+  type ReportFact,
   type ReportInsight,
   type ReportKpi,
+  type ReportReconcile,
 } from '@/lib/designedReport';
 import { downloadBlob, downloadExcel, type ExcelSheet } from '@/lib/excelExport';
 import {
@@ -136,9 +140,13 @@ export interface ReportExportBarProps {
    * §7.6): the Excel's "סיכום ותובנות" takes these instead of asking `POST /reports/insights`.
    */
   insights?: ReportInsight[];
+  /** The PDF header band's key facts (§9), right to left; none: the period, the scope and the rows. */
+  facts?: ReportFact[];
+  /** The PDF's reconciliation section (§9): the same money in layers, and whether they agree. */
+  reconcile?: ReportReconcile | null;
 }
 
-export type { PreviousPeriod, ReportChart, ReportKpi };
+export type { PreviousPeriod, ReportChart, ReportFact, ReportKpi, ReportReconcile };
 
 /**
  * The columns that are known only from the exported rows (`expandInExport`, one per payment
@@ -221,6 +229,8 @@ export function ReportExportBar({
   csv,
   pdf,
   insights,
+  facts,
+  reconcile,
 }: ReportExportBarProps) {
   const t = useTranslations('reportFramework.export');
   const ctx = useReportContext();
@@ -339,6 +349,8 @@ export function ReportExportBar({
     const hints = keys
       ? Object.fromEntries(Object.entries(keys).filter(([, v]) => typeof v === 'string' && chosen.has(v)))
       : {};
+    const shownFacts = cleanFacts(facts);
+    const checked = cleanReconcile(reconcile);
     return {
       ...(reportType ? { reportType } : {}),
       // The header band's two lines (§7.1): the period, then business › place.
@@ -352,6 +364,8 @@ export function ReportExportBar({
       ...(previousLabel && before ? { previousLabel: previousLabel.slice(0, 80) } : {}),
       ...(groups.length ? { groupBy: groups } : {}),
       ...(Object.keys(hints).length ? { insightKeys: hints } : {}),
+      ...(shownFacts.length ? { facts: shownFacts } : {}),
+      ...(checked ? { reconcile: checked } : {}),
     };
   };
 

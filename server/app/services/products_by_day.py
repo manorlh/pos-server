@@ -403,10 +403,12 @@ def document(data: Dict[str, Any], *, title: str = "מכירות מוצרים ל
     for k in kpis:
         if k.key in ("bestDay", "worstDay"):
             k.icon = "calendar"
-    blocks: List[Any] = [D.KpiBlock(kpis)]
+    blocks: List[Any] = [D.Section("תמונת מצב", "chart"), D.KpiBlock(kpis)]
     if data["insights"]:
+        blocks.append(D.Section("תובנות — מה חשוב לדעת", "tip_bulb"))
         blocks.append(D.InsightBlock([D.Insight(i["type"], i["text"]) for i in data["insights"]]))
     days = data["days"]
+    blocks.append(D.Section("יום אחרי יום", "calendar"))
     if days:
         figure = "net" if amounts else "items"
         blocks.append(D.ChartBlock([D.Chart(
@@ -429,15 +431,16 @@ def document(data: Dict[str, Any], *, title: str = "מכירות מוצרים ל
         prod_cols.append(col("net", "מכירות", "money"))
     prod_cols.append(col("share", "% מהיום", "percent"))
     long = sum(min(len(d["products"]), DAY_ROWS_MAX) for d in days) > 45 or len(days) > 7
-    for d in days:
-        if not d["products"]:
-            continue
+    sold = [d for d in days if d["products"]]
+    if sold:
+        blocks.append(D.Section("המוצרים של כל יום", "box", new_page=long))
+    for k, d in enumerate(sold):
         head = f"{d['label']} · " + (f"{D.format_value(d['net'], 'money', short=True)} · " if amounts else "") + \
             f"{P.format_number(d['items'])} פריטים"
-        blocks.append(D.Heading(head, new_page=long))
+        blocks.append(D.Heading(head, new_page=long and k > 0))
         blocks.append(D.Table(prod_cols, DS._cells(prod_cols, d["products"][:DAY_ROWS_MAX])))
 
-    blocks.append(D.Heading("סיכום כל הימים יחד", new_page=True))
+    blocks.append(D.Section("סיכום כל הימים יחד", "list", new_page=True))
     sum_cols = [col("name", "מוצר"), col("department", "מחלקה"), col("units", "כמות כוללת", "number")]
     if amounts:
         sum_cols.append(col("net", "מכירות", "money"))
@@ -455,10 +458,13 @@ def document(data: Dict[str, Any], *, title: str = "מכירות מוצרים ל
                 for r in m["rows"]]
         blocks.append(D.Table(cols, rows, title="מוצר × " + ("שבוע" if m["grouping"] == "week" else "יום") + " (כמויות)"))
     period = f"{f.strftime('%d.%m.%Y')} – {t.strftime('%d.%m.%Y')}"
+    facts = [("תקופה", period), ("ימים", P.format_number(totals["days"])), ("היקף", data["scope"]["label"]),
+             ("מוצרים", P.format_number(len(data["summary"]["products"]))), ("פריטים", P.format_number(totals["units"]))]
     return D.Document(
         title=title,
         period=period,
         scope=data["scope"]["label"],
+        facts=facts,
         generated_at=D.now_label(tz),
         generated_by=user_name,
         business_name=branding.get("name") or "",

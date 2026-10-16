@@ -62,6 +62,39 @@ export interface ReportKpi {
   /** Which way is good news; default by key (refund*, void*, discount*… → down). */
   better?: 'up' | 'down';
   icon?: KpiIcon;
+  /** The card's small grey line under the number ("70.9%", "18 קופות"), ≤ 80. */
+  sub?: string;
+}
+
+/** One of the header band's key facts (§9): "תאריך" · "שעות" · "קופות", right to left. */
+export interface ReportFact {
+  label: string;
+  value: string;
+}
+
+/** A reconciliation's card: the same money in one layer (Z, documents, items…). */
+export interface ReportReconcileCard {
+  label: string;
+  value: number | string | null;
+  kind?: 'money' | 'number' | 'percent' | 'text';
+  sub?: string;
+  icon?: KpiIcon;
+}
+
+/** Whether two layers agree: a pill "✓ תואם" (match), "פער" (mismatch), "ממתין" (pending). */
+export interface ReportReconcileCheck {
+  label: string;
+  status: 'match' | 'mismatch' | 'pending' | 'none';
+  /** What the pill says after the label; default by the status. */
+  text?: string;
+}
+
+/** The PDF's reconciliation section (§9): 1–4 equal cards and up to 4 checks. */
+export interface ReportReconcile {
+  title?: string;
+  note?: string;
+  cards: ReportReconcileCard[];
+  checks?: ReportReconcileCheck[];
 }
 
 export type ReportChartType = 'bar' | 'hbar' | 'donut' | 'line';
@@ -229,10 +262,50 @@ export function cleanKpis(kpis: readonly ReportKpi[] | undefined): ReportKpi[] {
       ...(k.spark?.length ? { spark: k.spark.slice(-31).map((n) => scale(Number.isFinite(n) ? n : 0) ?? 0) } : {}),
       ...(k.better ? { better: k.better } : {}),
       ...(k.icon ? { icon: k.icon } : {}),
+      ...(k.sub?.trim() ? { sub: k.sub.trim().slice(0, 80) } : {}),
     });
     if (out.length === 8) break;
   }
   return out;
+}
+
+/** Up to 6 key facts as the server takes them (§9): a label ≤ 40, a value ≤ 120, none empty. */
+export function cleanFacts(facts: readonly ReportFact[] | undefined): ReportFact[] {
+  return (facts ?? [])
+    .map((f) => ({ label: (f.label ?? '').trim().slice(0, 40), value: String(f.value ?? '').trim().slice(0, 120) }))
+    .filter((f) => f.value !== '')
+    .slice(0, 6);
+}
+
+const RECONCILE_STATUSES = new Set(['match', 'mismatch', 'pending', 'none']);
+
+/**
+ * A reconciliation as the server takes it (§9): 1–4 cards with a label, up to 4 checks with a
+ * known status; undefined when no card is left.
+ */
+export function cleanReconcile(r: ReportReconcile | null | undefined): ReportReconcile | undefined {
+  if (!r) return undefined;
+  const cards = (r.cards ?? [])
+    .filter((c) => c && c.label?.trim())
+    .slice(0, 4)
+    .map((c) => ({
+      label: c.label.trim().slice(0, 60),
+      value: typeof c.value === 'number' ? (Number.isFinite(c.value) ? c.value : null) : (c.value ?? null),
+      ...(c.kind ? { kind: c.kind } : {}),
+      ...(c.sub?.trim() ? { sub: c.sub.trim().slice(0, 80) } : {}),
+      ...(c.icon ? { icon: c.icon } : {}),
+    }));
+  if (!cards.length) return undefined;
+  const checks = (r.checks ?? [])
+    .filter((k) => k && k.label?.trim() && RECONCILE_STATUSES.has(k.status))
+    .slice(0, 4)
+    .map((k) => ({ label: k.label.trim().slice(0, 60), status: k.status, ...(k.text?.trim() ? { text: k.text.trim().slice(0, 60) } : {}) }));
+  return {
+    ...(r.title?.trim() ? { title: r.title.trim().slice(0, 80) } : {}),
+    ...(r.note?.trim() ? { note: r.note.trim().slice(0, 300) } : {}),
+    cards,
+    ...(checks.length ? { checks } : {}),
+  };
 }
 
 /** A chart as the server takes it: ≤ 48 labels, ≤ 3 series of the same length; null-free numbers. */
