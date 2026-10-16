@@ -4,6 +4,7 @@ import type { TillDataState } from './zDataState';
 import type { AutoReopenMode } from './availabilityReopen';
 import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
+import type { PresetDiscount } from './presetDiscounts';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -418,6 +419,10 @@ export interface PosSettingsV1 {
   unlinkedCardCreditEnabled?: boolean;
   refundCustomerDetailsRequired?: boolean;
   tipPresets?: number[];
+  /** "הנחות קבועות" (lib/presetDiscounts.ts, P:/specs/preset-discounts.md §2): the deepest layer's list wins whole. */
+  presetDiscounts?: PresetDiscount[];
+  /** Which presets are one-tap buttons on the sell screen at this layer (ids); unset = every active `button`. */
+  presetDiscountButtons?: string[];
   tipDistribution?: TipDistribution;
   /** The question on the customer's tip screen; '' / unset = the till's default wording. */
   tipPromptText?: string;
@@ -534,6 +539,8 @@ export type PosSettingsPatch = Partial<
     | 'clearingServer'
     | 'forceTerminalNumber'
     | 'tipPresets'
+    | 'presetDiscounts'
+    | 'presetDiscountButtons'
     | 'tipDistribution'
     | 'tipPromptText'
     | 'payInstallmentsMax'
@@ -625,6 +632,10 @@ export type PosSettingsPatch = Partial<
   forceTerminalNumber?: boolean | null;
   /** `null` = unset this layer's percentages and inherit the level above's again. */
   tipPresets?: number[] | null;
+  /** `null` = inherit the level above's preset discounts again; [] = none at this level. */
+  presetDiscounts?: PresetDiscount[] | null;
+  /** `null` = inherit which presets are direct buttons; [] = none. */
+  presetDiscountButtons?: string[] | null;
   tipDistribution?: TipDistribution | null;
   /** `null` = inherit the level above's tip question again. */
   tipPromptText?: string | null;

@@ -3,11 +3,13 @@
 /**
  * The promotions report's discounts sections: OTH ("על חשבון הבית") by item, employee,
  * reason, till and day, and the club discount ("הנחת מועדון") by till and day beside the
- * manual basket discounts. Same window and scope as the report above it
- * (`GET /reports/discounts`, src/lib/discountsReportApi.ts).
+ * manual basket discounts, and the preset discounts ("הנחות קבועות", P:/specs/preset-discounts.md §6)
+ * by preset. Same window and scope as the report above it (`GET /reports/discounts`,
+ * src/lib/discountsReportApi.ts); every use of a preset is on /dashboard/preset-discounts-report.
  */
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -145,6 +147,7 @@ function labelledRows(data: DiscountsReport, t: T) {
     oth,
     clubByTill: data.club.byTill.map((r, i) => ({ ...r, key: r.machineId ?? `t${i}`, label: tillLabel(r, unknown, register) })),
     clubByDay: data.club.byDay.map((r) => ({ ...r, key: r.date, label: r.date })),
+    presetsByPreset: (data.presets?.byPreset ?? []).map((r, i) => ({ ...r, key: r.presetId ?? `p${i}`, label: r.name ?? unknown })),
     byKind: data.basketByKind.map((r) => ({ ...r, key: r.kind, label: t(`kind.${r.kind}`) })),
     vouchersByBatch: (data.vouchers?.byBatch ?? []).map((r, i) => ({ ...r, key: r.batchId ?? `b${i}`, label: r.name ?? unknown })),
     vouchersByTill: (data.vouchers?.byTill ?? []).map((r, i) => ({ ...r, key: r.machineId ?? `t${i}`, label: tillLabel(r, unknown, register) })),
@@ -226,6 +229,17 @@ function othClubSheets(data: DiscountsReport, rows: OthClubRows, t: T): { id: st
         ),
       ),
     );
+    if (data.presets && data.presets.totals.count > 0) {
+      sheets.push(
+        clubSheet(
+          'clubPreset',
+          t('presets.byPreset'),
+          { key: 'preset', header: t('presets.col.preset'), kind: 'text' },
+          rows.presetsByPreset.map((r) => [r.label, r.count, r.amount]),
+          data.presets.totals,
+        ),
+      );
+    }
     if (data.club.totals.count > 0) {
       sheets.push(
         clubSheet(
@@ -419,6 +433,19 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
                   )}
                 />
               </div>
+              {data.presets && data.presets.totals.count > 0 ? (
+                <>
+                  <h3 className="px-6 text-sm font-semibold">{t('presets.byPreset')}</h3>
+                  <div className="overflow-x-auto">
+                    <ClubTable head={t('presets.col.preset')} rows={rows.presetsByPreset} totals={data.presets.totals} />
+                  </div>
+                  <p className="px-6 text-xs text-muted-foreground">
+                    <Link href="/dashboard/preset-discounts-report" className="font-medium text-primary hover:underline">
+                      {t('presets.openTracking')} ←
+                    </Link>
+                  </p>
+                </>
+              ) : null}
               {data.club.totals.count > 0 ? (
                 <>
                   <h3 className="px-6 text-sm font-semibold">{t('club.byTill')}</h3>
