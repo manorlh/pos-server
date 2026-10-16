@@ -1,0 +1,229 @@
+{
+  "_": "P:/specs/cash-paylink.md §14 (קיוסק מארח וניתוב ענן/מקומי): the cloud relay — the same bytes in pos-server server/tests/fixtures/kiosk_desktop, kiosk-desktop test/fixtures/contract and pos-android app/src/test/resources",
+  "hostSecret": "host-secret",
+  "clientId": "a1b2c3d4-0000-4000-8000-00000000c001",
+  "clientSecret": "a05fe853edd4ca997cdfba7eae8992e86980a967969a68543f21bdd402217d85",
+  "request": {
+    "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+    "stationId": "st-1",
+    "method": "POST",
+    "path": "/cash/stations/st-1/tx/7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b/start",
+    "client": "a1b2c3d4-0000-4000-8000-00000000c001",
+    "ts": "1760000000000",
+    "nonce": "nonce-relay-0001",
+    "sig": "wVXgKgknJIcSLWs9rLgMETJ1g0TqyzWYCnlBuv13MBk",
+    "body": "{\"leaseId\":\"l-1\",\"amountAgorot\":5735,\"orderRef\":\"o-1\",\"orderLabel\":\"57\",\"kind\":\"sale\"}",
+    "waitMs": 6000
+  },
+  "statusRequest": {
+    "requestId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "stationId": "st-1",
+    "method": "GET",
+    "path": "/cash/stations/st-1/status",
+    "client": "a1b2c3d4-0000-4000-8000-00000000c001",
+    "ts": "1760000001000",
+    "nonce": "nonce-relay-0002",
+    "sig": "frECRv0RarhVfSg2gTgl5cpsuoQ2NJVsMQbXRCVKAHc",
+    "body": "",
+    "waitMs": 6000
+  },
+  "answers": {
+    "done": {
+      "api": 1,
+      "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+      "state": "done",
+      "reply": {
+        "status": 200,
+        "body": {
+          "txId": "7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b",
+          "stationId": "st-1",
+          "state": "ACCEPTING",
+          "amountAgorot": 5735,
+          "dueAgorot": 5740,
+          "insertedAgorot": 0,
+          "seq": 1
+        },
+        "hostTime": 1760000000180
+      }
+    },
+    "refused": {
+      "api": 1,
+      "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+      "state": "done",
+      "reply": {
+        "status": 409,
+        "body": {
+          "error": "not_holder",
+          "position": 2
+        },
+        "hostTime": 1760000000180
+      }
+    },
+    "pending": {
+      "api": 1,
+      "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+      "state": "pending"
+    },
+    "expired": {
+      "api": 1,
+      "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+      "state": "expired"
+    },
+    "lost": {
+      "api": 1,
+      "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+      "state": "lost"
+    }
+  },
+  "poll": {
+    "body": {
+      "replies": [
+        {
+          "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+          "status": 200,
+          "body": {
+            "txId": "7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b",
+            "stationId": "st-1",
+            "state": "ACCEPTING",
+            "amountAgorot": 5735,
+            "dueAgorot": 5740,
+            "insertedAgorot": 0,
+            "seq": 1
+          },
+          "hostTime": 1760000000180
+        }
+      ],
+      "waitMs": 20000
+    },
+    "answer": {
+      "api": 1,
+      "relay": true,
+      "requests": [
+        {
+          "requestId": "0f8e2d1c-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+          "clientId": "a1b2c3d4-0000-4000-8000-00000000c001",
+          "stationId": "st-1",
+          "method": "POST",
+          "path": "/cash/stations/st-1/tx/7c0e5a1b-2d3f-4c5e-8a9b-0c1d2e3f4a5b/start",
+          "client": "a1b2c3d4-0000-4000-8000-00000000c001",
+          "ts": "1760000000000",
+          "nonce": "nonce-relay-0001",
+          "sig": "wVXgKgknJIcSLWs9rLgMETJ1g0TqyzWYCnlBuv13MBk",
+          "body": "{\"leaseId\":\"l-1\",\"amountAgorot\":5735,\"orderRef\":\"o-1\",\"orderLabel\":\"57\",\"kind\":\"sale\"}",
+          "ageMs": 180
+        }
+      ]
+    }
+  },
+  "routes": [
+    {
+      "cashRoute": "lan",
+      "ownHost": false,
+      "lanOkAgoMs": 1000,
+      "payment": "lan",
+      "recovery": [
+        "lan"
+      ]
+    },
+    {
+      "cashRoute": "lan",
+      "ownHost": false,
+      "lanOkAgoMs": null,
+      "payment": "lan",
+      "recovery": [
+        "lan"
+      ]
+    },
+    {
+      "cashRoute": "cloud",
+      "ownHost": false,
+      "lanOkAgoMs": 1000,
+      "payment": "cloud",
+      "recovery": [
+        "cloud"
+      ]
+    },
+    {
+      "cashRoute": "auto",
+      "ownHost": false,
+      "lanOkAgoMs": 1000,
+      "payment": "lan",
+      "recovery": [
+        "lan",
+        "cloud"
+      ]
+    },
+    {
+      "cashRoute": "auto",
+      "ownHost": false,
+      "lanOkAgoMs": 29999,
+      "payment": "lan",
+      "recovery": [
+        "lan",
+        "cloud"
+      ]
+    },
+    {
+      "cashRoute": "auto",
+      "ownHost": false,
+      "lanOkAgoMs": 30000,
+      "payment": "cloud",
+      "recovery": [
+        "lan",
+        "cloud"
+      ]
+    },
+    {
+      "cashRoute": "auto",
+      "ownHost": false,
+      "lanOkAgoMs": null,
+      "payment": "cloud",
+      "recovery": [
+        "lan",
+        "cloud"
+      ]
+    },
+    {
+      "cashRoute": "cloud",
+      "ownHost": true,
+      "lanOkAgoMs": null,
+      "payment": "local",
+      "recovery": [
+        "local"
+      ]
+    },
+    {
+      "cashRoute": "auto",
+      "ownHost": true,
+      "lanOkAgoMs": null,
+      "payment": "local",
+      "recovery": [
+        "local"
+      ]
+    },
+    {
+      "cashRoute": "bogus",
+      "ownHost": false,
+      "lanOkAgoMs": 1000,
+      "payment": "lan",
+      "recovery": [
+        "lan"
+      ]
+    }
+  ],
+  "lease": {
+    "lanRenewMs": 2000,
+    "lanTtlMs": 6000,
+    "cloudRenewMs": 5000,
+    "cloudTtlMs": 20000
+  },
+  "limits": {
+    "executeMaxAgeMs": 10000,
+    "pickupMs": 10000,
+    "answerMs": 20000,
+    "clientWaitMaxMs": 10000,
+    "hostWaitMaxMs": 25000,
+    "bodyMaxBytes": 16384,
+    "autoLanFreshMs": 30000
+  }
+}

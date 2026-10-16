@@ -57,6 +57,8 @@ UNACKED_KEY = "cashUnackedHoldMin"
 #: Stage 2 (P:/specs/cash-paylink.md §11.15): the kiosk's "חסר עודף" choice wait, the station's wait for the card.
 OWED_CHOICE_KEY = "cashOwedChoiceSec"
 SPLIT_WAIT_KEY = "cashSplitWaitSec"
+#: §14.2: how the client reaches its station's host — over the LAN (default), through the cloud relay, or LAN first.
+ROUTE_KEY = "cashRoute"
 
 #: The shekel's coins and notes, in agorot (10 אג' – 10 ₪; 20 / 50 / 100 / 200 ₪).
 ILS_COINS: Tuple[int, ...] = (10, 50, 100, 200, 500, 1000)
@@ -78,6 +80,15 @@ ROUNDING_LABELS = {
     ROUNDING_NONE: "ללא עיגול",
     ROUNDING_NEAREST_10: "לעשרות אגורות: 1–4 למטה, 5–9 למעלה (ברירת מחדל)",
 }
+ROUTE_LAN = "lan"
+ROUTE_CLOUD = "cloud"
+ROUTE_AUTO = "auto"
+ROUTE_OPTIONS = (ROUTE_LAN, ROUTE_CLOUD, ROUTE_AUTO)
+ROUTE_LABELS = {
+    ROUTE_LAN: "רשת מקומית (ברירת מחדל)",
+    ROUTE_CLOUD: "דרך הענן",
+    ROUTE_AUTO: "אוטומטי: רשת מקומית, ואם העמדה לא עונה — דרך הענן",
+}
 HOPPER_FEEDS_OPTIONS = ("auto", "all", "none")
 HOPPER_FEEDS_LABELS = {
     "auto": "אוטומטי (ברירת מחדל)",
@@ -90,7 +101,7 @@ CASHBOX_MEANS = ("present", "removed")
 IO_MAX = 63
 
 #: A kiosk's (or a till's) own: whether it takes cash, at which station, its receipt lines.
-KIOSK_KEYS: Tuple[str, ...] = (ENABLED_KEY, STATION_KEY, SPLIT_KEY, RECEIPT_LINES_KEY, OWED_CHOICE_KEY)
+KIOSK_KEYS: Tuple[str, ...] = (ENABLED_KEY, STATION_KEY, SPLIT_KEY, RECEIPT_LINES_KEY, OWED_CHOICE_KEY, ROUTE_KEY)
 #: Read by both the station (on the host) and the kiosk.
 SHARED_KEYS: Tuple[str, ...] = (INSERT_TIMEOUT_KEY, IDLE_TIMEOUT_KEY, QUEUE_TIMEOUT_KEY, REFUND_GRACE_KEY)
 #: A station's: overridable on the station itself.
@@ -108,7 +119,7 @@ ALL_KEYS: Tuple[str, ...] = (
     INSERT_TIMEOUT_KEY, IDLE_TIMEOUT_KEY, QUEUE_TIMEOUT_KEY, REFUND_GRACE_KEY, ROUNDING_KEY, SPLIT_KEY,
     FLOAT_LEVELS_KEY, CASHBOX_KEY, LAMP_MAP_KEY, SWITCH_MAP_KEY, RECEIPT_LINES_KEY, SIMULATOR_KEY,
     DRIVER_PATH_KEY, DLL_PATH_KEY, SETTLE_KEY, PAYOUT_TIMEOUT_KEY, ESCROW_KEY, HOPPER_FEEDS_KEY, UNACKED_KEY,
-    OWED_CHOICE_KEY, SPLIT_WAIT_KEY,
+    OWED_CHOICE_KEY, SPLIT_WAIT_KEY, ROUTE_KEY,
 )
 
 #: Integer keys and their ranges.
@@ -129,6 +140,7 @@ ENUMS: Dict[str, Tuple[str, ...]] = {
     SHORTFALL_KEY: SHORTFALL_OPTIONS,
     ROUNDING_KEY: ROUNDING_OPTIONS,
     HOPPER_FEEDS_KEY: HOPPER_FEEDS_OPTIONS,
+    ROUTE_KEY: ROUTE_OPTIONS,
 }
 LIST_KEYS = (COINS_KEY, NOTES_KEY, ALERT_TILLS_KEY)
 MAP_KEYS = (FLOAT_LEVELS_KEY, CASHBOX_KEY, LAMP_MAP_KEY, SWITCH_MAP_KEY)
@@ -246,6 +258,15 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     _spec(HOPPER_FEEDS_KEY, "מזומן — מטבעות למכונות העודף", "enum", "auto",
           f"האם מטבעות שהוכנסו ממלאים את מכונות העודף. {_STATION}",
           options=HOPPER_FEEDS_OPTIONS, labels=HOPPER_FEEDS_LABELS),
+    _spec(ROUTE_KEY, "מזומן — הנתיב לעמדת המזומן", "enum", ROUTE_LAN,
+          "איך הקיוסק (או הקופה) מגיע לשרת שמנהל את עמדת המזומן שלו. "
+          f"«{ROUTE_LABELS[ROUTE_LAN]}» — ישירות ברשת של הסניף, עובד גם בלי אינטרנט. "
+          f"«{ROUTE_LABELS[ROUTE_CLOUD]}» — כל פקודה עוברת דרך הענן לשרת המזומן (או לקיוסק המארח) ובחזרה: לא צריך "
+          "שהקיוסקים יראו זה את זה ברשת, אבל צריך אינטרנט בשני הצדדים, והעדכון על המסך איטי מעט (כשנייה). "
+          f"«{ROUTE_LABELS[ROUTE_AUTO]}» — כל תשלום בוחר כשהוא מתחיל, ונשאר בנתיב שבחר עד הסוף. "
+          "קיוסק מארח משלם בעמדה שלו תמיד בתוך האפליקציה. "
+          f"{_KIOSK}",
+          options=ROUTE_OPTIONS, labels=ROUTE_LABELS),
     _spec(UNACKED_KEY, "מזומן — עסקה ששולמה ולא אושרה (דקות)", "integer", 30,
           "עסקה ששולמה במלואה והקיוסק לא אישר שהפיק עליה מסמך בזמן הזה עוברת ל\"זיכוי מוחזק\" עם התראה "
           f"(1–1440). {_STATION}"),
@@ -437,6 +458,11 @@ def typed_value(key: str, value: Any) -> Any:
     except (TypeError, ValueError):
         return typed_value(key, _default_of(key)) if value != _default_of(key) else None
     return value
+
+
+def route_of(value: Any) -> str:
+    """`cashRoute` as a device reads it (§14.2): lan | cloud | auto — anything else is lan."""
+    return value if value in ROUTE_OPTIONS else ROUTE_LAN
 
 
 def typed(params: Dict[str, Any], keys: Tuple[str, ...] = ALL_KEYS) -> Dict[str, Any]:

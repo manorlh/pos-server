@@ -52,14 +52,16 @@ function header(v: string | string[] | undefined): string | null {
 
 export class CashLanServer {
   private server: http.Server;
-  private readonly nonces = new NonceCache();
+  private readonly nonces: NonceCache;
   private readonly sockets = new Set<{ ws: WsConnection; off: () => void }>();
   private port = 0;
 
   constructor(
     private readonly host: CashLanHost,
-    private readonly opts: { port: number; hostname?: string },
+    private readonly opts: { port: number; hostname?: string; nonces?: NonceCache },
   ) {
+    // The host's own cache when it gives one (shared with the cloud relay, §14.4).
+    this.nonces = opts.nonces ?? new NonceCache();
     this.server = http.createServer((req, res) => void this.handle(req, res));
     this.server.on('upgrade', (req, socket, head) => this.upgrade(req, socket, head));
     this.server.keepAliveTimeout = 5_000;

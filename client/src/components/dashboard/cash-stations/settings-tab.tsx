@@ -24,6 +24,7 @@ import {
   ILS_NOTES,
   denominationText,
   effectiveText,
+  runsStations,
   settingsBody,
   settingsDraftOf,
   type CashStation,
@@ -109,6 +110,7 @@ export function SettingsTab({
   machines: PosMachine[];
 }) {
   const t = useTranslations('cashStations.settings');
+  const tAdd = useTranslations('cashStations.add');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const effective = useMemo(() => station.effectiveSettings ?? {}, [station.effectiveSettings]);
@@ -121,7 +123,8 @@ export function SettingsTab({
   const [draft, setDraft] = useState<SettingsDraft>(() => settingsDraftOf(station.settings, effective));
 
   const sameShop = (m: PosMachine) => String(m.shopId ?? '').toLowerCase() === station.shopId.toLowerCase();
-  const hosts = machines.filter((m) => sameShop(m) && m.deviceRole === 'cash_host');
+  // A dedicated cash host, or a host kiosk (§14.1).
+  const hosts = machines.filter((m) => sameShop(m) && runsStations(m));
   // The alert tills: the shop's tills (never a kiosk or a screen) — `cashAlertTills` ('' = the main till).
   const tills = machines
     .filter((m) => sameShop(m) && (m.deviceRole === 'till' || m.deviceRole == null) && m.fiscal !== false)
@@ -255,7 +258,7 @@ export function SettingsTab({
               onChange={setHostId}
               options={[
                 { value: '', label: t('noHost') },
-                ...hosts.map((m) => ({ value: m.id, label: m.name })),
+                ...hosts.map((m) => ({ value: m.id, label: m.cashHostEmbedded ? tAdd('embeddedHost', { name: m.name }) : m.name })),
                 // The current host, should the list not have it (another page of devices, or no longer a cash server).
                 ...(station.host && !hosts.some((m) => m.id === station.host?.machineId)
                   ? [{ value: station.host.machineId, label: station.host.name ?? station.host.machineId }]

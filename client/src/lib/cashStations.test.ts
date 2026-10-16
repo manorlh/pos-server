@@ -10,6 +10,10 @@ import { join } from 'node:path';
 
 import {
   CASH_HOST_ACTIONS,
+  CASH_ROUTES,
+  cashRouteOf,
+  mayHostEmbedded,
+  runsStations,
   COMMAND_OPS,
   DUMP_NOTES_MAX,
   EMPTY_JOURNAL_FILTERS,
@@ -413,5 +417,35 @@ describe('he.json', () => {
     for (const k of ['intro', 'readOnly', 'assigned', 'unassigned', 'servedHere', 'servedElsewhere', 'noCash', 'switchLabel']) {
       assert.ok(cs.kiosks[k], `kiosks.${k}`);
     }
+  });
+});
+
+describe('the host kiosk and the route (P:/specs/cash-paylink.md §14)', () => {
+  it('a route as the devices read it: unknown is the LAN', () => {
+    assert.deepEqual([...CASH_ROUTES], ['lan', 'cloud', 'auto']);
+    assert.deepEqual(['lan', 'cloud', 'auto', 'wifi', null, undefined, 3].map(cashRouteOf), ['lan', 'cloud', 'auto', 'lan', 'lan', 'lan', 'lan']);
+  });
+
+  it('who may run a station, and where the card is offered', () => {
+    assert.equal(runsStations({ deviceRole: 'cash_host' }), true);
+    assert.equal(runsStations({ deviceRole: 'kiosk', cashHostEmbedded: true }), true);
+    assert.equal(runsStations({ deviceRole: 'kiosk', cashHostEmbedded: false }), false);
+    assert.equal(runsStations({ deviceRole: 'kiosk' }), false);
+    assert.equal(mayHostEmbedded({ deviceRole: 'kiosk', platform: 'windows' }), true);
+    assert.equal(mayHostEmbedded({ deviceRole: 'kiosk', platform: 'android' }), false);
+    assert.equal(mayHostEmbedded({ deviceRole: 'cash_host', platform: 'windows' }), false);
+    assert.equal(mayHostEmbedded({ deviceRole: 'kds', platform: 'windows', fiscal: false }), false);
+  });
+
+  it('its words are in he.json', () => {
+    const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
+    const cs = he.cashStations;
+    for (const k of ['title', 'intro', 'switch', 'on', 'off', 'notAllowed', 'stations', 'noStations', 'addStation', 'offBlocked', 'firewall', 'inactive', 'readOnly']) {
+      assert.ok(cs.embeddedHost[k], `embeddedHost.${k}`);
+    }
+    for (const r of CASH_ROUTES) assert.ok(cs.kiosks.route[r], `kiosks.route.${r}`);
+    assert.ok(cs.kiosks.routeHint);
+    assert.ok(cs.hostCard.embedded);
+    assert.match(cs.add.embeddedHost, /\{name\}/);
   });
 });

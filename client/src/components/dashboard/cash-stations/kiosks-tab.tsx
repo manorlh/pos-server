@@ -14,12 +14,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2, MonitorSmartphone } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { stationOfClient, type CashStation } from '@/lib/cashStations';
+import { CASH_ROUTES, cashRouteOf, stationOfClient, type CashRoute, type CashStation } from '@/lib/cashStations';
 import { cashStationKey, cashStationsKey, fetchCashStations, setStationClient } from '@/lib/cashStationsApi';
 import type { PosMachine } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import { ToneBadge } from './parts';
+import { NativeSelect, ToneBadge } from './parts';
 
 export function KiosksTab({ station, machines, canEdit }: { station: CashStation; machines: PosMachine[]; canEdit: boolean }) {
   const t = useTranslations('cashStations.kiosks');
@@ -40,9 +40,9 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
   const others = station.clients.filter((c) => !kioskIds.has(c.machineId.toLowerCase()));
 
   const assign = useMutation({
-    mutationFn: (a: { machineId: string; on: boolean }) => setStationClient(station.stationId, a.machineId, a.on),
+    mutationFn: (a: { machineId: string; on: boolean; route?: CashRoute }) => setStationClient(station.stationId, a.machineId, a.on, a.route),
     onSuccess: (next, a) => {
-      toast.success(a.on ? t('assigned') : t('unassigned'));
+      toast.success(a.route ? t('routeSaved') : a.on ? t('assigned') : t('unassigned'));
       qc.setQueryData(cashStationKey(station.stationId), next);
       // The shop's other stations lose (or gain) the kiosk too; the parameters page shows its new values.
       void qc.invalidateQueries({ queryKey: ['cash-stations'] });
@@ -52,6 +52,12 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
   });
 
   const nameOf = (id: string | null) => stations.find((s) => s.stationId === id)?.label ?? null;
+  // Its way to the station (P:/specs/cash-paylink.md §14.2): the LAN, the cloud, or the LAN first.
+  const clientOf = (id: string) => station.clients.find((x) => x.machineId.toLowerCase() === id.toLowerCase());
+  const routeWords = (id: string) => {
+    const c = clientOf(id);
+    return c?.route ? t(`route.${cashRouteOf(c.route)}`) : null;
+  };
 
   return (
     <div className="space-y-3">
@@ -81,11 +87,23 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
                       </Link>
                       <span className="block text-xs text-muted-foreground">
                         {here ? t('servedHere') : elsewhere ? t('servedElsewhere', { station: elsewhere }) : t('noCash')}
+                        {here && routeWords(k.id) ? ` · ${routeWords(k.id)}` : ''}
                         {k.kioskEnabled === false ? ` · ${t('kioskOff')}` : ''}
                       </span>
                     </span>
                     <span className="flex items-center gap-2">
                       {here ? <ToneBadge tone="ok">{t('assignedBadge')}</ToneBadge> : null}
+                      {here && clientOf(k.id)?.route ? (
+                        <span className="w-44">
+                          <NativeSelect
+                            value={cashRouteOf(clientOf(k.id)?.route)}
+                            disabled={!canEdit || assign.isPending}
+                            onChange={(v) => assign.mutate({ machineId: k.id, on: true, route: cashRouteOf(v) })}
+                            options={CASH_ROUTES.map((r) => ({ value: r, label: t(`route.${r}`) }))}
+                            ariaLabel={t('routeSelect', { name: k.name })}
+                          />
+                        </span>
+                      ) : null}
                       {busy ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden /> : null}
                       <label className="flex items-center gap-2 text-xs">
                         <Switch
@@ -106,7 +124,10 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
                     <Link href={`/dashboard/machines/${c.machineId}`} className="font-medium hover:underline">
                       {c.name ?? c.machineId.slice(0, 8)}
                     </Link>
-                    <span className="block text-xs text-muted-foreground">{c.kind === 'till' ? t('till') : t('servedHere')}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {c.kind === 'till' ? t('till') : t('servedHere')}
+                      {routeWords(c.machineId) ? ` · ${routeWords(c.machineId)}` : ''}
+                    </span>
                   </span>
                   <ToneBadge tone="ok">{t('assignedBadge')}</ToneBadge>
                 </li>
@@ -114,6 +135,7 @@ export function KiosksTab({ station, machines, canEdit }: { station: CashStation
             </ul>
           )}
           <p className="mt-2 text-xs text-muted-foreground">{t('howItResolves')}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t('routeHint')}</p>
         </CardContent>
       </Card>
     </div>

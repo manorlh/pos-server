@@ -3,6 +3,11 @@
  * copies the service keeps), the role module that runs for it (KDS / order status board), and
  * the shell's own view for the screens (role, update status). The kiosk role runs inside the
  * service as before; switching the role never touches the ledger.
+ *
+ * "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): a kiosk the cloud made the host of its cash station(s) runs the
+ * cash host module beside the kiosk (`embedded`) — its own payments call it in-process (CashPay.setLocalHost), the
+ * other kiosks over the LAN or the cloud relay; never stopped under a customer (a lease or a transaction open), and
+ * the updater waits for it like for the kiosk's own payment.
  */
 
 import { EventEmitter } from 'node:events';
@@ -45,6 +50,8 @@ export class RoleManager extends EventEmitter {
   private readonly ctx: RoleContext;
   /** The cash host's module (role `cash_host`). */
   private cash: CashHostModule | null = null;
+  /** The cash host module runs inside the kiosk (a host kiosk, §14.1), not as the device's role. */
+  private cashEmbedded = false;
   private cashTimer: NodeJS.Timeout | null = null;
   private staffUntil = 0;
   private staffName: string | null = null;
@@ -87,7 +94,28 @@ export class RoleManager extends EventEmitter {
     this.cashTimer = null;
     const c = this.cash;
     this.cash = null;
+    if (this.cashEmbedded) this.svc.cashPay.setLocalHost(null);
+    this.cashEmbedded = false;
     await c?.stop();
+  }
+
+  /**
+   * A host kiosk (§14.1): the cloud's §11.2 answer gave this kiosk stations to run — the module starts beside the
+   * kiosk; gone (or the device no longer a kiosk) — it stops, once no customer is at any of its stations.
+   */
+  private syncEmbeddedCash() {
+    const want = this.current === 'kiosk' && this.svc.cashPay.hostsStations();
+    if (want && !this.cash) {
+      const mod = new CashHostModule(this.svc, { ...this.cashOptions, log: this.log, embedded: true });
+      this.cash = mod;
+      this.cashEmbedded = true;
+      this.svc.cashPay.setLocalHost(mod.host);
+      this.log('cash: this kiosk runs its cash station(s) (host kiosk)');
+      void mod.start().catch((e) => this.log(`cash host (kiosk): ${e instanceof Error ? e.message : String(e)}`));
+    } else if (!want && this.cash && this.cashEmbedded && !this.cash.busy()) {
+      this.log('cash: this kiosk no longer runs a cash station');
+      void this.stopCash();
+    }
   }
 
   role(): AppRole | null {
@@ -136,6 +164,7 @@ export class RoleManager extends EventEmitter {
       this.switchModule(next);
     }
     this.svc.setFiscalRole(fiscalOf(me?.fiscal, next));
+    this.syncEmbeddedCash();
     this.emitView();
   }
 
@@ -161,7 +190,9 @@ export class RoleManager extends EventEmitter {
       this.board.start();
     }
     if (role !== 'order_status_board') this.svc.setScreenMedia([]);
-    if (role !== 'cash_host' && this.cash) void this.stopCash();
+    // A host kiosk's module is the kiosk's (syncEmbeddedCash); a role's own module goes with its role.
+    if (role !== 'cash_host' && this.cash && !this.cashEmbedded) void this.stopCash();
+    if (role === 'cash_host' && this.cash && this.cashEmbedded) void this.stopCash();
     if (role === 'cash_host' && !this.cash) {
       this.cash = new CashHostModule(this.svc, { ...this.cashOptions, log: this.log });
       void this.cash.start().catch((e) => this.log(`cash host: ${e instanceof Error ? e.message : String(e)}`));
@@ -176,7 +207,7 @@ export class RoleManager extends EventEmitter {
   /* ------------------------------------------------------------- the cash host's staff screen */
 
   cashView(): CashHostView | null {
-    if (!this.cash) return null;
+    if (!this.cash || this.cashEmbedded) return null;
     const v = this.cash.host.staffView();
     const unlocked = Date.now() < this.staffUntil;
     return { ...v, unlocked, staffName: unlocked ? this.staffName : null } as CashHostView;
@@ -219,9 +250,14 @@ export class RoleManager extends EventEmitter {
     }
   }
 
-  /** The cash host is busy: a lease or a transaction is open at a station. */
+  /** The cash host is busy: a lease or a transaction is open at a station (a host kiosk's too — another kiosk's customer). */
   cashBusy(): boolean {
     return this.cash?.busy() ?? false;
+  }
+
+  /** A host kiosk runs its station(s) now (§14.1). */
+  hostsCash(): boolean {
+    return this.cashEmbedded && this.cash !== null;
   }
 
   private localBoard(v: BoardView): BoardView {
@@ -285,7 +321,12 @@ export class RoleManager extends EventEmitter {
 
   /** What the updater asks: the kiosk's flow for a kiosk, the last touch for a screen. */
   activity(): Activity {
-    if (this.current === 'kiosk' || this.current === null) return { ...this.svc.activity(), role: this.current };
+    if (this.current === 'kiosk' || this.current === null) {
+      const a = { ...this.svc.activity(), role: this.current };
+      // A host kiosk: a customer of another kiosk at its station holds it too (§14.1).
+      if (!this.cashBusy()) return a;
+      return { ...a, busy: true, idle: false };
+    }
     if (this.current === 'cash_host') {
       // Never restarted under a customer at a cash station (a lease or a transaction open).
       const busy = this.cashBusy();

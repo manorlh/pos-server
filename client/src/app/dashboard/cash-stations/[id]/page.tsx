@@ -107,6 +107,7 @@ export default function CashStationPage({ params }: { params: Promise<{ id: stri
                   <Link href={`/dashboard/machines/${station.host.machineId}`} className="hover:underline">
                     {station.host.name ?? '—'}
                   </Link>
+                  {station.host.embedded ? <span className="text-xs text-muted-foreground">· {t('hostCard.embedded')}</span> : null}
                   <span className={station.host.online ? 'text-emerald-700 dark:text-emerald-400' : 'text-destructive'}>
                     ({station.host.online ? t('page.hostOnline') : t('page.hostOffline')})
                   </span>

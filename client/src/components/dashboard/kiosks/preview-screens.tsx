@@ -3496,7 +3496,8 @@ function cashHeadline(cash: LiveCashPay): string {
     case 'connecting':
       return 'מתחבר למכשיר המזומן…';
     case 'queued':
-      return `מכשיר המזומן תפוס — ממתין… (מקום ${cash.position ?? 1})`;
+      // P:/specs/cash-paylink.md §14.3: the same words on every route; the place in line from 2 on.
+      return `עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום${(cash.position ?? 1) >= 2 ? ` · מקום ${cash.position} בתור` : ''}`;
     case 'busy':
       return CASH_BUSY_TEXT;
     case 'question':
