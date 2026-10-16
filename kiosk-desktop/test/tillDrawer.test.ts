@@ -774,3 +774,52 @@ describe('the till: "פתיחת מגירה", the movements, the count, the depos
     expect(log.movements.map((m) => m.type)).toEqual(['deposit']);
   });
 });
+
+describe('the till: the drawer under "כשאין הרשאה" and with the refunds (the merged engine)', () => {
+  it('show (the default): a denied row as before — hidden, or shown with "הצג מושבת עם הסבר"; hide: hidden either way', async () => {
+    const show = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור' } }, WAITER_PIN);
+    expect(show.state().drawer!.offered).toMatchObject({ cashOut: false, walletDeposit: false });
+    const disabled = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור', permissionsDeniedUi: 'הצג מושבת עם הסבר' } }, WAITER_PIN);
+    expect(disabled.state().drawer!.offered).toMatchObject({ cashOut: true, walletDeposit: true });
+    const hide = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור', permissionsDeniedUi: 'הצג מושבת עם הסבר', deniedActionUi: 'hide' } }, WAITER_PIN);
+    expect(hide.state().drawer!.offered).toMatchObject({ cashOut: false, walletDeposit: false, log: false });
+  });
+
+  it("code: a waiter's denied cash out is offered and asks a manager's code — recorded as the manager's approval; the log stays as under show", async () => {
+    const h = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור', deniedActionUi: 'code' } }, WAITER_PIN);
+    expect(h.state().drawer!.offered).toMatchObject({ cashOut: true, log: false });
+    await h.ok('drawer.movement', { type: 'CASH_OUT', amountAgorot: 5_000, reason: 'ספק' });
+    const d = h.state().dialog!;
+    expect(d.body).toBe('הוצאת מזומן — דורש אישור מנהל');
+    await h.ok('dialog.answer', { dialogId: d.id, action: 'approve', answers: { pin: MANAGER_PIN } });
+    expect(movements(h).map((m) => [m.type, m.amountAgorot, m.employeeId, m.approverId])).toEqual([['cash_out', 5_000, 'u-waiter', 'u-manager']]);
+    // Never relaxed into "allowed"; under show the same waiter is refused outright — no question, nothing moved.
+    const show = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור' } }, WAITER_PIN);
+    await show.ok('drawer.movement', { type: 'CASH_OUT', amountAgorot: 5_000, reason: 'ספק' });
+    expect(show.state().dialog).toBeNull();
+    expect(movements(show)).toEqual([]);
+    expect(events(show).at(-1)).toMatchObject({ eventType: 'CASH_OUT', result: 'denied', employeeId: 'u-waiter' });
+  });
+
+  it("a cash refund opens the drawer through the drawer service: the refund's manager is not asked again and is named in the log", async () => {
+    const h = await till({ parameters: { cashDrawer: 'בתשלום מזומן' } });
+    await h.ok('sell.add', { productId: 'p-cola' });
+    await h.ok('checkout.start');
+    await h.ok('checkout.cash', { amountAgorot: 1_250 });
+    const docId = h.state().checkout.documentId!;
+    await h.ok('checkout.finish');
+    await settle();
+    const before = kicks(h);
+    const r = await h.call('doc.refund', { documentId: docId });
+    expect(r.ok).toBe(true);
+    const d = h.state().dialog;
+    if (d) await h.ok('dialog.answer', { dialogId: d.id, action: 'approve', answers: { pin: MANAGER_PIN } });
+    await settle();
+    expect(kicks(h)).toBe(before + 1);
+    const refund = events(h).filter((e) => e.eventType === 'REFUND');
+    expect(refund).toHaveLength(1);
+    expect(refund[0]).toMatchObject({ result: 'approved', employeeId: 'u-cashier', permission: 'REFUND', ...(d ? { approverId: 'u-manager' } : {}) });
+    // Nothing else asked: the refund's approval was the drawer's too.
+    expect(h.state().dialog).toBeNull();
+  });
+});

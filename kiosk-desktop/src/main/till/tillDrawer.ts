@@ -41,6 +41,7 @@ import {
   type WalletBalance,
 } from '../../core/till/drawerAway';
 import { NO_LOCK, type ExitLock } from '../../core/desktopExit';
+import { actingProfile, deniedMode, deniedUiSettingsOf, profileOf, shows, type ProfileUser } from '../../core/till/permissions';
 import type { RosterUser } from '../../core/till/staff';
 import { CashDrawerService, type DrawerOutcome, type DrawerPerson, type DrawerTarget } from './drawerService';
 import { DOCUMENT_RELAY, RemoteDrawers, hostDocumentJob, hostDrawerJob, remoteWhy } from './remoteDrawer';
@@ -52,6 +53,8 @@ import { DrawerStore, cashMovementWire, drawerEventWire } from './drawerStore';
 import type { TillContext } from './tillContext';
 
 const APPROVAL_LOCK = 'till.drawerApprovalLock';
+/** Every code the drawer decides by ("כשאין הרשאה" turns a role's DENY of these into a manager's code). */
+const DRAWER_CODES: readonly string[] = Object.values(DRAWER_PERM);
 const sh = (agorot: number) => formatShekelSign(agorot);
 
 /** Android's words (strings*.xml: drawer_*, cash_*, wallet_deposit_*). */
@@ -118,7 +121,7 @@ export class TillDrawer {
       o.service ??
       new CashDrawerService({
         store: new DrawerStore(svc.db),
-        operator: () => this.person(c.operator()),
+        operator: () => this.actingPerson(c.operator()),
         parameters: () => svc.cloud.parameters(),
         // The Windows till's own drawer: its receipt printer's RJ11 port.
         ownDrawer: () => ({ id: 'local', name: 'הקופה' }),
@@ -212,19 +215,45 @@ export class TillDrawer {
     return this.remote.here().map((h: DrawerHost) => ({ kind: 'remote' as const, id: h.printerId ?? `remote:${h.machineId}`, name: REMOTE_TEXT.dest(h.label), host: { machineId: h.machineId, printerId: h.printerId, label: h.label } }));
   }
 
-  /** A roster user as the drawer reads them. */
+  /** A roster user as the drawer reads them — their role as it is (an approver's never turned). */
   person(u: RosterUser | null): DrawerPerson | null {
     if (!u) return null;
     const name = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username;
     return { id: u.id, name, role: u.role, permissions: u.permissions ?? null, limits: u.limits ?? null, tillRoleName: u.tillRoleName ?? null };
   }
 
+  /** "כשאין הרשאה" (P:/specs/denied-actions-ui.md): the till's `deniedActionUi` and the older `permissionsDeniedUi`. */
+  private deniedSettings() {
+    return deniedUiSettingsOf(this.c.svc.cloud.parameters());
+  }
+
+  /**
+   * The operator as the drawer decides for them — the engine's acting profile (core/till/permissions.ts `actingProfile`):
+   * under "כשאין הרשאה" = לבקש קוד מנהל a role's DENY of a drawer code (and of a refund's drawer) is "דורש אישור מנהל",
+   * a manager's code recorded as an approval; never "allowed". Otherwise the person as they are.
+   */
+  actingPerson(u: RosterUser | null): DrawerPerson | null {
+    const p = this.person(u);
+    if (!u || !p) return p;
+    const acting = actingProfile(profileOf(u as RosterUser & ProfileUser), this.deniedSettings(), DRAWER_CODES);
+    if (!acting || acting.askedForCode.size === 0) return p;
+    const permissions: Record<string, string> = { ...(u.permissions ?? {}) };
+    for (const code of acting.askedForCode) permissions[code] = 'approval';
+    return { ...p, permissions };
+  }
+
   /* ------------------------------------------------------------------ state */
 
-  /** "הצג מושבת עם הסבר" shows a denied row (and says why on the tap); the default hides it. */
-  private offeredCode(u: RosterUser, code: string): boolean {
-    const p = this.c.svc.cloud.parameters().permissionsDeniedUi;
-    return (typeof p === 'string' && p.trim() === 'הצג מושבת עם הסבר') || stateOfUser(u, code) !== 'deny';
+  /**
+   * A drawer row (spec §3: a place that always read `permissionsDeniedUi`): a role's DENY is shown — the tap says why —
+   * only with "הצג מושבת עם הסבר" under `show`, hidden under `hide`, shown and asking a manager's code under `code`.
+   * `noCode`: a row whose tap cannot ask a code (the log) — under `code` it is as under `show`.
+   */
+  private offeredCode(u: RosterUser, code: string, noCode = false): boolean {
+    const settings = this.deniedSettings();
+    const role = profileOf(u as RosterUser & ProfileUser);
+    const asShown = noCode && deniedMode(role, settings) === 'code' ? { ...role, deniedUi: 'show' as const } : role;
+    return shows(asShown, code, settings, 'legacy');
   }
 
   state(): TillDrawerState {
@@ -241,7 +270,7 @@ export class TillDrawer {
         deposit: s.movementsEnabled && off(DRAWER_PERM.DEPOSIT),
         count: off(DRAWER_PERM.COUNT) || off(DRAWER_PERM.BLIND_COUNT),
         walletDeposit: (ownDrawer || drawerModeHasButton(mode)) && off(DRAWER_PERM.WALLET_DEPOSIT),
-        log: off(DRAWER_PERM.VIEW_LOG) || off(DRAWER_PERM.VIEW_MOVEMENTS),
+        log: (!!u && this.offeredCode(u, DRAWER_PERM.VIEW_LOG, true)) || (!!u && this.offeredCode(u, DRAWER_PERM.VIEW_MOVEMENTS, true)),
         // A device with no drawer of its own: another till's (Android's menu rule).
         remote: !ownDrawer && !drawerModeHasButton(mode) && this.remote.here().length > 0 && off(DRAWER_PERM.OPEN_REMOTE),
       },
@@ -564,7 +593,8 @@ export class TillDrawer {
   /** "הפקדת מזומן מעובד": the shop's wallets from the cloud (with this device's not sent yet) — null: no answer (offline). */
   async listWallets(): Promise<{ wallets: WalletBalance[]; offline: boolean }> {
     const u = this.c.signedIn();
-    if (stateOfUser(u, DRAWER_PERM.WALLET_DEPOSIT) === 'deny') return this.c.refuse('permission_denied', `אין לך הרשאה: ${drawerPermLabel(DRAWER_PERM.WALLET_DEPOSIT)}`);
+    // Under "כשאין הרשאה" = לבקש קוד מנהל the list opens; the deposit itself asks the manager (the drawer service).
+    if (stateOfUser(this.actingPerson(u)!, DRAWER_PERM.WALLET_DEPOSIT) === 'deny') return this.c.refuse('permission_denied', `אין לך הרשאה: ${drawerPermLabel(DRAWER_PERM.WALLET_DEPOSIT)}`);
     const svc = this.c.svc;
     const m = svc.machineId;
     const r = m ? await svc.api.get(`sync/${m}/cash-wallets`, { timeoutMs: 8_000 }) : null;
