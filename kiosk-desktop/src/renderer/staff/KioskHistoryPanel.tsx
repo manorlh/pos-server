@@ -137,7 +137,7 @@ export function KioskHistoryPanel({ m, onDone }: { m: PreviewModel; onDone?: () 
           );
         })}
       </div>
-      {history?.cloud === 'failed' ? <div className="text-xs font-semibold text-red-600">{REPRINT_TEXT.cloudFailed}</div> : null}
+      {history?.cloud === 'failed' ? <div className="text-xs font-semibold text-red-700">{REPRINT_TEXT.cloudFailed}</div> : null}
       {history?.cloud === 'unsupported' ? <div className="text-xs font-semibold text-amber-700">{REPRINT_TEXT.cloudUnsupported}</div> : null}
       {loading && !history ? <div className="text-xs">…</div> : null}
       {history && rows.length === 0 ? <div>{range.days === 1 && !range.older && !query ? REPRINT_TEXT.noOrdersToday : REPRINT_TEXT.empty}</div> : null}
@@ -158,8 +158,8 @@ export function KioskHistoryPanel({ m, onDone }: { m: PreviewModel; onDone?: () 
                 {r.pickupLabel ?? r.label}
               </span>
               <span>{[whenOf(r.at, isToday), shekels(r.totalAgorot), r.payment, r.number ? `#${r.number}` : null, r.customerName].filter(Boolean).join(' · ')}</span>
-              {r.bonFailed ? <span className="font-bold text-red-600">בון: {r.bon}</span> : null}
-              {failed > 0 ? <span className="font-bold text-red-600">{REPRINT_TEXT.ticketsNotPrinted}{failed > 1 ? ` (${failed})` : ''}</span> : null}
+              {r.bonFailed ? <span className="font-bold text-red-700">בון: {r.bon}</span> : null}
+              {failed > 0 ? <span className="font-bold text-red-700">{REPRINT_TEXT.ticketsNotPrinted}{failed > 1 ? ` (${failed})` : ''}</span> : null}
               {r.source === 'cloud' ? <span style={{ color: m.c.mutedText }}>(מהענן)</span> : null}
             </button>
           );
@@ -178,7 +178,7 @@ export function KioskHistoryPanel({ m, onDone }: { m: PreviewModel; onDone?: () 
               .join(' · ')}
           </div>
           <div className="text-xs">
-            תשלום: {current.payment ?? '—'} · קבלה: {current.receipt} · בון: <span className={current.bonFailed ? 'font-bold text-red-600' : ''}>{current.bon}</span>
+            תשלום: {current.payment ?? '—'} · קבלה: {current.receipt} · בון: <span className={current.bonFailed ? 'font-bold text-red-700' : ''}>{current.bon}</span>
           </div>
           {current.tickets.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1 text-xs">

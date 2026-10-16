@@ -94,8 +94,7 @@ import {
   wallpaperScrim,
   kioskRestLookOverBackdrop,
   railMotionColors,
-  mixHex,
-  readableInk,
+  isDarkColor,
 } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
 import { categoryInitial, readableTextOn } from '@/lib/categoryLook';
@@ -1782,7 +1781,7 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
         {pricePillOn(m.cfg) ? (
           <PricePill m={m} p={p} className="mt-1.5" />
         ) : (
-          <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'productPrice', 13) }}>
+          <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'productPrice', 13) }}>
             {m.money(p.price)}
           </div>
         )}
@@ -2008,7 +2007,7 @@ export function CartPanel({ m }: { m: PreviewModel }) {
                 {l.product.name}
               </div>
               <div className="flex items-center justify-between gap-1">
-                <span className="kt-10 tabular-nums" style={{ color: m.c.dark ? m.c.primary : readableInk(m.c.primary, [mixHex(m.c.surface, '#000000', 0x0a / 255)]), ...textSize(m, 'cartLines', 10) }}>
+                <span className="kt-10 tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'cartLines', 10) }}>
                   {m.money(l.unit * l.qty)}
                 </span>
                 <span className="kt-10 tabular-nums" style={{ color: m.c.mutedText }}>
@@ -2546,7 +2545,7 @@ export function ProductSheet({
                   {product.description}
                 </p>
               ) : null}
-              <div className="mt-1.5 font-bold tabular-nums" style={{ color: m.c.primary }}>
+              <div className="mt-1.5 font-bold tabular-nums" style={{ color: m.c.primaryInk }}>
                 {m.money(product.price)}
               </div>
               {showDietary && product.dietaryTags.length > 0 ? (
@@ -3010,7 +3009,7 @@ export function UpsellWindow({
                       <div className="flex items-center gap-1 p-1.5">
                         <div className="min-w-0 flex-1">
                           <div className="line-clamp-2 kt-11 font-bold leading-snug">{p.name}</div>
-                          {showPrice ? <div className="kt-11 font-bold tabular-nums" style={{ color: m.c.primary }}>+{m.money(p.price)}</div> : null}
+                          {showPrice ? <div className="kt-11 font-bold tabular-nums" style={{ color: m.c.primaryInk }}>+{m.money(p.price)}</div> : null}
                         </div>
                         <span
                           className="flex h-6 w-6 shrink-0 items-center justify-center"
@@ -3131,7 +3130,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
                     {l.extras.join(' · ')}
                   </div>
                 ) : null}
-                <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'cartLines', 12) }}>
+                <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'cartLines', 12) }}>
                   {m.money(l.unit * l.qty)}
                 </div>
                 {m.pricing?.lines[l.key]?.promotionAgorot ? (
@@ -3171,7 +3170,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
             ))}
             <div className="flex items-center justify-between border-t pt-1.5 text-base font-extrabold" style={{ borderColor: m.c.border }}>
               <span>{m.txt('reviewTotal')}</span>
-              <span className="tabular-nums" style={{ color: m.c.primary }}>
+              <span className="tabular-nums" style={{ color: m.c.primaryInk }}>
                 {m.money(total)}
               </span>
             </div>
@@ -3327,7 +3326,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
               </div>
               <div className="flex items-center justify-between border-t pt-2" style={{ borderColor: m.c.border }}>
                 <span className="text-base font-bold">{m.txt('tipTotal')}</span>
-                <span className="text-xl font-extrabold tabular-nums" style={{ color: m.c.primary }}>
+                <span className="text-xl font-extrabold tabular-nums" style={{ color: m.c.primaryInk }}>
                   {money(total)}
                 </span>
               </div>
@@ -4221,7 +4220,8 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
             {words.subtitle}
           </p>
           {back ? (
-            <div className="mt-5 rounded-full px-5 py-2 text-base font-bold tabular-nums" style={{ background: `${ink}24` }}>
+            // A darker pill under light words (a light one under dark): `${ink}24` lightened the ground under white words to 3.7:1.
+            <div className="mt-5 rounded-full px-5 py-2 text-base font-bold tabular-nums" style={{ background: isDarkColor(ink) ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.22)' }}>
               {back}
             </div>
           ) : null}

@@ -2322,6 +2322,8 @@ export interface ResolvedThemeColors {
   buttonInk: string;
   /** The accent as words (a "בחינם", a promotion's line): readable on the cards, the background and its own tint (4.5:1). */
   accentInk: string;
+  /** The primary as small words (a price, a total): readable on the cards, the background and a line's grey card (4.5:1). */
+  primaryInk: string;
 }
 
 /** The least contrast the words on a soft (tinted) button keep — WCAG AA for normal text. */
@@ -2396,6 +2398,7 @@ export function resolveThemeColors(theme: KioskTheme): ResolvedThemeColors {
     buttonText: theme.buttonTextColor ?? contrastText(button),
     buttonInk: readableInk(button, [tint(surface), tint(background)]),
     accentInk: readableInk(theme.accentColor, [surface, background, mixHex(surface, theme.accentColor, 0x1f / 255)]),
+    primaryInk: readableInk(theme.primaryColor, [surface, background, mixHex(surface, '#000000', 0x0a / 255), mixHex(surface, theme.primaryColor, 0x0f / 255)]),
   };
 }
 
