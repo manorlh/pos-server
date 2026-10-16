@@ -45,6 +45,8 @@ interface WorldOptions {
   gate?: boolean | string;
   idle?: number;
   startAt?: number;
+  /** "סוג רישיון" as the cloud last said it (core/deviceLicense.ts); absent — none said. */
+  license?: unknown;
 }
 
 /** One device: the cloud's word, the clock, the till engine's facts, and what the runtime did about them. */
@@ -58,6 +60,7 @@ function world(o: WorldOptions = {}) {
     snapshot: (o.snapshot === undefined ? KIOSK_ROW : o.snapshot) as Record<string, unknown> | null,
     deviceRole: (o.deviceRole === undefined ? 'kiosk' : o.deviceRole) as unknown,
     parameters: { kioskTillModeEnabled: o.gate === undefined ? true : o.gate, ...(o.idle === undefined ? {} : { kioskTillModeIdleReturnMinutes: o.idle }) } as Record<string, unknown>,
+    license: o.license as unknown,
     roster: [manager, cashier] as RosterUser[],
     kioskFacts: { ...KIOSK_AT_REST } as KioskSideFacts,
     card: false,
@@ -84,6 +87,7 @@ function world(o: WorldOptions = {}) {
       snapshot: () => w.snapshot,
       deviceRole: () => w.deviceRole,
       parameters: () => w.parameters,
+      licenseProduct: () => w.license,
       roster: () => w.roster,
       shopId: () => SHOP,
       kioskFacts: () => w.kioskFacts,
@@ -377,6 +381,54 @@ describe('the owner’s gate closes — back home as soon as nothing is open', (
     await x.rt.tick();
     expect(x.rt.mode()).toBe('till');
     expect(x.w.events[0].details).toMatchObject({ action: 'enter', reason: 'cloud' });
+  });
+});
+
+describe('"סוג רישיון" — the work mode only for kiosk_till, whatever the gate parameter says', () => {
+  it('"קיוסק בלבד" with the gate on: nothing offered, the switch refused by the license (named)', async () => {
+    const { rt, w } = world({ gate: true, license: 'kiosk' });
+    expect(rt.params()).toEqual({ enabled: false, idleReturnMinutes: 3, licenseProduct: 'kiosk' });
+    expect(rt.offered()).toEqual({ toTill: false, toKiosk: false });
+    expect(code(rt.mayEnter())).toBe('license');
+    const refused = await rt.enterTill('מנהל', 'm', 'manual');
+    expect(refused).toEqual({ wire: 'license', text: 'סוג הרישיון של המכשיר (קיוסק בלבד) אינו כולל מעבר בין קיוסק לקופה' });
+    expect(rt.mode()).toBe('kiosk');
+    expect(w.events).toEqual([]);
+  });
+
+  it('"קיוסק + קופה" with the gate off (parameters from before the change): offered', () => {
+    const { rt } = world({ gate: false, license: 'kiosk_till' });
+    expect(rt.params().enabled).toBe(true);
+    expect(rt.offered()).toEqual({ toTill: true, toKiosk: false });
+  });
+
+  it('none said (an older cloud): the gate, as before', () => {
+    expect(world({ gate: true }).rt.params().enabled).toBe(true);
+    expect(world({ gate: false }).rt.params().enabled).toBe(false);
+  });
+
+  it('a kiosk in till mode whose license becomes "קיוסק בלבד" goes back at rest (reason: cloud)', async () => {
+    const { rt, w } = world({ license: 'kiosk_till' });
+    await rt.enterTill('מנהלת סניף', 'mgr', 'manual');
+    expect(rt.mode()).toBe('till');
+    w.events.length = 0;
+    w.license = 'kiosk';
+    w.till = { ...NO_TILL_FACTS, basketOpen: true };
+    await rt.tick();
+    expect(rt.mode()).toBe('till');
+    w.till = NO_TILL_FACTS;
+    await rt.tick();
+    expect(rt.mode()).toBe('kiosk');
+    expect(w.events[0].details).toMatchObject({ action: 'exit', reason: 'cloud' });
+  });
+
+  it('a till "קופה בלבד": the dashboard’s return_kiosk is answered, nothing moves', async () => {
+    const { rt, w } = world({ snapshot: TILL_ROW, deviceRole: 'till', license: 'till' });
+    reply(w, rt, { ...TILL_ROW, workMode: { id: 'c9', mode: 'kiosk', by: 'דנה' } });
+    await rt.tick();
+    expect(rt.mode()).toBe('till');
+    expect(rt.statusFields().commandsDone).toEqual(['c9']);
+    expect(await rt.returnToKiosk('manual', 'מנהל', 'm')).toMatchObject({ wire: 'license' });
   });
 });
 

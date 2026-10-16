@@ -19,6 +19,8 @@ import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
+import { licenseFacts } from '../core/deviceLicense';
+import type { PairOutcome } from '../shared/bridge';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
 import { lanTargetOf, type LanHost, type LanTarget } from '../core/lanOpenOrders';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
@@ -1064,12 +1066,15 @@ export class KioskService extends EventEmitter {
 
   /* ------------------------------------------------------------- pairing */
 
-  async pair(input: { serverUrl: string; code: string; machineName: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+  async pair(input: { serverUrl: string; code: string; machineName: string }): Promise<PairOutcome> {
     if (this.paired) return { ok: false, error: 'הקיוסק כבר מצומד' };
     const r = await pairRequest(this.api, { ...input, deviceInfo: this.opts.deviceInfo });
     if (!r.ok) return { ok: false, error: r.error };
     await this.adopt(r.credentials);
-    return { ok: true };
+    // "סוג רישיון" (core/deviceLicense.ts): "המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד" over the first screen, and a
+    // warning when the license does not fit the role it opened in (the cloud enforces roles; this only says it).
+    const license = licenseFacts(this.cloud.licenseProduct(), this.cloud.machine()?.deviceRole ?? null);
+    return { ok: true, ...(license.paired ? { notice: license.paired } : {}), ...(license.warning ? { warning: license.warning } : {}) };
   }
 
   /**
@@ -4566,9 +4571,12 @@ export class KioskService extends EventEmitter {
     const update = u
       ? { current: u.current, available: u.available, status: u.phase, message: u.message, progress: u.progress, lastCheckAt: u.lastCheckAt, autoInstall: u.autoInstall, installWindow: u.installWindow }
       : { current: this.opts.appVersion, available: null, status: 'not_checked' };
+    const license = licenseFacts(this.cloud.licenseProduct(), me?.deviceRole ?? null);
     return {
       machine: this.view().machine,
       deviceRole: me?.deviceRole ?? null,
+      // "סוג רישיון": what the cloud licensed the device as, and a warning when it does not fit the role.
+      license: license.product ? { product: license.product, label: license.label, info: license.info, warning: license.warning } : null,
       shopName: me?.shopName ?? null,
       companyName: me?.companyName ?? null,
       network: { online: !this.offlineNow, lastBeatOkAt: this.sync.status.lastBeatOkAt, serverUrl: this.cloud.credentials()?.serverUrl ?? null, interfaces: this.platform.interfaces() },

@@ -26,6 +26,7 @@ import type { ShellView } from '../shared/roles';
 import { kiosk } from './bridge';
 import { KioskApp } from './kiosk/KioskApp';
 import { Pairing } from './pairing/Pairing';
+import { PairedNotice } from './pairing/pairedNotice';
 import { OrderStatusBoard } from './roles/board/OrderStatusBoard';
 import { CashHostScreen } from './roles/cash/CashHostScreen';
 import { KdsScreen } from './roles/kds/KdsScreen';
@@ -35,7 +36,17 @@ import { ShellStaff } from './staff/ShellStaff';
 import { shell } from './roles/shellBridge';
 import { t } from './i18n';
 
-export function App({ initial, initialShell }: { initial: KioskView; initialShell: ShellView | null }) {
+export function App(props: { initial: KioskView; initialShell: ShellView | null }) {
+  return (
+    <>
+      <AppScreen {...props} />
+      {/* "סוג רישיון": what the device was set up as, for a few seconds after the pairing (pairing/pairedNotice.tsx). */}
+      <PairedNotice />
+    </>
+  );
+}
+
+function AppScreen({ initial, initialShell }: { initial: KioskView; initialShell: ShellView | null }) {
   const [view, setView] = useState<KioskView>(initial);
   const [shellView, setShellView] = useState<ShellView | null>(initialShell);
   useEffect(() => kiosk.on('view', setView), []);

@@ -671,6 +671,8 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
             <div>קיוסק: {info.machine?.name ?? '—'}</div>
             <div>סניף: {info.shopName ?? '—'} · חברה: {info.companyName ?? '—'}</div>
             <div>קופה מס׳ {info.machine?.posNumber ?? '—'} · תפקיד: {info.deviceRole ?? '—'}</div>
+            {info.license?.info ? <div>{info.license.info}</div> : null}
+            {info.license?.warning ? <div className="font-semibold text-amber-700">{info.license.warning}</div> : null}
             <div dir="ltr" className="text-end text-xs">
               {info.machine?.machineId}
             </div>
