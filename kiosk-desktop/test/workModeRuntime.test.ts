@@ -422,6 +422,17 @@ describe('"סוג רישיון" — the work mode only for kiosk_till, whatever 
     expect(w.events[0].details).toMatchObject({ action: 'exit', reason: 'cloud' });
   });
 
+  it('a till away in its kiosk mode whose license becomes "קופה בלבד" comes home (reason: cloud)', async () => {
+    const x = world({ snapshot: TILL_ROW, deviceRole: 'till', license: 'kiosk_till' });
+    expect(await x.rt.returnToKiosk('manual', 'מנהל', 'mgr')).toBeNull();
+    expect(x.rt.mode()).toBe('kiosk');
+    x.w.events.length = 0;
+    x.w.license = 'till';
+    await x.rt.tick();
+    expect(x.rt.mode()).toBe('till');
+    expect(x.w.events[0].details).toMatchObject({ action: 'enter', reason: 'cloud' });
+  });
+
   it('a till "קופה בלבד": the dashboard’s return_kiosk is answered, nothing moves', async () => {
     const { rt, w } = world({ snapshot: TILL_ROW, deviceRole: 'till', license: 'till' });
     reply(w, rt, { ...TILL_ROW, workMode: { id: 'c9', mode: 'kiosk', by: 'דנה' } });
