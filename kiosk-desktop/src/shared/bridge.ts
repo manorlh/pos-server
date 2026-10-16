@@ -481,6 +481,27 @@ export interface TechnicianInfo {
     installWindow?: { start: string; end: string } | null;
   };
   quickSupport: string | null;
+  /** "גודל תצוגה" (P:/specs/display-scale.md): the window's size now, its source, the cloud's and the local choice. */
+  displayScale?: DisplayScaleView;
+}
+
+/** "גודל תצוגה" on the technician's screen (core/displayScale.ts). */
+export interface DisplayScaleView {
+  /** The size now, in percent of the automatic size (an old "זום": its share of it). */
+  percent: number;
+  setting: 'auto' | number;
+  source: 'local' | 'cloud' | 'auto';
+  /** The cloud's value as it resolved for this device ("auto", "85"; null: none). */
+  cloud: string | null;
+  /** The saved local choice ("auto", "85"; null: follow the cloud). */
+  local: string | null;
+  /** An unsaved choice is being previewed (`displayScalePreview`): its value (null: follow the cloud). */
+  preview?: { local: string | null };
+  /** The old absolute "זום" still in force (no new choice saved over it). */
+  legacyZoom: number | null;
+  /** The window's page zoom now, and the automatic one. */
+  zoom: number;
+  autoZoom: number;
 }
 
 export interface KioskEvents {
@@ -625,7 +646,14 @@ export type TechnicianAction =
   | { type: 'updateCheck' }
   | { type: 'updateInstall' }
   | { type: 'quickSupport' }
-  | { type: 'setZoom'; zoom: number }
+  /**
+   * "גודל תצוגה": `displayScalePreview` shows a choice at once without saving it ("auto", "85", or null — follow the
+   * cloud); `displayScaleEnd` drops the preview; `displayScaleSave` saves it on the device (over the cloud) and drops
+   * the old "זום". Replaces the old ×1 / ×1.5 / ×2 "זום" buttons (`setZoom`).
+   */
+  | { type: 'displayScalePreview'; local: string | null }
+  | { type: 'displayScaleEnd' }
+  | { type: 'displayScaleSave'; local: string | null }
   /** "מדפסת לקבלות ולמסמכים": a destination's id, `local`, `ask` — or null, "חזור להגדרת הענן". */
   | { type: 'setReceiptPrinter'; id: string | null }
   | { type: 'unpair' };

@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react';
 import { Delete, X } from 'lucide-react';
 import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
 import type { AdminActionResult, AdminInfo, KioskView, SynqpayAdminInfo, SynqpayPairingView, TechnicianInfo } from '../../shared/bridge';
+import { DISPLAY_SCALE_TEXT, DisplayScaleControl } from '../roles/DisplayScaleControl';
 import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
 import { t } from '../i18n';
@@ -767,15 +768,27 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
               פתיחת TeamViewer QuickSupport
             </Btn>
           </Panel>
-          <Panel m={m} title="תצוגה">
-            <div className="flex gap-2">
-              {[1, 1.5, 2, 2.5].map((z) => (
-                <Btn key={z} m={m} onClick={() => act({ type: 'setZoom', zoom: z })}>
-                  ×{z}
-                </Btn>
-              ))}
-            </div>
-          </Panel>
+          {/* "גודל תצוגה" (P:/specs/display-scale.md): the one size control, saved on this kiosk over the cloud. */}
+          {info.displayScale ? (
+            <Panel m={m} title={DISPLAY_SCALE_TEXT.title}>
+              <DisplayScaleControl
+                view={info.displayScale}
+                act={(a) => void act(a)}
+                button={(label, onClick, disabled) => (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={disabled}
+                    onClick={onClick}
+                    className="min-w-[var(--k-target,0px)] px-3 py-1.5 text-xs font-bold disabled:opacity-40"
+                    style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }}
+                  >
+                    {label}
+                  </button>
+                )}
+              />
+            </Panel>
+          ) : null}
           <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />
           <Btn m={m} danger onClick={() => act({ type: 'unpair' })}>
             ניתוק הקיוסק מהענן
