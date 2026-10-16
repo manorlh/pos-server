@@ -10,6 +10,7 @@
  * rail colours (railMotionColors); railFollow off — the rail never scrolls by itself.
  */
 
+import { lookCategoryImagePx, lookCategoryItemPx, lookColumnPx, lookColumns } from '@/lib/kioskLandscape';
 import { useEffect, useRef, useState } from 'react';
 import { basketDocked, basketKindOf, catalogContinuous, layoutOf, productColumns, railCircles, railEmphasisOf, railFollows, railMeasures, type LayoutCategoryIcons } from '@/lib/kioskLayout';
 import { railMotionColors, type RailMotionColors } from '@/lib/kioskConfig';
@@ -103,11 +104,16 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
 
   const basket = basketKindOf(m.cfg, widthDpOf(m));
   const measures = railMeasures(layout.railSize, widthDpOf(m), Math.round(bodyH * DP_PER_PX));
-  const railW = Math.round(measures.widthDp / DP_PER_PX);
-  const itemH = Math.round(measures.itemDp / DP_PER_PX);
-  const imageSize = Math.round(measures.imageDp / DP_PER_PX);
-  const gridPx = m.screen.w - railW - (m.panel ? 132 : 0);
-  const cols = productColumns(Math.max(2, Math.floor(gridPx / 190)), layout.productSize, gridPx * DP_PER_PX, layout.card === 'row');
+  // "עיצוב לרוחב" (lib/kioskLandscape.ts): in landscape the rail at the landscape column's width, a category no taller and
+  // its picture no larger than the landscape sizes, and never a dish wider than the landscape tile; portrait — as today.
+  const look = m.landscape;
+  const railW = lookColumnPx(look, Math.round(measures.widthDp / DP_PER_PX));
+  const itemH = lookCategoryItemPx(look, Math.round(measures.itemDp / DP_PER_PX));
+  const imageSize = look ? Math.max(20, Math.min(lookCategoryImagePx(look, Math.round(measures.imageDp / DP_PER_PX)), itemH - 30)) : Math.round(measures.imageDp / DP_PER_PX);
+  const gridPx = m.screen.w - railW - (m.panel && basket === 'panel' ? (m.panelWidth ?? 132) : 0);
+  const cols = layout.card === 'row'
+    ? productColumns(Math.max(2, Math.floor(gridPx / 190)), layout.productSize, gridPx * DP_PER_PX, true)
+    : lookColumns(look, productColumns(Math.max(2, Math.floor(gridPx / 190)), layout.productSize, gridPx * DP_PER_PX), gridPx);
   const counts = cartCounts(m);
   const pick = (id: string) => {
     setActive(id);

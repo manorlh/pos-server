@@ -11,9 +11,16 @@
  * node test does not call.
  */
 
+import { validateLandscape, type KioskLandscape } from './kioskLandscape';
 import {
   KIOSK_LAYOUT_DEFAULTS,
   KIOSK_WELCOME_DEFAULTS,
+  LAYOUT_BASKETS,
+  LAYOUT_CARDS,
+  LAYOUT_CATALOGS,
+  LAYOUT_CATEGORY_ICONS,
+  LAYOUT_PRODUCT_SIZES,
+  LAYOUT_RAIL_SIZES,
   layoutTemplateLayer,
   repairLayout,
   templateOf,
@@ -868,6 +875,11 @@ export interface KioskConfig {
    * kiosk's first language keeps using the flat `texts` (an older kiosk reads only those).
    */
   textsByLang: KioskTextsByLang;
+  /**
+   * "עיצוב לרוחב" (kioskLandscape.ts, P:/specs/kiosk-landscape-design.md): the design keys that win only on a screen
+   * on its side, and the landscape sizes. Optional — absent (no level set it): today's kiosk.
+   */
+  landscape?: KioskLandscape;
 }
 
 export type KioskSectionKey = keyof KioskConfig;
@@ -2102,6 +2114,36 @@ export function validateKioskConfig(
 
   // "כיתוב רץ": its texts, their days and hours, the screens and the look.
   if (cfg.ticker !== undefined) validateTicker(e, cfg.ticker);
+
+  // "עיצוב לרוחב": the normal design's vocabularies, the sizes' ranges, its media.
+  if (cfg.landscape !== undefined && cfg.landscape !== null) {
+    e.push(
+      ...validateLandscape(cfg.landscape, {
+        'theme.categoryLayout': ['side', 'top'],
+        'theme.cartStyle': ['bar', 'panel'],
+        'theme.gridDensity': ['compact', 'comfortable', 'large'],
+        'theme.categoryStyle': ['chips', 'tabs', 'images'],
+        'theme.imageRatio': ['1:1', '4:3', '16:9'],
+        'theme.typeScale': ['normal', 'large', 'xlarge'],
+        'layout.catalog': LAYOUT_CATALOGS,
+        'layout.basket': LAYOUT_BASKETS,
+        'layout.railSize': LAYOUT_RAIL_SIZES,
+        'layout.productSize': LAYOUT_PRODUCT_SIZES,
+        'layout.categoryIcons': LAYOUT_CATEGORY_ICONS,
+        'layout.card': LAYOUT_CARDS,
+      }),
+    );
+    checkMedia(e, 'landscape.theme.backgroundImage', cfg.landscape.theme?.backgroundImage, ['image']);
+    const playlist = cfg.landscape.attract?.playlist;
+    if (Array.isArray(playlist)) {
+      if (playlist.length > L.playlistMax) e.push({ path: 'landscape.attract.playlist', code: 'tooMany', params: { max: L.playlistMax } });
+      playlist.forEach((item, i) => {
+        const it = (item ?? {}) as { media?: unknown; durationSec?: unknown };
+        checkMedia(e, `landscape.attract.playlist.${i}.media`, it.media, ['image', 'video'], false);
+        checkRange(e, `landscape.attract.playlist.${i}.durationSec`, it.durationSec, L.playlistDuration);
+      });
+    }
+  }
 
   // "מבנה הקיוסק" and "ברוכים הבאים" (kioskLayout.ts); every text in every language (kioskTexts.ts).
   e.push(...validateLayout(cfg));

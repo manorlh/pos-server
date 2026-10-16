@@ -5,6 +5,7 @@
  * Sizes are drawn for the kiosk's 540 CSS px across (a 1080 screen at ×2) and scale with the frame.
  */
 
+import { lookColumns } from '@/lib/kioskLandscape';
 import { createContext, useContext, type CSSProperties, type ReactNode } from 'react';
 import { Check, Plus, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -50,12 +51,17 @@ export function dishColumnsFor(m: PreviewModel, widthPx: number): number {
   const density = m.cfg.theme.gridDensity;
   const [phone, tablet] = density === 'compact' ? [3, 4] : density === 'large' ? [dp >= 400 ? 2 : 1, 2] : [2, 3];
   // "גודל מוצרים" (layout.productSize): a column more or fewer, as on the Android kiosk.
-  return productColumns(dp < 600 ? phone : dp >= 1100 ? tablet + 1 : tablet, layoutOf(m.cfg).productSize, dp);
+  // "עיצוב לרוחב": in landscape never a dish wider than the landscape tile (lib/kioskLandscape.ts).
+  return lookColumns(m.landscape, productColumns(dp < 600 ? phone : dp >= 1100 ? tablet + 1 : tablet, layoutOf(m.cfg).productSize, dp), widthPx);
 }
 
-/** The frame's scale against the kiosk's 540 CSS px. */
+/**
+ * The frame's scale against the kiosk's 540 CSS px. "עיצוב לרוחב" (lib/kioskLandscape.ts): on a landscape screen against
+ * its short side — the width there grew every chip, icon and badge to ×1.6 ("לא ענקיים").
+ */
 export function unitOf(m: PreviewModel): number {
-  return Math.min(1.6, Math.max(0.55, m.screen.w / 540));
+  const side = m.landscape ? Math.min(m.screen.w, m.screen.h) : m.screen.w;
+  return Math.min(1.6, Math.max(0.55, side / 540));
 }
 
 /** What a layout's dish card asks of its catalog: "רוצים להפוך לארוחה?" for a dish. */
@@ -203,7 +209,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
       className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:opacity-60"
       style={dishCardStyle(m)}
     >
-      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
+      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, maxHeight: m.landscape?.productImageMaxPx, ...photoBgStyle(m) }}>
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {soldTag}
         {plus(34 * u, 'absolute bottom-2 end-2')}

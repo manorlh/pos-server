@@ -1,0 +1,1598 @@
+{
+  "about": "עיצוב לרוחב (P:/specs/kiosk-landscape-design.md). The same bytes in pos-server server/tests/fixtures, kiosk-desktop/test/fixtures and pos-android app/src/test/resources; SHA-256 (LF) pinned in all three.",
+  "version": 1,
+  "sizes": {
+    "defaults": {
+      "categoryColumnDp": 232,
+      "categoryItemMaxDp": 96,
+      "categoryImageMaxDp": 64,
+      "productTileMaxDp": 240,
+      "productMinColumns": 3,
+      "productImageMaxDp": 160,
+      "textScalePct": 100
+    },
+    "ranges": {
+      "categoryColumnDp": {
+        "min": 160,
+        "max": 360,
+        "step": 4
+      },
+      "categoryItemMaxDp": {
+        "min": 56,
+        "max": 200,
+        "step": 4
+      },
+      "categoryImageMaxDp": {
+        "min": 32,
+        "max": 160,
+        "step": 4
+      },
+      "productTileMaxDp": {
+        "min": 160,
+        "max": 480,
+        "step": 4
+      },
+      "productMinColumns": {
+        "min": 2,
+        "max": 8,
+        "step": 1
+      },
+      "productImageMaxDp": {
+        "min": 80,
+        "max": 400,
+        "step": 4
+      },
+      "textScalePct": {
+        "min": 80,
+        "max": 130,
+        "step": 5
+      }
+    }
+  },
+  "constants": {
+    "gapDp": 12,
+    "minTileDp": 140,
+    "categoryColumnMaxShare": 0.3,
+    "minTouchDp": 48
+  },
+  "overrideKeys": {
+    "theme": [
+      "categoryLayout",
+      "cartStyle",
+      "gridDensity",
+      "categoryStyle",
+      "imageRatio",
+      "typeScale",
+      "backgroundImage"
+    ],
+    "layout": [
+      "catalog",
+      "basket",
+      "railSize",
+      "productSize",
+      "categoryIcons",
+      "card"
+    ],
+    "attract": [
+      "playlist"
+    ]
+  },
+  "resolveSizes": [
+    {
+      "name": "absent",
+      "block": null,
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 100
+      }
+    },
+    {
+      "name": "empty",
+      "block": {},
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 100
+      }
+    },
+    {
+      "name": "empty sizes",
+      "block": {
+        "sizes": {}
+      },
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 100
+      }
+    },
+    {
+      "name": "partial",
+      "block": {
+        "sizes": {
+          "categoryColumnDp": 200,
+          "productTileMaxDp": 300
+        }
+      },
+      "expect": {
+        "categoryColumnDp": 200,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 300,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 100
+      }
+    },
+    {
+      "name": "below range",
+      "block": {
+        "sizes": {
+          "categoryColumnDp": 100,
+          "productMinColumns": 1,
+          "textScalePct": 50
+        }
+      },
+      "expect": {
+        "categoryColumnDp": 160,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 2,
+        "productImageMaxDp": 160,
+        "textScalePct": 80
+      }
+    },
+    {
+      "name": "above range",
+      "block": {
+        "sizes": {
+          "categoryItemMaxDp": 999,
+          "productImageMaxDp": 1000,
+          "textScalePct": 200
+        }
+      },
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 200,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 400,
+        "textScalePct": 130
+      }
+    },
+    {
+      "name": "steps",
+      "block": {
+        "sizes": {
+          "categoryColumnDp": 229,
+          "textScalePct": 103,
+          "productMinColumns": 4.4,
+          "productTileMaxDp": 262
+        }
+      },
+      "expect": {
+        "categoryColumnDp": 228,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 264,
+        "productMinColumns": 4,
+        "productImageMaxDp": 160,
+        "textScalePct": 105
+      }
+    },
+    {
+      "name": "half up",
+      "block": {
+        "sizes": {
+          "categoryColumnDp": 230,
+          "textScalePct": 102.5
+        }
+      },
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 105
+      }
+    },
+    {
+      "name": "broken",
+      "block": {
+        "sizes": {
+          "categoryColumnDp": "240",
+          "productMinColumns": true,
+          "categoryImageMaxDp": null
+        }
+      },
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 100
+      }
+    },
+    {
+      "name": "not an object",
+      "block": {
+        "sizes": [
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "categoryColumnDp": 232,
+        "categoryItemMaxDp": 96,
+        "categoryImageMaxDp": 64,
+        "productTileMaxDp": 240,
+        "productMinColumns": 3,
+        "productImageMaxDp": 160,
+        "textScalePct": 100
+      }
+    }
+  ],
+  "productColumns": [
+    {
+      "columns": 3,
+      "gridDp": 1208,
+      "sizes": {},
+      "expect": 5
+    },
+    {
+      "columns": 4,
+      "gridDp": 1208,
+      "sizes": {},
+      "expect": 5
+    },
+    {
+      "columns": 6,
+      "gridDp": 1208,
+      "sizes": {},
+      "expect": 6
+    },
+    {
+      "columns": 3,
+      "gridDp": 905,
+      "sizes": {},
+      "expect": 4
+    },
+    {
+      "columns": 3,
+      "gridDp": 1134,
+      "sizes": {},
+      "expect": 5
+    },
+    {
+      "columns": 3,
+      "gridDp": 1048,
+      "sizes": {},
+      "expect": 5
+    },
+    {
+      "columns": 2,
+      "gridDp": 500,
+      "sizes": {},
+      "expect": 3
+    },
+    {
+      "columns": 2,
+      "gridDp": 300,
+      "sizes": {},
+      "expect": 2
+    },
+    {
+      "columns": 1,
+      "gridDp": 120,
+      "sizes": {},
+      "expect": 1
+    },
+    {
+      "columns": 3,
+      "gridDp": 1208,
+      "sizes": {
+        "productTileMaxDp": 320
+      },
+      "expect": 4
+    },
+    {
+      "columns": 3,
+      "gridDp": 1208,
+      "sizes": {
+        "productMinColumns": 6
+      },
+      "expect": 6
+    },
+    {
+      "columns": 3,
+      "gridDp": 1208,
+      "sizes": {
+        "productMinColumns": 8
+      },
+      "expect": 8
+    },
+    {
+      "columns": 3,
+      "gridDp": 1600,
+      "sizes": {
+        "productTileMaxDp": 160
+      },
+      "expect": 10
+    },
+    {
+      "columns": 5,
+      "gridDp": 700,
+      "sizes": {
+        "productTileMaxDp": 480
+      },
+      "expect": 5
+    }
+  ],
+  "categoryColumn": [
+    {
+      "widthDp": 1920,
+      "sizes": {},
+      "expect": 232
+    },
+    {
+      "widthDp": 1536,
+      "sizes": {},
+      "expect": 232
+    },
+    {
+      "widthDp": 1366,
+      "sizes": {},
+      "expect": 232
+    },
+    {
+      "widthDp": 1280,
+      "sizes": {},
+      "expect": 232
+    },
+    {
+      "widthDp": 960,
+      "sizes": {},
+      "expect": 232
+    },
+    {
+      "widthDp": 640,
+      "sizes": {},
+      "expect": 192
+    },
+    {
+      "widthDp": 1920,
+      "sizes": {
+        "categoryColumnDp": 360
+      },
+      "expect": 360
+    },
+    {
+      "widthDp": 1000,
+      "sizes": {
+        "categoryColumnDp": 360
+      },
+      "expect": 300
+    },
+    {
+      "widthDp": 1920,
+      "sizes": {
+        "categoryColumnDp": 160
+      },
+      "expect": 160
+    }
+  ],
+  "categoryItem": [
+    {
+      "computedDp": 135,
+      "sizes": {},
+      "expect": 96
+    },
+    {
+      "computedDp": 96,
+      "sizes": {},
+      "expect": 96
+    },
+    {
+      "computedDp": 80,
+      "sizes": {},
+      "expect": 80
+    },
+    {
+      "computedDp": 40,
+      "sizes": {},
+      "expect": 48
+    },
+    {
+      "computedDp": 180,
+      "sizes": {
+        "categoryItemMaxDp": 160
+      },
+      "expect": 160
+    },
+    {
+      "computedDp": 60,
+      "sizes": {
+        "categoryItemMaxDp": 56
+      },
+      "expect": 56
+    }
+  ],
+  "categoryImage": [
+    {
+      "computedDp": 95,
+      "sizes": {},
+      "expect": 64
+    },
+    {
+      "computedDp": 40,
+      "sizes": {},
+      "expect": 40
+    },
+    {
+      "computedDp": 120,
+      "sizes": {
+        "categoryImageMaxDp": 100
+      },
+      "expect": 100
+    }
+  ],
+  "productImage": [
+    {
+      "computedDp": 174,
+      "sizes": {},
+      "expect": 160
+    },
+    {
+      "computedDp": 150,
+      "sizes": {},
+      "expect": 150
+    },
+    {
+      "computedDp": 300,
+      "sizes": {
+        "productImageMaxDp": 240
+      },
+      "expect": 240
+    },
+    {
+      "computedDp": 90,
+      "sizes": {
+        "productImageMaxDp": 80
+      },
+      "expect": 80
+    }
+  ],
+  "textScale": [
+    {
+      "displayScale": 1.0,
+      "sizes": {},
+      "expect": 1.0
+    },
+    {
+      "displayScale": 1.15,
+      "sizes": {},
+      "expect": 1.15
+    },
+    {
+      "displayScale": 1.0,
+      "sizes": {
+        "textScalePct": 90
+      },
+      "expect": 0.9
+    },
+    {
+      "displayScale": 1.3,
+      "sizes": {
+        "textScalePct": 120
+      },
+      "expect": 1.56
+    },
+    {
+      "displayScale": 0.9,
+      "sizes": {
+        "textScalePct": 85
+      },
+      "expect": 0.765
+    }
+  ],
+  "screens": [
+    {
+      "name": "1920x1080",
+      "widthDp": 1920,
+      "heightDp": 1080,
+      "layoutColumns": 4,
+      "expect": {
+        "sideCart": true,
+        "panelDp": 480,
+        "rail": true,
+        "categoryColumnDp": 232,
+        "gridDp": 1208,
+        "columns": 5,
+        "tileDp": 232.0,
+        "imageDp43": 160
+      }
+    },
+    {
+      "name": "1536x864 (14in at 125%)",
+      "widthDp": 1536,
+      "heightDp": 864,
+      "layoutColumns": 4,
+      "expect": {
+        "sideCart": true,
+        "panelDp": 399,
+        "rail": true,
+        "categoryColumnDp": 232,
+        "gridDp": 905,
+        "columns": 4,
+        "tileDp": 217.25,
+        "imageDp43": 160
+      }
+    },
+    {
+      "name": "1366x768",
+      "widthDp": 1366,
+      "heightDp": 768,
+      "layoutColumns": 3,
+      "expect": {
+        "sideCart": true,
+        "panelDp": 355,
+        "rail": true,
+        "categoryColumnDp": 232,
+        "gridDp": 779,
+        "columns": 4,
+        "tileDp": 185.75,
+        "imageDp43": 139
+      }
+    },
+    {
+      "name": "1280x800",
+      "widthDp": 1280,
+      "heightDp": 800,
+      "layoutColumns": 3,
+      "expect": {
+        "sideCart": false,
+        "panelDp": 0,
+        "rail": true,
+        "categoryColumnDp": 232,
+        "gridDp": 1048,
+        "columns": 5,
+        "tileDp": 200.0,
+        "imageDp43": 150
+      }
+    },
+    {
+      "name": "2560x1440",
+      "widthDp": 2560,
+      "heightDp": 1440,
+      "layoutColumns": 5,
+      "expect": {
+        "sideCart": true,
+        "panelDp": 480,
+        "rail": true,
+        "categoryColumnDp": 232,
+        "gridDp": 1848,
+        "columns": 8,
+        "tileDp": 220.5,
+        "imageDp43": 160
+      }
+    },
+    {
+      "name": "1024x600",
+      "widthDp": 1024,
+      "heightDp": 600,
+      "layoutColumns": 3,
+      "expect": {
+        "sideCart": false,
+        "panelDp": 0,
+        "rail": true,
+        "categoryColumnDp": 232,
+        "gridDp": 792,
+        "columns": 4,
+        "tileDp": 189.0,
+        "imageDp43": 142
+      }
+    }
+  ],
+  "apply": [
+    {
+      "name": "portrait ignores the block",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "theme": {
+            "cartStyle": "panel"
+          },
+          "layout": {
+            "catalog": "wall"
+          }
+        }
+      },
+      "display": {
+        "landscape": false,
+        "sideCart": false,
+        "rail": null
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "no block, wide: side cart (auto)",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "empty block = no block",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {}
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "no block, narrow: bar stays",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": false,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "no block, tight: top tabs (auto)",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": false
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "top",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "block bar on a wide screen: bar",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "theme": {
+            "cartStyle": "bar"
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": true
+        }
+      }
+    },
+    {
+      "name": "block side on a tight screen: side",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "theme": {
+            "categoryLayout": "side"
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": false
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": true,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "block catalog wall: side, quick add",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "layout": {
+            "catalog": "wall"
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": false
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": "wall",
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "no_required"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": true,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "block catalog shelves: top",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "layout": {
+            "catalog": "shelves"
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "top",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": "shelves",
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": true,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "block catalog and its own categoryLayout",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "layout": {
+            "catalog": "shelves"
+          },
+          "theme": {
+            "categoryLayout": "side"
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": "shelves",
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": true,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "block basket summary: bar, no auto",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "layout": {
+            "basket": "summary"
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": "summary",
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": true
+        }
+      }
+    },
+    {
+      "name": "block density, sizes and text: the rest auto",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "theme": {
+            "gridDensity": "compact",
+            "typeScale": "large"
+          },
+          "layout": {
+            "productSize": "s",
+            "railSize": "s"
+          },
+          "sizes": {
+            "productTileMaxDp": 200
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "compact",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "large",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "s",
+          "productSize": "s",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "block attract playlist and background",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": [
+            {
+              "media": {
+                "url": "https://cdn.example/p.jpg",
+                "kind": "image",
+                "sha256": null,
+                "bytes": null
+              },
+              "durationSec": 8
+            }
+          ]
+        },
+        "landscape": {
+          "attract": {
+            "playlist": [
+              {
+                "media": {
+                  "url": "https://cdn.example/land.mp4",
+                  "kind": "video",
+                  "sha256": null,
+                  "bytes": null
+                },
+                "durationSec": 20
+              }
+            ]
+          },
+          "theme": {
+            "backgroundImage": {
+              "url": "https://cdn.example/p.jpg",
+              "kind": "image",
+              "sha256": null,
+              "bytes": null
+            }
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": false,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": {
+            "url": "https://cdn.example/p.jpg",
+            "kind": "image",
+            "sha256": null,
+            "bytes": null
+          }
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": [
+            {
+              "media": {
+                "url": "https://cdn.example/land.mp4",
+                "kind": "video",
+                "sha256": null,
+                "bytes": null
+              },
+              "durationSec": 20
+            }
+          ]
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "null keys inherit",
+      "config": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "landscape": {
+          "theme": {
+            "cartStyle": null
+          },
+          "layout": {
+            "catalog": null
+          }
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "side",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    },
+    {
+      "name": "portrait design top stays top",
+      "config": {
+        "theme": {
+          "categoryLayout": "top",
+          "cartStyle": "bar",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        }
+      },
+      "display": {
+        "landscape": true,
+        "sideCart": true,
+        "rail": true
+      },
+      "expect": {
+        "theme": {
+          "categoryLayout": "top",
+          "cartStyle": "panel",
+          "gridDensity": "comfortable",
+          "categoryStyle": "chips",
+          "imageRatio": "4:3",
+          "typeScale": "normal",
+          "backgroundImage": null
+        },
+        "layout": {
+          "catalog": null,
+          "basket": null,
+          "railSize": "m",
+          "productSize": "m",
+          "categoryIcons": null,
+          "card": null,
+          "quickAdd": "off"
+        },
+        "attract": {
+          "playlist": []
+        },
+        "explicit": {
+          "categories": false,
+          "cart": false
+        }
+      }
+    }
+  ]
+}

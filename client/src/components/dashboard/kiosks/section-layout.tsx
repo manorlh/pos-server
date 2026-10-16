@@ -373,7 +373,11 @@ export function LayoutSection() {
   const t = useTranslations('kiosks.layouts');
   const ed = useKioskEditor();
   const [open, setOpen] = useState(false);
-  const layout = ed.draft.layout;
+  // In landscape, which keys apply follows the landscape values ("לרוחב" over the normal layout).
+  const layout =
+    ed.orientation === 'landscape' && ed.draft.landscape?.layout
+      ? { ...ed.draft.layout, ...Object.fromEntries(Object.entries(ed.draft.landscape.layout).filter(([, v]) => v !== null && v !== undefined)) }
+      : ed.draft.layout;
   return (
     <div className="space-y-4">
       <SectionCard title={t('title')} description={t('hint')} paths={['layout']}>

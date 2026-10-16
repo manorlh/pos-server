@@ -6,6 +6,7 @@
  * from the config through `PreviewModel`, so a change in the editor shows here at once.
  */
 
+import { lookCategoryImagePx, type LandscapeLook } from '@/lib/kioskLandscape';
 import {
   useEffect,
   useLayoutEffect,
@@ -352,6 +353,11 @@ export interface PreviewModel {
    */
   twoColumns?: boolean;
   contentMaxWidth?: number | null;
+  /**
+   * "עיצוב לרוחב" (lib/kioskLandscape.ts, P:/specs/kiosk-landscape-design.md §3): the landscape sizes in these screens'
+   * CSS px — the category column, a category's tile and picture, a dish's columns and picture. Absent / null: portrait.
+   */
+  landscape?: LandscapeLook | null;
   c: ResolvedThemeColors;
   radius: number;
   btnRadius: number;
@@ -1746,7 +1752,8 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
       className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
       style={dishCardStyle(m)}
     >
-      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
+      {/* "עיצוב לרוחב": the picture never taller than the landscape size (cropped, as cover). */}
+      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, maxHeight: m.landscape?.productImageMaxPx, ...photoBgStyle(m) }}>
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {p.soldOut ? (
           <span className="absolute start-2 top-2 rounded-full bg-black/70 px-2 py-0.5 kt-10 font-bold text-white">{m.t('soldOut')}</span>
@@ -1804,7 +1811,7 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
                 className="mx-auto flex w-fit justify-center transition-all duration-200"
                 style={{ borderRadius: Math.max(10, m.radius * 0.7), outline: on ? `2px solid ${m.c.button}` : 'none', outlineOffset: 2 }}
               >
-                <CategoryImage m={m} cat={cat} size={48} radius={Math.max(10, m.radius * 0.7)} />
+                <CategoryImage m={m} cat={cat} size={lookCategoryImagePx(m.landscape, 48)} radius={Math.max(10, m.radius * 0.7)} />
               </div>
               <div className="mt-1 truncate kt-10 font-semibold" style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', 10) }}>
                 {cat.name}
@@ -1877,12 +1884,19 @@ function CategoryRail({
   railRef: RefObject<HTMLDivElement | null>;
 }) {
   const style = m.cfg.theme.categoryStyle;
-  const imageSize = style === 'images' ? (m.wide ? 56 : 48) : 36;
+  // "עיצוב לרוחב" (lib/kioskLandscape.ts): the landscape column at its width, each category a row (its picture beside
+  // its name) no taller than the landscape size, the picture capped; portrait — today's 76 px rail.
+  const look = m.landscape;
+  const row = !!look && look.columnPx >= 110;
+  // A narrow column (the Windows kiosk's 116–130 px) keeps a whole word on its line with the smaller name.
+  const rowFont = look && look.columnPx >= 150 ? 13 : 11;
+  const itemMax = look ? look.categoryItemMaxPx : null;
+  const imageSize = row && itemMax ? Math.min(look!.categoryImageMaxPx, Math.max(16, itemMax - 12)) : lookCategoryImagePx(look, style === 'images' ? (m.wide ? 56 : 48) : 36);
   return (
     <div
       ref={railRef}
-      className="relative flex w-[76px] shrink-0 flex-col gap-1 overflow-y-auto border-e py-2 [scrollbar-width:none]"
-      style={{ borderColor: m.c.border, background: m.c.dark ? '#00000026' : '#FFFFFF80' }}
+      className="relative flex shrink-0 flex-col gap-1 overflow-y-auto border-e py-2 [scrollbar-width:none]"
+      style={{ width: look ? look.columnPx : 76, borderColor: m.c.border, background: m.c.dark ? '#00000026' : '#FFFFFF80' }}
     >
       {m.categories.map((cat) => {
         const on = cat.id === active;
@@ -1895,8 +1909,11 @@ function CategoryRail({
             data-cat={cat.id}
             data-active={on || undefined}
             onClick={() => onPick(cat.id)}
-            className="relative mx-1 flex flex-col items-center gap-1 px-1 py-1.5 text-center transition-all duration-200"
-            style={itemStyle}
+            className={cn(
+              'relative mx-1 flex items-center py-1.5 transition-all duration-200',
+              row ? 'flex-row gap-2 px-2 text-start' : 'flex-col gap-1 px-1 text-center',
+            )}
+            style={row && itemMax ? { ...itemStyle, maxHeight: itemMax, minHeight: Math.min(itemMax, imageSize + 8) } : itemStyle}
           >
             {style === 'tabs' && on ? (
               <span className="absolute inset-y-1 start-0 w-[3px] rounded-full" style={{ background: m.c.button }} aria-hidden />
@@ -1911,7 +1928,10 @@ function CategoryRail({
             >
               <CategoryImage m={m} cat={cat} size={imageSize} radius={style === 'chips' ? 999 : Math.max(8, m.radius * 0.6)} />
             </span>
-            <span className={`line-clamp-2 w-full kt-10 leading-tight [overflow-wrap:anywhere] ${on ? 'font-bold' : ''}`} style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', 10) }}>
+            <span
+              className={`line-clamp-2 min-w-0 leading-tight [overflow-wrap:anywhere] ${row ? `flex-1 ${rowFont === 13 ? 'kt-13' : 'kt-11'}` : 'w-full kt-10'} ${on ? 'font-bold' : ''}`}
+              style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', row ? rowFont : 10) }}
+            >
               {cat.name}
             </span>
           </button>

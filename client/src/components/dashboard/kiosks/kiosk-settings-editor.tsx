@@ -48,12 +48,13 @@ import {
   type KioskSettings,
   type KioskSummary,
 } from '@/lib/kioskApi';
-import { KioskEditorContext, useServerErrorText, type KioskEditorValue, type PreviewScreen } from './editor-context';
+import { KioskEditorContext, useServerErrorText, type KioskEditorOrientation, type KioskEditorValue, type PreviewScreen } from './editor-context';
 import { OptionSelect } from './fields';
 import { KioskPreview, type KioskPreviewControls } from './kiosk-preview';
 import { MotionSection } from './section-motion';
 import { ReviewDialog } from './review-dialog';
 import { AppearanceSection } from './section-appearance';
+import { LandscapeSizesCard, OrientationBar } from './section-landscape';
 import { AttractSectionEditor } from './section-attract';
 import { CatalogSection } from './section-catalog';
 import { ClubSection, PickupSection } from './section-club-pickup';
@@ -66,6 +67,29 @@ import { TimersSection } from './section-timers';
 import { AlertsSection } from './section-alerts';
 import { UpsellSection } from './section-upsell';
 import { PreviewTextHighlight, TextsSection } from './section-texts';
+
+/**
+ * After an edit under `landscape`: the objects it left empty are dropped (a block with nothing in it is no block —
+ * the draft compares equal to what was saved, and nothing is sent).
+ */
+function tidyLandscape(cfg: KioskConfig, path: string): KioskConfig {
+  if (!path.startsWith('landscape') || !cfg.landscape) return cfg;
+  const prune = (v: unknown): unknown => {
+    if (!v || typeof v !== 'object' || Array.isArray(v) || 'url' in (v as object)) return v;
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      const p = prune(x);
+      if (p === undefined || p === null || (typeof p === 'object' && !Array.isArray(p) && Object.keys(p as object).length === 0)) continue;
+      out[k] = p;
+    }
+    return out;
+  };
+  const block = prune(cfg.landscape) as Record<string, unknown>;
+  const next = { ...cfg };
+  if (Object.keys(block).length === 0) delete next.landscape;
+  else next.landscape = block;
+  return next;
+}
 
 type SectionKey =
   | 'general'
@@ -86,7 +110,7 @@ type SectionKey =
 const SECTIONS: { key: SectionKey; screen: PreviewScreen; paths: string[] }[] = [
   { key: 'general', screen: 'service', paths: ['general'] },
   // "מראה" also holds "מבנה הקיוסק" (layout) beside the style, and the category icons.
-  { key: 'appearance', screen: 'catalog', paths: ['theme', 'layout', 'screenImages'] },
+  { key: 'appearance', screen: 'catalog', paths: ['theme', 'layout', 'screenImages', 'landscape'] },
   // "טקסטים": every customer text, per screen and language (section-texts.tsx).
   { key: 'texts', screen: 'attract', paths: ['texts', 'textsByLang'] },
   // "הנפשות": the Motion Engine — the pace, every event's own motion, each with "הצג" (section-motion.tsx).
@@ -164,6 +188,8 @@ function EditorBody({
   const previewControls = useRef<KioskPreviewControls>(null);
   const [previewLang, setPreviewLang] = useState<string>(() => saved.general.languages?.[0] ?? 'he');
   const [highlightText, setHighlightText] = useState<string | null>(null);
+  // "לאורך / לרוחב" (P:/specs/kiosk-landscape-design.md §5): which design the fields edit, and the previews shown.
+  const [orientation, setOrientation] = useState<KioskEditorOrientation>('portrait');
 
   const dirty = !jsonEqual(draft, saved);
   useEffect(() => {
@@ -259,7 +285,7 @@ function EditorBody({
     errors,
     serverErrors,
     set: (path, value) => {
-      setDraft((d) => setPath(d, path, value));
+      setDraft((d) => tidyLandscape(setPath(d, path, value), path));
       setServerErrors((list) => (list.length ? list.filter((e) => !(e.path === path || e.path.startsWith(`${path}.`))) : list));
     },
     reset: (path) =>
@@ -278,7 +304,7 @@ function EditorBody({
           const moved = switchLayoutTemplate(d, baseOf(d.theme.uiStyle, tpl), baseOf(d.theme.uiStyle, parent), parent);
           return path === 'layout' ? setPath(moved, 'layout', cloneJson(baseOf(d.theme.uiStyle, parent).layout)) : moved;
         }
-        return setPath(d, path, cloneJson(getPath(baseOf(d.theme.uiStyle, tpl), path)));
+        return tidyLandscape(setPath(d, path, cloneJson(getPath(baseOf(d.theme.uiStyle, tpl), path))), path);
       }),
     setUiStyle: (style) =>
       setDraft((d) => {
@@ -300,7 +326,15 @@ function EditorBody({
     },
     dirty,
     openReview: () => setReviewOpen(true),
+    orientation,
+    setOrientation: (o) => {
+      setOrientation(o);
+      setShowPreview(true);
+    },
   };
+
+  /** The previews side by side (portrait and landscape) while the landscape design is edited. */
+  const landscapeView = orientation === 'landscape' && (section === 'appearance' || section === 'attract');
 
   const pickSection = (key: SectionKey) => {
     setSection(key);
@@ -368,7 +402,7 @@ function EditorBody({
           })}
         </nav>
 
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_460px]">
+        <div className={cn('grid items-start gap-6', landscapeView ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]' : 'lg:grid-cols-[minmax(0,1fr)_460px]')}>
           <div key={section} className="min-w-0 space-y-4 animate-in fade-in slide-in-from-bottom-1 duration-300">
             {serverErrors.length > 0 ? (
               <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-sm">
@@ -387,10 +421,14 @@ function EditorBody({
                 </ul>
               </div>
             ) : null}
+            {section === 'appearance' || section === 'attract' ? <OrientationBar /> : null}
             {section === 'general' ? (
               <GeneralSection />
             ) : section === 'appearance' ? (
-              <AppearanceSection />
+              <>
+                {orientation === 'landscape' ? <LandscapeSizesCard /> : null}
+                <AppearanceSection />
+              </>
             ) : section === 'texts' ? (
               <TextsSection />
             ) : section === 'motion' ? (
@@ -424,7 +462,28 @@ function EditorBody({
           <aside className={cn('lg:sticky lg:top-16', !showPreview && 'hidden lg:block')}>
             <div className="rounded-3xl border bg-gradient-to-b from-muted/60 to-background p-4">
               <PreviewTextHighlight textKey={section === 'texts' ? highlightText : null} lang={previewLang}>
+              <div className={cn(landscapeView && 'grid items-start gap-3 [grid-template-columns:minmax(0,1fr)_minmax(0,2.6fr)]')}>
+              {landscapeView ? (
+                <div className="min-w-0 pt-16">
+                  <KioskPreview
+                    config={draft}
+                    previewLang={draft.general.languages?.[0] ?? 'he'}
+                    catalog={catalogQuery.data ?? null}
+                    categoryImageUrls={imagesQuery.data?.images ?? {}}
+                    categoryColors={imagesQuery.data?.colors ?? {}}
+                    fonts={fonts}
+                    screen={screen}
+                    onScreen={setScreen}
+                    brandName={brandName}
+                    nowMs={nowMs}
+                    frame="tablet"
+                    bare
+                  />
+                </div>
+              ) : null}
+              <div className="min-w-0">
               <KioskPreview
+                frame={landscapeView ? 'landscape' : undefined}
                 config={draft}
                 previewLang={section === 'texts' ? previewLang : (draft.general.languages?.[0] ?? 'he')}
                 catalog={catalogQuery.data ?? null}
@@ -442,6 +501,8 @@ function EditorBody({
                     : undefined
                 }
               />
+              </div>
+              </div>
               </PreviewTextHighlight>
             </div>
           </aside>

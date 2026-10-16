@@ -7,7 +7,8 @@
  */
 
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
-import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme, kioskTargetCssPx } from '@dash-lib/displayProfile';
+import { browserFacts, displayProfile, kioskDisplay, kioskTargetCssPx } from '@dash-lib/displayProfile';
+import { applyLandscape, landscapeLook, lookColumns } from '@dash-lib/kioskLandscape';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -207,12 +208,9 @@ function useKioskDisplay() {
 
 export function KioskApp({ view }: { view: KioskView }) {
   const screenDisplay = useKioskDisplay();
-  const cfg = useMemo(() => {
-    const base = view.config as unknown as KioskConfig;
-    if (!screenDisplay.display.landscape) return base;
-    const theme = kioskDisplayTheme(base.theme, screenDisplay.display);
-    return theme === base.theme ? base : { ...base, theme };
-  }, [view.config, screenDisplay.display]);
+  // "עיצוב לרוחב" (lib/kioskLandscape.ts, P:/specs/kiosk-landscape-design.md): in landscape the block's design keys over
+  // the normal design, the automatic decisions (side cart, rail / tabs) for what it left unset; portrait as it is.
+  const cfg = useMemo(() => applyLandscape(view.config as unknown as KioskConfig, screenDisplay.display).config, [view.config, screenDisplay.display]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // "איך תרצו לשלם?" (payment.methods, stepModes.payMethod — payMethodAsk): what this kiosk can take now
   // (the card through its terminal, a voucher online, cash at the till), asked by the step's mode.
@@ -735,7 +733,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
-  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
+  // …and the landscape sizes ("לא ענקיים") in this window's CSS px (the page zoom: cssPerDip), never a dish wider than the
+  // landscape tile (the standard catalog's rail and side basket beside).
+  const look = landscapeLook(cfg, screenDisplay.display, size.w, screenDisplay.cssPerDip);
+  const panelPx = screenDisplay.display.sideCart ? Math.round(screenDisplay.display.panelWidthDp * screenDisplay.cssPerDip) : 132;
+  const cols = lookColumns(
+    look,
+    productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w),
+    size.w - (side && look ? look.columnPx : side ? 76 : 0) - (panel ? panelPx : 0),
+  );
   const rules = { ...rulesOf(cfgIn, cart.length === 0), asksPayMethod: asksPay };
   const back = () => {
     // An upsell window: "לא תודה" — unless it is "חובה" (answered only, never backed out of).
@@ -840,6 +846,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    landscape: look,
     // Landscape: the cart and the checkout's steps in two columns, a readable width (kiosk-shared ScreenBody).
     twoColumns: screenDisplay.display.twoColumns,
     contentMaxWidth: screenDisplay.display.contentMaxWidthDp ? Math.round(screenDisplay.display.contentMaxWidthDp * screenDisplay.cssPerDip) : null,
@@ -1109,7 +1116,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   const overlay = messageScreen && messagePlacement(messageScreen) === 'overlay-center';
   const weights = typeWeights(cfg.theme.typeWeight);
   const rootVars = {
-    '--k-scale': String(typeScaleFactor(cfg.theme.typeScale)),
+    '--k-scale': String(typeScaleFactor(cfg.theme.typeScale) * (look?.textFactor ?? 1)),
     '--k-w-body': String(weights.body),
     '--font-weight-medium': String(weights.medium),
     '--font-weight-semibold': String(weights.semibold),
