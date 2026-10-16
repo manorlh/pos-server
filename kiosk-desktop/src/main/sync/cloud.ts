@@ -87,12 +87,14 @@ export interface PosUser {
    * approval | deny) — absent from an older server (the legacy `role` answers then).
    */
   permissions?: Record<string, string> | null;
+  /** The role's limits (`{code: {maxAmount, maxPercent}}`): a cash out above a supervisor's ₪200 asks a manager. */
+  limits?: Record<string, Record<string, number>> | null;
   tillRoleKey?: string | null;
   tillRoleName?: string | null;
 }
 
-/** The roster's shape kept here; a copy from before it (no shop, no permissions) is pulled again in full. */
-const POS_USERS_SHAPE = '2';
+/** The roster's shape kept here; a copy from before it (no shop, no permissions, no limits) is pulled again in full. */
+const POS_USERS_SHAPE = '3';
 
 /** A secret store (Electron safeStorage) for the machine token; plain in Node tools. */
 export interface SecretBox {
@@ -330,6 +332,7 @@ export class CloudStore {
         isActive: u.isActive !== false,
         shopId: typeof u.shopId === 'string' ? u.shopId : null,
         permissions: permissionsOf(u.permissions),
+        limits: limitsOf(u.limits),
         tillRoleKey: typeof u.tillRoleKey === 'string' ? u.tillRoleKey : null,
         tillRoleName: typeof u.tillRoleName === 'string' ? u.tillRoleName : null,
       }),
@@ -348,6 +351,19 @@ function permissionsOf(v: unknown): Record<string, string> | null {
   const out: Record<string, string> = {};
   for (const [code, state] of Object.entries(v as Record<string, unknown>)) {
     if (state === 'allow' || state === 'approval' || state === 'deny') out[code] = state;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** `{code: {key: number}}` as the roster carries a role's limits; anything else dropped (null when nothing is left). */
+function limitsOf(v: unknown): Record<string, Record<string, number>> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out: Record<string, Record<string, number>> = {};
+  for (const [code, lim] of Object.entries(v as Record<string, unknown>)) {
+    if (!lim || typeof lim !== 'object' || Array.isArray(lim)) continue;
+    const vals: Record<string, number> = {};
+    for (const [k, n] of Object.entries(lim as Record<string, unknown>)) if (typeof n === 'number' && Number.isFinite(n)) vals[k] = n;
+    if (Object.keys(vals).length > 0) out[code] = vals;
   }
   return Object.keys(out).length > 0 ? out : null;
 }

@@ -1082,3 +1082,44 @@
 .t-strong dd {
   font-weight: 700;
 }
+
+/* "מגירת מזומן" (screens/DrawerScreen.tsx): the reason picked, the shift's log. */
+.t-menu-row.t-menu-on {
+  background: var(--t-accent-soft);
+  color: var(--t-accent);
+  font-weight: 700;
+}
+
+.t-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.t-list-row {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--t-line);
+  font-size: 14px;
+}
+
+/* A notice about the employee's sign-in / the change owed (userSessions, tillCash): above the till, not over it. */
+.t-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--t-warn-soft);
+  color: var(--t-warn);
+  font-size: 14px;
+}
+
+.t-notice .t-notice-text {
+  flex: 1;
+}
+
+/* The engine's question answered by itself when its time is up ("לפתוח מגירה?"). */
+.t-countdown {
+  margin: 0 0 8px;
+  color: var(--t-muted);
+  font-size: 13px;
+}

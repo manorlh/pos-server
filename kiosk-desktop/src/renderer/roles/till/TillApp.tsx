@@ -26,6 +26,7 @@ import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
 import { CheckoutScreen } from './screens/CheckoutScreen';
+import { DrawerScreen, type DrawerLog, type WalletRow } from './screens/DrawerScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
 import { LockScreen } from './screens/LockScreen';
 import { MenuScreen } from './screens/MenuScreen';
@@ -38,7 +39,7 @@ import { useTillEngine } from './useTillEngine';
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen';
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -175,10 +176,29 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return (
         <MenuScreen
           state={s}
-          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : 'caps')}
+          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : to === 'drawer' ? 'drawer' : to === 'drawerOpen' ? 'drawerOpen' : 'caps')}
           signOut={() => void run('session.logout', {})}
           switchTo={() => void run('mode.switch', { to: 'kiosk' })}
           back={() => setView('sell')}
+        />
+      );
+    }
+    if ((view === 'drawer' || view === 'drawerOpen') && s.drawer) {
+      return (
+        <DrawerScreen
+          drawer={s.drawer}
+          initial={view === 'drawerOpen' ? 'reason' : 'menu'}
+          actions={{
+            open: (reason, note) => run('drawer.open', { reason, note }),
+            movement: (type, amountAgorot, reason, note, source) => run('drawer.movement', { type, amountAgorot, reason, note, source }),
+            count: () => run('drawer.count', {}),
+            countSave: (countedAgorot) => run('drawer.countSave', { countedAgorot }),
+            countDone: () => run('drawer.countDone', {}),
+            wallets: async () => (await run('drawer.wallets', {})) as { wallets: WalletRow[]; offline: boolean } | undefined,
+            deposit: (employeeId, countedAgorot) => run('drawer.walletDeposit', { employeeId, countedAgorot }),
+            log: async () => (await run('drawer.log', {})) as DrawerLog | undefined,
+            back: () => setView('menu'),
+          }}
         />
       );
     }
@@ -252,7 +272,11 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               {T.caps}
             </button>
           ) : (
-            <button type="button" className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' || view === 'shopx' ? ' t-nav-on' : ''}`} onClick={() => setView('menu')}>
+            <button
+              type="button"
+              className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' || view === 'shopx' || view === 'drawer' || view === 'drawerOpen' ? ' t-nav-on' : ''}`}
+              onClick={() => setView('menu')}
+            >
               {T.menu}
             </button>
           )}

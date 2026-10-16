@@ -29,6 +29,7 @@ import {
   type SaleOption,
   type SaleTotals,
   type XDoc,
+  type XTill,
 } from '../../core/sale';
 import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
@@ -371,7 +372,17 @@ export class Ledger {
    * (a card-only kiosk: 0), in one transaction with its outbox row. Refused while a payment is
    * pending in it.
    */
-  closeShift(input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now?: Date; countedCashAgorot?: number | null }):
+  closeShift(input: {
+    closedByName: string;
+    closedByUserId?: string | null;
+    unattended?: boolean;
+    closeRequestId?: string | null;
+    vatRate: number;
+    now?: Date;
+    countedCashAgorot?: number | null;
+    /** The till's drawer figures on the X (core/till/drawer.ts `tillWithDrawer`: the movements and the wallets), by the shift. */
+    tillExtra?: (till: XTill, shiftId: string) => XTill;
+  }):
     | { kind: 'closed'; shift: ShiftRow; payload: Record<string, unknown> }
     | { kind: 'none' }
     | { kind: 'pending'; count: number } {
@@ -604,9 +615,20 @@ export class Ledger {
 export function shiftCloseWire(
   shift: ShiftRow,
   docs: readonly DocDraft[],
-  input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now: string; countedCashAgorot?: number | null },
+  input: {
+    closedByName: string;
+    closedByUserId?: string | null;
+    unattended?: boolean;
+    closeRequestId?: string | null;
+    vatRate: number;
+    now: string;
+    countedCashAgorot?: number | null;
+    tillExtra?: (till: XTill, shiftId: string) => XTill;
+  },
 ): Record<string, unknown> {
-  const { till, reportableIds } = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
+  const built = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
+  const reportableIds = built.reportableIds;
+  const till = input.tillExtra ? input.tillExtra(built.till, shift.id) : built.till;
   const unattended = input.unattended ?? false;
   const payload: Record<string, unknown> = {
     closedAt: input.now,

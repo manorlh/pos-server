@@ -76,7 +76,7 @@ import { openDb, type Db } from './db/sqlite';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
-import { Outbox, type OutboxRow } from './sync/outbox';
+import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
@@ -1190,7 +1190,17 @@ export class KioskService extends EventEmitter {
     if (reply.body.promotions?.changed) await within(this.sync.pullPromotions(), PROMOTIONS_PULL_TIMEOUT_MS);
   }
 
+  /** Side rows a module sends itself (the till's drawer audit and cash movements, main/till/drawerService.ts). */
+  private readonly sideRequesters = new Map<OutboxKind, (row: OutboxRow) => { path: string; body: unknown } | null>();
+
+  /** A module's own side kind: its request for each row (null drops the row). */
+  registerSideKind(kind: OutboxKind, request: (row: OutboxRow) => { path: string; body: unknown } | null): void {
+    this.sideRequesters.set(kind, request);
+  }
+
   private sideRequest(row: OutboxRow): { path: string; body: unknown } | null {
+    const own = this.sideRequesters.get(row.kind);
+    if (own) return own(row);
     if (row.kind === 'transmission') {
       const t = this.kv.getJson<Record<string, unknown>>(`transmission:${row.ref_id}`);
       return t ? { path: 'transmissions', body: t } : null;

@@ -243,6 +243,15 @@ export interface XTill {
   vatTotal?: number;
   transactionsCount: number;
   itemsCount: number;
+  /**
+   * "מגירת מזומן" (core/till/drawer.ts `tillWithDrawer`): the shift's Cash In / Cash Out / deposits, and the cash its payments
+   * left with employees / employees deposited here ("הכסף אצלי", drawer-away §5.6) — only when not zero, already in expectedCash.
+   */
+  cashIn?: number;
+  cashOut?: number;
+  deposits?: number;
+  walletIn?: number;
+  walletDeposits?: number;
 }
 
 export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, currentRate: number): { till: XTill; reportableIds: string[] } {

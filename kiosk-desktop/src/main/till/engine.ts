@@ -65,6 +65,10 @@ import {
 } from '../../shared/till/protocol';
 import { legsOf, xDocOf, type AppliedPromotionRow, type DocDraft } from '../fiscal/ledger';
 import type { KioskService } from '../service';
+import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../../core/till/drawer';
+import { DRAWER_PERM } from '../../core/till/drawer';
+import { TillDrawer } from './tillDrawer';
+import type { DialogSpec, TillContext } from './tillContext';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -115,7 +119,28 @@ const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2
 const LOGIN_LOCK = 'till.loginLock';
 const APPROVAL_LOCK = 'till.approvalLock';
 /** The codes the screens show or hide by. */
-const SESSION_CODES = [PERM.SELL, PERM.SHIFT_OPEN, PERM.SHIFT_CLOSE, PERM.X, PERM.Z, PERM.REPRINT, PERM.DRAWER_ON_CASH_SALE, PERM.KIOSK_TILL_MODE, PERM.SHOP_X];
+const SESSION_CODES = [
+  PERM.SELL,
+  PERM.SHIFT_OPEN,
+  PERM.SHIFT_CLOSE,
+  PERM.X,
+  PERM.Z,
+  PERM.REPRINT,
+  PERM.DRAWER_ON_CASH_SALE,
+  PERM.KIOSK_TILL_MODE,
+  PERM.SHOP_X,
+  // "מגירת מזומן" (tillDrawer.ts): the screens' drawer rows.
+  DRAWER_PERM.MANUAL,
+  DRAWER_PERM.CHANGE,
+  DRAWER_PERM.CASH_IN,
+  DRAWER_PERM.CASH_OUT,
+  DRAWER_PERM.DEPOSIT,
+  DRAWER_PERM.COUNT,
+  DRAWER_PERM.BLIND_COUNT,
+  DRAWER_PERM.WALLET_DEPOSIT,
+  DRAWER_PERM.VIEW_LOG,
+  DRAWER_PERM.VIEW_MOVEMENTS,
+];
 
 const sh = (agorot: number) => formatShekelSign(agorot);
 
@@ -188,6 +213,12 @@ interface PendingDialog {
   /** A check of the typed code of its own (the work mode's, against KIOSK_TILL_MODE in the runtime); else `code` against the roster. */
   verify?: (pin: string) => Promise<{ ok: true; by: Approver } | { ok: false; message: string }>;
   resume(approver: Approver | null): Promise<unknown> | unknown;
+  /** A choice (a module's question, tillContext.ts): every action but "cancel" comes here. */
+  onAction?: (action: string, answers: Record<string, string>) => unknown;
+  onCancel?: () => unknown;
+  /** Unanswered until then: closed, and `onTimeout` runs ("לפתוח מגירה?" after `cashDrawerAskTimeoutSec`). */
+  timer?: NodeJS.Timeout;
+  onTimeout?: () => unknown;
 }
 
 interface CheckoutRec {
@@ -272,6 +303,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private tick: NodeJS.Timeout | null = null;
   private stopped = false;
   private lastState = '';
+  /** What the modules that add a feature to the till are handed (tillContext.ts). */
+  readonly ctx: TillContext;
+  /** "מגירת מזומן": the drawer's flows, its audit and movements (tillDrawer.ts). */
+  readonly drawer: TillDrawer;
 
   constructor(private readonly o: TillEngineOptions) {
     this.svc = o.svc;
@@ -279,6 +314,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.nowFn = o.now ?? (() => Date.now());
     this.log = o.log ?? (() => undefined);
     this.lastActivityAt = this.nowFn();
+    this.ctx = this.makeContext();
+    this.drawer = new TillDrawer(this.ctx, { expectedBalance: () => this.expectedNow() });
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
@@ -288,8 +325,50 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.attachWorkMode();
   }
 
+  private makeContext(): TillContext {
+    return {
+      svc: this.svc,
+      compare: this.compare,
+      now: () => this.nowFn(),
+      log: (m) => this.log(m),
+      operator: () => (this.cashier && !this.locked ? this.cashier : null),
+      signedIn: () => this.signedIn(),
+      roster: () => this.roster(),
+      shopId: () => this.shop(),
+      refuse: (code, message, details) => refuse(code, message, details),
+      ask: (d) => this.ask(d),
+      toast: (text, tone = 'info') => this.toast(text, tone),
+      changed: () => {
+        this.dirty = true;
+        this.commit();
+      },
+      later: (fn) => this.later(fn),
+      paying: () => this.paying(),
+    };
+  }
+
+  /** A module's question (tillContext.ts `DialogSpec`): the engine's dialog, with its choices and its time. */
+  private ask(d: DialogSpec): { dialogId: string } {
+    this.openDialog({
+      kind: d.kind,
+      title: d.title,
+      body: d.body,
+      fields: d.fields,
+      actions: d.actions,
+      code: d.code ?? null,
+      verify: d.verify,
+      resume: d.resume ?? (() => undefined),
+      onAction: d.onAction,
+      onCancel: d.onCancel,
+      expiresInMs: d.expiresInMs,
+      onTimeout: d.onTimeout,
+    });
+    return { dialogId: this.pending!.dialog.id };
+  }
+
   stop() {
     this.stopped = true;
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
     if (this.tick) clearInterval(this.tick);
@@ -504,6 +583,23 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'hw.result':
         // The real engine carries out its own hardware: nothing arrives from a page (the role refuses it too).
         return undefined;
+      // "מגירת מזומן" (tillDrawer.ts).
+      case 'drawer.open':
+        return this.drawer.openManual(typeof a.reason === 'string' ? a.reason : null, typeof a.note === 'string' ? a.note : null);
+      case 'drawer.movement':
+        return this.drawer.movement(a.type, a.amountAgorot, a.reason, a.note, a.source);
+      case 'drawer.count':
+        return this.drawer.startCount();
+      case 'drawer.countSave':
+        return this.drawer.saveCount(a.countedAgorot);
+      case 'drawer.countDone':
+        return this.drawer.closeCount();
+      case 'drawer.wallets':
+        return this.drawer.listWallets();
+      case 'drawer.walletDeposit':
+        return this.drawer.deposit(a.employeeId, a.countedAgorot);
+      case 'drawer.log':
+        return this.drawer.log();
     }
     return refuse('unknown_op');
   }
@@ -552,7 +648,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
     this.cashier = null;
     this.locked = true;
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.pending = null;
+    this.drawer.reset();
     // The shop's figures were for the user who asked: gone with them.
     this.shopXDoc = null;
     this.shopXError = null;
@@ -584,17 +682,68 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return { dialogId: this.pending!.dialog.id };
   }
 
-  private openDialog(d: { kind: EngineDialog['kind']; title: string; body: string; fields: EngineDialog['fields']; actions: EngineDialog['actions']; code: string | null; resume: PendingDialog['resume']; verify?: PendingDialog['verify'] }) {
+  private openDialog(d: {
+    kind: EngineDialog['kind'];
+    title: string;
+    body: string;
+    fields: EngineDialog['fields'];
+    actions: EngineDialog['actions'];
+    code: string | null;
+    resume: PendingDialog['resume'];
+    verify?: PendingDialog['verify'];
+    onAction?: PendingDialog['onAction'];
+    onCancel?: PendingDialog['onCancel'];
+    expiresInMs?: number;
+    onTimeout?: PendingDialog['onTimeout'];
+  }) {
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.dialogSeq += 1;
-    this.pending = { dialog: { id: `d${this.dialogSeq}`, kind: d.kind, title: d.title, body: d.body, fields: d.fields, actions: d.actions }, code: d.code, verify: d.verify, resume: d.resume };
+    const id = `d${this.dialogSeq}`;
+    const expiresAt = d.expiresInMs && d.expiresInMs > 0 ? this.nowFn() + d.expiresInMs : undefined;
+    this.pending = {
+      dialog: { id, kind: d.kind, title: d.title, body: d.body, fields: d.fields, actions: d.actions, ...(expiresAt ? { expiresAt } : {}) },
+      code: d.code,
+      verify: d.verify,
+      resume: d.resume,
+      onAction: d.onAction,
+      onCancel: d.onCancel,
+      onTimeout: d.onTimeout,
+    };
+    if (expiresAt) {
+      const p = this.pending;
+      p.timer = setTimeout(() => {
+        void this.later(async () => {
+          if (this.pending !== p || this.stopped) return;
+          this.pending = null;
+          try {
+            await p.onTimeout?.();
+          } catch (e) {
+            this.log(`till dialog timeout: ${String(e)}`);
+          }
+          this.dirty = true;
+          this.commit();
+        });
+      }, d.expiresInMs);
+      p.timer.unref?.();
+    }
   }
 
   private async answerDialog(id: string, action: string, answers: Record<string, string>) {
     const p = this.pending;
     if (!p || p.dialog.id !== id) return refuse('invalid_args');
     if (action === 'cancel') {
+      if (p.timer) clearTimeout(p.timer);
       this.pending = null;
-      return undefined;
+      const v = await p.onCancel?.();
+      return v === undefined ? undefined : v;
+    }
+    // A choice: its actions are the answers (the drawers, "הכסף אצלי", "פתח" / "לא").
+    if (p.onAction && !p.verify && !p.code) {
+      if (!p.dialog.actions.some((a) => a.id === action)) return refuse('invalid_args');
+      if (p.timer) clearTimeout(p.timer);
+      this.pending = null;
+      const v = await p.onAction(action, answers);
+      return v === undefined ? undefined : v;
     }
     if (action !== 'approve') return refuse('invalid_args');
     let approver: Approver | null = null;
@@ -619,6 +768,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.svc.kv.setJson(APPROVAL_LOCK, NO_LOCK);
       approver = { id: out.user.id, name: displayName(out.user) };
     }
+    if (p.timer) clearTimeout(p.timer);
     this.pending = null;
     const value = await p.resume(approver);
     return value === undefined ? undefined : value;
@@ -1031,14 +1181,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.printOrAsk(doc);
   }
 
-  /** "פתיחת מגירה": on every payment that moves cash, when the till parameter and the user's right say so (the Android drawer, without its audit yet). */
+  /**
+   * "פתיחת מגירה" after a payment that moved cash (Android CheckoutViewModel.drawerAfterCash): through the drawer service only
+   * — its rules, its audit, "לפתוח מגירה?" (`cashDrawer` "בתשלום מזומן — לשאול"), and on a device away from the drawer where
+   * the money goes (drawer-away §5.3). The cash is what the cash legs took.
+   */
   private kickDrawer(doc: DocDraft) {
-    if (!legsOf(doc).some((l) => l.method === 'cash')) return;
-    const v = String(this.svc.cloud.parameters().cashDrawer ?? '').trim().toLowerCase();
-    const mode = v === '' || v === 'כבוי' || v === 'off' || v === 'false' ? 'off' : 'on';
-    if (mode === 'off') return;
-    if (!this.cashier || stateOf(this.cashier, PERM.DRAWER_ON_CASH_SALE) !== 'allow') return;
-    void this.svc.openDrawer().catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
+    const cash = legsOf(doc)
+      .filter((l) => l.method === 'cash')
+      .reduce((sum, l) => sum + l.amountAgorot, 0);
+    if (cash <= 0) return;
+    void Promise.resolve(this.drawer.afterCashSale({ id: doc.id, documentType: doc.documentType, number: doc.number }, cash)).catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
   }
 
   private printMode(): { off: boolean; ask: boolean } {
@@ -1190,15 +1343,39 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   private xFigures(shiftId: string) {
     const shift = this.svc.ledger.shift(shiftId)!;
-    return { shift, ...buildXTill(this.svc.ledger.docsOfShift(shiftId).map(xDocOf), shift.opening_cash, this.svc.vatRate()) };
+    const x = buildXTill(this.svc.ledger.docsOfShift(shiftId).map(xDocOf), shift.opening_cash, this.svc.vatRate());
+    // "מגירת מזומן": the shift's movements and wallets move the expected drawer (spec §8, drawer-away §5.6).
+    return { shift, ...x, till: this.withDrawer(x.till, shiftId) };
+  }
+
+  /** The X's `till` with the shift's Cash In / Out / deposits and wallets (only when not zero), as the close freezes them. */
+  private withDrawer(till: ReturnType<typeof buildXTill>['till'], shiftId: string) {
+    const t: { movements: CashMovementTotals; wallets: WalletTotals } = this.drawer.service.shiftTotals(shiftId);
+    return tillWithDrawer(till, t.movements, t.wallets);
+  }
+
+  /** The open shift's expected drawer now (spec §8), with its movements and wallets; null with no shift. */
+  private expectedNow(): number | null {
+    const shift = this.svc.ledger.currentShift();
+    if (!shift) return null;
+    return ofShekels(this.xFigures(shift.id).till.expectedCash);
   }
 
   /** The shift closed with the counted cash: X frozen into the close and printed, the documents flushed (no gate: the callers' own). */
   private closeNow(user: RosterUser, counted: number) {
-    const closed = this.svc.ledger.closeShift({ closedByName: displayName(user), closedByUserId: user.id, vatRate: this.svc.vatRate(), countedCashAgorot: counted, now: new Date(this.nowFn()) });
+    const closed = this.svc.ledger.closeShift({
+      closedByName: displayName(user),
+      closedByUserId: user.id,
+      vatRate: this.svc.vatRate(),
+      countedCashAgorot: counted,
+      now: new Date(this.nowFn()),
+      tillExtra: (till, shiftId) => this.withDrawer(till, shiftId),
+    });
     if (closed.kind === 'pending') return refuse('checkout_busy', WORDS.pendingBlocksClose(closed.count));
     if (closed.kind === 'none') return refuse('shift_closed');
     const fig = this.xFigures(closed.shift.id);
+    // "מגירת מזומן": the close's count as a count movement (spec §9) — counted, expected, variance, who.
+    this.drawer.service.recordCount(counted, this.drawer.service.settings().blindCount, null, { expectedAgorot: ofShekels(fig.till.expectedCash), shiftId: closed.shift.id });
     // The internal shift of an independent till has no paper of its own: its Z is the paper.
     if (!this.shiftsHidden()) {
       this.svc.printX({
@@ -1245,6 +1422,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       vatAgorot: a(t.vatTotal ?? 0),
       tipsAgorot: a(t.totalTips),
       itemsCount: t.itemsCount,
+      ...(t.cashIn ? { cashInAgorot: a(t.cashIn) } : {}),
+      ...(t.cashOut ? { cashOutAgorot: a(t.cashOut) } : {}),
+      ...(t.deposits ? { depositsAgorot: a(t.deposits) } : {}),
+      ...(t.walletIn ? { walletInAgorot: a(t.walletIn) } : {}),
+      ...(t.walletDeposits ? { walletDepositsAgorot: a(t.walletDeposits) } : {}),
     };
   }
 
@@ -1508,6 +1690,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       dialog,
       menuHidden: parseHiddenMenu(this.svc.cloud.parameters()[HIDDEN_MENU_PARAM]),
       tileText: tileTextOf(this.svc.cloud.parameters()),
+      drawer: this.drawer.state(),
       shopX: {
         offered: this.shopXHere(),
         report: this.shopXDoc?.doc ?? null,

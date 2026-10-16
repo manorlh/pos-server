@@ -86,6 +86,16 @@ export const TILL_OPS = [
   // "דוח X סניפי" (core/till/shopX.ts): the cloud's interim report of the shop — `refresh` asks the other tills first,
   // `print` prints the one on screen. Nothing changes: not a document.
   'report.shopX',
+  // "מגירת מזומן" (main/till/tillDrawer.ts): "פתח מגירה" with its reason, Cash In / Out / Deposit, a count, "הפקדת מזומן
+  // מעובד", the shift's log and movements. Every opening goes through the drawer service's rules (a manager when they ask).
+  'drawer.open',
+  'drawer.movement',
+  'drawer.count',
+  'drawer.countSave',
+  'drawer.countDone',
+  'drawer.wallets',
+  'drawer.walletDeposit',
+  'drawer.log',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -114,6 +124,12 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'checkout.print',
   'checkout.recheckCard',
   'checkout.markNotApproved',
+  'drawer.open',
+  'drawer.movement',
+  'drawer.count',
+  'drawer.countSave',
+  'drawer.countDone',
+  'drawer.walletDeposit',
 ]);
 
 export interface OpArgs {
@@ -152,6 +168,16 @@ export interface OpArgs {
   'checkout.print': { print: boolean };
   'checkout.recheckCard': Record<string, never>;
   'checkout.markNotApproved': Record<string, never>;
+  /** A reason code (core/till/drawer.ts DRAWER_REASONS, not a movement's), and its note ("אחר"). */
+  'drawer.open': { reason?: string | null; note?: string | null };
+  'drawer.movement': { type: 'CASH_IN' | 'CASH_OUT' | 'DEPOSIT'; amountAgorot: number; reason?: string | null; note?: string | null; source?: string | null };
+  'drawer.count': Record<string, never>;
+  'drawer.countSave': { countedAgorot: number };
+  'drawer.countDone': Record<string, never>;
+  'drawer.wallets': Record<string, never>;
+  /** An employee of the list `drawer.wallets` gave last, and what was counted into the drawer. */
+  'drawer.walletDeposit': { employeeId: string; countedAgorot: number };
+  'drawer.log': Record<string, never>;
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -371,6 +397,8 @@ export interface EngineDialog {
   body: string;
   fields: DialogField[];
   actions: Array<{ id: string; label: string; primary?: boolean }>;
+  /** Unanswered until then (epoch ms) the engine answers itself ("לפתוח מגירה?" — `cashDrawerAskTimeoutSec`): a countdown. */
+  expiresAt?: number;
 }
 
 export interface ModeState {
@@ -403,6 +431,18 @@ export interface TillState {
   tileText?: TileTextState;
   /** "דוח X סניפי" (core/till/shopX.ts): offered on this till, and the report last brought (until sign-out). */
   shopX?: ShopXState;
+  /** "מגירת מזומן" (main/till/tillDrawer.ts): the menu's drawer rows, the reasons, a count in progress. */
+  drawer?: DrawerState;
+}
+
+export interface DrawerState {
+  offered: { open: boolean; cashIn: boolean; cashOut: boolean; deposit: boolean; count: boolean; walletDeposit: boolean; log: boolean };
+  requireReason: boolean;
+  requireNoteForOther: boolean;
+  movementsEnabled: boolean;
+  blindCount: boolean;
+  reasons: Array<{ code: string; label: string }>;
+  count: { blind: boolean; expectedAgorot: number | null; result: { countedAgorot: number; expectedAgorot: number | null; varianceAgorot: number | null } | null } | null;
 }
 
 export interface ShopXState {
@@ -436,6 +476,12 @@ export interface XReport {
   vatAgorot?: number;
   tipsAgorot?: number;
   itemsCount?: number;
+  /** "מגירת מזומן": the shift's Cash In / Cash Out / deposits, and the wallets (drawer-away §5.6) — in the expected cash. */
+  cashInAgorot?: number;
+  cashOutAgorot?: number;
+  depositsAgorot?: number;
+  walletInAgorot?: number;
+  walletDepositsAgorot?: number;
   /** The paper went to the printer. */
   printed?: boolean;
 }

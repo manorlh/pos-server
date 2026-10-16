@@ -58,6 +58,8 @@ export interface RosterUser {
   shopId?: string | null;
   /** The cloud's effective permissions (code → allow | approval | deny); absent from an older server. */
   permissions?: Record<string, string> | null;
+  /** The role's limits (`{code: {maxAmount, maxPercent}}`, shekels / percent): an "allow" above one asks a manager. */
+  limits?: Record<string, Record<string, number>> | null;
   tillRoleName?: string | null;
 }
 

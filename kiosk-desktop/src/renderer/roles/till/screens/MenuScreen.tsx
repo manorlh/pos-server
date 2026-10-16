@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -23,6 +23,11 @@ interface Row {
   shiftRow?: boolean;
   /** "דוח X סניפי": only where the till's parameters put it (`shopXTills`). */
   onlyShopX?: boolean;
+  /**
+   * Shown only when the engine says so (the drawer's rows: its mode, the role — Android's `offered`); an engine that does not
+   * say (the demo) shows the row as "בקרוב".
+   */
+  when?: (s: TillState) => boolean | undefined;
 }
 
 const GROUPS: Array<{ title: string; rows: Row[] }> = [
@@ -32,8 +37,14 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
       { key: 'shift', label: 'משמרת (דו״ח X)', to: 'shift', shiftRow: true },
       { key: 'shift_close', label: 'סגירת משמרת', to: 'shift', perm: 'SHIFT_CLOSE', shiftRow: true },
       { key: 'till_z', label: 'הפק Z', to: 'shift', perm: 'Z', onlyTillZ: true },
-      { key: 'open_cash_drawer', label: 'פתיחת מגירה' },
-      { key: 'cash_menu', label: 'מזומן במגירה', sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות' },
+      { key: 'open_cash_drawer', label: 'פתיחת מגירה', to: 'drawerOpen', when: (s) => s.drawer?.offered.open },
+      {
+        key: 'cash_menu',
+        label: 'מזומן במגירה',
+        sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות',
+        to: 'drawer',
+        when: (s) => (s.drawer ? Object.entries(s.drawer.offered).some(([k, v]) => k !== 'open' && v) : undefined),
+      },
       { key: 'refund', label: 'זיכוי' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },
@@ -86,9 +97,10 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
           <ul className="t-menu">
             {g.rows
               .filter((r) => (!r.perm || perms.includes(r.perm)) && (!r.onlyTillZ || tillZ) && (!r.onlyShopX || state.shopX?.offered === true) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
+              .filter((r) => !r.when || r.when(state) !== false)
               .map((r) => (
                 <li key={r.label}>
-                  {r.to ? (
+                  {r.to && (!r.when || r.when(state) === true) ? (
                     <button type="button" className="t-menu-row" onClick={() => go(r.to!)}>
                       <span>{r.label}</span>
                     </button>
