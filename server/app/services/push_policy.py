@@ -746,11 +746,15 @@ def status_for(db: Session, user: Any, tenant_id: Any, endpoint_hash: Optional[s
         "thisDeviceRegistered": this is not None,
         "thisDevice": (
             {"lastSuccessAt": _iso(this.last_success_at), "lastFailureAt": _iso(this.last_failure_at),
-             "failing": this_failing}
+             "failing": this_failing,
+             # "בדיקת התראות" (fix/pwa-push): which device, and why its last message failed.
+             "id": str(this.id), "label": this.label, "lastError": this.last_error,
+             "failureCount": int(this.failure_count or 0), "service": webpush.service_of(this.endpoint)}
             if this is not None else None
         ),
         "configured": vapid is not None,
         "publicKey": vapid.public_key if vapid is not None else None,
+        "problem": webpush.config_problem(),
     }
 
 

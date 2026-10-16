@@ -1231,7 +1231,9 @@ class TestStage2Migration:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["e5a9c3d1f7b2"]
+        # One head, descending from this revision (later revisions land on top of it).
+        (head,) = script.get_heads()
+        assert "e5a9c3d1f7b2" in {r.revision for r in script.iterate_revisions(head, "base")}
 
 
 class TestMigration:

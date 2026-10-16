@@ -75,7 +75,8 @@ class Settings(BaseSettings):
 
     # "התראות לטלפון" (Web Push, app/services/webpush.py): the VAPID key pair, base64url — the
     # 65-byte public point and the 32-byte private scalar (`python -m scripts.generate_vapid_keys`).
-    # Set only in the environment; never committed. Both empty = phone alerts off.
+    # Set only in the environment; never committed. No private key = phone alerts off; the public
+    # key browsers get is always derived from the private one (fix/pwa-push).
     webpush_vapid_public_key: str = ""
     webpush_vapid_private_key: str = ""
     # The contact the push services see ("mailto:…" or "https://…"). Empty = the dashboard's

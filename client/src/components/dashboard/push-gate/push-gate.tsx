@@ -23,7 +23,7 @@ import { BellOff, Download, Smartphone, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { promptInstall, useInstallPromptAvailable } from '@/lib/installPrompt';
-import { currentEndpointHash, resubscribeThisBrowserSilently } from '@/lib/pushAlertsApi';
+import { currentEndpointHash, resubscribeThisBrowserSilently, subscriptionKeyMatches, tellWorker } from '@/lib/pushAlertsApi';
 import { deviceReady } from '@/lib/pushPolicy';
 import { fetchPushStatus } from '@/lib/pushPolicyApi';
 import {
@@ -240,7 +240,11 @@ function Gate({ userId, device }: { userId: string; device: DeviceSnapshot }) {
     queryKey: ['push-status'],
     queryFn: async () => {
       const hash = await currentEndpointHash().catch(() => null);
-      return { ...(await fetchPushStatus(hash)), hasSubscription: !!hash };
+      const data = await fetchPushStatus(hash);
+      // fix/pwa-push: a subscription made with another key (the server's keys changed) is not registered.
+      const keyMatches = await subscriptionKeyMatches(data.publicKey).catch(() => true);
+      void tellWorker(data.publicKey);
+      return { ...data, hasSubscription: !!hash, keyMatches };
     },
     staleTime: 60_000,
     refetchOnWindowFocus: true,
@@ -261,7 +265,7 @@ function Gate({ userId, device }: { userId: string; device: DeviceSnapshot }) {
         ...flags,
         configured: status.data.configured,
         mode: status.data.required,
-        registered: status.data.hasSubscription && deviceReady(status.data),
+        registered: status.data.hasSubscription && status.data.keyMatches && deviceReady(status.data),
         resubscribeTried,
         installPrompt,
       }
@@ -276,11 +280,11 @@ function Gate({ userId, device }: { userId: string; device: DeviceSnapshot }) {
   useEffect(() => {
     if (!resubscribe || resubscribing.current) return;
     resubscribing.current = true;
-    void resubscribeThisBrowserSilently(publicKey)
+    void resubscribeThisBrowserSilently(publicKey, userId)
       .catch(() => false)
       .then(() => qc.invalidateQueries({ queryKey: ['push-status'] }))
       .finally(() => setResubscribeTried(true));
-  }, [resubscribe, publicKey, qc]);
+  }, [resubscribe, publicKey, qc, userId]);
 
   if (!facts || !view) return null;
 
@@ -330,6 +334,7 @@ function Gate({ userId, device }: { userId: string; device: DeviceSnapshot }) {
           open
           facts={facts}
           publicKey={publicKey}
+          userId={userId}
           startAt={screen.open ? screen.startAt : undefined}
           onClose={closeScreen}
           onChanged={() => {
