@@ -1294,3 +1294,45 @@
 .t-bad {
   color: #c62828;
 }
+
+/* "חסומים כעת" / "חסום / אזל" (BlocksScreen). */
+.t-block-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.t-block-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 10px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+}
+.t-block-pill-blocked {
+  background: #dc2626;
+}
+.t-block-pill-soldout {
+  background: #b45309;
+}
+.t-btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.t-block-sheet {
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.t-block-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 10px 0;
+}
+.t-block-form legend {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.t-picker {
+  max-height: 50vh;
+  overflow-y: auto;
+}

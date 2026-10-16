@@ -37,6 +37,9 @@ export function gridWindow(rows: number, rowHeight: number, scrollTop: number, v
   return { first, last, padTop: first * step, padBottom: (rows - 1 - last) * step };
 }
 
+/** A tile held this long opens "חסום / אזל" (Android SellViewModel LOCK_PRESS_MS). */
+export const HOLD_MS = 7_000;
+
 export function ProductGrid({
   products,
   departments,
@@ -44,6 +47,7 @@ export function ProductGrid({
   tileHeight,
   onAdd,
   onInfo,
+  onHold,
   tileText = TILE_TEXT_DEFAULTS,
 }: {
   products: Product[];
@@ -53,9 +57,28 @@ export function ProductGrid({
   onAdd(productId: string): void;
   /** The "i": the item's window (absent: no badge). */
   onInfo?(product: Product): void;
+  /** A tile held 7 s (Android LOCK_PRESS_MS): "חסום / אזל" for it (absent: a hold is a tap). */
+  onHold?(productId: string): void;
   tileText?: TileTextState;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const hold = useRef<{ timer: number; fired: boolean } | null>(null);
+  const holdStart = (id: string) => {
+    if (!onHold) return;
+    if (hold.current) window.clearTimeout(hold.current.timer);
+    const h = { timer: 0, fired: false };
+    h.timer = window.setTimeout(() => {
+      h.fired = true;
+      onHold(id);
+    }, HOLD_MS);
+    hold.current = h;
+  };
+  const holdEnd = () => {
+    if (hold.current && !hold.current.fired) {
+      window.clearTimeout(hold.current.timer);
+      hold.current = null;
+    }
+  };
   const [scrollTop, setScrollTop] = useState(0);
   const [viewHeight, setViewHeight] = useState(900);
   const [viewWidth, setViewWidth] = useState(800);
@@ -123,7 +146,18 @@ export function ProductGrid({
                 type="button"
                 className={`t-tile${p.sale ? ' t-tile-off' : ''}${info ? ' t-tile-has-info' : ''}`}
                 style={{ borderInlineStartColor: colorOf.get(p.departmentId) ?? '#9aa1ab' }}
-                onClick={() => onAdd(p.id)}
+                onPointerDown={() => holdStart(p.id)}
+                onPointerUp={holdEnd}
+                onPointerLeave={holdEnd}
+                onPointerCancel={holdEnd}
+                onClick={() => {
+                  // A hold that opened the sheet is not a tap as well.
+                  if (hold.current?.fired) {
+                    hold.current = null;
+                    return;
+                  }
+                  onAdd(p.id);
+                }}
               >
                 <span className="t-tile-name" style={{ fontSize: name.px, WebkitLineClamp: name.lines }} title={name.whole ? undefined : p.name}>
                   {p.name}

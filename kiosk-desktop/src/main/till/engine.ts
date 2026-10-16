@@ -214,6 +214,8 @@ import { TillDrawer } from './tillDrawer';
 import { TillRemotePrint, type TillRemotePrintOptions } from './tillRemotePrint';
 import { TillTransmission } from './tillTransmission';
 import { TillShopXLan } from './tillShopXLan';
+import { TillItemBlocks } from './tillItemBlocks';
+import { IB_TEXT } from '../../core/till/itemBlocks';
 import type { LanCall } from '../kitchen/kitchenNet';
 import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
 import { TillSessions } from './userSessions';
@@ -682,6 +684,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly transmission: TillTransmission;
   /** "דוח X סניפי" over the LAN: this till's part in the main till's report (tillShopXLan.ts). */
   readonly shopXLan: TillShopXLan;
+  /** "חסומים כעת" / "חסום / אזל" (tillItemBlocks.ts). */
+  readonly itemBlocks: TillItemBlocks;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -710,6 +714,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       sleep: o.shopXLan?.sleep,
     });
     if (o.shopXLan?.manual !== true) this.shopXLan.start();
+    this.itemBlocks = new TillItemBlocks(this.ctx, {
+      wide: () => {
+        const d = decide(this.profile(), PERM.ITEM_BLOCK_WIDE);
+        return d.kind === 'allowed' ? 'allow' : d.kind === 'approval' ? 'approval' : 'deny';
+      },
+      // "permissionsDeniedUi": a locked option is left out unless the till shows it greyed with why.
+      deniedHidden: () => String(this.svc.cloud.parameters().permissionsDeniedUi ?? '').trim() !== 'הצג מושבת עם הסבר',
+    });
+    this.itemBlocks.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -790,6 +803,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.remotePrint.stop();
     this.transmission.stop();
     this.shopXLan.stop();
+    this.itemBlocks.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -1110,6 +1124,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.vouchers.remove(a.id);
       case 'checkout.finishTest':
         return this.finishTest();
+      case 'blocks.list':
+        return this.itemBlocks.list();
+      case 'blocks.sheet':
+        return this.itemBlocks.sheet(typeof a.productId === 'string' ? a.productId : null, typeof a.categoryId === 'string' ? a.categoryId : null);
+      case 'blocks.block':
+        return this.blockItem(a);
+      case 'blocks.release':
+        return this.releaseBlocks(a.ids);
       case 'transmission.open':
         return this.transmissionOpen();
       case 'transmission.now':
@@ -2953,6 +2975,46 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   }
 
   /** The card did not go through (certainly not charged): back to the tenders, the words shown. */
+  /* ------------------------------------------------------------- "חסום / אזל" */
+
+  /**
+   * A block or a "sold out" to the cloud: checked against its sheet, then ITEM_BLOCK — ITEM_BLOCK_WIDE beyond the till's own
+   * reach — the operator alone or a manager's code (the approver is the cloud's `X-Pos-User-Id`). Refused for wanting the wider
+   * right after all (`block_scope_not_allowed`, `needs`): asked once more for it.
+   */
+  private blockItem(a: Record<string, unknown>) {
+    const plan = this.itemBlocks.plan(a);
+    const run = (wide: boolean): unknown =>
+      this.gate(
+        wide ? PERM.ITEM_BLOCK_WIDE : PERM.ITEM_BLOCK,
+        async (approver) => {
+          const r = await this.itemBlocks.send(plan.request, approver?.id ?? null);
+          if (!r.ok && r.needsWide && !wide) return run(true);
+          this.toast(r.message, r.ok ? 'ok' : 'error');
+          return r.ok ? { ok: true, message: r.message } : refuse('permission_denied', r.message);
+        },
+        { title: wide ? IB_TEXT.approveWide : IB_TEXT.approve },
+      );
+    return run(plan.wide);
+  }
+
+  /** "שחרר" / "שחרר הכל": one approval for them all (ITEM_BLOCK_WIDE when any of them reaches beyond the till). */
+  private releaseBlocks(idsRaw: unknown) {
+    this.signedIn();
+    const ids = Array.isArray(idsRaw) ? idsRaw.filter((x): x is string => typeof x === 'string' && !!x) : [];
+    if (ids.length === 0) return refuse('invalid_args');
+    const wide = this.itemBlocks.releaseNeedsWide(ids);
+    return this.gate(
+      wide ? PERM.ITEM_BLOCK_WIDE : PERM.ITEM_BLOCK,
+      async (approver) => {
+        const r = await this.itemBlocks.release(ids, approver?.id ?? null);
+        this.toast(r.message, r.ok ? 'ok' : 'error');
+        return r.ok ? r : refuse('permission_denied', r.message);
+      },
+      { title: wide ? IB_TEXT.approveWide : IB_TEXT.approve },
+    );
+  }
+
   /* ------------------------------------------------------------- "פעולות אשראי" */
 
   /** The screen opened: its view in the state from now on; the terminal read, the batch, the history (in the background). */

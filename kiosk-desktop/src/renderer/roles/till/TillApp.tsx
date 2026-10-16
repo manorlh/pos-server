@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { tillBusy, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
+import { tillBusy, type OpArgs, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
 import { capabilityTiles, NO_CAPS } from '../../host/caps';
 import type { HostCaps, TillHost } from '../../host/TillHost';
 import type { DisplayProfile } from './layout/displayProfileAdapter';
@@ -38,16 +38,24 @@ import { ShopXScreen } from './screens/ShopXScreen';
 import { UsersScreen } from './screens/UsersScreen';
 import { OwedScreen } from './screens/OwedScreen';
 import { TransmissionScreen } from './screens/TransmissionScreen';
+import { BlockSheet, BlocksScreen, type BlocksActions } from './screens/BlocksScreen';
+import type { BlockSheetView, BlocksListView } from '../../../core/till/itemBlocks';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks';
 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
-type Sheet = { kind: 'discount' } | { kind: 'oth'; lineId: string | null } | { kind: 'receipt' } | { kind: 'held' } | { kind: 'heldClose'; retry: (keepHeld: boolean) => void };
+type Sheet =
+  | { kind: 'discount' }
+  | { kind: 'oth'; lineId: string | null }
+  | { kind: 'receipt' }
+  | { kind: 'held' }
+  | { kind: 'heldClose'; retry: (keepHeld: boolean) => void }
+  | { kind: 'block'; productId: string };
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -123,6 +131,24 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return r.ok ? (r.value as DiscountPreview) : undefined;
     },
     [attempt],
+  );
+  // "חסומים כעת" / "חסום / אזל": the engine's views and ops (a manager's code is its dialog; then the sheet closes).
+  const blocksActions = useMemo<BlocksActions>(
+    () => ({
+      list: async () => (await run('blocks.list', {})) as BlocksListView | undefined,
+      sheet: async (item) => (await run('blocks.sheet', item)) as BlockSheetView | undefined,
+      block: async (request) => {
+        const r = await attempt('blocks.block', request as OpArgs['blocks.block']);
+        if (!r.ok) say(r.message, 'error');
+        return r.ok;
+      },
+      release: async (ids) => {
+        const r = await attempt('blocks.release', { ids });
+        if (!r.ok) say(r.message, 'error');
+        return r.ok;
+      },
+    }),
+    [run, attempt, say],
   );
   const recentReceipts = useCallback(async () => (await run('refund.recent', {})) as ReceiptRow[] | undefined, [run]);
   const findReceipt = useCallback(async (query: string) => (await run('refund.find', { query })) as ReceiptFind | undefined, [run]);
@@ -308,6 +334,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         />
       );
     }
+    if (view === 'blocks') {
+      return <BlocksScreen actions={blocksActions} catalog={catalog} back={() => setView('menu')} />;
+    }
     if (view === 'transmission') {
       return (
         <TransmissionScreen
@@ -373,6 +402,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         onDepartment={(departmentId) => void run('sell.department', { departmentId })}
         onSearch={(text) => void run('sell.search', { text })}
         onVoucher={host.demo ? undefined : (code) => void run('sell.voucher', { code })}
+        onHold={host.demo || (s.session.hidden ?? []).includes('ITEM_BLOCK') ? undefined : (productId) => setSheet({ kind: 'block', productId })}
         shiftOpen={host.demo || s.shift.open || s.shift.hidden === true}
         goShift={() => setView('shift')}
         cart={{
@@ -582,6 +612,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           onDismiss={() => void run('order.dismiss', {})}
         />
       ) : null}
+      {s.session.cashier && sheet?.kind === 'block' ? <BlockSheet item={{ productId: sheet.productId }} actions={blocksActions} onDone={() => setSheet(null)} /> : null}
       {s.notice && !s.dialog ? <NoticeDialog title={s.notice.title} text={s.notice.text} onOk={() => void run('notice.ack', {})} /> : null}
       {s.dialog ? <EngineDialog dialog={s.dialog} answer={(action, answers) => void run('dialog.answer', { dialogId: s.dialog!.id, action, answers })} /> : null}
       <div className="t-toasts" aria-live="polite">

@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -78,6 +78,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
     title: 'ניהול',
     // "הגדרות" hidden stays reachable: the manager's corner → "ניהול הקיוסק" → the technician (the Android safety rule).
     rows: [
+      // "חסומים כעת" (ItemBlocksUi.kt): the blocks in force, "חסום פריט" — the sheet's options are the operator's.
+      { key: 'blocks_now', label: 'חסומים כעת', to: 'blocks' },
       { key: 'screen_edit', label: 'עריכת מסך' },
       // "עובדים מחוברים" (exclusive-login-v2 §8א): where the rule is on; a manager's code opens it for anyone else.
       { key: 'signed_in_users', label: 'עובדים מחוברים', to: 'users', when: (s) => (s.users ? s.users.offered : undefined) },

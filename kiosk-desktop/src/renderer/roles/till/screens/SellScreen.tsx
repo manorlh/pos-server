@@ -42,6 +42,7 @@ export function SellScreen({
   onDepartment,
   onSearch,
   onVoucher,
+  onHold,
   cart,
   shiftOpen = true,
   goShift,
@@ -55,6 +56,8 @@ export function SellScreen({
   onSearch(text: string): void;
   /** A voucher scanned with items in the order: the payment opens and applies it (`sell.voucher`); absent — none here. */
   onVoucher?(code: string): void;
+  /** A tile held 7 s: its "חסום / אזל" sheet (absent: none). */
+  onHold?(productId: string): void;
   cart: CartActions;
   /** No shift: the till says why it cannot charge and offers the way to open one (Android sell_no_shift). */
   shiftOpen?: boolean;
@@ -121,6 +124,7 @@ export function SellScreen({
         tileHeight={layout.tileHeightDp}
         onAdd={onAdd}
         onInfo={setInfo}
+        onHold={onHold}
         tileText={state.tileText}
       />
       {info ? (

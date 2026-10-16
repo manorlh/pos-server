@@ -157,6 +157,11 @@ export const TILL_OPS = [
   'transmission.authorize',
   'transmission.read',
   'transmission.more',
+  // "חסומים כעת" / "חסום / אזל" (main/till/tillItemBlocks.ts): the blocks in force, an item's sheet, a block, a release.
+  'blocks.list',
+  'blocks.sheet',
+  'blocks.block',
+  'blocks.release',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -224,6 +229,8 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'transmission.now',
   'transmission.offline',
   'transmission.authorize',
+  'blocks.block',
+  'blocks.release',
 ]);
 
 export interface OpArgs {
@@ -329,6 +336,20 @@ export interface OpArgs {
   'transmission.authorize': Record<string, never>;
   'transmission.read': Record<string, never>;
   'transmission.more': Record<string, never>;
+  'blocks.list': Record<string, never>;
+  'blocks.sheet': { productId?: string; categoryId?: string };
+  'blocks.block': {
+    productId?: string | null;
+    categoryId?: string | null;
+    kind: 'sold_out' | 'blocked';
+    channels: Array<'pos' | 'kiosk' | 'online' | 'menu'>;
+    level: 'shop' | 'area' | 'machine' | 'event';
+    levelId?: string | null;
+    kioskDisplay?: 'hide' | 'grey' | null;
+    note?: string | null;
+    duration: { mode: 'minutes'; minutes: number } | { mode: 'time'; at: string } | { mode: 'end_of_day' } | { mode: 'none' };
+  };
+  'blocks.release': { ids: string[] };
 }
 
 /* ------------------------------------------------------------------- errors */
