@@ -459,6 +459,8 @@ interface CheckoutRec {
   tenderedAgorot: number;
   askPrint: boolean;
   printWarning: string | null;
+  /** "פריטים שלא נותבו למדפסת: …" — the sale's lines no kitchen printer takes (main/kitchen); the sale stands. */
+  kitchenWarning: string | null;
   cardStatus: string | null;
   cardError: string | null;
   /** The cart as priced when the payment opened: what the document is written from. */
@@ -512,6 +514,7 @@ const idleCheckout = (): CheckoutRec => ({
   tenderedAgorot: 0,
   askPrint: false,
   printWarning: null,
+  kitchenWarning: null,
   cardStatus: null,
   cardError: null,
   frozen: null,
@@ -2636,6 +2639,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.cardError = null;
     this.clearBasket();
     void this.svc.sync.flush();
+    // "בונים במכירה" and the KDS (main/kitchen): queued durably before the receipt, never holding the sale.
+    const unrouted = this.svc.tillKitchen(doc);
+    c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     this.kickDrawer(doc);
     this.printOrAsk(doc);
   }
@@ -2662,10 +2668,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (c.basket) c.basket.handedBackAgorot = o.handBack;
     this.clearBasket();
     void this.svc.sync.flush();
+    const sale = docs.find((d) => isSaleType(d.documentType));
+    // "בונים במכירה" and the KDS (main/kitchen) for what the basket sold — never for its credit notes.
+    const unrouted = sale ? this.svc.tillKitchen(sale) : [];
+    c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     // Cash taken, or handed back (a return, change): the drawer opens.
     const cashMoved = docs.some((d) => legsOf(d).some((l) => l.method === 'cash'));
     if (cashMoved && !o.viaCard) {
-      const sale = docs.find((d) => isSaleType(d.documentType));
       if (sale && legsOf(sale).some((l) => l.method === 'cash')) this.kickDrawer(sale);
       else this.refundDrawer(...docs.filter((d) => isCreditType(d.documentType)));
     }
@@ -3530,6 +3539,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         tenderedAgorot: c.phase === 'done' ? c.tenderedAgorot : handedTotal(approved),
         askPrint: c.askPrint,
         printWarning: c.printWarning,
+        kitchenWarning: c.phase === 'done' ? c.kitchenWarning : null,
         cardStatus: c.cardStatus,
         cardError: c.phase === 'card_unknown' ? (c.cardError ?? WORDS.cardPending) : c.cardError,
         cardUnknown: c.phase === 'card_unknown',

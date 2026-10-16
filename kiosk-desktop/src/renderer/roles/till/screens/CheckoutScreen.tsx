@@ -198,6 +198,11 @@ export function CheckoutScreen({
             </div>
           </div>
         ) : null}
+        {checkout.kitchenWarning ? (
+          <div className="t-warn" role="status">
+            <p>{checkout.kitchenWarning}</p>
+          </div>
+        ) : null}
         {checkout.printWarning ? (
           <div className="t-warn" role="alert">
             <p>{checkout.printWarning}</p>
