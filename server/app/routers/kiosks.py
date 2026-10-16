@@ -463,10 +463,17 @@ def create_kiosk(
     if machine is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     svc.check_machine_scope(db, current_user, machine, active_tenant_id)
-    device = svc.convert(
-        db, current_user, machine,
-        name=body.name, controller_ids=body.controller_machine_ids, lock_device=body.lock_device,
-    )
+    from app.services import device_license
+
+    try:
+        device = svc.convert(
+            db, current_user, machine,
+            name=body.name, controller_ids=body.controller_machine_ids, lock_device=body.lock_device,
+        )
+    except device_license.LicenseRefused as refused:
+        # "סוג רישיון": a "קופה בלבד" till never becomes a kiosk (409 `license_till_only`, Hebrew `message`).
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     try:
         db.commit()
     except IntegrityError:
@@ -490,10 +497,17 @@ def patch_kiosk(
 ):
     """Name, enabled, controllers (422 `invalid_controller:<id>`)."""
     machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
-    svc.update(
-        db, machine, device,
-        name=body.name, enabled=body.enabled, controller_ids=body.controller_machine_ids,
-    )
+    from app.services import device_license
+
+    try:
+        svc.update(
+            db, machine, device,
+            name=body.name, enabled=body.enabled, controller_ids=body.controller_machine_ids,
+        )
+    except device_license.LicenseRefused as refused:
+        # "סוג רישיון": a "קיוסק בלבד" kiosk is never switched off — it would work as a till (409).
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     db.commit()
     return svc.summary(db, device)
 
@@ -505,8 +519,15 @@ def delete_kiosk(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Back to a regular till; its orders and the command audit stay."""
-    _machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    """Back to a regular till; its orders and the command audit stay. Not for a "קיוסק בלבד" kiosk (409)."""
+    machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    from app.services import device_license
+
+    if device.home_role is None:
+        try:
+            device_license.check_role(machine, "till")
+        except device_license.LicenseRefused as refused:
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
     svc.remove(db, device)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -584,9 +605,14 @@ def post_kiosk_command(
         if target is not None:
             svc.check_machine_scope(db, current_user, target, active_tenant_id)
             if kiosk_till_mode.ensure_home_till_row(db, target) is None:
+                from app.services import device_license
+
                 return JSONResponse(
                     status_code=status.HTTP_409_CONFLICT,
-                    content={"detail": "till_mode_disabled", "message": "מצב קיוסק אינו מופעל לקופה הזו"},
+                    content={
+                        "detail": "till_mode_disabled",
+                        "message": device_license.work_mode_refusal_message(target) or "מצב קיוסק אינו מופעל לקופה הזו",
+                    },
                 )
 
     machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
@@ -631,7 +657,14 @@ def put_kiosk_till_mode_gate(
     from app.services import kiosk_till_mode
 
     machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
-    kiosk_till_mode.set_gate(db, machine, body.enabled, current_user)
+    from app.services import device_license
+
+    try:
+        kiosk_till_mode.set_gate(db, machine, body.enabled, current_user)
+    except device_license.LicenseRefused as refused:
+        # "סוג רישיון": a licensed device's gate is its license's (409 `till_mode_by_license`).
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     db.commit()
     svc.notify_device_lock(machine)
     return svc.summary(db, device)

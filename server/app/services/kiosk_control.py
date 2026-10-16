@@ -249,6 +249,11 @@ def convert(
         or machine.shop_id is None
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="machine_not_assigned")
+    # "סוג רישיון" (app/services/device_license.py): a "קופה בלבד" till never becomes a kiosk (409
+    # `license_till_only`, a `DeviceProfileRefused` — the routes answer its body as is).
+    from app.services import device_license
+
+    device_license.check_role(machine, "kiosk")
     controllers = validate_controllers(db, machine, controller_ids)
     if existing is not None:
         # A till that worked as a kiosk some days ("מצב עבודה") becomes a kiosk by role: its row (config,
@@ -301,6 +306,11 @@ def update(
     if name is not None:
         device.name = _clean_name(name, machine.name)
     if enabled is not None:
+        if enabled is False and device.enabled and device.home_role is None:
+            # "קיוסק בלבד": a disabled kiosk works as a till — never for this license (409).
+            from app.services import device_license
+
+            device_license.check_kiosk_disable(machine, device.name)
         device.enabled = bool(enabled)
     db.flush()
     return device
@@ -783,8 +793,12 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
     controlled = controlled_devices(db, machine)
     expire_locks(db, controlled + ([device] if device is not None else []), now=now)
     controls = summaries(db, controlled, now=now)
+    # "סוג רישיון" (P:/specs/device-license-type.md §7.1): every till hears its product on this poll too.
+    from app.services import device_license
+
+    license_product = device_license.product_of(db, machine, device)
     if device is None or not device.enabled:
-        return {"kiosk": False, "serverTime": _iso(now), "controls": controls}
+        return {"kiosk": False, "serverTime": _iso(now), "controls": controls, "licenseProduct": license_product}
     bundle = cfgsvc.effective_bundle(db, machine)
     # "התראות לקופות" and "סגירה יחד עם ה-Z הסניפי" (app/services/kiosk_ops.py).
     from app.services import kiosk_ops
@@ -813,6 +827,8 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
         "bonCommands": ops["bonCommands"],
         # "מצב עבודה" from the dashboard: {id, mode, by} or null (kiosk_till_mode.py).
         "workMode": ops.get("workMode"),
+        # "סוג רישיון": till | kiosk | kiosk_till (only kiosk_till has the work mode).
+        "licenseProduct": license_product,
     }
 
 

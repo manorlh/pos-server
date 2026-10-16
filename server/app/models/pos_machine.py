@@ -385,6 +385,13 @@ class POSMachine(Base):
     #: (app/services/licenses.py). Set by a super admin only.
     license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
     license_expires_on = Column(Date, nullable=True)
+    #: "סוג רישיון" (P:/specs/device-license-type.md, app/services/device_license.py): "till" (קופה בלבד),
+    #: "kiosk" (קיוסק בלבד) or "kiosk_till" (קיוסק + קופה) — what the role may be and whether the kiosk ↔ till
+    #: work mode exists. Set at pairing and on the machine page by a super admin / its distributor. NULL on a
+    #: till / kiosk: derived from today's state, never enforced; always NULL on a non-fiscal device.
+    license_product = Column(String(16), nullable=True)
+    #: Every setting of it, oldest first: `[{at, from, to, by, byName, byRole, source}]` (pairing / dashboard).
+    license_product_history = Column(JSONB, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Bumped whenever this terminal is unpaired. Machine tokens carry the version

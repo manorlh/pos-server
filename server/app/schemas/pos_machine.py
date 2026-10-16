@@ -431,6 +431,20 @@ class POSMachineResponse(POSMachineBase):
     device_driver_pending: bool = Field(False, alias="deviceDriverPending")
     license_type: str = Field("permanent", alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
+    #: "סוג רישיון" (app/services/device_license.py): the product now — stored, or derived from today's
+    #: state when none is stored (`licenseProductStored` null); null for a device that is not a till / kiosk.
+    license_product: Optional[str] = Field(None, alias="licenseProduct")
+    license_product_stored: Optional[str] = Field(None, alias="licenseProductStored")
+    license_product_label: Optional[str] = Field(None, alias="licenseProductLabel")
+    #: Its last settings (`[{at, from, to, by, byName, byRole, source}]`, newest last).
+    license_product_history: Optional[List[Dict[str, Any]]] = Field(None, alias="licenseProductHistory")
+    #: A stored product the role does not fit (e.g. a kiosk code whose conversion failed at pairing).
+    license_mismatch: bool = Field(False, alias="licenseMismatch")
+
+    @field_validator("license_mismatch", mode="before")
+    @classmethod
+    def _unset_mismatch(cls, value):
+        return value is True
     is_active: bool = Field(..., alias="isActive")
 
     @field_validator("license_type", mode="before")

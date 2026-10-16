@@ -324,7 +324,7 @@ def apply_on_pairing(db: Session, pairing_code, machine: POSMachine) -> bool:
         # "מסופון חיצוני ברשת — חובה לקיוסק": the address given with the code, if any.
         pinpad_written = apply_pinpad(machine, options.get("pinpadHost"), options.get("pinpadPort"))
         db.commit()
-    except (HTTPException, IntegrityError) as exc:
+    except (HTTPException, IntegrityError, DeviceProfileRefused) as exc:
         db.rollback()
         logger.warning("kiosk code %s: machine %s not converted (%s)", pairing_code.id, machine.id, exc)
         return False
@@ -398,13 +398,20 @@ def check_model_change(db: Session, machine: POSMachine, new_model: Optional[str
         )
 
 
-def check_role_switch(db: Session, machine: POSMachine, role: str) -> None:
+_NO_PRODUCT = object()
+
+
+def check_role_switch(db: Session, machine: POSMachine, role: str, license_product: Any = _NO_PRODUCT) -> None:
     """
     Refuse a change of role unless the rules allow it now. The same role passes. A till
     or kiosk never becomes a display device, nor back (409
     `device_role_change_requires_pairing`): remove it and add it again with a new code. A
-    KDS and the board may trade places (both display devices).
+    KDS and the board may trade places (both display devices). "סוג רישיון"
+    (app/services/device_license.py): the new role must fit the device's license — the one stored, or
+    `license_product` sent with the change (409 `license_till_only` / `license_kiosk_only` /
+    `license_product_role_mismatch`).
     """
+    from app.services import device_license
     from app.services.main_till import main_till_of_shop
 
     current = current_role(db, machine)
@@ -414,6 +421,10 @@ def check_role_switch(db: Session, machine: POSMachine, role: str) -> None:
         raise DD.role_change_refusal(machine, current, role)
     if role in DD.NON_FISCAL_ROLES:
         return  # a screen's role: nothing fiscal on it to wait for
+    if license_product is _NO_PRODUCT:
+        device_license.check_role(machine, role)
+    else:
+        device_license.check_role(machine, role, product=license_product)
     label = _label(machine)
     if role == ROLE_KIOSK:
         prefix = f"לא ניתן להפוך את {label} לקיוסק"

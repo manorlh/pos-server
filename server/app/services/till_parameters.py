@@ -515,6 +515,13 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     from app.services.battery_alerts import apply_to_parameters as _battery_monitoring
 
     _battery_monitoring(machine, resolved.parameters)
+    # "סוג רישיון" (app/services/device_license.py, P:/specs/device-license-type.md §3.2): a licensed till /
+    # kiosk gets the license's gate `kioskTillModeEnabled` whatever the levels say — an app that does not know
+    # the license obeys it too — and a change of license moves the watermark, so the device pulls again.
+    from app.services import device_license
+
+    device_license.apply_to_parameters(machine, resolved.parameters)
+    resolved.updated_at = _later(resolved.updated_at, device_license.changed_at(machine))
     return resolved
 
 
