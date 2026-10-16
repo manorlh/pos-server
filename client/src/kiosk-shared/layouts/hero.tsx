@@ -78,7 +78,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
       </div>
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 px-3 py-2" style={{ background: 'rgba(17,17,17,0.8)', color: '#fff' }}>
         <span className="min-w-0 flex-1">
-          <span className="block truncate kt-15 font-bold" style={textSize(m, 'productName', 15)}>
+          <span className="k-name block truncate kt-15 font-bold" style={textSize(m, 'productName', 15)}>
             {p.name}
           </span>
           <span className="block kt-13 font-extrabold tabular-nums" style={textSize(m, 'productPrice', 13)}>

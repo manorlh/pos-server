@@ -98,7 +98,7 @@ export function StepsProductSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
+            <div className="k-name-block line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
               {product.name}
             </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
@@ -380,7 +380,7 @@ export function MealSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
+            <div className="k-name-block line-clamp-2 text-lg font-extrabold leading-tight" style={textSize(m, 'itemName', 18)}>
               {product.name}
             </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>
@@ -477,7 +477,7 @@ export function MealSheet({
                       <span className="overflow-hidden" style={{ width: 48 * u, height: 48 * u, borderRadius: 12 }}>
                         <ProductImage m={m} p={c.product} className="h-full w-full" />
                       </span>
-                      <span className="line-clamp-2 kt-13 font-bold leading-tight" style={textSize(m, 'itemOptions', 13)}>
+                      <span className="k-name line-clamp-2 kt-13 font-bold leading-tight" style={textSize(m, 'itemOptions', 13)}>
                         {c.product.name}
                       </span>
                       {c.upchargeAgorot > 0 ? (
@@ -597,7 +597,7 @@ export function MealChooser({
         {/* "תג כמות": how many of the dish (or of this meal) the basket already holds. */}
         <DishCountBadge m={m} inCart={counts[p.id] ?? 0} size={Math.round(20 * u)} className="-end-1.5 -top-1.5" />
       </span>
-      <span className="min-w-0 flex-1 truncate kt-15 font-bold">{title}</span>
+      <span className="k-name min-w-0 flex-1 truncate kt-15 font-bold">{title}</span>
       <span className="shrink-0 text-lg font-extrabold tabular-nums" style={{ color: on ? m.c.primary : m.c.text }}>
         {m.money(p.price)}
       </span>

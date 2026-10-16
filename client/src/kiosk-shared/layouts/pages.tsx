@@ -253,7 +253,7 @@ export function PagesProductSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-1 font-extrabold leading-tight" style={textSize(m, 'itemName', 17)}>
+            <div className="k-name-block line-clamp-1 font-extrabold leading-tight" style={textSize(m, 'itemName', 17)}>
               {product.name}
             </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>

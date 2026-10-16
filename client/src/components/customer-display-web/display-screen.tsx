@@ -315,7 +315,8 @@ export function CustomerScreen({
           {state.lines.slice(-12).map((l) => (
             <div key={l.id} className="rounded-xl px-3 py-2" style={{ background: c.card }}>
               <div className="flex items-baseline justify-between gap-3 text-[2.8vmin] font-semibold">
-                <span className="min-w-0 truncate">
+                {/* In its own direction: an English name is cut at its end, not its start (its width is its own — no alignment). */}
+                <span className="min-w-0 truncate" style={{ unicodeBidi: 'plaintext' }}>
                   {l.qty !== 1 ? `${l.qty}${l.unit ? ` ${l.unit}` : ''} × ` : ''}
                   {l.name}
                 </span>

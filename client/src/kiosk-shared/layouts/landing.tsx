@@ -112,7 +112,7 @@ function LandingHome({ m, onEnter }: { m: PreviewModel; onEnter: (id: string) =>
                 style={{ ...cardStyle(m), minHeight: icon + 60 * u, paddingTop: 12 * u, paddingBottom: 12 * u }}
               >
                 <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'duotone'} size={icon} />
-                <span className="line-clamp-2 kt-15 font-bold leading-tight" style={textSize(m, 'categoryName', 15)}>
+                <span className="k-name line-clamp-2 kt-15 font-bold leading-tight" style={textSize(m, 'categoryName', 15)}>
                   {cat.name}
                 </span>
                 {layout.landingShowCounts ? (
@@ -156,7 +156,7 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
       <div className="flex items-center gap-3">
         <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'duotone'} size={Math.round(48 * u)} />
         <div className="min-w-0">
-          <h2 className="truncate text-xl font-extrabold leading-tight">{cat.name}</h2>
+          <h2 className="k-name truncate text-xl font-extrabold leading-tight">{cat.name}</h2>
           <div className="kt-11" style={{ color: m.c.mutedText }}>
             {itemsCount(m, cat.products.length)}
           </div>

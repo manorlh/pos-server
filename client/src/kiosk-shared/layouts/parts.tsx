@@ -96,7 +96,7 @@ export function itemsCount(m: PreviewModel, n: number): string {
 export function SectionTitle({ m, title, count }: { m: PreviewModel; title: string; count?: number }) {
   return (
     <h3 className="flex items-baseline gap-2 pt-1 text-base font-extrabold">
-      <span className="truncate">{title}</span>
+      <span className="k-name truncate">{title}</span>
       {count !== undefined ? (
         <span className="kt-11 font-medium" style={{ color: m.c.mutedText }}>
           {itemsCount(m, count)}
@@ -159,7 +159,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {soldTag}
         </div>
         <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
+          <div className="k-name-block line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
             {p.name}
           </div>
           {m.cfg.theme.showDescriptions && p.description ? (
@@ -193,7 +193,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {plus(42 * u, 'absolute bottom-0 end-0')}
           <DishCountBadge m={m} inCart={inCart} size={Math.round(28 * u)} className="end-0 top-0" />
         </div>
-        <div className="mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
+        <div className="k-name mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
           {p.name}
         </div>
         <div className={pill ? 'w-full' : 'mt-0.5'}>{priced}</div>
@@ -216,7 +216,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         <DishCountBadge m={m} inCart={inCart} size={Math.round(26 * u)} className="end-2 top-2" />
       </div>
       <div className="space-y-0.5 p-2.5">
-        <div className="line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>
+        <div className="k-name-block line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>
           {p.name}
         </div>
         {m.cfg.theme.showDescriptions && p.description ? (

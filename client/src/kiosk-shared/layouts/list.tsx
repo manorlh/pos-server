@@ -131,7 +131,7 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
         </span>
       ) : null}
       <span className="min-w-0 flex-1">
-        <span className="block truncate kt-13 font-bold" style={textSize(m, 'productName', 13)}>
+        <span className="k-name block truncate kt-13 font-bold" style={textSize(m, 'productName', 13)}>
           {p.name}
         </span>
         {m.cfg.theme.showDescriptions ? (

@@ -310,6 +310,21 @@
   text-align: start;
 }
 
+/* A name in its own direction: an English name in the Hebrew till is cut at its end ("Cheddar & Truf…"), not its
+   start ("…ddar & Truffle Mayo"). The cart line (one line) is aligned as its parent whatever its own direction; the
+   tile's clamped name keeps its own start — Chrome drops a clamp's "…" from a left-to-right line aligned to the right —
+   and its box hugs its words at the tile's start (the tile's align-items: flex-start). */
+.t-line-name {
+  unicode-bidi: plaintext;
+  text-align: match-parent;
+  text-align: -webkit-match-parent;
+}
+
+.t-tile-name {
+  unicode-bidi: plaintext;
+  max-width: 100%;
+}
+
 .t-tile-name {
   font-weight: 700;
   overflow: hidden;

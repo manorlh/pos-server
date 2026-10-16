@@ -4285,6 +4285,15 @@ ${MOTION_CSS}
   :where(.k-hit) { position: relative; }
   .k-min-target { min-height: var(--k-target, 0px); }
   :where(.k-staff) :where(button:not(.k-hit), input, select) { min-height: var(--k-target, 0px); }
+  /* A name (a product, a category, a basket line) in its own direction: "Cheddar & Truffle Mayo" in a Hebrew screen is cut
+     at its end ("Cheddar & Truf…"), not its start ("…ddar & Truffle Mayo") — the browser's bidi rules otherwise lay the
+     English run out right to left and clip its first letters. Aligned as its parent (start in a row, centred in a tile),
+     whatever the name's own direction. A control's own alignment utility still wins (components layer).
+     .k-name-block — a clamped name (line-clamp-N) in a start-aligned card: Chrome drops the clamp's "…" from a left-to-right
+     line aligned to the right, so the box hugs its words at the start instead (right in Hebrew) and its lines run from the
+     name's own start. A centred clamped name takes .k-name (centred lines keep their "…"). */
+  .k-name { unicode-bidi: plaintext; text-align: match-parent; text-align: -webkit-match-parent; }
+  .k-name-block { unicode-bidi: plaintext; text-align: start; width: fit-content; max-width: 100%; }
 }
 .k-hit::before { content: ''; position: absolute; top: min(0px, calc(50% - var(--k-target, 0px) / 2)); bottom: min(0px, calc(50% - var(--k-target, 0px) / 2)); left: min(0px, calc(50% - var(--k-target, 0px) / 2)); right: min(0px, calc(50% - var(--k-target, 0px) / 2)); }
 @keyframes kioskCardTap { 0%, 15% { transform: translate(-50%, -4px) rotate(-10deg); } 45%, 62% { transform: translate(-50%, 46px) rotate(0deg); } 85%, 100% { transform: translate(-50%, -4px) rotate(-10deg); } }

@@ -156,7 +156,9 @@ export function DrawerBasket({ m }: { m: PreviewModel }) {
               {m.cart.map((l) => (
                 <div key={l.key} className="space-y-1.5 rounded-xl p-2" style={{ background: m.c.dark ? '#FFFFFF0D' : '#0000000A', ...textSize(m, 'cartLines', 13) }}>
                   <div className="flex items-start gap-2">
-                    <span className="line-clamp-2 min-w-0 flex-1 kt-13 font-semibold leading-tight">{l.product.name}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="k-name-block line-clamp-2 kt-13 font-semibold leading-tight">{l.product.name}</span>
+                    </span>
                     <span className="shrink-0 kt-13 font-bold tabular-nums">{m.money(l.unit * l.qty)}</span>
                   </div>
                   <Stepper
@@ -235,7 +237,7 @@ export function ReceiptBasket({ m }: { m: PreviewModel }) {
               <span className="w-7 shrink-0 font-bold tabular-nums" style={{ color: m.c.primary }}>
                 {l.qty}×
               </span>
-              <span className="min-w-0 flex-1 truncate">{l.product.name}</span>
+              <span className="k-name min-w-0 flex-1 truncate">{l.product.name}</span>
               <span className="shrink-0 font-bold tabular-nums">{m.money(l.unit * l.qty)}</span>
               <button type="button" aria-label="-" onClick={() => setQty(m, l, l.qty - 1)} className="flex shrink-0 items-center justify-center rounded-full" style={{ width: 32 * u, height: 32 * u, background: `${m.c.button}1A`, color: m.c.buttonInk }}>
                 <Minus className="h-4 w-4" />

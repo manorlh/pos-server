@@ -115,7 +115,7 @@ function WallButton({ m, p, tint, inCart }: { m: PreviewModel; p: PProduct; tint
       style={{ ...cardStyle(m), minHeight: 96 * u, background: added ? m.c.accent : cardStyle(m).background, color: ink }}
     >
       <span className="absolute inset-x-0 top-0 h-1.5" style={{ background: tint }} />
-      <span className="line-clamp-2 kt-15 font-bold leading-tight" style={{ minHeight: '2.5em', ...textSize(m, 'productName', 15) }}>
+      <span className="k-name line-clamp-2 kt-15 font-bold leading-tight" style={{ minHeight: '2.5em', ...textSize(m, 'productName', 15) }}>
         {p.name}
       </span>
       <span className="mt-1 kt-15 font-extrabold tabular-nums" style={{ color: added ? ink : m.c.primary, ...textSize(m, 'productPrice', 15) }}>
