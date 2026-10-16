@@ -441,6 +441,22 @@ describe('a payment through the cloud relay, end to end', () => {
   });
 });
 
+describe('recovery in auto (§14.2.3)', () => {
+  it('a payment the cloud carried is looked up on the LAN first; its ack right after the payment went its own way', async () => {
+    const cloud = mailbox();
+    const { host } = await cashHost(cloud.api, [{ machineId: KIOSK, name: 'קיוסק 2', kind: 'kiosk', route: 'auto' }]);
+    host.relay.start();
+    const pay = kioskPay(cloud.api, ref({ lanAddress: '127.0.0.1', port: host.port }), { cashRoute: 'auto' });
+    // A payment a restart left behind, carried by the cloud; the station never heard of it.
+    const txId = randomUUID();
+    const kv = (pay as unknown as { d: { kv: Kv } }).d.kv;
+    kv.setJson('cash.pending', [{ txId, stationId: 'st-1', leaseId: null, orderId: 'o', docId: 'd', amountAgorot: 100, orderLabel: null, startedAt: Date.now(), started: true, finalState: null, via: 'cloud' }]);
+    const before = cloud.relayedCount();
+    expect(await pay.lookUp(txId)).toEqual({ kind: 'none' });
+    expect(cloud.relayedCount()).toBe(before); // answered on the LAN — the cloud never asked
+  });
+});
+
 /* ------------------------------------------------------------------ the host kiosk (§14.1) */
 
 describe('a host kiosk', () => {

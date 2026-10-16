@@ -256,6 +256,8 @@ export interface CashPayView {
   stage: 'connecting' | 'queued' | 'insert' | 'settling' | 'change' | 'refunding' | 'done' | 'refunded' | 'fault' | 'owed_choice' | 'split_card';
   /** In the queue: the place (1 = next). */
   position: number | null;
+  /** In the queue past `cashQueueTimeoutSec` ("ההמתנה ארוכה מהרגיל", P:/specs/cash-paylink.md §14.3). */
+  longWait?: boolean;
   stationName: string | null;
   insertedAgorot: number;
   dueAgorot: number;
