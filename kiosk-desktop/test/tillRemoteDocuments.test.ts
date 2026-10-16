@@ -33,6 +33,7 @@ import { remoteWhy } from '../src/core/till/remotePrint';
 import type { LanCall } from '../src/main/kitchen/kitchenNet';
 import { DEFAULT_PRINTER_KEY, TILL_PRINTER_KEY } from '../src/main/till/tillRemotePrint';
 import { PIN, harness, type Harness } from './tillEngineHarness';
+import { PRINT_KEY } from './support/kitchenFakes';
 
 const settings = (over: Partial<RemoteDocSettings> = {}): RemoteDocSettings => ({ ...remoteDocSettingsOf({}), ...over });
 
@@ -401,7 +402,7 @@ const PRINTERS = {
   etag: 'e1',
   machineId: 'm',
   printers: [{ id: '22222222-0000-4000-8000-000000000001', name: 'מדפסת בר', purpose: 'receipt', type: 'cloud', hostMachineId: 'm-bar', hostMachineName: 'בר', hostLanAddress: '10.0.0.7', hostLanPort: 8399, paperWidth: 58, scope: 'machine', isHost: false, inScope: false, hostDocumentRelay: true }],
-  printSecret: 'shop-secret',
+  printSecret: PRINT_KEY,
   printHost: null,
 };
 
@@ -468,7 +469,7 @@ describe('on the Windows till', () => {
     await cashSale(h);
     await settle(h, 60);
     const post = lanSeen.find((c) => c.method === 'POST' && c.path === '/kitchen/jobs')!;
-    expect(post).toMatchObject({ address: '10.0.0.7', port: 8399, secret: 'shop-secret' });
+    expect(post).toMatchObject({ address: '10.0.0.7', port: 8399, secret: PRINT_KEY });
     const body = post.body as Record<string, unknown> & { document: Record<string, unknown> };
     expect(body.kind).toBe('document');
     expect(body.printerId).toBe(PRINTERS.printers[0].id);

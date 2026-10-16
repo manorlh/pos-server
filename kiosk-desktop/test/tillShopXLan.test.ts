@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { answersShopXOverLan, ownShopXSection, pendingPath, shopXAskOf, shopXPart, sumFigures } from '../src/core/till/shopXLan';
 import type { LanCall } from '../src/main/kitchen/kitchenNet';
 import { MACHINE, PIN, harness, type Harness } from './tillEngineHarness';
+import { PRINT_KEY } from './support/kitchenFakes';
 
 describe('the rules', () => {
   it('the board is asked with who asks; its ask is the round\'s id', () => {
@@ -54,7 +55,7 @@ afterEach(() => {
   current = null;
 });
 
-const PRINTERS = { syncType: 'full', etag: 'e', printers: [], printSecret: 'shop-secret', printHost: { machineId: 'main', name: 'קופה 1', isSelf: false, lanAddress: '10.0.0.2', port: 8399 } };
+const PRINTERS = { syncType: 'full', etag: 'e', printers: [], printSecret: PRINT_KEY, printHost: { machineId: 'main', name: 'קופה 1', isSelf: false, lanAddress: '10.0.0.2', port: 8399 } };
 
 function rig(history: Record<string, unknown>, board: (path: string) => unknown) {
   const seen: Array<{ method: string; path: string; body: unknown; secret: string }> = [];
@@ -83,7 +84,7 @@ describe('this till\'s part on the Windows till', () => {
     await h.engine.shopXLan.pollOnce();
     const gets = seen.filter((c) => c.method === 'GET');
     expect(gets[0].path).toBe(`/shop-close/pending?machineId=${MACHINE}&posNumber=2&name=${encodeURIComponent('קופה 2')}`);
-    expect(gets[0].secret).toBe('shop-secret');
+    expect(gets[0].secret).toBe(PRINT_KEY);
     const posts = seen.filter((c) => c.method === 'POST');
     // Once per round.
     expect(posts).toHaveLength(1);

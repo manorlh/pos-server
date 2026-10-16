@@ -11,6 +11,7 @@ import { VOUCHER_LAN_TEXT, dtoOfSnapshot, hostLookupOf, hostRedeemBody, localPri
 import { termsOf, type TillVoucherUnit } from '../src/core/till/vouchers';
 import type { LanCall } from '../src/main/kitchen/kitchenNet';
 import { readyTill, type Harness } from './tillEngineHarness';
+import { PRINT_KEY } from './support/kitchenFakes';
 
 const SNAPSHOT = {
   typeName: 'שובר ארוחה',
@@ -73,12 +74,12 @@ afterEach(() => {
   current = null;
 });
 
-const PRINTERS = { syncType: 'full', etag: 'e', printers: [], printSecret: 'shop-secret', printHost: { machineId: 'main', name: 'קופה 1', isSelf: false, lanAddress: '10.0.0.2', port: 8399 } };
+const PRINTERS = { syncType: 'full', etag: 'e', printers: [], printSecret: PRINT_KEY, printHost: { machineId: 'main', name: 'קופה 1', isSelf: false, lanAddress: '10.0.0.2', port: 8399 } };
 
 async function rig(host: (path: string, body: Record<string, unknown>) => { status: number; body: unknown } | 'lost') {
   const seen: Array<{ path: string; body: Record<string, unknown> }> = [];
   const lanCall: LanCall = async (_t, secret, _method, path, body) => {
-    expect(secret).toBe('shop-secret');
+    expect(secret).toBe(PRINT_KEY);
     seen.push({ path, body: body as Record<string, unknown> });
     const a = host(path, body as Record<string, unknown>);
     if (a === 'lost') throw new Error('no answer');
