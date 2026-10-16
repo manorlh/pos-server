@@ -459,6 +459,8 @@ export interface AdminWorkMode {
   toKiosk?: boolean;
   /** The manager who opened this menu holds KIOSK_TILL_MODE: their code counts, no second one is asked. */
   openerHolds: boolean;
+  /** "מצב עבודה בהפעלה" (`kioskTillModeStartMode`): anything but `last` — a restart starts the device as it says. Absent: `last`. */
+  startMode?: 'last' | 'home' | 'kiosk' | 'till';
 }
 
 export interface TechnicianInfo {

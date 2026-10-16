@@ -2,9 +2,14 @@
  * "מצב עבודה: קיוסק / קופה" — the pure rules (core/workMode.ts), the port of the Android app's
  * KioskTillModeTest.kt and KioskHomeRole's cases: the parameters, the switch's refusals both ways, held sales
  * never blocking, the idle return, the dashboard's command, the sessions kept across a restart, what the cloud
- * hears, the manager's code (the same lock as the desktop exit's pad).
+ * hears, the manager's code (the same lock as the desktop exit's pad); "מצב עבודה בהפעלה" — the mode the device
+ * starts in, every case of the shared golden work_mode_start_golden.json (the same bytes in pos-server and pos-android).
  */
 
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
 import { describe, expect, it } from 'vitest';
 import { LOCKOUT_MS, MAX_FAILURES, type RosterUser } from '../src/core/desktopExit';
@@ -17,6 +22,11 @@ import {
   QUIET_TILL,
   REFUSALS,
   REFUSAL_TEXT,
+  DEFAULT_START_MODE,
+  PARAM_START_MODE,
+  START_MODES,
+  START_QUIET_MS,
+  START_RETRY_MS,
   TILL_EVENT,
   WORK_TEXT,
   approval,
@@ -38,10 +48,16 @@ import {
   rawFactsOf,
   remote,
   sessionToJson,
+  parseStartMode,
+  startStep,
+  startTarget,
   statusJson,
   userHolds,
   workModeEvent,
   type KioskSideFacts,
+  type RawKioskFacts,
+  type StartStep,
+  type WorkMode,
   type TillModeParams,
   type TillModeRefusal,
   type TillSession,
@@ -49,7 +65,7 @@ import {
   type WorkModeCommand,
 } from '../src/core/workMode';
 
-const on: TillModeParams = { enabled: true, idleReturnMinutes: 3 };
+const on: TillModeParams = { enabled: true, idleReturnMinutes: 3, startMode: 'last' };
 const atRest: KioskSideFacts = KIOSK_AT_REST;
 const quietTill: TillSideFacts = QUIET_TILL;
 const till = (over: Partial<TillSideFacts>): TillSideFacts => ({ ...QUIET_TILL, ...over });
@@ -58,11 +74,15 @@ const wire = (r: TillModeRefusal | null) => r?.wire ?? null;
 
 describe('the parameters — off by default, every value read sensibly', () => {
   it('defaults, and what the cloud sets', () => {
-    expect(paramsOf({})).toEqual({ enabled: false, idleReturnMinutes: 3 });
-    expect(paramsOf(null)).toEqual({ enabled: false, idleReturnMinutes: 3 });
-    expect(paramsOf({ kioskTillModeEnabled: 'true', kioskTillModeIdleReturnMinutes: '0' })).toEqual({ enabled: true, idleReturnMinutes: 0 });
+    expect(paramsOf({})).toEqual({ enabled: false, idleReturnMinutes: 3, startMode: 'last' });
+    expect(paramsOf(null)).toEqual({ enabled: false, idleReturnMinutes: 3, startMode: 'last' });
+    expect(paramsOf({ kioskTillModeEnabled: 'true', kioskTillModeIdleReturnMinutes: '0' })).toEqual({ enabled: true, idleReturnMinutes: 0, startMode: 'last' });
     // The cloud's own types: a boolean and an integer.
-    expect(paramsOf({ kioskTillModeEnabled: true, kioskTillModeIdleReturnMinutes: 7 })).toEqual({ enabled: true, idleReturnMinutes: 7 });
+    expect(paramsOf({ kioskTillModeEnabled: true, kioskTillModeIdleReturnMinutes: 7 })).toEqual({ enabled: true, idleReturnMinutes: 7, startMode: 'last' });
+    // "מצב עבודה בהפעלה": the cloud's word, anything else `last`.
+    expect(paramsOf({ kioskTillModeEnabled: true, kioskTillModeStartMode: 'home' }).startMode).toBe('home');
+    expect(paramsOf({ kioskTillModeStartMode: 'first' }).startMode).toBe('last');
+    expect(paramsOf({ kioskTillModeStartMode: 3 }).startMode).toBe('last');
   });
 
   it('wrong values fall back, never fail open; the dropped "require manager" parameter is ignored', () => {
@@ -85,7 +105,7 @@ describe('the parameters — off by default, every value read sensibly', () => {
 
 describe('to the till — never when off, over a kiosk payment or a customer’s order', () => {
   it('the refusals, in order', () => {
-    expect(wire(mayEnter({ enabled: false, idleReturnMinutes: 3 }, atRest))).toBe('disabled');
+    expect(wire(mayEnter({ enabled: false, idleReturnMinutes: 3, startMode: 'last' }, atRest))).toBe('disabled');
     expect(wire(mayEnter(on, kiosk({ paying: true })))).toBe('kiosk_payment');
     expect(wire(mayEnter(on, kiosk({ cardInFlight: true })))).toBe('kiosk_payment');
     expect(wire(mayEnter(on, kiosk({ ordering: true })))).toBe('customer_ordering');
@@ -157,7 +177,7 @@ describe('the dashboard’s switch — runs when it may, waits with the reason, 
     expect(remote(toKiosk, 'till', on, atRest, till({ heldSales: 4 }))).toEqual({ run: true, done: true, blocked: null });
     expect(remote(toKiosk, 'kiosk', on, atRest, quietTill)).toEqual({ run: false, done: true, blocked: null });
     // The owner's gate closed: the command is answered (done) and nothing moves.
-    expect(remote(toTill, 'kiosk', { enabled: false, idleReturnMinutes: 3 }, atRest, quietTill)).toEqual({ run: false, done: true, blocked: REFUSALS.disabled });
+    expect(remote(toTill, 'kiosk', { enabled: false, idleReturnMinutes: 3, startMode: 'last' }, atRest, quietTill)).toEqual({ run: false, done: true, blocked: REFUSALS.disabled });
   });
 
   it('the cloud’s command — read from kiosk sync, anything malformed ignored', () => {
@@ -181,6 +201,8 @@ describe('the session — kept across a restart as JSON', () => {
     expect(parseSession(sessionToJson(s))).toEqual(s);
     expect(parseSession('{"sinceMs":5,"by":null,"byId":null,"source":"?"}')).toEqual({ sinceMs: 5, by: null, byId: null, source: 'manual' });
     expect(parseSession('{"sinceMs":"7","by":"  ","byId":"","source":"idle"}')).toEqual({ sinceMs: 7, by: null, byId: null, source: 'idle' });
+    // A till session the start mode opened ("מצב עבודה בהפעלה").
+    expect(parseSession('{"sinceMs":9,"by":null,"byId":null,"source":"start"}')).toEqual({ sinceMs: 9, by: null, byId: null, source: 'start' });
     expect(parseSession('not json')).toBeNull();
     expect(parseSession('5')).toBeNull();
     expect(parseSession('[]')).toBeNull();
@@ -256,6 +278,8 @@ describe('the Android app’s Hebrew, word for word', () => {
     expect([WORK_TEXT.kiosk, WORK_TEXT.till]).toEqual(['קיוסק', 'קופה']);
     expect(WORK_TEXT.needsManager).toBe('המעבר לקופה דורש קוד של מנהל עם ההרשאה "מעבר למצב קופה בקיוסק".');
     expect(WORK_TEXT.hint).toContain('המכשיר יעבוד כקופה עד שיוחזר לקיוסק');
+    // "מצב עבודה בהפעלה" (Android kwork_hint_start, word for word).
+    expect(WORK_TEXT.hintStart).toBe('המכשיר יעבוד כקופה עד שיוחזר לקיוסק. אחרי הפעלה מחדש הוא עולה לפי "מצב עבודה בהפעלה" שנקבע בדשבורד. המסמכים יירשמו על שם העובד שנכנס. מכירות מושהות יחכו למצב קופה.');
     expect(WORK_TEXT.countdown(12)).toBe('חוזר לקיוסק בעוד 12 שניות');
     expect(WORK_TEXT.stay).toBe('נשארים');
     expect(WORK_TEXT.heldNotice(3)).toBe('יש 3 מכירות מושהות — יחכו במצב קופה');
@@ -392,5 +416,77 @@ describe('the manager’s code — only a holder of KIOSK_TILL_MODE, five wrong 
 
   it('the permission is spelled as the cloud’s catalogue', () => {
     expect(KIOSK_TILL_MODE).toBe('KIOSK_TILL_MODE');
+  });
+});
+
+/* ------------------------------------------------------------------ "מצב עבודה בהפעלה" */
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const START_GOLDEN_FILE = path.join(here, 'fixtures', 'contract', 'work_mode_start_golden.json');
+/** SHA-256 of the golden (LF bytes) — the same pinned in pos-server (test_kiosk_till_mode.py) and pos-android (KioskStartModeTest). */
+const START_GOLDEN_SHA256 = '7a52267775df6450c8ab77d9ad520120fb4cd5e25ee7757768b5703f3dcea258';
+
+interface StartCase {
+  name: string;
+  enabled: boolean;
+  startMode: string;
+  raw: RawKioskFacts;
+  current: WorkMode;
+  kiosk?: Partial<KioskSideFacts>;
+  till?: Partial<TillSideFacts>;
+  look: { settled: boolean; heldBack: boolean; quietMs: number };
+  step: { kind: 'done' } | { kind: 'wait'; blocked: string | null } | { kind: 'switch'; to: WorkMode };
+}
+const startGolden = JSON.parse(readFileSync(START_GOLDEN_FILE, 'utf8')) as {
+  parameter: string;
+  options: string[];
+  default: string;
+  quietMs: number;
+  retryMs: number;
+  parse: Array<{ raw: string | null; mode: string }>;
+  cases: StartCase[];
+};
+
+/** A step as the golden writes it (a refusal by its wire code). */
+function wireStep(step: StartStep) {
+  if (step.kind === 'wait') return { kind: 'wait', blocked: step.blocked?.wire ?? null };
+  return step;
+}
+
+describe('"מצב עבודה בהפעלה" — the mode the device starts in (work_mode_start_golden.json)', () => {
+  it('the golden is the pinned bytes, and speaks this module’s words', () => {
+    const raw = readFileSync(START_GOLDEN_FILE).toString('utf8').replace(/\r\n/g, '\n');
+    expect(createHash('sha256').update(raw, 'utf8').digest('hex')).toBe(START_GOLDEN_SHA256);
+    expect(startGolden.parameter).toBe(PARAM_START_MODE);
+    expect(startGolden.options).toEqual([...START_MODES]);
+    expect(startGolden.default).toBe(DEFAULT_START_MODE);
+    expect(startGolden.quietMs).toBe(START_QUIET_MS);
+    expect(startGolden.retryMs).toBe(START_RETRY_MS);
+  });
+
+  it('the cloud’s word, read as the Android app reads it — anything unknown is `last`', () => {
+    for (const row of startGolden.parse) expect(parseStartMode(row.raw), String(row.raw)).toBe(row.mode);
+    expect(parseStartMode(undefined)).toBe('last');
+    expect(parseStartMode(true)).toBe('last');
+  });
+
+  it('every case of the golden', () => {
+    expect(startGolden.cases.length).toBeGreaterThan(20);
+    for (const c of startGolden.cases) {
+      const params: TillModeParams = { enabled: c.enabled, idleReturnMinutes: 3, startMode: parseStartMode(c.startMode) };
+      const step = startStep(params, c.raw, c.current, kiosk(c.kiosk ?? {}), till(c.till ?? {}), c.look);
+      expect(wireStep(step), c.name).toEqual(c.step);
+    }
+  });
+
+  it('the target by the role the device was given', () => {
+    const kioskRole: RawKioskFacts = { kiosk: true, homeTill: false };
+    const tillRow: RawKioskFacts = { kiosk: true, homeTill: true };
+    expect(startTarget('last', kioskRole)).toBeNull();
+    expect(startTarget('home', kioskRole)).toBe('kiosk');
+    expect(startTarget('home', tillRow)).toBe('till');
+    expect(startTarget('home', NOT_A_KIOSK)).toBe('till');
+    expect(startTarget('kiosk', tillRow)).toBe('kiosk');
+    expect(startTarget('till', kioskRole)).toBe('till');
   });
 });

@@ -48,6 +48,16 @@ describe('the section "מצב עבודה" in the manager’s menu', () => {
     expect(out).not.toContain(WORK_TEXT.hint);
   });
 
+  it('"מצב עבודה בהפעלה" set: the hint says a restart starts the device as the setting says', () => {
+    const out = html({ info: info({ startMode: 'kiosk' }) });
+    expect(out).toContain(esc(WORK_TEXT.hintStart));
+    expect(out).not.toContain(WORK_TEXT.hint);
+    // `last` (or an older service that says nothing): as before.
+    expect(html({ info: info({ startMode: 'last' }) })).toContain(WORK_TEXT.hint);
+    // An opener without the permission: the code line, as before.
+    expect(html({ info: info({ startMode: 'till', openerHolds: false }) })).toContain(esc(WORK_TEXT.needsManager));
+  });
+
   it('"קופה" is off when the switch is not offered now', () => {
     expect(html({ info: info({ toTill: false }) })).toMatch(/<button[^>]*disabled=""[^>]*>קופה<\/button>/);
   });

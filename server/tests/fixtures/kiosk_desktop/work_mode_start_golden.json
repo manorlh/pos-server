@@ -1,0 +1,198 @@
+{
+  "about": "\"מצב עבודה בהפעלה\" (kioskTillModeStartMode, P:/specs/kiosk-landscape-till-mode.md §5.14): the mode a device starts in at an app start or a re-pairing. The same bytes in pos-server (server/tests/fixtures/kiosk_desktop, kiosk-desktop/test/fixtures/contract) and pos-android (app/src/test/resources); every case is run by kiosk-desktop core/workMode.ts startStep and Android domain/KioskTillMode.kt KioskTillMode.startStep. Facts left out are false (heldSales 0).",
+  "parameter": "kioskTillModeStartMode",
+  "options": ["last", "home", "kiosk", "till"],
+  "default": "last",
+  "quietMs": 30000,
+  "retryMs": 60000,
+  "parse": [
+    { "raw": "last", "mode": "last" },
+    { "raw": "home", "mode": "home" },
+    { "raw": "kiosk", "mode": "kiosk" },
+    { "raw": "till", "mode": "till" },
+    { "raw": " Kiosk ", "mode": "kiosk" },
+    { "raw": "TILL", "mode": "till" },
+    { "raw": "sideways", "mode": "last" },
+    { "raw": "", "mode": "last" },
+    { "raw": null, "mode": "last" }
+  ],
+  "cases": [
+    {
+      "name": "last: the mode last chosen stays (today's behaviour)",
+      "enabled": true, "startMode": "last", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "done" }
+    },
+    {
+      "name": "the owner's gate closed: the setting is ignored",
+      "enabled": false, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "done" }
+    },
+    {
+      "name": "home: a kiosk by role kept in till mode starts as the kiosk",
+      "enabled": true, "startMode": "home", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "kiosk" }
+    },
+    {
+      "name": "home: a kiosk by role already a kiosk — nothing to do",
+      "enabled": true, "startMode": "home", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "done" }
+    },
+    {
+      "name": "home: a till by role kept away in its kiosk mode starts as the till",
+      "enabled": true, "startMode": "home", "raw": { "kiosk": true, "homeTill": true }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "till" }
+    },
+    {
+      "name": "home: a till with no kiosk-mode row is home already",
+      "enabled": true, "startMode": "home", "raw": { "kiosk": false, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "done" }
+    },
+    {
+      "name": "kiosk: a kiosk by role kept in till mode starts as the kiosk",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "kiosk" }
+    },
+    {
+      "name": "kiosk: a till by role with its kiosk-mode row starts as a kiosk",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": true }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "kiosk" }
+    },
+    {
+      "name": "kiosk: a till by role with no row yet — the switch asks the cloud for it at the door",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": false, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "kiosk" }
+    },
+    {
+      "name": "kiosk: already a kiosk",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": true }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "done" }
+    },
+    {
+      "name": "till: a kiosk by role starts as a till",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "till" }
+    },
+    {
+      "name": "till: a till by role kept away in its kiosk mode comes home",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": true }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "till" }
+    },
+    {
+      "name": "till: already a till",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "done" }
+    },
+    {
+      "name": "to the kiosk: never over lines rung up — the sale is restored in its mode",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "till": { "basketOpen": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "basket_open" }
+    },
+    {
+      "name": "to the kiosk: never over the payment screen (a card answer asked for after the restart)",
+      "enabled": true, "startMode": "home", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "till": { "checkoutOpen": true, "holdsTender": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "payment_open" }
+    },
+    {
+      "name": "to the kiosk: never with a card at the terminal",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": true }, "current": "till",
+      "till": { "cardInFlight": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "payment_open" }
+    },
+    {
+      "name": "to the kiosk: never over a table's order on screen",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "till": { "tableOpen": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "table_open" }
+    },
+    {
+      "name": "to the kiosk: held sales never block — they wait for the till",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "till": { "heldSales": 2 },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "kiosk" }
+    },
+    {
+      "name": "to the till: never over a kiosk customer's payment",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "kiosk": { "paying": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "kiosk_payment" }
+    },
+    {
+      "name": "to the till: never with a card at the kiosk's terminal",
+      "enabled": true, "startMode": "home", "raw": { "kiosk": true, "homeTill": true }, "current": "kiosk",
+      "kiosk": { "cardInFlight": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "kiosk_payment" }
+    },
+    {
+      "name": "to the till: never over a customer's order",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "kiosk": { "ordering": true },
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": "customer_ordering" }
+    },
+    {
+      "name": "re-paired: nothing until the cloud's word for this pairing is on the device",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": false, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": null }
+    },
+    {
+      "name": "re-paired: not settled is a wait even where the gate reads closed (the cloud has not said yet)",
+      "enabled": false, "startMode": "last", "raw": { "kiosk": false, "homeTill": false }, "current": "till",
+      "look": { "settled": false, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "wait", "blocked": null }
+    },
+    {
+      "name": "held back by a restored sale: once it is gone, not before the screens were quiet for 30 s",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": true, "quietMs": 29999 },
+      "step": { "kind": "wait", "blocked": null }
+    },
+    {
+      "name": "held back by a restored sale: the next idle point — nothing open, 30 s without a touch",
+      "enabled": true, "startMode": "kiosk", "raw": { "kiosk": true, "homeTill": false }, "current": "till",
+      "look": { "settled": true, "heldBack": true, "quietMs": 30000 },
+      "step": { "kind": "switch", "to": "kiosk" }
+    },
+    {
+      "name": "held back, and a sale open again: still the sale's reason",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "kiosk": { "ordering": true },
+      "look": { "settled": true, "heldBack": true, "quietMs": 120000 },
+      "step": { "kind": "wait", "blocked": "customer_ordering" }
+    },
+    {
+      "name": "held back, to the till: at rest and quiet",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": true, "quietMs": 45000 },
+      "step": { "kind": "switch", "to": "till" }
+    },
+    {
+      "name": "the first look after a start needs no quiet: nobody is at work on the device yet",
+      "enabled": true, "startMode": "till", "raw": { "kiosk": true, "homeTill": false }, "current": "kiosk",
+      "look": { "settled": true, "heldBack": false, "quietMs": 0 },
+      "step": { "kind": "switch", "to": "till" }
+    }
+  ]
+}
