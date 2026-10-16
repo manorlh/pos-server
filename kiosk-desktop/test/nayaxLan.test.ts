@@ -254,7 +254,10 @@ describe('the pinpad on the LAN: a sale frame that never reached it is "not sent
       kind: 'declined',
       message: `${NO_LINK}: http_not_allowed`,
       voidMeta: null,
+      // Never reached it: "קיוסק — כשאין מסופון אשראי" offers the till beside the card until something answers.
+      notSent: true,
     });
+    expect(svc.unreachable).toBe(true);
     expect(off.tried).toEqual(['doTransaction']);
 
     const refused = lan(HTTPS, false);

@@ -101,6 +101,20 @@ def _put_kiosk(w, overrides):
     )
 
 
+def _no_till_fallback(w):
+    """
+    "קיוסק — כשאין מסופון אשראי" = `block` at the kiosk (test_kiosk_no_terminal_fallback.py): with no "תשלום בקופה"
+    in its config, nothing offers the till for it — the kiosk is left without a way to pay, as before the parameter.
+    """
+    from app.models.till_parameter import TillParameter, TillParameterValue
+    from app.services import till_parameters as TP
+
+    TP.ensure_builtin_parameters(w.db)
+    definition = w.db.query(TillParameter).filter(TillParameter.key == TP.KIOSK_NO_TERMINAL_FALLBACK_KEY).one()
+    w.db.add(TillParameterValue(parameter_id=definition.id, scope_type="machine", scope_id=w.kiosk.id, value="block"))
+    w.db.commit()
+
+
 def _kiosk_sync(w, status, now=T0):
     out = kiosk_control.kiosk_sync(w.db, w.kiosk, status, now=now)
     w.db.commit()
@@ -349,6 +363,7 @@ def test_a_kiosk_on_none_has_no_card_lock_and_its_health_terminal_part_is_off(k)
 
 def test_saving_none_on_a_kiosk_without_pay_at_till_warns_and_saves(k):
     w = k
+    _no_till_fallback(w)
     out = _patch_machine(w, w.kiosk, paymentIntegration="none")
     assert w.kiosk.settings["paymentIntegration"] == "none"  # saved: a warning, never a refusal
     assert out.warnings == [{
@@ -379,6 +394,9 @@ def test_the_context_tells_a_kiosks_form_whether_it_is_paid_at_the_till(k):
                 active_tenant_id=w.tenant.id, db=w.db,
             )
 
+    # "קיוסק — כשאין מסופון אשראי" (`pay_at_till`, the default): the kiosk offers the till itself.
+    assert context(w.kiosk)["kioskPaysAtTill"] is True
+    _no_till_fallback(w)
     assert context(w.kiosk)["kioskPaysAtTill"] is False
     _put_kiosk(w, {"payment": {"methods": ["cash_at_till"]}})
     assert context(w.kiosk)["kioskPaysAtTill"] is True

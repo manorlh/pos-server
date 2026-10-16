@@ -103,6 +103,8 @@ describe('what this kiosk can take now', () => {
   it('only split_card and a voucher: the card beside it, and the voucher kept but not usable with no terminal to pay what it leaves', () => {
     const { fetchFn } = fakeCloud();
     const svc = kiosk(fetchFn, { methods: ['voucher', 'split_card'] });
+    // "קיוסק — כשאין מסופון אשראי" = block: no till offered for the missing terminal (core/noTerminalFallback.ts).
+    svc.cloud.setParameters({ kioskNoTerminalFallback: 'block' }, null);
     try {
       const pay = svc.view().pay;
       // A voucher is a leg of the document the card pays the rest of (as the Android kiosk), so it stays on the list; but with no usable
@@ -114,11 +116,19 @@ describe('what this kiosk can take now', () => {
       svc.stop();
     }
     const alone = kiosk(fakeCloud().fetchFn, { methods: ['split_card'] });
+    alone.cloud.setParameters({ kioskNoTerminalFallback: 'block' }, null);
     try {
       expect(alone.view().pay.methods).toEqual(['card']);
       expect(alone.view().pay.usable).toEqual([]);
     } finally {
       alone.stop();
+    }
+    // `pay_at_till` (the default): the till offered for the missing terminal finishes the voucher's order too.
+    const fallback = kiosk(fakeCloud().fetchFn, { methods: ['voucher', 'split_card'] });
+    try {
+      expect(fallback.view().pay).toMatchObject({ methods: ['card', 'voucher', 'cash_at_till'], usable: ['voucher', 'cash_at_till'], tillFallback: true });
+    } finally {
+      fallback.stop();
     }
   });
 });
@@ -159,10 +169,12 @@ describe('"מזומן בקופה": the open order to the tills', () => {
   it('never a total the customer did not see; never where cash at the till is not offered', async () => {
     const { fetchFn } = fakeCloud();
     const svc = kiosk(fetchFn, { methods: ['cash_at_till', 'card'] });
+    // Card only and "קיוסק — כשאין מסופון אשראי" = block: the till is never offered.
     const card = kiosk(fetchFn, { methods: ['card'] });
+    card.cloud.setParameters({ kioskNoTerminalFallback: 'block' }, null);
     try {
       expect(await svc.placeOpenOrder({ ...basket(6200), vouchers: [] })).toMatchObject({ ok: false, reason: 'changed', totalAgorot: 5200 });
-      expect(await card.placeOpenOrder({ ...basket(5200), vouchers: [] })).toMatchObject({ ok: false, reason: 'error' });
+      expect(await card.placeOpenOrder({ ...basket(5200), vouchers: [] })).toMatchObject({ ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' });
     } finally {
       svc.stop();
       card.stop();

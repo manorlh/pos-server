@@ -140,6 +140,7 @@ import { StaffLayer } from '../staff/StaffLayer';
 import { AdminHoldBar, useAdminCornerHold } from '../staff/adminHold';
 import { kioskCornerArmed } from '../../core/adminCorner';
 import { noPaymentBodyHe, noPaymentCause } from '../../core/noPaymentText';
+import { fallbackPayConfig } from '../../core/noTerminalFallback';
 import { KioskShopLock } from './KioskShopLock';
 import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
@@ -221,7 +222,9 @@ export function KioskApp({ view }: { view: KioskView }) {
   const oneCard = (list: PaymentMethod[]) => list.filter((m) => !MULTI_CARD_METHODS.includes(m));
   const payInfo = { ...payHost, methods: oneCard(payHost.methods), usable: oneCard(payHost.usable) };
   // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
-  const payAsk = kioskPayChooser(cfg, payInfo.methods, payInfo.usable);
+  // "קיוסק — כשאין מסופון אשראי" (core/noTerminalFallback.ts): the till offered for a terminal that is not there — the step is
+  // read over the methods offered now, and always asked.
+  const payAsk = kioskPayChooser(fallbackPayConfig(cfg, payInfo.methods, payHost.tillFallback === true), payInfo.methods, payInfo.usable);
   const asksPay = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' | 'cash_device' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : payAsk.fallback === 'cash_device' ? 'cash_device' : 'card';
   const flowReducer = useCallback((s: KioskFlowState, a: FlowAction) => reduce(s, a.event, { ...rulesOf(cfgIn, a.cartEmpty), asksPayMethod: asksPay }), [cfgIn, asksPay]);

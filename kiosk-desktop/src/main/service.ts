@@ -18,8 +18,19 @@ import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '
 import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
-import { OfflineTracker } from '../core/kioskHealth';
+import { OfflineTracker, terminalAlertReason } from '../core/kioskHealth';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
+import {
+  CARD_FALLBACK_TEXT,
+  NO_TERMINAL_FALLBACK_KEY,
+  configNoTerminalFallback,
+  fallbackCard,
+  mayPayAtTill,
+  noTerminalFallbackOf,
+  tillFallbackApplies,
+  withTillFallback,
+  type NoTerminalFallback,
+} from '../core/noTerminalFallback';
 import { lanTargetOf, type LanHost, type LanTarget } from '../core/lanOpenOrders';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
 import { CashCredits } from './kiosk/cashCredits';
@@ -1227,9 +1238,11 @@ export class KioskService extends EventEmitter {
     if (health !== 'ok' && health !== 'unknown') alerts.push({ kind: 'printer', key: 'printer:receipt', reason: health === 'no_paper' ? 'no_paper' : health === 'offline' || health === 'unavailable' ? 'offline' : 'error' });
     const bonsFailed = today.filter((o) => o.bonStatus === 'failed').length;
     if (bonsFailed > 0) alerts.push({ kind: 'printer', key: 'printer:bon', reason: 'bon_failed', detail: { failed: bonsFailed } });
-    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does.
-    if (this.pay.monitor.state === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
-    else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
+    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does. Kept while
+    // "קיוסק — כשאין מסופון אשראי" offers the till instead (core/kioskHealth.ts terminalAlertReason).
+    const terminalReason = terminalAlertReason({ state: this.pay.monitor.state, chargeNotSent: this.pay.chargeUnreachable });
+    if (terminalReason === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
+    else if (terminalReason === 'not_configured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
     if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
     // "אין קשר לעמדת המזומן" (§11.15ג): its station silent on the LAN a minute — the cloud routes it as a cash alert.
     const cashSilent = this.cashMag.enabled() ? this.cashMag.unreachableAlert() : this.cashPay.unreachableAlert();
@@ -1952,13 +1965,19 @@ export class KioskService extends EventEmitter {
     });
     if (outcome.kind === 'refused') {
       this.ledger.voidCardSale(doc.id, null);
-      this.progress({ orderId, phase: 'declined', message: 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.', amountAgorot, canCancel: false, cancelling: false });
+      // "קיוסק — כשאין מסופון אשראי": the till is offered back on "איך תרצו לשלם?" — said so.
+      const message = this.tillFallbackNow() ? CARD_FALLBACK_TEXT : 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.';
+      this.progress({ orderId, phase: 'declined', message, amountAgorot, canCancel: false, cancelling: false });
+      this.dirty();
       return;
     }
     if (outcome.kind === 'declined') {
       this.ledger.voidCardSale(doc.id, outcome.voidMeta);
       this.pay.forgetAttempt(this.lastReferenceOf(doc.id) ?? '');
-      this.progress({ orderId, phase: 'declined', message: outcome.message, amountAgorot, canCancel: false, cancelling: false });
+      // It never reached the terminal: with "קיוסק — כשאין מסופון אשראי" the till is offered beside the card now — said so.
+      const message = outcome.notSent && this.tillFallbackNow() ? CARD_FALLBACK_TEXT : outcome.message;
+      this.progress({ orderId, phase: 'declined', message, amountAgorot, canCancel: false, cancelling: false });
+      if (outcome.notSent) this.dirty();
       void this.sync.flush();
       return;
     }
@@ -2509,7 +2528,8 @@ export class KioskService extends EventEmitter {
   async pullLanHost(force = false): Promise<void> {
     const id = this.machineId;
     if (!id || !this.fiscalRole || this.opts.bridge || !this.isKiosk()) return;
-    if (!kioskPayMethods(this.config().payment.methods).includes('cash_at_till')) return;
+    // "תשלום בקופה" set — or offered when the terminal is not there ("קיוסק — כשאין מסופון אשראי"): known before the cloud goes.
+    if (!mayPayAtTill(kioskPayMethods(this.config().payment.methods), this.tillFallbackMode())) return;
     if (!force && Date.now() - this.lanHostPulledAt < LAN_HOST_PULL_MS) return;
     this.lanHostPulledAt = Date.now();
     const kept = this.kv.getJson<KeptLanHost>(LAN_HOST);
@@ -2531,14 +2551,42 @@ export class KioskService extends EventEmitter {
     return offlineBlockScopeOf(this.cloud.parameters()[OFFLINE_BLOCK_SCOPE_KEY], configOfflineBlockScope(this.snapshot()?.config));
   }
 
+  /** "קיוסק — כשאין מסופון אשראי" (`kioskNoTerminalFallback`): the parameter, else the config's, else `pay_at_till`. */
+  private tillFallbackMode(): NoTerminalFallback {
+    return noTerminalFallbackOf(this.cloud.parameters()[NO_TERMINAL_FALLBACK_KEY], configNoTerminalFallback(this.snapshot()?.config));
+  }
+
+  /** The kiosk's methods as configured, one card per document — "ללא אשראי" without the card ones. */
+  private configuredPayMethods(): PaymentMethod[] {
+    const set = tsKioskPayMethods(this.config().payment.methods);
+    return this.pay.noCard ? set.filter((m) => m !== 'card' && m !== 'split_card') : set;
+  }
+
+  /**
+   * "תשלום בקופה" is offered now for the terminal's sake (core/noTerminalFallback.ts): the card cannot be charged in
+   * advance, or its terminal does not answer, and nothing else pays.
+   */
+  private tillFallbackNow(): boolean {
+    if (!this.fiscalRole || !this.isKiosk()) return false;
+    return tillFallbackApplies({
+      mode: this.tillFallbackMode(),
+      methods: this.configuredPayMethods(),
+      card: fallbackCard({ configured: this.pay.configured, unreachable: this.pay.unreachable, locked: this.pay.blocked() }),
+      cashDeviceUsable: this.cashDeviceUsable(),
+    });
+  }
+
   private payView(kiosk: boolean): KioskView['pay'] {
-    const set = kiosk ? tsKioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
     // "ללא אשראי": no card tile at all (not one shown off) — cash at the till and the voucher stay.
-    const methods = this.pay.noCard ? set.filter((m) => m !== 'card' && m !== 'split_card') : set;
+    const configured = kiosk ? this.configuredPayMethods() : (['card'] as PaymentMethod[]);
+    // "קיוסק — כשאין מסופון אשראי" (`pay_at_till`, the default): no terminal to charge on (or one that does not answer)
+    // and nothing else that pays — "תשלום בקופה" is offered, so the kiosk never rests for the terminal alone.
+    const fallback = kiosk && this.tillFallbackNow();
+    const methods = withTillFallback(configured, fallback);
     const state = this.pay.monitor.state;
     // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
     // a terminal that did not answer its check is tried on the press.
-    const cardOff = this.pay.noCard
+    const cardOffNow = this.pay.noCard
       ? NO_CARD_TEXT
       : this.pay.blocked()
         ? 'תשלום קודם ממתין לבירור. אנא פנו לצוות.'
@@ -2547,6 +2595,8 @@ export class KioskService extends EventEmitter {
           : state === 'unconfigured'
             ? 'לא הוגדר מסופון אשראי לקיוסק'
             : 'מסופון האשראי לא זמין כרגע';
+    // The card's tile while the till is offered for it: the customer's words, not the staff's.
+    const cardOff = fallback && cardOffNow !== null && !this.pay.noCard ? CARD_FALLBACK_TEXT : cardOffNow;
     const usable = methods.filter((m) =>
       // A voucher only where its order can be finished: by the card (the vouchers are legs of the document) or at the till
       // (voucherCanFinish) — never a dead end.
@@ -2568,6 +2618,7 @@ export class KioskService extends EventEmitter {
       usable: kiosk ? offlineUsable(usable, this.offlineBlocked(this.config()), this.offlineScope(), blockCash) : usable,
       cardOff,
       cashOff: methods.includes('cash_device') ? (this.cashMag.enabled() ? this.cashMag.offReason() : this.cashPay.offReason()) : null,
+      ...(fallback ? { tillFallback: true as const } : {}),
     };
   }
 
@@ -2661,7 +2712,8 @@ export class KioskService extends EventEmitter {
     if (!this.fiscalRole || !this.isKiosk()) return { ok: false, reason: 'error', message: 'המכשיר אינו קיוסק פעיל' };
     if (!this.newSaleAllowed()) return { ok: false, reason: 'error', message: SHOP_LOCK_TEXT.title };
     const cfg = this.config();
-    if (!kioskPayMethods(cfg.payment.methods).includes('cash_at_till')) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
+    // Set on the kiosk, or offered when its terminal is not there ("קיוסק — כשאין מסופון אשראי", core/noTerminalFallback.ts).
+    if (!mayPayAtTill(kioskPayMethods(cfg.payment.methods), this.tillFallbackMode())) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
     // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
     if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'error', message: DISCOUNT_PAY_HERE };
     const basket: StartPaymentIn = { ...input, vouchers: undefined };

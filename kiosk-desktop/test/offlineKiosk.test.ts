@@ -325,9 +325,13 @@ describe('3. no card terminal', () => {
     expect(none.pay.usable).toEqual(['cash_at_till']);
     expect(none.pay.cardOff).toBe('הקיוסק מוגדר ללא אשראי');
     expect(none.state.noPayment).toBe(false);
-    // Card only and "ללא אשראי": nothing to take — the screens rest on "התשלום אינו זמין כרגע" (KioskApp: payAsk.fallback null).
+    // Card only and "ללא אשראי": "קיוסק — כשאין מסופון אשראי" (`pay_at_till`, the default) offers the till — the kiosk sells.
     const cardOnly = kiosk(c, { integration: 'none', methods: ['card'] }).fresh();
-    expect(cardOnly.pay.usable).toEqual([]);
+    expect(cardOnly.pay).toMatchObject({ methods: ['cash_at_till'], usable: ['cash_at_till'], tillFallback: true });
+    expect(payMethodAsk(cardOnly.pay.methods, cardOnly.pay.usable, 'off').fallback).toBe('cash_at_till');
+    // `block`: nothing to take — the screens rest on "התשלום אינו זמין כרגע" (KioskApp: payAsk.fallback null).
+    const blocked = kiosk(c, { integration: 'none', methods: ['card'], params: { kioskNoTerminalFallback: 'block' } }).fresh();
+    expect(blocked.pay.usable).toEqual([]);
   });
 
   it('none set up at all: the card shown off with why; the till takes it; card alone rests on "no payment" (terminal)', () => {
@@ -340,7 +344,14 @@ describe('3. no card terminal', () => {
     // "המסופון לא זמין" (state.noPayment, the terminal's fault — not the "no payment" rest).
     expect(payMethodAsk(v.pay.methods, v.pay.usable, 'required').fallback).toBe('cash_at_till');
     expect(v.state.noPaymentReason).toBe('terminal');
-    const alone = kiosk(c, { methods: ['card'] }).fresh();
+    // Card alone, none set up: the till offered for it (`pay_at_till`, the default) — the card's tile says so, the staff's
+    // pill still says the terminal is missing.
+    const fallback = kiosk(c, { methods: ['card'] }).fresh();
+    expect(fallback.pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['cash_at_till'], cardOff: 'האשראי לא זמין כרגע — אפשר לשלם בקופה', tillFallback: true });
+    expect(payMethodAsk(fallback.pay.methods, fallback.pay.usable, 'off')).toEqual({ asks: true, optional: false, fallback: 'cash_at_till' });
+    expect(fallback.state).toMatchObject({ noPayment: true, noPaymentReason: 'terminal' });
+    // `block`: as before — the "no payment" rest.
+    const alone = kiosk(c, { methods: ['card'], params: { kioskNoTerminalFallback: 'block' } }).fresh();
     expect(alone.pay.usable).toEqual([]);
     expect(payMethodAsk(alone.pay.methods, alone.pay.usable, 'required').fallback).toBeNull();
     expect(alone.state).toMatchObject({ noPayment: true, noPaymentReason: 'terminal' });
@@ -511,12 +522,16 @@ describe('4. no internet and no terminal', () => {
     expect(k.svc.lanTarget()?.secret).toBe(PRINT_KEY);
   });
 
-  it('a kiosk that does not offer the till never asks the cloud for the LAN host', async () => {
+  it('a kiosk that does not offer the till (`kioskNoTerminalFallback` = block) never asks the cloud for the LAN host', async () => {
     const c = cloud();
     c.state.online = true;
-    const k = kiosk(c, { terminal: pinpad(), methods: ['card'] });
+    const k = kiosk(c, { terminal: pinpad(), methods: ['card'], params: { kioskNoTerminalFallback: 'block' } });
     await k.svc.pullLanHost(true);
     expect(c.sent.some((s) => s.path === 'sync/m/printers')).toBe(false);
+    // `pay_at_till` (the default): the till may be offered when the terminal goes — the host is known before the cloud goes.
+    const card = kiosk(c, { terminal: pinpad(), methods: ['card'] });
+    await card.svc.pullLanHost(true);
+    expect(c.sent.some((s) => s.path === 'sync/m/printers')).toBe(true);
   });
 
   it('CashMag on the LAN, "ללא אשראי", offline with the block on: the cash device stays and the sale is written here', async () => {
@@ -710,5 +725,142 @@ describe('the rules', () => {
     expect(offlineNoticeShown({ ...on, offline: false, screen: 'attract' })).toBe(false);
     expect(offlineNoticeText(true)).toBe('אין כרגע חיבור לאינטרנט. ההזמנה והתשלום במסופון ממשיכים כרגיל.');
     expect(offlineNoticeText(false)).not.toContain('מסופון');
+  });
+});
+
+/* ======================================================================= 7. "גם אם אין מסופון שיעלה" */
+
+/**
+ * "קיוסק — כשאין מסופון אשראי" (`kioskNoTerminalFallback`, core/noTerminalFallback.ts; the owner, 16.10.2026): a card-only
+ * kiosk with no terminal (none set up, or one that does not answer) comes up on its menu and takes the order to the till —
+ * the cloud, the shop's LAN host offline, else the "לתשלום בקופה" slip — never a tax document here. `block`: as before.
+ */
+describe('7. no terminal: "תשלום בקופה" instead (kioskNoTerminalFallback)', () => {
+  const FALLBACK_TEXT = 'האשראי לא זמין כרגע — אפשר לשלם בקופה';
+  /**
+   * The terminal's alert in the kiosk's status (`status.alerts`): kept while the till is offered instead — the cloud makes it
+   * the exception "תקלת מסוף אשראי בקיוסק" (`kiosk_terminal`, the managers' push) — and gone once the card works again.
+   */
+  const terminalAlerts = (k: ReturnType<typeof kiosk>) =>
+    ((k.svc as unknown as { kioskStatus(): { alerts: Array<Record<string, unknown>> } }).kioskStatus().alerts ?? []).filter((a) => a.kind === 'terminal');
+  const PINPAD = { address: 'https://10.0.0.5:8080/SPICy' };
+  /** Where KioskApp rests with this view: it sells while "איך תרצו לשלם?" has a way to pay (kioskPayChooser's fallback). */
+  const sells = (v: { pay: { methods: Parameters<typeof payMethodAsk>[0]; usable: Parameters<typeof payMethodAsk>[1] } }) => payMethodAsk(v.pay.methods, v.pay.usable, 'off').fallback !== null;
+
+  it('none set up, card only: the menu opens, the card tile says why, "תשלום בקופה" takes it — no document on the kiosk', async () => {
+    const c = cloud();
+    c.state.online = true;
+    c.answers['POST sync/m/kiosk/open-orders'] = openOrderBody;
+    const k = kiosk(c, { methods: ['card'] });
+    const v = k.fresh();
+    expect(v.pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['cash_at_till'], cardOff: FALLBACK_TEXT, tillFallback: true });
+    expect(sells(v)).toBe(true);
+    // Still told: "המסופון לא מוגדר" in the status (the cloud's `kiosk_terminal`, pushed to the managers).
+    expect(terminalAlerts(k)).toEqual([{ kind: 'terminal', key: 'terminal', reason: 'not_configured' }]);
+    // "איך תרצו לשלם?" is asked (a card-only kiosk's step is off: with the card off, the till must be chosen).
+    expect(payMethodAsk(v.pay.methods, v.pay.usable, 'off')).toEqual({ asks: true, optional: false, fallback: 'cash_at_till' });
+    // The card is still refused before anything is written.
+    expect(await k.svc.startPayment(basket())).toMatchObject({ ok: false, reason: 'terminal' });
+    const r = await k.svc.placeOpenOrder({ ...basket(), expectedTotalAgorot: 4200, vouchers: [] });
+    expect(r).toMatchObject({ ok: true, pickupLabel: 'K-1', pending: false, dueAgorot: 4200 });
+    expect(c.sent.some((s) => s.method === 'POST' && s.path === 'sync/m/kiosk/open-orders')).toBe(true);
+    // Fiscal: the till that takes the money writes the document — none here, nothing to upload as a sale.
+    expect(k.svc.outbox.count('transaction')).toBe(0);
+  });
+
+  it('`block`: today\'s rest on "התשלום אינו זמין כרגע", the order to the till refused', async () => {
+    const c = cloud();
+    const k = kiosk(c, { methods: ['card'], params: { kioskNoTerminalFallback: 'block' } });
+    const v = k.fresh();
+    expect(v.pay).toEqual({ methods: ['card'], usable: [], cardOff: 'לא הוגדר מסופון אשראי לקיוסק', cashOff: null });
+    expect(sells(v)).toBe(false);
+    expect(v.state).toMatchObject({ noPayment: true, noPaymentReason: 'terminal' });
+    expect(await k.svc.placeOpenOrder({ ...basket(), expectedTotalAgorot: 4200, vouchers: [] })).toMatchObject({ ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' });
+  });
+
+  it('an old cloud (no parameter, nothing in the config): `pay_at_till` all the same; the config\'s word when the parameter is absent', () => {
+    const c = cloud();
+    expect(kiosk(c, { methods: ['card'] }).fresh().pay.tillFallback).toBe(true);
+    // The Android bundle's way (the cloud puts `block` in the config): honoured here too when no parameter came.
+    expect(kiosk(c, { methods: ['card'], general: { noTerminalFallback: 'block' } }).fresh().pay.usable).toEqual([]);
+    // The parameter wins over the config.
+    expect(kiosk(c, { methods: ['card'], general: { noTerminalFallback: 'block' }, params: { kioskNoTerminalFallback: 'pay_at_till' } }).fresh().pay.tillFallback).toBe(true);
+    // The kiosk set to take the till itself: nothing added for the terminal.
+    expect(kiosk(c, { methods: ['card', 'cash_at_till'] }).fresh().pay.tillFallback).toBeUndefined();
+  });
+
+  it('set up but not answering: the card stays (tried on the press) with "תשלום בקופה" beside it; back when it answers', async () => {
+    const c = cloud();
+    const terminal = pinpad();
+    terminal.script.check = false;
+    const k = kiosk(c, { terminal, methods: ['card'] });
+    expect(k.fresh().pay).toMatchObject({ methods: ['card'], usable: ['card'], cardOff: null });
+    await k.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
+    await k.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
+    const v = k.fresh();
+    expect(v.state.terminal).toBe('unreachable');
+    expect(v.pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['card', 'cash_at_till'], cardOff: null, tillFallback: true });
+    expect(terminalAlerts(k)).toEqual([{ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: PINPAD }]);
+    // Two ways to pay: "איך תרצו לשלם?" is asked (KioskApp: fallbackPayConfig), the card first.
+    expect(payMethodAsk(v.pay.methods, v.pay.usable, 'required')).toEqual({ asks: true, optional: false, fallback: 'card' });
+    // `block`: the card alone, as before.
+    const blocked = kiosk(c, { terminal, methods: ['card'], params: { kioskNoTerminalFallback: 'block' } });
+    await blocked.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
+    await blocked.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
+    expect(blocked.fresh().pay).toMatchObject({ methods: ['card'], usable: ['card'] });
+    // The terminal answers again: the till goes, and so does the alert.
+    terminal.script.check = true;
+    await k.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
+    expect(k.fresh().pay.methods).toEqual(['card']);
+    expect(terminalAlerts(k)).toEqual([]);
+  });
+
+  it('a charge that never reached the terminal: the customer is told to pay at the till, and it is offered at once', async () => {
+    const c = cloud();
+    const terminal = pinpad();
+    const k = kiosk(c, { terminal, methods: ['card'] });
+    terminal.script.sale.push({ answer: 'NOT_SENT', message: 'connect ETIMEDOUT 10.0.0.5:8080' });
+    const { orderId, last } = await sell(k);
+    expect(last).toMatchObject({ phase: 'declined', message: FALLBACK_TEXT });
+    expect(k.svc.ledger.doc(k.svc.orders.get(orderId)!.transactionId!)!.status).toBe('cancelled');
+    expect(k.fresh().pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['card', 'cash_at_till'], tillFallback: true });
+    // Told at once, before any check: "אין תקשורת למסופון האשראי".
+    expect(terminalAlerts(k)).toEqual([{ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: PINPAD }]);
+    // A check that answers: the card alone again, no alert.
+    await k.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
+    expect(k.fresh().pay.methods).toEqual(['card']);
+    expect(terminalAlerts(k)).toEqual([]);
+    // A card the terminal declines is the card's answer: nothing offered for it.
+    terminal.script.sale.push({ answer: 'DECLINED', message: 'כרטיס נדחה', raw: null, statusCode: 3 });
+    expect((await sell(k)).last).toMatchObject({ phase: 'declined', message: 'כרטיס נדחה' });
+    expect(k.fresh().pay.methods).toEqual(['card']);
+  });
+
+  it('offline and no terminal: to the shop’s LAN host (its print server); the host down — the "לתשלום בקופה" slip', async () => {
+    const host = await lanHost();
+    const c = cloud();
+    c.state.online = true;
+    c.answers['GET sync/m/printers'] = () => printersAnswer(host.port);
+    const k = kiosk(c, { methods: ['card'] });
+    // Online, the card-only kiosk learnt where the host is: the till may be offered for its terminal.
+    await k.svc.pullLanHost(true);
+    expect(k.svc.lanTarget()).toMatchObject({ address: '127.0.0.1', port: host.port });
+    c.state.online = false;
+    k.offline(true);
+    expect(k.fresh().pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['cash_at_till'] });
+    const r = await k.svc.placeOpenOrder({ ...basket(), expectedTotalAgorot: 4200, vouchers: [] });
+    expect(r).toMatchObject({ ok: true, pending: false, dueAgorot: 4200 });
+    expect(host.board.has((r as { localId: string }).localId)).toBe(true);
+    // The host down: the customer takes it to the till on paper.
+    host.setDown(true);
+    const slipped = await k.svc.placeOpenOrder({ ...basket(), expectedTotalAgorot: 4200, vouchers: [] });
+    expect(slipped).toMatchObject({ ok: true, pending: true });
+    const slip = textOf(await until(() => k.printed.find((d) => d.kind === 'receipt')));
+    for (const s of ['לתשלום בקופה', '1 × המבורגר', `KO:${(slipped as { localId: string }).localId}`, 'הזמנה ממתינה לסנכרון']) expect(slip).toContain(s);
+    expect(k.svc.outbox.count('transaction')).toBe(0);
+    // "חסימת הזמנות כשאין אינטרנט" still holds what it holds: offline with it on (`all`), the "offline" rest.
+    const held = kiosk(c, { methods: ['card'], general: { blockWhenOffline: true } });
+    held.offline(true);
+    expect(held.fresh()).toMatchObject({ pay: { usable: [] }, state: { noPayment: true, noPaymentReason: 'offline' } });
   });
 });
