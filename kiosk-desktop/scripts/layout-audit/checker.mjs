@@ -379,8 +379,10 @@ function auditNow(o, noHit) {
     }
     const vis = intersect(r, box);
     if (!vis) continue; // scrolled out of sight — reachable
-    const cx = vis.left + vis.width / 2;
-    const cy = vis.top + vis.height / 2;
+    // A text's point is its first glyph line's middle (an inline span over two lines has a box whose middle is elsewhere).
+    const line = el.matches(INTERACTIVE) ? null : paintedTextRects(el)[0];
+    const cx = line ? line.left + line.width / 2 : vis.left + vis.width / 2;
+    const cy = line ? line.top + line.height / 2 : vis.top + vis.height / 2;
     const cover = coverAt(el, cx, cy);
     if (!cover) {
       exposed.add(el);

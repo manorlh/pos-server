@@ -190,6 +190,9 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* A screen taller than what is left (the PIN pad on a 480–620 px window) scrolls instead of losing "כניסה"
+     (layout audit 16.10); every screen that fits is as before. */
+  overflow-y: auto;
 }
 
 .t-blocking {
@@ -714,6 +717,7 @@
 
 .t-lock {
   margin: auto;
+  flex-shrink: 0;
   padding: 16px;
   box-sizing: border-box;
   width: 100%;
@@ -1330,7 +1334,8 @@
 /* §13 (nayax-deferred-all): the terminal works deferred — amber on the payment screen and the sell screen. */
 .t-deferred {
   background: #ff9500;
-  color: #fff;
+  /* Dark words on the amber (white on it was 2.2:1 — layout audit 16.10). */
+  color: #1d2433;
   font-weight: 700;
   border-radius: 10px;
   padding: 10px 12px;
