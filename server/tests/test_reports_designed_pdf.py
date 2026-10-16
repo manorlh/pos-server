@@ -455,6 +455,30 @@ class TestInsights:
                                 previous_rows=[["קפה", 1, 50], ["תה", 1, 40], ["סלט", 1, 90]])
         assert any(i.type == "alert" and i.text.startswith("ללא מכירות הפעם: סלט") for i in gone)
 
+    @pytest.mark.parametrize("label", ["מול 01.10–07.10", "  מול 01.10–07.10", "מול-01.10–07.10", "01.10–07.10"])
+    def test_a_label_that_already_says_against_is_said_once(self, world, label):
+        """The dashboard's label is "מול 01.10–07.10": every sentence and card says "מול" once."""
+        rows = [["קפה", 10, 900], ["תה", 5, 100], ["מאפה", 2, 300]]
+        prev = [["קפה", 10, 400], ["תה", 5, 300], ["מאפה", 2, 300]]
+        kpis = [D.Kpi("net", "מכירות נטו", 1300, "money", compare=1000, compare_label=label)]
+        texts = [i.text for i in I.table_insights("product-sales", PRODUCTS, rows, previous_rows=prev,
+                                                     previous_label=label, kpis=kpis)]
+        said = [t for t in texts if "01.10–07.10" in t]
+        assert len(said) >= 2, texts  # the KPI's move and the total's
+        assert all("מול 01.10–07.10" in t and "מול מול" not in t and "מול-" not in t for t in said), said
+        # The PDF's card: "מול 01.10–07.10" under the number, once.
+        body = body_for("product-sales", I.RANKING, rows=4)
+        body["kpis"] = [{"key": "net", "label": "מכירות נטו", "value": 1300, "kind": "money", "compare": 1000,
+                         "compareLabel": label}]
+        content = b"\n".join(_pages(_post(world, body).body))
+        assert _has(content, "מול 01.10–07.10") and not _has(content, "מול מול")
+
+    def test_compared_with(self):
+        assert D.compared_with("מול שבוע שעבר") == "שבוע שעבר"
+        assert D.compared_with("מול־אירוע ב") == "אירוע ב"
+        assert D.compared_with("מולדת") == "מולדת"  # a word that only starts like it
+        assert D.compared_with("") == D.compared_with(None) == D.compared_with("מול") == "התקופה הקודמת"
+
     def test_an_outlier_by_the_median_and_its_absolute_deviation(self):
         cols = _cols(("cashier", "קופאי", "text"), ("net", "נטו", "money"))
         rows = [["דנה", 1000], ["יוסי", 1050], ["מיכל", 980], ["אבי", 1020], ["רוני", 4000]]
