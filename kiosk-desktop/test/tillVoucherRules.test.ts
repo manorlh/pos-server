@@ -33,6 +33,12 @@ import {
   voucherTestMixRefusal,
   voucherTestMoneyRefusal,
   voucherUnitsOf,
+  voucherLeaveNames,
+  voucherLeaveText,
+  voucherSuccessModeOf,
+  voucherSuccessOf,
+  voucherSuccessShows,
+  moneyText,
   withPick,
   VOUCHER_TEST_TEXT,
   type AppliedProduction,
@@ -483,5 +489,42 @@ describe('a voucher product on a refund', () => {
     expect(voucherRefundRefusal({ name: 'שובר מתנה', voucherId: 'v-1' })).toBe('שובר מתנה הוא שובר. זיכוי שובר רק מקבלה.');
     expect(voucherRefundRefusal({ name: 'קולה', voucherId: null })).toBeNull();
     expect(voucherRefundRefusal({ name: 'קולה' })).toBeNull();
+  });
+});
+
+/* ------------------------------------------------- leaving, the success */
+
+describe('"השובר לא מומש" (leaving the payment with vouchers applied)', () => {
+  it('names them: given back to the customer, not redeemed', () => {
+    expect(voucherLeaveNames([])).toBeNull();
+    expect(voucherLeaveNames([8])).toBe('שובר מס׳ 0008');
+    expect(voucherLeaveNames([0])).toBe('השובר');
+    expect(voucherLeaveNames([8, 12, 8])).toBe('שוברים מס׳ 0008, 0012');
+    expect(voucherLeaveNames([8, 0])).toBe('2 שוברים');
+    expect(voucherLeaveText([8])).toBe('שובר מס׳ 0008 יוחזר ללקוח ולא ימומש');
+    expect(voucherLeaveText([8, 12])).toBe('שוברים מס׳ 0008, 0012 יוחזרו ללקוח ולא ימומשו');
+    expect(voucherLeaveText([])).toBeNull();
+  });
+});
+
+describe('"מסך הצלחה במימוש שובר" (`voucherSuccessScreen`)', () => {
+  it('always by default; only a close by itself; never', () => {
+    expect(voucherSuccessModeOf(undefined)).toBe('always');
+    expect(voucherSuccessModeOf('junk')).toBe('always');
+    expect(voucherSuccessModeOf(' Auto-Close ')).toBe('auto_close');
+    expect(voucherSuccessModeOf('off')).toBe('off');
+    expect(voucherSuccessShows('always', true, 'with_payment')).toBe(true);
+    expect(voucherSuccessShows('always', false, 'auto')).toBe(false);
+    expect(voucherSuccessShows('auto_close', true, 'auto')).toBe(true);
+    expect(voucherSuccessShows('auto_close', true, 'tap')).toBe(false);
+    expect(voucherSuccessShows('off', true, 'auto')).toBe(false);
+  });
+
+  it('what was redeemed under the title', () => {
+    expect(voucherSuccessOf(1, 2)).toEqual({ title: 'השובר מומש בהצלחה', detail: 'מומשו 2 פריטים' });
+    expect(voucherSuccessOf(2, 1, 3_000)).toEqual({ title: 'השוברים מומשו בהצלחה', detail: 'מומש פריט אחד · הנחה ₪30' });
+    expect(voucherSuccessOf(1, 0)).toEqual({ title: 'השובר מומש בהצלחה', detail: null });
+    expect(moneyText(1_250)).toBe('₪12.50');
+    expect(moneyText(3_000)).toBe('₪30');
   });
 });

@@ -1045,6 +1045,65 @@ export function voucherInfoJson(info: VoucherInfoTotals): Record<string, unknown
   };
 }
 
+/* ------------------------------------------------- leaving the payment */
+
+/** "השובר לא מומש" (VoucherLeavePayment.kt): leaving the payment while vouchers are applied — asked first. */
+export const VOUCHER_LEAVE_TEXT = {
+  title: 'השובר לא מומש',
+  ok: 'אישור',
+  stay: 'חזרה לתשלום',
+} as const;
+
+const leaveNumber = (serial: number) => String(Math.max(0, serial)).padStart(4, '0');
+
+/** "שובר מס׳ 0008" / "שוברים מס׳ 0008, 0012" / "השובר" / "2 שוברים"; null — none. */
+export function voucherLeaveNames(serials: readonly number[]): string | null {
+  if (serials.length === 0) return null;
+  if (serials.length === 1) return serials[0] > 0 ? `שובר מס׳ ${leaveNumber(serials[0])}` : 'השובר';
+  if (serials.every((n) => n > 0)) return `שוברים מס׳ ${[...new Set(serials)].map(leaveNumber).join(', ')}`;
+  return `${serials.length} שוברים`;
+}
+
+/** "שובר מס׳ 0008 יוחזר ללקוח ולא ימומש" — the vouchers scanned at the payment go back to the customer. */
+export function voucherLeaveText(serials: readonly number[]): string | null {
+  const name = voucherLeaveNames(serials);
+  if (!name) return null;
+  return serials.length === 1 ? `${name} יוחזר ללקוח ולא ימומש` : `${name} יוחזרו ללקוח ולא ימומשו`;
+}
+
+/* ---------------------------------------------- "מסך הצלחה במימוש שובר" */
+
+/** `voucherSuccessScreen`: after every sale that redeemed a voucher (the default), only when it closed by itself, never. */
+export type VoucherSuccessMode = 'always' | 'auto_close' | 'off';
+
+export function voucherSuccessModeOf(raw: unknown): VoucherSuccessMode {
+  const w = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  return w === 'auto_close' || w === 'off' ? w : 'always';
+}
+
+/** How a sale that redeemed a voucher was closed: by itself, by the cashier's "סגור עסקה וממש שובר", or with money for the rest. */
+export type VoucherCloseKind = 'auto' | 'tap' | 'with_payment';
+
+export function voucherSuccessShows(mode: VoucherSuccessMode, redeemed: boolean, kind: VoucherCloseKind): boolean {
+  if (!redeemed) return false;
+  return mode === 'always' || (mode === 'auto_close' && kind === 'auto');
+}
+
+/** "השובר מומש בהצלחה" / "השוברים מומשו בהצלחה", and under it what was redeemed — "מומשו 2 פריטים", "הנחה ₪30". */
+export function voucherSuccessOf(vouchers: number, items: number, discountAgorot = 0): { title: string; detail: string | null } {
+  const parts = [items === 1 ? 'מומש פריט אחד' : items > 1 ? `מומשו ${items} פריטים` : null, discountAgorot > 0 ? `הנחה ${moneyText(discountAgorot)}` : null].filter((x): x is string => !!x);
+  return { title: vouchers > 1 ? 'השוברים מומשו בהצלחה' : 'השובר מומש בהצלחה', detail: parts.length > 0 ? parts.join(' · ') : null };
+}
+
+/** ₪30, ₪12.50 (the cloud's money_text). */
+export function moneyText(agorot: number): string {
+  const a = Math.trunc(agorot);
+  return a % 100 === 0 ? `₪${a / 100}` : `₪${Math.trunc(a / 100)}.${String(Math.abs(a % 100)).padStart(2, '0')}`;
+}
+
 /* ------------------------------------------------------------ the refunds */
 
 /** A product that is a voucher is credited from its receipt only (SellViewModel.refundRefusal). */

@@ -162,6 +162,8 @@ describe('a discount voucher at the payment ("שובר הנחה")', () => {
     expect(hh.state().checkout.totalAgorot).toBe(4_450);
     expect(vouchersOf(hh).items).toEqual([{ id: 'res-d', kind: 'discount', label: 'שובר #7 · סדרה', what: '₪10 הנחה על כל העסקה', amountAgorot: 1_000, test: false }]);
     await hh.ok('checkout.cash', { amountAgorot: 4_450 });
+    // "מסך הצלחה במימוש שובר" (always, by default): the discount it gave.
+    expect(hh.state().checkout.voucherSuccess).toEqual({ title: 'השובר מומש בהצלחה', detail: 'הנחה ₪10', notTaken: null, note: null });
     const doc = hh.svc.ledger.doc(hh.state().checkout.documentId!)!;
     expect(doc.totals.totalAgorot).toBe(4_450);
     expect(doc.voucherDiscounts).toMatchObject([{ reservationId: 'res-d', amountAgorot: 1_000, uses: 1 }]);
@@ -180,7 +182,15 @@ describe('a discount voucher at the payment ("שובר הנחה")', () => {
     expect(hh.state().checkout.totalAgorot).toBe(4_200);
     await until(() => calls(hh, 'reservations/res-d/release')[0]);
     await scan(hh);
-    await hh.ok('checkout.cancel');
+    // "השובר לא מומש": asked first — "חזרה לתשלום" stays, "אישור" gives it back.
+    const ask = (await hh.ok<{ dialogId: string }>('checkout.cancel'))!;
+    expect(hh.state().dialog).toMatchObject({ title: 'השובר לא מומש', body: 'שובר מס׳ 0007 יוחזר ללקוח ולא ימומש' });
+    expect(hh.state().dialog!.actions.map((a) => a.label)).toEqual(['אישור', 'חזרה לתשלום']);
+    await hh.ok('dialog.answer', { dialogId: ask.dialogId, action: 'cancel' });
+    expect(hh.state().checkout.phase).toBe('tender');
+    const again = (await hh.ok<{ dialogId: string }>('checkout.cancel'))!;
+    await hh.ok('dialog.answer', { dialogId: again.dialogId, action: 'approve' });
+    expect(hh.state().checkout.phase).toBe('idle');
     await until(() => calls(hh, 'reservations/res-d/release')[1]);
   });
 });
@@ -386,6 +396,13 @@ describe('a production voucher of groups ("פריט אחד מכל קבוצה")',
     expect(hh.state().dialog).toMatchObject({ id: ask.dialogId, body: 'סגירה עכשיו — מה שלא מומש מהשובר יאבד (שתייה ×1)' });
     await hh.ok('dialog.answer', { dialogId: ask.dialogId, action: 'approve' });
     expect(hh.state().checkout.phase).toBe('done');
+    // The success says what was not taken, amber.
+    expect(hh.state().checkout.voucherSuccess).toEqual({
+      title: 'השובר מומש בהצלחה',
+      detail: 'מומש פריט אחד',
+      notTaken: 'לא נלקח: שתייה ×1\nמה שלא מומש מהשובר יאבד (שתייה ×1)',
+      note: null,
+    });
   });
 });
 
@@ -414,7 +431,9 @@ describe('a plain list voucher ("/redeem")', () => {
     const hh = await till({ [`${P}/lookup`]: () => plain, [`${P}/redeem`]: () => ({ redemptionId: 'red-2', redeemed: [{ productId: 'p-cola', quantity: 1 }], voucher: { serial: 5 } }) });
     await sell(hh, ['p-cola', 1], ['p-burger', 1]);
     await scan(hh);
-    await hh.ok('checkout.cancel');
+    const ask = (await hh.ok<{ dialogId: string }>('checkout.cancel'))!;
+    expect(hh.state().dialog!.body).toBe('שובר מס׳ 0005 יוחזר ללקוח ולא ימומש');
+    await hh.ok('dialog.answer', { dialogId: ask.dialogId, action: 'approve' });
     await until(() => calls(hh, 'redemptions/red-2/reverse')[0]);
   });
 });
@@ -485,7 +504,8 @@ describe('the scan itself', () => {
     await hh.engine.vouchers.lastScan;
     expect(hh.state().checkout).toMatchObject({ phase: 'tender', totalAgorot: 0 });
     // An empty order: the items first.
-    await hh.ok('checkout.cancel');
+    const ask = (await hh.ok<{ dialogId: string }>('checkout.cancel'))!;
+    await hh.ok('dialog.answer', { dialogId: ask.dialogId, action: 'approve' });
     await hh.ok('sell.clear');
     expect((await hh.fail('sell.voucher', { code: CODE })).message).toBe('השובר משלם על פריטים שבסל — הוסיפו את הפריטים לסל, ואז סרקו את השובר (או לחצו "שובר" במסך התשלום).');
   });

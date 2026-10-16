@@ -193,7 +193,15 @@ import {
   voucherInfoJson,
   voucherInfoLines,
   voucherInfoOf,
+  voucherCloseMessages,
+  voucherLeaveText,
+  voucherLeftOf,
   voucherRefundRefusal,
+  voucherSuccessModeOf,
+  voucherSuccessOf,
+  voucherSuccessShows,
+  VOUCHER_LEAVE_TEXT,
+  type VoucherCloseKind,
   type DocPrepaidRedemption,
   type VoucherInfoTotals,
 } from '../../core/till/vouchers';
@@ -492,6 +500,8 @@ interface CheckoutRec {
   token: string;
   /** "סיום בדיקה": the simulation's end (a test voucher's sale) — nothing was written. */
   testEnd: string[] | null;
+  /** "מסך הצלחה במימוש שובר": the sale redeemed vouchers. */
+  voucherSuccess: NonNullable<CheckoutState['voucherSuccess']> | null;
 }
 
 /** A credit line as priced from the cart. */
@@ -551,6 +561,7 @@ const idleCheckout = (): CheckoutRec => ({
   docIds: [],
   token: '',
   testEnd: null,
+  voucherSuccess: null,
 });
 
 function isInt(v: unknown, min: number, max: number): v is number {
@@ -2232,10 +2243,35 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (['off', 'false', '0', 'no'].includes(raw)) return;
     if (this.vouchers.production.some((a) => a.entitlement)) return;
     try {
+      this.closeKind = 'auto';
       this.closeSettled();
     } catch (e) {
       this.log(`voucher auto close: ${String(e)}`);
+    } finally {
+      this.closeKind = null;
     }
+  }
+
+  /** How the sale being closed now was closed (the success screen's rule): by itself, the cashier's tap, or with money. */
+  private closeKind: VoucherCloseKind | null = null;
+
+  /**
+   * "מסך הצלחה במימוש שובר" (`voucherSuccessScreen`, voucherSuccessFor): a sale that redeemed vouchers — what was redeemed, and
+   * what the customer did not take (the close's words). Read before the vouchers are let go.
+   */
+  private voucherSuccessNow(kind: VoucherCloseKind): CheckoutRec['voucherSuccess'] {
+    const v = this.vouchers;
+    const f = this.checkout.frozen;
+    const discounts = (f?.voucherOutcomes ?? []).filter((o) => o.amountAgorot > 0);
+    const count = v.production.filter((a) => !a.testMode).length + discounts.length;
+    const mode = voucherSuccessModeOf(this.svc.cloud.parameters().voucherSuccessScreen ?? this.svc.settingsMap().voucherSuccessScreen);
+    if (!voucherSuccessShows(mode, count > 0, kind)) return null;
+    const items = v.production.reduce((s, a) => s + a.units.length, 0);
+    const off = discounts.reduce((s, o) => s + o.amountAgorot, 0);
+    const success = voucherSuccessOf(count, items, off);
+    const left = v.production.map((a) => voucherLeftOf(a)).filter((x): x is NonNullable<typeof x> => !!x);
+    const close = voucherCloseMessages(left, new Date(this.nowFn()));
+    return { ...success, notTaken: close?.notTaken ?? null, note: close?.note ?? null };
   }
 
   /** The vouchers (and cash credits) paid it all: the document now — no cash handed over, no change, no drawer. */
@@ -2537,7 +2573,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The vouchers paid it all ("סגור עסקה וממש שובר"): the document with their legs alone.
     if (amount === 0 && total > 0 && this.approvedLegs().length > 0 && dueOf(total, this.approvedLegs()) === 0 && !this.checkout.basket) {
       this.noRealMoneyInTest();
-      return this.voucherCloseGate(() => this.closeSettled()) ?? this.closeSettled();
+      const tap = () => {
+        this.closeKind = 'tap';
+        try {
+          return this.closeSettled();
+        } finally {
+          this.closeKind = null;
+        }
+      };
+      return this.voucherCloseGate(tap) ?? tap();
     }
     // Nothing to pay (VoucherZeroDue: "סגור עסקה" — a ₪0 sale, e.g. every line on the house): closed with no money moved.
     const zero = total === 0 && amount === 0;
@@ -2804,6 +2848,23 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.checkout = idleCheckout();
       return undefined;
     };
+    // "השובר לא מומש" (VoucherLeavePayment): vouchers applied and not redeemed — asked first; a simulation holds nothing.
+    const leaving = this.vouchers.simulation() ? null : voucherLeaveText(this.vouchers.serials());
+    if (handed === 0 && leaving) {
+      this.openDialog({
+        kind: 'confirm',
+        title: VOUCHER_LEAVE_TEXT.title,
+        body: leaving,
+        fields: [],
+        actions: [
+          { id: 'approve', label: VOUCHER_LEAVE_TEXT.ok, primary: true },
+          { id: 'cancel', label: VOUCHER_LEAVE_TEXT.stay },
+        ],
+        code: null,
+        resume: () => reset(),
+      });
+      return { dialogId: this.pending!.dialog.id };
+    }
     if (handed === 0) return reset();
     // Cash was already taken: the sale is abandoned only with the money handed back (Android "בטל מכירה והחזר מזומן").
     this.openDialog({
@@ -2890,6 +2951,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       }));
     c.cardStatus = null;
     c.cardError = null;
+    // "מסך הצלחה במימוש שובר": the vouchers this sale redeemed — by itself, the cashier's tap, or with money for the rest.
+    const paidByMoney = legs.some((l) => (l.method === 'cash' || l.method === 'card') && l.amountAgorot > 0);
+    c.voucherSuccess = this.voucherSuccessNow(this.closeKind ?? (paidByMoney ? 'with_payment' : 'tap'));
     // The vouchers confirmed with the document (it names them too), then nothing held any more.
     this.vouchers.settle(doc);
     this.vouchers.clear();
@@ -3836,6 +3900,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
           : {}),
         ...(c.phase !== 'idle' && c.phase !== 'done' && !c.basket && c.frozen ? { vouchers: this.voucherView(c.frozen, dueOf(c.totalAgorot, approved)) } : {}),
         ...(c.testEnd ? { testEnd: c.testEnd } : {}),
+        ...(c.phase === 'done' && c.voucherSuccess ? { voucherSuccess: c.voucherSuccess } : {}),
       },
       shift: {
         hidden: this.shiftsHidden(),

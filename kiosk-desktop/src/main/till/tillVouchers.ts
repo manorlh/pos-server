@@ -173,6 +173,11 @@ export class TillVouchers {
 
   /* ------------------------------------------------------------ the state */
 
+  /** The service numbers of the vouchers on this sale ("שובר מס׳ 0008"), in the order applied. */
+  serials(): number[] {
+    return [...this.production.map((a) => a.serial), ...this.discounts.map((d) => d.serial)];
+  }
+
   /** A test voucher is on this sale: it is a simulation. */
   simulation(): boolean {
     return this.production.some((a) => a.testMode) || this.discounts.some((d) => isTestVoucherId(d.reservationId));
@@ -355,7 +360,7 @@ export class TillVouchers {
     const v = r.voucher;
     return this.c.later(() => {
       if (!this.samePayment(pay)) {
-        void releaseDiscount(this.post, v);
+        this.quietly(releaseDiscount(this.post, v));
         return { kind: 'cancelled' as const };
       }
       this.discounts.push(v);
@@ -364,7 +369,7 @@ export class TillVouchers {
       if (refused) {
         this.discounts = this.discounts.filter((x) => x !== v);
         this.codes.delete(voucherCodeKey(code)!);
-        void releaseDiscount(this.post, v);
+        this.quietly(releaseDiscount(this.post, v));
         this.host.reprice();
         return { kind: 'refused' as const, text: refused };
       }
@@ -443,7 +448,7 @@ export class TillVouchers {
     }
     const test = res.testMode === true || dto.testMode === true || isTestVoucherId(redemptionId);
     if (covered.length === 0) {
-      if (!test) void this.cloud.reverse(redemptionId);
+      if (!test) this.quietly(this.cloud.reverse(redemptionId));
       return { kind: 'refused', text: VOUCHER_TEXT.nothingInBasket };
     }
     const priced = coverPriced(accounting, covered, () => ({ key: null, name: null }));
@@ -472,7 +477,7 @@ export class TillVouchers {
       entitlement: null,
     };
     return this.book(applied, pay, () => {
-      if (!test) void this.cloud.reverse(redemptionId);
+      if (!test) this.quietly(this.cloud.reverse(redemptionId));
     });
   }
 
@@ -688,10 +693,10 @@ export class TillVouchers {
       maxUsesPerDay: num(dto.maxUsesPerDay),
     };
     if (priced.length === 0) {
-      void this.release(reservationId);
+      this.quietly(this.release(reservationId));
       return { kind: 'refused', text: VOUCHER_TEXT.nothingInBasket };
     }
-    return this.book(applied, pay, () => void this.release(reservationId));
+    return this.book(applied, pay, () => this.quietly(this.release(reservationId)));
   }
 
   /** [a] on the sale (through the engine's queue): repriced; given back when the payment moved on or could not take it. */
@@ -786,7 +791,7 @@ export class TillVouchers {
     }
     if (d) {
       this.discounts = this.discounts.filter((x) => x !== d);
-      void releaseDiscount(this.post, d);
+      this.quietly(releaseDiscount(this.post, d));
     }
     for (const [k, v] of this.codes) if (v.id === id) this.codes.delete(k);
     this.applied = null;
@@ -798,8 +803,13 @@ export class TillVouchers {
   }
 
   private giveBackProduction(a: AppliedProduction) {
-    if (a.reservationId) void this.release(a.reservationId);
-    else if (!a.testMode) void this.cloud.reverse(a.redemptionId);
+    if (a.reservationId) this.quietly(this.release(a.reservationId));
+    else if (!a.testMode) this.quietly(this.cloud.reverse(a.redemptionId));
+  }
+
+  /** A give-back that runs on its own: its failure is logged, never thrown (the hold runs out in the cloud anyway). */
+  private quietly(p: Promise<unknown>) {
+    p.catch((e: unknown) => this.c.log(`voucher give-back: ${String(e)}`));
   }
 
   private async release(reservationId: string): Promise<boolean> {
@@ -814,7 +824,7 @@ export class TillVouchers {
   /** The payment abandoned (cancelled, the shift's automatic close): every voucher given back. */
   abandon() {
     for (const a of this.production) this.giveBackProduction(a);
-    for (const d of this.discounts) void releaseDiscount(this.post, d);
+    for (const d of this.discounts) this.quietly(releaseDiscount(this.post, d));
     this.clear();
   }
 

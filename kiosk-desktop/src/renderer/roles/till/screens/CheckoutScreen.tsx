@@ -254,6 +254,14 @@ export function CheckoutScreen({
     return (
       <div className="t-checkout" style={style}>
         <h1 className="t-checkout-title t-ok">{handBack > 0 ? T.refundDoneScreen : T.done}</h1>
+        {checkout.voucherSuccess ? (
+          // "מסך הצלחה במימוש שובר": the vouchers redeemed, and (amber) what the customer did not take.
+          <div className="t-voucher-success" role="status">
+            <p className="t-voucher-success-title">✓ {checkout.voucherSuccess.title}</p>
+            {checkout.voucherSuccess.detail ? <p>{checkout.voucherSuccess.detail}</p> : null}
+            {checkout.voucherSuccess.notTaken ? <p className="t-voucher-test">{checkout.voucherSuccess.notTaken}</p> : null}
+          </div>
+        ) : null}
         {handBack > 0 ? (
           <div className="t-change-big">
             <span>{T.basketHandBack('')}</span>

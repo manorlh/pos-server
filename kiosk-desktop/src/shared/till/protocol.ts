@@ -615,6 +615,11 @@ export interface CheckoutState {
   vouchers?: CheckoutVouchers | null;
   /** "סיום בדיקה": the simulation's end — what would have been covered and left to pay; nothing was written. */
   testEnd?: string[] | null;
+  /**
+   * "מסך הצלחה במימוש שובר" (`voucherSuccessScreen`): the sale redeemed vouchers — "השובר מומש בהצלחה", what was redeemed,
+   * and (amber) what the customer did not take.
+   */
+  voucherSuccess?: { title: string; detail: string | null; notTaken: string | null; note: string | null } | null;
 }
 
 export interface ShiftState {
