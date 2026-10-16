@@ -4,6 +4,7 @@ import type { TillDataState } from './zDataState';
 import type { AutoReopenMode } from './availabilityReopen';
 import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
+import type { LicenseProduct } from './deviceLicense';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -79,6 +80,17 @@ export interface CurrentUser extends User, UserCapabilities {}
  * after the last day. Set by a super admin only.
  */
 export type LicenseType = 'permanent' | 'temporary';
+
+/** One setting of a machine's "סוג רישיון" (`license_product_history`). */
+export interface LicenseProductChange {
+  at: string;
+  from: LicenseProduct | null;
+  to: LicenseProduct | null;
+  by: string | null;
+  byName: string | null;
+  byRole?: string | null;
+  source: 'pairing' | 'dashboard' | string;
+}
 
 export interface Company {
   id: string;
@@ -852,6 +864,16 @@ export interface PosMachine {
   /** "לקוח זמני" on this till alone; the till keeps the earliest end above it too. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
+  /**
+   * "סוג רישיון" (lib/deviceLicense.ts): what the till / kiosk may be — the stored one, or derived from its
+   * state when none is stored (`licenseProductStored` null); null for a screen / server. `licenseMismatch`:
+   * the stored one does not fit the role. Absent on an older server.
+   */
+  licenseProduct?: LicenseProduct | null;
+  licenseProductStored?: LicenseProduct | null;
+  licenseProductLabel?: string | null;
+  licenseProductHistory?: LicenseProductChange[];
+  licenseMismatch?: boolean;
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;
   /** "פתיחה אוטומטית" (lib/autoStart.ts): ready / missing / off; null — never reported (no indicator). */

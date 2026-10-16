@@ -48,6 +48,10 @@ export interface KioskTillMode {
   employee: string | null;
   blocked: string | null;
   blockedText: string | null;
+  /** "סוג רישיון" (lib/deviceLicense.ts): the device's product, and whether the gate above is its (no switch here). */
+  licenseProduct?: 'till' | 'kiosk' | 'kiosk_till' | null;
+  licenseProductLabel?: string | null;
+  byLicense?: boolean;
 }
 
 /** The screen the kiosk lays itself out on (P:/specs/kiosk-landscape-till-mode.md §2), as it reported it. */

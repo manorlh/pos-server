@@ -78,6 +78,8 @@ import {
   KdsScreenFields,
   KioskOptionsFields,
 } from '@/components/dashboard/machines/device-role';
+import { DeviceLicensePicker, LicenseCountsPanel } from '@/components/dashboard/machines/device-license';
+import { licensedRoleOf, pairingLicenseOf, type LicenseProduct } from '@/lib/deviceLicense';
 import { WebKioskLink } from '@/components/dashboard/machines/web-kiosk-link';
 import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
 import { CustomerDisplayPairingFields, CustomerDisplayWebLink } from '@/components/dashboard/customer-display/customer-display-devices';
@@ -177,6 +179,8 @@ export default function MachinesPage() {
    * (docs/SPEC_DEVICE_ROLE_MODEL.md) — no convert step afterwards.
    */
   const [pairDeviceRole, setPairDeviceRole] = useState<DeviceRole | ''>('');
+  /** "סוג רישיון" for a till / kiosk ('' — the role's default; lib/deviceLicense.ts). */
+  const [pairLicense, setPairLicense] = useState<LicenseProduct | ''>('');
   const [pairKiosk, setPairKiosk] = useState<KioskDraft>(EMPTY_KIOSK_DRAFT);
   /** Android unless chosen: a Windows install cannot redeem an Android code, nor back. */
   const [pairPlatform, setPairPlatform] = useState<DevicePlatform>('android');
@@ -411,6 +415,7 @@ export default function MachinesPage() {
     setPairPreAssignLabel(null);
     setPairDeviceModel('');
     setPairDeviceRole('');
+    setPairLicense('');
     setPairKiosk(EMPTY_KIOSK_DRAFT);
     setPairPlatform('android');
     setPairKds(EMPTY_KDS_SCREEN);
@@ -862,6 +867,9 @@ export default function MachinesPage() {
         />
       ) : null}
 
+      {/* "רישיונות מכשירים" — the count per license product, for billing (a super admin / distributor). */}
+      {!isLoading ? <LicenseCountsPanel /> : null}
+
       {!isLoading && visibleMachines.length > 0 ? (
         <DevicesToolbar
           filters={filters}
@@ -1094,6 +1102,7 @@ export default function MachinesPage() {
                   value={pairDeviceRole}
                   onChange={(role) => {
                     setPairDeviceRole(role);
+                    setPairLicense('');
                     setPairWorkConfig(EMPTY_WORK_CONFIG);
                     // The browser runs a kiosk, a KDS or a board — never a till; a cash server is Windows only.
                     if (!platformsFor(role).includes(pairPlatform)) setPairPlatform(platformsFor(role)[0] ?? 'android');
@@ -1115,6 +1124,18 @@ export default function MachinesPage() {
                   </p>
                 ) : null}
               </div>
+              {/* "סוג רישיון" (P:/specs/device-license-type.md): a till or a kiosk only — the role's default first. */}
+              {licensedRoleOf(pairDeviceRole) ? (
+                <div className="space-y-2">
+                  <Label>{t('license.label')}</Label>
+                  <DeviceLicensePicker
+                    role={pairDeviceRole}
+                    value={pairingLicenseOf(pairDeviceRole, pairLicense) ?? ''}
+                    onChange={setPairLicense}
+                  />
+                  <p className="text-xs text-muted-foreground">{t('license.hint')}</p>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label>{t('deviceRole.platform')}</Label>
                 <DevicePlatformPicker
@@ -1306,9 +1327,11 @@ export default function MachinesPage() {
                     }
                     if (pairMissing) return;
                     setPairWorkConfigOutcome(null);
+                    const pairLicenseProduct = pairingLicenseOf(pairDeviceRole, pairLicense);
                     generateCode.mutate({
                       ...pairingRequestBody(pairDraft, pairKiosk),
                       ...(pairWorkConfigPlan ? { workConfig: pairWorkConfigPlan } : {}),
+                      ...(pairLicenseProduct ? { licenseProduct: pairLicenseProduct } : {}),
                     });
                   }}
                   disabled={

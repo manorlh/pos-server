@@ -74,6 +74,8 @@ import { Label } from '@/components/ui/label';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { controllerOptions } from '@/components/dashboard/kiosks/convert-dialog';
 import { DeviceModelSelect } from '@/components/dashboard/machines/device-model';
+import { DeviceLicensePicker, useMayManageLicense } from '@/components/dashboard/machines/device-license';
+import { licenseChoiceForRoleChange, parseLicenseProduct, type LicenseProduct } from '@/lib/deviceLicense';
 import { cn } from '@/lib/utils';
 
 export const EMPTY_KIOSK_DRAFT: KioskDraft = {
@@ -674,11 +676,21 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
   const [kiosk, setKiosk] = useState<KioskDraft>({ ...EMPTY_KIOSK_DRAFT, name: machine.name });
   const [error, setError] = useState<string | null>(null);
   const becomesKiosk = role === 'kiosk' && currentRole !== 'kiosk';
-  const body = deviceProfileBody(
+  // "סוג רישיון" (lib/deviceLicense.ts): a new role the stored license does not fit needs one that does —
+  // a super admin / distributor picks it here (sent with the change); anyone else cannot make the change.
+  const tl = useTranslations('machines.license');
+  const mayManageLicense = useMayManageLicense();
+  const storedLicense = parseLicenseProduct(machine.licenseProductStored);
+  const licenseChoices = !display && !server && role !== currentRole ? licenseChoiceForRoleChange(storedLicense, role) : null;
+  const [license, setLicense] = useState<LicenseProduct | ''>('');
+  const chosenLicense = licenseChoices ? (license && licenseChoices.includes(license) ? license : licenseChoices[0]) : null;
+  const licenseBlocked = !!licenseChoices && !mayManageLicense;
+  const profileBody = deviceProfileBody(
     { role: currentRole, model: currentModel },
     { role, model: deviceModelIdOf(model) },
     kiosk,
   );
+  const body = profileBody && chosenLicense && mayManageLicense ? { ...profileBody, licenseProduct: chosenLicense } : profileBody;
 
   const save = useMutation({
     mutationFn: () => api.put(`/machines/${machine.id}/device-profile`, body).then((r) => r.data),
@@ -715,6 +727,27 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
           ) : null}
           <p className="text-xs text-muted-foreground">{t('roleChangeNeedsPairing')}</p>
         </div>
+        {licenseChoices && storedLicense ? (
+          licenseBlocked ? (
+            <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              {tl('roleChangeBlocked', { product: tl(`product.${storedLicense}`) })}
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <Label>{tl('label')}</Label>
+              <p className="text-xs text-muted-foreground">{tl('roleChangeNeedsLicense', { product: tl(`product.${storedLicense}`) })}</p>
+              <DeviceLicensePicker
+                role={role}
+                options={licenseChoices}
+                value={chosenLicense ?? ''}
+                onChange={(next) => {
+                  setLicense(next);
+                  setError(null);
+                }}
+              />
+            </div>
+          )
+        ) : null}
         {becomesKiosk ? (
           <KioskOptionsFields shopId={machine.shopId ?? null} machineId={machine.id} value={kiosk} onChange={setKiosk} />
         ) : null}
@@ -742,7 +775,7 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
           {tc('cancel')}
         </Button>
         <Button
-          disabled={!body || save.isPending || (becomesKiosk && !!kioskDraftError(kiosk))}
+          disabled={!body || save.isPending || licenseBlocked || (becomesKiosk && !!kioskDraftError(kiosk))}
           title={!body ? t('noChange') : undefined}
           onClick={() => save.mutate()}
         >

@@ -58,6 +58,7 @@ import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
 import { SyncCell } from '@/components/dashboard/machines/sync-status';
 import type { DeviceSyncStatus } from '@/lib/syncStatus';
 import { DevicePlatformBadge, DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
+import { DeviceLicenseBadge } from '@/components/dashboard/machines/device-license';
 import { AutoStartBadge } from '@/components/dashboard/machines/auto-start';
 import {
   MachineGroupHeader,
@@ -589,6 +590,7 @@ export function DevicesList({
             </div>
             <div className="flex flex-wrap items-center gap-1">
               <DeviceRoleBadge m={m} showTill />
+              <DeviceLicenseBadge m={m} />
               <DevicePlatformBadge m={m} showAndroid />
               <DeviceModelBadge m={m} />
             </div>
@@ -724,6 +726,7 @@ export function DevicesList({
           <td className="px-2 py-2">
             <div className="flex flex-wrap items-center gap-1">
               <DeviceRoleBadge m={m} showTill />
+              <DeviceLicenseBadge m={m} />
               <DevicePlatformBadge m={m} showAndroid={isDisplayDevice(m)} />
             </div>
           </td>
