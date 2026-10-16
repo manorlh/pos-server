@@ -1572,3 +1572,205 @@ class TestTheKioskDesktopHost:
         assert (station["state"], station["changeAvailableAgorot"]) == ("ready", 20300)
         assert [d["valueAgorot"] for d in station["denominations"]] == [100, 1000]
         assert [r.details.get("code") for r in cash_rows(w)] == ["hopper_low"]
+
+
+# ── CashMag (P:/specs/cashmag-windows.md §6, §8): credits from the kiosk's document, its own cash alerts ─────────
+
+
+def _cashmag_doc(w, *, choice="credit", owed=260, slip="C-K7Q3MX", tx_id=None, host_id="cashmag", till=None):
+    """A CashMag kiosk's document: one cash leg whose `cashDevice` says the machine and what the customer chose."""
+    till = till or w.kiosk
+    shift = w.shift(till, 1)
+    doc = w.doc(till, shift, "37.35")
+    (leg,) = w.db.query(TransactionPayment).filter(TransactionPayment.transaction_id == doc.id).all()
+    tx_id = tx_id or uuid.uuid4()
+    block = {
+        "txId": str(tx_id), "stationId": "cashmag:192.168.1.40:65000", "hostId": host_id, "receivedAgorot": 5000,
+        "changeAgorot": 1000, "changeOwedAgorot": owed, "roundingAgorot": 5, "slipCode": slip,
+        **({"changeOwedAs": choice} if choice else {}),
+    }
+    leg.nayax_meta = {"cashDevice": CS.clean_cash_device(block)}
+    w.db.commit()
+    return doc, tx_id
+
+
+def _cashmag_alert(kiosk_id, text="אין קשר לשרת CashMag (192.168.1.40:65000)"):
+    return [{"kind": "cash", "key": "cash:cashmag:unreachable", "reason": "unreachable", "text": text,
+             "detail": {"stationId": "cashmag:192.168.1.40:65000", "stationName": "CashMag", "device": "cashmag"}}]
+
+
+def _unit_rows(w, *, open_only=True):
+    return CA.rows_of_station(w.db, f"cashmag:{w.kiosk.id}", open_only=open_only)
+
+
+class TestCashMagCredits:
+    def test_the_documents_leg_makes_the_credit_once_with_no_station(self, w):
+        doc, tx_id = _cashmag_doc(w)
+        CS.match_documents_safely(w.db, [doc.id])
+        row = w.db.get(CashStationTx, tx_id)
+        assert (row.device, row.station_id, row.host_machine_id, row.client_machine_id) == ("cashmag", None, None, w.kiosk.id)
+        assert (row.owed_status, row.owed_kind, row.owed_agorot, row.change_owed_as, row.slip_code) == ("open", "change_credit", 260, "credit", "C-K7Q3MX")
+        assert (row.document_id, row.document_number, row.shop_id) == (str(doc.id), doc.transaction_number, w.kiosk.shop_id)
+        assert (row.inserted_agorot, row.change_paid_agorot, row.amount_agorot, row.rounding_agorot) == (5000, 1000, 3735, 5)
+        # Pushed again (or matched again): nothing new.
+        CS.match_documents_safely(w.db, [doc.id])
+        assert w.db.query(CashStationTx).filter(CashStationTx.slip_code == "C-K7Q3MX").count() == 1
+        # Never a till's "שולם ללקוח", never an alert.
+        assert CS.owed_items_for_till(w.db, w.till1) == []
+        assert cash_rows(w) == [] and _unit_rows(w) == []
+
+    def test_redeemed_like_a_stations_any_shop_of_the_company_in_parts_released_confirmed(self, w):
+        from app.models.cash_station import CashCreditRedemption
+
+        doc, tx_id = _cashmag_doc(w)
+        CS.match_documents_safely(w.db, [doc.id])
+        out = CSR.get_cash_credit(str(w.kiosk.id), "CC:C-K7Q3MX", machine=w.kiosk, db=w.db)
+        assert out["credit"] == {
+            "code": "C-K7Q3MX", "amountAgorot": 260, "remainingAgorot": 260, "status": "open",
+            "stationName": "CashMag", "orderLabel": None, "createdAt": out["credit"]["createdAt"],
+        }
+        assert CS.lookup_credit(w.db, w.other_till, "c-k7q3mx")["credit"]["remainingAgorot"] == 260
+        assert refusal(CS.lookup_credit, w.db, _company_world_machine(w), "C-K7Q3MX").status_code == 404
+        first = str(uuid.uuid4())
+        part = CS.redeem_credit(w.db, w.till1, "C-K7Q3MX", {"redemptionId": first, "amountAgorot": 200})
+        w.db.commit()
+        assert part["credit"]["remainingAgorot"] == 60
+        assert w.db.get(CashCreditRedemption, uuid.UUID(first)).station_id is None
+        assert CS.redeem_credit(w.db, w.till1, "C-K7Q3MX", {"redemptionId": first, "amountAgorot": 200})["credit"]["remainingAgorot"] == 60
+        second = str(uuid.uuid4())
+        CS.redeem_credit(w.db, w.kiosk, "C-K7Q3MX", {"redemptionId": second, "amountAgorot": 60})
+        w.db.commit()
+        assert (w.db.get(CashStationTx, tx_id).owed_status, w.db.get(CashStationTx, tx_id).resolution) == ("resolved", "redeemed")
+        # The order was not paid: back on the credit.
+        assert CS.release_redemption(w.db, w.kiosk, second)["credit"]["remainingAgorot"] == 60
+        w.db.commit()
+        assert w.db.get(CashStationTx, tx_id).owed_status == "open"
+        # The paying document's `cash_credit` leg confirms the first.
+        shift = w.shift(w.till1, 2)
+        paying = w.doc(w.till1, shift, "2.00")
+        (leg,) = w.db.query(TransactionPayment).filter(TransactionPayment.transaction_id == paying.id).all()
+        leg.method = "cash_credit"
+        leg.nayax_meta = {"cashCredit": CS.clean_cash_credit({"code": "C-K7Q3MX", "redemptionId": first})}
+        w.db.commit()
+        CS.match_documents_safely(w.db, [paying.id])
+        assert w.db.get(CashCreditRedemption, uuid.UUID(first)).status == "confirmed"
+        assert refusal(CS.release_redemption, w.db, w.till1, first).detail["code"] == "confirmed"
+
+    def test_only_a_credit_of_a_completed_cashmag_document(self, w):
+        for choice in ("slip", "tip", None):
+            doc, tx_id = _cashmag_doc(w, choice=choice, slip="C-AAAAAA")
+            CS.match_documents_safely(w.db, [doc.id])
+            assert w.db.get(CashStationTx, tx_id) is None
+        # A cash station's leg (its host's id): the station's journal makes its credits, never the document.
+        doc, tx_id = _cashmag_doc(w, host_id=str(w.host.id), slip="C-BBBBBB")
+        CS.match_documents_safely(w.db, [doc.id])
+        assert w.db.get(CashStationTx, tx_id) is None
+        # Nothing owed, no code, a voided document: nothing.
+        doc, tx_id = _cashmag_doc(w, owed=0, slip="C-CCCCCC")
+        CS.match_documents_safely(w.db, [doc.id])
+        assert w.db.get(CashStationTx, tx_id) is None
+        doc, tx_id = _cashmag_doc(w, slip="nope")
+        CS.match_documents_safely(w.db, [doc.id])
+        assert w.db.get(CashStationTx, tx_id) is None
+        from app.models.transaction import TransactionStatus
+
+        doc, tx_id = _cashmag_doc(w, slip="C-DDDDDD")
+        doc.status = TransactionStatus.CANCELLED
+        w.db.commit()
+        CS.match_documents_safely(w.db, [doc.id])
+        assert w.db.get(CashStationTx, tx_id) is None
+
+    def test_a_station_transaction_of_the_same_id_is_left_alone(self, w):
+        tx_id = uuid.uuid4()
+        journal(w, tx_entry(w, tx_id, change_owed=260, slip="C-EEEEEE"))
+        doc, _ = _cashmag_doc(w, tx_id=tx_id, slip="C-EEEEEE")
+        CS.match_documents_safely(w.db, [doc.id])
+        row = w.db.get(CashStationTx, tx_id)
+        assert (row.device, row.station_id) == (None, w.station.id)
+
+
+class TestCashMagAlerts:
+    def test_a_cashmag_kiosks_alert_is_its_own_cash_alert_not_its_stations(self, w):
+        # The kiosk is a PayLink client too: its CashMag alert never lands on the station.
+        enable_kiosk(w, w.station.id)
+        device = w.db.get(KioskDevice, w.kiosk.id)
+        OPS.reconcile(w.db, w.kiosk, device, {}, _cashmag_alert(w.kiosk.id))
+        w.db.commit()
+        assert cash_rows(w) == []
+        (row,) = _unit_rows(w)
+        assert (row.exception_type, row.severity, row.status, row.machine_id) == ("cash_unit", "high", "new", w.kiosk.id)
+        assert row.details["summary"].startswith("CashMag (קיוסק 3): ")
+        assert "אין קשר לשרת CashMag" in row.details["summary"]
+        assert (row.details["source"], row.details["unit"], row.details["device"]) == ("kiosk", f"kiosk:{w.kiosk.id}", "cashmag")
+        assert (row.details["stationId"], row.details["cashmagServer"]) == (f"cashmag:{w.kiosk.id}", "cashmag:192.168.1.40:65000")
+        assert (w.till1.id, "cash_alert") in w.woken
+        # On its tills (`cashAlertTills` '' = the main till), once.
+        items = [a for a in OPS.alerts_for_till(w.db, w.till1) if a["kind"] == "cash"]
+        assert [(a["reason"], a["kioskName"]) for a in items] == [("unreachable", "CashMag")]
+        assert [a for a in OPS.alerts_for_till(w.db, w.till2) if a["kind"] == "cash"] == []
+        acked = OPS.acknowledge(w.db, w.till1, items[0]["id"], pos_user_name="דנה")
+        assert acked["acknowledgedBy"] == "דנה · Till 1"
+        with pytest.raises(HTTPException) as e:
+            OPS.acknowledge(w.db, w.till2, items[0]["id"])
+        assert e.value.status_code == 404
+        # Still reported: nothing new; reached again: closed.
+        OPS.reconcile(w.db, w.kiosk, device, {}, _cashmag_alert(w.kiosk.id))
+        w.db.commit()
+        assert len(_unit_rows(w, open_only=False)) == 1
+        OPS.reconcile(w.db, w.kiosk, device, {}, [])
+        w.db.commit()
+        assert _unit_rows(w) == [] and _unit_rows(w, open_only=False)[0].details["resolvedAt"]
+
+    def test_the_kiosks_own_cash_alert_tills(self, w):
+        set_param(w, CP.ALERT_TILLS_KEY, "machine", w.kiosk.id, str(w.till2.id))
+        device = w.db.get(KioskDevice, w.kiosk.id)
+        OPS.reconcile(w.db, w.kiosk, device, {}, _cashmag_alert(w.kiosk.id, text=""))
+        w.db.commit()
+        (row,) = _unit_rows(w)
+        assert row.details["summary"] == "CashMag (קיוסק 3): קיוסק 3 — עמדת המזומן CashMag לא עונה"
+        assert [a["reason"] for a in OPS.alerts_for_till(w.db, w.till2) if a["kind"] == "cash"] == ["unreachable"]
+        assert [a for a in OPS.alerts_for_till(w.db, w.till1) if a["kind"] == "cash"] == []
+
+    def test_a_paylink_kiosks_alert_keeps_its_stations_routing(self, w):
+        device = w.db.get(KioskDevice, w.kiosk.id)
+        reported = [{"kind": "cash", "key": "cash:unreachable", "reason": "unreachable", "text": "אין קשר לעמדת המזומן",
+                     "detail": {"stationId": str(w.station.id), "stationName": "עמדת מזומן 2"}}]
+        OPS.reconcile(w.db, w.kiosk, device, {}, reported)
+        w.db.commit()
+        assert len(cash_rows(w, "unreachable")) == 1 and _unit_rows(w) == []
+
+
+class TestCashMagMigration:
+    def test_station_nullable_device_added_idempotent_on_the_single_head(self):
+        import importlib.util
+
+        import sqlalchemy as sa
+        from alembic.config import Config
+        from alembic.operations import Operations
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        root = Path(__file__).absolute().parents[1]
+        path = root / "alembic" / "versions" / "f3b8d2c6a9e1_cashmag_credits.py"
+        spec = importlib.util.spec_from_file_location("migration_f3b8d2c6a9e1", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert (module.revision, module.down_revision) == ("f3b8d2c6a9e1", "e5a9c3d1f7b2")
+        engine = sa.create_engine("sqlite://")
+        with engine.begin() as conn:
+            conn.execute(sa.text("CREATE TABLE cash_station_txs (tx_id CHAR(32) PRIMARY KEY, station_id CHAR(32) NOT NULL)"))
+            conn.execute(sa.text("CREATE TABLE cash_credit_redemptions (id CHAR(32) PRIMARY KEY, station_id CHAR(32) NOT NULL)"))
+            conn.execute(sa.text("INSERT INTO cash_station_txs (tx_id, station_id) VALUES ('a', 's')"))
+            with Operations.context(MigrationContext.configure(conn)):
+                module.upgrade()
+                module.upgrade()  # idempotent
+            insp = sa.inspect(conn)
+            txs = {c["name"]: c for c in insp.get_columns("cash_station_txs")}
+            assert txs["station_id"]["nullable"] and "device" in txs
+            assert {c["name"]: c for c in insp.get_columns("cash_credit_redemptions")}["station_id"]["nullable"]
+            assert conn.execute(sa.text("SELECT station_id, device FROM cash_station_txs")).one() == ("s", None)
+            conn.execute(sa.text("INSERT INTO cash_station_txs (tx_id, station_id, device) VALUES ('b', NULL, 'cashmag')"))
+        config = Config(str(root / "alembic.ini"))
+        config.set_main_option("script_location", str(root / "alembic"))
+        script = ScriptDirectory.from_config(config)
+        assert script.get_heads() == ["f3b8d2c6a9e1"]

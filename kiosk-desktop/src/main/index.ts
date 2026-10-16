@@ -38,6 +38,7 @@ import { parseWindow } from '../core/updatePolicy';
 import type { PrintDoc } from '../core/printDocs';
 import type { KdsActionInput } from '../shared/roles';
 import type { CashStaffAction } from '../shared/cash';
+import { cashmagLocalOf } from './kiosk/cashmagPay';
 import type { WorkerLink } from './cash/paylinkDevice';
 import type { WorkerReply } from './cash/paylinkCore';
 
@@ -155,6 +156,11 @@ function installConfig(): {
   desktopIdleReturnMinutes?: number;
   /** "שרת מזומן": the LAN API's port (default 47630, core/cash/lanProtocol.ts). */
   cashPort?: number;
+  /**
+   * CashMag (P:/specs/cashmag-windows.md §2): this kiosk's own server address / name / user code over the cloud's,
+   * and function names — { "cashmag": { "host": "192.168.1.40", "port": 65000, "terminal": "קיוסק 1" } }.
+   */
+  cashmag?: unknown;
 } {
   try {
     return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
@@ -305,6 +311,7 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:cancelPayment', () => svc.cancelPayment());
   ipcMain.handle('kiosk:cashOwedChoice', (_e, choice: unknown) => svc.cashOwedChoice(choice));
   ipcMain.handle('kiosk:cashSplit', () => svc.cashSplit());
+  ipcMain.handle('kiosk:cashQuestion', (_e, confirm: unknown) => svc.cashQuestion(confirm));
   ipcMain.handle('kiosk:redeemCashCredit', (_e, input: unknown) => svc.redeemCashCredit(input));
   ipcMain.handle('kiosk:releaseCashCredit', (_e, id: unknown) => svc.releaseCashCredit(typeof id === 'string' ? id : ''));
   ipcMain.handle('kiosk:receiptChoice', (_e, orderId: string, print: boolean) => svc.receiptChoice(orderId, print));
@@ -457,6 +464,8 @@ void app.whenReady().then(async () => {
     deviceInfo: deviceInfoOf('Windows kiosk'),
     secretBox: secretBoxOf(),
     renderer: renderPage,
+    // "מזומן" at a CashMag machine: kiosk.json `cashmag` over the cloud's (never synced).
+    cashmagLocal: cashmagLocalOf(install.cashmag),
     platform: {
       quit: () => app.quit(),
       networkUp: () => enet.isOnline(),

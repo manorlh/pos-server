@@ -24,7 +24,7 @@ from shift_world import accept_str_uuids, make_world
 
 KEYS = (
     CM.ENABLED_KEY, CM.PROTOCOL_KEY, CM.HOST_KEY, CM.PORT_KEY, CM.TERMINAL_KEY, CM.USER_CODE_KEY, CM.CURRENCY_KEY,
-    CM.ROUNDING_KEY, CM.QUEUE_TIMEOUT_KEY, CM.AUTO_CANCEL_KEY, CM.CALL_TIMEOUT_KEY,
+    CM.ROUNDING_KEY, CM.QUEUE_TIMEOUT_KEY, CM.AUTO_CANCEL_KEY, CM.CALL_TIMEOUT_KEY, CM.OWED_CREDIT_KEY,
 )
 
 
@@ -72,6 +72,7 @@ def test_the_keys_are_the_tills_and_every_default_is_todays():
     assert KEYS == (
         "cashmagEnabled", "cashmagProtocol", "cashmagHost", "cashmagPort", "cashmagTerminal", "cashmagUserCode",
         "cashmagCurrency", "cashmagRounding", "cashmagQueueTimeoutSec", "cashmagAutoCancelSec", "cashmagCallTimeoutSec",
+        "cashmagOwedCredit",
     )
     assert specs[CM.ENABLED_KEY].value_type == "boolean" and specs[CM.ENABLED_KEY].default_value is False
     assert specs[CM.PROTOCOL_KEY].enum_options == ("jar", "json", "rlp") and specs[CM.PROTOCOL_KEY].default_value == "jar"
@@ -81,6 +82,8 @@ def test_the_keys_are_the_tills_and_every_default_is_todays():
     assert specs[CM.QUEUE_TIMEOUT_KEY].default_value == 0
     assert specs[CM.AUTO_CANCEL_KEY].default_value == 0
     assert specs[CM.CALL_TIMEOUT_KEY].default_value == 30
+    # "זיכוי להזמנה הבאה" at a CashMag machine: on — the cloud makes the credit from the document.
+    assert (CM.OWED_CREDIT_KEY, specs[CM.OWED_CREDIT_KEY].value_type, specs[CM.OWED_CREDIT_KEY].default_value) == ("cashmagOwedCredit", "boolean", True)
     for key in (CM.HOST_KEY, CM.PORT_KEY, CM.TERMINAL_KEY, CM.USER_CODE_KEY):
         assert specs[key].default_value is None, key
     for spec in specs.values():
@@ -89,6 +92,9 @@ def test_the_keys_are_the_tills_and_every_default_is_todays():
         assert not spec.admin_only
     assert len({s.label for s in specs.values()}) == len(specs)
     assert TP.enum_labels(CM.PROTOCOL_KEY) == CM.PROTOCOL_LABELS
+    # The till speaks json itself (pos-android CashMagJsonDriver, the Windows kiosk's client); RLP not yet.
+    assert "עוד לא נתמך" not in CM.PROTOCOL_LABELS[CM.PROTOCOL_JSON]
+    assert "עוד לא נתמך" in CM.PROTOCOL_LABELS[CM.PROTOCOL_RLP]
 
 
 def test_they_are_created_with_the_others(world):
@@ -103,6 +109,7 @@ def test_off_on_every_till_until_a_level_turns_it_on(world):
     pulled = _pulled(world, t1)
     assert pulled[CM.ENABLED_KEY] is False
     assert pulled[CM.CURRENCY_KEY] == "ILS" and pulled[CM.PROTOCOL_KEY] == "jar"
+    assert pulled[CM.OWED_CREDIT_KEY] is True
     assert pulled.get(CM.HOST_KEY) is None and pulled.get(CM.USER_CODE_KEY) is None
     _set(world, CM.ENABLED_KEY, "shop", world.shop.id, True)
     _set(world, CM.HOST_KEY, "shop", world.shop.id, " 192.168.1.40 ")

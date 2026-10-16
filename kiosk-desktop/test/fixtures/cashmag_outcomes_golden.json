@@ -1,0 +1,143 @@
+{
+  "_comment": "CashMag cross-platform contract (P:/specs/cashmag.md §12): how a client reads the CashMag server's answer to a payment, for money. Shared by pos-android (app/src/test/resources, CashMagGoldenTest) and pos-server kiosk-desktop (when it gets its CashMag driver) — keep both copies byte-equal; each test pins the LF-normalised SHA-256. Amounts in agorot. outcome: paid | cancelled | unavailable | failed. A document only on paid.",
+  "version": 1,
+  "rounding": [
+    { "mode": "nearest_10", "amountAgorot": 5730, "dueAgorot": 5730 },
+    { "mode": "nearest_10", "amountAgorot": 5734, "dueAgorot": 5730 },
+    { "mode": "nearest_10", "amountAgorot": 5735, "dueAgorot": 5740 },
+    { "mode": "nearest_10", "amountAgorot": 5739, "dueAgorot": 5740 },
+    { "mode": "nearest_10", "amountAgorot": 3, "dueAgorot": 3 },
+    { "mode": "none", "amountAgorot": 5734, "dueAgorot": 5734 }
+  ],
+  "decimals": [
+    { "text": "57.35", "agorot": 5735 },
+    { "text": "10,1", "agorot": 1010 },
+    { "text": "1.234,50", "agorot": 123450 },
+    { "text": "1,234.50", "agorot": 123450 },
+    { "text": "-20", "agorot": -2000 },
+    { "text": "x", "agorot": null }
+  ],
+  "waits": [
+    { "name": "claimed by another till, nothing in", "reply": { "valid": false, "reachedDevice": false, "error": "CLAIMED_BY_ANOTHER" }, "mayWait": true },
+    { "name": "server busy, nothing in", "reply": { "valid": false, "reachedDevice": true, "error": "API_IS_BUSY" }, "mayWait": true },
+    { "name": "server busy, money in", "reply": { "valid": false, "reachedDevice": true, "error": "API_IS_BUSY", "balance": { "cashInAgorot": 100, "cashOutAgorot": 0 } }, "mayWait": false },
+    { "name": "not started", "reply": { "valid": false, "reachedDevice": false, "error": "NOT_STARTED" }, "mayWait": false },
+    { "name": "paid", "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 100, "cashOutAgorot": 0, "customerBalanceAgorot": 0 } }, "mayWait": false }
+  ],
+  "cases": [
+    {
+      "name": "paid exactly, rounded down",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 5730, "cashOutAgorot": 0, "customerBalanceAgorot": 0 } },
+      "expect": { "outcome": "paid", "receivedAgorot": 5730, "changeAgorot": 0, "changeOwedAgorot": 0, "roundingAgorot": -4 }
+    },
+    {
+      "name": "paid with change",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 10000, "cashOutAgorot": 4270, "customerBalanceAgorot": 0 } },
+      "expect": { "outcome": "paid", "receivedAgorot": 10000, "changeAgorot": 4270, "changeOwedAgorot": 0, "roundingAgorot": -4 }
+    },
+    {
+      "name": "paid, change not dispensed: owed (merchant owes the customer)",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 10000, "cashOutAgorot": 4000, "customerBalanceAgorot": -270, "merchantBalanceAgorot": 270 } },
+      "expect": { "outcome": "paid", "receivedAgorot": 10000, "changeAgorot": 4000, "changeOwedAgorot": 270, "roundingAgorot": -4 }
+    },
+    {
+      "name": "more change than due, the device's own figure says so",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 6000, "cashOutAgorot": 300, "customerBalanceAgorot": 0, "overDispensedAgorot": 30 } },
+      "expect": { "outcome": "paid", "receivedAgorot": 6000, "changeAgorot": 300, "changeOwedAgorot": 0, "roundingAgorot": -4 }
+    },
+    {
+      "name": "short without the device's own figure: held for a manager",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 6000, "cashOutAgorot": 300, "customerBalanceAgorot": 0 } },
+      "expect": { "outcome": "failed", "heldAgorot": 5700, "reason": "HELD", "lost": false }
+    },
+    {
+      "name": "the customer still owes: held for a manager",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 5000, "cashOutAgorot": 0, "customerBalanceAgorot": 730 } },
+      "expect": { "outcome": "failed", "heldAgorot": 5000, "reason": "HELD", "lost": false }
+    },
+    {
+      "name": "cancelled, everything given back",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 2000, "cashOutAgorot": 2000, "customerBalanceAgorot": 5730 } },
+      "expect": { "outcome": "cancelled", "refundedAgorot": 2000 }
+    },
+    {
+      "name": "nothing inserted",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "cashInAgorot": 0, "cashOutAgorot": 0 } },
+      "expect": { "outcome": "cancelled", "refundedAgorot": 0 }
+    },
+    {
+      "name": "interrupted at the device, no figures",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": true, "error": "PAY_TRANSACTION_FAILED" },
+      "expect": { "outcome": "cancelled", "refundedAgorot": 0 }
+    },
+    {
+      "name": "the cashier cancelled the wait for the machine",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": false, "error": "WAIT_CANCELLED" },
+      "expect": { "outcome": "cancelled", "refundedAgorot": 0 }
+    },
+    {
+      "name": "refused before money (never reached the device)",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": false, "error": "NOT_STARTED" },
+      "expect": { "outcome": "unavailable", "reason": "NOT_STARTED" }
+    },
+    {
+      "name": "the server refused the request (licence)",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": true, "error": "INVALID_LICENSE" },
+      "expect": { "outcome": "unavailable", "reason": "INVALID_LICENSE" }
+    },
+    {
+      "name": "aborted with money kept",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": true, "error": "ABORTED_FUNCTION", "balance": { "cashInAgorot": 5000, "cashOutAgorot": 0 } },
+      "expect": { "outcome": "failed", "heldAgorot": 5000, "reason": "ABORTED_FUNCTION", "lost": false }
+    },
+    {
+      "name": "aborted, figures say all given back",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": true, "error": "ABORTED_FUNCTION", "balance": { "cashInAgorot": 500, "cashOutAgorot": 500 } },
+      "expect": { "outcome": "cancelled", "refundedAgorot": 500 }
+    },
+    {
+      "name": "the answer lost (disconnect, a throw)",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": false, "reachedDevice": true, "error": "EXCEPTION" },
+      "expect": { "outcome": "failed", "heldAgorot": 0, "reason": "EXCEPTION", "lost": true }
+    },
+    {
+      "name": "valid without figures",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true },
+      "expect": { "outcome": "failed", "heldAgorot": 0, "reason": "NO_BALANCE", "lost": true }
+    },
+    {
+      "name": "another currency",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "EUR", "cashInAgorot": 5730, "cashOutAgorot": 0, "customerBalanceAgorot": 0 } },
+      "expect": { "outcome": "failed", "heldAgorot": 5730, "reason": "CURRENCY", "lost": false }
+    },
+    {
+      "name": "another amount (a negative one is a payout, never ours)",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "transactionAgorot": -5734, "cashInAgorot": 0, "cashOutAgorot": 5734 } },
+      "expect": { "outcome": "failed", "heldAgorot": 0, "reason": "AMOUNT_MISMATCH", "lost": false }
+    },
+    {
+      "name": "the detailed call names the document's amount",
+      "request": { "amountAgorot": 5734, "dueAgorot": 5730, "currency": "ILS" },
+      "reply": { "valid": true, "balance": { "currency": "ILS", "transactionAgorot": 5734, "roundedAgorot": 5730, "cashInAgorot": 5730, "cashOutAgorot": 0, "customerBalanceAgorot": 0 } },
+      "expect": { "outcome": "paid", "receivedAgorot": 5730, "changeAgorot": 0, "changeOwedAgorot": 0, "roundingAgorot": -4 }
+    }
+  ]
+}

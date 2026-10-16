@@ -21,10 +21,16 @@ import { OfflineTracker } from '../core/kioskHealth';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
 import { CashCredits } from './kiosk/cashCredits';
+import { CashMagPay, CASHMAG_STATION_NAME, txViewOf as cashmagTxView, type CashMagEntry, type CashMagLocalConfig, type CashMagProgress } from './kiosk/cashmagPay';
+import { CASHMAG_ERRORS, CASHMAG_HOST_ID, cashmagConfigText, type CashMagConfig } from '../core/cash/cashmag';
+import type { CashMagDriverOptions } from './cash/cashmagDriver';
+import type { CashRecyclerDriver } from './cash/recycler';
+import type { CashMagFunctions } from '../core/cash/cashmagWire';
+import type { SessionStore } from './cash/cashmagClient';
 import { creditLegsOf } from '../core/cash/credit';
 import { cashSlipDoc } from '../core/printDocs';
 import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cash/tx';
-import { shekelText } from '../core/cash/settings';
+import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
 import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
@@ -170,6 +176,15 @@ export interface ServiceOptions {
    * printers are looked at once; by default this service keeps its own.
    */
   usbWatch?: UsbPrinterWatch;
+  /**
+   * CashMag (P:/specs/cashmag-windows.md): the kiosk's own settings from kiosk.json `cashmag` — the server's address,
+   * the name, the user code (over the cloud's), and function names. Never synced.
+   */
+  cashmagLocal?: CashMagLocalConfig | null;
+  /** Tests: the CashMag driver (a fake, or the real one against a fake server) and its options. */
+  cashmagDriver?: (cfg: CashMagConfig, functions: CashMagFunctions, session: SessionStore) => CashRecyclerDriver;
+  cashmagDriverOptions?: CashMagDriverOptions;
+  cashmagPollMs?: number;
 }
 
 /** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
@@ -214,6 +229,11 @@ export class KioskService extends EventEmitter {
   readonly payAtTill: PayAtTill;
   /** "מזומן" at the shop's cash station (kiosk/cashPay.ts, P:/specs/cash-paylink.md §11.6). */
   readonly cashPay: CashPay;
+  /**
+   * "מזומן" at a CashMag machine (kiosk/cashmagPay.ts, P:/specs/cashmag-windows.md): the kiosk's cash device instead of
+   * the cash station when the cloud turns `cashmagEnabled` on — off by default (nothing of it runs).
+   */
+  readonly cashMag: CashMagPay;
   readonly sync: SyncEngine;
   /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
   readonly relocator: PinpadRelocator;
@@ -302,6 +322,17 @@ export class KioskService extends EventEmitter {
     this.cashPay = new CashPay({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log, fetch: opts.fetch });
     this.cashCredits = new CashCredits({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log });
     this.cashPay.onChange(() => this.dirty());
+    this.cashMag = new CashMagPay({
+      kv: this.kv,
+      params: () => this.cloud.parameters(),
+      local: () => opts.cashmagLocal ?? null,
+      kioskName: () => this.cloud.machine()?.machineName ?? null,
+      log: this.log,
+      driverFor: opts.cashmagDriver,
+      driverOptions: opts.cashmagDriverOptions,
+      pollMs: opts.cashmagPollMs,
+    });
+    this.cashMag.onChange(() => this.dirty());
     this.providers = opts.providers ?? PROVIDERS;
     this.tillZ = new TillZService({
       db: this.db,
@@ -436,6 +467,10 @@ export class KioskService extends EventEmitter {
       // "מזומן" at the cash station: its status for the tile, and payments a restart left open.
       this.cashPay.start();
       void this.settleCash();
+      // CashMag (off by default: no probe, no connection): its port knocked on, and what a restart left.
+      if (this.cashMag.enabled()) this.log(cashmagConfigText(this.cashMag.config()));
+      this.cashMag.start();
+      void this.settleCashMag();
     }
     this.timers.push(setInterval(() => void this.tick10(), 10_000));
     this.timers.push(setInterval(() => void this.tick30(), 30_000));
@@ -449,6 +484,7 @@ export class KioskService extends EventEmitter {
     if (this.stopped) return;
     this.stopped = true;
     this.cashPay.stop();
+    this.cashMag.stop();
     if (this.emitTimer) clearTimeout(this.emitTimer);
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
@@ -842,6 +878,7 @@ export class KioskService extends EventEmitter {
           if (!this.cashPay.inFlight && this.cashPay.pending().length > 0) await this.settleCash();
           // Cash credits taken for orders that were not paid: back on the credit.
           await this.cashCredits.flush().catch((e) => this.log(`cash credits: ${String(e)}`));
+          if (!this.cashMag.inFlight && this.cashMag.journal().length > 0) await this.settleCashMag();
         }
       },
       sideRequest: (row: OutboxRow) => this.sideRequest(row),
@@ -868,7 +905,7 @@ export class KioskService extends EventEmitter {
     else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
     if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
     // "אין קשר לעמדת המזומן" (§11.15ג): its station silent on the LAN a minute — the cloud routes it as a cash alert.
-    const cashSilent = this.cashPay.unreachableAlert();
+    const cashSilent = this.cashMag.enabled() ? this.cashMag.unreachableAlert() : this.cashPay.unreachableAlert();
     if (cashSilent) alerts.push(cashSilent);
     const help = this.kv.getJson<{ requestId: string; at: number; screen: string }>(HELP);
     if (help && Date.now() - help.at < 10 * 60_000) alerts.push({ kind: 'help', key: 'help', reason: 'help', requestId: help.requestId, detail: { screen: help.screen } });
@@ -1374,7 +1411,7 @@ export class KioskService extends EventEmitter {
     // A screen (KDS, order status board) is not a till: it never sells.
     if (!this.fiscalRole) return { ok: false, reason: 'error', message: 'מכשיר תצוגה אינו קופה' };
     if (!this.newSaleAllowed()) return { ok: false, reason: 'error', message: SHOP_LOCK_TEXT.title };
-    if (this.pay.cardInFlight || this.cashPay.inFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
+    if (this.pay.cardInFlight || this.cashPay.inFlight || this.cashMag.inFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
     const byCash = input.method === 'cash_device';
     // The vouchers of the order (goods ones as legs, discount ones held for it), read field by field: the
     // browser kiosk's bridge sends them over HTTP.
@@ -1386,6 +1423,11 @@ export class KioskService extends EventEmitter {
     const withVouchers = (!!vouchers && vouchers.legs.length + vouchers.discounts.length > 0) || credits.length > 0;
     const terminalRefusal = (): StartPaymentOut | null => {
       // "מזומן" at the cash station: the station must be there (its own refusal); the card's terminal is not asked.
+      if (byCash && this.cashMag.enabled()) {
+        // CashMag: configured, nothing left for the staff; the server itself is asked when the payment starts.
+        const refused = this.cashMag.refusal();
+        return refused ? { ok: false, reason: 'terminal', message: refused } : null;
+      }
       if (byCash) return this.cashPay.configured() ? null : { ok: false, reason: 'terminal', message: this.cashPay.offReason() ?? 'מכשיר המזומן לא זמין' };
       // No terminal set up: refused. One whose last check did not answer is tried now — its error said if it fails.
       if (!this.pay.configured) return { ok: false, reason: 'terminal', message: 'לא הוגדר מסופון אשראי לקיוסק. אנא פנו לצוות.' };
@@ -1487,6 +1529,11 @@ export class KioskService extends EventEmitter {
       if (!done) return { ok: false, reason: 'error', message: 'המסמך לא נשמר' };
       void this.afterApproval(order.localId, done, false);
       return { ok: true, orderId: order.localId, amountAgorot: 0 };
+    }
+    if (byCash && this.cashMag.enabled()) {
+      this.progress({ orderId: order.localId, phase: 'starting', message: 'מתחבר למכשיר המזומן…', amountAgorot: chargeAgorot, canCancel: true, cancelling: false, cash: this.cashMagView(null, chargeAgorot) });
+      void this.runCashMag(order.localId, doc, chargeAgorot);
+      return { ok: true, orderId: order.localId, amountAgorot: chargeAgorot };
     }
     if (byCash) {
       this.progress({ orderId: order.localId, phase: 'starting', message: 'מתחבר למכשיר המזומן…', amountAgorot: chargeAgorot, canCancel: true, cancelling: false, cash: this.cashView(null, chargeAgorot, 'connecting') });
@@ -1612,16 +1659,40 @@ export class KioskService extends EventEmitter {
   }
 
   /** "חסר עודף במכשיר" (§11.15א): what the customer may choose — a slip always, a credit online, a tip where tips are on. */
-  private owedChoices(): OwedChoice[] {
-    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && this.cloudOnline()) || (c === 'tip' && this.config().payment.tipEnabled === true));
+  private owedChoices(tx?: TxView): OwedChoice[] {
+    // A credit online only: the cloud keeps it — from the station's journal, or (CashMag, P:/specs/cashmag-windows.md §6)
+    // from this document's cash leg (`changeOwedAs` "credit") once it reaches the cloud, while `cashmagOwedCredit` is on
+    // (the Android till reads the same key).
+    const credit = this.cloudOnline() && (tx?.hostId !== CASHMAG_HOST_ID || this.cashMag.config().owedCredit);
+    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && credit) || (c === 'tip' && this.config().payment.tipEnabled === true));
+  }
+
+  /** The cash settings of the device paying now: CashMag reads the till parameters themselves (`cashOwedChoiceSec`, `cashReceiptLines`). */
+  private cashSettings(): CashSettings {
+    return this.cashMag.enabled() ? cashSettingsOf(this.cloud.parameters()) : this.cashPay.settings();
+  }
+
+  private cashStationName(): string | null {
+    return this.cashMag.enabled() ? CASHMAG_STATION_NAME : (this.cashPay.station()?.name ?? null);
+  }
+
+  /** The cash device's tile may be offered: CashMag's when the cloud turned it on, else the cash station's. */
+  private cashDeviceUsable(): boolean {
+    return this.cashMag.enabled() ? this.cashMag.usable() : this.cashPay.usable();
+  }
+
+  /** The device's acknowledgement once the document is written (or the failure handled): CashMag's or the station's. */
+  private async cashAck(tx: TxView, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null, extra: { changeOwedAs?: OwedChoice | null; void?: boolean } = {}): Promise<boolean> {
+    if (tx.hostId === CASHMAG_HOST_ID) return this.cashMag.ack(tx.txId, documentId);
+    return this.cashPay.ack(tx.txId, documentId, documentNumber, orderLabel, extra);
   }
 
   /** The pay screen asks what to do with the change owed; a slip when nobody chooses in `cashOwedChoiceSec`. */
   private askOwedChoice(orderId: string, tx: TxView, amount: number): Promise<OwedChoice> {
-    const choices = this.owedChoices();
+    const choices = this.owedChoices(tx);
     const cur = this.payProgress;
     if (choices.length < 2 || !cur || cur.orderId !== orderId) return Promise.resolve('slip');
-    const ms = this.cashPay.settings().owedChoiceSec * 1000;
+    const ms = this.cashSettings().owedChoiceSec * 1000;
     return new Promise<OwedChoice>((resolve) => {
       let timer: NodeJS.Timeout | null = null;
       const done = (c: OwedChoice) => {
@@ -1637,7 +1708,7 @@ export class KioskService extends EventEmitter {
         message: `חסר עודף במכשיר: ${shekelText(tx.changeOwedAgorot)}`,
         canCancel: false,
         cancelling: false,
-        cash: { ...this.cashView(tx, amount, 'owed_choice'), owedChoices: choices, owedDeadlineAt: Date.now() + ms },
+        cash: { ...this.cashView(tx, amount, 'owed_choice'), ...(tx.hostId === CASHMAG_HOST_ID ? { device: 'cashmag' as const, stationName: CASHMAG_STATION_NAME } : {}), owedChoices: choices, owedDeadlineAt: Date.now() + ms },
       });
     });
   }
@@ -1722,7 +1793,7 @@ export class KioskService extends EventEmitter {
         orderLabel: o?.pickupLabel ?? null,
         slipCode,
         txShort: shortTx(txId),
-        stationName: this.cashPay.station()?.name ?? null,
+        stationName: this.cashStationName(),
         at: new Date(),
       }),
     );
@@ -1755,6 +1826,79 @@ export class KioskService extends EventEmitter {
     await this.applyCashOutcome(orderId, doc.id, outcome, false);
   }
 
+  /* ------------------------------------------------ "מזומן" at a CashMag machine (P:/specs/cashmag-windows.md) */
+
+  /** The pay screen's cash look for a CashMag payment ("הכנס מזומן", the busy wait, the server's question). */
+  private cashMagView(p: CashMagProgress | null, amountAgorot: number): NonNullable<PayProgress['cash']> {
+    return {
+      stage: p?.stage ?? 'connecting',
+      device: 'cashmag',
+      position: null,
+      stationName: CASHMAG_STATION_NAME,
+      insertedAgorot: p?.insertedAgorot ?? 0,
+      dueAgorot: p?.dueAgorot ?? amountAgorot,
+      changeAgorot: 0,
+      changeOwedAgorot: 0,
+      exactOnly: false,
+      escrowAgorot: 0,
+      accepts: null,
+      slipCode: null,
+      txShort: null,
+      question: p?.question ?? null,
+      canSplit: false,
+    };
+  }
+
+  /** The payment at the CashMag machine, to its end: the document on a plain "paid" only (kiosk/cashmagPay.ts). */
+  private async runCashMag(orderId: string, doc: DocDraft, amountAgorot: number) {
+    let outcome: CashOutcome;
+    try {
+      outcome = await this.cashMag.pay({ orderId, docId: doc.id, amountAgorot }, (p) => {
+        const cur = this.payProgress;
+        if (!cur || cur.orderId !== orderId) return;
+        const waiting = p.stage === 'connecting' || p.stage === 'busy';
+        this.progress({ ...cur, phase: waiting ? 'starting' : 'charging', message: p.message, canCancel: p.canCancel && !cur.cancelling, cash: this.cashMagView(p, amountAgorot) });
+      });
+    } catch (e) {
+      // Never "nothing happened" on a guess: journaled → the staff's (no document); never journaled → nothing was sent.
+      this.log(`cashmag payment: ${e instanceof Error ? e.message : String(e)}`);
+      const entry = this.cashMag.journal().find((x) => x.docId === doc.id);
+      outcome = entry ? { kind: 'held', tx: cashmagTxView(entry, { state: 'HELD', outcome: null, inserted: 0, held: 0, message: CASHMAG_ERRORS.EXCEPTION }) } : { kind: 'refunded', tx: null, message: 'מכשיר המזומן לא זמין' };
+    }
+    await this.applyCashOutcome(orderId, doc.id, outcome, false);
+  }
+
+  /**
+   * What a restart (or a fault) left at CashMag: answered paid → the document now (no paper: the customer is gone);
+   * sent and never answered → the staff's, the document voided — never one without a clear answer.
+   */
+  async settleCashMag(): Promise<void> {
+    await this.cashMag.settle({
+      docStatus: (id) => this.ledger.doc(id)?.status ?? null,
+      writePaid: async (e: CashMagEntry, tx: TxView) => {
+        const done = this.ledger.completeCashSale(e.docId, this.cashLegOf(tx, tx.changeOwedAgorot > 0 ? 'slip' : null));
+        if (!done || done.status !== 'completed') return false;
+        this.log(`cashmag tx ${e.txId.slice(0, 8)}: paid before the restart — its document written now`);
+        await this.afterApproval(e.orderId, done, true);
+        void this.sync.flush();
+        return true;
+      },
+      voidDoc: (e: CashMagEntry, outcome: string) => {
+        this.ledger.voidCardSale(e.docId, { cashTxId: e.txId, device: 'cashmag', outcome });
+        void this.sync.flush();
+      },
+      // The pay screen still finishing it (the change-owed choice): its own path writes the document.
+      live: (e: CashMagEntry) => this.payProgress?.orderId === e.orderId && (this.payProgress.phase === 'starting' || this.payProgress.phase === 'charging'),
+    });
+    this.dirty();
+  }
+
+  /** CashMag's question on the pay screen: the customer's answer (dialogValid / dialogCancel). */
+  async cashQuestion(raw: unknown): Promise<void> {
+    if (typeof raw !== 'boolean') return;
+    await this.cashMag.answerQuestion(raw);
+  }
+
   /** What the station's word means for the order and its document (a live payment, or a recovery). */
   private async applyCashOutcome(orderId: string, docId: string, outcome: CashOutcome, recovered: boolean) {
     // Stopped meanwhile (the app quits): the station's word is settled at the next start (settleCash).
@@ -1771,15 +1915,19 @@ export class KioskService extends EventEmitter {
       if (this.stopped) return;
       const done = this.ledger.completeCashSale(docId, this.cashLegOf(tx, owedAs), new Date(), owedAs === 'tip' ? tx.changeOwedAgorot : 0);
       if (done && done.status === 'completed') {
-        if (live) this.progress({ ...this.payProgress!, phase: 'charging', canCancel: false, cash: this.cashView(tx, amount, 'done') });
+        const doneView =
+          tx.hostId === CASHMAG_HOST_ID
+            ? { ...this.cashMagView(null, amount), stage: 'done' as const, insertedAgorot: tx.insertedAgorot, changeAgorot: tx.changePaidAgorot, changeOwedAgorot: tx.changeOwedAgorot }
+            : this.cashView(tx, amount, 'done');
+        if (live) this.progress({ ...this.payProgress!, phase: 'charging', canCancel: false, cash: doneView });
         await this.afterApproval(orderId, done, recovered);
         if (owed && !recovered && owedAs !== 'tip') this.printCashSlip(owedAs === 'credit' ? 'credit' : 'change_owed', orderId, tx.changeOwedAgorot, tx.slipCode, tx.txId);
-        if (!recovered && this.cashPay.settings().receiptLines && this.config().payment.receiptPolicy !== 'always' && owed && owedAs !== 'tip') {
+        if (!recovered && this.cashSettings().receiptLines && this.config().payment.receiptPolicy !== 'always' && owed && owedAs !== 'tip') {
           // The receipt carries the change owed (or the credit) and its code: printed whatever the policy when something is owed.
           this.printReceipt(orderId, false);
         }
       }
-      await this.cashPay.ack(tx.txId, docId, done ? formatDocNumber(done.prefix, String(done.number)) : null, this.orders.get(orderId)?.pickupLabel ?? null, { changeOwedAs: owedAs });
+      await this.cashAck(tx, done?.status === 'completed' ? docId : null, done ? formatDocNumber(done.prefix, String(done.number)) : null, this.orders.get(orderId)?.pickupLabel ?? null, { changeOwedAs: owedAs });
       void this.sync.flush();
       return;
     }
@@ -1790,8 +1938,12 @@ export class KioskService extends EventEmitter {
       const declined = card?.kind === 'declined' ? card : null;
       this.ledger.voidCardSale(docId, { ...(declined?.voidMeta ?? {}), cashTxId: outcome.tx?.txId ?? null, outcome: outcome.tx?.outcome ?? 'cancelled' });
       const message = declined ? `${declined.message} — ${outcome.message}` : outcome.message;
-      if (live) this.progress({ ...this.payProgress!, phase: 'declined', message, canCancel: false, cancelling: false, cash: this.cashView(outcome.tx, amount, 'refunded') });
-      if (outcome.tx) await this.cashPay.ack(outcome.tx.txId, null, null);
+      const refundedView =
+        outcome.tx?.hostId === CASHMAG_HOST_ID || (!outcome.tx && this.cashMag.enabled())
+          ? { ...this.cashMagView(null, amount), stage: 'refunded' as const, insertedAgorot: outcome.tx?.insertedAgorot ?? 0 }
+          : this.cashView(outcome.tx, amount, 'refunded');
+      if (live) this.progress({ ...this.payProgress!, phase: 'declined', message, canCancel: false, cancelling: false, cash: refundedView });
+      if (outcome.tx) await this.cashAck(outcome.tx, null, null);
       void this.sync.flush();
       return;
     }
@@ -1799,10 +1951,11 @@ export class KioskService extends EventEmitter {
       const tx = outcome.tx;
       this.ledger.voidCardSale(docId, { cashTxId: tx.txId, outcome: 'held', heldAgorot: tx.heldAgorot });
       if (live) {
-        this.progress({ ...this.payProgress!, phase: 'unknown', message: 'תקלה — פנה לצוות', canCancel: false, cancelling: false, cash: this.cashView(tx, amount, 'fault') });
+        const view = tx.hostId === CASHMAG_HOST_ID ? { ...this.cashMagView(null, amount), stage: 'fault' as const, insertedAgorot: tx.heldAgorot, txShort: shortTx(tx.txId), slipCode: tx.slipCode } : this.cashView(tx, amount, 'fault');
+        this.progress({ ...this.payProgress!, phase: 'unknown', message: 'תקלה — פנה לצוות', canCancel: false, cancelling: false, cash: view });
         this.printCashSlip('fault', orderId, tx.heldAgorot, tx.slipCode, tx.txId);
       }
-      await this.cashPay.ack(tx.txId, null, null);
+      await this.cashAck(tx, null, null);
       void this.sync.flush();
       return;
     }
@@ -1994,11 +2147,11 @@ export class KioskService extends EventEmitter {
       m === 'card'
         ? this.fiscalRole && cardOff === null
         : m === 'voucher'
-          ? !this.offlineNow && voucherCanFinish(methods, (this.fiscalRole && cardOff === null) || (this.fiscalRole && this.cashPay.usable()))
+          ? !this.offlineNow && voucherCanFinish(methods, (this.fiscalRole && cardOff === null) || (this.fiscalRole && this.cashDeviceUsable()))
           : m === 'cash_at_till'
             ? this.fiscalRole
             : m === 'cash_device'
-              ? this.fiscalRole && this.cashPay.usable()
+              ? this.fiscalRole && this.cashDeviceUsable()
               : false,
     );
     // Offline with "חסימת הזמנות כשאין אינטרנט" on: nothing to take (the rest screen says why), or — with
@@ -2008,7 +2161,7 @@ export class KioskService extends EventEmitter {
       methods,
       usable: kiosk ? offlineUsable(usable, this.offlineBlocked(this.config()), this.offlineScope(), blockCash) : usable,
       cardOff,
-      cashOff: methods.includes('cash_device') ? this.cashPay.offReason() : null,
+      cashOff: methods.includes('cash_device') ? (this.cashMag.enabled() ? this.cashMag.offReason() : this.cashPay.offReason()) : null,
     };
   }
 
@@ -2194,6 +2347,11 @@ export class KioskService extends EventEmitter {
     // Cash + card: the card's charge is cancelled — then the station gives the cash part back (§11.15ב).
     if (p.cash?.stage === 'split_card') {
       await this.pay.cancel();
+      return;
+    }
+    // CashMag: the wait left ("חזרה"), or dialogCancel — the machine gives back what went in.
+    if (p.cash && this.cashMag.inFlight) {
+      this.cashMag.cancel();
       return;
     }
     // "מזומן": the station gives back what went in (or the queue is left).
@@ -2502,7 +2660,7 @@ export class KioskService extends EventEmitter {
               changeOwedAgorot: doc.cash.changeOwedAgorot,
               roundingAgorot: doc.cash.roundingAgorot,
               slipCode: doc.cash.slipCode,
-              lines: this.cashPay.settings().receiptLines,
+              lines: this.cashSettings().receiptLines,
               changeOwedAs: doc.cash.changeOwedAs ?? null,
               splitAgorot: doc.cash.splitAgorot ?? 0,
             }
@@ -2696,7 +2854,7 @@ export class KioskService extends EventEmitter {
     return {
       role: this.isKiosk() ? 'kiosk' : null,
       screen: this.flow.screen,
-      busy: this.flow.busy || this.payProgress?.phase === 'starting' || this.payProgress?.phase === 'charging' || this.cashPay.inFlight,
+      busy: this.flow.busy || this.payProgress?.phase === 'starting' || this.payProgress?.phase === 'charging' || this.cashPay.inFlight || this.cashMag.inFlight,
       idle: this.flow.idle,
       cardInFlight: this.pay.cardInFlight,
       cardBlocked: this.pay.blocked(),
@@ -2970,6 +3128,34 @@ export class KioskService extends EventEmitter {
             pending: this.cashPay.pending().map((p) => ({ txShort: shortTx(p.txId), amountAgorot: p.amountAgorot, startedAt: p.startedAt, final: p.finalState })),
           }
         : null,
+      cashmag: this.cashmagAdmin(),
+    };
+  }
+
+  /** "מכשיר מזומן CashMag" on the manager's screen: the settings in force and their source, what the staff must look at. */
+  private cashmagAdmin(): AdminInfo['cashmag'] {
+    if (!this.cashMag.enabled() && this.cashMag.journal().length === 0) return null;
+    const cfg = this.cashMag.config();
+    const st = this.cashMag.driverState();
+    return {
+      address: `${cfg.host || '—'}:${cfg.port || '—'}`,
+      protocol: cfg.protocol === cfg.wire ? cfg.wire : `${cfg.wire} (מהענן: ${cfg.protocol})`,
+      terminal: cfg.terminal,
+      userCodeSet: cfg.userCode !== '',
+      sources: cfg.sources,
+      usable: this.cashMag.usable(),
+      reason: this.cashMag.offReason(),
+      connection: st?.connection ?? null,
+      lastError: st?.lastError ?? null,
+      unresolved: this.cashMag.unresolved().map((e) => ({
+        txId: e.txId,
+        txShort: shortTx(e.txId),
+        amountAgorot: e.amountAgorot,
+        startedAt: e.startedAt,
+        outcome: e.outcome,
+        heldAgorot: e.heldAgorot,
+        reason: e.reason,
+      })),
     };
   }
 
@@ -2998,7 +3184,20 @@ export class KioskService extends EventEmitter {
       case 'retryPrints':
         this.printQueue.retryFailed();
         return { ok: true };
+      case 'cashmagAcknowledge': {
+        const ok = this.cashMag.acknowledge(a.txId, this.adminName ?? 'מנהל');
+        this.dirty();
+        return { ok, message: ok ? 'סומן כטופל' : 'העסקה לא נמצאה' };
+      }
+      case 'cashmagCheck':
+        await this.cashMag.probe();
+        await this.settleCashMag();
+        return { ok: this.cashMag.usable(), message: this.cashMag.offReason() ?? 'שרת CashMag זמין' };
       case 'cashRecheck':
+        if (this.cashMag.enabled()) {
+          await this.cashMag.probe();
+          await this.settleCashMag();
+        }
         await this.cashPay.refreshStatus();
         await this.settleCash();
         return { ok: this.cashPay.pending().length === 0, message: this.cashPay.pending().length === 0 ? 'אין תשלומי מזומן פתוחים' : 'מכשיר המזומן לא ענה — ננסה שוב' };
