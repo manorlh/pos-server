@@ -79,7 +79,16 @@ export function WorkModePanel({
         </div>
       ) : null}
       <div className="text-xs" style={{ color: m.c.mutedText }}>
-        {tillNow ? (info.openerHolds ? WORK_TEXT.hintToKiosk : WORK_TEXT.needsManagerToKiosk) : info.openerHolds ? WORK_TEXT.hint : WORK_TEXT.needsManager}
+        {tillNow
+          ? info.openerHolds
+            ? WORK_TEXT.hintToKiosk
+            : WORK_TEXT.needsManagerToKiosk
+          : !info.openerHolds
+            ? WORK_TEXT.needsManager
+            : // "מצב עבודה בהפעלה": a restart starts the device as the setting says, not as chosen here.
+              info.startMode && info.startMode !== 'last'
+              ? WORK_TEXT.hintStart
+              : WORK_TEXT.hint}
       </div>
     </section>
   );

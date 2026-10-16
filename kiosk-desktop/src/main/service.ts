@@ -3897,6 +3897,7 @@ export class KioskService extends EventEmitter {
             toTill: this.workMode.offered().toTill,
             toKiosk: this.workMode.offered().toKiosk,
             openerHolds: this.workMode.holds(this.adminUserId),
+            startMode: this.workMode.params().startMode,
           }
         : undefined,
     };

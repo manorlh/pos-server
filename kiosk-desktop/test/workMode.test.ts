@@ -278,6 +278,8 @@ describe('the Android app’s Hebrew, word for word', () => {
     expect([WORK_TEXT.kiosk, WORK_TEXT.till]).toEqual(['קיוסק', 'קופה']);
     expect(WORK_TEXT.needsManager).toBe('המעבר לקופה דורש קוד של מנהל עם ההרשאה "מעבר למצב קופה בקיוסק".');
     expect(WORK_TEXT.hint).toContain('המכשיר יעבוד כקופה עד שיוחזר לקיוסק');
+    // "מצב עבודה בהפעלה" (Android kwork_hint_start, word for word).
+    expect(WORK_TEXT.hintStart).toBe('המכשיר יעבוד כקופה עד שיוחזר לקיוסק. אחרי הפעלה מחדש הוא עולה לפי "מצב עבודה בהפעלה" שנקבע בדשבורד. המסמכים יירשמו על שם העובד שנכנס. מכירות מושהות יחכו למצב קופה.');
     expect(WORK_TEXT.countdown(12)).toBe('חוזר לקיוסק בעוד 12 שניות');
     expect(WORK_TEXT.stay).toBe('נשארים');
     expect(WORK_TEXT.heldNotice(3)).toBe('יש 3 מכירות מושהות — יחכו במצב קופה');
