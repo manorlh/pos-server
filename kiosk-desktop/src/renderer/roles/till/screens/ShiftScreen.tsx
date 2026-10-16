@@ -6,7 +6,7 @@
  * (`mode.rolesAllowed` empty: no button at all, §6.2).
  */
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import type { DeviceRoleName, TillState, XReport } from '../../../../shared/till/protocol';
 import { parseAmount } from '../amount';
 import type { TillLayout } from '../layout/tillLayout';
@@ -134,6 +134,23 @@ export function ShiftScreen({ state, layout, actions }: { state: TillState; layo
                   <dd>{money(figures.vatAgorot)}</dd>
                 </>
               ) : null}
+              {/* "מגירת מזומן": the shift's movements and the cash with employees, each only when it moved (in the expected cash). */}
+              {(
+                [
+                  ['הכנסות', figures.cashInAgorot, 1],
+                  ['הוצאות', figures.cashOutAgorot, -1],
+                  ['הפקדות', figures.depositsAgorot, -1],
+                  ['הכסף אצל עובדים', figures.walletInAgorot, -1],
+                  ['הפקדות מעובדים', figures.walletDepositsAgorot, 1],
+                ] as Array<[string, number | undefined, number]>
+              )
+                .filter(([, v]) => !!v)
+                .map(([label, v, sign]) => (
+                  <Fragment key={label}>
+                    <dt>{label}</dt>
+                    <dd>{money(sign * (v ?? 0))}</dd>
+                  </Fragment>
+                ))}
               <dt>{T.expectedCash}</dt>
               <dd>{money(figures.expectedCashAgorot)}</dd>
               {closed && closed.countedCashAgorot !== undefined ? (

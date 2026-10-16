@@ -742,7 +742,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const user = this.signedIn();
     const st = stateOf(user, code);
     if (st === 'allow') return resume(null);
-    if (st === 'deny' && !opts.askOnDeny) return refuse('permission_denied', TEXT.denied(code));
+    if (st === 'deny' && !opts.askOnDeny) {
+      // Every refusal of a gated action, in the drawer's audit (Android PermissionGate.onDecision).
+      this.drawer.service.recordPermission(code, 'deny', null, TEXT.denied(code));
+      return refuse('permission_denied', TEXT.denied(code));
+    }
     this.openDialog({
       kind: 'manager_approval',
       title: opts.title ?? WORDS.managerApprovalTitle,
@@ -753,7 +757,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         { id: 'cancel', label: WORDS.cancel },
       ],
       code,
-      resume,
+      // Every manager override: both names, in the drawer's audit.
+      resume: (approver) => {
+        if (approver) this.drawer.service.recordPermission(code, 'approval', approver);
+        return resume(approver);
+      },
     });
     return { dialogId: this.pending!.dialog.id };
   }
@@ -1647,6 +1655,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         closedAt: null,
         till: fig.till,
         countedCash: null,
+        // "ספירה עיוורת": the interim X does not state the expected cash.
+        blindCount: this.drawer.service.settings().blindCount,
       });
       return { ...this.xReportOf(fig.till, shift.sequence_number), printed: true };
     });

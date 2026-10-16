@@ -458,6 +458,57 @@ export class CashDrawerService {
     return row;
   }
 
+  /**
+   * A manager's override or a refusal of any other gated action (Android PermissionGate → recordPermission), in the same
+   * audit (`category = permission`): who asked, who approved, what.
+   */
+  recordPermission(code: string, decision: 'approval' | 'deny', approver: { id: string; name: string } | null, deniedText: string | null = null, amountAgorot: number | null = null): void {
+    const me = this.d.operator();
+    const ident = this.d.identity();
+    const id = this.newId();
+    const row: DrawerEventRow = {
+      id,
+      category: 'permission',
+      eventType: 'PERMISSION',
+      permission: code,
+      decision,
+      result: decision === 'deny' ? 'denied' : 'approved',
+      resultReason: decision === 'deny' ? deniedText : null,
+      companyId: ident.companyId,
+      shopId: ident.shopId,
+      machineId: ident.machineId,
+      drawerId: null,
+      drawerName: null,
+      deviceId: ident.deviceId,
+      shiftId: this.d.currentShiftId(),
+      employeeId: me?.id ?? null,
+      employeeName: me?.name ?? null,
+      employeeRole: me ? (me.tillRoleName?.trim() || me.role) : null,
+      approverId: approver?.id ?? null,
+      approverName: approver?.name ?? null,
+      approverMethod: approver ? 'pin' : null,
+      tableId: null,
+      saleId: null,
+      paymentId: null,
+      originalSaleId: null,
+      reason: null,
+      reasonNote: null,
+      movementId: null,
+      cashMovementType: null,
+      amountAgorot,
+      expectedBalanceAgorot: null,
+      offline: !this.d.online(),
+      occurredAt: this.now(),
+      details: null,
+    };
+    try {
+      this.d.store.putEvent(row);
+      this.d.enqueue('drawer_event', id);
+    } catch (e) {
+      this.warn(`permission audit: not recorded — ${String(e)}`);
+    }
+  }
+
   /** The net the movements and wallets add to a shift's expected cash. */
   netOfShift(shiftId: string): number {
     const t = this.shiftTotals(shiftId);

@@ -692,6 +692,24 @@ describe('the till: "פתיחת מגירה", the movements, the count, the depos
     expect(x).toMatchObject({ expectedCashAgorot: 20_000 - 45_000 + 5_000, cashOutAgorot: 45_000, cashInAgorot: 5_000 });
   });
 
+  it('the X paper: the movements and the cash with employees, each only when it moved; under blind count the interim X states no expected cash', async () => {
+    const h = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור', drawerAwayPolicy: 'wallet', drawerNear: 'away' } }, MANAGER_PIN);
+    await h.ok('drawer.movement', { type: 'CASH_OUT', amountAgorot: 5_000, reason: 'ספק' });
+    await cashSale(h, 1_250);
+    await h.ok('checkout.finish');
+    await h.ok('report.x');
+    const papers = () => h.svc.db.all<{ doc: string }>("SELECT doc FROM print_jobs WHERE kind = 'z' ORDER BY created_at").map((r) => JSON.parse(r.doc) as { ops: Array<{ t: string; label?: string; value?: string }> });
+    const rowsOf = (d: { ops: Array<{ t: string; label?: string; value?: string }> }) => d.ops.filter((o) => o.t === 'row').map((o) => o.label);
+    const x = papers().at(-1)!;
+    expect(rowsOf(x)).toEqual(expect.arrayContaining(['הוצאות', 'הכסף אצל עובדים', 'מזומן צפוי']));
+    expect(rowsOf(x)).not.toContain('הכנסות');
+    expect(rowsOf(x)).not.toContain('הפקדות מעובדים');
+    const blind = await till({ parameters: { 'cashDrawer.blindCount': 'true' } }, MANAGER_PIN);
+    await blind.ok('report.x');
+    const bx = blind.svc.db.all<{ doc: string }>("SELECT doc FROM print_jobs WHERE kind = 'z'").map((r) => JSON.parse(r.doc) as { ops: Array<{ t: string; label?: string }> });
+    expect(bx.at(-1)!.ops.filter((o) => o.t === 'row').map((o) => o.label)).not.toContain('מזומן צפוי');
+  });
+
   it('a count, blind when the till says so: the expected is shown only after the amount; the close records its count', async () => {
     const h = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור', 'cashDrawer.blindCount': 'true' } }, SUP_PIN);
     await h.ok('drawer.count');
@@ -728,6 +746,23 @@ describe('the till: "פתיחת מגירה", the movements, the count, the depos
     const h = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור' } });
     expect(await h.ok('drawer.wallets')).toEqual({ wallets: [], offline: true });
     expect((await h.fail('drawer.walletDeposit', { employeeId: 'u-waiter', countedAgorot: 100 })).message).toBe('אין חיבור לשרת — לא ניתן לבדוק כמה צפוי');
+  });
+
+  it('every manager override and every refusal of a gated action is in the same audit (category permission)', async () => {
+    const h = await till({ parameters: {} }, WAITER_PIN);
+    // A waiter may not see the shop's X: refused, recorded.
+    const refusals = await h.call('report.shopX', {});
+    expect(refusals.ok).toBe(false);
+    await h.ok('sell.add', { productId: 'p-cola' });
+    await h.ok('checkout.start');
+    await h.ok('checkout.cash', { amountAgorot: 1_250 });
+    const docId = h.state().checkout.documentId!;
+    await h.ok('checkout.finish');
+    // A copy from the history needs REPRINT: the manager approves it.
+    await h.ok('doc.reprint', { documentId: docId });
+    await h.ok('dialog.answer', { dialogId: h.state().dialog!.id, action: 'approve', answers: { pin: MANAGER_PIN } });
+    const perms = h.engine.drawer.service.store.eventsOfShift(h.svc.ledger.currentShift()!.id).filter((e) => e.category === 'permission');
+    expect(perms.map((e) => [e.permission, e.decision, e.result, e.employeeId, e.approverId])).toContainEqual(['REPRINT', 'approval', 'approved', 'u-waiter', 'u-manager']);
   });
 
   it('the log of the shift: openings and movements as the role may see them', async () => {

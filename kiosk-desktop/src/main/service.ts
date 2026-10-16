@@ -3140,7 +3140,7 @@ export class KioskService extends EventEmitter {
     return this.printQueue.enqueue('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null));
   }
 
-  printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash'> & { refId: string }): string {
+  printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash' | 'blindCount'> & { refId: string }): string {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
     return this.printQueue.enqueue(
@@ -3161,6 +3161,7 @@ export class KioskService extends EventEmitter {
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         till: i.till,
         countedCash: i.countedCash,
+        ...(i.blindCount ? { blindCount: true } : {}),
       }),
     );
   }
