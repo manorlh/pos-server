@@ -99,6 +99,7 @@ export interface HarnessOptions {
   /** "הדפסה בקופה אחרת": the LAN, the clock, the drawing. */
   remotePrint?: TillRemotePrintOptions;
   shopXLan?: TillEngineOptions['shopXLan'];
+  voucherLan?: TillEngineOptions['voucherLan'];
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -169,7 +170,7 @@ export function harness(o: HarnessOptions = {}): Harness {
   if (o.promotions) svc.cloud.setPromotions(o.promotions, null);
   svc.cloud.applyPosUsers({ syncType: 'full', users: o.users ?? roster(), serverTime: 't' });
   svc.applyProvider();
-  const engine = new KioskCoreTillEngine({ svc, compare: (p, h) => bcrypt.compare(p, h), workMode: () => o.workMode ?? null, now: o.now, remotePrint: o.remotePrint, shopXLan: o.shopXLan ?? { manual: true } });
+  const engine = new KioskCoreTillEngine({ svc, compare: (p, h) => bcrypt.compare(p, h), workMode: () => o.workMode ?? null, now: o.now, remotePrint: o.remotePrint, shopXLan: o.shopXLan ?? { manual: true }, voucherLan: o.voucherLan });
   const states: TillState[] = [];
   const events: EngineEvent[] = [];
   engine.on((e) => {

@@ -274,6 +274,8 @@ export interface TillEngineOptions {
   remotePrint?: TillRemotePrintOptions;
   /** "דוח X סניפי" over the LAN: the LAN call, the clock; `manual` — no poll timer (tests drive it). */
   shopXLan?: { lanCall?: LanCall; sleep?: (ms: number) => Promise<void>; manual?: boolean };
+  /** Vouchers through the shop's LAN host: the LAN call (tests). */
+  voucherLan?: LanCall;
 }
 
 class Refusal extends Error {
@@ -749,7 +751,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       afterApply: () => this.afterVoucher(),
       mayAlone: (code) => decide(this.profile(), code).kind === 'allowed',
       setting: (key) => this.svc.cloud.parameters()[key] ?? this.svc.settingsMap()[key],
-    });
+    }, undefined, { lanCall: o.voucherLan });
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
