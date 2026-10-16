@@ -3,7 +3,8 @@
  *  - a long press (2 s) in the top-right corner (detected by the kiosk's root, nothing drawn over it) → the PIN of a
  *    manager whose role allows "יציאה מנעילת קופה (קיוסק)" (KIOSK_UNLOCK, checked offline against the
  *    synced POS users) → "ניהול הקיוסק": status, payment and unresolved charges, printer, sync,
- *    media, today's orders (re-print a bon / a receipt — never a charge), the Zs, pause, and — for a
+ *    media, today's orders (re-print a bon / a receipt — never a charge), "משמרת ו-Z" (the kiosk's close or its own Z by
+ *    its Z mode, staff/KioskZPanel.tsx), the Zs, pause, and — for a
  *    manager who also holds DESKTOP_EXIT — "יציאה לשולחן העבודה" and "יציאה מהתוכנה";
  *  - six taps in the top-left corner + the technician code (1995 unless the cloud set one) →
  *    "בדיקות ומידע קיוסק": assignment, network, printer test and choice, a read-only pinpad check,
@@ -30,6 +31,7 @@ import { DESKTOP_EXIT_LABEL, DesktopExitButton, DesktopExitMenuButton, DesktopEx
 import { PERMISSION_LABEL } from '../../core/desktopExit';
 import { WORK_TEXT } from '../../core/workMode';
 import { WorkModePanel } from './WorkModePanel';
+import { KioskZPanel } from './KioskZPanel';
 
 /** CashMag on the manager's screen: where the server's address came from, what an unclear payment was. */
 const CASHMAG_SOURCE: Record<string, string> = { cloud: 'מהענן', local: 'מקומי (kiosk.json)', default: 'לא מוגדר' };
@@ -312,6 +314,17 @@ function AdminScreen({
           </Btn>
         </div>
       </Panel>
+      {info.kioskZ ? (
+        <KioskZPanel
+          m={m}
+          info={info.kioskZ}
+          onRun={async () => {
+            const r = await kiosk.adminAction({ type: 'kioskZ' });
+            refresh();
+            return r;
+          }}
+        />
+      ) : null}
       <Panel m={m} title="מסופון אשראי">
         <div>סוג: {info.terminal.kind ?? 'לא מוגדר'}</div>
         <div dir="ltr" className="text-end">

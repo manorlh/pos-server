@@ -81,6 +81,7 @@ import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
+import { KioskZRunner, kioskZHold, kioskZKindOfDevice, kioskZOutcomeOk, kioskZOutcomeText, makesOwnZ, type KioskAdminZOutcome, type KioskZPort } from '../core/kioskZ';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
 import { NayaxUsbProvider } from './payment/nayaxUsb';
@@ -201,6 +202,8 @@ export interface ServiceOptions {
   cashmagDriver?: (cfg: CashMagConfig, functions: CashMagFunctions, session: SessionStore) => CashRecyclerDriver;
   cashmagDriverOptions?: CashMagDriverOptions;
   cashmagPollMs?: number;
+  /** Tests: the kiosk admin's Z waits between its looks for the close in the cloud (core/kioskZ.ts KioskZRunner). */
+  kioskZPause?: (ms: number) => Promise<void>;
   /**
    * Tests: the kitchen's wires (main/kitchen) — a network printer's link, the LAN print server's request, whether this
    * PC is on a LAN, the kitchen's clock — and the LAN print host's port (0: any) and address.
@@ -466,6 +469,7 @@ export class KioskService extends EventEmitter {
       transmit: () => this.transmitBatch('z_close'),
       print: (z) => this.printZ(z),
       log: this.log,
+      online: () => !this.isOffline,
     });
     this.sync = new SyncEngine(this.api, this.cloud, this.ledger, this.outbox, this.remoteHooks(), opts.appVersion);
     this.relocator = new PinpadRelocator({
@@ -3552,6 +3556,8 @@ export class KioskService extends EventEmitter {
       this.dirty();
       return;
     }
+    // A close or a Z asked from afar waits while a customer orders or pays (KioskZHold): said once per request and reason.
+    if (!mayRun) this.deferRemoteForCustomer();
     if (mayRun && this.pendingClose) {
       const req = this.pendingClose;
       this.pendingClose = null;
@@ -3577,6 +3583,29 @@ export class KioskService extends EventEmitter {
     // A till by role: its own automatic close, with what is open on it (the till's engine decides).
     if (this.fiscalRole && !this.isKiosk() && this.tillAutoClose) await this.tillAutoClose().catch((e: unknown) => this.log(`till automatic close: ${String(e)}`));
     this.dirty();
+  }
+
+  /** The last `deferred` ack sent per request (KioskZHold's code): each reason said once, not every tick. */
+  private readonly deferredSaid = new Map<string, string>();
+
+  /**
+   * "ממתין לסיום תשלום בקיוסק" / "לקוח באמצע הזמנה" (pos-server docs/SPEC_KIOSK.md §25, Android CloseShiftCoordinator /
+   * TillZCoordinator `deferred`): the cloud's close or Z asked of this kiosk is held while a customer is at it — acked
+   * `deferred` with `kiosk_paying` / `kiosk_ordering`, then run on the first idle tick.
+   */
+  private deferRemoteForCustomer() {
+    const f = this.kioskSideFacts();
+    const hold = kioskZHold(this.fiscalRole && this.isKioskMode(), f.paying ? 'paying' : f.ordering ? 'ordering' : this.flow.flowState);
+    if (!hold) return;
+    const say = (kind: 'close' | 'z', requestId: string) => {
+      const key = `${kind}:${requestId}`;
+      if (this.deferredSaid.get(key) === hold) return;
+      this.deferredSaid.set(key, hold);
+      while (this.deferredSaid.size > 50) this.deferredSaid.delete(this.deferredSaid.keys().next().value as string);
+      this.ack(kind, requestId, 'deferred', { errorCode: hold });
+    };
+    if (this.pendingClose) say('close', this.pendingClose.requestId);
+    if (this.pendingZ && zModeOf(this.cloud.heartbeat().zMode) === 'till') say('z', this.pendingZ.requestId);
   }
 
   /** The card batch (doPeriodic), reported to the cloud (POST /transmissions, via the outbox). */
@@ -3716,6 +3745,7 @@ export class KioskService extends EventEmitter {
       zs: this.tillZ.list(10),
       zOwed: this.tillZ.owed,
       zMode: this.cloud.heartbeat().zMode,
+      kioskZ: this.kioskZInfo(),
       offlineSince: this.offline.since,
       desktopExit: this.adminExitUser()
         ? { allowed: true, reason: null }
@@ -3770,6 +3800,91 @@ export class KioskService extends EventEmitter {
     };
   }
 
+  /** The kiosk's Z mode on this device (core/kioskZ.ts): the shop's Z mode, the heartbeat's `independentTill` first. */
+  private kioskZKind() {
+    const beat = this.cloud.heartbeat();
+    return kioskZKindOfDevice(beat.zMode, beat.independentTill === true);
+  }
+
+  /** A customer ordering or paying on the kiosk's screens (the kiosk side of the work mode's facts). */
+  private kioskCustomerBusy(): boolean {
+    const f = this.kioskSideFacts();
+    return f.paying || f.ordering;
+  }
+
+  /**
+   * "משמרת ו-Z" in the kiosk admin (pos-android ui/kiosk/KioskZPanel.kt KioskZAdminSection): a fiscal kiosk working as one
+   * — its mode, the shift, an owed Z, and whether a customer holds it. Absent elsewhere (a till by role, a KDS, a bridge).
+   */
+  private kioskZInfo(): AdminInfo['kioskZ'] {
+    if (!this.fiscalRole || !this.isKioskMode() || this.opts.bridge) return null;
+    const kind = this.kioskZKind();
+    return { kind, shiftOpen: !!this.ledger.currentShift(), owed: this.tillZ.owed && makesOwnZ(kind), customerBusy: this.kioskCustomerBusy() };
+  }
+
+  /** The device's side of the kiosk admin's close / Z (core/kioskZ.ts KioskZPort; Android ContainerKioskZPort). */
+  private kioskZPort(): KioskZPort {
+    return {
+      cardInFlight: () => this.pay.cardInFlight,
+      openShiftId: () => this.ledger.currentShift()?.id ?? null,
+      pendingDocuments: (shiftId) => this.ledger.pendingInShift(shiftId),
+      closeShift: async (shiftId, closedByName) => {
+        if (this.ledger.currentShift()?.id !== shiftId) return { kind: 'changed' };
+        // As the kiosk's own daily close: nobody counted a drawer it does not have (counted = expected).
+        const r = this.ledger.closeShift({ closedByName, closedByUserId: this.adminUserId, vatRate: this.vatRate() });
+        if (r.kind === 'pending') return { kind: 'pending', count: r.count };
+        if (r.kind === 'none') return { kind: 'no_shift' };
+        this.log(`kiosk admin: shift ${r.shift.id} closed by ${this.adminName ?? '-'} (${this.adminUserId ?? '-'})`);
+        await this.sync.flush().catch(() => undefined);
+        return { kind: 'closed', shiftId: r.shift.id };
+      },
+      transmit: async () => this.tillZ.setCardTransmission(await this.transmitBatch('z_close')),
+      prepare: () => this.tillZ.prepare(),
+      requestAndPrint: async (userId, userName) => {
+        const z = await this.tillZ.produce(this.kioskZCloser(userName), false, null, userId);
+        switch (z.kind) {
+          case 'produced': {
+            const n = Number(z.z.machineSequenceNumber ?? z.z.zNumber);
+            return { kind: 'produced', number: Number.isFinite(n) ? n : 0, printError: null, printedHere: z.printedHere !== false };
+          }
+          case 'offline':
+            return { kind: 'offline' };
+          case 'waiting':
+            return { kind: 'waiting', closing: this.ledger.closingCount() };
+          case 'refused':
+            if (z.refusal === 'nothing_to_report') return { kind: 'nothing' };
+            // "אין מסמכים — אין צורך ב-Z": said in words, never the wire code.
+            if (z.refusal === 'empty_z') return { kind: 'refused', detail: 'אין מסמכים — אין צורך ב-Z' };
+            return { kind: 'refused', detail: z.refusal };
+          case 'failed':
+            return { kind: 'failed', detail: z.detail ?? `HTTP ${z.status}` };
+        }
+      },
+      oweZ: () => this.tillZ.markOwed(),
+    };
+  }
+
+  /** Who closed it, as the shop lock names it: the kiosk, then the manager who opened the admin. */
+  private kioskZCloser(manager: string | null = this.adminName): string {
+    return [closerName(this.operator()), manager].filter(Boolean).join(' · ');
+  }
+
+  /**
+   * The kiosk admin's "סגירת משמרת" / "הפקת Z" by the kiosk's Z mode (KioskZRunner): never over a customer ordering or
+   * paying, a card on the terminal or a pending payment; one at a time with the automatic close's own Z.
+   */
+  async kioskAdminZ(): Promise<KioskAdminZOutcome> {
+    if (!this.kioskZInfo()) return { kind: 'failed', detail: 'הפעולה זמינה בקיוסק בלבד' };
+    const kind = this.kioskZKind();
+    const runner = new KioskZRunner(this.kioskZPort(), this.opts.kioskZPause, this.log);
+    const busy = this.kioskCustomerBusy();
+    const out = await this.tillZ.exclusive(() =>
+      makesOwnZ(kind) ? runner.produceZ(busy, this.kioskZCloser(), this.adminUserId, this.adminName) : runner.closeShift(busy, this.kioskZCloser()),
+    );
+    void this.sync.kioskSync().catch(() => undefined);
+    return out ?? { kind: 'blocked', block: 'running' };
+  }
+
   async adminAction(a: AdminAction): Promise<AdminActionResult> {
     if (!this.adminOk()) return { ok: false, message: 'נדרש קוד מנהל' };
     this.adminUntil = Date.now() + 5 * 60_000;
@@ -3804,6 +3919,11 @@ export class KioskService extends EventEmitter {
         // The kitchen's too (main/kitchen): a person's "נסה שוב" — a ticket that may be on paper goes marked.
         this.kitchen.retryAll();
         return { ok: true };
+      case 'kioskZ': {
+        const out = await this.kioskAdminZ();
+        this.dirty();
+        return { ok: kioskZOutcomeOk(out), message: kioskZOutcomeText(out) };
+      }
       case 'cashmagAcknowledge': {
         const ok = this.cashMag.acknowledge(a.txId, this.adminName ?? 'מנהל');
         this.dirty();

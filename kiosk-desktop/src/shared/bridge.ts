@@ -340,6 +340,11 @@ export interface AdminInfo {
   zs: Array<{ number: number; closedAt: string; state: string }>;
   zOwed: boolean;
   zMode: string;
+  /**
+   * "משמרת ו-Z" (core/kioskZ.ts): a fiscal kiosk working as one — its Z mode per device, the shift, a Z owed (own Z
+   * only), a customer at it now. Absent / null elsewhere (a till by role, a KDS, a bridge, the Android bundle).
+   */
+  kioskZ?: { kind: 'shop' | 'independent' | 'own'; shiftOpen: boolean; owed: boolean; customerBusy: boolean } | null;
   offlineSince: number | null;
   /**
    * "יציאה לשולחן העבודה" / "יציאה מהתוכנה" from this menu: whether the manager who opened it holds
@@ -516,7 +521,12 @@ export type AdminAction =
   /** CashMag: a manager dealt with an unclear payment at the machine ("טופל"). */
   | { type: 'cashmagAcknowledge'; txId: string }
   /** CashMag: is the server there now (a knock on its port, the machine not taken). */
-  | { type: 'cashmagCheck' };
+  | { type: 'cashmagCheck' }
+  /**
+   * "משמרת ו-Z" (core/kioskZ.ts): the kiosk's one action by its Z mode — "סגירת משמרת" in the shop Z, "הפקת Z" with its own
+   * Z — run by the manager who opened this menu; refused (with why) over a customer, a card or a pending payment.
+   */
+  | { type: 'kioskZ' };
 
 export interface AdminActionResult {
   ok: boolean;
