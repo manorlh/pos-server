@@ -117,7 +117,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         role="button"
         data-add={p.addPath === 'direct' ? 'direct' : 'sheet'}
         aria-label={kt(m, 'quickAdd')}
-        className={cn('flex shrink-0 items-center justify-center shadow-md transition-transform duration-150 active:scale-90', className)}
+        className={cn('k-hit flex shrink-0 items-center justify-center shadow-md transition-transform duration-150 active:scale-90', className)}
         style={{ width: size, height: size, borderRadius: 999, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         onClick={(e) => {
           e.stopPropagation();

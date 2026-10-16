@@ -302,7 +302,9 @@ export function CustomerScreen({
         <span className="text-[2.2vmin]" style={{ color: c.muted }}>{state.itemCount} {t.items}</span>
       </div>
       {show.items ? (
-        <div className="min-h-0 flex-1 space-y-1 overflow-hidden">
+        // Anchored at the bottom: when the last lines do not all fit, the oldest go out at the top — the line just rung up
+        // always shows (layout audit 16.10: the newest lines were the ones cut off at the bottom).
+        <div data-cd-lines className="flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden">
           {state.lines.slice(-12).map((l) => (
             <div key={l.id} className="rounded-xl px-3 py-2" style={{ background: c.card }}>
               <div className="flex items-baseline justify-between gap-3 text-[2.8vmin] font-semibold">

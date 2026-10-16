@@ -94,6 +94,8 @@ import {
   wallpaperScrim,
   kioskRestLookOverBackdrop,
   railMotionColors,
+  mixHex,
+  readableInk,
 } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
 import { categoryInitial, readableTextOn } from '@/lib/categoryLook';
@@ -392,6 +394,12 @@ export interface PreviewModel {
   setCartTarget: (el: HTMLDivElement | null) => void;
   /** The side order panel is shown (cartStyle = panel on the wide frame). */
   panel: boolean;
+  /**
+   * The side panel's width in px on a landscape kiosk (displayProfile kioskDisplay `panelWidthDp` — 340–480 dp, §4 — in
+   * this window's px); absent / null: the preview's 132 px. Layout audit 16.10: a 1080p kiosk drew its basket 132 px
+   * (264 dp) wide, every name cut to a word.
+   */
+  panelWidth?: number | null;
   /** The frame's screen, in px (= dp for the layout rules). */
   screen: { w: number; h: number };
   /** The attract button's box on that screen (ctaBox). */
@@ -677,7 +685,7 @@ export function PricePill({ m, p, className }: { m: PreviewModel; p: PProduct; c
 
 export function buttonStyle(m: PreviewModel, variant: 'primary' | 'soft' = 'primary'): CSSProperties {
   if (variant === 'soft') {
-    return { background: `${m.c.button}1A`, color: m.c.button, borderRadius: m.btnRadius };
+    return { background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: m.btnRadius };
   }
   return { background: m.c.button, color: m.c.buttonText, borderRadius: m.btnRadius };
 }
@@ -911,7 +919,8 @@ export function BigButton({ m, children, onClick, variant = 'primary', className
       type="button"
       onClick={onClick}
       // `k-tap`: the motion engine's press (preview-feedback.tsx), over today's when it is there.
-      className={`k-tap ${variant === 'primary' ? 'k-tap-solid' : ''} relative flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook ? 'opacity-50' : ''} ${className}`}
+      aria-disabled={disabledLook || undefined}
+      className={`k-tap ${variant === 'primary' ? 'k-tap-solid' : ''} k-min-target relative flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook ? 'opacity-50' : ''} ${className}`}
       style={{ ...buttonStyle(m, variant), ...textSize(m, 'buttons', 15) }}
     >
       {children}
@@ -921,14 +930,14 @@ export function BigButton({ m, children, onClick, variant = 'primary', className
 
 export function Stepper({ m, value, onChange, small = false }: { m: PreviewModel; value: number; onChange: (n: number) => void; small?: boolean }) {
   const size = small ? 26 : 34;
-  const btn: CSSProperties = { width: size, height: size, borderRadius: 999, background: `${m.c.button}1A`, color: m.c.button };
+  const btn: CSSProperties = { width: size, height: size, borderRadius: 999, background: `${m.c.button}1A`, color: m.c.buttonInk };
   return (
     <div className="flex items-center gap-2.5">
-      <button type="button" style={btn} className="flex items-center justify-center" onClick={() => onChange(value - 1)}>
+      <button type="button" style={btn} className="k-hit flex items-center justify-center" onClick={() => onChange(value - 1)}>
         {value <= 1 && small ? <Trash2 className="h-3.5 w-3.5" /> : <Minus className="h-4 w-4" />}
       </button>
       <span className="min-w-4 text-center text-sm font-bold tabular-nums">{value}</span>
-      <button type="button" style={btn} className="flex items-center justify-center" onClick={() => onChange(value + 1)}>
+      <button type="button" style={btn} className="k-hit flex items-center justify-center" onClick={() => onChange(value + 1)}>
         <Plus className="h-4 w-4" />
       </button>
     </div>
@@ -1469,7 +1478,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
             m.live?.help ? (
               <button
                 type="button"
-                className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium"
+                className="k-hit flex items-center gap-1 px-2.5 py-1 text-xs font-medium"
                 style={ATTRACT_PILL}
                 title={m.txt('helpText')}
                 onClick={(e) => {
@@ -1572,8 +1581,8 @@ export function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
       type="button"
       aria-label={m.t('back')}
       onClick={back}
-      className="flex shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
-      style={{ width: size, height: size, background: `${m.c.button}1A`, color: m.c.button }}
+      className="k-hit flex shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
+      style={{ width: size, height: size, background: `${m.c.button}1A`, color: m.c.buttonInk }}
     >
       <ChevronRight className="h-5 w-5" />
     </button>
@@ -1629,8 +1638,10 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
           <LiveBack m={m} />
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-3 [scrollbar-width:none]">
-        <div className="w-full overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, maxWidth: tile * 2 + gap + pad * 2, borderRadius: Math.max(16, m.radius) }}>
+      {/* Centred by its own auto margins, never squeezed (shrink-0): on a short window (a landscape kiosk, 960×540) the card
+          scrolls whole — "להמשך" stays reachable — instead of being cut by its rounded corners (layout audit 16.10). */}
+      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
+        <div className="my-auto w-full shrink-0 overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, maxWidth: tile * 2 + gap + pad * 2, borderRadius: Math.max(16, m.radius) }}>
           <CardHeader m={m} caption={m.txt('serviceCaption')} />
           <div className="flex flex-col gap-4" style={{ padding: pad }}>
             <ScreenImage m={m} k="service" height={110} />
@@ -1838,7 +1849,7 @@ function CategoryStrip({ m, active, onPick }: { m: PreviewModel; active: string 
             data-cat={cat.id}
             data-active={on || undefined}
             onClick={() => onPick(cat.id)}
-            className="shrink-0 px-3.5 py-1.5 kt-13 font-semibold transition-all duration-200"
+            className="k-min-target shrink-0 px-3.5 py-1.5 kt-13 font-semibold transition-all duration-200"
             style={{
               ...(on
                 ? { background: m.c.button, color: m.c.buttonText, borderRadius: 999 }
@@ -1901,7 +1912,7 @@ function CategoryRail({
             >
               <CategoryImage m={m} cat={cat} size={imageSize} radius={style === 'chips' ? 999 : Math.max(8, m.radius * 0.6)} />
             </span>
-            <span className={`line-clamp-2 w-full kt-10 leading-tight ${on ? 'font-bold' : ''}`} style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', 10) }}>
+            <span className={`line-clamp-2 w-full kt-10 leading-tight [overflow-wrap:anywhere] ${on ? 'font-bold' : ''}`} style={{ color: on ? m.c.button : m.c.text, ...textSize(m, 'categoryName', 10) }}>
               {cat.name}
             </span>
           </button>
@@ -1949,7 +1960,8 @@ export function CartBar({ m }: { m: PreviewModel }) {
         <CartTarget
           register={m.setCartTarget}
           key={m.cartBump}
-          className={cn('flex h-6 min-w-6 items-center justify-center rounded-full bg-white/25 px-1.5 text-xs tabular-nums', pop.className)}
+          // A darker bubble: white on a white tint over the button was 3:1 (layout audit 16.10).
+          className={cn('flex h-6 min-w-6 items-center justify-center rounded-full bg-black/20 px-1.5 text-xs tabular-nums', pop.className)}
           style={pop.style}
         >
           {count}
@@ -1968,7 +1980,7 @@ export function CartPanel({ m }: { m: PreviewModel }) {
   const count = cartCount(m.cart);
   const pop = badgePop(m, count > 0);
   return (
-    <div className="flex w-[132px] shrink-0 flex-col border-s" style={{ borderColor: m.c.border, background: m.c.surface }}>
+    <div className="flex shrink-0 flex-col border-s" style={{ width: m.panelWidth ?? 132, borderColor: m.c.border, background: m.c.surface }}>
       <CartTarget
         register={m.setCartTarget}
         className="relative flex items-center justify-between gap-1 border-b px-2 py-2"
@@ -1996,7 +2008,7 @@ export function CartPanel({ m }: { m: PreviewModel }) {
                 {l.product.name}
               </div>
               <div className="flex items-center justify-between gap-1">
-                <span className="kt-10 tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'cartLines', 10) }}>
+                <span className="kt-10 tabular-nums" style={{ color: m.c.dark ? m.c.primary : readableInk(m.c.primary, [mixHex(m.c.surface, '#000000', 0x0a / 255)]), ...textSize(m, 'cartLines', 10) }}>
                   {m.money(l.unit * l.qty)}
                 </span>
                 <span className="kt-10 tabular-nums" style={{ color: m.c.mutedText }}>
@@ -2016,7 +2028,7 @@ export function CartPanel({ m }: { m: PreviewModel }) {
         </div>
         <button
           type="button"
-          className={`k-tap k-tap-solid relative w-full px-2 py-2 kt-11 font-bold ${count === 0 ? 'opacity-50' : ''}`}
+          className={`k-tap k-tap-solid k-min-target relative w-full px-2 py-2 kt-11 font-bold ${count === 0 ? 'opacity-50' : ''}`}
           style={buttonStyle(m)}
           onClick={() => count > 0 && m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
         >
@@ -2060,7 +2072,7 @@ export function TopBar({ m, items: configured }: { m: PreviewModel; items: Layou
   const rc = railMotionColors(m.cfg.theme);
   // A real kiosk: only the buttons it can honour (never a button that does nothing).
   const items = m.live ? configured.filter((i) => i === 'cancel' || !!m.live?.topBar?.[i]) : configured;
-  const pill = 'flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3.5 kt-13 font-bold transition-transform duration-150 active:scale-95';
+  const pill = 'k-hit flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3.5 kt-13 font-bold transition-transform duration-150 active:scale-95';
   const button = (item: LayoutTopBarItem) => {
     if (item === 'club') {
       return (
@@ -2141,7 +2153,7 @@ export function CatalogHeader({ m, children, search = true }: { m: PreviewModel;
           </span>
         ) : null}
         {m.live?.startOver ? (
-          <button type="button" onClick={m.live.startOver} className="px-2.5 py-1 kt-11 font-semibold" style={{ ...cardStyle(m), borderRadius: 999 }}>
+          <button type="button" onClick={m.live.startOver} className="k-hit px-2.5 py-1 kt-11 font-semibold" style={{ ...cardStyle(m), borderRadius: 999 }}>
             {m.t('startOver')}
           </button>
         ) : null}
@@ -2591,7 +2603,7 @@ export function ProductSheet({
                     </span>
                     <span className="flex items-center gap-1">
                       {g.freeCount ? (
-                        <span className="rounded-full px-2 py-0.5 kt-10 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accent }}>
+                        <span className="rounded-full px-2 py-0.5 kt-10 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accentInk }}>
                           {m.t('freeChoices', { n: g.freeCount })}
                         </span>
                       ) : null}
@@ -2601,7 +2613,7 @@ export function ProductSheet({
                           lacking
                             ? { background: `${ERROR_COLOR}1A`, color: ERROR_COLOR }
                             : g.min > 0
-                              ? { background: `${m.c.button}1A`, color: m.c.button }
+                              ? { background: `${m.c.button}1A`, color: m.c.buttonInk }
                               : { background: '#0000000D', color: m.c.mutedText }
                         }
                       >
@@ -2658,7 +2670,7 @@ export function ProductSheet({
                       key={q}
                       type="button"
                       onClick={() => setNotes(on ? notes.filter((x) => x !== q) : [...notes, q])}
-                      className="px-3 py-1 text-xs font-medium transition-colors duration-150"
+                      className="k-hit px-3 py-1 text-xs font-medium transition-colors duration-150"
                       style={{ ...(on ? { ...buttonStyle(m), borderRadius: 999 } : { background: '#0000000D', borderRadius: 999 }), ...textSize(m, 'itemOptions', 12) }}
                     >
                       {q}
@@ -2728,7 +2740,7 @@ export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; 
         e.stopPropagation();
         onClick();
       }}
-      className="flex h-8 min-w-8 items-center justify-center px-2 kt-11 font-bold disabled:opacity-40"
+      className="k-hit flex h-8 min-w-8 items-center justify-center px-2 kt-11 font-bold disabled:opacity-40"
       style={{ borderRadius: 999, border: `1.5px solid ${m.c.border}`, background: m.c.surface, color: m.c.text }}
     >
       {label}
@@ -2739,7 +2751,7 @@ export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; 
       <button
         type="button"
         onClick={() => dish.toggle(group.id, option.id)}
-        className="flex min-w-0 flex-1 items-center gap-2.5 py-0.5 text-start text-sm"
+        className="k-min-target flex min-w-0 flex-1 items-center gap-2.5 py-0.5 text-start text-sm"
         style={textSize(m, 'itemOptions', 14)}
       >
         <span
@@ -2759,7 +2771,7 @@ export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; 
         ) : null}
         <span className="min-w-0 flex-1 truncate">{option.name}</span>
         {free ? (
-          <span className="shrink-0 kt-11 font-bold" style={{ color: m.c.accent }}>
+          <span className="shrink-0 kt-11 font-bold" style={{ color: m.c.accentInk }}>
             {m.t('free')}
           </span>
         ) : option.price > 0 ? (
@@ -3089,7 +3101,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
               {m.txt('reviewHint')}
             </p>
           </div>
-          <button type="button" className="shrink-0 px-3 py-1.5 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
+          <button type="button" className="k-hit shrink-0 px-3 py-1.5 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
             {m.txt('addMoreCta')}
           </button>
         </div>
@@ -3123,7 +3135,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
                   {m.money(l.unit * l.qty)}
                 </div>
                 {m.pricing?.lines[l.key]?.promotionAgorot ? (
-                  <div className="truncate kt-11 font-semibold tabular-nums" style={{ color: m.c.accent }}>
+                  <div className="truncate kt-11 font-semibold tabular-nums" style={{ color: m.c.accentInk }}>
                     {m.t('promotionLine', { name: m.pricing.lines[l.key].promotionName ?? '', amount: m.money(m.pricing.lines[l.key].promotionAgorot / 100) })}
                   </div>
                 ) : null}
@@ -3152,7 +3164,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
             </div>
             {/* The promotions the kiosk will charge with (the real kiosk's pricing). */}
             {promotions.map((a) => (
-              <div key={a.name} className="flex items-center justify-between kt-13 font-semibold" style={{ color: m.c.accent }}>
+              <div key={a.name} className="flex items-center justify-between kt-13 font-semibold" style={{ color: m.c.accentInk }}>
                 <span className="min-w-0 truncate">{a.name}</span>
                 <span className="tabular-nums">−{m.money(a.discountAgorot / 100)}</span>
               </div>
@@ -3248,7 +3260,8 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
   return (
     <div className="relative flex h-full flex-col">
       <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
-        <div className="my-auto w-full max-w-[640px] overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
+        {/* Never squeezed (shrink-0): a short window scrolls the whole card, "המשך ללא טיפ" included (layout audit 16.10). */}
+        <div className="my-auto w-full max-w-[640px] shrink-0 overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
           <CardHeader m={m} caption={m.txt('tipCaption')} start={<LiveBack m={m} size={32} />} />
           <div className="flex flex-col gap-4 p-4">
             <CheckoutBarRow m={m} steps={steps} current="tip" />
@@ -3580,14 +3593,14 @@ function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskL
             <div className="text-sm font-bold" style={{ color: m.c.mutedText }}>
               לתשלום
             </div>
-            <div className="text-5xl font-black tabular-nums" style={{ color: m.c.primary }}>
+            <div className="text-5xl font-black leading-[1.15] tabular-nums" style={{ color: m.c.primary }}>
               {shekels(cash.dueAgorot)}
             </div>
             <div className="mt-2 text-base font-bold">התשלום יתחיל לבד כשהעמדה תתפנה</div>
           </div>
           <span aria-hidden className="inline-block h-10 w-10 animate-spin rounded-full border-4" style={{ borderColor: `${m.c.button}33`, borderTopColor: m.c.button }} />
           {live.canCancel ? (
-            <button type="button" className="mt-auto text-sm font-bold underline" style={{ color: m.c.mutedText }} onClick={live.onCancel}>
+            <button type="button" className="k-hit mt-auto text-sm font-bold underline" style={{ color: m.c.mutedText }} onClick={live.onCancel}>
               חזרה
             </button>
           ) : null}
@@ -3631,7 +3644,7 @@ function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskL
             <div className="text-sm font-bold" style={{ color: m.c.mutedText }}>
               שולם במזומן {shekels(cash.splitAgorot ?? cash.insertedAgorot)}
             </div>
-            <div className="text-5xl font-black tabular-nums" style={{ color: m.c.primary }}>
+            <div className="text-5xl font-black leading-[1.15] tabular-nums" style={{ color: m.c.primary }}>
               {shekels(cash.cardRestAgorot ?? 0)}
             </div>
             <div className="mt-1 text-base font-bold">הציגו כרטיס במסופון האשראי</div>
@@ -3693,7 +3706,7 @@ function LiveCash({ m, live, cash }: { m: PreviewModel; live: NonNullable<KioskL
               <div className="text-sm font-bold" style={{ color: m.c.mutedText }}>
                 הוכנסו
               </div>
-              <div className="text-5xl font-black tabular-nums" style={{ color: m.c.primary }}>
+              <div className="text-5xl font-black leading-[1.15] tabular-nums" style={{ color: m.c.primary }}>
                 {shekels(cash.insertedAgorot)}
               </div>
               <div className="mt-1 text-base font-bold tabular-nums">מתוך {shekels(cash.dueAgorot)}</div>
@@ -3938,7 +3951,7 @@ function SuccessCard({ m }: { m: PreviewModel }) {
           <div>
             <div
               data-pickup
-              className={cn('text-6xl font-black tabular-nums', fx?.number.className)}
+              className={cn('text-6xl font-black leading-[1.15] tabular-nums', fx?.number.className)}
               dir="ltr"
               style={{ ...fx?.number.style, color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}
             >
@@ -4005,7 +4018,7 @@ function ClassicSuccess({ m }: { m: PreviewModel }) {
   const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;
   const outlined = chromeOf(m).outline !== null;
   // A style with an outline (tech): the check in the accent, ringed — never a blob of it.
-  const markColors: CSSProperties = outlined ? { background: `${m.c.accent}1F`, color: m.c.accent, border: `1px solid ${m.c.accent}` } : { background: m.c.accent, color: '#fff' };
+  const markColors: CSSProperties = outlined ? { background: `${m.c.accent}1F`, color: m.c.accentInk, border: `1px solid ${m.c.accent}` } : { background: m.c.accent, color: '#fff' };
   // "מנוע הנפשות" (success): the ✓ drawn, the number zooming in, confetti by kind; no engine — today's pop.
   const fx = successFx(m.engine);
   return (
@@ -4026,7 +4039,7 @@ function ClassicSuccess({ m }: { m: PreviewModel }) {
           </div>
           <div
             data-pickup
-            className={cn('text-6xl font-black tabular-nums', fx?.number.className)}
+            className={cn('text-6xl font-black leading-[1.15] tabular-nums', fx?.number.className)}
             dir="ltr"
             style={{ ...fx?.number.style, color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}
           >
@@ -4196,7 +4209,7 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
               <Img src={m.logoUrl} className="max-h-full max-w-full object-contain" />
             </div>
           ) : m.brandName.trim() ? (
-            <div className="mb-5 text-base font-bold" style={{ opacity: 0.85 }}>
+            <div className="mb-5 text-base font-bold">
               {m.brandName}
             </div>
           ) : null}
@@ -4204,7 +4217,7 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
           <h2 className="mt-5 text-4xl font-extrabold leading-tight" style={{ color: look.title }}>
             {words.title}
           </h2>
-          <p className="mt-2 text-xl font-semibold" style={{ opacity: 0.92 }}>
+          <p className="mt-2 text-xl font-semibold">
             {words.subtitle}
           </p>
           {back ? (
@@ -4212,7 +4225,7 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
               {back}
             </div>
           ) : null}
-          <p className="mt-4 text-sm" style={{ opacity: 0.78 }}>
+          <p className="mt-4 text-sm font-semibold">
             {m.t('rest.orderAtTill')}
           </p>
           {messages.length > 0 ? (
@@ -4244,6 +4257,16 @@ ${MOTION_CSS}
 .k-root .kt-11 { font-size: calc(11px * var(--k-scale)); }
 .k-root .kt-13 { font-size: calc(13px * var(--k-scale)); }
 .k-root .kt-15 { font-size: calc(15px * var(--k-scale)); }
+/* "גבולות מגע" (display-profile spec §2.9; layout audit 16.10): a small control's touch area grown to 48 dp at the window's
+   scale — the kiosk's root sets --k-target (48 CSS px at zoom 1, 24 at the Windows kiosk's ×2) — without moving a pixel of
+   what it draws (.k-hit), or its height made at least that (.k-min-target). Unset (the dashboard's preview): nothing.
+   In Tailwind's components layer: a control's own utilities (absolute, min-h-…) still win. */
+@layer components {
+  :where(.k-hit) { position: relative; }
+  .k-min-target { min-height: var(--k-target, 0px); }
+  :where(.k-staff) :where(button:not(.k-hit), input, select) { min-height: var(--k-target, 0px); }
+}
+.k-hit::before { content: ''; position: absolute; top: min(0px, calc(50% - var(--k-target, 0px) / 2)); bottom: min(0px, calc(50% - var(--k-target, 0px) / 2)); left: min(0px, calc(50% - var(--k-target, 0px) / 2)); right: min(0px, calc(50% - var(--k-target, 0px) / 2)); }
 @keyframes kioskCardTap { 0%, 15% { transform: translate(-50%, -4px) rotate(-10deg); } 45%, 62% { transform: translate(-50%, 46px) rotate(0deg); } 85%, 100% { transform: translate(-50%, -4px) rotate(-10deg); } }
 @keyframes kioskRing { 0% { transform: scale(0.85); opacity: 0.9; } 100% { transform: scale(1.2); opacity: 0; } }
 @keyframes kioskPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.025); } }

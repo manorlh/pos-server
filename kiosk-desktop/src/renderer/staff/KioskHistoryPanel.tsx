@@ -100,7 +100,7 @@ export function KioskHistoryPanel({ m, onDone }: { m: PreviewModel; onDone?: () 
   const current = rows.find((r) => r.localId === picked) ?? rows[0] ?? null;
   const today = history ? new Date().toDateString() : '';
   const btn = { background: m.c.button, color: m.c.buttonText, borderRadius: 8 } as const;
-  const soft = { background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 } as const;
+  const soft = { background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 } as const;
 
   return (
     <section className="space-y-2 p-3 text-sm" style={cardStyle(m)} data-testid="kiosk-history">
@@ -116,7 +116,7 @@ export function KioskHistoryPanel({ m, onDone }: { m: PreviewModel; onDone?: () 
         ) : null}
       </div>
       {note ? <div className={`rounded-lg p-2 text-center text-xs font-semibold ${note.ok ? 'bg-black/5' : 'bg-red-50 text-red-700'}`}>{note.text}</div> : null}
-      {history && history.unprintedTickets > 0 ? <div className="text-xs font-bold text-red-600">{REPRINT_TEXT.ticketsAlert(history.unprintedTickets)}</div> : null}
+      {history && history.unprintedTickets > 0 ? <div className="text-xs font-bold text-red-700">{REPRINT_TEXT.ticketsAlert(history.unprintedTickets)}</div> : null}
       <div className="text-xs" style={{ color: m.c.mutedText }}>
         {REPRINT_TEXT.historySub}
       </div>

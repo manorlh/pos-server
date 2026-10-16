@@ -5,6 +5,7 @@
  * customer mid-order or paying.
  */
 
+import { mixHex, readableInk } from '@dash-lib/kioskConfig';
 import { useState } from 'react';
 import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
 import type { AdminActionResult, AdminInfo } from '../../shared/bridge';
@@ -34,7 +35,7 @@ export function KioskZPanel({ m, info, onRun }: { m: PreviewModel; info: NonNull
     <section className="space-y-2 p-3 text-sm" style={cardStyle(m)} data-testid="kiosk-z">
       <h3 className="text-sm font-extrabold">{KZ_TEXT.title}</h3>
       <div className="flex items-center gap-2">
-        <span className="rounded-full px-2.5 py-0.5 text-xs font-bold" style={{ background: `${accent}29`, color: accent }}>
+        <span className="rounded-full px-2.5 py-0.5 text-xs font-bold" style={{ background: `${accent}29`, color: readableInk(accent, [mixHex(m.c.surface, accent, 0x29 / 255)]) }}>
           {KZ_TEXT.kind[info.kind]}
         </span>
         <span>{info.shiftOpen ? KZ_TEXT.shiftOpen : KZ_TEXT.shiftClosed}</span>
@@ -55,7 +56,7 @@ export function KioskZPanel({ m, info, onRun }: { m: PreviewModel; info: NonNull
           {label}
         </button>
         {confirming ? (
-          <button type="button" onClick={() => setConfirming(false)} className="px-4 py-2 text-sm font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 10 }}>
+          <button type="button" onClick={() => setConfirming(false)} className="px-4 py-2 text-sm font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 10 }}>
             {KZ_TEXT.cancel}
           </button>
         ) : null}

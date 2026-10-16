@@ -237,7 +237,7 @@ export function ReceiptBasket({ m }: { m: PreviewModel }) {
               </span>
               <span className="min-w-0 flex-1 truncate">{l.product.name}</span>
               <span className="shrink-0 font-bold tabular-nums">{m.money(l.unit * l.qty)}</span>
-              <button type="button" aria-label="-" onClick={() => setQty(m, l, l.qty - 1)} className="flex shrink-0 items-center justify-center rounded-full" style={{ width: 32 * u, height: 32 * u, background: `${m.c.button}1A`, color: m.c.button }}>
+              <button type="button" aria-label="-" onClick={() => setQty(m, l, l.qty - 1)} className="flex shrink-0 items-center justify-center rounded-full" style={{ width: 32 * u, height: 32 * u, background: `${m.c.button}1A`, color: m.c.buttonInk }}>
                 <Minus className="h-4 w-4" />
               </button>
               <button type="button" aria-label="+" onClick={() => setQty(m, l, l.qty + 1)} className="flex shrink-0 items-center justify-center rounded-full" style={{ width: 32 * u, height: 32 * u, background: m.c.button, color: m.c.buttonText }}>

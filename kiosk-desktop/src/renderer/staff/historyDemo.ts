@@ -79,6 +79,35 @@ export function demoAdminInfo(): AdminInfo {
     zMode: 'shop',
     offlineSince: null,
     desktopExit: { allowed: false, reason: 'web demo' },
+    // `&admin=full` (the layout audit): every panel of the menu — "מצב עבודה", "משמרת ו-Z", the Zs, the cash devices.
+    ...(typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('admin') === 'full' ? fullAdminExtras() : {}),
+  };
+}
+
+function fullAdminExtras(): Partial<AdminInfo> {
+  const now = Date.now();
+  return {
+    workMode: { enabled: true, mode: 'kiosk', toTill: true, toKiosk: false, openerHolds: true },
+    kioskZ: { kind: 'own', shiftOpen: true, owed: true, customerBusy: false },
+    zOwed: true,
+    zs: [
+      { number: 1187, closedAt: new Date(now - 86_400_000).toISOString(), state: 'sent' },
+      { number: 1186, closedAt: new Date(now - 2 * 86_400_000).toISOString(), state: 'sent' },
+    ],
+    orders: [{ localId: 'demo-1', label: 'A-17', at: now - 600_000, totalAgorot: 9_999_990, bon: 'printed', receipt: 'sent', number: '40000123' }],
+    cash: { station: 'עמדת מזומן ראשית', address: '192.168.1.60', usable: true, reason: null, pending: [{ txShort: 'A7F3', amountAgorot: 9_999_990, startedAt: now - 120_000, final: null }] },
+    cashmag: {
+      address: '192.168.1.61:8080',
+      protocol: 'json',
+      terminal: 'KIOSK-01',
+      userCodeSet: true,
+      sources: { address: 'machine', protocol: 'shop' },
+      usable: false,
+      reason: 'המכונה לא עונה (בדיקה אחרונה לפני 2 דקות)',
+      connection: 'disconnected',
+      lastError: 'ECONNREFUSED 192.168.1.61:8080',
+      unresolved: [{ txId: 'cm-1', txShort: 'C9D1', amountAgorot: 4_590, startedAt: now - 3_600_000, outcome: 'paid_unconfirmed', heldAgorot: 2_000, reason: 'החיבור נותק באמצע התשלום' }],
+    },
   };
 }
 
