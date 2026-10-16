@@ -34,6 +34,9 @@ from app.services import till_permissions as TP
 
 _UNSET = object()
 
+#: The till parameter "כשאין הרשאה" per level (app/services/cash_drawer.py registers it).
+DENIED_ACTION_UI_KEY = "deniedActionUi"
+
 
 class TillRoleError(ValueError):
     """A request the roles cannot take. `code` is the API's detail; message safe to show."""
@@ -71,6 +74,7 @@ def role_effective(role: TillRole, overrides: Any = None) -> TP.EffectivePermiss
         role_id=str(role.id),
         role_key=role.builtin_key,
         role_name=role.name,
+        role_denied_ui=getattr(role, "denied_ui", None),
     )
 
 
@@ -141,7 +145,44 @@ def sync_fields(eff: TP.EffectivePermissions) -> Dict[str, Any]:
         "till_role_name": eff.role_name,
         "permissions": dict(eff.states),
         "limits": {code: dict(v) for code, v in eff.limits.items()},
+        # "כשאין הרשאה": the employee's / the role's; None — the till's level parameter decides.
+        "denied_ui": eff.denied_ui,
     }
+
+
+# ── "כשאין הרשאה" at one till (P:/specs/denied-actions-ui.md) ─────────────────
+
+
+def level_denied_ui(db: Session, machine: Any) -> str:
+    """The till parameter `deniedActionUi` as `machine` resolves it (company → shop → area → till); `show` by default."""
+    from app.services.till_parameters import raw_parameters_for_machine
+
+    try:
+        value = raw_parameters_for_machine(db, machine).get(DENIED_ACTION_UI_KEY)
+        return TP.clean_denied_ui(value) or TP.DENIED_UI_SHOW
+    except Exception:  # noqa: BLE001 — an unreadable parameter is today's behaviour, never a refusal
+        return TP.DENIED_UI_SHOW
+
+
+def denied_ui_for(db: Session, pos_user: Any, machine: Any, eff: Optional[TP.EffectivePermissions] = None) -> str:
+    """What the till does with `pos_user`'s denied options at `machine`: employee → role → level → show."""
+    eff = eff if eff is not None else effective_for_pos_user(pos_user)
+    if eff.denied_ui:
+        return eff.denied_ui
+    return level_denied_ui(db, machine) if machine is not None else TP.DENIED_UI_SHOW
+
+
+def operator_state(db: Session, pos_user: Any, code: str, machine: Any) -> str:
+    """
+    `pos_user`'s state for `code` as the till acts on it at `machine`: "אסור" under "לבקש קוד מנהל" is
+    "דורש אישור מנהל" there (TP.denied_ui_state) — what a cloud check of the signed-in operator (not of
+    an approver) must agree with, or the till asks a manager for something the cloud then refuses.
+    """
+    eff = effective_for_pos_user(pos_user)
+    state = eff.state(code)
+    if state != TP.DENY or code in TP.DENIED_UI_UNTOUCHED:
+        return state
+    return TP.denied_ui_state(state, code, denied_ui_for(db, pos_user, machine, eff))
 
 
 # ── Roles of a company ────────────────────────────────────────────────────────
@@ -227,6 +268,8 @@ def role_out(role: TillRole, users: int = 0) -> Dict[str, Any]:
         "own": {"permissions": dict(role.permissions or {}), "limits": dict(role.limits or {})},
         "permissions": eff.states,
         "limits": eff.limits,
+        # "כשאין הרשאה": the role's own (show | hide | code), null = as the level says.
+        "deniedUi": getattr(role, "denied_ui", None),
         "legacyRole": eff.legacy_role,
         "users": users,
         "updatedAt": role.updated_at.isoformat() if role.updated_at else None,
@@ -253,12 +296,23 @@ def _clean(permissions: Any, limits: Any) -> Tuple[Dict[str, str], Dict[str, Dic
 
 
 def _snapshot(role: TillRole) -> Dict[str, Any]:
-    return {
+    out = {
         "name": role.name,
         "description": role.description,
         "permissions": dict(role.permissions or {}),
         "limits": dict(role.limits or {}),
     }
+    # "כשאין הרשאה": only when set, so a role that never had it snapshots as before.
+    if getattr(role, "denied_ui", None):
+        out["deniedUi"] = role.denied_ui
+    return out
+
+
+def _clean_denied_ui(value: Any) -> Optional[str]:
+    try:
+        return TP.clean_denied_ui(value)
+    except TP.PermissionValueError as exc:
+        raise TillRoleError("invalid_denied_ui", 'ערך לא תקין ל"כשאין הרשאה" (להציג / להסתיר / לבקש קוד מנהל)') from exc
 
 
 def record_change(
@@ -327,9 +381,11 @@ def create_role(
     copy_from: Optional[TillRole] = None,
     permissions: Any = None,
     limits: Any = None,
+    denied_ui: Any = _UNSET,
 ) -> TillRole:
     cleaned_name = _check_name(db, company.id, name)
     states, lims = _clean(permissions, limits)
+    own_denied_ui = None if denied_ui is _UNSET else _clean_denied_ui(denied_ui)
     if copy_from is not None:
         # A duplicate is the source as it resolves now, written out in full, so later
         # edits to the source never move the copy.
@@ -337,6 +393,9 @@ def create_role(
         template = TP.template_of(copy_from.builtin_key, copy_from.base_key)
         own_states = {**eff.states, **states}
         own_limits = {**{k: dict(v) for k, v in eff.limits.items()}, **lims}
+        # A duplicate hides / asks as its source does, unless the request says otherwise.
+        if denied_ui is _UNSET:
+            own_denied_ui = getattr(copy_from, "denied_ui", None)
     else:
         if base_key is not None and base_key not in TP.DEFAULTS:
             raise TillRoleError("unknown_template", "תבנית לא מוכרת")
@@ -345,7 +404,7 @@ def create_role(
     row = TillRole(
         id=uuid.uuid4(), tenant_id=company.tenant_id, company_id=company.id, builtin_key=None,
         base_key=template, name=cleaned_name, description=(description or "").strip() or None,
-        permissions=own_states, limits=own_limits, sort_order=200,
+        permissions=own_states, limits=own_limits, denied_ui=own_denied_ui, sort_order=200,
         created_by=getattr(user, "id", None), updated_by=getattr(user, "id", None),
     )
     db.add(row)
@@ -364,8 +423,9 @@ def update_role(
     description: Any = _UNSET,
     permissions: Any = _UNSET,
     limits: Any = _UNSET,
+    denied_ui: Any = _UNSET,
 ) -> Set[uuid.UUID]:
-    """Edit a role; returns the shops whose tills must hear of it."""
+    """Edit a role; returns the shops whose tills must hear of it. `denied_ui` None = inherit again."""
     if role.deleted_at is not None:
         raise TillRoleError("role_deleted", "התפקיד נמחק", status=404)
     before = _snapshot(role)
@@ -380,6 +440,8 @@ def update_role(
         )
         role.permissions = states
         role.limits = lims
+    if denied_ui is not _UNSET:
+        role.denied_ui = _clean_denied_ui(denied_ui)
     role.updated_by = getattr(user, "id", None)
     role.updated_at = _now()
     after = _snapshot(role)
@@ -439,7 +501,11 @@ def set_overrides(db: Session, company: Company, pos_user: PosUser, overrides: A
         if not isinstance(overrides, dict):
             raise TillRoleError("invalid_overrides", "overrides must be an object")
         states, lims = _clean(overrides.get("states"), overrides.get("limits"))
-        cleaned = {"states": states, "limits": lims} if (states or lims) else None
+        # "כשאין הרשאה" for this employee alone (P:/specs/denied-actions-ui.md); absent / null = as the role.
+        own_denied_ui = _clean_denied_ui(overrides.get("deniedUi"))
+        cleaned = {"states": states, "limits": lims} if (states or lims or own_denied_ui) else None
+        if own_denied_ui:
+            cleaned["deniedUi"] = own_denied_ui
     # "בקשות אישור מרחוק" keeps its own key in the same column (app/services/remote_approvals/
     # overrides.py), edited on the employee card on its own: the role editor never drops it.
     kept = (pos_user.permission_overrides or {}).get("approvals") if isinstance(pos_user.permission_overrides, dict) else None

@@ -521,6 +521,9 @@ class TestMigration:
         assert set(script.get_revision("6af69aa646d1").down_revision) == {"7c4e2a9d1b6f", "d8a3f1c6e2b7"}
         # 4ff6c2ab6d7c (14.10d) joins that with bill-on-another-till's e7b2d9f4a6c3 (on c4d8e2f6a1b9) and table waiter assignment's d8b3f1a6c2e4.
         assert set(script.get_revision("4ff6c2ab6d7c").down_revision) == {"6af69aa646d1", "e7b2d9f4a6c3", "d8b3f1a6c2e4"}
+        # 6b3b29c7bc5b (17.10) joins the four heads built on cash stage 2 (e5a9c3d1f7b2): denied-actions UI, PWA push,
+        # the cash host kiosk and CashMag credits.
+        assert set(script.get_revision("6b3b29c7bc5b").down_revision) == {"d9e4b2a7c1f8", "b8f2c6e4a9d1", "f3a8c6e1d9b4", "f3b8d2c6a9e1"}
         assert set(script.get_revision("bb6205ba290c").down_revision) == {"e3b9d7a41c62", "5d1f8b3e7a92", "e4b7c2d9a6f1"}
         assert set(script.get_revision("ba584f6fb704").down_revision) == {"396f22daf19c", "a7d3e1c9b5f2"}
         assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"

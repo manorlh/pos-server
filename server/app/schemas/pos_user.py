@@ -152,6 +152,10 @@ class PosUserSyncRow(BaseModel):
     till_role_name: Optional[str] = Field(None, alias="tillRoleName")
     permissions: Optional[Dict[str, str]] = None
     limits: Optional[Dict[str, Dict[str, float]]] = None
+    #: "כשאין הרשאה" (P:/specs/denied-actions-ui.md): the employee's override, else the role's —
+    #: show | hide | code; null: the till's level parameter `deniedActionUi` decides (absent from an
+    #: older server: the same). Cached on the till with the profile, for offline.
+    denied_ui: Optional[str] = Field(None, alias="deniedUi")
     #: "אל תציג שוב" (P:/specs/fire-restaurant-flow.md §8.5): the hints the employee dismissed; [] — none.
     hints_dismissed: List[str] = Field(default_factory=list, alias="hintsDismissed")
     created_at: datetime = Field(..., alias="createdAt")

@@ -36,6 +36,14 @@ app/services/product_tile_text.py as the design's own fields under "מראה", e
 from the defaults, like `motion`: nothing set leaves a till's sync bytes as they were). A code wins
 over the parameter; `"base"` ("לפי פרמטרי הקופה") undoes a level above's value. `legacy_view` carries
 the parameters' four (`productText`) for the editor and its preview.
+
+"זרימה" (P:/specs/flow-design.md §9): `flow` — the till's shell (a home of the open orders, a wizard
+for a new one, a side menu of big rows) chosen for every device (`shell`) or per profile (`profiles.<p>`,
+"base" = as `shell`, also over a level above's value), with its options. Absent from the defaults like
+`look`: nothing set is no `flow` and today's sync bytes; every key optional, null inherits, merged per
+key. `flow_view` / `flow_for_profile` settle it; the shared fixture tests/fixtures/flow_design_contract.json
+pins them with the till (pos-android domain/FlowDesign.kt). A till older than `FLOW_MIN_VERSION_CODE`
+ignores the section and shows "רגיל".
 """
 from __future__ import annotations
 
@@ -150,6 +158,32 @@ SUMMARY_STATES = ("auto", "open", "closed")
 FIRE_HINTS = ("on", "first_time", "off")
 MAP_STYLES = ("auto", "classic", "modern")
 SHOW_HIDE = ("auto", "show", "hide")
+
+# "זרימה" (P:/specs/flow-design.md §9). Like `look`, absent from DEFAULT_CONFIG; a till reads a value it does
+# not know as that key's default.
+FLOW_SECTION = "flow"
+FLOW_CLASSIC, FLOW_ON = "classic", "flow"
+#: `flow.shell` (every device at the level) — "רגיל (כמו היום)" / "זרימה". Never "base": that is a profile's.
+FLOW_SHELLS = (FLOW_CLASSIC, FLOW_ON)
+#: `flow.profiles.<p>`: classic, flow, or "base" ("כמו הבסיס" = as `shell`, also over a level above's value).
+FLOW_PROFILE_VALUES = (*FLOW_SHELLS, AS_BASE)
+#: The home's view: "auto" — the map when the till has tables; the orders' list; the tables' map.
+FLOW_HOMES = ("auto", "orders", "tables")
+#: The wizard's first step: ask table or pickup; straight to the table's number; straight to a pickup.
+FLOW_FIRST_STEPS = ("type", "table", "pickup")
+#: "כמה סועדים?": "auto" — the till parameter `tablesAskGuests`; always; never.
+FLOW_ASK_GUESTS = ("auto", "always", "never")
+#: A pickup's name: "auto" — as today (at payment, `askOrderName`); none; asked in the wizard; required there.
+FLOW_PICKUP_NAMES = ("auto", "off", "ask", "required")
+#: Each option's value when no level sets it (`background` null: our palette, spec §5.3; "base" says it over a
+#: level above's colour).
+FLOW_DEFAULTS: Dict[str, Any] = {
+    "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": True, "pickupName": "auto", "background": None,
+}
+#: The till build that first shows "זרימה" (an older one ignores `flow` and shows "רגיל": "גרסה 0.1.NNN — תציג
+#: 'רגיל' עד עדכון"): 0.1.820, pos-android integration/2026-10-17 (7f2c2259), the first APK with
+#: feat/flow-design. One constant — the dashboard reads it from the server.
+FLOW_MIN_VERSION_CODE = 820
 
 #: The action bar's buttons. A quick order's and a table's are separate lists. Phase 2 adds,
 #: at the end (an older till drops a button it does not know): a quick order's "עוד סבב"
@@ -525,6 +559,20 @@ LOOK = PartialObj({
     _tile_text.INFO_BADGE_KEY: OrLiteral(Enum(_tile_text.INFO_BADGES), AS_BASE),
 })
 
+#: "זרימה" (P:/specs/flow-design.md §9): every key optional, null inherits, merged per key (`profiles` too).
+#: Refused on save: a value not of its vocabulary (`invalid_value`), a background neither #RRGGBB nor "base"
+#: (`invalid_color`). `background: "base"` is "ברירת המחדל שלנו" — our palette also over a level above's colour.
+FLOW = PartialObj({
+    "shell": Enum(FLOW_SHELLS),
+    "profiles": PartialObj({p: OrLiteral(Enum(FLOW_SHELLS), AS_BASE) for p in PROFILES}),
+    "home": Enum(FLOW_HOMES),
+    "firstStep": Enum(FLOW_FIRST_STEPS),
+    "askGuests": Enum(FLOW_ASK_GUESTS),
+    "notes": Bool(),
+    "pickupName": Enum(FLOW_PICKUP_NAMES),
+    "background": OrLiteral(Color(nullable=True), AS_BASE),
+})
+
 SCHEMA = Obj({
     "schemaVersion": IntChoice((SCHEMA_VERSION,)),
     "template": TemplateNode(),
@@ -610,7 +658,10 @@ SCHEMA = Obj({
     # design's own fields — `productNameFit`, `productNameMaxLines`, `productNameMinTextSize`,
     # `productInfoBadge`. Every key optional (`LOOK`): nothing set follows the till parameters.
     _tile_text.DESIGN_SECTION: LOOK,
-}, fill={"motion": {}, _tile_text.DESIGN_SECTION: {}, "hints": {}})
+    # "זרימה" (P:/specs/flow-design.md §9): the till's shell and its options (`FLOW`). Every key optional:
+    # nothing set is "רגיל" on every device — today's till.
+    FLOW_SECTION: FLOW,
+}, fill={"motion": {}, _tile_text.DESIGN_SECTION: {}, "hints": {}, FLOW_SECTION: {}})
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schemaVersion": SCHEMA_VERSION,
@@ -891,6 +942,90 @@ def for_profile(cfg: Dict[str, Any], profile: str) -> Dict[str, Any]:
         "textSize": fixed.get("textSize", layout.get("textSize", "normal")),
         "features": list(defaults["features"]),
         "actions": {"table": table_actions, "quick": quick_actions},
+    }
+
+
+# ── "זרימה": what each profile shows (mirrored by tillDesign.ts and FlowDesign.kt) ──
+
+_FLOW_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _flow_section(cfg_or_flow: Any) -> Dict[str, Any]:
+    """The `flow` section of a config, or the section itself (a dict with none of the config's other keys)."""
+    if not isinstance(cfg_or_flow, dict):
+        return {}
+    if FLOW_SECTION in cfg_or_flow:
+        section = cfg_or_flow.get(FLOW_SECTION)
+        return section if isinstance(section, dict) else {}
+    if any(k in SCHEMA.fields and k not in FLOW.fields for k in cfg_or_flow):
+        return {}  # a config with nothing set: no section
+    return cfg_or_flow
+
+
+def _flow_shell(flow: Dict[str, Any], profile: str) -> str:
+    profiles = flow.get("profiles") if isinstance(flow.get("profiles"), dict) else {}
+    own = profiles.get(profile)
+    if isinstance(own, str) and own in FLOW_SHELLS:
+        return own
+    shell = flow.get("shell")
+    if isinstance(shell, str) and shell in FLOW_SHELLS:
+        return shell
+    return FLOW_CLASSIC
+
+
+def flow_shell(cfg_or_flow: Any, profile: str) -> str:
+    """
+    The shell a profile shows (spec §9): `profiles[p]` when it is classic / flow; else `shell` when it is;
+    else classic. "base", null or anything else in a profile reads as not set.
+    """
+    return _flow_shell(_flow_section(cfg_or_flow), profile)
+
+
+def flow_view(cfg_or_flow: Any) -> Dict[str, Any]:
+    """
+    The `flow` section with every key settled — the shared fixture's "expect": `shell` per profile (all of
+    PROFILES), every option its value or its default (FLOW_DEFAULTS). Read tolerantly, as the till reads it:
+    a value not of its vocabulary is the default — a background "base" (or anything not #RRGGBB) is null, our
+    palette. Pure.
+    """
+    flow = _flow_section(cfg_or_flow)
+
+    def word(key: str, vocabulary: Sequence[str]) -> str:
+        value = flow.get(key)
+        return value if isinstance(value, str) and value in vocabulary else FLOW_DEFAULTS[key]
+
+    notes = flow.get("notes")
+    background = flow.get("background")
+    return {
+        "shell": {p: _flow_shell(flow, p) for p in PROFILES},
+        "home": word("home", FLOW_HOMES),
+        "firstStep": word("firstStep", FLOW_FIRST_STEPS),
+        "askGuests": word("askGuests", FLOW_ASK_GUESTS),
+        "notes": notes if isinstance(notes, bool) else FLOW_DEFAULTS["notes"],
+        "pickupName": word("pickupName", FLOW_PICKUP_NAMES),
+        "background": background if isinstance(background, str) and _FLOW_COLOR.match(background) else None,
+    }
+
+
+def flow_for_profile(cfg_or_flow: Any, profile: str) -> Dict[str, Any]:
+    """`flow_view` as one profile shows it: `shell` is that profile's ("classic" / "flow"); an unknown profile is the handheld."""
+    if profile not in PROFILES:
+        profile = "handheld"
+    view = flow_view(cfg_or_flow)
+    return {**view, "shell": view["shell"][profile]}
+
+
+def flow_catalog() -> Dict[str, Any]:
+    """The vocabularies and defaults of `flow` — the shared fixture's `catalog`."""
+    return {
+        "shells": list(FLOW_SHELLS),
+        "profileValues": list(FLOW_PROFILE_VALUES),
+        "profiles": list(PROFILES),
+        "homes": list(FLOW_HOMES),
+        "firstSteps": list(FLOW_FIRST_STEPS),
+        "askGuests": list(FLOW_ASK_GUESTS),
+        "pickupNames": list(FLOW_PICKUP_NAMES),
+        "defaults": dict(FLOW_DEFAULTS),
     }
 
 
@@ -1187,10 +1322,32 @@ def shows_phase2(machine) -> Optional[bool]:
     place: "גרסה 0.1.NNN — תציג 'נקי' עד עדכון"): by its reported `app_version`. None when it
     never said, or for a till that is not Android (the Windows till's design comes later).
     """
+    return _android_build_at_least(machine, PHASE2_MIN_VERSION_CODE)
+
+
+def _android_build_at_least(machine, min_code: int) -> Optional[bool]:
+    """Whether this Android till's reported build is `min_code` or newer; None when unknown or not Android."""
     from app.services.cloud_card_refunds import till_version_code
 
     platform = (getattr(machine, "platform", None) or "android").strip().lower()
     if platform != "android":
         return None
     code = till_version_code(getattr(machine, "app_version", None))
-    return None if code is None else code >= PHASE2_MIN_VERSION_CODE
+    return None if code is None else code >= min_code
+
+
+# ── Which tills show "זרימה" (the review before a save) ──────────────────────
+
+
+def flow_min_version() -> str:
+    """The first till version that shows "זרימה", as a till writes it."""
+    return f"0.1.{FLOW_MIN_VERSION_CODE}"
+
+
+def shows_flow(machine) -> Optional[bool]:
+    """
+    Whether this till's build shows "זרימה" (an older one ignores `flow` and shows "רגיל": "גרסה 0.1.NNN —
+    תציג 'רגיל' עד עדכון"): by its reported `app_version`, as `shows_phase2`. None when it never said, or for
+    a till that is not Android.
+    """
+    return _android_build_at_least(machine, FLOW_MIN_VERSION_CODE)

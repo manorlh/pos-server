@@ -18,7 +18,7 @@ export interface PaymentIntegrationContextOption {
   value: PaymentIntegration;
   label: string;
   selectable: boolean;
-  reason: 'needs_builtin_terminal' | 'soon' | 'needs_nfc' | null;
+  reason: 'needs_builtin_terminal' | 'soon' | 'needs_nfc' | 'not_on_kiosk' | null;
 }
 
 export interface PaymentIntegrationContext {
@@ -28,6 +28,8 @@ export interface PaymentIntegrationContext {
   hasBuiltinTerminal: boolean | null;
   /** Null unless a till, or unknown. */
   hasNfc: boolean | null;
+  /** Null unless a till (absent on an older server): a kiosk takes no Tap to Pay yet. */
+  isKiosk?: boolean | null;
   options: PaymentIntegrationContextOption[];
   /** The first explicit choice in the layers above this one. */
   inherited: { integration: PaymentIntegration | null; source: SettingsLevelName | null };

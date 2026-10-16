@@ -6,7 +6,8 @@ of till users and the audit (docs/SPEC_ROLES_PERMISSIONS.md).
     GET    /companies/{id}/till-roles                        the company's roles (built-ins created on first read)
     POST   /companies/{id}/till-roles                        a custom role (blank from a template, or a duplicate)
     PUT    /companies/{id}/till-roles/matrix                 several roles' permissions at once (the matrix editor)
-    PUT    /companies/{id}/till-roles/{role_id}              rename / describe / permissions / limits
+                                                             and "כשאין הרשאה" per role (`deniedUi`)
+    PUT    /companies/{id}/till-roles/{role_id}              rename / describe / permissions / limits / deniedUi
     DELETE /companies/{id}/till-roles/{role_id}?reassignTo=  a custom role (built-ins are never deleted)
     POST   /companies/{id}/till-roles/apply-spec-defaults    "החל ברירות מחדל לפי האפיון"
     GET    /companies/{id}/till-roles/changes                the audit
@@ -51,6 +52,8 @@ class RoleCreateIn(BaseModel):
     copy_from_role_id: Optional[uuid.UUID] = Field(None, alias="copyFromRoleId")
     permissions: Optional[Dict[str, Optional[str]]] = None
     limits: Optional[Dict[str, Optional[Dict[str, Optional[float]]]]] = None
+    #: "כשאין הרשאה" (P:/specs/denied-actions-ui.md): show | hide | code; null = as the level says.
+    denied_ui: Optional[str] = Field(None, alias="deniedUi")
 
     model_config = {"populate_by_name": True}
 
@@ -60,6 +63,8 @@ class RoleUpdateIn(BaseModel):
     description: Optional[str] = None
     permissions: Optional[Dict[str, Optional[str]]] = None
     limits: Optional[Dict[str, Optional[Dict[str, Optional[float]]]]] = None
+    #: "כשאין הרשאה": show | hide | code; null = inherit again; omitted = unchanged.
+    denied_ui: Optional[str] = Field(None, alias="deniedUi")
 
     model_config = {"populate_by_name": True}
 
@@ -68,6 +73,10 @@ class MatrixRoleIn(BaseModel):
     id: uuid.UUID
     permissions: Dict[str, Optional[str]] = Field(default_factory=dict)
     limits: Dict[str, Optional[Dict[str, Optional[float]]]] = Field(default_factory=dict)
+    #: "כשאין הרשאה" (the matrix's first row): show | hide | code; null = inherit; omitted = unchanged.
+    denied_ui: Optional[str] = Field(None, alias="deniedUi")
+
+    model_config = {"populate_by_name": True}
 
 
 class MatrixIn(BaseModel):
@@ -192,10 +201,12 @@ def create_till_role(
     company = _editable(db, company_id, current_user, active_tenant_id)
     svc.ensure_company_roles(db, company)
     source = _role(db, company, body.copy_from_role_id) if body.copy_from_role_id else None
+    extra = {"denied_ui": body.denied_ui} if "denied_ui" in body.model_fields_set else {}
     try:
         role = svc.create_role(
             db, company, name=body.name, user=current_user, description=body.description,
             base_key=body.base_key, copy_from=source, permissions=body.permissions, limits=body.limits,
+            **extra,
         )
     except svc.TillRoleError as err:
         db.rollback()
@@ -218,8 +229,10 @@ def save_till_role_matrix(
     try:
         for item in body.roles:
             role = _role(db, company, item.id)
+            extra = {"denied_ui": item.denied_ui} if "denied_ui" in item.model_fields_set else {}
             shops |= svc.update_role(
                 db, company, role, user=current_user, permissions=item.permissions, limits=item.limits,
+                **extra,
             )
     except svc.TillRoleError as err:
         db.rollback()
@@ -244,7 +257,7 @@ def update_till_role(
     try:
         shops = svc.update_role(
             db, company, role, user=current_user,
-            **{k: v for k, v in sent.items() if k in ("name", "description", "permissions", "limits")},
+            **{k: v for k, v in sent.items() if k in ("name", "description", "permissions", "limits", "denied_ui")},
         )
     except svc.TillRoleError as err:
         db.rollback()
@@ -354,6 +367,9 @@ def list_till_role_users(
                 "overrides": u.permission_overrides,
                 "permissions": effective[u.id].states,
                 "limits": effective[u.id].limits,
+                # "כשאין הרשאה": the employee's / the role's (null — as the level says), and from where.
+                "deniedUi": effective[u.id].denied_ui,
+                "deniedUiSource": effective[u.id].denied_ui_source,
             }
             for u in users
         ],
@@ -486,4 +502,6 @@ def assign_till_role(
         "overrides": pu.permission_overrides,
         "permissions": eff.states,
         "limits": eff.limits,
+        "deniedUi": eff.denied_ui,
+        "deniedUiSource": eff.denied_ui_source,
     }

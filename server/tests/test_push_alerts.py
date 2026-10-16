@@ -403,7 +403,9 @@ def test_subscribing_preferences_test_message_and_history(w, monkeypatch):
                               current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert saved["categories"] == ["till_offline"] and saved["quietTo"] == "07:00"
     monkeypatch.setattr(R, "_now", lambda: NOW)
-    assert R.send_test(current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db) == {"sent": 1}
+    out = R.send_test(current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    # Sent now (fix/pwa-push): the answer carries the push service's status per device.
+    assert out["sent"] == 1 and out["delivered"] == 1 and out["results"][0]["status"] == 201
     with pytest.raises(HTTPException) as err:
         R.send_test(current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert err.value.status_code == 429

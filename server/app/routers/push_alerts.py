@@ -8,15 +8,19 @@ Dashboard (Clerk/user JWT + X-Tenant-Id). The user's own devices and preferences
 GET    /push/config                → push on / off, the VAPID public key, the alert types
 GET    /push/categories            → the alert types I may choose (`integrity` for a super admin only)
 GET    /push/devices               → my subscribed devices
-POST   /push/devices               → subscribe this browser {endpoint, keys: {p256dh, auth}, label?}
+POST   /push/devices               → subscribe this browser {endpoint, keys: {p256dh, auth}, label?, deviceId?}
+                                     (deviceId: the browser's own id — its older subscriptions are replaced)
 POST   /push/devices/unsubscribe   → {endpoint}: this browser unsubscribed
+POST   /push/devices/renew         → NO sign-in: the service worker's `pushsubscriptionchange`
+                                     {oldEndpoint, oldAuth, endpoint, keys} — the old subscription is the proof
 PATCH  /push/devices/{id}          → a super admin: {integrity: bool} — "שלמות נתונים" on that device
 DELETE /push/devices/{id}          → stop sending to one of my devices
 GET    /push/preferences           → my preferences in this organization (defaults when none)
 PUT    /push/preferences           → {enabled, categories, shopIds, eventIds, minAmount, quietFrom,
                                      quietTo, rateLimitMinutes, digestEnabled}; a super admin also
                                      `integrity` in categories and {integrity: {companyIds}}
-POST   /push/test                  → a test message to my devices
+POST   /push/test                  → "בדיקת התראות": {scope: "this" | "all", endpointHash?} — sent now; one
+                                     result per device (the push service's status), at most every 30 s
 GET    /push/options               → the shops and the events (current / next two weeks) I can choose;
                                      a super admin also every company ("שלמות נתונים")
 GET    /push/alerts                → the alerts of the push types in my reach, newest first
@@ -35,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import get_active_tenant_id, get_current_user
+from app.middleware.rate_limit import check_rate_limit
 from app.models.exception_alerts import CHANNEL_PUSH, ExceptionAlertDispatch, ExceptionLogEntry, PushSubscription
 from app.models.report_event import ReportEvent, ReportEventMachine
 from app.models.user import User, UserRole
@@ -59,7 +64,12 @@ def _staff(user: User) -> User:
 
 
 def _rule_error(exc: RuleError) -> HTTPException:
-    code = status.HTTP_429_TOO_MANY_REQUESTS if exc.code == "test_too_soon" else status.HTTP_422_UNPROCESSABLE_ENTITY
+    if exc.code == "test_too_soon":
+        return HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                             detail={"code": exc.code, "field": exc.field, "detail": exc.detail,
+                                     "retryAfter": int(exc.detail) if str(exc.detail or "").isdigit() else None},
+                             headers={"Retry-After": str(exc.detail)} if str(exc.detail or "").isdigit() else None)
+    code = status.HTTP_404_NOT_FOUND if exc.code == "not_found" else status.HTTP_422_UNPROCESSABLE_ENTITY
     return HTTPException(status_code=code, detail={"code": exc.code, "field": exc.field, "detail": exc.detail})
 
 
@@ -75,6 +85,8 @@ def get_push_config(current_user: User = Depends(get_current_user)):
     return {
         "enabled": vapid is not None,
         "publicKey": vapid.public_key if vapid is not None else None,
+        # "בדיקת התראות": what is wrong with the server's keys, as a code (never a key).
+        "problem": webpush.config_problem(),
         "categories": P.categories_json(current_user),
         "defaults": {"minAmount": float(P.DEFAULT_MIN_AMOUNT), "rateLimitMinutes": P.DEFAULT_RATE_LIMIT},
     }
@@ -115,12 +127,33 @@ def add_device(
             endpoint=str(body.get("endpoint") or ""), p256dh=str(keys.get("p256dh") or ""), auth=str(keys.get("auth") or ""),
             user_agent=request.headers.get("user-agent"), label=body.get("label"),
             initial={"shopIds": body.get("shopIds"), "eventIds": body.get("eventIds")},
+            device_key=str(body.get("deviceId") or "") or None,
         )
     except RuleError as exc:
         raise _rule_error(exc) from None
     db.commit()
     db.refresh(row)
     return P.device_json(row, current_user)
+
+
+@router.post("/devices/renew")
+def renew_device(request: Request, body: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """
+    The service worker's `pushsubscriptionchange` (client/public/sw.js): the browser replaced its
+    subscription while no page was open, so there is no sign-in — the old endpoint and its auth
+    secret prove it is that browser (app/services/exception_alerts/push.py `renew`). Rate-limited.
+    """
+    check_rate_limit(request, "push_renew", max_calls=20, window_seconds=60)
+    keys = body.get("keys") if isinstance(body.get("keys"), dict) else {}
+    try:
+        row = P.renew(
+            db, old_endpoint=str(body.get("oldEndpoint") or ""), old_auth=str(body.get("oldAuth") or ""),
+            endpoint=str(body.get("endpoint") or ""), p256dh=str(keys.get("p256dh") or ""), auth=str(keys.get("auth") or ""),
+        )
+    except RuleError as exc:
+        raise _rule_error(exc) from None
+    db.commit()
+    return {"ok": True, "endpointHash": row.endpoint_hash}
 
 
 @router.patch("/devices/{device_id}")
@@ -198,19 +231,38 @@ def put_preferences(
 
 
 @router.post("/test")
-def send_test(current_user: User = Depends(get_current_user), active_tenant_id=Depends(get_active_tenant_id),
-              db: Session = Depends(get_db)):
+def send_test(body: Optional[Dict[str, Any]] = Body(default=None), current_user: User = Depends(get_current_user),
+              active_tenant_id=Depends(get_active_tenant_id), db: Session = Depends(get_db)):
+    """
+    "בדיקת התראות": `{scope: "this", endpointHash}` — only this browser; `{scope: "all"}` (or no
+    body) — every device of mine. Sent now: `results` holds each device's push service answer
+    (`status` 201 = the push service took it; 404 / 410 = the subscription is gone and was turned
+    off; 403 = the server's keys are not the ones the browser subscribed with).
+    """
     from app.services import webpush
 
     _staff(current_user)
+    body = body if isinstance(body, dict) else {}
     if webpush.config() is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "push_not_configured"})
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail={"code": "push_not_configured", "problem": webpush.config_problem()})
+    scope = str(body.get("scope") or "all")
+    if scope not in ("this", "all"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={"code": "scope_invalid", "field": "scope", "detail": None})
     try:
-        rows = P.send_test(db, current_user, active_tenant_id, now=_now())
+        test_id, results = P.send_test(db, current_user, active_tenant_id, now=_now(),
+                                       endpoint_hash=str(body.get("endpointHash") or "") or None,
+                                       only_this=scope == "this")
     except RuleError as exc:
         raise _rule_error(exc) from None
     db.commit()
-    return {"sent": len(rows)}
+    return {
+        "sent": len(results),
+        "delivered": sum(1 for r in results if r["ok"]),
+        "testId": test_id,
+        "results": results,
+    }
 
 
 @router.get("/options")

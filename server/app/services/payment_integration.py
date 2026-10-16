@@ -23,7 +23,12 @@ tills and one till (a tablet) can be set apart. The values:
 * `synqpay` — "SynqPay — מסוף חיצוני" (docs/SPEC_SYNQPAY.md): the `synqpay*` keys (device
   model, connection USB/LAN and its parameters) and the write-only `synqpayApiKey` — which
   the till normally gets itself, by pairing with the terminal (§2.2), so it is not required.
-* `tap_to_pay` — "Tap to Pay במכשיר (iPOSpays)": reserved, refused on write for now.
+* `tap_to_pay` — "Tap to Pay במכשיר (iPOSpays)" (P:/specs/tap-to-pay.md): the card is tapped on
+  the till's own NFC through iPOSpays' In-App SDK (Israel, Z-Credit behind it). `tapToPayTpn`,
+  `tapToPayEnvironment` (sandbox | production) and the write-only `tapToPayMerchantCode`
+  (app/services/payment_secrets.py). Not on a device known to have no NFC, and not on a kiosk
+  (stage 1): both a 422 on the till's own layer (`check_machine_choice`); a till that inherits it
+  anyway says so itself and takes no card. Off unless a layer picks it.
 * `none` — "ללא אשראי (מזומן ואמצעים אחרים)" (P:/specs/payment-integration-none.md): the till
   takes no card at all — cash and the other methods only. Any till may be set so, one with a
   terminal of its own too. Nothing is required, and nothing about a terminal is asked or
@@ -47,7 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.payment_options import PAYMENT_OPTIONS
-from app.services.payment_secrets import SYNQPAY_API_KEY, ZCREDIT_KEY, ZCREDIT_PASSWORD
+from app.services.payment_secrets import SYNQPAY_API_KEY, TAP_TO_PAY_MERCHANT_CODE, ZCREDIT_KEY, ZCREDIT_PASSWORD
 from app.services.payment_terminal import PinpadAddressError, clean_pinpad_host, merged_pinpad_host
 
 KEY = "paymentIntegration"
@@ -62,8 +67,8 @@ TAP_TO_PAY = "tap_to_pay"
 NONE = "none"
 
 INTEGRATIONS: Tuple[str, ...] = (AUTO, AGAMENTO, NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, TAP_TO_PAY, NONE)
-#: Shown as "בקרוב" and refused on write.
-RESERVED: Tuple[str, ...] = (TAP_TO_PAY,)
+#: Shown as "בקרוב" and refused on write (none today: Tap to Pay was, until 16.10.2026).
+RESERVED: Tuple[str, ...] = ()
 #: Integrations that charge on a terminal outside the till: the only ones a till without
 #: a terminal of its own can use.
 EXTERNAL: Tuple[str, ...] = (NAYAX_LAN, NAYAX_USB, ZCREDIT, SYNQPAY, TAP_TO_PAY)
@@ -125,6 +130,17 @@ SYNQPAY_SERIAL_DOCUMENTED: Tuple[str, ...] = ("rx5000",)
 _SYNQPAY_USB_DEVICE = re.compile(r"^(?:[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}|COM[0-9]{1,3})$")
 _SYNQPAY_SERIAL = re.compile(r"^[A-Za-z0-9-]{4,32}$")
 
+# ── Tap to Pay's settings (P:/specs/tap-to-pay.md) ────────────────────────────
+#: The TPN (Terminal Profile Number) iPOSpays gives the merchant's Tap on Phone terminal.
+TAP_TO_PAY_TPN = "tapToPayTpn"
+#: Which iPOSpays environment the TPN lives in. The SDK build decides where the till really
+#: goes (a test AAR talks to the sandbox only); the till refuses to charge when the two differ.
+TAP_TO_PAY_ENVIRONMENT = "tapToPayEnvironment"
+TAP_TO_PAY_ENVIRONMENTS: Tuple[str, ...] = ("sandbox", "production")
+TAP_TO_PAY_ENVIRONMENT_LABELS_HE: Dict[str, str] = {"sandbox": "סביבת בדיקות (Sandbox)", "production": "ייצור"}
+#: A TPN as the portal shows it: letters and digits (12 in the docs' examples).
+_TAP_TO_PAY_TPN = re.compile(r"^[A-Za-z0-9]{4,20}$")
+
 # ── A Nayax C4 on the till's USB (`nayax_usb`) ────────────────────────────────
 #: The C4's USB ids, "VVVV:PPPP" (hex vendor:product, upper case), when the till must pick it
 #: among several devices; unset / blank = the first CDC-ACM device attached.
@@ -147,6 +163,8 @@ SETTING_KEYS: Tuple[str, ...] = (
     SYNQPAY_TLS,
     SYNQPAY_USB_DEVICE,
     SYNQPAY_SERIAL_NUMBER,
+    TAP_TO_PAY_TPN,
+    TAP_TO_PAY_ENVIRONMENT,
 )
 #: The Nayax address keys, resettable with `null` too, so clearing a field in the
 #: device dialog brings the shop's value back instead of keeping the old one.
@@ -156,8 +174,12 @@ RESETTABLE_KEYS: Tuple[str, ...] = SETTING_KEYS + NAYAX_KEYS
 #: The secrets the till gets (the WebCheckout key is not used by a till: it is stored
 #: for the merchant's other channels and never leaves the server), each only to a till
 #: that charges on its integration.
-TILL_SECRET_KEYS: Tuple[str, ...] = (ZCREDIT_PASSWORD, SYNQPAY_API_KEY)
-TILL_SECRET_INTEGRATION: Dict[str, str] = {ZCREDIT_PASSWORD: ZCREDIT, SYNQPAY_API_KEY: SYNQPAY}
+TILL_SECRET_KEYS: Tuple[str, ...] = (ZCREDIT_PASSWORD, SYNQPAY_API_KEY, TAP_TO_PAY_MERCHANT_CODE)
+TILL_SECRET_INTEGRATION: Dict[str, str] = {
+    ZCREDIT_PASSWORD: ZCREDIT,
+    SYNQPAY_API_KEY: SYNQPAY,
+    TAP_TO_PAY_MERCHANT_CODE: TAP_TO_PAY,
+}
 
 #: Z-Credit terminal numbers are digits, leading zeros kept ("0882…").
 _TERMINAL_NUMBER = re.compile(r"^[0-9]{1,20}$")
@@ -176,7 +198,7 @@ REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     # the terminal itself and sends the key up (SPEC_SYNQPAY.md §2.2) — a till with none yet is
     # "not paired", shown beside the form, not a field missing from it.
     SYNQPAY: (SYNQPAY_DEVICE_MODEL, SYNQPAY_CONNECTION, SYNQPAY_HOST),
-    TAP_TO_PAY: (),
+    TAP_TO_PAY: (TAP_TO_PAY_TPN, TAP_TO_PAY_MERCHANT_CODE, TAP_TO_PAY_ENVIRONMENT),
     # No terminal: nothing to ask for, so nothing is ever "חסר".
     NONE: (),
 }
@@ -214,6 +236,9 @@ FIELD_LABELS_HE: Dict[str, str] = {
     SYNQPAY_USB_DEVICE: "התקן USB",
     SYNQPAY_SERIAL_NUMBER: "מספר סידורי של המסוף",
     SYNQPAY_API_KEY: "מפתח API",
+    TAP_TO_PAY_TPN: "TPN",
+    TAP_TO_PAY_MERCHANT_CODE: "קוד סוחר (Merchant Code)",
+    TAP_TO_PAY_ENVIRONMENT: "סביבה (בדיקות / ייצור)",
 }
 
 #: The 422 a till without a terminal of its own gets for `agamento` on its own layer.
@@ -222,6 +247,16 @@ NEEDS_BUILTIN_DETAIL = {
     "msg": "לקופה הזו אין מסוף מובנה (למשל טאבלט P18): ניתן לבחור רק אינטגרציה חיצונית — "
     "Nayax מסופון ברשת, Nayax מסופון בחיבור USB, Z-Credit מסופון חיצוני או SynqPay מסוף חיצוני — "
     "או ללא אשראי.",
+}
+
+#: The 422s of `tap_to_pay` on a till's own layer where it cannot work (P:/specs/tap-to-pay.md).
+TAP_TO_PAY_NEEDS_NFC_DETAIL = {
+    "code": "tap_to_pay_needs_nfc",
+    "msg": "למכשיר הזה אין NFC — Tap to Pay דורש מכשיר עם NFC.",
+}
+TAP_TO_PAY_NOT_ON_KIOSK_DETAIL = {
+    "code": "tap_to_pay_not_on_kiosk",
+    "msg": "Tap to Pay עדיין לא נתמך בקיוסק — רק בקופה.",
 }
 
 #: One USB terminal per till (the owner, 08.10.2026): a till on `nayax_usb` may not also charge
@@ -242,15 +277,41 @@ def clean_integration(value: Any) -> Optional[str]:
 
 
 def validate_integration(value: Optional[str]) -> Optional[str]:
-    """For the PATCH schema: a known, selectable value. `tap_to_pay` is not yet."""
+    """For the PATCH schema: a known, selectable value (none is RESERVED today)."""
     if value is None:
         return None
     cleaned = clean_integration(value)
     if cleaned is None:
         raise ValueError(f"paymentIntegration must be one of {', '.join(INTEGRATIONS)}")
     if cleaned in RESERVED:
-        raise ValueError("payment_integration_reserved: Tap to Pay is not available yet")
+        raise ValueError(f"payment_integration_reserved: {cleaned} is not available yet")
     return cleaned
+
+
+def validate_tap_to_pay_tpn(value: Optional[str]) -> Optional[str]:
+    """A TPN as the portal shows it (letters and digits, kept as typed); None for blank."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "":
+        return None
+    if not _TAP_TO_PAY_TPN.match(text):
+        raise ValueError("tapToPayTpn must be 4–20 letters or digits")
+    return text
+
+
+def validate_tap_to_pay_environment(value: Optional[str]) -> Optional[str]:
+    """`sandbox` or `production` (`test` reads as `sandbox`); None for blank."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text == "":
+        return None
+    if text in ("test", "uat"):
+        text = "sandbox"
+    if text not in TAP_TO_PAY_ENVIRONMENTS:
+        raise ValueError("tapToPayEnvironment must be 'sandbox' or 'production'")
+    return text
 
 
 def validate_terminal_number(value: Optional[str]) -> Optional[str]:
@@ -406,16 +467,38 @@ def normalize_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
 
 def check_machine_choice(machine: Any, patch: Dict[str, Any]) -> None:
     """
-    Refuse `agamento` on the own layer of a till without a terminal of its own. Raises
-    `HTTPException(422, NEEDS_BUILTIN_DETAIL)`.
+    Refuse, on a till's own layer, `agamento` on a till without a terminal of its own
+    (NEEDS_BUILTIN_DETAIL), and `tap_to_pay` on a device known to have no NFC or on a kiosk
+    (TAP_TO_PAY_NEEDS_NFC_DETAIL / TAP_TO_PAY_NOT_ON_KIOSK_DETAIL). Raises `HTTPException(422)`.
     """
-    if clean_integration(patch.get(KEY)) != AGAMENTO:
-        return
-    if getattr(machine, "has_builtin_terminal", True):
+    chosen = clean_integration(patch.get(KEY))
+    detail: Optional[Dict[str, str]] = None
+    if chosen == AGAMENTO and not getattr(machine, "has_builtin_terminal", True):
+        detail = NEEDS_BUILTIN_DETAIL
+    elif chosen == TAP_TO_PAY:
+        if getattr(machine, "is_kiosk", False) is True:
+            detail = TAP_TO_PAY_NOT_ON_KIOSK_DETAIL
+        elif device_has_nfc(machine) is False:
+            detail = TAP_TO_PAY_NEEDS_NFC_DETAIL
+    if detail is None:
         return
     from fastapi import HTTPException, status
 
-    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=dict(NEEDS_BUILTIN_DETAIL))
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=dict(detail))
+
+
+def tap_to_pay_reason(machine: Any) -> Optional[str]:
+    """
+    Why a till cannot charge on Tap to Pay, or None when it may (or is not known not to):
+    `not_on_kiosk` (stage 1 is the till only) or `needs_nfc` (it reported no NFC).
+    """
+    if machine is None:
+        return None
+    if getattr(machine, "is_kiosk", False) is True:
+        return "not_on_kiosk"
+    if device_has_nfc(machine) is False:
+        return "needs_nfc"
+    return None
 
 
 # ── Resolution ───────────────────────────────────────────────────────────────
@@ -495,7 +578,7 @@ def missing_fields(integration: str, merged: Dict[str, Any], secrets_set: Sequen
         if key == "nayaxDeviceHost":
             if merged_pinpad_host(merged) is None:
                 out.append(key)
-        elif key in (ZCREDIT_PASSWORD, SYNQPAY_API_KEY):
+        elif key in (ZCREDIT_PASSWORD, SYNQPAY_API_KEY, TAP_TO_PAY_MERCHANT_CODE):
             if key not in secrets_set:
                 out.append(key)
         elif key == SYNQPAY_HOST:
@@ -551,7 +634,8 @@ def till_sync_fields(db: Any, machine: Any, tenant: Any, company: Any, shop: Any
     What the till's settings sync says about its card integration, over the merged
     managed keys: `paymentIntegration` as the explicit choice down the layers (absent
     when automatic, so the till keeps deciding by its hardware as before), and, for a
-    till on Z-Credit, `zcreditPassword` in the clear — its only way out of the server.
+    till on Z-Credit, `zcreditPassword` in the clear — its only way out of the server (so
+    too SynqPay's key and Tap to Pay's merchant code, each to a till on its integration).
     Keys mapped to None are to be removed from the sync's settings. `nayax_usb` has no
     secret: the till gets the value and, when some layer names the C4, `nayaxUsbDevice`
     (a managed key, merged like the rest).
@@ -832,7 +916,7 @@ def is_synqpay_device(machine: Any) -> bool:
 
 def device_has_nfc(machine: Any) -> Optional[bool]:
     """
-    Whether the till has NFC (for Tap to Pay, reserved): what it reported at pairing
+    Whether the till has NFC (Tap to Pay needs it): what it reported at pairing
     (`device_info.nfc`), else known for its model (a P18 has it), else unknown (None).
     """
     info = getattr(machine, "device_info", None)

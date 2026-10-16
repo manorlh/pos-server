@@ -3,7 +3,8 @@
 /**
  * `PushAlertsSheet` — "הירשם להתראות בטלפון": turn on push on this phone / browser, choose which
  * alerts arrive (types, the minimum for a large void, shops, events, quiet hours, how often),
- * send a test, see and remove one's devices. For the Manager Cockpit and the alerts page.
+ * "בדיקת התראות" (./push-diagnosis.tsx: a test to this device or all of mine, step by step), see
+ * and remove one's devices. For the Manager Cockpit and the alerts page.
  *
  * Props: `{ scope, context?, onDone }` (./types.ts), plus `open` / `onOpenChange` when the
  * caller controls it, or a `trigger` button of its own. With a scope's shop or event and no
@@ -38,12 +39,14 @@ import {
   fetchPushPreferences,
   removePushDevice,
   savePushPreferences,
-  sendPushTest,
   setDeviceIntegrity,
   subscribeThisBrowser,
   unsubscribeThisBrowser,
 } from '@/lib/pushAlertsApi';
 import { formatShortDateTime } from '@/lib/format';
+import { useAuth } from '@/lib/auth';
+import { serviceName } from '@/lib/pushDiagnosis';
+import { PushDiagnosis } from './push-diagnosis';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -223,6 +226,7 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
 function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: string[] } }) {
   const t = useTranslations('phoneAlerts');
   const qc = useQueryClient();
+  const userId = useAuth((s) => s.user?.id ?? null);
   const support = useBrowserSupport();
   const config = useQuery({ queryKey: ['push-config'], queryFn: fetchPushConfig });
   const devices = useQuery({ queryKey: ['push-devices'], queryFn: fetchPushDevices });
@@ -248,7 +252,7 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
     void qc.invalidateQueries({ queryKey: ['push-status'] });
   };
   const subscribe = useMutation({
-    mutationFn: () => subscribeThisBrowser(config.data?.publicKey ?? null, initial),
+    mutationFn: () => subscribeThisBrowser(config.data?.publicKey ?? null, initial, userId),
     onSuccess: (outcome) => {
       if (outcome === 'subscribed') toast.success(t('subscribed'));
       else toast.error(t(outcome === 'denied' ? 'denied' : 'notConfigured'));
@@ -258,16 +262,11 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
     onError: () => toast.error(t('subscribeFailed')),
   });
   const stop = useMutation({
-    mutationFn: () => unsubscribeThisBrowser({ byUser: true }),
+    mutationFn: () => unsubscribeThisBrowser({ byUser: true, userId }),
     onSuccess: () => {
       setEndpointKnown();
       refresh();
     },
-  });
-  const test = useMutation({
-    mutationFn: sendPushTest,
-    onSuccess: (n) => toast.success(t('testSent', { n })),
-    onError: () => toast.error(t('testFailed')),
   });
   const remove = useMutation({ mutationFn: removePushDevice, onSuccess: refresh });
   const integrity = useMutation({
@@ -290,14 +289,9 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
       ) : (
         <div className="flex flex-wrap gap-2">
           {endpointKnown ? (
-            <>
-              <Button variant="outline" onClick={() => test.mutate()} disabled={test.isPending || active.length === 0}>
-                {t('sendTest')}
-              </Button>
-              <Button variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>
-                {t('stopHere')}
-              </Button>
-            </>
+            <Button variant="ghost" onClick={() => stop.mutate()} disabled={stop.isPending}>
+              {t('stopHere')}
+            </Button>
           ) : (
             <Button onClick={() => subscribe.mutate()} disabled={subscribe.isPending || !config.data}>
               {subscribe.isPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <BellRing className="size-4" aria-hidden />}
@@ -313,7 +307,9 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
               <span className="min-w-0">
                 <span className="block truncate font-medium">{d.label ?? t('device')}</span>
                 <span className="block text-xs text-muted-foreground">
+                  {d.endpointHash === hash ? `${t('diag.results.thisDevice')} · ` : ''}
                   {d.lastSuccessAt ? t('lastSent', { at: formatShortDateTime(d.lastSuccessAt) }) : t('neverSent')}
+                  {d.service ? ` · ${serviceName(d.service)}` : ''}
                   {d.lastError ? ` · ${d.lastError}` : ''}
                 </span>
               </span>
@@ -338,6 +334,24 @@ function ThisDevice({ initial }: { initial: { shopIds?: string[]; eventIds?: str
         </ul>
       ) : null}
     </section>
+  );
+}
+
+/** "בדיקת התראות" under this device, once the server's config is known. */
+function Diagnosis() {
+  const qc = useQueryClient();
+  const config = useQuery({ queryKey: ['push-config'], queryFn: fetchPushConfig });
+  if (!config.data) return null;
+  return (
+    <PushDiagnosis
+      publicKey={config.data.publicKey}
+      configured={config.data.enabled}
+      problem={config.data.problem ?? null}
+      onChanged={() => {
+        void qc.invalidateQueries({ queryKey: ['push-devices'] });
+        void qc.invalidateQueries({ queryKey: ['push-status'] });
+      }}
+    />
   );
 }
 
@@ -384,6 +398,7 @@ export function PushAlertsSheet({
           </DialogHeader>
           <div className="space-y-4">
             <ThisDevice initial={scope.eventId ? { eventIds: [scope.eventId] } : scope.shopId ? { shopIds: [scope.shopId] } : {}} />
+            <Diagnosis />
             {initial ? (
               <PreferencesForm
                 key={String(prefs.data?.exists)}

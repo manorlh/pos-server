@@ -20,6 +20,8 @@ export interface TillDesignDefaults {
   catalog: Record<string, unknown>;
   /** The first till version that shows phase 2's templates ("0.1.553"); absent from an older server. */
   phase2MinVersion?: string;
+  /** The first till version that shows "זרימה" (flow-design.md §9); absent from an older server. */
+  flowMinVersion?: string;
 }
 
 export interface TillDesignSettings {
@@ -53,6 +55,8 @@ export interface TillDesignTargets {
     appVersion?: string | null;
     /** Whether it shows phase 2's templates: false — "נקי" until it updates; null — unknown. */
     phase2Templates?: boolean | null;
+    /** Whether it shows "זרימה": false — "רגיל" until it updates; null — unknown. */
+    flow?: boolean | null;
   }>;
 }
 

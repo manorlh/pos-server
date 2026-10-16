@@ -14,6 +14,13 @@ import { join } from 'node:path';
 import {
   ACTION_LABELS,
   AS_BASE,
+  FLOW_ASK_GUESTS,
+  FLOW_DEFAULTS,
+  FLOW_FIRST_STEPS,
+  FLOW_HOMES,
+  FLOW_PICKUP_NAMES,
+  FLOW_PROFILE_VALUES,
+  FLOW_SHELLS,
   LEGACY_FALLBACK,
   PHASE2_NEW_TEMPLATES,
   PROFILES,
@@ -29,6 +36,11 @@ import {
   deepMerge,
   diffConfigs,
   flatProductOrder,
+  flowCatalog,
+  flowForProfile,
+  flowOnProfiles,
+  flowShell,
+  flowView,
   forProfile,
   formatShekels,
   gridColumns,
@@ -37,6 +49,7 @@ import {
   legacyQuickActions,
   menuView,
   orderCategories,
+  pruneEmptyFlow,
   pruneEmptyMotion,
   pruneEmptyLook,
   pruneOverrides,
@@ -589,5 +602,92 @@ describe('"מראה" — "שם פריט מלא ותג i": the design look (P:/sp
     assert.deepEqual(diffConfigs({}, pruneOverrides(TILL_DESIGN_DEFAULTS, setPath(TILL_DESIGN_DEFAULTS, 'look.productInfoBadge', 'always'))), [
       { path: 'look.productInfoBadge', before: null, after: 'always' },
     ]);
+  });
+});
+
+/* "זרימה" (P:/specs/flow-design.md §9): the shared fixture flow_design_contract.json (pos-server
+ * tests/fixtures, the same bytes in pos-android app/src/test/resources; both pin its SHA-256). */
+interface FlowFixture {
+  catalog: unknown;
+  cases: Array<{ name: string; layers: TillDesignLayer[]; expect: Record<string, unknown> & { shell: Record<string, string> } }>;
+  tolerant: Array<{ name: string; flow: Record<string, unknown>; expect: unknown }>;
+  invalid: Array<{ flow: unknown; path: string; code: string }>;
+}
+
+const FLOW_FIXTURE_PATH = join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'flow_design_contract.json');
+const FLOW_GOLDEN_SHA256 = '5737da6c0855c4cd80e9451f212ef9894c2fa185d89f5ad3800ad5e1b8541b9e';
+const flowText = readFileSync(FLOW_FIXTURE_PATH, 'utf8').replace(/\r\n/g, '\n');
+const flowFixture = JSON.parse(flowText) as FlowFixture;
+
+describe('"זרימה": the flow section of the till design (P:/specs/flow-design.md §9)', () => {
+  it('reads the pinned fixture, whose catalog is the vocabulary here', () => {
+    assert.equal(createHash('sha256').update(flowText, 'utf8').digest('hex'), FLOW_GOLDEN_SHA256);
+    assert.deepEqual(flowCatalog(), flowFixture.catalog);
+    assert.deepEqual([...FLOW_SHELLS], ['classic', 'flow']);
+    assert.deepEqual([...FLOW_PROFILE_VALUES], ['classic', 'flow', AS_BASE]);
+    assert.ok(FLOW_HOMES.length && FLOW_FIRST_STEPS.length && FLOW_ASK_GUESTS.length && FLOW_PICKUP_NAMES.length);
+  });
+
+  it('merges every case\'s layers and settles it on every profile as the server and the till', () => {
+    assert.ok(flowFixture.cases.length >= 10);
+    for (const c of flowFixture.cases) {
+      const layers = c.layers.map((l) => ({ flow: l }));
+      for (const layer of layers) assert.deepEqual(validateTillDesignLayer(layer).errors, [], c.name);
+      const resolved = resolveTillDesign(...layers);
+      assert.deepEqual(validateTillDesign(resolved), [], c.name);
+      for (const cfg of [resolved, resolved.flow ?? {}]) {
+        assert.deepEqual(flowView(cfg), c.expect, c.name);
+        for (const p of PROFILES) {
+          assert.deepEqual(flowForProfile(cfg, p), { ...c.expect, shell: c.expect.shell[p] }, `${c.name} / ${p}`);
+          assert.equal(flowShell(cfg, p), c.expect.shell[p], `${c.name} / ${p}`);
+        }
+      }
+    }
+  });
+
+  it('refuses every invalid layer with the server\'s path and code', () => {
+    assert.ok(flowFixture.invalid.length >= 10);
+    for (const c of flowFixture.invalid) {
+      const { cleaned, errors } = validateTillDesignLayer({ flow: c.flow });
+      assert.deepEqual(errors.map((e) => `${e.path}|${e.code}`), [`${c.path}|${c.code}`], JSON.stringify(c.flow));
+      assert.equal('flow' in cleaned, false);
+    }
+  });
+
+  it('reads what the till does not know as the default, and refuses it on save', () => {
+    for (const c of flowFixture.tolerant) {
+      assert.deepEqual(flowView(c.flow), c.expect, c.name);
+      assert.ok(validateTillDesignLayer({ flow: c.flow }).errors.length >= Object.keys(c.flow).length, c.name);
+    }
+  });
+
+  it('is absent from the defaults; nothing set is "רגיל" everywhere', () => {
+    assert.equal('flow' in TILL_DESIGN_DEFAULTS, false);
+    assert.equal('flow' in resolveTillDesign({ flow: {} }, { flow: { shell: null, profiles: {} } }), false);
+    assert.deepEqual(flowView(TILL_DESIGN_DEFAULTS), { shell: Object.fromEntries(PROFILES.map((p) => [p, 'classic'])), ...FLOW_DEFAULTS });
+    assert.deepEqual(flowOnProfiles(TILL_DESIGN_DEFAULTS), []);
+    assert.deepEqual(flowOnProfiles(resolveTillDesign({ flow: { shell: 'flow', profiles: { tabletPortrait: 'classic' } } })), ['handheld', 'tabletLandscape']);
+  });
+
+  it('saves only what differs; a choice set and set back leaves no section; "base" only over a value above', () => {
+    const inherited = resolveTillDesign({ flow: { shell: 'flow', profiles: { tabletLandscape: 'classic' } } });
+    assert.equal(asBaseValue(inherited.flow?.profiles?.tabletLandscape), AS_BASE);
+    assert.equal(asBaseValue(inherited.flow?.profiles?.handheld), null);
+    const draft = setPath(setPath(inherited, 'flow.profiles.tabletLandscape', AS_BASE), 'flow.home', 'orders');
+    assert.deepEqual(pruneOverrides(inherited, draft), { flow: { profiles: { tabletLandscape: AS_BASE }, home: 'orders' } });
+    const back = pruneEmptyFlow(setPath(setPath(TILL_DESIGN_DEFAULTS, 'flow.profiles.handheld', 'flow'), 'flow.profiles.handheld', undefined));
+    assert.deepEqual(back, TILL_DESIGN_DEFAULTS);
+    assert.equal(pruneEmptyFlow(TILL_DESIGN_DEFAULTS), TILL_DESIGN_DEFAULTS);
+    assert.deepEqual(diffConfigs({}, pruneOverrides(TILL_DESIGN_DEFAULTS, setPath(TILL_DESIGN_DEFAULTS, 'flow.shell', 'flow'))), [
+      { path: 'flow.shell', before: null, after: 'flow' },
+    ]);
+    // "ברירת המחדל שלנו" over a level above's background: "base", read as our palette.
+    const coloured = resolveTillDesign({ flow: { background: '#1E3A8A' } });
+    assert.equal(asBaseValue(coloured.flow?.background), AS_BASE);
+    const ours = setPath(coloured, 'flow.background', AS_BASE);
+    assert.deepEqual(pruneOverrides(coloured, ours), { flow: { background: AS_BASE } });
+    assert.deepEqual(validateTillDesign(ours), []);
+    assert.equal(flowView(ours).background, null);
+    assert.deepEqual(validateTillDesignLayer({ flow: { background: 'brand' } }).errors.map((e) => `${e.path}|${e.code}`), ['flow.background|invalid_color']);
   });
 });

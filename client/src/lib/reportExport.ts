@@ -6,7 +6,7 @@
  * Pure: the Hebrew words come in through `words`, so node tests need no translator.
  */
 import { selectSheetColumns, type ExcelCellKind, type ExcelSheet, type ExcelValue } from './excelExport';
-import type { InsightKeys, ReportChart, ReportInsight, ReportKpi } from './designedReport';
+import type { InsightKeys, ReportChart, ReportFact, ReportInsight, ReportKpi, ReportReconcile } from './designedReport';
 
 export interface ReportFilterLine {
   /** "קופאי", "אמצעי תשלום"… */
@@ -147,6 +147,11 @@ export interface ReportPdfBody {
   insights?: ReportInsight[];
   noInsights?: boolean;
   cover?: 'auto' | 'always' | 'never';
+  // The light design (P:\specs\reports-designed-pdf.md §9), optional too:
+  /** The header band's key facts, right to left (≤ 6); none: the period, the scope and the rows. */
+  facts?: ReportFact[];
+  /** A reconciliation section: equal cards and a ✓ / פער pill per check. */
+  reconcile?: ReportReconcile;
 }
 
 /** A report table as the exports see it: keyed columns, plain values, a totals row. */

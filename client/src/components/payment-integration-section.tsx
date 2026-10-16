@@ -37,9 +37,13 @@ import {
   SYNQPAY_MODEL_LABELS,
   SYNQPAY_PROTOCOLS,
   SYNQPAY_PROTOCOL_LABELS,
+  TAP_TO_PAY_ENVIRONMENTS,
+  TAP_TO_PAY_ENVIRONMENT_LABELS,
   ZCREDIT_MODES,
   ZCREDIT_MODE_LABELS,
+  PAYMENT_SECRET_KEYS,
   cleanIntegration,
+  cleanTapToPayEnvironment,
   formEffectiveIntegration,
   formSynqpayConnection,
   synqpayDefaultPort,
@@ -122,6 +126,8 @@ function inheritedFor(
     synqpayTls: inherited?.synqpayTls ?? null,
     synqpayUsbDevice: inherited?.synqpayUsbDevice ?? null,
     synqpaySerialNumber: inherited?.synqpaySerialNumber ?? null,
+    tapToPayTpn: inherited?.tapToPayTpn ?? null,
+    tapToPayEnvironment: inherited?.tapToPayEnvironment ?? null,
   };
 }
 
@@ -152,6 +158,8 @@ export function usePaymentIntegrationValidation({
   const errors = validatePaymentIntegration(value, inh, secrets, {
     requireAll: level === 'machine',
     hasBuiltinTerminal,
+    hasNfc: context?.hasNfc ?? null,
+    isKiosk: context?.isKiosk ?? null,
   });
   const integration = formEffectiveIntegration(value, inh, hasBuiltinTerminal);
   const missing = level === 'machine' ? [] : missingRequiredFields(integration.effective, value, inh, secrets);
@@ -195,7 +203,7 @@ export function PaymentIntegrationSection({
   const inh = inheritedFor(inherited, context);
   const hasBuiltinTerminal = context?.hasBuiltinTerminal ?? null;
   const options = integrationOptions(
-    { hasBuiltinTerminal, hasNfc: context?.hasNfc ?? null },
+    { hasBuiltinTerminal, hasNfc: context?.hasNfc ?? null, isKiosk: context?.isKiosk ?? null },
     context?.options,
   );
   // A value this layer holds that the till may not use (a stored "built-in" on a tablet)
@@ -262,7 +270,8 @@ export function PaymentIntegrationSection({
       | 'synqpayHost'
       | 'synqpayPort'
       | 'synqpayUsbDevice'
-      | 'synqpaySerialNumber',
+      | 'synqpaySerialNumber'
+      | 'tapToPayTpn',
     opts: { placeholder?: string; hint?: string; numeric?: boolean; mono?: boolean; maxLength?: number },
   ) => (
     <div className="space-y-1">
@@ -357,6 +366,10 @@ export function PaymentIntegrationSection({
     );
   };
 
+  const t2pEnvOwn = cleanTapToPayEnvironment(value.tapToPayEnvironment) ?? '';
+  const t2pEnvInherited = cleanTapToPayEnvironment(inheritedText('tapToPayEnvironment'));
+  const t2pEnvItems = TAP_TO_PAY_ENVIRONMENTS.map((e) => ({ value: e, label: TAP_TO_PAY_ENVIRONMENT_LABELS[e] }));
+
   const modeOwn = typeof value.zcreditMode === 'string' ? value.zcreditMode : '';
   const modeInherited = inheritedText('zcreditMode');
   const modeItems = ZCREDIT_MODES.map((m) => ({ value: m, label: ZCREDIT_MODE_LABELS[m] }));
@@ -401,7 +414,7 @@ export function PaymentIntegrationSection({
         {integration.selected === 'auto' && integration.inherited ? (
           <p className={HINT}>{inheritedLabel(integration.effective, inheritedSource)}</p>
         ) : null}
-        {/* A tablet: why the built-in choice is disabled — an error once it is the one chosen. */}
+        {/* A tablet: why the built-in choice is disabled — an error once it is the one chosen (Tap to Pay on a kiosk / no NFC too). */}
         {errors.paymentIntegration ? (
           <p role="alert" className={ERROR}>
             {errors.paymentIntegration}
@@ -597,10 +610,57 @@ export function PaymentIntegrationSection({
       ) : null}
 
       {integration.effective === 'tap_to_pay' ? (
-        <div className="space-y-2 rounded-lg border p-3 opacity-70">
+        <div className="space-y-3 rounded-lg border p-3">
           <p className={HINT}>{PI_TEXT.tapToPayHint}</p>
-          <Input disabled dir="ltr" placeholder={PI_TEXT.tapToPayMerchant} />
-          <Input disabled dir="ltr" placeholder={PI_TEXT.tapToPayTerminal} />
+          <p className={HINT}>{PI_TEXT.tapToPayEnabledHint}</p>
+          {textField('tapToPayTpn', { hint: PI_TEXT.tapToPayTpnHint, mono: true, maxLength: 20 })}
+          <SecretField
+            secretKey="tapToPayMerchantCode"
+            label={fieldLabel('tapToPayMerchantCode')}
+            value={value.tapToPayMerchantCode}
+            status={context?.secrets?.tapToPayMerchantCode}
+            error={fieldError('tapToPayMerchantCode')}
+            onChange={(next) => set({ tapToPayMerchantCode: next })}
+          />
+          <p className={HINT}>{PI_TEXT.tapToPayCodeHint}</p>
+          <div className="space-y-1">
+            {fieldLabel('tapToPayEnvironment')}
+            <Select
+              value={t2pEnvOwn}
+              onValueChange={(next) => set({ tapToPayEnvironment: cleanTapToPayEnvironment(next) })}
+              items={t2pEnvItems}
+            >
+              <SelectTrigger id="pi-tapToPayEnvironment" aria-invalid={errors.tapToPayEnvironment ? true : undefined}>
+                <SelectValue
+                  placeholder={
+                    t2pEnvInherited
+                      ? `${TAP_TO_PAY_ENVIRONMENT_LABELS[t2pEnvInherited]} ${PI_TEXT.inheritedSuffix}`
+                      : PI_TEXT.tapToPayEnvPlaceholder
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {t2pEnvItems.map((m) => (
+                  <SelectItem key={m.value} value={m.value} label={m.label}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {t2pEnvOwn !== '' && showOverrideHints && t2pEnvInherited ? (
+              <Button
+                type="button"
+                variant="link"
+                size="xs"
+                className="h-auto px-0 text-xs"
+                onClick={() => set({ tapToPayEnvironment: null })}
+              >
+                {PI_TEXT.resetToInherited}
+              </Button>
+            ) : null}
+            <p className={HINT}>{PI_TEXT.tapToPayEnvHint}</p>
+            {fieldError('tapToPayEnvironment')}
+          </div>
         </div>
       ) : null}
 
@@ -616,7 +676,7 @@ export function PaymentIntegrationSection({
                 className="h-auto px-0 text-xs"
                 onClick={() =>
                   set({
-                    [key]: key === 'zcreditPassword' || key === 'zcreditKey' || key === 'synqpayApiKey' ? undefined : null,
+                    [key]: (PAYMENT_SECRET_KEYS as readonly string[]).includes(key) ? undefined : null,
                   } as Partial<PosSettingsPatch>)
                 }
               >

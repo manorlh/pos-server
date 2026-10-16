@@ -9,7 +9,9 @@ import {
   changePct,
   chartFromTable,
   cleanChart,
+  cleanFacts,
   cleanKpis,
+  cleanReconcile,
   daysInRange,
   insightMark,
   previousWindow,
@@ -94,6 +96,59 @@ describe('KPI comparison', () => {
     const [k] = cleanKpis([{ key: 'x', label: 'x', value: 1, kind: 'money', better: 'down', icon: 'refund' }]);
     assert.equal(k.better, 'down');
     assert.equal(k.icon, 'refund');
+  });
+  it("the card's small line (§9) passes trimmed, at most 80; an empty one is left out", () => {
+    const [a, b] = cleanKpis([
+      { key: 'a', label: 'a', value: 1, kind: 'money', sub: '  70.9%  ' },
+      { key: 'b', label: 'b', value: 1, kind: 'money', sub: ' ' },
+    ]);
+    assert.equal(a.sub, '70.9%');
+    assert.equal('sub' in b, false);
+    assert.equal(cleanKpis([{ key: 'c', label: 'c', value: 1, kind: 'money', sub: 'x'.repeat(90) }])[0].sub?.length, 80);
+  });
+});
+
+describe('the light design (§9): facts and reconciliation', () => {
+  it('facts: at most 6, trimmed to the server limits, none without a value', () => {
+    const facts = cleanFacts([
+      { label: ' תאריך ', value: ' 14.10.26 ' },
+      { label: 'ריק', value: '  ' },
+      ...Array.from({ length: 8 }, (_, i) => ({ label: `f${i}`, value: String(i) })),
+    ]);
+    assert.equal(facts.length, 6);
+    assert.deepEqual(facts[0], { label: 'תאריך', value: '14.10.26' });
+    assert.equal(facts.some((f) => f.label === 'ריק'), false);
+    assert.deepEqual(cleanFacts(undefined), []);
+  });
+  it('a reconciliation: up to 4 cards with a label, checks of a known status only', () => {
+    const r = cleanReconcile({
+      title: ' התאמה ',
+      cards: [
+        { label: 'Z', value: 100, sub: '2 סגירות' },
+        { label: ' ', value: 1 },
+        { label: 'עסקאות', value: Number.NaN },
+        { label: 'פריטים', value: '99' },
+        { label: 'ד', value: 4 },
+        { label: 'ה', value: 5 },
+      ],
+      checks: [
+        { label: 'Z מול עסקאות', status: 'match' },
+        { label: 'x', status: 'maybe' as 'match' },
+        { label: 'עסקאות מול פריטים', status: 'mismatch', text: ' פער ₪ 1 ' },
+      ],
+    });
+    assert.ok(r);
+    assert.equal(r.title, 'התאמה');
+    assert.deepEqual(r.cards.map((c) => c.label), ['Z', 'עסקאות', 'פריטים', 'ד']);
+    assert.equal(r.cards[1].value, null);
+    assert.deepEqual(r.checks, [
+      { label: 'Z מול עסקאות', status: 'match' },
+      { label: 'עסקאות מול פריטים', status: 'mismatch', text: 'פער ₪ 1' },
+    ]);
+  });
+  it('no card: no reconciliation', () => {
+    assert.equal(cleanReconcile({ cards: [{ label: '', value: 1 }] }), undefined);
+    assert.equal(cleanReconcile(null), undefined);
   });
 });
 

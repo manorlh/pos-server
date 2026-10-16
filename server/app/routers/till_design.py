@@ -13,11 +13,12 @@ Dashboard (Clerk; read and write: super admin, distributor (own tills), company 
 (company tree), shop manager (own shop, its points of sale and tills) — never a cashier or a
 shift supervisor; the company layer is not a shop manager's):
 
-GET  /till-design/defaults              `{defaults, catalog, phase2MinVersion}` (vocabularies,
-                                        templates, profiles; the first till version that shows
-                                        phase 2's templates)
+GET  /till-design/defaults              `{defaults, catalog, phase2MinVersion, flowMinVersion}`
+                                        (vocabularies, templates, profiles; the first till version
+                                        that shows phase 2's templates, and "זרימה")
 GET  /till-design/targets?shopId=       the shop's points of sale and tills, for the level pickers
-                                        (each till's version and whether it shows phase 2)
+                                        (each till's version and whether it shows phase 2 and
+                                        "זרימה")
 GET  /till-design/settings?level=company|shop|area|machine&id=
 PUT  /till-design/settings?level=&id=   `{overrides}` — replaces that level's partial layer
 GET  /till-design/category-display?level=&id=
@@ -299,6 +300,8 @@ def get_defaults(current_user: User = Depends(get_current_user)):
         "defaults": design.default_config(),
         "catalog": design.catalog(),
         "phase2MinVersion": design.phase2_min_version(),
+        # "זרימה" (P:/specs/flow-design.md §9): an older till ignores `flow` and shows "רגיל".
+        "flowMinVersion": design.flow_min_version(),
     }
 
 
@@ -312,7 +315,8 @@ def get_targets(
     """
     The shop's points of sale (not archived) and active tills, for the area / till pickers —
     each till with its version (`appVersion`, as it reported it) and `phase2Templates`: whether
-    it shows phase 2's templates (false: it shows "נקי" until it updates; null: unknown).
+    it shows phase 2's templates (false: it shows "נקי" until it updates; null: unknown); `flow`
+    the same for "זרימה" (false: it shows "רגיל" until it updates).
     """
     scope = resolve_scope(db, current_user, "shop", shop_id, active_tenant_id)
     areas = (
@@ -339,6 +343,7 @@ def get_targets(
                 "deviceModel": getattr(m, "device_model", None),
                 "appVersion": getattr(m, "app_version", None),
                 "phase2Templates": design.shows_phase2(m),
+                "flow": design.shows_flow(m),
             }
             for m in machines
         ],

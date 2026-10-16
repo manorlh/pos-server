@@ -241,6 +241,7 @@ class PushSubscription(Base):
     __table_args__ = (
         UniqueConstraint("endpoint_hash", name="uq_push_subscriptions_endpoint_hash"),
         Index("ix_push_subscriptions_user", "user_id", "disabled_at"),
+        Index("ix_push_subscriptions_user_device", "user_id", "device_key"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -254,6 +255,9 @@ class PushSubscription(Base):
     auth = Column(String(100), nullable=False)
     #: "Chrome · Android" — what the person sees in their devices list.
     label = Column(String(120), nullable=True)
+    #: The browser's own random id (dashboard localStorage, fix/pwa-push): one active row per
+    #: browser per user — a new subscription from the same browser replaces the older one.
+    device_key = Column(String(64), nullable=True)
     user_agent = Column(String(300), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

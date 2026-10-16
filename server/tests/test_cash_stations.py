@@ -1236,9 +1236,9 @@ class TestStage2Migration:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        heads = script.get_heads()
-        assert len(heads) == 1
-        assert "e5a9c3d1f7b2" in {r.revision for r in script.walk_revisions("base", heads[0])}
+        # One head, descending from this revision (later revisions land on top of it).
+        (head,) = script.get_heads()
+        assert "e5a9c3d1f7b2" in {r.revision for r in script.iterate_revisions(head, "base")}
 
 
 class TestMigration:
@@ -1773,4 +1773,6 @@ class TestCashMagMigration:
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
-        assert script.get_heads() == ["f3b8d2c6a9e1"]
+        # One head, with this revision on its line (release 17.10 joins it with its siblings in 6b3b29c7bc5b).
+        (head,) = script.get_heads()
+        assert "f3b8d2c6a9e1" in {r.revision for r in script.iterate_revisions(head, "base")}

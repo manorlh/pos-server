@@ -12,7 +12,7 @@
 
 A till user's role is `pos_users.till_role_id` (null: not yet assigned — they keep the
 legacy role matching `pos_users.role`), with optional per-user overrides in
-`pos_users.permission_overrides`.
+`pos_users.permission_overrides` (`states`, `limits`, and "כשאין הרשאה" as `deniedUi`).
 """
 import uuid
 
@@ -43,6 +43,9 @@ class TillRole(Base):
     permissions = Column(JSONB, nullable=False, default=dict, server_default="{}")
     #: `{code: {maxPercent|maxAmount: number}}` — only what this role sets itself.
     limits = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    #: "כשאין הרשאה" (P:/specs/denied-actions-ui.md): what the till does with an option this role
+    #: denies — show | hide | code; null = as the till's level parameter `deniedActionUi` says.
+    denied_ui = Column(String(8), nullable=True)
     sort_order = Column(Integer, nullable=False, default=100, server_default="100")
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(UUID(as_uuid=True), nullable=True)
