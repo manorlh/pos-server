@@ -36,7 +36,8 @@ export interface CardAttempt {
   /** What the terminal was asked for (tip included), agorot. */
   amountAgorot: number;
   method: 'card';
-  kind: 'sale';
+  /** `payout`: money back to a card (a basket's credit notes, AttemptKind.PAYOUT) — settled by the same vuid as a sale. */
+  kind: 'sale' | 'payout';
   payments: number;
   terminalTip: boolean;
   tipAgorot: number;

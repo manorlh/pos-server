@@ -21,8 +21,10 @@ import { localDate } from '../../core/kioskOrders';
 import { toShekels } from '../../core/money';
 import {
   buildXTill,
+  isCreditType,
   lastTransactionNumberOf,
   lineGross,
+  manualDiscount,
   optionCharged,
   unitAgorot,
   type SaleLine,
@@ -35,7 +37,16 @@ import type { Kv } from '../db/schema';
 import type { ApprovedCard } from '../payment/provider';
 import type { Outbox } from '../sync/outbox';
 
-export type DocStatus = 'pending' | 'completed' | 'cancelled';
+/**
+ * `refunded` / `partial_refund`: a completed sale a credit note credited (in full / in part — SaleRepository.settleCredit);
+ * still a concluded movement of money (the X counts it as it was), never edited otherwise.
+ */
+export type DocStatus = 'pending' | 'completed' | 'cancelled' | 'refunded' | 'partial_refund';
+
+/** A document whose money moved: completed, or a sale credited since (in full or in part). */
+export function settled(d: Pick<DocDraft, 'status'>): boolean {
+  return d.status === 'completed' || d.status === 'refunded' || d.status === 'partial_refund';
+}
 
 /** Everything a document is, as stored (the wire is built from it). */
 export interface DocDraft {
@@ -87,17 +98,30 @@ export interface DocDraft {
   changeAgorot?: number;
   /** Where it was rung: absent = a kiosk order; `till` = a staff sale (the cashier's own PIN session). */
   channel?: 'till';
+  /** A mixed basket (core/till/basket.ts): the same id on every document of it. */
+  basketId?: string;
+  /** A credit note: the sale it credits; null — a return with no receipt. */
+  refundOfTransactionId?: string | null;
+  /** Nothing is left to credit on the original once this credit note stands. */
+  fullyRefunded?: boolean;
+  /** Who authorised it — a manager's code, or the operator acting on their own right (`approvedByPosUserId`). */
+  approvedByPosUserId?: string | null;
+  /** The customer a credit note went to (name, and a phone or an address), as taken down at the till. */
+  customer?: { name: string; phone: string | null; address: string | null } | null;
+  /** The basket discount on its own (inside the document's discount), its rate when given as one, its kind. */
+  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
 }
 
 /** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
 export interface DocLeg {
-  method: 'cash' | 'card';
+  /** `exchange`: what a mixed basket's returns paid of its sale (core/till/basket.ts) — never cash, card or the drawer. */
+  method: 'cash' | 'card' | 'exchange';
   amountAgorot: number;
 }
 
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
 export function legsOf(d: Pick<DocDraft, 'payments' | 'card' | 'status' | 'totals'>): DocLeg[] {
-  if (d.status !== 'completed') return [];
+  if (!settled(d)) return [];
   if (d.payments && d.payments.length > 0) return d.payments;
   return d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [];
 }
@@ -123,6 +147,39 @@ export interface SaleInput {
   tenderedAgorot?: number;
   changeAgorot?: number;
   channel?: 'till';
+  now?: Date;
+  /** Who authorised its discounts (a manager's code, or the operator acting on their own right). */
+  approvedByPosUserId?: string | null;
+  /** The basket discount on its own, its rate, its kind. */
+  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+}
+
+/** One document of a basket, as the till's engine built it (core/till/basket.ts). */
+export interface BasketDocInput {
+  documentType: number;
+  lines: SaleLine[];
+  tracked: string[];
+  totals: SaleTotals;
+  promotions?: AppliedPromotionRow[];
+  /** Its legs: real ones and `exchange` — they add up to what it collects or credits. */
+  payments: DocLeg[];
+  tenderedAgorot?: number;
+  changeAgorot?: number;
+  /** A credit note: the sale it credits (null: no receipt) and whether nothing is left on it afterwards. */
+  refundOfTransactionId?: string | null;
+  fullyRefunded?: boolean;
+  approvedByPosUserId?: string | null;
+  customer?: { name: string; phone: string | null; address: string | null } | null;
+  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+}
+
+export interface BasketWriteInput {
+  prefix: string | null;
+  branchId: string | null;
+  operator: { id: string; name: string };
+  /** The basket's id on every document; null: one credit note on its own (a refund from the history). */
+  basketId: string | null;
+  documents: BasketDocInput[];
   now?: Date;
 }
 
@@ -492,6 +549,8 @@ export class Ledger {
       ...(typeof input.tenderedAgorot === 'number' ? { tenderedAgorot: input.tenderedAgorot } : {}),
       ...(typeof input.changeAgorot === 'number' ? { changeAgorot: input.changeAgorot } : {}),
       ...(input.channel ? { channel: input.channel } : {}),
+      ...(input.approvedByPosUserId ? { approvedByPosUserId: input.approvedByPosUserId } : {}),
+      ...(input.basketDiscount ? { basketDiscount: input.basketDiscount } : {}),
     };
     this.db.run(
       'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -517,18 +576,149 @@ export class Ledger {
     return row ? (JSON.parse(row.payload) as DocDraft) : null;
   }
 
+  private save(next: DocDraft) {
+    this.db.run('UPDATE documents SET status = ?, updated_at = ?, payload = ? WHERE id = ?', next.status, next.updatedAt, JSON.stringify(next), next.id);
+  }
+
   /**
    * Approved: completed with its card leg (none when the vouchers paid the whole sale), in one transaction with its
-   * outbox row. Only from pending.
+   * outbox row. Only from pending. A document of a mixed basket completes with every pending document of its basket — the
+   * card on the one(s) whose legs hold it, each credit note settling its original (SaleRepository.completeBasket).
    */
   completeCardSale(id: string, card: ApprovedCard | null, now = new Date()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
-      const next: DocDraft = { ...d, status: 'completed', card, updatedAt: now.toISOString() };
-      this.db.run("UPDATE documents SET status = 'completed', updated_at = ?, payload = ? WHERE id = ?", next.updatedAt, JSON.stringify(next), id);
-      this.outbox.enqueue('transaction', id);
-      return next;
+      const group = d.basketId ? this.basketDocs(d.basketId).filter((x) => x.status === 'pending') : [d];
+      let primary: DocDraft = d;
+      for (const doc of group) {
+        const hasCard = !doc.payments || doc.payments.length === 0 || doc.payments.some((l) => l.method === 'card');
+        const next: DocDraft = { ...doc, status: 'completed', card: hasCard ? card : null, updatedAt: now.toISOString() };
+        this.save(next);
+        if (next.refundOfTransactionId) this.settleCredit(next.refundOfTransactionId, next.fullyRefunded === true, now);
+        this.outbox.enqueue('transaction', next.id);
+        if (next.id === id) primary = next;
+      }
+      return primary;
+    });
+  }
+
+  /* ------------------------------------------------------- credits, baskets */
+
+  /** Every document of a basket, in the order written (the sale first). */
+  basketDocs(basketId: string): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE json_extract(payload, '$.basketId') = ? ORDER BY created_at, rowid", basketId)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** The credit notes issued against [originalId] (cancelled ones included — callers filter). */
+  refundsOf(originalId: string): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE json_extract(payload, '$.refundOfTransactionId') = ? ORDER BY created_at, rowid", originalId)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** The sales numbered one of [numbers] that may still be credited (refundableByNumbers): 320 / 400, completed or part-credited. */
+  refundableByNumbers(numbers: readonly number[]): DocDraft[] {
+    if (numbers.length === 0) return [];
+    const marks = numbers.map(() => '?').join(', ');
+    return this.db
+      .all<{ payload: string }>(`SELECT payload FROM documents WHERE number IN (${marks}) AND document_type IN (320, 400) AND status IN ('completed', 'partial_refund') ORDER BY created_at DESC`, ...numbers)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** Recent sales that may still have something to credit, newest first (recentRefundable). */
+  recentRefundable(limit: number): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE document_type IN (320, 400) AND status IN ('completed', 'partial_refund') ORDER BY created_at DESC LIMIT ?", limit)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /**
+   * What a credit note does to its original once the money has gone back (settleCredit): `refunded` when nothing is left,
+   * `partial_refund` otherwise — never re-sent itself (the cloud reads the credit's link).
+   */
+  private settleCredit(originalId: string, fully: boolean, now: Date) {
+    const o = this.doc(originalId);
+    if (!o || !settled(o)) return;
+    this.save({ ...o, status: fully ? 'refunded' : 'partial_refund', updatedAt: now.toISOString() });
+  }
+
+  /**
+   * Every document of a basket (or one credit note — a refund from the history), in ONE transaction with its shift: the
+   * sale first, then the credit notes — each numbered in its own type's series, the counter saved first. `completed`:
+   * with their outbox rows and their originals settled; `pending` (a card): nothing else until the terminal answers
+   * ([completeCardSale] / [voidCardSale]). [check] runs inside the transaction before a number is drawn: a refusal (a
+   * credit the original no longer holds) writes nothing. Null with no shift open.
+   */
+  recordBasket(input: BasketWriteInput, status: 'pending' | 'completed', check?: () => string | null): DocDraft[] | { refused: string } | null {
+    return this.db.tx(() => {
+      const shift = this.currentShift();
+      if (!shift) return null;
+      const refusal = check?.() ?? null;
+      if (refusal) return { refused: refusal };
+      const now = (input.now ?? new Date()).toISOString();
+      const out: DocDraft[] = [];
+      for (const doc of input.documents) {
+        const number = this.counters.next(doc.documentType);
+        const draft: DocDraft = {
+          id: randomUUID(),
+          documentType: doc.documentType,
+          number,
+          prefix: input.prefix,
+          status,
+          createdAt: now,
+          updatedAt: now,
+          shiftId: shift.id,
+          businessDate: shift.business_date,
+          cashierId: input.operator.id,
+          cashierName: input.operator.name,
+          branchId: input.branchId,
+          orderId: null,
+          lines: doc.lines,
+          itemIds: doc.lines.map(() => randomUUID()),
+          tracked: doc.tracked,
+          totals: doc.totals,
+          ...(doc.promotions && doc.promotions.length > 0 ? { promotions: doc.promotions } : {}),
+          card: null,
+          paymentId: randomUUID(),
+          voidMeta: null,
+          payments: doc.payments,
+          ...(typeof doc.tenderedAgorot === 'number' ? { tenderedAgorot: doc.tenderedAgorot } : {}),
+          ...(typeof doc.changeAgorot === 'number' ? { changeAgorot: doc.changeAgorot } : {}),
+          channel: 'till',
+          ...(input.basketId ? { basketId: input.basketId } : {}),
+          ...(doc.refundOfTransactionId !== undefined ? { refundOfTransactionId: doc.refundOfTransactionId, fullyRefunded: doc.fullyRefunded === true } : {}),
+          ...(doc.approvedByPosUserId ? { approvedByPosUserId: doc.approvedByPosUserId } : {}),
+          ...(doc.customer ? { customer: doc.customer } : {}),
+          ...(doc.basketDiscount ? { basketDiscount: doc.basketDiscount } : {}),
+        };
+        this.db.run(
+          'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          draft.id,
+          draft.documentType,
+          seriesOf(draft.documentType),
+          number,
+          draft.prefix,
+          status,
+          shift.id,
+          null,
+          now,
+          now,
+          draft.totals.totalAgorot,
+          draft.totals.tipAgorot,
+          JSON.stringify(draft),
+        );
+        out.push(draft);
+      }
+      if (status === 'completed') {
+        for (const d of out) {
+          if (d.refundOfTransactionId) this.settleCredit(d.refundOfTransactionId, d.fullyRefunded === true, new Date(now));
+          this.outbox.enqueue('transaction', d.id);
+        }
+      }
+      return out;
     });
   }
 
@@ -563,15 +753,23 @@ export class Ledger {
     });
   }
 
-  /** Certainly not charged: cancelled (the number stays burned), with the lookup's evidence. */
+  /**
+   * Certainly not charged: cancelled (the number stays burned), with the lookup's evidence. A basket stands or falls
+   * together: every pending document of it is cancelled (SaleRepository.voidCardSale → voidBasket).
+   */
   voidCardSale(id: string, voidMeta: Record<string, unknown> | null, now = new Date()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
-      const next: DocDraft = { ...d, status: 'cancelled', voidMeta, updatedAt: now.toISOString() };
-      this.db.run("UPDATE documents SET status = 'cancelled', updated_at = ?, payload = ? WHERE id = ?", next.updatedAt, JSON.stringify(next), id);
-      this.outbox.enqueue('transaction', id);
-      return next;
+      const group = d.basketId ? this.basketDocs(d.basketId).filter((x) => x.status === 'pending') : [d];
+      let primary: DocDraft = d;
+      for (const doc of group) {
+        const next: DocDraft = { ...doc, status: 'cancelled', voidMeta, updatedAt: now.toISOString() };
+        this.save(next);
+        this.outbox.enqueue('transaction', next.id);
+        if (next.id === id) primary = next;
+      }
+      return primary;
     });
   }
 
@@ -592,7 +790,7 @@ export class Ledger {
 
   todaysDocs(day: string): DocDraft[] {
     return this.db
-      .all<{ payload: string }>("SELECT payload FROM documents WHERE status = 'completed' AND created_at >= ? ORDER BY created_at DESC", new Date(`${day}T00:00:00`).toISOString())
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE status IN ('completed', 'refunded', 'partial_refund') AND created_at >= ? ORDER BY created_at DESC", new Date(`${day}T00:00:00`).toISOString())
       .map((r) => JSON.parse(r.payload) as DocDraft);
   }
 }
@@ -646,7 +844,7 @@ export function xDocOf(d: DocDraft): XDoc {
     payments:
       d.payments && d.payments.length > 0
         ? legsOf(d)
-        : d.status === 'completed'
+        : settled(d)
           ? [
               ...(d.voucherLegs ?? []).map((l) => ({ method: 'production_voucher', amountAgorot: l.amountAgorot })),
               ...(d.creditLegs ?? []).map((l) => ({ method: 'cash_credit', amountAgorot: l.amountAgorot })),
@@ -654,12 +852,24 @@ export function xDocOf(d: DocDraft): XDoc {
               ...(d.cash ? [{ method: 'cash', amountAgorot: tenderAmounts(d).cash }] : []),
             ]
           : [],
-    paymentMethod: d.payments && d.payments.length > 0 ? d.payments[d.payments.length - 1].method : docPaymentMethod(d),
+    paymentMethod: d.payments && d.payments.length > 0 ? lastRealMethod(d.payments) : docPaymentMethod(d),
     vatAgorot: d.totals.vatAgorot,
     vatRate: d.totals.vatRate,
     tipAgorot: d.totals.tipAgorot,
     tipPaymentMethod: tipMethodOf(d),
   };
+}
+
+/** A till document's discounts by hand: its lines' (OTH left out — printed at ₪0 on its line) and the basket's. */
+export function tillManualDiscount(d: Pick<DocDraft, 'lines' | 'basketDiscount'>): number {
+  const lines = d.lines.filter((l) => !l.oth && typeof l.creditAgorot !== 'number').reduce((s, l) => s + manualDiscount(l), 0);
+  return lines + Math.max(0, d.basketDiscount?.agorot ?? 0);
+}
+
+/** A till document's `paymentMethod`: the money that moved — its last real leg; `exchange` when none did (Basket.kt base()). */
+export function lastRealMethod(payments: readonly DocLeg[]): string {
+  const real = payments.filter((l) => l.method !== 'exchange');
+  return real.length > 0 ? real[real.length - 1].method : 'exchange';
 }
 
 /** The meta on the wire: every top-level value a string, the nested `result` JSON-encoded (OutboxSync.nayaxMetaObject). */
@@ -743,6 +953,29 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     }
     // The discount vouchers' share ("שוברי הנחה"): inside the same discount, a discount and never a tender.
     if ((l.voucherAgorot ?? 0) > 0) item.voucherDiscount = r2(l.voucherAgorot!);
+    if (typeof l.creditAgorot === 'number') {
+      // A credit-note line (SaleRepository.buildRefundItems): net, as on every credit note — the money credited; what of the
+      // gross was not paid is its discount; the original line it credits.
+      const share = lineGross(l) - l.creditAgorot;
+      item.totalPrice = r2(l.creditAgorot);
+      if (share !== 0) {
+        item.discount = r2(share);
+        item.discountType = 'fixed';
+        item.lineDiscount = -r2(share);
+      }
+      if (l.refundOfItemId) item.refundOfItemId = l.refundOfItemId;
+    } else if (manualDiscount(l) > 0) {
+      // The cashier's line discount (or OTH's 100%): a resolved amount, inside documentDiscount (Basket.kt sale items).
+      item.discount = r2(manualDiscount(l));
+      item.discountType = 'fixed';
+      item.lineDiscount = -r2(manualDiscount(l));
+    }
+    // OTH ("על חשבון הבית"): why, who gave it, who approved it.
+    if (l.oth) {
+      item.othReason = l.oth.reason;
+      if (l.oth.by) item.othBy = l.oth.by;
+      if (l.oth.approvedBy) item.othApprovedBy = l.oth.approvedBy;
+    }
     // "תפריטים": the menu active when the line was added / priced and where its price came from — the sales-by-menu report
     // (SPEC_MENUS §6). A line priced with no menu active carries none of them.
     if (l.menuId) {
@@ -753,7 +986,8 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
   });
-  const meta = d.status === 'completed' ? flattenMeta(d.card?.meta) : flattenMeta(d.voidMeta);
+  const done = settled(d);
+  const meta = done ? flattenMeta(d.card?.meta) : flattenMeta(d.voidMeta);
   const wire: Record<string, unknown> = {
     id: d.id,
     transactionNumber: String(d.number),
@@ -761,9 +995,10 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     status: d.status,
     documentType: d.documentType,
     documentProductionDate: d.createdAt,
-    // A till sale names the money that moved: the last tender (Basket.kt base()). A kiosk's: a sale the vouchers paid whole
-    // names them, as the till's (CheckoutViewModel: PRODUCTION_VOUCHER); else the card's / the cash station's.
-    paymentMethod: d.payments && d.payments.length > 0 ? d.payments[d.payments.length - 1].method : docPaymentMethod(d),
+    // A till sale names the money that moved: the last real tender, `exchange` when none did (Basket.kt base()). A kiosk's:
+    // a sale the vouchers paid whole names them, as the till's (CheckoutViewModel: PRODUCTION_VOUCHER); else the card's /
+    // the cash station's.
+    paymentMethod: d.payments && d.payments.length > 0 ? lastRealMethod(d.payments) : docPaymentMethod(d),
     // A till's cash sale: what the customer handed over and the change given back.
     amountTendered: typeof d.tenderedAgorot === 'number' ? r2(d.tenderedAgorot) : undefined,
     changeAmount: typeof d.changeAgorot === 'number' ? r2(d.changeAgorot) : undefined,
@@ -805,8 +1040,30 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     ...(d.promotions && d.promotions.length > 0
       ? { promotions: d.promotions.map((p) => ({ promotionId: p.promotionId, name: p.name, type: p.type, applications: p.applications, discount: r2(p.discountAgorot) })) }
       : {}),
+    // A credit note: the sale it credits (none for a return with no receipt).
+    ...(d.refundOfTransactionId ? { refundOfTransactionId: d.refundOfTransactionId } : {}),
+    // A mixed basket: the same id on each of its documents (docs/SHIFTS_API.md §1.2a).
+    ...(d.basketId ? { basketId: d.basketId } : {}),
+    // Who authorised it: a manager's code, or the operator acting on their own right.
+    ...(d.approvedByPosUserId ? { approvedByPosUserId: d.approvedByPosUserId } : {}),
+    // The customer a credit note went to.
+    ...(d.customer
+      ? {
+          customerName: d.customer.name || undefined,
+          ...(d.customer.phone ? { customerPhone: d.customer.phone } : {}),
+          ...(d.customer.address ? { customerAddress: d.customer.address } : {}),
+        }
+      : {}),
+    // The basket discount on its own (inside documentDiscount), its rate, its kind.
+    ...(d.basketDiscount && d.basketDiscount.agorot > 0
+      ? {
+          basketDiscount: r2(d.basketDiscount.agorot),
+          ...(d.basketDiscount.percent !== null ? { basketDiscountPercent: d.basketDiscount.percent } : {}),
+          basketDiscountKind: d.basketDiscount.kind,
+        }
+      : {}),
   };
-  if (d.status === 'completed' && (d.card || d.cash || (d.voucherLegs ?? []).length > 0 || (d.creditLegs ?? []).length > 0 || (d.payments && d.payments.length > 0))) {
+  if (done && (d.card || d.cash || (d.voucherLegs ?? []).length > 0 || (d.creditLegs ?? []).length > 0 || (d.payments && d.payments.length > 0))) {
     if (d.payments && d.payments.length > 0) {
       // A till sale: its tenders in the order taken (cash legs, the card last), the card's leg its payment id and meta.
       wire.payments = legsOf(d).map((leg, i) => {
@@ -891,14 +1148,16 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
           : []),
       ].sort((a, b) => a.sequence - b.sequence);
     }
+    // A sale removes stock; a credit note puts it back (Basket.kt basketMovements).
+    const credit = isCreditType(d.documentType);
     const moves = d.lines
       .map((l, i) => ({ l, i }))
       .filter(({ l }) => d.tracked.includes(l.productId))
       .map(({ l, i }) => ({
         id: stableUuid(`${d.id}:stock:${d.itemIds[i]}`),
         productId: l.productId,
-        delta: -l.qty,
-        reason: 'sale',
+        delta: credit ? l.qty : -l.qty,
+        reason: credit ? 'refund' : 'sale',
         transactionItemId: d.itemIds[i],
         occurredAt: d.createdAt,
       }));

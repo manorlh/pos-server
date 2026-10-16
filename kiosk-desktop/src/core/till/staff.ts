@@ -43,6 +43,11 @@ export const PERM = {
   DRAWER_ON_CASH_SALE: 'CASH_DRAWER.OPEN_ON_CASH_SALE',
   CATALOG_WRITE: 'CATALOG_WRITE',
   KIOSK_TILL_MODE: 'KIOSK_TILL_MODE',
+  REFUND: 'REFUND',
+  DISCOUNT: 'DISCOUNT',
+  OTH: 'OTH',
+  LINE_VOID: 'LINE_VOID',
+  HELD_SALE_CANCEL: 'HELD_SALE_CANCEL',
 } as const;
 
 /** Hebrew names for "אין לך הרשאה: …" and the approval prompt — the cloud's labels (PermissionService.LABELS). */
@@ -52,6 +57,8 @@ export const PERM_LABEL: Record<string, string> = {
   PRICE_OVERRIDE: 'הקלדת מחיר לפריט במחיר פתוח',
   DISCOUNT: 'הנחה',
   LINE_VOID: 'ביטול שורה',
+  HELD_SALE_CANCEL: 'ביטול מכירה מושהית',
+  OTH: 'על חשבון הבית (OTH)',
   REFUND: 'זיכוי / החזר',
   REPRINT: 'הדפסה חוזרת',
   SELL_RESTRICTED_ITEMS: 'מכירת פריט המחייב אישור מנהל',

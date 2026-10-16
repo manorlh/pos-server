@@ -86,6 +86,36 @@ export const TILL_OPS = [
   // "דוח X סניפי" (core/till/shopX.ts): the cloud's interim report of the shop — `refresh` asks the other tills first,
   // `print` prints the one on screen. Nothing changes: not a document.
   'report.shopX',
+  // "הנחה לחשבון" (core/till/discounts.ts): what a keyed basket discount would do, applying it, taking it off.
+  'discount.preview',
+  'discount.apply',
+  'discount.remove',
+  // OTH ("על חשבון הבית"): lines given free with a reason; taken back.
+  'oth.confirm',
+  'oth.undo',
+  // "זיכוי" on the sell screen (core/till/basket.ts): the button (the refund's authority, then the two ways in), the
+  // catalog's refund mode, its end; "זיכוי מקבלה" — the recent receipts, a number looked up, a receipt's lines, the
+  // picked lines into the cart as returns.
+  'refund.button',
+  'refund.catalog',
+  'refund.end',
+  'refund.recent',
+  'refund.find',
+  'refund.pick',
+  'refund.add',
+  // "זיכוי" from the history (DetailViewModel): a document's refundable lines, and the credit note for the picked ones.
+  'doc.detail',
+  // A basket with returns at the payment: who the money goes back to, an even exchange, the money back (cash / card).
+  'checkout.returnCustomer',
+  'checkout.exchange',
+  'checkout.payout',
+  // "מכירות בהמתנה" (core/till/heldSales.ts): park the basket, the list, pick one up, cancel one (with a reason).
+  'held.hold',
+  'held.list',
+  'held.resume',
+  'held.cancel',
+  // "הבנתי" on the notice the shift opens with (the automatic close of the one before).
+  'notice.ack',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -114,6 +144,21 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'checkout.print',
   'checkout.recheckCard',
   'checkout.markNotApproved',
+  'discount.apply',
+  'discount.remove',
+  'oth.confirm',
+  'oth.undo',
+  'refund.button',
+  'refund.catalog',
+  'refund.end',
+  'refund.add',
+  'checkout.returnCustomer',
+  'checkout.exchange',
+  'checkout.payout',
+  'held.hold',
+  'held.resume',
+  'held.cancel',
+  'notice.ack',
 ]);
 
 export interface OpArgs {
@@ -125,6 +170,7 @@ export interface OpArgs {
   'sell.add': { productId: string; qty?: number };
   'sell.setQty': { lineId: string; qty: number };
   'sell.remove': { lineId: string };
+  /** A line's discount in whole percent (5 / 10 / 20; 0 takes it off). */
   'sell.discount': { lineId: string; pct: number };
   'sell.clear': Record<string, never>;
   'sell.department': { departmentId: string | null };
@@ -137,13 +183,40 @@ export interface OpArgs {
   'dialog.answer': { dialogId: string; action: string; answers?: Record<string, string> };
   'doc.history': { limit?: number };
   'doc.reprint': { documentId: string };
-  'doc.refund': { documentId: string };
+  /** A credit note for [quantities] (original line id → quantity) of the document: cash or the original's card. */
+  'doc.refund': { documentId: string; quantities?: Record<string, number> };
+  /** [quantities]: what the screen picked — the answer says what crediting them gives back (`selectedAgorot`). */
+  'doc.detail': { documentId: string; quantities?: Record<string, number> };
   'shift.open': { openingCashAgorot: number };
-  'shift.close': { countedCashAgorot: number };
+  /** `keepHeld`: "סגור והשאר מושהות" where the shop allows it (`allowCloseWithHeldSales`). */
+  'shift.close': { countedCashAgorot: number; keepHeld?: boolean };
   'report.x': Record<string, never>;
   'report.shopX': { refresh?: boolean; print?: boolean };
   /** `countedCashAgorot`: the drawer's count when the shift is still open (it is closed first). */
-  'z.produce': { countedCashAgorot?: number };
+  'z.produce': { countedCashAgorot?: number; keepHeld?: boolean };
+  'discount.preview': { mode: BasketDiscountMode; input: string };
+  'discount.apply': { mode: BasketDiscountMode; input: string };
+  'discount.remove': Record<string, never>;
+  'oth.confirm': { lineIds: string[]; reason: string };
+  'oth.undo': { lineId: string };
+  'refund.button': Record<string, never>;
+  'refund.catalog': Record<string, never>;
+  'refund.end': Record<string, never>;
+  'refund.recent': Record<string, never>;
+  /** A receipt's number as typed: `20000057`, `57`, `2-10000000`. */
+  'refund.find': { query: string };
+  'refund.pick': { transactionId: string };
+  /** The lines picked off a receipt (its line id → quantity), into the cart as returns. */
+  'refund.add': { transactionId: string; quantities: Record<string, number> };
+  'checkout.returnCustomer': { name: string; phone?: string; address?: string };
+  'checkout.exchange': Record<string, never>;
+  'checkout.payout': { method: 'cash' | 'card' };
+  'held.hold': { label?: string };
+  'held.list': Record<string, never>;
+  'held.resume': { id: string; parkLive?: boolean };
+  /** "בטל" on a held sale: HELD_SALE_CANCEL, a reason, the `held_sale_cancelled` till event. */
+  'held.cancel': { id: string; reason: string };
+  'notice.ack': Record<string, never>;
   'mode.switch': { to: DeviceRoleName; managerCode?: string };
   'host.idle': { idle: boolean; busy: boolean };
   'hw.result': HwResult;
@@ -188,6 +261,11 @@ export const TILL_ERRORS = {
   shift_not_open: 'אין משמרת פתוחה. לא ניתן למכור עד שתיפתח משמרת.',
   card_failed: 'התשלום בכרטיס לא הושלם',
   not_a_till: 'המכשיר הזה אינו קופה',
+  // Refunds, discounts, held sales (the Android till's sentences come with each refusal as `message`).
+  refund_refused: 'הזיכוי לא בוצע',
+  held_sales: 'יש מכירות מושהות',
+  basket_changed: 'הקבלה המקורית זוכתה בינתיים. יש לבחור את הפריטים מחדש.',
+  discount_refused: 'ההנחה לא ניתנה',
 } as const;
 
 export type TillErrorCode = keyof typeof TILL_ERRORS;
@@ -217,7 +295,14 @@ export interface SessionState {
   permissions: string[];
   /** A demo engine: nothing it issues is a fiscal document. */
   demo: boolean;
+  /**
+   * "כשאין הרשאה" (core/till/permissions.ts): the codes whose options the screens leave out for this operator (`hide`, and
+   * the older `permissionsDeniedUi` at the entries that always read it). Absent: none.
+   */
+  hidden?: string[];
 }
+
+export type BasketDiscountMode = 'percent' | 'fixed' | 'target';
 
 export interface Department {
   id: string;
@@ -272,6 +357,16 @@ export interface CartLine {
   unitAgorot: number;
   discountPct: number;
   totalAgorot: number;
+  /** A line coming back ("זיכוי"): its money goes the other way; shown red. */
+  refund?: boolean;
+  /** A return picked off a receipt: that receipt's number. */
+  fromReceipt?: string | null;
+  /** The cashier's discount on the line (OTH's included), agorot. */
+  discountAgorot?: number;
+  /** OTH ("על חשבון הבית"): the reason. */
+  oth?: string | null;
+  /** "לא מקבל הנחות". */
+  noDiscount?: boolean;
 }
 
 export interface SellState {
@@ -280,11 +375,75 @@ export interface SellState {
   search: string;
   lines: CartLine[];
   itemCount: number;
+  /** What the basket comes to: the sale lines after every discount, less the returns (negative: money back). */
   totalAgorot: number;
   /** The VAT inside the total. */
   vatAgorot: number;
   /** "מבצעים": what the promotions took off the lines (the total is after it). */
   promotionsAgorot?: number;
+  /** "מצב זיכוי": every catalog tap takes a unit back. */
+  refundMode?: boolean;
+  /** The refund's authority given: "זיכוי פריט מהקטלוג" / "זיכוי מקבלה" on screen. */
+  refundChooser?: boolean;
+  /** The sale lines after every discount, and the returns (positive) — a basket with returns shows both. */
+  saleTotalAgorot?: number;
+  refundTotalAgorot?: number;
+  /** "הנחה לחשבון": what it takes off now, and how it was given (null: none). */
+  basketDiscount?: { amountAgorot: number; type: 'percentage' | 'fixed'; value: number } | null;
+  /** The cashier's line discounts (OTH's apart), agorot. */
+  lineDiscountsAgorot?: number;
+  /** What the OTH lines were worth. */
+  othAgorot?: number;
+  /** What the lines that take no discount come to (out of the basket discount's base). */
+  nonDiscountableAgorot?: number;
+}
+
+/** "מכירות בהמתנה" on this till. */
+export interface HeldState {
+  count: number;
+  sales: Array<{ id: string; label: string | null; at: string; cashier: string | null; itemCount: number; totalAgorot: number; items: Array<{ name: string; quantity: number }> }>;
+  /** "סגור והשאר מושהות" is offered at a close (`allowCloseWithHeldSales`). */
+  keepAllowed: boolean;
+}
+
+/** OTH as the till's parameters set it. */
+export interface OthState {
+  enabled: boolean;
+  requiresManager: boolean;
+  reasons: string[];
+}
+
+/** One line of a document as "זיכוי" offers it (the history's detail, a receipt picked). */
+export interface RefundableLine {
+  itemId: string;
+  productId: string;
+  name: string;
+  originalQty: number;
+  remainingQty: number;
+  /** What the customer paid per unit (display; the money is the credit's). */
+  unitNetAgorot: number;
+  /** Already in this cart (a receipt's lines). */
+  inCart?: number;
+}
+
+export interface DocumentDetail {
+  id: string;
+  ref: string;
+  documentType: number;
+  status: string;
+  totalAgorot: number;
+  cashier: string;
+  at: string;
+  methods: string[];
+  lines: RefundableLine[];
+  isRefundDocument: boolean;
+  anythingRefundable: boolean;
+  /** How the money goes back: the original's tender (a card sale on a till "ללא אשראי": cash). */
+  refundMethod: 'cash' | 'card';
+  /** What crediting every remaining line gives back. */
+  refundAllAgorot: number;
+  /** What crediting the picked quantities gives back (RefundMath.refundTotal), when the screen sent them. */
+  selectedAgorot?: number;
 }
 
 export type CheckoutPhase = 'idle' | 'tender' | 'card_waiting' | 'done';
@@ -293,6 +452,24 @@ export interface CheckoutLeg {
   method: 'cash' | 'card';
   amountAgorot: number;
   status: 'approved' | 'pending';
+}
+
+/** A basket with returns at the payment (core/till/basket.ts). */
+export interface CheckoutBasket {
+  saleAgorot: number;
+  refundAgorot: number;
+  /** Sale less refund: positive paid, negative paid out. */
+  netAgorot: number;
+  payoutAgorot: number;
+  /** Some of what comes back came with no receipt. */
+  hasUnlinked: boolean;
+  /** `return_customer` (who the money goes back to), `tender` (a positive net), `exchange` (zero), `payout` (money back). */
+  step: 'return_customer' | 'tender' | 'exchange' | 'payout';
+  customer: { name: string; phone: string; address: string; required: boolean };
+  /** How a card payout would go; `unavailable`: cash only. */
+  payoutRoute: 'linked' | 'unlinked' | 'unavailable';
+  /** What went back to the customer, once done. */
+  handedBackAgorot?: number;
 }
 
 export interface CheckoutState {
@@ -318,6 +495,10 @@ export interface CheckoutState {
   cardError?: string | null;
   /** The card's answer is not known (never charged twice): tenders wait for "בדוק שוב" / a manager's "סמן כלא אושר". */
   cardUnknown?: boolean;
+  /** A basket with returns: its figures and its step. Absent: a plain sale. */
+  basket?: CheckoutBasket | null;
+  /** Every document the payment wrote (a basket: the sale and its credit notes), as printed. */
+  documentRefs?: string[];
 }
 
 export interface ShiftState {
@@ -403,6 +584,15 @@ export interface TillState {
   tileText?: TileTextState;
   /** "דוח X סניפי" (core/till/shopX.ts): offered on this till, and the report last brought (until sign-out). */
   shopX?: ShopXState;
+  /** "מכירות בהמתנה" (core/till/heldSales.ts). */
+  held?: HeldState;
+  /** OTH ("על חשבון הבית"), as the parameters set it. */
+  oth?: OthState;
+  /**
+   * "סגירה אוטומטית במשמרת הקודמת" (core/till/autoCloseCart.ts): what the next shift is told, once (a basket held or voided,
+   * held sales cancelled) — until the cashier says "הבנתי" (`session.activity` with `ack`). Absent: nothing to tell.
+   */
+  notice?: { title: string; text: string } | null;
 }
 
 export interface ShopXState {

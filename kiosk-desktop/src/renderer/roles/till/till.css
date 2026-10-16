@@ -1082,3 +1082,30 @@
 .t-strong dd {
   font-weight: 700;
 }
+
+/* ── refunds, discounts, OTH, held sales (main/till/engine.ts; parts/TillSheets.tsx) ── */
+.t-line-refund .t-line-name,
+.t-line-refund .t-line-total {
+  color: var(--t-danger);
+}
+.t-cart-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.t-dialog-wide {
+  max-width: 720px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.t-row-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.t-row-input .t-input {
+  flex: 1;
+}

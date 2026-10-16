@@ -38,10 +38,12 @@ export function ShiftScreen({ state, layout, actions }: { state: TillState; layo
   const amount = parseAmount(cash);
   const others = state.mode.rolesAllowed.filter((r) => r !== state.mode.current);
   const tillZ = state.z.zMode === 'till';
-  const perms = state.session.permissions;
+  // "כשאין הרשאה" (core/till/permissions.ts): an option the role denies is shown (a tap says "אין הרשאה") unless the engine
+  // says to leave it out (`session.hidden`: "להסתיר"); "לבקש קוד מנהל" asks a manager's code at the tap.
+  const denied = new Set(state.session.hidden ?? []);
   // "הסתרת פריטים בתפריט" (core/till/menuHide.ts): a hidden "הפק Z" / "סגירת משמרת" is not offered here either (Android).
   const hidden = new Set(state.menuHidden ?? []);
-  const can = (code: string) => perms.includes(code) && !(code === 'Z' && hidden.has('till_z')) && !(code === 'SHIFT_CLOSE' && hidden.has('shift_close'));
+  const can = (code: string) => !denied.has(code) && !(code === 'Z' && hidden.has('till_z')) && !(code === 'SHIFT_CLOSE' && hidden.has('shift_close'));
   const figures = x ?? closed;
   // An independent till has no shifts: only "הפק Z" (count the cash, the internal shift closes, the Z, the paper).
   if (s.hidden) {

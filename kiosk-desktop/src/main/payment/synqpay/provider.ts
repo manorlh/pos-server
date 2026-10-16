@@ -310,6 +310,27 @@ export class SynqPayProvider implements PaymentProvider {
     }
   }
 
+  /** A refund (זיכוי), the card presented — SynqPay takes no link to the original (logged, not sent: SynqPayTerminal.refund). */
+  async refund(req: { amountAgorot: number; reference: string; originalTransactionId: string | null; onProgress?: (m: string) => void }): Promise<SaleResult> {
+    if (!this.settings.paired) return { answer: 'DECLINED', message: PAIRING_TEXT.notPaired, raw: null, statusCode: null };
+    const lock = await this.cardLock();
+    if (lock) return { answer: 'DECLINED', message: cardLockText(lock), raw: null, statusCode: null };
+    if (req.originalTransactionId) this.ctx.log(`synqpay refund: original ${req.originalTransactionId} (SynqPay takes no link to it)`);
+    req.onProgress?.('הצמד, הכנס או העבר את הכרטיס');
+    this.progress = req.onProgress ?? null;
+    try {
+      const a = await this.client.refund(req.reference, req.amountAgorot);
+      if (a.answer === 'APPROVED') return { answer: 'APPROVED', card: approvedCard(req.reference, a, 1), raw: JSON.stringify(a.result) };
+      if (a.answer === 'DECLINED') {
+        const code = typeof a.result.statusCode === 'number' ? a.result.statusCode : null;
+        return { answer: 'DECLINED', message: a.verdict.message, raw: JSON.stringify(a.result), statusCode: code };
+      }
+      return { answer: 'UNKNOWN', message: a.message, raw: null };
+    } finally {
+      this.progress = null;
+    }
+  }
+
   async resolve(attempt: { reference: string; amountAgorot: number; terminalTip: boolean }): Promise<Resolution> {
     const r = await this.client.resolve(attempt.reference, attempt.amountAgorot);
     if (r.kind === 'approved' && r.answer.answer === 'APPROVED') return { kind: 'approved', card: approvedCard(attempt.reference, r.answer, 1) };
