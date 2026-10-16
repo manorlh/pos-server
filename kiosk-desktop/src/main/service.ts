@@ -21,6 +21,7 @@ import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, ty
 import { OfflineTracker, terminalAlertReason } from '../core/kioskHealth';
 import { licenseFacts } from '../core/deviceLicense';
 import type { PairOutcome } from '../shared/bridge';
+import { DISPLAY_SCALE_PARAM, parseDisplayScale, displayScaleWire, windowZoomPlan, type WindowZoomPlan } from '../core/displayScale';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
 import {
   CARD_FALLBACK_TEXT,
@@ -192,6 +193,7 @@ import type {
   StartPaymentOut,
   TechnicianAction,
   TechnicianInfo,
+  DisplayScaleView,
   AdminActionResult,
 } from '../shared/bridge';
 
@@ -201,7 +203,10 @@ export interface PlatformHooks {
   launchQuickSupport(): Promise<string | null>;
   networkUp(): boolean;
   interfaces(): Array<{ name: string; address: string }>;
-  setZoom?(zoom: number): void;
+  /** The window's automatic page zoom now (core/windowZoom.ts — its size, before "גודל תצוגה"). */
+  autoZoom?(): number;
+  /** "גודל תצוגה" changed (a preview, a save, the cloud's value): the window's zoom again (`windowZoom`). */
+  refreshZoom?(): void;
   checkUpdate?(): Promise<{ available: string | null; status: string }>;
   installUpdate?(): Promise<{ ok: boolean; message?: string }>;
   /** The updater's state, without asking the network (main/update/updater.ts). */
@@ -259,10 +264,15 @@ export interface ServiceOptions {
   kitchen?: { printerLink?: (host: string, port: number) => PrinterLink; lanCall?: LanCall; onLan?: () => boolean; now?: () => number; hostPort?: number; hostName?: string };
 }
 
-/** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
+/**
+ * The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), "גודל תצוגה"
+ * (`displayScale`: "auto" / "85", null — follow the cloud; core/displayScale.ts) and the old absolute "זום" (`zoom`,
+ * read while no `displayScale` was saved over it — saving one clears it).
+ */
 export interface LocalSettings {
   printer: PrinterTarget;
   zoom: number | null;
+  displayScale: string | null;
 }
 
 const LOCAL_SETTINGS = 'local.settings';
@@ -402,6 +412,8 @@ export class KioskService extends EventEmitter {
   /** Cash credits taken for orders (§11.15א). */
   readonly cashCredits: CashCredits;
   private adminUntil = 0;
+  /** "גודל תצוגה": the technician's choice shown but not saved yet (null: none). */
+  private displayScalePreview: { local: string | null } | null = null;
   private adminName: string | null = null;
   /** The shop manager who opened the admin (their till user id): the authority of a SynqPay pairing. */
   private adminUserId: string | null = null;
@@ -747,7 +759,65 @@ export class KioskService extends EventEmitter {
       const mac = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(addr);
       printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
-    return { printer, zoom: s.zoom ?? null };
+    const scale = parseDisplayScale(s.displayScale);
+    return { printer, zoom: s.zoom ?? null, displayScale: scale === null ? null : displayScaleWire(scale) };
+  }
+
+  /* ----------------------------------------------------------- display size */
+
+  /**
+   * "גודל תצוגה": the window's zoom from its automatic one ([autoZoom], core/windowZoom.ts) — the technician's unsaved
+   * preview, else the saved local choice (else an old "זום"), else the cloud's `displayScale` (core/displayScale.ts).
+   */
+  displayScalePlan(autoZoom: number): WindowZoomPlan {
+    const s = this.localSettings();
+    const preview = this.displayScalePreview;
+    return windowZoomPlan(autoZoom, this.cloud.parameters()[DISPLAY_SCALE_PARAM], preview ? preview.local : s.displayScale, preview ? null : s.zoom);
+  }
+
+  /** The page zoom the window is given (main/index.ts). */
+  windowZoom(autoZoom: number): number {
+    return this.displayScalePlan(autoZoom).zoom;
+  }
+
+  /** The technician's view of it (TechnicianInfo.displayScale). */
+  displayScaleView(): DisplayScaleView {
+    const s = this.localSettings();
+    const plan = this.displayScalePlan(this.platform.autoZoom?.() ?? 1);
+    const cloud = parseDisplayScale(this.cloud.parameters()[DISPLAY_SCALE_PARAM]);
+    return {
+      percent: plan.effective.percent,
+      setting: plan.effective.setting,
+      source: plan.effective.source,
+      cloud: cloud === null ? null : displayScaleWire(cloud),
+      local: s.displayScale,
+      ...(this.displayScalePreview ? { preview: { ...this.displayScalePreview } } : {}),
+      legacyZoom: plan.legacyZoom,
+      zoom: plan.zoom,
+      autoZoom: plan.autoZoom,
+    };
+  }
+
+  private displayScaleAction(a: Extract<TechnicianAction, { type: 'displayScalePreview' | 'displayScaleEnd' | 'displayScaleSave' }>): { ok: boolean; message?: string } {
+    const valid = (v: string | null) => (v === null ? null : parseDisplayScale(v));
+    if (a.type === 'displayScaleEnd') {
+      this.displayScalePreview = null;
+    } else {
+      const parsed = valid(a.local);
+      if (a.local !== null && parsed === null) return { ok: false, message: 'גודל לא תקין' };
+      const local = parsed === null ? null : displayScaleWire(parsed);
+      if (a.type === 'displayScalePreview') {
+        this.displayScalePreview = { local };
+      } else {
+        this.displayScalePreview = null;
+        // One control: the old absolute "זום" goes with the first new choice saved.
+        this.setLocalSettings({ displayScale: local, zoom: null });
+        this.log(`display scale: saved locally ${local ?? 'none (follow the cloud)'}`);
+      }
+    }
+    this.platform.refreshZoom?.();
+    this.dirty();
+    return { ok: true };
   }
 
   setLocalSettings(patch: Partial<LocalSettings>) {
@@ -4641,6 +4711,7 @@ export class KioskService extends EventEmitter {
       })(),
       update,
       quickSupport: null,
+      displayScale: this.displayScaleView(),
     };
   }
 
@@ -4703,10 +4774,10 @@ export class KioskService extends EventEmitter {
         // A new choice: the question's memory starts again.
         this.kv.delete(DEFAULT_PRINTER_KEY);
         return { ok: true };
-      case 'setZoom':
-        this.setLocalSettings({ zoom: a.zoom });
-        this.platform.setZoom?.(a.zoom);
-        return { ok: true };
+      case 'displayScalePreview':
+      case 'displayScaleEnd':
+      case 'displayScaleSave':
+        return this.displayScaleAction(a);
       case 'unpair':
         if (this.outbox.count() > 0) return { ok: false, message: 'יש נתונים שטרם נשלחו לענן — לא ניתן לנתק' };
         this.sync.stop();
