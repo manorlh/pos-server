@@ -1094,6 +1094,14 @@
   gap: 6px;
   margin: 8px 0;
 }
+/* "הנחות קבועות": the one-tap buttons over the cart's tools, and the chips at the top of "הנחה לחשבון". */
+.t-presets {
+  gap: 6px;
+  margin: 8px 0 0;
+}
+.t-presets .t-chip {
+  font-weight: 600;
+}
 .t-dialog-wide {
   max-width: 720px;
   width: 100%;

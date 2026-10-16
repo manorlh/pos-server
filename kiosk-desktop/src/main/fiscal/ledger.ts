@@ -34,6 +34,7 @@ import {
   type XTill,
 } from '../../core/sale';
 import { countsAsPayment, isTestVoucherId, offVoucherLineValues, type DocPrepaidRedemption } from '../../core/till/vouchers';
+import { presetDocFields, type PresetMark } from '../../core/till/presetDiscounts';
 import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
 import type { ApprovedCard } from '../payment/provider';
@@ -116,7 +117,7 @@ export interface DocDraft {
   /** The customer a credit note went to (name, and a phone or an address), as taken down at the till. */
   customer?: { name: string; phone: string | null; address: string | null } | null;
   /** The basket discount on its own (inside the document's discount), its rate when given as one, its kind. */
-  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+  basketDiscount?: { agorot: number; percent: number | null; kind: string; preset?: PresetMark } | null;
 }
 
 /** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
@@ -167,7 +168,7 @@ export interface SaleInput {
   /** Who authorised its discounts (a manager's code, or the operator acting on their own right). */
   approvedByPosUserId?: string | null;
   /** The basket discount on its own, its rate, its kind. */
-  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+  basketDiscount?: { agorot: number; percent: number | null; kind: string; preset?: PresetMark } | null;
 }
 
 /** One document of a basket, as the till's engine built it (core/till/basket.ts). */
@@ -186,7 +187,7 @@ export interface BasketDocInput {
   fullyRefunded?: boolean;
   approvedByPosUserId?: string | null;
   customer?: { name: string; phone: string | null; address: string | null } | null;
-  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+  basketDiscount?: { agorot: number; percent: number | null; kind: string; preset?: PresetMark } | null;
 }
 
 export interface BasketWriteInput {
@@ -1142,6 +1143,8 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
           basketDiscount: r2(d.basketDiscount.agorot),
           ...(d.basketDiscount.percent !== null ? { basketDiscountPercent: d.basketDiscount.percent } : {}),
           basketDiscountKind: d.basketDiscount.kind,
+          // "הנחות קבועות" (spec §5): which preset, and whom for — only with kind "preset".
+          ...presetDocFields(d.basketDiscount.kind, d.basketDiscount.preset),
         }
       : {}),
   };

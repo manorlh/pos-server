@@ -90,6 +90,8 @@ export const TILL_OPS = [
   'discount.preview',
   'discount.apply',
   'discount.remove',
+  // "הנחות קבועות" (core/till/presetDiscounts.ts): a preset's one tap — replaces the basket discount; again takes it off.
+  'discount.preset',
   // OTH ("על חשבון הבית"): lines given free with a reason; taken back.
   'oth.confirm',
   'oth.undo',
@@ -200,6 +202,7 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'checkout.markNotApproved',
   'discount.apply',
   'discount.remove',
+  'discount.preset',
   'oth.confirm',
   'oth.undo',
   'refund.button',
@@ -281,6 +284,8 @@ export interface OpArgs {
   'discount.preview': { mode: BasketDiscountMode; input: string };
   'discount.apply': { mode: BasketDiscountMode; input: string };
   'discount.remove': Record<string, never>;
+  /** A preset by its id; "עבור מי" when the preset asks it (a picked employee / the customer, or typed). */
+  'discount.preset': { presetId: string; for?: string; forKind?: 'employee' | 'customer' | 'typed'; forRef?: string };
   'oth.confirm': { lineIds: string[]; reason: string };
   'oth.undo': { lineId: string };
   'refund.button': Record<string, never>;
@@ -539,7 +544,13 @@ export interface SellState {
   saleTotalAgorot?: number;
   refundTotalAgorot?: number;
   /** "הנחה לחשבון": what it takes off now, and how it was given (null: none). */
-  basketDiscount?: { amountAgorot: number; type: 'percentage' | 'fixed'; value: number } | null;
+  basketDiscount?: {
+    amountAgorot: number;
+    type: 'percentage' | 'fixed';
+    value: number;
+    /** "הנחות קבועות": the preset it is, and whom for. */
+    preset?: { id: string; name: string; for: string | null };
+  } | null;
   /** The cashier's line discounts (OTH's apart), agorot. */
   lineDiscountsAgorot?: number;
   /** What the OTH lines were worth. */
@@ -561,6 +572,22 @@ export interface OthState {
   enabled: boolean;
   requiresManager: boolean;
   reasons: string[];
+}
+
+/** "הנחות קבועות" (core/till/presetDiscounts.ts): the presets in order, the one-tap ones, and the employees "עבור מי" picks from. */
+export interface PresetDiscountsState {
+  items: Array<{
+    id: string;
+    name: string;
+    kind: 'percent' | 'amount';
+    value: number;
+    color: string | null;
+    requiresManager: boolean;
+    forWhom: 'none' | 'optional' | 'required';
+    forWhomSource: 'free' | 'employees' | 'club';
+  }>;
+  buttons: string[];
+  employees?: Array<{ id: string; name: string }>;
 }
 
 /** One line of a document as "זיכוי" offers it (the history's detail, a receipt picked). */
@@ -781,6 +808,8 @@ export interface TillState {
   held?: HeldState;
   /** OTH ("על חשבון הבית"), as the parameters set it. */
   oth?: OthState;
+  /** "הנחות קבועות" as the settings set them; absent: none (nothing shows). */
+  presetDiscounts?: PresetDiscountsState;
   /**
    * "סגירה אוטומטית במשמרת הקודמת" (core/till/autoCloseCart.ts): what the next shift is told, once (a basket held or voided,
    * held sales cancelled) — until the cashier says "הבנתי" (`session.activity` with `ack`). Absent: nothing to tell.

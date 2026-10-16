@@ -113,6 +113,7 @@ import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } 
 import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
+import { KIND_PRESET, presetLabel } from '../core/till/presetDiscounts';
 import { TillZService } from './fiscal/tillZService';
 import { KioskZRunner, kioskZHold, kioskZKindOfDevice, kioskZOutcomeOk, kioskZOutcomeText, makesOwnZ, type KioskAdminZOutcome, type KioskZPort } from '../core/kioskZ';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
@@ -3213,6 +3214,16 @@ export class KioskService extends EventEmitter {
           : {}),
         // The till's discounts by hand (OTH lines print at ₪0 on their own), a credit note's original and customer.
         ...(tillManualDiscount(doc) > 0 ? { manualDiscountAgorot: tillManualDiscount(doc) } : {}),
+        // "הנחות קבועות": the preset's own row ("הנחת עובדים 40%") and whom it was for.
+        ...(doc.basketDiscount?.kind === KIND_PRESET && doc.basketDiscount.preset && doc.basketDiscount.agorot > 0
+          ? {
+              presetDiscount: {
+                label: presetLabel(doc.basketDiscount.preset.name, doc.basketDiscount.preset.kind, doc.basketDiscount.percent ?? 0),
+                amountAgorot: doc.basketDiscount.agorot,
+                forName: doc.basketDiscount.preset.for,
+              },
+            }
+          : {}),
         ...(doc.refundOfTransactionId ? { refundOfNumber: this.docNumberOf(doc.refundOfTransactionId) } : {}),
         ...(doc.customer ? { customer: doc.customer } : {}),
         ...(merchantCopy ? { merchantCopy: true } : {}),

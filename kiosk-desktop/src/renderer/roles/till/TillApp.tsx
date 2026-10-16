@@ -25,7 +25,7 @@ import { AdminHoldBar, useAdminCornerHold } from '../../staff/adminHold';
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
-import { BasketDiscountSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { BasketDiscountSheet, PresetForSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
 import { ORDER_TEXT } from '../../../core/till/orderDetails';
 import { FAILOVER_TEXT } from '../../../core/kitchen/failover';
 import { CheckoutScreen } from './screens/CheckoutScreen';
@@ -53,6 +53,7 @@ type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
 type Sheet =
   | { kind: 'discount' }
+  | { kind: 'presetFor'; presetId: string; fromDiscount: boolean }
   | { kind: 'oth'; lineId: string | null }
   | { kind: 'receipt' }
   | { kind: 'held' }
@@ -224,6 +225,16 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   if (!state) return root(<div className="t-blocking">{status === 'offline' ? T.engineOffline : T.engineStarting}</div>);
 
   const s = state;
+  // "הנחות קבועות": the one on the basket again takes it off; one that asks "עבור מי" opens its sheet first.
+  const presets = s.presetDiscounts?.items ?? [];
+  const presetButtons = presets.filter((p) => (s.presetDiscounts?.buttons ?? []).includes(p.id));
+  const sendPreset = (presetId: string, who: Omit<OpArgs['discount.preset'], 'presetId'> = {}) =>
+    void attempt('discount.preset', { presetId, ...who }).then((r) => (r.ok ? setSheet(null) : say(r.message, 'error')));
+  const tapPreset = (presetId: string, fromDiscount: boolean) => {
+    const p = presets.find((x) => x.id === presetId);
+    if (p && p.forWhom !== 'none' && s.sell.basketDiscount?.preset?.id !== presetId) return setSheet({ kind: 'presetFor', presetId, fromDiscount });
+    sendPreset(presetId);
+  };
   const main = (() => {
     if (s.session.locked || !s.session.cashier) return <LockScreen demo={host.demo} onLogin={(pin) => void run('session.login', { pin })} />;
     if (s.checkout.phase !== 'idle') {
@@ -438,9 +449,16 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
                 hold: () => setSheet({ kind: 'held' }),
                 held: () => setSheet({ kind: 'held' }),
                 orderEdit: () => void run('order.edit', {}),
+                preset: (presetId: string) => tapPreset(presetId, false),
               }),
         }}
-        cartView={{ hidden: s.session.hidden ?? [], othEnabled: s.oth?.enabled === true, heldCount: s.held?.count ?? 0, order: s.order ? { strip: s.order.strip, configured: s.order.configured } : null }}
+        cartView={{
+          hidden: s.session.hidden ?? [],
+          othEnabled: s.oth?.enabled === true,
+          heldCount: s.held?.count ?? 0,
+          order: s.order ? { strip: s.order.strip, configured: s.order.configured } : null,
+          presetButtons,
+        }}
       />
     );
   })();
@@ -578,9 +596,25 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           current={s.sell.basketDiscount ?? null}
           apply={(mode, input) => void attempt('discount.apply', { mode, input }).then((r) => (r.ok ? setSheet(null) : say(r.message, 'error')))}
           remove={() => void run('discount.remove', {}).then(() => setSheet(null))}
+          presets={(s.session.hidden ?? []).includes('DISCOUNT') ? [] : presets}
+          onPreset={(presetId) => tapPreset(presetId, true)}
           onClose={() => setSheet(null)}
         />
       ) : null}
+      {s.session.cashier && sheet?.kind === 'presetFor'
+        ? (() => {
+            const preset = presets.find((p) => p.id === sheet.presetId);
+            if (!preset) return null;
+            return (
+              <PresetForSheet
+                preset={preset}
+                employees={s.presetDiscounts?.employees ?? []}
+                onApply={(who) => sendPreset(preset.id, who)}
+                onClose={() => setSheet(sheet.fromDiscount ? { kind: 'discount' } : null)}
+              />
+            );
+          })()
+        : null}
       {s.session.cashier && sheet?.kind === 'oth' ? (
         <OthSheet
           lines={s.sell.lines}
