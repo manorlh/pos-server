@@ -2398,7 +2398,7 @@ export function resolveThemeColors(theme: KioskTheme): ResolvedThemeColors {
     buttonText: theme.buttonTextColor ?? contrastText(button),
     buttonInk: readableInk(button, [tint(surface), tint(background)]),
     accentInk: readableInk(theme.accentColor, [surface, background, mixHex(surface, theme.accentColor, 0x1f / 255)]),
-    primaryInk: readableInk(theme.primaryColor, [surface, background, mixHex(surface, '#000000', 0x0a / 255), mixHex(surface, theme.primaryColor, 0x0f / 255)]),
+    primaryInk: readableInk(theme.primaryColor, [surface, background, mixHex(surface, '#000000', 0x0a / 255), mixHex(surface, theme.primaryColor, 0x0f / 255), mixHex(background, theme.primaryColor, 0x0f / 255)]),
   };
 }
 
