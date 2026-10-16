@@ -3466,6 +3466,8 @@ export interface LiveCashPay {
   /** question: the machine's title and text. */
   question?: { title: string; text: string } | null;
   position: number | null;
+  /** In the queue past `cashQueueTimeoutSec` (P:/specs/cash-paylink.md §14.3) — Windows and Android both send it. */
+  longWait?: boolean;
   stationName: string | null;
   insertedAgorot: number;
   dueAgorot: number;
@@ -3497,7 +3499,7 @@ function cashHeadline(cash: LiveCashPay): string {
       return 'מתחבר למכשיר המזומן…';
     case 'queued':
       // P:/specs/cash-paylink.md §14.3: the same words on every route; the place in line from 2 on.
-      return `עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום${(cash.position ?? 1) >= 2 ? ` · מקום ${cash.position} בתור` : ''}`;
+      return `עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום${(cash.position ?? 1) >= 2 ? ` · מקום ${cash.position} בתור` : ''}${cash.longWait ? ' · ההמתנה ארוכה מהרגיל' : ''}`;
     case 'busy':
       return CASH_BUSY_TEXT;
     case 'question':
