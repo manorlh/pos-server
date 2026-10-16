@@ -17,7 +17,7 @@
  */
 
 import { layoutOf, productColumns } from '@/lib/kioskLayout';
-import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@/lib/displayProfile';
+import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme, kioskTargetCssPx } from '@/lib/displayProfile';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -889,6 +889,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     // Landscape (lib/displayProfile.ts): the cart and the checkout's steps in two columns, a readable width.
     twoColumns: display.twoColumns,
     contentMaxWidth: display.contentMaxWidthDp,
+    // The side basket at its width (§4: 340–480 dp; the root is laid out in dp).
+    panelWidth: display.sideCart ? display.panelWidthDp : null,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
@@ -1120,6 +1122,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     '--font-weight-bold': String(weights.bold),
     '--font-weight-extrabold': String(weights.extrabold),
     '--font-weight-black': String(weights.black),
+    // The smallest control, 48 dp: the root is zoomed by the profile's scale (a 4K screen as full HD — layout audit 16.10).
+    '--k-target': `${kioskTargetCssPx(1 / screenProfile.scale)}px`,
   } as CSSProperties;
   const light = profile === 'light';
   // The style's chrome, and the motion engine's press and badge (CSS custom properties on the root).

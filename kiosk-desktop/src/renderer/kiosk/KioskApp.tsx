@@ -7,7 +7,7 @@
  */
 
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
-import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@dash-lib/displayProfile';
+import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme, kioskTargetCssPx } from '@dash-lib/displayProfile';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -840,6 +840,8 @@ export function KioskApp({ view }: { view: KioskView }) {
     // Landscape: the cart and the checkout's steps in two columns, a readable width (kiosk-shared ScreenBody).
     twoColumns: screenDisplay.display.twoColumns,
     contentMaxWidth: screenDisplay.display.contentMaxWidthDp ? Math.round(screenDisplay.display.contentMaxWidthDp * screenDisplay.cssPerDip) : null,
+    // The side basket at its width (§4: 340–480 dp), in this window's CSS px.
+    panelWidth: screenDisplay.display.sideCart ? Math.round(screenDisplay.display.panelWidthDp * screenDisplay.cssPerDip) : null,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
@@ -1111,6 +1113,8 @@ export function KioskApp({ view }: { view: KioskView }) {
     '--font-weight-bold': String(weights.bold),
     '--font-weight-extrabold': String(weights.extrabold),
     '--font-weight-black': String(weights.black),
+    // The smallest control, 48 dp at this window's zoom (kiosk-shared `.k-hit`; layout audit 16.10).
+    '--k-target': `${kioskTargetCssPx(screenDisplay.cssPerDip)}px`,
   } as CSSProperties;
   const onAttractService = serviceOnAttract(cfgIn);
   const chrome = chromeRoot(m);
@@ -1480,8 +1484,9 @@ function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: st
 /** "הודעה ללקוח כשאין אינטרנט": the line at the top (the Android kiosk's KioskOfflineNotice) — it takes no tap. */
 function OfflineNotice({ m, text }: { m: PreviewModel; text: string }) {
   return (
-    // Clear of the corners (back, help, the logo): the line wraps rather than covering a button.
-    <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-[55] flex justify-center px-24">
+    // Clear of the corners (back, help, the logo, the menu's "ביטול ההזמנה" — 122 px from the edge): the line wraps rather
+    // than covering a button (layout audit 16.10: at 96 px it covered the cancel button's end).
+    <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-[55] flex justify-center px-32">
       <div className="max-w-[560px] px-4 py-1.5 text-center text-[13px] font-semibold leading-snug shadow-md animate-in fade-in duration-300" style={{ background: m.c.surface, color: m.c.text, borderRadius: 18, border: `1px solid ${m.c.border}` }}>
         {text}
       </div>

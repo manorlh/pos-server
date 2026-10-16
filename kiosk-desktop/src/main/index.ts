@@ -37,6 +37,7 @@ import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
 import { QUICKSUPPORT_PATHS } from '../core/technician';
+import { kioskWindowZoom } from '../core/windowZoom';
 import { IDLE_RETURN_MINUTES } from '../core/desktopExit';
 import { DesktopMode } from './shell/desktopMode';
 import { parseWindow } from '../core/updatePolicy';
@@ -222,13 +223,10 @@ const renderPage: PageRenderer = async (doc: PrintDoc, widthDots: number) => {
 };
 
 function zoomFor(win: BrowserWindow): number {
-  const local = service?.localSettings().zoom;
-  if (local && local > 0.5 && local < 4) return local;
   // The layout is drawn for ~540 CSS px across a portrait kiosk (a 1080-wide screen at ×2),
-  // ~960 across a landscape one; the zoom fills the screen at that size.
+  // ~960 across a landscape one; the zoom fills the screen at that size (core/windowZoom.ts).
   const { width, height } = win.getContentBounds();
-  const short = Math.min(width, height);
-  return Math.max(1, Math.min(3, short / 540));
+  return kioskWindowZoom(width, height, service?.localSettings().zoom);
 }
 
 function createMain() {

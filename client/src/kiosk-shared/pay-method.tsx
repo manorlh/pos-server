@@ -334,7 +334,7 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
               </div>
             ) : null}
             {live.note ? (
-              <p className="text-center kt-13 font-semibold" style={{ color: m.c.accent }}>
+              <p className="text-center kt-13 font-semibold" style={{ color: m.c.accentInk }}>
                 {live.note}
               </p>
             ) : null}
@@ -367,7 +367,8 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
   return (
     <div className="relative flex h-full flex-col">
       <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
-        <div className="my-auto w-full max-w-[640px] overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
+        {/* Never squeezed (shrink-0): a short window scrolls the whole card (layout audit 16.10). */}
+        <div className="my-auto w-full max-w-[640px] shrink-0 overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
           <EntryHeader m={m} caption={m.txt('stepPayMethod')} start={<LiveBack m={m} size={32} />} compact={m.screen.h < 720} />
           {body}
         </div>
@@ -410,7 +411,7 @@ export function CashAtTillDone({ m, live }: { m: PreviewModel; live: KioskLiveCa
             <div className="text-sm font-semibold" style={{ color: m.c.mutedText }}>
               {payText(m, 'cashDoneBody', { number: '' }).trim() || m.txt('pickupLabel')}
             </div>
-            <div className="text-6xl font-black tabular-nums" dir="ltr" style={{ color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}>
+            <div className="text-6xl font-black leading-[1.15] tabular-nums" dir="ltr" style={{ color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}>
               {live.pickupLabel}
             </div>
           </div>

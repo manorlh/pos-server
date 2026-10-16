@@ -1,0 +1,23 @@
+{
+  "_comment": "The screen matrix of the layout audit (P:/specs/layout-audit-1610/README.md): every panel from 10 to 32 inches the owner asked for on 16.10, plus 720x1024 and the square panels. Shared by pos-server kiosk-desktop/test/fixtures and pos-android app/src/test/resources (keep both copies equal). widthPx x heightPx is the panel's native landscape (or square) mode; orientations: the kiosk may be mounted either way (portrait = the panel turned), the till turns only where `tillRotates` (a tablet); a square panel has one. scales: the Windows display scaling (100/125/150%) - on Android the same factors as densityDpi 160/200/240. diagonalInches null: unknown (the browser never knows it; Android tests it as an HDMI panel with no physical claim). approxDiagonal: the owner gave a range, the value is a typical panel.",
+  "scales": [1.0, 1.25, 1.5],
+  "screens": [
+    { "id": "10.1in-1280x800", "diagonalInches": 10.1, "widthPx": 1280, "heightPx": 800, "tillRotates": true },
+    { "id": "10.1in-1920x1200", "diagonalInches": 10.1, "widthPx": 1920, "heightPx": 1200, "tillRotates": true },
+    { "id": "11in-2000x1200", "diagonalInches": 11.0, "widthPx": 2000, "heightPx": 1200, "tillRotates": true },
+    { "id": "13.3in-1920x1080", "diagonalInches": 13.3, "widthPx": 1920, "heightPx": 1080, "tillRotates": true },
+    { "id": "15.6in-1366x768", "diagonalInches": 15.6, "widthPx": 1366, "heightPx": 768, "tillRotates": false },
+    { "id": "15.6in-1920x1080", "diagonalInches": 15.6, "widthPx": 1920, "heightPx": 1080, "tillRotates": false },
+    { "id": "17in-1280x1024", "diagonalInches": 17.0, "widthPx": 1280, "heightPx": 1024, "tillRotates": false },
+    { "id": "21.5in-1920x1080", "diagonalInches": 21.5, "widthPx": 1920, "heightPx": 1080, "tillRotates": false },
+    { "id": "24in-1920x1080", "diagonalInches": 24.0, "widthPx": 1920, "heightPx": 1080, "tillRotates": false },
+    { "id": "27in-2560x1440", "diagonalInches": 27.0, "widthPx": 2560, "heightPx": 1440, "tillRotates": false },
+    { "id": "27in-3840x2160", "diagonalInches": 27.0, "widthPx": 3840, "heightPx": 2160, "tillRotates": false },
+    { "id": "32in-1920x1080", "diagonalInches": 32.0, "widthPx": 1920, "heightPx": 1080, "tillRotates": false },
+    { "id": "32in-3840x2160", "diagonalInches": 32.0, "widthPx": 3840, "heightPx": 2160, "tillRotates": false },
+    { "id": "1024x720", "diagonalInches": null, "approxDiagonal": 10.1, "widthPx": 1024, "heightPx": 720, "tillRotates": true },
+    { "id": "square-720", "diagonalInches": null, "approxDiagonal": 10.1, "widthPx": 720, "heightPx": 720, "tillRotates": false },
+    { "id": "square-1024", "diagonalInches": null, "approxDiagonal": 13.3, "widthPx": 1024, "heightPx": 1024, "tillRotates": false },
+    { "id": "square-1080", "diagonalInches": null, "approxDiagonal": 15.6, "widthPx": 1080, "heightPx": 1080, "tillRotates": false }
+  ]
+}

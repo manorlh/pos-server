@@ -151,7 +151,7 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
             e.stopPropagation();
             tap(p, true, pic(e));
           }}
-          className="flex shrink-0 items-center justify-center rounded-full font-bold shadow-sm"
+          className="k-hit flex shrink-0 items-center justify-center rounded-full font-bold shadow-sm"
           style={{ width: 36 * u, height: 36 * u, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         >
           {added ? <Check className="h-1/2 w-1/2" /> : <Plus className="h-1/2 w-1/2" />}

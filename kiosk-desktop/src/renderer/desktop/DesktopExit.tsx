@@ -31,7 +31,8 @@ export function DesktopExitButton({ onOpen, className = 'absolute', style }: { o
         e.stopPropagation();
         onOpen();
       }}
-      className={`${className} bottom-2 right-2 z-[66] flex h-9 w-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100`}
+      // `k-hit`: on the kiosk, its touch area 48 dp at the window's zoom (kiosk-shared PREVIEW_CSS; layout audit 16.10).
+      className={`${className} k-hit bottom-2 right-2 z-[66] flex h-9 w-9 items-center justify-center rounded-full text-white transition-opacity hover:opacity-100`}
       style={{ background: 'rgba(17, 24, 39, 0.28)', opacity: 0.7, ...style }}
     >
       <MonitorUp className="h-[18px] w-[18px]" aria-hidden />
