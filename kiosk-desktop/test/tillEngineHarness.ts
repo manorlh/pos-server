@@ -120,7 +120,11 @@ export function harness(o: HarnessOptions = {}): Harness {
     const key = `${method} ${p}`;
     // An exact route first, then a `…/*` prefix.
     const a = answers[key] ?? Object.entries(answers).find(([k]) => k.endsWith('*') && key.startsWith(k.slice(0, -1)))?.[1];
-    return new Response(JSON.stringify(a ? a(body) : {}), { status: a ? 200 : 404, headers: { 'Content-Type': 'application/json' } });
+    // An answer may name its own status (`{__status: 409, …}`): the cloud's refusals, as the till reads them.
+    const out = a ? a(body) : {};
+    const status = out && typeof out === 'object' && typeof (out as { __status?: unknown }).__status === 'number' ? (out as { __status: number }).__status : a ? 200 : 404;
+    if (out && typeof out === 'object') delete (out as { __status?: unknown }).__status;
+    return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
   };
   const terminal = new FakeTerminal();
   const printer = { ...noPrinter, sent: [] as Uint8Array[] };

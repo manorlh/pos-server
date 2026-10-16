@@ -33,13 +33,14 @@ import { MenuScreen } from './screens/MenuScreen';
 import { SellScreen } from './screens/SellScreen';
 import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
+import { UsersScreen } from './screens/UsersScreen';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users';
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -176,7 +177,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return (
         <MenuScreen
           state={s}
-          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : to === 'drawer' ? 'drawer' : to === 'drawerOpen' ? 'drawerOpen' : 'caps')}
+          go={(to) => setView(to === 'caps' ? 'caps' : to)}
           signOut={() => void run('session.logout', {})}
           switchTo={() => void run('mode.switch', { to: 'kiosk' })}
           back={() => setView('sell')}
@@ -198,6 +199,22 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             deposit: (employeeId, countedAgorot) => run('drawer.walletDeposit', { employeeId, countedAgorot }),
             log: async () => (await run('drawer.log', {})) as DrawerLog | undefined,
             back: () => setView('menu'),
+          }}
+        />
+      );
+    }
+    if (view === 'users') {
+      return (
+        <UsersScreen
+          users={s.users}
+          actions={{
+            open: () => void run('users.open', {}),
+            refresh: () => void run('users.refresh', {}),
+            release: (sessionId) => void run('users.release', { sessionId }),
+            close: () => {
+              void run('users.close', {});
+              setView('menu');
+            },
           }}
         />
       );
@@ -274,7 +291,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           ) : (
             <button
               type="button"
-              className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' || view === 'shopx' || view === 'drawer' || view === 'drawerOpen' ? ' t-nav-on' : ''}`}
+              className={`t-nav-btn${view !== 'sell' && view !== 'shift' ? ' t-nav-on' : ''}`}
               onClick={() => setView('menu')}
             >
               {T.menu}
@@ -315,6 +332,15 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               {s.mode.switchLabel ?? 'חזרה לקיוסק'}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {s.users?.notice ? (
+        // "עובד מחובר בקופה אחת בלבד": signed in elsewhere too, signing out at the end of the action, signed out (exclusive login v2).
+        <div className="t-notice" role="status">
+          <span className="t-notice-text">{s.users.notice}</span>
+          <button type="button" className="t-pill" onClick={() => void run('session.dismissNotice', {})}>
+            {T.close}
+          </button>
         </div>
       ) : null}
       {status === 'offline' ? (

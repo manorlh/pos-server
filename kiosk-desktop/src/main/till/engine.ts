@@ -68,6 +68,7 @@ import type { KioskService } from '../service';
 import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../../core/till/drawer';
 import { DRAWER_PERM } from '../../core/till/drawer';
 import { TillDrawer } from './tillDrawer';
+import { TillSessions } from './userSessions';
 import type { DialogSpec, TillContext } from './tillContext';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
@@ -307,6 +308,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly ctx: TillContext;
   /** "מגירת מזומן": the drawer's flows, its audit and movements (tillDrawer.ts). */
   readonly drawer: TillDrawer;
+  /** "עובד מחובר בקופה אחת בלבד", "עובדים מחוברים", "נעילה בחוסר שימוש" (userSessions.ts). */
+  readonly sessions: TillSessions;
+  /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
+  private lastTouchAt: number;
 
   constructor(private readonly o: TillEngineOptions) {
     this.svc = o.svc;
@@ -316,6 +321,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.lastActivityAt = this.nowFn();
     this.ctx = this.makeContext();
     this.drawer = new TillDrawer(this.ctx, { expectedBalance: () => this.expectedNow() });
+    this.lastTouchAt = this.lastActivityAt;
+    this.sessions = new TillSessions(this.ctx, {
+      completeSignIn: (user) => this.completeSignIn(user),
+      signOut: (reason) => this.forceSignOut(reason),
+      lastActivity: () => Math.max(this.lastActivityAt, this.lastTouchAt),
+      canSignOutNow: () => this.checkout.phase === 'idle' && !this.svc.pay.cardInFlight,
+    });
+    this.sessions.start();
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
@@ -368,6 +381,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   stop() {
     this.stopped = true;
+    this.sessions.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -482,6 +496,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const before = this.applied.get(c.clientOpId);
       if (before) return { ...before, id: c.id };
     }
+    // A touch: every op from the screens but the host's own and the catalog's read (the idle lock counts from it).
+    if (c.op !== 'host.idle' && c.op !== 'hw.result' && c.op !== 'session.hello' && c.op !== 'catalog.snapshot') this.lastTouchAt = this.nowFn();
     let reply: EngineReply;
     try {
       if (!this.svc.fiscal && c.op !== 'session.hello' && c.op !== 'host.idle' && c.op !== 'session.activity') refuse('not_a_till');
@@ -600,6 +616,18 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.drawer.deposit(a.employeeId, a.countedAgorot);
       case 'drawer.log':
         return this.drawer.log();
+      // "עובדים מחוברים" (userSessions.ts).
+      case 'users.open':
+        return this.sessions.open();
+      case 'users.refresh':
+        this.signedIn();
+        return this.sessions.load();
+      case 'users.release':
+        return this.sessions.release(a.sessionId);
+      case 'users.close':
+        return this.sessions.closeList();
+      case 'session.dismissNotice':
+        return this.sessions.dismissNotice();
     }
     return refuse('unknown_op');
   }
@@ -638,14 +666,34 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const code: TillErrorCode = d.outcome === 'locked' || d.outcome === 'locked_out' ? 'login_locked' : 'wrong_pin';
       return refuse(code, d.message ?? TEXT.loginBad, { triesLeft: d.triesLeft });
     }
-    this.cashier = d.user;
+    // "עובד מחובר בקופה אחת בלבד": signed in at another till → not here (unless a manager releases it); no answer — as
+    // the shop chose (exclusiveUserLoginOffline). The question's answer completes the sign-in itself.
+    const check = await this.sessions.afterPin(d.user);
+    if (check !== 'in') return check;
+    return this.completeSignIn(d.user);
+  }
+
+  /** The employee is in: the operator, the activity's clock, the guard told. */
+  private completeSignIn(user: RosterUser) {
+    const before = this.cashier;
+    if (before && before.id !== user.id) this.sessions.left(before);
+    this.cashier = user;
     this.locked = false;
     this.lastActivityAt = this.nowFn();
-    return { cashier: { id: d.user.id, name: displayName(d.user) } };
+    this.lastTouchAt = this.lastActivityAt;
+    this.sessions.signedIn(user);
+    return { cashier: { id: user.id, name: displayName(user) } };
   }
 
   private logout() {
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
+    this.signOutNow();
+    return undefined;
+  }
+
+  /** The operator leaves (sign-out, the idle lock, a manager's release, the work mode): the guard owes their release. */
+  private signOutNow() {
+    const user = this.cashier;
     this.cashier = null;
     this.locked = true;
     if (this.pending?.timer) clearTimeout(this.pending.timer);
@@ -654,7 +702,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The shop's figures were for the user who asked: gone with them.
     this.shopXDoc = null;
     this.shopXError = null;
-    return undefined;
+    if (user) this.sessions.left(user);
+  }
+
+  /** "נעילה בחוסר שימוש" / a manager's release (userSessions.ts): never over a payment — the caller checked. */
+  private forceSignOut(reason: 'idle' | 'released') {
+    if (!this.cashier || this.checkout.phase !== 'idle') return;
+    this.log(`till: ${displayName(this.cashier)} signed out (${reason})`);
+    this.signOutNow();
   }
 
   /**
@@ -1556,8 +1611,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const r = await wm.returnToKiosk('manual', by.name, by.id);
       if (r) return refuse('mode_switch_busy', r.text, { reason: r.wire });
       // The employee's session ends with the till mode (Android: session.signOut).
-      this.cashier = null;
-      this.locked = true;
+      this.signOutNow();
       this.cart = [];
       return undefined;
     };
@@ -1691,6 +1745,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       menuHidden: parseHiddenMenu(this.svc.cloud.parameters()[HIDDEN_MENU_PARAM]),
       tileText: tileTextOf(this.svc.cloud.parameters()),
       drawer: this.drawer.state(),
+      users: this.sessions.state(),
       shopX: {
         offered: this.shopXHere(),
         report: this.shopXDoc?.doc ?? null,

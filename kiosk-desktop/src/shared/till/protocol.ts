@@ -96,6 +96,13 @@ export const TILL_OPS = [
   'drawer.wallets',
   'drawer.walletDeposit',
   'drawer.log',
+  // "עובד מחובר בקופה אחת בלבד" (main/till/userSessions.ts): "עובדים מחוברים" — the shop's signed-in employees, a manager's
+  // release from here; and the banner about this till's own sign-in, dismissed.
+  'users.open',
+  'users.refresh',
+  'users.release',
+  'users.close',
+  'session.dismissNotice',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -130,6 +137,10 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'drawer.countSave',
   'drawer.countDone',
   'drawer.walletDeposit',
+  'users.open',
+  'users.release',
+  'users.close',
+  'session.dismissNotice',
 ]);
 
 export interface OpArgs {
@@ -178,6 +189,11 @@ export interface OpArgs {
   /** An employee of the list `drawer.wallets` gave last, and what was counted into the drawer. */
   'drawer.walletDeposit': { employeeId: string; countedAgorot: number };
   'drawer.log': Record<string, never>;
+  'users.open': Record<string, never>;
+  'users.refresh': Record<string, never>;
+  'users.release': { sessionId: string };
+  'users.close': Record<string, never>;
+  'session.dismissNotice': Record<string, never>;
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -433,6 +449,29 @@ export interface TillState {
   shopX?: ShopXState;
   /** "מגירת מזומן" (main/till/tillDrawer.ts): the menu's drawer rows, the reasons, a count in progress. */
   drawer?: DrawerState;
+  /** "עובד מחובר בקופה אחת בלבד" (main/till/userSessions.ts): the banner, and "עובדים מחוברים". */
+  users?: UsersState;
+}
+
+export interface SignedInSession {
+  id: string;
+  posUserId: string;
+  posUserName: string | null;
+  machineName: string | null;
+  posNumber: string | null;
+  startedAt: string | null;
+  lastSeenAt: string | null;
+  silentSince: string | null;
+  openTables: number;
+  here: boolean;
+}
+
+export interface UsersState {
+  notice: string | null;
+  offered: boolean;
+  list: { sessions: SignedInSession[]; at: number } | null;
+  busy: boolean;
+  error: string | null;
 }
 
 export interface DrawerState {
