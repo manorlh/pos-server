@@ -33,6 +33,15 @@ export interface SaleRequest {
   onAnswered?: () => void;
 }
 
+export interface RefundRequest {
+  amountAgorot: number;
+  reference: string;
+  /** The acquirer's id of the original sale (a linked refund); null — an unlinked credit. */
+  originalTransactionId: string | null;
+  onProgress?: (message: string) => void;
+  onAnswered?: () => void;
+}
+
 /** What the document's card leg and the receipt need of an approval. */
 export interface ApprovedCard {
   brand: CardBrand;
@@ -90,6 +99,11 @@ export interface PaymentProvider {
   newReference(): string;
   check(timeoutMs?: number): Promise<CheckResult>;
   sale(req: SaleRequest): Promise<SaleResult>;
+  /**
+   * Money back to a card (a credit note's card leg): linked to the original sale's acquirer id when given, else an
+   * unlinked credit. Absent: this terminal takes no refunds from the till.
+   */
+  refund?(req: RefundRequest): Promise<SaleResult>;
   resolve(attempt: { reference: string; amountAgorot: number; terminalTip: boolean }): Promise<Resolution>;
   abort(reference: string): Promise<void>;
   /** The day's batch to the acquirer (Nayax doPeriodic), when the terminal has one. */

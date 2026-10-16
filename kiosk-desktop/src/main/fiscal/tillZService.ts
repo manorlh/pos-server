@@ -27,12 +27,14 @@ import type { Kv } from '../db/schema';
 import type { Api } from '../sync/api';
 import type { Ledger } from './ledger';
 import type { TransmitResult } from '../payment/provider';
+import { kioskZPrintsHere } from '../../core/kioskZ';
 
 const OWED = 'tillZ.owed';
 const PENDING = 'tillZ.pendingRequest';
 
 export type ZOutcome =
-  | { kind: 'produced'; z: Record<string, unknown> }
+  /** `printedHere` false: a controlling till asked for this Z and prints it itself (the answer's `printOn`). */
+  | { kind: 'produced'; z: Record<string, unknown>; printedHere?: boolean }
   | { kind: 'refused'; refusal: string }
   | { kind: 'waiting'; why: string }
   | { kind: 'offline' }
@@ -51,6 +53,8 @@ export interface TillZDeps {
   transmit: () => Promise<TransmitResult | null>;
   print: (z: Record<string, unknown>) => void;
   log: (m: string) => void;
+  /** The cloud reachable now (no connection: the Z is owed, never asked). Default: yes. */
+  online?: () => boolean;
 }
 
 export class TillZService {
@@ -112,6 +116,36 @@ export class TillZService {
     }
   }
 
+  /**
+   * The kiosk admin's own Z (core/kioskZ.ts KioskZRunner): its steps under this service's one lock, so the 30-second tick
+   * never asks for a Z beside it. Null while the tick or another request is at it.
+   */
+  async exclusive<T>(fn: () => Promise<T>): Promise<T | null> {
+    if (this.busy) return null;
+    this.busy = true;
+    try {
+      return await fn();
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** The card deals transmitted before the shift closed (the admin's Z): what this Z carries, not a second batch. */
+  setCardTransmission(t: TransmitResult | null) {
+    this.cardTransmission = t ? cardTransmissionWire(t) : { outcome: 'skipped', at: new Date().toISOString() };
+  }
+
+  /**
+   * prepare() for the admin's Z (TillZService.prepare on Android): no connection → `offline` (owed); every close delivered
+   * first, else `waiting` with how many are still closing.
+   */
+  async prepare(): Promise<{ kind: 'ready' } | { kind: 'offline' } | { kind: 'waiting'; closing: number }> {
+    if (this.d.online && !this.d.online()) return { kind: 'offline' };
+    await this.d.flush();
+    const closing = this.d.ledger.closingCount();
+    return closing > 0 ? { kind: 'waiting', closing } : { kind: 'ready' };
+  }
+
   /** A close requested by the cloud (heartbeat pendingCloseShift): the same close, its request id carried. */
   closeForCloud(input: { requestId: string; closerName: string; vatRate: number }) {
     return this.d.ledger.closeShift({ closedByName: input.closerName, closeRequestId: input.requestId, unattended: true, vatRate: input.vatRate });
@@ -125,7 +159,7 @@ export class TillZService {
   }
 
   /** POST till-z with the one request id; the Z stored, its shifts marked, printed. */
-  async produce(closerName: string, unattended: boolean, tillZRequestId: string | null = null): Promise<ZOutcome> {
+  async produce(closerName: string, unattended: boolean, tillZRequestId: string | null = null, createdByUserId: string | null = null): Promise<ZOutcome> {
     const machineId = this.d.machineId();
     if (!machineId) return { kind: 'waiting', why: 'not paired' };
     const ready = await this.prepared();
@@ -152,6 +186,7 @@ export class TillZService {
       clientRequestId: pending.id,
       ...(tillZRequestId ? { tillZRequestId } : {}),
       ...(through ? { throughShiftId: through.id } : {}),
+      ...(createdByUserId ? { createdByUserId } : {}),
       createdByName: closerName,
       unattended,
       ...(till ? { till } : {}),
@@ -200,12 +235,17 @@ export class TillZService {
     this.d.kv.delete(PENDING);
     this.cardTransmission = null;
     this.d.log(`till Z ${number}`);
-    try {
-      this.d.print(z);
-    } catch (e) {
-      this.d.log(`till Z print: ${String(e)}`);
+    // A Z a controlling till of the shop asked for and prints itself (`printOn: "controller"`): not on the kiosk's paper.
+    const printedHere = kioskZPrintsHere(answer);
+    if (!printedHere) this.d.log(`till Z ${number}: printed on ${String(answer.printOnName ?? answer.printOnMachineId ?? 'the controlling till')}`);
+    else {
+      try {
+        this.d.print(z);
+      } catch (e) {
+        this.d.log(`till Z print: ${String(e)}`);
+      }
     }
-    return { kind: 'produced', z };
+    return { kind: 'produced', z, printedHere };
   }
 
   /** The Zs the kiosk holds, newest first. */

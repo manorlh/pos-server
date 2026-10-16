@@ -144,7 +144,7 @@ function settling(answers: ReturnType<typeof fakeCloud>['answers'], ids: { reser
     answers[`POST sync/m/prepaid-vouchers/reservations/${r}/release`] = () => ({ status: 200, body: { ok: true } });
   }
   for (const r of ids.redemptions ?? []) {
-    answers[`POST sync/m/prepaid-vouchers/redemptions/${r}/attach`] = () => ({ status: 200, body: { ok: true } });
+    answers[`POST sync/m/prepaid-vouchers/redemptions/${r}/transaction`] = () => ({ status: 200, body: { ok: true } });
     answers[`POST sync/m/prepaid-vouchers/redemptions/${r}/reverse`] = () => ({ status: 200, body: { ok: true } });
   }
 }
@@ -304,7 +304,7 @@ describe('a goods voucher in the kiosk payment (a leg of the document)', () => {
     expect(items[0].notes).toBeUndefined();
     expect(String(items[1].notes)).toMatch(/^כלול בשובר #7 \(1\)/);
     expect(items[1]).toMatchObject({ totalPrice: 20 });
-    const attach = await until(() => calls(cloud.sent, 'redemptions/red-7/attach')[0]);
+    const attach = await until(() => calls(cloud.sent, 'redemptions/red-7/transaction')[0]);
     expect(attach.body).toEqual({ transactionId: doc!.id });
   });
 
@@ -321,7 +321,7 @@ describe('a goods voucher in the kiosk payment (a leg of the document)', () => {
     const wire = await wireOf(svc, doc!.id);
     expect((wire.payments as Row[]).map((p) => [p.method, p.amount])).toEqual([['production_voucher', 5], ['card', 5]]);
     expect(wire.documentDiscount).toBe(10);
-    await until(() => calls(cloud.sent, 'reservations/r-v1/confirm')[0] && calls(cloud.sent, 'redemptions/red-7/attach')[0]);
+    await until(() => calls(cloud.sent, 'reservations/r-v1/confirm')[0] && calls(cloud.sent, 'redemptions/red-7/transaction')[0]);
   });
 
   it('paying the whole goods needs no terminal: the document is complete with the leg alone, the vouchers settled', async () => {
@@ -338,7 +338,7 @@ describe('a goods voucher in the kiosk payment (a leg of the document)', () => {
     const wire = await wireOf(svc, doc!.id);
     expect(wire).toMatchObject({ paymentMethod: 'production_voucher', totalAmount: 10 });
     expect((wire.payments as Row[]).map((p) => [p.method, p.amount])).toEqual([['production_voucher', 10]]);
-    await until(() => calls(cloud.sent, 'redemptions/red-7/attach')[0]);
+    await until(() => calls(cloud.sent, 'redemptions/red-7/transaction')[0]);
   });
 
   it('paying the whole goods, the tip is still the card\'s: the terminal is asked for it alone, and the document has both', async () => {
@@ -377,7 +377,7 @@ describe('a goods voucher in the kiosk payment (a leg of the document)', () => {
     const { doc } = await paid(svc, started.orderId);
     expect(((await wireOf(svc, doc!.id)).payments as Row[]).map((p) => p.method)).toEqual(['card']);
     await until(() => calls(cloud.sent, 'redemptions/red-8/reverse')[0]);
-    expect(calls(cloud.sent, 'redemptions/red-8/attach')).toHaveLength(0);
+    expect(calls(cloud.sent, 'redemptions/red-8/transaction')).toHaveLength(0);
   });
 
   it('a declined card leaves the leg: the document cancelled, the redemption not attached', async () => {

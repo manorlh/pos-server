@@ -21,21 +21,34 @@ import { localDate } from '../../core/kioskOrders';
 import { toShekels } from '../../core/money';
 import {
   buildXTill,
+  isCreditType,
   lastTransactionNumberOf,
   lineGross,
+  manualDiscount,
   optionCharged,
   unitAgorot,
   type SaleLine,
   type SaleOption,
   type SaleTotals,
   type XDoc,
+  type XTill,
 } from '../../core/sale';
+import { countsAsPayment, isTestVoucherId, offVoucherLineValues, type DocPrepaidRedemption } from '../../core/till/vouchers';
 import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
 import type { ApprovedCard } from '../payment/provider';
 import type { Outbox } from '../sync/outbox';
 
-export type DocStatus = 'pending' | 'completed' | 'cancelled';
+/**
+ * `refunded` / `partial_refund`: a completed sale a credit note credited (in full / in part — SaleRepository.settleCredit);
+ * still a concluded movement of money (the X counts it as it was), never edited otherwise.
+ */
+export type DocStatus = 'pending' | 'completed' | 'cancelled' | 'refunded' | 'partial_refund';
+
+/** A document whose money moved: completed, or a sale credited since (in full or in part). */
+export function settled(d: Pick<DocDraft, 'status'>): boolean {
+  return d.status === 'completed' || d.status === 'refunded' || d.status === 'partial_refund';
+}
 
 /** Everything a document is, as stored (the wire is built from it). */
 export interface DocDraft {
@@ -65,6 +78,11 @@ export interface DocDraft {
   voucherLegs?: DocVoucherLeg[];
   /** Discount vouchers held for the sale that took nothing off it: given back once the sale is written. */
   voucherReleases?: string[];
+  /**
+   * A till sale's production vouchers ("שוברי הפקה", core/till/vouchers.ts), as it booked each — its accounting, its units by
+   * the document's lines: the deductions (`voucherDiscounts` kind `production_voucher`), the memo lines, the hold each names.
+   */
+  prepaidVouchers?: DocPrepaidRedemption[];
   /** The card's leg; null with the vouchers alone paying the sale (nothing was charged). */
   card: ApprovedCard | null;
   /**
@@ -77,6 +95,108 @@ export interface DocDraft {
   paymentId: string;
   /** The lookup's evidence on a voided document. */
   voidMeta: Record<string, unknown> | null;
+  /**
+   * A till sale's tenders, in the order taken (cash legs, then the card leg last) — their amounts add up
+   * to the document's total. Absent: the kiosk's one card leg for the whole total.
+   */
+  payments?: DocLeg[];
+  /** A cash sale: what was handed over and the change given back (agorot) — `amountTendered` / `changeAmount` on the wire. */
+  tenderedAgorot?: number;
+  changeAgorot?: number;
+  /** Where it was rung: absent = a kiosk order; `till` = a staff sale (the cashier's own PIN session). */
+  channel?: 'till';
+  /** A mixed basket (core/till/basket.ts): the same id on every document of it. */
+  basketId?: string;
+  /** A credit note: the sale it credits; null — a return with no receipt. */
+  refundOfTransactionId?: string | null;
+  /** Nothing is left to credit on the original once this credit note stands. */
+  fullyRefunded?: boolean;
+  /** Who authorised it — a manager's code, or the operator acting on their own right (`approvedByPosUserId`). */
+  approvedByPosUserId?: string | null;
+  /** The customer a credit note went to (name, and a phone or an address), as taken down at the till. */
+  customer?: { name: string; phone: string | null; address: string | null } | null;
+  /** The basket discount on its own (inside the document's discount), its rate when given as one, its kind. */
+  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+}
+
+/** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
+export interface DocLeg {
+  /**
+   * `exchange`: what a mixed basket's returns paid of its sale (core/till/basket.ts) — never cash, card or the drawer. `cash_credit`: a
+   * CC: credit redeemed at the payment (§11.15א). `production_voucher`: a production voucher booked as a tender ("שוברי הפקה").
+   */
+  method: 'cash' | 'card' | 'exchange' | 'cash_credit' | 'production_voucher';
+  amountAgorot: number;
+  /** A cash credit's leg (§11.15א): the redemption it confirms — sent as the payment's `cashCredit`. */
+  cashCredit?: { code: string; redemptionId: string };
+  /** A production voucher's leg: its hold (the document confirms it, §4.2) or its `/redeem` redemption, its number. */
+  voucher?: { redemptionId: string; reservationId: string | null; serial: number };
+}
+
+/** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
+export function legsOf(d: Pick<DocDraft, 'payments' | 'card' | 'status' | 'totals'>): DocLeg[] {
+  if (!settled(d)) return [];
+  if (d.payments && d.payments.length > 0) return d.payments;
+  return d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [];
+}
+
+/** What a sale document is written from (a kiosk's card sale, a till's cash or card-last sale). */
+export interface SaleInput {
+  documentType: number;
+  prefix: string | null;
+  branchId: string | null;
+  operator: { id: string; name: string };
+  orderId: string | null;
+  lines: SaleLine[];
+  tracked: string[];
+  totals: SaleTotals;
+  promotions?: AppliedPromotionRow[];
+  voucherDiscounts?: DocVoucherDiscount[];
+  voucherReleases?: string[];
+  voucherLegs?: DocVoucherLeg[];
+  /** A till sale's production vouchers as booked (DocDraft.prepaidVouchers). */
+  prepaidVouchers?: DocPrepaidRedemption[];
+  /** Cash credits redeemed for the sale (§11.15א): `cash_credit` legs. */
+  creditLegs?: DocCreditLeg[];
+  /** A till sale's tenders (see DocDraft.payments), the cash handed over and the change. */
+  payments?: DocLeg[];
+  tenderedAgorot?: number;
+  changeAgorot?: number;
+  channel?: 'till';
+  now?: Date;
+  /** Who authorised its discounts (a manager's code, or the operator acting on their own right). */
+  approvedByPosUserId?: string | null;
+  /** The basket discount on its own, its rate, its kind. */
+  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+}
+
+/** One document of a basket, as the till's engine built it (core/till/basket.ts). */
+export interface BasketDocInput {
+  documentType: number;
+  lines: SaleLine[];
+  tracked: string[];
+  totals: SaleTotals;
+  promotions?: AppliedPromotionRow[];
+  /** Its legs: real ones and `exchange` — they add up to what it collects or credits. */
+  payments: DocLeg[];
+  tenderedAgorot?: number;
+  changeAgorot?: number;
+  /** A credit note: the sale it credits (null: no receipt) and whether nothing is left on it afterwards. */
+  refundOfTransactionId?: string | null;
+  fullyRefunded?: boolean;
+  approvedByPosUserId?: string | null;
+  customer?: { name: string; phone: string | null; address: string | null } | null;
+  basketDiscount?: { agorot: number; percent: number | null; kind: string } | null;
+}
+
+export interface BasketWriteInput {
+  prefix: string | null;
+  branchId: string | null;
+  operator: { id: string; name: string };
+  /** The basket's id on every document; null: one credit note on its own (a refund from the history). */
+  basketId: string | null;
+  documents: BasketDocInput[];
+  now?: Date;
 }
 
 export interface ShiftRow {
@@ -262,11 +382,15 @@ export class Ledger {
     this.kv.setNumber(SHIFT_SEQ_KEY, atLeast);
   }
 
-  /** The open shift, or a new one as the kiosk itself (float 0). */
-  openShift(operator: { id: string; name: string }, now = new Date()): ShiftRow {
+  /**
+   * The open shift, or a new one: as the kiosk itself (float 0), or — at a till — as the employee signed in,
+   * with the float counted into the drawer (`openingCashAgorot`).
+   */
+  openShift(operator: { id: string; name: string }, now = new Date(), openingCashAgorot = 0): ShiftRow {
     return this.db.tx(() => {
       const open = this.currentShift();
       if (open) return open;
+      const opening = Number.isInteger(openingCashAgorot) && openingCashAgorot > 0 ? openingCashAgorot : 0;
       const row: ShiftRow = {
         id: randomUUID(),
         sequence_number: this.nextShiftNumber(),
@@ -274,7 +398,7 @@ export class Ledger {
         opened_at: now.toISOString(),
         opened_by_id: operator.id,
         opened_by_name: operator.name,
-        opening_cash: 0,
+        opening_cash: opening,
         status: 'open',
         closed_at: null,
         close_payload: null,
@@ -290,7 +414,7 @@ export class Ledger {
         row.opened_at,
         row.opened_by_id,
         row.opened_by_name,
-        0,
+        row.opening_cash,
         'open',
       );
       this.outbox.enqueue('shift_open', row.id);
@@ -320,7 +444,17 @@ export class Ledger {
    * (a card-only kiosk: 0), in one transaction with its outbox row. Refused while a payment is
    * pending in it.
    */
-  closeShift(input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now?: Date }):
+  closeShift(input: {
+    closedByName: string;
+    closedByUserId?: string | null;
+    unattended?: boolean;
+    closeRequestId?: string | null;
+    vatRate: number;
+    now?: Date;
+    countedCashAgorot?: number | null;
+    /** The till's drawer figures on the X (core/till/drawer.ts `tillWithDrawer`: the movements and the wallets), by the shift. */
+    tillExtra?: (till: XTill, shiftId: string) => XTill;
+  }):
     | { kind: 'closed'; shift: ShiftRow; payload: Record<string, unknown> }
     | { kind: 'none' }
     | { kind: 'pending'; count: number } {
@@ -388,73 +522,80 @@ export class Ledger {
    * The pending card sale, numbered in its series (the counter saved first), BEFORE the terminal
    * is touched. Refused (null) without an open shift.
    */
-  openCardSale(input: {
-    documentType: number;
-    prefix: string | null;
-    branchId: string | null;
-    operator: { id: string; name: string };
-    orderId: string | null;
-    lines: SaleLine[];
-    tracked: string[];
-    totals: SaleTotals;
-    promotions?: AppliedPromotionRow[];
-    voucherDiscounts?: DocVoucherDiscount[];
-    voucherReleases?: string[];
-    voucherLegs?: DocVoucherLeg[];
-    /** Cash credits redeemed for the sale (§11.15א): `cash_credit` legs. */
-    creditLegs?: DocCreditLeg[];
-    now?: Date;
-  }): DocDraft | null {
+  openCardSale(input: SaleInput): DocDraft | null {
+    return this.db.tx(() => this.insertSale(input, 'pending'));
+  }
+
+  /**
+   * A till's cash sale (and a cash-only settle): the document numbered in its series (the counter saved first) and
+   * written `completed` with its legs and the cash handed over, in ONE transaction with its outbox row — there is no
+   * terminal to wait for, so there is no pending state. Refused (null) without an open shift.
+   */
+  recordCashSale(input: SaleInput): DocDraft | null {
     return this.db.tx(() => {
-      const shift = this.currentShift();
-      if (!shift) return null;
-      const now = (input.now ?? new Date()).toISOString();
-      const number = this.counters.next(input.documentType);
-      const draft: DocDraft = {
-        id: randomUUID(),
-        documentType: input.documentType,
-        number,
-        prefix: input.prefix,
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-        shiftId: shift.id,
-        businessDate: shift.business_date,
-        cashierId: input.operator.id,
-        cashierName: input.operator.name,
-        branchId: input.branchId,
-        orderId: input.orderId,
-        lines: input.lines,
-        itemIds: input.lines.map(() => randomUUID()),
-        tracked: input.tracked,
-        totals: input.totals,
-        ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
-        ...(input.voucherDiscounts && input.voucherDiscounts.length > 0 ? { voucherDiscounts: input.voucherDiscounts } : {}),
-        ...(input.voucherLegs && input.voucherLegs.length > 0 ? { voucherLegs: input.voucherLegs } : {}),
-        ...(input.creditLegs && input.creditLegs.length > 0 ? { creditLegs: input.creditLegs } : {}),
-        ...(input.voucherReleases && input.voucherReleases.length > 0 ? { voucherReleases: input.voucherReleases } : {}),
-        card: null,
-        paymentId: randomUUID(),
-        voidMeta: null,
-      };
-      this.db.run(
-        'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        draft.id,
-        draft.documentType,
-        seriesOf(draft.documentType),
-        number,
-        draft.prefix,
-        'pending',
-        shift.id,
-        draft.orderId,
-        now,
-        now,
-        draft.totals.totalAgorot,
-        draft.totals.tipAgorot,
-        JSON.stringify(draft),
-      );
-      return draft;
+      const doc = this.insertSale(input, 'completed');
+      if (doc) this.outbox.enqueue('transaction', doc.id);
+      return doc;
     });
+  }
+
+  /** The one write of a new sale document (inside the caller's transaction). */
+  private insertSale(input: SaleInput, status: 'pending' | 'completed'): DocDraft | null {
+    const shift = this.currentShift();
+    if (!shift) return null;
+    const now = (input.now ?? new Date()).toISOString();
+    const number = this.counters.next(input.documentType);
+    const draft: DocDraft = {
+      id: randomUUID(),
+      documentType: input.documentType,
+      number,
+      prefix: input.prefix,
+      status,
+      createdAt: now,
+      updatedAt: now,
+      shiftId: shift.id,
+      businessDate: shift.business_date,
+      cashierId: input.operator.id,
+      cashierName: input.operator.name,
+      branchId: input.branchId,
+      orderId: input.orderId,
+      lines: input.lines,
+      itemIds: input.lines.map(() => randomUUID()),
+      tracked: input.tracked,
+      totals: input.totals,
+      ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
+      ...(input.voucherDiscounts && input.voucherDiscounts.length > 0 ? { voucherDiscounts: input.voucherDiscounts } : {}),
+      ...(input.voucherLegs && input.voucherLegs.length > 0 ? { voucherLegs: input.voucherLegs } : {}),
+      ...(input.creditLegs && input.creditLegs.length > 0 ? { creditLegs: input.creditLegs } : {}),
+      ...(input.voucherReleases && input.voucherReleases.length > 0 ? { voucherReleases: input.voucherReleases } : {}),
+      ...(input.prepaidVouchers && input.prepaidVouchers.length > 0 ? { prepaidVouchers: input.prepaidVouchers } : {}),
+      card: null,
+      paymentId: randomUUID(),
+      voidMeta: null,
+      ...(input.payments && input.payments.length > 0 ? { payments: input.payments } : {}),
+      ...(typeof input.tenderedAgorot === 'number' ? { tenderedAgorot: input.tenderedAgorot } : {}),
+      ...(typeof input.changeAgorot === 'number' ? { changeAgorot: input.changeAgorot } : {}),
+      ...(input.channel ? { channel: input.channel } : {}),
+      ...(input.approvedByPosUserId ? { approvedByPosUserId: input.approvedByPosUserId } : {}),
+      ...(input.basketDiscount ? { basketDiscount: input.basketDiscount } : {}),
+    };
+    this.db.run(
+      'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      draft.id,
+      draft.documentType,
+      seriesOf(draft.documentType),
+      number,
+      draft.prefix,
+      status,
+      shift.id,
+      draft.orderId,
+      now,
+      now,
+      draft.totals.totalAgorot,
+      draft.totals.tipAgorot,
+      JSON.stringify(draft),
+    );
+    return draft;
   }
 
   doc(id: string): DocDraft | null {
@@ -462,18 +603,149 @@ export class Ledger {
     return row ? (JSON.parse(row.payload) as DocDraft) : null;
   }
 
+  private save(next: DocDraft) {
+    this.db.run('UPDATE documents SET status = ?, updated_at = ?, payload = ? WHERE id = ?', next.status, next.updatedAt, JSON.stringify(next), next.id);
+  }
+
   /**
    * Approved: completed with its card leg (none when the vouchers paid the whole sale), in one transaction with its
-   * outbox row. Only from pending.
+   * outbox row. Only from pending. A document of a mixed basket completes with every pending document of its basket — the
+   * card on the one(s) whose legs hold it, each credit note settling its original (SaleRepository.completeBasket).
    */
   completeCardSale(id: string, card: ApprovedCard | null, now = new Date()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
-      const next: DocDraft = { ...d, status: 'completed', card, updatedAt: now.toISOString() };
-      this.db.run("UPDATE documents SET status = 'completed', updated_at = ?, payload = ? WHERE id = ?", next.updatedAt, JSON.stringify(next), id);
-      this.outbox.enqueue('transaction', id);
-      return next;
+      const group = d.basketId ? this.basketDocs(d.basketId).filter((x) => x.status === 'pending') : [d];
+      let primary: DocDraft = d;
+      for (const doc of group) {
+        const hasCard = !doc.payments || doc.payments.length === 0 || doc.payments.some((l) => l.method === 'card');
+        const next: DocDraft = { ...doc, status: 'completed', card: hasCard ? card : null, updatedAt: now.toISOString() };
+        this.save(next);
+        if (next.refundOfTransactionId) this.settleCredit(next.refundOfTransactionId, next.fullyRefunded === true, now);
+        this.outbox.enqueue('transaction', next.id);
+        if (next.id === id) primary = next;
+      }
+      return primary;
+    });
+  }
+
+  /* ------------------------------------------------------- credits, baskets */
+
+  /** Every document of a basket, in the order written (the sale first). */
+  basketDocs(basketId: string): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE json_extract(payload, '$.basketId') = ? ORDER BY created_at, rowid", basketId)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** The credit notes issued against [originalId] (cancelled ones included — callers filter). */
+  refundsOf(originalId: string): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE json_extract(payload, '$.refundOfTransactionId') = ? ORDER BY created_at, rowid", originalId)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** The sales numbered one of [numbers] that may still be credited (refundableByNumbers): 320 / 400, completed or part-credited. */
+  refundableByNumbers(numbers: readonly number[]): DocDraft[] {
+    if (numbers.length === 0) return [];
+    const marks = numbers.map(() => '?').join(', ');
+    return this.db
+      .all<{ payload: string }>(`SELECT payload FROM documents WHERE number IN (${marks}) AND document_type IN (320, 400) AND status IN ('completed', 'partial_refund') ORDER BY created_at DESC`, ...numbers)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** Recent sales that may still have something to credit, newest first (recentRefundable). */
+  recentRefundable(limit: number): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE document_type IN (320, 400) AND status IN ('completed', 'partial_refund') ORDER BY created_at DESC LIMIT ?", limit)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /**
+   * What a credit note does to its original once the money has gone back (settleCredit): `refunded` when nothing is left,
+   * `partial_refund` otherwise — never re-sent itself (the cloud reads the credit's link).
+   */
+  private settleCredit(originalId: string, fully: boolean, now: Date) {
+    const o = this.doc(originalId);
+    if (!o || !settled(o)) return;
+    this.save({ ...o, status: fully ? 'refunded' : 'partial_refund', updatedAt: now.toISOString() });
+  }
+
+  /**
+   * Every document of a basket (or one credit note — a refund from the history), in ONE transaction with its shift: the
+   * sale first, then the credit notes — each numbered in its own type's series, the counter saved first. `completed`:
+   * with their outbox rows and their originals settled; `pending` (a card): nothing else until the terminal answers
+   * ([completeCardSale] / [voidCardSale]). [check] runs inside the transaction before a number is drawn: a refusal (a
+   * credit the original no longer holds) writes nothing. Null with no shift open.
+   */
+  recordBasket(input: BasketWriteInput, status: 'pending' | 'completed', check?: () => string | null): DocDraft[] | { refused: string } | null {
+    return this.db.tx(() => {
+      const shift = this.currentShift();
+      if (!shift) return null;
+      const refusal = check?.() ?? null;
+      if (refusal) return { refused: refusal };
+      const now = (input.now ?? new Date()).toISOString();
+      const out: DocDraft[] = [];
+      for (const doc of input.documents) {
+        const number = this.counters.next(doc.documentType);
+        const draft: DocDraft = {
+          id: randomUUID(),
+          documentType: doc.documentType,
+          number,
+          prefix: input.prefix,
+          status,
+          createdAt: now,
+          updatedAt: now,
+          shiftId: shift.id,
+          businessDate: shift.business_date,
+          cashierId: input.operator.id,
+          cashierName: input.operator.name,
+          branchId: input.branchId,
+          orderId: null,
+          lines: doc.lines,
+          itemIds: doc.lines.map(() => randomUUID()),
+          tracked: doc.tracked,
+          totals: doc.totals,
+          ...(doc.promotions && doc.promotions.length > 0 ? { promotions: doc.promotions } : {}),
+          card: null,
+          paymentId: randomUUID(),
+          voidMeta: null,
+          payments: doc.payments,
+          ...(typeof doc.tenderedAgorot === 'number' ? { tenderedAgorot: doc.tenderedAgorot } : {}),
+          ...(typeof doc.changeAgorot === 'number' ? { changeAgorot: doc.changeAgorot } : {}),
+          channel: 'till',
+          ...(input.basketId ? { basketId: input.basketId } : {}),
+          ...(doc.refundOfTransactionId !== undefined ? { refundOfTransactionId: doc.refundOfTransactionId, fullyRefunded: doc.fullyRefunded === true } : {}),
+          ...(doc.approvedByPosUserId ? { approvedByPosUserId: doc.approvedByPosUserId } : {}),
+          ...(doc.customer ? { customer: doc.customer } : {}),
+          ...(doc.basketDiscount ? { basketDiscount: doc.basketDiscount } : {}),
+        };
+        this.db.run(
+          'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          draft.id,
+          draft.documentType,
+          seriesOf(draft.documentType),
+          number,
+          draft.prefix,
+          status,
+          shift.id,
+          null,
+          now,
+          now,
+          draft.totals.totalAgorot,
+          draft.totals.tipAgorot,
+          JSON.stringify(draft),
+        );
+        out.push(draft);
+      }
+      if (status === 'completed') {
+        for (const d of out) {
+          if (d.refundOfTransactionId) this.settleCredit(d.refundOfTransactionId, d.fullyRefunded === true, new Date(now));
+          this.outbox.enqueue('transaction', d.id);
+        }
+      }
+      return out;
     });
   }
 
@@ -508,15 +780,23 @@ export class Ledger {
     });
   }
 
-  /** Certainly not charged: cancelled (the number stays burned), with the lookup's evidence. */
+  /**
+   * Certainly not charged: cancelled (the number stays burned), with the lookup's evidence. A basket stands or falls
+   * together: every pending document of it is cancelled (SaleRepository.voidCardSale → voidBasket).
+   */
   voidCardSale(id: string, voidMeta: Record<string, unknown> | null, now = new Date()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
-      const next: DocDraft = { ...d, status: 'cancelled', voidMeta, updatedAt: now.toISOString() };
-      this.db.run("UPDATE documents SET status = 'cancelled', updated_at = ?, payload = ? WHERE id = ?", next.updatedAt, JSON.stringify(next), id);
-      this.outbox.enqueue('transaction', id);
-      return next;
+      const group = d.basketId ? this.basketDocs(d.basketId).filter((x) => x.status === 'pending') : [d];
+      let primary: DocDraft = d;
+      for (const doc of group) {
+        const next: DocDraft = { ...doc, status: 'cancelled', voidMeta, updatedAt: now.toISOString() };
+        this.save(next);
+        this.outbox.enqueue('transaction', next.id);
+        if (next.id === id) primary = next;
+      }
+      return primary;
     });
   }
 
@@ -537,7 +817,7 @@ export class Ledger {
 
   todaysDocs(day: string): DocDraft[] {
     return this.db
-      .all<{ payload: string }>("SELECT payload FROM documents WHERE status = 'completed' AND created_at >= ? ORDER BY created_at DESC", new Date(`${day}T00:00:00`).toISOString())
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE status IN ('completed', 'refunded', 'partial_refund') AND created_at >= ? ORDER BY created_at DESC", new Date(`${day}T00:00:00`).toISOString())
       .map((r) => JSON.parse(r.payload) as DocDraft);
   }
 }
@@ -549,16 +829,28 @@ export class Ledger {
 export function shiftCloseWire(
   shift: ShiftRow,
   docs: readonly DocDraft[],
-  input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now: string },
+  input: {
+    closedByName: string;
+    closedByUserId?: string | null;
+    unattended?: boolean;
+    closeRequestId?: string | null;
+    vatRate: number;
+    now: string;
+    countedCashAgorot?: number | null;
+    tillExtra?: (till: XTill, shiftId: string) => XTill;
+  },
 ): Record<string, unknown> {
-  const { till, reportableIds } = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
+  const built = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
+  const reportableIds = built.reportableIds;
+  const till = input.tillExtra ? input.tillExtra(built.till, shift.id) : built.till;
   const unattended = input.unattended ?? false;
   const payload: Record<string, unknown> = {
     closedAt: input.now,
     ...(input.closedByUserId ? { closedByUserId: input.closedByUserId } : {}),
     closedByName: input.closedByName,
     unattended,
-    ...(unattended ? {} : { countedCash: till.expectedCash }),
+    // A till's close names what was counted in the drawer; the kiosk's automatic one counts what was expected.
+    ...(unattended ? {} : { countedCash: typeof input.countedCashAgorot === 'number' && input.countedCashAgorot >= 0 ? toShekels(input.countedCashAgorot) : till.expectedCash }),
     expectedCash: till.expectedCash,
     transactionIds: reportableIds,
     lastTransactionNumber: lastTransactionNumberOf(docs.map((d) => ({ status: d.status, transactionNumber: d.number }))),
@@ -585,22 +877,51 @@ export function xDocOf(d: DocDraft): XDoc {
     grossAgorot: d.totals.grossAgorot,
     itemsQty: d.lines.reduce((s, l) => s + l.qty, 0),
     documentDiscountAgorot: d.totals.discountAgorot,
-    // The vouchers' legs and the card's (what is left of the goods): the X counts the card's, never the vouchers'.
+    // A till sale: its own tenders (cash legs, the card last). A kiosk's: the vouchers' legs and the card's (what is left of
+    // the goods) — the X counts the card's, never the vouchers'.
     payments:
-      d.status === 'completed'
-        ? [
-            ...(d.voucherLegs ?? []).map((l) => ({ method: 'production_voucher', amountAgorot: l.amountAgorot })),
-            ...(d.creditLegs ?? []).map((l) => ({ method: 'cash_credit', amountAgorot: l.amountAgorot })),
-            ...(d.card ? [{ method: 'card', amountAgorot: tenderAmounts(d).card }] : []),
-            ...(d.cash ? [{ method: 'cash', amountAgorot: tenderAmounts(d).cash }] : []),
-          ]
-        : [],
-    paymentMethod: docPaymentMethod(d),
+      d.payments && d.payments.length > 0
+        ? legsOf(d)
+        : settled(d)
+          ? [
+              ...(d.voucherLegs ?? []).map((l) => ({ method: 'production_voucher', amountAgorot: l.amountAgorot })),
+              ...(d.creditLegs ?? []).map((l) => ({ method: 'cash_credit', amountAgorot: l.amountAgorot })),
+              ...(d.card ? [{ method: 'card', amountAgorot: tenderAmounts(d).card }] : []),
+              ...(d.cash ? [{ method: 'cash', amountAgorot: tenderAmounts(d).cash }] : []),
+            ]
+          : [],
+    paymentMethod: d.payments && d.payments.length > 0 ? lastRealMethod(d.payments) : docPaymentMethod(d),
     vatAgorot: d.totals.vatAgorot,
     vatRate: d.totals.vatRate,
     tipAgorot: d.totals.tipAgorot,
     tipPaymentMethod: tipMethodOf(d),
+    // Production vouchers (VoucherRedemption.kt): a deduction is out of the gross and out of the discounts alike (never more
+    // than the document's discount); a ₪0 voucher's goods are no items of the shift.
+    ...(prepaidDeductionOf(d) > 0 ? { prepaidDeductionAgorot: Math.min(prepaidDeductionOf(d), d.totals.discountAgorot) } : {}),
+    ...(offVoucherUnitsOf(d) > 0 ? { offVoucherUnits: offVoucherUnitsOf(d) } : {}),
   };
+}
+
+/** A document's production voucher deductions ("קיזוז שובר הפקה", discount mode). */
+export function prepaidDeductionOf(d: Pick<DocDraft, 'prepaidVouchers'>): number {
+  return (d.prepaidVouchers ?? []).filter((r) => r.accounting === 'discount').reduce((s, r) => s + Math.max(0, r.amountAgorot), 0);
+}
+
+/** The units of a document's zero-mode vouchers — counted in no item total. */
+export function offVoucherUnitsOf(d: Pick<DocDraft, 'prepaidVouchers'>): number {
+  return (d.prepaidVouchers ?? []).filter((r) => !countsAsPayment(r.accounting)).reduce((s, r) => s + r.units.length, 0);
+}
+
+/** A till document's discounts by hand: its lines' (OTH left out — printed at ₪0 on its line) and the basket's. */
+export function tillManualDiscount(d: Pick<DocDraft, 'lines' | 'basketDiscount'>): number {
+  const lines = d.lines.filter((l) => !l.oth && typeof l.creditAgorot !== 'number').reduce((s, l) => s + manualDiscount(l), 0);
+  return lines + Math.max(0, d.basketDiscount?.agorot ?? 0);
+}
+
+/** A till document's `paymentMethod`: the money that moved — its last real leg; `exchange` when none did (Basket.kt base()). */
+export function lastRealMethod(payments: readonly DocLeg[]): string {
+  const real = payments.filter((l) => l.method !== 'exchange');
+  return real.length > 0 ? real[real.length - 1].method : 'exchange';
 }
 
 /** The meta on the wire: every top-level value a string, the nested `result` JSON-encoded (OutboxSync.nayaxMetaObject). */
@@ -633,6 +954,19 @@ function modifierWire(o: SaleOption): Record<string, unknown> {
 
 /** The document as POST /sync/{m}/transactions takes it (TransactionPayload). */
 export function documentWire(d: DocDraft): Record<string, unknown> {
+  // Production vouchers ("שוברי הפקה", core/till/vouchers.ts): a "test-…" one is a simulation's — never on a document.
+  const redemptions = (d.prepaidVouchers ?? []).filter((r) => !isTestVoucherId(r.reservationId) && !isTestVoucherId(r.redemptionId));
+  // Zero mode: each ₪0 line's memo value and the redemption or the hold it names (the contract's §4.3).
+  const memoValues = offVoucherLineValues(redemptions);
+  const memoRedemption = new Map<string, string>();
+  const memoReservation = new Map<string, string>();
+  for (const r of redemptions) {
+    if (countsAsPayment(r.accounting)) continue;
+    for (const u of r.units) {
+      if (r.reservationId && !r.legacy) memoReservation.set(u.lineKey, r.reservationId);
+      else memoRedemption.set(u.lineKey, r.redemptionId);
+    }
+  }
   const items = d.lines.map((l, i) => {
     const unit = unitAgorot(l);
     const item: Record<string, unknown> = {
@@ -684,7 +1018,40 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     }
     // The discount vouchers' share ("שוברי הנחה"): inside the same discount, a discount and never a tender.
     if ((l.voucherAgorot ?? 0) > 0) item.voucherDiscount = r2(l.voucherAgorot!);
-    // "תפריטים": the menu active when the line was added and where its price came from — the sales-by-menu report (SPEC_MENUS §6).
+    // "קיזוז שובר הפקה": a production voucher's deduction from the line (inside documentDiscount, §4.1).
+    if ((l.prepaidDeductionAgorot ?? 0) > 0) item.prepaidDeduction = r2(l.prepaidDeductionAgorot!);
+    // A ₪0 voucher line: what its goods were worth (agorot), and the redemption or the hold it names (§4.3).
+    const memo = memoValues.get(l.key);
+    if (memo !== undefined) {
+      item.voucherMemoValueAgorot = memo;
+      if (memoRedemption.has(l.key)) item.voucherRedemptionId = memoRedemption.get(l.key);
+      if (memoReservation.has(l.key)) item.voucherReservationId = memoReservation.get(l.key);
+    }
+    if (typeof l.creditAgorot === 'number') {
+      // A credit-note line (SaleRepository.buildRefundItems): net, as on every credit note — the money credited; what of the
+      // gross was not paid is its discount; the original line it credits.
+      const share = lineGross(l) - l.creditAgorot;
+      item.totalPrice = r2(l.creditAgorot);
+      if (share !== 0) {
+        item.discount = r2(share);
+        item.discountType = 'fixed';
+        item.lineDiscount = -r2(share);
+      }
+      if (l.refundOfItemId) item.refundOfItemId = l.refundOfItemId;
+    } else if (manualDiscount(l) > 0) {
+      // The cashier's line discount (or OTH's 100%): a resolved amount, inside documentDiscount (Basket.kt sale items).
+      item.discount = r2(manualDiscount(l));
+      item.discountType = 'fixed';
+      item.lineDiscount = -r2(manualDiscount(l));
+    }
+    // OTH ("על חשבון הבית"): why, who gave it, who approved it.
+    if (l.oth) {
+      item.othReason = l.oth.reason;
+      if (l.oth.by) item.othBy = l.oth.by;
+      if (l.oth.approvedBy) item.othApprovedBy = l.oth.approvedBy;
+    }
+    // "תפריטים": the menu active when the line was added / priced and where its price came from — the sales-by-menu report
+    // (SPEC_MENUS §6). A line priced with no menu active carries none of them.
     if (l.menuId) {
       item.menuId = l.menuId;
       if (l.menuName) item.menuName = l.menuName;
@@ -693,7 +1060,8 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
   });
-  const meta = d.status === 'completed' ? flattenMeta(d.card?.meta) : flattenMeta(d.voidMeta);
+  const done = settled(d);
+  const meta = done ? flattenMeta(d.card?.meta) : flattenMeta(d.voidMeta);
   const wire: Record<string, unknown> = {
     id: d.id,
     transactionNumber: String(d.number),
@@ -701,8 +1069,13 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     status: d.status,
     documentType: d.documentType,
     documentProductionDate: d.createdAt,
-    // A sale the vouchers paid whole names them, as the till's (CheckoutViewModel: PRODUCTION_VOUCHER); else the card's.
-    paymentMethod: docPaymentMethod(d),
+    // A till sale names the money that moved: the last real tender, `exchange` when none did (Basket.kt base()). A kiosk's:
+    // a sale the vouchers paid whole names them, as the till's (CheckoutViewModel: PRODUCTION_VOUCHER); else the card's /
+    // the cash station's.
+    paymentMethod: d.payments && d.payments.length > 0 ? lastRealMethod(d.payments) : docPaymentMethod(d),
+    // A till's cash sale: what the customer handed over and the change given back.
+    amountTendered: typeof d.tenderedAgorot === 'number' ? r2(d.tenderedAgorot) : undefined,
+    changeAmount: typeof d.changeAgorot === 'number' ? r2(d.changeAgorot) : undefined,
     tipAmount: r2(d.totals.tipAgorot),
     tipPaymentMethod: tipMethodOf(d) ?? undefined,
     totalAmount: r2(d.totals.grossAgorot),
@@ -718,104 +1091,164 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     items,
-    // The discount vouchers ("שוברי הנחה"): what each took, the lines it took it from, the hold the document confirms.
-    ...(d.voucherDiscounts && d.voucherDiscounts.length > 0
+    // The discount vouchers ("שוברי הנחה"): what each took, the lines it took it from, the hold the document confirms — then
+    // the production vouchers' deductions (`kind: production_voucher`, §4.1), each naming its hold (or its redemption).
+    ...((d.voucherDiscounts ?? []).length > 0 || redemptions.some((r) => r.accounting === 'discount' && r.amountAgorot > 0)
       ? {
-          voucherDiscounts: d.voucherDiscounts.map((v) => ({
-            reservationId: v.reservationId,
-            voucherId: v.voucherId,
-            batchId: v.batchId,
-            serial: v.serial,
-            batchName: v.batchName,
-            kind: v.kind,
-            uses: v.uses,
-            amount: r2(v.amountAgorot),
-            lines: v.lines.flatMap((l) => {
-              const i = d.lines.findIndex((x) => x.key === l.lineKey);
-              return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(l.amountAgorot) }] : [];
-            }),
-          })),
+          voucherDiscounts: [
+            ...(d.voucherDiscounts ?? []).map((v) => ({
+              reservationId: v.reservationId,
+              voucherId: v.voucherId,
+              batchId: v.batchId,
+              serial: v.serial,
+              batchName: v.batchName,
+              kind: v.kind,
+              uses: v.uses,
+              amount: r2(v.amountAgorot),
+              lines: v.lines.flatMap((l) => {
+                const i = d.lines.findIndex((x) => x.key === l.lineKey);
+                return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(l.amountAgorot) }] : [];
+              }),
+            })),
+            ...productionDeductionsWire(d, redemptions),
+          ],
         }
+      : {}),
+    // A document made only of ₪0 voucher lines, with no money and no tip (§4.3) — never otherwise.
+    ...(d.lines.length > 0 && d.lines.every((l) => memoValues.has(l.key)) && d.totals.totalAgorot === 0 && d.totals.tipAgorot === 0 && legsOf(d).every((l) => l.amountAgorot === 0)
+      ? { voucherMemo: true }
       : {}),
     // The promotions ("מבצעים") the sale was priced with.
     ...(d.promotions && d.promotions.length > 0
       ? { promotions: d.promotions.map((p) => ({ promotionId: p.promotionId, name: p.name, type: p.type, applications: p.applications, discount: r2(p.discountAgorot) })) }
       : {}),
+    // A credit note: the sale it credits (none for a return with no receipt).
+    ...(d.refundOfTransactionId ? { refundOfTransactionId: d.refundOfTransactionId } : {}),
+    // A mixed basket: the same id on each of its documents (docs/SHIFTS_API.md §1.2a).
+    ...(d.basketId ? { basketId: d.basketId } : {}),
+    // Who authorised it: a manager's code, or the operator acting on their own right.
+    ...(d.approvedByPosUserId ? { approvedByPosUserId: d.approvedByPosUserId } : {}),
+    // The customer a credit note went to.
+    ...(d.customer
+      ? {
+          customerName: d.customer.name || undefined,
+          ...(d.customer.phone ? { customerPhone: d.customer.phone } : {}),
+          ...(d.customer.address ? { customerAddress: d.customer.address } : {}),
+        }
+      : {}),
+    // The basket discount on its own (inside documentDiscount), its rate, its kind.
+    ...(d.basketDiscount && d.basketDiscount.agorot > 0
+      ? {
+          basketDiscount: r2(d.basketDiscount.agorot),
+          ...(d.basketDiscount.percent !== null ? { basketDiscountPercent: d.basketDiscount.percent } : {}),
+          basketDiscountKind: d.basketDiscount.kind,
+        }
+      : {}),
   };
-  if (d.status === 'completed' && (d.card || d.cash || (d.voucherLegs ?? []).length > 0 || (d.creditLegs ?? []).length > 0)) {
-    const legs = (d.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);
-    const credits = (d.creditLegs ?? []).filter((l) => l.amountAgorot > 0);
-    const split = isSplit(d);
-    const amounts = tenderAmounts(d);
-    // In a split the cash was taken first: its leg before the card's.
-    const cashSeq = legs.length + credits.length + 1;
-    const cardSeq = cashSeq + (split ? 1 : 0);
-    // The goods vouchers' legs first ("שובר הפקה"), the cash credits' ("זיכוי מזומן"), then the cash / the card for what
-    // they did not cover: the legs add up to the goods after discounts.
-    wire.payments = [
-      ...legs.map((l, i) => ({
-        id: stableUuid(`${d.id}:voucher:${l.redemptionId}`),
-        sequence: i + 1,
-        method: 'production_voucher',
-        amount: r2(l.amountAgorot),
-        createdAt: d.updatedAt,
-      })),
-      ...credits.map((l, i) => ({
-        id: stableUuid(`${d.id}:credit:${l.redemptionId}`),
-        sequence: legs.length + i + 1,
-        method: 'cash_credit',
-        amount: r2(l.amountAgorot),
-        cashCredit: { code: l.code, redemptionId: l.redemptionId },
-        createdAt: d.updatedAt,
-      })),
-      ...(d.card
-        ? [
-            {
-              id: d.paymentId,
-              sequence: cardSeq,
-              method: 'card',
-              amount: r2(amounts.card),
-              nayaxMeta: flattenMeta(d.card.meta),
-              creditPayments: d.card.payments ?? undefined,
-              cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
-              createdAt: d.updatedAt,
-            },
-          ]
-        : []),
-      // "מזומן" at the cash station: a `cash` leg (every report counts it as cash) with its transaction (§11.7).
-      ...(d.cash
-        ? [
-            {
-              // Alone, the document's payment id (as the card's); beside the card, its own.
-              id: split ? stableUuid(`${d.id}:cash`) : d.paymentId,
-              sequence: cashSeq,
-              method: 'cash',
-              amount: r2(amounts.cash),
-              cashDevice: {
-                txId: d.cash.txId,
-                stationId: d.cash.stationId,
-                hostId: d.cash.hostId,
-                receivedAgorot: d.cash.receivedAgorot,
-                changeAgorot: d.cash.changeAgorot,
-                changeOwedAgorot: d.cash.changeOwedAgorot,
-                roundingAgorot: d.cash.roundingAgorot,
-                slipCode: d.cash.slipCode,
-                ...(d.cash.changeOwedAs ? { changeOwedAs: d.cash.changeOwedAs } : {}),
-                ...(split ? { splitAgorot: d.cash.splitAgorot } : {}),
+  if (done && (d.card || d.cash || (d.voucherLegs ?? []).length > 0 || (d.creditLegs ?? []).length > 0 || (d.payments && d.payments.length > 0))) {
+    if (d.payments && d.payments.length > 0) {
+      // A till sale: its tenders in the order taken (cash legs, the card last), the card's leg its payment id and meta.
+      wire.payments = legsOf(d).map((leg, i) => {
+        if (leg.method === 'card' && d.card) {
+          return {
+            id: d.paymentId,
+            sequence: i + 1,
+            method: 'card',
+            amount: r2(leg.amountAgorot),
+            nayaxMeta: flattenMeta(d.card.meta),
+            creditPayments: d.card.payments ?? undefined,
+            cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
+            createdAt: d.updatedAt,
+          };
+        }
+        return {
+          id: stableUuid(`${d.id}:pay:${i}`),
+          sequence: i + 1,
+          method: leg.method,
+          amount: r2(leg.amountAgorot),
+          ...(leg.method === 'cash_credit' && leg.cashCredit ? { cashCredit: { code: leg.cashCredit.code, redemptionId: leg.cashCredit.redemptionId } } : {}),
+          // A "שוברי הפקה" leg names the hold it pays (§4.2): the document confirms it even when the till's confirm never landed.
+          ...(leg.method === 'production_voucher' && leg.voucher?.reservationId && !isTestVoucherId(leg.voucher.reservationId) ? { reservationId: leg.voucher.reservationId } : {}),
+          createdAt: d.updatedAt,
+        };
+      });
+    } else {
+      const legs = (d.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);
+      const credits = (d.creditLegs ?? []).filter((l) => l.amountAgorot > 0);
+      const split = isSplit(d);
+      const amounts = tenderAmounts(d);
+      // In a split the cash was taken first: its leg before the card's.
+      const cashSeq = legs.length + credits.length + 1;
+      const cardSeq = cashSeq + (split ? 1 : 0);
+      // The goods vouchers' legs first ("שובר הפקה"), the cash credits' ("זיכוי מזומן"), then the cash / the card for what
+      // they did not cover: the legs add up to the goods after discounts.
+      wire.payments = [
+        ...legs.map((l, i) => ({
+          id: stableUuid(`${d.id}:voucher:${l.redemptionId}`),
+          sequence: i + 1,
+          method: 'production_voucher',
+          amount: r2(l.amountAgorot),
+          createdAt: d.updatedAt,
+        })),
+        ...credits.map((l, i) => ({
+          id: stableUuid(`${d.id}:credit:${l.redemptionId}`),
+          sequence: legs.length + i + 1,
+          method: 'cash_credit',
+          amount: r2(l.amountAgorot),
+          cashCredit: { code: l.code, redemptionId: l.redemptionId },
+          createdAt: d.updatedAt,
+        })),
+        ...(d.card
+          ? [
+              {
+                id: d.paymentId,
+                sequence: cardSeq,
+                method: 'card',
+                amount: r2(amounts.card),
+                nayaxMeta: flattenMeta(d.card.meta),
+                creditPayments: d.card.payments ?? undefined,
+                cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
+                createdAt: d.updatedAt,
               },
-              createdAt: d.updatedAt,
-            },
-          ]
-        : []),
-    ].sort((a, b) => a.sequence - b.sequence);
+            ]
+          : []),
+        // "מזומן" at the cash station: a `cash` leg (every report counts it as cash) with its transaction (§11.7).
+        ...(d.cash
+          ? [
+              {
+                // Alone, the document's payment id (as the card's); beside the card, its own.
+                id: split ? stableUuid(`${d.id}:cash`) : d.paymentId,
+                sequence: cashSeq,
+                method: 'cash',
+                amount: r2(amounts.cash),
+                cashDevice: {
+                  txId: d.cash.txId,
+                  stationId: d.cash.stationId,
+                  hostId: d.cash.hostId,
+                  receivedAgorot: d.cash.receivedAgorot,
+                  changeAgorot: d.cash.changeAgorot,
+                  changeOwedAgorot: d.cash.changeOwedAgorot,
+                  roundingAgorot: d.cash.roundingAgorot,
+                  slipCode: d.cash.slipCode,
+                  ...(d.cash.changeOwedAs ? { changeOwedAs: d.cash.changeOwedAs } : {}),
+                  ...(split ? { splitAgorot: d.cash.splitAgorot } : {}),
+                },
+                createdAt: d.updatedAt,
+              },
+            ]
+          : []),
+      ].sort((a, b) => a.sequence - b.sequence);
+    }
+    // A sale removes stock; a credit note puts it back (Basket.kt basketMovements).
+    const credit = isCreditType(d.documentType);
     const moves = d.lines
       .map((l, i) => ({ l, i }))
       .filter(({ l }) => d.tracked.includes(l.productId))
       .map(({ l, i }) => ({
         id: stableUuid(`${d.id}:stock:${d.itemIds[i]}`),
         productId: l.productId,
-        delta: -l.qty,
-        reason: 'sale',
+        delta: credit ? l.qty : -l.qty,
+        reason: credit ? 'refund' : 'sale',
         transactionItemId: d.itemIds[i],
         occurredAt: d.createdAt,
       }));
@@ -825,6 +1258,45 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
   }
   for (const k of Object.keys(wire)) if (wire[k] === undefined) delete wire[k];
   return wire;
+}
+
+/**
+ * The production vouchers' deductions of a document as `voucherDiscounts` entries of `kind` = `production_voucher`
+ * (OutboxSync.productionVoucherDeductions): each with its hold (or its redemption), batch and voucher, its share of each line
+ * and the units it covered, as the receipt lists them.
+ */
+function productionDeductionsWire(d: DocDraft, redemptions: readonly DocPrepaidRedemption[]): Array<Record<string, unknown>> {
+  return redemptions
+    .filter((r) => r.accounting === 'discount' && r.amountAgorot > 0)
+    .map((r) => {
+      const byLine = new Map<string, number>();
+      for (const u of r.units) byLine.set(u.lineKey, (byLine.get(u.lineKey) ?? 0) + u.coveredAgorot);
+      const units = new Map<string, { productName: string; groupName: string | null; quantity: number }>();
+      for (const u of r.units) {
+        const k = `${u.name || u.productId}|${u.groupName ?? ''}`;
+        const cur = units.get(k);
+        if (cur) cur.quantity += 1;
+        else units.set(k, { productName: u.name || u.productId, groupName: u.groupName, quantity: 1 });
+      }
+      return {
+        ...(r.legacy || !r.reservationId ? {} : { reservationId: r.reservationId }),
+        ...(r.voucherId ? { voucherId: r.voucherId } : {}),
+        ...(r.batchId ? { batchId: r.batchId } : {}),
+        serial: r.serial,
+        ...(r.batchName ? { batchName: r.batchName } : {}),
+        kind: 'production_voucher',
+        uses: 1,
+        amount: r2(r.amountAgorot),
+        lines: [...byLine.entries()].flatMap(([key, amount]) => {
+          const i = d.lines.findIndex((x) => x.key === key);
+          return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(amount) }] : [];
+        }),
+        // The cloud's hold confirms by its reservation; a `/redeem` redemption by its own id.
+        ...(r.legacy || !r.reservationId ? { redemptionId: r.redemptionId } : {}),
+        ...(r.typeName ? { typeName: r.typeName } : {}),
+        units: [...units.values()],
+      };
+    });
 }
 
 /** A UUID-shaped id derived from a string (the same input → the same id, so a re-push is idempotent). */

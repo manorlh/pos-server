@@ -78,6 +78,12 @@ export interface SaleLine {
   /** "כלול בשובר #7 (1)": the goods voucher that paid for the line, as the till's document marks it (coverByVoucher); never printed in the kitchen. */
   voucherMark?: string;
   /**
+   * "קיזוז שובר הפקה" (core/till/vouchers.ts, accounting `discount`): the production vouchers' deduction from this line — inside
+   * the document's discount (the total and its VAT base are after it), on the wire `items[].prepaidDeduction`; never a tender,
+   * never a "הנחה" on paper or in the X. Absent: none.
+   */
+  prepaidDeductionAgorot?: number;
+  /**
    * "תפריטים": the menu active when the line was added and where its price came from (`menu` / `catalog`) — the document's
    * item carries them (`menuId` / `menuName` / `priceSource`) for the sales-by-menu report. Absent: no menu.
    */
@@ -86,6 +92,21 @@ export interface SaleLine {
   priceSource?: 'menu' | 'catalog' | null;
   /** With a menu: the catalog's own price then (the till's held sale carries it as `catalogPrice`). */
   catalogPriceAgorot?: number | null;
+  /**
+   * A till's manual line discount ("הנחה" on the line, or OTH's 100%), resolved to agorot: inside the document's discount,
+   * never in the line's gross (core/till/discounts.ts). Absent: none.
+   */
+  discountAgorot?: number;
+  /** OTH ("על חשבון הבית", core/till/discounts.ts): why, who gave it, who approved it. */
+  oth?: { reason: string; by: string | null; approvedBy: string | null } | null;
+  /** A credit-note line: the original line it credits (null: a return with no receipt), and what it credits (net). */
+  refundOfItemId?: string | null;
+  creditAgorot?: number;
+}
+
+/** What a line takes off by hand (the cashier's discount, OTH): never on a credit line. */
+export function manualDiscount(l: Pick<SaleLine, 'discountAgorot'>): number {
+  return Math.max(0, l.discountAgorot ?? 0);
 }
 
 /** What one choice adds to one unit of the dish. */
@@ -124,6 +145,8 @@ export interface SaleTotals {
   discountAgorot: number;
   /** What discount vouchers took off, inside [discountAgorot]. */
   voucherDiscountAgorot: number;
+  /** The production vouchers' deductions ("קיזוז שובר הפקה"), inside [discountAgorot]. Absent: none. */
+  prepaidDeductionAgorot?: number;
   /** What the goods cost: gross − discounts. The card tender. */
   totalAgorot: number;
   netAgorot: number;
@@ -134,18 +157,27 @@ export interface SaleTotals {
   vatRate: number;
 }
 
-export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgorot = 0): SaleTotals {
+/**
+ * [basketDiscountAgorot]: a till's basket discount ("הנחה לחשבון"), already in money (Cart.documentDiscountAmount) — taken
+ * after the lines' own discounts, inside the document's discount like them.
+ */
+export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgorot = 0, basketDiscountAgorot = 0): SaleTotals {
   const gross = lines.reduce((s, l) => s + lineGross(l), 0);
   // The promotions' and the discount vouchers' shares (Cart.totals): the document's discount.
   const promotion = lines.reduce((s, l) => s + Math.max(0, l.promotionAgorot ?? 0), 0);
   const voucher = lines.reduce((s, l) => s + Math.max(0, l.voucherAgorot ?? 0), 0);
-  const discount = promotion + voucher;
+  // A till's manual line discounts (and OTH) and its basket discount: the same document discount.
+  const manual = lines.reduce((s, l) => s + manualDiscount(l), 0);
+  // The production vouchers' deductions ("קיזוז שובר הפקה"): fiscally the same discount (Cart.totals prepaidDeduction).
+  const deduction = lines.reduce((s, l) => s + Math.max(0, l.prepaidDeductionAgorot ?? 0), 0);
+  const discount = promotion + voucher + manual + Math.max(0, basketDiscountAgorot) + deduction;
   const total = gross - discount;
   const net = vatNet(total, vatRate);
   return {
     grossAgorot: gross,
     discountAgorot: discount,
     voucherDiscountAgorot: voucher,
+    ...(deduction > 0 ? { prepaidDeductionAgorot: deduction } : {}),
     totalAgorot: total,
     netAgorot: net,
     vatAgorot: total - net,
@@ -153,6 +185,52 @@ export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgoro
     chargeAgorot: total + tipAgorot,
     vatRate,
   };
+}
+
+/**
+ * A credit note's totals (SaleRepository.recordRefund / buildBasketDocuments): the lines' credits (net of their discount
+ * share) are its amount — no document discount on a credit — and its VAT split is taken from them at [vatRate] (none on
+ * a receipt refund).
+ */
+export function creditTotals(lines: readonly SaleLine[], vatRate: number): SaleTotals {
+  const credited = lines.reduce((s, l) => s + (l.creditAgorot ?? lineGross(l)), 0);
+  const net = vatNet(credited, vatRate);
+  return {
+    grossAgorot: credited,
+    discountAgorot: 0,
+    voucherDiscountAgorot: 0,
+    totalAgorot: credited,
+    netAgorot: net,
+    vatAgorot: credited - net,
+    tipAgorot: 0,
+    chargeAgorot: credited,
+    vatRate,
+  };
+}
+
+/** A credit document: a credit note (330) or an exempt dealer's receipt refund (−400) — DocumentType.isCredit. */
+export function isCreditType(documentType: number): boolean {
+  return documentType === 330 || documentType === -400;
+}
+
+/** A sale document: a tax invoice-receipt (320) or an exempt dealer's receipt (400) — DocumentType.isSale. */
+export function isSaleType(documentType: number): boolean {
+  return documentType === 320 || documentType === 400;
+}
+
+/**
+ * Money back, crediting [originalType] (null: no receipt) — FiscalDocuments.creditTypeFor: a receipt refund (−400) for a
+ * receipt or whenever the business is exempt now; a credit note (330) otherwise.
+ */
+export function creditDocumentType(dealerType: string | null | undefined, originalType: number | null): 330 | -400 {
+  if (originalType === 400) return -400;
+  if (dealerType === 'exempt') return -400;
+  return 330;
+}
+
+/** The VAT rate a new document of [documentType] is written at: none on a receipt (400 / −400). */
+export function vatRateForType(documentType: number, configured: number): number {
+  return documentType === 400 || documentType === -400 ? 0 : configured;
 }
 
 /** KioskCustomer.tipOf: (goods × pct + 50) / 100 in integers (lib/kioskMoney.ts tipPercentOf — one copy). */
@@ -224,6 +302,12 @@ export interface XDoc {
   vatRate: number | null;
   tipAgorot: number;
   tipPaymentMethod: string | null;
+  /**
+   * Production vouchers (core/till/vouchers.ts): the document's deductions ("קיזוז שובר הפקה" — out of the gross and out of the
+   * discounts alike, their own section), and its ₪0 voucher units (no items of the shift). Absent: none.
+   */
+  prepaidDeductionAgorot?: number;
+  offVoucherUnits?: number;
 }
 
 const REPORTABLE = new Set(['completed', 'refunded', 'partial_refund']);
@@ -243,6 +327,26 @@ export interface XTill {
   vatTotal?: number;
   transactionsCount: number;
   itemsCount: number;
+  /**
+   * Mixed baskets (core/till/basket.ts): the net of the exchange legs — received on sales less given on credit notes, zero
+   * when every basket is whole — as the cloud's `totalExchange`; and what the sales received in exchange. Absent when the
+   * shift had no basket, so such a shift closes as it always did (ShiftClose.kt).
+   */
+  totalExchange?: number;
+  exchangeReceived?: number;
+  /**
+   * "מגירת מזומן" (core/till/drawer.ts `tillWithDrawer`): the shift's Cash In / Cash Out / deposits, and the cash its payments
+   * left with employees / employees deposited here ("הכסף אצלי", drawer-away §5.6) — only when not zero, already in expectedCash.
+   */
+  cashIn?: number;
+  cashOut?: number;
+  deposits?: number;
+  walletIn?: number;
+  walletDeposits?: number;
+  /** "שוברי הפקה": what production vouchers paid as a tender — only when not zero; never cash, card or the drawer. */
+  totalVouchers?: number;
+  /** The X's production vouchers sections (core/till/vouchers.ts voucherInfoJson) — information, in no figure above. */
+  prepaidVouchersInfo?: Record<string, unknown>;
 }
 
 export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, currentRate: number): { till: XTill; reportableIds: string[] } {
@@ -256,7 +360,10 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     cardTips = 0,
     vat = 0,
     items = 0,
-    count = 0;
+    count = 0,
+    exchangeIn = 0,
+    exchangeOut = 0,
+    vouchers = 0;
   let vatComplete = true;
   const ids: string[] = [];
   for (const d of docs) {
@@ -266,15 +373,25 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     const credit = CREDIT_TYPES.has(d.documentType);
     if (credit) refunds += d.grossAgorot;
     else {
-      sales += d.grossAgorot;
-      items += Math.trunc(d.itemsQty);
-      discounts += d.documentDiscountAgorot;
+      // A production voucher's deduction is out of the gross and out of the discounts alike (XReport.kt); a ₪0 voucher's goods
+      // are no items of the shift.
+      const deduction = Math.min(Math.max(0, d.prepaidDeductionAgorot ?? 0), d.documentDiscountAgorot);
+      sales += d.grossAgorot - deduction;
+      items += Math.max(0, Math.trunc(d.itemsQty) - Math.max(0, d.offVoucherUnits ?? 0));
+      discounts += d.documentDiscountAgorot - deduction;
     }
     const sign = credit ? -1 : 1;
     const legs = d.payments.length > 0 ? d.payments : [{ method: d.paymentMethod ?? 'cash', amountAgorot: credit ? d.grossAgorot : d.grossAgorot - d.documentDiscountAgorot }];
     for (const leg of legs) {
       if (leg.method === 'cash') cash += sign * leg.amountAgorot;
       else if (leg.method === 'card') card += sign * leg.amountAgorot;
+      // Neither cash nor card, and never in the drawer: the exchange row (XReport.kt).
+      else if (leg.method === 'exchange') {
+        if (credit) exchangeOut += leg.amountAgorot;
+        else exchangeIn += leg.amountAgorot;
+      }
+      // "שוברי הפקה", whichever code wrote the leg: its own line, never the drawer.
+      else if (leg.method === 'production_voucher' || leg.method === 'voucher') vouchers += sign * leg.amountAgorot;
     }
     if (d.vatAgorot === null) {
       vatComplete = false;
@@ -301,6 +418,10 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     itemsCount: items,
   };
   if (vatComplete) till.vatTotal = s(vat);
+  // Only a shift with a mixed basket carries them (ShiftClose.kt: totalExchange takeIf moved, exchangeReceived when not zero).
+  if (exchangeIn !== 0 || exchangeIn - exchangeOut !== 0) till.totalExchange = s(exchangeIn - exchangeOut);
+  if (exchangeIn !== 0) till.exchangeReceived = s(exchangeIn);
+  if (vouchers !== 0) till.totalVouchers = s(vouchers);
   return { till, reportableIds: ids };
 }
 

@@ -28,6 +28,10 @@ import type { PageRenderer } from './printer/printQueue';
 import { UpdateManager } from './update/updater';
 import { RoleManager } from './roles/manager';
 import { RollingLog } from './deviceLog';
+import { createWorkMode, type WorkModeRuntime } from './workMode';
+import { liteHintOf, windowsTillCaps, TillRole } from './roles/till';
+import { KioskCoreTillEngine } from './till/engine';
+import { APP_SCHEME, attachTillRole, type TillElectron } from './roles/tillElectron';
 import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
@@ -66,6 +70,8 @@ let bridgeMode: BridgeModeHandle | null = null;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'kiosk', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
+  // The till role's screens (roles/tillElectron.ts): the one app bundle, verified, at r2m://app/.
+  APP_SCHEME,
 ]);
 
 // Smooth: GPU raster, no throttling, autoplaying videos.
@@ -123,6 +129,12 @@ function fileResponse(file: string, request: Request, cache: string): Response {
 let service: KioskService | null = null;
 let updater: UpdateManager | null = null;
 let roles: RoleManager | null = null;
+/** "מצב עבודה: קיוסק / קופה" (workMode.ts): the switch between the kiosk and the till, built after the role manager. */
+let workMode: WorkModeRuntime | null = null;
+/** The till role (roles/till.ts): a preview over the mock engine until the bundled engine (P2). */
+let tillRole: TillRole | null = null;
+let tillView: TillElectron | null = null;
+let tillEngine: KioskCoreTillEngine | null = null;
 let main: BrowserWindow | null = null;
 let printer: BrowserWindow | null = null;
 let printerReady: Promise<void> | null = null;
@@ -329,6 +341,8 @@ function bridge(svc: KioskService) {
   ipcMain.handle('shell:kds', () => roles?.kdsView());
   ipcMain.handle('shell:kdsAction', (_e, a: KdsActionInput) => roles?.kdsAction(a) ?? { ok: false });
   ipcMain.on('shell:activity', () => roles?.touch());
+  // The manager's menu opened from the till's corner is closed: the till's view comes back over the window.
+  ipcMain.on('shell:adminClosed', () => tillView?.resume());
   // "שרת מזומן": the staff screen (shared/cash.ts) — its view, a manager's code, an action.
   ipcMain.handle('shell:cash', () => roles?.cashView() ?? null);
   ipcMain.handle('shell:cashUnlock', (_e, pin: unknown) => roles?.cashUnlock(typeof pin === 'string' ? pin.slice(0, 12) : '') ?? { ok: false });
@@ -494,7 +508,8 @@ void app.whenReady().then(async () => {
     currentVersion: appVersion(),
     dir: path.join(app.getPath('userData'), 'updates'),
     // Out on the desktop: an automatic install waits for the way back (core/updatePolicy.ts).
-    activity: () => ({ ...(roles?.activity() ?? svc.activity()), desktop: desktop?.active === true }),
+    // The till: busy / at rest as its screens say (never an install mid-sale).
+    activity: () => ({ ...(roles?.activity() ?? svc.activity()), ...(tillRole && roles?.role() === 'till' ? tillRole.activity() : {}), desktop: desktop?.active === true }),
     localWindow: parseWindow(install.updateWindow),
     checkEveryMs: Math.max(5, Number(install.updateCheckMinutes) || 15) * 60_000,
     runInstaller: (file, args) => {
@@ -523,6 +538,47 @@ void app.whenReady().then(async () => {
   roles.on('board', (v) => sendShell('shell:board', v));
   roles.on('kds', (v) => sendShell('shell:kds', v));
   roles.on('cash', (v) => sendShell('shell:cash', v));
+  // work mode: its changes reach the screens through the service's view (the role follows), the shell's view carries what the till shows of it.
+  workMode = createWorkMode(svc, (m) => console.log(`[shell] ${m}`));
+  workMode.onChange(() => roles?.emitView());
+
+  // The till role: the same app and installer — the cloud's role decides (a till by role, or a kiosk working as a
+  // till). The screens are the one app bundle; the engine behind them is the kiosk core (main/till/engine.ts):
+  // the same ledger, numbering, terminals, printer and Z the kiosk already runs.
+  tillEngine = new KioskCoreTillEngine({ svc, workMode: () => workMode, log: (m) => console.log(`[till] ${m}`) });
+  tillRole = new TillRole({
+    engine: tillEngine,
+    userData: app.getPath('userData'),
+    builtInBundleDir: app.isPackaged ? path.join(process.resourcesPath, 'app-bundle') : path.join(__dirname, '..', 'app-bundle'),
+    appVersion: appVersion(),
+    device: () => {
+      const d = screen.getPrimaryDisplay();
+      return {
+        model: 'Windows',
+        os: `${os.type()} ${os.release()}`,
+        screen: { width: d.size.width, height: d.size.height, dpr: d.scaleFactor },
+        installationId: null,
+        shellVersion: appVersion(),
+        lite: liteHintOf({ release: os.release(), totalMemBytes: os.totalmem() }),
+      };
+    },
+    caps: () => windowsTillCaps(svc),
+    log: (m) => console.log(`[shell] ${m}`),
+  });
+  tillView = attachTillRole({
+    role: tillRole,
+    main: () => main,
+    preload: path.join(__dirname, '..', 'preload', 'app.js'),
+    isDev,
+    enabled: () => true,
+    log: (m) => console.log(`[shell] ${m}`),
+    // "ניהול הקיוסק" from the till's corner: never during a payment; the shell's window shows the menu (staff/ShellStaff.tsx).
+    admin: {
+      allowed: () => !tillEngine?.paying(),
+      open: () => sendShell('shell:admin', { from: 'till' }),
+    },
+  });
+  roles.on('view', (v) => tillView?.onRole(v.role));
 
   registerKioskProtocol();
 
@@ -534,6 +590,7 @@ void app.whenReady().then(async () => {
   // Restarted while out on the desktop (a crash, an update, a reboot): back in full screen, and said so.
   if (service.desktopExitState()) service.desktopReturned('restart');
   roles.start();
+  workMode?.start();
   // Development builds check only on "בדוק עכשיו"; an installed app on its own timer too.
   if (app.isPackaged && !isDev) updater.start();
   else void updater.confirmInstalled();
@@ -561,6 +618,9 @@ app.on('window-all-closed', () => {
   desktop?.stop();
   hideReturnTray();
   updater?.stop();
+  tillView?.stop();
+  tillEngine?.stop();
+  workMode?.stop();
   roles?.stop();
   service?.stop();
   app.quit();

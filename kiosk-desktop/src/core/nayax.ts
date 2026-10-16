@@ -51,6 +51,49 @@ export function saleFrame(amountAgorot: number, vuid: string, payments = 1): str
   return frame('doTransaction', body);
 }
 
+/**
+ * A refund (tranType 53, Tweezer.refund / refundUnlinked): linked to the original sale by the acquirer's
+ * `originalTransactionId` when there is one — an unlinked credit otherwise (higher risk, often declined).
+ */
+export function refundFrame(amountAgorot: number, vuid: string, originalTransactionId: string | null): string {
+  const body: Record<string, unknown> = {
+    amount: Math.round(amountAgorot),
+    vuid,
+    currency: '376',
+    creditTerms: 1,
+    tranCode: 1,
+    tranType: 53,
+  };
+  if (originalTransactionId) body.originalTransactionId = originalTransactionId;
+  body.cardNumber = '';
+  body.expDate = '';
+  body.cvv = '';
+  return frame('doTransaction', body);
+}
+
+/**
+ * The acquirer's own transaction id of a card sale (acquirerTransactionIdOf): `transactionId` flat on the card meta, or
+ * under its `result` — never the terminal's `uid` (that one links a refund to nothing).
+ */
+export function acquirerTransactionIdOf(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta) return null;
+  const pick = (o: unknown): string | null => {
+    if (!o || typeof o !== 'object') return null;
+    const v = (o as Record<string, unknown>).transactionId;
+    const s = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+    return s && s !== 'null' ? s : null;
+  };
+  let result: unknown = meta.result;
+  if (typeof result === 'string') {
+    try {
+      result = JSON.parse(result);
+    } catch {
+      result = null;
+    }
+  }
+  return pick(meta) ?? pick(result);
+}
+
 export const abortFrame = (vuid: string) => frame('abortTransaction', { vuid });
 export const lookupFrame = (vuid: string) => frame('getTransactionByVuid', { vuid });
 export const statusFrame = () => frame('getStatus', {});

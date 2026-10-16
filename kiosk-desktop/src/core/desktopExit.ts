@@ -58,6 +58,8 @@ export interface RosterUser {
   shopId?: string | null;
   /** The cloud's effective permissions (code → allow | approval | deny); absent from an older server. */
   permissions?: Record<string, string> | null;
+  /** The role's limits (`{code: {maxAmount, maxPercent}}`, shekels / percent): an "allow" above one asks a manager. */
+  limits?: Record<string, Record<string, number>> | null;
   tillRoleName?: string | null;
 }
 
@@ -66,36 +68,52 @@ export interface RosterUser {
  * by test/desktopExit.test.ts against pos-server's tests/fixtures/till_permissions_matrix.json.
  */
 export const CODES: readonly string[] = [
-  'SELL', 'CALCULATOR.USE', 'PRICE_OVERRIDE', 'DISCOUNT', 'VOUCHER_DISCOUNT_OVERRIDE', 'VOUCHER_TEST_REDEEM', 'LINE_VOID', 'HELD_SALE_CANCEL', 'OTH', 'REFUND', 'REPRINT',
-  'SELL_RESTRICTED_ITEMS',
-  'TABLES.USE', 'TABLES.OPEN_OTHERS', 'TABLE_CANCEL', 'TABLE_VOID', 'TABLE_RESTORE', 'TABLE_UNLOCK',
-  'SHIFT_OPEN', 'SHIFT_CLOSE', 'X', 'Z', 'TRANSMIT', 'VIEW_REPORTS',
-  'CASH_DRAWER.OPEN_ON_CASH_SALE', 'CASH_DRAWER.OPEN_MANUALLY', 'CASH_DRAWER.OPEN_FOR_CHANGE', 'CASH_DRAWER.CASH_IN',
-  'CASH_DRAWER.CASH_OUT', 'CASH_DRAWER.DEPOSIT', 'CASH_DRAWER.COUNT', 'CASH_DRAWER.BLIND_COUNT',
-  'CASH_DRAWER.OPEN_FOR_TEST', 'CASH_DRAWER.APPROVE_OPEN', 'CASH_DRAWER.OPEN_AFTER_CLOSE', 'CASH_DRAWER.VIEW_LOG',
-  'CASH_DRAWER.VIEW_CASH_MOVEMENTS',
-  'CATALOG_WRITE', 'ITEM_BLOCK', 'ATTENDANCE_MANAGE', 'USER_SESSION_RELEASE', 'CARD_UNRESOLVED', 'KIOSK_CONTROL', 'KIOSK_UNLOCK',
-  DESKTOP_EXIT,
-  // "מעבר למצב קופה בקיוסק" (P:/specs/kiosk-landscape-till-mode.md §5.3): a manager's, checked on the device.
-  'KIOSK_TILL_MODE',
+  'SELL', 'CALCULATOR.USE', 'PRICE_OVERRIDE', 'DISCOUNT', 'VOUCHER_DISCOUNT_OVERRIDE', 'VOUCHER_TEST_REDEEM',
+  'LINE_VOID', 'HELD_SALE_CANCEL', 'OTH', 'REFUND', 'REPRINT', 'SELL_RESTRICTED_ITEMS', 'TABLES.USE',
+  'TABLES.OPEN_OTHERS', 'TABLES.ASSIGN', 'TABLE_CANCEL', 'TABLE_VOID', 'TABLE_RESTORE', 'TABLE_UNLOCK', 'SHIFT_OPEN',
+  'SHIFT_CLOSE', 'X', 'Z', 'TRANSMIT', 'VIEW_REPORTS', 'SHOP_X_REPORT', 'CASH_DRAWER.OPEN_ON_CASH_SALE',
+  'CASH_DRAWER.OPEN_MANUALLY', 'CASH_DRAWER.OPEN_FOR_CHANGE', 'CASH_DRAWER.CASH_IN', 'CASH_DRAWER.CASH_OUT',
+  'CASH_DRAWER.DEPOSIT', 'CASH_DRAWER.COUNT', 'CASH_DRAWER.BLIND_COUNT', 'CASH_DRAWER.OPEN_FOR_TEST',
+  'CASH_DRAWER.APPROVE_OPEN', 'CASH_DRAWER.OPEN_AFTER_CLOSE', 'CASH_DRAWER.VIEW_LOG',
+  'CASH_DRAWER.VIEW_CASH_MOVEMENTS', 'CASH_DRAWER.OPEN_REMOTE', 'CASH_DRAWER.WALLET_DEPOSIT', 'CATALOG_WRITE',
+  'CATALOG_VIEW', 'CATALOG_AVAILABILITY', 'CATALOG_PRICE', 'CATALOG_EDIT', 'CATALOG_CREATE', 'ITEM_BLOCK',
+  'ITEM_BLOCK_WIDE', 'ATTENDANCE_MANAGE', 'USER_SESSION_RELEASE', 'MULTI_DEVICE_LOGIN', 'CARD_UNRESOLVED',
+  'KIOSK_CONTROL', 'KIOSK_UNLOCK', DESKTOP_EXIT, 'KIOSK_TILL_MODE', 'APPROVE_REMOTE.refund',
+  'APPROVE_REMOTE.document_cancel', 'APPROVE_REMOTE.line_void', 'APPROVE_REMOTE.table_cancel',
+  'APPROVE_REMOTE.discount_line', 'APPROVE_REMOTE.discount_basket', 'APPROVE_REMOTE.price_override',
+  'APPROVE_REMOTE.oth', 'APPROVE_REMOTE.drawer_open', 'APPROVE_REMOTE.drawer_open_remote', 'APPROVE_REMOTE.cash_out',
+  'APPROVE_REMOTE.shift_close', 'APPROVE_REMOTE.reprint', 'APPROVE_REMOTE.table_ops', 'APPROVE_REMOTE.card_unresolved',
+  'APPROVE_REMOTE.user_release', 'APPROVE_REMOTE.z_close', 'APPROVE_REMOTE.terminal_offline_all',
+  'APPROVE_REMOTE.refund_no_receipt', 'APPROVE_REMOTE.refund_cash', 'APPROVE_REMOTE.below_cost',
+  'APPROVE_REMOTE.out_of_stock_sale', 'APPROVE_REMOTE.employee_meal_over', 'APPROVE_REMOTE.house_account_over',
+  'APPROVE_REMOTE.voucher_manual', 'APPROVE_REMOTE.club_adjust', 'APPROVE_REMOTE.table_reopen',
+  'APPROVE_REMOTE.payment_change', 'APPROVE_REMOTE.installments_over', 'APPROVE_REMOTE.manual_card',
+  'APPROVE_REMOTE.after_hours_sale', 'APPROVE_REMOTE.opening_float', 'APPROVE_REMOTE.close_other_shift',
+  'APPROVE_REMOTE.tip_over', 'APPROVE_REMOTE.attendance_fix', 'PAYMENT_REVERSE_CASH', 'PAYMENT_REVERSE_CARD',
+  'PAYMENT_REVERSE_OTHER', 'TERMINAL_OFFLINE_ALL',
 ];
 const KNOWN = new Set(CODES);
 
 /** What a cashier needed a manager for before roles (the cloud's `LEGACY_APPROVAL_CODES`). */
 const LEGACY_APPROVAL = new Set([
-  'REFUND', 'DISCOUNT', 'VOUCHER_DISCOUNT_OVERRIDE', 'VOUCHER_TEST_REDEEM', 'OTH', 'CATALOG_WRITE', 'TRANSMIT', 'TABLE_CANCEL', 'TABLE_UNLOCK', 'REPRINT', 'TABLE_VOID',
-  'TABLE_RESTORE', 'USER_SESSION_RELEASE', 'KIOSK_UNLOCK', 'KIOSK_CONTROL', 'ATTENDANCE_MANAGE', 'CARD_UNRESOLVED',
-  'SELL_RESTRICTED_ITEMS', 'HELD_SALE_CANCEL', 'ITEM_BLOCK',
+  'DISCOUNT', 'VOUCHER_DISCOUNT_OVERRIDE', 'VOUCHER_TEST_REDEEM', 'HELD_SALE_CANCEL', 'OTH', 'REFUND', 'REPRINT',
+  'SELL_RESTRICTED_ITEMS', 'TABLES.ASSIGN', 'TABLE_CANCEL', 'TABLE_VOID', 'TABLE_RESTORE', 'TABLE_UNLOCK', 'TRANSMIT',
+  'SHOP_X_REPORT', 'CASH_DRAWER.OPEN_REMOTE', 'CATALOG_WRITE', 'CATALOG_AVAILABILITY', 'CATALOG_PRICE', 'CATALOG_EDIT',
+  'CATALOG_CREATE', 'ITEM_BLOCK', 'ITEM_BLOCK_WIDE', 'ATTENDANCE_MANAGE', 'USER_SESSION_RELEASE', 'CARD_UNRESOLVED',
+  'KIOSK_CONTROL', 'KIOSK_UNLOCK', 'PAYMENT_REVERSE_CASH', 'PAYMENT_REVERSE_CARD', 'PAYMENT_REVERSE_OTHER',
 ]);
 /** A shop manager's alone before roles (the cloud's `LEGACY_CASHIER_DENIED`). */
-const LEGACY_CASHIER_DENIED = new Set(['CASH_DRAWER.APPROVE_OPEN', DESKTOP_EXIT, 'KIOSK_TILL_MODE']);
+const LEGACY_CASHIER_DENIED = new Set([
+  'CASH_DRAWER.APPROVE_OPEN', 'MULTI_DEVICE_LOGIN', DESKTOP_EXIT, 'KIOSK_TILL_MODE', 'TERMINAL_OFFLINE_ALL',
+]);
 
 /** What the legacy role allowed (Android `PermissionProfile.legacy`); an unknown code is never granted. */
 export function legacyState(role: string | null | undefined, code: string): PermState {
   if (!KNOWN.has(code)) return 'deny';
   if ((role ?? '').trim().toLowerCase() === 'shop_manager') return 'allow';
   if (LEGACY_APPROVAL.has(code)) return 'approval';
-  if (LEGACY_CASHIER_DENIED.has(code)) return 'deny';
+  // Approving another till's request from afar ("APPROVE_REMOTE.<type>") was never a cashier's.
+  if (LEGACY_CASHIER_DENIED.has(code) || code.startsWith('APPROVE_REMOTE.')) return 'deny';
   return 'allow';
 }
 

@@ -32,7 +32,7 @@ import type { MenuBlock } from '@dash-lib/menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import { addonOnlyRow, sellableOnKiosk } from '@dash-lib/kioskSellable';
 import { noteImagesOf, optionImagesOf } from '@dash-lib/kioskItemFlow';
-import { kioskSoldOut, rowAvailable, type SaleState } from '@dash-lib/kioskSoldOut';
+import { decideSoldOut, itemBlocksOf, kioskSoldOut, rowAvailable, type SaleState, type SoldOutState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
 import { ofShekels } from '../../core/money';
@@ -101,10 +101,14 @@ export interface KProduct {
   priceAgorot: number;
   /** The catalog's own price when a menu set `priceAgorot`; absent: no menu is on it (client lib/kioskMenus.ts `basePriceOf`). */
   catalogPriceAgorot?: number;
-  /** The active menu that placed it ("תפריטים"), with where its price came from: `menu` / `catalog`. */
+  /**
+   * The active menu that placed it ("תפריטים"), with where its price came from: `menu` / `catalog`. The kiosk's catalog: its own
+   * menus (client lib/kioskMenus.ts). The till's: set while a till menu (core/till/menus.ts) is active — copied onto the sold line
+   * (`menuId` / `menuName` / `priceSource`). Absent with no menu active.
+   */
   menuId?: string | null;
   menuName?: string | null;
-  priceSource?: 'menu' | 'catalog' | null;
+  priceSource?: 'menu' | 'catalog';
   /** "לא מקבל הנחות": no promotion discounts it (it still counts towards a spend threshold). */
   noDiscount: boolean;
   imageUrl: string | null;
@@ -123,6 +127,15 @@ export interface KProduct {
   trackStock: boolean;
   /** A meal (menu.meals): its window opens, never the card's quick "+". */
   meal: boolean;
+  /**
+   * The till's catalog only (`buildKioskCatalog` channel `till`): "מחייב אישור מנהל במכירה" (itself or its
+   * category) — the till sells it to a user who may (SELL_RESTRICTED_ITEMS), never a kiosk.
+   */
+  restricted?: boolean;
+  /** The till's catalog only: the sale state by the shared rules (lib/kioskSoldOut.ts decideSoldOut) with this till's clock and stock. */
+  sale?: { state: SoldOutState; reason: string | null; note: string | null; untilMs: number | null };
+  /** The till's catalog only: the product IS a voucher (the cloud's `voucherId`) — credited from its receipt only. */
+  voucherId?: string | null;
 }
 
 export interface KioskCatalogData {
@@ -183,19 +196,41 @@ function restrictedRow(p: Row, restricted: ReadonlySet<string>): boolean {
 /** Is this product sold on a kiosk at all — the one rule of client lib/kioskSellable.ts, shared with the browser kiosk. */
 export { sellableOnKiosk };
 
+/**
+ * Is this product on a till's sell screen: not delisted, not "קיוסק בלבד" (`salesChannel` kiosk_only — the till hides
+ * it from its sell screen, pos-server models/product.py), on this till's list when its catalog is "selected".
+ * A manager-approval item is on it (flagged `restricted`; the user's rights decide).
+ */
+export function sellableOnTill(p: Row, machineCatalogMode: string | null | undefined): boolean {
+  if (p.deleted === true) return false;
+  if (p.inStock === false) return false;
+  if (p.salesChannel === 'kiosk_only') return false;
+  if (machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
+  return true;
+}
+
+export interface CatalogOptions {
+  /** `kiosk` (default): what the self-order kiosk sells. `till`: what a till sells (sellableOnTill). */
+  channel?: 'kiosk' | 'till';
+}
+
 export function buildKioskCatalog(
   catalog: { products: Row[]; categories: Row[]; menu: Row | null; machineCatalog: { mode?: string } | null; catalogMenus?: MenuBlock | null },
   settings: Record<string, unknown>,
   localImage: (url: string | null, size: 'card' | 'large') => string | null,
   /** This kiosk's stock levels and clock ("אזל" / "חסום"); absent: none here, now. */
   sale: SaleState = { stock: {}, nowMs: Date.now() },
+  options: CatalogOptions = {},
 ): KioskCatalogData {
+  const till = options.channel === 'till';
   const mode = catalog.machineCatalog?.mode ?? 'all';
   const restricted = restrictedOf(catalog.categories);
-  const activeCats = catalog.categories.filter((c) => c.isActive !== false && c.deleted !== true && !restricted.has(String(c.id)));
+  // A kiosk never shows what needs a manager's code; a till shows it, flagged, to the user who may sell it.
+  const activeCats = catalog.categories.filter((c) => c.isActive !== false && c.deleted !== true && (till || !restricted.has(String(c.id))));
   const catIds = new Set(activeCats.map((c) => String(c.id)));
   // "תפריטים": the menu active on this kiosk's own clock, laid over what the shop lists (client lib/kioskMenus.ts).
-  const lay = layMenu(catalog.catalogMenus, sale.nowMs, menuInputsOf(catalog.products));
+  // The till lays its own menus (core/till/menus.ts, the surface "pos") over what this builds: none here for it.
+  const lay = layMenu(till ? null : catalog.catalogMenus, sale.nowMs, menuInputsOf(catalog.products));
   const menuOn = lay.state.mode === 'menu';
   const menuCats = menuOn ? new Set(lay.state.categories ?? []) : null;
   const menuRank = new Map((lay.state.categoryOrder ?? []).map((id, i) => [id, i]));
@@ -221,15 +256,16 @@ export function buildKioskCatalog(
 
   const mealIds = new Set(Object.keys(((catalog.menu ?? {}) as { meals?: Record<string, unknown> }).meals ?? {}));
   const inActiveCategory = (p: Row) => typeof p.categoryId === 'string' && catIds.has(p.categoryId);
-  /** What the kiosk sells by the catalog's own rules (no menu): its list, its channel, an active category. */
-  const byCatalog = (p: Row) => sellableOnKiosk(p, mode) && inActiveCategory(p) && !restrictedRow(p, restricted);
+  /** What this channel sells by the catalog's own rules (no menu): its list, its channel, an active category. */
+  const byCatalog = (p: Row) => (till ? sellableOnTill(p, mode) : sellableOnKiosk(p, mode) && !restrictedRow(p, restricted)) && inActiveCategory(p);
   /** What an active menu places: over the machine's list; the channel, the manager's approval and delisting stay. */
   const byMenu = (p: Row) => !!lay.placed?.has(String(p.id)) && sellableOnKiosk(p, mode, true) && inActiveCategory(p) && !restrictedRow(p, restricted);
   const ordered = catalog.products
     .slice()
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'));
-  // "תוספת בלבד" (lib/kioskSellable.ts addonOnlyRow): never on the screens, whatever a menu places — kept below.
-  const onScreens = (p: Row) => !addonOnlyRow(p);
+  // "תוספת בלבד" (lib/kioskSellable.ts addonOnlyRow): never on the kiosk's screens, whatever a menu places — kept below.
+  // The till's sell screen is the till's own (its menus are laid by core/till/menus.ts over this list).
+  const onScreens = (p: Row) => till || !addonOnlyRow(p);
   const onKiosk = lay.state.mode === 'menu' ? ordered.filter((p) => byMenu(p) && onScreens(p)) : lay.state.mode === 'none' ? [] : ordered.filter((p) => byCatalog(p) && onScreens(p));
   const onKioskIds = new Set(onKiosk.map((p) => String(p.id)));
   // Held: what the catalog sells but the screens do not show — an open basket's lines and a meal's components (an add-on
@@ -264,6 +300,8 @@ export function buildKioskCatalog(
       barcode: str(p.barcode),
       trackStock: p.trackStock === true,
       meal: mealIds.has(String(p.id)),
+      ...(till ? { restricted: restrictedRow(p, restricted), sale: tillSaleState(p, sale, catalogSettings(settings)) } : {}),
+      ...(till && str(p.voucherId) ? { voucherId: str(p.voucherId) } : {}),
     };
   };
   const products: KProduct[] = onKiosk.map(productOf);
@@ -330,6 +368,21 @@ export function buildKioskCatalog(
     if (usable.length > 0) meals[id] = usable;
   }
   return { categories, products, menu: lay.state, held, groups, meals, quickNotes, noteImages, upsells, upsellRules: upsellRulesOf(menu) };
+}
+
+/** `autoSoldOutAtZero`: on unless a layer turns it off (SoldOutRules.autoOn). */
+function catalogSettings(settings: Record<string, unknown>): { auto: unknown } {
+  return { auto: settings.autoSoldOutAtZero };
+}
+
+/**
+ * A till product's sale state NOW — the Android till's `SoldOutRules.decide` (lib/kioskSoldOut.ts): the blocks the cloud sent
+ * for this device with the till's own clock, and its stock under "אזל אוטומטי". The row's own lock (`lockAvailable` /
+ * `isAvailable` false) is a separate refusal the engine makes ("אינו זמין למכירה").
+ */
+export function tillSaleState(p: Row, sale: SaleState, o: { auto: unknown }): NonNullable<KProduct['sale']> {
+  const d = decideSoldOut(itemBlocksOf(p.blocks), sale.nowMs, { setting: o.auto, trackStock: p.trackStock === true, stock: sale.stock[String(p.id)] ?? null });
+  return { state: d.state, reason: d.reason, note: d.block?.note?.trim() || null, untilMs: d.untilMs };
 }
 
 /** The pictures the kiosk keeps for its catalog (not of what it hides or does not sell). */

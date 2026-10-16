@@ -87,12 +87,23 @@ export interface PosUser {
    * approval | deny) — absent from an older server (the legacy `role` answers then).
    */
   permissions?: Record<string, string> | null;
+  /** The limits that apply (code → {maxAmount, maxPercent}): an "allow" above them asks a manager (core/till/permissions.ts; a drawer cash out above a supervisor's ₪200 too). */
+  limits?: Record<string, Record<string, number>> | null;
   tillRoleKey?: string | null;
   tillRoleName?: string | null;
+  /**
+   * "כשאין הרשאה" (P:/specs/denied-actions-ui.md): the employee's own, else the role's — show | hide | code; null: the
+   * till's level parameter `deniedActionUi` decides (absent from a cloud before feat/denied-actions-ui: the same).
+   */
+  deniedUi?: string | null;
 }
 
-/** The roster's shape kept here; a copy from before it (no shop, no permissions) is pulled again in full. */
-const POS_USERS_SHAPE = '2';
+/**
+ * The roster's shape kept here; a copy from before it is pulled again in full. '4': shop, permissions, the role's limits
+ * and "כשאין הרשאה" (`deniedUi`) — one shape for the whole Windows till ('3' was written by two separate builds, one
+ * without `deniedUi`, so no '3' copy is trusted).
+ */
+const POS_USERS_SHAPE = '4';
 
 /** A secret store (Electron safeStorage) for the machine token; plain in Node tools. */
 export interface SecretBox {
@@ -109,6 +120,7 @@ const K = {
   params: 'cloud.parameters',
   paramsEtag: 'cloud.parametersEtag',
   catalog: 'cloud.catalog',
+  catalogMenus: 'cloud.catalogMenus',
   kiosk: 'cloud.kioskSnapshot',
   kioskSyncAt: 'cloud.kioskSyncAt',
   beat: 'cloud.heartbeat',
@@ -223,6 +235,23 @@ export class CloudStore {
       machineCatalog: (body.machineCatalog as CatalogSnapshot['machineCatalog']) ?? prev.machineCatalog,
       serverTime: typeof body.serverTime === 'string' ? body.serverTime : prev.serverTime,
     } satisfies CatalogSnapshot);
+    // "תפריטים": whole when the cloud sends the block; a delta pull that carries none keeps the last; a full pull that
+    // carries none (a cloud without menus) clears it — what a menu once said is never kept against the cloud's silence.
+    const block = body.catalogMenus;
+    if (block && typeof block === 'object' && !Array.isArray(block)) this.write(K.catalogMenus, block);
+    else if (full && this.catalogMenus() !== null) {
+      this.kv.delete(K.catalogMenus);
+      this.cache.set(K.catalogMenus, null);
+    }
+  }
+
+  /**
+   * "תפריטים": the `catalogMenus` block of the last catalog pull, as the cloud sent it (menus, the assignments along THIS
+   * till's chain, the fallback, its device groups) — read by core/till/menus.ts; null: none was ever sent.
+   * The same object until the next write (a memo may compare it by identity).
+   */
+  catalogMenus(): Record<string, unknown> | null {
+    return this.read<Record<string, unknown>>(K.catalogMenus);
   }
 
   /** The promotions as `GET /sync/{m}/promotions` sent them (read by lib/kioskMoney.ts promotionsOf). */
@@ -312,8 +341,10 @@ export class CloudStore {
         isActive: u.isActive !== false,
         shopId: typeof u.shopId === 'string' ? u.shopId : null,
         permissions: permissionsOf(u.permissions),
+        limits: limitsOf(u.limits),
         tillRoleKey: typeof u.tillRoleKey === 'string' ? u.tillRoleKey : null,
         tillRoleName: typeof u.tillRoleName === 'string' ? u.tillRoleName : null,
+        deniedUi: typeof u.deniedUi === 'string' && ['show', 'hide', 'code'].includes(u.deniedUi.trim().toLowerCase()) ? u.deniedUi.trim().toLowerCase() : null,
       }),
     );
     const full = body.syncType === 'full';
@@ -330,6 +361,19 @@ function permissionsOf(v: unknown): Record<string, string> | null {
   const out: Record<string, string> = {};
   for (const [code, state] of Object.entries(v as Record<string, unknown>)) {
     if (state === 'allow' || state === 'approval' || state === 'deny') out[code] = state;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** `{code: {maxAmount, maxPercent}}` with numbers only; null when nothing is left. */
+function limitsOf(v: unknown): Record<string, Record<string, number>> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out: Record<string, Record<string, number>> = {};
+  for (const [code, inner] of Object.entries(v as Record<string, unknown>)) {
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    const values: Record<string, number> = {};
+    for (const [k, n] of Object.entries(inner as Record<string, unknown>)) if (typeof n === 'number' && Number.isFinite(n)) values[k] = n;
+    if (Object.keys(values).length > 0) out[code] = values;
   }
   return Object.keys(out).length > 0 ? out : null;
 }

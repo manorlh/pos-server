@@ -1,0 +1,10 @@
+# The one app bundle's floor (S0-12, P:/specs/web-till-spec-v2.md §13.3): Windows 7 / Electron 22
+# is Chromium 108, Chrome / Edge 109 the last browsers there, Safari 16.4 the iPad's floor.
+# vite.app.config.mts carries the same floor (build.target + Lightning CSS targets);
+# test/appBundleFloor.test.ts keeps the two in step.
+chrome >= 108
+edge >= 108
+safari >= 16.4
+ios_saf >= 16.4
+samsung >= 20
+firefox >= 115

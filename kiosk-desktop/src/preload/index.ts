@@ -48,7 +48,7 @@ const api: KioskBridge = {
 contextBridge.exposeInMainWorld('kiosk', api);
 
 /** The shell (shared/roles.ts): the device's role, the update status, the KDS and board screens. */
-const shellChannels: Record<keyof ShellEvents, string> = { view: 'shell:view', board: 'shell:board', kds: 'shell:kds', cash: 'shell:cash' };
+const shellChannels: Record<keyof ShellEvents, string> = { view: 'shell:view', board: 'shell:board', kds: 'shell:kds', cash: 'shell:cash', admin: 'shell:admin' };
 const shellApi: ShellBridge = {
   view: () => ipcRenderer.invoke('shell:view'),
   board: () => ipcRenderer.invoke('shell:board'),
@@ -60,6 +60,7 @@ const shellApi: ShellBridge = {
   cash: () => ipcRenderer.invoke('shell:cash'),
   cashUnlock: (pin) => ipcRenderer.invoke('shell:cashUnlock', pin),
   cashAction: (a) => ipcRenderer.invoke('shell:cashAction', a),
+  adminClosed: () => ipcRenderer.send('shell:adminClosed'),
   on: (event, fn) => {
     const channel = shellChannels[event];
     const listener = (_e: unknown, payload: unknown) => (fn as (p: unknown) => void)(payload);

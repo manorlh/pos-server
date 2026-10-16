@@ -42,6 +42,10 @@
 - **תשלום:** מסופון Nayax ברשת (TweezerComm JSON-RPC ל-`https://<host>:8080/SPICy`, הצמדת תעודה בפעם
   הראשונה) — אותן מסגרות כמו בקופה. ספק תשלום נוסף (SynqPay) נכנס דרך `src/main/payment/registry.ts`.
   כללי השחזור (`docs/SPEC_CARD_RECOVERY.md`) חלים על כל ספק: לעולם לא חיוב שני על תוצאה לא ידועה.
+- **בלי אינטרנט** (`docs/SPEC_KIOSK.md` §17.1): עולה לתפריט מהדיסק ומוכר — אשראי במסופון, מזומן במכשיר ב-LAN, מסמכים
+  ומספור מקומיים ב-outbox. "תשלום בקופה" נמסר לשרת ההדפסות של הסניף ב-LAN (`src/core/lanOpenOrders.ts`,
+  `src/main/kiosk/lanClient.ts`; הכתובת והסוד נשמרים מ-`GET /sync/{m}/printers`), ובלי שרת — פתק "לתשלום בקופה" עם
+  "הזמנה ממתינה לסנכרון". הבדיקות: `test/offlineKiosk.test.ts`.
 - **מדפסת:** כל דף הוא תמונה (כמו בקופה): הקבלה, הבון ופתק האיסוף מצוירים על canvas בחלון נסתר,
   הופכים ל-raster של ESC/POS ‏(576 נקודות) ונשלחים ל-spooler של Windows במצב RAW, או ל-TCP 9100.
 

@@ -16,6 +16,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
 import type { BonDoc, PrintDoc, ReceiptDoc, SlipDoc, TicketDoc, ZDoc } from '../../core/printDocs';
+import type { KitchenDoc } from '../../core/kitchen/doc';
 import { layoutTicket } from '../../core/kitchenTicketStyle';
 
 const FONT = '"Roboto", "Noto Sans Hebrew", Arial, sans-serif';
@@ -509,12 +510,38 @@ function drawBon(doc: BonDoc, w: number): HTMLCanvasElement {
  * prints black — a thermal head has no grey; the dashed frame says it.
  */
 function drawStyledBon(doc: BonDoc): HTMLCanvasElement {
+  return paintTicket(layoutTicket(doc.ticket!, doc.style!, { paper: 80, printerName: doc.printerName ?? '', measure: canvasMeasure() }));
+}
+
+/** Text widths as the canvas that draws them measures them. */
+function canvasMeasure(): (text: string, size: number, bold: boolean) => number {
   const probe = canvas(10, 10).ctx;
-  const measure = (text: string, size: number, bold: boolean) => {
+  return (text: string, size: number, bold: boolean) => {
     font(probe, size, bold ? 'bold' : 'normal');
     return probe.measureText(text).width;
   };
-  const layout = layoutTicket(doc.ticket!, doc.style!, { paper: 80, printerName: doc.printerName ?? '', measure });
+}
+
+/**
+ * A kitchen printer's ticket (core/kitchen/doc.ts): its design at its paper, one copy ("עותק 2 מתוך 3" in the design's
+ * footer), drawn as the bon above.
+ */
+function drawKitchen(doc: KitchenDoc): HTMLCanvasElement {
+  return paintTicket(
+    layoutTicket(doc.ticket, doc.style, {
+      paper: doc.paper,
+      printerName: doc.printerName,
+      copy: doc.copy,
+      copies: doc.copies,
+      cutPaper: doc.cutPaper,
+      courses: doc.courses,
+      categories: doc.categories,
+      measure: canvasMeasure(),
+    }),
+  );
+}
+
+function paintTicket(layout: ReturnType<typeof layoutTicket>): HTMLCanvasElement {
   const { c, ctx } = canvas(layout.width, layout.height);
   for (const op of layout.ops) {
     if (op.type === 'rect') {
@@ -577,6 +604,7 @@ export async function renderDoc(doc: PrintDoc, widthDots: number): Promise<{ wid
   await loadFonts();
   let page: HTMLCanvasElement;
   if (doc.kind === 'bon') page = doc.ticket && doc.style ? scaled(drawStyledBon(doc), widthDots) : drawBon(doc, widthDots);
+  else if (doc.kind === 'kitchen') page = scaled(drawKitchen(doc), widthDots);
   else if (doc.kind === 'receipt') page = scaled(await drawReceiptAt384(doc), widthDots);
   else if (doc.kind === 'slip') page = scaled(drawSlipAt384(doc), widthDots);
   else if (doc.kind === 'ticket') page = scaled(drawTicketAt384(doc), widthDots);

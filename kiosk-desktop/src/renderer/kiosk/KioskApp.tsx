@@ -125,6 +125,7 @@ import {
   type KioskFlowState,
 } from '../../core/kioskFlow';
 import { inTechnicianZone, mayOpen as technicianMayOpen, TapSequence } from '../../core/technician';
+import { offlineNoticeShown, offlineNoticeText } from '../../core/offlineBlock';
 import type { BasketChange, CashCreditLegIn, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn, VoucherAnswer } from '../../shared/bridge';
 import { scannedVoucherCode } from '../../core/kioskScan';
 import { cashCreditCodeOf } from '../../core/cash/credit';
@@ -136,15 +137,15 @@ import { BatteryAlerts } from './BatteryAlerts';
 import { Dialog } from './Dialog';
 import { noteEntry, type EntryRequest } from './EntryWindow';
 import { StaffLayer } from '../staff/StaffLayer';
+import { AdminHoldBar, useAdminCornerHold } from '../staff/adminHold';
+import { kioskCornerArmed } from '../../core/adminCorner';
+import { noPaymentBodyHe, noPaymentCause } from '../../core/noPaymentText';
 import { KioskShopLock } from './KioskShopLock';
 import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
 
 /** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
 const FOOTER_PX = 18;
-
-/** The admin's corner (CSS px from the physical top-right). */
-const ADMIN_ZONE = 48;
 
 type FlowAction = { event: KioskEvent; cartEmpty: boolean };
 
@@ -295,8 +296,13 @@ export function KioskApp({ view }: { view: KioskView }) {
   }, []);
   const flightSeq = useRef(0);
   const taps = useRef(new TapSequence());
-  const longPress = useRef<number | null>(null);
-  const swallowClick = useRef(false);
+  // "ניהול הקיוסק": two seconds held on the top-start square — the top right, the staff's Hebrew — as the Android kiosk's
+  // KioskAdminCorner (core/adminCorner.ts); never during a payment, never over a pad or a menu already up.
+  const adminHold = useAdminCornerHold({
+    rtl: true,
+    armed: () => kioskCornerArmed({ screen: flowRef.current.screen, busy: flowBusy(flowRef.current), staffOpen: staffOpen !== 'none' }),
+    onOpen: () => setStaffOpen('admin'),
+  });
   const size = useWindowSize();
 
   /* ---------------------------------------------------------- the catalog */
@@ -1108,6 +1114,10 @@ export function KioskApp({ view }: { view: KioskView }) {
   } as CSSProperties;
   const onAttractService = serviceOnAttract(cfgIn);
   const chrome = chromeRoot(m);
+  // "התשלום אינו זמין": its default line says why — the terminal, the cash device, both (core/noPaymentText.ts); the
+  // business's own text wins, and another language keeps the registry's.
+  const noPayBody = lang === 'he' && !configuredText(cfg, 'he', 'noPaymentBody') ? noPaymentBodyHe(noPaymentCause(payInfo)) : null;
+  const mRest: PreviewModel = noPayBody ? { ...m, txt: (k: KioskTextKey) => (k === 'noPaymentBody' ? noPayBody : m.txt(k)) } : m;
 
   return (
     <div
@@ -1117,31 +1127,22 @@ export function KioskApp({ view }: { view: KioskView }) {
       style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
-        // "ניהול הקיוסק": a 2 s press in the physical top-right corner (nothing drawn over it).
-        if (e.clientX > window.innerWidth - ADMIN_ZONE && e.clientY < ADMIN_ZONE) {
-          longPress.current = window.setTimeout(() => {
-            longPress.current = null;
-            swallowClick.current = true;
-            if (technicianMayOpen({ screen: flowRef.current.screen, busy: flowBusy(flowRef.current) }, false)) setStaffOpen('admin');
-          }, 2000);
-        }
+        // "ניהול הקיוסק": the corner's hold (adminHold.tsx) — nothing taken before its claim.
+        adminHold.handlers.onPointerDownCapture(e);
         // The technician's corner: the physical top-left, whatever the language.
         if (inTechnicianZone(e.clientX, e.clientY) && taps.current.tap(Date.now()) && technicianMayOpen({ screen: flow.screen, busy: flowBusy(flow) }, flowBusy(flow))) {
           setStaffOpen('technician');
         }
       }}
-      onPointerUpCapture={() => {
-        if (longPress.current) window.clearTimeout(longPress.current);
-        longPress.current = null;
-      }}
-      onPointerCancelCapture={() => {
-        if (longPress.current) window.clearTimeout(longPress.current);
-        longPress.current = null;
-      }}
+      onPointerMoveCapture={adminHold.handlers.onPointerMoveCapture}
+      onPointerUpCapture={adminHold.handlers.onPointerUpCapture}
+      onPointerCancelCapture={adminHold.handlers.onPointerCancelCapture}
+      onContextMenuCapture={adminHold.handlers.onContextMenuCapture}
       onClickCapture={(e) => {
-        // The technician's corner is for its taps only, and the press that opened the admin is not a tap.
-        if (inTechnicianZone(e.clientX, e.clientY) || swallowClick.current) {
-          swallowClick.current = false;
+        // The press the corner took is not a tap.
+        adminHold.handlers.onClickCapture(e);
+        // The technician's corner is for its taps only.
+        if (inTechnicianZone(e.clientX, e.clientY)) {
           e.stopPropagation();
           e.preventDefault();
         }
@@ -1236,7 +1237,7 @@ export function KioskApp({ view }: { view: KioskView }) {
             ) : (
               // "יצאתי לנוח… תכף אשוב" (paused / closed): the pause's own message and end, as the cloud sent them.
               <PausedScreen
-                m={m}
+                m={mRest}
                 variant={s === 'closed' ? 'closed' : s === 'no_payment' ? (view.state.noPaymentReason === 'offline' ? 'offline' : 'noPayment') : 'paused'}
                 pause={{ message: view.state.pausedMessage, until: view.state.pausedUntil }}
               />
@@ -1377,11 +1378,16 @@ export function KioskApp({ view }: { view: KioskView }) {
         />
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}
+      {/* "הודעה ללקוח כשאין אינטרנט" (general.offlineNotice, off): offline and still selling — a quiet line at the top. */}
+      {offlineNoticeShown({ enabled: cfg.general.offlineNotice === true, offline: view.state.offline === true, sells, screen: flow.screen }) ? (
+        <OfflineNotice m={m} text={configuredText(cfg, 'he', 'offlineNotice') ?? offlineNoticeText(usable.has('card'))} />
+      ) : null}
       {/* "סוללה חלשה": the strip and the alarm — never over a payment (BatteryAlerts.tsx). */}
       <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
       {scanNote}
       {shopLockUp ? <KioskShopLock m={m} closeDay={view.closeDay ?? null} /> : null}
-      <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} />
+      <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} onResetCustomer={() => dispatch({ type: 'reset' })} />
+      <AdminHoldBar progress={adminHold.progress} rtl={adminHold.rtl} />
     </div>
   );
 }
@@ -1467,6 +1473,18 @@ function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: st
       <p className="text-sm" style={{ color: m.c.mutedText }}>
         {body}
       </p>
+    </div>
+  );
+}
+
+/** "הודעה ללקוח כשאין אינטרנט": the line at the top (the Android kiosk's KioskOfflineNotice) — it takes no tap. */
+function OfflineNotice({ m, text }: { m: PreviewModel; text: string }) {
+  return (
+    // Clear of the corners (back, help, the logo): the line wraps rather than covering a button.
+    <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-[55] flex justify-center px-24">
+      <div className="max-w-[560px] px-4 py-1.5 text-center text-[13px] font-semibold leading-snug shadow-md animate-in fade-in duration-300" style={{ background: m.c.surface, color: m.c.text, borderRadius: 18, border: `1px solid ${m.c.border}` }}>
+        {text}
+      </div>
     </div>
   );
 }

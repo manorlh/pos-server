@@ -11,7 +11,8 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
-import { legMarks, orderCode, orderDue, recountLegs, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { legMarks, openLines, orderCode, orderDue, recountLegs, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { kioskTextOf } from '@dash-lib/kioskTexts';
 import { DISCOUNT_PAY_HERE, startVouchersOf } from '@dash-lib/kioskVoucherClient';
 import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '@dash-lib/kioskVouchers';
 import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
@@ -19,6 +20,7 @@ import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promoti
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
+import { lanTargetOf, type LanHost, type LanTarget } from '../core/lanOpenOrders';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
 import { CashCredits } from './kiosk/cashCredits';
 import { CashMagPay, CASHMAG_STATION_NAME, txViewOf as cashmagTxView, type CashMagEntry, type CashMagLocalConfig, type CashMagProgress } from './kiosk/cashmagPay';
@@ -28,17 +30,21 @@ import type { CashRecyclerDriver } from './cash/recycler';
 import type { CashMagFunctions } from '../core/cash/cashmagWire';
 import type { SessionStore } from './cash/cashmagClient';
 import { creditLegsOf } from '../core/cash/credit';
-import { cashSlipDoc } from '../core/printDocs';
+import { cashSlipDoc, payAtTillSlipDoc } from '../core/printDocs';
+import { formatShekelSign, ltr } from '../core/money';
 import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cash/tx';
 import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
 import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { bonDoc, kioskBonStyle, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
-import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
+import { bonDoc, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type XInput } from '../core/printDocs';
+import { BON_NOT_ON_KIOSK, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
+import { lineMenuFacts, menuKey, presentTillCatalog, resolveTillMenu } from '../core/till/menus';
+import { offVoucherLineValues, voucherDeductionLabel, voucherLineMemo } from '../core/till/vouchers';
+import { effectiveSnapshot, kioskFactsOf, rawFactsOf, REFUSAL_TEXT, WORK_TEXT, workModeEvent, type KioskSideFacts, type WorkModeEvent } from '../core/workMode';
 import { attempt as techAttempt, codeMatches, NO_LOCK, type TechLock } from '../core/technician';
 import {
   decideExit,
@@ -71,10 +77,11 @@ import { openDb, type Db } from './db/sqlite';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
-import { Outbox, type OutboxRow } from './sync/outbox';
+import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
-import { docVoucherDiscounts, documentWire, Ledger, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
+import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
+import { KioskZRunner, kioskZHold, kioskZKindOfDevice, kioskZOutcomeOk, kioskZOutcomeText, makesOwnZ, type KioskAdminZOutcome, type KioskZPort } from '../core/kioskZ';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
 import { NayaxUsbProvider } from './payment/nayaxUsb';
@@ -92,7 +99,17 @@ import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type 
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
+import { KitchenService } from './kitchen/kitchenService';
+import { KdsOutbox } from './kitchen/kdsOutbox';
+import { KitchenHost, TILL_ONLY_JOB_KINDS, kitchenJobsModule } from './kitchen/kitchenHost';
+import { PrintJobsHost } from './printer/printJobsHost';
+import { kioskBonToKitchen, tillSaleToKitchen } from './kitchen/kitchenFlows';
+import type { LanCall } from './kitchen/kitchenNet';
+import type { PrinterLink } from '../core/kitchen/delivery';
+import { bonJobState } from '../core/kitchen/queue';
+import { tillNameOf } from '../core/kitchen/tickets';
 import { FunnelStore } from './kiosk/funnel';
+import { WorkSessions, type WorkModeRuntime } from './workMode';
 import {
   basketChanges,
   cloudCheckRequest,
@@ -108,7 +125,7 @@ import {
 import type { FunnelEvent } from '../core/kioskFunnel';
 import { applyBatteryStep, batteryMonitoredParam, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
 import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
-import { basketSold } from '@dash-lib/kioskBasketSold';
+import { basketSold, type BasketSold } from '@dash-lib/kioskBasketSold';
 import { basePriceOf, hasMenus, keptListPrice, menuById, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from '@dash-lib/kioskMenus';
 import type { MenuBlock } from '@dash-lib/menuSchedule';
 import type {
@@ -185,6 +202,13 @@ export interface ServiceOptions {
   cashmagDriver?: (cfg: CashMagConfig, functions: CashMagFunctions, session: SessionStore) => CashRecyclerDriver;
   cashmagDriverOptions?: CashMagDriverOptions;
   cashmagPollMs?: number;
+  /** Tests: the kiosk admin's Z waits between its looks for the close in the cloud (core/kioskZ.ts KioskZRunner). */
+  kioskZPause?: (ms: number) => Promise<void>;
+  /**
+   * Tests: the kitchen's wires (main/kitchen) — a network printer's link, the LAN print server's request, whether this
+   * PC is on a LAN, the kitchen's clock — and the LAN print host's port (0: any) and address.
+   */
+  kitchen?: { printerLink?: (host: string, port: number) => PrinterLink; lanCall?: LanCall; onLan?: () => boolean; now?: () => number; hostPort?: number; hostName?: string };
 }
 
 /** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
@@ -210,10 +234,50 @@ const SHOP_Z_CLOSE_RESULT = 'shopZClose.result';
 const DESKTOP_LOCK = 'desktopExit.lock';
 const DESKTOP_STATE = 'desktopExit.state';
 const DESKTOP_LOG = 'desktopExit.log';
+/** "מצב עבודה: קיוסק / קופה": the device's own log of its mode switches. */
+const WORK_MODE_LOG = 'workMode.log';
+/** A till event of the device's (`POST /sync/{m}/events`, pos-server TillEventIn): a desktop exit or a mode switch. */
+type TillEventRecord = DesktopExitEvent | WorkModeEvent;
+
+/**
+ * A till's lines (main/till/engine.ts), for the pricing: `promo` — `exclude`: an OTH line, not counted by the promotions at
+ * all; `handDiscountAgorot`: the cashier's line discount (never discounted by a promotion, counted after it); null: as rung
+ * up. `listPrice` — a price the line keeps whatever the catalog says now.
+ */
+export interface TillLineHooks {
+  promo?: (key: string, grossAgorot: number) => { exclude?: boolean; handDiscountAgorot?: number } | null;
+  /** A held sale's line: the price it was parked at (HeldSaleCodec: a parked basket keeps the price it was quoted). */
+  listPrice?: (key: string) => number | null;
+}
+
+/** A till event the till's engine records (held sales, line voids, the automatic close): kept and sent like the others. */
+export interface TillEngineEvent {
+  id: string;
+  type: string;
+  occurredAt: string;
+  shiftId: string | null;
+  posUserId: string | null;
+  amount?: number;
+  details: Record<string, unknown>;
+}
+
+/** "ניהול הקיוסק" on a device with no staff synced yet (the manager's code is checked on the device, never online). */
+export const NO_ROSTER_TEXT = 'אין עדיין עובדים במכשיר — נדרש חיבור לענן פעם אחת. כניסת טכנאי: 6 הקשות בפינה השמאלית העליונה';
+/**
+ * "תשלום בקופה" with no cloud (core/lanOpenOrders.ts): the shop's LAN host — its print server — and the shop's print secret
+ * (sealed), as `GET /sync/{m}/printers` last gave them, with its ETag. Read only by a kiosk that offers the till.
+ */
+const LAN_HOST = 'lan.host';
+const LAN_HOST_PULL_MS = 5 * 60_000;
+type KeptLanHost = { etag: string | null; host: LanHost | null; secret: string | null; sealed: boolean };
 
 export class KioskService extends EventEmitter {
   readonly db: Db;
   readonly kv: Kv;
+  /** "מצב עבודה": the till session / the away-in-kiosk session, kept in the kv (main/workMode.ts). */
+  readonly workSessions: WorkSessions;
+  /** The work mode's runtime (built by main/index.ts after the role manager); null until then and in tests that do not need it. */
+  workMode: WorkModeRuntime | null = null;
   readonly cloud: CloudStore;
   readonly api: Api;
   readonly outbox: Outbox;
@@ -234,6 +298,18 @@ export class KioskService extends EventEmitter {
    * the cash station when the cloud turns `cashmagEnabled` on — off by default (nothing of it runs).
    */
   readonly cashMag: CashMagPay;
+  /** "בונים": the kitchen tickets to the shop's kitchen printers / print server / the cloud relay (main/kitchen). */
+  readonly kitchen: KitchenService;
+  /** A till's paid counter sales to the cloud's KDS (main/kitchen/kdsOutbox.ts). */
+  readonly kitchenKds: KdsOutbox;
+  /** This device printing for the shop's others when the cloud names it (main/kitchen/kitchenHost.ts). */
+  readonly kitchenHost: KitchenHost;
+  /**
+   * The cloud's print jobs for this device (`GET /sync/{m}/print-jobs/pending`) — ONE poller (main/printer/printJobsHost.ts):
+   * the kitchen's tickets while it hosts (main/kitchen/kitchenHost.ts), the till's drawers and documents while it works as
+   * a till (main/till/tillDrawer.ts). A document or a drawer nobody here takes is answered "failed" at once.
+   */
+  readonly printJobs: PrintJobsHost;
   readonly sync: SyncEngine;
   /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
   readonly relocator: PinpadRelocator;
@@ -302,6 +378,7 @@ export class KioskService extends EventEmitter {
     this.db = openDb(path.join(opts.dataDir, 'kiosk.db'));
     migrate(this.db);
     this.kv = new Kv(this.db);
+    this.workSessions = new WorkSessions(this.kv);
     this.cloud = new CloudStore(this.kv, opts.secretBox ?? PLAIN_BOX);
     const creds = this.cloud.credentials();
     this.api = new Api(creds?.serverUrl ?? 'http://localhost/', () => this.cloud.credentials()?.accessToken ?? null, opts.fetch, `R2M-Kiosk-Windows/${opts.appVersion}`);
@@ -318,7 +395,54 @@ export class KioskService extends EventEmitter {
     this.printQueue = new PrintQueue(this.db, this.transport, () => this.printerResolution().target, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
-    this.payAtTill = new PayAtTill({ kv: this.kv, api: this.api, machineId: () => this.machineId, operator: () => this.operator(), log: this.log });
+    const kitchenOpts = opts.kitchen ?? {};
+    this.printJobs = new PrintJobsHost({ api: this.api, machineId: () => this.machineId, active: () => !this.isOffline, decline: TILL_ONLY_JOB_KINDS, log: this.log });
+    this.kitchen = new KitchenService({
+      db: this.db,
+      kv: this.kv,
+      api: this.api,
+      machineId: () => this.machineId,
+      secretBox: opts.secretBox,
+      params: () => this.cloud.parameters(),
+      tillName: () => tillNameOf(this.cloud.machine()?.posNumber, this.cloud.machine()?.machineName),
+      ownTarget: () => this.printerResolution().target,
+      transport: this.transport,
+      renderer: () => this.printQueue.pageRenderer,
+      onLan: kitchenOpts.onLan ?? (() => localPrivateIpv4() !== null),
+      orderData: () => ({ courses: [], categories: this.kitchenCategories() }),
+      // A kiosk says its unprinted bons in its own alerts (the order's bon status): the cloud's list is a till's.
+      reportsBonAlerts: () => !this.isKiosk(),
+      log: this.log,
+      now: kitchenOpts.now,
+      printerLink: kitchenOpts.printerLink,
+      lanCall: kitchenOpts.lanCall,
+    });
+    this.kitchen.onChange(() => {
+      this.refreshBonStates();
+      this.dirty();
+    });
+    this.kitchenKds = new KdsOutbox({ kv: this.kv, api: this.api, machineId: () => this.machineId, kitchen: this.kitchen, log: this.log, now: kitchenOpts.now });
+    this.kitchenHost = new KitchenHost({
+      kitchen: this.kitchen,
+      api: this.api,
+      machineId: () => this.machineId,
+      lanAddress: () => localPrivateIpv4(),
+      log: this.log,
+      portOverride: kitchenOpts.hostPort,
+      hostname: kitchenOpts.hostName,
+      printJobs: this.printJobs,
+    });
+    this.printJobs.register('kitchen', kitchenJobsModule(this.kitchen));
+    this.payAtTill = new PayAtTill({
+      kv: this.kv,
+      api: this.api,
+      machineId: () => this.machineId,
+      operator: () => this.operator(),
+      log: this.log,
+      // The cloud away: the shop's LAN host takes the orders (its print server; never for an independent kiosk).
+      lanTarget: () => this.lanTarget(),
+      kioskName: () => this.operator().name,
+    });
     this.cashPay = new CashPay({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log, fetch: opts.fetch });
     this.cashCredits = new CashCredits({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log });
     this.cashPay.onChange(() => this.dirty());
@@ -345,6 +469,7 @@ export class KioskService extends EventEmitter {
       transmit: () => this.transmitBatch('z_close'),
       print: (z) => this.printZ(z),
       log: this.log,
+      online: () => !this.isOffline,
     });
     this.sync = new SyncEngine(this.api, this.cloud, this.ledger, this.outbox, this.remoteHooks(), opts.appVersion);
     this.relocator = new PinpadRelocator({
@@ -371,10 +496,33 @@ export class KioskService extends EventEmitter {
     return this.cloud.credentials()?.machineId ?? null;
   }
 
-  /** A role module's block on every heartbeat (null removes it). */
+  /** A role module's block on every heartbeat (null removes it). `capabilities` is merged across the modules that say them. */
   setHeartbeatPart(key: string, part: (() => unknown) | null): void {
+    if (key === 'capabilities') {
+      this.setCapabilities('heartbeatPart', part ? () => (Array.isArray(part()) ? (part() as unknown[]).filter((w): w is string => typeof w === 'string') : []) : null);
+      return;
+    }
     if (part) this.heartbeatParts.set(key, part);
     else this.heartbeatParts.delete(key);
+  }
+
+  private readonly capabilityOwners = new Map<string, () => string[]>();
+
+  /**
+   * A module's words in the heartbeat's `capabilities` (the cash host's device logs, the till's `document_relay_v1` —
+   * main/till/remoteDrawer.ts): the union of every owner's; none at all — no key (a heartbeat as before).
+   */
+  setCapabilities(owner: string, words: (() => string[]) | null): void {
+    if (words) this.capabilityOwners.set(owner, words);
+    else this.capabilityOwners.delete(owner);
+    if (this.capabilityOwners.size === 0) {
+      this.heartbeatParts.delete('capabilities');
+      return;
+    }
+    this.heartbeatParts.set('capabilities', () => {
+      const all = [...new Set([...this.capabilityOwners.values()].flatMap((f) => f()))];
+      return all.length > 0 ? all : undefined;
+    });
   }
 
   /** The cloud answered a heartbeat lately (90 s). */
@@ -459,6 +607,12 @@ export class KioskService extends EventEmitter {
 
   async start(): Promise<void> {
     this.printQueue.recover();
+    // "בונים": what a restart left in flight recovered, the queue running (offline too: the LAN and the printers).
+    this.kitchen.start();
+    this.kitchenKds.start();
+    void this.kitchenHost.apply();
+    // The cloud's print jobs for this device: one poller, at the pace its modules want (none: no call at all).
+    this.printJobs.start();
     this.orders.prune();
     if (this.paired) {
       this.sync.start();
@@ -493,12 +647,17 @@ export class KioskService extends EventEmitter {
     this.offUsbWatch();
     if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
+    this.printJobs.stop();
+    this.kitchen.stop();
+    this.kitchenKds.stop();
+    void this.kitchenHost.stop();
     this.transport.dispose();
     this.db.close();
   }
 
   private dirty() {
     this.viewDirty = true;
+    this.catalogRev += 1;
     // Coalesced: one view per tick at most.
     if (!this.emitTimer && !this.stopped) {
       this.emitTimer = setTimeout(() => {
@@ -509,6 +668,10 @@ export class KioskService extends EventEmitter {
   }
   private emitTimer: NodeJS.Timeout | null = null;
   private stopped = false;
+  /** Moves with every change of what the catalog is built from (the cloud's catalog, stock, settings, media): the till's catalog is built again then. */
+  private catalogRev = 0;
+  private tillCatalogMemo: { rev: number; until: number | null; data: ReturnType<typeof buildKioskCatalog>; version: number; menu: string; block: unknown } | null = null;
+  private tillCatalogBuilds = 0;
 
   emitEvent<K extends keyof KioskEvents>(name: K, payload: KioskEvents[K]) {
     this.emit(name, payload);
@@ -522,9 +685,11 @@ export class KioskService extends EventEmitter {
     const addr = typeof params.receiptPrinterAddress === 'string' ? params.receiptPrinterAddress.trim() : '';
     let printer = s.printer ?? null;
     if (!printer) {
-      // The cloud's "מדפסת חשבוניות — כתובת" when it is a network address, else the spooler.
+      // The cloud's "מדפסת חשבוניות — כתובת": a network address (IP[:port]); a Windows printer's NAME (a till has no technician
+      // corner to choose one on the device — a MAC, which Android's Bluetooth printer uses, is not a name); else the spooler's automatic choice.
       const m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d+))?$/.exec(addr);
-      printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: null };
+      const mac = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(addr);
+      printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
     return { printer, zoom: s.zoom ?? null };
   }
@@ -550,7 +715,7 @@ export class KioskService extends EventEmitter {
 
   /* ---------------------------------------------------------------- views */
 
-  private settingsMap(): Record<string, unknown> {
+  settingsMap(): Record<string, unknown> {
     const cloud = this.cloud.settings().settings ?? {};
     // A SynqPay key paired here that the cloud does not have yet wins over the sync's (pairing.ts).
     const local = this.localSynqKey();
@@ -559,7 +724,7 @@ export class KioskService extends EventEmitter {
     return merged.settings;
   }
 
-  private business(): BusinessInfo {
+  business(): BusinessInfo {
     const b = (this.cloud.settings().businessInfo ?? {}) as Record<string, unknown>;
     const s = (v: unknown) => (typeof v === 'string' ? v : null);
     return {
@@ -576,16 +741,62 @@ export class KioskService extends EventEmitter {
     };
   }
 
-  private vatRate(): number {
+  vatRate(): number {
     return vatRateOf(this.settingsMap().globalTaxRate, this.business().dealerType);
   }
 
+  /**
+   * The kiosk snapshot as the rest of the app reads it — the EFFECTIVE one (Android KioskHomeRole.effective):
+   * a till by role at home, whose kiosk-mode row says `kiosk: true, homeRole: "till"`, reads `kiosk: false`, so a
+   * till is a till exactly as before and only works as a kiosk while it is away in its kiosk mode.
+   */
   private snapshot(): Record<string, unknown> | null {
+    return effectiveSnapshot(this.cloud.kioskSnapshot(), this.workSessions.away() !== null);
+  }
+
+  /** The cloud's word as it said it — for the work mode's own decisions and for what a kiosk row's data needs. */
+  rawKioskSnapshot(): Record<string, unknown> | null {
     return this.cloud.kioskSnapshot();
   }
 
+  /** A kiosk row exists and is on (a kiosk by role, or a till's kiosk mode — at home or away). */
+  hasKioskRow(): boolean {
+    return rawFactsOf(this.cloud.kioskSnapshot()).kiosk;
+  }
+
+  /**
+   * A kiosk to the rest of the app: the effective word. A kiosk by role in its till session still IS a kiosk row
+   * (its orders, funnel, status and the dashboard's commands carry on); `isKioskMode` says whether its screens are
+   * what the device shows. A till by role at home is not a kiosk.
+   */
   isKiosk(): boolean {
     return this.snapshot()?.kiosk === true;
+  }
+
+  /** A kiosk by role working as a till today (its till session): the till rules apply, the kiosk's own Z and shift logic wait. */
+  inTillSession(): boolean {
+    return this.workSessions.till() !== null && this.isKiosk() && !rawFactsOf(this.cloud.kioskSnapshot()).homeTill;
+  }
+
+  /** The kiosk's screens are what this device shows (Android `isActive`): a kiosk, and not in its till session. */
+  isKioskMode(): boolean {
+    return this.isKiosk() && !this.inTillSession();
+  }
+
+  /** The kiosk side at the moment of a switch to the till (core/workMode.ts): a customer paying or ordering, a card at the terminal. */
+  kioskSideFacts(): KioskSideFacts {
+    const phase = this.payProgress?.phase;
+    return kioskFactsOf({ flowState: this.flow.flowState, busy: this.flow.busy || phase === 'starting' || phase === 'charging' }, this.pay.cardInFlight);
+  }
+
+  /** The work mode's runtime, kept for the kiosk status and the admin (main/index.ts builds it after the role manager). */
+  attachWorkMode(runtime: WorkModeRuntime | null) {
+    this.workMode = runtime;
+  }
+
+  /** The mode (or what the screens show of it) changed: the view, and through it the role (main/roles/manager.ts). */
+  workModeChanged() {
+    this.dirty();
   }
 
   operator() {
@@ -678,6 +889,48 @@ export class KioskService extends EventEmitter {
     this.saleChangeAt = catalogNextChangeMs(catalog.products, now);
     this.menuBlock = (catalog.catalogMenus as MenuBlock | null | undefined) ?? null;
     return buildKioskCatalog(catalog, this.settingsMap(), (url, size) => this.localMediaUrl(url, size), { stock: this.cloud.stockLevels(), nowMs: now });
+  }
+
+  /**
+   * The till's catalog (the till role, main/till/engine.ts): what a till sells — not "קיוסק בלבד", the items that
+   * need a manager's approval included and flagged — with each product's sale state decided by the shared rules
+   * (lib/kioskSoldOut.ts) for the till to gate (blocked / sold out / out of stock).
+   *
+   * "תפריטים" (core/till/menus.ts): the menu active on the till's own clock `nowMs` (the machine's wall clock; the caller's, for a
+   * test or a priced basket) is laid over it — a menu: only what it places, in its order, at its listed prices, each product
+   * carrying the menu it is offered under; the fallback "לא למכור": nothing; none active / none assigned: as without menus.
+   */
+  tillCatalogData(nowMs: number = Date.now()) {
+    const memo = this.tillCatalogMemo;
+    // Which menu is active is a handful of comparisons, worked out at each call: the catalog is laid out again only when that
+    // answer (a schedule boundary passed — offline too) or the block itself changes, never per call.
+    const block = this.cloud.catalogMenus();
+    const resolution = resolveTillMenu(block, new Date(nowMs));
+    const menu = menuKey(resolution);
+    // Built again when something it is made of moved, when a block ends by the clock alone, or when the menu switches.
+    if (memo && memo.rev === this.catalogRev && memo.block === block && memo.menu === menu && (memo.until === null || nowMs < memo.until)) return memo.data;
+    const catalog = this.cloud.catalog();
+    const built = buildKioskCatalog(catalog, this.settingsMap(), (url, size) => this.localMediaUrl(url, size), { stock: this.cloud.stockLevels(), nowMs }, { channel: 'till' });
+    const data = resolution.mode === 'catalog' ? built : { ...built, ...presentTillCatalog(built, block, resolution) };
+    this.tillCatalogBuilds += 1;
+    this.tillCatalogMemo = { rev: this.catalogRev, until: catalogNextChangeMs(catalog.products, nowMs), data, version: this.tillCatalogBuilds, menu, block };
+    return data;
+  }
+
+  /** The till catalog's version: moves each time it is built again (the screens fetch it when it moves). */
+  tillCatalogVersion(nowMs?: number): number {
+    this.tillCatalogData(nowMs);
+    return this.tillCatalogMemo?.version ?? 0;
+  }
+
+  /** Counts as offline now (the cloud silent, or no network). */
+  get isOffline(): boolean {
+    return this.offlineNow;
+  }
+
+  /** The basket priced for the till: the same engine as the kiosk's (priceBasket — choices, meals, promotions by the clock), from the till's catalog. */
+  priceTillBasket(input: StartPaymentIn, now = new Date(), hooks?: TillLineHooks) {
+    return this.priceBasket(input, now, 'till', hooks);
   }
 
   private pausedState(): { paused: boolean; message: string | null; until: string | null } {
@@ -828,9 +1081,11 @@ export class KioskService extends EventEmitter {
         };
       },
       // Bridge mode: the browser page reports the kiosk's status (with this service's part, bridgePart).
-      kioskStatus: () => (this.isKiosk() && !this.opts.bridge ? this.kioskStatus() : null),
+      kioskStatus: () => this.kioskSyncStatus(),
       onKioskSnapshot: (next: Record<string, unknown>, prev: Record<string, unknown> | null) => {
         if (next.kiosk && next.configVersion !== prev?.configVersion) this.log(`kiosk config ${String(next.configVersion)}`);
+        // "מצב עבודה": the sessions follow the cloud's word, and the dashboard's `enter_till` / `return_kiosk` is taken up.
+        this.workMode?.onKioskReply(next, prev);
         // Bridge mode: the browser page carries the close out (closeForShopZ) and reports it.
         if (!this.opts.bridge) this.onCloseRequest(next.closeRequest);
         this.applyProvider();
@@ -867,11 +1122,21 @@ export class KioskService extends EventEmitter {
       },
       afterBeat: async () => {
         const id = this.machineId;
-        if (id && this.isKiosk()) await this.orders.push(this.api, id);
+        // What the kiosk made is delivered whatever mode the device works in now (a kiosk row, not the effective
+        // word): a till by role at home still sends the orders it took while away, a kiosk by role in its till
+        // session the ones its customers placed before (Android syncNow: `if (next.kiosk)` on the cloud's own word).
+        if (id && this.hasKioskRow()) await this.orders.push(this.api, id);
         // "ביצועי קיוסקים": the funnel's events, after the orders.
-        if (id && this.isKiosk()) await this.funnel.push(this.api, id).catch(() => false);
-        // "מזומן בקופה": the open orders the cloud has not taken, the vouchers to give back.
-        if (id && this.isKiosk()) await this.payAtTill.flush().catch((e) => this.log(`pay at till: ${String(e)}`));
+        if (id && this.hasKioskRow()) await this.funnel.push(this.api, id).catch(() => false);
+        // "בונים": the printers' settings (ETag), the jobs handed over asked about; hosting for the others when named.
+        if (id && this.fiscalRole) {
+          await this.kitchen.afterBeat().catch((e) => this.log(`kitchen: ${String(e)}`));
+          await this.kitchenHost.afterBeat().catch((e) => this.log(`kitchen host: ${String(e)}`));
+        }
+        // "מזומן בקופה": where the shop's LAN host is (for the offline days), then the open orders the cloud has not
+        // taken — with what a LAN till did with them — and the vouchers to give back.
+        if (id && this.hasKioskRow()) await this.pullLanHost().catch((e) => this.log(`LAN host: ${String(e)}`));
+        if (id && this.hasKioskRow()) await this.payAtTill.flush().catch((e) => this.log(`pay at till: ${String(e)}`));
         // "מזומן" at the cash station: which station and its secret (ETag), and payments still to settle.
         if (id && this.isKiosk()) {
           await this.cashPay.pull().catch((e) => this.log(`cash: ${String(e)}`));
@@ -886,13 +1151,30 @@ export class KioskService extends EventEmitter {
         this.log('machine token revoked: back to pairing');
         this.sync.stop();
         this.cloud.forget();
+        this.workSessions.clear();
         this.dirty();
       },
       log: this.log,
     };
   }
 
+  /**
+   * What `kiosk/sync` reports: a kiosk row's status — a kiosk by role in either mode, a till by role from its kiosk-mode
+   * row on (Android `if (_raw.value.kiosk) statusJson()`) — and, from a till by role that wants its first kiosk mode,
+   * `requestKioskMode` (the cloud makes the row where the owner allowed it). A plain till reports nothing.
+   */
+  private kioskSyncStatus(): Record<string, unknown> | null {
+    if (this.opts.bridge) return null;
+    const asking = this.workMode?.kioskModeRequested() === true;
+    const row = this.hasKioskRow();
+    if (!row && !asking) return null;
+    const status = row ? this.kioskStatus() : {};
+    return asking ? { ...status, requestKioskMode: true } : status;
+  }
+
   private kioskStatus(): Record<string, unknown> {
+    // "מצב עבודה": `flowState: till_mode` + `tillMode` while it works as a till, the dashboard's commands done (`commandsDone`).
+    const work = this.workMode?.statusFields() ?? {};
     const today = this.orders.todays();
     const media = this.media.getStatus();
     const alerts: Array<Record<string, unknown>> = [];
@@ -910,7 +1192,7 @@ export class KioskService extends EventEmitter {
     const help = this.kv.getJson<{ requestId: string; at: number; screen: string }>(HELP);
     if (help && Date.now() - help.at < 10 * 60_000) alerts.push({ kind: 'help', key: 'help', reason: 'help', requestId: help.requestId, detail: { screen: help.screen } });
     return {
-      flowState: this.flow.flowState,
+      flowState: work.flowState ?? this.flow.flowState,
       shiftOpen: this.ledger.currentShift() !== null,
       appliedConfigVersion: (this.snapshot()?.configVersion as string) ?? undefined,
       mediaReady: media.ready,
@@ -930,6 +1212,8 @@ export class KioskService extends EventEmitter {
       // "תקינות מכשירים" (pos-server kiosk_health.clean_health): what only the kiosk sees.
       health: this.healthReport(health),
       ...(this.opts.displayInfo ? { display: this.opts.displayInfo() ?? undefined } : {}),
+      ...(work.tillMode ? { tillMode: work.tillMode } : {}),
+      ...(work.commandsDone ? { commandsDone: work.commandsDone } : {}),
     };
   }
 
@@ -1035,7 +1319,17 @@ export class KioskService extends EventEmitter {
     if (reply.body.promotions?.changed) await within(this.sync.pullPromotions(), PROMOTIONS_PULL_TIMEOUT_MS);
   }
 
+  /** Side rows a module sends itself (the till's drawer audit and cash movements, main/till/drawerService.ts). */
+  private readonly sideRequesters = new Map<OutboxKind, (row: OutboxRow) => { path: string; body: unknown } | null>();
+
+  /** A module's own side kind: its request for each row (null drops the row). */
+  registerSideKind(kind: OutboxKind, request: (row: OutboxRow) => { path: string; body: unknown } | null): void {
+    this.sideRequesters.set(kind, request);
+  }
+
   private sideRequest(row: OutboxRow): { path: string; body: unknown } | null {
+    const own = this.sideRequesters.get(row.kind);
+    if (own) return own(row);
     if (row.kind === 'transmission') {
       const t = this.kv.getJson<Record<string, unknown>>(`transmission:${row.ref_id}`);
       return t ? { path: 'transmissions', body: t } : null;
@@ -1053,7 +1347,7 @@ export class KioskService extends EventEmitter {
       return r ? { path: 'kds/release', body: r } : null;
     }
     if (row.kind === 'till_event') {
-      const e = this.kv.getJson<DesktopExitEvent>(`tillEvent:${row.ref_id}`);
+      const e = this.kv.getJson<TillEventRecord>(`tillEvent:${row.ref_id}`);
       return e ? { path: 'events', body: e } : null;
     }
     return null;
@@ -1068,7 +1362,8 @@ export class KioskService extends EventEmitter {
   /* --------------------------------------------------------------- media */
 
   private mediaWanted(): MediaRefIn[] {
-    const snap = this.snapshot();
+    // The kiosk row's own word: a till by role keeps its kiosk mode's media ready while at home (Android syncMedia on `next.kiosk`).
+    const snap = this.rawKioskSnapshot();
     const list: MediaRefIn[] = [];
     // Bridge mode: the browser shows the cloud's media itself; only the receipt's logo is kept here.
     if (!this.opts.bridge && snap?.kiosk === true && Array.isArray(snap.media)) {
@@ -1255,7 +1550,7 @@ export class KioskService extends EventEmitter {
    * the customer is still waiting on goes on as a live payment (success, bon); an older one is
    * completed without printing (as the till's recovery) — staff re-print its bon from the admin.
    */
-  private async settleOrphans() {
+  async settleOrphans() {
     await this.pay.resolveOrphans({
       isPending: (id) => this.ledger.doc(id)?.status === 'pending',
       complete: (a, card) => {
@@ -1282,8 +1577,11 @@ export class KioskService extends EventEmitter {
   private priceBasket(
     input: StartPaymentIn,
     now = new Date(),
+    channel: 'kiosk' | 'till' = 'kiosk',
+    hooks?: TillLineHooks,
   ): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[]; voucherOutcomes: VoucherOutcome[] } {
-    const cat = this.catalogData();
+    // The till's catalog is the one in force at `now` — its menu ("תפריטים") included, so the price is the menu's while it is active.
+    const cat = channel === 'till' ? this.tillCatalogData(now.getTime()) : this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
     // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
     // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
@@ -1296,12 +1594,17 @@ export class KioskService extends EventEmitter {
     const changes: BasketChange[] = [];
     const tracked = new Set<string>();
     // What the cloud said a moment ago wins over a catalog that has not caught up yet.
-    const cloud = overridesLive(this.cloudBasket, Date.now());
+    // A till's basket is gated at the door (the engine's sold-out / blocked rules, with a manager's approval): pricing keeps
+    // what is in it, and the cloud's word of a moment ago is the kiosk's.
+    const cloud = channel === 'till' ? null : overridesLive(this.cloudBasket, Date.now());
     // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
     // line added under a menu, held and shown by the same rules (client lib/kioskBasketSold.ts, the Android kiosk's
     // KioskBasketLookup). A meal's component: found even when no screen shows it (hidden, not placed), but never blocked,
-    // sold out or gone.
-    const lookup = basketSold({ products: cat.products, categories: cat.categories, held: cat.held, cfg: this.config(), gone: cloud?.gone });
+    // sold out or gone. The till: what its catalog sells now.
+    const lookup: Pick<BasketSold<KProduct>, 'dish' | 'component'> =
+      channel === 'till'
+        ? { dish: (id) => byId.get(id) ?? null, component: (id) => byId.get(id) ?? null }
+        : basketSold({ products: cat.products, categories: cat.categories, held: cat.held, cfg: this.config(), gone: cloud?.gone });
     for (const l of input.lines) {
       const p = lookup.dish(l.productId, !!l.menuId);
       // A meal whose chosen component is no longer sold goes as a whole: the customer chooses again.
@@ -1317,9 +1620,11 @@ export class KioskService extends EventEmitter {
       }
       // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the basket is
       // no price change), else what the kiosk sells it at now; the cloud's word moves a catalog-priced dish only.
-      const own = keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), menuPrices.get(p.id));
+      const kept = channel === 'till' ? (hooks?.listPrice?.(l.key) ?? null) : null;
+      const own = kept ?? keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), channel === 'till' ? undefined : menuPrices.get(p.id));
       // The menu the line says it was added under: only one this kiosk's block holds is recorded on the document.
-      const under = l.menuId ? menuById(block, l.menuId) : null;
+      // (A till's lines carry the till's own menu facts — lineMenuFacts — never the kiosk's.)
+      const under = channel === 'kiosk' && l.menuId ? menuById(block, l.menuId) : null;
       const options = this.chargedOptions(cat.groups[p.id] ?? [], l.options);
       const components = parts.map((c) => {
         const slot = slots.find((s) => s.id === c.slotId)!;
@@ -1362,6 +1667,8 @@ export class KioskService extends EventEmitter {
               catalogPriceAgorot: pricesNow(p, cloud?.prices.get(p.id)).catalogAgorot,
             }
           : {}),
+        // "תפריטים" on the till: the menu this line was priced under and where its price came from; none with no menu active.
+        ...(channel === 'till' ? lineMenuFacts(p) : null),
       });
     }
     // A price that moved since the screen showed it: shown to the customer, never charged as is.
@@ -1369,8 +1676,13 @@ export class KioskService extends EventEmitter {
     for (const c of basketChanges(input.lines.filter((l) => priced.has(l.key)), priced)) if (c.kind === 'repriced') changes.push(c);
     // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price) — then the discount
     // vouchers held for the order ("שוברי הנחה"), in the order applied (`withPromotions(...).withVoucherDiscounts()`).
+    // A till's line by hand (core/till/discounts.ts): an OTH line is not counted by promotions at all; a hand-discounted one
+    // is never discounted by one and counts towards a threshold at what it costs after it (Promotions.kt basketOf).
+    const hands = new Map(lines.map((x) => [x.key, hooks?.promo?.(x.key, unitAgorot(x) * x.qty) ?? null] as const));
     const promo = priceKioskBasket(
-      lines.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true })),
+      lines
+        .filter((x) => hands.get(x.key)?.exclude !== true)
+        .map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true, handDiscountAgorot: hands.get(x.key)?.handDiscountAgorot ?? 0 })),
       promotionsOf(this.cloud.promotions()),
       localDateTimeOf(now),
       input.vouchers?.discounts ?? [],
@@ -1879,7 +2191,11 @@ export class KioskService extends EventEmitter {
    */
   async settleCashMag(): Promise<void> {
     await this.cashMag.settle({
-      docStatus: (id) => this.ledger.doc(id)?.status ?? null,
+      // A sale a till credited since is still a paid one here.
+      docStatus: (id) => {
+        const s = this.ledger.doc(id)?.status ?? null;
+        return s === 'refunded' || s === 'partial_refund' ? 'completed' : s;
+      },
       writePaid: async (e: CashMagEntry, tx: TxView) => {
         const done = this.ledger.completeCashSale(e.docId, this.cashLegOf(tx, tx.changeOwedAgorot > 0 ? 'slip' : null));
         if (!done || done.status !== 'completed') return false;
@@ -2082,7 +2398,9 @@ export class KioskService extends EventEmitter {
     if (!order) return;
     const cfg = this.config();
     const rules: PickupRules = { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat };
-    const pickup = order.pickupNumber ? { number: order.pickupNumber, label: order.pickupLabel ?? String(order.pickupNumber) } : await allocatePickup(this.kv, this.api, this.machineId, order, rules);
+    const pickup = order.pickupNumber
+      ? { number: order.pickupNumber, label: order.pickupLabel ?? String(order.pickupNumber) }
+      : await allocatePickup(this.kv, this.api, this.machineId, order, rules, { offline: this.offlineNow });
     order = this.orders.update(orderId, (o) => ({ ...o, pickupNumber: pickup.number, pickupLabel: pickup.label }))!;
     const policy = cfg.payment.receiptPolicy;
     const receipt: PayProgress['receipt'] = policy === 'always' ? 'printing' : policy === 'ask' ? 'ask' : 'none';
@@ -2123,6 +2441,44 @@ export class KioskService extends EventEmitter {
   /** Offline with "חסימת הזמנות כשאין אינטרנט" on: what it blocks is [offlineScope]'s. */
   private offlineBlocked(cfg: { general?: { blockWhenOffline?: boolean } } | null): boolean {
     return !!cfg && kioskOfflineBlocks(cfg.general, this.offlineNow);
+  }
+
+  /** The shop's LAN host for "תשלום בקופה" with no cloud, as last kept (the secret opened); null: none known. */
+  lanTarget(): LanTarget | null {
+    const kept = this.kv.getJson<KeptLanHost>(LAN_HOST);
+    if (!kept?.host || !kept.secret) return null;
+    try {
+      return { ...kept.host, secret: kept.sealed ? (this.opts.secretBox ?? PLAIN_BOX).open(kept.secret) : kept.secret };
+    } catch {
+      return null;
+    }
+  }
+
+  private lanHostPulledAt = 0;
+
+  /**
+   * Where the shop's LAN host is and the shop's print secret (`GET /sync/{m}/printers`, ETag), kept for the days the
+   * cloud is away — every 5 minutes after a good beat, only on a kiosk that offers "תשלום בקופה" (the browser kiosk's
+   * bridge: the page hands its orders over itself). An independent kiosk is given no LAN address: none kept.
+   */
+  async pullLanHost(force = false): Promise<void> {
+    const id = this.machineId;
+    if (!id || !this.fiscalRole || this.opts.bridge || !this.isKiosk()) return;
+    if (!kioskPayMethods(this.config().payment.methods).includes('cash_at_till')) return;
+    if (!force && Date.now() - this.lanHostPulledAt < LAN_HOST_PULL_MS) return;
+    this.lanHostPulledAt = Date.now();
+    const kept = this.kv.getJson<KeptLanHost>(LAN_HOST);
+    // The ETag only while what it stands for is still readable here (a secret that no longer opens is asked again).
+    const etag = kept?.etag && (kept.host === null || this.lanTarget() !== null) ? kept.etag : null;
+    const r = await this.api.get<Record<string, unknown>>(`sync/${id}/printers${etag ? `?etag=${encodeURIComponent(etag)}` : ''}`, { timeoutMs: 20_000 });
+    if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object' || r.body.syncType === 'unchanged') return;
+    const t = lanTargetOf(r.body);
+    const box = this.opts.secretBox ?? PLAIN_BOX;
+    const host: LanHost | null = t ? { address: t.address, port: t.port, machineId: t.machineId, name: t.name } : null;
+    if (JSON.stringify(host) !== JSON.stringify(kept?.host ?? null)) {
+      this.log(host ? `pay at till: the shop's LAN host is ${host.name ?? host.machineId ?? '?'} at ${host.address}:${host.port}` : 'pay at till: no LAN host for this kiosk');
+    }
+    this.kv.setJson(LAN_HOST, { etag: typeof r.body.etag === 'string' ? r.body.etag : null, host, secret: t ? box.seal(t.secret) : null, sealed: box !== PLAIN_BOX } satisfies KeptLanHost);
   }
 
   /** "קיוסק — מה נחסם כשאין אינטרנט" (`kioskOfflineBlockScope`): the parameter, else the config's, else `all`. */
@@ -2278,7 +2634,16 @@ export class KioskService extends EventEmitter {
     const now = Date.now();
     const localId = randomUUID();
     const businessDate = localDate(now);
-    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat });
+    // The cloud known to be away: nothing waited for — the local number (tagged L), the LAN host at once.
+    const offline = this.offlineNow;
+    const pickup = await allocatePickup(
+      this.kv,
+      this.api,
+      this.machineId,
+      { localId, businessDate },
+      { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat },
+      { offline },
+    );
     const order: OpenOrder = {
       localId,
       createdAtMs: now,
@@ -2299,12 +2664,15 @@ export class KioskService extends EventEmitter {
       cloudState: null,
       rejected: null,
     };
-    // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon ("ממתין לתשלום בקופה") — once the
-    // cloud has not refused the order (it may be offline: the bon prints all the same). With "בון מטבח
-    // במדפסת הקיוסק" off it never prints here: the till that takes the money prints it.
-    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && windowsBonRoute(cfg.printing) !== 'none';
+    // "שלח למטבח לפני תשלום": the bon ("ממתין לתשלום בקופה") goes now — to the shop's kitchen printers by the routing
+    // (main/kitchen, as the Android kiosk's bonBeforePay), or on this kiosk's own printer — once the cloud has not refused
+    // the order (it may be offline: the bon prints all the same). No kitchen printer and "בון מטבח במדפסת הקיוסק" off:
+    // never here — the till that takes the money prints it.
+    const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
+    const bonRoute: KioskBonRoute = windowsBonRouteFor(cfg.printing, kitchenConfig);
+    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && bonRoute !== 'none';
     order.kitchenSent = kitchenFirst;
-    const placed = await this.payAtTill.place(order);
+    const placed = await this.payAtTill.place(order, { offline });
     if (placed.rejected === PRICE_CHANGED) {
       // The cloud prices it otherwise: never placed. The catalog caught up, the customer shown the change.
       this.payAtTill.forget(localId);
@@ -2316,7 +2684,28 @@ export class KioskService extends EventEmitter {
       this.dirty();
       return { ok: false, reason: 'rejected', message: `ההזמנה לא נקלטה (${placed.rejected}). אנא פנו לצוות.` };
     }
-    if (kitchenFirst) {
+    if (kitchenFirst && bonViaKitchen(bonRoute, cfg.printing, kitchenConfig)) {
+      // The shop's kitchen printers (or the bon printer it names): the bon marked unpaid, so the till never prints it again.
+      kioskBonToKitchen(
+        this.kitchen,
+        bonRoute,
+        cfg.printing,
+        {
+          orderId: localId,
+          pickupLabel: pickup.label,
+          customerName: order.customerName,
+          tableRef: order.tableRef,
+          transactionNumber: pickup.label,
+          service: order.serviceType,
+          createdAt: new Date(now).toISOString(),
+          kioskName: this.operator().name,
+          lines,
+          copies: 1,
+          notice: 'ממתין לתשלום בקופה',
+        },
+        this.productCategoryOf(),
+      );
+    } else if (kitchenFirst) {
       this.printQueue.enqueue(
         'bon',
         localId,
@@ -2338,11 +2727,39 @@ export class KioskService extends EventEmitter {
         }, kioskBonStyle(this.cloud.parameters())),
       );
     }
-    if (cfg.printing.pickupSlip) {
+    // "הזמנה ממתינה לסנכרון" only while no till can see it: neither the cloud nor the shop's LAN host has it.
+    const pending = placed.cloudState === null && !this.payAtTill.lanDelivered(localId);
+    if (pending) {
+      // No till can find it by its number or QR yet: the customer takes it to the till on paper — the Android kiosk's
+      // cash slip (the number, what to pay, the items, the QR, "ממתינה לסנכרון"), in place of the pickup slip.
+      this.printQueue.enqueue('slip', localId, this.payAtTillSlip(placed, cfg, now, true));
+    } else if (cfg.printing.pickupSlip) {
       this.printQueue.enqueue('slip', localId, slipDoc({ businessName: this.business().companyName, pickupLabel: pickup.label, service: order.serviceType, itemCount: lines.reduce((n, l) => n + l.qty, 0), totalAgorot: orderDue(placed) }));
     }
     this.dirty();
-    return { ok: true, localId, pickupLabel: pickup.label, vouchers, dueAgorot: orderDue(placed), pending: placed.cloudState === null, code: orderCode(localId) };
+    return { ok: true, localId, pickupLabel: pickup.label, vouchers, dueAgorot: orderDue(placed), pending, code: orderCode(localId) };
+  }
+
+  /** "לתשלום בקופה" on paper (core/printDocs.ts payAtTillSlipDoc), in the kiosk's own words (its texts, else the defaults). */
+  private payAtTillSlip(o: OpenOrder, cfg: ReturnType<typeof resolveKioskConfig>, at: number, pending: boolean): PrintDoc {
+    const text = (key: string, values?: Record<string, string | number>) => kioskTextOf(cfg, 'he', key, values);
+    const notes = [
+      ...o.vouchers.map((v) => `${text('paySlipVoucher', { number: v.serial })} — ${ltr(formatShekelSign(v.amountAgorot))}`),
+      ...(o.tipAgorot > 0 ? [`${text('paySlipTip')} ${ltr(formatShekelSign(o.tipAgorot))}`] : []),
+    ];
+    return payAtTillSlipDoc({
+      businessName: this.business().companyName,
+      title: text('cashSlipTitle'),
+      label: o.pickupLabel,
+      amountLabel: text('paySlipAmount'),
+      dueAgorot: orderDue(o),
+      lines: openLines(o.lines),
+      notes,
+      code: orderCode(o.localId),
+      at: new Date(at),
+      footer: text('cashSlipFooter'),
+      pending: pending ? text('cashSlipPending') : null,
+    });
   }
 
   async cancelPayment(): Promise<void> {
@@ -2426,10 +2843,11 @@ export class KioskService extends EventEmitter {
    * in zMode = till, the Z produced. Answered once per request (kept), `pending` until it can run.
    */
   async closeForShopZ(requestId: string): Promise<{ state: 'done' | 'failed' | 'pending'; shiftId: string | null; zNumber: number | null; detail: string | null }> {
+    // Kiosk mode only, at rest (a browser kiosk's bridge is never a till by role: its work mode is not attached).
     const key = `bridge.shopZClose:${requestId}`;
     const kept = this.kv.getJson<{ state: 'done' | 'failed'; shiftId: string | null; zNumber: number | null; detail: string | null }>(key);
     if (kept) return kept;
-    const mayRun = autoCloseMayRun({ kiosk: this.fiscalRole && this.isKiosk(), flowIdle: this.flow.idle, flowBusy: this.flow.busy, cardInFlight: this.pay.cardInFlight });
+    const mayRun = autoCloseMayRun({ kiosk: this.fiscalRole && this.isKioskMode(), flowIdle: this.flow.idle, flowBusy: this.flow.busy, cardInFlight: this.pay.cardInFlight });
     if (!mayRun) return { state: 'pending', shiftId: null, zNumber: null, detail: 'לקוח באמצע הזמנה או תשלום' };
     const op = this.operator();
     const r = this.ledger.closeShift({ closedByName: closerName(op), unattended: true, vatRate: this.vatRate() });
@@ -2602,16 +3020,26 @@ export class KioskService extends EventEmitter {
     await this.transport.send(this.printerResolution().target, DRAWER_KICK);
   }
 
+  /** Raw ESC/POS bytes to the receipt printer now (a document another till sent to print here, main/till/remoteDrawer.ts). */
+  async sendToReceiptPrinter(bytes: Uint8Array): Promise<void> {
+    await this.transport.send(this.printerResolution().target, bytes);
+  }
+
   /* ------------------------------------------------------------- printing */
 
-  private receiptLines(doc: DocDraft): ReceiptLine[] {
+  receiptLines(doc: DocDraft): ReceiptLine[] {
+    // A ₪0 voucher line's value (core/till/vouchers.ts): printed under it, outside every total.
+    const memo = offVoucherLineValues(doc.prepaidVouchers ?? []);
     return doc.lines.map((l) => {
       const unit = unitAgorot(l);
       return {
         name: l.name,
         qty: l.qty,
         unitAgorot: unit,
-        totalAgorot: unit * l.qty,
+        // A credit-note line prints what it credits (net of its discount share), as the till's credit notes do.
+        totalAgorot: typeof l.creditAgorot === 'number' ? l.creditAgorot : unit * l.qty,
+        ...(l.oth ? { oth: l.oth.reason } : {}),
+        ...(memo.has(l.key) ? { memo: voucherLineMemo(memo.get(l.key)!, l.voucherMark) } : l.voucherMark ? { voucher: l.voucherMark } : {}),
         // What was charged (free choices are not printed), a meal's components with their upcharge (LineText.receiptSubLines).
         paid: [
           ...l.options.filter((o) => optionCharged(o) > 0).map((o) => ({ text: kitchenOptionText(o), priceAgorot: optionCharged(o) })),
@@ -2628,15 +3056,28 @@ export class KioskService extends EventEmitter {
     const o = this.orders.get(orderId);
     const doc = o?.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!o || !doc || doc.status !== 'completed') return;
+    // "מספר הזמנה A-1" on the receipt (`printing.orderNumberOnReceipt`, on by default): one paper.
+    this.printQueue.enqueue('receipt', orderId, this.receiptDocFor(doc, copy, this.config().printing.orderNumberOnReceipt ? o.pickupLabel ?? null : null));
+  }
+
+  /**
+   * A till's receipt (the till role, main/till/engine.ts) for a completed document — the same drawing and the same
+   * footer / logo / place rules as the kiosk's, with the tenders and the change; a copy says "העתק". Queued like any
+   * page: a failure is the printer's light and a retry, never the sale's. Returns the print job's id.
+   */
+  printDocReceipt(doc: DocDraft, copy: boolean, merchantCopy = false): string | null {
+    if (!settled(doc)) return null;
+    return this.printQueue.enqueue('receipt', merchantCopy ? `${doc.id}:merchant` : doc.id, this.receiptDocFor(doc, copy || merchantCopy, null, merchantCopy));
+  }
+
+  private receiptDocFor(doc: DocDraft, copy: boolean, orderNumber: string | null, merchantCopy = false): PrintDoc {
     const params = this.cloud.parameters();
     const footer: [string | null, string | null] = [
       typeof params['receipt.footer.line1'] === 'string' ? (params['receipt.footer.line1'] as string) : null,
       typeof params['receipt.footer.line2'] === 'string' ? (params['receipt.footer.line2'] as string) : null,
     ];
     const logo = this.settingsMap().brandReceiptLogoUrl;
-    this.printQueue.enqueue(
-      'receipt',
-      orderId,
+    return (
       receiptDoc({
         documentType: doc.documentType,
         number: formatDocNumber(doc.prefix, String(doc.number)),
@@ -2655,7 +3096,10 @@ export class KioskService extends EventEmitter {
         promotions: (doc.promotions ?? []).map((p) => ({ name: p.name, discountAgorot: p.discountAgorot })),
         // "שובר #12 — פסטיבל הקיץ" under the items (a discount) and "שובר הפקה" among the payments (the goods vouchers' legs).
         voucherDiscounts: (doc.voucherDiscounts ?? []).map((v) => ({ label: voucherLabel(v.serial, v.batchName), amountAgorot: v.amountAgorot })),
-        voucherLegs: (doc.voucherLegs ?? []).map((l) => ({ amountAgorot: l.amountAgorot })),
+        // A till sale's "שוברי הפקה" legs too (core/till/vouchers.ts), and its production vouchers' deductions and ₪0 goods.
+        voucherLegs: [...(doc.voucherLegs ?? []), ...(doc.payments ?? []).filter((l) => l.method === 'production_voucher')].map((l) => ({ amountAgorot: l.amountAgorot })),
+        prepaidDeductions: (doc.prepaidVouchers ?? []).filter((v) => v.accounting === 'discount' && v.amountAgorot > 0).map((v) => ({ label: voucherDeductionLabel(v.serial), amountAgorot: v.amountAgorot })),
+        voucherGoodsValueAgorot: [...offVoucherLineValues(doc.prepaidVouchers ?? []).values()].reduce((s, x) => s + x, 0),
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         // "מזומן" at the cash station: שולם / עודף (`cashReceiptLines`), what is owed and its code.
         cash: doc.cash
@@ -2672,18 +3116,37 @@ export class KioskService extends EventEmitter {
           : null,
         // "זיכוי מזומן C-K7Q3MX" among the payments (§11.15א).
         creditLegs: (doc.creditLegs ?? []).map((l) => ({ code: l.code, amountAgorot: l.amountAgorot })),
+        // A till sale: every tender, the cash handed over and the change.
+        // (A cash credit's leg is "זיכוי מזומן" above, never a tender here.)
+        ...(doc.payments && doc.payments.length > 0
+          ? {
+              tenders: doc.payments.filter((l): l is { method: 'cash' | 'card' | 'exchange'; amountAgorot: number } => l.method !== 'cash_credit' && l.method !== 'production_voucher'),
+              tenderedAgorot: doc.tenderedAgorot ?? null,
+              changeAgorot: doc.changeAgorot ?? null,
+            }
+          : {}),
+        // The till's discounts by hand (OTH lines print at ₪0 on their own), a credit note's original and customer.
+        ...(tillManualDiscount(doc) > 0 ? { manualDiscountAgorot: tillManualDiscount(doc) } : {}),
+        ...(doc.refundOfTransactionId ? { refundOfNumber: this.docNumberOf(doc.refundOfTransactionId) } : {}),
+        ...(doc.customer ? { customer: doc.customer } : {}),
+        ...(merchantCopy ? { merchantCopy: true } : {}),
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).
         place: this.placeOfMachine(),
-        // "מספר הזמנה A-1" on the receipt (`printing.orderNumberOnReceipt`, on by default): one paper.
-        orderNumber: this.config().printing.orderNumberOnReceipt ? o.pickupLabel ?? null : null,
-      }),
+        orderNumber,
+      })
     );
   }
 
+  /** A document of this till as printed ("20000057"), or null when it is not here. */
+  docNumberOf(id: string): string | null {
+    const d = this.ledger.doc(id);
+    return d ? formatDocNumber(d.prefix, String(d.number)) : null;
+  }
+
   /** The shop, the till's number and name, as `machines/me` says them (the documents' place line). */
-  private placeOfMachine(): { shopName: string | null; posNumber: string | null; deviceName: string | null } {
+  placeOfMachine(): { shopName: string | null; posNumber: string | null; deviceName: string | null } {
     const me = this.cloud.machine();
     return { shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, deviceName: me?.machineName ?? null };
   }
@@ -2749,7 +3212,7 @@ export class KioskService extends EventEmitter {
     const step = reprint ? 'enqueue' : bonStep({ fulfillmentMode: o.fulfillmentMode, paid: o.paid, bonRequestedAtMs: o.bonRequestedAtMs, jobIds: o.bonJobIds });
     if (step === 'none' || step === 'wait' || step === 'track') return;
     if (step === 'recover') {
-      const found = this.printQueue.jobsFor(orderId, 'bon').map((j) => j.id);
+      const found = [...this.printQueue.jobsFor(orderId, 'bon').map((j) => j.id), ...this.kitchen.jobsFor(orderId).map((j) => j.id)];
       if (found.length > 0) {
         this.orders.update(orderId, (x) => ({ ...x, bonJobIds: found }));
         return;
@@ -2758,14 +3221,47 @@ export class KioskService extends EventEmitter {
     const doc = o.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!doc) return;
     const cfg = this.config();
-    // "בון מטבח במדפסת הקיוסק" (off by default): every page this kiosk prints is on its own printer,
-    // so off it prints no bon — said on the order, never a staff alert (core/kioskBonRoute.ts).
-    if (windowsBonRoute(cfg.printing) === 'none') {
+    // "בון מטבח במדפסת הקיוסק" (off by default) and the shop's kitchen printers (core/kioskBonRoute.ts): the Android
+    // kiosk's route — the kitchen printers by the routing, the one bon printer it names, its own printer, or none.
+    const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
+    const route = windowsBonRouteFor(cfg.printing, kitchenConfig);
+    if (route === 'none') {
       this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'none', bonDetail: BON_NOT_ON_KIOSK }));
       return;
     }
     this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
     const copies = Math.max(1, Math.min(3, cfg.printing.bonCopies || 1));
+    if (bonViaKitchen(route, cfg.printing, kitchenConfig)) {
+      // Through the kitchen queue (main/kitchen): once — its job ids derive from the order (a reprint: fresh ones).
+      const q = kioskBonToKitchen(
+        this.kitchen,
+        route,
+        cfg.printing,
+        {
+          orderId,
+          pickupLabel: o.pickupLabel ?? String(o.pickupNumber ?? '?'),
+          customerName: o.customerName,
+          tableRef: o.tableRef,
+          transactionNumber: o.transactionNumber,
+          service: o.serviceType,
+          createdAt: doc.createdAt,
+          kioskName: this.operator().name,
+          lines: doc.lines,
+          copies,
+          notice: reprint ? 'הדפסה חוזרת' : null,
+          nonce: reprint ? String(Date.now()) : null,
+        },
+        this.productCategoryOf(),
+      );
+      if (q.jobIds.length === 0) {
+        // Asked, and no printer takes any of it: a staff alert, never "printed".
+        this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'failed', bonDetail: q.detail ?? 'אין מדפסת בונים למוצרי ההזמנה' }));
+        return;
+      }
+      this.orders.update(orderId, (x) => ({ ...x, bonJobIds: reprint ? [...x.bonJobIds, ...q.jobIds] : q.jobIds, bonDetail: q.detail }));
+      this.refreshBonStates();
+      return;
+    }
     const me = this.cloud.machine();
     const ids: string[] = [];
     for (let c = 1; c <= copies; c++) {
@@ -2792,6 +3288,53 @@ export class KioskService extends EventEmitter {
       );
     }
     this.orders.update(orderId, (x) => ({ ...x, bonJobIds: reprint ? [...x.bonJobIds, ...ids] : ids }));
+  }
+
+  /** The product's category now, from the catalog (printers hang on categories). */
+  private productCategoryOf(): (productId: string) => string | null {
+    const categories = new Map<string, string>();
+    for (const p of this.cloud.catalog().products) {
+      if (typeof p.id === 'string' && typeof p.categoryId === 'string') categories.set(p.id, p.categoryId);
+    }
+    return (id) => categories.get(id) ?? null;
+  }
+
+  /** The catalog's categories, for a ticket ordered by category ("סדר הפריטים בבון", §9). */
+  private kitchenCategories(): Array<{ id: string; name: string | null; parentId: string | null; sortOrder: number | null }> {
+    return this.cloud
+      .catalog()
+      .categories.filter((c) => typeof c.id === 'string')
+      .map((c) => ({
+        id: c.id as string,
+        name: typeof c.name === 'string' ? c.name : null,
+        parentId: typeof c.parentId === 'string' ? c.parentId : null,
+        sortOrder: typeof c.sortOrder === 'number' ? c.sortOrder : null,
+      }));
+  }
+
+  /**
+   * A till's completed counter sale to the kitchen (main/kitchen/kitchenFlows.ts): its tickets when "בונים במכירה" is on,
+   * its KDS release when the shop runs the KDS — queued durably, never holding the cashier. Not for a kiosk's sale (its
+   * bon is `printBon`). The lines no kitchen printer takes, by name.
+   */
+  tillKitchen(doc: DocDraft): string[] {
+    try {
+      const r = tillSaleToKitchen(
+        { kitchen: this.kitchen, kds: this.kitchenKds, params: this.cloud.parameters(), categoryOf: this.productCategoryOf(), log: this.log },
+        {
+          transactionId: doc.id,
+          documentType: doc.documentType,
+          documentNumber: formatDocNumber(doc.prefix, String(doc.number)),
+          lines: doc.lines,
+          cashierName: doc.cashierName || null,
+          createdAt: doc.createdAt,
+        },
+      );
+      return r.unrouted;
+    } catch (e) {
+      this.log(`kitchen tickets for sale ${doc.id}: ${String(e)}`);
+      return [];
+    }
   }
 
   /**
@@ -2827,11 +3370,55 @@ export class KioskService extends EventEmitter {
   /** The bon's state from its jobs ("sent" is never reported as "printed"). */
   private refreshBonStates() {
     for (const o of this.orders.todays()) {
-      if (o.bonJobIds.length === 0) continue;
-      const jobs = o.bonJobIds.map((id) => this.printQueue.job(id)?.status ?? 'failed');
-      const status = jobs.some((s) => s === 'failed') ? 'failed' : jobs.every((s) => s === 'sent') ? 'sent' : 'queued';
-      if (status !== o.bonStatus) this.orders.update(o.localId, (x) => ({ ...x, bonStatus: status, bonDetail: status === 'failed' ? 'לא הודפס' : null }));
+      // "printed" is final (every printer confirmed it); "none" has no jobs.
+      if (o.bonJobIds.length === 0 || o.bonStatus === 'printed' || o.bonStatus === 'none') continue;
+      // A page on its own printer (print_jobs), or a kitchen job (main/kitchen): "printed" only when every printer confirmed.
+      const jobs = o.bonJobIds.map((id) => this.printQueue.job(id)?.status ?? bonJobState(this.kitchen.job(id)));
+      const status = jobs.some((s) => s === 'failed') ? 'failed' : jobs.every((s) => s === 'printed') ? 'printed' : jobs.every((s) => s === 'sent' || s === 'printed') ? 'sent' : 'queued';
+      if (status === o.bonStatus) continue;
+      // A kitchen job's own words when it failed ("no_paper: …"); the lines no printer takes stay said.
+      const kitchenError = status === 'failed' ? (this.kitchen.jobs(o.bonJobIds).find((j) => j.state === 'failed')?.lastError ?? null) : null;
+      this.orders.update(o.localId, (x) => ({
+        ...x,
+        bonStatus: status,
+        bonDetail: status === 'failed' ? (kitchenError ? `לא הודפס — ${kitchenError.slice(0, 120)}` : 'לא הודפס') : x.bonDetail?.startsWith('פריטים שלא נותבו') ? x.bonDetail : null,
+      }));
     }
+  }
+
+  /**
+   * The X report on paper (the till role: an interim X, and the X of a shift's close): the Android till's report drawn in the
+   * Z's own ops (core/printDocs.ts xDoc), queued like any page. Returns the print job's id.
+   */
+  /** "דוח X סניפי" (core/till/shopX.ts): the cloud's paper on the receipt printer, as the till's X. */
+  printShopX(doc: Parameters<typeof shopXPrintDoc>[0], refId: string): string {
+    return this.printQueue.enqueue('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null));
+  }
+
+  printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash' | 'blindCount'> & { refId: string }): string {
+    const me = this.cloud.machine();
+    const logo = this.settingsMap().brandReceiptLogoUrl;
+    return this.printQueue.enqueue(
+      'z',
+      i.refId,
+      xDoc({
+        business: this.business(),
+        shopName: me?.shopName ?? null,
+        posNumber: me?.posNumber ?? null,
+        machineName: me?.machineName ?? null,
+        cashierName: i.cashierName,
+        shiftNumber: i.shiftNumber,
+        businessDate: i.businessDate,
+        openedAt: i.openedAt,
+        closedAt: i.closedAt,
+        printedAt: new Date(),
+        copy: false,
+        logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
+        till: i.till,
+        countedCash: i.countedCash,
+        ...(i.blindCount ? { blindCount: true } : {}),
+      }),
+    );
   }
 
   private printZ(z: Record<string, unknown>) {
@@ -2848,8 +3435,9 @@ export class KioskService extends EventEmitter {
     this.flow = f;
     this.lastFlowScreen = f.screen;
     this.flowChangedAt = Date.now();
-    // Trading starts again (opening hours, a lock lifted — the shop's too): the next shift opens as the kiosk itself.
-    if (f.screen === 'attract' && ['closed', 'paused', 'no_payment', SHOP_LOCK_FLOW.screen].includes(prev) && this.fiscalRole && this.isKiosk() && !this.tillZ.owed && !this.ledger.currentShift()) {
+    // Trading starts again (opening hours, a lock lifted — the shop's too): the next shift opens as the kiosk itself — in kiosk
+    // mode only (a kiosk by role working as a till opens its shifts by the employee, never as the kiosk).
+    if (f.screen === 'attract' && ['closed', 'paused', 'no_payment', SHOP_LOCK_FLOW.screen].includes(prev) && this.fiscalRole && this.isKioskMode() && !this.tillZ.owed && !this.ledger.currentShift()) {
       this.ledger.openShift(this.operator());
     }
   }
@@ -2946,11 +3534,19 @@ export class KioskService extends EventEmitter {
 
   private async tick30() {
     if (!this.paired) return;
-    const mayRun = autoCloseMayRun({ kiosk: this.fiscalRole && this.isKiosk(), flowIdle: this.flow.idle, flowBusy: this.flow.busy, cardInFlight: this.pay.cardInFlight });
+    // The kiosk's own closes (the shop Z's request, the cloud's close / Z / transmit, the automatic Z) run in kiosk mode only,
+    // at rest: while a kiosk by role works as a till the till rules apply and nothing fiscal moves under the till's feet
+    // (spec §5.5; Android KioskZHold is null in till mode); a till by role at home was never a kiosk here.
+    const mayRun = autoCloseMayRun({ kiosk: this.fiscalRole && this.isKioskMode(), flowIdle: this.flow.idle, flowBusy: this.flow.busy, cardInFlight: this.pay.cardInFlight });
     const cfg = this.isKiosk() ? this.config() : null;
     const op = this.operator();
     // The main till's shop Z part: a payment waited out, an answer the cloud did not take yet.
     if (this.shopZPart) await this.runShopZPart();
+    // "תשלום בקופה" with the cloud away: the orders it has not taken handed to the shop's LAN host (again), and what its
+    // till did with them asked (the Android kiosk's 15 s loop; the cloud's own turn is the next good beat).
+    if (this.offlineNow && this.fiscalRole && !this.opts.bridge && this.isKiosk() && this.payAtTill.pending() > 0) {
+      await this.payAtTill.lanRetry().catch((e) => this.log(`pay at till (LAN): ${String(e)}`));
+    }
     // The pinpad that moved (a DHCP change): looked for by who it is, "לפי המאק" first (PinpadRelocator).
     if (this.fiscalRole && !this.opts.bridge) await this.relocateTick().catch(() => undefined);
     // "סגירה יחד עם ה-Z הסניפי": carried out first, on an idle tick (KioskRepository.autoCloseTick).
@@ -2960,6 +3556,8 @@ export class KioskService extends EventEmitter {
       this.dirty();
       return;
     }
+    // A close or a Z asked from afar waits while a customer orders or pays (KioskZHold): said once per request and reason.
+    if (!mayRun) this.deferRemoteForCustomer();
     if (mayRun && this.pendingClose) {
       const req = this.pendingClose;
       this.pendingClose = null;
@@ -2982,7 +3580,32 @@ export class KioskService extends EventEmitter {
       if (r.kind === 'refused' && r.refusal === 'nothing_to_report') this.ack('z', req.requestId, 'failed', { errorCode: 'nothing_to_report' });
     }
     await this.tillZ.tick({ mayRun, kioskAt: cfg?.operations.autoCloseAt, paramAt: this.cloud.parameters().autoCloseShiftAt, closerName: closerName(op), vatRate: this.vatRate() });
+    // A till by role: its own automatic close, with what is open on it (the till's engine decides).
+    if (this.fiscalRole && !this.isKiosk() && this.tillAutoClose) await this.tillAutoClose().catch((e: unknown) => this.log(`till automatic close: ${String(e)}`));
     this.dirty();
+  }
+
+  /** The last `deferred` ack sent per request (KioskZHold's code): each reason said once, not every tick. */
+  private readonly deferredSaid = new Map<string, string>();
+
+  /**
+   * "ממתין לסיום תשלום בקיוסק" / "לקוח באמצע הזמנה" (pos-server docs/SPEC_KIOSK.md §25, Android CloseShiftCoordinator /
+   * TillZCoordinator `deferred`): the cloud's close or Z asked of this kiosk is held while a customer is at it — acked
+   * `deferred` with `kiosk_paying` / `kiosk_ordering`, then run on the first idle tick.
+   */
+  private deferRemoteForCustomer() {
+    const f = this.kioskSideFacts();
+    const hold = kioskZHold(this.fiscalRole && this.isKioskMode(), f.paying ? 'paying' : f.ordering ? 'ordering' : this.flow.flowState);
+    if (!hold) return;
+    const say = (kind: 'close' | 'z', requestId: string) => {
+      const key = `${kind}:${requestId}`;
+      if (this.deferredSaid.get(key) === hold) return;
+      this.deferredSaid.set(key, hold);
+      while (this.deferredSaid.size > 50) this.deferredSaid.delete(this.deferredSaid.keys().next().value as string);
+      this.ack(kind, requestId, 'deferred', { errorCode: hold });
+    };
+    if (this.pendingClose) say('close', this.pendingClose.requestId);
+    if (this.pendingZ && zModeOf(this.cloud.heartbeat().zMode) === 'till') say('z', this.pendingZ.requestId);
   }
 
   /** The card batch (doPeriodic), reported to the cloud (POST /transmissions, via the outbox). */
@@ -3054,6 +3677,8 @@ export class KioskService extends EventEmitter {
    * by the legacy role: a shop manager, as before.
    */
   async adminUnlock(pin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+    // A device that never synced its staff (pairing, the first start offline): no manager can be checked here yet.
+    if (this.cloud.posUsers().length === 0) return { ok: false, error: NO_ROSTER_TEXT };
     const candidates = usersAllowed(this.cloud.posUsers(), this.shopIdHere(), KIOSK_UNLOCK);
     if (candidates.length === 0) return { ok: false, error: `אין בסניף מנהל עם הרשאת "${KIOSK_UNLOCK_LABEL}"` };
     const u = await findByPin(candidates, typeof pin === 'string' ? pin : '', (p, h) => bcrypt.compare(p, h));
@@ -3069,7 +3694,7 @@ export class KioskService extends EventEmitter {
   }
 
   /** The machine's shop (the roster's users must be of it). */
-  private shopIdHere(): string | null {
+  shopIdHere(): string | null {
     const me = this.cloud.machine()?.shopId;
     return this.cloud.credentials()?.shopId ?? (typeof me === 'string' ? me : null);
   }
@@ -3120,6 +3745,7 @@ export class KioskService extends EventEmitter {
       zs: this.tillZ.list(10),
       zOwed: this.tillZ.owed,
       zMode: this.cloud.heartbeat().zMode,
+      kioskZ: this.kioskZInfo(),
       offlineSince: this.offline.since,
       desktopExit: this.adminExitUser()
         ? { allowed: true, reason: null }
@@ -3134,6 +3760,16 @@ export class KioskService extends EventEmitter {
           }
         : null,
       cashmag: this.cashmagAdmin(),
+      // "מצב עבודה: קיוסק / קופה": the section exists only where the owner allowed it.
+      workMode: this.workMode
+        ? {
+            enabled: this.workMode.view().enabled,
+            mode: this.workMode.mode(),
+            toTill: this.workMode.offered().toTill,
+            toKiosk: this.workMode.offered().toKiosk,
+            openerHolds: this.workMode.holds(this.adminUserId),
+          }
+        : undefined,
     };
   }
 
@@ -3164,6 +3800,91 @@ export class KioskService extends EventEmitter {
     };
   }
 
+  /** The kiosk's Z mode on this device (core/kioskZ.ts): the shop's Z mode, the heartbeat's `independentTill` first. */
+  private kioskZKind() {
+    const beat = this.cloud.heartbeat();
+    return kioskZKindOfDevice(beat.zMode, beat.independentTill === true);
+  }
+
+  /** A customer ordering or paying on the kiosk's screens (the kiosk side of the work mode's facts). */
+  private kioskCustomerBusy(): boolean {
+    const f = this.kioskSideFacts();
+    return f.paying || f.ordering;
+  }
+
+  /**
+   * "משמרת ו-Z" in the kiosk admin (pos-android ui/kiosk/KioskZPanel.kt KioskZAdminSection): a fiscal kiosk working as one
+   * — its mode, the shift, an owed Z, and whether a customer holds it. Absent elsewhere (a till by role, a KDS, a bridge).
+   */
+  private kioskZInfo(): AdminInfo['kioskZ'] {
+    if (!this.fiscalRole || !this.isKioskMode() || this.opts.bridge) return null;
+    const kind = this.kioskZKind();
+    return { kind, shiftOpen: !!this.ledger.currentShift(), owed: this.tillZ.owed && makesOwnZ(kind), customerBusy: this.kioskCustomerBusy() };
+  }
+
+  /** The device's side of the kiosk admin's close / Z (core/kioskZ.ts KioskZPort; Android ContainerKioskZPort). */
+  private kioskZPort(): KioskZPort {
+    return {
+      cardInFlight: () => this.pay.cardInFlight,
+      openShiftId: () => this.ledger.currentShift()?.id ?? null,
+      pendingDocuments: (shiftId) => this.ledger.pendingInShift(shiftId),
+      closeShift: async (shiftId, closedByName) => {
+        if (this.ledger.currentShift()?.id !== shiftId) return { kind: 'changed' };
+        // As the kiosk's own daily close: nobody counted a drawer it does not have (counted = expected).
+        const r = this.ledger.closeShift({ closedByName, closedByUserId: this.adminUserId, vatRate: this.vatRate() });
+        if (r.kind === 'pending') return { kind: 'pending', count: r.count };
+        if (r.kind === 'none') return { kind: 'no_shift' };
+        this.log(`kiosk admin: shift ${r.shift.id} closed by ${this.adminName ?? '-'} (${this.adminUserId ?? '-'})`);
+        await this.sync.flush().catch(() => undefined);
+        return { kind: 'closed', shiftId: r.shift.id };
+      },
+      transmit: async () => this.tillZ.setCardTransmission(await this.transmitBatch('z_close')),
+      prepare: () => this.tillZ.prepare(),
+      requestAndPrint: async (userId, userName) => {
+        const z = await this.tillZ.produce(this.kioskZCloser(userName), false, null, userId);
+        switch (z.kind) {
+          case 'produced': {
+            const n = Number(z.z.machineSequenceNumber ?? z.z.zNumber);
+            return { kind: 'produced', number: Number.isFinite(n) ? n : 0, printError: null, printedHere: z.printedHere !== false };
+          }
+          case 'offline':
+            return { kind: 'offline' };
+          case 'waiting':
+            return { kind: 'waiting', closing: this.ledger.closingCount() };
+          case 'refused':
+            if (z.refusal === 'nothing_to_report') return { kind: 'nothing' };
+            // "אין מסמכים — אין צורך ב-Z": said in words, never the wire code.
+            if (z.refusal === 'empty_z') return { kind: 'refused', detail: 'אין מסמכים — אין צורך ב-Z' };
+            return { kind: 'refused', detail: z.refusal };
+          case 'failed':
+            return { kind: 'failed', detail: z.detail ?? `HTTP ${z.status}` };
+        }
+      },
+      oweZ: () => this.tillZ.markOwed(),
+    };
+  }
+
+  /** Who closed it, as the shop lock names it: the kiosk, then the manager who opened the admin. */
+  private kioskZCloser(manager: string | null = this.adminName): string {
+    return [closerName(this.operator()), manager].filter(Boolean).join(' · ');
+  }
+
+  /**
+   * The kiosk admin's "סגירת משמרת" / "הפקת Z" by the kiosk's Z mode (KioskZRunner): never over a customer ordering or
+   * paying, a card on the terminal or a pending payment; one at a time with the automatic close's own Z.
+   */
+  async kioskAdminZ(): Promise<KioskAdminZOutcome> {
+    if (!this.kioskZInfo()) return { kind: 'failed', detail: 'הפעולה זמינה בקיוסק בלבד' };
+    const kind = this.kioskZKind();
+    const runner = new KioskZRunner(this.kioskZPort(), this.opts.kioskZPause, this.log);
+    const busy = this.kioskCustomerBusy();
+    const out = await this.tillZ.exclusive(() =>
+      makesOwnZ(kind) ? runner.produceZ(busy, this.kioskZCloser(), this.adminUserId, this.adminName) : runner.closeShift(busy, this.kioskZCloser()),
+    );
+    void this.sync.kioskSync().catch(() => undefined);
+    return out ?? { kind: 'blocked', block: 'running' };
+  }
+
   async adminAction(a: AdminAction): Promise<AdminActionResult> {
     if (!this.adminOk()) return { ok: false, message: 'נדרש קוד מנהל' };
     this.adminUntil = Date.now() + 5 * 60_000;
@@ -3182,13 +3903,27 @@ export class KioskService extends EventEmitter {
       case 'reprintReceipt':
         this.printReceipt(a.orderId, true);
         return { ok: true };
+      case 'reprintLast': {
+        // Today's last document — a kiosk order's or a till sale's — on paper again, marked "העתק" (never a new number).
+        const last = this.ledger.todaysDocs(localDate(Date.now()))[0];
+        if (!last) return { ok: false, message: 'אין עסקאות היום' };
+        this.printDocReceipt(last, true);
+        return { ok: true, message: `נשלח להדפסה: ${formatDocNumber(last.prefix, String(last.number))} (העתק)` };
+      }
       case 'testPrint':
         await this.lookForPrinter();
         this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
         return { ok: true };
       case 'retryPrints':
         this.printQueue.retryFailed();
+        // The kitchen's too (main/kitchen): a person's "נסה שוב" — a ticket that may be on paper goes marked.
+        this.kitchen.retryAll();
         return { ok: true };
+      case 'kioskZ': {
+        const out = await this.kioskAdminZ();
+        this.dirty();
+        return { ok: kioskZOutcomeOk(out), message: kioskZOutcomeText(out) };
+      }
       case 'cashmagAcknowledge': {
         const ok = this.cashMag.acknowledge(a.txId, this.adminName ?? 'מנהל');
         this.dirty();
@@ -3220,6 +3955,46 @@ export class KioskService extends EventEmitter {
         });
         this.dirty();
         return { ok };
+      }
+      // "מצב עבודה": to the till — the kiosk side first (never over a customer's order or payment), then always a manager's
+      // code with KIOSK_TILL_MODE: the one that opened this menu counts when it holds it, else the code typed on the pad.
+      case 'workMode': {
+        const wm = this.workMode;
+        // Back to the kiosk from the corner over the till: the till side's checks (an open sale, a payment), the same code.
+        if (a.mode === 'kiosk') {
+          if (!wm || !wm.offered().toKiosk) return { ok: false, refusal: 'disabled', message: REFUSAL_TEXT.disabled };
+          const back = wm.mayReturn();
+          if (back) return { ok: false, refusal: back.wire, message: back.text };
+          let who: string | null = this.adminName;
+          let whoId: string | null = this.adminUserId;
+          if (!wm.holds(this.adminUserId)) {
+            if (typeof a.code !== 'string' || a.code.trim() === '') return { ok: false, needsCode: true, message: WORK_TEXT.needsManagerToKiosk };
+            const c = await wm.checkManagerCode(a.code);
+            if (!c.ok) return { ok: false, needsCode: true, message: c.message };
+            who = c.name;
+            whoId = c.id;
+          }
+          const refusedBack = await wm.returnToKiosk('manual', who, whoId);
+          if (refusedBack) return { ok: false, refusal: refusedBack.wire, message: refusedBack.text };
+          return { ok: true };
+        }
+        if (!wm || !wm.offered().toTill) return { ok: false, refusal: 'disabled', message: REFUSAL_TEXT.disabled };
+        const refusal = wm.mayEnter();
+        if (refusal) return { ok: false, refusal: refusal.wire, message: refusal.text };
+        let by: string | null = this.adminName;
+        let byId: string | null = this.adminUserId;
+        if (!wm.holds(this.adminUserId)) {
+          if (typeof a.code !== 'string' || a.code.trim() === '') return { ok: false, needsCode: true, message: WORK_TEXT.needsManager };
+          const c = await wm.checkManagerCode(a.code);
+          if (!c.ok) return { ok: false, needsCode: true, message: c.message };
+          by = c.name;
+          byId = c.id;
+        }
+        const refused = await wm.enterTill(by, byId, 'manual');
+        if (refused) return { ok: false, refusal: refused.wire, message: refused.text };
+        // The admin was the kiosk's: it does not outlive the switch.
+        this.adminUntil = 0;
+        return { ok: true };
       }
       // "יציאה לשולחן העבודה" / "יציאה מהתוכנה" from the manager's menu: the manager who opened it
       // must hold DESKTOP_EXIT (no second code), and never during an order or a payment.
@@ -3335,11 +4110,45 @@ export class KioskService extends EventEmitter {
     return this.kv.getJson<DesktopExitEvent[]>(DESKTOP_LOG) ?? [];
   }
 
-  /** A till event: kept here, and to the cloud through the outbox (`POST /sync/{m}/events`). */
-  private recordTillEvent(e: DesktopExitEvent) {
+  /**
+   * A till event: kept here, and to the cloud through the outbox (`POST /sync/{m}/events`). The desktop exits also
+   * go into the device's own log; "מצב עבודה" switches (`kiosk_till_mode`, recordWorkModeEvent) keep their own.
+   */
+  private recordTillEvent(e: TillEventRecord | TillEngineEvent) {
     this.kv.setJson(`tillEvent:${e.id}`, e);
-    this.kv.setJson(DESKTOP_LOG, [...this.desktopExitLog(), e].slice(-100));
+    if (e.type === 'desktop_exit') this.kv.setJson(DESKTOP_LOG, [...this.desktopExitLog(), e].slice(-100));
     if (this.paired) this.outbox.enqueue('till_event', e.id);
+  }
+
+  /** A till event of the till's engine (`POST /sync/{m}/events`): `held_sale_cancelled`, `line_void`, `shift_auto_closed`… */
+  recordEngineEvent(e: TillEngineEvent) {
+    this.recordTillEvent(e);
+  }
+
+  /**
+   * "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (core/till/autoCloseCart.ts): the till's engine registers its tick; the
+   * half-minute tick runs it on a till by role (a kiosk's own automatic close is tillZService.tick).
+   */
+  private tillAutoClose: (() => Promise<unknown>) | null = null;
+
+  attachTillAutoClose(fn: (() => Promise<unknown>) | null) {
+    this.tillAutoClose = fn;
+  }
+
+  /**
+   * "מצב עבודה: קיוסק / קופה": one switch as the till event `kiosk_till_mode` (core/workMode.ts eventDetails) — the
+   * user who switched it, the open shift, kept on the device (the last 100) and sent to the cloud with the outbox.
+   */
+  recordWorkModeEvent(details: Record<string, unknown>, posUserId: string | null): WorkModeEvent {
+    const e = workModeEvent({ id: randomUUID(), atMs: Date.now(), shiftId: this.ledger.currentShift()?.id ?? null, posUserId, details });
+    this.recordTillEvent(e);
+    this.kv.setJson(WORK_MODE_LOG, [...this.workModeLog(), e].slice(-100));
+    return e;
+  }
+
+  /** The device's own log of the last mode switches. */
+  workModeLog(): WorkModeEvent[] {
+    return this.kv.getJson<WorkModeEvent[]>(WORK_MODE_LOG) ?? [];
   }
 
   /* ------------------------------------------------------------ technician */
@@ -3434,6 +4243,7 @@ export class KioskService extends EventEmitter {
         if (this.outbox.count() > 0) return { ok: false, message: 'יש נתונים שטרם נשלחו לענן — לא ניתן לנתק' };
         this.sync.stop();
         this.cloud.forget();
+        this.workSessions.clear();
         this.dirty();
         return { ok: true };
     }

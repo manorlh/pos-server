@@ -155,7 +155,9 @@ export class RoleManager extends EventEmitter {
 
   recompute() {
     const { me, deviceRole } = this.facts();
-    const next = resolveRole({ paired: this.svc.paired, deviceRole, kioskActive: this.svc.isKiosk(), kdsDevice: this.kdsDevice });
+    // "מצב עבודה": `isKiosk()` is the effective word (a till by role at home is no kiosk; away in its kiosk mode it is one);
+    // a kiosk by role in its till session opens as the till.
+    const next = resolveRole({ paired: this.svc.paired, deviceRole, kioskActive: this.svc.isKiosk(), kdsDevice: this.kdsDevice, tillSession: this.svc.inTillSession() });
     if (next !== this.current) {
       this.log(`role ${this.current ?? '—'} → ${next ?? '—'}`);
       this.current = next;
@@ -276,6 +278,7 @@ export class RoleManager extends EventEmitter {
       online: !v.state.offline,
       update: this.updates(),
       shopActive: this.svc.cloud.shopActive(),
+      workMode: this.svc.workMode?.view() ?? null,
     };
   }
 
@@ -312,6 +315,8 @@ export class RoleManager extends EventEmitter {
 
   touch() {
     this.lastTouchAt = Date.now();
+    // "מצב עבודה": a touch on a role screen is also the idle return's "נשארים".
+    this.svc.workMode?.touched();
   }
 
   /** What the updater asks: the kiosk's flow for a kiosk, the last touch for a screen. */

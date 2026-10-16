@@ -340,6 +340,11 @@ export interface AdminInfo {
   zs: Array<{ number: number; closedAt: string; state: string }>;
   zOwed: boolean;
   zMode: string;
+  /**
+   * "משמרת ו-Z" (core/kioskZ.ts): a fiscal kiosk working as one — its Z mode per device, the shift, a Z owed (own Z
+   * only), a customer at it now. Absent / null elsewhere (a till by role, a KDS, a bridge, the Android bundle).
+   */
+  kioskZ?: { kind: 'shop' | 'independent' | 'own'; shiftOpen: boolean; owed: boolean; customerBusy: boolean } | null;
   offlineSince: number | null;
   /**
    * "יציאה לשולחן העבודה" / "יציאה מהתוכנה" from this menu: whether the manager who opened it holds
@@ -370,6 +375,25 @@ export interface AdminInfo {
     lastError: string | null;
     unresolved: Array<{ txId: string; txShort: string; amountAgorot: number; startedAt: number; outcome: string | null; heldAgorot: number; reason: string | null }>;
   } | null;
+  /** "מצב עבודה: קיוסק / קופה" (core/workMode.ts): absent from a service that predates it. */
+  workMode?: AdminWorkMode;
+}
+
+/** The manager's "מצב עבודה" section: shown only where the owner allowed it (`enabled`). */
+export interface AdminWorkMode {
+  /** The owner's gate (`kioskTillModeEnabled`) is open for this device. */
+  enabled: boolean;
+  /** The mode now ("קיוסק" — this menu is the kiosk's; "קופה" is where the button leads). */
+  mode: 'kiosk' | 'till';
+  /** The "קופה" button exists: kiosk mode, the gate open. */
+  toTill: boolean;
+  /**
+   * The "קיוסק" button exists: till mode (a kiosk by role always; a till by role where the owner allowed it) — the
+   * manager's corner over the till opens this menu too (staff/ShellStaff.tsx). Absent from an older service: false.
+   */
+  toKiosk?: boolean;
+  /** The manager who opened this menu holds KIOSK_TILL_MODE: their code counts, no second one is asked. */
+  openerHolds: boolean;
 }
 
 export interface TechnicianInfo {
@@ -470,6 +494,8 @@ export type AdminAction =
   | { type: 'pause'; paused: boolean }
   | { type: 'reprintBon'; orderId: string }
   | { type: 'reprintReceipt'; orderId: string }
+  /** "הדפס עסקה אחרונה" (the Android admin's quick reprint): today's last document, kiosk or till, as a copy. */
+  | { type: 'reprintLast' }
   | { type: 'testPrint' }
   | { type: 'checkTerminal' }
   | { type: 'recheckPayment'; reference: string }
@@ -479,6 +505,11 @@ export type AdminAction =
   | { type: 'exitKiosk' }
   /** "יציאה לשולחן העבודה" from the menu: the same manager's DESKTOP_EXIT, no second code. */
   | { type: 'desktopExit' }
+  /**
+   * "מצב עבודה": to the till. Refused (`refusal`) over a customer's order or payment; always a manager's code with
+   * KIOSK_TILL_MODE — the one that opened this menu counts when it holds it, else `needsCode` asks for another (`code`).
+   */
+  | { type: 'workMode'; mode: 'till' | 'kiosk'; code?: string }
   /** "צימוד מסוף SynqPay": `pair` (the first code, or "שלח קוד חדש"); the serial when the kiosk cannot tell it. */
   | { type: 'synqpayPair'; serialNumber?: string | null }
   /** The 6 digits from the terminal's screen. */
@@ -490,11 +521,20 @@ export type AdminAction =
   /** CashMag: a manager dealt with an unclear payment at the machine ("טופל"). */
   | { type: 'cashmagAcknowledge'; txId: string }
   /** CashMag: is the server there now (a knock on its port, the machine not taken). */
-  | { type: 'cashmagCheck' };
+  | { type: 'cashmagCheck' }
+  /**
+   * "משמרת ו-Z" (core/kioskZ.ts): the kiosk's one action by its Z mode — "סגירת משמרת" in the shop Z, "הפקת Z" with its own
+   * Z — run by the manager who opened this menu; refused (with why) over a customer, a card or a pending payment.
+   */
+  | { type: 'kioskZ' };
 
 export interface AdminActionResult {
   ok: boolean;
   message?: string;
+  /** "מצב עבודה": why the switch is refused now (core/workMode.ts `TillModeRefusal`). */
+  refusal?: string;
+  /** "מצב עבודה": a manager's code with KIOSK_TILL_MODE is needed (or the one typed was refused: `message` says why). */
+  needsCode?: boolean;
   /** SynqPay's pairing actions: where it stands now. */
   pairing?: SynqpayPairingView;
 }

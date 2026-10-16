@@ -90,6 +90,11 @@ export interface RedeemInput {
   newId: () => string;
   /** A goods voucher that paid nothing of the basket goes back on itself — the host keeps the reversal until the cloud answers. */
   reverse?: (redemptionId: string) => Promise<void>;
+  /**
+   * What a till adds to every call (the Windows till: `features`, `testModeAware` — the production vouchers contract §2,
+   * "מצב בדיקה"): merged into the lookup, the hold and the redemption. Absent: the kiosks' calls, as they always were.
+   */
+  extras?: Record<string, unknown>;
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -161,10 +166,25 @@ export async function redeemVoucherCode(post: VoucherPost, input: RedeemInput): 
   const early = stackingBeforeScan(inOrder);
   if (early) return stackingRefused(early);
 
-  const looked = await post<Record<string, unknown>>('prepaid-vouchers/lookup', { code: input.code, supportedKinds: [...SUPPORTED_VOUCHER_KINDS] }, 12_000);
+  const looked = await lookupVoucher(post, input.code, input.extras);
+  if (looked.kind !== 'ok') return looked;
+  return redeemLookedUp(post, input, looked.dto);
+}
+
+/** `prepaid-vouchers/lookup` for [code] (every kind this client applies, and what the till adds): the voucher, or why not. */
+export async function lookupVoucher(post: VoucherPost, code: string, extras?: Record<string, unknown>): Promise<{ kind: 'ok'; dto: Record<string, unknown> } | Extract<VoucherResult, { kind: 'offline' | 'refused' }>> {
+  const looked = await post<Record<string, unknown>>('prepaid-vouchers/lookup', { code, supportedKinds: [...SUPPORTED_VOUCHER_KINDS], ...(extras ?? {}) }, 12_000);
   if (looked.kind === 'offline') return { kind: 'offline' };
   if (looked.kind === 'refused') return { kind: 'refused', reason: looked.detail ?? (looked.status === 404 ? 'prepaid_voucher_not_found' : `http_${looked.status}`) };
-  const dto = looked.body ?? {};
+  return { kind: 'ok', dto: looked.body ?? {} };
+}
+
+/**
+ * A voucher already looked up ([dto], `lookupVoucher`): held as a discount on the order, or — goods of a plain list —
+ * redeemed online as a leg of the payment (`redeem`).
+ */
+export async function redeemLookedUp(post: VoucherPost, input: RedeemInput, dto: Record<string, unknown>): Promise<VoucherResult> {
+  const inOrder = vouchersInOrder(input.discounts, input.earlier);
   const kind = voucherKindOf(dto.kind);
   const incoming: VoucherInSale = {
     voucherId: str(dto.voucherId) || str(dto.id),
@@ -207,6 +227,7 @@ async function applyDiscount(post: VoucherPost, input: RedeemInput, dto: Record<
       otherVouchers: inOrder.map(inSaleWire),
       posUserId: input.operator.id,
       posUserName: input.operator.name,
+      ...(input.extras ?? {}),
     },
     15_000,
   );
@@ -308,6 +329,7 @@ async function redeemGoods(post: VoucherPost, input: RedeemInput, dto: Record<st
       posUserId: input.operator.id,
       posUserName: input.operator.name,
       saleRef: input.saleRef,
+      ...(input.extras ?? {}),
     },
     15_000,
   );
