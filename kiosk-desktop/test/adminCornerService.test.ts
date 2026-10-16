@@ -35,7 +35,7 @@ const cashier = person({ id: 'cash', username: 'cash', firstName: 'קופאי', 
 const KIOSK_REPLY = { kiosk: true, homeRole: 'kiosk', configVersion: 'v1', machineId: MACHINE, name: 'קיוסק 1', config: {}, workMode: null };
 
 /** A paired kiosk with its staff synced earlier — and the internet gone now. */
-function offlineKiosk(opts: { users?: RosterUser[]; gate?: boolean } = {}) {
+function offlineKiosk(opts: { users?: RosterUser[]; gate?: boolean; snapshot?: boolean } = {}) {
   let calls = 0;
   const fetchFn: typeof fetch = async () => {
     calls += 1;
@@ -57,7 +57,7 @@ function offlineKiosk(opts: { users?: RosterUser[]; gate?: boolean } = {}) {
   svc.cloud.setMachine({ machineId: MACHINE, machineName: 'קיוסק 1', deviceRole: 'kiosk', shopId: SHOP });
   svc.cloud.setParameters({ kioskTillModeEnabled: opts.gate ?? true }, null);
   svc.cloud.applyPosUsers({ syncType: 'full', serverTime: '2026-10-16T10:00:00Z', users: opts.users ?? [boss, lead, cashier] });
-  svc.cloud.setKioskSnapshot(KIOSK_REPLY);
+  if (opts.snapshot !== false) svc.cloud.setKioskSnapshot(KIOSK_REPLY);
   const runtime = createWorkMode(svc);
   const roles = new RoleManager(svc, () => ({ current: '0.5.2', phase: 'idle', available: null, progress: null, message: null, lastCheckAt: null, autoInstall: false, installWindow: null }));
   let till: TillFacts = { ...NO_TILL_FACTS };
@@ -100,6 +100,17 @@ describe('the corner on "התשלום אינו זמין" — no terminal, no int
       expect(w.calls()).toBe(before);
       // "הדפס עסקה אחרונה": nothing sold today — said, never a new number.
       expect(await w.svc.adminAction({ type: 'reprintLast' })).toEqual({ ok: false, message: 'אין עסקאות היום' });
+    } finally {
+      w.done();
+    }
+  });
+
+  it('"waiting" — paired, no kiosk config yet, offline: the corner’s menu still opens from the cached roster', async () => {
+    const w = offlineKiosk({ snapshot: false });
+    try {
+      expect(w.svc.view().phase).not.toBe('kiosk');
+      expect(await w.svc.adminUnlock('7001')).toEqual({ ok: true, name: 'רונית מנהלת' });
+      expect(() => w.svc.adminInfo()).not.toThrow();
     } finally {
       w.done();
     }
