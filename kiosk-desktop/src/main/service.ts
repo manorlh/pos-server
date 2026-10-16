@@ -36,7 +36,36 @@ import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cas
 import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
 import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { bonDoc, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type XInput } from '../core/printDocs';
+import { bonDoc, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput } from '../core/printDocs';
+import {
+  appendLog,
+  bonText,
+  CLOUD_HISTORY_DAYS,
+  decideApprover,
+  eventDetails,
+  failedTickets,
+  HISTORY_DEFAULT_DAYS,
+  HISTORY_KEEP_DAYS,
+  HISTORY_SHOWN,
+  kinds as reprintKinds,
+  labelOf,
+  lastBon,
+  mayAlone as reprintAlone,
+  mergeHistory,
+  parseCloudOrders,
+  parseLog,
+  paymentText,
+  receiptText,
+  recent,
+  REPRINT_TEXT,
+  search as searchHistory,
+  shiftDay,
+  ticketStates,
+  ticketsToReprint,
+  type HistoryOrder,
+  type ReprintKind,
+  type TicketJob,
+} from '../core/kioskReprint';
 import { BON_NOT_ON_KIOSK, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
@@ -130,8 +159,10 @@ import { basePriceOf, hasMenus, keptListPrice, menuById, menuKeyAt, menuPriceSet
 import type { MenuBlock } from '@dash-lib/menuSchedule';
 import type {
   AdminAction,
+  AdminHistory,
   AdminInfo,
   BasketChange,
+  HistoryRow,
   KioskEvents,
   KioskView,
   CashCreditResult,
@@ -236,6 +267,10 @@ const DESKTOP_STATE = 'desktopExit.state';
 const DESKTOP_LOG = 'desktopExit.log';
 /** "מצב עבודה: קיוסק / קופה": the device's own log of its mode switches. */
 const WORK_MODE_LOG = 'workMode.log';
+/** "הדפסה חוזרת" in the manager's menu (core/kioskReprint.ts): the device's log of its reprints, the second code's lock. */
+const REPRINT_LOG = 'kiosk.reprintLog';
+const REPRINT_LOCK = 'kiosk.reprintLock';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A till event of the device's (`POST /sync/{m}/events`, pos-server TillEventIn): a desktop exit or a mode switch. */
 type TillEventRecord = DesktopExitEvent | WorkModeEvent;
 
@@ -258,6 +293,8 @@ export interface TillEngineEvent {
   shiftId: string | null;
   posUserId: string | null;
   amount?: number;
+  /** The document it concerns (a reprint's), when it is one of this device's (a UUID). */
+  transactionId?: string;
   details: Record<string, unknown>;
 }
 
@@ -1003,6 +1040,8 @@ export class KioskService extends EventEmitter {
       },
       staff: {
         unprintedBons: today.filter((o) => o.bonStatus === 'failed' || o.bonStatus === 'queued').length,
+        // "שובר פריט לא הודפס": as the bons', a red word in the corner — the reprint is the manager's, in the history.
+        unprintedTickets: this.unprintedTicketsOf(today),
         printer: this.printQueue.health(),
         pendingUploads: this.outbox.count() + this.payAtTill.pending(),
         mediaMissing: media.missing,
@@ -3161,8 +3200,19 @@ export class KioskService extends EventEmitter {
     const o = this.orders.get(orderId);
     const doc = o?.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!o || !doc || doc.status !== 'completed') return 0;
+    const pages = this.itemTicketDocs(doc, o.transactionNumber, null);
+    for (const page of pages) this.printQueue.enqueue('ticket', orderId, page);
+    return pages.length;
+  }
+
+  /**
+   * The item tickets [doc] earns now, as pages (the catalog's modes, "שוברי פריט"; none for a credit note) — each with
+   * its place among them, and [notice] ("הדפסה חוזרת") on a person's reprint.
+   */
+  private itemTicketDocs(doc: DocDraft, transactionNumber: string | null, notice: string | null): TicketDoc[] {
+    if (doc.status !== 'completed') return [];
     const setting = itemTicketSetting(this.cloud.parameters()[ITEM_TICKET_PARAM]);
-    if (!itemTicketsPrint(doc.documentType, true, setting)) return 0;
+    if (!itemTicketsPrint(doc.documentType, true, setting)) return [];
     const catalog = this.cloud.catalog();
     const products = new Map(catalog.products.map((p) => [String(p.id), p] as const));
     const categories = new Map(catalog.categories.map((c) => [String(c.id), c] as const));
@@ -3182,24 +3232,20 @@ export class KioskService extends EventEmitter {
       }),
     );
     const place = this.placeOfMachine();
-    tickets.forEach((items, i) => {
-      this.printQueue.enqueue(
-        'ticket',
-        orderId,
-        ticketDoc({
-          businessName: this.business().companyName,
-          shopName: place.shopName,
-          machineName: place.deviceName,
-          posNumber: place.posNumber,
-          transactionNumber: o.transactionNumber,
-          issuedAt: new Date(doc.createdAt),
-          items,
-          index: i + 1,
-          count: tickets.length,
-        }),
-      );
-    });
-    return tickets.length;
+    return tickets.map((items, i) =>
+      ticketDoc({
+        businessName: this.business().companyName,
+        shopName: place.shopName,
+        machineName: place.deviceName,
+        posNumber: place.posNumber,
+        transactionNumber,
+        issuedAt: new Date(doc.createdAt),
+        items,
+        index: i + 1,
+        count: tickets.length,
+        notice,
+      }),
+    );
   }
 
   /**
@@ -3885,6 +3931,248 @@ export class KioskService extends EventEmitter {
     return out ?? { kind: 'blocked', block: 'running' };
   }
 
+  /* ------------------------------------------------ "היסטוריית עסקאות" and "הדפסה חוזרת" */
+
+  /** The cloud's rows of the last "ישנות יותר" asked, by local id: a reprint of one finds its document. */
+  private cloudHistoryRows = new Map<string, HistoryOrder>();
+
+  /** Bons print on this kiosk at all: its bon route is not "none" (core/kioskBonRoute.ts — "בון מטבח במדפסת הקיוסק"). */
+  private bonsOn(): boolean {
+    const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
+    return windowsBonRouteFor(this.config().printing, kitchenConfig) !== 'none';
+  }
+
+  /** An order's item-ticket jobs as the history reads them: which ticket each printed, how it went, the page itself. */
+  private ticketJobsOf(orderId: string): Array<TicketJob & { doc: TicketDoc }> {
+    const out: Array<TicketJob & { doc: TicketDoc }> = [];
+    for (const j of this.printQueue.jobsFor(orderId, 'ticket')) {
+      try {
+        const doc = JSON.parse(j.doc) as TicketDoc;
+        out.push({ index: typeof doc.index === 'number' ? doc.index : null, count: typeof doc.count === 'number' ? doc.count : null, status: j.status, createdAt: j.created_at, doc });
+      } catch {
+        /* an unreadable page is no ticket */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * An order's tickets and how each printed. A sale settled after a restart printed none on purpose ("שוחזר — הדפסה
+   * חוזרת מהניהול"): its tickets, as its document earns them now, are all "לא הודפס".
+   */
+  private ticketStatusOf(o: HistoryOrder, doc: DocDraft | null): HistoryRow['tickets'] {
+    const jobs = this.ticketJobsOf(o.localId);
+    if (jobs.length > 0) return ticketStates(jobs);
+    if (o.recovered && doc) {
+      const n = this.itemTicketDocs(doc, o.transactionNumber, null).length;
+      return Array.from({ length: n }, (_, i) => ({ index: i + 1, count: n, state: 'failed' as const, prints: 0 }));
+    }
+    return [];
+  }
+
+  /** "שובר פריט לא הודפס": [today]'s item tickets whose newest print the queue gave up on (looked at only when one failed). */
+  private unprintedTicketsOf(today: readonly KioskOrder[]): number {
+    if (today.length === 0 || this.printQueue.failedCountOf('ticket', Date.now() - 2 * 86_400_000) === 0) return 0;
+    return today.reduce((n, o) => n + failedTickets(ticketStates(this.ticketJobsOf(o.localId))).length, 0);
+  }
+
+  /** The cloud's orders of this kiosk (`GET /sync/{m}/kiosk/orders`): the days before the week it keeps. */
+  private async cloudHistory(until: string, days: number, query: string): Promise<{ state: AdminHistory['cloud']; orders: HistoryOrder[] }> {
+    if (!this.machineId || !this.paired) return { state: 'failed', orders: [] };
+    if (this.offlineNow) return { state: 'failed', orders: [] };
+    const params = new URLSearchParams({ until, days: String(days) });
+    if (query.trim()) params.set('q', query.trim().slice(0, 40));
+    const reply = await this.api.get<unknown>(`sync/${this.machineId}/kiosk/orders?${params.toString()}`, { timeoutMs: 10_000 });
+    if (reply.kind === 'offline') return { state: 'failed', orders: [] };
+    // A server from before the route: 405 (the path takes POST only) or 404.
+    if (reply.kind === 'refused') return { state: reply.status === 404 || reply.status === 405 ? 'unsupported' : 'failed', orders: [] };
+    const orders = parseCloudOrders(reply.body);
+    // The last answer only (at most the route's 500): what the screen lists now.
+    this.cloudHistoryRows = new Map(orders.map((o) => [o.localId, o] as const));
+    return { state: 'ok', orders };
+  }
+
+  /** One history row: the sale, how it was paid, how its receipt, bon and item tickets printed, what may print again. */
+  private historyRow(o: HistoryOrder, kept: boolean, bonsOn: boolean): HistoryRow {
+    const doc = o.transactionId ? this.ledger.doc(o.transactionId) : null;
+    const receiptJobs = kept ? this.printQueue.jobsFor(o.localId, 'receipt').map((j) => ({ status: j.status, createdAt: j.created_at })) : [];
+    return {
+      localId: o.localId,
+      at: o.createdAtMs,
+      businessDate: o.businessDate,
+      label: labelOf(o),
+      pickupLabel: o.pickupLabel,
+      number: o.transactionNumber,
+      customerName: o.customerName,
+      totalAgorot: o.totalAgorot + o.tipAgorot,
+      payment: paymentText(doc, o),
+      receipt: receiptText(receiptJobs, o.receiptStatus),
+      bon: bonText(o),
+      bonFailed: o.fulfillmentMode === 'BON' && o.bonStatus === 'failed',
+      tickets: this.ticketStatusOf(o, doc),
+      kinds: reprintKinds(o, bonsOn, { hasDocument: doc !== null && settled(doc), kept }),
+      source: kept ? 'kiosk' : 'cloud',
+    };
+  }
+
+  /**
+   * "היסטוריית עסקאות" in the manager's menu: today (the default) or the week the kiosk keeps, or — "ישנות יותר" — the
+   * cloud's month before it when it answers; one search for all (core/kioskReprint.ts search); the newest HISTORY_SHOWN.
+   */
+  async adminHistory(input: { days?: number; query?: string; older?: boolean }): Promise<AdminHistory> {
+    if (!this.adminOk()) throw new Error('נדרש קוד מנהל');
+    this.adminUntil = Date.now() + 5 * 60_000;
+    const now = Date.now();
+    const today = localDate(now);
+    const older = input?.older === true;
+    const days = older ? HISTORY_KEEP_DAYS : Number(input?.days) >= HISTORY_KEEP_DAYS ? HISTORY_KEEP_DAYS : HISTORY_DEFAULT_DAYS;
+    const query = typeof input?.query === 'string' ? input.query.slice(0, 40) : '';
+    const local = this.orders.all();
+    const bonsOn = this.bonsOn();
+    let found: HistoryOrder[];
+    let cloud: AdminHistory['cloud'] = 'off';
+    if (older) {
+      // What the kiosk still keeps of those days (its own, with how each page printed), and the cloud's.
+      const week = new Set(recent(local, today, HISTORY_KEEP_DAYS).map((o) => o.localId));
+      const keptOlder = local.filter((o) => o.paid && !week.has(o.localId));
+      const fetched = await this.cloudHistory(shiftDay(today, -HISTORY_KEEP_DAYS), CLOUD_HISTORY_DAYS, query);
+      cloud = fetched.state;
+      found = searchHistory(mergeHistory(keptOlder, fetched.orders.filter((o) => !week.has(o.localId))), query);
+    } else {
+      found = searchHistory(recent(local, today, days), query);
+    }
+    const keptIds = new Set(local.map((o) => o.localId));
+    const lb = lastBon(local, bonsOn);
+    return {
+      days,
+      older,
+      query,
+      rows: found.slice(0, HISTORY_SHOWN).map((o) => this.historyRow(o, keptIds.has(o.localId), bonsOn)),
+      total: found.length,
+      cloud,
+      alone: reprintAlone(this.cloud.posUsers(), this.shopIdHere(), this.adminUserId),
+      bonsOn,
+      lastBon: lb ? { localId: lb.localId, label: labelOf(lb) } : null,
+      unprintedTickets: this.unprintedTicketsOf(this.orders.todays(today)),
+      log: parseLog(this.kv.get(REPRINT_LOG))
+        .filter((e) => e.businessDate === today)
+        .reverse()
+        .slice(0, 30)
+        .map((e) => ({ at: e.atMs, kind: e.kind, label: e.pickupLabel ?? (e.documentNumber ? `#${e.documentNumber}` : null), by: e.by, tickets: e.tickets ?? null, ...(e.failed ? { failed: true } : {}) })),
+    };
+  }
+
+  /**
+   * Who reprints (KioskReprintPanel `alone` / LocalManagerSheet): the manager who opened the menu when their role allows
+   * "הדפסה חוזרת", else another manager's code with it ([code]; none yet → `needsCode`). Checked on the device.
+   */
+  private async reprintApprover(code?: string): Promise<{ ok: true; by: string | null; byId: string | null } | { ok: false; result: AdminActionResult }> {
+    const roster = this.cloud.posUsers();
+    if (reprintAlone(roster, this.shopIdHere(), this.adminUserId)) return { ok: true, by: this.adminName, byId: this.adminUserId };
+    if (typeof code !== 'string' || code.trim() === '') return { ok: false, result: { ok: false, needsCode: true, message: REPRINT_TEXT.needsManager } };
+    const d = await decideApprover({
+      users: roster,
+      shopId: this.shopIdHere(),
+      code,
+      lock: this.kv.getJson<ExitLock>(REPRINT_LOCK),
+      nowMs: Date.now(),
+      compare: (p, h) => bcrypt.compare(p, h),
+    });
+    this.kv.setJson(REPRINT_LOCK, d.lock);
+    if (d.outcome === 'granted' && d.user) return { ok: true, by: displayName(d.user), byId: d.user.id };
+    return { ok: false, result: { ok: false, needsCode: true, message: d.message ?? REPRINT_TEXT.needsManager } };
+  }
+
+  /** The cloud's "הדפסה חוזרת" event (`reprint`) and the day's log — whether or not the paper came out: it was asked for. */
+  private recordReprint(
+    kind: ReprintKind,
+    order: Pick<HistoryOrder, 'localId' | 'pickupLabel' | 'transactionNumber' | 'transactionId'>,
+    who: { by: string | null; byId: string | null },
+    extra: { failed?: boolean; tickets?: number[] | null; only?: 'all' | 'failed'; last?: boolean } = {},
+  ) {
+    const now = Date.now();
+    const details = eventDetails(kind, order, who.by, who.byId, this.adminName, {
+      failed: extra.failed === true,
+      ...(extra.tickets ? { tickets: extra.tickets } : {}),
+      ...(extra.only ? { only: extra.only } : {}),
+      ...(extra.last ? { last: true } : {}),
+    });
+    this.recordTillEvent({
+      id: randomUUID(),
+      type: 'reprint',
+      occurredAt: new Date(now).toISOString(),
+      shiftId: this.ledger.currentShift()?.id ?? null,
+      posUserId: who.byId,
+      ...(order.transactionId && UUID_RE.test(order.transactionId) ? { transactionId: order.transactionId } : {}),
+      details,
+    });
+    this.kv.set(
+      REPRINT_LOG,
+      appendLog(parseLog(this.kv.get(REPRINT_LOG)), {
+        atMs: now,
+        businessDate: localDate(now),
+        kind,
+        orderId: order.localId,
+        pickupLabel: order.pickupLabel,
+        documentNumber: order.transactionNumber,
+        by: who.by,
+        ...(extra.tickets ? { tickets: extra.tickets } : {}),
+        ...(extra.failed ? { failed: true } : {}),
+      }),
+    );
+    this.log(`kiosk reprint: ${kind} of ${order.localId} by ${who.by ?? '?'}${extra.failed ? ' — nothing printed' : ''}`);
+  }
+
+  /**
+   * "הדפסה חוזרת" of one sale from the history: the item tickets (the very pages, each "הדפסה חוזרת" — all of them, or
+   * only those that did not print; a sale with no ticket printed here: drawn from its document), the invoice's copy
+   * ("העתק"), the kitchen bon ("הדפסה חוזרת"). What cannot print is said before any code is asked.
+   */
+  private async adminReprint(kind: ReprintKind, orderId: string, only: 'all' | 'failed', code?: string): Promise<AdminActionResult> {
+    const kept = this.orders.get(orderId);
+    const order: HistoryOrder | null = kept ?? this.cloudHistoryRows.get(orderId) ?? null;
+    if (!order || !order.paid) return { ok: false, message: 'ההזמנה לא נמצאה' };
+    const doc = order.transactionId ? this.ledger.doc(order.transactionId) : null;
+    const hasDoc = doc !== null && settled(doc);
+    if ((kind === 'item_tickets' || kind === 'invoice_copy') && !hasDoc) return { ok: false, message: REPRINT_TEXT.noDocument };
+    if (kind === 'kitchen_bon' && !kept) return { ok: false, message: REPRINT_TEXT.notOnKiosk };
+    if (kind === 'kitchen_bon' && order.fulfillmentMode !== 'BON') return { ok: false, message: 'ההזמנה הלכה למסך המטבח — אין לה בון' };
+    const jobs = kind === 'item_tickets' ? this.ticketJobsOf(orderId) : [];
+    if (kind === 'item_tickets' && only === 'failed' && !(jobs.length === 0 && order.recovered) && ticketsToReprint(jobs, 'failed').length === 0) {
+      return { ok: false, message: REPRINT_TEXT.noFailedTickets };
+    }
+    const who = await this.reprintApprover(code);
+    if (!who.ok) return who.result;
+    let failure: string | null = null;
+    let tickets: number[] | null = null;
+    if (kind === 'item_tickets') {
+      if (jobs.length > 0) {
+        const slots = ticketsToReprint(jobs, only);
+        for (const s of slots) this.printQueue.enqueue('ticket', orderId, { ...s.latest.doc, index: s.index, count: s.count, notice: REPRINT_TEXT.notice });
+        tickets = slots.map((s) => s.index);
+      } else {
+        // None printed here (a sale settled after a restart, or before the jobs kept): drawn again from its document.
+        const pages = this.itemTicketDocs(doc!, order.transactionNumber, REPRINT_TEXT.notice);
+        for (const page of pages) this.printQueue.enqueue('ticket', orderId, page);
+        tickets = pages.map((_, i) => i + 1);
+      }
+      if (tickets.length === 0) failure = REPRINT_TEXT.noTickets;
+    } else if (kind === 'invoice_copy') {
+      if (kept) this.printReceipt(orderId, true);
+      else this.printQueue.enqueue('receipt', orderId, this.receiptDocFor(doc!, true, this.config().printing.orderNumberOnReceipt ? order.pickupLabel : null));
+    } else {
+      this.printBon(orderId, true);
+      const after = this.orders.get(orderId);
+      // Not on this kiosk ("בון מטבח במדפסת הקיוסק" off), or no printer takes it: said, not "sent".
+      if (!this.bonsOn()) failure = BON_NOT_ON_KIOSK;
+      else if (after?.bonStatus === 'failed') failure = after.bonDetail ?? 'הבון לא הודפס';
+    }
+    this.recordReprint(kind, order, who, { failed: failure !== null, tickets, ...(kind === 'item_tickets' ? { only } : {}) });
+    if (kept && kind === 'kitchen_bon' && this.machineId) void this.orders.push(this.api, this.machineId);
+    this.dirty();
+    return { ok: failure === null, message: failure ?? REPRINT_TEXT.done };
+  }
+
   async adminAction(a: AdminAction): Promise<AdminActionResult> {
     if (!this.adminOk()) return { ok: false, message: 'נדרש קוד מנהל' };
     this.adminUntil = Date.now() + 5 * 60_000;
@@ -3897,25 +4185,39 @@ export class KioskService extends EventEmitter {
         this.kv.set(LOCAL_PAUSE, a.paused ? '1' : '0');
         this.dirty();
         return { ok: true };
+      // Every reprint is "הדפסה חוזרת" (core/kioskReprint.ts): under REPRINT, recorded — the old buttons too.
+      case 'reprint':
+        return this.adminReprint(a.kind, a.orderId, a.only === 'failed' ? 'failed' : 'all', a.code);
       case 'reprintBon':
-        this.printBon(a.orderId, true);
-        return { ok: true };
+        return this.adminReprint('kitchen_bon', a.orderId, 'all', a.code);
       case 'reprintReceipt':
-        this.printReceipt(a.orderId, true);
-        return { ok: true };
+        return this.adminReprint('invoice_copy', a.orderId, 'all', a.code);
+      case 'reprintLastBon': {
+        // "הדפס שוב את הבון האחרון": the newest sale's bon — failed, or out and torn — marked "הדפסה חוזרת".
+        const o = lastBon(this.orders.all(), this.bonsOn());
+        if (!o) return { ok: false, message: REPRINT_TEXT.noLastBon };
+        const r = await this.adminReprint('kitchen_bon', o.localId, 'all', a.code);
+        return r.ok ? { ...r, message: REPRINT_TEXT.lastBonDone(labelOf(o)) } : r;
+      }
       case 'reprintLast': {
         // Today's last document — a kiosk order's or a till sale's — on paper again, marked "העתק" (never a new number).
         const last = this.ledger.todaysDocs(localDate(Date.now()))[0];
         if (!last) return { ok: false, message: 'אין עסקאות היום' };
+        const who = await this.reprintApprover(a.code);
+        if (!who.ok) return who.result;
         this.printDocReceipt(last, true);
-        return { ok: true, message: `נשלח להדפסה: ${formatDocNumber(last.prefix, String(last.number))} (העתק)` };
+        const number = formatDocNumber(last.prefix, String(last.number));
+        const order = last.orderId ? this.orders.get(last.orderId) : null;
+        this.recordReprint('invoice_copy', { localId: order?.localId ?? last.orderId ?? last.id, pickupLabel: order?.pickupLabel ?? null, transactionNumber: number, transactionId: last.id }, who, { last: true });
+        return { ok: true, message: `נשלח להדפסה: ${number} (העתק)` };
       }
       case 'testPrint':
         await this.lookForPrinter();
         this.printQueue.enqueue('test', null, slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 }));
         return { ok: true };
       case 'retryPrints':
-        this.printQueue.retryFailed();
+        // An item ticket is exchanged for goods: it prints again only as its order's reprint ("שובר פריט", marked).
+        this.printQueue.retryFailed(undefined, ['ticket']);
         // The kitchen's too (main/kitchen): a person's "נסה שוב" — a ticket that may be on paper goes marked.
         this.kitchen.retryAll();
         return { ok: true };

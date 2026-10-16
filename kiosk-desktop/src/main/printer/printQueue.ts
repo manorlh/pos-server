@@ -112,15 +112,25 @@ export class PrintQueue {
     return this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM print_jobs WHERE status = 'failed' AND created_at >= ?", sinceMs)?.n ?? 0;
   }
 
+  /** The jobs of one kind that failed since then ("שובר פריט לא הודפס" looks closer only when there are any). */
+  failedCountOf(kind: JobKind, sinceMs: number): number {
+    return this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM print_jobs WHERE kind = ? AND status = 'failed' AND created_at >= ?", kind, sinceMs)?.n ?? 0;
+  }
+
   /** Jobs left half-way by a crash are queued again; old ones are dropped (a week). */
   recover() {
     this.db.run("UPDATE print_jobs SET status = 'queued' WHERE status = 'sending'");
     this.db.run('DELETE FROM print_jobs WHERE created_at < ?', Date.now() - 7 * 86_400_000);
   }
 
-  retryFailed(refId?: string) {
-    if (refId) this.db.run("UPDATE print_jobs SET status = 'queued', attempts = 0 WHERE status = 'failed' AND ref_id = ?", refId);
-    else this.db.run("UPDATE print_jobs SET status = 'queued', attempts = 0 WHERE status = 'failed'");
+  /**
+   * The failed jobs queued again ("הדפסה חוזרת של מה שנכשל"), but for [except]: an item ticket is exchanged for goods, so
+   * it prints again only as a person's reprint of its order, marked "הדפסה חוזרת" (core/kioskReprint.ts).
+   */
+  retryFailed(refId?: string, except: readonly JobKind[] = []) {
+    const skip = except.length > 0 ? ` AND kind NOT IN (${except.map(() => '?').join(', ')})` : '';
+    if (refId) this.db.run(`UPDATE print_jobs SET status = 'queued', attempts = 0 WHERE status = 'failed' AND ref_id = ?${skip}`, refId, ...except);
+    else this.db.run(`UPDATE print_jobs SET status = 'queued', attempts = 0 WHERE status = 'failed'${skip}`, ...except);
     void this.work();
   }
 

@@ -320,6 +320,21 @@ function drawTicketAt384(doc: TicketDoc): HTMLCanvasElement {
       }
       return size;
     };
+    // "הדפסה חוזרת" (a person's reprint): a black band at the head, as the bon's — never handed over as a first ticket.
+    if (doc.notice) {
+      const top = y + 4;
+      const bottom = top + 30 + 14;
+      if (draw) {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(PAD, top, W - 2 * PAD, bottom - top);
+        ctx.fillStyle = '#FFF';
+        font(ctx, 30, 'bold');
+        ctx.textAlign = 'center';
+        ctx.fillText(doc.notice, W / 2, bottom - 10);
+        ctx.fillStyle = '#000';
+      }
+      y = bottom + 4;
+    }
     centred(doc.businessName, 26, true);
     if (doc.shopName) centred(doc.shopName, 20);
     centred(doc.title, 22, true);

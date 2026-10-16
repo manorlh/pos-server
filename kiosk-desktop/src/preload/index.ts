@@ -33,6 +33,7 @@ const api: KioskBridge = {
   adminUnlock: (pin) => ipcRenderer.invoke('kiosk:adminUnlock', pin),
   adminInfo: () => ipcRenderer.invoke('kiosk:adminInfo'),
   adminAction: (a) => ipcRenderer.invoke('kiosk:adminAction', a),
+  adminHistory: (input) => ipcRenderer.invoke('kiosk:adminHistory', input),
   technicianUnlock: (code) => ipcRenderer.invoke('kiosk:technicianUnlock', code),
   technicianInfo: () => ipcRenderer.invoke('kiosk:technicianInfo'),
   technicianAction: (a) => ipcRenderer.invoke('kiosk:technicianAction', a),

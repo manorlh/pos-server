@@ -331,6 +331,7 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:adminUnlock', (_e, pin: string) => svc.adminUnlock(pin));
   ipcMain.handle('kiosk:adminInfo', () => svc.adminInfo());
   ipcMain.handle('kiosk:adminAction', (_e, a) => svc.adminAction(a));
+  ipcMain.handle('kiosk:adminHistory', (_e, input) => svc.adminHistory(input));
   ipcMain.handle('kiosk:technicianUnlock', (_e, code: string) => svc.technicianUnlock(code));
   ipcMain.handle('kiosk:technicianInfo', () => svc.technicianInfo());
   ipcMain.handle('kiosk:technicianAction', (_e, a) => svc.technicianAction(a));

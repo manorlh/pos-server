@@ -49,6 +49,7 @@ export const LIVE: Record<string, string> = {
   staffOffline: 'אין אינטרנט',
   staffTerminal: 'המסופון לא זמין',
   staffBons: 'בונים לא הודפסו',
+  staffTickets: 'שובר פריט לא הודפס',
   staffPrinter: 'תקלת מדפסת',
   staffCard: 'תשלום לבירור',
   poweredBy: 'POWERED BY R2M POS',

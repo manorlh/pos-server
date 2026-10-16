@@ -76,6 +76,8 @@ export interface KioskView {
   };
   staff: {
     unprintedBons: number;
+    /** "שובר פריט לא הודפס": today's item tickets the queue gave up on (core/kioskReprint.ts); absent from an older host. */
+    unprintedTickets?: number;
     printer: string;
     pendingUploads: number;
     mediaMissing: number;
@@ -379,6 +381,64 @@ export interface AdminInfo {
   workMode?: AdminWorkMode;
 }
 
+/** How one item ticket of a sale printed ("לא הודפס" per ticket, core/kioskReprint.ts ticketStates). */
+export interface HistoryTicket {
+  index: number;
+  count: number;
+  state: 'sent' | 'queued' | 'failed';
+  /** The first print and every reprint of it. */
+  prints: number;
+}
+
+/** "היסטוריית עסקאות" in the manager's menu (core/kioskReprint.ts): one paid sale. */
+export interface HistoryRow {
+  localId: string;
+  /** ms; 0 when the cloud did not say. */
+  at: number;
+  businessDate: string;
+  /** Its name on the screen: the pickup label, else the document number, else its id (labelOf). */
+  label: string;
+  pickupLabel: string | null;
+  number: string | null;
+  customerName: string | null;
+  /** With the tip. */
+  totalAgorot: number;
+  /** "אשראי ···4242", "מזומן", "שובר"…; null when unknown. */
+  payment: string | null;
+  /** The receipt / the bon in words; `bonFailed` for the red. */
+  receipt: string;
+  bon: string;
+  bonFailed: boolean;
+  /** Its item tickets and how each printed; empty: none (or not known — an order the kiosk no longer keeps). */
+  tickets: HistoryTicket[];
+  /** What may print again (core/kioskReprint.ts kinds). */
+  kinds: Array<'item_tickets' | 'invoice_copy' | 'kitchen_bon'>;
+  /** Kept on the kiosk, or only the cloud's (older than the week it keeps). */
+  source: 'kiosk' | 'cloud';
+}
+
+/** The manager's "היסטוריית עסקאות" now: the rows asked for, the cloud's part, who may reprint, the day's log. */
+export interface AdminHistory {
+  /** 1 ("היום") or 7 ("7 ימים"); `older`: the cloud's days before the kept week ("ישנות יותר"). */
+  days: number;
+  older: boolean;
+  query: string;
+  rows: HistoryRow[];
+  /** How many matched (the rows are the newest of them). */
+  total: number;
+  /** The cloud's part: not asked, answered, no answer (offline), or a server without the route. */
+  cloud: 'off' | 'ok' | 'failed' | 'unsupported';
+  /** The manager who opened the menu holds "הדפסה חוזרת": no second code. */
+  alone: boolean;
+  bonsOn: boolean;
+  /** "הדפס שוב את הבון האחרון": the newest sale with a bon; null — none (or bons off). */
+  lastBon: { localId: string; label: string } | null;
+  /** Today's item tickets that did not print. */
+  unprintedTickets: number;
+  /** "הדפסות חוזרות היום", newest first. */
+  log: Array<{ at: number; kind: 'item_tickets' | 'invoice_copy' | 'kitchen_bon'; label: string | null; by: string | null; tickets?: number[] | null; failed?: boolean }>;
+}
+
 /** The manager's "מצב עבודה" section: shown only where the owner allowed it (`enabled`). */
 export interface AdminWorkMode {
   /** The owner's gate (`kioskTillModeEnabled`) is open for this device. */
@@ -477,6 +537,8 @@ export interface KioskBridge {
   helpRequest(): Promise<void>;
   adminUnlock(pin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }>;
   adminInfo(): Promise<AdminInfo>;
+  /** "היסטוריית עסקאות" (core/kioskReprint.ts); absent where the host has none (the Android bundle: its own native menu). */
+  adminHistory?(input: { days: number; query: string; older?: boolean }): Promise<AdminHistory>;
   adminAction(action: AdminAction): Promise<AdminActionResult>;
   technicianUnlock(code: string): Promise<{ outcome: 'granted' | 'wrong' | 'locked_out' | 'locked'; triesLeft: number; lockedForMs: number }>;
   technicianInfo(): Promise<TechnicianInfo>;
@@ -492,10 +554,19 @@ export interface KioskBridge {
 export type AdminAction =
   | { type: 'syncNow' }
   | { type: 'pause'; paused: boolean }
-  | { type: 'reprintBon'; orderId: string }
-  | { type: 'reprintReceipt'; orderId: string }
+  /** The bon / the receipt of an order again: `reprint` of `kitchen_bon` / `invoice_copy` (under REPRINT, recorded). */
+  | { type: 'reprintBon'; orderId: string; code?: string }
+  | { type: 'reprintReceipt'; orderId: string; code?: string }
   /** "הדפס עסקה אחרונה" (the Android admin's quick reprint): today's last document, kiosk or till, as a copy. */
-  | { type: 'reprintLast' }
+  | { type: 'reprintLast'; code?: string }
+  /** "הדפס שוב את הבון האחרון": the newest sale's kitchen bon, marked "הדפסה חוזרת". */
+  | { type: 'reprintLastBon'; code?: string }
+  /**
+   * "הדפסה חוזרת" of one sale (core/kioskReprint.ts): its item tickets ("שובר פריט" — all of them, or `only: 'failed'`
+   * those that did not print), its invoice's copy, its kitchen bon. Under REPRINT: the menu's manager alone when the role
+   * allows it, else `needsCode` asks for another manager's (`code`); recorded (the cloud's `reprint` event, the day's log).
+   */
+  | { type: 'reprint'; kind: 'item_tickets' | 'invoice_copy' | 'kitchen_bon'; orderId: string; only?: 'all' | 'failed'; code?: string }
   | { type: 'testPrint' }
   | { type: 'checkTerminal' }
   | { type: 'recheckPayment'; reference: string }
@@ -533,7 +604,10 @@ export interface AdminActionResult {
   message?: string;
   /** "מצב עבודה": why the switch is refused now (core/workMode.ts `TillModeRefusal`). */
   refusal?: string;
-  /** "מצב עבודה": a manager's code with KIOSK_TILL_MODE is needed (or the one typed was refused: `message` says why). */
+  /**
+   * "מצב עבודה": a manager's code with KIOSK_TILL_MODE is needed; "הדפסה חוזרת": one with REPRINT (or the one typed was
+   * refused: `message` says why).
+   */
   needsCode?: boolean;
   /** SynqPay's pairing actions: where it stands now. */
   pairing?: SynqpayPairingView;

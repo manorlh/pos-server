@@ -3,7 +3,9 @@
  *  - a long press (2 s) in the top-right corner (detected by the kiosk's root, nothing drawn over it) → the PIN of a
  *    manager whose role allows "יציאה מנעילת קופה (קיוסק)" (KIOSK_UNLOCK, checked offline against the
  *    synced POS users) → "ניהול הקיוסק": status, payment and unresolved charges, printer, sync,
- *    media, today's orders (re-print a bon / a receipt — never a charge), "משמרת ו-Z" (the kiosk's close or its own Z by
+ *    media, "היסטוריית עסקאות" (today / the week kept / older from the cloud, searched; per sale "שובר פריט" — all or only
+ *    what did not print — "חשבונית (העתק)", "בון למטבח", each "הדפסה חוזרת" under REPRINT, staff/KioskHistoryPanel.tsx;
+ *    never a charge), "משמרת ו-Z" (the kiosk's close or its own Z by
  *    its Z mode, staff/KioskZPanel.tsx), the Zs, pause, and — for a
  *    manager who also holds DESKTOP_EXIT — "יציאה לשולחן העבודה" and "יציאה מהתוכנה";
  *  - six taps in the top-left corner + the technician code (1995 unless the cloud set one) →
@@ -14,7 +16,7 @@
  *    order or payment; always a manager's code with KIOSK_TILL_MODE (the one that opened the menu counts
  *    when it holds it);
  *  - a small red label in the corner when something needs staff (no internet, the pinpad, a bon
- *    that did not print, a payment to check) — no internet never blocks a sale;
+ *    or an item ticket that did not print, a payment to check) — no internet never blocks a sale;
  *  - "יציאה לשולחן העבודה" (desktop/DesktopExit.tsx): a quiet icon in the bottom-right corner of the
  *    resting screens (`home`), and a button in both menus → a manager's code (DESKTOP_EXIT).
  */
@@ -32,6 +34,7 @@ import { PERMISSION_LABEL } from '../../core/desktopExit';
 import { WORK_TEXT } from '../../core/workMode';
 import { WorkModePanel } from './WorkModePanel';
 import { KioskZPanel } from './KioskZPanel';
+import { KioskHistoryPanel } from './KioskHistoryPanel';
 
 /** CashMag on the manager's screen: where the server's address came from, what an unclear payment was. */
 const CASHMAG_SOURCE: Record<string, string> = { cloud: 'מהענן', local: 'מקומי (kiosk.json)', default: 'לא מוגדר' };
@@ -77,6 +80,7 @@ export function StaffLayer({
     view.state.noPayment ? t('staffTerminal') : null,
     view.state.cardBlocked ? t('staffCard') : null,
     view.staff.unprintedBons > 0 ? `${t('staffBons')} (${view.staff.unprintedBons})` : null,
+    (view.staff.unprintedTickets ?? 0) > 0 ? `${t('staffTickets')} (${view.staff.unprintedTickets})` : null,
     view.staff.printer !== 'ok' && view.staff.printer !== 'unknown' ? t('staffPrinter') : null,
   ].filter(Boolean);
   return (
@@ -430,28 +434,8 @@ function AdminScreen({
           סנכרון עכשיו
         </Btn>
       </Panel>
-      <Panel m={m} title="הזמנות היום">
-        <Btn m={m} onClick={() => act({ type: 'reprintLast' })}>
-          הדפס עסקה אחרונה (העתק)
-        </Btn>
-        {info.orders.length === 0 ? <div>אין הזמנות היום</div> : null}
-        {info.orders.map((o) => (
-          <div key={o.localId} className="flex items-center gap-2 border-t py-1 text-xs" style={{ borderColor: m.c.border }}>
-            <span className="w-12 font-bold" dir="ltr">
-              {o.label ?? '—'}
-            </span>
-            <span className="flex-1">
-              {new Date(o.at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} · {shekels(o.totalAgorot)} · בון: {o.bon}
-            </span>
-            <Btn m={m} onClick={() => act({ type: 'reprintBon', orderId: o.localId })}>
-              בון
-            </Btn>
-            <Btn m={m} onClick={() => act({ type: 'reprintReceipt', orderId: o.localId })}>
-              קבלה
-            </Btn>
-          </div>
-        ))}
-      </Panel>
+      {/* "היסטוריית עסקאות" and every "הדפסה חוזרת" (staff/KioskHistoryPanel.tsx, core/kioskReprint.ts): under REPRINT, recorded. */}
+      <KioskHistoryPanel m={m} onDone={refresh} />
       <Panel m={m} title="דוחות Z">
         {info.zs.length === 0 ? <div>אין</div> : null}
         {info.zs.map((z) => (
