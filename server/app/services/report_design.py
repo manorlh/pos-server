@@ -115,6 +115,19 @@ def better_of(key: str, given: Optional[str] = None) -> str:
     return "down" if any(w in k for w in DOWN_WORDS) else "up"
 
 
+#: "מול" at the start of a comparison's label ("מול 01.10–07.10", "מול-שבוע שעבר").
+_AGAINST = re.compile(r"^\s*מול(?:[\s\-־]+|$)")
+
+
+def compared_with(label: Optional[str], default: str = "התקופה הקודמת") -> str:
+    """
+    What a figure is compared with, for a sentence that already says "מול": the label without a
+    "מול" of its own — the dashboard's label is "מול 01.10–07.10", and "מול מול …" is wrong.
+    """
+    text = _AGAINST.sub("", P.clean(label or "")).strip()
+    return text or default
+
+
 def icon_of(key: str, given: Optional[str] = None) -> str:
     if given in ICONS:
         return given  # type: ignore[return-value]
@@ -1260,7 +1273,7 @@ class _Layout:
                 c.rect(tx - 2.5, ty - 0.55, 5.0, 1.1, fg)
             c.text(bold, cs, cx0 + 4.5, ty + cs * 0.36, text, fg)
             text_right = cx0 - 4
-        note = kpi.sub or (f"מול {kpi.compare_label}" if chip is not None and kpi.compare_label else "")
+        note = kpi.sub or (f"מול {compared_with(kpi.compare_label)}" if chip is not None and kpi.compare_label else "")
         room = text_right - spark_right
         if note and room > 22:
             fitted = P._fit(regular, note, sub_size, room)
