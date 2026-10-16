@@ -242,7 +242,8 @@ export class TillCash {
 
   start() {
     const tick = () => {
-      if (!this.c.svc.paired) return;
+      // A till by role only (never a kiosk's background engine): the cloud routes the debts to tills.
+      if (!this.c.svc.paired || !this.drawer.isTill()) return;
       void this.owed.refreshIfDue(this.c.now()).then(() => this.c.changed(), () => undefined);
     };
     this.timers.push(setInterval(tick, 30_000), setTimeout(tick, 2_000));
