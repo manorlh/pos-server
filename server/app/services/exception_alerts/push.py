@@ -44,17 +44,21 @@ live in their user preferences (`integrity_prefs`).
 
 Delivery: the dispatch row is written first (unique per entry, rule and device), then the
 message is encrypted and posted by a background sender thread (webpush.py), which records
-sent / failed and turns off a device the push service says is gone. Nothing here sends SMS
-or WhatsApp.
+sent / failed (and logs why a push service refused) and turns off a device the push service
+says is gone. The test message ("בדיקת התראות") is sent in the request instead, so its answer
+carries each push service's status. Nothing here sends SMS or WhatsApp.
 """
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import queue
+import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -249,6 +253,15 @@ RETRY_AFTER = timedelta(minutes=2)
 MAX_ATTEMPTS = 3
 #: Stop sending to a device after this many failures in a row (the push service never said "gone").
 MAX_FAILURES = 10
+#: `last_error` of a row that stopped because the push service said the subscription is gone (it
+#: may be renewed by the browser's `pushsubscriptionchange`), and of one another subscription of
+#: the same browser replaced.
+GONE_ERRORS = ("http_404", "http_410")
+REPLACED = "replaced"
+#: The browser's own id (the dashboard's localStorage): letters, digits, '-' and '_'.
+DEVICE_KEY = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+#: "בדיקת התראות" sends now, in the request: each push service gets this long.
+TEST_SEND_TIMEOUT = 8
 
 
 def category_of(entry: ExceptionLogEntry) -> Optional[str]:
@@ -946,11 +959,28 @@ def _record(db: Session, job: Dict[str, Any], result: Any, now: datetime) -> boo
         else:
             device.last_failure_at = now
             device.failure_count = int(device.failure_count or 0) + 1
-            device.last_error = (result.error or "failed")[:200]
+            device.last_error = failure_text(result)
             if result.gone or device.failure_count >= MAX_FAILURES:
                 device.disabled_at = now
+    if not result.ok:
+        # Fly's log says why a phone got nothing (the host and status — never the endpoint or a key).
+        from app.services import webpush
+
+        logger.warning(
+            "push: %s answered %s (%s%s) for device %s%s",
+            webpush.service_of(job.get("endpoint") or ""), result.status, result.error or "failed",
+            f": {result.detail}" if getattr(result, "detail", None) else "", job.get("subscriptionId"),
+            " — turned off" if device is not None and device.disabled_at is not None else "",
+        )
     db.flush()
     return True
+
+
+def failure_text(result: Any) -> str:
+    """`last_error`: the code, and the push service's reason when it gave one ("http_403: …")."""
+    text = result.error or "failed"
+    detail = getattr(result, "detail", None)
+    return (f"{text}: {detail}" if detail else text)[:200]
 
 
 def _send(job: Dict[str, Any]):
@@ -959,8 +989,10 @@ def _send(job: Dict[str, Any]):
     vapid = webpush.config()
     if vapid is None:
         return webpush.SendResult(ok=False, status=None, error="push_not_configured")
+    # The test's own wait (`send_now`), else the sender's.
+    extra = {"timeout": job["timeout"]} if job.get("timeout") else {}
     return webpush.send(job["endpoint"], job["p256dh"], job["auth"], job["payload"], vapid=vapid,
-                        topic=job.get("topic"), client=TRANSPORT)
+                        topic=job.get("topic"), client=TRANSPORT, **extra)
 
 
 def _factory() -> Session:
@@ -1052,8 +1084,12 @@ def _deliver(
     now: datetime,
     entry: Optional[ExceptionLogEntry] = None,
     digest_count: Optional[int] = None,
+    collect: Optional[List[Dict[str, Any]]] = None,
 ) -> List[ExceptionAlertDispatch]:
-    """One row per device, claimed before anything is sent; `status` given = held back."""
+    """
+    One row per device, claimed before anything is sent; `status` given = held back. `collect`:
+    the jobs are handed back there instead of to the sender (the test sends them itself, now).
+    """
     # "התראות בנייד": the recipient's behaviour for the category (stays on screen, vibration).
     if status is None:
         from app.services.push_policy import decorate
@@ -1093,6 +1129,9 @@ def _deliver(
         if status is None:
             jobs.append(_job(row, device, payload))
     db.flush()
+    if collect is not None:
+        collect.extend(jobs)
+        return out
     for job in jobs:
         _submit(db, job)
     return out
@@ -1248,10 +1287,29 @@ def _flush_urgent(db: Session, rule: ExceptionAlertRule, now: datetime, tzinfo) 
     return made
 
 
-def send_test(db: Session, user: Any, tenant_id: Any, *, now: Optional[datetime] = None) -> List[ExceptionAlertDispatch]:
-    """"שליחת התראת בדיקה" to every device of the user (the rule is created when missing)."""
+def send_test(
+    db: Session,
+    user: Any,
+    tenant_id: Any,
+    *,
+    now: Optional[datetime] = None,
+    endpoint_hash: Optional[str] = None,
+    only_this: bool = False,
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """
+    "בדיקת התראות" — a test message to this browser (`only_this`: the device whose endpoint hash
+    the page sent) or to every active device of the user (the rule is created when missing).
+    Sent NOW, in the caller (never the background sender): the answer carries each push service's
+    status, so the dashboard can say where it stopped. Returns (test id, one result per device).
+    At most once per TEST_MIN_GAP per user (`test_too_soon`, its detail = the seconds left).
+    """
     now = now or utcnow()
+    wanted = (endpoint_hash or "").strip().lower()
     devices = devices_of(db, user.id)
+    if only_this:
+        devices = [d for d in devices if wanted and d.endpoint_hash == wanted]
+        if not devices:
+            raise RuleError("device_not_registered", "endpointHash")
     if not devices:
         raise RuleError("no_devices", "devices")
     last = (
@@ -1261,12 +1319,66 @@ def send_test(db: Session, user: Any, tenant_id: Any, *, now: Optional[datetime]
         .first()
     )
     if last is not None and now - aware(last[0]) < TEST_MIN_GAP:
-        raise RuleError("test_too_soon", None)
+        left = TEST_MIN_GAP - (now - aware(last[0]))
+        raise RuleError("test_too_soon", None, str(max(1, int(left.total_seconds() + 0.999))))
     rule = rule_for_user(db, user.id, tenant_id) or save_preferences(db, user, tenant_id, {})
-    payload = {"title": "התראת בדיקה", "body": "ההתראות לטלפון פועלות במכשיר הזה.", "url": home_url(db, user),
-               "tag": "test", "kind": "test"}
-    return _deliver(db, rule=rule, kind=DISPATCH_TEST, devices=devices, payload=payload, status=None, reason=None,
-                    dedupe_prefix=f"test:{uuid.uuid4().hex}", now=now)
+    test_id = uuid.uuid4().hex[:16]
+    payload = {"title": "התראת בדיקה", "body": "ההתראות פועלות במכשיר הזה.", "url": home_url(db, user),
+               "tag": "test", "kind": "test", "testId": test_id}
+    jobs: List[Dict[str, Any]] = []
+    _deliver(db, rule=rule, kind=DISPATCH_TEST, devices=devices, payload=payload, status=None, reason=None,
+             dedupe_prefix=f"test:{test_id}", now=now, collect=jobs)
+    by_id = {d.id: d for d in devices}
+    for job in jobs:
+        # Each device is told which one it is ("Chrome · Windows"): with several, the person sees which arrived.
+        label = by_id[job["subscriptionId"]].label
+        if label:
+            job["payload"] = {**job["payload"], "body": f"ההתראות פועלות במכשיר הזה ({label})."}
+    results = send_now(db, jobs, now)
+    out = []
+    for job, result in results:
+        device = by_id[job["subscriptionId"]]
+        out.append({
+            "deviceId": str(device.id),
+            "label": device.label,
+            "service": _service(device.endpoint),
+            "thisDevice": bool(wanted) and device.endpoint_hash == wanted,
+            "ok": bool(result.ok),
+            "status": result.status,
+            "error": None if result.ok else (result.error or "failed"),
+            "detail": None if result.ok else getattr(result, "detail", None),
+            "gone": bool(getattr(result, "gone", False)),
+        })
+    return test_id, out
+
+
+def _service(endpoint: str) -> str:
+    from app.services import webpush
+
+    return webpush.service_of(endpoint)
+
+
+def send_now(db: Session, jobs: Sequence[Dict[str, Any]], now: datetime) -> List[Tuple[Dict[str, Any], Any]]:
+    """
+    Send the jobs in the caller — in parallel, each push service at most TEST_SEND_TIMEOUT — and
+    record each result on its dispatch row and device. `SEND_MODE = "off"` sends nothing.
+    """
+    from app.services import webpush
+
+    if not jobs:
+        return []
+    for job in jobs:
+        job.setdefault("timeout", TEST_SEND_TIMEOUT)
+    if SEND_MODE == "off":
+        results = [webpush.SendResult(ok=False, status=None, error="sending_off") for _ in jobs]
+    elif len(jobs) == 1:
+        results = [_send(jobs[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(jobs), 5), thread_name_prefix="push-test") as pool:
+            results = list(pool.map(_send, jobs))
+    for job, result in zip(jobs, results):
+        _record(db, job, result, now)
+    return list(zip(jobs, results))
 
 
 def retry_stale(db: Session, *, now: Optional[datetime] = None) -> int:
@@ -1344,11 +1456,15 @@ def push_service_endpoint(endpoint: str) -> bool:
 
 def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: str, auth: str,
               user_agent: Optional[str] = None, label: Optional[str] = None,
-              initial: Optional[Dict[str, Any]] = None) -> PushSubscription:
+              initial: Optional[Dict[str, Any]] = None, device_key: Optional[str] = None) -> PushSubscription:
     """
     Add (or move to this user, or revive) a device. Validated; the caller commits. The first
     device of a user creates their preferences — `initial` narrows them (the shop / event the
     person subscribed from), else every alert type, everywhere they may see.
+
+    `device_key` (the browser's own random id, fix/pwa-push): the user's other active rows of the
+    same browser — older subscriptions it has since replaced — are turned off ("replaced"), so a
+    browser is one device in the list and in the health counts.
     """
     from app.services import webpush
 
@@ -1357,6 +1473,9 @@ def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: 
         raise RuleError("endpoint_invalid", "endpoint")
     if not webpush.valid_client_key(p256dh, auth):
         raise RuleError("keys_invalid", "keys")
+    key = (device_key or "").strip() or None
+    if key is not None and not DEVICE_KEY.match(key):
+        raise RuleError("device_key_invalid", "deviceId")
     hashed = endpoint_hash(endpoint)
     row = db.query(PushSubscription).filter(PushSubscription.endpoint_hash == hashed).first()
     if row is None:
@@ -1368,10 +1487,21 @@ def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: 
     row.auth = auth.strip()
     row.user_agent = (user_agent or "")[:300] or None
     row.label = (" ".join((label or "").split())[:120] or None) or device_label(user_agent)
+    if key is not None:
+        row.device_key = key
     row.disabled_at = None
     row.failure_count = 0
     row.last_error = None
     db.flush()
+    if key is not None:
+        for old in (
+            db.query(PushSubscription)
+            .filter(PushSubscription.user_id == user.id, PushSubscription.device_key == key,
+                    PushSubscription.id != row.id, PushSubscription.disabled_at.is_(None))
+            .all()
+        ):
+            old.disabled_at = utcnow()
+            old.last_error = REPLACED
     active = (
         db.query(PushSubscription)
         .filter(PushSubscription.user_id == user.id, PushSubscription.disabled_at.is_(None), PushSubscription.id != row.id)
@@ -1383,6 +1513,50 @@ def subscribe(db: Session, user: Any, tenant_id: Any, *, endpoint: str, p256dh: 
     if rule_for_user(db, user.id, tenant_id) is None:
         narrowed = {k: v for k, v in (initial or {}).items() if k in ("shopIds", "eventIds") and v}
         save_preferences(db, user, tenant_id, narrowed)
+    db.flush()
+    return row
+
+
+def renew(db: Session, *, old_endpoint: str, old_auth: str, endpoint: str, p256dh: str, auth: str) -> PushSubscription:
+    """
+    The service worker's `pushsubscriptionchange` (sw.js): the browser replaced a subscription
+    while no page was open. No sign-in there — the old subscription itself is the proof: its
+    endpoint and its 16-byte auth secret (known only to that browser and to us). The row keeps its
+    user and moves to the new endpoint and keys. A device the user removed (or one replaced by a
+    newer subscription) stays off; one the push service called gone may come back. The caller commits.
+    """
+    from app.services import webpush
+
+    old = db.query(PushSubscription).filter(
+        PushSubscription.endpoint_hash == endpoint_hash((old_endpoint or "").strip())).first()
+    if old is None or not old_auth or not hmac.compare_digest(str(old.auth or ""), str(old_auth).strip()):
+        raise RuleError("not_found", "oldEndpoint")
+    if old.disabled_at is not None and not str(old.last_error or "").startswith(GONE_ERRORS):
+        raise RuleError("not_found", "oldEndpoint")
+    endpoint = (endpoint or "").strip()
+    if len(endpoint) > 2000 or not push_service_endpoint(endpoint):
+        raise RuleError("endpoint_invalid", "endpoint")
+    if not webpush.valid_client_key(p256dh, auth):
+        raise RuleError("keys_invalid", "keys")
+    hashed = endpoint_hash(endpoint)
+    row = old
+    if hashed != old.endpoint_hash:
+        existing = db.query(PushSubscription).filter(PushSubscription.endpoint_hash == hashed).first()
+        if existing is not None:
+            # The page registered the new subscription already: keep that row, retire the old one.
+            old.disabled_at = old.disabled_at or utcnow()
+            old.last_error = REPLACED
+            row = existing
+            row.user_id = old.user_id
+            row.device_key = row.device_key or old.device_key
+        else:
+            old.endpoint = endpoint
+            old.endpoint_hash = hashed
+    row.p256dh = p256dh.strip()
+    row.auth = auth.strip()
+    row.disabled_at = None
+    row.failure_count = 0
+    row.last_error = None
     db.flush()
     return row
 
@@ -1400,6 +1574,8 @@ def device_json(row: PushSubscription, user: Any = None) -> Dict[str, Any]:
         "lastSuccessAt": iso(row.last_success_at),
         "lastFailureAt": iso(row.last_failure_at),
         "lastError": row.last_error,
+        "failureCount": int(row.failure_count or 0),
+        "service": _service(row.endpoint),
         "active": row.disabled_at is None,
     }
     if is_super_admin(user):
@@ -1419,7 +1595,8 @@ def set_device_integrity(user: Any, device: PushSubscription, on: bool) -> None:
 __all__ = [
     "CATEGORIES", "CATEGORY_KEYS", "INTEGRITY", "category_of", "categories_for", "clean", "as_json",
     "preferences_json", "save_preferences", "rule_for_user", "entry_matches", "integrity_recipients",
-    "process_entry", "flush_rule", "send_test", "retry_stale", "subscribe", "device_label", "payload_for",
+    "process_entry", "flush_rule", "send_test", "send_now", "retry_stale", "subscribe", "renew", "device_label",
+    "payload_for",
 ]
 
 
