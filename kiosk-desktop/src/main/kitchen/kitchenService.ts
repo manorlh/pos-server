@@ -28,6 +28,7 @@ import type { Kv } from '../db/schema';
 import type { Db } from '../db/sqlite';
 import { PLAIN_BOX, type SecretBox } from '../sync/cloud';
 import type { PageRenderer } from '../printer/printQueue';
+import type { JobOutcome } from '../printer/printJobsHost';
 import type { PrinterTarget, Transport } from '../printer/transports';
 import { concat, toMono } from '../../core/escpos';
 import { DEFAULT_PRINTER_PORT, EMPTY_KITCHEN_CONFIG, parseKitchenConfig, parsePrinter, withoutSecret, type KitchenConfig, type KitchenPrinter } from '../../core/kitchen/config';
@@ -94,6 +95,8 @@ const CONFIG_KEY = 'kitchen.config';
 const SECRET_KEY = 'kitchen.secret';
 /** The printers' settings are asked again at most this often (an unchanged answer is a few bytes). */
 export const CONFIG_PULL_MS = 60_000;
+/** A relayed job in this queue: answered to the cloud by `sendAcks` once printed. */
+const TAKEN: JobOutcome = { status: 'taken' };
 /** A "not the print server" answer pulls the settings again at most this often. */
 const STALE_REFRESH_MS = 30_000;
 /** One call to the cloud from the relay loop waits at most this long. */
@@ -1101,53 +1104,38 @@ export class KitchenService {
   }
 
   /**
-   * The host's side of the cloud relay: the cloud's jobs for this device into the queue (`GET print-jobs/pending`),
-   * then the answers owed (`POST …/ack`). A job it already has (printed, the ack lost; or it came over the LAN first)
-   * is never printed twice — its answer goes to the cloud too. Documents / drawers (another till's bill) are not
-   * printed by this build: answered "failed" so the sender falls back at once.
+   * The host's side of the cloud relay, one job the device's print-jobs poller (main/printer/printJobsHost.ts) hands over: a
+   * `ticket` / `test` for a printer this device prints, into the queue under the cloud's id — `taken`: this queue answers the
+   * cloud itself once it printed (`sendAcks`). A job it already has (printed, the ack lost; or it came over the LAN first)
+   * is never printed twice — its answer goes to the cloud again. A printer it does not know, or no ticket: "failed" at once.
    */
-  async takeRelayed(): Promise<number> {
-    const id = this.d.machineId();
-    if (!id) return 0;
-    const r = await this.d.api.get<{ jobs?: Array<Record<string, unknown>> }>(`sync/${id}/print-jobs/pending`, { timeoutMs: 10_000 });
-    if (r.kind !== 'ok') return 0;
-    let taken = 0;
+  async takeRelayedJob(remote: { id: string; kind: string; printerId?: string | null; raw?: Record<string, unknown> }): Promise<JobOutcome> {
+    const rid = remote.id;
+    const kind = remote.kind;
+    const body = remote.raw ?? {};
+    const ticket = body.ticket && typeof body.ticket === 'object' ? (body.ticket as WireTicket) : null;
+    if ((kind !== 'ticket' && kind !== 'test') || !ticket) return { status: 'failed', error: kind === 'ticket' || kind === 'test' ? 'ticket missing' : `${kind} not printed by this device` };
     const now = this.now();
-    for (const remote of r.body?.jobs ?? []) {
-      const rid = typeof remote.id === 'string' ? remote.id : null;
-      if (!rid) continue;
-      const kind = typeof remote.kind === 'string' ? remote.kind : 'ticket';
-      const ticket = remote.ticket && typeof remote.ticket === 'object' ? (remote.ticket as WireTicket) : null;
-      if ((kind !== 'ticket' && kind !== 'test') || !ticket) {
-        await this.d.api.post(`sync/${id}/print-jobs/${encodeURIComponent(rid)}/ack`, { status: 'failed', error: kind === 'ticket' || kind === 'test' ? 'ticket missing' : `${kind} not printed by this device` }, { timeoutMs: RELAY_CALL_MS });
-        continue;
+    const existing = this.store.byRelayJobId(rid) ?? this.store.byId(rid);
+    if (existing) {
+      const back = takenBackAsHost(existing, rid, now, JSON.stringify(ticket));
+      if (back) {
+        this.store.update(back);
+        this.wake();
+        return TAKEN;
       }
-      const existing = this.store.byRelayJobId(rid) ?? this.store.byId(rid);
-      if (existing) {
-        const back = takenBackAsHost(existing, rid, now, JSON.stringify(ticket));
-        if (back) {
-          this.store.update(back);
-          taken++;
-          continue;
-        }
-        const tied = relayedAgain(existing, rid);
-        if (tied) this.store.update(tied);
-        continue;
-      }
-      const printerId = typeof remote.printerId === 'string' ? remote.printerId : null;
-      const printer = (printerId ? this.printerById(printerId) : null) ?? this.hostedPrinterOf(remote.printer);
-      if (!printer) {
-        await this.d.api.post(`sync/${id}/print-jobs/${encodeURIComponent(rid)}/ack`, { status: 'failed', error: 'printer unknown on host' }, { timeoutMs: RELAY_CALL_MS });
-        continue;
-      }
-      const style = kind === 'test' && remote.ticketStyle && typeof remote.ticketStyle === 'object' ? (remote.ticketStyle as Record<string, unknown>) : null;
-      const job = this.newJob(printer, style ? { ...ticket, style } : ticket, kind === 'test' ? 'test' : 'ticket', now, null);
-      this.store.insertAll([{ ...job, id: rid, relayJobId: rid, route: 'DIRECT' }]);
-      taken++;
+      const tied = relayedAgain(existing, rid);
+      if (tied) this.store.update(tied);
+      return TAKEN;
     }
-    if (taken > 0) this.wake();
-    await this.sendAcks();
-    return taken;
+    const printerId = remote.printerId ?? (typeof body.printerId === 'string' ? body.printerId : null);
+    const printer = (printerId ? this.printerById(printerId) : null) ?? this.hostedPrinterOf(body.printer);
+    if (!printer) return { status: 'failed', error: 'printer unknown on host' };
+    const style = kind === 'test' && body.ticketStyle && typeof body.ticketStyle === 'object' ? (body.ticketStyle as Record<string, unknown>) : null;
+    const job = this.newJob(printer, style ? { ...ticket, style } : ticket, kind === 'test' ? 'test' : 'ticket', now, null);
+    this.store.insertAll([{ ...job, id: rid, relayJobId: rid, route: 'DIRECT' }]);
+    this.wake();
+    return TAKEN;
   }
 
   private hostedPrinterOf(raw: unknown): KitchenPrinter | null {

@@ -11,11 +11,14 @@
  *      GET  /kitchen/jobs/status?ids=a,b      → {"jobs":[{id, status, error}]}
  *      POST /kitchen/jobs/cancel?ids=a        → {"jobs":[{id, status}]}     (no documents here: "unknown")
  *    — and where it listens told to the cloud (`POST /sync/{m}/print-host`);
- *  - the cloud's relayed jobs for it (`GET /sync/{m}/print-jobs/pending`, every 10 s while it hosts and on each beat),
+ *  - the cloud's relayed jobs for it (`GET /sync/{m}/print-jobs/pending`): the kitchen's kinds on the device's ONE
+ *    print-jobs poller (main/printer/printJobsHost.ts, `kitchenJobsModule` — every 10 s while it hosts, and on each beat),
  *    printed in its own queue (one id once, whichever way it came) and answered (`…/ack`).
  *
- * Another till's bills and receipts (`document`) and drawers are not printed by this build: refused, so the sender
- * prints them itself (P:/specs/bill-print-other-till.md — the cloud hands those only to builds that say they can).
+ * Another till's bills and receipts (`document`) and its drawer are never taken over the LAN here: refused (404), so the
+ * sender goes on to the cloud by the same id (P:/specs/bill-print-other-till.md §6 — LAN first, then the cloud). There
+ * the same poller hands them to the Windows till's own module (main/till/tillDrawer.ts, a till that says
+ * `document_relay_v1`); a device that is not working as a till answers them "failed" at once, so the sender falls back.
  */
 
 import http from 'node:http';
@@ -23,11 +26,32 @@ import { timingSafeEqual } from 'node:crypto';
 import type { Api } from '../sync/api';
 import { DEFAULT_LAN_PORT } from '../../core/kitchen/config';
 import { hostsOwnPrinter, takesRelayedJobs } from '../../core/kitchen/routing';
+import type { PrintJobsModule } from '../printer/printJobsHost';
 import type { KitchenService } from './kitchenService';
 
 const MAX_BODY = 512 * 1024;
 /** While hosting, the cloud's relayed jobs are looked for this often (besides each beat). */
 export const RELAY_HOST_POLL_MS = 10_000;
+
+/** The kinds the cloud relays to a device that only a working till prints (another till's bill / receipt, its drawer). */
+export const TILL_ONLY_JOB_KINDS = ['document', 'drawer'] as const;
+
+/**
+ * The kitchen's part of the device's one print-jobs poller: `ticket` / `test` into the kitchen queue, while this device
+ * takes the cloud's relayed jobs (it hosts a cloud printer, or it is the shop's print server); the answers the queue owes
+ * after each look.
+ */
+export function kitchenJobsModule(kitchen: KitchenService): PrintJobsModule {
+  return {
+    wanted: () => kitchen.hostsRelay(),
+    everyMs: RELAY_HOST_POLL_MS,
+    handlers: {
+      ticket: (job) => kitchen.takeRelayedJob(job),
+      test: (job) => kitchen.takeRelayedJob(job),
+    },
+    afterPoll: () => kitchen.sendAcks(),
+  };
+}
 
 export interface KitchenHostDeps {
   kitchen: KitchenService;
@@ -40,6 +64,8 @@ export interface KitchenHostDeps {
   hostname?: string;
   /** Tests: the port to listen on instead of the cloud's (0 = any). */
   portOverride?: number;
+  /** The device's one print-jobs poller (main/printer/printJobsHost.ts): looked at now when hosting begins, and on a beat. */
+  printJobs?: { kick(): void; poll(): Promise<number> };
 }
 
 function sameSecret(expected: string, given: string): boolean {
@@ -51,7 +77,6 @@ function sameSecret(expected: string, given: string): boolean {
 export class KitchenHost {
   private server: http.Server | null = null;
   private port: number | null = null;
-  private pollTimer: NodeJS.Timeout | null = null;
   private stopped = false;
 
   constructor(private readonly d: KitchenHostDeps) {}
@@ -67,7 +92,7 @@ export class KitchenHost {
     return ((c.hostsLan && c.printHost?.isSelf === true) || hostsOwnPrinter(c)) && !!c.printSecret;
   }
 
-  /** Run the LAN server while the settings say this device hosts, stop it otherwise; and the relay look. */
+  /** Run the LAN server while the settings say this device hosts, stop it otherwise; the relay looked at now when it takes it. */
   async apply(): Promise<void> {
     if (this.stopped) return;
     const c = this.d.kitchen.config();
@@ -78,11 +103,7 @@ export class KitchenHost {
       await this.close();
       await this.listen(port);
     }
-    if (takesRelayedJobs(c)) this.schedulePoll(0);
-    else if (this.pollTimer) {
-      clearTimeout(this.pollTimer);
-      this.pollTimer = null;
-    }
+    if (takesRelayedJobs(c)) this.d.printJobs?.kick();
   }
 
   private listen(port: number): Promise<void> {
@@ -113,23 +134,7 @@ export class KitchenHost {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    if (this.pollTimer) clearTimeout(this.pollTimer);
-    this.pollTimer = null;
     await this.close();
-  }
-
-  private schedulePoll(ms: number) {
-    if (this.stopped || this.pollTimer) return;
-    this.pollTimer = setTimeout(() => {
-      this.pollTimer = null;
-      void this.d.kitchen
-        .takeRelayed()
-        .catch((e) => this.d.log(`kitchen relay look: ${String(e)}`))
-        .finally(() => {
-          if (takesRelayedJobs(this.d.kitchen.config())) this.schedulePoll(RELAY_HOST_POLL_MS);
-        });
-    }, ms);
-    this.pollTimer.unref?.();
   }
 
   /** After a good beat: where this device listens told to the cloud (when it hosts), the relay looked at, the answers sent. */
@@ -141,7 +146,8 @@ export class KitchenHost {
       const port = this.listening() ?? this.d.kitchen.config().printHost?.port ?? DEFAULT_LAN_PORT;
       await this.d.api.post(`sync/${id}/print-host`, { lanAddress: this.d.lanAddress(), port }, { timeoutMs: 10_000 });
     }
-    if (takesRelayedJobs(this.d.kitchen.config())) await this.d.kitchen.takeRelayed().catch((e) => this.d.log(`kitchen relay: ${String(e)}`));
+    // The relay through the one poller (its look sends the answers owed); not taking it any more: the answers still owed.
+    if (takesRelayedJobs(this.d.kitchen.config()) && this.d.printJobs) await this.d.printJobs.poll().catch((e) => this.d.log(`kitchen relay: ${String(e)}`));
     else await this.d.kitchen.sendAcks().catch(() => undefined);
   }
 

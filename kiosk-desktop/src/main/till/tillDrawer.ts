@@ -43,7 +43,8 @@ import {
 import { NO_LOCK, type ExitLock } from '../../core/desktopExit';
 import type { RosterUser } from '../../core/till/staff';
 import { CashDrawerService, type DrawerOutcome, type DrawerPerson, type DrawerTarget } from './drawerService';
-import { DOCUMENT_RELAY, PrintJobsHost, RemoteDrawers, hostDocumentJob, hostDrawerJob, remoteWhy } from './remoteDrawer';
+import { DOCUMENT_RELAY, RemoteDrawers, hostDocumentJob, hostDrawerJob, remoteWhy } from './remoteDrawer';
+import type { PrintJobsHost, PrintJobsModule } from '../printer/printJobsHost';
 import { REMOTE_TEXT, type DrawerHost } from '../../core/till/remotePrint';
 import { centreOn, job as escposJob, toMono, RASTER_80MM, type MonoBitmap } from '../../core/escpos';
 import { normalizeRole } from '../../core/roles';
@@ -100,7 +101,9 @@ export class TillDrawer {
   readonly service: CashDrawerService;
   /** Another till's drawer from here, and this till as another's host (remoteDrawer.ts). */
   readonly remote: RemoteDrawers;
-  readonly host: PrintJobsHost;
+  /** This till's `drawer` / `document` jobs, as a module of the device's one print-jobs poller (registered while it runs). */
+  private readonly jobs: PrintJobsModule;
+  private offJobs: (() => void) | null = null;
   private timers: NodeJS.Timeout[] = [];
   private count: { eventId: string | null; blind: boolean; result: CountResult | null } | null = null;
   /** The wallets the deposit screen showed (the cloud's, with this device's not sent yet): a deposit settles what was shown. */
@@ -144,10 +147,9 @@ export class TillDrawer {
       return m ? { path: 'cash-drawer/movements', body: cashMovementWire(m) } : null;
     });
     this.remote = new RemoteDrawers({ api: svc.api, machineId: () => svc.machineId, params: () => svc.cloud.parameters(), log: (m) => c.log(m) });
-    this.host = new PrintJobsHost({
-      api: svc.api,
-      machineId: () => svc.machineId,
-      active: () => this.isTill() && !svc.isOffline,
+    this.jobs = {
+      wanted: () => this.isTill(),
+      everyMs: 4_000,
       handlers: {
         drawer: (job) =>
           hostDrawerJob(job, {
@@ -170,8 +172,12 @@ export class TillDrawer {
             },
           }),
       },
-      log: (m) => c.log(m),
-    });
+    };
+  }
+
+  /** The device's one print-jobs poller (main/printer/printJobsHost.ts) — this till's kinds are on it while it runs. */
+  get host(): PrintJobsHost {
+    return this.c.svc.printJobs;
   }
 
   /** A till by role, working as one (never a kiosk's background engine): the host's poll and the capability are this one's. */
@@ -189,13 +195,15 @@ export class TillDrawer {
     };
     this.timers.push(setInterval(pull, 60_000), setTimeout(pull, 3_000));
     for (const t of this.timers) t.unref?.();
-    this.host.start(4_000);
+    this.offJobs?.();
+    this.offJobs = svc.printJobs.register('till', this.jobs);
   }
 
   stop() {
     for (const t of this.timers) clearTimeout(t);
     this.timers = [];
-    this.host.stop();
+    this.offJobs?.();
+    this.offJobs = null;
     this.c.svc.setCapabilities('till.documentRelay', null);
   }
 

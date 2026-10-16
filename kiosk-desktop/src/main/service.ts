@@ -99,7 +99,8 @@ import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
 import { KitchenService } from './kitchen/kitchenService';
 import { KdsOutbox } from './kitchen/kdsOutbox';
-import { KitchenHost } from './kitchen/kitchenHost';
+import { KitchenHost, TILL_ONLY_JOB_KINDS, kitchenJobsModule } from './kitchen/kitchenHost';
+import { PrintJobsHost } from './printer/printJobsHost';
 import { kioskBonToKitchen, tillSaleToKitchen } from './kitchen/kitchenFlows';
 import type { LanCall } from './kitchen/kitchenNet';
 import type { PrinterLink } from '../core/kitchen/delivery';
@@ -299,6 +300,12 @@ export class KioskService extends EventEmitter {
   readonly kitchenKds: KdsOutbox;
   /** This device printing for the shop's others when the cloud names it (main/kitchen/kitchenHost.ts). */
   readonly kitchenHost: KitchenHost;
+  /**
+   * The cloud's print jobs for this device (`GET /sync/{m}/print-jobs/pending`) — ONE poller (main/printer/printJobsHost.ts):
+   * the kitchen's tickets while it hosts (main/kitchen/kitchenHost.ts), the till's drawers and documents while it works as
+   * a till (main/till/tillDrawer.ts). A document or a drawer nobody here takes is answered "failed" at once.
+   */
+  readonly printJobs: PrintJobsHost;
   readonly sync: SyncEngine;
   /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
   readonly relocator: PinpadRelocator;
@@ -385,6 +392,7 @@ export class KioskService extends EventEmitter {
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
     const kitchenOpts = opts.kitchen ?? {};
+    this.printJobs = new PrintJobsHost({ api: this.api, machineId: () => this.machineId, active: () => !this.isOffline, decline: TILL_ONLY_JOB_KINDS, log: this.log });
     this.kitchen = new KitchenService({
       db: this.db,
       kv: this.kv,
@@ -418,7 +426,9 @@ export class KioskService extends EventEmitter {
       log: this.log,
       portOverride: kitchenOpts.hostPort,
       hostname: kitchenOpts.hostName,
+      printJobs: this.printJobs,
     });
+    this.printJobs.register('kitchen', kitchenJobsModule(this.kitchen));
     this.payAtTill = new PayAtTill({
       kv: this.kv,
       api: this.api,
@@ -596,6 +606,8 @@ export class KioskService extends EventEmitter {
     this.kitchen.start();
     this.kitchenKds.start();
     void this.kitchenHost.apply();
+    // The cloud's print jobs for this device: one poller, at the pace its modules want (none: no call at all).
+    this.printJobs.start();
     this.orders.prune();
     if (this.paired) {
       this.sync.start();
@@ -630,6 +642,7 @@ export class KioskService extends EventEmitter {
     this.offUsbWatch();
     if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
+    this.printJobs.stop();
     this.kitchen.stop();
     this.kitchenKds.stop();
     void this.kitchenHost.stop();

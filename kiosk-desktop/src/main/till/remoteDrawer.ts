@@ -5,22 +5,27 @@
  *  - from here: "פתיחת מגירה ב<קופה>" and a cash payment away from the drawer (drawer-away §5.3) — a `drawer` job through the
  *    cloud (`POST /sync/{m}/print-jobs`, the id = the drawer log's event id), its answer waited for `remotePrintTimeoutSec`,
  *    taken back when none came;
- *  - here, as the host: the jobs the cloud hands this till (`GET /sync/{m}/print-jobs/pending`) — a `drawer` job opens this
- *    till's drawer once per id, only with a drawer, never past its time, never in a payment of its own; a `document` job (a bill
- *    or a receipt another till sent) prints as it is on the receipt printer, once per id; each answered (`…/ack`).
+ *  - here, as the host: the jobs the cloud hands this till (`GET /sync/{m}/print-jobs/pending`, through the device's one
+ *    print-jobs poller, main/printer/printJobsHost.ts) — a `drawer` job opens this till's drawer once per id, only with a
+ *    drawer, never past its time, never in a payment of its own; a `document` job (a bill or a receipt another till sent)
+ *    prints as it is on the receipt printer, once per id; each answered (`…/ack`).
  *
  * The cloud lists drawer hosts — and hands documents — only to a build that says `document_relay_v1` on its heartbeat; the
- * Windows till says it. No LAN print server on Windows: the senders reach it through the cloud (their LAN try finds nobody).
- * The host's poll is every few seconds (no realtime channel on Windows). Kinds this module does not print (a kitchen ticket
- * relayed to this till) are left alone: the cloud hands them out again after its lease.
+ * Windows till says it. The senders reach it through the cloud: the Windows print host on the LAN (main/kitchen/kitchenHost.ts)
+ * takes kitchen tickets only and refuses a document or a drawer (404), so the sender goes on to the cloud by the same id. The
+ * poll is every few seconds (no realtime channel on Windows); a kitchen ticket relayed to this device is the kitchen's.
  */
 
 import type { MonoBitmap } from '../../core/escpos';
 import { DOCUMENT_RELAY, drawerHostsHere, jobExpired, parseDrawerHosts, rasterOfGzip, remotePrintSettingsOf, remoteWhy, type DrawerHost } from '../../core/till/remotePrint';
 import type { Api } from '../sync/api';
+import type { JobAnswer, PendingJob } from '../printer/printJobsHost';
 import type { DrawerJob } from './drawerService';
 
 export { DOCUMENT_RELAY };
+// The host's side is the device's one print-jobs poller (main/printer/printJobsHost.ts): this module's kinds are registered
+// on it by main/till/tillDrawer.ts.
+export { PrintJobsHost, type JobAnswer, type PendingJob } from '../printer/printJobsHost';
 
 const PRINTERS_EVERY_MS = 5 * 60_000;
 const STATUS_EVERY_MS = 1_000;
@@ -102,94 +107,6 @@ export class RemoteDrawers {
     // No answer in time: taken back (a till that took it may still open — the sender says "לא נפתחה" all the same).
     await this.d.api.post(`sync/${m}/print-jobs/${encodeURIComponent(id)}/cancel`, {}, { timeoutMs: 8_000 }).catch(() => undefined);
     throw new Error('timeout');
-  }
-}
-
-/** One pending job as the cloud hands it. */
-export interface PendingJob {
-  id: string;
-  kind: string;
-  printerId: string | null;
-  createdAt: string | null;
-  expiresAt: string | null;
-  timeoutSec: number | null;
-  drawer?: Record<string, unknown> | null;
-  document?: Record<string, unknown> | null;
-}
-
-export type JobAnswer = { status: 'done' } | { status: 'failed'; error: string };
-
-/**
- * The host's side: the cloud's jobs for this till of the kinds it prints, each handled once per id (an id handed out again is
- * answered as it was), and answered.
- */
-export class PrintJobsHost {
-  private readonly answered = new Map<string, JobAnswer>();
-  private timer: NodeJS.Timeout | null = null;
-  private polling = false;
-
-  constructor(
-    private readonly d: {
-      api: Api;
-      machineId(): string | null;
-      /** Whether to look now (paired, a till, the cloud reachable). */
-      active(): boolean;
-      handlers: Partial<Record<string, (job: PendingJob) => Promise<JobAnswer>>>;
-      log?: (m: string) => void;
-    },
-  ) {}
-
-  start(everyMs = 4_000) {
-    this.stop();
-    this.timer = setInterval(() => void this.poll(), everyMs);
-    this.timer.unref?.();
-  }
-
-  stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  async poll(): Promise<number> {
-    const m = this.d.machineId();
-    if (!m || this.polling || !this.d.active()) return 0;
-    this.polling = true;
-    let n = 0;
-    try {
-      const r = await this.d.api.get<{ jobs?: unknown[] }>(`sync/${m}/print-jobs/pending`, { timeoutMs: 15_000 });
-      if (r.kind !== 'ok' || !Array.isArray(r.body?.jobs)) return 0;
-      for (const raw of r.body.jobs) {
-        const j = raw as Record<string, unknown>;
-        if (typeof j.id !== 'string' || typeof j.kind !== 'string') continue;
-        const handler = this.d.handlers[j.kind];
-        if (!handler) continue;
-        const job: PendingJob = {
-          id: j.id,
-          kind: j.kind,
-          printerId: typeof j.printerId === 'string' ? j.printerId : null,
-          createdAt: typeof j.createdAt === 'string' ? j.createdAt : null,
-          expiresAt: typeof j.expiresAt === 'string' ? j.expiresAt : null,
-          timeoutSec: typeof j.timeoutSec === 'number' ? j.timeoutSec : null,
-          drawer: j.drawer && typeof j.drawer === 'object' ? (j.drawer as Record<string, unknown>) : null,
-          document: j.document && typeof j.document === 'object' ? (j.document as Record<string, unknown>) : null,
-        };
-        let answer = this.answered.get(job.id);
-        if (!answer) {
-          try {
-            answer = await handler(job);
-          } catch (e) {
-            answer = { status: 'failed', error: (e instanceof Error ? e.message : String(e)).slice(0, 200) };
-          }
-          this.answered.set(job.id, answer);
-          while (this.answered.size > 500) this.answered.delete(this.answered.keys().next().value as string);
-        }
-        await this.d.api.post(`sync/${m}/print-jobs/${encodeURIComponent(job.id)}/ack`, answer, { timeoutMs: 10_000 });
-        n += 1;
-      }
-    } finally {
-      this.polling = false;
-    }
-    return n;
   }
 }
 

@@ -18,7 +18,8 @@ import type { PrintDoc } from '../src/core/printDocs';
 import type { KitchenDoc } from '../src/core/kitchen/doc';
 import type { WireTicket } from '../src/core/kitchen/tickets';
 import { saleDispatchId } from '../src/main/kiosk/kdsRelease';
-import { KitchenHost } from '../src/main/kitchen/kitchenHost';
+import { KitchenHost, TILL_ONLY_JOB_KINDS, kitchenJobsModule } from '../src/main/kitchen/kitchenHost';
+import { PrintJobsHost } from '../src/main/printer/printJobsHost';
 import { KitchenService } from '../src/main/kitchen/kitchenService';
 
 import type { PaymentProvider, SaleResult } from '../src/main/payment/provider';
@@ -443,18 +444,27 @@ describe('this Windows device as the shop\'s print server / a printer\'s host', 
       acks.push([url.pathname.split('/').at(-2)!, b!.status]);
       return { status: 200, body: {} };
     });
-    expect(await h.k.takeRelayed()).toBe(1);
+    // The device's one print-jobs poller, with the kitchen's part only (no till working here).
+    const jobs = new PrintJobsHost({ api: cloudApi(h.cloud), machineId: () => 'windows-host', decline: TILL_ONLY_JOB_KINDS });
+    jobs.register('kitchen', kitchenJobsModule(h.k));
+    expect(await jobs.poll()).toBe(1);
+    // Taken into the kitchen queue: answered by the queue once printed, not by the poller now.
+    expect(acks).toEqual([]);
     await h.k.work();
     await until(() => kitchen.tickets().length === 1);
     await h.k.sendAcks();
     expect(acks).toEqual([['relay-1', 'done']]);
     // The cloud hands it out again (it never heard the ack): answered "done" again — not printed again.
-    expect(await h.k.takeRelayed()).toBe(0);
+    expect(await jobs.poll()).toBe(1);
     await h.k.work();
     expect(kitchen.tickets()).toHaveLength(1);
-    // A document for this device: not printed by this build — answered failed at once.
+    expect(acks).toEqual([
+      ['relay-1', 'done'],
+      ['relay-1', 'done'],
+    ]);
+    // A document for this device, which does not work as a till: answered failed at once (the sender prints it itself).
     h.cloud.on('GET sync/windows-host/print-jobs/pending', () => ({ status: 200, body: { jobs: [{ id: 'doc-1', kind: 'document', document: { image: '' } }] } }));
-    await h.k.takeRelayed();
+    await jobs.poll();
     expect(acks.at(-1)).toEqual(['doc-1', 'failed']);
   });
 
