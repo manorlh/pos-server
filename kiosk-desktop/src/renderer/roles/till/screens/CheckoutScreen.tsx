@@ -409,6 +409,12 @@ export function CheckoutScreen({
           ))}
         </ul>
       ) : null}
+      {checkout.deferredNotice ? (
+        // §13: the terminal works deferred — the amber box above the tenders (Android DeferredCheckoutNotices).
+        <div className="t-deferred" role="note">
+          {checkout.deferredNotice}
+        </div>
+      ) : null}
       {checkout.cardError ? (
         <div className="t-warn" role="alert">
           <p>{checkout.cardError}</p>

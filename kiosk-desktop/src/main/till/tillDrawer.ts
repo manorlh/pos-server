@@ -24,6 +24,8 @@ import {
   drawerModeHasButton,
   drawerPermLabel,
   mayApproveDrawer,
+  remoteDrawerAction,
+  remoteDrawerModeOf,
   stateOfUser,
   type DrawerRequest,
   type DrawerVerdict,
@@ -53,6 +55,8 @@ import { DrawerStore, cashMovementWire, drawerEventWire } from './drawerStore';
 import type { TillContext } from './tillContext';
 
 const APPROVAL_LOCK = 'till.drawerApprovalLock';
+/** "לפתוח את המגירה ב<קופה>?" (Android drawer_ask_remote_title). */
+const REMOTE_DRAWER_ASK = (label: string) => `לפתוח את המגירה ב${label}?`;
 /** Every code the drawer decides by ("כשאין הרשאה" turns a role's DENY of these into a manager's code). */
 const DRAWER_CODES: readonly string[] = Object.values(DRAWER_PERM);
 const sh = (agorot: number) => formatShekelSign(agorot);
@@ -405,6 +409,60 @@ export class TillDrawer {
       });
     }
     return this.open(request, { quiet: true });
+  }
+
+  /**
+   * §9ב (Android DrawerFlow.remoteAfterCash): a cash sale whose receipt printed at another till ([host]) — the drawer there,
+   * as `remotePrintDrawer` says: `never` (the default) nothing; `ask` "לפתוח את המגירה ב<קופה>?" — opened only on a yes
+   * (unanswered it stays shut, recorded as declined); `auto` opened. Under CASH_DRAWER.OPEN_REMOTE, through the drawer
+   * service like every other opening. On a device away from the drawer the payment's own question decided it (§5.3).
+   */
+  remoteAfterCash(host: { machineId: string; printerId: string | null; machineName: string | null; drawer: boolean | null }, page: { saleId?: string | null; cashAgorot?: number | null; documentType?: number | null; documentNumber?: number | null; code?: string | null; number?: string | null }): unknown {
+    if (!page.saleId) return undefined;
+    if (this.service.awaySettings().policy !== 'none') return undefined;
+    const mode = remoteDrawerModeOf(this.c.svc.cloud.parameters().remotePrintDrawer);
+    const cash = page.cashAgorot ?? 0;
+    const action = remoteDrawerAction(mode, cash > 0, host.drawer);
+    if (action === 'none') return undefined;
+    const label = host.machineName?.trim() || host.machineId;
+    const documentType = page.documentType !== null && page.documentType !== undefined ? String(page.documentType) : (page.code ?? null);
+    const documentNumber = page.documentNumber !== null && page.documentNumber !== undefined ? String(page.documentNumber) : (page.number ?? null);
+    const request: DrawerRequest = { context: 'CASH_SALE', amountAgorot: cash, saleId: page.saleId, documentType: documentType ?? undefined, documentNumber: documentNumber ?? undefined, remote: true };
+    const target: Extract<DrawerTarget, { kind: 'remote' }> = {
+      kind: 'remote',
+      id: host.printerId ?? `remote:${host.machineId}`,
+      name: REMOTE_TEXT.dest(label),
+      host: { machineId: host.machineId, printerId: host.printerId, label },
+      documentType,
+      documentNumber,
+    };
+    if (action === 'open') return this.openRemote(request, target);
+    const wait = this.service.askSettings();
+    return this.c.ask({
+      kind: 'confirm',
+      title: REMOTE_DRAWER_ASK(label),
+      body: DRAWER_TEXT.askAutoSkip(wait.timeoutSec),
+      fields: [],
+      actions: [
+        { id: 'open', label: DRAWER_TEXT.askOpen, primary: true },
+        { id: 'skip', label: DRAWER_TEXT.askSkip },
+      ],
+      onAction: (a) => {
+        if (a === 'open') return this.openRemote(request, target);
+        this.service.recordDeclined(request, false);
+        return undefined;
+      },
+      onCancel: () => {
+        this.service.recordDeclined(request, false);
+        return undefined;
+      },
+      expiresInMs: wait.timeoutSec * 1000,
+      // Another till's drawer opens only on a yes: unanswered, it stays shut.
+      onTimeout: () => {
+        this.service.recordDeclined(request, true);
+        return undefined;
+      },
+    });
   }
 
   /**

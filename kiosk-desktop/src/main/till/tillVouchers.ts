@@ -23,6 +23,8 @@ import { stackingRefusal, stackingText, voucherKindOf, voucherStackingOf, type A
 import { voucherCodeOf, type WebOrderLine } from '@dash-lib/kioskWebOrders';
 import { GROUP_AMBIGUOUS } from '@dash-lib/voucherGroups';
 import { refusalOf } from '../../core/cash/credit';
+import { ASSIGNED_OFFLINE, VOUCHER_LAN, VOUCHER_LAN_TEXT, dtoOfSnapshot, hostLookupOf, hostRedeemBody, hostTakes, localPriced, offlineUsedText } from '../../core/till/voucherLan';
+import { lanCall as defaultLanCall, type LanCall } from '../kitchen/kitchenNet';
 import { displayName } from '../../core/desktopExit';
 import { unitAgorot, type SaleLine } from '../../core/sale';
 import {
@@ -146,13 +148,16 @@ export class TillVouchers {
   /** Holds sent with no answer, per sale and code: on "in use" the same request is sent again and given back. */
   private unanswered = new Map<string, Record<string, unknown>>();
   readonly cloud: VoucherCloud;
+  private readonly lan: LanCall;
 
   constructor(
     private readonly c: TillContext,
     private readonly host: VoucherHost,
     cloud?: VoucherCloud,
+    o: { lanCall?: LanCall } = {},
   ) {
     const svc = c.svc;
+    this.lan = o.lanCall ?? defaultLanCall;
     this.cloud = cloud ?? {
       post: async (path, body, timeoutMs) => {
         const m = svc.machineId;
@@ -298,7 +303,9 @@ export class TillVouchers {
 
   private async flow(code: string, pay: VoucherPayment): Promise<Outcome> {
     const looked = await lookupVoucher(this.post, code, { features: [...VOUCHER_FEATURES] });
-    if (looked.kind === 'offline') return { kind: 'refused', text: VOUCHER_TEXT.offline };
+    // No cloud, or a batch assigned to work without internet on the shop's main till: the shop's LAN host (voucherLan.ts).
+    if (looked.kind === 'offline') return this.lanTarget() ? this.viaHost(code, pay, VOUCHER_LAN_TEXT.notAssigned) : { kind: 'refused', text: VOUCHER_TEXT.offline };
+    if (looked.kind === 'refused' && looked.reason === ASSIGNED_OFFLINE) return this.viaHost(code, pay, voucherReasonText(looked.reason, looked.message));
     if (looked.kind === 'refused') return { kind: 'refused', text: voucherReasonText(looked.reason, looked.message) };
     const dto = looked.dto;
     const voucherId = String(dto.voucherId ?? dto.id ?? '');
@@ -326,6 +333,126 @@ export class TillVouchers {
       if (r !== REDEEM_NEEDS_RESERVE) return r;
     }
     return this.reserveGoods(code, dto, pay);
+  }
+
+  /* ------------------------------------------------------ the shop's LAN host */
+
+  /** The shop's print host on the LAN (never this device), with the shop's secret (KioskPayAtTill.lanTargets). */
+  private lanTarget(): { address: string; port: number; secret: string } | null {
+    const config = this.c.svc.kitchen.config();
+    const h = config.printHost;
+    if (!h || h.isSelf || !h.lanAddress || !config.printSecret) return null;
+    return { address: h.lanAddress, port: h.port, secret: config.printSecret };
+  }
+
+  /** One POST to the host (VoucherLanClient.post): its JSON on HTTP 200, else null (not there, not answering). */
+  private async lanPost(path: string, body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    const t = this.lanTarget();
+    if (!t) return null;
+    const m = this.c.svc.machineId;
+    try {
+      const r = await this.lan(t, t.secret, 'POST', path, body, { caller: m ? { id: m, name: this.c.svc.cloud.machine()?.machineName ?? null } : null, connectMs: 1_200, readMs: 5_000 });
+      return r.status === 200 && r.body && typeof r.body === 'object' ? (r.body as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The host's redemption ids of this device (attached to their document / given back over the LAN, never the cloud). */
+  private hostIds(): Set<string> {
+    return new Set(this.c.svc.kv.getJson<string[]>('vouchers.viaHost') ?? []);
+  }
+
+  private rememberHost(id: string) {
+    const ids = [...this.hostIds(), id].slice(-200);
+    this.c.svc.kv.setJson('vouchers.viaHost', ids);
+  }
+
+  /**
+   * A voucher of the shop's LAN host (ProductionVoucherService.openOffline / redeemAt HOST): looked up there, placed on the
+   * sale by its batch's terms, priced here, taken there once by this request's id (sent again when the answer is lost).
+   * No host, or the host does not hold it: [notThere].
+   */
+  private async viaHost(code: string, pay: VoucherPayment, notThere: string): Promise<Outcome> {
+    const looked = hostLookupOf(await this.lanPost(VOUCHER_LAN.LOOKUP, { code }));
+    if (!looked || !looked.ok || !hostTakes(looked)) return { kind: 'refused', text: notThere };
+    if (looked.refusal) return { kind: 'refused', text: looked.refusalText ?? voucherReasonText(looked.refusal) };
+    const dto = dtoOfSnapshot(looked);
+    const voucherId = String(dto.voucherId ?? '');
+    const held = [...this.codes.values()].find((v) => v.voucherId === voucherId);
+    if (held) return { kind: 'refused', text: this.rescanText(held.id, pay.lines) };
+    // A test batch is never redeemed without the cloud (TrainingMode / the cloud's simulation).
+    if (dto.testMode === true) return { kind: 'refused', text: notThere };
+    const terms = termsOf(dto);
+    const units = this.freeUnits(pay, terms.includeExtras);
+    if (units.length === 0) return { kind: 'refused', text: VOUCHER_TEXT.nothingInBasket };
+    const incoming: VoucherInSale = { voucherId, batchId: String(dto.batchId ?? ''), kind: voucherKindOf(dto.kind), stacking: voucherStackingOf(dto.stacking), maxPerSale: num(dto.maxVouchersPerSale) };
+    const stack = stackingRefusal(this.inSale(), incoming);
+    if (stack) return { kind: 'refused', text: stackingText(stack.code, stack.limit, incoming.kind) ?? voucherReasonText(stack.code) };
+    const takenHere = this.production.filter((a) => a.voucherId === voucherId).reduce((sum, a) => sum + a.units.length, 0);
+    let st = voucherScanState(terms, units, voucherSaleCap(Math.max(0, Math.floor(unitsRemaining(terms))), null, takenHere));
+    for (const amb of st.ambiguous) {
+      const u = st.units.find((x) => x.id === amb.ref)!;
+      const pick = await this.ask({
+        kind: 'confirm',
+        title: VOUCHER_TEXT.groupTitle,
+        body: VOUCHER_TEXT.groupBody(u.name),
+        fields: [],
+        actions: [...amb.groupKeys.map((k) => ({ id: `g:${k}`, label: terms.groups.find((g) => g.key === k)?.name ?? k })), { id: 'skip', label: 'לא בשובר' }, { id: 'cancel', label: 'ביטול' }],
+        choice: true,
+      });
+      if (!pick) return { kind: 'cancelled' };
+      if (pick.action.startsWith('g:')) st = withPick(st, u.id, pick.action.slice(2));
+    }
+    if (Object.keys(st.assigned).length === 0) return { kind: 'refused', text: st.refusal?.text ?? VOUCHER_TEXT.nothingInBasket };
+    if (st.refusal) return { kind: 'refused', text: st.refusal.text };
+    if (!this.autoApply()) {
+      const go = await this.confirmRedeem(st.units.filter((u) => u.id in st.assigned));
+      if (!go) return { kind: 'cancelled' };
+    }
+    const mine = st.units.filter((u) => u.id in st.assigned);
+    const op = this.operator();
+    const me = this.c.svc.cloud.machine();
+    const id = randomUUID();
+    const body = hostRedeemBody({ code, id, saleRef: pay.saleRef, units: mine, assigned: st.assigned, user: op.id ? op : null, machineId: this.c.svc.machineId, by: me?.posNumber ? `קופה ${me.posNumber}` : (me?.machineName ?? null) });
+    const reply = (await this.lanPost(VOUCHER_LAN.REDEEM, body)) ?? (await this.lanPost(VOUCHER_LAN.REDEEM, body));
+    if (!reply) return { kind: 'refused', text: VOUCHER_LAN_TEXT.noAnswer };
+    if (reply.ok !== true) {
+      const reason = typeof reply.reason === 'string' ? reply.reason : null;
+      const text = typeof reply.text === 'string' && reply.text.trim() ? reply.text : reason === 'not_assigned' ? VOUCHER_LAN_TEXT.notAssigned : reason === 'prepaid_voucher_used' ? offlineUsedText(null, null) : voucherReasonText(reason);
+      return { kind: 'refused', text };
+    }
+    this.rememberHost(id);
+    const priced = localPriced(terms, mine, st.assigned);
+    const taken = new Map<string, number>();
+    for (const k of Object.values(st.assigned)) taken.set(k, (taken.get(k) ?? 0) + 1);
+    const applied: AppliedProduction = {
+      source: 'host',
+      reservationId: null,
+      redemptionId: id,
+      code,
+      voucherId,
+      batchId: String(dto.batchId ?? ''),
+      serial: Number(dto.serial) || 0,
+      typeName: str(dto.typeName),
+      batchName: str(dto.eventName) ?? str(dto.batchName),
+      productionName: str(dto.productionName),
+      accounting: terms.accounting,
+      pricing: terms.pricing,
+      tillValue: terms.tillValue,
+      includeExtras: terms.includeExtras,
+      amountAgorot: countsAsPayment(terms.accounting) ? priced.reduce((sum, u) => sum + u.covered, 0) : 0,
+      topUpAgorot: 0,
+      note: null,
+      units: priced,
+      inSale: incoming,
+      testMode: false,
+      approval: null,
+      entitlement: voucherEntitlementOf(terms, taken, st.cap - Object.keys(st.assigned).length),
+      validUntil: str(dto.validUntil),
+    };
+    this.c.log(`voucher ${voucherLogTail(code)}: taken by the shop's LAN host (${id})`);
+    return this.book(applied, pay, () => this.quietly(this.lanPost(VOUCHER_LAN.REVERSE, { id })));
   }
 
   /** The shared voucher flow's calls (lib/kioskVoucherClient.ts) through this till's cloud: a refusal's code as its detail. */
@@ -803,7 +930,9 @@ export class TillVouchers {
   }
 
   private giveBackProduction(a: AppliedProduction) {
-    if (a.reservationId) this.quietly(this.release(a.reservationId));
+    // The host's: given back over the LAN (POST /vouchers/reverse), once — the host books it back to active.
+    if (a.source === 'host') this.quietly(this.lanPost(VOUCHER_LAN.REVERSE, { id: a.redemptionId }));
+    else if (a.reservationId) this.quietly(this.release(a.reservationId));
     else if (!a.testMode) this.quietly(this.cloud.reverse(a.redemptionId));
   }
 
@@ -859,7 +988,13 @@ export class TillVouchers {
     void (async () => {
       for (const v of discounts) await confirmDiscount(this.post, v, { transactionId: doc.id, amountAgorot: v.amountAgorot });
       for (const reservationId of releases) await releaseDiscount(this.post, { reservationId });
+      const viaHost = this.hostIds();
       for (const r of prepaid) {
+        // The host's redemption: its document named to the host (POST /vouchers/attach), which syncs it to the cloud.
+        if (viaHost.has(r.redemptionId)) {
+          await this.lanPost(VOUCHER_LAN.ATTACH, { id: r.redemptionId, transactionId: doc.id });
+          continue;
+        }
         const path = r.legacy || !r.reservationId ? `prepaid-vouchers/redemptions/${encodeURIComponent(r.redemptionId)}/transaction` : `prepaid-vouchers/reservations/${encodeURIComponent(r.reservationId)}/confirm`;
         const body = r.legacy || !r.reservationId ? { transactionId: doc.id } : { transactionId: doc.id, amountAgorot: r.amountAgorot, ...(r.approval ? { approval: r.approval } : {}) };
         for (let i = 0; i < 3; i++) {

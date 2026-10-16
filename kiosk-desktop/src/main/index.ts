@@ -18,6 +18,7 @@
 
 import { windowsDisplayReport } from './displayReport';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray, utilityProcess } from 'electron';
+import { attachCustomerDisplay } from './shell/customerDisplayWindow';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -136,6 +137,7 @@ let tillRole: TillRole | null = null;
 let tillView: TillElectron | null = null;
 let tillEngine: KioskCoreTillEngine | null = null;
 let main: BrowserWindow | null = null;
+let customerDisplay: { stop(): void } | null = null;
 let printer: BrowserWindow | null = null;
 let printerReady: Promise<void> | null = null;
 let printSeq = 0;
@@ -563,7 +565,7 @@ void app.whenReady().then(async () => {
         lite: liteHintOf({ release: os.release(), totalMemBytes: os.totalmem() }),
       };
     },
-    caps: () => windowsTillCaps(svc),
+    caps: () => windowsTillCaps(svc, { secondScreen: screen.getAllDisplays().length > 1 }),
     log: (m) => console.log(`[shell] ${m}`),
   });
   tillView = attachTillRole({
@@ -580,6 +582,8 @@ void app.whenReady().then(async () => {
     },
   });
   roles.on('view', (v) => tillView?.onRole(v.role));
+  // "מסך לקוח": the till's second screen, when its settings want it and a second display is there.
+  customerDisplay = attachCustomerDisplay({ source: tillEngine.customerDisplay, preload: path.join(__dirname, '..', 'preload', 'index.js'), log: (m) => console.log(`[shell] ${m}`) });
 
   registerKioskProtocol();
 
@@ -620,6 +624,7 @@ app.on('window-all-closed', () => {
   hideReturnTray();
   updater?.stop();
   tillView?.stop();
+  customerDisplay?.stop();
   tillEngine?.stop();
   workMode?.stop();
   roles?.stop();

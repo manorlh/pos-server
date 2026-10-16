@@ -432,3 +432,99 @@ export function NoticeDialog({ title, text, onOk }: { title: string; text: strin
     </div>
   );
 }
+
+/* ------------------------------------------------------- the order's details */
+
+/**
+ * "פרטי הזמנה" (Android OrderNameSheet.kt `OrderDetailsSheet`): a question at a time — "לקחת או לשבת?" as two big buttons (a
+ * tap answers and moves on), then the customer's name; only what the engine asks shows. Both are mandatory: the button stays
+ * off without a name. The engine keeps the answers and goes on (the held first item, the payment).
+ */
+export function OrderDetailsSheet({
+  ask,
+  dining: initialDining,
+  name: initialName,
+  texts,
+  onConfirm,
+  onDismiss,
+}: {
+  ask: { dining: boolean; name: boolean; confirmLabel: string };
+  dining: 'take_away' | 'eat_in' | null;
+  name: string | null;
+  texts: { diningQuestion: string; nameTitle: string; takeAway: string; eatIn: string; nameLabel: string; nameHint: string; back: string; cancel: string };
+  onConfirm(dining: 'take_away' | 'eat_in' | null, name: string | null): void;
+  onDismiss(): void;
+}) {
+  const [dining, setDining] = useState(initialDining);
+  const [name, setName] = useState(initialName ?? '');
+  const [step, setStep] = useState<'dining' | 'name' | null>(ask.dining ? 'dining' : ask.name ? 'name' : null);
+  const finish = (d = dining) => onConfirm(ask.dining ? d : null, ask.name ? name.trim() : null);
+  const choose = (d: 'take_away' | 'eat_in') => {
+    setDining(d);
+    if (ask.name) setStep('name');
+    else finish(d);
+  };
+  const title = step === 'dining' ? texts.diningQuestion : texts.nameTitle;
+  return (
+    <div className="t-overlay" role="dialog" aria-modal="true" aria-label={title} onClick={onDismiss}>
+      <div className="t-dialog t-order-details" onClick={(e) => e.stopPropagation()}>
+        <h2 className="t-dialog-title">{title}</h2>
+        {step === 'dining' ? (
+          <>
+            <div className="t-order-dining">
+              <button type="button" className={`t-order-choice${dining === 'take_away' ? ' t-order-choice-on' : ''}`} onClick={() => choose('take_away')}>
+                <span className="t-order-icon" aria-hidden="true">
+                  🛍
+                </span>
+                <span>{texts.takeAway}</span>
+              </button>
+              <button type="button" className={`t-order-choice${dining === 'eat_in' ? ' t-order-choice-on' : ''}`} onClick={() => choose('eat_in')}>
+                <span className="t-order-icon" aria-hidden="true">
+                  🍽
+                </span>
+                <span>{texts.eatIn}</span>
+              </button>
+            </div>
+            <div className="t-dialog-actions">
+              <button type="button" className="t-btn t-btn-ghost" onClick={onDismiss}>
+                {texts.cancel}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {ask.dining && dining ? <p className="t-order-answered">{dining === 'take_away' ? texts.takeAway : texts.eatIn}</p> : null}
+            <label className="t-field">
+              <span>{texts.nameLabel}</span>
+              <input
+                className="t-input"
+                autoFocus
+                value={name}
+                maxLength={40}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && name.trim()) finish();
+                }}
+              />
+            </label>
+            <p className="t-muted t-small">{texts.nameHint}</p>
+            <div className="t-dialog-actions">
+              {ask.dining ? (
+                <button type="button" className="t-btn t-btn-ghost" onClick={() => setStep('dining')}>
+                  {texts.back}
+                </button>
+              ) : (
+                <button type="button" className="t-btn t-btn-ghost" onClick={onDismiss}>
+                  {texts.cancel}
+                </button>
+              )}
+              <button type="button" className="t-btn t-btn-primary" disabled={!name.trim()} onClick={() => finish()}>
+                {ask.confirmLabel}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

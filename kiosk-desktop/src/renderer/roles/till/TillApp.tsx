@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { tillBusy, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
+import { tillBusy, type OpArgs, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
 import { capabilityTiles, NO_CAPS } from '../../host/caps';
 import type { HostCaps, TillHost } from '../../host/TillHost';
 import type { DisplayProfile } from './layout/displayProfileAdapter';
@@ -25,7 +25,9 @@ import { AdminHoldBar, useAdminCornerHold } from '../../staff/adminHold';
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
-import { BasketDiscountSheet, HeldSheet, NoticeDialog, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { BasketDiscountSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { ORDER_TEXT } from '../../../core/till/orderDetails';
+import { FAILOVER_TEXT } from '../../../core/kitchen/failover';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { DrawerScreen, type DrawerLog, type WalletRow } from './screens/DrawerScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
@@ -36,16 +38,26 @@ import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
 import { UsersScreen } from './screens/UsersScreen';
 import { OwedScreen } from './screens/OwedScreen';
+import { TransmissionScreen } from './screens/TransmissionScreen';
+import { BlockSheet, BlocksScreen, type BlocksActions } from './screens/BlocksScreen';
+import { PrintQueueScreen, type PrintQueueActions, type QueueRow } from './screens/PrintQueueScreen';
+import type { BlockSheetView, BlocksListView } from '../../../core/till/itemBlocks';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
-type Sheet = { kind: 'discount' } | { kind: 'oth'; lineId: string | null } | { kind: 'receipt' } | { kind: 'held' } | { kind: 'heldClose'; retry: (keepHeld: boolean) => void };
+type Sheet =
+  | { kind: 'discount' }
+  | { kind: 'oth'; lineId: string | null }
+  | { kind: 'receipt' }
+  | { kind: 'held' }
+  | { kind: 'heldClose'; retry: (keepHeld: boolean) => void }
+  | { kind: 'block'; productId: string };
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -121,6 +133,36 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return r.ok ? (r.value as DiscountPreview) : undefined;
     },
     [attempt],
+  );
+  // "חסומים כעת" / "חסום / אזל": the engine's views and ops (a manager's code is its dialog; then the sheet closes).
+  const blocksActions = useMemo<BlocksActions>(
+    () => ({
+      list: async () => (await run('blocks.list', {})) as BlocksListView | undefined,
+      sheet: async (item) => (await run('blocks.sheet', item)) as BlockSheetView | undefined,
+      block: async (request) => {
+        const r = await attempt('blocks.block', request as OpArgs['blocks.block']);
+        if (!r.ok) say(r.message, 'error');
+        return r.ok;
+      },
+      release: async (ids) => {
+        const r = await attempt('blocks.release', { ids });
+        if (!r.ok) say(r.message, 'error');
+        return r.ok;
+      },
+    }),
+    [run, attempt, say],
+  );
+  const printQueueActions = useMemo<PrintQueueActions>(
+    () => ({
+      list: async () => (await run('printQueue.list', {})) as { rows: QueueRow[]; view: { redirects: Array<{ fromId: string; text: string }> } | null } | undefined,
+      choices: async (jobId) => (await run('printQueue.choices', { jobId })) as Array<{ id: string; label: string }> | undefined,
+      retry: (jobId) => run('printQueue.retry', { jobId }),
+      move: (jobId, toId) => run('printQueue.move', { jobId, toId }),
+      handled: (jobId) => run('printQueue.handled', { jobId }),
+      endRedirect: (fromId) => run('printQueue.endRedirect', { fromId }),
+      back: () => setView('menu'),
+    }),
+    [run],
   );
   const recentReceipts = useCallback(async () => (await run('refund.recent', {})) as ReceiptRow[] | undefined, [run]);
   const findReceipt = useCallback(async (query: string) => (await run('refund.find', { query })) as ReceiptFind | undefined, [run]);
@@ -306,6 +348,28 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         />
       );
     }
+    if (view === 'printQueue') {
+      return <PrintQueueScreen actions={printQueueActions} />;
+    }
+    if (view === 'blocks') {
+      return <BlocksScreen actions={blocksActions} catalog={catalog} back={() => setView('menu')} />;
+    }
+    if (view === 'transmission') {
+      return (
+        <TransmissionScreen
+          tx={s.transmission}
+          actions={{
+            open: () => void run('transmission.open', {}),
+            now: () => void run('transmission.now', {}),
+            offline: (on) => void run('transmission.offline', { on }),
+            authorize: () => void run('transmission.authorize', {}),
+            read: () => void run('transmission.read', {}),
+            more: () => void run('transmission.more', {}),
+            back: () => setView('menu'),
+          }}
+        />
+      );
+    }
     if (view === 'shopx') {
       return (
         <ShopXScreen
@@ -355,6 +419,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         onDepartment={(departmentId) => void run('sell.department', { departmentId })}
         onSearch={(text) => void run('sell.search', { text })}
         onVoucher={host.demo ? undefined : (code) => void run('sell.voucher', { code })}
+        onHold={host.demo || (s.session.hidden ?? []).includes('ITEM_BLOCK') ? undefined : (productId) => setSheet({ kind: 'block', productId })}
         shiftOpen={host.demo || s.shift.open || s.shift.hidden === true}
         goShift={() => setView('shift')}
         cart={{
@@ -372,9 +437,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
                 refund: () => void run('refund.button', {}),
                 hold: () => setSheet({ kind: 'held' }),
                 held: () => setSheet({ kind: 'held' }),
+                orderEdit: () => void run('order.edit', {}),
               }),
         }}
-        cartView={{ hidden: s.session.hidden ?? [], othEnabled: s.oth?.enabled === true, heldCount: s.held?.count ?? 0 }}
+        cartView={{ hidden: s.session.hidden ?? [], othEnabled: s.oth?.enabled === true, heldCount: s.held?.count ?? 0, order: s.order ? { strip: s.order.strip, configured: s.order.configured } : null }}
       />
     );
   })();
@@ -457,6 +523,37 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           </button>
         </div>
       ) : null}
+      {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
+        // "בון לא הודפס במדפסת מטבח" (KitchenPrintBanner): never quieted; a tap opens the queue.
+        <button type="button" className="t-banner t-banner-button" role="alert" onClick={() => setView('printQueue')}>
+          {s.printQueue.banner}
+        </button>
+      ) : null}
+      {view === 'sell' && !s.session.locked
+        ? (s.printQueue?.redirects ?? []).map((r) => (
+            <div key={r.fromId} className="t-notice t-redirect" role="status">
+              <span className="t-notice-text">{r.text}</span>
+              <button type="button" className="t-pill" onClick={() => void run('printQueue.endRedirect', { fromId: r.fromId })}>
+                {FAILOVER_TEXT.endRedirect}
+              </button>
+            </div>
+          ))
+        : null}
+      {s.terminalOffline && !s.session.locked && s.checkout.phase === 'idle' && view === 'sell' ? (
+        // The terminal works deferred (Android TerminalOfflineChip): amber, the cards that do not pass on the second line.
+        <div className="t-notice t-deferred-banner" role="status">
+          <span className="t-notice-text">
+            {s.terminalOffline.text.split('\n').map((line, i) => (
+              <span key={i} style={{ display: 'block' }}>
+                {line}
+              </span>
+            ))}
+          </span>
+          <button type="button" className="t-pill" onClick={() => setView('transmission')}>
+            {T.transmissionOpen}
+          </button>
+        </div>
+      ) : null}
       {s.users?.notice ? (
         // "עובד מחובר בקופה אחת בלבד": signed in elsewhere too, signing out at the end of the action, signed out (exclusive login v2).
         <div className="t-notice" role="status">
@@ -536,6 +633,19 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           }}
         />
       ) : null}
+      {s.session.cashier && view === 'sell' && s.order?.ask && !s.dialog && !sheet ? (
+        // "פרטי הזמנה" (askEatInTakeAway / askOrderName): when the engine asks — a new order, its first item, the payment.
+        <OrderDetailsSheet
+          key={`${s.order.ask.purpose}:${s.order.ask.dining}:${s.order.ask.name}`}
+          ask={s.order.ask}
+          dining={s.order.dining}
+          name={s.order.name}
+          texts={ORDER_TEXT}
+          onConfirm={(dining, name) => void attempt('order.details', { dining, name }).then((r) => !r.ok && say(r.message, 'error'))}
+          onDismiss={() => void run('order.dismiss', {})}
+        />
+      ) : null}
+      {s.session.cashier && sheet?.kind === 'block' ? <BlockSheet item={{ productId: sheet.productId }} actions={blocksActions} onDone={() => setSheet(null)} /> : null}
       {s.notice && !s.dialog ? <NoticeDialog title={s.notice.title} text={s.notice.text} onOk={() => void run('notice.ack', {})} /> : null}
       {s.dialog ? <EngineDialog dialog={s.dialog} answer={(action, answers) => void run('dialog.answer', { dialogId: s.dialog!.id, action, answers })} /> : null}
       <div className="t-toasts" aria-live="polite">

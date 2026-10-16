@@ -48,6 +48,9 @@ export const PERM = {
   OTH: 'OTH',
   LINE_VOID: 'LINE_VOID',
   HELD_SALE_CANCEL: 'HELD_SALE_CANCEL',
+  TRANSMIT: 'TRANSMIT',
+  ITEM_BLOCK: 'ITEM_BLOCK',
+  ITEM_BLOCK_WIDE: 'ITEM_BLOCK_WIDE',
 } as const;
 
 /** Hebrew names for "אין לך הרשאה: …" and the approval prompt — the cloud's labels (PermissionService.LABELS). */
@@ -73,6 +76,7 @@ export const PERM_LABEL: Record<string, string> = {
   'CASH_DRAWER.OPEN_MANUALLY': 'פתיחת מגירה ידנית',
   CATALOG_WRITE: 'עריכת קטלוג',
   ITEM_BLOCK: 'חסימת פריט / אזל',
+  ITEM_BLOCK_WIDE: 'חסימה מעבר לקופה',
   KIOSK_UNLOCK: 'יציאה מנעילת קופה',
   DESKTOP_EXIT: 'יציאה לשולחן העבודה (Windows)',
   KIOSK_TILL_MODE: 'מעבר למצב קופה בקיוסק',

@@ -38,6 +38,7 @@ export function tillPrinter(name: string): KitchenPrinter {
     hostLanAddress: null,
     hostLanPort: null,
     isHost: false,
+    hostDocumentRelay: null,
     inScope: true,
     paperWidth: 80,
     printWidthDots: null,

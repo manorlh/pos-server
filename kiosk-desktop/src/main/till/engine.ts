@@ -211,9 +211,33 @@ import { HeldStore } from './heldStore';
 import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../../core/till/drawer';
 import { DRAWER_PERM } from '../../core/till/drawer';
 import { TillDrawer } from './tillDrawer';
+import { TillRemotePrint, type TillRemotePrintOptions } from './tillRemotePrint';
+import { TillTransmission } from './tillTransmission';
+import { TillShopXLan } from './tillShopXLan';
+import { TillItemBlocks } from './tillItemBlocks';
+import { TillPrintQueue } from './tillPrintQueue';
+import { TillCustomerDisplay } from './tillCustomerDisplay';
+import { FAILOVER_TEXT, ticketTitleOf } from '../../core/kitchen/failover';
+import { IB_TEXT } from '../../core/till/itemBlocks';
+import type { LanCall } from '../kitchen/kitchenNet';
+import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
 import { TillSessions } from './userSessions';
 import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
 import type { DialogSpec, TillContext } from './tillContext';
+import {
+  ORDER_TEXT,
+  anyQuestion,
+  cleanOrderName,
+  diningOf,
+  missingOrderDetails,
+  orderDetailsStrip,
+  orderQuestionsOf,
+  startDetailsDue,
+  type Dining,
+  type OrderFacts,
+  type OrderQuestions,
+} from '../../core/till/orderDetails';
+import type { OrderAsk } from '../../shared/till/protocol';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -246,6 +270,12 @@ export interface TillEngineOptions {
   now?: () => number;
   workMode?: () => TillWorkMode | null;
   log?: (m: string) => void;
+  /** "הדפסה בקופה אחרת": the transport, the clock and the drawing (tests). */
+  remotePrint?: TillRemotePrintOptions;
+  /** "דוח X סניפי" over the LAN: the LAN call, the clock; `manual` — no poll timer (tests drive it). */
+  shopXLan?: { lanCall?: LanCall; sleep?: (ms: number) => Promise<void>; manual?: boolean };
+  /** Vouchers through the shop's LAN host: the LAN call (tests). */
+  voucherLan?: LanCall;
 }
 
 class Refusal extends Error {
@@ -615,7 +645,18 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private refundChooser = false;
   private refundGrant: { approverId: string; profile: PermissionProfile } | null = null;
   /** A held sale's basket discount and approver, kept in memory while it is parked (Android parkedExtras). */
-  private readonly parkedExtras = new Map<string, { discount: { type: DiscountType; value: number } | null; approver: string | null }>();
+  private readonly parkedExtras = new Map<string, { discount: { type: DiscountType; value: number } | null; approver: string | null; dining?: Dining | null; orderName?: string | null }>();
+  /**
+   * "פרטי הזמנה" (core/till/orderDetails.ts): the quick order's take-away / eat-in and name, the first item held for them
+   * ("בפתיחת הזמנה"), the sheet the engine asks for now, and the basket whose opening questions were closed unanswered.
+   */
+  private orderDining: Dining | null = null;
+  private orderName: string | null = null;
+  private orderStart: { productId: string; qty: number } | null = null;
+  private orderAsk: 'open' | 'payment' | 'edit' | null = null;
+  /** "פעולות אשראי" was opened since the sign-in: its view goes in the state. */
+  private transmissionShown = false;
+  private diningFirstDismissedFor: string | null = null;
   private hostIdle = { idle: true, busy: false };
   private lastActivityAt: number;
   private lastZNumber: number | null = null;
@@ -642,6 +683,18 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly cash: TillCash;
   /** Vouchers at the payment: discount and production vouchers, "מצב בדיקה" (tillVouchers.ts). */
   readonly vouchers: TillVouchers;
+  /** "הדפסה בקופה אחרת" (tillRemotePrint.ts). */
+  readonly remotePrint: TillRemotePrint;
+  /** "פעולות אשראי": the transmission, the terminal's deferred mode, the §13 warning (tillTransmission.ts). */
+  readonly transmission: TillTransmission;
+  /** "דוח X סניפי" over the LAN: this till's part in the main till's report (tillShopXLan.ts). */
+  readonly shopXLan: TillShopXLan;
+  /** "חסומים כעת" / "חסום / אזל" (tillItemBlocks.ts). */
+  readonly itemBlocks: TillItemBlocks;
+  /** "תור הדפסה" and "מדפסת חלופית" for the kitchen tickets (tillPrintQueue.ts). */
+  readonly printQueue: TillPrintQueue;
+  /** "מסך לקוח": the second screen's settings and state (tillCustomerDisplay.ts). */
+  readonly customerDisplay: TillCustomerDisplay;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -655,6 +708,33 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.ctx = this.makeContext();
     this.drawer = new TillDrawer(this.ctx, { expectedBalance: () => this.expectedNow() });
     this.drawer.start();
+    // "הדפסה בקופה אחרת": the till's pages to another till's printer, as the cloud lets them (tillRemotePrint.ts).
+    this.remotePrint = new TillRemotePrint(this.ctx, { ...(o.remotePrint ?? {}), remoteAfterCash: (host, page) => void this.later(() => this.drawer.remoteAfterCash(host, page)) });
+    this.remotePrint.start();
+    this.transmission = new TillTransmission(this.ctx);
+    this.transmission.start();
+    this.shopXLan = new TillShopXLan(this.ctx, {
+      openShiftTill: () => {
+        const s = this.svc.ledger.currentShift();
+        if (!s) return null;
+        return { id: s.id, businessDate: s.business_date, till: this.xFigures(s.id).till };
+      },
+      lanCall: o.shopXLan?.lanCall,
+      sleep: o.shopXLan?.sleep,
+    });
+    if (o.shopXLan?.manual !== true) this.shopXLan.start();
+    this.itemBlocks = new TillItemBlocks(this.ctx, {
+      wide: () => {
+        const d = decide(this.profile(), PERM.ITEM_BLOCK_WIDE);
+        return d.kind === 'allowed' ? 'allow' : d.kind === 'approval' ? 'approval' : 'deny';
+      },
+      // "permissionsDeniedUi": a locked option is left out unless the till shows it greyed with why.
+      deniedHidden: () => String(this.svc.cloud.parameters().permissionsDeniedUi ?? '').trim() !== 'הצג מושבת עם הסבר',
+    });
+    this.itemBlocks.start();
+    this.printQueue = new TillPrintQueue(this.ctx);
+    this.customerDisplay = new TillCustomerDisplay(this.ctx);
+    this.customerDisplay.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -671,13 +751,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       afterApply: () => this.afterVoucher(),
       mayAlone: (code) => decide(this.profile(), code).kind === 'allowed',
       setting: (key) => this.svc.cloud.parameters()[key] ?? this.svc.settingsMap()[key],
-    });
+    }, undefined, { lanCall: o.voucherLan });
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
     this.svc.on('view', onView);
     this.offView = () => this.svc.off('view', onView);
-    this.tick = setInterval(() => this.refresh(), 5_000);
+    this.tick = setInterval(() => {
+      this.refresh();
+      // "מדפסת חלופית": the question about a kitchen ticket that did not print, when it is due.
+      if (!this.stopped) void this.later(() => this.printQueue.prompt()).then(() => this.refresh());
+    }, 5_000);
     this.attachWorkMode();
     // "סגירת משמרת אוטומטית גם עם עגלה פתוחה": the service's half-minute tick asks the till (a till by role only).
     this.svc.attachTillAutoClose?.(() => this.later(() => this.autoCloseTick()));
@@ -704,6 +788,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       },
       later: (fn) => this.later(fn),
       paying: () => this.paying(),
+      dialogOpen: () => this.pending !== null,
     };
   }
 
@@ -731,6 +816,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.sessions.stop();
     this.cash.stop();
     this.drawer.stop();
+    this.remotePrint.stop();
+    this.transmission.stop();
+    this.shopXLan.stop();
+    this.itemBlocks.stop();
+    this.customerDisplay.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -803,10 +893,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const state = this.buildState();
     const json = JSON.stringify(state);
     this.dirty = false;
-    if (json === this.lastState) return;
+    if (json === this.lastState) {
+      // A module's word with nothing else changed ("נשלח להדפסה ב…"): said all the same.
+      this.drainToasts();
+      return;
+    }
     this.lastState = json;
     this.seq += 1;
     this.emit('state', state);
+    // "מסך לקוח": the second screen follows what the till shows (filtered, the thanks held — tillCustomerDisplay.ts).
+    this.customerDisplay?.publish(state, this.transmission?.notices().customer ?? null);
     // The updater and the pay monitor see a till as a quiet or busy device (never an update mid-sale).
     const busy = state.sell.lines.length > 0 || state.checkout.phase !== 'idle' || state.dialog !== null;
     this.svc.reportFlow({ flowState: busy ? 'paying' : 'attract', screen: state.checkout.phase !== 'idle' ? 'pay' : 'attract', busy, idle: !busy && this.nowFn() - this.lastActivityAt > 60_000 });
@@ -1047,6 +1143,71 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.vouchers.remove(a.id);
       case 'checkout.finishTest':
         return this.finishTest();
+      case 'printQueue.list':
+        this.signedIn();
+        return { rows: this.printQueue.rows(), view: this.printQueue.view() ?? null };
+      case 'printQueue.choices':
+        this.signedIn();
+        return this.printQueue.choices(String(a.jobId ?? ''));
+      case 'printQueue.retry':
+        this.signedIn();
+        if (!this.printQueue.retry(String(a.jobId ?? ''))) return refuse('invalid_args', FAILOVER_TEXT.busy);
+        this.toast(FAILOVER_TEXT.sentAgain, 'ok');
+        return undefined;
+      case 'printQueue.move': {
+        this.signedIn();
+        const text = this.printQueue.move(String(a.jobId ?? ''), String(a.toId ?? ''), a.alsoNext === true);
+        this.toast(text, text === FAILOVER_TEXT.busy || text === FAILOVER_TEXT.noOther ? 'error' : 'ok');
+        return { text };
+      }
+      case 'printQueue.handled': {
+        const job = this.svc.kitchen.job(String(a.jobId ?? ''));
+        if (!job) return refuse('invalid_args');
+        // "סמן כטופל": a manager's code, always (Android's elevation `table:reprint`).
+        return this.gate(
+          PERM.REPRINT,
+          (approver) => {
+            const by = approver ?? { id: this.signedIn().id, name: displayName(this.signedIn()) };
+            this.svc.kitchen.discard(job.id, `handled by ${by.name}`, by.name);
+            return undefined;
+          },
+          { force: true, body: FAILOVER_TEXT.handledBody(ticketTitleOf(job), job.printerName) },
+        );
+      }
+      case 'printQueue.endRedirect':
+        this.signedIn();
+        this.svc.kitchen.endRedirect(String(a.fromId ?? ''));
+        return undefined;
+      case 'blocks.list':
+        return this.itemBlocks.list();
+      case 'blocks.sheet':
+        return this.itemBlocks.sheet(typeof a.productId === 'string' ? a.productId : null, typeof a.categoryId === 'string' ? a.categoryId : null);
+      case 'blocks.block':
+        return this.blockItem(a);
+      case 'blocks.release':
+        return this.releaseBlocks(a.ids);
+      case 'transmission.open':
+        return this.transmissionOpen();
+      case 'transmission.now':
+        return this.gate(PERM.TRANSMIT, () => this.transmissionAction(() => this.transmission.transmitNow()), { body: TX_TEXT.reasonTransmit });
+      case 'transmission.offline':
+        return this.transmissionSwitch(a.on === true);
+      case 'transmission.authorize':
+        return this.gate(PERM.TRANSMIT, () => this.transmissionAction(() => this.transmission.authorizePending()), { body: TX_TEXT.reasonOffline });
+      case 'transmission.read':
+        this.signedIn();
+        void this.transmission.readOffline(true).catch(() => undefined);
+        return undefined;
+      case 'transmission.more':
+        this.signedIn();
+        void this.transmission.more().catch(() => undefined);
+        return undefined;
+      case 'order.details':
+        return this.setOrderDetails(a.dining, a.name);
+      case 'order.dismiss':
+        return this.dismissOrderDetails();
+      case 'order.edit':
+        return this.editOrderDetails();
       case 'sell.voucher':
         return this.sellVoucher(a.code);
     }
@@ -1354,7 +1515,93 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.refundMode = false;
     this.refundChooser = false;
     this.refundGrant = null;
+    this.orderDining = null;
+    this.orderName = null;
+    this.orderStart = null;
+    this.orderAsk = null;
     this.basketId = randomUUID();
+  }
+
+  /* ------------------------------------------------------------- the order's details */
+
+  private orderQuestions(): OrderQuestions {
+    return orderQuestionsOf(this.svc.cloud.parameters());
+  }
+
+  private orderFacts(): OrderFacts {
+    return { hasLines: this.cart.length > 0, hasRefundLines: this.cart.some((l) => l.refund), dining: this.orderDining, name: this.orderName };
+  }
+
+  /** What this quick order still has to answer (null: nothing, or nothing asked). */
+  private orderDetailsMissing(): OrderQuestions | null {
+    return missingOrderDetails(this.orderQuestions(), this.orderFacts());
+  }
+
+  /**
+   * The details given ("לקחת" / "לשבת", the name), each kept when not given; then what waited for them: the held first item
+   * ("בפתיחת הזמנה"), the payment. Mandatory: what is asked and still missing is refused.
+   */
+  private setOrderDetails(diningRaw: unknown, nameRaw: unknown) {
+    this.signedIn();
+    if (this.checkout.phase !== 'idle') return refuse('checkout_busy');
+    const dining = diningOf(diningRaw);
+    const name = cleanOrderName(nameRaw);
+    if (diningRaw !== undefined && diningRaw !== null && !dining) return refuse('invalid_args');
+    const q = this.orderQuestions();
+    const next: OrderFacts = { ...this.orderFacts(), dining: dining ?? this.orderDining, name: name ?? this.orderName };
+    const still = missingOrderDetails(q, next);
+    if (still?.dining) return refuse('invalid_args', ORDER_TEXT.diningQuestion);
+    if (still?.name) return refuse('invalid_args', ORDER_TEXT.nameRequired);
+    this.orderDining = next.dining;
+    this.orderName = next.name;
+    const ask = this.orderAsk;
+    this.orderAsk = null;
+    if (ask === 'open' && this.orderStart) {
+      const start = this.orderStart;
+      this.orderStart = null;
+      return this.add(start.productId, start.qty);
+    }
+    if (ask === 'payment') return this.checkoutStart();
+    return undefined;
+  }
+
+  /** The sheet closed unanswered: the held first item dropped; the opening questions not again for this order (the payment asks). */
+  private dismissOrderDetails() {
+    this.signedIn();
+    const ask = this.orderAsk;
+    this.orderAsk = null;
+    if (ask === 'open') this.orderStart = null;
+    if (ask === null) this.diningFirstDismissedFor = this.basketId;
+    return undefined;
+  }
+
+  /** "פרטי הזמנה" from the strip on the sell screen: the configured questions, the answers shown. */
+  private editOrderDetails() {
+    this.signedIn();
+    if (this.checkout.phase !== 'idle') return refuse('checkout_busy');
+    if (!anyQuestion(this.orderQuestions())) return refuse('invalid_args');
+    this.orderAsk = 'edit';
+    return undefined;
+  }
+
+  /** What the screens show of the order's details, and the sheet the engine asks for now. */
+  private orderView(): TillState['order'] {
+    const q = this.orderQuestions();
+    const strip = orderDetailsStrip(this.orderDining, this.orderName) || null;
+    if (!anyQuestion(q) && !strip) return undefined;
+    let ask: OrderAsk | null = null;
+    const user = this.cashier && !this.locked;
+    if (user && this.checkout.phase === 'idle') {
+      if (this.orderAsk === 'edit') ask = { purpose: 'edit', dining: q.dining, name: q.name, confirmLabel: ORDER_TEXT.save };
+      else if (this.orderAsk === 'open' || this.orderAsk === 'payment') {
+        const m = this.orderDetailsMissing();
+        if (m) ask = { purpose: this.orderAsk, dining: m.dining, name: m.name, confirmLabel: this.orderAsk === 'open' ? ORDER_TEXT.start : ORDER_TEXT.continue };
+      } else if (!this.refundMode && !this.refundChooser && this.diningFirstDismissedFor !== this.basketId && (this.svc.ledger.currentShift() || this.shiftsHidden())) {
+        const due = startDetailsDue(q, this.orderFacts());
+        if (due) ask = { purpose: 'start', dining: due.dining, name: due.name, confirmLabel: ORDER_TEXT.start };
+      }
+    }
+    return { dining: this.orderDining, name: this.orderName, strip, configured: anyQuestion(q), ask };
   }
 
   private add(productId: string, qty: number) {
@@ -1370,6 +1617,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       if (voucher) return refuse('refund_refused', voucher);
       this.putRefund(p.id, qty, p.name);
       return undefined;
+    }
+    // "בפתיחת הזמנה": the first item of a new quick order waits for the order's details.
+    if (this.cart.length === 0 && !this.orderStart && this.orderQuestions().atOpen && this.orderDetailsMissing()) {
+      this.orderStart = { productId: p.id, qty };
+      this.orderAsk = 'open';
+      return { orderDetails: true };
     }
     const settings = this.svc.settingsMap();
     const user = this.signedIn();
@@ -2161,6 +2414,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.cart.length === 0) refuse('cart_empty');
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
     if (!this.svc.ledger.currentShift() && !this.shiftsHidden()) refuse('shift_not_open', WORDS.noShiftBlocksSale);
+    // "פרטי הזמנה": an order reaching the payment without them is asked first, whatever "מתי לשאול" says.
+    if (this.orderDetailsMissing()) {
+      this.orderAsk = 'payment';
+      return { orderDetails: true };
+    }
     const p = this.priced();
     if (p.gone.length > 0) {
       // What the catalog no longer sells leaves the cart; the cashier looks again.
@@ -2750,6 +3008,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /** The card approved: a single document finalises as before; a basket's (or a payout's) documents together. */
   private finalizeAfterCard(done: DocDraft) {
+    // A card approved while the terminal works deferred: one more for the card company ("ממתינות לאישור").
+    this.transmission.noteApprovedCard();
     if (this.checkout.basket || done.basketId) {
       const docs = done.basketId ? this.svc.ledger.basketDocs(done.basketId) : [done];
       const b = this.checkout.basket;
@@ -2769,7 +3029,89 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   }
 
   /** The card did not go through (certainly not charged): back to the tenders, the words shown. */
-  private cardFailed(message: string) {
+  /* ------------------------------------------------------------- "חסום / אזל" */
+
+  /**
+   * A block or a "sold out" to the cloud: checked against its sheet, then ITEM_BLOCK — ITEM_BLOCK_WIDE beyond the till's own
+   * reach — the operator alone or a manager's code (the approver is the cloud's `X-Pos-User-Id`). Refused for wanting the wider
+   * right after all (`block_scope_not_allowed`, `needs`): asked once more for it.
+   */
+  private blockItem(a: Record<string, unknown>) {
+    const plan = this.itemBlocks.plan(a);
+    const run = (wide: boolean): unknown =>
+      this.gate(
+        wide ? PERM.ITEM_BLOCK_WIDE : PERM.ITEM_BLOCK,
+        async (approver) => {
+          const r = await this.itemBlocks.send(plan.request, approver?.id ?? null);
+          if (!r.ok && r.needsWide && !wide) return run(true);
+          this.toast(r.message, r.ok ? 'ok' : 'error');
+          return r.ok ? { ok: true, message: r.message } : refuse('permission_denied', r.message);
+        },
+        { title: wide ? IB_TEXT.approveWide : IB_TEXT.approve },
+      );
+    return run(plan.wide);
+  }
+
+  /** "שחרר" / "שחרר הכל": one approval for them all (ITEM_BLOCK_WIDE when any of them reaches beyond the till). */
+  private releaseBlocks(idsRaw: unknown) {
+    this.signedIn();
+    const ids = Array.isArray(idsRaw) ? idsRaw.filter((x): x is string => typeof x === 'string' && !!x) : [];
+    if (ids.length === 0) return refuse('invalid_args');
+    const wide = this.itemBlocks.releaseNeedsWide(ids);
+    return this.gate(
+      wide ? PERM.ITEM_BLOCK_WIDE : PERM.ITEM_BLOCK,
+      async (approver) => {
+        const r = await this.itemBlocks.release(ids, approver?.id ?? null);
+        this.toast(r.message, r.ok ? 'ok' : 'error');
+        return r.ok ? r : refuse('permission_denied', r.message);
+      },
+      { title: wide ? IB_TEXT.approveWide : IB_TEXT.approve },
+    );
+  }
+
+  /* ------------------------------------------------------------- "פעולות אשראי" */
+
+  /** The screen opened: its view in the state from now on; the terminal read, the batch, the history (in the background). */
+  private transmissionOpen() {
+    this.signedIn();
+    this.transmissionShown = true;
+    void this.transmission.open().catch((e: unknown) => this.log(`transmission screen: ${String(e)}`));
+    return undefined;
+  }
+
+  /** A terminal action approved (TRANSMIT): it runs in the background, its answer on the screen and as a toast. */
+  private transmissionAction(run: () => Promise<string>) {
+    if (this.paying()) return refuse('checkout_busy', TX_TEXT.busy);
+    void run()
+      .then((text) => this.later(() => this.toast(text, 'info')))
+      .catch((e: unknown) => this.log(`transmission: ${String(e)}`));
+    return { started: true };
+  }
+
+  /** The deferred mode's switch: on — "להפעיל מצב לא מקוון?" first; then TRANSMIT (a manager's code where the role asks one). */
+  private transmissionSwitch(on: boolean) {
+    this.signedIn();
+    const go = () => this.gate(PERM.TRANSMIT, () => this.transmissionAction(() => this.transmission.switchOffline(on)), { body: TX_TEXT.reasonOffline });
+    if (!on) return go();
+    this.openDialog({
+      kind: 'confirm',
+      title: TX_TEXT.confirmTitle,
+      body: TX_TEXT.confirmBody,
+      fields: [],
+      actions: [
+        { id: 'approve', label: TX_TEXT.turnOn, primary: true },
+        { id: 'cancel', label: TX_TEXT.cancel },
+      ],
+      code: null,
+      resume: () => go(),
+    });
+    return { dialogId: this.pending!.dialog.id };
+  }
+
+  private cardFailed(message0: string) {
+    // §13: a card the terminal refused while deferred, named by its kind ("כרטיס דביט — לא נתמך במצב לא מקוון…").
+    const refused = offlineRefusedCard(message0, this.transmission.offlineOn(), true);
+    const message = refused ? REFUSED_OFFLINE_TEXT[refused] : message0;
     this.checkout.legs = this.checkout.legs.filter((l) => !(l.method === 'card' && l.status === 'pending'));
     this.checkout.docId = null;
     this.checkout.docIds = [];
@@ -2957,10 +3299,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The vouchers confirmed with the document (it names them too), then nothing held any more.
     this.vouchers.settle(doc);
     this.vouchers.clear();
+    // The order's name and take-away / eat-in: on its kitchen tickets (the headline, the band), never on the receipt.
+    const order = { orderName: this.orderName, dining: this.orderDining };
     this.clearBasket();
     void this.svc.sync.flush();
     // "בונים במכירה" and the KDS (main/kitchen): queued durably before the receipt, never holding the sale.
-    const unrouted = this.svc.tillKitchen(doc);
+    const unrouted = this.svc.tillKitchen(doc, order);
     c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     this.kickDrawer(doc);
     this.printOrAsk(doc);
@@ -2986,11 +3330,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.cardStatus = null;
     c.cardError = null;
     if (c.basket) c.basket.handedBackAgorot = o.handBack;
+    const order = { orderName: this.orderName, dining: this.orderDining };
     this.clearBasket();
     void this.svc.sync.flush();
     const sale = docs.find((d) => isSaleType(d.documentType));
     // "בונים במכירה" and the KDS (main/kitchen) for what the basket sold — never for its credit notes.
-    const unrouted = sale ? this.svc.tillKitchen(sale) : [];
+    const unrouted = sale ? this.svc.tillKitchen(sale, order) : [];
     c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     // Cash taken, or handed back (a return, change): the drawer opens.
     const cashMoved = docs.some((d) => legsOf(d).some((l) => l.method === 'cash'));
@@ -3184,9 +3529,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The lines' money as rung up (gross less each line's own discount): what the list shows.
     const total = p.lines.reduce((s, l) => s + lineGross(l) - (l.discountAgorot ?? 0), 0);
     const op = this.operator();
-    const id = this.held.hold(lines, { id: op.id, name: op.name }, holdLabelOf(labelRaw), total);
+    // The order's name names the held sale when none was typed (Android hold(cashierId, cart.orderName)).
+    const id = this.held.hold(lines, { id: op.id, name: op.name }, holdLabelOf(labelRaw) ?? this.orderName, total);
     if (!id) return refuse('invalid_args', HELD_TEXT.holdFailed);
-    if (this.cartDiscount || this.discountApprover) this.parkedExtras.set(id, { discount: this.cartDiscount, approver: this.discountApprover });
+    if (this.cartDiscount || this.discountApprover || this.orderDining || this.orderName) {
+      this.parkedExtras.set(id, { discount: this.cartDiscount, approver: this.discountApprover, dining: this.orderDining, orderName: this.orderName });
+    }
     this.clearBasket();
     return { id };
   }
@@ -3219,6 +3567,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (extras) {
       this.cartDiscount = extras.discount;
       this.discountApprover = extras.approver;
+      this.orderDining = extras.dining ?? null;
+      this.orderName = extras.orderName ?? null;
     }
     return undefined;
   }
@@ -3891,6 +4241,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         kitchenWarning: c.phase === 'done' ? c.kitchenWarning : null,
         cardStatus: c.cardStatus,
         cardError: c.phase === 'card_unknown' ? (c.cardError ?? WORDS.cardPending) : c.cardError,
+        // §13: while the terminal works deferred — "⚠ מצב לא מקוון: כרטיסי תייר (חו״ל), כרטיסי דיירקט וכרטיסי דביט לא יעברו…".
+        ...(() => {
+          const notice = c.phase === 'tender' || c.phase === 'card_waiting' ? this.transmission.notices().cashier : null;
+          return notice ? { deferredNotice: notice } : {};
+        })(),
         cardUnknown: c.phase === 'card_unknown',
         ...(basket ? { basket } : {}),
         ...(c.phase === 'done' && c.docIds.length > 1
@@ -3953,6 +4308,19 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       },
       oth: { enabled: oth.enabled, requiresManager: oth.requiresManager, reasons: oth.reasons },
       notice: user && !this.locked ? this.autoCloseNotice() : null,
+      ...(() => {
+        const order = this.orderView();
+        return order ? { order } : {};
+      })(),
+      ...(this.transmissionShown && user ? { transmission: this.transmission.view() } : {}),
+      ...(() => {
+        const q = user ? this.printQueue.view() : undefined;
+        return q ? { printQueue: q } : {};
+      })(),
+      ...(() => {
+        const banner = user ? this.transmission.banner() : null;
+        return banner ? { terminalOffline: banner } : {};
+      })(),
     };
     return state;
   }

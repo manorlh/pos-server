@@ -711,6 +711,23 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
             <Btn m={m} onClick={() => act({ type: 'printerTest' })}>
               הדפסת בדיקה
             </Btn>
+            {info.receipts ? (
+              // "מדפסת לקבלות ולמסמכים": another till's printer the cloud offers this one (bill-print-other-till).
+              <div className="flex flex-col gap-1">
+                <div className="font-semibold">מדפסת לקבלות ולמסמכים</div>
+                {info.receipts.scope ? <div className="text-xs">{info.receipts.scope}</div> : null}
+                <div className="flex flex-wrap items-center gap-2">
+                  {info.receipts.options.map((o) => (
+                    <Btn key={o.id} m={m} onClick={() => act({ type: 'setReceiptPrinter', id: o.id })}>
+                      {info.receipts!.choice === o.id ? `✓ ${o.label}` : o.label}
+                    </Btn>
+                  ))}
+                  <Btn m={m} onClick={() => act({ type: 'setReceiptPrinter', id: null })}>
+                    {info.receipts.choice === null ? '✓ ' : ''}חזור להגדרת הענן
+                  </Btn>
+                </div>
+              </div>
+            ) : null}
           </Panel>
           <Panel m={m} title="מסופון (בדיקה בלבד — בלי חיוב)">
             <div>

@@ -1212,3 +1212,147 @@
   font-size: 1.6em;
   font-weight: 700;
 }
+
+/* "פרטי הזמנה" (OrderDetailsSheet): two big choices, then the name; the strip on the cart. */
+.t-order-dining {
+  display: flex;
+  gap: 12px;
+  margin: 10px 0;
+}
+.t-order-choice {
+  flex: 1;
+  min-height: 120px;
+  border: 0;
+  border-radius: 18px;
+  background: #eef0f3;
+  color: #111318;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.t-order-choice-on {
+  background: #1f6feb;
+  color: #fff;
+}
+.t-order-icon {
+  font-size: 30px;
+}
+.t-order-answered {
+  text-align: center;
+  font-weight: 700;
+  color: #1f6feb;
+  margin: 0 0 8px;
+}
+.t-order-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: #e8f0fe;
+  color: #111318;
+  font: inherit;
+  font-weight: 700;
+  padding: 8px 12px;
+  margin: 3px 0;
+  cursor: pointer;
+}
+
+/* §13 (nayax-deferred-all): the terminal works deferred — amber on the payment screen and the sell screen. */
+.t-deferred {
+  background: #ff9500;
+  color: #fff;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+.t-deferred-banner {
+  background: #fff4e0;
+  border-color: #ff9500;
+}
+.t-tx-card-on {
+  background: #fdecea;
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+.t-tx-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.t-ok {
+  color: #2e7d32;
+  font-weight: 700;
+}
+.t-bad {
+  color: #c62828;
+}
+
+/* "חסומים כעת" / "חסום / אזל" (BlocksScreen). */
+.t-block-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.t-block-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 10px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+}
+.t-block-pill-blocked {
+  background: #dc2626;
+}
+.t-block-pill-soldout {
+  background: #b45309;
+}
+.t-btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.t-block-sheet {
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.t-block-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 10px 0;
+}
+.t-block-form legend {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.t-picker {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+/* "בון לא הודפס במדפסת מטבח" — the red strip, a button; a redirect's amber chip; a dialog's box. */
+.t-banner-button {
+  display: block;
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.t-redirect {
+  background: #f9a825;
+  color: #000;
+}
+.t-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}

@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -54,6 +54,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
       // "עודף חייב ללקוח" (cash-paylink §11.8): only while the cloud routes such debts to this till.
       { label: 'עודף חייב ללקוח', to: 'owed', when: (s) => (s.owed?.items.length ?? 0) > 0 },
       { key: 'refund', label: 'זיכוי', to: 'refund', perm: 'REFUND' },
+      // "פעולות אשראי" (TransmissionScreen.kt): the transmission and the terminal's deferred mode — opened by anyone, its actions TRANSMIT.
+      { key: 'transmission', label: 'פעולות אשראי', to: 'transmission' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },
       { key: 'kiosk_orders', label: 'הזמנות קיוסק לתשלום' },
@@ -76,6 +78,10 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
     title: 'ניהול',
     // "הגדרות" hidden stays reachable: the manager's corner → "ניהול הקיוסק" → the technician (the Android safety rule).
     rows: [
+      // "חסומים כעת" (ItemBlocksUi.kt): the blocks in force, "חסום פריט" — the sheet's options are the operator's.
+      { key: 'blocks_now', label: 'חסומים כעת', to: 'blocks' },
+      // "תור הדפסה" (PrintQueueScreen.kt): the kitchen tickets that need a person, the redirects.
+      { key: 'print_queue', label: 'תור הדפסה', to: 'printQueue' },
       { key: 'screen_edit', label: 'עריכת מסך' },
       // "עובדים מחוברים" (exclusive-login-v2 §8א): where the rule is on; a manager's code opens it for anyone else.
       { key: 'signed_in_users', label: 'עובדים מחוברים', to: 'users', when: (s) => (s.users ? s.users.offered : undefined) },

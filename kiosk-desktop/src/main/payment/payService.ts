@@ -24,6 +24,7 @@ import { blocksCard, cancelAction, cardBlocked, lookupVoidMeta, type CardAttempt
 import { isNoCard, mayCheckTerminal, terminalCheckDue, terminalConfigState, terminalState, type TerminalState } from '../../core/kioskHealth';
 import type { Db } from '../db/sqlite';
 import type { ApprovedCard, PaymentProvider, Resolution, TransmitResult } from './provider';
+import type { Authorization, OfflineModeStatus } from '../../core/till/transmission';
 
 export type ChargeOutcome =
   | { kind: 'approved'; card: ApprovedCard; recovered: boolean }
@@ -395,6 +396,49 @@ export class PayService {
     this.monitor.state = terminalState(this.monitor.config, this.monitor.failures);
     if (before !== this.monitor.state) this.log(`terminal: ${before} → ${this.monitor.state}`);
     this.emit();
+  }
+
+  /** A terminal here that sends the day's batch ("שדר עסקאות עכשיו"). */
+  get canTransmit(): boolean {
+    return !!this.provider?.transmit && !this.noCard;
+  }
+
+  /** The terminal has a deferred mode to read and switch (Nayax); SynqPay and none — no. */
+  get deferredSupported(): boolean {
+    return !!this.provider?.offlineMode && !this.noCard;
+  }
+
+  /**
+   * The terminal may be asked about its deferred mode / batch now: no card on it, none answered in the last 45 s (its result
+   * still on the terminal's screen, GatedEmvDevice.CARD_QUIET_MS) — unless [forced] (a person opened the screen).
+   */
+  terminalQuiet(forced = false): boolean {
+    if (this.inFlight) return false;
+    if (forced) return true;
+    return this.lastCardAnswerAtMs === null || Date.now() - this.lastCardAnswerAtMs >= 45_000;
+  }
+
+  async offlineMode(forced = false): Promise<{ status: OfflineModeStatus | null; error: string | null } | null> {
+    if (!this.provider?.offlineMode || this.noCard) return null;
+    if (!this.terminalQuiet(forced)) return { status: null, error: 'busy' };
+    return this.provider.offlineMode();
+  }
+
+  async setOfflineMode(on: boolean): Promise<{ status: OfflineModeStatus | null; error: string | null; authorization: Authorization | null } | null> {
+    if (!this.provider?.setOfflineMode || this.noCard) return null;
+    if (this.inFlight) return { status: null, error: 'busy', authorization: null };
+    return this.provider.setOfflineMode(on);
+  }
+
+  async authorizePending(): Promise<Authorization | null | 'busy'> {
+    if (!this.provider?.authorizePending || this.noCard) return null;
+    if (this.inFlight) return 'busy';
+    return this.provider.authorizePending();
+  }
+
+  async batchReport(forced = false): Promise<{ count: number | null; amountAgorot: number | null } | null> {
+    if (!this.provider?.batchReport || this.noCard || !this.terminalQuiet(forced)) return null;
+    return this.provider.batchReport();
   }
 
   /** The day's batch (doPeriodic), never with a card on the terminal. */

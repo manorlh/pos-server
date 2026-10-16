@@ -5,6 +5,8 @@
 @source '../../../client/src/components/dashboard/kiosks/preview-screens.tsx';
 @source '../../../client/src/components/dashboard/kiosks/preview-entry.tsx';
 @source '../../../client/src/kiosk-shared';
+/* "מסך לקוח" on the till's second screen (renderer/display): the dashboard's own customer screen. */
+@source '../../../client/src/components/customer-display-web';
 
 html,
 body {

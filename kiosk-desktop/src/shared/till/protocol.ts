@@ -145,6 +145,31 @@ export const TILL_OPS = [
   'checkout.removeVoucher',
   'checkout.finishTest',
   'sell.voucher',
+  // "פרטי הזמנה" (core/till/orderDetails.ts): "לקחת / לשבת" and the customer's name given; the sheet closed; the strip's edit.
+  'order.details',
+  'order.dismiss',
+  'order.edit',
+  // "פעולות אשראי" (main/till/tillTransmission.ts): the screen opened (its view in the state), "שדר עסקאות עכשיו", the deferred
+  // mode's switch and "אשר עסקאות ממתינות" (TRANSMIT), the terminal read again, the history's next page.
+  'transmission.open',
+  'transmission.now',
+  'transmission.offline',
+  'transmission.authorize',
+  'transmission.read',
+  'transmission.more',
+  // "חסומים כעת" / "חסום / אזל" (main/till/tillItemBlocks.ts): the blocks in force, an item's sheet, a block, a release.
+  'blocks.list',
+  'blocks.sheet',
+  'blocks.block',
+  'blocks.release',
+  // "תור הדפסה" / "מדפסת חלופית" (main/till/tillPrintQueue.ts): the tickets that need a person, where one may go, "הדפס שוב",
+  // "העבר למדפסת אחרת", "סמן כטופל" (a manager's code), "בטל הפניה".
+  'printQueue.list',
+  'printQueue.choices',
+  'printQueue.retry',
+  'printQueue.move',
+  'printQueue.handled',
+  'printQueue.endRedirect',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -206,6 +231,18 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'checkout.removeVoucher',
   'checkout.finishTest',
   'sell.voucher',
+  'order.details',
+  'order.dismiss',
+  'order.edit',
+  'transmission.now',
+  'transmission.offline',
+  'transmission.authorize',
+  'blocks.block',
+  'blocks.release',
+  'printQueue.retry',
+  'printQueue.move',
+  'printQueue.handled',
+  'printQueue.endRedirect',
 ]);
 
 export interface OpArgs {
@@ -301,6 +338,36 @@ export interface OpArgs {
   'checkout.finishTest': Record<string, never>;
   /** A voucher scanned on the sell screen: the payment opens and the voucher is applied there. */
   'sell.voucher': { code: string };
+  /** The order's details: each given one is kept (a missing one that is asked is refused). */
+  'order.details': { dining?: 'take_away' | 'eat_in' | null; name?: string | null };
+  'order.dismiss': Record<string, never>;
+  'order.edit': Record<string, never>;
+  'transmission.open': Record<string, never>;
+  'transmission.now': Record<string, never>;
+  'transmission.offline': { on: boolean };
+  'transmission.authorize': Record<string, never>;
+  'transmission.read': Record<string, never>;
+  'transmission.more': Record<string, never>;
+  'blocks.list': Record<string, never>;
+  'blocks.sheet': { productId?: string; categoryId?: string };
+  'blocks.block': {
+    productId?: string | null;
+    categoryId?: string | null;
+    kind: 'sold_out' | 'blocked';
+    channels: Array<'pos' | 'kiosk' | 'online' | 'menu'>;
+    level: 'shop' | 'area' | 'machine' | 'event';
+    levelId?: string | null;
+    kioskDisplay?: 'hide' | 'grey' | null;
+    note?: string | null;
+    duration: { mode: 'minutes'; minutes: number } | { mode: 'time'; at: string } | { mode: 'end_of_day' } | { mode: 'none' };
+  };
+  'blocks.release': { ids: string[] };
+  'printQueue.list': Record<string, never>;
+  'printQueue.choices': { jobId: string };
+  'printQueue.retry': { jobId: string };
+  'printQueue.move': { jobId: string; toId: string; alsoNext?: boolean };
+  'printQueue.handled': { jobId: string };
+  'printQueue.endRedirect': { fromId: string };
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -607,6 +674,8 @@ export interface CheckoutState {
   cardError?: string | null;
   /** The card's answer is not known (never charged twice): tenders wait for "בדוק שוב" / a manager's "סמן כלא אושר". */
   cardUnknown?: boolean;
+  /** §13 (nayax-deferred-all): the terminal works deferred — the amber warning above the tenders. Absent: online. */
+  deferredNotice?: string | null;
   /** A basket with returns: its figures and its step. Absent: a plain sale. */
   basket?: CheckoutBasket | null;
   /** Every document the payment wrote (a basket: the sale and its credit notes), as printed. */
@@ -663,7 +732,8 @@ export interface HealthState {
 export interface DialogField {
   name: string;
   label: string;
-  kind: 'pin' | 'text';
+  /** `check`: a box, unticked; its answer is "true" / "false" with whichever action is chosen. */
+  kind: 'pin' | 'text' | 'check';
 }
 
 export interface EngineDialog {
@@ -722,6 +792,59 @@ export interface TillState {
   users?: UsersState;
   /** "עודף חייב ללקוח" / "זיכוי מוחזק" the cloud routes to this till (main/till/tillCash.ts), "שולם ללקוח" on each. */
   owed?: { items: Array<{ id: string; line: string; amountAgorot: number }> };
+  /**
+   * "פרטי הזמנה" of a quick order (core/till/orderDetails.ts — `askEatInTakeAway`, `askOrderName`, `orderDetailsAt`): the
+   * answers, the strip's words ("לקחת  ·  דני"), and the sheet the engine asks for now. Absent: none asked, none given.
+   */
+  /** "פעולות אשראי" once opened (main/till/tillTransmission.ts TransmissionView). */
+  transmission?: TransmissionState;
+  /** The sell screen's amber banner: the terminal works deferred, or deferred sales wait for the card company. */
+  terminalOffline?: { text: string; tone: 'amber' };
+  /** "בון לא הודפס במדפסת מטבח": the red strip, how many, and the redirects in force ("«בר» נשלחת ל«מטבח» עד 14:20"). */
+  printQueue?: { banner: string | null; count: number; redirects: Array<{ fromId: string; text: string }> };
+  order?: {
+    dining: 'take_away' | 'eat_in' | null;
+    name: string | null;
+    strip: string | null;
+    /** Some question is switched on (the strip's ✎ opens them). */
+    configured: boolean;
+    ask: OrderAsk | null;
+  };
+}
+
+/** "פעולות אשראי" as the screen shows it. */
+export interface TransmissionState {
+  supported: boolean;
+  deferredSupported: boolean;
+  offline: {
+    reading: boolean;
+    failed: boolean;
+    status: { allowed: boolean; working: boolean; readAt: number } | null;
+    stateLine: string | null;
+    limitsLine: string | null;
+    switching: boolean;
+  };
+  pendingLine: string | null;
+  neverTransmitted: boolean;
+  lastFailed: string | null;
+  running: boolean;
+  message: string | null;
+  history: {
+    rows: Array<{ id: string; at: string | null; status: string; tone: 'ok' | 'error' | 'muted'; trigger: string; facts: string[]; detail: string | null; unsynced: boolean }>;
+    total: number | null;
+    error: string | null;
+    loading: boolean;
+    more: boolean;
+  };
+}
+
+/** The order's details sheet: why it is up, what it asks (mandatory), its button's words. */
+export interface OrderAsk {
+  /** `start` — a new order opens with them; `open` — its first item waits; `payment` — before paying; `edit` — the strip's. */
+  purpose: 'start' | 'open' | 'payment' | 'edit';
+  dining: boolean;
+  name: boolean;
+  confirmLabel: string;
 }
 
 export interface SignedInSession {

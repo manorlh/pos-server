@@ -5,6 +5,10 @@
  */
 
 export const T = {
+  /** The deferred banner's way to "פעולות אשראי". */
+  transmissionOpen: 'פעולות אשראי',
+  /** "פרטי הזמנה" on the cart's strip before any answer (Android order_details_title). */
+  orderDetails: 'פרטי הזמנה',
   appName: 'R2M POS',
   demoBadge: 'מצב הדגמה — שום דבר כאן אינו מסמך אמיתי',
   sell: 'מכירה',

@@ -24,6 +24,8 @@ export interface CartActions {
   refund?(): void;
   hold?(): void;
   held?(): void;
+  /** "פרטי הזמנה": the strip's ✎ (the configured questions, the answers shown). */
+  orderEdit?(): void;
 }
 
 export interface CartView {
@@ -31,6 +33,8 @@ export interface CartView {
   hidden?: readonly string[];
   othEnabled?: boolean;
   heldCount?: number;
+  /** "פרטי הזמנה": the answers in words ("לקחת  ·  דני"), and whether any question is on. */
+  order?: { strip: string | null; configured: boolean } | null;
 }
 
 const CHIPS = [5, 10, 20] as const;
@@ -53,6 +57,13 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
           {sell.itemCount} {T.items}
         </span>
       </header>
+      {view.order && (view.order.strip || (view.order.configured && !empty)) ? (
+        // The quick order's details (Android OrderDetailsStrip): a tap changes them.
+        <button type="button" className="t-order-strip" onClick={() => actions.orderEdit?.()} disabled={!actions.orderEdit || !view.order.configured}>
+          <span>{view.order.strip ?? T.orderDetails}</span>
+          {view.order.configured ? <span aria-hidden="true">✎</span> : null}
+        </button>
+      ) : null}
       {sell.refundMode ? (
         <div className="t-warn t-small" role="note">
           {T.refundModeBanner}

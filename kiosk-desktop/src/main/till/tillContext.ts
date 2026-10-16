@@ -60,4 +60,6 @@ export interface TillContext {
   later<T>(fn: () => Promise<T> | T): Promise<T>;
   /** A payment is on (the checkout taking tenders or waiting on the card, or a card at the terminal). */
   paying(): boolean;
+  /** A question is on the screen now (a new one would take its place): a module's own question waits for it. */
+  dialogOpen?(): boolean;
 }

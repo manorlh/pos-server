@@ -98,6 +98,8 @@ export default defineConfig(({ mode }) => ({
       input: {
         index: path.join(here, 'src/renderer/index.html'),
         print: path.join(here, 'src/renderer/print.html'),
+        // "מסך לקוח": the till's second screen (main/shell/customerDisplayWindow.ts).
+        display: path.join(here, 'src/renderer/display.html'),
         // "גשר לדפדפן": the bridge's tray window (main/bridge/electron.ts).
         bridge: path.join(here, 'src/renderer/bridge.html'),
       },

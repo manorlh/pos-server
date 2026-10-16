@@ -10,6 +10,11 @@ declare global {
     kiosk?: KioskBridge;
     r2m?: ShellBridge;
     r2mBridge?: BridgeWindowApi;
+    /** "מסך לקוח" — the till's second screen (renderer/display). */
+    kioskDisplay?: {
+      onState(fn: (frame: unknown) => void): () => void;
+      ready(): void;
+    };
     kioskPrint?: {
       onRender(fn: (req: { id: number; doc: unknown; widthDots: number }) => void): void;
       result(r: { id: number; width?: number; height?: number; rgba?: Uint8Array; error?: string }): void;

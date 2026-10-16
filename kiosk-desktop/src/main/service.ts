@@ -34,9 +34,13 @@ import { cashSlipDoc, payAtTillSlipDoc } from '../core/printDocs';
 import { formatShekelSign, ltr } from '../core/money';
 import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cash/tx';
 import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
-import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
+import { cardPrincipalAgorot, legsOf, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { bonDoc, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput } from '../core/printDocs';
+import { LOCAL_DESTINATION, REMOTE_DOC_TEXT, TILL_CHOICE_ASK, remoteDestinationsOf, remoteDocSettingsOf, type PrintedPage } from '../core/till/remoteDocuments';
+import { rowOf as transmissionRowOf, type TransmissionRow } from '../core/till/transmission';
+import { DEFAULT_PRINTER_KEY, TILL_PRINTER_KEY, type RemoteDocumentsRouter } from './till/tillRemotePrint';
+import { isCreditType as isCreditDoc } from '../core/sale';
+import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput } from '../core/printDocs';
 import {
   appendLog,
   bonText,
@@ -121,8 +125,8 @@ import type { PinpadIdentity } from '../core/pinpadRelocation';
 import { PROVIDERS } from './payment/registry';
 import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalSynqKey, type PairingUpload } from './payment/synqpay/pairing';
 import type { SynqPayProvider } from './payment/synqpay/provider';
-import type { PaymentProvider, ProviderContext, ProviderFactory } from './payment/provider';
-import { PrintQueue, type PageRenderer } from './printer/printQueue';
+import type { PaymentProvider, ProviderContext, ProviderFactory, TransmitResult } from './payment/provider';
+import { PrintQueue, type JobKind, type PageRenderer } from './printer/printQueue';
 import { DefaultTransport, type PrinterTarget, type Transport } from './printer/transports';
 import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
 import { allocatePickup, OrderStore } from './kiosk/orders';
@@ -400,6 +404,8 @@ export class KioskService extends EventEmitter {
   private shopZPartBusy = false;
   /** Role modules' own heartbeat blocks (the cash host's `cash`, contract §11.9). */
   private readonly heartbeatParts = new Map<string, () => unknown>();
+  /** "הדפסה בקופה אחרת" (main/till/tillRemotePrint.ts): where the till's pages go — null (a kiosk, no till): here, as before. */
+  private remoteDocs: RemoteDocumentsRouter | null = null;
 
   constructor(private readonly opts: ServiceOptions) {
     super();
@@ -3043,6 +3049,35 @@ export class KioskService extends EventEmitter {
     return true;
   }
 
+  /** The till's router of its pages to another till's printer (main/till/tillRemotePrint.ts); null — every page prints here. */
+  setRemoteDocuments(r: RemoteDocumentsRouter | null): void {
+    this.remoteDocs = r;
+  }
+
+  /** This device has a receipt printer of its own set (a Windows queue or a network printer) — "להדפיס כאן" is possible. */
+  hasOwnReceiptPrinter(): boolean {
+    const t = this.printerResolution().target;
+    if (t.transport === 'tcp') return !!t.host;
+    if (t.transport === 'spooler') return !!t.queueName;
+    return false;
+  }
+
+  /**
+   * A page of the till (a receipt, a copy, a credit note, X / Z): where `remotePrintDocuments` and the cloud's printers send
+   * it (another till's printer, P:/specs/bill-print-other-till.md), else here, as before. Returns the local print job's id,
+   * or null when it went elsewhere (said on the screen) or was asked about.
+   */
+  private pagePrint(kind: JobKind, refId: string | null, doc: PrintDoc, page: PrintedPage): string | null {
+    const local = () => this.printQueue.enqueue(kind, refId, doc);
+    if (!this.remoteDocs) return local();
+    try {
+      return this.remoteDocs.print(page, doc, local);
+    } catch (e) {
+      this.log(`remote print: ${String(e)} — printed here`);
+      return local();
+    }
+  }
+
   /** A non-fiscal page drawn by the browser's role (a bon, a slip) — never a receipt (those come from the ledger). */
   printPage(kind: 'bon' | 'slip', refId: string | null, doc: PrintDoc): string {
     return this.printQueue.enqueue(kind, refId, doc);
@@ -3106,7 +3141,19 @@ export class KioskService extends EventEmitter {
    */
   printDocReceipt(doc: DocDraft, copy: boolean, merchantCopy = false): string | null {
     if (!settled(doc)) return null;
-    return this.printQueue.enqueue('receipt', merchantCopy ? `${doc.id}:merchant` : doc.id, this.receiptDocFor(doc, copy || merchantCopy, null, merchantCopy));
+    const isCopy = copy || merchantCopy;
+    const number = formatDocNumber(doc.prefix, String(doc.number));
+    const cash = legsOf(doc)
+      .filter((l) => l.method === 'cash')
+      .reduce((sum, l) => sum + l.amountAgorot, 0);
+    const credit = isCreditDoc(doc.documentType);
+    return this.pagePrint('receipt', merchantCopy ? `${doc.id}:merchant` : doc.id, this.receiptDocFor(doc, isCopy, null, merchantCopy), {
+      kind: credit ? 'credit' : 'receipt',
+      number,
+      copy: isCopy,
+      title: `${documentTitleFor(doc.documentType)} ${number}`.trim(),
+      ...(credit || isCopy ? {} : { saleId: doc.id, cashAgorot: cash > 0 ? cash : null, documentType: doc.documentType, documentNumber: doc.number }),
+    });
   }
 
   private receiptDocFor(doc: DocDraft, copy: boolean, orderNumber: string | null, merchantCopy = false): PrintDoc {
@@ -3363,7 +3410,7 @@ export class KioskService extends EventEmitter {
    * its KDS release when the shop runs the KDS — queued durably, never holding the cashier. Not for a kiosk's sale (its
    * bon is `printBon`). The lines no kitchen printer takes, by name.
    */
-  tillKitchen(doc: DocDraft): string[] {
+  tillKitchen(doc: DocDraft, order: { orderName?: string | null; dining?: 'take_away' | 'eat_in' | null } = {}): string[] {
     try {
       const r = tillSaleToKitchen(
         { kitchen: this.kitchen, kds: this.kitchenKds, params: this.cloud.parameters(), categoryOf: this.productCategoryOf(), log: this.log },
@@ -3374,6 +3421,9 @@ export class KioskService extends EventEmitter {
           lines: doc.lines,
           cashierName: doc.cashierName || null,
           createdAt: doc.createdAt,
+          // "פרטי הזמנה": the name as the ticket's headline, take-away / eat-in as its band.
+          orderName: order.orderName ?? null,
+          dining: order.dining ?? null,
         },
       );
       return r.unrouted;
@@ -3438,13 +3488,15 @@ export class KioskService extends EventEmitter {
    */
   /** "דוח X סניפי" (core/till/shopX.ts): the cloud's paper on the receipt printer, as the till's X. */
   printShopX(doc: Parameters<typeof shopXPrintDoc>[0], refId: string): string {
-    return this.printQueue.enqueue('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null));
+    return (
+      this.pagePrint('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null), { kind: 'report', code: 'x', title: doc.title }) ?? ''
+    );
   }
 
   printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash' | 'blindCount'> & { refId: string }): string {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
-    return this.printQueue.enqueue(
+    return this.pagePrint(
       'z',
       i.refId,
       xDoc({
@@ -3464,13 +3516,20 @@ export class KioskService extends EventEmitter {
         countedCash: i.countedCash,
         ...(i.blindCount ? { blindCount: true } : {}),
       }),
-    );
+      { kind: 'report', code: 'x', number: i.shiftNumber !== null && i.shiftNumber !== undefined ? String(i.shiftNumber) : null, title: 'דוח X' },
+    ) ?? '';
   }
 
   private printZ(z: Record<string, unknown>) {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
-    this.printQueue.enqueue('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy: false, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date() }));
+    const zNumber = z.zNumber ?? z.number ?? null;
+    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy: false, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date() }), {
+      kind: 'report',
+      code: 'z',
+      number: zNumber !== null && zNumber !== undefined ? String(zNumber) : null,
+      title: zNumber !== null && zNumber !== undefined ? `דוח Z ${String(zNumber)}` : 'דוח Z',
+    });
   }
 
   /* ---------------------------------------------------------------- ticks */
@@ -3652,6 +3711,30 @@ export class KioskService extends EventEmitter {
     };
     if (this.pendingClose) say('close', this.pendingClose.requestId);
     if (this.pendingZ && zModeOf(this.cloud.heartbeat().zMode) === 'till') say('z', this.pendingZ.requestId);
+  }
+
+  /** "שדר עסקאות עכשיו" ("פעולות אשראי", main/till/tillTransmission.ts): the batch now, its row to the cloud as always. */
+  transmitNow(trigger: 'manual' | 'remote' = 'manual'): Promise<TransmitResult | null> {
+    return this.transmitBatch(trigger);
+  }
+
+  /** This device's transmissions as kept (the newest first), each with whether the cloud has it yet. */
+  localTransmissions(limit = 200): Array<TransmissionRow & { synced: boolean }> {
+    const rows = this.db.all<{ key: string; value: string }>("SELECT key, value FROM kv WHERE key LIKE 'transmission:%' ORDER BY updated_at DESC LIMIT ?", limit);
+    const out: Array<TransmissionRow & { synced: boolean }> = [];
+    for (const r of rows) {
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(r.value);
+      } catch {
+        continue;
+      }
+      const row = transmissionRowOf(parsed);
+      if (!row) continue;
+      const pending = this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM outbox WHERE kind = 'transmission' AND ref_id = ?", row.id)?.n ?? 0;
+      out.push({ ...row, synced: pending === 0 });
+    }
+    return out;
   }
 
   /** The card batch (doPeriodic), reported to the cloud (POST /transmissions, via the outbox). */
@@ -4491,8 +4574,24 @@ export class KioskService extends EventEmitter {
       network: { online: !this.offlineNow, lastBeatOkAt: this.sync.status.lastBeatOkAt, serverUrl: this.cloud.credentials()?.serverUrl ?? null, interfaces: this.platform.interfaces() },
       printer: { ...admin.printer, queues: queues.map((q) => `${q.name} (${q.health})`) },
       terminal: admin.terminal,
+      ...(() => {
+        const r = this.receiptChoices();
+        return r ? { receipts: r } : {};
+      })(),
       update,
       quickSupport: null,
+    };
+  }
+
+  /** "מדפסת לקבלות ולמסמכים": the choices when another till's printer is offered to this one (none — undefined). */
+  private receiptChoices(): TechnicianInfo['receipts'] {
+    const s = remoteDocSettingsOf(this.cloud.parameters());
+    const remote = remoteDestinationsOf(this.kitchen.config().printers, s, this.machineId);
+    if (remote.length === 0) return undefined;
+    return {
+      choice: this.kv.get(TILL_PRINTER_KEY),
+      options: [{ id: LOCAL_DESTINATION, label: REMOTE_DOC_TEXT.local }, ...remote.map((d) => ({ id: d.id, label: d.name })), { id: TILL_CHOICE_ASK, label: 'לשאול בכל פעם' }],
+      scope: s.enabled ? REMOTE_DOC_TEXT.scope(REMOTE_DOC_TEXT.scopeOf(s.documents)) : null,
     };
   }
 
@@ -4537,6 +4636,12 @@ export class KioskService extends EventEmitter {
         const launched = await this.platform.launchQuickSupport();
         return launched ? { ok: true, message: launched } : { ok: false, message: 'TeamViewer QuickSupport לא מותקן במחשב' };
       }
+      case 'setReceiptPrinter':
+        if (a.id === null) this.kv.delete(TILL_PRINTER_KEY);
+        else this.kv.set(TILL_PRINTER_KEY, a.id);
+        // A new choice: the question's memory starts again.
+        this.kv.delete(DEFAULT_PRINTER_KEY);
+        return { ok: true };
       case 'setZoom':
         this.setLocalSettings({ zoom: a.zoom });
         this.platform.setZoom?.(a.zoom);

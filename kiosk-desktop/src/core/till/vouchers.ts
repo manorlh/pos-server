@@ -552,7 +552,8 @@ export interface AppliedUnit {
 
 /** A production voucher approved for this sale: by the cloud's hold ([reservationId]) or its `/redeem` ([source] `redeem`). */
 export interface AppliedProduction {
-  source: 'reserve' | 'redeem';
+  /** `host`: redeemed by the shop's LAN host while the cloud was away (core/till/voucherLan.ts). */
+  source: 'reserve' | 'redeem' | 'host';
   /** The hold (reserve → confirm); null for `/redeem`. */
   reservationId: string | null;
   /** The cloud's redemption (`/redeem`), or the hold's request id. */
