@@ -211,9 +211,24 @@ import { HeldStore } from './heldStore';
 import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../../core/till/drawer';
 import { DRAWER_PERM } from '../../core/till/drawer';
 import { TillDrawer } from './tillDrawer';
+import { TillRemotePrint, type TillRemotePrintOptions } from './tillRemotePrint';
 import { TillSessions } from './userSessions';
 import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
 import type { DialogSpec, TillContext } from './tillContext';
+import {
+  ORDER_TEXT,
+  anyQuestion,
+  cleanOrderName,
+  diningOf,
+  missingOrderDetails,
+  orderDetailsStrip,
+  orderQuestionsOf,
+  startDetailsDue,
+  type Dining,
+  type OrderFacts,
+  type OrderQuestions,
+} from '../../core/till/orderDetails';
+import type { OrderAsk } from '../../shared/till/protocol';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -246,6 +261,8 @@ export interface TillEngineOptions {
   now?: () => number;
   workMode?: () => TillWorkMode | null;
   log?: (m: string) => void;
+  /** "הדפסה בקופה אחרת": the transport, the clock and the drawing (tests). */
+  remotePrint?: TillRemotePrintOptions;
 }
 
 class Refusal extends Error {
@@ -615,7 +632,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private refundChooser = false;
   private refundGrant: { approverId: string; profile: PermissionProfile } | null = null;
   /** A held sale's basket discount and approver, kept in memory while it is parked (Android parkedExtras). */
-  private readonly parkedExtras = new Map<string, { discount: { type: DiscountType; value: number } | null; approver: string | null }>();
+  private readonly parkedExtras = new Map<string, { discount: { type: DiscountType; value: number } | null; approver: string | null; dining?: Dining | null; orderName?: string | null }>();
+  /**
+   * "פרטי הזמנה" (core/till/orderDetails.ts): the quick order's take-away / eat-in and name, the first item held for them
+   * ("בפתיחת הזמנה"), the sheet the engine asks for now, and the basket whose opening questions were closed unanswered.
+   */
+  private orderDining: Dining | null = null;
+  private orderName: string | null = null;
+  private orderStart: { productId: string; qty: number } | null = null;
+  private orderAsk: 'open' | 'payment' | 'edit' | null = null;
+  private diningFirstDismissedFor: string | null = null;
   private hostIdle = { idle: true, busy: false };
   private lastActivityAt: number;
   private lastZNumber: number | null = null;
@@ -642,6 +668,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly cash: TillCash;
   /** Vouchers at the payment: discount and production vouchers, "מצב בדיקה" (tillVouchers.ts). */
   readonly vouchers: TillVouchers;
+  /** "הדפסה בקופה אחרת" (tillRemotePrint.ts). */
+  readonly remotePrint: TillRemotePrint;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -655,6 +683,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.ctx = this.makeContext();
     this.drawer = new TillDrawer(this.ctx, { expectedBalance: () => this.expectedNow() });
     this.drawer.start();
+    // "הדפסה בקופה אחרת": the till's pages to another till's printer, as the cloud lets them (tillRemotePrint.ts).
+    this.remotePrint = new TillRemotePrint(this.ctx, { ...(o.remotePrint ?? {}), remoteAfterCash: (host, page) => void this.later(() => this.drawer.remoteAfterCash(host, page)) });
+    this.remotePrint.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -704,6 +735,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       },
       later: (fn) => this.later(fn),
       paying: () => this.paying(),
+      dialogOpen: () => this.pending !== null,
     };
   }
 
@@ -731,6 +763,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.sessions.stop();
     this.cash.stop();
     this.drawer.stop();
+    this.remotePrint.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -803,7 +836,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const state = this.buildState();
     const json = JSON.stringify(state);
     this.dirty = false;
-    if (json === this.lastState) return;
+    if (json === this.lastState) {
+      // A module's word with nothing else changed ("נשלח להדפסה ב…"): said all the same.
+      this.drainToasts();
+      return;
+    }
     this.lastState = json;
     this.seq += 1;
     this.emit('state', state);
@@ -1047,6 +1084,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.vouchers.remove(a.id);
       case 'checkout.finishTest':
         return this.finishTest();
+      case 'order.details':
+        return this.setOrderDetails(a.dining, a.name);
+      case 'order.dismiss':
+        return this.dismissOrderDetails();
+      case 'order.edit':
+        return this.editOrderDetails();
       case 'sell.voucher':
         return this.sellVoucher(a.code);
     }
@@ -1354,7 +1397,93 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.refundMode = false;
     this.refundChooser = false;
     this.refundGrant = null;
+    this.orderDining = null;
+    this.orderName = null;
+    this.orderStart = null;
+    this.orderAsk = null;
     this.basketId = randomUUID();
+  }
+
+  /* ------------------------------------------------------------- the order's details */
+
+  private orderQuestions(): OrderQuestions {
+    return orderQuestionsOf(this.svc.cloud.parameters());
+  }
+
+  private orderFacts(): OrderFacts {
+    return { hasLines: this.cart.length > 0, hasRefundLines: this.cart.some((l) => l.refund), dining: this.orderDining, name: this.orderName };
+  }
+
+  /** What this quick order still has to answer (null: nothing, or nothing asked). */
+  private orderDetailsMissing(): OrderQuestions | null {
+    return missingOrderDetails(this.orderQuestions(), this.orderFacts());
+  }
+
+  /**
+   * The details given ("לקחת" / "לשבת", the name), each kept when not given; then what waited for them: the held first item
+   * ("בפתיחת הזמנה"), the payment. Mandatory: what is asked and still missing is refused.
+   */
+  private setOrderDetails(diningRaw: unknown, nameRaw: unknown) {
+    this.signedIn();
+    if (this.checkout.phase !== 'idle') return refuse('checkout_busy');
+    const dining = diningOf(diningRaw);
+    const name = cleanOrderName(nameRaw);
+    if (diningRaw !== undefined && diningRaw !== null && !dining) return refuse('invalid_args');
+    const q = this.orderQuestions();
+    const next: OrderFacts = { ...this.orderFacts(), dining: dining ?? this.orderDining, name: name ?? this.orderName };
+    const still = missingOrderDetails(q, next);
+    if (still?.dining) return refuse('invalid_args', ORDER_TEXT.diningQuestion);
+    if (still?.name) return refuse('invalid_args', ORDER_TEXT.nameRequired);
+    this.orderDining = next.dining;
+    this.orderName = next.name;
+    const ask = this.orderAsk;
+    this.orderAsk = null;
+    if (ask === 'open' && this.orderStart) {
+      const start = this.orderStart;
+      this.orderStart = null;
+      return this.add(start.productId, start.qty);
+    }
+    if (ask === 'payment') return this.checkoutStart();
+    return undefined;
+  }
+
+  /** The sheet closed unanswered: the held first item dropped; the opening questions not again for this order (the payment asks). */
+  private dismissOrderDetails() {
+    this.signedIn();
+    const ask = this.orderAsk;
+    this.orderAsk = null;
+    if (ask === 'open') this.orderStart = null;
+    if (ask === null) this.diningFirstDismissedFor = this.basketId;
+    return undefined;
+  }
+
+  /** "פרטי הזמנה" from the strip on the sell screen: the configured questions, the answers shown. */
+  private editOrderDetails() {
+    this.signedIn();
+    if (this.checkout.phase !== 'idle') return refuse('checkout_busy');
+    if (!anyQuestion(this.orderQuestions())) return refuse('invalid_args');
+    this.orderAsk = 'edit';
+    return undefined;
+  }
+
+  /** What the screens show of the order's details, and the sheet the engine asks for now. */
+  private orderView(): TillState['order'] {
+    const q = this.orderQuestions();
+    const strip = orderDetailsStrip(this.orderDining, this.orderName) || null;
+    if (!anyQuestion(q) && !strip) return undefined;
+    let ask: OrderAsk | null = null;
+    const user = this.cashier && !this.locked;
+    if (user && this.checkout.phase === 'idle') {
+      if (this.orderAsk === 'edit') ask = { purpose: 'edit', dining: q.dining, name: q.name, confirmLabel: ORDER_TEXT.save };
+      else if (this.orderAsk === 'open' || this.orderAsk === 'payment') {
+        const m = this.orderDetailsMissing();
+        if (m) ask = { purpose: this.orderAsk, dining: m.dining, name: m.name, confirmLabel: this.orderAsk === 'open' ? ORDER_TEXT.start : ORDER_TEXT.continue };
+      } else if (!this.refundMode && !this.refundChooser && this.diningFirstDismissedFor !== this.basketId && (this.svc.ledger.currentShift() || this.shiftsHidden())) {
+        const due = startDetailsDue(q, this.orderFacts());
+        if (due) ask = { purpose: 'start', dining: due.dining, name: due.name, confirmLabel: ORDER_TEXT.start };
+      }
+    }
+    return { dining: this.orderDining, name: this.orderName, strip, configured: anyQuestion(q), ask };
   }
 
   private add(productId: string, qty: number) {
@@ -1370,6 +1499,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       if (voucher) return refuse('refund_refused', voucher);
       this.putRefund(p.id, qty, p.name);
       return undefined;
+    }
+    // "בפתיחת הזמנה": the first item of a new quick order waits for the order's details.
+    if (this.cart.length === 0 && !this.orderStart && this.orderQuestions().atOpen && this.orderDetailsMissing()) {
+      this.orderStart = { productId: p.id, qty };
+      this.orderAsk = 'open';
+      return { orderDetails: true };
     }
     const settings = this.svc.settingsMap();
     const user = this.signedIn();
@@ -2161,6 +2296,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.cart.length === 0) refuse('cart_empty');
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
     if (!this.svc.ledger.currentShift() && !this.shiftsHidden()) refuse('shift_not_open', WORDS.noShiftBlocksSale);
+    // "פרטי הזמנה": an order reaching the payment without them is asked first, whatever "מתי לשאול" says.
+    if (this.orderDetailsMissing()) {
+      this.orderAsk = 'payment';
+      return { orderDetails: true };
+    }
     const p = this.priced();
     if (p.gone.length > 0) {
       // What the catalog no longer sells leaves the cart; the cashier looks again.
@@ -2957,10 +3097,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The vouchers confirmed with the document (it names them too), then nothing held any more.
     this.vouchers.settle(doc);
     this.vouchers.clear();
+    // The order's name and take-away / eat-in: on its kitchen tickets (the headline, the band), never on the receipt.
+    const order = { orderName: this.orderName, dining: this.orderDining };
     this.clearBasket();
     void this.svc.sync.flush();
     // "בונים במכירה" and the KDS (main/kitchen): queued durably before the receipt, never holding the sale.
-    const unrouted = this.svc.tillKitchen(doc);
+    const unrouted = this.svc.tillKitchen(doc, order);
     c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     this.kickDrawer(doc);
     this.printOrAsk(doc);
@@ -2986,11 +3128,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.cardStatus = null;
     c.cardError = null;
     if (c.basket) c.basket.handedBackAgorot = o.handBack;
+    const order = { orderName: this.orderName, dining: this.orderDining };
     this.clearBasket();
     void this.svc.sync.flush();
     const sale = docs.find((d) => isSaleType(d.documentType));
     // "בונים במכירה" and the KDS (main/kitchen) for what the basket sold — never for its credit notes.
-    const unrouted = sale ? this.svc.tillKitchen(sale) : [];
+    const unrouted = sale ? this.svc.tillKitchen(sale, order) : [];
     c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     // Cash taken, or handed back (a return, change): the drawer opens.
     const cashMoved = docs.some((d) => legsOf(d).some((l) => l.method === 'cash'));
@@ -3184,9 +3327,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The lines' money as rung up (gross less each line's own discount): what the list shows.
     const total = p.lines.reduce((s, l) => s + lineGross(l) - (l.discountAgorot ?? 0), 0);
     const op = this.operator();
-    const id = this.held.hold(lines, { id: op.id, name: op.name }, holdLabelOf(labelRaw), total);
+    // The order's name names the held sale when none was typed (Android hold(cashierId, cart.orderName)).
+    const id = this.held.hold(lines, { id: op.id, name: op.name }, holdLabelOf(labelRaw) ?? this.orderName, total);
     if (!id) return refuse('invalid_args', HELD_TEXT.holdFailed);
-    if (this.cartDiscount || this.discountApprover) this.parkedExtras.set(id, { discount: this.cartDiscount, approver: this.discountApprover });
+    if (this.cartDiscount || this.discountApprover || this.orderDining || this.orderName) {
+      this.parkedExtras.set(id, { discount: this.cartDiscount, approver: this.discountApprover, dining: this.orderDining, orderName: this.orderName });
+    }
     this.clearBasket();
     return { id };
   }
@@ -3219,6 +3365,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (extras) {
       this.cartDiscount = extras.discount;
       this.discountApprover = extras.approver;
+      this.orderDining = extras.dining ?? null;
+      this.orderName = extras.orderName ?? null;
     }
     return undefined;
   }
@@ -3953,6 +4101,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       },
       oth: { enabled: oth.enabled, requiresManager: oth.requiresManager, reasons: oth.reasons },
       notice: user && !this.locked ? this.autoCloseNotice() : null,
+      ...(() => {
+        const order = this.orderView();
+        return order ? { order } : {};
+      })(),
     };
     return state;
   }

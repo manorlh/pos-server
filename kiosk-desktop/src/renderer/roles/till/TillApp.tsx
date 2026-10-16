@@ -25,7 +25,8 @@ import { AdminHoldBar, useAdminCornerHold } from '../../staff/adminHold';
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
-import { BasketDiscountSheet, HeldSheet, NoticeDialog, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { BasketDiscountSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { ORDER_TEXT } from '../../../core/till/orderDetails';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { DrawerScreen, type DrawerLog, type WalletRow } from './screens/DrawerScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
@@ -372,9 +373,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
                 refund: () => void run('refund.button', {}),
                 hold: () => setSheet({ kind: 'held' }),
                 held: () => setSheet({ kind: 'held' }),
+                orderEdit: () => void run('order.edit', {}),
               }),
         }}
-        cartView={{ hidden: s.session.hidden ?? [], othEnabled: s.oth?.enabled === true, heldCount: s.held?.count ?? 0 }}
+        cartView={{ hidden: s.session.hidden ?? [], othEnabled: s.oth?.enabled === true, heldCount: s.held?.count ?? 0, order: s.order ? { strip: s.order.strip, configured: s.order.configured } : null }}
       />
     );
   })();
@@ -534,6 +536,18 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             if (sheet.kind === 'heldClose' && s.held!.count === 0) sheet.retry(false);
             else setSheet(null);
           }}
+        />
+      ) : null}
+      {s.session.cashier && view === 'sell' && s.order?.ask && !s.dialog && !sheet ? (
+        // "פרטי הזמנה" (askEatInTakeAway / askOrderName): when the engine asks — a new order, its first item, the payment.
+        <OrderDetailsSheet
+          key={`${s.order.ask.purpose}:${s.order.ask.dining}:${s.order.ask.name}`}
+          ask={s.order.ask}
+          dining={s.order.dining}
+          name={s.order.name}
+          texts={ORDER_TEXT}
+          onConfirm={(dining, name) => void attempt('order.details', { dining, name }).then((r) => !r.ok && say(r.message, 'error'))}
+          onDismiss={() => void run('order.dismiss', {})}
         />
       ) : null}
       {s.notice && !s.dialog ? <NoticeDialog title={s.notice.title} text={s.notice.text} onOk={() => void run('notice.ack', {})} /> : null}

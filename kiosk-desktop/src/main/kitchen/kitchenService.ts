@@ -305,6 +305,11 @@ export class KitchenService {
     return this.d.onLan ? this.d.onLan() : true;
   }
 
+  /** This device is on a LAN (the print server, another till's print port may be reached) — the till's remote documents. */
+  lanReachable(): boolean {
+    return this.onLan();
+  }
+
   /* ------------------------------------------------------------------ queueing */
 
   /**

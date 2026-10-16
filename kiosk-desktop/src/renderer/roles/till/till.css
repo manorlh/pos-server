@@ -1212,3 +1212,55 @@
   font-size: 1.6em;
   font-weight: 700;
 }
+
+/* "פרטי הזמנה" (OrderDetailsSheet): two big choices, then the name; the strip on the cart. */
+.t-order-dining {
+  display: flex;
+  gap: 12px;
+  margin: 10px 0;
+}
+.t-order-choice {
+  flex: 1;
+  min-height: 120px;
+  border: 0;
+  border-radius: 18px;
+  background: #eef0f3;
+  color: #111318;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.t-order-choice-on {
+  background: #1f6feb;
+  color: #fff;
+}
+.t-order-icon {
+  font-size: 30px;
+}
+.t-order-answered {
+  text-align: center;
+  font-weight: 700;
+  color: #1f6feb;
+  margin: 0 0 8px;
+}
+.t-order-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  background: #e8f0fe;
+  color: #111318;
+  font: inherit;
+  font-weight: 700;
+  padding: 8px 12px;
+  margin: 3px 0;
+  cursor: pointer;
+}

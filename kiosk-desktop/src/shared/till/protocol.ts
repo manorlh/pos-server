@@ -145,6 +145,10 @@ export const TILL_OPS = [
   'checkout.removeVoucher',
   'checkout.finishTest',
   'sell.voucher',
+  // "פרטי הזמנה" (core/till/orderDetails.ts): "לקחת / לשבת" and the customer's name given; the sheet closed; the strip's edit.
+  'order.details',
+  'order.dismiss',
+  'order.edit',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -206,6 +210,9 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'checkout.removeVoucher',
   'checkout.finishTest',
   'sell.voucher',
+  'order.details',
+  'order.dismiss',
+  'order.edit',
 ]);
 
 export interface OpArgs {
@@ -301,6 +308,10 @@ export interface OpArgs {
   'checkout.finishTest': Record<string, never>;
   /** A voucher scanned on the sell screen: the payment opens and the voucher is applied there. */
   'sell.voucher': { code: string };
+  /** The order's details: each given one is kept (a missing one that is asked is refused). */
+  'order.details': { dining?: 'take_away' | 'eat_in' | null; name?: string | null };
+  'order.dismiss': Record<string, never>;
+  'order.edit': Record<string, never>;
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -722,6 +733,27 @@ export interface TillState {
   users?: UsersState;
   /** "עודף חייב ללקוח" / "זיכוי מוחזק" the cloud routes to this till (main/till/tillCash.ts), "שולם ללקוח" on each. */
   owed?: { items: Array<{ id: string; line: string; amountAgorot: number }> };
+  /**
+   * "פרטי הזמנה" of a quick order (core/till/orderDetails.ts — `askEatInTakeAway`, `askOrderName`, `orderDetailsAt`): the
+   * answers, the strip's words ("לקחת  ·  דני"), and the sheet the engine asks for now. Absent: none asked, none given.
+   */
+  order?: {
+    dining: 'take_away' | 'eat_in' | null;
+    name: string | null;
+    strip: string | null;
+    /** Some question is switched on (the strip's ✎ opens them). */
+    configured: boolean;
+    ask: OrderAsk | null;
+  };
+}
+
+/** The order's details sheet: why it is up, what it asks (mandatory), its button's words. */
+export interface OrderAsk {
+  /** `start` — a new order opens with them; `open` — its first item waits; `payment` — before paying; `edit` — the strip's. */
+  purpose: 'start' | 'open' | 'payment' | 'edit';
+  dining: boolean;
+  name: boolean;
+  confirmLabel: string;
 }
 
 export interface SignedInSession {

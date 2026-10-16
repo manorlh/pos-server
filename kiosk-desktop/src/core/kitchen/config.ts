@@ -28,6 +28,11 @@ export interface KitchenPrinter {
   hostLanPort: number | null;
   /** This device prints the printer's jobs itself (it hosts it, or it is the shop's print server). */
   isHost: boolean;
+  /**
+   * A receipt printer of type cloud another till hosts: that till's build prints relayed documents (`document_relay_v1`,
+   * P:/specs/bill-print-other-till.md §10.2); false — "נדרש עדכון גרסה", never a destination; null — not said.
+   */
+  hostDocumentRelay: boolean | null;
   /** Lines of this device's tickets may route here; false — listed only to host it, a kiosk's bon printer, a redirect target. */
   inScope: boolean;
   paperWidth: number;
@@ -154,6 +159,7 @@ export function parsePrinter(v: unknown): KitchenPrinter | null {
     hostLanAddress: str(p.hostLanAddress),
     hostLanPort: port(p.hostLanPort),
     isHost: bool(p.isHost, false),
+    hostDocumentRelay: boolOrNull(p.hostDocumentRelay),
     inScope: bool(p.inScope, true),
     paperWidth: int(p.paperWidth) ?? 80,
     printWidthDots: int(p.printWidthDots),
