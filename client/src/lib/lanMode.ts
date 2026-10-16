@@ -179,6 +179,8 @@ export interface FormerHostChange {
   orderId: string;
   tableId: string;
   tableNumber: number | null;
+  /** "3B" (P:/specs/table-scope.md §6.4): shown instead of `tableNumber`, then an internal number. */
+  tableLabel?: string | null;
   tableName: string | null;
   till: { status: string; version: number; total: number | null; itemCount: number; updatedAt: string | null };
   cloud: { status: string | null; version: number | null; total: number | null; updatedAt: string | null };

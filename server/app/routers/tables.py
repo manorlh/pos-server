@@ -188,11 +188,22 @@ def _spend(db: Session, auth: _Authority) -> None:
             raise _elevation_401("elevation_already_used")
 
 
-def _actor(machine: POSMachine, body) -> T.Actor:
+def _h(value) -> Optional[str]:
+    """A header's value — None when absent (or when a test calls the route with the `Header` default itself)."""
+    return value.strip() or None if isinstance(value, str) else None
+
+
+#: "תחום שולחנות" (P:/specs/table-scope.md §10): the till user who approved one action outside the scope.
+SCOPE_APPROVER_HEADER = "X-Scope-Approver"
+
+
+def _actor(machine: POSMachine, body, operator_id=None, scope_approver=None) -> T.Actor:
     return T.Actor(
         machine=machine,
         pos_user_id=(getattr(body, "pos_user_id", None) or None),
         pos_user_name=(getattr(body, "pos_user_name", None) or None),
+        operator_id=_h(operator_id),
+        scope_approver=_h(scope_approver),
     )
 
 
@@ -214,10 +225,14 @@ def _wake_all(db: Session, machine: POSMachine, table_id: Optional[str] = None) 
 def get_tables_state(
     machine_id: str,
     since: Optional[str] = Query(None, description="The `stateTag` the till holds: unchanged → `syncType: unchanged`."),
+    scope: Optional[str] = Query(
+        None, description="`all`: \"כל השולחנות\" — past the device's scope, for `X-Pos-User-Id` with TABLES.SEE_ALL.",
+    ),
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
     request: Request = None,
     response: Response = None,
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
 ):
     """
     The tables screen: zones, tables (order summary, lock), the reasons — with `stateVersion`
@@ -225,27 +240,37 @@ def get_tables_state(
     (also the `ETag`). A till that sends its tag back — `If-None-Match` (304, no body) or
     `?since=` (`{"syncType": "unchanged", ...}`) — while nothing changed gets no state at all:
     nothing is built (app/services/tables_state.py). Without either, the full state as always.
+
+    "תחום שולחנות" (P:/specs/table-scope.md §9): only what is in the device's scope; `?scope=all` with
+    `X-Pos-User-Id` of an employee whose TABLES.SEE_ALL is allowed — everything the point of sale shows
+    (`scopeAll`; anyone else: the scoped state). Its tag is its own.
     """
     from app.services import sync_versions
+    from app.services import table_scope as TSC
     from app.services import tables_state as TS
 
     since = since.strip() if isinstance(since, str) and since.strip() else None
+    all_scope = (
+        isinstance(scope, str) and scope.strip() == "all" and machine.table_scope is not None
+        and TSC.sees_all(db, machine, _h(operator_id))
+    )
+    variant = TS.VARIANT_ALL if all_scope else ""
     version = TS.current_version(db, machine.shop_id)
     now = T._now()
     # "מצב סנכרון" (app/services/sync_versions.py): `tables` — the floor plan's hash, never the
     # orders; kept per shop and tables version, so an unchanged answer costs no more than before.
     plan = {"tables": sync_versions.tables_version(db, machine, version)}
-    if since is not None and TS.tag_matches(since, machine, version, now):
+    if since is not None and TS.tag_matches(since, machine, version, now, variant):
         sync_versions.set_header(response, plan)
         return {"syncType": "unchanged", "stateVersion": version, "stateTag": since}
     held = TS.parse_tags(request.headers.get("if-none-match")) if request is not None else []
     for tag in held:
-        if TS.tag_matches(tag, machine, version, now):
+        if TS.tag_matches(tag, machine, version, now, variant):
             return Response(
                 status_code=status.HTTP_304_NOT_MODIFIED,
                 headers={"ETag": f'"{tag}"', sync_versions.HEADER: sync_versions.header_value(plan)},
             )
-    out, tag = T.till_state_cached(db, machine, version=version, now=now)
+    out, tag = T.till_state_cached(db, machine, version=version, now=now, all_scope=all_scope)
     db.commit()  # the default reasons, the first time a tenant's are read
     out["stateVersion"] = version
     out["stateTag"] = tag
@@ -401,9 +426,14 @@ def enter_table(
     body: Optional[TableEnterIn] = None,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    scope_approver: Optional[str] = Header(None, alias=SCOPE_APPROVER_HEADER),
 ):
-    """Lock the table for this till (409 `table_locked` with who has it) and read it."""
-    out = T.enter(db, _actor(machine, body), table_id)
+    """
+    Lock the table for this till (409 `table_locked` with who has it) and read it. Outside the device's or the
+    employee's scope: 403 `table_out_of_scope` — unless `X-Scope-Approver` names who may (P:/specs/table-scope.md).
+    """
+    out = T.enter(db, _actor(machine, body, operator_id, scope_approver), table_id)
     db.commit()
     _wake(background_tasks, db, machine, str(table_id))
     return out
@@ -509,8 +539,10 @@ def move_table(
     background_tasks: BackgroundTasks,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    scope_approver: Optional[str] = Header(None, alias=SCOPE_APPROVER_HEADER),
 ):
-    out = T.move(db, _actor(machine, body), table_id, body)
+    out = T.move(db, _actor(machine, body, operator_id, scope_approver), table_id, body)
     db.commit()
     _wake(background_tasks, db, machine, str(table_id))
     return out
@@ -524,12 +556,14 @@ def prepare_merge(
     background_tasks: BackgroundTasks,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    scope_approver: Optional[str] = Header(None, alias=SCOPE_APPROVER_HEADER),
 ):
     """
     "איחוד שולחנות", step one: lock the target and every source — all or none (409
     `table_locked` with every table another till holds) — and read their orders.
     """
-    out = T.merge_prepare(db, _actor(machine, body), table_id, body.source_table_ids)
+    out = T.merge_prepare(db, _actor(machine, body, operator_id, scope_approver), table_id, body.source_table_ids)
     db.commit()
     _wake(background_tasks, db, machine, str(table_id))
     return out
@@ -611,9 +645,11 @@ def transfer_items(
     background_tasks: BackgroundTasks,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
+    operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
+    scope_approver: Optional[str] = Header(None, alias=SCOPE_APPROVER_HEADER),
 ):
     """"העברת פריטים": lines of this table moved to another — both written, or neither."""
-    out = T.transfer(db, _actor(machine, body), table_id, body)
+    out = T.transfer(db, _actor(machine, body, operator_id, scope_approver), table_id, body)
     db.commit()
     _wake(background_tasks, db, machine, str(table_id))
     return out
@@ -632,6 +668,7 @@ def till_create_reservation(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="table_not_found")
     shop = db.get(Shop, machine.shop_id)
     T.check_reservation_area(db, machine, body.table_id)
+    T.check_reservation_scope(db, machine, body.table_id)
     r = T.create_reservation(db, shop, body, by_name=body.pos_user_name)
     db.commit()
     _wake(background_tasks, db, machine, None)
@@ -665,10 +702,12 @@ def adhoc_table(
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
     db: Session = Depends(get_db),
+    scope_approver: Optional[str] = Header(None, alias=SCOPE_APPROVER_HEADER),
 ):
     """
     "פתיחת שולחן לפי מספר": the table of that number, made in "שולחנות מזדמנים" when it is
-    on no map. Any waiter's — it adds a table to sit at, not a layout edit.
+    on no map. Any waiter's — it adds a table to sit at, not a layout edit. `label` ("3B"): the labelled
+    table, never made; outside the till's scope, 403 `table_out_of_scope` (P:/specs/table-scope.md §5, §6.3).
 
     "שחזור שולחן" onto a taken number (P:/specs/table-restore-payments.md §1): with a `name` ("ש-12")
     and `nearTableId` / `zoneId`, the table is made beside the original, shown by its label alone
@@ -687,9 +726,10 @@ def adhoc_table(
         if out is None:
             raise HTTPException(status_code=422, detail="name_required")
     else:
-        if body.number is None:
+        if body.number is None and not body.label:
             raise HTTPException(status_code=422, detail="number_required")
-        out = {**T.adhoc_table(db, machine, body.number), "labelled": False}
+        actor = _actor(machine, body, operator_id, scope_approver)
+        out = {**T.adhoc_table(db, machine, body.number, label=body.label, actor=actor), "labelled": False}
     db.commit()
     if out["created"]:
         _wake_all(db, machine)
@@ -1003,6 +1043,59 @@ def _wake_shop(background_tasks: BackgroundTasks, db: Session, shop_id) -> None:
     """A dashboard change to the shop's tables: a new version, and every till of the shop woken."""
     shop = db.get(Shop, shop_id)
     T.tables_changed(db, shop_id, tenant_id=shop.tenant_id if shop is not None else None)
+
+
+@router.get("/tables/scopes")
+def get_table_scopes(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "מי רואה מה" (P:/specs/table-scope.md §2, §9): the shop's zones with their tables, every active device and
+    employee with their scope (`null` — everything), the devices whose build predates the scope or the labels
+    (`oldDevices` — "מכשירים בגרסה ישנה לא מסתירים שולחנות ברשת מקומית"), and the last changes of the scopes.
+    """
+    from app.models.pos_machine import POSMachine as _M
+    from app.models.pos_user import PosUser as _U
+    from app.models.tables import TableScopeChange
+    from app.services import table_scope as TSC
+    from app.services.printers import machine_label
+
+    shop = _readable_shop(db, shop_id, current_user, tenant_id)
+    devices = (
+        db.query(_M).filter(_M.shop_id == shop.id, _M.is_active.is_(True)).order_by(_M.pos_number.asc()).all()
+    )
+    users = db.query(_U).filter(_U.shop_id == shop.id, _U.is_active.is_(True)).order_by(_U.username.asc()).all()
+    changes = (
+        db.query(TableScopeChange)
+        .filter(TableScopeChange.shop_id == shop.id)
+        .order_by(TableScopeChange.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return {
+        "shopId": str(shop.id),
+        "zones": TSC.scope_tree(db, shop.id, any_area=True),
+        "devices": [
+            {
+                "id": str(m.id), "name": machine_label(m), "posNumber": m.pos_number,
+                "areaId": str(m.area_id) if m.area_id else None, "tableScope": TSC.scope_out(m.table_scope),
+            }
+            for m in devices if getattr(m, "is_fiscal", True) is not False
+        ],
+        "users": [
+            {
+                "id": str(u.id),
+                "name": " ".join(p for p in (u.first_name or "", u.last_name or "") if p).strip() or u.username,
+                "tableScope": TSC.scope_out(u.table_scope),
+            }
+            for u in users
+        ],
+        "oldDevices": T.label_readiness(db, shop.id),
+        "changes": [TSC.change_out(c) for c in changes],
+    }
 
 
 @router.get("/tables/layout")

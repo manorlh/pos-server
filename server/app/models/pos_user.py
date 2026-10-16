@@ -84,6 +84,9 @@ class PosUser(Base):
     #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb` on the tables they are assigned;
     #: null — chosen automatically (app/services/table_assignments.py `waiter_color`).
     table_color = Column(String(9), nullable=True)
+    #: "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3, §14): `{"zoneIds": [...], "tableIds": [...]}` of their
+    #: shop; null — no fixed scope (today). With `tableAssignmentScope` their live assignments add to it.
+    table_scope = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

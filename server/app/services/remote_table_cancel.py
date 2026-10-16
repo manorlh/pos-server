@@ -198,7 +198,7 @@ def request(
     params = {
         "orderId": str(order.id),
         "tableId": str(table.id),
-        "tableLabel": VT.table_title(table.number, table.name),
+        "tableLabel": VT.table_title(table.number, table.name, getattr(table, "label", None)),
         "orderVersion": order.version,
         "reason": reason.name,
         "reasonId": str(reason.id),

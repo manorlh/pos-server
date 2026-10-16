@@ -152,6 +152,11 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("TABLES.ASSIGN", "שיוך שולחנות למלצרים", "tables",
                    "שיוך אזורים ושולחנות למלצר לפני שהם נפתחים (כפתור \"שיוך מלצרים\" במסך השולחנות), "
                    "\"נקה הכל\" והעתקת שיוך מאתמול או מהמשמרת הקודמת."),
+    # P:/specs/table-scope.md §4: beyond the device's and the employee's scope ("תחום שולחנות").
+    PermissionSpec("TABLES.SEE_ALL", "כל השולחנות, מעבר לתחום", "tables",
+                   "מותר: התחום של העובד לא חל עליו, ובמסך השולחנות יש מעבר \"כל השולחנות\" שעובר גם את התחום של "
+                   "המכשיר. דורש אישור: פעולה אחת על שולחן מחוץ לתחום (פתיחה, העברה, איחוד) בקוד של מי שמותר לו — "
+                   "נרשמת עם המאשר. לא עוקף את נקודת המכירה ולא \"שולחן תפוס\"."),
     PermissionSpec("TABLE_CANCEL", "ביטול שולחן", "tables",
                    "ביטול הזמנה פתוחה של שולחן, עם סיבה.", scope="table:cancel"),
     PermissionSpec("TABLE_VOID", "ביטול פריט שנשלח למטבח", "tables",
@@ -433,6 +438,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "CASH_DRAWER.OPEN_REMOTE",
     # "שיוך שולחנות למלצרים": arranging the floor is a manager's — a legacy cashier asks one.
     "TABLES.ASSIGN",
+    # "כל השולחנות, מעבר לתחום": a legacy cashier asks a manager (P:/specs/table-scope.md §10).
+    "TABLES.SEE_ALL",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -478,6 +485,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "TABLES.OPEN_OTHERS":                (P, A, A, A),
     # "שיוך שולחנות למלצרים" (P:/specs/table-waiter-assignment.md §3): the shift supervisor and the manager.
     "TABLES.ASSIGN":                     (D, D, A, A),
+    # "כל השולחנות, מעבר לתחום" (P:/specs/table-scope.md §4, the owner's §13.4): the others on a manager's code.
+    "TABLES.SEE_ALL":                    (P, P, A, A),
     "TABLE_CANCEL":                      (P, P, A, A),
     "TABLE_VOID":                        (P, P, A, A),
     "TABLE_RESTORE":                     (D, P, A, A),

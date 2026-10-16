@@ -963,7 +963,7 @@ def table_title(table: Any) -> str:
     name = (getattr(table, "name", None) or "").strip()
     if getattr(table, "label_only", False) and name:
         return name
-    return plain(table.number, table.name)
+    return plain(table.number, table.name, getattr(table, "label", None))
 
 
 ParamsCache = Dict[Any, Tuple[str, Optional[int]]]
@@ -1164,6 +1164,9 @@ def queue_table_tickets(
         "orderRef": str(order.id)[:8],
         "sourceName": _clip(source_name, TICKET_TEXT_MAX),
     }
+    term = VT.ticket_term(db, table)
+    if term:
+        head["tableTerm"] = term
     if fire:
         head["fire"] = _clip(fire, TICKET_TEXT_MAX)
     if notice:
@@ -1329,6 +1332,7 @@ def record_till_event(db: Session, machine: Any, order: Any, plan: Plan, now: da
                     "orderId": str(order.id),
                     "tableNumber": order.table_number,
                     "tableName": order.table_name,
+                    **({"tableLabel": order.table_label} if getattr(order, "table_label", None) else {}),
                     "courseId": plan.pending.course.id,
                     "courseName": plan.pending.course.name,
                     "previousCourseId": plan.pending.previous.id,

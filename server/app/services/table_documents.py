@@ -22,6 +22,11 @@ The explicit form matches a name as a whole (it starts with the text and does no
 digit: "ש-12" finds "ש-12 (2)", not "ש-120"); any other name search is a substring.
 The same rules on the till (pos-android, the history search) and in the dashboard (client
 lib/tableSearch.ts) — keep them identical.
+
+**Labels** ("3B", P:/specs/table-scope.md §6.4): "ש3B", "שולחן 3B", "תא 3B", "t3b" — a table word and a label
+that begins with a digit — and "שולחן VIP" / "תא VIP" (a word, a space, a label of letters) ask for the labelled
+table, matched by the label's normalised form (`label_key`: "3-b" is "3B"); with the chip, "3B" alone. "תא" is a
+table word too (`tableTerm`). The order keeps its label as written (`table_label`).
 """
 from __future__ import annotations
 
@@ -130,6 +135,8 @@ def table_ref(order: TableOrder) -> Dict[str, Any]:
     return {
         "tableNumber": order.table_number,
         "tableName": order.table_name,
+        # "3B" (P:/specs/table-scope.md §6.4): never text in `tableNumber` — the label beside it.
+        "tableLabel": getattr(order, "table_label", None) or None,
         "tableOrderId": str(order.id),
         "tableOpenedAt": order.opened_at.isoformat() if order.opened_at else None,
     }
@@ -165,7 +172,11 @@ def tables_by_transaction_any_shop(db: Session, rows: List[Any]) -> Dict[str, Di
 # ── Search: "ש12", "ש 12", "ש-12", "שולחן 12", "t12", "table 12" ─────────────
 
 #: The explicit form: a table word, an optional dash / "#" / maqaf, the number.
-_EXPLICIT = re.compile(r"^(?:שולחן|ש|table|t)\s*[-#\u05be]?\s*(\d{1,5})$", re.IGNORECASE | re.ASCII)
+_EXPLICIT = re.compile(r"^(?:שולחן|ש|תא|table|t)\s*[-#\u05be]?\s*(\d{1,5})$", re.IGNORECASE | re.ASCII)
+#: A label after a table word: one that begins with a digit ("ש3B", "תא 3B"), or — after a whole word and a
+#: space — one of letters ("שולחן VIP", "תא A1").
+_EXPLICIT_LABEL = re.compile(r"^(?:שולחן|ש|תא|table|t)\s*[-#\u05be]?\s*(\d[0-9A-Za-z\u05d0-\u05ea \-]*)$", re.IGNORECASE)
+_WORD_LABEL = re.compile(r"^(?:שולחן|תא|table)\s+([A-Za-z\u05d0-\u05ea][0-9A-Za-z\u05d0-\u05ea \-]*)$", re.IGNORECASE)
 _DIGITS = re.compile(r"^\d{1,5}$", re.ASCII)
 #: What may not follow a whole name ("ש-12" is not "ש-120"). Not "": a name may end there.
 _ASCII_DIGITS = frozenset("0123456789")
@@ -187,10 +198,17 @@ class TableQuery:
     name: Optional[str]
     explicit: bool
     name_whole: bool = False
+    #: A label's normalised form ("3B" for "3-b"): the order's `table_label` read the same way.
+    label_key: Optional[str] = None
 
-    def matches(self, number: Optional[int], name: Optional[str]) -> bool:
-        if self.number is not None and number is not None and int(number) == self.number:
+    def matches(self, number: Optional[int], name: Optional[str], label: Optional[str] = None) -> bool:
+        if self.number is not None and isinstance(number, int) and number == self.number:
             return True
+        if self.label_key is not None and label:
+            from app.services.table_labels import label_key
+
+            if label_key(label) == self.label_key:
+                return True
         if not self.name:
             return False
         wanted, have = self.name.casefold(), (name or "").strip().casefold()
@@ -209,13 +227,30 @@ def parse_table_query(text: Optional[str], *, chip: bool = False) -> Optional[Ta
     m = _EXPLICIT.match(t)
     if m:
         return TableQuery(number=int(m.group(1)), name=t, explicit=True, name_whole=True)
+    for pattern in (_EXPLICIT_LABEL, _WORD_LABEL):
+        m = pattern.match(t)
+        key = _label_key_of(m.group(1)) if m else None
+        if key is not None:
+            # The table word's own text is also a restored table's name ("ש-3B").
+            return TableQuery(number=None, name=t, explicit=True, name_whole=True, label_key=key)
     if chip:
         if _DIGITS.match(t):
             return TableQuery(number=int(t), name=None, explicit=True)
-        return TableQuery(number=None, name=t, explicit=True)
+        return TableQuery(number=None, name=t, explicit=True, label_key=_label_key_of(t))
     if any(ch.isalpha() for ch in t):
-        return TableQuery(number=None, name=t, explicit=False)
+        return TableQuery(number=None, name=t, explicit=False, label_key=_label_key_of(t))
     return None
+
+
+def _label_key_of(text: str) -> Optional[str]:
+    """The normalised label [text] is ("3-b" → "3B"), None when it is not one (a number, a refused character)."""
+    from app.services import table_labels as TL
+
+    try:
+        parsed = TL.parse(text)
+    except TL.LabelError:
+        return None
+    return parsed.key if parsed.is_label else None
 
 
 def _escape_like(text: str) -> str:
@@ -227,6 +262,11 @@ def order_match_clause(tq: TableQuery):
     clauses = []
     if tq.number is not None:
         clauses.append(TableOrder.table_number == tq.number)
+    if tq.label_key is not None:
+        # The order's label read as its key: no spaces, no "-", upper case (`matches` confirms it).
+        clauses.append(
+            func.upper(func.replace(func.replace(TableOrder.table_label, " ", ""), "-", "")) == tq.label_key
+        )
     if tq.name and tq.name_whole:
         # Starts with it; `matches` then refuses a name that goes on with a digit ("ש-120").
         clauses.append(func.trim(TableOrder.table_name).ilike(_escape_like(tq.name) + "%", escape="\\"))
@@ -259,7 +299,7 @@ def transaction_ids_for_table(
         orders = orders.filter(or_(TableOrder.opened_at >= floor, TableOrder.closed_at >= floor))
     ids: List[str] = []
     for order in orders.order_by(TableOrder.opened_at.desc()).limit(SEARCH_ORDERS_MAX).all():
-        if not tq.matches(order.table_number, order.table_name):
+        if not tq.matches(order.table_number, order.table_name, getattr(order, "table_label", None)):
             continue
         sale = uuid_text(order.transaction_id)
         ids += ([sale] if sale else []) + extra_document_ids(order)
@@ -291,7 +331,7 @@ def search_matches(
     tq = parse_table_query(q) if isinstance(q, str) else None
     if tq is None:
         return matched
-    hit = table is not None and tq.matches(table.get("tableNumber"), table.get("tableName"))
+    hit = table is not None and tq.matches(table.get("tableNumber"), table.get("tableName"), table.get("tableLabel"))
     if tq.explicit:
         return ["table"] if hit else []
     return [*(matched or []), "table"] if hit else matched

@@ -881,6 +881,8 @@ class TransactionListItem(BaseModel):
     #: The table it paid (app/services/table_documents.py): the number and name as the order froze
     #: them, the order, and when it was opened. Null for any other document; dashboard reads only.
     table_number: Optional[int] = Field(None, alias="tableNumber")
+    #: "3B" (P:/specs/table-scope.md §6.4): the table's label — `tableNumber` is then its internal number (never text).
+    table_label: Optional[str] = Field(None, alias="tableLabel")
     table_name: Optional[str] = Field(None, alias="tableName")
     table_order_id: Optional[str] = Field(None, alias="tableOrderId")
     table_opened_at: Optional[str] = Field(None, alias="tableOpenedAt")

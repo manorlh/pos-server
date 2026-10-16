@@ -1802,6 +1802,8 @@ export interface Transaction {
    */
   tableNumber?: number | null;
   tableName?: string | null;
+  /** "3B" (P:/specs/table-scope.md §6.4): shown instead of `tableNumber`, which is then an internal number. */
+  tableLabel?: string | null;
   tableOrderId?: string | null;
   tableOpenedAt?: string | null;
   /**
@@ -2791,6 +2793,8 @@ export interface PosUser {
   /** "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): their own (null — automatic) and the one shown. */
   tableColor?: string | null;
   tableColorEffective?: string | null;
+  /** "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): `{zoneIds, tableIds}` of the shop; null — no fixed scope. */
+  tableScope?: { zoneIds: string[]; tableIds: string[] } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2817,6 +2821,8 @@ export interface PosUserUpdate {
   pin?: string;
   /** `#rrggbb`; '' or null — automatic again. */
   tableColor?: string | null;
+  /** "שולחנות שהעובד רואה": sent only when changed; null — no fixed scope (every table). */
+  tableScope?: { zoneIds: string[]; tableIds: string[] } | null;
 }
 
 // ── Operational reports (GET /reports/products, /reports/cashiers, /reports/tips) ──

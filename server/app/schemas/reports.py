@@ -328,6 +328,8 @@ class ShopTransactionRow(BaseModel):
     #: order froze them, the order (one table opened and closed twice a day is two orders) and
     #: when it was opened. Additive and nullable like `basketId`: null for any other document.
     table_number: Optional[int] = Field(None, alias="tableNumber")
+    #: "3B" (P:/specs/table-scope.md §6.4): the table's label — `tableNumber` is then its internal number (never text).
+    table_label: Optional[str] = Field(None, alias="tableLabel")
     table_name: Optional[str] = Field(None, alias="tableName")
     table_order_id: Optional[str] = Field(None, alias="tableOrderId")
     table_opened_at: Optional[str] = Field(None, alias="tableOpenedAt")

@@ -53,6 +53,8 @@ import {
   type TableState,
   type TileLook,
 } from '@/lib/tableTileLook';
+import { fittedFont, sortTables } from '@/lib/tableLabels';
+import { tableDisplay } from '@/lib/tableRestore';
 import { Button } from '@/components/ui/button';
 import { FloorDefs, KindIcon, SketchShape, type SketchLook } from './sketch-shapes';
 
@@ -62,6 +64,10 @@ const SELECT =
 export interface PreviewTable {
   id: string;
   number: number;
+  /** "3B" (P:/specs/table-scope.md §6.3): drawn instead of the number; a `labelOnly` table by its name. */
+  label?: string | null;
+  name?: string | null;
+  labelOnly?: boolean;
   shape: 'round' | 'square' | 'rect';
   x: number;
   y: number;
@@ -282,7 +288,7 @@ export function DeviceFloor({
   );
   const shapes = useMemo(() => drawOrder(visible).map((el) => onView(el, view)), [visible, view]);
   const entries = useMemo(() => legendEntries(visible), [visible]);
-  const ordered = useMemo(() => [...tables].sort((a, b) => a.number - b.number), [tables]);
+  const ordered = useMemo(() => sortTables(tables), [tables]);
   const stateOf = useMemo(() => new Map(ordered.map((tb, i) => [tb.id, i])), [ordered]);
   const cells = useMemo(() => (grid ? gridCells(ordered.length, device) : []), [grid, ordered.length, device]);
   const sketchLook: SketchLook = { words: display.labels, symbolScale: display.scale / 100, minSymbol: DECOR_MIN_ICON_DP, compact };
@@ -327,7 +333,7 @@ export function DeviceFloor({
                   h={body}
                   round={round}
                   rotation={0}
-                  number={tb.number}
+                  number={tableDisplay(tb).main}
                   seats={tb.seats ?? 4}
                   look={look}
                   index={stateOf.get(tb.id) ?? i}
@@ -345,7 +351,7 @@ export function DeviceFloor({
                 h={tb.height * view.tableScale}
                 round={tb.shape === 'round'}
                 rotation={tb.rotation}
-                number={tb.number}
+                number={tableDisplay(tb).main}
                 seats={tb.seats ?? 4}
                 look={look}
                 index={stateOf.get(tb.id) ?? i}
@@ -440,7 +446,8 @@ export function PreviewTableShape({
   h: number;
   round: boolean;
   rotation: number;
-  number: number;
+  /** What the tile says: its number, or its label ("3B"). */
+  number: number | string;
   seats: number;
   look: TileLook | null;
   /** Its place in the sample floor: which state it shows. */
@@ -453,7 +460,13 @@ export function PreviewTableShape({
   const sample = look ? sampleTable(state, index, seats, look.overdueMinutes) : null;
   const lines = look && sample ? tileInfoLines(look.info, sample) : [];
   const short = Math.min(w, h);
-  const numberFs = Math.max(9, short * (lines.length ? 0.3 : 0.36) * (look?.numberScale ?? 1));
+  // A long label ("VIP 12") shrinks to fit the table, as the till's tile does (P:/specs/table-scope.md §6.3).
+  const numberFs = fittedFont(
+    String(number),
+    Math.max(9, short * (lines.length ? 0.3 : 0.36) * (look?.numberScale ?? 1)),
+    w,
+    7,
+  );
   const infoFs = Math.max(7, short * 0.13);
   // As many lines as fit under the number.
   const room = Math.max(0, Math.floor((h * 0.86 - numberFs * 1.05) / (infoFs * 1.2)));

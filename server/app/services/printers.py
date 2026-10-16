@@ -1846,6 +1846,9 @@ def create_job(db: Session, machine: POSMachine, body: PrintJobIn) -> Tuple[Kitc
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="printer_not_relayed")
     now = _now()
     payload = body.ticket.model_dump(by_alias=True)
+    # Said only by a till that has a word to say (a relayed ticket of today keeps its shape).
+    if payload.get("tableTerm") is None:
+        payload.pop("tableTerm", None)
     if not payload.get("sourceName"):
         payload["sourceName"] = machine_label(machine)
     job = KitchenPrintJob(

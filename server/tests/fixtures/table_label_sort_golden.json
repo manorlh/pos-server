@@ -1,0 +1,614 @@
+{
+  "_comment": "Table labels (P:/specs/table-scope.md §6, the owner's 16.10 decisions §13.5–6): parse (a number, a label with its key, or the refusal's reason), the natural order, titles with the word before them (tableTerm), ranges, the keypad's suggestions and exact match, its row of letters, the internal number. Byte-identical in pos-server server/tests/fixtures and pos-android app/src/test/resources: server app/services/table_labels.py, android domain/TableLabels.kt, client lib/tableLabels.ts (reads the server's copy).",
+  "parse": [
+    {
+      "input": "12",
+      "number": 12
+    },
+    {
+      "input": " 12 ",
+      "number": 12
+    },
+    {
+      "input": "007",
+      "number": 7
+    },
+    {
+      "input": "1",
+      "number": 1
+    },
+    {
+      "input": "99999",
+      "number": 99999
+    },
+    {
+      "input": "0",
+      "error": "number_range"
+    },
+    {
+      "input": "100000",
+      "error": "number_range"
+    },
+    {
+      "input": "3b",
+      "label": "3B",
+      "key": "3B"
+    },
+    {
+      "input": "3B",
+      "label": "3B",
+      "key": "3B"
+    },
+    {
+      "input": "3-B",
+      "label": "3-B",
+      "key": "3B"
+    },
+    {
+      "input": "3 b",
+      "label": "3 B",
+      "key": "3B"
+    },
+    {
+      "input": "  3   b ",
+      "label": "3 B",
+      "key": "3B"
+    },
+    {
+      "input": "b3",
+      "label": "B3",
+      "key": "B3"
+    },
+    {
+      "input": "A10",
+      "label": "A10",
+      "key": "A10"
+    },
+    {
+      "input": "תא 2",
+      "label": "תא 2",
+      "key": "תא2"
+    },
+    {
+      "input": " תא  2 ",
+      "label": "תא 2",
+      "key": "תא2"
+    },
+    {
+      "input": "תא-7",
+      "label": "תא-7",
+      "key": "תא7"
+    },
+    {
+      "input": "VIP 1",
+      "label": "VIP 1",
+      "key": "VIP1"
+    },
+    {
+      "input": "vip-1",
+      "label": "VIP-1",
+      "key": "VIP1"
+    },
+    {
+      "input": "3/B",
+      "error": "characters"
+    },
+    {
+      "input": "3.B",
+      "error": "characters"
+    },
+    {
+      "input": "3_B",
+      "error": "characters"
+    },
+    {
+      "input": "3B!",
+      "error": "characters"
+    },
+    {
+      "input": "",
+      "error": "empty"
+    },
+    {
+      "input": "   ",
+      "error": "empty"
+    },
+    {
+      "input": "3-4",
+      "error": "no_letter"
+    },
+    {
+      "input": "1 2",
+      "error": "no_letter"
+    },
+    {
+      "input": "-",
+      "error": "no_letter"
+    },
+    {
+      "input": "ABCDEFGHIJKL",
+      "label": "ABCDEFGHIJKL",
+      "key": "ABCDEFGHIJKL"
+    },
+    {
+      "input": "ABCDEFGHIJKLM",
+      "error": "too_long"
+    },
+    {
+      "input": "3ב",
+      "label": "3ב",
+      "key": "3ב"
+    },
+    {
+      "input": "ך1",
+      "label": "ך1",
+      "key": "ך1"
+    },
+    {
+      "input": "3B\t",
+      "label": "3B",
+      "key": "3B"
+    }
+  ],
+  "sorted": [
+    "1",
+    "2",
+    "3",
+    "3A",
+    "3B",
+    "3C",
+    "10",
+    "10A",
+    "A1",
+    "A2",
+    "A10",
+    "B1",
+    "תא 2"
+  ],
+  "shuffled": [
+    "A1",
+    "תא 2",
+    "B1",
+    "A2",
+    "2",
+    "10A",
+    "3A",
+    "1",
+    "3C",
+    "3",
+    "10",
+    "A10",
+    "3B"
+  ],
+  "mixed": {
+    "input": [
+      "11",
+      "בר 2",
+      "3-B",
+      "3 C",
+      "בר 1",
+      "A3",
+      "בר 10",
+      "3",
+      "a2",
+      "AB1",
+      "3D",
+      "9",
+      "A1",
+      "4",
+      "20B",
+      "3A",
+      "10",
+      "ת1",
+      "גן",
+      "20A",
+      "B1"
+    ],
+    "sorted": [
+      "3",
+      "3A",
+      "3-B",
+      "3 C",
+      "3D",
+      "4",
+      "9",
+      "10",
+      "11",
+      "20A",
+      "20B",
+      "A1",
+      "a2",
+      "A3",
+      "AB1",
+      "B1",
+      "בר 1",
+      "בר 2",
+      "בר 10",
+      "גן",
+      "ת1"
+    ]
+  },
+  "titles": [
+    {
+      "number": 12,
+      "label": null,
+      "name": null,
+      "labelOnly": false,
+      "title": "12",
+      "term": "שולחן",
+      "withTerm": "שולחן 12"
+    },
+    {
+      "number": 12,
+      "label": null,
+      "name": "VIP 1",
+      "labelOnly": false,
+      "title": "12 · VIP 1",
+      "term": "שולחן",
+      "withTerm": "שולחן 12 · VIP 1"
+    },
+    {
+      "number": 99999,
+      "label": "3B",
+      "name": null,
+      "labelOnly": false,
+      "title": "3B",
+      "term": "תא",
+      "withTerm": "תא 3B"
+    },
+    {
+      "number": 99999,
+      "label": "3B",
+      "name": "VIP",
+      "labelOnly": false,
+      "title": "3B · VIP",
+      "term": "תא",
+      "withTerm": "תא 3B · VIP"
+    },
+    {
+      "number": 9012,
+      "label": null,
+      "name": "ש-12",
+      "labelOnly": true,
+      "title": "ש-12",
+      "term": "שולחן",
+      "withTerm": "ש-12"
+    },
+    {
+      "number": 99998,
+      "label": "3B",
+      "name": "ש-3B",
+      "labelOnly": true,
+      "title": "ש-3B",
+      "term": "תא",
+      "withTerm": "ש-3B"
+    },
+    {
+      "number": 7,
+      "label": null,
+      "name": "  ",
+      "labelOnly": false,
+      "title": "7",
+      "term": "",
+      "withTerm": "7"
+    },
+    {
+      "number": 7,
+      "label": null,
+      "name": null,
+      "labelOnly": false,
+      "title": "7",
+      "term": "  ",
+      "withTerm": "7"
+    }
+  ],
+  "ranges": [
+    {
+      "from": "3A",
+      "to": "3L",
+      "items": [
+        "3A",
+        "3B",
+        "3C",
+        "3D",
+        "3E",
+        "3F",
+        "3G",
+        "3H",
+        "3I",
+        "3J",
+        "3K",
+        "3L"
+      ]
+    },
+    {
+      "from": "3l",
+      "to": "3a",
+      "items": [
+        "3A",
+        "3B",
+        "3C",
+        "3D",
+        "3E",
+        "3F",
+        "3G",
+        "3H",
+        "3I",
+        "3J",
+        "3K",
+        "3L"
+      ]
+    },
+    {
+      "from": "A1",
+      "to": "A10",
+      "items": [
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+        "A5",
+        "A6",
+        "A7",
+        "A8",
+        "A9",
+        "A10"
+      ]
+    },
+    {
+      "from": "A08",
+      "to": "A11",
+      "items": [
+        "A08",
+        "A09",
+        "A10",
+        "A11"
+      ]
+    },
+    {
+      "from": "1",
+      "to": "5",
+      "items": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "from": "3א",
+      "to": "3ד",
+      "items": [
+        "3א",
+        "3ב",
+        "3ג",
+        "3ד"
+      ]
+    },
+    {
+      "from": "תא 1",
+      "to": "תא 3",
+      "items": [
+        "תא 1",
+        "תא 2",
+        "תא 3"
+      ]
+    },
+    {
+      "from": "3A",
+      "to": "4B",
+      "error": "range_shape"
+    },
+    {
+      "from": "3",
+      "to": "3A",
+      "error": "range_mixed"
+    },
+    {
+      "from": "3A",
+      "to": "3AB",
+      "error": "range_shape"
+    },
+    {
+      "from": "3A",
+      "to": "3א",
+      "error": "range_shape"
+    },
+    {
+      "from": "3-A",
+      "to": "3-C",
+      "items": [
+        "3-A",
+        "3-B",
+        "3-C"
+      ]
+    },
+    {
+      "from": "1",
+      "to": "600",
+      "error": "range_too_many"
+    }
+  ],
+  "keypad": {
+    "tables": [
+      {
+        "number": 3,
+        "label": null
+      },
+      {
+        "number": 30,
+        "label": null
+      },
+      {
+        "number": 31,
+        "label": null
+      },
+      {
+        "number": 99996,
+        "label": "3A"
+      },
+      {
+        "number": 99995,
+        "label": "3B"
+      },
+      {
+        "number": 99994,
+        "label": "3C"
+      },
+      {
+        "number": 99993,
+        "label": "3D"
+      },
+      {
+        "number": 99992,
+        "label": "3E"
+      },
+      {
+        "number": 99991,
+        "label": "3F"
+      },
+      {
+        "number": 99990,
+        "label": "3G"
+      },
+      {
+        "number": 99989,
+        "label": "3H"
+      },
+      {
+        "number": 12,
+        "label": null
+      },
+      {
+        "number": 99987,
+        "label": "A1"
+      },
+      {
+        "number": 99986,
+        "label": "תא 2"
+      }
+    ],
+    "cases": [
+      {
+        "typed": "3",
+        "suggestions": [
+          "3",
+          "3A",
+          "3B",
+          "3C",
+          "3D",
+          "3E",
+          "3F",
+          "3G"
+        ],
+        "exact": "3"
+      },
+      {
+        "typed": "3b",
+        "suggestions": [
+          "3B"
+        ],
+        "exact": "3B"
+      },
+      {
+        "typed": "3 B",
+        "suggestions": [
+          "3B"
+        ],
+        "exact": "3B"
+      },
+      {
+        "typed": "3-b",
+        "suggestions": [
+          "3B"
+        ],
+        "exact": "3B"
+      },
+      {
+        "typed": "3K",
+        "suggestions": [],
+        "exact": null
+      },
+      {
+        "typed": "12",
+        "suggestions": [
+          "12"
+        ],
+        "exact": "12"
+      },
+      {
+        "typed": "012",
+        "suggestions": [
+          "12"
+        ],
+        "exact": "12"
+      },
+      {
+        "typed": "1",
+        "suggestions": [
+          "12"
+        ],
+        "exact": null
+      },
+      {
+        "typed": "a",
+        "suggestions": [
+          "A1"
+        ],
+        "exact": null
+      },
+      {
+        "typed": "תא",
+        "suggestions": [
+          "תא 2"
+        ],
+        "exact": null
+      },
+      {
+        "typed": "",
+        "suggestions": [],
+        "exact": null
+      },
+      {
+        "typed": "31",
+        "suggestions": [
+          "31"
+        ],
+        "exact": "31"
+      }
+    ]
+  },
+  "letters": {
+    "labels": [
+      "3B",
+      "3a",
+      "תא 2",
+      "A1",
+      "בר 1",
+      null
+    ],
+    "letters": [
+      "A",
+      "B",
+      "א",
+      "ב",
+      "ר",
+      "ת"
+    ]
+  },
+  "internal": [
+    {
+      "taken": [],
+      "number": 99999
+    },
+    {
+      "taken": [
+        99999,
+        99998,
+        12
+      ],
+      "number": 99997
+    }
+  ]
+}

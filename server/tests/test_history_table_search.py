@@ -57,7 +57,8 @@ def test_digits_and_amounts_are_not_a_table_search_without_the_chip(typed):
 def test_with_the_chip_digits_are_a_table_number_and_text_a_name():
     assert T.parse_table_query("12", chip=True) == T.TableQuery(number=12, name=None, explicit=True)
     assert T.parse_table_query(" 12 ", chip=True).number == 12
-    assert T.parse_table_query("VIP 1", chip=True) == T.TableQuery(number=None, name="VIP 1", explicit=True)
+    # A text that is a label is its label too ("VIP 1" is "VIP1", P:/specs/table-scope.md §6.4).
+    assert T.parse_table_query("VIP 1", chip=True) == T.TableQuery(number=None, name="VIP 1", explicit=True, label_key="VIP1")
     assert T.parse_table_query("ש-12", chip=True) == T.TableQuery(number=12, name="ש-12", explicit=True, name_whole=True)
     assert T.parse_table_query("123456", chip=True) == T.TableQuery(number=None, name="123456", explicit=True)
     assert T.parse_table_query("", chip=True) is None

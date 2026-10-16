@@ -192,6 +192,8 @@ class TestParameters:
             "tableAssignmentMode", "tableAssignmentUnassigned", "tableAssignmentOwner", "tableAssignmentReset",
             "tableAssignmentOnClockOut", "tableAssignmentMulti", "tableAssignmentNotify", "tableBusyEntry",
             "tableBusyShowHolder",
+            # "תחום שולחנות" and "תא" (P:/specs/table-scope.md §3, §5, §6.4), right after the waiters'.
+            "tableAssignmentScope", "tableScopeOutside", "tableTerm",
             "tablesSendSelected", "tablesAfterSend", "tablesSendStayButton",
             "autoFire", "autoFireMinutesOverride",
             "fireAskOnSend", "fireAskMinutes", "fireHints", "itemScheduleMinutes", "itemScheduleOnClose", "kdsShowScheduled",

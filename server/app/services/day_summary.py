@@ -639,7 +639,10 @@ def tables(ctx: _Ctx, window: ReportWindow) -> Optional[Dict[str, Any]]:
         "averagePerCover": _r(paid_total / guests_paid) if guests_paid else None,
         "open": [
             {
-                "name": o.table_name or (f"שולחן {o.table_number}" if o.table_number is not None else P.DASH),
+                "name": o.table_name or (
+                    f"שולחן {getattr(o, 'table_label', None) or o.table_number}"
+                    if (getattr(o, "table_label", None) or o.table_number is not None) else P.DASH
+                ),
                 "openedAt": _iso(o.opened_at),
                 "openedLocal": _aware(o.opened_at).astimezone(zone).strftime("%H:%M") if o.opened_at else None,
                 "total": _r(o.total),

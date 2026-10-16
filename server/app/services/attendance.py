@@ -377,6 +377,8 @@ def open_tables_for(db: Session, shop_id: Any, pos_user_id: Any) -> List[Dict[st
             "tableId": str(o.table_id),
             "number": o.table_number,
             "name": o.table_name,
+            # "3B" (P:/specs/table-scope.md §6): the label, the number beside it the internal one.
+            **({"label": o.table_label} if getattr(o, "table_label", None) else {}),
             "total": float(o.total or 0),
             "guests": o.guests,
             "openedAt": _iso(o.opened_at),
@@ -1252,7 +1254,9 @@ def record_manual_exception(db: Session, adj: AttendanceAdjustment, shift: Optio
 
 def _report_till_exception(db, machine, shift, pos_user, approval, tables, now) -> None:
     """Clocked out over open tables (on a manager's approval at the till) — an exception."""
-    names = ", ".join(str(t.number) for t in tables if getattr(t, "number", None) is not None)
+    names = ", ".join(
+        str(getattr(t, "label", None) or t.number) for t in tables if getattr(t, "number", None) is not None
+    )
     approver = getattr(approval, "name", None) if approval is not None else None
     summary = " · ".join(p for p in (
         pos_user_name(pos_user),

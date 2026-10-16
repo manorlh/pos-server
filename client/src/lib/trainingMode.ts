@@ -137,7 +137,7 @@ export interface UnsyncedTillBlocker extends TrainingTillRef {
 export interface OpenTablesBlocker {
   code: 'open_tables';
   count: number;
-  tables: { number: number | null; name: string | null }[];
+  tables: { number: number | null; name: string | null; label?: string | null }[];
 }
 
 export type TrainingBlocker = UnsyncedTillBlocker | OpenTablesBlocker;
@@ -343,8 +343,10 @@ export function pendingOf(b: UnsyncedTillBlocker): number | null {
   return b.pendingDocuments ?? b.pendingCount ?? null;
 }
 
-/** A table by its number, else its name. */
-export function tableLabel(t: { number: number | null; name: string | null }): string | null {
+/** A table by its label ("3B"), else its number, else its name. */
+export function tableLabel(t: { number: number | null; name: string | null; label?: string | null }): string | null {
+  const label = t.label?.trim();
+  if (label) return label;
   if (t.number !== null && t.number !== undefined) return String(t.number);
   const name = t.name?.trim();
   return name ? name : null;

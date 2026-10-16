@@ -421,6 +421,10 @@ class POSMachine(Base):
     #: What the till's build says it can do, from its last heartbeat (`capabilities`, a list of
     #: strings): remote control asks a till only with "remote_close_v2" (app/services/remote_till_z.py).
     capabilities = Column(JSONB, nullable=True)
+    #: "שולחנות שהמכשיר רואה" (P:/specs/table-scope.md §2, §14): `{"zoneIds": [...], "tableIds": [...]}` — the
+    #: zones (with every table in them, later ones too) and single tables this device's tables screen shows;
+    #: null — every table its point of sale shows (today). Narrows only; reset when the device changes shop.
+    table_scope = Column(JSONB, nullable=True)
     cellular_reported_at = Column(DateTime(timezone=True), nullable=True)
     #: Flattened from `cellular` for the search: "פרטנר,סלקום" and "0541234567,0521234567".
     sim_carriers = Column(String(200), nullable=True, index=True)

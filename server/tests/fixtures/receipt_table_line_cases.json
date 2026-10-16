@@ -407,6 +407,70 @@
         "waiter": "דנה"
       },
       "line": "שולחן 12 · מלצר: דנה"
+    },
+    {
+      "name": "a labelled table (P:/specs/table-scope.md §6.4): its label, the word before it the till's tableTerm",
+      "fields": [
+        "table",
+        "zone"
+      ],
+      "term": "תא",
+      "facts": {
+        "number": 99999,
+        "name": null,
+        "zone": "מפלס 3",
+        "guests": null,
+        "waiter": null,
+        "label": "3B"
+      },
+      "line": "תא 3B · מפלס 3"
+    },
+    {
+      "name": "a labelled table with a name, no tableTerm",
+      "fields": [
+        "table"
+      ],
+      "facts": {
+        "number": 99998,
+        "name": "VIP",
+        "zone": null,
+        "guests": null,
+        "waiter": null,
+        "label": "3B"
+      },
+      "line": "שולחן 3B · VIP"
+    },
+    {
+      "name": "a numbered table under tableTerm",
+      "fields": [
+        "table",
+        "guests"
+      ],
+      "term": "תא",
+      "facts": {
+        "number": 12,
+        "name": null,
+        "zone": null,
+        "guests": 4,
+        "waiter": null,
+        "label": null
+      },
+      "line": "תא 12 · 4 סועדים"
+    },
+    {
+      "name": "a blank tableTerm is the default word",
+      "fields": [
+        "table"
+      ],
+      "term": " ",
+      "facts": {
+        "number": 7,
+        "name": null,
+        "zone": null,
+        "guests": null,
+        "waiter": null
+      },
+      "line": "שולחן 7"
     }
   ]
 }
