@@ -64,7 +64,7 @@ export function mixHex(a: string, b: string, t: number): string {
   return `#${mix(r1, r2)}${mix(g1, g2)}${mix(b1, b2)}`.toUpperCase();
 }
 
-function luminance(hex: string): number {
+export function luminance(hex: string): number {
   const [r, g, b] = hexToRgb(hex).map((v) => {
     const c = v / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -72,7 +72,7 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
-function contrast(a: string, b: string): number {
+export function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
@@ -146,6 +146,54 @@ export function tokensFor(cfg: Pick<TillDesignConfig, 'colors'>, brandColor?: st
     amberBg: '#FEF3C7',
     red: '#B91C1C',
     redBg: '#FEE2E2',
+  };
+}
+
+/** `color` moved toward `toward` until it reads `min`:1 on `bg` (at most 20 steps). */
+function untilContrast(color: string, bg: string, toward: string, min: number): string {
+  let out = color;
+  for (let i = 0; i < 20 && contrast(out, bg) < min; i++) out = mixHex(toward, out, 0.12);
+  return out;
+}
+
+/** `color` darkened on a light `bg`, lightened on a dark one, until it reads `min`:1 (a state's word in its colour). */
+export function readableOn(color: string, bg: string, min = 4.5): string {
+  return untilContrast(color, bg, luminance(bg) < 0.4 ? '#FFFFFF' : '#000000', min);
+}
+
+/**
+ * "זרימה"'s palette (P:/specs/flow-design.md §5.3): ours — the design's light / dark tokens, the accent the
+ * design's `colors.accent` or the brand colour, lightened on dark until it reads 4.5:1 (no background, or "base")
+ * — or, with a chosen `flow.background`, the surface, the border and the text derived from its luminance (text
+ * always 4.5:1).
+ * The text on the accent is white or ink, whichever reads better. Never the competitor's navy and yellow.
+ */
+export function flowTokens(cfg: Pick<TillDesignConfig, 'colors' | 'flow'>, brandColor?: string | null): Tokens {
+  const base = tokensFor(cfg, brandColor);
+  const own = cfg.flow?.background;
+  const chosen = typeof own === 'string' && /^#[0-9A-Fa-f]{6}$/.test(own) ? own.toUpperCase() : null;
+  const onAccentOf = (accent: string) => (contrast(accent, '#FFFFFF') >= contrast(accent, '#111827') ? '#FFFFFF' : '#111827');
+  if (!chosen) {
+    const accent = base.dark ? untilContrast(base.accent, base.bg, '#FFFFFF', 4.5) : base.accent;
+    return { ...base, accent, onAccent: onAccentOf(accent), tint: mixHex(accent, base.surface, base.dark ? 0.18 : 0.1) };
+  }
+  const dark = contrast(chosen, '#FFFFFF') > contrast(chosen, '#111827');
+  const ink = untilContrast(dark ? '#F2F4F7' : '#111827', chosen, dark ? '#FFFFFF' : '#000000', 4.5);
+  const ink2 = untilContrast(mixHex(ink, chosen, 0.62), chosen, ink, 4.5);
+  const surface = dark ? mixHex('#FFFFFF', chosen, 0.07) : mixHex('#FFFFFF', chosen, 0.7);
+  const border = dark ? mixHex('#FFFFFF', chosen, 0.16) : mixHex('#000000', chosen, 0.1);
+  const accent = untilContrast(base.accent, chosen, dark ? '#FFFFFF' : '#000000', 4.5);
+  return {
+    ...base,
+    dark,
+    bg: chosen,
+    surface,
+    border,
+    ink,
+    ink2,
+    accent,
+    onAccent: onAccentOf(accent),
+    tint: mixHex(accent, surface, dark ? 0.2 : 0.1),
   };
 }
 

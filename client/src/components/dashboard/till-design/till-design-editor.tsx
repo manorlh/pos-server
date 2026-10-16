@@ -11,6 +11,9 @@
  * "שולחנות ומפה" (P:/specs/till-design-tables.md, ./section-floor.tsx): the floor editor itself and the
  * tables' look and the map's display — till parameters at the same level, saved apart from the design
  * (the bar below saves both) — with the till's floor beside it, every change shown before it is saved.
+ *
+ * "סגנון מסכים" (P:/specs/flow-design.md §5, ./section-flow.tsx): "רגיל" or "זרימה" per level and device
+ * class, with its options; its own preview beside it (./preview-flow.tsx).
  */
 
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
@@ -34,6 +37,7 @@ import {
   getPath,
   imageCoverage,
   jsonEqual,
+  pruneEmptyFlow,
   pruneEmptyMotion,
   pruneEmptyLook,
   pruneOverrides,
@@ -69,6 +73,8 @@ import { ReviewDialog } from './review-dialog';
 import { FloorPreviewPanel, FloorSection } from './section-floor';
 import { ActionsSection } from './section-actions';
 import { FieldsSection } from './section-fields';
+import { FlowSection } from './section-flow';
+import { FlowPreviewPanel } from './preview-flow';
 import { LayoutSection } from './section-layout';
 import { LookSection } from './section-look';
 import { MenuSection } from './section-menu';
@@ -78,10 +84,12 @@ import { TillMenuSection } from './section-till-menu';
 import { CoursesOffNote, CoverageSummary } from './section-template-options';
 import { TillPreview } from './till-preview';
 
-type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion' | 'tillMenu' | 'floor';
+type SectionKey = 'template' | 'flow' | 'layout' | 'menu' | 'actions' | 'look' | 'fields' | 'motion' | 'tillMenu' | 'floor';
 
 const SECTIONS: { key: SectionKey; paths: string[] }[] = [
   { key: 'template', paths: ['template', 'profiles', 'courses', 'payDock', 'night', 'visual', 'professional', 'bar.openTabs'] },
+  // "סגנון מסכים" (P:/specs/flow-design.md §5): "רגיל" or "זרימה", and its options.
+  { key: 'flow', paths: ['flow'] },
   { key: 'layout', paths: ['layout', 'profiles'] },
   { key: 'menu', paths: ['menu', 'bar.favorites'] },
   { key: 'actions', paths: ['actionBar', 'quickCash', 'bar.quantityPresets', 'bar.repeatRound'] },
@@ -128,6 +136,8 @@ interface EditorBodyProps {
   dirtyRef: MutableRefObject<boolean>;
   /** The first till version that shows phase 2's templates (the server's constant). */
   phase2MinVersion?: string | null;
+  /** The first till version that shows "זרימה" (the server's constant). */
+  flowMinVersion?: string | null;
   /** The company whose courses ("שלבי הגשה") the courses board shows. */
   companyId?: string | null;
   /** The page's shop: the floor "שולחנות ומפה" edits (none at company level: one is picked). */
@@ -146,6 +156,7 @@ export function EditorBody({
   targets,
   dirtyRef,
   phase2MinVersion,
+  flowMinVersion,
   companyId,
   shopId = null,
   initialSection = null,
@@ -282,12 +293,12 @@ export function EditorBody({
     setMode,
     errors,
     serverErrors,
-    // A `motion` or `look` edit may leave empty objects behind (back to nothing): pruned, as the server does.
+    // A `motion`, `look` or `flow` edit may leave empty objects behind (back to nothing): pruned, as the server does.
     set: (path, value) => {
-      setDraft((d) => pruneEmptyLook(pruneEmptyMotion(setPath(d, path, value))));
+      setDraft((d) => pruneEmptyFlow(pruneEmptyLook(pruneEmptyMotion(setPath(d, path, value)))));
       setServerErrors((list) => (list.length ? list.filter((e) => !hits([path], e.path)) : list));
     },
-    reset: (path) => setDraft((d) => pruneEmptyLook(pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path)))))),
+    reset: (path) => setDraft((d) => pruneEmptyFlow(pruneEmptyLook(pruneEmptyMotion(setPath(d, path, cloneJson(getPath(inherited, path))))))),
     showProductInfo: () => {
       setShowPreview(true);
       setInfoNonce((n) => n + 1);
@@ -400,6 +411,8 @@ export function EditorBody({
               ) : null}
               {section === 'template' ? (
                 <TemplateSection />
+              ) : section === 'flow' ? (
+                <FlowSection />
               ) : section === 'layout' ? (
                 <LayoutSection />
               ) : section === 'menu' ? (
@@ -448,6 +461,8 @@ export function EditorBody({
           <aside className={cn('lg:sticky lg:top-16', !showPreview && 'hidden lg:block')}>
             {section === 'motion' ? (
               <TillTablesDemo />
+            ) : section === 'flow' ? (
+              <FlowPreviewPanel />
             ) : section === 'floor' ? (
               <FloorPreviewPanel live={floorLive} effective={floorEffective} device={floorDevice} onDevice={setFloorDevice} />
             ) : (
@@ -540,6 +555,7 @@ export function EditorBody({
             saving={save.isPending}
             onConfirm={() => save.mutate()}
             phase2MinVersion={phase2MinVersion ?? null}
+            flowMinVersion={flowMinVersion ?? null}
             mostlyWithoutPhotos={mostlyWithoutPhotos}
           />
         ) : null}
@@ -694,6 +710,7 @@ export function TillDesignEditor({
           targets={targets}
           dirtyRef={dirtyRef}
           phase2MinVersion={defaults.data?.phase2MinVersion ?? null}
+          flowMinVersion={defaults.data?.flowMinVersion ?? null}
           companyId={companyId}
           shopId={shopId}
           initialSection={sectionFrom(initialSection)}
