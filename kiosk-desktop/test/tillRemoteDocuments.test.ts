@@ -518,6 +518,27 @@ describe('on the Windows till', () => {
     expect(h.svc.printQueue.jobsFor(h.state().checkout.documentId ?? '', 'receipt')).toHaveLength(1);
   });
 
+  it('the technician\'s "מדפסת לקבלות ולמסמכים": this till\'s printer, the other till\'s, "לשאול בכל פעם"; "חזור להגדרת הענן"', async () => {
+    const { h } = rig();
+    current = h;
+    await h.svc.kitchen.pull(true);
+    const info = await h.svc.technicianInfo();
+    expect(info.receipts).toEqual({
+      choice: null,
+      options: [
+        { id: 'local', label: 'מדפסת הקופה' },
+        { id: PRINTERS.printers[0].id, label: 'המדפסת של בר' },
+        { id: 'ask', label: 'לשאול בכל פעם' },
+      ],
+      scope: 'במדפסת של קופה אחרת מודפסים: חשבונות, קבלות וחשבוניות. שאר המסמכים — במדפסת של הקופה הזו.',
+    });
+    expect(h.svc.technicianUnlock('1995').outcome).toBe('granted');
+    await h.svc.technicianAction({ type: 'setReceiptPrinter', id: 'local' });
+    expect(h.svc.kv.get(TILL_PRINTER_KEY)).toBe('local');
+    await h.svc.technicianAction({ type: 'setReceiptPrinter', id: null });
+    expect(h.svc.kv.get(TILL_PRINTER_KEY)).toBeNull();
+  });
+
   it('"מדפסת הקופה" chosen on this till wins over the cloud\'s assignment', async () => {
     const { h, lanSeen } = rig();
     current = h;

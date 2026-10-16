@@ -464,6 +464,11 @@ export interface TechnicianInfo {
   network: { online: boolean; lastBeatOkAt: number | null; serverUrl: string | null; interfaces: Array<{ name: string; address: string }> };
   printer: AdminInfo['printer'];
   terminal: AdminInfo['terminal'];
+  /**
+   * "מדפסת לקבלות ולמסמכים" (bill-print-other-till §3, §7א): where this till's pages go when another till's printer is offered
+   * ("המדפסת של <שם הקופה>") — this till's own choice over the cloud's (null — the cloud's setting); absent: none offered.
+   */
+  receipts?: { choice: string | null; options: Array<{ id: string; label: string }>; scope: string | null };
   /** The updater (main/update/updater.ts); `status` is its phase (shared/roles.ts UpdatePhase). */
   update: {
     current: string;
@@ -621,4 +626,6 @@ export type TechnicianAction =
   | { type: 'updateInstall' }
   | { type: 'quickSupport' }
   | { type: 'setZoom'; zoom: number }
+  /** "מדפסת לקבלות ולמסמכים": a destination's id, `local`, `ask` — or null, "חזור להגדרת הענן". */
+  | { type: 'setReceiptPrinter'; id: string | null }
   | { type: 'unpair' };

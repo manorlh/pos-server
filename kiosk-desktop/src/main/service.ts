@@ -36,9 +36,9 @@ import { OWED_CHOICES, shortTx, type OwedChoice, type TxView } from '../core/cas
 import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/settings';
 import { cardPrincipalAgorot, legsOf, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import type { PrintedPage } from '../core/till/remoteDocuments';
+import { LOCAL_DESTINATION, REMOTE_DOC_TEXT, TILL_CHOICE_ASK, remoteDestinationsOf, remoteDocSettingsOf, type PrintedPage } from '../core/till/remoteDocuments';
 import { rowOf as transmissionRowOf, type TransmissionRow } from '../core/till/transmission';
-import type { RemoteDocumentsRouter } from './till/tillRemotePrint';
+import { DEFAULT_PRINTER_KEY, TILL_PRINTER_KEY, type RemoteDocumentsRouter } from './till/tillRemotePrint';
 import { isCreditType as isCreditDoc } from '../core/sale';
 import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput } from '../core/printDocs';
 import {
@@ -4574,8 +4574,24 @@ export class KioskService extends EventEmitter {
       network: { online: !this.offlineNow, lastBeatOkAt: this.sync.status.lastBeatOkAt, serverUrl: this.cloud.credentials()?.serverUrl ?? null, interfaces: this.platform.interfaces() },
       printer: { ...admin.printer, queues: queues.map((q) => `${q.name} (${q.health})`) },
       terminal: admin.terminal,
+      ...(() => {
+        const r = this.receiptChoices();
+        return r ? { receipts: r } : {};
+      })(),
       update,
       quickSupport: null,
+    };
+  }
+
+  /** "מדפסת לקבלות ולמסמכים": the choices when another till's printer is offered to this one (none — undefined). */
+  private receiptChoices(): TechnicianInfo['receipts'] {
+    const s = remoteDocSettingsOf(this.cloud.parameters());
+    const remote = remoteDestinationsOf(this.kitchen.config().printers, s, this.machineId);
+    if (remote.length === 0) return undefined;
+    return {
+      choice: this.kv.get(TILL_PRINTER_KEY),
+      options: [{ id: LOCAL_DESTINATION, label: REMOTE_DOC_TEXT.local }, ...remote.map((d) => ({ id: d.id, label: d.name })), { id: TILL_CHOICE_ASK, label: 'לשאול בכל פעם' }],
+      scope: s.enabled ? REMOTE_DOC_TEXT.scope(REMOTE_DOC_TEXT.scopeOf(s.documents)) : null,
     };
   }
 
@@ -4620,6 +4636,12 @@ export class KioskService extends EventEmitter {
         const launched = await this.platform.launchQuickSupport();
         return launched ? { ok: true, message: launched } : { ok: false, message: 'TeamViewer QuickSupport לא מותקן במחשב' };
       }
+      case 'setReceiptPrinter':
+        if (a.id === null) this.kv.delete(TILL_PRINTER_KEY);
+        else this.kv.set(TILL_PRINTER_KEY, a.id);
+        // A new choice: the question's memory starts again.
+        this.kv.delete(DEFAULT_PRINTER_KEY);
+        return { ok: true };
       case 'setZoom':
         this.setLocalSettings({ zoom: a.zoom });
         this.platform.setZoom?.(a.zoom);
