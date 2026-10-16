@@ -85,6 +85,16 @@ const bridgeApi: BridgeWindowApi = {
 
 contextBridge.exposeInMainWorld('r2mBridge', bridgeApi);
 
+/** "מסך לקוח" (main/shell/customerDisplayWindow.ts): the till's frames for its second screen. */
+contextBridge.exposeInMainWorld('kioskDisplay', {
+  onState: (fn: (frame: unknown) => void) => {
+    const listener = (_e: unknown, payload: unknown) => fn(payload);
+    ipcRenderer.on('display:state', listener);
+    return () => ipcRenderer.removeListener('display:state', listener);
+  },
+  ready: () => ipcRenderer.send('display:ready'),
+});
+
 contextBridge.exposeInMainWorld('kioskPrint', {
   onRender: (fn: (req: { id: number; doc: unknown; widthDots: number }) => void) => ipcRenderer.on('print:render', (_e, req) => fn(req)),
   result: (r: { id: number; width?: number; height?: number; rgba?: Uint8Array; error?: string }) => ipcRenderer.send('print:result', r),

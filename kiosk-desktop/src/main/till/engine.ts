@@ -216,6 +216,7 @@ import { TillTransmission } from './tillTransmission';
 import { TillShopXLan } from './tillShopXLan';
 import { TillItemBlocks } from './tillItemBlocks';
 import { TillPrintQueue } from './tillPrintQueue';
+import { TillCustomerDisplay } from './tillCustomerDisplay';
 import { FAILOVER_TEXT, ticketTitleOf } from '../../core/kitchen/failover';
 import { IB_TEXT } from '../../core/till/itemBlocks';
 import type { LanCall } from '../kitchen/kitchenNet';
@@ -690,6 +691,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly itemBlocks: TillItemBlocks;
   /** "תור הדפסה" and "מדפסת חלופית" for the kitchen tickets (tillPrintQueue.ts). */
   readonly printQueue: TillPrintQueue;
+  /** "מסך לקוח": the second screen's settings and state (tillCustomerDisplay.ts). */
+  readonly customerDisplay: TillCustomerDisplay;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -728,6 +731,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     });
     this.itemBlocks.start();
     this.printQueue = new TillPrintQueue(this.ctx);
+    this.customerDisplay = new TillCustomerDisplay(this.ctx);
+    this.customerDisplay.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -813,6 +818,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.transmission.stop();
     this.shopXLan.stop();
     this.itemBlocks.stop();
+    this.customerDisplay.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -893,6 +899,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.lastState = json;
     this.seq += 1;
     this.emit('state', state);
+    // "מסך לקוח": the second screen follows what the till shows (filtered, the thanks held — tillCustomerDisplay.ts).
+    this.customerDisplay?.publish(state, this.transmission?.notices().customer ?? null);
     // The updater and the pay monitor see a till as a quiet or busy device (never an update mid-sale).
     const busy = state.sell.lines.length > 0 || state.checkout.phase !== 'idle' || state.dialog !== null;
     this.svc.reportFlow({ flowState: busy ? 'paying' : 'attract', screen: state.checkout.phase !== 'idle' ? 'pay' : 'attract', busy, idle: !busy && this.nowFn() - this.lastActivityAt > 60_000 });

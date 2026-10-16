@@ -225,7 +225,7 @@ export const PREVIEW_CAPS: HostCaps = { ...NO_CAPS, scan: { hid: true, camera: f
  * receipt goes to the Windows queue / the network printer / the USB printer, the drawer opens through it, and the card
  * terminal is the one the cloud configured for this machine (Nayax LAN / USB, SynqPay).
  */
-export function windowsTillCaps(svc: { pay: { describe(): { kind: string | null } } }): HostCaps {
+export function windowsTillCaps(svc: { pay: { describe(): { kind: string | null } } }, o: { secondScreen?: boolean } = {}): HostCaps {
   const kind = svc.pay.describe().kind;
   return {
     localEngine: true,
@@ -234,7 +234,8 @@ export function windowsTillCaps(svc: { pay: { describe(): { kind: string | null 
     channels: { tcpTls: true, https: true, serial: true, usbCdc: true },
     terminals: { nayaxLan: kind === 'nayax_lan', nayaxUsb: kind === 'nayax_usb', synqpayLan: kind === 'synqpay', synqpaySerial: kind === 'synqpay', zcredit: kind === 'zcredit', agamento: false },
     scan: { hid: true, camera: false },
-    customerDisplay: false,
+    // "מסך לקוח" (main/shell/customerDisplayWindow.ts): a second display connected.
+    customerDisplay: o.secondScreen === true,
     secureStore: true,
     backgroundSync: true,
   };
