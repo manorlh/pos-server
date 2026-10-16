@@ -133,6 +133,30 @@ def post_kiosk_orders(
     return out
 
 
+@till_router.get("/{machine_id}/kiosk/orders")
+def get_own_kiosk_orders(
+    machine_id: str,
+    days: int = Query(30, ge=1, le=31),
+    until: Optional[date] = Query(None, description="The last business date (default today)"),
+    q: Optional[str] = Query(None, max_length=40, description="A pickup number or its letters, a document number, a name or an amount"),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "היסטוריית עסקאות" in the kiosk's own manager menu: its orders of the `days` business days up to `until`, newest
+    first (at most 500), the phone masked — the days the kiosk no longer keeps itself (a week). Its own orders only
+    (the path machine is the token's); a controlling till reads a kiosk's through `/kiosks/{k}/orders`.
+    """
+    # Called directly (the tests), an unset query is its `Query(...)` default: not given.
+    return svc.own_order_history(
+        db,
+        machine,
+        until=until if isinstance(until, date) else None,
+        days=days if isinstance(days, int) else 30,
+        q=q if isinstance(q, str) else None,
+    )
+
+
 @till_router.post("/{machine_id}/kiosk/pickup-number", dependencies=FISCAL_SYNC_PATH)
 def post_pickup_number(
     machine_id: str,

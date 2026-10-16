@@ -1035,6 +1035,75 @@ def till_order_history(db: Session, kiosk_machine: POSMachine, days: int = 1, *,
     return [order_out(r, full_phone=False) for r in rows]
 
 
+#: The kiosk's own "היסטוריית עסקאות" from the cloud: what it no longer keeps itself (a week), up to a month back.
+OWN_HISTORY_MAX_DAYS = 31
+OWN_HISTORY_MAX_ORDERS = 500
+
+
+def _amount_agorot(text: str) -> Optional[int]:
+    """An amount as the kiosk's search reads it ("45", "45.5", "45,50", "₪45.50"), in agorot; None for anything else."""
+    raw = text.replace("₪", "").replace(",", ".").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not (value > 0) or value != value or value > 10_000_000:
+        return None
+    return int(round(value * 100))
+
+
+def own_order_history(
+    db: Session,
+    machine: POSMachine,
+    *,
+    until: Optional[date] = None,
+    days: int = 30,
+    q: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    """
+    The kiosk's OWN orders of the [days] business days up to [until] (default: today), newest first, the phone masked
+    (a device is no dashboard user): "היסטוריית עסקאות" in the kiosk's manager menu asks the cloud for the days it no
+    longer keeps itself (pos-android KioskOrderStore and kiosk-desktop OrderStore keep a week). With `q` — a pickup
+    number or its letters ("A12", "a 12", "12"), a document number, the customer's name, or an amount ("45", "45,5",
+    "₪45.50": the total with the tip) — only the matching orders, as the kiosk searches its own (KioskReprint.search).
+    """
+    from datetime import timedelta as _td
+
+    from sqlalchemy import or_
+
+    from app.services import kiosk_pickup
+
+    days = max(1, min(int(days or 1), OWN_HISTORY_MAX_DAYS))
+    last = until or business_today(db, machine.tenant_id, now=now)
+    first = last - _td(days=days - 1)
+    query = db.query(KioskOrder).filter(
+        KioskOrder.machine_id == machine.id,
+        KioskOrder.business_date >= first,
+        KioskOrder.business_date <= last,
+    )
+    needle = (q or "").strip()[:40]
+    if needle:
+        escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        clauses = [
+            KioskOrder.transaction_number.ilike(f"%{escaped}%", escape="\\"),
+            KioskOrder.customer_name.ilike(f"%{escaped}%", escape="\\"),
+        ]
+        pickup = kiosk_pickup.parse_pickup_query(needle)
+        if pickup is not None:
+            clauses.append(kiosk_pickup.order_match_clause(pickup))
+        agorot = _amount_agorot(needle)
+        if agorot is not None:
+            clauses.append((KioskOrder.total_agorot + KioskOrder.tip_agorot) == agorot)
+        query = query.filter(or_(*clauses))
+    rows = (
+        query.order_by(KioskOrder.business_date.desc(), KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+        .limit(OWN_HISTORY_MAX_ORDERS)
+        .all()
+    )
+    return [order_out(r, full_phone=False) for r in rows]
+
+
 # ── Commands ─────────────────────────────────────────────────────────────────
 
 
