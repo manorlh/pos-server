@@ -1967,10 +1967,11 @@ export class KioskService extends EventEmitter {
 
   /** "חסר עודף במכשיר" (§11.15א): what the customer may choose — a slip always, a credit online, a tip where tips are on. */
   private owedChoices(tx?: TxView): OwedChoice[] {
-    // CashMag (P:/specs/cashmag-windows.md §6): no credit yet — the cloud makes credits from a cash station's journal
-    // only, so a CashMag credit's code could not be redeemed. A slip, or a tip.
-    const cashmag = tx?.hostId === CASHMAG_HOST_ID;
-    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && !cashmag && this.cloudOnline()) || (c === 'tip' && this.config().payment.tipEnabled === true));
+    // A credit online only: the cloud keeps it — from the station's journal, or (CashMag, P:/specs/cashmag-windows.md §6)
+    // from this document's cash leg (`changeOwedAs` "credit") once it reaches the cloud, while `cashmagOwedCredit` is on
+    // (the Android till reads the same key).
+    const credit = this.cloudOnline() && (tx?.hostId !== CASHMAG_HOST_ID || this.cashMag.config().owedCredit);
+    return OWED_CHOICES.filter((c) => c === 'slip' || (c === 'credit' && credit) || (c === 'tip' && this.config().payment.tipEnabled === true));
   }
 
   /** The cash settings of the device paying now: CashMag reads the till parameters themselves (`cashOwedChoiceSec`, `cashReceiptLines`). */

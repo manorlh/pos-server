@@ -28,6 +28,10 @@ ROUNDING_KEY = "cashmagRounding"
 QUEUE_TIMEOUT_KEY = "cashmagQueueTimeoutSec"
 AUTO_CANCEL_KEY = "cashmagAutoCancelSec"
 CALL_TIMEOUT_KEY = "cashmagCallTimeoutSec"
+#: "זיכוי להזמנה הבאה" for change owed at a CashMag machine (P:/specs/cashmag-windows.md §6): the cloud makes the
+#: credit from the kiosk's / till's document (cash_stations.cashmag_credits_from_documents). On by default — the cloud
+#: supports it; read by the Android till / kiosk and the Windows kiosk alike, offered online only.
+OWED_CREDIT_KEY = "cashmagOwedCredit"
 
 PROTOCOL_JAR = "jar"
 PROTOCOL_JSON = "json"
@@ -35,7 +39,7 @@ PROTOCOL_RLP = "rlp"
 PROTOCOL_OPTIONS: Tuple[str, ...] = (PROTOCOL_JAR, PROTOCOL_JSON, PROTOCOL_RLP)
 PROTOCOL_LABELS: Dict[str, str] = {
     PROTOCOL_JAR: "ספריית היצרן (jar)",
-    PROTOCOL_JSON: "JSON-RPC ברשת (בלי ספריית היצרן) — עוד לא נתמך",
+    PROTOCOL_JSON: "JSON-RPC ברשת (בלי ספריית היצרן)",
     PROTOCOL_RLP: "RLP — עוד לא נתמך",
 }
 
@@ -75,11 +79,13 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     _spec(ENABLED_KEY, "מכשיר מזומן CashMag — פעיל בקופה", "boolean", False,
           "כשמופעל, במסך התשלום של הקופה יש \"מזומן במכשיר\": הלקוח משלם ומקבל עודף במכונת המזומן של CashMag "
           "(CMC Monetic), דרך תוכנת היצרן בקופסת CashMag ברשת המקומית. כבוי (ברירת מחדל) — הקופה כמו היום, בלי שום "
-          f"פנייה למכונה. דורש גרסת קופה שכוללת את ספריית היצרן. {_LEVELS}"),
+          "פנייה למכונה. בפרוטוקול ספריית היצרן (jar) — דורש גרסת קופה שכוללת אותה; ב-JSON-RPC — לא. "
+          f"{_LEVELS}"),
     _spec(PROTOCOL_KEY, "מכשיר מזומן CashMag — פרוטוקול", "enum", PROTOCOL_JAR,
           f"איך הקופה מדברת עם תוכנת היצרן במחשב CashMag. «{PROTOCOL_LABELS[PROTOCOL_JAR]}» (ברירת מחדל). "
-          f"«{PROTOCOL_LABELS[PROTOCOL_JSON]}» ו-«{PROTOCOL_LABELS[PROTOCOL_RLP]}» — יופעלו כשיהיה להם דרייבר; עד אז "
-          f"התשלום \"לא זמין\". {_LEVELS}",
+          f"«{PROTOCOL_LABELS[PROTOCOL_JSON]}» — לקוח שלנו לשרת CashMag: מסכי תשלום שלנו, מתחבר רק לזמן התשלום "
+          "(כמו קיוסק Windows — שם אין ספרייה, ו-jar ו-JSON-RPC שניהם JSON-RPC). "
+          f"«{PROTOCOL_LABELS[PROTOCOL_RLP]}» — עד שהיצרן ימסור את פורמט ההודעות התשלום \"לא זמין\". {_LEVELS}",
           enum_options=PROTOCOL_OPTIONS, enum_labels=PROTOCOL_LABELS),
     _spec(HOST_KEY, "מכשיר מזומן CashMag — כתובת השרת", "string", None,
           f"כתובת המחשב של היצרן ברשת המקומית (IP או שם), למשל 192.168.1.40. ריק — לא מוגדר. {_LEVELS}"),
@@ -104,6 +110,10 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
           f"(0–1800) — רק אחרי שהיצרן יאשר את היחידה. {_LEVELS}"),
     _spec(CALL_TIMEOUT_KEY, "מכשיר מזומן CashMag — זמן לקריאה (שניות)", "integer", 30,
           f"הזמן המקסימלי לקריאה שאינה תשלום (חיבור, רישיון, הפעלה) (5–120). ברירת מחדל 30. {_LEVELS}"),
+    _spec(OWED_CREDIT_KEY, "מכשיר מזומן CashMag — זיכוי בעודף חייב", "boolean", True,
+          "כשהמכונה לא נתנה את כל העודף, הלקוח יכול לבחור \"זיכוי להזמנה הבאה\": פתק עם קוד ו-QR שמממשים בכל קופה "
+          "או קיוסק של החברה (גם בחלקים). מוצע רק כשהמכשיר מחובר לענן. כבוי — פתק לקופה (או טיפ) בלבד. "
+          f"ברירת מחדל: פעיל. {_LEVELS}"),
 )
 
 

@@ -19,6 +19,11 @@
 * `CashRelayRequest` — §14.4 the cloud relay: one LAN call of a client (`cashRoute` cloud / auto) kept for its
   station's host, signed by the client exactly as on the LAN, handed to the host once, and its answer for the client.
 
+CashMag (P:/specs/cashmag-windows.md §6): a kiosk paying at a CashMag machine has no station and no host of ours. When
+its customer keeps the change owed as a credit, the cloud makes the credit from the kiosk's document (its `cash` leg's
+`cashDevice`, `hostId` "cashmag", `changeOwedAs` "credit"): a `CashStationTx` row with `device` "cashmag" and no
+station (`station_id` null) — redeemed, released and confirmed exactly like a station's.
+
 Amounts are integer agorot throughout, as on the LAN (§11 preamble).
 """
 import uuid
@@ -94,9 +99,12 @@ class CashStationTx(Base):
     #: The kiosk's `txId` (UUID v4): the same id is the same transaction (§11.1).
     tx_id = Column(UUID(as_uuid=True), primary_key=True)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    station_id = Column(UUID(as_uuid=True), ForeignKey("cash_stations.id", ondelete="CASCADE"), nullable=False)
+    #: Null only for a CashMag credit (`device` "cashmag"): no station of ours took the money.
+    station_id = Column(UUID(as_uuid=True), ForeignKey("cash_stations.id", ondelete="CASCADE"), nullable=True)
     host_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="SET NULL"), nullable=True)
     client_machine_id = Column(UUID(as_uuid=True), nullable=True)
+    #: Null — a PayLink station's journal; "cashmag" — made from a CashMag kiosk's document (a credit).
+    device = Column(String(16), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False)
     state = Column(String(16), nullable=False)
     outcome = Column(String(20), nullable=True)
@@ -194,7 +202,8 @@ class CashCreditRedemption(Base):
     id = Column(UUID(as_uuid=True), primary_key=True)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     tx_id = Column(UUID(as_uuid=True), ForeignKey("cash_station_txs.tx_id", ondelete="CASCADE"), nullable=False)
-    station_id = Column(UUID(as_uuid=True), ForeignKey("cash_stations.id", ondelete="CASCADE"), nullable=False)
+    #: Its credit's station; null for a CashMag credit.
+    station_id = Column(UUID(as_uuid=True), ForeignKey("cash_stations.id", ondelete="CASCADE"), nullable=True)
     code = Column(String(32), nullable=False)
     #: The till / kiosk that took it.
     machine_id = Column(UUID(as_uuid=True), nullable=True)

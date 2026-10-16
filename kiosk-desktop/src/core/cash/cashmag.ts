@@ -51,6 +51,8 @@ export const CASHMAG_PARAMS = {
   queueTimeoutSec: 'cashmagQueueTimeoutSec',
   autoCancelSec: 'cashmagAutoCancelSec',
   callTimeoutSec: 'cashmagCallTimeoutSec',
+  /** "זיכוי להזמנה הבאה" for change owed (the cloud makes the credit from the document); absent — an older cloud: off. */
+  owedCredit: 'cashmagOwedCredit',
 } as const;
 
 export const DEFAULT_CURRENCY = 'ILS';
@@ -90,6 +92,8 @@ export interface CashMagConfig {
   autoCancelSec: number;
   /** The longest a call other than a payment may take (connect, user, start). */
   callTimeoutSec: number;
+  /** `cashmagOwedCredit`: the customer may keep change owed as a credit (online only) — as the Android till reads it. */
+  owedCredit: boolean;
   /** Where each setting came from (the staff screen shows it). */
   sources: Record<'host' | 'port' | 'terminal' | 'userCode', CashMagSource>;
 }
@@ -158,6 +162,7 @@ export function cashmagConfigOf(params: Record<string, unknown> | null | undefin
     queueTimeoutSec: whole(p[K.queueTimeoutSec], 0, 0, 1800),
     autoCancelSec: whole(p[K.autoCancelSec], 0, 0, 1800),
     callTimeoutSec: whole(p[K.callTimeoutSec], DEFAULT_CALL_TIMEOUT_SEC, 5, 120),
+    owedCredit: on(p[K.owedCredit]),
     sources: { host: host.source, port: port.source, terminal: terminal.source, userCode: userCode.source },
   };
 }
