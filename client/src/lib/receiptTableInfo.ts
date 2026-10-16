@@ -5,7 +5,9 @@
  * title: "שולחן 12 · גן · 4 סועדים · מלצר: דנה". Empty (the default) or `none`: no line, as before.
  *
  * The pure helpers of the till design's field and its preview. The line's rule is the till's and the
- * cloud's, pinned by server/tests/fixtures/receipt_table_line_cases.json (the test reads it).
+ * cloud's, pinned by server/tests/fixtures/receipt_table_line_cases.json (the test reads it). A labelled
+ * table ("3B", P:/specs/table-scope.md §6.4) shows its label instead of its number, and the word before it is
+ * the till's `tableTerm` ("תא 3B · מפלס 3"; blank — "שולחן").
  *
  * Self-contained on purpose (no imports): the node test build compiles it alone.
  */
@@ -33,6 +35,8 @@ export interface ReceiptTableFacts {
   zone: string | null;
   guests: number | null;
   waiter: string | null;
+  /** "3B" (P:/specs/table-scope.md §6.4): shown instead of the number, which is then an internal one. */
+  label?: string | null;
 }
 
 /** The preview's table. */
@@ -64,16 +68,28 @@ const text = (v: string | null | undefined): string | null => {
   return t ? t : null;
 };
 
-/** "12", "12 · VIP 1" — or a restored table by its label alone ("ש-12"). */
+/** "12", "12 · VIP 1", "3B", "3B · VIP" — or a restored table by its label alone ("ש-12"). */
 export function receiptTableTitle(facts: ReceiptTableFacts): string | null {
-  const label = text(facts.name);
-  if (facts.number === null || facts.number === undefined) return label;
-  if (!label) return String(facts.number);
-  return label.startsWith('ש-') ? label : `${facts.number}${RECEIPT_TABLE_SEPARATOR}${label}`;
+  const name = text(facts.name);
+  const shown = text(facts.label) ?? (facts.number === null || facts.number === undefined ? null : String(facts.number));
+  if (shown === null) return name;
+  if (!name) return shown;
+  return name.startsWith('ש-') ? name : `${shown}${RECEIPT_TABLE_SEPARATOR}${name}`;
 }
 
-/** "שולחן 12 · גן · 4 סועדים · מלצר: דנה" — or null: nothing asked, no table, or none of it known. */
-export function receiptTableLine(fields: readonly string[], facts: ReceiptTableFacts | null): string | null {
+/** The word before the table when the till's `tableTerm` is not set (or blank). */
+export const RECEIPT_TABLE_WORD = 'שולחן';
+
+/**
+ * "שולחן 12 · גן · 4 סועדים · מלצר: דנה" — or null: nothing asked, no table, or none of it known. [term]: the
+ * word before the table (`tableTerm`, "תא 3B"); blank or none — "שולחן".
+ */
+export function receiptTableLine(
+  fields: readonly string[],
+  facts: ReceiptTableFacts | null,
+  term?: string | null,
+): string | null {
+  const word = text(term) ?? RECEIPT_TABLE_WORD;
   if (!facts || fields.length === 0) return null;
   const wanted = new Set(fields);
   const parts: string[] = [];
@@ -81,7 +97,7 @@ export function receiptTableLine(fields: readonly string[], facts: ReceiptTableF
     if (!wanted.has(field)) continue;
     if (field === 'table') {
       const title = receiptTableTitle(facts);
-      if (title) parts.push(`שולחן ${title}`);
+      if (title) parts.push(`${word} ${title}`);
     } else if (field === 'zone') {
       const zone = text(facts.zone);
       if (zone) parts.push(zone);

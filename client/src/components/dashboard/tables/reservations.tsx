@@ -5,10 +5,11 @@
  * guests, a note) and the table set aside (or none yet). New and edited here or on a
  * till; the tills show the day's on the tables. "הגיעו" seats a booking, "לא הגיעו" and
  * "ביטול" close it. A table booked over the same time is refused (409
- * `reservation_overlap`).
+ * `reservation_overlap`). A table is named by its title — its label instead of its number ("3B",
+ * P:/specs/table-scope.md §6) — and the picker lists the tables in the natural order (3, 3A, 3B, 10).
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -16,6 +17,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatTime } from '@/lib/format';
 import { todayIso } from '@/lib/reportWindow';
 import { tableDisplay } from '@/lib/tableRestore';
+import { sortTables } from '@/lib/tableLabels';
 import {
   createReservation,
   fetchReservations,
@@ -70,6 +72,11 @@ export function TableReservations({ shopId }: { shopId: string }) {
 
   const rows = data ?? [];
   const guests = rows.filter((r) => r.status !== 'cancelled').reduce((n, r) => n + (r.guests ?? 0), 0);
+  // The booked table by its title ("3B · VIP"), from the floor (the booking carries its number only).
+  const { data: layout } = useQuery({ queryKey: ['tables-layout', shopId], queryFn: () => fetchTablesLayout(shopId) });
+  const titles = useMemo(() => new Map((layout?.tables ?? []).map((tb) => [tb.id, tableDisplay(tb).text])), [layout]);
+  const tableOf = (r: TableReservation) =>
+    (r.tableId ? titles.get(r.tableId) : undefined) ?? r.tableLabel ?? (r.tableNumber !== null ? String(r.tableNumber) : null);
 
   return (
     <div className="space-y-4">
@@ -119,7 +126,7 @@ export function TableReservations({ shopId }: { shopId: string }) {
                       {r.phone ?? '—'}
                     </TableCell>
                     <TableCell>{r.guests ?? '—'}</TableCell>
-                    <TableCell>{r.tableNumber ?? t('noTable')}</TableCell>
+                    <TableCell>{tableOf(r) ?? t('noTable')}</TableCell>
                     <TableCell className="max-w-48 truncate text-xs">{r.notes ?? ''}</TableCell>
                     <TableCell>
                       <Badge className={STATUS_STYLE[r.status]} variant="secondary">
@@ -213,7 +220,7 @@ function ReservationForm({
   const [tableId, setTableId] = useState(existing?.tableId ?? '');
 
   const { data: layout } = useQuery({ queryKey: ['tables-layout', shopId], queryFn: () => fetchTablesLayout(shopId) });
-  const tables = [...(layout?.tables ?? [])].sort((a, b) => a.number - b.number);
+  const tables = sortTables(layout?.tables ?? []);
 
   const save = useMutation({
     mutationFn: () => {

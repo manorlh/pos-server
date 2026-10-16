@@ -75,6 +75,7 @@ describe('blockers', () => {
 
   it('names a table by its number, else its name', () => {
     assert.equal(tableLabel({ number: 0, name: 'x' }), '0');
+    assert.equal(tableLabel({ number: 99999, name: null, label: '3B' }), '3B');
     assert.equal(tableLabel({ number: null, name: ' בר ' }), 'בר');
     assert.equal(tableLabel({ number: null, name: '  ' }), null);
   });

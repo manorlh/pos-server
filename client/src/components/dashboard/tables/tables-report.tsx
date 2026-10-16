@@ -41,7 +41,8 @@ type T = ReturnType<typeof useTranslations>;
  */
 function reportSheets(d: TablesReport, t: T, tc: T, waiter: string) {
   const mins = (m: number | null | undefined) => (m == null ? null : Math.round(m));
-  const tableLabel = (n: number | null | undefined, name: string | null | undefined) =>
+  // A labelled table by its label ("3B", P:/specs/table-scope.md §6.4), never its internal number.
+  const tableLabel = (n: number | string | null | undefined, name: string | null | undefined) =>
     [n, name].filter((v) => v != null && v !== '').join(' ');
   const figureColumns: ExcelSheet['columns'] = [
     { key: 'orders', header: t('orders'), kind: 'number' },
@@ -90,7 +91,7 @@ function reportSheets(d: TablesReport, t: T, tc: T, waiter: string) {
         rows: d.waiterTables
           .filter((r) => !waiter || r.waiter === waiter)
           .map((r) => [
-            r.waiter, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.openedAt, r.closedAt, mins(r.minutes),
+            r.waiter, tableLabel(r.tableLabel || r.tableNumber, r.tableName), r.zoneName, r.openedAt, r.closedAt, mins(r.minutes),
             r.guests, r.total, r.tip, r.transactionNumber, r.status === 'cancelled' ? t('cancelledShort') : null,
           ]),
       }
@@ -106,7 +107,7 @@ function reportSheets(d: TablesReport, t: T, tc: T, waiter: string) {
     byTable: {
       name: t('byTable'),
       columns: [{ key: 'table', header: t('table') }, { key: 'zone', header: t('zone') }, ...figureColumns],
-      rows: d.byTable.map((r) => [tableLabel(r.number, r.name), r.zoneName, ...figures(r)]),
+      rows: d.byTable.map((r) => [tableLabel(r.label || r.number, r.name), r.zoneName, ...figures(r)]),
     } satisfies ExcelSheet,
     byReason: {
       name: t('cancelByReason'),
@@ -140,7 +141,7 @@ function reportSheets(d: TablesReport, t: T, tc: T, waiter: string) {
         { key: 'total', header: tc('total'), kind: 'money' },
       ],
       rows: d.cancellations.rows.map((r) => [
-        r.closedAt, tableLabel(r.tableNumber, r.tableName), r.zoneName, r.reason, r.reasonText, r.cancelledBy,
+        r.closedAt, tableLabel(r.tableLabel || r.tableNumber, r.tableName), r.zoneName, r.reason, r.reasonText, r.cancelledBy,
         r.approvedBy, r.items.map((it) => `${it.quantity} × ${it.name}`).join(', '), r.total,
       ]),
     } satisfies ExcelSheet,
@@ -381,7 +382,7 @@ export function TablesReportView({ shopId }: { shopId: string }) {
                         <TableRow key={r.orderId} className={r.status === 'cancelled' ? 'text-muted-foreground' : ''}>
                           <TableCell>{r.waiter}</TableCell>
                           <TableCell>
-                            {[r.tableNumber, r.tableName].filter(Boolean).join(' ')}
+                            {[r.tableLabel || r.tableNumber, r.tableName].filter(Boolean).join(' ')}
                             {r.zoneName ? <span className="text-xs text-muted-foreground"> ({r.zoneName})</span> : null}
                           </TableCell>
                           <TableCell>{r.openedAt ? formatDateTime(r.openedAt) : '—'}</TableCell>
@@ -429,7 +430,7 @@ export function TablesReportView({ shopId }: { shopId: string }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows(data.byTable, (r) => [r.number, r.name, r.zoneName ? `(${r.zoneName})` : null].filter(Boolean).join(' '))}
+                {rows(data.byTable, (r) => [r.label || r.number, r.name, r.zoneName ? `(${r.zoneName})` : null].filter(Boolean).join(' '))}
               </TableBody>
             </Table>
           </Section>
@@ -487,7 +488,7 @@ export function TablesReportView({ shopId }: { shopId: string }) {
                   data.cancellations.rows.map((r) => (
                     <TableRow key={r.orderId}>
                       <TableCell>{formatDateTime(r.closedAt)}</TableCell>
-                      <TableCell>{[r.tableNumber, r.tableName].filter(Boolean).join(' ')}</TableCell>
+                      <TableCell>{[r.tableLabel || r.tableNumber, r.tableName].filter(Boolean).join(' ')}</TableCell>
                       <TableCell>
                         {r.reason}
                         {r.reasonText ? <span className="text-muted-foreground"> — {r.reasonText}</span> : null}

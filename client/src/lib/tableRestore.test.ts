@@ -77,6 +77,11 @@ describe('edits', () => {
     assert.equal(editError('mapSymbolScale', '100.5'), 'scale');
     assert.equal(editError('mapSymbolScale', 'גדול'), 'scale');
     assert.equal(editError('mapSymbolScale', ''), null);
+    // "המילה לפני המספר" (P:/specs/table-scope.md §14.2): text, at most 10 once its spaces are squeezed.
+    assert.equal(editError('tableTerm', 'תא'), null);
+    assert.equal(editError('tableTerm', '  תא   VIP '), null);
+    assert.equal(editError('tableTerm', '   '), 'term');
+    assert.equal(editError('tableTerm', 'x'.repeat(11)), 'term');
   });
 
   it('sends a whole number typed for an integer as a number', () => {
@@ -153,6 +158,10 @@ describe('a table on the floor', () => {
     assert.deepEqual(tableDisplay({ number: 9012, name: 'ש-12', labelOnly: true }), { main: 'ש-12', sub: null, text: 'ש-12' });
     // A label-only table whose name was cleared reads by its number.
     assert.deepEqual(tableDisplay({ number: 9012, name: '', labelOnly: true }), { main: '9012', sub: null, text: '9012' });
+    // A labelled table (P:/specs/table-scope.md §6.1): its label, never its internal number.
+    assert.deepEqual(tableDisplay({ number: 99_999, label: '3B', name: null }), { main: '3B', sub: null, text: '3B' });
+    assert.deepEqual(tableDisplay({ number: 99_999, label: '3B', name: 'VIP' }), { main: '3B', sub: 'VIP', text: '3B · VIP' });
+    assert.deepEqual(tableDisplay({ number: 99_998, label: '3B', name: 'ש-3B', labelOnly: true }), { main: 'ש-3B', sub: null, text: 'ש-3B' });
   });
 });
 

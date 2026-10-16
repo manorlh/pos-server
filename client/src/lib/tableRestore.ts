@@ -32,7 +32,10 @@ export interface RestoreParam {
   enumOptions: string[] | null;
   enumLabels: Record<string, string> | null;
   defaultValue: unknown;
-  /** The card's group (`staffTables` | `restore` | `mapDisplay` | `waiters` | `send` | `courses` | `fireFlow`). Absent on an older server. */
+  /**
+   * The card's group (`staffTables` | `restore` | `mapDisplay` | `waiters` | `scope` | `send` | `courses` | `fireFlow`),
+   * served with the groups' order and names (a new one shows with no change here). Absent on an older server.
+   */
   group?: string | null;
   /** A warning per option, shown once it is chosen (`tableBusyEntry` = off: "לא בטוח…"). */
   optionWarnings?: Record<string, string> | null;
@@ -148,6 +151,10 @@ export function fromText(valueType: string, text: string): unknown {
 /** The symbols' size on the till's map, percent (pos-server app/services/table_map_display.py). */
 export const MAP_SYMBOL_SCALE_RANGE = { min: 70, max: 150 } as const;
 
+/** `tableTerm` ("תא" instead of "שולחן", P:/specs/table-scope.md §14.2): text of at most 10. */
+export const TABLE_TERM_KEY = 'tableTerm';
+export const TABLE_TERM_MAX = 10;
+
 /** `autoFireMinutesOverride`: the minutes for every course at the level, 1–180 (as a course's own). */
 export const AUTO_FIRE_MINUTES_MIN = 1;
 export const AUTO_FIRE_MINUTES_MAX = 180;
@@ -156,8 +163,13 @@ export const AUTO_FIRE_MINUTES_MAX = 180;
  * Why an edited text would be refused (the server refuses it too), or null. `INHERIT` (an empty
  * text) is always fine; an empty methods list is written as the empty list, not as inherit.
  */
-export function editError(key: string, text: string): 'prefix' | 'window' | 'scale' | 'minutes' | null {
+export function editError(key: string, text: string): 'prefix' | 'window' | 'scale' | 'minutes' | 'term' | null {
   if (text === '') return null;
+  if (key === TABLE_TERM_KEY) {
+    // "המילה לפני המספר" (P:/specs/table-scope.md §14.2): spaces squeezed, not blank, at most 10.
+    const squeezed = text.split(/\s+/).filter(Boolean).join(' ');
+    return !squeezed || squeezed.length > TABLE_TERM_MAX ? 'term' : null;
+  }
   if (key === 'restoredTablePrefix') return text.trim() === '' || text.length > PREFIX_MAX ? 'prefix' : null;
   if (key === 'restoreWindow') {
     const { kind, hours } = parseWindow(text);
@@ -213,14 +225,22 @@ export function ownKeys(own: Record<string, unknown>): string[] {
 /**
  * How a table reads on the floor: its number, big, and its name under it — or, for a restored table
  * made beside its taken original (`labelOnly`, pos-server app/services/tables.py), its label alone
- * ("ש-12"), never "9012 · ש-12". `text` is the one-line form ("12 · VIP", "ש-12").
+ * ("ש-12"), never "9012 · ש-12". A labelled table ("3B", P:/specs/table-scope.md §6.1) shows its label
+ * instead of its number, which is then an internal one. `text` is the one-line form ("12 · VIP", "3B · VIP",
+ * "ש-12") — lib/tableLabels.ts `tableTitle`.
  */
-export function tableDisplay(t: { number: number; name?: string | null; labelOnly?: boolean | null }): {
+export function tableDisplay(t: {
+  number: number;
+  name?: string | null;
+  labelOnly?: boolean | null;
+  label?: string | null;
+}): {
   main: string;
   sub: string | null;
   text: string;
 } {
   const name = (t.name ?? '').trim();
   if (t.labelOnly && name) return { main: name, sub: null, text: name };
-  return { main: String(t.number), sub: name || null, text: name ? `${t.number} · ${name}` : String(t.number) };
+  const shown = (t.label ?? '').trim() || String(t.number);
+  return { main: shown, sub: name || null, text: name ? `${shown} · ${name}` : shown };
 }

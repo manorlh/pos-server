@@ -5,8 +5,11 @@
  * the rest, the zones' counts, a grid zone's cells, the map's zoom, how often to refresh, and an action
  * sent to a till as the card follows it.
  *
- * Self-contained on purpose (no imports): the node test build compiles it alone.
+ * Self-contained on purpose (no imports but ./tableLabels, itself self-contained): the node test build
+ * compiles it with its test.
  */
+
+import { sortTables } from './tableLabels';
 
 // ── A table's state, as the till's floor colours it ──────────────────────────
 
@@ -192,12 +195,16 @@ export function zoneCounts(tables: { zoneId: string; order: unknown | null }[]):
   return out;
 }
 
-/** A grid zone ("ריבועים"): its tables by number, row after row. */
-export function gridCells<T extends { number: number }>(tables: T[], columns: number): { table: T; row: number; col: number }[] {
+/**
+ * A grid zone ("ריבועים"): its tables in the natural order of their labels and numbers (3, 3A, 3B, 10 —
+ * P:/specs/table-scope.md §6.2, lib/tableLabels.ts), row after row.
+ */
+export function gridCells<T extends { number: number; label?: string | null }>(
+  tables: T[],
+  columns: number,
+): { table: T; row: number; col: number }[] {
   const cols = Math.max(1, Math.floor(columns));
-  return [...tables]
-    .sort((a, b) => a.number - b.number)
-    .map((table, i) => ({ table, row: Math.floor(i / cols), col: i % cols }));
+  return sortTables(tables).map((table, i) => ({ table, row: Math.floor(i / cols), col: i % cols }));
 }
 
 /** How many grid cells of `cell` px fit across `width` px (at least 2, at most 12). */

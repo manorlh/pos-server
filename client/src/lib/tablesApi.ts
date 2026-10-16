@@ -8,6 +8,7 @@ import type { Sketch } from './tableSketch';
 import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
 import type { RemoteCancelRequested, RemoteCancelStatus, TableCancelRoute } from './remoteTableCancel';
 import type { ActionStatus, NextCourse } from './liveTables';
+import type { ScopeTreeZone, TableScope } from './tableScope';
 import type {
   AssignmentChange,
   AssignmentConfig,
@@ -40,7 +41,10 @@ export interface TableZone {
 export interface DiningTable {
   id: string;
   zoneId: string;
+  /** The table's number — for a labelled table its internal one (never shown: lib/tableLabels.ts). */
   number: number;
+  /** "3B" (P:/specs/table-scope.md §6.1): shown instead of the number; absent on a table without one. */
+  label?: string | null;
   name: string | null;
   seats: number;
   shape: TableShape;
@@ -71,6 +75,23 @@ export interface TablesLayout {
   logoUrl?: string | null;
   /** "סוגי שולחנות": the shop's live table types. */
   tableTypes?: TableType[];
+  /**
+   * The shop's tills whose build predates the labels (`labels: false`) or the scope (`scope: false`) —
+   * P:/specs/table-scope.md §6.5: "המכשירים האלה יציגו את התווית אבל לא יוכלו להקליד אותה".
+   */
+  oldDevices?: OldDevice[];
+}
+
+/** A till of the shop on an older build (`GET /tables/layout`, `/tables/scopes`: `oldDevices`). */
+export interface OldDevice {
+  machineId: string;
+  name: string;
+  posNumber: string | null;
+  appVersion: string | null;
+  /** Reads `label` (`table_labels_v1`). */
+  labels: boolean;
+  /** Narrows by its scope on the LAN (`table_scope_v1`). */
+  scope: boolean;
 }
 
 export interface TableOrderSummary {
@@ -402,6 +423,8 @@ export interface CancelReason {
 export interface TablesReportRow {
   tableId?: string;
   number?: number | null;
+  /** "3B": `number` is then its internal one. */
+  label?: string | null;
   name?: string | null;
   zoneId?: string | null;
   zoneName: string | null;
@@ -415,6 +438,7 @@ export interface CancelledRow {
   orderId: string;
   closedAt: string | null;
   tableNumber: number | null;
+  tableLabel?: string | null;
   tableName: string | null;
   zoneName: string | null;
   reason: string;
@@ -447,6 +471,7 @@ export interface WaiterTableRow {
   waiter: string;
   waiterId: string | null;
   tableNumber: number | null;
+  tableLabel?: string | null;
   tableName: string | null;
   zoneName: string | null;
   openedAt: string | null;
@@ -505,12 +530,16 @@ export const updateZone = (
 
 export const archiveZone = (zoneId: string) => api.post(`/tables/zones/${zoneId}/archive`).then((r) => r.data);
 
+/**
+ * "הוספת טווח": numbers (1 … 20) or labels with the same beginning ("3A" … "3L", P:/specs/table-scope.md §14.9);
+ * what was there already is skipped. 422 `table_label_invalid` {reason}, 400 `bulk_too_many`.
+ */
 export const bulkAddTables = (
   zoneId: string,
-  body: { from: number; to: number; seats: number; shape: TableShape; typeId?: string | null },
+  body: { from: number | string; to: number | string; seats: number; shape: TableShape; typeId?: string | null },
 ) =>
   api
-    .post<{ created: number[]; skipped: number[] }>(`/tables/zones/${zoneId}/bulk`, body)
+    .post<{ created: (number | string)[]; skipped: (number | string)[] }>(`/tables/zones/${zoneId}/bulk`, body)
     .then((r) => r.data);
 
 export const saveTablePositions = (
@@ -518,9 +547,13 @@ export const saveTablePositions = (
   items: { id: string; x: number; y: number; width?: number; height?: number; rotation?: number }[],
 ) => api.put<{ saved: number }>(`/tables/zones/${zoneId}/positions`, { items }).then((r) => r.data);
 
+/**
+ * A table: `number` a number, or a label ("3B" — P:/specs/table-scope.md §6.1, an internal number picked). 409
+ * `table_number_taken` / `table_label_taken` {label}, 422 `table_label_invalid` {reason}.
+ */
 export const createTable = (body: {
   zoneId: string;
-  number: number;
+  number: number | string;
   name?: string | null;
   seats: number;
   shape: TableShape;
@@ -533,13 +566,14 @@ export const createTable = (body: {
   typeId?: string | null;
 }) => api.post<DiningTable>('/tables/tables', body).then((r) => r.data);
 
+/** `number`: a number makes the table its number again (a label it had is dropped); a label ("3B") labels it. */
 export const updateTable = (
   tableId: string,
   body: Partial<
     Pick<
       DiningTable,
-      'zoneId' | 'number' | 'name' | 'seats' | 'shape' | 'x' | 'y' | 'width' | 'height' | 'rotation' | 'kind' | 'discountPercent' | 'typeId'
-    >
+      'zoneId' | 'name' | 'seats' | 'shape' | 'x' | 'y' | 'width' | 'height' | 'rotation' | 'kind' | 'discountPercent' | 'typeId'
+    > & { number: number | string }
   >,
 ) => api.patch<DiningTable>(`/tables/tables/${tableId}`, body).then((r) => r.data);
 
@@ -672,6 +706,8 @@ export interface TableReservation {
   id: string;
   tableId: string | null;
   tableNumber: number | null;
+  /** "3B" — when the server sends it (else the table's title is read from the layout by `tableId`). */
+  tableLabel?: string | null;
   reservedAt: string;
   durationMinutes: number;
   guests: number | null;
@@ -703,3 +739,46 @@ export const updateReservation = (
   id: string,
   body: Partial<ReservationInput> & { status?: ReservationStatus },
 ) => api.patch<TableReservation>(`/tables/reservations/${id}`, body, { params: { shopId } }).then((r) => r.data);
+
+// ── "תחום שולחנות" (P:/specs/table-scope.md §2, §3, §14.9) ───────────────────────────
+
+/** A device as the scope card reads it: its scope (null — every table) and what its build can do. */
+export interface ScopeDevice {
+  id: string;
+  name: string;
+  posNumber: string | null;
+  areaId: string | null;
+  tableScope: TableScope | null;
+  appVersion: string | null;
+  /** `scope` — hides what is outside its scope on the LAN too (`table_scope_v1`); `labels` — reads "3B". */
+  capable: { scope: boolean; labels: boolean };
+}
+
+/** `GET /machines/{id}/table-scope`: the device, the tree it may pick from, the shop's other devices. */
+export interface MachineTableScopeView {
+  device: ScopeDevice;
+  /** Its point of sale's zones and the shop-wide ones, each with its tables (natural order). */
+  zones: ScopeTreeZone[];
+  devices: ScopeDevice[];
+}
+
+export const fetchMachineTableScope = (machineId: string) =>
+  api.get<MachineTableScopeView>(`/machines/${machineId}/table-scope`).then((r) => r.data);
+
+/**
+ * "שולחנות שהמכשיר רואה" — and ("החל גם על…") the same on other devices of the shop. 422 `table_scope_invalid`
+ * {reason: zone_not_seen | table_not_seen | …, machineId?}, 400 `machine_other_shop` {machineId}.
+ */
+export const saveMachineTableScope = (machineId: string, tableScope: TableScope | null, alsoMachineIds: string[]) =>
+  api
+    .put<{ devices: ScopeDevice[] }>(`/machines/${machineId}/table-scope`, { tableScope, alsoMachineIds })
+    .then((r) => r.data);
+
+/** `GET /shops/{id}/pos-users/table-scope-tree`: every zone of the shop, and the devices that have a scope. */
+export interface PosUserScopeTree {
+  zones: ScopeTreeZone[];
+  devices: { id: string; name: string; tableScope: TableScope | null }[];
+}
+
+export const fetchPosUserScopeTree = (shopId: string) =>
+  api.get<PosUserScopeTree>(`/shops/${shopId}/pos-users/table-scope-tree`).then((r) => r.data);
