@@ -49,6 +49,14 @@ import type {
 import type { ShellBridge, ShellEvents, ShellView } from '../../shared/roles';
 import { SIDE_DP as ADMIN_CORNER_SIDE } from '../../core/adminCorner';
 import { configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable } from '../../core/offlineBlock';
+import {
+  CARD_FALLBACK_TEXT,
+  configNoTerminalFallback,
+  noTerminalFallbackOf,
+  tillFallbackApplies,
+  withTillFallback,
+  type FallbackCard,
+} from '../../core/noTerminalFallback';
 import { ANDROID_BRIDGE_API, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, type ANDROID_CALLS, type ANDROID_EVENTS, type ANDROID_SENDS } from './androidWire';
 
 export { ANDROID_BRIDGE_API, ANDROID_CALLS, ANDROID_EVENTS, ANDROID_ORIGIN, ANDROID_PLACE_OPEN_ORDER_API, ANDROID_SENDS, ANDROID_WIRE_API } from './androidWire';
@@ -208,7 +216,10 @@ export function normalizeView(view: KioskView, opts: { payAtTill?: boolean } = {
   // the cloud puts a scope other than the default in the config as it sends it (`general.offlineBlockScope`).
   const blocked = kioskOfflineBlocks(resolved.general, view.state?.offline === true);
   const scope = offlineBlockScopeOf(configOfflineBlockScope(view.config));
-  const base = opts.payAtTill ? tillPay(configured, androidNoCard(view), blocked) : androidNoCard(view) ? noCardPay(configured) : cardPay(configured);
+  // "קיוסק — כשאין מסופון אשראי" (core/noTerminalFallback.ts): the cloud puts a choice other than the default in the config
+  // (`general.noTerminalFallback`); the APK's terminal as its snapshot says it (`state.terminal`).
+  const fallback = { mode: noTerminalFallbackOf(configNoTerminalFallback(view.config)), card: androidCard(view) };
+  const base = opts.payAtTill ? tillPay(configured, androidNoCard(view), blocked, fallback) : androidNoCard(view) ? noCardPay(configured) : cardPay(configured);
   // "מזומן עובד בלי אינטרנט" (§13): the cash station stays unless the config says `general.offlineBlockCash`.
   const pay = { ...base, usable: offlineUsable(base.usable, blocked, scope, offlineBlockCashOf(undefined, view.config)) };
   // Resting for it: the "offline" screen's words (the Windows kiosk's noPaymentReason), not the terminal's.
@@ -247,20 +258,42 @@ function noCardPay(configured: readonly unknown[]): KioskView['pay'] {
 }
 
 /**
+ * The APK's card for "קיוסק — כשאין מסופון אשראי" (core/noTerminalFallback.ts), from its snapshot's `state.terminal`
+ * (pos-android KioskTerminalState, lower case): `ready` — ok (its health tried on the press); `unreachable` — set up, not
+ * answering; none set up, a built-in one only, "ללא אשראי", or the cloud's lock on an unresolved card — missing.
+ */
+export function androidCard(view: Pick<KioskView, 'state'> | null | undefined): FallbackCard {
+  const terminal = view?.state?.terminal;
+  if (terminal === 'unconfigured' || terminal === 'not_external' || terminal === 'no_card') return 'missing';
+  if (view?.state?.cardBlocked === true) return 'missing';
+  return terminal === 'unreachable' ? 'flaky' : 'ok';
+}
+
+/**
  * An APK that places orders for the till (bridgeApi 2, "placeOpenOrder"): the Windows kiosk's "איך תרצו לשלם?"
  * (main/service.ts payView) — the methods configured as a one-card kiosk takes them (tsKioskPayMethods, in their
  * order); "ללא אשראי" ([noCard]) without the card (no tile; its line says why); cash at the till usable unless
  * "חסימת הזמנות כשאין אינטרנט" holds the kiosk ([offlineBlocked], whatever it blocks — with `all` [normalizeView]
  * then takes the rest too); a voucher where its order can be finished — by the card or at the till. The card is as
- * on API 1: the APK checks its terminal on the press.
+ * on API 1: the APK checks its terminal on the press — except where "קיוסק — כשאין מסופון אשראי" ([fallback]) offers
+ * the till for a terminal that is not there: its tile off then, in the customer's words.
  */
-function tillPay(configured: readonly unknown[], noCard: boolean, offlineBlocked: boolean): KioskView['pay'] {
+function tillPay(
+  configured: readonly unknown[],
+  noCard: boolean,
+  offlineBlocked: boolean,
+  fallback: { mode: ReturnType<typeof noTerminalFallbackOf>; card: FallbackCard } = { mode: 'block', card: 'ok' },
+): KioskView['pay'] {
   const set = tsKioskPayMethods(configured).filter((m) => m === 'card' || m === 'voucher' || m === 'cash_at_till');
-  const methods = noCard ? set.filter((m) => m !== 'card') : set;
-  const cardUsable = methods.includes('card');
+  const base = noCard ? set.filter((m) => m !== 'card') : set;
+  const applies = tillFallbackApplies({ mode: fallback.mode, methods: base, card: fallback.card, cashDeviceUsable: false });
+  const methods = withTillFallback(base, applies);
+  const cardMissing = applies && fallback.card === 'missing';
+  const cardUsable = methods.includes('card') && !cardMissing;
   const tillUsable = methods.includes('cash_at_till') && !offlineBlocked;
   const usable = methods.filter((m) => (m === 'card' ? cardUsable : m === 'cash_at_till' ? tillUsable : cardUsable || tillUsable));
-  return { methods, usable, cardOff: noCard ? ANDROID_NO_CARD_TEXT : null };
+  const cardOff = noCard ? ANDROID_NO_CARD_TEXT : cardMissing && methods.includes('card') ? CARD_FALLBACK_TEXT : null;
+  return { methods, usable, cardOff, ...(applies ? { tillFallback: true as const } : {}) };
 }
 
 /**

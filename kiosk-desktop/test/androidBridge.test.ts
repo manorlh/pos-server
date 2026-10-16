@@ -478,8 +478,13 @@ describe('"תשלום בקופה" through the APK (bridgeApi 2: placeOpenOrder)'
     bridges.kiosk.on('view', (v) => seen.push(v));
     bridges.inbox.event('view', JSON.stringify(apkView(['voucher', 'cash_at_till'])));
     expect(seen[0].pay).toEqual({ methods: ['voucher', 'cash_at_till'], usable: ['voucher', 'cash_at_till'], cardOff: ANDROID_NO_CARD_TEXT });
-    // Not offered (no "cash_at_till" configured): as before — nothing to sell by, the "no payment" rest.
-    const none = (await bootView(2, apkView(['voucher']))).view.pay;
+    // Not offered (no "cash_at_till" configured): "קיוסק — כשאין מסופון אשראי" (`pay_at_till`, the default) offers the
+    // till all the same — the kiosk sells (core/noTerminalFallback.ts).
+    const fallback = (await bootView(2, apkView(['voucher']))).view.pay;
+    expect(fallback).toEqual({ methods: ['voucher', 'cash_at_till'], usable: ['voucher', 'cash_at_till'], cardOff: ANDROID_NO_CARD_TEXT, tillFallback: true });
+    expect(restsOn(fallback, ['voucher'])).toBe('attract');
+    // `block` (the cloud puts it in the config): as before — nothing to sell by, the "no payment" rest.
+    const none = (await bootView(2, apkView(['voucher'], NO_CARD_STATE, { noTerminalFallback: 'block' }))).view.pay;
     expect(none).toEqual({ methods: ['voucher'], usable: [], cardOff: ANDROID_NO_CARD_TEXT });
     expect(restsOn(none, ['voucher'])).toBe('no_payment');
     // "חסימת הזמנות כשאין אינטרנט", offline: no order to the till either.

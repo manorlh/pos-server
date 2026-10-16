@@ -93,6 +93,11 @@ export interface KioskView {
     cardOff: string | null;
     /** "מזומן" at the cash station: why its tile is off now (Hebrew), else null / absent. */
     cashOff?: string | null;
+    /**
+     * "קיוסק — כשאין מסופון אשראי" (core/noTerminalFallback.ts): "תשלום בקופה" is among the methods only because the
+     * terminal is not there (none set up, or not answering) and nothing else pays. Absent: not so.
+     */
+    tillFallback?: true;
   };
   /**
    * "סניף לא פעיל" (client lib/shopActive.ts): false — the shop was turned off in the cloud; the

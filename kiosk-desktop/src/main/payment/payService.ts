@@ -28,7 +28,7 @@ import type { Authorization, OfflineModeStatus } from '../../core/till/transmiss
 
 export type ChargeOutcome =
   | { kind: 'approved'; card: ApprovedCard; recovered: boolean }
-  | { kind: 'declined'; message: string; voidMeta: Record<string, unknown> | null }
+  | { kind: 'declined'; message: string; voidMeta: Record<string, unknown> | null; notSent?: true }
   | { kind: 'unknown'; message: string }
   | { kind: 'refused'; reason: 'terminal' | 'in_flight' | 'unresolved' | 'amount' };
 
@@ -46,6 +46,12 @@ export class PayService {
   private integration: string | null = null;
   private inFlight: { reference: string; sent: boolean; answered: boolean; abort: boolean } | null = null;
   private lastCardAnswerAtMs: number | null = null;
+  /**
+   * A charge never reached the terminal (NOT_SENT: no link) and nothing has answered since — a check, or a card. "קיוסק —
+   * כשאין מסופון אשראי" (core/noTerminalFallback.ts) offers the till beside the card then, as with failed checks (the
+   * Android kiosk's KioskTerminalInfo.chargeUnreachable).
+   */
+  private chargeNotSent = false;
   readonly monitor: MonitorState = { config: 'unconfigured', failures: 0, lastCheckAtMs: null, lastOkAtMs: null, lastError: null, state: 'unconfigured' };
   private listeners = new Set<() => void>();
   /** "חסימת אשראי כשיש תשלום לא מוכרע" (the till parameter cardLockOnUnresolved), read per charge. Off unless set. */
@@ -87,6 +93,7 @@ export class PayService {
       this.provider = p;
       this.monitor.failures = 0;
       this.monitor.lastCheckAtMs = null;
+      this.chargeNotSent = false;
     }
     this.integration = integration;
     // SynqPay not paired yet: no orders until it is (as the Android kiosk's KioskTerminal.configured).
@@ -148,6 +155,11 @@ export class PayService {
     return this.monitor.config === 'no_card';
   }
 
+  /** Set up, but not answering now: its checks failed (`unreachable`), or a charge never reached it since the last answer. */
+  get unreachable(): boolean {
+    return this.configured && (this.monitor.state === 'unreachable' || this.chargeNotSent);
+  }
+
   /* ------------------------------------------------------------- charging */
 
   /**
@@ -204,10 +216,12 @@ export class PayService {
         // document is voided with the reason, and there is nothing to look up or to settle.
         this.forgetAttempt(reference);
         this.log(`card: not sent (${reference}): ${result.message}`);
-        return { kind: 'declined', message: result.message, voidMeta: null };
+        this.chargeNotSent = true;
+        return { kind: 'declined', message: result.message, voidMeta: null, notSent: true };
       }
       this.inFlight.answered = true;
       this.lastCardAnswerAtMs = Date.now();
+      this.chargeNotSent = false;
       if (result.answer === 'APPROVED') return { kind: 'approved', card: result.card, recovered: false };
       if (result.answer === 'DECLINED') return { kind: 'declined', message: result.message, voidMeta: null };
       // Unknown: never a second charge — ask about this reference.
@@ -388,6 +402,7 @@ export class PayService {
       this.monitor.failures = 0;
       this.monitor.lastOkAtMs = Date.now();
       this.monitor.lastError = null;
+      this.chargeNotSent = false;
     } else {
       this.monitor.failures++;
       this.monitor.lastError = r.detail;

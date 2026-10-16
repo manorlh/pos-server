@@ -7,6 +7,7 @@
 import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
 import type { KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
+import { CARD_FALLBACK_TEXT, withTillFallback } from '../core/noTerminalFallback';
 
 /** The demo's tips: on, with "סכום אחר" (the demo config's checkout asks both). */
 const DEMO_TIPS = { tipEnabled: true, tipOther: true } as const;
@@ -123,6 +124,8 @@ function demoView(): KioskView {
   const rest = demoRest();
   const methods = kioskPayMethods(((demoCheckout().payment ?? {}) as { methods?: unknown[] }).methods);
   const nopay = new URLSearchParams(window.location.search).get('nopay') === '1';
+  // `?noterminal=1`: no terminal set up — "קיוסק — כשאין מסופון אשראי" offers "תשלום בקופה" (as main/service.ts payView sends it).
+  const noTerminal = new URLSearchParams(window.location.search).get('noterminal') === '1';
   const cats = [
     { id: 'c1', name: 'המבורגרים', imageUrl: null },
     { id: 'c2', name: 'שתייה', imageUrl: null },
@@ -191,9 +194,19 @@ function demoView(): KioskView {
       promotions: [],
     },
     // `?nopay=1`: "התשלום אינו זמין" — nothing to charge on.
-    state: { ...rest.state, noPayment: nopay, terminal: 'ready', offline: new URLSearchParams(window.location.search).get('offline') === '1', offlineSince: null, cardBlocked: false },
+    state: {
+      ...rest.state,
+      noPayment: nopay || noTerminal,
+      ...(noTerminal ? { noPaymentReason: 'terminal' as const } : {}),
+      terminal: noTerminal ? 'unconfigured' : 'ready',
+      offline: new URLSearchParams(window.location.search).get('offline') === '1',
+      offlineSince: null,
+      cardBlocked: false,
+    },
     staff: { unprintedBons: 0, printer: 'ok', pendingUploads: 0, mediaMissing: 0 },
-    pay: { methods, usable: nopay ? [] : methods, cardOff: null },
+    pay: noTerminal && !methods.includes('cash_at_till')
+      ? { methods: withTillFallback(methods, true), usable: withTillFallback(methods, true).filter((m) => m !== 'card'), cardOff: CARD_FALLBACK_TEXT, tillFallback: true }
+      : { methods, usable: nopay ? [] : methods, cardOff: null },
   };
 }
 
