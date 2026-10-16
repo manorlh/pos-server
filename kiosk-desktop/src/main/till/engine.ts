@@ -324,6 +324,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.lastActivityAt = this.nowFn();
     this.ctx = this.makeContext();
     this.drawer = new TillDrawer(this.ctx, { expectedBalance: () => this.expectedNow() });
+    this.drawer.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -357,6 +358,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ask: (d) => this.ask(d),
       toast: (text, tone = 'info') => this.toast(text, tone),
       changed: () => {
+        // A module's answer arriving after the till stopped (its timers, a cloud reply): nothing to show any more.
+        if (this.stopped) return;
         this.dirty = true;
         this.commit();
       },
@@ -388,6 +391,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.stopped = true;
     this.sessions.stop();
     this.cash.stop();
+    this.drawer.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -608,6 +612,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       // "מגירת מזומן" (tillDrawer.ts).
       case 'drawer.open':
         return this.drawer.openManual(typeof a.reason === 'string' ? a.reason : null, typeof a.note === 'string' ? a.note : null);
+      case 'drawer.openRemote':
+        return this.drawer.openOnHost(a.machineId, typeof a.reason === 'string' ? a.reason : null, typeof a.note === 'string' ? a.note : null);
       case 'drawer.movement':
         return this.drawer.movement(a.type, a.amountAgorot, a.reason, a.note, a.source);
       case 'drawer.count':

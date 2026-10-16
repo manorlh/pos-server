@@ -405,10 +405,33 @@ export class KioskService extends EventEmitter {
     return this.cloud.credentials()?.machineId ?? null;
   }
 
-  /** A role module's block on every heartbeat (null removes it). */
+  /** A role module's block on every heartbeat (null removes it). `capabilities` is merged across the modules that say them. */
   setHeartbeatPart(key: string, part: (() => unknown) | null): void {
+    if (key === 'capabilities') {
+      this.setCapabilities('heartbeatPart', part ? () => (Array.isArray(part()) ? (part() as unknown[]).filter((w): w is string => typeof w === 'string') : []) : null);
+      return;
+    }
     if (part) this.heartbeatParts.set(key, part);
     else this.heartbeatParts.delete(key);
+  }
+
+  private readonly capabilityOwners = new Map<string, () => string[]>();
+
+  /**
+   * A module's words in the heartbeat's `capabilities` (the cash host's device logs, the till's `document_relay_v1` —
+   * main/till/remoteDrawer.ts): the union of every owner's; none at all — no key (a heartbeat as before).
+   */
+  setCapabilities(owner: string, words: (() => string[]) | null): void {
+    if (words) this.capabilityOwners.set(owner, words);
+    else this.capabilityOwners.delete(owner);
+    if (this.capabilityOwners.size === 0) {
+      this.heartbeatParts.delete('capabilities');
+      return;
+    }
+    this.heartbeatParts.set('capabilities', () => {
+      const all = [...new Set([...this.capabilityOwners.values()].flatMap((f) => f()))];
+      return all.length > 0 ? all : undefined;
+    });
   }
 
   /** The cloud answered a heartbeat lately (90 s). */
@@ -2848,6 +2871,11 @@ export class KioskService extends EventEmitter {
   /** The cash drawer's kick through the receipt printer (its RJ11 port). */
   async openDrawer(): Promise<void> {
     await this.transport.send(this.printerResolution().target, DRAWER_KICK);
+  }
+
+  /** Raw ESC/POS bytes to the receipt printer now (a document another till sent to print here, main/till/remoteDrawer.ts). */
+  async sendToReceiptPrinter(bytes: Uint8Array): Promise<void> {
+    await this.transport.send(this.printerResolution().target, bytes);
   }
 
   /* ------------------------------------------------------------- printing */

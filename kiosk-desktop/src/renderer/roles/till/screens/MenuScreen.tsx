@@ -38,15 +38,21 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
       { key: 'shift_close', label: 'סגירת משמרת', to: 'shift', perm: 'SHIFT_CLOSE', shiftRow: true },
       { key: 'till_z', label: 'הפק Z', to: 'shift', perm: 'Z', onlyTillZ: true },
       { key: 'open_cash_drawer', label: 'פתיחת מגירה', to: 'drawerOpen', when: (s) => s.drawer?.offered.open },
+      // "פתיחת מגירה ב<קופה>" (bill-print-other-till §9ג): a till with no drawer of its own opens another till's.
+      {
+        label: 'פתיחת מגירה בקופה אחרת',
+        to: 'drawer',
+        when: (s) => s.drawer?.offered.remote ?? false,
+      },
       {
         key: 'cash_menu',
         label: 'מזומן במגירה',
         sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות',
         to: 'drawer',
-        when: (s) => (s.drawer ? Object.entries(s.drawer.offered).some(([k, v]) => k !== 'open' && v) : undefined),
+        when: (s) => (s.drawer ? Object.entries(s.drawer.offered).some(([k, v]) => k !== 'open' && k !== 'remote' && v) : undefined),
       },
       // "עודף חייב ללקוח" (cash-paylink §11.8): only while the cloud routes such debts to this till.
-      { label: 'עודף חייב ללקוח', to: 'owed', when: (s) => (s.owed ? s.owed.items.length > 0 : undefined) },
+      { label: 'עודף חייב ללקוח', to: 'owed', when: (s) => (s.owed?.items.length ?? 0) > 0 },
       { key: 'refund', label: 'זיכוי' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },

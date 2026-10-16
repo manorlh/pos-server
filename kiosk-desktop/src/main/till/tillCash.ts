@@ -206,7 +206,7 @@ export interface OwedState {
 export class TillCash {
   readonly owed: CashOwedRepository;
   readonly credits: CashCreditCloud;
-  private timer: NodeJS.Timeout | null = null;
+  private timers: NodeJS.Timeout[] = [];
 
   constructor(
     private readonly c: TillContext,
@@ -245,14 +245,13 @@ export class TillCash {
       if (!this.c.svc.paired) return;
       void this.owed.refreshIfDue(this.c.now()).then(() => this.c.changed(), () => undefined);
     };
-    this.timer = setInterval(tick, 30_000);
-    this.timer.unref?.();
-    setTimeout(tick, 2_000).unref?.();
+    this.timers.push(setInterval(tick, 30_000), setTimeout(tick, 2_000));
+    for (const t of this.timers) t.unref?.();
   }
 
   stop() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    for (const t of this.timers) clearTimeout(t);
+    this.timers = [];
   }
 
   state(): OwedState {
@@ -314,7 +313,11 @@ export class TillCash {
           this.c.changed();
           return result;
         }),
-      );
+      )
+      .catch((e: unknown): OwedPayResult => {
+        this.c.log(`cash owed: ${String(e)}`);
+        return { kind: 'refused', why: 'failed', detail: String(e) };
+      });
     this.lastPay = done;
     return { started: true };
   }

@@ -89,6 +89,7 @@ export const TILL_OPS = [
   // "מגירת מזומן" (main/till/tillDrawer.ts): "פתח מגירה" with its reason, Cash In / Out / Deposit, a count, "הפקדת מזומן
   // מעובד", the shift's log and movements. Every opening goes through the drawer service's rules (a manager when they ask).
   'drawer.open',
+  'drawer.openRemote',
   'drawer.movement',
   'drawer.count',
   'drawer.countSave',
@@ -137,6 +138,7 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'checkout.recheckCard',
   'checkout.markNotApproved',
   'drawer.open',
+  'drawer.openRemote',
   'drawer.movement',
   'drawer.count',
   'drawer.countSave',
@@ -189,6 +191,8 @@ export interface OpArgs {
   'checkout.markNotApproved': Record<string, never>;
   /** A reason code (core/till/drawer.ts DRAWER_REASONS, not a movement's), and its note ("אחר"). */
   'drawer.open': { reason?: string | null; note?: string | null };
+  /** "פתיחת מגירה ב<קופה>" (bill-print-other-till §9ג): the host's machine id (`drawer.hosts`), and the reason as for "פתח מגירה". */
+  'drawer.openRemote': { machineId: string; reason?: string | null; note?: string | null };
   'drawer.movement': { type: 'CASH_IN' | 'CASH_OUT' | 'DEPOSIT'; amountAgorot: number; reason?: string | null; note?: string | null; source?: string | null };
   'drawer.count': Record<string, never>;
   'drawer.countSave': { countedAgorot: number };
@@ -493,7 +497,9 @@ export interface UsersState {
 }
 
 export interface DrawerState {
-  offered: { open: boolean; cashIn: boolean; cashOut: boolean; deposit: boolean; count: boolean; walletDeposit: boolean; log: boolean };
+  offered: { open: boolean; cashIn: boolean; cashOut: boolean; deposit: boolean; count: boolean; walletDeposit: boolean; log: boolean; remote: boolean };
+  /** "פתיחת מגירה ב<קופה>": the tills whose drawer may be opened from here. */
+  hosts: Array<{ id: string; label: string }>;
   requireReason: boolean;
   requireNoteForOther: boolean;
   movementsEnabled: boolean;

@@ -199,6 +199,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           initial={view === 'drawerOpen' ? 'reason' : 'menu'}
           actions={{
             open: (reason, note) => run('drawer.open', { reason, note }),
+            openRemote: (machineId, reason, note) => run('drawer.openRemote', { machineId, reason, note }),
             movement: (type, amountAgorot, reason, note, source) => run('drawer.movement', { type, amountAgorot, reason, note, source }),
             count: () => run('drawer.count', {}),
             countSave: (countedAgorot) => run('drawer.countSave', { countedAgorot }),

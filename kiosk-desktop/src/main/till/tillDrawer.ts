@@ -15,6 +15,7 @@ import { approveBy } from '../../core/till/approval';
 import {
   DRAWER_PERM,
   DRAWER_REASONS,
+  approvalText,
   DRAWER_REASON_LABEL,
   MOVEMENT_REASONS,
   contextOfReason,
@@ -42,6 +43,10 @@ import {
 import { NO_LOCK, type ExitLock } from '../../core/desktopExit';
 import type { RosterUser } from '../../core/till/staff';
 import { CashDrawerService, type DrawerOutcome, type DrawerPerson, type DrawerTarget } from './drawerService';
+import { DOCUMENT_RELAY, PrintJobsHost, RemoteDrawers, hostDocumentJob, hostDrawerJob, remoteWhy } from './remoteDrawer';
+import { REMOTE_TEXT, type DrawerHost } from '../../core/till/remotePrint';
+import { centreOn, job as escposJob, toMono, RASTER_80MM, type MonoBitmap } from '../../core/escpos';
+import { normalizeRole } from '../../core/roles';
 import { DrawerStore, cashMovementWire, drawerEventWire } from './drawerStore';
 import type { TillContext } from './tillContext';
 
@@ -79,7 +84,9 @@ export interface CountResult {
 /** What the screens show of the drawer (`TillState.drawer`). */
 export interface TillDrawerState {
   /** The menu's rows ("פתיחת מגירה", "מזומן במגירה" and its actions), as Android offers them. */
-  offered: { open: boolean; cashIn: boolean; cashOut: boolean; deposit: boolean; count: boolean; walletDeposit: boolean; log: boolean };
+  offered: { open: boolean; cashIn: boolean; cashOut: boolean; deposit: boolean; count: boolean; walletDeposit: boolean; log: boolean; remote: boolean };
+  /** "פתיחת מגירה ב<קופה>" (§9ג): the tills whose drawer may be opened from here. */
+  hosts: Array<{ id: string; label: string }>;
   requireReason: boolean;
   requireNoteForOther: boolean;
   movementsEnabled: boolean;
@@ -91,6 +98,10 @@ export interface TillDrawerState {
 
 export class TillDrawer {
   readonly service: CashDrawerService;
+  /** Another till's drawer from here, and this till as another's host (remoteDrawer.ts). */
+  readonly remote: RemoteDrawers;
+  readonly host: PrintJobsHost;
+  private timers: NodeJS.Timeout[] = [];
   private count: { eventId: string | null; blind: boolean; result: CountResult | null } | null = null;
   /** The wallets the deposit screen showed (the cloud's, with this device's not sent yet): a deposit settles what was shown. */
   private wallets: WalletBalance[] | null = null;
@@ -108,8 +119,12 @@ export class TillDrawer {
         parameters: () => svc.cloud.parameters(),
         // The Windows till's own drawer: its receipt printer's RJ11 port.
         ownDrawer: () => ({ id: 'local', name: 'הקופה' }),
-        kick: async (target) => {
-          if (target.kind !== 'own') throw new Error('אין מגירה כזו בקופה זו');
+        kick: async (target, job) => {
+          // Another till's drawer: a `drawer` job, and its answer (bill-print-other-till §9ב–§9ג).
+          if (target.kind === 'remote') {
+            if (!job) throw new Error('not_sent');
+            return this.remote.open({ machineId: target.host.machineId, printerId: target.host.printerId, label: target.host.label, name: null }, job);
+          }
           await svc.openDrawer();
         },
         currentShiftId: () => svc.ledger.currentShift()?.id ?? null,
@@ -128,6 +143,65 @@ export class TillDrawer {
       const m = this.service.store.movement(row.ref_id);
       return m ? { path: 'cash-drawer/movements', body: cashMovementWire(m) } : null;
     });
+    this.remote = new RemoteDrawers({ api: svc.api, machineId: () => svc.machineId, params: () => svc.cloud.parameters(), log: (m) => c.log(m) });
+    this.host = new PrintJobsHost({
+      api: svc.api,
+      machineId: () => svc.machineId,
+      active: () => this.isTill() && !svc.isOffline,
+      handlers: {
+        drawer: (job) =>
+          hostDrawerJob(job, {
+            hasDrawer: () => this.service.targets({ context: 'CASH_SALE', saleId: 'x' }).length > 0 || this.service.targets({ context: 'MANUAL' }).length > 0,
+            paying: () => c.paying(),
+            kick: () => svc.openDrawer(),
+            now: () => c.now(),
+            notice: (text) => {
+              c.toast(text, 'info');
+              c.changed();
+            },
+            log: (m) => c.log(m),
+          }),
+        document: (job) =>
+          hostDocumentJob(job, {
+            now: () => c.now(),
+            decodePng: decodePng,
+            print: async (bmp) => {
+              await svc.sendToReceiptPrinter(escposJob(centreOn(bmp, RASTER_80MM)));
+            },
+          }),
+      },
+      log: (m) => c.log(m),
+    });
+  }
+
+  /** A till by role, working as one (never a kiosk's background engine): the host's poll and the capability are this one's. */
+  isTill(): boolean {
+    const svc = this.c.svc;
+    return svc.paired && svc.fiscal && !svc.isKiosk() && normalizeRole(svc.cloud.machine()?.deviceRole ?? 'till') === 'till';
+  }
+
+  /** The cloud's drawer hosts (now and every five minutes), the host's poll, the capability that lets the cloud use them. */
+  start() {
+    const svc = this.c.svc;
+    svc.setCapabilities('till.documentRelay', () => (this.isTill() ? [DOCUMENT_RELAY] : []));
+    const pull = () => {
+      if (this.isTill()) void this.remote.pull().then(() => this.c.changed(), () => undefined);
+    };
+    this.timers.push(setInterval(pull, 60_000), setTimeout(pull, 3_000));
+    for (const t of this.timers) t.unref?.();
+    this.host.start(4_000);
+  }
+
+  stop() {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers = [];
+    this.host.stop();
+    this.c.svc.setCapabilities('till.documentRelay', null);
+  }
+
+  /** The other tills' drawers as targets ("המגירה ב<קופה>"). */
+  remoteTargets(): DrawerTarget[] {
+    return this.remote.here().map((h: DrawerHost) => ({ kind: 'remote' as const, id: h.printerId ?? `remote:${h.machineId}`, name: REMOTE_TEXT.dest(h.label), host: { machineId: h.machineId, printerId: h.printerId, label: h.label } }));
   }
 
   /** A roster user as the drawer reads them. */
@@ -160,7 +234,10 @@ export class TillDrawer {
         count: off(DRAWER_PERM.COUNT) || off(DRAWER_PERM.BLIND_COUNT),
         walletDeposit: (ownDrawer || drawerModeHasButton(mode)) && off(DRAWER_PERM.WALLET_DEPOSIT),
         log: off(DRAWER_PERM.VIEW_LOG) || off(DRAWER_PERM.VIEW_MOVEMENTS),
+        // A device with no drawer of its own: another till's (Android's menu rule).
+        remote: !ownDrawer && !drawerModeHasButton(mode) && this.remote.here().length > 0 && off(DRAWER_PERM.OPEN_REMOTE),
       },
+      hosts: this.remote.here().map((h) => ({ id: h.machineId, label: h.label })),
       requireReason: s.requireReason,
       requireNoteForOther: s.requireNoteForOther,
       movementsEnabled: s.movementsEnabled,
@@ -310,7 +387,9 @@ export class TillDrawer {
     if (settings.policy === 'none') return false;
     const own = this.service.targets(request);
     if (!isAway(settings.near, own.length > 0, false)) return false;
-    const choices: DrawerChoice[] = own.map((d) => ({ id: d.id, name: d.name }));
+    const hosts = this.remoteTargets();
+    const all: DrawerTarget[] = [...own, ...hosts];
+    const choices: DrawerChoice[] = all.map((d) => ({ id: d.id, name: d.kind === 'remote' ? d.host.label : d.name, remote: d.kind === 'remote' ? { machineId: d.host.machineId, printerId: d.host.printerId, label: d.host.label } : null }));
     const plan = awayPlan(settings, choices);
     const cash = request.amountAgorot ?? null;
     const record = (choice: string, dismissed = false) => {
@@ -320,8 +399,11 @@ export class TillDrawer {
       return undefined;
     };
     const openOwn = (id: string) => {
-      const t = own.find((d) => d.id === id);
-      return t ? this.open(request, { target: t, quiet: true }) : record(AWAY_NONE);
+      const t = all.find((d) => d.id === id);
+      if (!t) return record(AWAY_NONE);
+      // Another till's drawer: under OPEN_REMOTE (§9ב's job), said here when it answered.
+      if (t.kind === 'remote') return this.openRemote({ ...request, remote: true }, { ...t, documentType: request.documentType ?? null, documentNumber: request.documentNumber ?? null });
+      return this.open(request, { target: t, quiet: true });
     };
     switch (plan.kind) {
       case 'open':
@@ -343,7 +425,7 @@ export class TillDrawer {
           body: cash !== null ? AWAY_TEXT.amount(sh(cash)) : '',
           fields: [],
           actions: [
-            ...plan.drawers.map((d, i) => ({ id: `drawer:${d.id}`, label: AWAY_TEXT.open(d.name), primary: i === 0 })),
+            ...plan.drawers.map((d, i) => ({ id: `drawer:${d.id}`, label: AWAY_TEXT.open(d.remote ? d.remote.label : d.name), primary: i === 0 })),
             { id: 'wallet', label: AWAY_TEXT.wallet, primary: plan.drawers.length === 0 },
             { id: 'none', label: AWAY_TEXT.none },
           ],
@@ -359,6 +441,43 @@ export class TillDrawer {
   }
 
   /* ------------------------------------------------------------------- ops */
+
+  /**
+   * Another till's drawer (§9ב–§9ג): decided and recorded here now, its answer waited for in the background — a job can take
+   * `remotePrintTimeoutSec` — and said when it comes ("המגירה נפתחה ב<קופה>" / why not).
+   */
+  private openRemote(request: DrawerRequest, target: Extract<DrawerTarget, { kind: 'remote' }>, approver: DrawerPerson | null = null): unknown {
+    const label = target.host.label;
+    const verdict = this.service.evaluate(request);
+    // A question first (a manager's code): asked now, the job after the answer.
+    if (verdict.kind === 'approval' && !approver) {
+      return this.follow({ kind: 'approval', verdict, message: approvalText(verdict.permission, verdict.why) }, {
+        quiet: true,
+        retryApproval: async (who) => this.openRemote(request, target, who),
+        retryTarget: async () => undefined,
+      });
+    }
+    void this.service.requestOpen(request, target, approver).then((outcome) =>
+      this.c.later(() => {
+        if (outcome.kind === 'opened') this.c.toast(REMOTE_TEXT.opened(label), 'ok');
+        else if (outcome.kind === 'failed') this.c.toast(REMOTE_TEXT.failed(label, remoteWhy(outcome.reason)), 'error');
+        else if (outcome.kind === 'denied') this.c.toast(DRAWER_TEXT.denied(outcome.reason), 'error');
+        this.c.changed();
+      }),
+    ).catch((e: unknown) => this.c.log(`drawer: another till's drawer — ${String(e)}`));
+    return { sent: true };
+  }
+
+  /** "פתיחת מגירה ב<קופה>" (§9ג) with its reason, as for any manual opening. */
+  openOnHost(machineId: unknown, reason: string | null, note: string | null): unknown {
+    this.c.signedIn();
+    const t = this.remoteTargets().find((x) => x.kind === 'remote' && x.host.machineId === machineId);
+    if (!t || t.kind !== 'remote') return this.c.refuse('invalid_args', REMOTE_TEXT.none);
+    const r = reason?.trim() || null;
+    if (r !== null && !(DRAWER_REASONS as readonly string[]).includes(r)) return this.c.refuse('invalid_args');
+    const context = contextOfReason(r) === 'CHANGE' ? 'CHANGE' : 'MANUAL';
+    return this.openRemote({ context, reason: r, note: note?.trim() || null, remote: true }, t);
+  }
 
   /** "פתח מגירה" with its reason (a movement or a count goes to its own op). */
   openManual(reason: string | null, note: string | null): Promise<unknown> | unknown {
@@ -495,4 +614,16 @@ export class TillDrawer {
 }
 
 /** The ops this module answers (`drawer.*`), for the engine's dispatch. */
-export const DRAWER_OPS = ['drawer.open', 'drawer.movement', 'drawer.count', 'drawer.countSave', 'drawer.countDone', 'drawer.wallets', 'drawer.walletDeposit', 'drawer.log'] as const;
+/** A document's PNG as the printer's dots (sharp, as the media store loads it); null when it is not one of that size. */
+async function decodePng(bytes: Buffer, widthDots: number, heightDots: number): Promise<MonoBitmap | null> {
+  try {
+    const { default: sharp } = await import('sharp');
+    const { data, info } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    if (info.width !== widthDots || info.height !== heightDots) return null;
+    return toMono(data, info.width, info.height);
+  } catch {
+    return null;
+  }
+}
+
+export const DRAWER_OPS = ['drawer.open', 'drawer.openRemote', 'drawer.movement', 'drawer.count', 'drawer.countSave', 'drawer.countDone', 'drawer.wallets', 'drawer.walletDeposit', 'drawer.log'] as const;

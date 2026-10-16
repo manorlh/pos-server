@@ -653,7 +653,7 @@ describe('the till: "פתיחת מגירה", the movements, the count, the depos
   it('the menu offers what the drawer and the role allow', async () => {
     const h = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור' } });
     // A cashier sees no log (CASH_DRAWER.VIEW_LOG / VIEW_CASH_MOVEMENTS are a supervisor's); a manager does.
-    expect(h.state().drawer!.offered).toEqual({ open: true, cashIn: true, cashOut: true, deposit: true, count: true, walletDeposit: true, log: false });
+    expect(h.state().drawer!.offered).toEqual({ open: true, cashIn: true, cashOut: true, deposit: true, count: true, walletDeposit: true, log: false, remote: false });
     const m = await till({ parameters: { cashDrawer: 'בתשלום מזומן + כפתור' } }, MANAGER_PIN);
     expect(m.state().drawer!.offered.log).toBe(true);
     const w = await till({ parameters: { cashDrawer: 'בתשלום מזומן' } }, WAITER_PIN);

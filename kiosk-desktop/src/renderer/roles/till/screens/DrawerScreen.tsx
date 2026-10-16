@@ -10,7 +10,7 @@ import type { DrawerState } from '../../../../shared/till/protocol';
 import { parseAmount } from '../amount';
 import { money, T } from '../text';
 
-export type DrawerSheet = 'menu' | 'reason' | 'CASH_IN' | 'CASH_OUT' | 'DEPOSIT' | 'count' | 'wallets' | 'log';
+export type DrawerSheet = 'menu' | 'reason' | 'remote' | 'CASH_IN' | 'CASH_OUT' | 'DEPOSIT' | 'count' | 'wallets' | 'log';
 
 export interface WalletRow {
   employeeId: string;
@@ -26,6 +26,8 @@ export interface DrawerLog {
 
 export interface DrawerActions {
   open(reason: string | null, note: string | null): Promise<unknown>;
+  /** "פתיחת מגירה ב<קופה>" (bill-print-other-till §9ג): another till's drawer, with the reason as for any manual opening. */
+  openRemote(machineId: string, reason: string | null, note: string | null): Promise<unknown>;
   movement(type: 'CASH_IN' | 'CASH_OUT' | 'DEPOSIT', amountAgorot: number, reason: string | null, note: string | null, source: string | null): Promise<unknown>;
   count(): Promise<unknown>;
   countSave(countedAgorot: number): Promise<unknown>;
@@ -75,9 +77,12 @@ export function DrawerScreen({ drawer, initial, actions }: { drawer: DrawerState
   const [wallets, setWallets] = useState<{ wallets: WalletRow[]; offline: boolean } | null>(null);
   const [picked, setPicked] = useState<WalletRow | null>(null);
   const [log, setLog] = useState<DrawerLog | null>(null);
+  /** The other till whose drawer the reason sheet opens (null: this till's). */
+  const [remoteId, setRemoteId] = useState<string | null>(null);
   const o = drawer.offered;
   const agorot = parseAmount(amount);
   const go = (s: DrawerSheet) => {
+    setRemoteId(null);
     setReason(null);
     setNote('');
     setAmount('');
@@ -101,13 +106,40 @@ export function DrawerScreen({ drawer, initial, actions }: { drawer: DrawerState
   );
   const toMenu = () => (initial && initial !== 'menu' ? actions.back() : setSheet('menu'));
 
-  if (sheet === 'reason') {
-    const noteNeeded = reason === 'OTHER' && drawer.requireNoteForOther;
+  if (sheet === 'remote') {
     return (
       <div className="t-report">
-        {head('פתיחת מגירה — סיבה', toMenu)}
+        {head('באיזו קופה לפתוח את המגירה?', toMenu)}
         <ul className="t-menu">
-          {drawer.reasons.map((r) => (
+          {drawer.hosts.map((h) => (
+            <li key={h.id}>
+              <button
+                type="button"
+                className="t-menu-row"
+                onClick={() => {
+                  setRemoteId(h.id);
+                  if (drawer.requireReason) setSheet('reason');
+                  else void actions.openRemote(h.id, null, null).then(() => toMenu());
+                }}
+              >
+                <span>המגירה ב{h.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (sheet === 'reason') {
+    const noteNeeded = reason === 'OTHER' && drawer.requireNoteForOther;
+    // Another till's drawer: opened for the reason given — never a movement or a count there.
+    const reasons = remoteId ? drawer.reasons.filter((r) => r.code !== 'CASH_IN' && r.code !== 'CASH_OUT' && r.code !== 'DEPOSIT' && r.code !== 'COUNT') : drawer.reasons;
+    return (
+      <div className="t-report">
+        {head(remoteId ? `פתיחת מגירה ב${drawer.hosts.find((h) => h.id === remoteId)?.label ?? ''} — סיבה` : 'פתיחת מגירה — סיבה', toMenu)}
+        <ul className="t-menu">
+          {reasons.map((r) => (
             <li key={r.code}>
               <button
                 type="button"
@@ -132,7 +164,7 @@ export function DrawerScreen({ drawer, initial, actions }: { drawer: DrawerState
           type="button"
           className="t-btn t-btn-primary t-btn-wide"
           disabled={(drawer.requireReason && !reason) || (noteNeeded && !note.trim())}
-          onClick={() => void actions.open(reason, note.trim() || null).then(() => toMenu())}
+          onClick={() => void (remoteId ? actions.openRemote(remoteId, reason, note.trim() || null) : actions.open(reason, note.trim() || null)).then(() => toMenu())}
         >
           פתח
         </button>
@@ -288,6 +320,7 @@ export function DrawerScreen({ drawer, initial, actions }: { drawer: DrawerState
 
   const rows: Array<{ id: DrawerSheet; label: string; on: boolean }> = [
     { id: 'reason', label: 'פתיחת מגירה', on: o.open },
+    { id: 'remote', label: drawer.hosts.length === 1 ? `פתיחת מגירה ב${drawer.hosts[0].label}` : 'פתיחת מגירה בקופה אחרת', on: o.remote },
     { id: 'CASH_IN', label: TITLES.CASH_IN, on: o.cashIn },
     { id: 'CASH_OUT', label: TITLES.CASH_OUT, on: o.cashOut },
     { id: 'DEPOSIT', label: TITLES.DEPOSIT, on: o.deposit },
@@ -310,7 +343,11 @@ export function DrawerScreen({ drawer, initial, actions }: { drawer: DrawerState
                 onClick={() => {
                   // No reason asked: "פתח מגירה" opens at once (Android startManual).
                   if (r.id === 'reason' && !drawer.requireReason) void actions.open(null, null);
-                  else go(r.id);
+                  else if (r.id === 'remote' && drawer.hosts.length === 1) {
+                    go('reason');
+                    setRemoteId(drawer.hosts[0].id);
+                    if (!drawer.requireReason) void actions.openRemote(drawer.hosts[0].id, null, null).then(() => setSheet('menu'));
+                  } else go(r.id);
                 }}
               >
                 <span>{r.label}</span>
