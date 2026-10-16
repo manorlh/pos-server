@@ -60,6 +60,7 @@ import {
   released,
   resentAfterHostLoss,
   retryNow,
+  mayBeOnPaper,
   sending,
   surfaced,
   takenBackAsHost,
@@ -84,12 +85,13 @@ import {
   type RoutedTicket,
 } from '../../core/kitchen/routing';
 import { styleForPrinter } from '../../core/kitchen/style';
-import { LABELS, wireLine, withNotice, type KitchenLine, type WireTicket } from '../../core/kitchen/tickets';
+import { LABELS, redirectNotice, wireLine, withNotice, type KitchenLine, type WireTicket } from '../../core/kitchen/tickets';
+import { RECHECK_MS, TEMP_REDIRECT_MS, activeRedirects, clearedRedirects, mayRedirect, redirectFor, redirectLog, ticketTitleOf, withRedirect, type TempRedirect } from '../../core/kitchen/failover';
 import { bonAlerts, LAN_UNREACHABLE } from '../../core/kitchen/alerts';
 import type { CategoryRef, CourseRef } from '../../core/kitchenTicketStyle';
 import { nameUuid } from '../kiosk/kdsRelease';
 import { KitchenStore } from './kitchenStore';
-import { lanCall as defaultLanCall, LanNotReached, tcpPrinterLink, type LanCall } from './kitchenNet';
+import { lanCall as defaultLanCall, LanNotReached, probePrinter, tcpPrinterLink, type LanCall } from './kitchenNet';
 
 const CONFIG_KEY = 'kitchen.config';
 const SECRET_KEY = 'kitchen.secret';
@@ -198,6 +200,9 @@ export class KitchenService {
   private roleKnown = false;
   /** One lock per physical printer: its tickets never overlap on this device (a lane and a hand-over's fallback). */
   private readonly locks = new Map<string, Promise<unknown>>();
+  /** "לשלוח לשם גם את הבאים": the temporary redirects (core/kitchen/failover.ts) — in memory, as on Android. */
+  private tempRedirects: TempRedirect[] = [];
+  private redirectWatch: NodeJS.Timeout | null = null;
 
   constructor(private readonly d: KitchenServiceDeps) {
     this.store = new KitchenStore(d.db);
@@ -338,7 +343,10 @@ export class KitchenService {
         ...(r.lines.some((l) => l.waiting) ? { waiting: r.lines.filter((l) => l.waiting).map(wireLine) } : {}),
       };
       const kind: JobKind = r.isTillCopy ? 'copy' : 'ticket';
-      const job = this.newJob(r.printer, its, kind, now, o.refId ?? null);
+      // "the next ones too": a printer redirected for a while — its tickets to the other, marked "הופנה מ: …" (one hop).
+      const temp = o.onlyPrinterId ? null : redirectFor(r.printer.id, this.tempRedirects, now);
+      const target = temp ? this.printerOrTill(temp.toId) : null;
+      const job = target ? this.newJob(target, { ...its, notice: redirectNotice(r.printer.name, its.notice) }, kind, now, o.refId ?? null) : this.newJob(r.printer, its, kind, now, o.refId ?? null);
       const withHold = o.hold ? { ...job, state: 'held' as const, lastError: o.hold } : job;
       return o.idSeed ? { ...withHold, id: jobIdOf(o.idSeed, withHold.printerId, kind) } : withHold;
     });
@@ -452,6 +460,132 @@ export class KitchenService {
     return this.store.open().filter(needsAttention);
   }
 
+  /* ------------------------------------------------------------------ "מדפסת חלופית" */
+
+  /** The printers a ticket may be moved to: this device's own (when it has one), the kitchen's it reaches, the receipt printers. */
+  failoverPrinters(ownPrinter: boolean): KitchenPrinter[] {
+    const config = this.config();
+    return [
+      ...(ownPrinter ? [tillPrinter(LABELS.till)] : []),
+      ...config.printers.filter((p) => !(p.purpose === 'receipt' && p.type === 'cloud') && (p.purpose === 'receipt' || p.inScope || p.isHost)),
+    ];
+  }
+
+  /** The printer a job is on (the config's, else as it was when the job was made). */
+  printerOfJob(job: KitchenJob): KitchenPrinter | null {
+    return this.printerOrTill(job.printerId) ?? this.snapshotOf(job);
+  }
+
+  /** The temporary redirects in force. */
+  redirects(): TempRedirect[] {
+    return activeRedirects(this.tempRedirects, this.now());
+  }
+
+  /** "בטל הפניה". */
+  endRedirect(fromId: string): void {
+    this.tempRedirects = clearedRedirects(this.tempRedirects, fromId);
+    this.emit();
+  }
+
+  /**
+   * A ticket moved to another printer (KitchenPrintService.moveToPrinter): a new job there by a new id, marked "הופנה מ: …"
+   * (and "ייתכן שכבר הודפס" when it may be on paper) — the old one out of its printer's queue; [alsoNext] — that printer's
+   * other waiting tickets too, and its next ones for 15 minutes. Each move to the cloud's log. A ticket printing right now: busy.
+   */
+  moveToPrinter(jobId: string, toId: string, alsoNext: boolean, by: { id: string; name: string } | null): 'moved' | 'busy' | 'gone' {
+    const target = this.printerOrTill(toId);
+    const job = this.store.byId(jobId);
+    if (!target || !job) return 'gone';
+    if (!mayRedirect(job)) return job.state === 'printing' || job.state === 'sending' ? 'busy' : 'gone';
+    const now = this.now();
+    const others = alsoNext ? this.store.pending().filter((j) => j.id !== job.id && j.printerId === job.printerId && mayRedirect(j)) : [];
+    const moved: Array<{ old: KitchenJob; next: KitchenJob }> = [];
+    for (const old of [job, ...others]) {
+      let ticket: WireTicket;
+      try {
+        ticket = JSON.parse(old.ticketJson) as WireTicket;
+      } catch {
+        continue;
+      }
+      let notice = redirectNotice(old.printerName, ticket.notice);
+      if (mayBeOnPaper(old)) notice = withNotice(notice, LABELS.resent);
+      const fresh = retryNow(old, now);
+      const next: KitchenJob = {
+        ...fresh,
+        id: randomUUID(),
+        printerId: target.id,
+        printerName: target.name,
+        printerJson: JSON.stringify(target),
+        route: routeOf(target, this.config().printHost),
+        ticketJson: JSON.stringify({ ...ticket, notice }),
+        createdAt: now,
+      };
+      this.store.delete(old.id);
+      this.store.insertAll([next]);
+      this.handled.delete(old.id);
+      moved.push({ old, next });
+    }
+    if (alsoNext) {
+      this.tempRedirects = withRedirect(this.tempRedirects, { fromId: job.printerId, fromName: job.printerName, toId: target.id, toName: target.name, until: now + TEMP_REDIRECT_MS }, now);
+      this.watchRedirects();
+    }
+    for (const { old } of moved) {
+      void this.logRedirect(
+        redirectLog({
+          id: randomUUID(),
+          kind: 'kitchen',
+          from: { id: old.printerId, name: old.printerName },
+          to: { id: target.id, name: target.name },
+          ticket: ticketTitleOf(old),
+          error: old.lastError,
+          temporaryUntil: alsoNext ? now + TEMP_REDIRECT_MS : null,
+          user: by,
+          at: now,
+        }),
+      );
+    }
+    this.wake();
+    this.emit();
+    return 'moved';
+  }
+
+  /** `POST /sync/{m}/print-redirects` — best effort: six tries, 20 s more each time; a 2xx or a 4xx is done. */
+  private async logRedirect(body: Record<string, unknown>, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<void> {
+    const m = this.d.machineId();
+    if (!m) return;
+    for (let attempt = 0; attempt < 6 && !this.closed; attempt++) {
+      const r = await this.d.api.post(`sync/${m}/print-redirects`, body, { timeoutMs: 15_000 });
+      if (r.kind === 'ok' || (r.kind === 'refused' && r.status >= 400 && r.status < 500)) return;
+      await sleep(20_000 * (attempt + 1));
+    }
+    this.d.log('kitchen: print redirect log not sent');
+  }
+
+  /** While a redirect runs, its printer is knocked on every 30 s; its answer ends the redirect (a network printer). */
+  private watchRedirects() {
+    if (this.redirectWatch || this.stopped) return;
+    this.redirectWatch = setInterval(() => void this.checkRedirects(), RECHECK_MS);
+    this.redirectWatch.unref?.();
+  }
+
+  async checkRedirects(): Promise<void> {
+    const now = this.now();
+    this.tempRedirects = activeRedirects(this.tempRedirects, now);
+    for (const r of [...this.tempRedirects]) {
+      const p = this.printerById(r.fromId);
+      if (!p || p.type !== 'network' || !p.host) continue;
+      if (await probePrinter(p.host, p.port ?? DEFAULT_PRINTER_PORT, 2_000)) {
+        this.tempRedirects = clearedRedirects(this.tempRedirects, r.fromId);
+        this.d.log(`kitchen: ${p.name} answers again — its redirect ended`);
+        this.emit();
+      }
+    }
+    if (this.tempRedirects.length === 0 && this.redirectWatch) {
+      clearInterval(this.redirectWatch);
+      this.redirectWatch = null;
+    }
+  }
+
   /** "נסה שוב": a fresh start — marked "ייתכן שכבר הודפס" when it may be on paper. Never a job handed to a host. */
   retry(jobId: string): boolean {
     const j = this.store.byId(jobId);
@@ -520,6 +654,8 @@ export class KitchenService {
   }
 
   stop(): void {
+    if (this.redirectWatch) clearInterval(this.redirectWatch);
+    this.redirectWatch = null;
     this.stopped = true;
     this.closed = true;
     if (this.wakeTimer) clearTimeout(this.wakeTimer);

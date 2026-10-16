@@ -1336,3 +1336,23 @@
   max-height: 50vh;
   overflow-y: auto;
 }
+
+/* "בון לא הודפס במדפסת מטבח" — the red strip, a button; a redirect's amber chip; a dialog's box. */
+.t-banner-button {
+  display: block;
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.t-redirect {
+  background: #f9a825;
+  color: #000;
+}
+.t-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}

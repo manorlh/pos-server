@@ -215,6 +215,8 @@ import { TillRemotePrint, type TillRemotePrintOptions } from './tillRemotePrint'
 import { TillTransmission } from './tillTransmission';
 import { TillShopXLan } from './tillShopXLan';
 import { TillItemBlocks } from './tillItemBlocks';
+import { TillPrintQueue } from './tillPrintQueue';
+import { FAILOVER_TEXT, ticketTitleOf } from '../../core/kitchen/failover';
 import { IB_TEXT } from '../../core/till/itemBlocks';
 import type { LanCall } from '../kitchen/kitchenNet';
 import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
@@ -686,6 +688,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly shopXLan: TillShopXLan;
   /** "חסומים כעת" / "חסום / אזל" (tillItemBlocks.ts). */
   readonly itemBlocks: TillItemBlocks;
+  /** "תור הדפסה" and "מדפסת חלופית" for the kitchen tickets (tillPrintQueue.ts). */
+  readonly printQueue: TillPrintQueue;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -723,6 +727,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       deniedHidden: () => String(this.svc.cloud.parameters().permissionsDeniedUi ?? '').trim() !== 'הצג מושבת עם הסבר',
     });
     this.itemBlocks.start();
+    this.printQueue = new TillPrintQueue(this.ctx);
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -745,7 +750,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const onView = () => this.refresh();
     this.svc.on('view', onView);
     this.offView = () => this.svc.off('view', onView);
-    this.tick = setInterval(() => this.refresh(), 5_000);
+    this.tick = setInterval(() => {
+      this.refresh();
+      // "מדפסת חלופית": the question about a kitchen ticket that did not print, when it is due.
+      if (!this.stopped) void this.later(() => this.printQueue.prompt()).then(() => this.refresh());
+    }, 5_000);
     this.attachWorkMode();
     // "סגירת משמרת אוטומטית גם עם עגלה פתוחה": the service's half-minute tick asks the till (a till by role only).
     this.svc.attachTillAutoClose?.(() => this.later(() => this.autoCloseTick()));
@@ -1124,6 +1133,41 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.vouchers.remove(a.id);
       case 'checkout.finishTest':
         return this.finishTest();
+      case 'printQueue.list':
+        this.signedIn();
+        return { rows: this.printQueue.rows(), view: this.printQueue.view() ?? null };
+      case 'printQueue.choices':
+        this.signedIn();
+        return this.printQueue.choices(String(a.jobId ?? ''));
+      case 'printQueue.retry':
+        this.signedIn();
+        if (!this.printQueue.retry(String(a.jobId ?? ''))) return refuse('invalid_args', FAILOVER_TEXT.busy);
+        this.toast(FAILOVER_TEXT.sentAgain, 'ok');
+        return undefined;
+      case 'printQueue.move': {
+        this.signedIn();
+        const text = this.printQueue.move(String(a.jobId ?? ''), String(a.toId ?? ''), a.alsoNext === true);
+        this.toast(text, text === FAILOVER_TEXT.busy || text === FAILOVER_TEXT.noOther ? 'error' : 'ok');
+        return { text };
+      }
+      case 'printQueue.handled': {
+        const job = this.svc.kitchen.job(String(a.jobId ?? ''));
+        if (!job) return refuse('invalid_args');
+        // "סמן כטופל": a manager's code, always (Android's elevation `table:reprint`).
+        return this.gate(
+          PERM.REPRINT,
+          (approver) => {
+            const by = approver ?? { id: this.signedIn().id, name: displayName(this.signedIn()) };
+            this.svc.kitchen.discard(job.id, `handled by ${by.name}`, by.name);
+            return undefined;
+          },
+          { force: true, body: FAILOVER_TEXT.handledBody(ticketTitleOf(job), job.printerName) },
+        );
+      }
+      case 'printQueue.endRedirect':
+        this.signedIn();
+        this.svc.kitchen.endRedirect(String(a.fromId ?? ''));
+        return undefined;
       case 'blocks.list':
         return this.itemBlocks.list();
       case 'blocks.sheet':
@@ -4259,6 +4303,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return order ? { order } : {};
       })(),
       ...(this.transmissionShown && user ? { transmission: this.transmission.view() } : {}),
+      ...(() => {
+        const q = user ? this.printQueue.view() : undefined;
+        return q ? { printQueue: q } : {};
+      })(),
       ...(() => {
         const banner = user ? this.transmission.banner() : null;
         return banner ? { terminalOffline: banner } : {};

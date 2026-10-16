@@ -162,6 +162,14 @@ export const TILL_OPS = [
   'blocks.sheet',
   'blocks.block',
   'blocks.release',
+  // "תור הדפסה" / "מדפסת חלופית" (main/till/tillPrintQueue.ts): the tickets that need a person, where one may go, "הדפס שוב",
+  // "העבר למדפסת אחרת", "סמן כטופל" (a manager's code), "בטל הפניה".
+  'printQueue.list',
+  'printQueue.choices',
+  'printQueue.retry',
+  'printQueue.move',
+  'printQueue.handled',
+  'printQueue.endRedirect',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -231,6 +239,10 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'transmission.authorize',
   'blocks.block',
   'blocks.release',
+  'printQueue.retry',
+  'printQueue.move',
+  'printQueue.handled',
+  'printQueue.endRedirect',
 ]);
 
 export interface OpArgs {
@@ -350,6 +362,12 @@ export interface OpArgs {
     duration: { mode: 'minutes'; minutes: number } | { mode: 'time'; at: string } | { mode: 'end_of_day' } | { mode: 'none' };
   };
   'blocks.release': { ids: string[] };
+  'printQueue.list': Record<string, never>;
+  'printQueue.choices': { jobId: string };
+  'printQueue.retry': { jobId: string };
+  'printQueue.move': { jobId: string; toId: string; alsoNext?: boolean };
+  'printQueue.handled': { jobId: string };
+  'printQueue.endRedirect': { fromId: string };
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -714,7 +732,8 @@ export interface HealthState {
 export interface DialogField {
   name: string;
   label: string;
-  kind: 'pin' | 'text';
+  /** `check`: a box, unticked; its answer is "true" / "false" with whichever action is chosen. */
+  kind: 'pin' | 'text' | 'check';
 }
 
 export interface EngineDialog {
@@ -781,6 +800,8 @@ export interface TillState {
   transmission?: TransmissionState;
   /** The sell screen's amber banner: the terminal works deferred, or deferred sales wait for the card company. */
   terminalOffline?: { text: string; tone: 'amber' };
+  /** "בון לא הודפס במדפסת מטבח": the red strip, how many, and the redirects in force ("«בר» נשלחת ל«מטבח» עד 14:20"). */
+  printQueue?: { banner: string | null; count: number; redirects: Array<{ fromId: string; text: string }> };
   order?: {
     dining: 'take_away' | 'eat_in' | null;
     name: string | null;

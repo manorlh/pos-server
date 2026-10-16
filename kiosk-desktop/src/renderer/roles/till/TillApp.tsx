@@ -27,6 +27,7 @@ import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
 import { BasketDiscountSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
 import { ORDER_TEXT } from '../../../core/till/orderDetails';
+import { FAILOVER_TEXT } from '../../../core/kitchen/failover';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { DrawerScreen, type DrawerLog, type WalletRow } from './screens/DrawerScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
@@ -39,6 +40,7 @@ import { UsersScreen } from './screens/UsersScreen';
 import { OwedScreen } from './screens/OwedScreen';
 import { TransmissionScreen } from './screens/TransmissionScreen';
 import { BlockSheet, BlocksScreen, type BlocksActions } from './screens/BlocksScreen';
+import { PrintQueueScreen, type PrintQueueActions, type QueueRow } from './screens/PrintQueueScreen';
 import type { BlockSheetView, BlocksListView } from '../../../core/till/itemBlocks';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
@@ -46,7 +48,7 @@ import { useTillEngine } from './useTillEngine';
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
 type Sheet =
@@ -149,6 +151,18 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       },
     }),
     [run, attempt, say],
+  );
+  const printQueueActions = useMemo<PrintQueueActions>(
+    () => ({
+      list: async () => (await run('printQueue.list', {})) as { rows: QueueRow[]; view: { redirects: Array<{ fromId: string; text: string }> } | null } | undefined,
+      choices: async (jobId) => (await run('printQueue.choices', { jobId })) as Array<{ id: string; label: string }> | undefined,
+      retry: (jobId) => run('printQueue.retry', { jobId }),
+      move: (jobId, toId) => run('printQueue.move', { jobId, toId }),
+      handled: (jobId) => run('printQueue.handled', { jobId }),
+      endRedirect: (fromId) => run('printQueue.endRedirect', { fromId }),
+      back: () => setView('menu'),
+    }),
+    [run],
   );
   const recentReceipts = useCallback(async () => (await run('refund.recent', {})) as ReceiptRow[] | undefined, [run]);
   const findReceipt = useCallback(async (query: string) => (await run('refund.find', { query })) as ReceiptFind | undefined, [run]);
@@ -334,6 +348,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         />
       );
     }
+    if (view === 'printQueue') {
+      return <PrintQueueScreen actions={printQueueActions} />;
+    }
     if (view === 'blocks') {
       return <BlocksScreen actions={blocksActions} catalog={catalog} back={() => setView('menu')} />;
     }
@@ -506,6 +523,22 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           </button>
         </div>
       ) : null}
+      {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
+        // "בון לא הודפס במדפסת מטבח" (KitchenPrintBanner): never quieted; a tap opens the queue.
+        <button type="button" className="t-banner t-banner-button" role="alert" onClick={() => setView('printQueue')}>
+          {s.printQueue.banner}
+        </button>
+      ) : null}
+      {view === 'sell' && !s.session.locked
+        ? (s.printQueue?.redirects ?? []).map((r) => (
+            <div key={r.fromId} className="t-notice t-redirect" role="status">
+              <span className="t-notice-text">{r.text}</span>
+              <button type="button" className="t-pill" onClick={() => void run('printQueue.endRedirect', { fromId: r.fromId })}>
+                {FAILOVER_TEXT.endRedirect}
+              </button>
+            </div>
+          ))
+        : null}
       {s.terminalOffline && !s.session.locked && s.checkout.phase === 'idle' && view === 'sell' ? (
         // The terminal works deferred (Android TerminalOfflineChip): amber, the cards that do not pass on the second line.
         <div className="t-notice t-deferred-banner" role="status">

@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -80,6 +80,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
     rows: [
       // "חסומים כעת" (ItemBlocksUi.kt): the blocks in force, "חסום פריט" — the sheet's options are the operator's.
       { key: 'blocks_now', label: 'חסומים כעת', to: 'blocks' },
+      // "תור הדפסה" (PrintQueueScreen.kt): the kitchen tickets that need a person, the redirects.
+      { key: 'print_queue', label: 'תור הדפסה', to: 'printQueue' },
       { key: 'screen_edit', label: 'עריכת מסך' },
       // "עובדים מחוברים" (exclusive-login-v2 §8א): where the rule is on; a manager's code opens it for anyone else.
       { key: 'signed_in_users', label: 'עובדים מחוברים', to: 'users', when: (s) => (s.users ? s.users.offered : undefined) },
