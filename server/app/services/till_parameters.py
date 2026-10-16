@@ -2392,6 +2392,49 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
 )
 
 
+# "קיוסק — כשאין מסופון אשראי" (the owner, 16.10.2026: "גם אם אין מסופון שיעלה"): a kiosk with no card terminal to
+# charge on — none set up, "ללא אשראי", or one that does not answer — and nothing else that pays (no "תשלום בקופה" set,
+# no cash station that answers). `pay_at_till` (the default): the kiosk still opens its menu and offers "תשלום בקופה" at
+# the payment — the order goes to the till as pay-at-till does (the cloud, the shop's LAN host offline, else the
+# "לתשלום בקופה" slip); no tax document on the kiosk. `block`: as before — the kiosk rests on "התשלום אינו זמין כרגע".
+# Read by kiosk-desktop (the Windows kiosk from `GET /sync/{m}/parameters`; the Android web bundle from its kiosk
+# config, where `kiosk_no_terminal_fallback_overlay` puts `general.noTerminalFallback` only when not the default) and
+# by the Android kiosk (`param.kioskNoTerminalFallback`). A kiosk that does not know it yet behaves as the default.
+KIOSK_NO_TERMINAL_FALLBACK_KEY = "kioskNoTerminalFallback"
+KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL = "pay_at_till"
+KIOSK_NO_TERMINAL_FALLBACK_BLOCK = "block"
+KIOSK_NO_TERMINAL_FALLBACK_OPTIONS = (KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL, KIOSK_NO_TERMINAL_FALLBACK_BLOCK)
+KIOSK_NO_TERMINAL_FALLBACK_DEFAULT = KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL
+KIOSK_NO_TERMINAL_FALLBACK_LABELS = {
+    KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL: "הקיוסק עובד ומציע תשלום בקופה (ברירת מחדל)",
+    KIOSK_NO_TERMINAL_FALLBACK_BLOCK: "הקיוסק לא מקבל הזמנות",
+}
+#: Where the kiosk's config carries a choice other than the default (`general.noTerminalFallback`).
+KIOSK_NO_TERMINAL_FALLBACK_CONFIG_FIELD = "noTerminalFallback"
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=KIOSK_NO_TERMINAL_FALLBACK_KEY,
+        label="קיוסק — כשאין מסופון אשראי",
+        value_type="enum",
+        enum_options=KIOSK_NO_TERMINAL_FALLBACK_OPTIONS,
+        enum_labels=KIOSK_NO_TERMINAL_FALLBACK_LABELS,
+        default_value=KIOSK_NO_TERMINAL_FALLBACK_DEFAULT,
+        description=(
+            "מה הקיוסק עושה כשאין לו מסופון אשראי לחייב בו — לא הוגדר מסופון, הקיוסק מוגדר \"ללא אשראי\", או "
+            "שהמסופון לא עונה — ואין אמצעי תשלום אחר (לא הוגדר \"תשלום בקופה\" ואין עמדת מזומן שעונה). "
+            f"«{KIOSK_NO_TERMINAL_FALLBACK_LABELS[KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL]}» — הקיוסק עולה ומקבל הזמנות "
+            "כרגיל, ובתשלום מוצע \"תשלום בקופה\": ההזמנה עוברת לקופות (דרך הענן, ובלי אינטרנט דרך הקופה הראשית "
+            "ברשת המקומית; אם אף אחת לא זמינה מודפס פתק \"לתשלום בקופה\"). הקיוסק לא מפיק מסמך — הקופה שגובה "
+            "את התשלום מפיקה אותו. מסופון שהוגדר אך לא עונה נשאר זמין לניסיון, ו\"תשלום בקופה\" מוצע לידו. "
+            f"«{KIOSK_NO_TERMINAL_FALLBACK_LABELS[KIOSK_NO_TERMINAL_FALLBACK_BLOCK]}» — כמו קודם: הקיוסק מציג "
+            "\"התשלום אינו זמין כרגע\" עד שהמסופון חוזר. \"חסימת הזמנות כשאין אינטרנט\" ממשיכה לחול כרגיל. "
+            "חל על קיוסק Windows ועל הקיוסק באנדרואיד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
+
 def _kiosk_parameter(db: Session, machine: POSMachine, key: str) -> Any:
     """`key` as it resolves for this kiosk (till → area → shop → company → default); None: no active definition."""
     parameter = db.query(TillParameter).filter(TillParameter.key == key).first()
@@ -2424,6 +2467,34 @@ def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
 def kiosk_offline_block_cash(db: Session, machine: POSMachine) -> bool:
     """`kioskOfflineBlockCash` for this kiosk: true only when a level (or a re-defaulted definition) says so."""
     return _kiosk_parameter(db, machine, KIOSK_OFFLINE_BLOCK_CASH_KEY) is True
+
+
+def kiosk_no_terminal_fallback(db: Session, machine: POSMachine) -> str:
+    """
+    `kioskNoTerminalFallback` as it resolves for this kiosk (till → area → shop → company → default).
+    A missing or inactive definition, or a value that is not an option: the default (`pay_at_till`).
+    """
+    value = _kiosk_parameter(db, machine, KIOSK_NO_TERMINAL_FALLBACK_KEY)
+    return value if value in KIOSK_NO_TERMINAL_FALLBACK_OPTIONS else KIOSK_NO_TERMINAL_FALLBACK_DEFAULT
+
+
+def kiosk_no_terminal_fallback_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The kiosk's effective config with `general.noTerminalFallback` when `kioskNoTerminalFallback` resolves to
+    something other than the default (a new dict) — the Android web kiosk reads it there. At the default the
+    config is left exactly as it was (no new configVersion): a kiosk without it behaves as the default.
+    """
+    try:
+        choice = kiosk_no_terminal_fallback(db, machine)
+    except Exception:  # noqa: BLE001 - a missing table (an older test world) changes nothing
+        return cfg
+    if choice == KIOSK_NO_TERMINAL_FALLBACK_DEFAULT:
+        return cfg
+    out = dict(cfg)
+    general = dict(out.get("general") or {})
+    general[KIOSK_NO_TERMINAL_FALLBACK_CONFIG_FIELD] = choice
+    out["general"] = general
+    return out
 
 
 def kiosk_offline_block_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
