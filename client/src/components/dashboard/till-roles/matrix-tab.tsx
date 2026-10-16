@@ -46,27 +46,33 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { StateChip } from './state-chip';
 import { ApplyDefaultsDialog, DeleteRoleDialog, EditRoleDialog, NewRoleDialog, SELECT } from './role-dialogs';
+import { DeniedPreviewCard } from './denied-preview';
 
 export function MatrixTab({
   companyId,
+  shopId = null,
   catalogue,
   data,
 }: {
   companyId: string;
+  /** The shop in scope: the preview reads its "כשאין הרשאה" (else the company's). */
+  shopId?: string | null;
   catalogue: PermissionCatalogue;
   data: TillRolesResponse;
 }) {
   // Re-keyed on the server's answer, so a save (or another tab's change) restarts the draft.
   const key = data.roles.map((r) => `${r.id}:${r.updatedAt}`).join('|');
-  return <Matrix key={key} companyId={companyId} catalogue={catalogue} data={data} />;
+  return <Matrix key={key} companyId={companyId} shopId={shopId} catalogue={catalogue} data={data} />;
 }
 
 function Matrix({
   companyId,
+  shopId,
   catalogue,
   data,
 }: {
   companyId: string;
+  shopId: string | null;
   catalogue: PermissionCatalogue;
   data: TillRolesResponse;
 }) {
@@ -128,6 +134,8 @@ function Matrix({
         </label>
       </div>
       <p className="text-xs text-muted-foreground">{t('legend')}</p>
+      {/* "מה יראה מלצר": the role's till as the matrix stands now (P:/specs/denied-actions-ui.md §5). */}
+      <DeniedPreviewCard companyId={companyId} shopId={shopId} roles={roles} draft={draft} />
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[720px] text-sm">

@@ -4809,7 +4809,18 @@
     "deniedUiShow": "להציג",
     "deniedUiHide": "להסתיר",
     "deniedUiCode": "לבקש קוד מנהל",
-    "deniedUiAria": "כשאין הרשאה — {role}"
+    "deniedUiAria": "כשאין הרשאה — {role}",
+    "previewTitle": "מה יראה {role}",
+    "previewRole": "תפקיד",
+    "previewMode": "כשאין הרשאה: {mode}",
+    "previewModeFromLevel": "{mode} (לפי {level})",
+    "previewLevelCompany": "החברה",
+    "previewLevelShop": "הסניף",
+    "previewHint": "לפי המטריצה כפי שהיא עכשיו (גם לפני שמירה) ו\"כשאין הרשאה\" של התפקיד — וכשהוא \"כמו בהגדרה\", של {level}. נקודת מכירה או קופה יכולות לקבוע אחרת. מנהל שנכנס רואה את כל מה שמותר לו. אפשרויות שנדרשות לסיום תשלום או סגירה, ויציאה מהמשתמש, לא מוסתרות לעולם.",
+    "previewHidden": "לא מופיע ({count})",
+    "previewCode": "בקוד מנהל ({count})",
+    "previewDenied": "מופיע, ולחיצה אומרת \"אין הרשאה\" ({count})",
+    "previewNone": "אין"
   },
   "cashDrawer": {
     "title": "מגירת מזומן",

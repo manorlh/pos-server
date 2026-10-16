@@ -75,3 +75,14 @@ export const assignTillRole = (
     clearOverrides?: boolean;
   },
 ) => api.put(`/shops/${shopId}/pos-users/${posUserId}/till-role`, body).then((r) => r.data);
+
+/** A level's till parameters as the roles page's parameters tab reads them (what it sets, what it inherits). */
+export interface DrawerParamsLevel {
+  own: Record<string, unknown>;
+  inherited: Record<string, unknown>;
+}
+
+export const fetchDrawerParamsLevel = (companyId: string, scopeType: 'company' | 'shop', scopeId: string) =>
+  api
+    .get<DrawerParamsLevel>(`/companies/${companyId}/till-drawer-params`, { params: { scopeType, scopeId } })
+    .then((r) => r.data);
