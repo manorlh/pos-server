@@ -181,9 +181,9 @@ FLOW_DEFAULTS: Dict[str, Any] = {
     "home": "auto", "firstStep": "type", "askGuests": "auto", "notes": True, "pickupName": "auto", "background": None,
 }
 #: The till build that first shows "זרימה" (an older one ignores `flow` and shows "רגיל": "גרסה 0.1.NNN — תציג
-#: 'רגיל' עד עדכון"). A placeholder — set when the first integration APK that ships pos-android
-#: feat/flow-design is built. One constant — the dashboard reads it from the server.
-FLOW_MIN_VERSION_CODE = 900
+#: 'רגיל' עד עדכון"): 0.1.820, pos-android integration/2026-10-17 (7f2c2259), the first APK with
+#: feat/flow-design. One constant — the dashboard reads it from the server.
+FLOW_MIN_VERSION_CODE = 820
 
 #: The action bar's buttons. A quick order's and a table's are separate lists. Phase 2 adds,
 #: at the end (an older till drops a button it does not know): a quick order's "עוד סבב"

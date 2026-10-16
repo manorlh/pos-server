@@ -247,8 +247,8 @@ def test_defaults_say_the_first_version_that_shows_flow(w):
     out = R.get_defaults(current_user=w.manager)
     assert out["flowMinVersion"] == T.flow_min_version() == f"0.1.{T.FLOW_MIN_VERSION_CODE}"
     assert T.FLOW_SECTION not in out["defaults"]
-    # A placeholder until the first integration APK that ships pos-android feat/flow-design is built.
-    assert T.FLOW_MIN_VERSION_CODE == 900
+    # The first integration APK that ships pos-android feat/flow-design: 0.1.820 (integration/2026-10-17).
+    assert T.FLOW_MIN_VERSION_CODE == 820
 
 
 def test_targets_say_which_tills_show_flow(w):
