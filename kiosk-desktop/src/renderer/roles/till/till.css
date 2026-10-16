@@ -1264,3 +1264,33 @@
   margin: 3px 0;
   cursor: pointer;
 }
+
+/* §13 (nayax-deferred-all): the terminal works deferred — amber on the payment screen and the sell screen. */
+.t-deferred {
+  background: #ff9500;
+  color: #fff;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+.t-deferred-banner {
+  background: #fff4e0;
+  border-color: #ff9500;
+}
+.t-tx-card-on {
+  background: #fdecea;
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+.t-tx-row {
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.t-ok {
+  color: #2e7d32;
+  font-weight: 700;
+}
+.t-bad {
+  color: #c62828;
+}

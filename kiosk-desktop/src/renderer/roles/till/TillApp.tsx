@@ -37,13 +37,14 @@ import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
 import { UsersScreen } from './screens/UsersScreen';
 import { OwedScreen } from './screens/OwedScreen';
+import { TransmissionScreen } from './screens/TransmissionScreen';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission';
 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
 type Sheet = { kind: 'discount' } | { kind: 'oth'; lineId: string | null } | { kind: 'receipt' } | { kind: 'held' } | { kind: 'heldClose'; retry: (keepHeld: boolean) => void };
@@ -307,6 +308,22 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         />
       );
     }
+    if (view === 'transmission') {
+      return (
+        <TransmissionScreen
+          tx={s.transmission}
+          actions={{
+            open: () => void run('transmission.open', {}),
+            now: () => void run('transmission.now', {}),
+            offline: (on) => void run('transmission.offline', { on }),
+            authorize: () => void run('transmission.authorize', {}),
+            read: () => void run('transmission.read', {}),
+            more: () => void run('transmission.more', {}),
+            back: () => setView('menu'),
+          }}
+        />
+      );
+    }
     if (view === 'shopx') {
       return (
         <ShopXScreen
@@ -456,6 +473,21 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           </span>
           <button type="button" className="t-pill" onClick={() => setView('owed')}>
             שולם ללקוח
+          </button>
+        </div>
+      ) : null}
+      {s.terminalOffline && !s.session.locked && s.checkout.phase === 'idle' && view === 'sell' ? (
+        // The terminal works deferred (Android TerminalOfflineChip): amber, the cards that do not pass on the second line.
+        <div className="t-notice t-deferred-banner" role="status">
+          <span className="t-notice-text">
+            {s.terminalOffline.text.split('\n').map((line, i) => (
+              <span key={i} style={{ display: 'block' }}>
+                {line}
+              </span>
+            ))}
+          </span>
+          <button type="button" className="t-pill" onClick={() => setView('transmission')}>
+            {T.transmissionOpen}
           </button>
         </div>
       ) : null}

@@ -11,7 +11,9 @@ import { resolveAttempt, type CallFn, type CallResult } from '../../core/cardRec
 import { acknowledgeApproval } from '../../core/terminalAck';
 import {
   abortFrame,
+  authorizePendingFrame,
   cardAnswerOf,
+  deviceConfigFrame,
   parseCardResponse,
   parseReply,
   periodicFrame,
@@ -19,7 +21,9 @@ import {
   pinpadUrl,
   privateIpv4,
   refundFrame,
+  reportFrame,
   saleFrame,
+  setOfflineModeFrame,
   saleOutcome,
   statusFrame,
   strictInt,
@@ -29,6 +33,7 @@ import {
   type PinpadAddress,
 } from '../../core/nayax';
 import { postFrame, requestNotWritten, tlsRefused, type PinStore } from './pinpadHttp';
+import { authorizationOf, batchReportOf, offlineModeOf, type Authorization, type OfflineModeStatus } from '../../core/till/transmission';
 import type { ApprovedCard, PaymentProvider, ProviderContext, ProviderFactory, ProviderKind, Resolution, SaleResult, TransmitResult } from './provider';
 
 const HTTP_MEMORY_MS = 24 * 3_600_000;
@@ -156,6 +161,41 @@ export abstract class NayaxTweezerProvider implements PaymentProvider {
 
   async abort(reference: string): Promise<void> {
     await this.call(abortFrame(reference), TIMEOUTS.abort);
+  }
+
+  /** `getConfig ["device"]`: the deferred mode, its permission and its limits (offlineModeOf). */
+  async offlineMode(): Promise<{ status: OfflineModeStatus | null; error: string | null }> {
+    const r = await this.call(deviceConfigFrame(), TIMEOUTS.config);
+    if (!r.ok) return { status: null, error: r.error };
+    const status = offlineModeOf(r.body);
+    return { status, error: status ? null : 'no reply' };
+  }
+
+  /**
+   * The switch (offlineSwitchExchange): `setConfig`, read back with `getConfig` (a setConfig's word is not trusted), and on
+   * the way off every deferred sale sent for approval. The error: no answer, or the terminal did not switch.
+   */
+  async setOfflineMode(on: boolean): Promise<{ status: OfflineModeStatus | null; error: string | null; authorization: Authorization | null }> {
+    const set = await this.call(setOfflineModeFrame(on), TIMEOUTS.config);
+    const setMessage = set.ok ? parseReply(set.body).statusMessage : null;
+    const read = await this.offlineMode();
+    const status = read.status;
+    let authorization: Authorization | null = null;
+    if (!on && status && status.working === false) authorization = await this.authorizePending();
+    const error = status === null ? (setMessage ?? (set.ok ? 'no reply' : set.error)) : status.working !== on ? (setMessage ?? 'the terminal did not switch') : null;
+    return { status, error, authorization };
+  }
+
+  /** `authorizePendingTransactions`: the deferred sales to the card company (150 s); null — no answer. */
+  async authorizePending(): Promise<Authorization | null> {
+    const r = await this.call(authorizePendingFrame(), TIMEOUTS.authorize);
+    return r.ok ? authorizationOf(r.body) : null;
+  }
+
+  /** `getReport x`: what the open batch holds. */
+  async batchReport(): Promise<{ count: number | null; amountAgorot: number | null } | null> {
+    const r = await this.call(reportFrame('x'), TIMEOUTS.report);
+    return r.ok ? batchReportOf(r.body) : null;
   }
 
   async transmit(): Promise<TransmitResult> {

@@ -149,6 +149,14 @@ export const TILL_OPS = [
   'order.details',
   'order.dismiss',
   'order.edit',
+  // "פעולות אשראי" (main/till/tillTransmission.ts): the screen opened (its view in the state), "שדר עסקאות עכשיו", the deferred
+  // mode's switch and "אשר עסקאות ממתינות" (TRANSMIT), the terminal read again, the history's next page.
+  'transmission.open',
+  'transmission.now',
+  'transmission.offline',
+  'transmission.authorize',
+  'transmission.read',
+  'transmission.more',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -213,6 +221,9 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'order.details',
   'order.dismiss',
   'order.edit',
+  'transmission.now',
+  'transmission.offline',
+  'transmission.authorize',
 ]);
 
 export interface OpArgs {
@@ -312,6 +323,12 @@ export interface OpArgs {
   'order.details': { dining?: 'take_away' | 'eat_in' | null; name?: string | null };
   'order.dismiss': Record<string, never>;
   'order.edit': Record<string, never>;
+  'transmission.open': Record<string, never>;
+  'transmission.now': Record<string, never>;
+  'transmission.offline': { on: boolean };
+  'transmission.authorize': Record<string, never>;
+  'transmission.read': Record<string, never>;
+  'transmission.more': Record<string, never>;
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -618,6 +635,8 @@ export interface CheckoutState {
   cardError?: string | null;
   /** The card's answer is not known (never charged twice): tenders wait for "בדוק שוב" / a manager's "סמן כלא אושר". */
   cardUnknown?: boolean;
+  /** §13 (nayax-deferred-all): the terminal works deferred — the amber warning above the tenders. Absent: online. */
+  deferredNotice?: string | null;
   /** A basket with returns: its figures and its step. Absent: a plain sale. */
   basket?: CheckoutBasket | null;
   /** Every document the payment wrote (a basket: the sale and its credit notes), as printed. */
@@ -737,6 +756,10 @@ export interface TillState {
    * "פרטי הזמנה" of a quick order (core/till/orderDetails.ts — `askEatInTakeAway`, `askOrderName`, `orderDetailsAt`): the
    * answers, the strip's words ("לקחת  ·  דני"), and the sheet the engine asks for now. Absent: none asked, none given.
    */
+  /** "פעולות אשראי" once opened (main/till/tillTransmission.ts TransmissionView). */
+  transmission?: TransmissionState;
+  /** The sell screen's amber banner: the terminal works deferred, or deferred sales wait for the card company. */
+  terminalOffline?: { text: string; tone: 'amber' };
   order?: {
     dining: 'take_away' | 'eat_in' | null;
     name: string | null;
@@ -744,6 +767,32 @@ export interface TillState {
     /** Some question is switched on (the strip's ✎ opens them). */
     configured: boolean;
     ask: OrderAsk | null;
+  };
+}
+
+/** "פעולות אשראי" as the screen shows it. */
+export interface TransmissionState {
+  supported: boolean;
+  deferredSupported: boolean;
+  offline: {
+    reading: boolean;
+    failed: boolean;
+    status: { allowed: boolean; working: boolean; readAt: number } | null;
+    stateLine: string | null;
+    limitsLine: string | null;
+    switching: boolean;
+  };
+  pendingLine: string | null;
+  neverTransmitted: boolean;
+  lastFailed: string | null;
+  running: boolean;
+  message: string | null;
+  history: {
+    rows: Array<{ id: string; at: string | null; status: string; tone: 'ok' | 'error' | 'muted'; trigger: string; facts: string[]; detail: string | null; unsynced: boolean }>;
+    total: number | null;
+    error: string | null;
+    loading: boolean;
+    more: boolean;
   };
 }
 

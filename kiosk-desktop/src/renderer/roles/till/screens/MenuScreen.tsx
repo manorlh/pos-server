@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -54,6 +54,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
       // "עודף חייב ללקוח" (cash-paylink §11.8): only while the cloud routes such debts to this till.
       { label: 'עודף חייב ללקוח', to: 'owed', when: (s) => (s.owed?.items.length ?? 0) > 0 },
       { key: 'refund', label: 'זיכוי', to: 'refund', perm: 'REFUND' },
+      // "פעולות אשראי" (TransmissionScreen.kt): the transmission and the terminal's deferred mode — opened by anyone, its actions TRANSMIT.
+      { key: 'transmission', label: 'פעולות אשראי', to: 'transmission' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },
       { key: 'kiosk_orders', label: 'הזמנות קיוסק לתשלום' },

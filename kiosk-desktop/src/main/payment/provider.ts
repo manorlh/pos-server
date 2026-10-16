@@ -16,6 +16,7 @@
  * (payment/synqpay/).
  */
 
+import type { Authorization, OfflineModeStatus } from '../../core/till/transmission';
 import type { CardBrand } from '../../core/nayax';
 
 export type ProviderKind = 'nayax_lan' | 'nayax_usb' | 'synqpay' | (string & {});
@@ -108,6 +109,15 @@ export interface PaymentProvider {
   abort(reference: string): Promise<void>;
   /** The day's batch to the acquirer (Nayax doPeriodic), when the terminal has one. */
   transmit?(): Promise<TransmitResult>;
+  /**
+   * "מצב לא מקוון (Deferred)" (P:/specs/nayax-deferred-all.md): the terminal's deferred mode as it says it (`getConfig
+   * ["device"]`); its switch (read back, and on the way off the deferred sales sent for approval); that approval alone; the
+   * current batch (`getReport x`). Absent: a terminal with no deferred mode (SynqPay).
+   */
+  offlineMode?(): Promise<{ status: OfflineModeStatus | null; error: string | null }>;
+  setOfflineMode?(on: boolean): Promise<{ status: OfflineModeStatus | null; error: string | null; authorization: Authorization | null }>;
+  authorizePending?(): Promise<Authorization | null>;
+  batchReport?(): Promise<{ count: number | null; amountAgorot: number | null } | null>;
   /** Replaced by another terminal: let go of what it holds (the C4's COM port opens once at a time). */
   dispose?(): void;
 }

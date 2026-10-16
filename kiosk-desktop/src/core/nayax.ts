@@ -24,6 +24,10 @@ export const TIMEOUTS = {
   status: 6_000,
   periodic: 150_000,
   report: 20_000,
+  /** getConfig / setConfig ["device"] (the deferred mode). */
+  config: 10_000,
+  /** authorizePendingTransactions: every deferred sale to the card company. */
+  authorize: 150_000,
   /** After an abort, how long the sale's own reply is still awaited. */
   cancelGrace: 60_000,
 } as const;
@@ -99,6 +103,10 @@ export const lookupFrame = (vuid: string) => frame('getTransactionByVuid', { vui
 export const statusFrame = () => frame('getStatus', {});
 export const internalStatusFrame = () => frame('getInternalStatus', null);
 export const reportFrame = (type: 'x' | 'queryReports' = 'x') => frame('getReport', { type });
+/** The deferred mode (P:/specs/nayax-deferred-all.md): read, switched, and the deferred sales sent for approval. */
+export const deviceConfigFrame = () => frame('getConfig', {}, 'device');
+export const setOfflineModeFrame = (on: boolean) => frame('setConfig', { offlineModeWorking: on }, 'device');
+export const authorizePendingFrame = () => frame('authorizePendingTransactions', {});
 export function periodicFrame(forceUpdateParams = false): string {
   return JSON.stringify({ jsonrpc: '2.0', method: 'doPeriodic', params: ['ashrait', 'wide', { forceUpdateParams }], id: '1' });
 }

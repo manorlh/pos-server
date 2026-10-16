@@ -212,6 +212,8 @@ import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../.
 import { DRAWER_PERM } from '../../core/till/drawer';
 import { TillDrawer } from './tillDrawer';
 import { TillRemotePrint, type TillRemotePrintOptions } from './tillRemotePrint';
+import { TillTransmission } from './tillTransmission';
+import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
 import { TillSessions } from './userSessions';
 import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
 import type { DialogSpec, TillContext } from './tillContext';
@@ -641,6 +643,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private orderName: string | null = null;
   private orderStart: { productId: string; qty: number } | null = null;
   private orderAsk: 'open' | 'payment' | 'edit' | null = null;
+  /** "פעולות אשראי" was opened since the sign-in: its view goes in the state. */
+  private transmissionShown = false;
   private diningFirstDismissedFor: string | null = null;
   private hostIdle = { idle: true, busy: false };
   private lastActivityAt: number;
@@ -670,6 +674,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly vouchers: TillVouchers;
   /** "הדפסה בקופה אחרת" (tillRemotePrint.ts). */
   readonly remotePrint: TillRemotePrint;
+  /** "פעולות אשראי": the transmission, the terminal's deferred mode, the §13 warning (tillTransmission.ts). */
+  readonly transmission: TillTransmission;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -686,6 +692,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // "הדפסה בקופה אחרת": the till's pages to another till's printer, as the cloud lets them (tillRemotePrint.ts).
     this.remotePrint = new TillRemotePrint(this.ctx, { ...(o.remotePrint ?? {}), remoteAfterCash: (host, page) => void this.later(() => this.drawer.remoteAfterCash(host, page)) });
     this.remotePrint.start();
+    this.transmission = new TillTransmission(this.ctx);
+    this.transmission.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -764,6 +772,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.cash.stop();
     this.drawer.stop();
     this.remotePrint.stop();
+    this.transmission.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -1084,6 +1093,22 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.vouchers.remove(a.id);
       case 'checkout.finishTest':
         return this.finishTest();
+      case 'transmission.open':
+        return this.transmissionOpen();
+      case 'transmission.now':
+        return this.gate(PERM.TRANSMIT, () => this.transmissionAction(() => this.transmission.transmitNow()), { body: TX_TEXT.reasonTransmit });
+      case 'transmission.offline':
+        return this.transmissionSwitch(a.on === true);
+      case 'transmission.authorize':
+        return this.gate(PERM.TRANSMIT, () => this.transmissionAction(() => this.transmission.authorizePending()), { body: TX_TEXT.reasonOffline });
+      case 'transmission.read':
+        this.signedIn();
+        void this.transmission.readOffline(true).catch(() => undefined);
+        return undefined;
+      case 'transmission.more':
+        this.signedIn();
+        void this.transmission.more().catch(() => undefined);
+        return undefined;
       case 'order.details':
         return this.setOrderDetails(a.dining, a.name);
       case 'order.dismiss':
@@ -2890,6 +2915,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /** The card approved: a single document finalises as before; a basket's (or a payout's) documents together. */
   private finalizeAfterCard(done: DocDraft) {
+    // A card approved while the terminal works deferred: one more for the card company ("ממתינות לאישור").
+    this.transmission.noteApprovedCard();
     if (this.checkout.basket || done.basketId) {
       const docs = done.basketId ? this.svc.ledger.basketDocs(done.basketId) : [done];
       const b = this.checkout.basket;
@@ -2909,7 +2936,49 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   }
 
   /** The card did not go through (certainly not charged): back to the tenders, the words shown. */
-  private cardFailed(message: string) {
+  /* ------------------------------------------------------------- "פעולות אשראי" */
+
+  /** The screen opened: its view in the state from now on; the terminal read, the batch, the history (in the background). */
+  private transmissionOpen() {
+    this.signedIn();
+    this.transmissionShown = true;
+    void this.transmission.open().catch((e: unknown) => this.log(`transmission screen: ${String(e)}`));
+    return undefined;
+  }
+
+  /** A terminal action approved (TRANSMIT): it runs in the background, its answer on the screen and as a toast. */
+  private transmissionAction(run: () => Promise<string>) {
+    if (this.paying()) return refuse('checkout_busy', TX_TEXT.busy);
+    void run()
+      .then((text) => this.later(() => this.toast(text, 'info')))
+      .catch((e: unknown) => this.log(`transmission: ${String(e)}`));
+    return { started: true };
+  }
+
+  /** The deferred mode's switch: on — "להפעיל מצב לא מקוון?" first; then TRANSMIT (a manager's code where the role asks one). */
+  private transmissionSwitch(on: boolean) {
+    this.signedIn();
+    const go = () => this.gate(PERM.TRANSMIT, () => this.transmissionAction(() => this.transmission.switchOffline(on)), { body: TX_TEXT.reasonOffline });
+    if (!on) return go();
+    this.openDialog({
+      kind: 'confirm',
+      title: TX_TEXT.confirmTitle,
+      body: TX_TEXT.confirmBody,
+      fields: [],
+      actions: [
+        { id: 'approve', label: TX_TEXT.turnOn, primary: true },
+        { id: 'cancel', label: TX_TEXT.cancel },
+      ],
+      code: null,
+      resume: () => go(),
+    });
+    return { dialogId: this.pending!.dialog.id };
+  }
+
+  private cardFailed(message0: string) {
+    // §13: a card the terminal refused while deferred, named by its kind ("כרטיס דביט — לא נתמך במצב לא מקוון…").
+    const refused = offlineRefusedCard(message0, this.transmission.offlineOn(), true);
+    const message = refused ? REFUSED_OFFLINE_TEXT[refused] : message0;
     this.checkout.legs = this.checkout.legs.filter((l) => !(l.method === 'card' && l.status === 'pending'));
     this.checkout.docId = null;
     this.checkout.docIds = [];
@@ -4039,6 +4108,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         kitchenWarning: c.phase === 'done' ? c.kitchenWarning : null,
         cardStatus: c.cardStatus,
         cardError: c.phase === 'card_unknown' ? (c.cardError ?? WORDS.cardPending) : c.cardError,
+        // §13: while the terminal works deferred — "⚠ מצב לא מקוון: כרטיסי תייר (חו״ל), כרטיסי דיירקט וכרטיסי דביט לא יעברו…".
+        ...(() => {
+          const notice = c.phase === 'tender' || c.phase === 'card_waiting' ? this.transmission.notices().cashier : null;
+          return notice ? { deferredNotice: notice } : {};
+        })(),
         cardUnknown: c.phase === 'card_unknown',
         ...(basket ? { basket } : {}),
         ...(c.phase === 'done' && c.docIds.length > 1
@@ -4104,6 +4178,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(() => {
         const order = this.orderView();
         return order ? { order } : {};
+      })(),
+      ...(this.transmissionShown && user ? { transmission: this.transmission.view() } : {}),
+      ...(() => {
+        const banner = user ? this.transmission.banner() : null;
+        return banner ? { terminalOffline: banner } : {};
       })(),
     };
     return state;

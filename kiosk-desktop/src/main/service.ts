@@ -37,6 +37,7 @@ import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/sett
 import { cardPrincipalAgorot, legsOf, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import type { PrintedPage } from '../core/till/remoteDocuments';
+import { rowOf as transmissionRowOf, type TransmissionRow } from '../core/till/transmission';
 import type { RemoteDocumentsRouter } from './till/tillRemotePrint';
 import { isCreditType as isCreditDoc } from '../core/sale';
 import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput } from '../core/printDocs';
@@ -124,7 +125,7 @@ import type { PinpadIdentity } from '../core/pinpadRelocation';
 import { PROVIDERS } from './payment/registry';
 import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalSynqKey, type PairingUpload } from './payment/synqpay/pairing';
 import type { SynqPayProvider } from './payment/synqpay/provider';
-import type { PaymentProvider, ProviderContext, ProviderFactory } from './payment/provider';
+import type { PaymentProvider, ProviderContext, ProviderFactory, TransmitResult } from './payment/provider';
 import { PrintQueue, type JobKind, type PageRenderer } from './printer/printQueue';
 import { DefaultTransport, type PrinterTarget, type Transport } from './printer/transports';
 import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
@@ -3710,6 +3711,30 @@ export class KioskService extends EventEmitter {
     };
     if (this.pendingClose) say('close', this.pendingClose.requestId);
     if (this.pendingZ && zModeOf(this.cloud.heartbeat().zMode) === 'till') say('z', this.pendingZ.requestId);
+  }
+
+  /** "שדר עסקאות עכשיו" ("פעולות אשראי", main/till/tillTransmission.ts): the batch now, its row to the cloud as always. */
+  transmitNow(trigger: 'manual' | 'remote' = 'manual'): Promise<TransmitResult | null> {
+    return this.transmitBatch(trigger);
+  }
+
+  /** This device's transmissions as kept (the newest first), each with whether the cloud has it yet. */
+  localTransmissions(limit = 200): Array<TransmissionRow & { synced: boolean }> {
+    const rows = this.db.all<{ key: string; value: string }>("SELECT key, value FROM kv WHERE key LIKE 'transmission:%' ORDER BY updated_at DESC LIMIT ?", limit);
+    const out: Array<TransmissionRow & { synced: boolean }> = [];
+    for (const r of rows) {
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(r.value);
+      } catch {
+        continue;
+      }
+      const row = transmissionRowOf(parsed);
+      if (!row) continue;
+      const pending = this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM outbox WHERE kind = 'transmission' AND ref_id = ?", row.id)?.n ?? 0;
+      out.push({ ...row, synced: pending === 0 });
+    }
+    return out;
   }
 
   /** The card batch (doPeriodic), reported to the cloud (POST /transmissions, via the outbox). */
