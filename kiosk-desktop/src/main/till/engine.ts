@@ -69,6 +69,7 @@ import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../.
 import { DRAWER_PERM } from '../../core/till/drawer';
 import { TillDrawer } from './tillDrawer';
 import { TillSessions } from './userSessions';
+import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
 import type { DialogSpec, TillContext } from './tillContext';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
@@ -310,6 +311,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly drawer: TillDrawer;
   /** "עובד מחובר בקופה אחת בלבד", "עובדים מחוברים", "נעילה בחוסר שימוש" (userSessions.ts). */
   readonly sessions: TillSessions;
+  /** "עודף חייב ללקוח" / "שולם ללקוח", "זיכוי מזומן" (tillCash.ts). */
+  readonly cash: TillCash;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -329,6 +332,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       canSignOutNow: () => this.checkout.phase === 'idle' && !this.svc.pay.cardInFlight,
     });
     this.sessions.start();
+    this.cash = new TillCash(this.ctx, this.drawer);
+    this.cash.start();
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
@@ -382,6 +387,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   stop() {
     this.stopped = true;
     this.sessions.stop();
+    this.cash.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
@@ -628,6 +634,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.sessions.closeList();
       case 'session.dismissNotice':
         return this.sessions.dismissNotice();
+      // "עודף חייב ללקוח" — "שולם ללקוח" (tillCash.ts), and "זיכוי מזומן" at the payment.
+      case 'owed.refresh':
+        return this.cash.refresh();
+      case 'owed.pay':
+        return this.cash.pay(a.id);
+      case 'checkout.credit':
+        return this.creditTender(a.code);
+      case 'checkout.removeCredit':
+        return this.removeCredit(a.redemptionId);
     }
     return refuse('unknown_op');
   }
@@ -1074,7 +1089,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tracked: f.tracked,
       totals: f.totals,
       promotions: f.promotions,
-      payments: step.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })),
+      payments: docLegs(step.legs),
+      creditLegs: creditLegsOf(step.legs),
       tenderedAgorot: step.tenderedAgorot,
       changeAgorot: step.changeAgorot,
       channel: 'till',
@@ -1116,7 +1132,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tracked: f.tracked,
       totals: f.totals,
       promotions: f.promotions,
-      payments: legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })),
+      payments: docLegs(legs),
+      creditLegs: creditLegsOf(legs),
       ...(handed > 0 ? { tenderedAgorot: handed, changeAgorot: 0 } : {}),
       channel: 'till',
     });
@@ -1190,6 +1207,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (c.phase !== 'tender') refuse('invalid_args');
     const handed = handedTotal(this.approvedLegs());
     const reset = () => {
+      // "זיכוי מזומן" taken for a sale that is not closed: back on its credit (kept and retried until the cloud hears it).
+      for (const l of this.checkout.legs) if (l.method === 'cash_credit' && l.credit) this.cash.credits.release(l.credit.redemptionId);
       this.checkout = idleCheckout();
       return undefined;
     };
@@ -1210,6 +1229,63 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return { dialogId: this.pending!.dialog.id };
   }
 
+  /**
+   * "זיכוי מזומן" (Android CheckoutViewModel.redeemCashCredit): a station's credit (`CC:<code>`, scanned or typed) taken for
+   * min(what is left on it, what is left of the goods) — a `cash_credit` leg naming its redemption; nothing left to collect —
+   * the sale is closed at once with no money moved (no drawer).
+   */
+  private async creditTender(raw: unknown) {
+    this.signedIn();
+    this.tenderOpen();
+    if (typeof raw !== 'string' || raw.length > 80) return refuse('invalid_args');
+    const inSale = this.checkout.legs.flatMap((l) => (l.method === 'cash_credit' && l.credit ? [{ ...l.credit, amountAgorot: l.amountAgorot }] : []));
+    const due = dueOf(this.checkout.totalAgorot, this.approvedLegs());
+    const r = await redeemCredit(this.cash.credits, raw, due, inSale);
+    if (r.kind === 'refused') return refuse('invalid_args', CREDIT_TEXT[r.why]);
+    // The payment may have moved on while the cloud answered: then the credit goes back.
+    if (this.checkout.phase !== 'tender') {
+      this.cash.credits.release(r.use.redemptionId);
+      return refuse('checkout_busy');
+    }
+    const amount = Math.min(r.use.amountAgorot, dueOf(this.checkout.totalAgorot, this.approvedLegs()));
+    this.checkout.legs.push({ method: 'cash_credit', amountAgorot: amount, handedAgorot: 0, credit: { code: r.use.code, redemptionId: r.use.redemptionId }, status: 'approved' });
+    if (dueOf(this.checkout.totalAgorot, this.approvedLegs()) > 0) return { creditAgorot: amount };
+    // Settled by the credits: the document now — no cash handed over, no change.
+    const f = this.checkout.frozen!;
+    if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
+    const legs = this.approvedLegs();
+    const doc = this.svc.ledger.recordCashSale({
+      documentType: saleDocumentType(this.svc.business().dealerType),
+      prefix: this.prefix(),
+      branchId: this.svc.business().branchId,
+      operator: this.operator(),
+      orderId: null,
+      lines: f.lines,
+      tracked: f.tracked,
+      totals: f.totals,
+      promotions: f.promotions,
+      payments: docLegs(legs),
+      creditLegs: creditLegsOf(legs),
+      tenderedAgorot: 0,
+      changeAgorot: 0,
+      channel: 'till',
+    });
+    if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
+    this.finalize(doc);
+    return { creditAgorot: amount };
+  }
+
+  /** "הסרת הזיכוי": the credit's leg off the payment, the amount back on the credit. */
+  private removeCredit(redemptionId: unknown) {
+    this.signedIn();
+    this.tenderOpen();
+    const i = this.checkout.legs.findIndex((l) => l.method === 'cash_credit' && l.credit?.redemptionId === redemptionId);
+    if (i < 0) return refuse('invalid_args');
+    const [leg] = this.checkout.legs.splice(i, 1);
+    this.cash.credits.release(leg.credit!.redemptionId);
+    return undefined;
+  }
+
   private checkoutFinish() {
     if (this.checkout.phase !== 'done') refuse('invalid_args');
     this.checkout = idleCheckout();
@@ -1225,7 +1301,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.documentRef = formatDocNumber(doc.prefix, String(doc.number));
     c.changeAgorot = doc.changeAgorot ?? 0;
     c.tenderedAgorot = doc.tenderedAgorot ?? 0;
-    c.legs = legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
+    c.legs = legs.map((l) => ({
+      method: l.method,
+      amountAgorot: l.amountAgorot,
+      handedAgorot: l.method === 'cash' ? l.amountAgorot : 0,
+      status: 'approved' as const,
+      ...(l.cashCredit ? { credit: l.cashCredit } : {}),
+    }));
     c.cardStatus = null;
     c.cardError = null;
     this.cart = [];
@@ -1707,7 +1789,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         paidAgorot: c.phase === 'done' ? c.totalAgorot : paid,
         dueAgorot: c.phase === 'idle' || c.phase === 'done' ? 0 : dueOf(c.totalAgorot, approved),
         changeAgorot: c.changeAgorot,
-        legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status })),
+        legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status, ...(l.credit ? { credit: l.credit } : {}) })),
         documentRef: c.documentRef,
         documentId: c.phase === 'done' ? c.docId : null,
         tenderedAgorot: c.phase === 'done' ? c.tenderedAgorot : handedTotal(approved),
@@ -1746,6 +1828,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tileText: tileTextOf(this.svc.cloud.parameters()),
       drawer: this.drawer.state(),
       users: this.sessions.state(),
+      owed: this.cash.state(),
       shopX: {
         offered: this.shopXHere(),
         report: this.shopXDoc?.doc ?? null,
@@ -1787,6 +1870,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       frozen: { lines: doc.lines, tracked: doc.tracked, promotions: doc.promotions ?? [], totals: doc.totals },
     };
   }
+}
+
+/** A sale's tenders as the document keeps them: a cash credit's leg with its redemption. */
+function docLegs(legs: readonly TenderLeg[]) {
+  return legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, ...(l.method === 'cash_credit' && l.credit ? { cashCredit: l.credit } : {}) }));
+}
+
+/** The cash credits among the tenders: "זיכוי מזומן C-K7Q3MX" on the receipt. */
+function creditLegsOf(legs: readonly TenderLeg[]) {
+  return legs.flatMap((l) => (l.method === 'cash_credit' && l.credit ? [{ redemptionId: l.credit.redemptionId, code: l.credit.code, amountAgorot: l.amountAgorot }] : []));
 }
 
 export { quickNotes, permLabel };

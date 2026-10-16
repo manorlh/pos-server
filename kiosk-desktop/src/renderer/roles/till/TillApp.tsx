@@ -34,13 +34,14 @@ import { SellScreen } from './screens/SellScreen';
 import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
 import { UsersScreen } from './screens/UsersScreen';
+import { OwedScreen } from './screens/OwedScreen';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -153,6 +154,13 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             copy: () => void (s.checkout.documentId ? run('doc.reprint', { documentId: s.checkout.documentId }) : undefined),
             recheck: () => void run('checkout.recheckCard', {}),
             markNotApproved: () => void run('checkout.markNotApproved', {}),
+            // "זיכוי מזומן": the real engine's (the demo has no cloud to redeem with).
+            ...(host.demo
+              ? {}
+              : {
+                  credit: (code: string) => void run('checkout.credit', { code }),
+                  removeCredit: (redemptionId: string) => void run('checkout.removeCredit', { redemptionId }),
+                }),
           }}
         />
       );
@@ -198,6 +206,18 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             wallets: async () => (await run('drawer.wallets', {})) as { wallets: WalletRow[]; offline: boolean } | undefined,
             deposit: (employeeId, countedAgorot) => run('drawer.walletDeposit', { employeeId, countedAgorot }),
             log: async () => (await run('drawer.log', {})) as DrawerLog | undefined,
+            back: () => setView('menu'),
+          }}
+        />
+      );
+    }
+    if (view === 'owed') {
+      return (
+        <OwedScreen
+          owed={s.owed}
+          actions={{
+            refresh: () => void run('owed.refresh', {}),
+            pay: (id) => void run('owed.pay', { id }),
             back: () => setView('menu'),
           }}
         />
@@ -332,6 +352,17 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               {s.mode.switchLabel ?? 'חזרה לקיוסק'}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {s.owed && s.owed.items.length > 0 && !s.session.locked && view !== 'owed' && s.checkout.phase === 'idle' ? (
+        // "עודף חייב ללקוח": urgent on the till (Android's alerts list) — the way to "שולם ללקוח".
+        <div className="t-notice" role="status">
+          <span className="t-notice-text">
+            עודף חייב ללקוח · {s.owed.items.length}
+          </span>
+          <button type="button" className="t-pill" onClick={() => setView('owed')}>
+            שולם ללקוח
+          </button>
         </div>
       ) : null}
       {s.users?.notice ? (

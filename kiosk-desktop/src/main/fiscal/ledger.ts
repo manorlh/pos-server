@@ -92,8 +92,10 @@ export interface DocDraft {
 
 /** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
 export interface DocLeg {
-  method: 'cash' | 'card';
+  method: 'cash' | 'card' | 'cash_credit';
   amountAgorot: number;
+  /** A cash credit's leg (§11.15א): the redemption it confirms — sent as the payment's `cashCredit`. */
+  cashCredit?: { code: string; redemptionId: string };
 }
 
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
@@ -844,7 +846,14 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
             createdAt: d.updatedAt,
           };
         }
-        return { id: stableUuid(`${d.id}:pay:${i}`), sequence: i + 1, method: leg.method, amount: r2(leg.amountAgorot), createdAt: d.updatedAt };
+        return {
+          id: stableUuid(`${d.id}:pay:${i}`),
+          sequence: i + 1,
+          method: leg.method,
+          amount: r2(leg.amountAgorot),
+          ...(leg.method === 'cash_credit' && leg.cashCredit ? { cashCredit: { code: leg.cashCredit.code, redemptionId: leg.cashCredit.redemptionId } } : {}),
+          createdAt: d.updatedAt,
+        };
       });
     } else {
       const legs = (d.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);

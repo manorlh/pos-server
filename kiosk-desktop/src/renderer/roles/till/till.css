@@ -1123,3 +1123,27 @@
   color: var(--t-muted);
   font-size: 13px;
 }
+
+/* "זיכוי מזומן" at the payment: the code and "מימוש" on one row. */
+.t-credit {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.t-credit .t-field {
+  flex: 1;
+  margin: 0;
+}
+
+/* "עודף חייב ללקוח" — the change a cash station owes, on the till (screens/OwedScreen.tsx). */
+.t-owed-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.t-owed-row span {
+  flex: 1;
+}

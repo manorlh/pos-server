@@ -2934,7 +2934,14 @@ export class KioskService extends EventEmitter {
         // "זיכוי מזומן C-K7Q3MX" among the payments (§11.15א).
         creditLegs: (doc.creditLegs ?? []).map((l) => ({ code: l.code, amountAgorot: l.amountAgorot })),
         // A till sale: every tender, the cash handed over and the change.
-        ...(doc.payments && doc.payments.length > 0 ? { tenders: doc.payments, tenderedAgorot: doc.tenderedAgorot ?? null, changeAgorot: doc.changeAgorot ?? null } : {}),
+        // (A cash credit's leg is "זיכוי מזומן" above, never a tender here.)
+        ...(doc.payments && doc.payments.length > 0
+          ? {
+              tenders: doc.payments.filter((l): l is { method: 'cash' | 'card'; amountAgorot: number } => l.method !== 'cash_credit'),
+              tenderedAgorot: doc.tenderedAgorot ?? null,
+              changeAgorot: doc.changeAgorot ?? null,
+            }
+          : {}),
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).

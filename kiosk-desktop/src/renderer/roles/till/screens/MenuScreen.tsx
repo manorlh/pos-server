@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -45,6 +45,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
         to: 'drawer',
         when: (s) => (s.drawer ? Object.entries(s.drawer.offered).some(([k, v]) => k !== 'open' && v) : undefined),
       },
+      // "עודף חייב ללקוח" (cash-paylink §11.8): only while the cloud routes such debts to this till.
+      { label: 'עודף חייב ללקוח', to: 'owed', when: (s) => (s.owed ? s.owed.items.length > 0 : undefined) },
       { key: 'refund', label: 'זיכוי' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },

@@ -103,6 +103,11 @@ export const TILL_OPS = [
   'users.release',
   'users.close',
   'session.dismissNotice',
+  // The cash stations' side (main/till/tillCash.ts): "עודף חייב ללקוח" and "שולם ללקוח"; "זיכוי מזומן" (`CC:<code>`) at the payment.
+  'owed.refresh',
+  'owed.pay',
+  'checkout.credit',
+  'checkout.removeCredit',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -141,6 +146,9 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'users.release',
   'users.close',
   'session.dismissNotice',
+  'owed.pay',
+  'checkout.credit',
+  'checkout.removeCredit',
 ]);
 
 export interface OpArgs {
@@ -194,6 +202,11 @@ export interface OpArgs {
   'users.release': { sessionId: string };
   'users.close': Record<string, never>;
   'session.dismissNotice': Record<string, never>;
+  'owed.refresh': Record<string, never>;
+  'owed.pay': { id: string };
+  /** The code as scanned (`CC:C-K7Q3MX`) or typed. */
+  'checkout.credit': { code: string };
+  'checkout.removeCredit': { redemptionId: string };
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -332,9 +345,12 @@ export interface SellState {
 export type CheckoutPhase = 'idle' | 'tender' | 'card_waiting' | 'done';
 
 export interface CheckoutLeg {
-  method: 'cash' | 'card';
+  /** `cash_credit`: "זיכוי מזומן" (a station's credit, `CC:` code) towards the goods. */
+  method: 'cash' | 'card' | 'cash_credit';
   amountAgorot: number;
   status: 'approved' | 'pending';
+  /** A cash credit's code and redemption ("הסרת הזיכוי" names it). */
+  credit?: { code: string; redemptionId: string };
 }
 
 export interface CheckoutState {
@@ -451,6 +467,8 @@ export interface TillState {
   drawer?: DrawerState;
   /** "עובד מחובר בקופה אחת בלבד" (main/till/userSessions.ts): the banner, and "עובדים מחוברים". */
   users?: UsersState;
+  /** "עודף חייב ללקוח" / "זיכוי מוחזק" the cloud routes to this till (main/till/tillCash.ts), "שולם ללקוח" on each. */
+  owed?: { items: Array<{ id: string; line: string; amountAgorot: number }> };
 }
 
 export interface SignedInSession {
