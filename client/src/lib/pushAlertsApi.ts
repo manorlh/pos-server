@@ -12,7 +12,8 @@ import {
   type PushOptions,
   type PushPreferences,
 } from './pushAlerts';
-import { safeSet, STOPPED_HERE_KEY } from './pushGate';
+import { safeGet, safeSet, STOPPED_HERE_KEY } from './pushGate';
+import { deviceIdFrom, retryableSubscribeError, sameKey, wantedKey, type TestResponse } from './pushDiagnosis';
 
 export async function fetchPushConfig(): Promise<PushConfig> {
   const { data } = await api.get<PushConfig>('/push/config');
@@ -44,9 +45,18 @@ export async function savePushPreferences(body: Record<string, unknown>): Promis
   return data;
 }
 
+/** A test message to every device of mine (the phone gate's flow); how many it went to. */
 export async function sendPushTest(): Promise<number> {
-  const { data } = await api.post<{ sent: number }>('/push/test');
-  return data.sent;
+  return (await runPushTest('all', await currentEndpointHash().catch(() => null))).sent;
+}
+
+/**
+ * "בדיקת התראות": a test message to this browser (`this`) or to all my devices, sent by the server
+ * now — the answer has each push service's status (pos-server `POST /push/test`).
+ */
+export async function runPushTest(scope: 'this' | 'all', endpointHash: string | null): Promise<TestResponse> {
+  const { data } = await api.post<TestResponse>('/push/test', { scope, endpointHash });
+  return data;
 }
 
 export async function fetchPushOptions(): Promise<PushOptions> {
@@ -83,31 +93,7 @@ export async function fetchPushHistory(limit = 50): Promise<HistoryRow[]> {
 
 // ── This browser ─────────────────────────────────────────────────────────────
 
-/** The dashboard's service worker (public/sw.js), registered now if it is not yet. */
-async function serviceWorker(): Promise<ServiceWorkerRegistration> {
-  const existing = await navigator.serviceWorker.getRegistration('/');
-  if (existing) return existing;
-  return navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
-}
-
-export type SubscribeOutcome = 'subscribed' | 'denied' | 'not_configured';
-
-/**
- * Ask for permission, subscribe with the server's VAPID key, and register the device. `initial`
- * narrows the preferences the first device creates (the shop / event it was subscribed from).
- */
-export async function subscribeThisBrowser(
-  publicKey: string | null,
-  initial: { shopIds?: string[]; eventIds?: string[] } = {},
-): Promise<SubscribeOutcome> {
-  if (!publicKey) return 'not_configured';
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') return 'denied';
-  await registerThisBrowser(publicKey, initial);
-  // Turned on again on purpose: the dashboard may keep it on from now (lib/pushGate.ts).
-  safeSet(localStore(), STOPPED_HERE_KEY, null);
-  return 'subscribed';
-}
+const WORKER_TIMEOUT_MS = 10_000;
 
 function localStore() {
   try {
@@ -117,37 +103,117 @@ function localStore() {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, code: string): Promise<T> {
+  return Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(code)), ms))]);
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The dashboard's service worker (public/sw.js), registered now if it is not yet, once it is
+ * active — never waiting forever (a worker that failed to install would hang `ready`): `sw_timeout`.
+ */
+export async function ensureWorker(): Promise<ServiceWorkerRegistration> {
+  const reg =
+    (await navigator.serviceWorker.getRegistration('/')) ??
+    (await navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }));
+  if (reg.active) return reg;
+  return withTimeout(navigator.serviceWorker.ready, WORKER_TIMEOUT_MS, 'sw_timeout');
+}
+
+/** This browser's own id for the server (one subscription per browser per user). */
+export function thisDeviceId(): string | null {
+  return deviceIdFrom(localStore(), () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+  );
+}
+
+/**
+ * Tell the worker the API and the server's key: its `pushsubscriptionchange` moves the device to a
+ * new subscription by itself (sw.js). Best effort.
+ */
+export async function tellWorker(publicKey: string | null, reg?: ServiceWorkerRegistration | null): Promise<void> {
+  try {
+    const registration = reg ?? (await navigator.serviceWorker.getRegistration('/'));
+    const worker = registration?.active;
+    if (!worker) return;
+    const apiBase = new URL(String(api.defaults.baseURL ?? ''), window.location.origin).href.replace(/\/+$/, '');
+    worker.postMessage({ type: 'r2m-push-config', apiBase, publicKey });
+  } catch {
+    // The worker learns it on the next open.
+  }
+}
+
+export type SubscribeOutcome = 'subscribed' | 'denied' | 'not_configured';
+
+/**
+ * Ask for permission, subscribe with the server's VAPID key, and register the device. `initial`
+ * narrows the preferences the first device creates (the shop / event it was subscribed from).
+ * `userId`: this person wants notifications in this browser — kept so a computer registers again
+ * by itself after a sign-out (components/dashboard/push-gate/push-keeper.tsx).
+ */
+export async function subscribeThisBrowser(
+  publicKey: string | null,
+  initial: { shopIds?: string[]; eventIds?: string[] } = {},
+  userId?: string | null,
+): Promise<SubscribeOutcome> {
+  if (!publicKey) return 'not_configured';
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') return 'denied';
+  await registerThisBrowser(publicKey, initial, userId);
+  // Turned on again on purpose: the dashboard may keep it on from now (lib/pushGate.ts).
+  safeSet(localStore(), STOPPED_HERE_KEY, null);
+  return 'subscribed';
+}
+
 /**
  * "התראות בנייד" (pwa-push-required §2.4): the permission is there but the registration is not
  * (gone, rotated, failing) — subscribe and register again without asking anything. False when
  * there is no permission to do it with.
  */
-export async function resubscribeThisBrowserSilently(publicKey: string | null): Promise<boolean> {
+export async function resubscribeThisBrowserSilently(publicKey: string | null, userId?: string | null): Promise<boolean> {
   if (!publicKey || typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
-  await registerThisBrowser(publicKey, {});
+  await registerThisBrowser(publicKey, {}, userId);
   return true;
 }
 
-/** Subscribe with the server's VAPID key (a subscription for another key is replaced) and register the device. */
-async function registerThisBrowser(publicKey: string, initial: { shopIds?: string[]; eventIds?: string[] }): Promise<void> {
-  const reg = await serviceWorker();
-  await navigator.serviceWorker.ready;
-  let sub = await reg.pushManager.getSubscription();
-  if (sub) {
-    // A subscription made for another key (keys rotated) cannot be used: replace it.
-    const key = sub.options.applicationServerKey;
-    const want = urlBase64ToUint8Array(publicKey);
-    const same = key && new Uint8Array(key).every((b, i) => b === want[i]) && new Uint8Array(key).length === want.length;
-    if (!same) {
-      await sub.unsubscribe();
-      sub = null;
+/** Subscribe, retrying what Edge's push service refuses now and then (lib/pushDiagnosis.ts). */
+async function subscribeWithRetry(reg: ServiceWorkerRegistration, key: Uint8Array<ArrayBuffer>): Promise<PushSubscription> {
+  const waits = [0, 800, 2500];
+  let last: unknown = null;
+  for (const wait of waits) {
+    if (wait) await sleep(wait);
+    try {
+      return await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    } catch (err) {
+      last = err;
+      if (!retryableSubscribeError(err)) throw err;
     }
   }
-  if (!sub) {
-    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+  throw last;
+}
+
+/** Subscribe with the server's VAPID key (a subscription for another key is replaced) and register the device. */
+async function registerThisBrowser(
+  publicKey: string,
+  initial: { shopIds?: string[]; eventIds?: string[] },
+  userId?: string | null,
+): Promise<void> {
+  const reg = await ensureWorker();
+  const want = urlBase64ToUint8Array(publicKey);
+  let sub = await reg.pushManager.getSubscription();
+  if (sub && !sameKey(sub.options.applicationServerKey, want)) {
+    // A subscription made for another key (keys rotated) cannot be used: replace it.
+    await sub.unsubscribe();
+    sub = null;
   }
+  if (!sub) sub = await subscribeWithRetry(reg, want);
   const json = sub.toJSON();
-  await api.post('/push/devices', { endpoint: json.endpoint, keys: json.keys, ...initial });
+  await api.post('/push/devices', { endpoint: json.endpoint, keys: json.keys, deviceId: thisDeviceId(), ...initial });
+  if (userId) safeSet(localStore(), wantedKey(userId), '1');
+  await tellWorker(publicKey, reg);
 }
 
 /** This browser's subscription endpoint, if it has one (to mark "this device" in the list). */
@@ -158,12 +224,33 @@ export async function currentEndpoint(): Promise<string | null> {
   return sub?.endpoint ?? null;
 }
 
+/** Whether this browser's subscription was made with `publicKey` (true when there is none to compare). */
+export async function subscriptionKeyMatches(publicKey: string | null): Promise<boolean> {
+  if (!publicKey || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return true;
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  const sub = reg ? await reg.pushManager.getSubscription() : null;
+  return !sub || sameKey(sub.options.applicationServerKey, urlBase64ToUint8Array(publicKey));
+}
+
+/** Whether this person turned notifications on in this browser (and did not stop them here). */
+export function wantedHere(userId: string | null | undefined): boolean {
+  return !!userId && safeGet(localStore(), wantedKey(userId)) === '1';
+}
+
+/** Whether "הפסק כאן" was chosen on this browser. */
+export function stoppedHere(): boolean {
+  return safeGet(localStore(), STOPPED_HERE_KEY) === '1';
+}
+
 /**
  * Stop this browser. `byUser` ("הפסק כאן"): a choice — the dashboard does not silently turn it
  * back on (lib/pushGate.ts `stoppedHere`); a required user still sees the red bar.
  */
-export async function unsubscribeThisBrowser(opts: { byUser?: boolean } = {}): Promise<void> {
-  if (opts.byUser) safeSet(localStore(), STOPPED_HERE_KEY, '1');
+export async function unsubscribeThisBrowser(opts: { byUser?: boolean; userId?: string | null } = {}): Promise<void> {
+  if (opts.byUser) {
+    safeSet(localStore(), STOPPED_HERE_KEY, '1');
+    if (opts.userId) safeSet(localStore(), wantedKey(opts.userId), null);
+  }
   const reg = await navigator.serviceWorker.getRegistration('/');
   const sub = reg ? await reg.pushManager.getSubscription() : null;
   if (!sub) return;
@@ -173,7 +260,8 @@ export async function unsubscribeThisBrowser(opts: { byUser?: boolean } = {}): P
 
 /**
  * On sign-out: this browser stops receiving the person's alerts (a shared phone must not keep
- * showing them on its lock screen). Best effort and quick — never holds the sign-out up.
+ * showing them on its lock screen). Best effort and quick — never holds the sign-out up. Their
+ * "wanted here" stays: signing in again on this browser turns it back on (push-keeper.tsx).
  */
 export async function forgetThisBrowserOnSignOut(): Promise<void> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;

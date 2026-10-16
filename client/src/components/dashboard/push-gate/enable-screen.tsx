@@ -34,6 +34,7 @@ export function EnableScreen({
   open,
   facts,
   publicKey,
+  userId,
   startAt,
   onClose,
   onChanged,
@@ -42,6 +43,8 @@ export function EnableScreen({
   open: boolean;
   facts: GateFacts;
   publicKey: string | null;
+  /** The signed-in person: "wanted here" is remembered for them (lib/pushAlertsApi.ts). */
+  userId?: string | null;
   /** Open at this step (the install help from the install bar); else where the device is. */
   startAt?: FlowStep;
   onClose: () => void;
@@ -61,7 +64,7 @@ export function EnableScreen({
     setNote(null);
     go('tap_enable');
     try {
-      const outcome = await subscribeThisBrowser(publicKey);
+      const outcome = await subscribeThisBrowser(publicKey, {}, userId);
       if (outcome === 'denied') {
         if (step === 'denied') setNote(t('stillDenied'));
         go('denied');

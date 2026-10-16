@@ -22,6 +22,7 @@ import { isProducer } from '@/lib/producer';
 import { DeviceCommandsTray } from '@/components/dashboard/device-commands/commands-tray';
 import { DeviceCommandPopup } from '@/components/dashboard/device-commands/command-popup';
 import { PushGate } from '@/components/dashboard/push-gate/push-gate';
+import { PushKeeper } from '@/components/dashboard/push-gate/push-keeper';
 
 function ShellSkeleton() {
   return (
@@ -47,6 +48,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <div className="space-y-4">
         {/* "התראות בנייד": install / enable / reminder / required bars — phones and tablets only. */}
         <PushGate />
+        {/* Computers (and wide tablets): this browser re-registered silently when it lost its subscription. */}
+        <PushKeeper />
         {ownFilters ? null : (
           <header className="space-y-3 print:hidden">
             <Breadcrumbs />

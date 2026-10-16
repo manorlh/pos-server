@@ -64,9 +64,21 @@ export interface PushStatus {
   lastSuccessAt: string | null;
   tone: HealthTone;
   thisDeviceRegistered: boolean;
-  thisDevice: { lastSuccessAt: string | null; lastFailureAt: string | null; failing: boolean } | null;
+  thisDevice: {
+    lastSuccessAt: string | null;
+    lastFailureAt: string | null;
+    failing: boolean;
+    /** fix/pwa-push ("בדיקת התראות"): which device, and why its last message failed ("http_410…"). */
+    id?: string;
+    label?: string | null;
+    lastError?: string | null;
+    failureCount?: number;
+    service?: string;
+  } | null;
   configured: boolean;
   publicKey: string | null;
+  /** What is wrong with the server's keys, as a code (lib/pushDiagnosis.ts `configProblem`). */
+  problem?: string | null;
 }
 
 export interface CompanyPushPolicy {
