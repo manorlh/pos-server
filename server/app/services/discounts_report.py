@@ -38,6 +38,8 @@ from app.models.user import User
 
 CLUB = "club"
 MANUAL = "manual"
+#: "הנחות קבועות" (app/services/preset_discounts.py): a kind of its own, and `presets.byPreset`.
+PRESET = "preset"
 
 
 def _money(value: Decimal) -> float:
@@ -129,6 +131,8 @@ def build_discounts_report(
         },
         "club": {"totals": {"count": 0, "amount": 0.0}, "byTill": [], "byDay": []},
         "basketByKind": [],
+        # "הנחות קבועות": per preset (its id, the name it was last given under), count and amount.
+        "presets": {"totals": {"count": 0, "amount": 0.0}, "byPreset": []},
         "vouchers": {
             "totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0},
             "byBatch": [], "byTill": [], "byDay": [],
@@ -211,6 +215,8 @@ def build_discounts_report(
             Transaction.basket_discount_kind,
             Transaction.created_at,
             Transaction.machine_id,
+            Transaction.preset_discount_id,
+            Transaction.preset_discount_name,
         )
         .all()
     )
@@ -222,10 +228,18 @@ def build_discounts_report(
     club_by_till: Dict[Optional[str], dict] = {}
     club_by_day: Dict[str, dict] = {}
     by_kind: Dict[str, dict] = {}
-    for amount, kind, created_at, till in basket_rows:
-        kind = CLUB if kind == CLUB else MANUAL
+    preset_totals = club_bucket()
+    by_preset: Dict[str, dict] = {}
+    preset_names: Dict[str, Optional[str]] = {}
+    for amount, kind, created_at, till, preset_id, preset_name in basket_rows:
+        kind = kind if kind in (CLUB, PRESET) else MANUAL
         money = _dec(amount)
         targets = [by_kind.setdefault(kind, club_bucket())]
+        if kind == PRESET:
+            key = preset_id or preset_name or ""
+            if preset_name:
+                preset_names[key] = preset_name
+            targets += [preset_totals, by_preset.setdefault(key, club_bucket())]
         if kind == CLUB:
             targets += [
                 club_totals,
@@ -329,8 +343,14 @@ def build_discounts_report(
         "byDay": [{"date": d, **club_flat(club_by_day[d])} for d in sorted(club_by_day)],
     }
     out["basketByKind"] = [
-        {"kind": kind, **club_flat(by_kind[kind])} for kind in (CLUB, MANUAL) if kind in by_kind
+        {"kind": kind, **club_flat(by_kind[kind])} for kind in (CLUB, MANUAL, PRESET) if kind in by_kind
     ]
+    out["presets"] = {
+        "totals": club_flat(preset_totals),
+        "byPreset": by_value([
+            {"presetId": k or None, "name": preset_names.get(k), **club_flat(b)} for k, b in by_preset.items()
+        ], "amount"),
+    }
     d_totals = voucher_bucket()
     d_by_batch: Dict[Optional[str], dict] = {}
     for amount, uses, batch_id, batch_name, tx_id, _created_at, _till in deduction_rows:

@@ -458,6 +458,13 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         if getattr(tx, "basket_discount_kind", None) == "club" and _dec(tx.basket_discount) > 0:
             rate = f" {_dec(tx.basket_discount_percent).normalize():f}%" if tx.basket_discount_percent is not None else ""
             lines.append(_row(f"הנחת מועדון{rate}", money(-_dec(tx.basket_discount))))
+        # "הנחות קבועות": the preset's name as the button said it ("הנחת עובדים 40%"), and whom for.
+        if getattr(tx, "basket_discount_kind", None) == "preset" and _dec(tx.basket_discount) > 0:
+            rate = f" {_dec(tx.basket_discount_percent).normalize():f}%" if tx.basket_discount_percent is not None else ""
+            name = getattr(tx, "preset_discount_name", None) or "הנחה"
+            lines.append(_row(f"{name}{rate}", money(-_dec(tx.basket_discount))))
+            if getattr(tx, "preset_discount_for", None):
+                lines.append(_row(f"עבור: {tx.preset_discount_for}", ""))
 
     totals: List[PrintRow] = []
     discount = _dec(tx.document_discount)

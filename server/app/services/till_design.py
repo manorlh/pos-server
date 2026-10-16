@@ -72,6 +72,7 @@ from app.services.kiosk_config import (
     _INVALID,
     _dedupe,
     _fail,
+    _join,
     _is_int,
     _merge_node,
     motion_engine_fields,
@@ -494,8 +495,39 @@ class IntOrOff(Node):
         return value
 
 
+#: "הנחות קבועות" (P:/specs/preset-discounts.md §3): a `discount` button may name one preset discount
+#: (`presetId`, the id in the till's `presetDiscounts`) — it then applies that preset in one tap, its
+#: label ("" = the preset's name). Absent = as before (opens the basket discount sheet), and absent
+#: from the stored button too, so an old bar keeps its bytes. Only on `discount`.
+PRESET_ID_KEY = "presetId"
+PRESET_ID_MAX = 64
+PRESET_ACTION = "discount"
+
+
+class _ActionItem(Obj):
+    """One bar button: `{action, label}` (+ `presetId` on `discount`, kept only when set)."""
+
+    def check(self, value, path, errors):
+        if not isinstance(value, dict) or PRESET_ID_KEY not in value:
+            return super().check(value, path, errors)
+        rest = {k: v for k, v in value.items() if k != PRESET_ID_KEY}
+        raw = value[PRESET_ID_KEY]
+        before = len(errors)
+        out = super().check(rest, path, errors)
+        if raw is None:
+            return out
+        where = _join(path, PRESET_ID_KEY)
+        if not isinstance(raw, str) or not raw.strip() or len(raw.strip()) > PRESET_ID_MAX:
+            _fail(errors, where, "invalid_type", f"must be a preset discount id (at most {PRESET_ID_MAX} characters)")
+        elif rest.get("action") != PRESET_ACTION:
+            _fail(errors, where, "invalid_value", "only a discount button names a preset discount")
+        if len(errors) > before or out is _INVALID:
+            return _INVALID
+        return {**out, PRESET_ID_KEY: raw.strip()}
+
+
 def _action_item(actions: Sequence[str]) -> Obj:
-    return Obj(
+    return _ActionItem(
         {"action": Enum(actions), "label": Str(ACTION_LABEL_MAX)},
         fill={"label": ""},
         merges=False,
@@ -725,11 +757,13 @@ def _check_bars(bars: Any, prefix: str, errors: List[Issue]) -> None:
         if not isinstance(items, list) or not items:
             continue
         actions = [i.get("action") for i in items if isinstance(i, dict)]
+        # A preset discount's button is its own button: "הנחת עובדים" beside "הנחה" is no repeat.
+        keys = [(i.get("action"), i.get(PRESET_ID_KEY)) for i in items if isinstance(i, dict)]
         seen = set()
-        for i, action in enumerate(actions):
-            if action in seen:
+        for i, key in enumerate(keys):
+            if key in seen:
                 errors.append(Issue(f"{prefix}.{mode}[{i}]", "duplicate", "this button is already on the bar"))
-            seen.add(action)
+            seen.add(key)
         required = REQUIRED_ACTION[mode]
         if required not in actions:
             errors.append(Issue(f"{prefix}.{mode}", f"action_bar_missing_{required}",

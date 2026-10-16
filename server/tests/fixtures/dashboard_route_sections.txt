@@ -687,6 +687,7 @@ GET /reports/overview -> reports|cockpit:view
 GET /reports/payment-methods -> reports:view
 POST /reports/pdf -> reference
 GET /reports/prepaid-vouchers -> reports|prepaid_vouchers|cockpit:view
+GET /reports/preset-discounts -> reports|promotions:view
 GET /reports/products -> reports:view
 GET /reports/products-by-day -> reports:view
 GET /reports/products-by-day/pdf -> reports:view

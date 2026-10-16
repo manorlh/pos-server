@@ -128,6 +128,10 @@ MANAGED_SETTING_KEYS = (
     # unlinkedCardCreditEnabled, refundCustomerDetailsRequired — refund_settings.py.
     *REFUND_SETTING_KEYS,
     "tipPresets",
+    # "הנחות קבועות" (app/services/preset_discounts.py): the preset basket discounts and which of
+    # them are one-tap buttons — the deepest layer that sets each key winning as a whole.
+    "presetDiscounts",
+    "presetDiscountButtons",
     # "סידור פריטים": the till's buttons in this order (product ids), set from a till's
     # edit mode at the shop, the point of sale or the till itself.
     "productOrder",
