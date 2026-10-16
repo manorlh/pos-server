@@ -257,6 +257,12 @@ export function lookCategoryImagePx(look: LandscapeLook | null | undefined, comp
   return Math.min(computedPx, look.categoryImageMaxPx);
 }
 
+/** A dish's tile width (px) on a landscape screen: `computedPx` never over productTileMaxDp (a shelf's card). */
+export function lookTileMaxPx(look: LandscapeLook | null | undefined, computedPx: number): number {
+  if (!look) return computedPx;
+  return Math.min(computedPx, Math.round(look.sizes.productTileMaxDp * look.cssPerDp));
+}
+
 /** The category column (px): `computedPx` on a portrait screen, the landscape column else. */
 export function lookColumnPx(look: LandscapeLook | null | undefined, computedPx: number): number {
   return look ? look.columnPx : computedPx;

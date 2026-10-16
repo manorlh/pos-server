@@ -6,6 +6,7 @@
  * catalog.oneCategory a chip shows its category alone. The basket floats at the bottom.
  */
 
+import { lookCategoryImagePx } from '@/lib/kioskLandscape';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { basketDocked, basketKindOf, catalogContinuous, heroShown, layoutOf } from '@/lib/kioskLayout';
@@ -29,7 +30,7 @@ export function TabsCatalog({ m, activeCategory, onCategory }: { m: PreviewModel
   const basket = basketKindOf(m.cfg, widthDpOf(m));
   const counts = cartCounts(m);
   const rows = layout.card === 'row';
-  const cols = rows ? 1 : dishColumnsFor(m, m.screen.w - (m.panel ? 132 : 0));
+  const cols = rows ? 1 : dishColumnsFor(m, m.screen.w - (m.panel && basket === 'panel' ? (m.panelWidth ?? 132) : 0));
 
   // The lit chip stays in view as the menu scrolls under it.
   useEffect(() => {
@@ -132,7 +133,7 @@ export function TabsCatalog({ m, activeCategory, onCategory }: { m: PreviewModel
 export function IconChip({ m, cat, on, onPick }: { m: PreviewModel; cat: PCategory; on: boolean; onPick: () => void }) {
   const mode = layoutOf(m.cfg).categoryIcons;
   const u = unitOf(m);
-  const size = Math.round(22 * u);
+  const size = lookCategoryImagePx(m.landscape, Math.round(22 * u));
   const fg = on ? m.c.buttonText : m.c.text;
   const id = categoryIconId(m, cat);
   return (

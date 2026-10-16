@@ -17,7 +17,8 @@
  */
 
 import { layoutOf, productColumns } from '@/lib/kioskLayout';
-import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme, kioskTargetCssPx } from '@/lib/displayProfile';
+import { browserFacts, displayProfile, kioskDisplay, kioskTargetCssPx } from '@/lib/displayProfile';
+import { applyLandscape, landscapeLook, lookColumns } from '@/lib/kioskLandscape';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -201,12 +202,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // (the root's zoom, below); every other screen exactly as its window says.
   const size = useMemo(() => ({ w: screenProfile.widthDp, h: screenProfile.heightDp }), [screenProfile.widthDp, screenProfile.heightDp]);
   const display = useMemo(() => kioskDisplay(screenProfile), [screenProfile]);
-  const cfg = useMemo(() => {
-    const base = view.config as KioskConfig;
-    if (!display.landscape) return base;
-    const theme = kioskDisplayTheme(base.theme, display);
-    return theme === base.theme ? base : { ...base, theme };
-  }, [view.config, display]);
+  // "עיצוב לרוחב" (lib/kioskLandscape.ts, P:/specs/kiosk-landscape-design.md): in landscape the block's design keys over
+  // the normal design, the automatic decisions (side cart, rail / tabs) for what it left unset; portrait as it is.
+  const cfg = useMemo(() => applyLandscape(view.config as KioskConfig, display).config, [view.config, display]);
+  // …and the landscape sizes ("לא ענקיים") in this root's px (laid out in dp: one px per dp).
+  const look = useMemo(() => landscapeLook(cfg, display, size.w, 1), [cfg, display, size.w]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // The card only through a paired Windows bridge (§28, lib/kioskBridge.ts).
   const cardReady = view.pay.usable.includes('card');
@@ -775,7 +775,12 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
-  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
+  // …and in landscape never a dish wider than the landscape tile (the standard catalog's rail and side basket beside).
+  const cols = lookColumns(
+    look,
+    productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w),
+    size.w - (side && look ? look.columnPx : side ? 76 : 0) - (panel ? (display.sideCart ? display.panelWidthDp : 132) : 0),
+  );
   const rules = rulesFor(cart.length === 0);
   const back = () => {
     // An upsell window: "לא תודה" — unless it is "חובה" (answered only, never backed out of).
@@ -886,6 +891,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    landscape: look,
     // Landscape (lib/displayProfile.ts): the cart and the checkout's steps in two columns, a readable width.
     twoColumns: display.twoColumns,
     contentMaxWidth: display.contentMaxWidthDp,
@@ -1115,7 +1121,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const overlay = messageScreen && messagePlacement(messageScreen) === 'overlay-center';
   const weights = typeWeights(cfg.theme.typeWeight);
   const rootVars = {
-    '--k-scale': String(typeScaleFactor(cfg.theme.typeScale)),
+    '--k-scale': String(typeScaleFactor(cfg.theme.typeScale) * (look?.textFactor ?? 1)),
     '--k-w-body': String(weights.body),
     '--font-weight-medium': String(weights.medium),
     '--font-weight-semibold': String(weights.semibold),

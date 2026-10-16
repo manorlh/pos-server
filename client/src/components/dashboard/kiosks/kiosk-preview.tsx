@@ -458,6 +458,8 @@ export function KioskPreview({
   // (applyLandscape above already made the landscape decisions the block left to the kiosk.)
   const shownTheme = config.theme;
   const shownConfig = config;
+  // The side basket at its §4 width in this frame's px (the preview's 132 px elsewhere).
+  const panelWidth = display.sideCart ? Math.round((display.panelWidthDp * FRAME_SIZE[frame].w) / FRAME_DEVICE_DP[frame]) : null;
   // The landscape sizes ("לא ענקיים") in this frame's CSS px.
   const look = landscapeLook(config, display, FRAME_SIZE[frame].w, FRAME_SIZE[frame].w / FRAME_DEVICE_DP[frame]);
   const panel = cartPanelShown(shownTheme, FRAME_DEVICE_DP[frame]);
@@ -478,7 +480,7 @@ export function KioskPreview({
   const cols = lookColumns(
     look,
     productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]),
-    FRAME_SIZE[frame].w - (side ? lookColumnPx(look, STANDARD_RAIL_PX) : 0) - (panel ? STANDARD_PANEL_PX : 0),
+    FRAME_SIZE[frame].w - (side ? lookColumnPx(look, STANDARD_RAIL_PX) : 0) - (panel ? (panelWidth ?? STANDARD_PANEL_PX) : 0),
   );
 
   /** The window for [moment], if a rule for the kiosk asks one (true: shown). */
@@ -559,6 +561,7 @@ export function KioskPreview({
   const model: PreviewModel = {
     cfg: shownConfig,
     landscape: look,
+    panelWidth,
     twoColumns: display.twoColumns,
     contentMaxWidth: display.contentMaxWidthDp ? Math.round((display.contentMaxWidthDp * FRAME_SIZE[frame].w) / FRAME_DEVICE_DP[frame]) : null,
     c: colors,

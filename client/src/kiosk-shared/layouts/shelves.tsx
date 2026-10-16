@@ -5,6 +5,7 @@
  * מוצרים" makes them more or fewer); "באנר מומלצים" over them (layout.hero). The cards are the tiles.
  */
 
+import { lookTileMaxPx } from '@/lib/kioskLandscape';
 import { cn } from '@/lib/utils';
 import { heroShown, layoutOf } from '@/lib/kioskLayout';
 import { itemEnter } from '@/components/dashboard/kiosks/preview-motion';
@@ -16,7 +17,8 @@ import { Empty, LayoutDishCard, SectionTitle, cartCounts, unitOf } from './parts
 
 export function ShelvesCatalog({ m }: { m: PreviewModel }) {
   const counts = cartCounts(m);
-  const card = shelfCardPx(m);
+  // "עיצוב לרוחב": in landscape a shelf's card never wider than the landscape tile (lib/kioskLandscape.ts).
+  const card = lookTileMaxPx(m.landscape, shelfCardPx(m));
   return (
     <PhaseFrame m={m}>
       <div className="relative min-h-0 flex-1 space-y-4 overflow-y-auto pb-4 pt-1 [scrollbar-width:none]">
