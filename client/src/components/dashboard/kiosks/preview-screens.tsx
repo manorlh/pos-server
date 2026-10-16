@@ -6,6 +6,7 @@
  * from the config through `PreviewModel`, so a change in the editor shows here at once.
  */
 
+import type { LandscapeLook } from '@/lib/kioskLandscape';
 import {
   useEffect,
   useLayoutEffect,
@@ -352,6 +353,11 @@ export interface PreviewModel {
    */
   twoColumns?: boolean;
   contentMaxWidth?: number | null;
+  /**
+   * "עיצוב לרוחב" (lib/kioskLandscape.ts, P:/specs/kiosk-landscape-design.md §3): the landscape sizes in these screens'
+   * CSS px — the category column, a category's tile and picture, a dish's columns and picture. Absent / null: portrait.
+   */
+  landscape?: LandscapeLook | null;
   c: ResolvedThemeColors;
   radius: number;
   btnRadius: number;

@@ -314,6 +314,8 @@
     "src/lib/customerDisplayWeb.test.ts",
     "src/lib/displayProfile.ts",
     "src/lib/displayProfile.test.ts",
+    "src/lib/kioskLandscape.ts",
+    "src/lib/kioskLandscape.test.ts",
     "src/lib/kioskPickupSearch.ts",
     "src/lib/kioskPickupSearch.test.ts",
     "src/lib/tableSearch.ts",

@@ -8,11 +8,12 @@
  */
 
 import { layoutOf, mealViewOf, payMethodSheet, productColumns } from '@/lib/kioskLayout';
-import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { Monitor, Smartphone, Tablet } from 'lucide-react';
-import { AS_TODAY, displayProfile, kioskDisplay, kioskDisplayTheme } from '@/lib/displayProfile';
+import { AS_TODAY, displayProfile, kioskDisplay } from '@/lib/displayProfile';
+import { applyLandscape, landscapeLook, lookColumnPx, lookColumns } from '@/lib/kioskLandscape';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
 import { fetchGroups, fetchProductMenu, fetchUpsells } from '@/lib/menuApi';
@@ -103,14 +104,43 @@ export interface KioskPreviewControls {
 const SCREENS: PreviewScreen[] = ['attract', 'service', 'catalog', 'product', 'cart', 'tip', 'details', 'pay', 'success', 'paused'];
 const PAUSED_VARIANTS: PausedVariant[] = ['paused', 'closed', 'noPayment', 'offline'];
 
-type Frame = 'phone' | 'tablet' | 'landscape';
+export type Frame = 'phone' | 'tablet' | 'landscape';
 
 const FRAME_SIZE: Record<Frame, { w: number; h: number }> = {
   phone: { w: 300, h: 620 },
   tablet: { w: 400, h: 600 },
-  // "קיוסק לרוחב" (P:/specs/kiosk-landscape-till-mode.md §4): a 1920×1080 kiosk, drawn at a third.
-  landscape: { w: 640, h: 360 },
+  // "קיוסק לרוחב" (P:/specs/kiosk-landscape-till-mode.md §4): a 1920×1080 kiosk as the Windows kiosk draws it (960×540
+  // CSS px at ×2 — half a CSS px per dp), shrunk to fit the panel (FitZoom).
+  landscape: { w: 960, h: 540 },
 };
+
+/** The standard catalog's side rail and side order panel (preview-screens SideRail / SidePanel), in the frame's px. */
+const STANDARD_RAIL_PX = 76;
+const STANDARD_PANEL_PX = 132;
+
+/**
+ * The frame at most as wide as its panel: shrunk (CSS zoom, so the screens keep their own coordinates) when the
+ * frame is wider than the space it has — the 960 px landscape frame in the editor's column — times `scale`.
+ */
+function FitZoom({ width, scale = 1, children }: { width: number; scale?: number; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [avail, setAvail] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const on = () => setAvail(el.clientWidth);
+    on();
+    const ro = new ResizeObserver(on);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const zoom = Math.min(1, avail ? avail / width : 1) * scale;
+  return (
+    <div ref={ref} className="flex w-full justify-center">
+      <div style={zoom < 0.999 ? { zoom } : undefined}>{children}</div>
+    </div>
+  );
+}
 
 /** The landscape frame's display: a 21.5" full-HD kiosk at mdpi — the side cart, the rail (lib/displayProfile.ts). */
 const LANDSCAPE_DISPLAY = kioskDisplay(displayProfile({ widthPx: 1920, heightPx: 1080, densityDpi: 160, xdpi: 102.5, ydpi: 102.5 }));
@@ -235,7 +265,9 @@ function useProductGroups(productId: string | null, real: boolean): { groups: PG
 }
 
 export function KioskPreview({
-  config,
+  config: rawConfig,
+  frame: forcedFrame,
+  bare = false,
   catalog,
   categoryImageUrls,
   categoryColors = {},
@@ -264,11 +296,19 @@ export function KioskPreview({
   controls?: Ref<KioskPreviewControls>;
   /** The texts editor's language tab: the screens' words in it (lib/kioskTexts.ts). */
   previewLang?: string;
+  /** This frame only (no frame switch): the editor's "לאורך / לרוחב" previews side by side. */
+  frame?: Frame;
+  /** The frame alone: no frame switch, no screen chips, no notes (the second of the side-by-side previews). */
+  bare?: boolean;
 }) {
   const t = useTranslations('kiosks.preview');
   const tb = useTranslations('kiosks.builtin');
   const sample = useSampleCatalog();
-  const [frame, setFrame] = useState<Frame>('phone');
+  const [chosenFrame, setFrame] = useState<Frame>('phone');
+  const frame = forcedFrame ?? chosenFrame;
+  // "עיצוב לרוחב" (P:/specs/kiosk-landscape-design.md): the landscape frame draws the design as a landscape kiosk does —
+  // the block's keys over the normal design, the automatic rules for the rest; the other frames the config as it is.
+  const config = useMemo(() => (frame === 'landscape' ? applyLandscape(rawConfig, LANDSCAPE_DISPLAY).config : rawConfig), [frame, rawConfig]);
   const [cart, setCart] = useState<PLine[]>([]);
   const [service, setService] = useState<'take_away' | 'eat_in'>('take_away');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
@@ -415,8 +455,11 @@ export function KioskPreview({
   const wide = frame !== 'phone';
   // The landscape frame draws what a landscape kiosk decides by itself (the side cart, the rail or the tabs).
   const display = frame === 'landscape' ? LANDSCAPE_DISPLAY : AS_TODAY;
-  const shownTheme = kioskDisplayTheme(config.theme, display);
-  const shownConfig = shownTheme === config.theme ? config : { ...config, theme: shownTheme };
+  // (applyLandscape above already made the landscape decisions the block left to the kiosk.)
+  const shownTheme = config.theme;
+  const shownConfig = config;
+  // The landscape sizes ("לא ענקיים") in this frame's CSS px.
+  const look = landscapeLook(config, display, FRAME_SIZE[frame].w, FRAME_SIZE[frame].w / FRAME_DEVICE_DP[frame]);
   const panel = cartPanelShown(shownTheme, FRAME_DEVICE_DP[frame]);
   const side = shownTheme.categoryLayout !== 'top';
   // "אפקטים": the preview draws the configured profile ("auto" — the device's choice — previews the full look).
@@ -431,7 +474,12 @@ export function KioskPreview({
   });
   const colors = resolveThemeColors(config.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
-  const cols = productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]);
+  // …and in landscape never a dish's tile wider than the landscape size allows (lib/kioskLandscape.ts).
+  const cols = lookColumns(
+    look,
+    productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]),
+    FRAME_SIZE[frame].w - (side ? lookColumnPx(look, STANDARD_RAIL_PX) : 0) - (panel ? STANDARD_PANEL_PX : 0),
+  );
 
   /** The window for [moment], if a rule for the kiosk asks one (true: shown). */
   const offerUpsell = (moment: UpsellMoment, then: PreviewScreen | null): boolean => {
@@ -510,6 +558,7 @@ export function KioskPreview({
   const ctaOnFrame = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const model: PreviewModel = {
     cfg: shownConfig,
+    landscape: look,
     twoColumns: display.twoColumns,
     contentMaxWidth: display.contentMaxWidthDp ? Math.round((display.contentMaxWidthDp * FRAME_SIZE[frame].w) / FRAME_DEVICE_DP[frame]) : null,
     c: colors,
@@ -698,7 +747,7 @@ export function KioskPreview({
   const weights = typeWeights(config.theme.typeWeight);
   const chrome = chromeRoot(model);
   const rootVars = {
-    '--k-scale': String(typeScaleFactor(config.theme.typeScale)),
+    '--k-scale': String(typeScaleFactor(config.theme.typeScale) * (look?.textFactor ?? 1)),
     '--k-w-body': String(weights.body),
     '--font-weight-medium': String(weights.medium),
     '--font-weight-semibold': String(weights.semibold),
@@ -710,8 +759,10 @@ export function KioskPreview({
   return (
     <div className="space-y-3">
       <style>{PREVIEW_CSS}</style>
+      {bare ? null : (
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold">{t('title')}</span>
+        <span className="text-sm font-semibold">{forcedFrame === 'landscape' ? t('landscapeTitle') : t('title')}</span>
+        {forcedFrame ? null : (
         <div className="inline-flex rounded-xl bg-muted p-1">
           {(['phone', 'tablet', 'landscape'] as const).map((f) => (
             <button
@@ -729,8 +780,11 @@ export function KioskPreview({
             </button>
           ))}
         </div>
+        )}
       </div>
+      )}
 
+      {bare ? null : (
       <div className="flex flex-wrap gap-1">
         {SCREENS.map((s) => (
           <button
@@ -746,7 +800,8 @@ export function KioskPreview({
           </button>
         ))}
       </div>
-      {screen === 'paused' ? (
+      )}
+      {screen === 'paused' && !bare ? (
         <div className="inline-flex flex-wrap rounded-xl bg-muted p-1 text-xs">
           {PAUSED_VARIANTS.map((v) => (
             <button
@@ -760,9 +815,9 @@ export function KioskPreview({
           ))}
         </div>
       ) : null}
-      {screen === 'paused' && pausedVariant === 'paused' ? <p className="text-xs text-muted-foreground">{t('rest.sampleEnd')}</p> : null}
+      {screen === 'paused' && pausedVariant === 'paused' && !bare ? <p className="text-xs text-muted-foreground">{t('rest.sampleEnd')}</p> : null}
 
-      <div className="flex justify-center">
+      <FitZoom width={size.w + (frame === 'phone' ? 20 : 24)} scale={bare ? 0.5 : 1}>
         <div
           className={cn(
             'relative shrink-0 bg-neutral-900 shadow-2xl ring-1 ring-black/10 transition-all duration-500',
@@ -925,9 +980,9 @@ export function KioskPreview({
             {(screen === 'catalog' || screen === 'product' || screen === 'cart') && !confirming ? <AddedToast m={model} bottom={PREVIEW_FOOTER_PX + 72} /> : null}
           </div>
         </div>
-      </div>
-      {config.theme.cartStyle === 'panel' ? <p className="text-center text-[11px] text-muted-foreground">{t('panelWideOnly')}</p> : null}
-      <p className="text-center text-[11px] text-muted-foreground">{real ? t('realCatalog', { name: catalog!.machineName }) : t('sampleNote')}</p>
+      </FitZoom>
+      {config.theme.cartStyle === 'panel' && !bare && frame !== 'landscape' ? <p className="text-center text-[11px] text-muted-foreground">{t('panelWideOnly')}</p> : null}
+      {bare ? null : <p className="text-center text-[11px] text-muted-foreground">{real ? t('realCatalog', { name: catalog!.machineName }) : t('sampleNote')}</p>}
     </div>
   );
 }

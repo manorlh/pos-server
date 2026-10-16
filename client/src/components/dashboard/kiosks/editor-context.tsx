@@ -19,6 +19,7 @@ import {
 } from '@/lib/kioskConfig';
 import type { KioskLevel, KioskServerError, KioskSourceCatalog } from '@/lib/kioskApi';
 import type { LayoutTemplate } from '@/lib/kioskLayout';
+import { LANDSCAPE_OVERRIDE_KEYS, type LandscapeSection } from '@/lib/kioskLandscape';
 import type { MotionDemo } from './kiosk-preview';
 
 import type { PreviewScreen } from '@/kiosk-shared/types';
@@ -65,6 +66,21 @@ export interface KioskEditorValue {
   dirty: boolean;
   /** "שדר לקיוסקים": open this level's review-and-save flow (as the save bar's button). */
   openReview: () => void;
+  /**
+   * "לאורך / לרוחב" (P:/specs/kiosk-landscape-design.md §5): in landscape, the fields that have a landscape
+   * counterpart edit `landscape.<path>` (useKioskField); the rest are shared by both orientations.
+   */
+  orientation?: KioskEditorOrientation;
+  setOrientation?: (o: KioskEditorOrientation) => void;
+}
+
+export type KioskEditorOrientation = 'portrait' | 'landscape';
+
+/** The landscape block's path for a design path (`theme.cartStyle` → `landscape.theme.cartStyle`), or null. */
+export function landscapePathOf(path: string): string | null {
+  const [section, key, ...rest] = path.split('.');
+  if (rest.length > 0 || !key || !(section in LANDSCAPE_OVERRIDE_KEYS)) return null;
+  return (LANDSCAPE_OVERRIDE_KEYS[section as LandscapeSection] as readonly string[]).includes(key) ? `landscape.${path}` : null;
 }
 
 export const KioskEditorContext = createContext<KioskEditorValue | null>(null);
@@ -92,8 +108,10 @@ export function useServerErrorText(): (e: KioskServerError) => string {
 export function useFieldErrors(path: string): string[] {
   const t = useTranslations('kiosks.validation');
   const serverText = useServerErrorText();
-  const { errors, serverErrors } = useKioskEditor();
-  const hit = (p: string) => p === path || p.startsWith(`${path}.`);
+  const { errors, serverErrors, orientation } = useKioskEditor();
+  // In landscape a design field's errors are its landscape value's.
+  const at = (orientation === 'landscape' && landscapePathOf(path)) || path;
+  const hit = (p: string) => p === at || p.startsWith(`${at}.`);
   const out: string[] = [];
   for (const e of errors) {
     if (hit(e.path)) out.push(t.has(e.code) ? t(e.code, e.params ?? {}) : e.code);
@@ -104,8 +122,28 @@ export function useFieldErrors(path: string): string[] {
   return Array.from(new Set(out));
 }
 
+/**
+ * A field at `path` as the editor's orientation shows it. In landscape, a design key with a landscape counterpart
+ * reads `landscape.<path>` — unset ("כמו לאורך"): the portrait value — and writes there; `reset` takes the
+ * landscape value back to what this level inherits (a higher level's, or none: like portrait).
+ */
 export function useKioskField<T>(path: string) {
   const ed = useKioskEditor();
+  const lp = ed.orientation === 'landscape' ? landscapePathOf(path) : null;
+  if (lp) {
+    const own = getPath(ed.draft, lp) as T | undefined;
+    const inheritedOwn = getPath(ed.inherited, lp) as T | undefined;
+    const portrait = getPath(ed.draft, path) as T;
+    return {
+      value: (own ?? portrait) as T,
+      inheritedValue: (inheritedOwn ?? getPath(ed.inherited, path)) as T,
+      overridden: !sameSetting(own, inheritedOwn),
+      set: (next: T) => ed.set(lp, next),
+      reset: () => ed.reset(lp),
+      disabled: !ed.canEdit,
+      landscape: { path: lp, set: own !== undefined && own !== null, inherited: inheritedOwn !== undefined && inheritedOwn !== null },
+    };
+  }
   const value = getPath(ed.draft, path) as T;
   const inheritedValue = getPath(ed.inherited, path) as T;
   return {
@@ -115,5 +153,6 @@ export function useKioskField<T>(path: string) {
     set: (next: T) => ed.set(path, next),
     reset: () => ed.reset(path),
     disabled: !ed.canEdit,
+    landscape: null as { path: string; set: boolean; inherited: boolean } | null,
   };
 }
