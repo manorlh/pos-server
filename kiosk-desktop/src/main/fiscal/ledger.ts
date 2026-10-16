@@ -31,6 +31,7 @@ import {
   type SaleOption,
   type SaleTotals,
   type XDoc,
+  type XTill,
 } from '../../core/sale';
 import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
@@ -114,9 +115,11 @@ export interface DocDraft {
 
 /** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
 export interface DocLeg {
-  /** `exchange`: what a mixed basket's returns paid of its sale (core/till/basket.ts) — never cash, card or the drawer. */
-  method: 'cash' | 'card' | 'exchange';
+  /** `exchange`: what a mixed basket's returns paid of its sale (core/till/basket.ts) — never cash, card or the drawer. `cash_credit`: a CC: credit redeemed at the payment (§11.15א). */
+  method: 'cash' | 'card' | 'exchange' | 'cash_credit';
   amountAgorot: number;
+  /** A cash credit's leg (§11.15א): the redemption it confirms — sent as the payment's `cashCredit`. */
+  cashCredit?: { code: string; redemptionId: string };
 }
 
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
@@ -428,7 +431,17 @@ export class Ledger {
    * (a card-only kiosk: 0), in one transaction with its outbox row. Refused while a payment is
    * pending in it.
    */
-  closeShift(input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now?: Date; countedCashAgorot?: number | null }):
+  closeShift(input: {
+    closedByName: string;
+    closedByUserId?: string | null;
+    unattended?: boolean;
+    closeRequestId?: string | null;
+    vatRate: number;
+    now?: Date;
+    countedCashAgorot?: number | null;
+    /** The till's drawer figures on the X (core/till/drawer.ts `tillWithDrawer`: the movements and the wallets), by the shift. */
+    tillExtra?: (till: XTill, shiftId: string) => XTill;
+  }):
     | { kind: 'closed'; shift: ShiftRow; payload: Record<string, unknown> }
     | { kind: 'none' }
     | { kind: 'pending'; count: number } {
@@ -802,9 +815,20 @@ export class Ledger {
 export function shiftCloseWire(
   shift: ShiftRow,
   docs: readonly DocDraft[],
-  input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now: string; countedCashAgorot?: number | null },
+  input: {
+    closedByName: string;
+    closedByUserId?: string | null;
+    unattended?: boolean;
+    closeRequestId?: string | null;
+    vatRate: number;
+    now: string;
+    countedCashAgorot?: number | null;
+    tillExtra?: (till: XTill, shiftId: string) => XTill;
+  },
 ): Record<string, unknown> {
-  const { till, reportableIds } = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
+  const built = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
+  const reportableIds = built.reportableIds;
+  const till = input.tillExtra ? input.tillExtra(built.till, shift.id) : built.till;
   const unattended = input.unattended ?? false;
   const payload: Record<string, unknown> = {
     closedAt: input.now,
@@ -1079,7 +1103,14 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
             createdAt: d.updatedAt,
           };
         }
-        return { id: stableUuid(`${d.id}:pay:${i}`), sequence: i + 1, method: leg.method, amount: r2(leg.amountAgorot), createdAt: d.updatedAt };
+        return {
+          id: stableUuid(`${d.id}:pay:${i}`),
+          sequence: i + 1,
+          method: leg.method,
+          amount: r2(leg.amountAgorot),
+          ...(leg.method === 'cash_credit' && leg.cashCredit ? { cashCredit: { code: leg.cashCredit.code, redemptionId: leg.cashCredit.redemptionId } } : {}),
+          createdAt: d.updatedAt,
+        };
       });
     } else {
       const legs = (d.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);

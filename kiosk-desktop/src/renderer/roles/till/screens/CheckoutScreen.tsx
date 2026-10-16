@@ -22,6 +22,9 @@ export interface CheckoutActions {
   copy(): void;
   recheck(): void;
   markNotApproved(): void;
+  /** "זיכוי מזומן": a station's credit code (`CC:…` scanned, or typed) towards the goods; absent — not on this engine. */
+  credit?(code: string): void;
+  removeCredit?(redemptionId: string): void;
   /** A basket with returns: who the money goes back to, an even exchange, the money back. */
   returnCustomer?(c: { name: string; phone: string; address: string }): void;
   exchange?(): void;
@@ -141,6 +144,7 @@ export function CheckoutScreen({
   noCard?: boolean;
 }) {
   const [padOpen, setPadOpen] = useState(false);
+  const [creditCode, setCreditCode] = useState('');
   const style = layout.checkoutMaxWidthDp ? { maxWidth: layout.checkoutMaxWidthDp } : undefined;
 
   if (checkout.phase === 'done') {
@@ -276,7 +280,12 @@ export function CheckoutScreen({
         <ul className="t-legs">
           {checkout.legs.map((l, i) => (
             <li key={i}>
-              {l.method === 'cash' ? T.cash : T.card} · {money(l.amountAgorot)} {l.status === 'pending' ? '· ממתין' : ''}
+              {l.method === 'cash' ? T.cash : l.method === 'cash_credit' ? `זיכוי ${l.credit?.code ?? ''}` : T.card} · {money(l.amountAgorot)} {l.status === 'pending' ? '· ממתין' : ''}
+              {l.method === 'cash_credit' && l.credit && actions.removeCredit && !waiting ? (
+                <button type="button" className="t-btn t-btn-ghost t-btn-small" onClick={() => actions.removeCredit!(l.credit!.redemptionId)}>
+                  הסרת הזיכוי
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -309,6 +318,27 @@ export function CheckoutScreen({
           )}
         </div>
       )}
+      {!waiting && actions.credit && !checkout.basket ? (
+        // "זיכוי מזומן" (P:/specs/cash-paylink.md §11.15א): the code of a station's credit — scanned (`CC:…`) or typed.
+        <form
+          className="t-credit"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (creditCode.trim()) {
+              actions.credit!(creditCode.trim());
+              setCreditCode('');
+            }
+          }}
+        >
+          <label className="t-field">
+            <span>זיכוי מזומן</span>
+            <input className="t-input" value={creditCode} maxLength={80} onChange={(e) => setCreditCode(e.target.value)} placeholder="C-XXXXXX" />
+          </label>
+          <button type="submit" className="t-btn" disabled={!creditCode.trim()}>
+            מימוש
+          </button>
+        </form>
+      ) : null}
       <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>
         {waiting ? T.checkoutCancel : hasLegs ? T.checkoutCancelPayment : T.checkoutBack}
       </button>

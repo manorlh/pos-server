@@ -15,11 +15,14 @@
  */
 
 export interface TenderLeg {
-  method: 'cash' | 'card';
+  /** `cash_credit`: a cash station's credit taken towards the goods (P:/specs/cash-paylink.md §11.15א) — never money handed over. */
+  method: 'cash' | 'card' | 'cash_credit';
   /** The goods it settled. */
   amountAgorot: number;
   /** Cash: what was handed over for it (the closing leg's is the whole note, the change inside it). */
   handedAgorot: number;
+  /** A cash credit's redemption (its leg confirms it on the document). */
+  credit?: { code: string; redemptionId: string };
 }
 
 export function paidOf(legs: readonly TenderLeg[]): number {

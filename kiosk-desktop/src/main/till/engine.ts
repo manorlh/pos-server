@@ -183,6 +183,12 @@ import {
 import { legsOf, settled, xDocOf, type AppliedPromotionRow, type BasketDocInput, type DocDraft, type DocLeg } from '../fiscal/ledger';
 import type { KioskService } from '../service';
 import { HeldStore } from './heldStore';
+import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../../core/till/drawer';
+import { DRAWER_PERM } from '../../core/till/drawer';
+import { TillDrawer } from './tillDrawer';
+import { TillSessions } from './userSessions';
+import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
+import type { DialogSpec, TillContext } from './tillContext';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -235,7 +241,33 @@ const APPROVAL_LOCK = 'till.approvalLock';
 const AUTO_CLOSE_NOTICE = 'till.autoCloseNotice';
 const AUTO_CLOSE_RECORDS = 'till.autoCloseRecords';
 /** The codes the screens show or hide by. */
-const SESSION_CODES = [PERM.SELL, PERM.SHIFT_OPEN, PERM.SHIFT_CLOSE, PERM.X, PERM.Z, PERM.REPRINT, PERM.DRAWER_ON_CASH_SALE, PERM.KIOSK_TILL_MODE, PERM.SHOP_X, PERM.REFUND, PERM.DISCOUNT, PERM.OTH, PERM.LINE_VOID, PERM.HELD_SALE_CANCEL];
+const SESSION_CODES = [
+  PERM.SELL,
+  PERM.SHIFT_OPEN,
+  PERM.SHIFT_CLOSE,
+  PERM.X,
+  PERM.Z,
+  PERM.REPRINT,
+  PERM.DRAWER_ON_CASH_SALE,
+  PERM.KIOSK_TILL_MODE,
+  PERM.SHOP_X,
+  PERM.REFUND,
+  PERM.DISCOUNT,
+  PERM.OTH,
+  PERM.LINE_VOID,
+  PERM.HELD_SALE_CANCEL,
+  // "מגירת מזומן" (tillDrawer.ts): the screens' drawer rows.
+  DRAWER_PERM.MANUAL,
+  DRAWER_PERM.CHANGE,
+  DRAWER_PERM.CASH_IN,
+  DRAWER_PERM.CASH_OUT,
+  DRAWER_PERM.DEPOSIT,
+  DRAWER_PERM.COUNT,
+  DRAWER_PERM.BLIND_COUNT,
+  DRAWER_PERM.WALLET_DEPOSIT,
+  DRAWER_PERM.VIEW_LOG,
+  DRAWER_PERM.VIEW_MOVEMENTS,
+];
 /**
  * The entries the screens have, by the code they are offered by and what they are ("כשאין הרשאה", spec §3): the ones that
  * always read `permissionsDeniedUi` are `legacy`; SHIFT_OPEN is never hidden (core/till/permissions.ts NEVER_HIDDEN).
@@ -258,6 +290,11 @@ const ENTRIES: ReadonlyArray<readonly [string, EntryKind]> = [
 const RECENT_RECEIPTS = 8;
 
 const sh = (agorot: number) => formatShekelSign(agorot);
+/** A gate's sum (₪, as the limits read it) in agorot for the drawer's audit; null when there is none. */
+const agorotOf = (shekels: number | null | undefined): number | null => (shekels === null || shekels === undefined ? null : ofShekels(shekels));
+
+/** "זיכוי מזומן" refused in a basket with returns (kcash_credit_failed). */
+const CREDIT_IN_BASKET = 'לא ניתן לממש את הזיכוי כרגע';
 
 /** "ההנחה לא ניתנה": a basket discount that is not one (nothing keyed). */
 const TILL_ERROR_DISCOUNT = 'ההנחה לא ניתנה';
@@ -390,6 +427,12 @@ interface PendingDialog {
   verify?: (pin: string) => Promise<{ ok: true; by: Approver } | { ok: false; message: string }>;
   /** Free text the dialog asks for (a reason), passed to `resume` with the approver. */
   resume(approver: Approver | null, answers: Record<string, string>): Promise<unknown> | unknown;
+  /** A choice (a module's question, tillContext.ts): every action but "cancel" comes here. */
+  onAction?: (action: string, answers: Record<string, string>) => unknown;
+  onCancel?: () => unknown;
+  /** Unanswered until then: closed, and `onTimeout` runs ("לפתוח מגירה?" after `cashDrawerAskTimeoutSec`). */
+  timer?: NodeJS.Timeout;
+  onTimeout?: () => unknown;
 }
 
 /** A mixed basket at the payment: its figures, its step, the customer, the route of a card payout. */
@@ -545,6 +588,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /** The automatic close: since when a payment has held it (that shift's id, the clock). */
   private autoPaymentWait: { shiftId: string; since: number } | null = null;
   private autoCloseBusy = false;
+  /** What the modules that add a feature to the till are handed (tillContext.ts). */
+  readonly ctx: TillContext;
+  /** "מגירת מזומן": the drawer's flows, its audit and movements (tillDrawer.ts). */
+  readonly drawer: TillDrawer;
+  /** "עובד מחובר בקופה אחת בלבד", "עובדים מחוברים", "נעילה בחוסר שימוש" (userSessions.ts). */
+  readonly sessions: TillSessions;
+  /** "עודף חייב ללקוח" / "שולם ללקוח", "זיכוי מזומן" (tillCash.ts). */
+  readonly cash: TillCash;
+  /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
+  private lastTouchAt: number;
 
   constructor(private readonly o: TillEngineOptions) {
     this.svc = o.svc;
@@ -553,6 +606,19 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.log = o.log ?? (() => undefined);
     this.held = new HeldStore(this.svc.kv, this.nowFn);
     this.lastActivityAt = this.nowFn();
+    this.ctx = this.makeContext();
+    this.drawer = new TillDrawer(this.ctx, { expectedBalance: () => this.expectedNow() });
+    this.drawer.start();
+    this.lastTouchAt = this.lastActivityAt;
+    this.sessions = new TillSessions(this.ctx, {
+      completeSignIn: (user) => this.completeSignIn(user),
+      signOut: (reason) => this.forceSignOut(reason),
+      lastActivity: () => Math.max(this.lastActivityAt, this.lastTouchAt),
+      canSignOutNow: () => this.checkout.phase === 'idle' && !this.svc.pay.cardInFlight,
+    });
+    this.sessions.start();
+    this.cash = new TillCash(this.ctx, this.drawer);
+    this.cash.start();
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
@@ -564,8 +630,55 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.svc.attachTillAutoClose?.(() => this.later(() => this.autoCloseTick()));
   }
 
+  private makeContext(): TillContext {
+    return {
+      svc: this.svc,
+      compare: this.compare,
+      now: () => this.nowFn(),
+      log: (m) => this.log(m),
+      operator: () => (this.cashier && !this.locked ? this.cashier : null),
+      signedIn: () => this.signedIn(),
+      roster: () => this.roster(),
+      shopId: () => this.shop(),
+      refuse: (code, message, details) => refuse(code, message, details),
+      ask: (d) => this.ask(d),
+      toast: (text, tone = 'info') => this.toast(text, tone),
+      changed: () => {
+        // A module's answer arriving after the till stopped (its timers, a cloud reply): nothing to show any more.
+        if (this.stopped) return;
+        this.dirty = true;
+        this.commit();
+      },
+      later: (fn) => this.later(fn),
+      paying: () => this.paying(),
+    };
+  }
+
+  /** A module's question (tillContext.ts `DialogSpec`): the engine's dialog, with its choices and its time. */
+  private ask(d: DialogSpec): { dialogId: string } {
+    this.openDialog({
+      kind: d.kind,
+      title: d.title,
+      body: d.body,
+      fields: d.fields,
+      actions: d.actions,
+      code: d.code ?? null,
+      verify: d.verify,
+      resume: d.resume ?? (() => undefined),
+      onAction: d.onAction,
+      onCancel: d.onCancel,
+      expiresInMs: d.expiresInMs,
+      onTimeout: d.onTimeout,
+    });
+    return { dialogId: this.pending!.dialog.id };
+  }
+
   stop() {
     this.stopped = true;
+    this.sessions.stop();
+    this.cash.stop();
+    this.drawer.stop();
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();
     if (this.tick) clearInterval(this.tick);
@@ -680,6 +793,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const before = this.applied.get(c.clientOpId);
       if (before) return { ...before, id: c.id };
     }
+    // A touch: every op from the screens but the host's own and the catalog's read (the idle lock counts from it).
+    if (c.op !== 'host.idle' && c.op !== 'hw.result' && c.op !== 'session.hello' && c.op !== 'catalog.snapshot') this.lastTouchAt = this.nowFn();
     let reply: EngineReply;
     try {
       if (!this.svc.fiscal && c.op !== 'session.hello' && c.op !== 'host.idle' && c.op !== 'session.activity') refuse('not_a_till');
@@ -832,6 +947,46 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'notice.ack':
         this.svc.kv.delete(AUTO_CLOSE_NOTICE);
         return undefined;
+      // "מגירת מזומן" (tillDrawer.ts).
+      case 'drawer.open':
+        return this.drawer.openManual(typeof a.reason === 'string' ? a.reason : null, typeof a.note === 'string' ? a.note : null);
+      case 'drawer.openRemote':
+        return this.drawer.openOnHost(a.machineId, typeof a.reason === 'string' ? a.reason : null, typeof a.note === 'string' ? a.note : null);
+      case 'drawer.movement':
+        return this.drawer.movement(a.type, a.amountAgorot, a.reason, a.note, a.source);
+      case 'drawer.count':
+        return this.drawer.startCount();
+      case 'drawer.countSave':
+        return this.drawer.saveCount(a.countedAgorot);
+      case 'drawer.countDone':
+        return this.drawer.closeCount();
+      case 'drawer.wallets':
+        return this.drawer.listWallets();
+      case 'drawer.walletDeposit':
+        return this.drawer.deposit(a.employeeId, a.countedAgorot);
+      case 'drawer.log':
+        return this.drawer.log();
+      // "עובדים מחוברים" (userSessions.ts).
+      case 'users.open':
+        return this.sessions.open();
+      case 'users.refresh':
+        this.signedIn();
+        return this.sessions.load();
+      case 'users.release':
+        return this.sessions.release(a.sessionId);
+      case 'users.close':
+        return this.sessions.closeList();
+      case 'session.dismissNotice':
+        return this.sessions.dismissNotice();
+      // "עודף חייב ללקוח" — "שולם ללקוח" (tillCash.ts), and "זיכוי מזומן" at the payment.
+      case 'owed.refresh':
+        return this.cash.refresh();
+      case 'owed.pay':
+        return this.cash.pay(a.id);
+      case 'checkout.credit':
+        return this.creditTender(a.code);
+      case 'checkout.removeCredit':
+        return this.removeCredit(a.redemptionId);
     }
     return refuse('unknown_op');
   }
@@ -887,23 +1042,52 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const code: TillErrorCode = d.outcome === 'locked' || d.outcome === 'locked_out' ? 'login_locked' : 'wrong_pin';
       return refuse(code, d.message ?? TEXT.loginBad, { triesLeft: d.triesLeft });
     }
-    this.cashier = d.user;
+    // "עובד מחובר בקופה אחת בלבד": signed in at another till → not here (unless a manager releases it); no answer — as
+    // the shop chose (exclusiveUserLoginOffline). The question's answer completes the sign-in itself.
+    const check = await this.sessions.afterPin(d.user);
+    if (check !== 'in') return check;
+    return this.completeSignIn(d.user);
+  }
+
+  /** The employee is in: the operator, the activity's clock, the guard told. */
+  private completeSignIn(user: RosterUser) {
+    const before = this.cashier;
+    if (before && before.id !== user.id) this.sessions.left(before);
+    this.cashier = user;
     this.locked = false;
     this.lastActivityAt = this.nowFn();
-    return { cashier: { id: d.user.id, name: displayName(d.user) } };
+    this.lastTouchAt = this.lastActivityAt;
+    this.sessions.signedIn(user);
+    return { cashier: { id: user.id, name: displayName(user) } };
   }
 
   private logout() {
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
+    this.signOutNow();
+    return undefined;
+  }
+
+  /** The operator leaves (sign-out, the idle lock, a manager's release, the work mode): the guard owes their release. */
+  private signOutNow() {
+    const user = this.cashier;
     this.cashier = null;
     this.locked = true;
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.pending = null;
+    this.drawer.reset();
     // The shop's figures were for the user who asked: gone with them; so is a refund's authority.
     this.shopXDoc = null;
     this.shopXError = null;
     this.refundGrant = null;
     this.refundChooser = false;
-    return undefined;
+    if (user) this.sessions.left(user);
+  }
+
+  /** "נעילה בחוסר שימוש" / a manager's release (userSessions.ts): never over a payment — the caller checked. */
+  private forceSignOut(reason: 'idle' | 'released') {
+    if (!this.cashier || this.checkout.phase !== 'idle') return;
+    this.log(`till: ${displayName(this.cashier)} signed out (${reason})`);
+    this.signOutNow();
   }
 
   /**
@@ -921,7 +1105,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.signedIn();
     const d = opts.decision ?? decide(this.profile(), code, { amount: opts.amount, percent: opts.percent, relaxApproval: opts.relax, forceApproval: opts.force });
     if (d.kind === 'allowed') return resume(null);
-    if (d.kind === 'denied' && !opts.askOnDeny) return refuse('permission_denied', deniedText(code, d.why));
+    if (d.kind === 'denied' && !opts.askOnDeny) {
+      const text = deniedText(code, d.why);
+      // Every refusal of a gated action, in the drawer's audit (Android PermissionGate.onDecision).
+      this.drawer.service.recordPermission(code, 'deny', null, text, agorotOf(opts.amount));
+      return refuse('permission_denied', text);
+    }
     this.openDialog({
       kind: 'manager_approval',
       title: opts.title ?? WORDS.managerApprovalTitle,
@@ -934,7 +1123,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       code: opts.approveCode ?? code,
       amount: opts.amount ?? null,
       percent: opts.percent ?? null,
-      resume: (by) => resume(by),
+      // Every manager override: both names, in the drawer's audit.
+      resume: (by) => {
+        if (by) this.drawer.service.recordPermission(opts.approveCode ?? code, 'approval', by, null, agorotOf(opts.amount));
+        return resume(by);
+      },
     });
     return { dialogId: this.pending!.dialog.id };
   }
@@ -950,24 +1143,61 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     percent?: number | null;
     resume: PendingDialog['resume'];
     verify?: PendingDialog['verify'];
+    onAction?: PendingDialog['onAction'];
+    onCancel?: PendingDialog['onCancel'];
+    expiresInMs?: number;
+    onTimeout?: PendingDialog['onTimeout'];
   }) {
+    if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.dialogSeq += 1;
+    const id = `d${this.dialogSeq}`;
+    const expiresAt = d.expiresInMs && d.expiresInMs > 0 ? this.nowFn() + d.expiresInMs : undefined;
     this.pending = {
-      dialog: { id: `d${this.dialogSeq}`, kind: d.kind, title: d.title, body: d.body, fields: d.fields, actions: d.actions },
+      dialog: { id, kind: d.kind, title: d.title, body: d.body, fields: d.fields, actions: d.actions, ...(expiresAt ? { expiresAt } : {}) },
       code: d.code,
       amount: d.amount ?? null,
       percent: d.percent ?? null,
       verify: d.verify,
       resume: d.resume,
+      onAction: d.onAction,
+      onCancel: d.onCancel,
+      onTimeout: d.onTimeout,
     };
+    if (expiresAt) {
+      const p = this.pending;
+      p.timer = setTimeout(() => {
+        void this.later(async () => {
+          if (this.pending !== p || this.stopped) return;
+          this.pending = null;
+          try {
+            await p.onTimeout?.();
+          } catch (e) {
+            this.log(`till dialog timeout: ${String(e)}`);
+          }
+          this.dirty = true;
+          this.commit();
+        });
+      }, d.expiresInMs);
+      p.timer.unref?.();
+    }
   }
 
   private async answerDialog(id: string, action: string, answers: Record<string, string>) {
     const p = this.pending;
     if (!p || p.dialog.id !== id) return refuse('invalid_args');
     if (action === 'cancel') {
+      if (p.timer) clearTimeout(p.timer);
       this.pending = null;
-      return undefined;
+      const v = await p.onCancel?.();
+      return v === undefined ? undefined : v;
+    }
+    // A choice: its actions are the answers (the drawers, "הכסף אצלי", "פתח" / "לא").
+    if (p.onAction && !p.verify && !p.code) {
+      if (!p.dialog.actions.some((a) => a.id === action)) return refuse('invalid_args');
+      if (p.timer) clearTimeout(p.timer);
+      this.pending = null;
+      const v = await p.onAction(action, answers);
+      return v === undefined ? undefined : v;
     }
     if (action !== 'approve') return refuse('invalid_args');
     let approver: Approver | null = null;
@@ -995,6 +1225,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.svc.kv.setJson(APPROVAL_LOCK, NO_LOCK);
       approver = { id: out.user.id, name: displayName(out.user) };
     }
+    if (p.timer) clearTimeout(p.timer);
     this.pending = null;
     const value = await p.resume(approver, answers);
     return value === undefined ? undefined : value;
@@ -1767,7 +1998,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
         const creditDoc = written[0];
         if (method === 'cash') {
-          this.refundDrawer();
+          this.refundDrawer(creditDoc);
           this.svc.printDocReceipt(creditDoc, false);
           void this.svc.sync.flush();
           this.toast(WORDS.refundDone, 'ok');
@@ -1798,11 +2029,21 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     });
   }
 
-  /** "מגירת מזומן": cash handed back opens the drawer under the refund's own approval (the drawer parameter on). */
-  private refundDrawer() {
-    const v = String(this.svc.cloud.parameters().cashDrawer ?? '').trim().toLowerCase();
-    if (v === '' || v === 'כבוי' || v === 'off' || v === 'false') return;
-    void this.svc.openDrawer().catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
+  /**
+   * "מגירת מזומן": cash handed back on a credit note opens the drawer — through the drawer service only (spec §13: its rules,
+   * its audit, `cashDrawer` off opens nothing), under the refund's own approval: the manager who approved the refund is not
+   * asked again, and is named in the drawer's log.
+   */
+  private refundDrawer(...credits: DocDraft[]) {
+    const cashOf = (d: DocDraft) =>
+      legsOf(d)
+        .filter((l) => l.method === 'cash')
+        .reduce((sum, l) => sum + l.amountAgorot, 0);
+    const credit = credits.find((d) => cashOf(d) > 0);
+    const cash = credits.reduce((sum, d) => sum + cashOf(d), 0);
+    if (!credit || cash <= 0) return;
+    const by = credit.approvedByPosUserId && credit.approvedByPosUserId !== this.cashier?.id ? credit.approvedByPosUserId : null;
+    void Promise.resolve(this.drawer.afterRefund({ id: credit.id, documentType: credit.documentType, number: credit.number }, cash, by)).catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
   }
 
   /* ---------------------------------------------------------------- checkout */
@@ -2069,7 +2310,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tracked: f.tracked,
       totals: f.totals,
       promotions: f.promotions,
-      payments: step.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })),
+      payments: docLegs(step.legs),
+      creditLegs: creditLegsOf(step.legs),
       tenderedAgorot: step.tenderedAgorot,
       changeAgorot: step.changeAgorot,
       channel: 'till',
@@ -2128,7 +2370,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tracked: f.tracked,
       totals: f.totals,
       promotions: f.promotions,
-      payments: legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })),
+      payments: docLegs(legs),
+      creditLegs: creditLegsOf(legs),
       ...(handed > 0 ? { tenderedAgorot: handed, changeAgorot: 0 } : {}),
       channel: 'till',
       ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
@@ -2283,6 +2526,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (c.phase !== 'tender') refuse('invalid_args');
     const handed = handedTotal(this.approvedLegs());
     const reset = () => {
+      // "זיכוי מזומן" taken for a sale that is not closed: back on its credit (kept and retried until the cloud hears it).
+      for (const l of this.checkout.legs) if (l.method === 'cash_credit' && l.credit) this.cash.credits.release(l.credit.redemptionId);
       this.checkout = idleCheckout();
       return undefined;
     };
@@ -2303,6 +2548,65 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return { dialogId: this.pending!.dialog.id };
   }
 
+  /**
+   * "זיכוי מזומן" (Android CheckoutViewModel.redeemCashCredit): a station's credit (`CC:<code>`, scanned or typed) taken for
+   * min(what is left on it, what is left of the goods) — a `cash_credit` leg naming its redemption; nothing left to collect —
+   * the sale is closed at once with no money moved (no drawer).
+   */
+  private async creditTender(raw: unknown) {
+    this.signedIn();
+    this.tenderOpen();
+    // A basket with returns takes no credit (Android redeemCashCredit: `isBasket` → "לא ניתן לממש את הזיכוי כרגע").
+    if (this.checkout.basket) return refuse('invalid_args', CREDIT_IN_BASKET);
+    if (typeof raw !== 'string' || raw.length > 80) return refuse('invalid_args');
+    const inSale = this.checkout.legs.flatMap((l) => (l.method === 'cash_credit' && l.credit ? [{ ...l.credit, amountAgorot: l.amountAgorot }] : []));
+    const due = dueOf(this.checkout.totalAgorot, this.approvedLegs());
+    const r = await redeemCredit(this.cash.credits, raw, due, inSale);
+    if (r.kind === 'refused') return refuse('invalid_args', CREDIT_TEXT[r.why]);
+    // The payment may have moved on while the cloud answered: then the credit goes back.
+    if (this.checkout.phase !== 'tender') {
+      this.cash.credits.release(r.use.redemptionId);
+      return refuse('checkout_busy');
+    }
+    const amount = Math.min(r.use.amountAgorot, dueOf(this.checkout.totalAgorot, this.approvedLegs()));
+    this.checkout.legs.push({ method: 'cash_credit', amountAgorot: amount, handedAgorot: 0, credit: { code: r.use.code, redemptionId: r.use.redemptionId }, status: 'approved' });
+    if (dueOf(this.checkout.totalAgorot, this.approvedLegs()) > 0) return { creditAgorot: amount };
+    // Settled by the credits: the document now — no cash handed over, no change.
+    const f = this.checkout.frozen!;
+    if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
+    const legs = this.approvedLegs();
+    const doc = this.svc.ledger.recordCashSale({
+      documentType: saleDocumentType(this.svc.business().dealerType),
+      prefix: this.prefix(),
+      branchId: this.svc.business().branchId,
+      operator: this.operator(),
+      orderId: null,
+      lines: f.lines,
+      tracked: f.tracked,
+      totals: f.totals,
+      promotions: f.promotions,
+      payments: docLegs(legs),
+      creditLegs: creditLegsOf(legs),
+      tenderedAgorot: 0,
+      changeAgorot: 0,
+      channel: 'till',
+    });
+    if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
+    this.finalize(doc);
+    return { creditAgorot: amount };
+  }
+
+  /** "הסרת הזיכוי": the credit's leg off the payment, the amount back on the credit. */
+  private removeCredit(redemptionId: unknown) {
+    this.signedIn();
+    this.tenderOpen();
+    const i = this.checkout.legs.findIndex((l) => l.method === 'cash_credit' && l.credit?.redemptionId === redemptionId);
+    if (i < 0) return refuse('invalid_args');
+    const [leg] = this.checkout.legs.splice(i, 1);
+    this.cash.credits.release(leg.credit!.redemptionId);
+    return undefined;
+  }
+
   private checkoutFinish() {
     if (this.checkout.phase !== 'done') refuse('invalid_args');
     this.checkout = idleCheckout();
@@ -2319,7 +2623,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.documentRef = formatDocNumber(doc.prefix, String(doc.number));
     c.changeAgorot = doc.changeAgorot ?? 0;
     c.tenderedAgorot = doc.tenderedAgorot ?? 0;
-    c.legs = legs.filter((l) => l.method !== EXCHANGE).map((l) => ({ method: l.method as 'cash' | 'card', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
+    c.legs = legs
+      .filter((l) => l.method !== EXCHANGE)
+      .map((l) => ({
+        method: l.method as 'cash' | 'card' | 'cash_credit',
+        amountAgorot: l.amountAgorot,
+        handedAgorot: l.method === 'cash' ? l.amountAgorot : 0,
+        status: 'approved' as const,
+        ...(l.cashCredit ? { credit: l.cashCredit } : {}),
+      }));
     c.cardStatus = null;
     c.cardError = null;
     this.clearBasket();
@@ -2344,7 +2656,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.legs = docs
       .flatMap((d) => legsOf(d))
       .filter((l) => l.method !== EXCHANGE)
-      .map((l) => ({ method: l.method as 'cash' | 'card', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
+      .map((l) => ({ method: l.method as 'cash' | 'card' | 'cash_credit', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
     c.cardStatus = null;
     c.cardError = null;
     if (c.basket) c.basket.handedBackAgorot = o.handBack;
@@ -2355,7 +2667,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (cashMoved && !o.viaCard) {
       const sale = docs.find((d) => isSaleType(d.documentType));
       if (sale && legsOf(sale).some((l) => l.method === 'cash')) this.kickDrawer(sale);
-      else this.refundDrawer();
+      else this.refundDrawer(...docs.filter((d) => isCreditType(d.documentType)));
     }
     if (o.handBack > 0) this.toast(WORDS.checkoutRefundDone(sh(o.handBack)), 'ok');
     if (this.printMode().off) return;
@@ -2365,14 +2677,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     }
   }
 
-  /** "פתיחת מגירה": on every payment that moves cash, when the till parameter and the user's right say so (the Android drawer, without its audit yet). */
+  /**
+   * "פתיחת מגירה" after a payment that moved cash (Android CheckoutViewModel.drawerAfterCash): through the drawer service only
+   * — its rules, its audit, "לפתוח מגירה?" (`cashDrawer` "בתשלום מזומן — לשאול"), and on a device away from the drawer where
+   * the money goes (drawer-away §5.3). The cash is what the cash legs took.
+   */
   private kickDrawer(doc: DocDraft) {
-    if (!legsOf(doc).some((l) => l.method === 'cash')) return;
-    const v = String(this.svc.cloud.parameters().cashDrawer ?? '').trim().toLowerCase();
-    const mode = v === '' || v === 'כבוי' || v === 'off' || v === 'false' ? 'off' : 'on';
-    if (mode === 'off') return;
-    if (!this.cashier || stateOf(this.cashier, PERM.DRAWER_ON_CASH_SALE) !== 'allow') return;
-    void this.svc.openDrawer().catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
+    const cash = legsOf(doc)
+      .filter((l) => l.method === 'cash')
+      .reduce((sum, l) => sum + l.amountAgorot, 0);
+    if (cash <= 0) return;
+    void Promise.resolve(this.drawer.afterCashSale({ id: doc.id, documentType: doc.documentType, number: doc.number }, cash)).catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
   }
 
   private printMode(): { off: boolean; ask: boolean } {
@@ -2644,15 +2959,39 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   private xFigures(shiftId: string) {
     const shift = this.svc.ledger.shift(shiftId)!;
-    return { shift, ...buildXTill(this.svc.ledger.docsOfShift(shiftId).map(xDocOf), shift.opening_cash, this.svc.vatRate()) };
+    const x = buildXTill(this.svc.ledger.docsOfShift(shiftId).map(xDocOf), shift.opening_cash, this.svc.vatRate());
+    // "מגירת מזומן": the shift's movements and wallets move the expected drawer (spec §8, drawer-away §5.6).
+    return { shift, ...x, till: this.withDrawer(x.till, shiftId) };
+  }
+
+  /** The X's `till` with the shift's Cash In / Out / deposits and wallets (only when not zero), as the close freezes them. */
+  private withDrawer(till: ReturnType<typeof buildXTill>['till'], shiftId: string) {
+    const t: { movements: CashMovementTotals; wallets: WalletTotals } = this.drawer.service.shiftTotals(shiftId);
+    return tillWithDrawer(till, t.movements, t.wallets);
+  }
+
+  /** The open shift's expected drawer now (spec §8), with its movements and wallets; null with no shift. */
+  private expectedNow(): number | null {
+    const shift = this.svc.ledger.currentShift();
+    if (!shift) return null;
+    return ofShekels(this.xFigures(shift.id).till.expectedCash);
   }
 
   /** The shift closed with the counted cash: X frozen into the close and printed, the documents flushed (no gate: the callers' own). */
   private closeNow(user: RosterUser, counted: number) {
-    const closed = this.svc.ledger.closeShift({ closedByName: displayName(user), closedByUserId: user.id, vatRate: this.svc.vatRate(), countedCashAgorot: counted, now: new Date(this.nowFn()) });
+    const closed = this.svc.ledger.closeShift({
+      closedByName: displayName(user),
+      closedByUserId: user.id,
+      vatRate: this.svc.vatRate(),
+      countedCashAgorot: counted,
+      now: new Date(this.nowFn()),
+      tillExtra: (till, shiftId) => this.withDrawer(till, shiftId),
+    });
     if (closed.kind === 'pending') return refuse('checkout_busy', WORDS.pendingBlocksClose(closed.count));
     if (closed.kind === 'none') return refuse('shift_closed');
     const fig = this.xFigures(closed.shift.id);
+    // "מגירת מזומן": the close's count as a count movement (spec §9) — counted, expected, variance, who.
+    this.drawer.service.recordCount(counted, this.drawer.service.settings().blindCount, null, { expectedAgorot: ofShekels(fig.till.expectedCash), shiftId: closed.shift.id });
     // The internal shift of an independent till has no paper of its own: its Z is the paper.
     if (!this.shiftsHidden()) {
       this.svc.printX({
@@ -2702,6 +3041,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       vatAgorot: a(t.vatTotal ?? 0),
       tipsAgorot: a(t.totalTips),
       itemsCount: t.itemsCount,
+      ...(t.cashIn ? { cashInAgorot: a(t.cashIn) } : {}),
+      ...(t.cashOut ? { cashOutAgorot: a(t.cashOut) } : {}),
+      ...(t.deposits ? { depositsAgorot: a(t.deposits) } : {}),
+      ...(t.walletIn ? { walletInAgorot: a(t.walletIn) } : {}),
+      ...(t.walletDeposits ? { walletDepositsAgorot: a(t.walletDeposits) } : {}),
     };
   }
 
@@ -2779,6 +3123,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         closedAt: null,
         till: fig.till,
         countedCash: null,
+        // "ספירה עיוורת": the interim X does not state the expected cash.
+        blindCount: this.drawer.service.settings().blindCount,
       });
       return { ...this.xReportOf(fig.till, shift.sequence_number), printed: true };
     });
@@ -2941,8 +3287,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         }
         if (cancelled.length > 0) this.recordEvent(TILL_EVENT_AUTO_CLOSE_HELD_CANCELLED, null, cancelled.reduce((s, h) => s + h.totalAgorot, 0), autoCloseHeldCancelledDetails(cancelled, at), open.id);
       }
-      // The close counts the expected cash (unattended by the till's own clock), the X frozen into it.
-      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs) });
+      // The close counts the expected cash (unattended by the till's own clock), the X frozen into it — with the drawer's
+      // movements and wallets, as every close of this till.
+      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs), tillExtra: (till, shiftId) => this.withDrawer(till, shiftId) });
       if (closed.kind !== 'closed') return null;
       this.autoPaymentWait = null;
       const record: AutoCloseRecord = {
@@ -2996,8 +3343,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const r = await wm.returnToKiosk('manual', by.name, by.id);
       if (r) return refuse('mode_switch_busy', r.text, { reason: r.wire });
       // The employee's session ends with the till mode (Android: session.signOut).
-      this.cashier = null;
-      this.locked = true;
+      this.signOutNow();
       this.cart = [];
       return undefined;
     };
@@ -3178,7 +3524,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         paidAgorot: c.phase === 'done' ? c.totalAgorot : paid,
         dueAgorot: c.phase === 'idle' || c.phase === 'done' ? 0 : dueOf(c.totalAgorot, approved),
         changeAgorot: c.changeAgorot,
-        legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status })),
+        legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status, ...(l.credit ? { credit: l.credit } : {}) })),
         documentRef: c.documentRef,
         documentId: c.phase === 'done' ? c.docId : null,
         tenderedAgorot: c.phase === 'done' ? c.tenderedAgorot : handedTotal(approved),
@@ -3221,6 +3567,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       dialog,
       menuHidden: parseHiddenMenu(params[HIDDEN_MENU_PARAM]),
       tileText: tileTextOf(params),
+      drawer: this.drawer.state(),
+      users: this.sessions.state(),
+      owed: this.cash.state(),
       shopX: {
         offered: this.shopXHere(),
         report: this.shopXDoc?.doc ?? null,
@@ -3274,6 +3623,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       frozen: { lines: carrier.lines, tracked: carrier.tracked, promotions: carrier.promotions ?? [], totals: carrier.totals },
     };
   }
+}
+
+/** A sale's tenders as the document keeps them: a cash credit's leg with its redemption. */
+function docLegs(legs: readonly TenderLeg[]) {
+  return legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, ...(l.method === 'cash_credit' && l.credit ? { cashCredit: l.credit } : {}) }));
+}
+
+/** The cash credits among the tenders: "זיכוי מזומן C-K7Q3MX" on the receipt. */
+function creditLegsOf(legs: readonly TenderLeg[]) {
+  return legs.flatMap((l) => (l.method === 'cash_credit' && l.credit ? [{ redemptionId: l.credit.redemptionId, code: l.credit.code, amountAgorot: l.amountAgorot }] : []));
 }
 
 export { quickNotes, permLabel };

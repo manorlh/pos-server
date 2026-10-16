@@ -87,7 +87,7 @@ export interface PosUser {
    * approval | deny) — absent from an older server (the legacy `role` answers then).
    */
   permissions?: Record<string, string> | null;
-  /** The limits that apply (code → {maxAmount, maxPercent}): an "allow" above them asks a manager (core/till/permissions.ts). */
+  /** The limits that apply (code → {maxAmount, maxPercent}): an "allow" above them asks a manager (core/till/permissions.ts; a drawer cash out above a supervisor's ₪200 too). */
   limits?: Record<string, Record<string, number>> | null;
   tillRoleKey?: string | null;
   tillRoleName?: string | null;
@@ -98,8 +98,12 @@ export interface PosUser {
   deniedUi?: string | null;
 }
 
-/** The roster's shape kept here; a copy from before it (no shop, no permissions, no limits) is pulled again in full. */
-const POS_USERS_SHAPE = '3';
+/**
+ * The roster's shape kept here; a copy from before it is pulled again in full. '4': shop, permissions, the role's limits
+ * and "כשאין הרשאה" (`deniedUi`) — one shape for the whole Windows till ('3' was written by two separate builds, one
+ * without `deniedUi`, so no '3' copy is trusted).
+ */
+const POS_USERS_SHAPE = '4';
 
 /** A secret store (Electron safeStorage) for the machine token; plain in Node tools. */
 export interface SecretBox {

@@ -27,19 +27,22 @@ import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
 import { BasketDiscountSheet, HeldSheet, NoticeDialog, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
 import { CheckoutScreen } from './screens/CheckoutScreen';
+import { DrawerScreen, type DrawerLog, type WalletRow } from './screens/DrawerScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
 import { LockScreen } from './screens/LockScreen';
 import { MenuScreen } from './screens/MenuScreen';
 import { SellScreen } from './screens/SellScreen';
 import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
+import { UsersScreen } from './screens/UsersScreen';
+import { OwedScreen } from './screens/OwedScreen';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
 type Sheet = { kind: 'discount' } | { kind: 'oth'; lineId: string | null } | { kind: 'receipt' } | { kind: 'held' } | { kind: 'heldClose'; retry: (keepHeld: boolean) => void };
@@ -202,6 +205,13 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             returnCustomer: (c) => void run('checkout.returnCustomer', c),
             exchange: () => void run('checkout.exchange', {}),
             payout: (method) => void run('checkout.payout', { method }),
+            // "זיכוי מזומן": the real engine's (the demo has no cloud to redeem with).
+            ...(host.demo
+              ? {}
+              : {
+                  credit: (code: string) => void run('checkout.credit', { code }),
+                  removeCredit: (redemptionId: string) => void run('checkout.removeCredit', { redemptionId }),
+                }),
           }}
         />
       );
@@ -237,11 +247,59 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               setSheet({ kind: 'held' });
               return;
             }
-            setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : 'caps');
+            setView(to);
           }}
           signOut={() => void run('session.logout', {})}
           switchTo={() => void run('mode.switch', { to: 'kiosk' })}
           back={() => setView('sell')}
+        />
+      );
+    }
+    if ((view === 'drawer' || view === 'drawerOpen') && s.drawer) {
+      return (
+        <DrawerScreen
+          drawer={s.drawer}
+          initial={view === 'drawerOpen' ? 'reason' : 'menu'}
+          actions={{
+            open: (reason, note) => run('drawer.open', { reason, note }),
+            openRemote: (machineId, reason, note) => run('drawer.openRemote', { machineId, reason, note }),
+            movement: (type, amountAgorot, reason, note, source) => run('drawer.movement', { type, amountAgorot, reason, note, source }),
+            count: () => run('drawer.count', {}),
+            countSave: (countedAgorot) => run('drawer.countSave', { countedAgorot }),
+            countDone: () => run('drawer.countDone', {}),
+            wallets: async () => (await run('drawer.wallets', {})) as { wallets: WalletRow[]; offline: boolean } | undefined,
+            deposit: (employeeId, countedAgorot) => run('drawer.walletDeposit', { employeeId, countedAgorot }),
+            log: async () => (await run('drawer.log', {})) as DrawerLog | undefined,
+            back: () => setView('menu'),
+          }}
+        />
+      );
+    }
+    if (view === 'owed') {
+      return (
+        <OwedScreen
+          owed={s.owed}
+          actions={{
+            refresh: () => void run('owed.refresh', {}),
+            pay: (id) => void run('owed.pay', { id }),
+            back: () => setView('menu'),
+          }}
+        />
+      );
+    }
+    if (view === 'users') {
+      return (
+        <UsersScreen
+          users={s.users}
+          actions={{
+            open: () => void run('users.open', {}),
+            refresh: () => void run('users.refresh', {}),
+            release: (sessionId) => void run('users.release', { sessionId }),
+            close: () => {
+              void run('users.close', {});
+              setView('menu');
+            },
+          }}
         />
       );
     }
@@ -339,7 +397,11 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               {T.caps}
             </button>
           ) : (
-            <button type="button" className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' || view === 'shopx' ? ' t-nav-on' : ''}`} onClick={() => setView('menu')}>
+            <button
+              type="button"
+              className={`t-nav-btn${view !== 'sell' && view !== 'shift' ? ' t-nav-on' : ''}`}
+              onClick={() => setView('menu')}
+            >
               {T.menu}
             </button>
           )}
@@ -378,6 +440,26 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               {s.mode.switchLabel ?? 'חזרה לקיוסק'}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {s.owed && s.owed.items.length > 0 && !s.session.locked && view !== 'owed' && s.checkout.phase === 'idle' ? (
+        // "עודף חייב ללקוח": urgent on the till (Android's alerts list) — the way to "שולם ללקוח".
+        <div className="t-notice" role="status">
+          <span className="t-notice-text">
+            עודף חייב ללקוח · {s.owed.items.length}
+          </span>
+          <button type="button" className="t-pill" onClick={() => setView('owed')}>
+            שולם ללקוח
+          </button>
+        </div>
+      ) : null}
+      {s.users?.notice ? (
+        // "עובד מחובר בקופה אחת בלבד": signed in elsewhere too, signing out at the end of the action, signed out (exclusive login v2).
+        <div className="t-notice" role="status">
+          <span className="t-notice-text">{s.users.notice}</span>
+          <button type="button" className="t-pill" onClick={() => void run('session.dismissNotice', {})}>
+            {T.close}
+          </button>
         </div>
       ) : null}
       {status === 'offline' ? (

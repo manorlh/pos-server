@@ -76,7 +76,7 @@ import { openDb, type Db } from './db/sqlite';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
-import { Outbox, type OutboxRow } from './sync/outbox';
+import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
@@ -427,10 +427,33 @@ export class KioskService extends EventEmitter {
     return this.cloud.credentials()?.machineId ?? null;
   }
 
-  /** A role module's block on every heartbeat (null removes it). */
+  /** A role module's block on every heartbeat (null removes it). `capabilities` is merged across the modules that say them. */
   setHeartbeatPart(key: string, part: (() => unknown) | null): void {
+    if (key === 'capabilities') {
+      this.setCapabilities('heartbeatPart', part ? () => (Array.isArray(part()) ? (part() as unknown[]).filter((w): w is string => typeof w === 'string') : []) : null);
+      return;
+    }
     if (part) this.heartbeatParts.set(key, part);
     else this.heartbeatParts.delete(key);
+  }
+
+  private readonly capabilityOwners = new Map<string, () => string[]>();
+
+  /**
+   * A module's words in the heartbeat's `capabilities` (the cash host's device logs, the till's `document_relay_v1` —
+   * main/till/remoteDrawer.ts): the union of every owner's; none at all — no key (a heartbeat as before).
+   */
+  setCapabilities(owner: string, words: (() => string[]) | null): void {
+    if (words) this.capabilityOwners.set(owner, words);
+    else this.capabilityOwners.delete(owner);
+    if (this.capabilityOwners.size === 0) {
+      this.heartbeatParts.delete('capabilities');
+      return;
+    }
+    this.heartbeatParts.set('capabilities', () => {
+      const all = [...new Set([...this.capabilityOwners.values()].flatMap((f) => f()))];
+      return all.length > 0 ? all : undefined;
+    });
   }
 
   /** The cloud answered a heartbeat lately (90 s). */
@@ -1212,7 +1235,17 @@ export class KioskService extends EventEmitter {
     if (reply.body.promotions?.changed) await within(this.sync.pullPromotions(), PROMOTIONS_PULL_TIMEOUT_MS);
   }
 
+  /** Side rows a module sends itself (the till's drawer audit and cash movements, main/till/drawerService.ts). */
+  private readonly sideRequesters = new Map<OutboxKind, (row: OutboxRow) => { path: string; body: unknown } | null>();
+
+  /** A module's own side kind: its request for each row (null drops the row). */
+  registerSideKind(kind: OutboxKind, request: (row: OutboxRow) => { path: string; body: unknown } | null): void {
+    this.sideRequesters.set(kind, request);
+  }
+
   private sideRequest(row: OutboxRow): { path: string; body: unknown } | null {
+    const own = this.sideRequesters.get(row.kind);
+    if (own) return own(row);
     if (row.kind === 'transmission') {
       const t = this.kv.getJson<Record<string, unknown>>(`transmission:${row.ref_id}`);
       return t ? { path: 'transmissions', body: t } : null;
@@ -2873,6 +2906,11 @@ export class KioskService extends EventEmitter {
     await this.transport.send(this.printerResolution().target, DRAWER_KICK);
   }
 
+  /** Raw ESC/POS bytes to the receipt printer now (a document another till sent to print here, main/till/remoteDrawer.ts). */
+  async sendToReceiptPrinter(bytes: Uint8Array): Promise<void> {
+    await this.transport.send(this.printerResolution().target, bytes);
+  }
+
   /* ------------------------------------------------------------- printing */
 
   receiptLines(doc: DocDraft): ReceiptLine[] {
@@ -2959,7 +2997,14 @@ export class KioskService extends EventEmitter {
         // "זיכוי מזומן C-K7Q3MX" among the payments (§11.15א).
         creditLegs: (doc.creditLegs ?? []).map((l) => ({ code: l.code, amountAgorot: l.amountAgorot })),
         // A till sale: every tender, the cash handed over and the change.
-        ...(doc.payments && doc.payments.length > 0 ? { tenders: doc.payments, tenderedAgorot: doc.tenderedAgorot ?? null, changeAgorot: doc.changeAgorot ?? null } : {}),
+        // (A cash credit's leg is "זיכוי מזומן" above, never a tender here.)
+        ...(doc.payments && doc.payments.length > 0
+          ? {
+              tenders: doc.payments.filter((l): l is { method: 'cash' | 'card' | 'exchange'; amountAgorot: number } => l.method !== 'cash_credit'),
+              tenderedAgorot: doc.tenderedAgorot ?? null,
+              changeAgorot: doc.changeAgorot ?? null,
+            }
+          : {}),
         // The till's discounts by hand (OTH lines print at ₪0 on their own), a credit note's original and customer.
         ...(tillManualDiscount(doc) > 0 ? { manualDiscountAgorot: tillManualDiscount(doc) } : {}),
         ...(doc.refundOfTransactionId ? { refundOfNumber: this.docNumberOf(doc.refundOfTransactionId) } : {}),
@@ -3141,7 +3186,7 @@ export class KioskService extends EventEmitter {
     return this.printQueue.enqueue('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null));
   }
 
-  printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash'> & { refId: string }): string {
+  printX(i: Pick<XInput, 'cashierName' | 'shiftNumber' | 'businessDate' | 'openedAt' | 'closedAt' | 'till' | 'countedCash' | 'blindCount'> & { refId: string }): string {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
     return this.printQueue.enqueue(
@@ -3162,6 +3207,7 @@ export class KioskService extends EventEmitter {
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         till: i.till,
         countedCash: i.countedCash,
+        ...(i.blindCount ? { blindCount: true } : {}),
       }),
     );
   }

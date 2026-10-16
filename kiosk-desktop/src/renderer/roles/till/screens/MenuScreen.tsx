@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held' | 'drawer' | 'drawerOpen' | 'users' | 'owed';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -23,6 +23,11 @@ interface Row {
   shiftRow?: boolean;
   /** "דוח X סניפי": only where the till's parameters put it (`shopXTills`). */
   onlyShopX?: boolean;
+  /**
+   * Shown only when the engine says so (the drawer's rows: its mode, the role — Android's `offered`); an engine that does not
+   * say (the demo) shows the row as "בקרוב".
+   */
+  when?: (s: TillState) => boolean | undefined;
 }
 
 const GROUPS: Array<{ title: string; rows: Row[] }> = [
@@ -32,8 +37,22 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
       { key: 'shift', label: 'משמרת (דו״ח X)', to: 'shift', shiftRow: true },
       { key: 'shift_close', label: 'סגירת משמרת', to: 'shift', perm: 'SHIFT_CLOSE', shiftRow: true },
       { key: 'till_z', label: 'הפק Z', to: 'shift', perm: 'Z', onlyTillZ: true },
-      { key: 'open_cash_drawer', label: 'פתיחת מגירה' },
-      { key: 'cash_menu', label: 'מזומן במגירה', sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות' },
+      { key: 'open_cash_drawer', label: 'פתיחת מגירה', to: 'drawerOpen', when: (s) => s.drawer?.offered.open },
+      // "פתיחת מגירה ב<קופה>" (bill-print-other-till §9ג): a till with no drawer of its own opens another till's.
+      {
+        label: 'פתיחת מגירה בקופה אחרת',
+        to: 'drawer',
+        when: (s) => s.drawer?.offered.remote ?? false,
+      },
+      {
+        key: 'cash_menu',
+        label: 'מזומן במגירה',
+        sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות',
+        to: 'drawer',
+        when: (s) => (s.drawer ? Object.entries(s.drawer.offered).some(([k, v]) => k !== 'open' && k !== 'remote' && v) : undefined),
+      },
+      // "עודף חייב ללקוח" (cash-paylink §11.8): only while the cloud routes such debts to this till.
+      { label: 'עודף חייב ללקוח', to: 'owed', when: (s) => (s.owed?.items.length ?? 0) > 0 },
       { key: 'refund', label: 'זיכוי', to: 'refund', perm: 'REFUND' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },
@@ -58,6 +77,8 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
     // "הגדרות" hidden stays reachable: the manager's corner → "ניהול הקיוסק" → the technician (the Android safety rule).
     rows: [
       { key: 'screen_edit', label: 'עריכת מסך' },
+      // "עובדים מחוברים" (exclusive-login-v2 §8א): where the rule is on; a manager's code opens it for anyone else.
+      { key: 'signed_in_users', label: 'עובדים מחוברים', to: 'users', when: (s) => (s.users ? s.users.offered : undefined) },
       { key: 'settings', label: 'הגדרות' },
       { key: 'diagnostics', label: 'אבחון' },
       { key: 'support', label: 'תמיכה מרחוק' },
@@ -88,9 +109,10 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
           <ul className="t-menu">
             {g.rows
               .filter((r) => (!r.perm || !denied.has(r.perm)) && (!r.onlyTillZ || tillZ) && (!r.onlyShopX || state.shopX?.offered === true) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
+              .filter((r) => !r.when || r.when(state) !== false)
               .map((r) => (
                 <li key={r.label}>
-                  {r.to ? (
+                  {r.to && (!r.when || r.when(state) === true) ? (
                     <button type="button" className="t-menu-row" onClick={() => go(r.to!)}>
                       <span>{r.label}</span>
                     </button>

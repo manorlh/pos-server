@@ -116,6 +116,29 @@ export const TILL_OPS = [
   'held.cancel',
   // "הבנתי" on the notice the shift opens with (the automatic close of the one before).
   'notice.ack',
+  // "מגירת מזומן" (main/till/tillDrawer.ts): "פתח מגירה" with its reason, Cash In / Out / Deposit, a count, "הפקדת מזומן
+  // מעובד", the shift's log and movements. Every opening goes through the drawer service's rules (a manager when they ask).
+  'drawer.open',
+  'drawer.openRemote',
+  'drawer.movement',
+  'drawer.count',
+  'drawer.countSave',
+  'drawer.countDone',
+  'drawer.wallets',
+  'drawer.walletDeposit',
+  'drawer.log',
+  // "עובד מחובר בקופה אחת בלבד" (main/till/userSessions.ts): "עובדים מחוברים" — the shop's signed-in employees, a manager's
+  // release from here; and the banner about this till's own sign-in, dismissed.
+  'users.open',
+  'users.refresh',
+  'users.release',
+  'users.close',
+  'session.dismissNotice',
+  // The cash stations' side (main/till/tillCash.ts): "עודף חייב ללקוח" and "שולם ללקוח"; "זיכוי מזומן" (`CC:<code>`) at the payment.
+  'owed.refresh',
+  'owed.pay',
+  'checkout.credit',
+  'checkout.removeCredit',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -159,6 +182,20 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'held.resume',
   'held.cancel',
   'notice.ack',
+  'drawer.open',
+  'drawer.openRemote',
+  'drawer.movement',
+  'drawer.count',
+  'drawer.countSave',
+  'drawer.countDone',
+  'drawer.walletDeposit',
+  'users.open',
+  'users.release',
+  'users.close',
+  'session.dismissNotice',
+  'owed.pay',
+  'checkout.credit',
+  'checkout.removeCredit',
 ]);
 
 export interface OpArgs {
@@ -225,6 +262,28 @@ export interface OpArgs {
   'checkout.print': { print: boolean };
   'checkout.recheckCard': Record<string, never>;
   'checkout.markNotApproved': Record<string, never>;
+  /** A reason code (core/till/drawer.ts DRAWER_REASONS, not a movement's), and its note ("אחר"). */
+  'drawer.open': { reason?: string | null; note?: string | null };
+  /** "פתיחת מגירה ב<קופה>" (bill-print-other-till §9ג): the host's machine id (`drawer.hosts`), and the reason as for "פתח מגירה". */
+  'drawer.openRemote': { machineId: string; reason?: string | null; note?: string | null };
+  'drawer.movement': { type: 'CASH_IN' | 'CASH_OUT' | 'DEPOSIT'; amountAgorot: number; reason?: string | null; note?: string | null; source?: string | null };
+  'drawer.count': Record<string, never>;
+  'drawer.countSave': { countedAgorot: number };
+  'drawer.countDone': Record<string, never>;
+  'drawer.wallets': Record<string, never>;
+  /** An employee of the list `drawer.wallets` gave last, and what was counted into the drawer. */
+  'drawer.walletDeposit': { employeeId: string; countedAgorot: number };
+  'drawer.log': Record<string, never>;
+  'users.open': Record<string, never>;
+  'users.refresh': Record<string, never>;
+  'users.release': { sessionId: string };
+  'users.close': Record<string, never>;
+  'session.dismissNotice': Record<string, never>;
+  'owed.refresh': Record<string, never>;
+  'owed.pay': { id: string };
+  /** The code as scanned (`CC:C-K7Q3MX`) or typed. */
+  'checkout.credit': { code: string };
+  'checkout.removeCredit': { redemptionId: string };
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -449,9 +508,12 @@ export interface DocumentDetail {
 export type CheckoutPhase = 'idle' | 'tender' | 'card_waiting' | 'done';
 
 export interface CheckoutLeg {
-  method: 'cash' | 'card';
+  /** `cash_credit`: "זיכוי מזומן" (a station's credit, `CC:` code) towards the goods. */
+  method: 'cash' | 'card' | 'cash_credit';
   amountAgorot: number;
   status: 'approved' | 'pending';
+  /** A cash credit's code and redemption ("הסרת הזיכוי" names it). */
+  credit?: { code: string; redemptionId: string };
 }
 
 /** A basket with returns at the payment (core/till/basket.ts). */
@@ -552,6 +614,8 @@ export interface EngineDialog {
   body: string;
   fields: DialogField[];
   actions: Array<{ id: string; label: string; primary?: boolean }>;
+  /** Unanswered until then (epoch ms) the engine answers itself ("לפתוח מגירה?" — `cashDrawerAskTimeoutSec`): a countdown. */
+  expiresAt?: number;
 }
 
 export interface ModeState {
@@ -593,6 +657,45 @@ export interface TillState {
    * held sales cancelled) — until the cashier says "הבנתי" (`session.activity` with `ack`). Absent: nothing to tell.
    */
   notice?: { title: string; text: string } | null;
+  /** "מגירת מזומן" (main/till/tillDrawer.ts): the menu's drawer rows, the reasons, a count in progress. */
+  drawer?: DrawerState;
+  /** "עובד מחובר בקופה אחת בלבד" (main/till/userSessions.ts): the banner, and "עובדים מחוברים". */
+  users?: UsersState;
+  /** "עודף חייב ללקוח" / "זיכוי מוחזק" the cloud routes to this till (main/till/tillCash.ts), "שולם ללקוח" on each. */
+  owed?: { items: Array<{ id: string; line: string; amountAgorot: number }> };
+}
+
+export interface SignedInSession {
+  id: string;
+  posUserId: string;
+  posUserName: string | null;
+  machineName: string | null;
+  posNumber: string | null;
+  startedAt: string | null;
+  lastSeenAt: string | null;
+  silentSince: string | null;
+  openTables: number;
+  here: boolean;
+}
+
+export interface UsersState {
+  notice: string | null;
+  offered: boolean;
+  list: { sessions: SignedInSession[]; at: number } | null;
+  busy: boolean;
+  error: string | null;
+}
+
+export interface DrawerState {
+  offered: { open: boolean; cashIn: boolean; cashOut: boolean; deposit: boolean; count: boolean; walletDeposit: boolean; log: boolean; remote: boolean };
+  /** "פתיחת מגירה ב<קופה>": the tills whose drawer may be opened from here. */
+  hosts: Array<{ id: string; label: string }>;
+  requireReason: boolean;
+  requireNoteForOther: boolean;
+  movementsEnabled: boolean;
+  blindCount: boolean;
+  reasons: Array<{ code: string; label: string }>;
+  count: { blind: boolean; expectedAgorot: number | null; result: { countedAgorot: number; expectedAgorot: number | null; varianceAgorot: number | null } | null } | null;
 }
 
 export interface ShopXState {
@@ -626,6 +729,12 @@ export interface XReport {
   vatAgorot?: number;
   tipsAgorot?: number;
   itemsCount?: number;
+  /** "מגירת מזומן": the shift's Cash In / Cash Out / deposits, and the wallets (drawer-away §5.6) — in the expected cash. */
+  cashInAgorot?: number;
+  cashOutAgorot?: number;
+  depositsAgorot?: number;
+  walletInAgorot?: number;
+  walletDepositsAgorot?: number;
   /** The paper went to the printer. */
   printed?: boolean;
 }

@@ -695,9 +695,17 @@ export interface XInput {
     vatTotal?: number;
     transactionsCount: number;
     itemsCount: number;
+    /** "מגירת מזומן" (core/till/drawer.ts tillWithDrawer): only when not zero, already in expectedCash. */
+    cashIn?: number;
+    cashOut?: number;
+    deposits?: number;
+    walletIn?: number;
+    walletDeposits?: number;
   };
   /** Counted cash on the close (shekels), null on an interim X or an uncounted close. */
   countedCash: number | null;
+  /** "ספירה עיוורת" (`cashDrawer.blindCount`): the interim X does not state the expected cash (Android DrawerCount.InterimBlind). */
+  blindCount?: boolean;
 }
 
 /**
@@ -740,7 +748,13 @@ export function xDoc(x: XInput): ZDoc {
   r('מסמכים', String(t.transactionsCount));
   d();
   r('קופה פותחת', money(t.openingCash));
-  r('מזומן צפוי', money(t.expectedCash), true);
+  // The drawer's movements and the employees' cash (drawer spec §8, drawer-away §5.6): each only when it moved something.
+  if (t.cashIn) r('הכנסות', money(t.cashIn));
+  if (t.cashOut) r('הוצאות', neg(t.cashOut));
+  if (t.deposits) r('הפקדות', neg(t.deposits));
+  if (t.walletIn) r('הכסף אצל עובדים', neg(t.walletIn));
+  if (t.walletDeposits) r('הפקדות מעובדים', money(t.walletDeposits));
+  if (x.closedAt || !x.blindCount) r('מזומן צפוי', money(t.expectedCash), true);
   if (x.closedAt) {
     if (x.countedCash === null) r('מזומן שנספר', 'לא נספר');
     else {
