@@ -241,6 +241,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/card-brands', labelKey: 'cardBrands', icon: CreditCard },
       // How often each promotion applied and what it took off, by shop, till and day.
       { href: '/dashboard/promotions-report', labelKey: 'promotionsReport', icon: Percent },
+      // "מעקב הנחות קבועות": every use of a preset discount — by preset, person and cashier.
+      { href: '/dashboard/preset-discounts-report', labelKey: 'presetDiscountsReport', icon: BadgePercent },
       // Modifiers chosen, meals and their components, upsells taken.
       { href: '/dashboard/menu-reports', labelKey: 'menuReports', icon: ClipboardList },
       { href: '/dashboard/hourly-sales', labelKey: 'hourlySales', icon: Grid3x3 },
@@ -390,6 +392,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard/payment-methods',
         labelKey: 'paymentMethods',
         icon: CreditCard,
+        gate: 'settingsWrite',
+      },
+      // "הנחות קבועות": the preset basket discounts (one tap on the till) per company / shop / point of sale / till.
+      {
+        href: '/dashboard/preset-discounts',
+        labelKey: 'presetDiscounts',
+        icon: BadgePercent,
         gate: 'settingsWrite',
       },
       // Kitchen / bar ticket printers and what prints where — a shop's managers.

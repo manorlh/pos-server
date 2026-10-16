@@ -18,7 +18,7 @@ META_MAX_CHARS = 16 * 1024
 #: What a document's basket discount can be (`basketDiscountKind`): the club button
 #: ("הנחת מועדון", till parameter `clubButtonEnabled`), the cashier's own, or a table's
 #: policy (app/services/table_policies.py): "הנחת שולחן", a staff meal, a managers' meal.
-BASKET_DISCOUNT_KINDS = ("club", "manual", "table", "staff", "managers")
+BASKET_DISCOUNT_KINDS = ("club", "manual", "table", "staff", "managers", "preset")
 
 #: A meal at a staff or managers' table (`mealKind`); anything else is no meal.
 MEAL_KINDS = ("staff", "managers")
@@ -396,6 +396,14 @@ class TransactionIn(BaseModel):
     basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
     basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent", ge=0, le=100)
     basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: "הנחות קבועות" (P:/specs/preset-discounts.md §5): with `basketDiscountKind` "preset", the
+    #: preset's id and name, and whom it was for. Optional; stored only on a preset's discount, free
+    #: text cut (app/services/preset_discounts.clean_document_fields), never a reason to refuse.
+    preset_discount_id: Optional[str] = Field(None, alias="presetDiscountId")
+    preset_discount_name: Optional[str] = Field(None, alias="presetDiscountName")
+    preset_discount_for: Optional[str] = Field(None, alias="presetDiscountFor")
+    preset_discount_for_kind: Optional[str] = Field(None, alias="presetDiscountForKind")
+    preset_discount_for_ref: Optional[str] = Field(None, alias="presetDiscountForRef")
     #: A meal at a staff or managers' table: `staff` / `managers`, whose meal it was (the
     #: employee the till picked) and why (a managers' table's reason). Optional; free text
     #: is cut to the columns, an unknown kind is no meal — never a reason to refuse.
@@ -704,6 +712,10 @@ class TransactionOut(BaseModel):
     basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
     basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent")
     basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    preset_discount_id: Optional[str] = Field(None, alias="presetDiscountId")
+    preset_discount_name: Optional[str] = Field(None, alias="presetDiscountName")
+    preset_discount_for: Optional[str] = Field(None, alias="presetDiscountFor")
+    preset_discount_for_kind: Optional[str] = Field(None, alias="presetDiscountForKind")
     #: A staff / managers' table meal: its kind, whose meal, why.
     meal_kind: Optional[str] = Field(None, alias="mealKind")
     meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")

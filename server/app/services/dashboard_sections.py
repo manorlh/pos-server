@@ -61,6 +61,8 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/transmissions", "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
             "/dashboard/cashier-sales", "/dashboard/area-sales", "/dashboard/tips",
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
+            # "מעקב הנחות קבועות" (P:/specs/preset-discounts.md §6).
+            "/dashboard/preset-discounts-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
             "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports", "/dashboard/targets",
@@ -244,7 +246,11 @@ SECTIONS: Tuple[Section, ...] = (
         "till_settings", "הגדרות קופות",
         "הגדרות הקופות לפי רמה (ארגון, חברה, סניף, עמדה, קופה): אמצעי תשלום, חריגים, מצב הדרכה "
         "ופרמטרי מגירת המזומן.",
-        ("/dashboard/payment-methods", "/dashboard/exception-settings", "/dashboard/customer-display"),
+        (
+            "/dashboard/payment-methods", "/dashboard/exception-settings", "/dashboard/customer-display",
+            # "הנחות קבועות" (P:/specs/preset-discounts.md §2).
+            "/dashboard/preset-discounts",
+        ),
     ),
     Section(
         "pos_users", "קופאים (POS)", "עובדי הקופה, קודי PIN, מי מחובר איפה ותפקידים והרשאות בקופה.",
@@ -646,6 +652,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/reports/side-by-side", S("reports", "cockpit", level=VIEW)),
     (_GET, "/reports/event-options", S("reports", "cockpit", "live_event", level=VIEW)),
     (_GET, "/reports/discounts", S("reports", "promotions")),
+    # "מעקב הנחות קבועות" (P:/specs/preset-discounts.md §6): beside the discounts report.
+    (_GET, "/reports/preset-discounts", S("reports", "promotions")),
     (_GET, "/reports/promotions", S("reports", "promotions")),
     (_GET, "/reports/upsells", S("reports", "products")),
     (_GET, "/reports/menu-sales", S("reports", "products")),

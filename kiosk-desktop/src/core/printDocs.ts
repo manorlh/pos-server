@@ -119,6 +119,11 @@ export interface ReceiptInput {
    * gross) and "הנחה" before the payable (ReceiptRenderer). Absent / 0: no rows (as before).
    */
   manualDiscountAgorot?: number;
+  /**
+   * "הנחות קבועות": the basket discount was a preset's — its own row ("הנחת עובדים 40%  −12.00", inside
+   * [manualDiscountAgorot]; the lines' own discounts stay "הנחה") and "עבור: דנה" under it. Absent: as before.
+   */
+  presetDiscount?: { label: string; amountAgorot: number; forName: string | null } | null;
   /** A credit note: the document it credits ("זיכוי עבור מסמך #20000057"). */
   refundOfNumber?: string | null;
   /** A credit note: the customer it went to, as taken down at the till. */
@@ -261,7 +266,13 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   const manual = Math.max(0, r.manualDiscountAgorot ?? 0);
   if (manual > 0) {
     ops.push({ t: 'row', label: 'סה"כ פריטים', value: formatAgorot(r.totalAgorot + manual), style: 'body' });
-    ops.push({ t: 'row', label: 'הנחה', value: formatAgorot(-manual), style: 'body' });
+    const preset = r.presetDiscount && r.presetDiscount.amountAgorot > 0 ? r.presetDiscount : null;
+    const byHand = preset ? manual - Math.min(preset.amountAgorot, manual) : manual;
+    if (byHand > 0) ops.push({ t: 'row', label: 'הנחה', value: formatAgorot(-byHand), style: 'body' });
+    if (preset) {
+      ops.push({ t: 'row', label: preset.label, value: formatAgorot(-Math.min(preset.amountAgorot, manual)), style: 'body' });
+      if (nonBlank(preset.forName)) ops.push({ t: 'text', text: `עבור: ${preset.forName!.trim()}`, style: 'small', align: 'start' });
+    }
   }
   ops.push({ t: 'row', label: 'סה"כ פריטים לתשלום', value: formatAgorot(r.totalAgorot), style: 'body' });
   const showVat = r.documentType !== 400 && r.documentType !== -400;

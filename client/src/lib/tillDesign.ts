@@ -266,7 +266,17 @@ export const TEXT_MAX = 40;
 export interface ActionItem {
   action: ActionId;
   label: string;
+  /**
+   * "הנחות קבועות" (P:/specs/preset-discounts.md §3): on a `discount` button only — the id of a
+   * preset in the till's `presetDiscounts`; the button then applies it in one tap (an empty label =
+   * the preset's name). Absent = as before (opens the basket discount sheet).
+   */
+  presetId?: string;
 }
+
+/** `presetId` is only on this action (till_design.py PRESET_ACTION). */
+export const PRESET_ACTION: ActionId = 'discount';
+export const PRESET_ID_MAX = 64;
 
 /** A profile's bars (phase 2 §3.4): null or "base" = the base's, [] = auto, a list = this profile's. */
 export interface ProfileActionBar {
@@ -1067,8 +1077,27 @@ class MapNode extends SchemaNode {
 
 const ID = new StrNode(ID_MAX, 1);
 
+/** One bar button: `{action, label}` (+ `presetId` on `discount`, kept only when set) — till_design.py's _ActionItem. */
+class ActionItemNode extends ObjNode {
+  check(value: unknown, path: string, errors: TillDesignIssue[]): Checked {
+    if (!isDict(value) || !('presetId' in value)) return super.check(value, path, errors);
+    const { presetId: raw, ...rest } = value;
+    const before = errors.length;
+    const out = super.check(rest, path, errors);
+    if (raw === null || raw === undefined) return out;
+    const where = join(path, 'presetId');
+    if (typeof raw !== 'string' || !raw.trim() || raw.trim().length > PRESET_ID_MAX) {
+      fail(errors, where, 'invalid_type', `must be a preset discount id (at most ${PRESET_ID_MAX} characters)`);
+    } else if (rest.action !== PRESET_ACTION) {
+      fail(errors, where, 'invalid_value', 'only a discount button names a preset discount');
+    }
+    if (errors.length > before || out === INVALID) return INVALID;
+    return { ...(out as Dict), presetId: (raw as string).trim() };
+  }
+}
+
 function actionItem(actions: readonly string[]): ObjNode {
-  return new ObjNode({ action: new EnumNode(actions), label: new StrNode(ACTION_LABEL_MAX) }, { label: '' }, false);
+  return new ActionItemNode({ action: new EnumNode(actions), label: new StrNode(ACTION_LABEL_MAX) }, { label: '' }, false);
 }
 
 function actionBar(actions: readonly string[]): ListNode {
@@ -1241,10 +1270,12 @@ function checkBars(bars: unknown, prefix: string, errors: TillDesignIssue[]): vo
     const items = bars[mode];
     if (!Array.isArray(items) || items.length === 0) continue;
     const actions = items.filter(isDict).map((i) => i.action);
+    // A preset discount's button is its own button: "הנחת עובדים" beside "הנחה" is no repeat.
+    const keys = items.filter(isDict).map((i) => `${String(i.action)}|${typeof i.presetId === 'string' ? i.presetId : ''}`);
     const seen = new Set<unknown>();
-    actions.forEach((action, i) => {
-      if (seen.has(action)) errors.push({ path: `${prefix}.${mode}[${i}]`, code: 'duplicate', message: 'this button is already on the bar' });
-      seen.add(action);
+    keys.forEach((key, i) => {
+      if (seen.has(key)) errors.push({ path: `${prefix}.${mode}[${i}]`, code: 'duplicate', message: 'this button is already on the bar' });
+      seen.add(key);
     });
     const required = REQUIRED_ACTION[mode];
     if (!actions.includes(required)) {

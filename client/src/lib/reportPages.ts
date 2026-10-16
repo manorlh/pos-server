@@ -35,6 +35,8 @@ export const REPORT_PAGES: ReportPageEntry[] = [
   { route: 'hourly-sales', files: ['app/dashboard/hourly-sales/page.tsx'], reportKeys: ['hourly-sales'] },
   { route: 'tips', files: ['app/dashboard/tips/page.tsx'], reportKeys: ['tips', 'tips-distribution'] },
   { route: 'promotions-report', files: ['app/dashboard/promotions-report/page.tsx'], reportKeys: ['promotions-report'] },
+  // "מעקב הנחות קבועות" (P:/specs/preset-discounts.md §6): every use of a preset discount.
+  { route: 'preset-discounts-report', files: ['app/dashboard/preset-discounts-report/page.tsx'], reportKeys: ['preset-discounts'] },
   // Its keys are lib/menuTargetsReports.ts `MENU_REPORT_KEYS` (one per tab).
   { route: 'menu-reports', files: ['app/dashboard/menu-reports/page.tsx'], reportKeys: [] },
   { route: 'all-in-one', files: ['app/dashboard/all-in-one/page.tsx'], reportKeys: ['all-in-one'] },
@@ -165,6 +167,7 @@ export const NOT_REPORT_PAGES: PageExclusion[] = [
   { route: 'notifications', reason: "SMS templates, account and send log - messaging settings, not a report" },
   { route: 'online-ordering', reason: "settings: online ordering" },
   { route: 'payment-methods', reason: "settings: payment methods" },
+  { route: 'preset-discounts', reason: "settings: the preset basket discounts per level (their uses: preset-discounts-report)" },
   { route: 'pos-users', reason: "settings: till users" },
   { route: 'producer', reason: "a producer's list of events that opens the one event (producer/[id] exports)" },
   { route: 'products', reason: "catalog editing: products" },

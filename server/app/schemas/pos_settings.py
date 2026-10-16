@@ -279,6 +279,27 @@ class PosSettingsV1Patch(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("tip percentages must not repeat")
         return v
+    #: "הנחות קבועות" (app/services/preset_discounts.py, P:/specs/preset-discounts.md §2): the preset
+    #: basket discounts in the till's order, and which are one-tap buttons on the sell screen (ids).
+    #: The deepest layer that sets either wins as a whole; `null` in a PATCH resets the layer to
+    #: inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py); [] = none at this level.
+    preset_discounts: Optional[List[Dict[str, Any]]] = Field(None, alias="presetDiscounts")
+    preset_discount_buttons: Optional[List[str]] = Field(None, alias="presetDiscountButtons")
+
+    @field_validator("preset_discounts", mode="before")
+    @classmethod
+    def _check_preset_discounts(cls, v: Any) -> Optional[List[Dict[str, Any]]]:
+        from app.services.preset_discounts import validate_presets
+
+        return validate_presets(v)
+
+    @field_validator("preset_discount_buttons", mode="before")
+    @classmethod
+    def _check_preset_discount_buttons(cls, v: Any) -> Optional[List[str]]:
+        from app.services.preset_discounts import validate_buttons
+
+        return validate_buttons(v)
+
     #: "חזרה אוטומטית לקיוסק" (app/services/desktop_idle_return.py): R2M POS for Windows back in
     #: full screen after this many idle minutes on the desktop; 0 = never; unset = 10; `null` in
     #: a PATCH resets the layer to inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).

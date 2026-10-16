@@ -75,6 +75,19 @@ ISSUED_BEFORE_PAIRING = "issued_before_pairing"
 PAIRING_SKEW = timedelta(minutes=10)
 
 
+def _preset_discount_columns(tx) -> dict:
+    """The preset discount's columns of a sale (P:/specs/preset-discounts.md §5), from its payload."""
+    from app.services.preset_discounts import clean_document_fields
+
+    return clean_document_fields(getattr(tx, "basket_discount_kind", None), {
+        "id": getattr(tx, "preset_discount_id", None),
+        "name": getattr(tx, "preset_discount_name", None),
+        "for": getattr(tx, "preset_discount_for", None),
+        "forKind": getattr(tx, "preset_discount_for_kind", None),
+        "forRef": getattr(tx, "preset_discount_for_ref", None),
+    })
+
+
 def _promotion_uuid(value) -> Optional[uuid.UUID]:
     """A line's promotion id when it reads as one; never a reason to refuse the line."""
     if value is None:
@@ -831,6 +844,8 @@ def _serialize_tx_for_upsert(
         "basket_discount": getattr(tx, "basket_discount", None),
         "basket_discount_percent": getattr(tx, "basket_discount_percent", None),
         "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
+        # "הנחות קבועות": which preset and whom for, only on a preset's discount (preset_discounts.py).
+        **_preset_discount_columns(tx),
         # Production vouchers' ₪0 memo document (§4.3): out of the counts, as on the till — only
         # when that is safe (no total, no money leg, no tip; review 09.10), else a sale as any.
         "voucher_memo": getattr(tx, "voucher_memo", False) is True and voucher_memo_problem(tx) is None,
