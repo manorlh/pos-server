@@ -18,7 +18,7 @@ import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '
 import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
-import { OfflineTracker } from '../core/kioskHealth';
+import { OfflineTracker, terminalAlertReason } from '../core/kioskHealth';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
 import {
   CARD_FALLBACK_TEXT,
@@ -1238,9 +1238,11 @@ export class KioskService extends EventEmitter {
     if (health !== 'ok' && health !== 'unknown') alerts.push({ kind: 'printer', key: 'printer:receipt', reason: health === 'no_paper' ? 'no_paper' : health === 'offline' || health === 'unavailable' ? 'offline' : 'error' });
     const bonsFailed = today.filter((o) => o.bonStatus === 'failed').length;
     if (bonsFailed > 0) alerts.push({ kind: 'printer', key: 'printer:bon', reason: 'bon_failed', detail: { failed: bonsFailed } });
-    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does.
-    if (this.pay.monitor.state === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
-    else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
+    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does. Kept while
+    // "קיוסק — כשאין מסופון אשראי" offers the till instead (core/kioskHealth.ts terminalAlertReason).
+    const terminalReason = terminalAlertReason({ state: this.pay.monitor.state, chargeNotSent: this.pay.chargeUnreachable });
+    if (terminalReason === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
+    else if (terminalReason === 'not_configured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
     if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
     // "אין קשר לעמדת המזומן" (§11.15ג): its station silent on the LAN a minute — the cloud routes it as a cash alert.
     const cashSilent = this.cashMag.enabled() ? this.cashMag.unreachableAlert() : this.cashPay.unreachableAlert();

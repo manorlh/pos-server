@@ -30,6 +30,7 @@ import {
   type NoTerminalFallback,
 } from '../src/core/noTerminalFallback';
 import { INITIAL_FLOW, reduce, restingScreen, type KioskFlowRules } from '../src/core/kioskFlow';
+import { terminalAlertReason } from '../src/core/kioskHealth';
 import { ANDROID_NO_CARD_TEXT, androidCard, normalizeView } from '../src/renderer/bridges/android';
 import type { KioskView } from '../src/shared/bridge';
 
@@ -86,6 +87,20 @@ describe('the rule (the golden, shared with pos-android)', () => {
 
   it('an order to the till is taken while the kiosk may offer it — a terminal that came back in between never refuses it', () => {
     for (const c of golden.mayPayAtTill) expect(mayPayAtTill(c.methods, c.mode), JSON.stringify(c)).toBe(c.may);
+  });
+});
+
+/* ------------------------------------------------------------------ the managers still told */
+
+describe('the terminal alert while the till is offered (status.alerts — the cloud\'s `kiosk_terminal`)', () => {
+  it('the Android kiosk\'s reasons: not answering, none set up; nothing for an answering one or "ללא אשראי"', () => {
+    expect(terminalAlertReason({ state: 'unconfigured', chargeNotSent: false })).toBe('not_configured');
+    expect(terminalAlertReason({ state: 'not_external', chargeNotSent: false })).toBe('not_configured');
+    expect(terminalAlertReason({ state: 'unreachable', chargeNotSent: false })).toBe('unreachable');
+    // A charge that never reached it: said at once, as the Android kiosk's chargeUnreachable.
+    expect(terminalAlertReason({ state: 'ready', chargeNotSent: true })).toBe('unreachable');
+    expect(terminalAlertReason({ state: 'ready', chargeNotSent: false })).toBeNull();
+    expect(terminalAlertReason({ state: 'no_card', chargeNotSent: true })).toBeNull();
   });
 });
 

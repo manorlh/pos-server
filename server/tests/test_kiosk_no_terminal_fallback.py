@@ -271,3 +271,54 @@ def test_the_kiosk_form_is_told_it_still_pays_at_the_till(world):
     _set(world, "machine", world.kiosk.id, "block")
     assert context(world.kiosk)["kioskPaysAtTill"] is False
     assert context(world.till)["kioskPaysAtTill"] is None  # a till
+
+
+# ── The managers still told (the coordinator 16.10: a push when a kiosk has no card) ─────────
+
+NOT_SET = {"kind": "terminal", "key": "terminal", "reason": "not_configured"}
+NOT_ANSWERING = {"kind": "terminal", "key": "terminal", "reason": "unreachable", "detail": {"address": "10.0.0.5:8080"}}
+
+
+def test_the_terminal_alert_stays_an_exception_for_the_managers_while_the_till_is_offered(world):
+    """
+    The kiosk keeps reporting its terminal alert while it offers "תשלום בקופה" instead (kiosk-desktop
+    core/kioskHealth.ts terminalAlertReason, pos-android KioskAlertRules): none set up — `not_configured`,
+    not answering — `unreachable`. Both are the exception "תקלת מסוף אשראי בקיוסק" (`kiosk_terminal`), pushed
+    as "card_terminal"; the alert clears ("recovered") once the kiosk stops saying so — the card works again.
+    """
+    from app.models.kiosk_ops import KioskAlert
+    from app.services.exception_alerts import push as P
+    from app.services.exception_alerts import sources as SRC
+
+    assert TP.kiosk_no_terminal_fallback(world.db, world.kiosk) == "pay_at_till"
+
+    def sync(alerts):
+        S.kiosk_sync(world.db, world.kiosk, {"flowState": "attract", "alerts": alerts})
+        world.db.commit()
+
+    def rows():
+        return world.db.query(KioskAlert).filter(KioskAlert.kiosk_machine_id == world.kiosk.id, KioskAlert.key == "terminal").all()
+
+    def entry(row):
+        (spec,) = SRC.capture(world.db, SRC.by_name("kiosk_alert"), row)
+        return spec
+
+    sync([NOT_SET])
+    (row,) = [r for r in rows() if r.cleared_at is None]
+    assert row.reason == "not_configured" and "המסופון לא מוגדר" in row.text
+    spec = entry(row)
+    assert spec.kind == "kiosk_terminal" and P.category_of(spec) == "card_terminal"
+
+    sync([NOT_ANSWERING])
+    (row,) = [r for r in rows() if r.cleared_at is None]
+    assert row.reason == "unreachable" and "אין תקשורת למסופון האשראי" in row.text
+    spec = entry(row)
+    assert spec.kind == "kiosk_terminal" and P.category_of(spec) == "card_terminal"
+
+    # The card works again: the kiosk says nothing of its terminal — the alert is over.
+    sync([])
+    assert [r for r in rows() if r.cleared_at is None] == []
+    assert {r.clear_reason for r in rows()} == {"recovered"}
+    # The card lock's reasons are the other exception ("מסוף אשראי לא תואם").
+    assert SRC.kiosk_alert_kind("terminal", "terminal_not_configured") == "terminal_mismatch"
+    assert SRC.kiosk_alert_kind("terminal", "not_configured") == "kiosk_terminal"

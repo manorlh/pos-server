@@ -40,6 +40,20 @@ export function terminalState(config: TerminalConfigState, consecutiveFailures: 
 
 export const canCharge = (s: TerminalState) => s === 'ready';
 
+/**
+ * The terminal's alert in the kiosk's status (`status.alerts`, key `terminal`) — the Android kiosk's KioskAlertRules, the
+ * same reasons: `unreachable` — set up and not answering (its checks, or a charge that never reached it since the last
+ * answer, [chargeNotSent]); `not_configured` — none set up, or a built-in one only; null — answering, or "ללא אשראי" (no
+ * terminal by design, nothing to fix). Said whatever the kiosk takes instead — "קיוסק — כשאין מסופון אשראי" offering the
+ * till keeps the managers told (the cloud's exception kind `kiosk_terminal`) — and gone once the card works again.
+ */
+export function terminalAlertReason(f: { state: TerminalState; chargeNotSent: boolean }): 'unreachable' | 'not_configured' | null {
+  if (f.state === 'no_card') return null;
+  if (f.state === 'unreachable' || (f.state === 'ready' && f.chargeNotSent)) return 'unreachable';
+  if (f.state === 'unconfigured' || f.state === 'not_external') return 'not_configured';
+  return null;
+}
+
 export const CHECK_OK_MS = 60_000;
 export const CHECK_FAILING_MS = 20_000;
 export const CARD_QUIET_MS = 45_000;

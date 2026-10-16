@@ -737,6 +737,13 @@ describe('the rules', () => {
  */
 describe('7. no terminal: "תשלום בקופה" instead (kioskNoTerminalFallback)', () => {
   const FALLBACK_TEXT = 'האשראי לא זמין כרגע — אפשר לשלם בקופה';
+  /**
+   * The terminal's alert in the kiosk's status (`status.alerts`): kept while the till is offered instead — the cloud makes it
+   * the exception "תקלת מסוף אשראי בקיוסק" (`kiosk_terminal`, the managers' push) — and gone once the card works again.
+   */
+  const terminalAlerts = (k: ReturnType<typeof kiosk>) =>
+    ((k.svc as unknown as { kioskStatus(): { alerts: Array<Record<string, unknown>> } }).kioskStatus().alerts ?? []).filter((a) => a.kind === 'terminal');
+  const PINPAD = { address: 'https://10.0.0.5:8080/SPICy' };
   /** Where KioskApp rests with this view: it sells while "איך תרצו לשלם?" has a way to pay (kioskPayChooser's fallback). */
   const sells = (v: { pay: { methods: Parameters<typeof payMethodAsk>[0]; usable: Parameters<typeof payMethodAsk>[1] } }) => payMethodAsk(v.pay.methods, v.pay.usable, 'off').fallback !== null;
 
@@ -748,6 +755,8 @@ describe('7. no terminal: "תשלום בקופה" instead (kioskNoTerminalFallba
     const v = k.fresh();
     expect(v.pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['cash_at_till'], cardOff: FALLBACK_TEXT, tillFallback: true });
     expect(sells(v)).toBe(true);
+    // Still told: "המסופון לא מוגדר" in the status (the cloud's `kiosk_terminal`, pushed to the managers).
+    expect(terminalAlerts(k)).toEqual([{ kind: 'terminal', key: 'terminal', reason: 'not_configured' }]);
     // "איך תרצו לשלם?" is asked (a card-only kiosk's step is off: with the card off, the till must be chosen).
     expect(payMethodAsk(v.pay.methods, v.pay.usable, 'off')).toEqual({ asks: true, optional: false, fallback: 'cash_at_till' });
     // The card is still refused before anything is written.
@@ -791,6 +800,7 @@ describe('7. no terminal: "תשלום בקופה" instead (kioskNoTerminalFallba
     const v = k.fresh();
     expect(v.state.terminal).toBe('unreachable');
     expect(v.pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['card', 'cash_at_till'], cardOff: null, tillFallback: true });
+    expect(terminalAlerts(k)).toEqual([{ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: PINPAD }]);
     // Two ways to pay: "איך תרצו לשלם?" is asked (KioskApp: fallbackPayConfig), the card first.
     expect(payMethodAsk(v.pay.methods, v.pay.usable, 'required')).toEqual({ asks: true, optional: false, fallback: 'card' });
     // `block`: the card alone, as before.
@@ -798,10 +808,11 @@ describe('7. no terminal: "תשלום בקופה" instead (kioskNoTerminalFallba
     await blocked.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
     await blocked.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
     expect(blocked.fresh().pay).toMatchObject({ methods: ['card'], usable: ['card'] });
-    // The terminal answers again: the till goes.
+    // The terminal answers again: the till goes, and so does the alert.
     terminal.script.check = true;
     await k.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
     expect(k.fresh().pay.methods).toEqual(['card']);
+    expect(terminalAlerts(k)).toEqual([]);
   });
 
   it('a charge that never reached the terminal: the customer is told to pay at the till, and it is offered at once', async () => {
@@ -813,9 +824,12 @@ describe('7. no terminal: "תשלום בקופה" instead (kioskNoTerminalFallba
     expect(last).toMatchObject({ phase: 'declined', message: FALLBACK_TEXT });
     expect(k.svc.ledger.doc(k.svc.orders.get(orderId)!.transactionId!)!.status).toBe('cancelled');
     expect(k.fresh().pay).toMatchObject({ methods: ['card', 'cash_at_till'], usable: ['card', 'cash_at_till'], tillFallback: true });
-    // A check that answers: the card alone again.
+    // Told at once, before any check: "אין תקשורת למסופון האשראי".
+    expect(terminalAlerts(k)).toEqual([{ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: PINPAD }]);
+    // A check that answers: the card alone again, no alert.
     await k.svc.pay.monitorTick({ busy: false, screen: 'attract' }, true);
     expect(k.fresh().pay.methods).toEqual(['card']);
+    expect(terminalAlerts(k)).toEqual([]);
     // A card the terminal declines is the card's answer: nothing offered for it.
     terminal.script.sale.push({ answer: 'DECLINED', message: 'כרטיס נדחה', raw: null, statusCode: 3 });
     expect((await sell(k)).last).toMatchObject({ phase: 'declined', message: 'כרטיס נדחה' });

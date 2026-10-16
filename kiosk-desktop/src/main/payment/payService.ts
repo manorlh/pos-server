@@ -160,6 +160,11 @@ export class PayService {
     return this.configured && (this.monitor.state === 'unreachable' || this.chargeNotSent);
   }
 
+  /** A charge never reached the terminal and nothing has answered since (a check, or a card). */
+  get chargeUnreachable(): boolean {
+    return this.chargeNotSent;
+  }
+
   /* ------------------------------------------------------------- charging */
 
   /**
