@@ -37,6 +37,9 @@ import type { KitchenDoc } from '../../core/kitchen/doc';
 import {
   afterFailure,
   discarded as discardedJob,
+  formerHostVerdict,
+  heldForOthers,
+  HOST_MOVED,
   JITTER_MS,
   KEEP_FINISHED_MS,
   KitchenJobRefused,
@@ -69,6 +72,7 @@ import {
   lanIntake,
   lanTargetOf,
   NOT_PRINT_SERVER,
+  printsForOthers,
   routeOf,
   split,
   takesRelayedJobs,
@@ -185,6 +189,10 @@ export class KitchenService {
   private lastReported: string | null = null;
   private bonAlertsOffUntil = 0;
   private readonly lanCall: LanCall;
+  /** Jobs taken for the others before this process: held until this device knows it is still their host. */
+  private readonly awaitingRole = new Set<string>();
+  /** The settings answered since this process started (the role is known). */
+  private roleKnown = false;
   /** One lock per physical printer: its tickets never overlap on this device (a lane and a hand-over's fallback). */
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -253,7 +261,11 @@ export class KitchenService {
     const etag = kept?.etag && (kept.printSecret !== null || this.d.kv.get(SECRET_KEY) === null) ? kept.etag : null;
     const r = await this.d.api.get<Record<string, unknown>>(`sync/${id}/printers${etag ? `?etag=${encodeURIComponent(etag)}` : ''}`, { timeoutMs: 20_000 });
     if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object') return false;
-    if (r.body.syncType === 'unchanged') return true;
+    this.roleKnown = true;
+    if (r.body.syncType === 'unchanged') {
+      if (this.awaitingRole.size > 0) this.wake();
+      return true;
+    }
     const next = parseKitchenConfig(r.body);
     this.d.kv.setJson(CONFIG_KEY, withoutSecret(next));
     if (next.printSecret) this.d.kv.set(SECRET_KEY, this.box.seal(next.printSecret));
@@ -459,8 +471,10 @@ export class KitchenService {
   discard(jobId: string, why: string, by: string | null = null): void {
     const j = this.store.byId(jobId);
     if (!j || j.state === 'printing' || j.state === 'sending') return;
-    const next = discardedJob(j, this.now(), why);
-    this.store.update(next.relayJobId && next.state === 'failed' && j.ackStatus === null ? { ...next, ackStatus: 'failed', lastError: next.lastError ?? why } : next);
+    const discarded = discardedJob(j, this.now(), why);
+    // Why, for whoever asks about it (a sender over the LAN, the cloud for a relayed one).
+    const next = discarded.state === 'failed' && discarded.lastError === null ? { ...discarded, lastError: why.slice(0, 300) } : discarded;
+    this.store.update(next.relayJobId && next.state === 'failed' && j.ackStatus === null ? { ...next, ackStatus: 'failed' } : next);
     if (by) this.handled.set(jobId, by);
     this.emit();
   }
@@ -515,6 +529,32 @@ export class KitchenService {
       const next = recovered(j, now);
       this.store.update(next);
       if (next.state === 'failed') this.d.log(`kitchen job ${j.id} (${j.printerName}): ${next.lastError}`);
+    }
+    // What this device took for the others before it stopped waits until it knows it is still their print host: the
+    // server may have moved while it was down — its senders sent it again to the new one, marked.
+    for (const j of this.store.pending()) if (heldForOthers(j, this.startedAt)) this.awaitingRole.add(j.id);
+  }
+
+  /** The held jobs of the others, decided once the role is known (or after the wait without a cloud). */
+  private confirmRole(): void {
+    if (this.awaitingRole.size === 0) return;
+    const waited = this.now() - this.startedAt;
+    const config = this.config();
+    const me = this.d.machineId();
+    for (const id of [...this.awaitingRole]) {
+      const job = this.store.byId(id);
+      if (!job || job.state !== 'pending') {
+        this.awaitingRole.delete(id);
+        continue;
+      }
+      const stillHost = this.roleKnown ? printsForOthers(job.printerId, this.snapshotOf(job), config, me) : null;
+      const verdict = formerHostVerdict(job, stillHost, waited);
+      if (verdict === 'wait') continue;
+      if (verdict === 'drop') {
+        this.d.log(`kitchen job ${job.id} (${job.printerName}): ${HOST_MOVED}`);
+        this.discard(job.id, HOST_MOVED);
+      }
+      this.awaitingRole.delete(id);
     }
   }
 
@@ -571,8 +611,10 @@ export class KitchenService {
       this.lastPurge = now;
       for (const j of this.store.all()) if (purgeable(j, now) || (j.finishedAt !== null && now - j.finishedAt > 7 * KEEP_FINISHED_MS)) this.store.delete(j.id);
     }
+    this.confirmRole();
     const byLane = new Map<string, KitchenJob[]>();
     for (const j of this.store.pending()) {
+      if (this.awaitingRole.has(j.id)) continue;
       const lane = this.laneOf(j);
       const list = byLane.get(lane) ?? [];
       list.push(j);
@@ -598,7 +640,7 @@ export class KitchenService {
     let last: string | null = null;
     for (;;) {
       if (this.closed) return;
-      const jobs = this.store.pending().filter((j) => this.laneOf(j) === lane);
+      const jobs = this.store.pending().filter((j) => !this.awaitingRole.has(j.id) && this.laneOf(j) === lane);
       if (jobs.length === 0) return;
       const head = headOf(jobs);
       if (head.nextAttemptAt > this.now()) return;
@@ -660,9 +702,9 @@ export class KitchenService {
 
   private scheduleNext(): void {
     if (this.stopped) return;
-    const pending = this.store.pending();
-    if (pending.length === 0) return;
-    const next = Math.min(...pending.map((j) => j.nextAttemptAt));
+    const pending = this.store.pending().filter((j) => !this.awaitingRole.has(j.id));
+    if (pending.length === 0 && this.awaitingRole.size === 0) return;
+    const next = pending.length > 0 ? Math.min(...pending.map((j) => j.nextAttemptAt)) : this.startedAt + 90_000;
     const wait = Math.max(MIN_WAIT_MS, Math.min(IDLE_MS, next - this.now()));
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
     this.wakeTimer = setTimeout(() => {

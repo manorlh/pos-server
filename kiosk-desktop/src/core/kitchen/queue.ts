@@ -293,6 +293,32 @@ export function takenBackAsHost(existing: KitchenJob, relayId: string, now: numb
   return { ...existing, state: 'pending', route: 'DIRECT', relayJobId: relayId, relayVia: SELF, relayHost: null, lastError: null, nextAttemptAt: now, updatedAt: now, ticketJson: ticketJson ?? existing.ticketJson };
 }
 
+/* ------------------------------------------------------------------ a print host that comes back no longer the host */
+
+/** How long a device that starts again holds what it took for the others before it knows whether it is still their host. */
+export const ROLE_WAIT_MS = 90_000;
+/** Why a held job of another device went unprinted here: the print server moved while this device was down. */
+export const HOST_MOVED = 'the print server moved while this till was down — its till sends it again';
+
+export type FormerHostVerdict = 'wait' | 'print' | 'drop';
+
+/**
+ * A job this device took for another (over the LAN, or from the cloud) and had not printed when it stopped
+ * (KitchenQueue.formerHostVerdict): still the host → it prints; no longer → it does not (its sender sends it again to
+ * the new host, marked); not known after [ROLE_WAIT_MS] (no cloud) → it prints, as always.
+ */
+export function formerHostVerdict(job: KitchenJob, stillHost: boolean | null, waitedMs: number): FormerHostVerdict {
+  if ((job.lanOrigin === 0 && job.relayJobId === null) || job.relayVia === SELF) return 'print';
+  if (stillHost === true) return 'print';
+  if (stillHost === false) return 'drop';
+  return waitedMs >= ROLE_WAIT_MS ? 'print' : 'wait';
+}
+
+/** Taken for another device and still to print — at start-up, one to hold until the role is known. */
+export function heldForOthers(job: KitchenJob, startedAt: number): boolean {
+  return (job.lanOrigin === 1 || job.relayJobId !== null) && job.relayVia !== SELF && job.state === 'pending' && job.createdAt < startedAt && job.kind !== 'test' && job.dismissed === 0;
+}
+
 /* ------------------------------------------------------------------ the LAN host it went to */
 
 export interface LanHostRef {

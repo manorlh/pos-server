@@ -247,6 +247,20 @@ export function takesRelayedJobs(config: KitchenConfig): boolean {
   return config.printers.some((p) => HOSTED.has(p.type) && p.isHost && p.purpose !== 'receipt') || config.printHost?.isSelf === true;
 }
 
+/**
+ * This device prints [printerId] for the others now, per its [config] ([sent]: the printer as the job has it): one the
+ * config says it hosts; else a cloud printer hung on this very device; else a network / Bluetooth printer while this
+ * device is the shop's print server (KitchenRouting.printsForOthers).
+ */
+export function printsForOthers(printerId: string, sent: KitchenPrinter | null, config: KitchenConfig, myMachineId: string | null): boolean {
+  const mine = config.printers.find((p) => p.id === printerId);
+  if (mine) return mine.isHost;
+  if (!sent) return false;
+  if (HOSTED.has(sent.type)) return myMachineId !== null && sent.hostMachineId === myMachineId;
+  if (SERVED.has(sent.type)) return config.printHost?.isSelf === true;
+  return false;
+}
+
 /** The refusal's code on the wire (`{"detail": "not_the_print_server"}`, HTTP 409). */
 export const NOT_PRINT_SERVER = 'not_the_print_server';
 

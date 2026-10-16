@@ -336,8 +336,8 @@ describe('the Windows till\'s counter sale ("בונים במכירה", the KDS)'
 /* ======================================================================= this device as the print host */
 
 describe('this Windows device as the shop\'s print server / a printer\'s host', () => {
-  function hostRig(config: Record<string, unknown>, cloud = new FakeCloud()) {
-    const { db, kv } = tempDb();
+  function hostRig(config: Record<string, unknown>, cloud = new FakeCloud(), store = tempDb(), clock?: { t: number }) {
+    const { db, kv } = store;
     const renderer = fakeRenderer();
     const logs: string[] = [];
     const k = new KitchenService({
@@ -354,6 +354,7 @@ describe('this Windows device as the shop\'s print server / a printer\'s host', 
       log: (m) => logs.push(m),
       printerLink: patientPrinterLink,
       lanCall: patientLanCall,
+      now: clock ? () => clock.t : undefined,
     });
     cloud.on('GET sync/m/printers', () => ({ status: 200, body: { syncType: 'full', etag: 'e', printSecret: PRINT_KEY, ...config } }));
     // The host's own machine id in the cloud's paths.
@@ -455,5 +456,60 @@ describe('this Windows device as the shop\'s print server / a printer\'s host', 
     h.cloud.on('GET sync/windows-host/print-jobs/pending', () => ({ status: 200, body: { jobs: [{ id: 'doc-1', kind: 'document', document: { image: '' } }] } }));
     await h.k.takeRelayed();
     expect(acks.at(-1)).toEqual(['doc-1', 'failed']);
+  });
+
+  it('a host that starts again holds what it took for the others until it knows it is still their print server', async () => {
+    const kitchen = await netPrinter();
+    const hosting = { hostsLan: true, printHost: { machineId: 'windows-host', isSelf: true, lanAddress: '127.0.0.1', port: 8399 }, printers: [printer({ id: 'kitchen', port: kitchen.port, isHost: true })] };
+    const moved = { hostsLan: false, printHost: { machineId: 'android-2', isSelf: false, lanAddress: '10.0.0.9', port: 8399 }, printers: [printer({ id: 'kitchen', port: kitchen.port, isHost: false })] };
+    const job = (id: string) => ({ id, printerId: 'kitchen', ticket: { source: 'table', tableName: '4', createdAt: '2026-10-16T10:00:00Z', lines: [{ name: 'סלט', quantity: 1 }] } });
+    // Taken over the LAN, then the till went down before it printed them.
+    const store = tempDb();
+    const before = hostRig(hosting, new FakeCloud(), store);
+    await before.k.pull(true);
+    expect(before.k.acceptLan(job('j-still')).status).toBe(200);
+    expect(before.k.acceptLan(job('j-moved')).status).toBe(200);
+    before.k.stop();
+
+    // Back, and still the print server: printed once the settings say so — not before.
+    const clock = { t: Date.now() + 1_000 };
+    const still = hostRig(hosting, new FakeCloud(), store, clock);
+    still.k.start();
+    await still.k.work();
+    expect(kitchen.tickets()).toHaveLength(0);
+    await still.k.pull(true);
+    await still.k.work();
+    await until(() => kitchen.tickets().length === 2);
+    still.k.stop();
+
+    // Back, and the print server moved while it was down: never printed here (its sender sends it to the new one).
+    const store2 = tempDb();
+    const b2 = hostRig(hosting, new FakeCloud(), store2);
+    await b2.k.pull(true);
+    b2.k.acceptLan(job('j-x'));
+    b2.k.stop();
+    const after = hostRig(moved, new FakeCloud(), store2, { t: Date.now() + 1_000 });
+    after.k.start();
+    await after.k.pull(true);
+    await after.k.work();
+    expect(after.k.job('j-x')).toMatchObject({ state: 'failed', dismissed: 1, lastError: 'the print server moved while this till was down — its till sends it again' });
+    expect(after.k.lanStatuses(['j-x']).jobs[0]).toMatchObject({ status: 'failed' });
+
+    // No cloud at all: printed after the wait, as always.
+    const store3 = tempDb();
+    const b3 = hostRig(hosting, new FakeCloud(), store3);
+    await b3.k.pull(true);
+    b3.k.acceptLan(job('j-y'));
+    b3.k.stop();
+    const offlineClock = { t: Date.now() + 1_000 };
+    const cloudless = new FakeCloud();
+    cloudless.online = false;
+    const alone = hostRig(hosting, cloudless, store3, offlineClock);
+    alone.k.start();
+    await alone.k.work();
+    expect(alone.k.job('j-y')!.state).toBe('pending');
+    offlineClock.t += 90_000;
+    await alone.k.work();
+    await until(() => kitchen.tickets().length === 3);
   });
 });
