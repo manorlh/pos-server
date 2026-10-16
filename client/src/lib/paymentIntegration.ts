@@ -26,8 +26,10 @@ export type PaymentIntegration =
   | 'tap_to_pay'
   | 'none';
 /** What a till actually charges on (never `auto`); `none` = on nothing. */
-export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'none';
+export type ResolvedIntegration = 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay' | 'none';
 export type ZcreditMode = 'test' | 'production';
+/** Tap to Pay (P:/specs/tap-to-pay.md): the iPOSpays environment the TPN lives in. */
+export type TapToPayEnvironment = 'sandbox' | 'production';
 export type SettingsLevelName = 'tenant' | 'company' | 'shop' | 'area' | 'machine';
 
 export const PAYMENT_INTEGRATIONS: readonly PaymentIntegration[] = [
@@ -43,8 +45,8 @@ export const PAYMENT_INTEGRATIONS: readonly PaymentIntegration[] = [
 
 /** Charged on a terminal outside the till: all a till without one of its own can use. */
 export const EXTERNAL_INTEGRATIONS: readonly PaymentIntegration[] = ['nayax_lan', 'nayax_usb', 'zcredit', 'synqpay', 'tap_to_pay'];
-/** Shown as "בקרוב" and refused by the server on write. */
-export const RESERVED_INTEGRATIONS: readonly PaymentIntegration[] = ['tap_to_pay'];
+/** Shown as "בקרוב" and refused by the server on write (none today: Tap to Pay was, until 16.10.2026). */
+export const RESERVED_INTEGRATIONS: readonly PaymentIntegration[] = [];
 
 export const INTEGRATION_LABELS: Record<PaymentIntegration, string> = {
   auto: 'אוטומטי',
@@ -71,6 +73,34 @@ export const INTEGRATION_SHORT_LABELS: Record<PaymentIntegration, string> = {
 
 export const ZCREDIT_MODES: readonly ZcreditMode[] = ['test', 'production'];
 export const ZCREDIT_MODE_LABELS: Record<ZcreditMode, string> = { test: 'בדיקה', production: 'ייצור' };
+
+// ── Tap to Pay (P:/specs/tap-to-pay.md; server app/services/payment_integration.py) ──
+
+export const TAP_TO_PAY_ENVIRONMENTS: readonly TapToPayEnvironment[] = ['sandbox', 'production'];
+export const TAP_TO_PAY_ENVIRONMENT_LABELS: Record<TapToPayEnvironment, string> = {
+  sandbox: 'סביבת בדיקות (Sandbox)',
+  production: 'ייצור',
+};
+const TAP_TO_PAY_TPN_RE = /^[A-Za-z0-9]{4,20}$/;
+const TAP_TO_PAY_CODE_RE = /^[A-Za-z0-9]{6,32}$/;
+
+/** `sandbox` | `production` as the server stores it (`test` / `uat` read as `sandbox`); null otherwise. */
+export function cleanTapToPayEnvironment(value: unknown): TapToPayEnvironment | null {
+  if (typeof value !== 'string') return null;
+  const t = value.trim().toLowerCase();
+  if (t === 'test' || t === 'uat') return 'sandbox';
+  return (TAP_TO_PAY_ENVIRONMENTS as readonly string[]).includes(t) ? (t as TapToPayEnvironment) : null;
+}
+
+/** A TPN as the portal shows it: 4–20 letters or digits. */
+export function isValidTapToPayTpn(value: string): boolean {
+  return TAP_TO_PAY_TPN_RE.test(value.trim());
+}
+
+/** A merchant code: 6–32 letters or digits (12 digits in the docs). */
+export function isValidTapToPayMerchantCode(value: string): boolean {
+  return TAP_TO_PAY_CODE_RE.test(value.trim());
+}
 
 // ── SynqPay (docs/SPEC_SYNQPAY.md; server app/services/payment_integration.py) ──
 
@@ -188,8 +218,18 @@ export const NAYAX_DEFAULT_PATH = '/SPICy';
 
 // ── Fields ───────────────────────────────────────────────────────────────────
 
-export type PaymentSecretKey = 'zcreditPassword' | 'zcreditKey' | 'synqpayApiKey';
-export const PAYMENT_SECRET_KEYS: readonly PaymentSecretKey[] = ['zcreditPassword', 'zcreditKey', 'synqpayApiKey'];
+export type PaymentSecretKey = 'zcreditPassword' | 'zcreditKey' | 'synqpayApiKey' | 'tapToPayMerchantCode';
+export const PAYMENT_SECRET_KEYS: readonly PaymentSecretKey[] = [
+  'zcreditPassword',
+  'zcreditKey',
+  'synqpayApiKey',
+  'tapToPayMerchantCode',
+];
+
+/** One of the write-only secrets (never returned by the server). */
+export function isPaymentSecretKey(key: string): key is PaymentSecretKey {
+  return (PAYMENT_SECRET_KEYS as readonly string[]).includes(key);
+}
 
 export type PaymentFieldKey =
   | 'paymentIntegration'
@@ -210,7 +250,10 @@ export type PaymentFieldKey =
   | 'synqpayTls'
   | 'synqpayUsbDevice'
   | 'synqpaySerialNumber'
-  | 'synqpayApiKey';
+  | 'synqpayApiKey'
+  | 'tapToPayTpn'
+  | 'tapToPayMerchantCode'
+  | 'tapToPayEnvironment';
 
 export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
   paymentIntegration: 'סוג אינטגרציית אשראי',
@@ -232,6 +275,9 @@ export const FIELD_LABELS: Record<PaymentFieldKey, string> = {
   synqpayUsbDevice: 'התקן USB',
   synqpaySerialNumber: 'מספר סידורי של המסוף',
   synqpayApiKey: 'מפתח API',
+  tapToPayTpn: 'TPN',
+  tapToPayMerchantCode: 'קוד סוחר (Merchant Code)',
+  tapToPayEnvironment: 'סביבה (בדיקות / ייצור)',
 };
 
 /**
@@ -248,7 +294,7 @@ export const REQUIRED_FIELDS: Record<Exclude<PaymentIntegration, 'auto'>, readon
   nayax_usb: [],
   zcredit: ['zcreditTerminalNumber', 'zcreditPassword', 'zcreditPinpadId', 'zcreditMode'],
   synqpay: ['synqpayDeviceModel', 'synqpayConnection', 'synqpayHost'],
-  tap_to_pay: [],
+  tap_to_pay: ['tapToPayTpn', 'tapToPayMerchantCode', 'tapToPayEnvironment'],
   // No terminal: nothing is ever "חסר".
   none: [],
 };
@@ -271,7 +317,7 @@ export const FORM_FIELDS: Record<PaymentIntegration, readonly PaymentFieldKey[]>
     'synqpaySerialNumber',
     'synqpayApiKey',
   ],
-  tap_to_pay: [],
+  tap_to_pay: ['tapToPayTpn', 'tapToPayMerchantCode', 'tapToPayEnvironment'],
   // The terminal's fields are hidden: there is none.
   none: [],
 };
@@ -293,7 +339,7 @@ export const PI_TEXT = {
   modeRequired: 'יש לבחור מצב: בדיקה או ייצור',
   secretInvalid: 'עד 200 תווים, ללא תווי בקרה',
   agamentoNeedsBuiltin: 'לקופה זו אין מסוף מובנה (טאבלט) — ניתן לבחור רק אינטגרציה חיצונית או ללא אשראי',
-  tapToPayReserved: 'Tap to Pay עדיין לא זמין',
+  tapToPayNotOnKiosk: 'Tap to Pay עדיין לא נתמך בקיוסק — רק בקופה',
   soon: 'בקרוב',
   autoHint: 'קופה עם מסוף מובנה — Agamento; Nayax אם הוגדר; טאבלט — מסופון חיצוני',
   autoNayaxLegacy: 'מוגדר כאן Nayax מהגדרה קודמת (nayaxEnabled), ולכן "אוטומטי" מחייב ב-Nayax.',
@@ -315,9 +361,16 @@ export const PI_TEXT = {
   modePlaceholder: 'בחרו מצב',
   advanced: 'מתקדם',
   keyHint: 'לא נדרש לסליקה במסופון — משמש ל-WebCheckout בלבד; לא נשלח לקופה',
-  tapToPayHint: 'Tap to Pay במכשיר (iPOSpays) יהיה זמין בקרוב. אין עדיין שדות להגדרה.',
-  tapToPayMerchant: 'מזהה סוחר (בקרוב)',
-  tapToPayTerminal: 'מזהה מסוף (בקרוב)',
+  tapToPayHint:
+    'הלקוח מצמיד כרטיס או טלפון לגב המכשיר (NFC), דרך ה-SDK של iPOSpays מול Z-Credit. הפרטים מתקבלים מ-iPOSpays / Z-Credit. במכשיר צריך NFC פעיל, הרשאת מיקום ואפשרויות מפתח כבויות.',
+  tapToPayTpnHint: 'כפי שמופיע בפורטל iPOSpays — אותיות באנגלית וספרות',
+  tapToPayTpnInvalid: '4–20 אותיות באנגלית או ספרות',
+  tapToPayCodeHint: 'נוצר בפורטל: Settings ← Merchant Keys / Ecom Token, ל-TPN מסוג Tap on Phone. בדרך כלל 12 ספרות',
+  tapToPayCodeInvalid: '6–32 אותיות באנגלית או ספרות',
+  tapToPayEnvRequired: 'יש לבחור סביבה: בדיקות או ייצור',
+  tapToPayEnvPlaceholder: 'בחרו סביבה',
+  tapToPayEnvHint: 'חייב להתאים לגרסת הקופה: גרסת בדיקות מתחברת רק לסביבת הבדיקות',
+  tapToPayEnabledHint: 'כבוי כברירת מחדל — פעיל רק בקופה (או ברמה) שבחרה בו.',
   noneHint:
     'הקופה לא מקבלת אשראי — מזומן ואמצעי התשלום האחרים בלבד. אין מסופון ואין שדות להגדרה; כפתורי האשראי מוסתרים בקופה, ואין התראות מסופון.',
   kioskNoPayment: 'לקיוסק לא יישאר אמצעי תשלום',
@@ -386,7 +439,14 @@ export function inheritedValueLabel(value: string): string {
 
 /** "סיסמה שמורה", "סיסמה שמורה ברמת החנות", "מפתח שמור ברמת הארגון". */
 export function secretSavedLabel(key: PaymentSecretKey, source: SettingsLevelName | null | undefined, own: boolean): string {
-  const noun = key === 'zcreditPassword' ? 'סיסמה שמורה' : key === 'synqpayApiKey' ? 'מפתח API שמור' : 'מפתח שמור';
+  const noun =
+    key === 'zcreditPassword'
+      ? 'סיסמה שמורה'
+      : key === 'synqpayApiKey'
+        ? 'מפתח API שמור'
+        : key === 'tapToPayMerchantCode'
+          ? 'קוד סוחר שמור'
+          : 'מפתח שמור';
   return own || !source ? noun : `${noun} ברמת ${LEVEL_LABELS[source]}`;
 }
 
@@ -514,16 +574,18 @@ export interface DeviceCapabilities {
   hasBuiltinTerminal?: boolean | null;
   /** null = unknown. */
   hasNfc?: boolean | null;
+  /** A kiosk: no Tap to Pay yet (stage 1 is the till only). null = not a till, or unknown. */
+  isKiosk?: boolean | null;
 }
 
-export type OptionReason = 'needs_builtin_terminal' | 'soon' | 'needs_nfc';
+export type OptionReason = 'needs_builtin_terminal' | 'soon' | 'needs_nfc' | 'not_on_kiosk';
 
 export interface IntegrationOption {
   value: PaymentIntegration;
   /** What the select shows ("… — בקרוב" for a reserved one). */
   label: string;
   selectable: boolean;
-  /** Not offered at all (Tap to Pay on a device known to have no NFC). */
+  /** Not offered at all (Tap to Pay on a device known to have no NFC, or on a kiosk). */
   hidden: boolean;
   reason: OptionReason | null;
   /** Why it cannot be picked, in Hebrew; null when it can. */
@@ -541,9 +603,8 @@ export interface ServerIntegrationOption {
 
 /**
  * The select's choices for a layer. A till without a terminal of its own may not pick
- * the built-in one (shown disabled, with why); Tap to Pay is never selectable yet, and
- * hidden on a device known to have no NFC. A server verdict, when given, can only take a
- * choice away.
+ * the built-in one (shown disabled, with why); Tap to Pay is hidden on a device known to have
+ * no NFC and on a kiosk (stage 1). A server verdict, when given, can only take a choice away.
  */
 export function integrationOptions(
   device: DeviceCapabilities | null | undefined,
@@ -553,21 +614,25 @@ export function integrationOptions(
   const nfc = device?.hasNfc;
   return PAYMENT_INTEGRATIONS.map((value) => {
     let reason: OptionReason | null = null;
-    if (value === 'tap_to_pay') reason = nfc === false ? 'needs_nfc' : 'soon';
+    if (RESERVED_INTEGRATIONS.includes(value)) reason = 'soon';
+    else if (value === 'tap_to_pay' && device?.isKiosk === true) reason = 'not_on_kiosk';
+    else if (value === 'tap_to_pay' && nfc === false) reason = 'needs_nfc';
     else if (value === 'agamento' && builtin === false) reason = 'needs_builtin_terminal';
     const server = serverOptions?.find((o) => o.value === value);
     if (reason === null && server && !server.selectable) {
       const r = server.reason;
-      reason = r === 'needs_builtin_terminal' || r === 'needs_nfc' ? r : 'soon';
+      reason = r === 'needs_builtin_terminal' || r === 'needs_nfc' || r === 'not_on_kiosk' ? r : 'soon';
     }
     const explanation =
       reason === 'needs_builtin_terminal'
         ? PI_TEXT.agamentoNeedsBuiltin
         : reason === 'needs_nfc'
           ? PI_TEXT.needsNfc
-          : reason === 'soon'
-            ? PI_TEXT.soon
-            : null;
+          : reason === 'not_on_kiosk'
+            ? PI_TEXT.tapToPayNotOnKiosk
+            : reason === 'soon'
+              ? PI_TEXT.soon
+              : null;
     return {
       value,
       label:
@@ -577,7 +642,7 @@ export function integrationOptions(
             ? server.label
             : INTEGRATION_LABELS[value],
       selectable: reason === null,
-      hidden: reason === 'needs_nfc',
+      hidden: reason === 'needs_nfc' || reason === 'not_on_kiosk',
       reason,
       explanation,
     };
@@ -654,6 +719,9 @@ export interface PaymentIntegrationForm {
   synqpayUsbDevice?: string | null;
   synqpaySerialNumber?: string | null;
   synqpayApiKey?: string | null;
+  tapToPayTpn?: string | null;
+  tapToPayEnvironment?: string | null;
+  tapToPayMerchantCode?: string | null;
 }
 
 /** What the layers above give (the settings GET's `effective`). */
@@ -694,6 +762,9 @@ export interface ValidateOptions {
   requireAll?: boolean;
   /** For a till: whether it has a terminal of its own. */
   hasBuiltinTerminal?: boolean | null;
+  /** For a till: whether it has NFC (null = unknown) and whether it is a kiosk — Tap to Pay needs NFC, not on a kiosk. */
+  hasNfc?: boolean | null;
+  isKiosk?: boolean | null;
 }
 
 /** The type the form's fields are for, from the form and what it inherits. */
@@ -723,7 +794,7 @@ export function fieldPresent(
   inherited: PaymentIntegrationInherited | null | undefined,
   secrets: SecretsStatus | null | undefined,
 ): boolean {
-  if (key === 'zcreditPassword' || key === 'zcreditKey' || key === 'synqpayApiKey') {
+  if (isPaymentSecretKey(key)) {
     if (isTypedSecret(form[key])) return true;
     if (!secrets) return true;
     const status = secrets[key];
@@ -779,7 +850,8 @@ export function validatePaymentIntegration(
   const errors: PaymentIntegrationErrors = {};
   const requireAll = opts.requireAll !== false;
   const own = cleanIntegration(form.paymentIntegration);
-  if (own === 'tap_to_pay') errors.paymentIntegration = PI_TEXT.tapToPayReserved;
+  if (own === 'tap_to_pay' && opts.isKiosk === true) errors.paymentIntegration = PI_TEXT.tapToPayNotOnKiosk;
+  else if (own === 'tap_to_pay' && opts.hasNfc === false) errors.paymentIntegration = PI_TEXT.needsNfc;
   else if (own === 'agamento' && opts.hasBuiltinTerminal === false) {
     errors.paymentIntegration = PI_TEXT.agamentoNeedsBuiltin;
   }
@@ -821,8 +893,17 @@ export function validatePaymentIntegration(
       const err = secretError(v);
       if (err) errors[key] = err;
       else if (key === 'synqpayApiKey' && !isValidSynqpayApiKey(v)) errors[key] = PI_TEXT.synqpayKeyInvalid;
+      else if (key === 'tapToPayMerchantCode' && !isValidTapToPayMerchantCode(v)) {
+        errors[key] = PI_TEXT.tapToPayCodeInvalid;
+      }
     }
   }
+
+  // Tap to Pay's values, checked whatever the type (the server validates every one sent).
+  const tpn = text(form.tapToPayTpn);
+  if (tpn !== null && !isValidTapToPayTpn(tpn)) errors.tapToPayTpn = PI_TEXT.tapToPayTpnInvalid;
+  const env = text(form.tapToPayEnvironment);
+  if (env !== null && cleanTapToPayEnvironment(env) === null) errors.tapToPayEnvironment = PI_TEXT.tapToPayEnvRequired;
 
   // SynqPay's values, checked whatever the type (the server validates every one sent).
   Object.assign(errors, synqpayFieldErrors(form));
@@ -833,7 +914,9 @@ export function validatePaymentIntegration(
       errors[key] =
         key === 'zcreditMode'
           ? PI_TEXT.modeRequired
-          : key === 'synqpayDeviceModel'
+          : key === 'tapToPayEnvironment'
+            ? PI_TEXT.tapToPayEnvRequired
+            : key === 'synqpayDeviceModel'
             ? PI_TEXT.synqpayModelRequired
             : key === 'synqpayConnection'
               ? PI_TEXT.synqpayConnectionRequired
@@ -963,7 +1046,8 @@ export function missingFieldsLabel(missing: readonly string[] | null | undefined
 /**
  * The Hebrew the server sent with a payment-integration refusal (422
  * `{detail: {code, msg}}`: `agamento_needs_builtin_terminal`, `secret_invalid`,
- * `usb_terminal_second` — one USB terminal per till; 409 `payment_integration_open_card` —
+ * `usb_terminal_second` — one USB terminal per till, `tap_to_pay_needs_nfc` / `tap_to_pay_not_on_kiosk`;
+ * 409 `payment_integration_open_card` —
  * "ללא אשראי" over open card sales, worded from its `tills`), or null for any other error.
  */
 export function paymentIntegrationErrorMessage(err: unknown): string | null {
@@ -975,6 +1059,8 @@ export function paymentIntegrationErrorMessage(err: unknown): string | null {
     return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.agamentoNeedsBuiltin;
   }
   if (code === 'usb_terminal_second') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.oneUsbTerminal;
+  if (code === 'tap_to_pay_needs_nfc') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.needsNfc;
+  if (code === 'tap_to_pay_not_on_kiosk') return typeof msg === 'string' && msg.trim() ? msg : PI_TEXT.tapToPayNotOnKiosk;
   if (code === OPEN_CARD_CODE) {
     // "ללא אשראי" over open card sales (409): the tills and their counts, worded here.
     const tills = openCardTills((detail as { tills?: unknown }).tills);
@@ -1112,7 +1198,13 @@ export function normalizeMachineIntegration(raw: Record<string, unknown>): Requi
   const automatic = raw.paymentIntegrationAutomatic ?? raw.payment_integration_automatic;
   return {
     paymentIntegration:
-      v === 'agamento' || v === 'nayax_lan' || v === 'nayax_usb' || v === 'zcredit' || v === 'synqpay' || v === 'none'
+      v === 'agamento' ||
+      v === 'nayax_lan' ||
+      v === 'nayax_usb' ||
+      v === 'zcredit' ||
+      v === 'synqpay' ||
+      v === 'tap_to_pay' ||
+      v === 'none'
         ? v
         : null,
     paymentIntegrationSource: cleanLevel(raw.paymentIntegrationSource ?? raw.payment_integration_source),

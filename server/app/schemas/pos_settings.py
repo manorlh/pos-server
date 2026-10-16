@@ -326,9 +326,10 @@ class PosSettingsV1Patch(BaseModel):
     #: reports the result in its heartbeat. Unset = false; `null` in a PATCH = inherit.
     force_terminal_number: Optional[bool] = Field(None, alias="forceTerminalNumber")
     # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ──
-    #: auto | agamento | nayax_lan | nayax_usb | zcredit | synqpay (tap_to_pay is reserved and
-    #: refused). "auto" or `null` in a PATCH = inherit again; `agamento` on a till without a
-    #: terminal of its own is a 422 (`agamento_needs_builtin_terminal`); `nayax_usb` beside a
+    #: auto | agamento | nayax_lan | nayax_usb | zcredit | synqpay | tap_to_pay | none. "auto" or
+    #: `null` in a PATCH = inherit again; `agamento` on a till without a terminal of its own is a
+    #: 422 (`agamento_needs_builtin_terminal`), `tap_to_pay` on a kiosk or a till without NFC too
+    #: (`tap_to_pay_not_on_kiosk` / `tap_to_pay_needs_nfc`); `nayax_usb` beside a
     #: SynqPay payment device on USB is a 422 (`usb_terminal_second`, one USB terminal per till).
     payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
     #: `nayax_usb`: the C4's USB ids, "VVVV:PPPP" (hex, stored upper-case); "" or `null` = this
@@ -355,6 +356,12 @@ class PosSettingsV1Patch(BaseModel):
     synqpay_usb_device: Optional[str] = Field(None, alias="synqpayUsbDevice")
     synqpay_serial_number: Optional[str] = Field(None, alias="synqpaySerialNumber")
     synqpay_api_key: Optional[str] = Field(None, alias="synqpayApiKey", exclude=True, repr=False)
+    #: Tap to Pay (P:/specs/tap-to-pay.md): the TPN iPOSpays gives the merchant's Tap on Phone
+    #: terminal and its environment (sandbox | production); the merchant code is write-only
+    #: like the Z-Credit password.
+    tap_to_pay_tpn: Optional[str] = Field(None, alias="tapToPayTpn")
+    tap_to_pay_environment: Optional[str] = Field(None, alias="tapToPayEnvironment")
+    tap_to_pay_merchant_code: Optional[str] = Field(None, alias="tapToPayMerchantCode", exclude=True, repr=False)
     #: "מכשירי תשלום" (app/services/payment_devices.py): a till without built-in clearing
     #: works with several payment devices of its shop. Set on a shop for all its tills, on a
     #: till to override it; `null` in a PATCH = inherit again.
@@ -435,6 +442,20 @@ class PosSettingsV1Patch(BaseModel):
         from app.services.payment_integration import validate_mode
 
         return validate_mode(v)
+
+    @field_validator("tap_to_pay_tpn")
+    @classmethod
+    def _check_tap_to_pay_tpn(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_tap_to_pay_tpn
+
+        return validate_tap_to_pay_tpn(v)
+
+    @field_validator("tap_to_pay_environment")
+    @classmethod
+    def _check_tap_to_pay_environment(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_tap_to_pay_environment
+
+        return validate_tap_to_pay_environment(v)
 
     @field_validator("synqpay_device_model")
     @classmethod

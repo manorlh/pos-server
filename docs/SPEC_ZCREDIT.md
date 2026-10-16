@@ -19,7 +19,7 @@
 | `nayax_lan` | Nayax — מסופון ברשת | הכתובת לפי `nayaxDeviceHost` / `nayaxDevicePort` / `nayaxSpicyPath`. |
 | `nayax_usb` | Nayax — מסופון בחיבור USB | מסופון Nayax C4 בכבל USB לקופה (פורט CDC-ACM משלו; אותן מסגרות TweezerComm כמו ברשת, במסגור לקו). אין כתובת. `nayaxUsbDevice` הרשות מזהה את ה-C4. מסוף אחד לקופה (ראו "מסוף USB אחד לקופה"). |
 | `zcredit` | Z-Credit — מסופון חיצוני | השדות `zcreditTerminalNumber`, `zcreditPinpadId`, `zcreditMode` והסיסמה (ראו "סודות"). |
-| `tap_to_pay` | Tap to Pay במכשיר (iPOSpays) | שמור לעתיד: מוצג "בקרוב", השרת דוחה כתיבה שלו, והקופה קוראת אותו כ-`auto`. |
+| `tap_to_pay` | Tap to Pay במכשיר (iPOSpays) | מ-16.10.2026 ניתן לבחירה (אפיון: P:/specs/tap-to-pay.md). הכרטיס מוצמד ל-NFC של המכשיר דרך ה-In-App SDK של iPOSpays (ישראל, Z-Credit מאחור). השדות `tapToPayTpn`, `tapToPayEnvironment` (`sandbox` / `production`) וקוד הסוחר `tapToPayMerchantCode` (סוד, כמו הסיסמה). לא בקיוסק ולא במכשיר שדיווח שאין לו NFC: 422 ברמת הקופה עצמה (`tap_to_pay_not_on_kiosk` / `tap_to_pay_needs_nfc`). כבוי עד שרמה בוחרת בו. |
 | `none` | ללא אשראי (מזומן ואמצעים אחרים) | הקופה לא מקבלת אשראי (P:/specs/payment-integration-none.md). מותר לכל מכשיר. אין שדות חובה ואין התראות מסופון. ה-sync שולח `payFastCardEnabled` / `payCardEnabled` / `payManualCardEnabled` = false בלי לגעת בשכבות. קיוסק בלי "תשלום בקופה" מקבל אזהרה בשמירה. שמירה שמעבירה ל-`none` קופה עם עסקאות אשראי פתוחות (לא ב-Z, לא שודרו, לא מוכרעות) נדחית: 409 `payment_integration_open_card` עם הקופות והספירות, בלי עקיפה. |
 
 - **הגדרה מנוהלת על השכבות:**
