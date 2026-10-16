@@ -78,7 +78,7 @@ import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
 import { Outbox, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
-import { docVoucherDiscounts, documentWire, Ledger, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
+import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
@@ -220,6 +220,28 @@ const DESKTOP_LOG = 'desktopExit.log';
 const WORK_MODE_LOG = 'workMode.log';
 /** A till event of the device's (`POST /sync/{m}/events`, pos-server TillEventIn): a desktop exit or a mode switch. */
 type TillEventRecord = DesktopExitEvent | WorkModeEvent;
+
+/**
+ * A till's lines (main/till/engine.ts), for the pricing: `promo` — `exclude`: an OTH line, not counted by the promotions at
+ * all; `handDiscountAgorot`: the cashier's line discount (never discounted by a promotion, counted after it); null: as rung
+ * up. `listPrice` — a price the line keeps whatever the catalog says now.
+ */
+export interface TillLineHooks {
+  promo?: (key: string, grossAgorot: number) => { exclude?: boolean; handDiscountAgorot?: number } | null;
+  /** A held sale's line: the price it was parked at (HeldSaleCodec: a parked basket keeps the price it was quoted). */
+  listPrice?: (key: string) => number | null;
+}
+
+/** A till event the till's engine records (held sales, line voids, the automatic close): kept and sent like the others. */
+export interface TillEngineEvent {
+  id: string;
+  type: string;
+  occurredAt: string;
+  shiftId: string | null;
+  posUserId: string | null;
+  amount?: number;
+  details: Record<string, unknown>;
+}
 
 /** "ניהול הקיוסק" on a device with no staff synced yet (the manager's code is checked on the device, never online). */
 export const NO_ROSTER_TEXT = 'אין עדיין עובדים במכשיר — נדרש חיבור לענן פעם אחת. כניסת טכנאי: 6 הקשות בפינה השמאלית העליונה';
@@ -805,8 +827,8 @@ export class KioskService extends EventEmitter {
   }
 
   /** The basket priced for the till: the same engine as the kiosk's (priceBasket — choices, meals, promotions by the clock), from the till's catalog. */
-  priceTillBasket(input: StartPaymentIn, now = new Date()) {
-    return this.priceBasket(input, now, 'till');
+  priceTillBasket(input: StartPaymentIn, now = new Date(), hooks?: TillLineHooks) {
+    return this.priceBasket(input, now, 'till', hooks);
   }
 
   private pausedState(): { paused: boolean; message: string | null; until: string | null } {
@@ -1439,6 +1461,7 @@ export class KioskService extends EventEmitter {
     input: StartPaymentIn,
     now = new Date(),
     channel: 'kiosk' | 'till' = 'kiosk',
+    hooks?: TillLineHooks,
   ): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[]; voucherOutcomes: VoucherOutcome[] } {
     // The till's catalog is the one in force at `now` — its menu ("תפריטים") included, so the price is the menu's while it is active.
     const cat = channel === 'till' ? this.tillCatalogData(now.getTime()) : this.catalogData();
@@ -1480,7 +1503,8 @@ export class KioskService extends EventEmitter {
       }
       // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the basket is
       // no price change), else what the kiosk sells it at now; the cloud's word moves a catalog-priced dish only.
-      const own = keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), channel === 'till' ? undefined : menuPrices.get(p.id));
+      const kept = channel === 'till' ? (hooks?.listPrice?.(l.key) ?? null) : null;
+      const own = kept ?? keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), channel === 'till' ? undefined : menuPrices.get(p.id));
       // The menu the line says it was added under: only one this kiosk's block holds is recorded on the document.
       // (A till's lines carry the till's own menu facts — lineMenuFacts — never the kiosk's.)
       const under = channel === 'kiosk' && l.menuId ? menuById(block, l.menuId) : null;
@@ -1535,8 +1559,13 @@ export class KioskService extends EventEmitter {
     for (const c of basketChanges(input.lines.filter((l) => priced.has(l.key)), priced)) if (c.kind === 'repriced') changes.push(c);
     // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price) — then the discount
     // vouchers held for the order ("שוברי הנחה"), in the order applied (`withPromotions(...).withVoucherDiscounts()`).
+    // A till's line by hand (core/till/discounts.ts): an OTH line is not counted by promotions at all; a hand-discounted one
+    // is never discounted by one and counts towards a threshold at what it costs after it (Promotions.kt basketOf).
+    const hands = new Map(lines.map((x) => [x.key, hooks?.promo?.(x.key, unitAgorot(x) * x.qty) ?? null] as const));
     const promo = priceKioskBasket(
-      lines.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true })),
+      lines
+        .filter((x) => hands.get(x.key)?.exclude !== true)
+        .map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true, handDiscountAgorot: hands.get(x.key)?.handDiscountAgorot ?? 0 })),
       promotionsOf(this.cloud.promotions()),
       localDateTimeOf(now),
       input.vouchers?.discounts ?? [],
@@ -2039,7 +2068,11 @@ export class KioskService extends EventEmitter {
    */
   async settleCashMag(): Promise<void> {
     await this.cashMag.settle({
-      docStatus: (id) => this.ledger.doc(id)?.status ?? null,
+      // A sale a till credited since is still a paid one here.
+      docStatus: (id) => {
+        const s = this.ledger.doc(id)?.status ?? null;
+        return s === 'refunded' || s === 'partial_refund' ? 'completed' : s;
+      },
       writePaid: async (e: CashMagEntry, tx: TxView) => {
         const done = this.ledger.completeCashSale(e.docId, this.cashLegOf(tx, tx.changeOwedAgorot > 0 ? 'slip' : null));
         if (!done || done.status !== 'completed') return false;
@@ -2849,7 +2882,9 @@ export class KioskService extends EventEmitter {
         name: l.name,
         qty: l.qty,
         unitAgorot: unit,
-        totalAgorot: unit * l.qty,
+        // A credit-note line prints what it credits (net of its discount share), as the till's credit notes do.
+        totalAgorot: typeof l.creditAgorot === 'number' ? l.creditAgorot : unit * l.qty,
+        ...(l.oth ? { oth: l.oth.reason } : {}),
         // What was charged (free choices are not printed), a meal's components with their upcharge (LineText.receiptSubLines).
         paid: [
           ...l.options.filter((o) => optionCharged(o) > 0).map((o) => ({ text: kitchenOptionText(o), priceAgorot: optionCharged(o) })),
@@ -2875,12 +2910,12 @@ export class KioskService extends EventEmitter {
    * footer / logo / place rules as the kiosk's, with the tenders and the change; a copy says "העתק". Queued like any
    * page: a failure is the printer's light and a retry, never the sale's. Returns the print job's id.
    */
-  printDocReceipt(doc: DocDraft, copy: boolean): string | null {
-    if (doc.status !== 'completed') return null;
-    return this.printQueue.enqueue('receipt', doc.id, this.receiptDocFor(doc, copy, null));
+  printDocReceipt(doc: DocDraft, copy: boolean, merchantCopy = false): string | null {
+    if (!settled(doc)) return null;
+    return this.printQueue.enqueue('receipt', merchantCopy ? `${doc.id}:merchant` : doc.id, this.receiptDocFor(doc, copy || merchantCopy, null, merchantCopy));
   }
 
-  private receiptDocFor(doc: DocDraft, copy: boolean, orderNumber: string | null): PrintDoc {
+  private receiptDocFor(doc: DocDraft, copy: boolean, orderNumber: string | null, merchantCopy = false): PrintDoc {
     const params = this.cloud.parameters();
     const footer: [string | null, string | null] = [
       typeof params['receipt.footer.line1'] === 'string' ? (params['receipt.footer.line1'] as string) : null,
@@ -2925,6 +2960,11 @@ export class KioskService extends EventEmitter {
         creditLegs: (doc.creditLegs ?? []).map((l) => ({ code: l.code, amountAgorot: l.amountAgorot })),
         // A till sale: every tender, the cash handed over and the change.
         ...(doc.payments && doc.payments.length > 0 ? { tenders: doc.payments, tenderedAgorot: doc.tenderedAgorot ?? null, changeAgorot: doc.changeAgorot ?? null } : {}),
+        // The till's discounts by hand (OTH lines print at ₪0 on their own), a credit note's original and customer.
+        ...(tillManualDiscount(doc) > 0 ? { manualDiscountAgorot: tillManualDiscount(doc) } : {}),
+        ...(doc.refundOfTransactionId ? { refundOfNumber: this.docNumberOf(doc.refundOfTransactionId) } : {}),
+        ...(doc.customer ? { customer: doc.customer } : {}),
+        ...(merchantCopy ? { merchantCopy: true } : {}),
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         // "סניף הרצליה · קופה 3 · קיוסק רויאל": the machine as the cloud names it (machines/me).
@@ -2932,6 +2972,12 @@ export class KioskService extends EventEmitter {
         orderNumber,
       })
     );
+  }
+
+  /** A document of this till as printed ("20000057"), or null when it is not here. */
+  docNumberOf(id: string): string | null {
+    const d = this.ledger.doc(id);
+    return d ? formatDocNumber(d.prefix, String(d.number)) : null;
   }
 
   /** The shop, the till's number and name, as `machines/me` says them (the documents' place line). */
@@ -3277,6 +3323,8 @@ export class KioskService extends EventEmitter {
       if (r.kind === 'refused' && r.refusal === 'nothing_to_report') this.ack('z', req.requestId, 'failed', { errorCode: 'nothing_to_report' });
     }
     await this.tillZ.tick({ mayRun, kioskAt: cfg?.operations.autoCloseAt, paramAt: this.cloud.parameters().autoCloseShiftAt, closerName: closerName(op), vatRate: this.vatRate() });
+    // A till by role: its own automatic close, with what is open on it (the till's engine decides).
+    if (this.fiscalRole && !this.isKiosk() && this.tillAutoClose) await this.tillAutoClose().catch((e: unknown) => this.log(`till automatic close: ${String(e)}`));
     this.dirty();
   }
 
@@ -3693,10 +3741,25 @@ export class KioskService extends EventEmitter {
    * A till event: kept here, and to the cloud through the outbox (`POST /sync/{m}/events`). The desktop exits also
    * go into the device's own log; "מצב עבודה" switches (`kiosk_till_mode`, recordWorkModeEvent) keep their own.
    */
-  private recordTillEvent(e: TillEventRecord) {
+  private recordTillEvent(e: TillEventRecord | TillEngineEvent) {
     this.kv.setJson(`tillEvent:${e.id}`, e);
     if (e.type === 'desktop_exit') this.kv.setJson(DESKTOP_LOG, [...this.desktopExitLog(), e].slice(-100));
     if (this.paired) this.outbox.enqueue('till_event', e.id);
+  }
+
+  /** A till event of the till's engine (`POST /sync/{m}/events`): `held_sale_cancelled`, `line_void`, `shift_auto_closed`… */
+  recordEngineEvent(e: TillEngineEvent) {
+    this.recordTillEvent(e);
+  }
+
+  /**
+   * "סגירת משמרת אוטומטית גם עם עגלה פתוחה" (core/till/autoCloseCart.ts): the till's engine registers its tick; the
+   * half-minute tick runs it on a till by role (a kiosk's own automatic close is tillZService.tick).
+   */
+  private tillAutoClose: (() => Promise<unknown>) | null = null;
+
+  attachTillAutoClose(fn: (() => Promise<unknown>) | null) {
+    this.tillAutoClose = fn;
   }
 
   /**

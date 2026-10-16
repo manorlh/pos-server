@@ -18,6 +18,7 @@ import {
   pinpadAddressOf,
   pinpadUrl,
   privateIpv4,
+  refundFrame,
   saleFrame,
   saleOutcome,
   statusFrame,
@@ -104,8 +105,21 @@ export abstract class NayaxTweezerProvider implements PaymentProvider {
   }
 
   async sale(req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void; onAnswered?: () => void }): Promise<SaleResult> {
+    return this.transact(saleFrame(req.amountAgorot, req.reference, req.payments), req);
+  }
+
+  /**
+   * Money back to a card (tranType 53, Tweezer.refund): linked to [originalTransactionId] when there is one, else an
+   * unlinked credit. One frame, never re-sent; an approval acknowledged as a sale's is (TerminalAck), a lost answer is
+   * unknown — the caller settles it by the same vuid or not at all.
+   */
+  async refund(req: { amountAgorot: number; reference: string; originalTransactionId: string | null; onProgress?: (m: string) => void; onAnswered?: () => void }): Promise<SaleResult> {
+    return this.transact(refundFrame(req.amountAgorot, req.reference, req.originalTransactionId), { ...req, payments: 1 });
+  }
+
+  private async transact(frame: string, req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void; onAnswered?: () => void }): Promise<SaleResult> {
     req.onProgress?.('הצמד, הכנס או העבר את הכרטיס');
-    const r = await this.call(saleFrame(req.amountAgorot, req.reference, req.payments), TIMEOUTS.sale);
+    const r = await this.call(frame, TIMEOUTS.sale);
     // The frame never left (no link, nothing written): certainly not charged, its reason said.
     if (!r.ok && r.notSent) return { answer: 'NOT_SENT', message: r.error };
     if (!r.ok) return { answer: 'UNKNOWN', message: `אין תשובה מהמסוף: ${r.error}`, raw: null };

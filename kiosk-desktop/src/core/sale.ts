@@ -86,6 +86,21 @@ export interface SaleLine {
   priceSource?: 'menu' | 'catalog' | null;
   /** With a menu: the catalog's own price then (the till's held sale carries it as `catalogPrice`). */
   catalogPriceAgorot?: number | null;
+  /**
+   * A till's manual line discount ("הנחה" on the line, or OTH's 100%), resolved to agorot: inside the document's discount,
+   * never in the line's gross (core/till/discounts.ts). Absent: none.
+   */
+  discountAgorot?: number;
+  /** OTH ("על חשבון הבית", core/till/discounts.ts): why, who gave it, who approved it. */
+  oth?: { reason: string; by: string | null; approvedBy: string | null } | null;
+  /** A credit-note line: the original line it credits (null: a return with no receipt), and what it credits (net). */
+  refundOfItemId?: string | null;
+  creditAgorot?: number;
+}
+
+/** What a line takes off by hand (the cashier's discount, OTH): never on a credit line. */
+export function manualDiscount(l: Pick<SaleLine, 'discountAgorot'>): number {
+  return Math.max(0, l.discountAgorot ?? 0);
 }
 
 /** What one choice adds to one unit of the dish. */
@@ -134,12 +149,18 @@ export interface SaleTotals {
   vatRate: number;
 }
 
-export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgorot = 0): SaleTotals {
+/**
+ * [basketDiscountAgorot]: a till's basket discount ("הנחה לחשבון"), already in money (Cart.documentDiscountAmount) — taken
+ * after the lines' own discounts, inside the document's discount like them.
+ */
+export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgorot = 0, basketDiscountAgorot = 0): SaleTotals {
   const gross = lines.reduce((s, l) => s + lineGross(l), 0);
   // The promotions' and the discount vouchers' shares (Cart.totals): the document's discount.
   const promotion = lines.reduce((s, l) => s + Math.max(0, l.promotionAgorot ?? 0), 0);
   const voucher = lines.reduce((s, l) => s + Math.max(0, l.voucherAgorot ?? 0), 0);
-  const discount = promotion + voucher;
+  // A till's manual line discounts (and OTH) and its basket discount: the same document discount.
+  const manual = lines.reduce((s, l) => s + manualDiscount(l), 0);
+  const discount = promotion + voucher + manual + Math.max(0, basketDiscountAgorot);
   const total = gross - discount;
   const net = vatNet(total, vatRate);
   return {
@@ -153,6 +174,52 @@ export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgoro
     chargeAgorot: total + tipAgorot,
     vatRate,
   };
+}
+
+/**
+ * A credit note's totals (SaleRepository.recordRefund / buildBasketDocuments): the lines' credits (net of their discount
+ * share) are its amount — no document discount on a credit — and its VAT split is taken from them at [vatRate] (none on
+ * a receipt refund).
+ */
+export function creditTotals(lines: readonly SaleLine[], vatRate: number): SaleTotals {
+  const credited = lines.reduce((s, l) => s + (l.creditAgorot ?? lineGross(l)), 0);
+  const net = vatNet(credited, vatRate);
+  return {
+    grossAgorot: credited,
+    discountAgorot: 0,
+    voucherDiscountAgorot: 0,
+    totalAgorot: credited,
+    netAgorot: net,
+    vatAgorot: credited - net,
+    tipAgorot: 0,
+    chargeAgorot: credited,
+    vatRate,
+  };
+}
+
+/** A credit document: a credit note (330) or an exempt dealer's receipt refund (−400) — DocumentType.isCredit. */
+export function isCreditType(documentType: number): boolean {
+  return documentType === 330 || documentType === -400;
+}
+
+/** A sale document: a tax invoice-receipt (320) or an exempt dealer's receipt (400) — DocumentType.isSale. */
+export function isSaleType(documentType: number): boolean {
+  return documentType === 320 || documentType === 400;
+}
+
+/**
+ * Money back, crediting [originalType] (null: no receipt) — FiscalDocuments.creditTypeFor: a receipt refund (−400) for a
+ * receipt or whenever the business is exempt now; a credit note (330) otherwise.
+ */
+export function creditDocumentType(dealerType: string | null | undefined, originalType: number | null): 330 | -400 {
+  if (originalType === 400) return -400;
+  if (dealerType === 'exempt') return -400;
+  return 330;
+}
+
+/** The VAT rate a new document of [documentType] is written at: none on a receipt (400 / −400). */
+export function vatRateForType(documentType: number, configured: number): number {
+  return documentType === 400 || documentType === -400 ? 0 : configured;
 }
 
 /** KioskCustomer.tipOf: (goods × pct + 50) / 100 in integers (lib/kioskMoney.ts tipPercentOf — one copy). */
@@ -243,6 +310,13 @@ export interface XTill {
   vatTotal?: number;
   transactionsCount: number;
   itemsCount: number;
+  /**
+   * Mixed baskets (core/till/basket.ts): the net of the exchange legs — received on sales less given on credit notes, zero
+   * when every basket is whole — as the cloud's `totalExchange`; and what the sales received in exchange. Absent when the
+   * shift had no basket, so such a shift closes as it always did (ShiftClose.kt).
+   */
+  totalExchange?: number;
+  exchangeReceived?: number;
 }
 
 export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, currentRate: number): { till: XTill; reportableIds: string[] } {
@@ -256,7 +330,9 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     cardTips = 0,
     vat = 0,
     items = 0,
-    count = 0;
+    count = 0,
+    exchangeIn = 0,
+    exchangeOut = 0;
   let vatComplete = true;
   const ids: string[] = [];
   for (const d of docs) {
@@ -275,6 +351,11 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     for (const leg of legs) {
       if (leg.method === 'cash') cash += sign * leg.amountAgorot;
       else if (leg.method === 'card') card += sign * leg.amountAgorot;
+      // Neither cash nor card, and never in the drawer: the exchange row (XReport.kt).
+      else if (leg.method === 'exchange') {
+        if (credit) exchangeOut += leg.amountAgorot;
+        else exchangeIn += leg.amountAgorot;
+      }
     }
     if (d.vatAgorot === null) {
       vatComplete = false;
@@ -301,6 +382,9 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     itemsCount: items,
   };
   if (vatComplete) till.vatTotal = s(vat);
+  // Only a shift with a mixed basket carries them (ShiftClose.kt: totalExchange takeIf moved, exchangeReceived when not zero).
+  if (exchangeIn !== 0 || exchangeIn - exchangeOut !== 0) till.totalExchange = s(exchangeIn - exchangeOut);
+  if (exchangeIn !== 0) till.exchangeReceived = s(exchangeIn);
   return { till, reportableIds: ids };
 }
 

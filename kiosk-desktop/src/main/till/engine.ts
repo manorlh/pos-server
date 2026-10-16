@@ -15,11 +15,19 @@
  *  - shifts open with the float counted into the drawer and close with the counted cash (X frozen into the close);
  *    the Z is the machine's own (fiscal/tillZService.ts) only in zMode = till — otherwise closing the shift is all this
  *    till does, exactly as the kiosk's own Z today;
- *  - staff sign in with their PIN from the synced roster, with the cloud's permissions (core/till/staff.ts), offline.
+ *  - staff sign in with their PIN from the synced roster, with the cloud's permissions and limits (core/till/staff.ts,
+ *    core/till/permissions.ts — "כשאין הרשאה" included), offline;
+ *  - "זיכוי" (core/till/refundMath.ts, core/till/basket.ts): from the history (a credit note for the picked lines of a
+ *    document — cash from the drawer, or the original's card at the terminal) and on the sell screen (a catalog return or
+ *    lines picked off a receipt, in a mixed basket with the sale: a 320 and its 330s, exchange legs, one payout); a credit
+ *    note is a 330 (−400 for a receipt or an exempt dealer) in its own series, linked to its original;
+ *  - "הנחה" on a line and on the basket, OTH ("על חשבון הבית"), with the role's ceilings (core/till/discounts.ts);
+ *  - "מכירות בהמתנה" (core/till/heldSales.ts, main/till/heldStore.ts), and every close asking about them;
+ *  - the automatic close of a shift with a basket open (core/till/autoCloseCart.ts) — `autoCloseTick`, from the service.
  *
  * Android is the reference: the flows and the Hebrew sentences are copied from pos-android (ui/sell, ui/checkout,
- * res/values/strings*.xml). Out of today's scope, the screens say "בקרוב": refunds, tables, held sales, manual
- * discounts, vouchers and club, attendance, the customer display.
+ * ui/history, res/values/strings*.xml). Out of today's scope, the screens say "בקרוב": tables, vouchers and club,
+ * attendance, the customer display.
  *
  * The state is the engine's alone (§3.3): the screens show what it says. Every changing op carries a `clientOpId` and is
  * never applied twice. Electron-free: tests drive it over a real KioskService with a fake terminal and printer.
@@ -27,18 +35,123 @@
 
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
-import { formatShekelSign, ofShekels } from '../../core/money';
-import { formatDocNumber, prefixFor } from '../../core/documentNumbers';
+import { formatShekelSign, ofShekels, times } from '../../core/money';
+import { docQueryMatches, docQueryNumbers, formatDocNumber, parseDocQuery, prefixFor } from '../../core/documentNumbers';
 import { localDate } from '../../core/kioskOrders';
-import { buildXTill, saleDocumentType, saleTotals, unitAgorot, type SaleLine, type SaleTotals } from '../../core/sale';
+import { acquirerTransactionIdOf } from '../../core/nayax';
+import {
+  buildXTill,
+  creditDocumentType,
+  creditTotals,
+  isCreditType,
+  isSaleType,
+  lineGross,
+  saleDocumentType,
+  saleTotals,
+  unitAgorot,
+  vatRateForType,
+  type SaleLine,
+  type SaleTotals,
+} from '../../core/sale';
+import { vatNet } from '../../core/money';
 import { zModeOf } from '../../core/tillZ';
 import { parameterOn } from '../sync/cloud';
-import { PERM, TEXT, approve, displayName, permLabel, stateOf, tryLogin, type RosterUser } from '../../core/till/staff';
+import { CODES, NO_LOCK, type BcryptCompare, type ExitLock } from '../../core/desktopExit';
+import { PERM, TEXT, displayName, permLabel, stateOf, tryLogin, type RosterUser } from '../../core/till/staff';
+import {
+  actingProfile,
+  approvalText,
+  approveWithin,
+  decide,
+  deniedText,
+  deniedUiSettingsOf,
+  mayApprove,
+  profileOf,
+  shows,
+  type Decision,
+  type EntryKind,
+  type PermissionProfile,
+  type ProfileUser,
+} from '../../core/till/permissions';
+import {
+  alreadyRefunded,
+  collectedPerLine,
+  creditFor,
+  creditedShekels,
+  refundLines,
+  remainingQuantities,
+  type RefundItem,
+} from '../../core/till/refundMath';
+import {
+  BasketMismatch,
+  EXCHANGE,
+  REFUND_CUSTOMER_DETAILS_PARAM,
+  UNLINKED_CARD_CREDIT_PARAM,
+  basketCreditsOf,
+  basketNextStep,
+  cardPayoutRoute,
+  creditTotal,
+  onUnlessFalse,
+  planBasketTenders,
+  returnCustomerComplete,
+  returnCustomerRequired,
+  type BasketCredit,
+  type CardPayoutRoute,
+  type LinkCandidate,
+  type Tender,
+} from '../../core/till/basket';
+import {
+  OTH_PERCENT,
+  basketDiscountKindOf,
+  basketDiscountPercentOf,
+  basketDiscountPreview,
+  basketDiscountRate,
+  committedBasketDiscount,
+  documentDiscountAmount,
+  lineDiscountAmount,
+  othDecide,
+  othNeed,
+  othRefusal,
+  othSettingsOf,
+  type BasketDiscountPreview,
+  type DiscountType,
+  type OthMark,
+} from '../../core/till/discounts';
+import {
+  HELD_CANCEL_AUTO_CLOSE,
+  HELD_CANCEL_LOCAL,
+  HELD_TEXT,
+  TILL_EVENT_HELD_SALE_CANCELLED,
+  allowCloseWithHeldSales,
+  heldSaleCancelDetails,
+  heldSalesGate,
+  holdLabelOf,
+  holdRefusal,
+  summaryOf,
+  type HeldLine,
+  type HeldSaleSummary,
+} from '../../core/till/heldSales';
+import {
+  AUTO_CLOSE_PARK_LABEL,
+  TILL_EVENT_AUTO_CLOSE_HELD_CANCELLED,
+  TILL_EVENT_SHIFT_AUTO_CLOSED,
+  autoCloseCartDetails,
+  autoCloseCartEventType,
+  autoCloseDecision,
+  autoCloseHeldCancelledDetails,
+  autoCloseRulesOf,
+  autoCloseNextShiftNotice,
+  shiftAutoClosedDetails,
+  worthNotice,
+  type AutoCloseCart,
+  type AutoCloseRecord,
+  type AutoCloseSaleLook,
+} from '../../core/till/autoCloseCart';
+import { autoCloseDue, autoCloseTimeOf } from '../../core/tillZ';
 import { cardLast, dueOf, handedTotal, paidOf, quickNotes, takeCash, validCashAmount, type TenderLeg } from '../../core/till/tender';
 import { HIDDEN_MENU_PARAM, parseHiddenMenu } from '../../core/till/menuHide';
 import { tileTextOf } from '../../core/till/tileText';
 import { SHOP_X_TEXT, shopXDocumentOf, shopXOffered, shopXRefusal, type ShopXDocument } from '../../core/till/shopX';
-import { NO_LOCK, type BcryptCompare, type ExitLock } from '../../core/desktopExit';
 import type { StartPaymentIn } from '../../shared/bridge';
 import {
   MUTATING_OPS,
@@ -46,10 +159,13 @@ import {
   TILL_PROTOCOL,
   engineError,
   engineErrorText,
+  type BasketDiscountMode,
   type Catalog,
   type CartLine,
+  type CheckoutBasket,
   type CheckoutState,
   type DeviceRoleName,
+  type DocumentDetail,
   type EngineCall,
   type EngineDialog,
   type EngineEndpoint,
@@ -58,13 +174,15 @@ import {
   type EngineReply,
   type HelloReply,
   type Product,
+  type RefundableLine,
   type TillErrorCode,
   type TillOp,
   type TillState,
   type XReport,
 } from '../../shared/till/protocol';
-import { legsOf, xDocOf, type AppliedPromotionRow, type DocDraft } from '../fiscal/ledger';
+import { legsOf, settled, xDocOf, type AppliedPromotionRow, type BasketDocInput, type DocDraft, type DocLeg } from '../fiscal/ledger';
 import type { KioskService } from '../service';
+import { HeldStore } from './heldStore';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -114,10 +232,35 @@ const MAX_QTY = 999;
 const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#be185d', '#4d7c0f', '#b45309', '#475569'];
 const LOGIN_LOCK = 'till.loginLock';
 const APPROVAL_LOCK = 'till.approvalLock';
+const AUTO_CLOSE_NOTICE = 'till.autoCloseNotice';
+const AUTO_CLOSE_RECORDS = 'till.autoCloseRecords';
 /** The codes the screens show or hide by. */
-const SESSION_CODES = [PERM.SELL, PERM.SHIFT_OPEN, PERM.SHIFT_CLOSE, PERM.X, PERM.Z, PERM.REPRINT, PERM.DRAWER_ON_CASH_SALE, PERM.KIOSK_TILL_MODE, PERM.SHOP_X];
+const SESSION_CODES = [PERM.SELL, PERM.SHIFT_OPEN, PERM.SHIFT_CLOSE, PERM.X, PERM.Z, PERM.REPRINT, PERM.DRAWER_ON_CASH_SALE, PERM.KIOSK_TILL_MODE, PERM.SHOP_X, PERM.REFUND, PERM.DISCOUNT, PERM.OTH, PERM.LINE_VOID, PERM.HELD_SALE_CANCEL];
+/**
+ * The entries the screens have, by the code they are offered by and what they are ("כשאין הרשאה", spec §3): the ones that
+ * always read `permissionsDeniedUi` are `legacy`; SHIFT_OPEN is never hidden (core/till/permissions.ts NEVER_HIDDEN).
+ */
+const ENTRIES: ReadonlyArray<readonly [string, EntryKind]> = [
+  [PERM.SHIFT_OPEN, 'option'],
+  [PERM.SHIFT_CLOSE, 'option'],
+  [PERM.X, 'option'],
+  [PERM.Z, 'option'],
+  [PERM.REFUND, 'option'],
+  [PERM.DISCOUNT, 'option'],
+  [PERM.OTH, 'option'],
+  [PERM.LINE_VOID, 'option'],
+  [PERM.HELD_SALE_CANCEL, 'option'],
+  [PERM.REPRINT, 'option'],
+  [PERM.SHOP_X, 'legacy'],
+  ['VIEW_REPORTS', 'legacy'],
+];
+/** The most recent receipts "זיכוי מקבלה" lists (RecentReceiptCount). */
+const RECENT_RECEIPTS = 8;
 
 const sh = (agorot: number) => formatShekelSign(agorot);
+
+/** "ההנחה לא ניתנה": a basket discount that is not one (nothing keyed). */
+const TILL_ERROR_DISCOUNT = 'ההנחה לא ניתנה';
 
 /** Android's words (res/values/strings*.xml), one place. */
 const WORDS = {
@@ -167,12 +310,67 @@ const WORDS = {
   approve: 'אישור',
   wrongPin: 'קוד שגוי',
   managerApprovalTitle: 'אישור מנהל',
+  // ── refunds ("זיכוי") ──
+  refundDone: 'הזיכוי בוצע',
+  refundNoShift: 'לא ניתן לבצע זיכוי לפני פתיחת משמרת.',
+  refundSelectItems: 'בחר לפחות פריט אחד לזיכוי',
+  refundNothingLeft: 'כל הפריטים במסמך זוכו',
+  refundCardMissingOriginal: 'לא נמצאה הפניה לעסקה המקורית במכשיר. לא ניתן לבצע זיכוי מקושר.',
+  refundModeBanner: 'מצב זיכוי: כל הקשה מחזירה פריט',
+  receiptNotFound: (n: string) => `לא נמצאה קבלה ${n} לזיכוי`,
+  receiptMatches: 'במספר הזה יש כמה מסמכים — בחרו את המסמך',
+  refundNotSupported: 'המסופון במכשיר הזה אינו מבצע זיכוי לכרטיס. אפשר לזכות במזומן.',
+  checkoutRefundDone: (s: string) => `הזיכוי הושלם — הוחזרו ${s}`,
+  basketCustomerRequired: 'חובה בזיכוי ללא קבלה: שם, וטלפון או כתובת.',
+  basketOriginalChanged: 'הקבלה המקורית זוכתה בינתיים. יש לבחור את הפריטים מחדש.',
+  basketPayoutUnavailable: 'זיכוי לכרטיס אינו זמין',
+  basketUnlinkedDeclined: (why: string) => `הזיכוי לכרטיס נדחה: ${why}. אפשר להחזיר במזומן.`,
+  tablesRefundBlocked: 'לא ניתן לבצע זיכוי בתוך שולחן. צאו מהשולחן כדי לזכות.',
+  // ── discounts, OTH ──
+  noDiscountTitle: 'לא מקבל הנחות',
+  lineNoDiscount: 'הפריט לא מקבל הנחות.',
+  basketDiscountExceeds: 'ההנחה גדולה מהסכום לתשלום',
+  othNoneEligible: 'אין בהזמנה פריטים שאפשר לתת על חשבון הבית.',
+  othRefusedNoDiscount: (n: string) => `${n} לא מקבל הנחות — אי אפשר לתת אותו על חשבון הבית.`,
+  othRefusedLineDiscount: 'הפריט על חשבון הבית (OTH). כדי לתת עליו הנחה אחרת — קודם בטלו את ה-OTH.',
+  othDisabled: 'OTH — על חשבון הבית אינו פעיל בקופה הזו',
+  othTitle: 'OTH — על חשבון הבית',
+  othUndoTitle: 'ביטול OTH',
+  othOver: (s: string) => `על חשבון הבית (OTH) · ${s} — מעל התקרה שלך`,
+  // ── held sales ──
+  heldCancelReasonRequired: 'יש לכתוב סיבת ביטול',
+  heldCloseNoneLeft: 'אין מכירות מושהות — אפשר להמשיך בסגירה.',
+  autoCloseNoticeTitle: 'סגירה אוטומטית במשמרת הקודמת',
 } as const;
+
+/** A line of a document a receipt return credits ("מקבלה", RefundSource). */
+interface ReceiptSource {
+  transactionId: string;
+  itemId: string;
+  documentNumber: string;
+  originalQty: number;
+  alreadyRefunded: number;
+  collectedAgorot: number;
+  unitAgorot: number;
+  /** The original line as sold (its options and meal), carried to the credit line. */
+  line: SaleLine;
+  tracked: boolean;
+}
 
 interface CartRec {
   lineId: string;
   productId: string;
   qty: number;
+  /** A line coming back ("זיכוי"): from the catalog, or picked off a receipt ([receipt]). */
+  refund?: boolean;
+  receipt?: ReceiptSource | null;
+  /** The cashier's line discount (percentage in hundredths, or a fixed sum); OTH's is its own 100%. */
+  discount?: { type: DiscountType; value: number } | null;
+  oth?: OthMark | null;
+  /** A held sale's line: the price it was parked at. */
+  keptUnitAgorot?: number | null;
+  /** The name it was parked under / sold under (a product the catalog lost since still shows). */
+  name?: string;
 }
 
 /** Who approved: a manager by their code, or nobody (the user's own right, a confirmation). */
@@ -185,9 +383,26 @@ interface PendingDialog {
   dialog: EngineDialog;
   /** The permission a manager's code must hold; null = a confirmation (no code). */
   code: string | null;
+  /** The sum / rate the approver's own ceiling must cover. */
+  amount?: number | null;
+  percent?: number | null;
   /** A check of the typed code of its own (the work mode's, against KIOSK_TILL_MODE in the runtime); else `code` against the roster. */
   verify?: (pin: string) => Promise<{ ok: true; by: Approver } | { ok: false; message: string }>;
-  resume(approver: Approver | null): Promise<unknown> | unknown;
+  /** Free text the dialog asks for (a reason), passed to `resume` with the approver. */
+  resume(approver: Approver | null, answers: Record<string, string>): Promise<unknown> | unknown;
+}
+
+/** A mixed basket at the payment: its figures, its step, the customer, the route of a card payout. */
+interface BasketRec {
+  saleAgorot: number;
+  refundAgorot: number;
+  netAgorot: number;
+  hasUnlinked: boolean;
+  step: CheckoutBasket['step'];
+  customer: { name: string; phone: string; address: string };
+  customerRequired: boolean;
+  route: CardPayoutRoute;
+  handedBackAgorot: number;
 }
 
 interface CheckoutRec {
@@ -207,6 +422,18 @@ interface CheckoutRec {
   frozen: Frozen | null;
   /** The receipt (print job) of the finished sale, until the cashier is done. */
   receiptJob: string | null;
+  /** A basket with returns. */
+  basket: BasketRec | null;
+  /** Every document the payment wrote (a basket's sale and credit notes). */
+  docIds: string[];
+}
+
+/** A credit line as priced from the cart. */
+interface PricedRefund {
+  rec: CartRec;
+  line: SaleLine;
+  totalAgorot: number;
+  tracked: boolean;
 }
 
 interface Frozen {
@@ -214,6 +441,22 @@ interface Frozen {
   tracked: string[];
   promotions: AppliedPromotionRow[];
   totals: SaleTotals;
+  /** The basket discount in money, its kind and rate (on the 320). */
+  basketDiscountAgorot?: number;
+  basketDiscount?: { type: DiscountType; value: number } | null;
+  /** The returns of a mixed basket. */
+  refunds?: PricedRefund[];
+}
+
+interface Priced extends Frozen {
+  gone: string[];
+  refunds: PricedRefund[];
+  saleTotalAgorot: number;
+  refundTotalAgorot: number;
+  netAgorot: number;
+  lineDiscountsAgorot: number;
+  othAgorot: number;
+  nonDiscountableAgorot: number;
 }
 
 const idleCheckout = (): CheckoutRec => ({
@@ -230,10 +473,27 @@ const idleCheckout = (): CheckoutRec => ({
   cardError: null,
   frozen: null,
   receiptJob: null,
+  basket: null,
+  docIds: [],
 });
 
 function isInt(v: unknown, min: number, max: number): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+}
+
+/** A document's lines as the refund reads them (RefundMath's TransactionItemEntity view). */
+function refundItemsOf(d: DocDraft): RefundItem[] {
+  return d.lines.map((l, i) => ({
+    id: d.itemIds[i],
+    productId: l.productId,
+    quantity: l.qty,
+    unitAgorot: unitAgorot(l),
+    discountAgorot: l.discountAgorot ?? 0,
+    promotionAgorot: l.promotionAgorot ?? 0,
+    voucherAgorot: l.voucherAgorot ?? 0,
+    noDiscount: l.noDiscount === true,
+    refundOfItemId: l.refundOfItemId ?? null,
+  }));
 }
 
 export class KioskCoreTillEngine implements EngineEndpoint {
@@ -246,6 +506,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private readonly compare: BcryptCompare;
   private readonly nowFn: () => number;
   private readonly log: (m: string) => void;
+  private readonly held: HeldStore;
 
   private cashier: RosterUser | null = null;
   private locked = true;
@@ -259,6 +520,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /** "SELL" approved by a manager for this basket (asked once per basket, Android sellGate). */
   private sellApprovedFor: string | null = null;
   private basketId = randomUUID();
+  /** "הנחה לחשבון" on this basket, and who authorised the discounts (named on the 320). */
+  private cartDiscount: { type: DiscountType; value: number } | null = null;
+  private discountApprover: string | null = null;
+  /** "מצב זיכוי" and the chooser; the manager who authorised the returns of this basket (a grant, spent at the commit). */
+  private refundMode = false;
+  private refundChooser = false;
+  private refundGrant: { approverId: string; profile: PermissionProfile } | null = null;
+  /** A held sale's basket discount and approver, kept in memory while it is parked (Android parkedExtras). */
+  private readonly parkedExtras = new Map<string, { discount: { type: DiscountType; value: number } | null; approver: string | null }>();
   private hostIdle = { idle: true, busy: false };
   private lastActivityAt: number;
   private lastZNumber: number | null = null;
@@ -272,12 +542,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private tick: NodeJS.Timeout | null = null;
   private stopped = false;
   private lastState = '';
+  /** The automatic close: since when a payment has held it (that shift's id, the clock). */
+  private autoPaymentWait: { shiftId: string; since: number } | null = null;
+  private autoCloseBusy = false;
 
   constructor(private readonly o: TillEngineOptions) {
     this.svc = o.svc;
     this.compare = o.compare ?? ((p, h) => bcrypt.compare(p, h));
     this.nowFn = o.now ?? (() => Date.now());
     this.log = o.log ?? (() => undefined);
+    this.held = new HeldStore(this.svc.kv, this.nowFn);
     this.lastActivityAt = this.nowFn();
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
@@ -286,6 +560,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.offView = () => this.svc.off('view', onView);
     this.tick = setInterval(() => this.refresh(), 5_000);
     this.attachWorkMode();
+    // "סגירת משמרת אוטומטית גם עם עגלה פתוחה": the service's half-minute tick asks the till (a till by role only).
+    this.svc.attachTillAutoClose?.(() => this.later(() => this.autoCloseTick()));
   }
 
   stop() {
@@ -294,6 +570,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.offMode?.();
     if (this.tick) clearInterval(this.tick);
     this.tick = null;
+    this.svc.attachTillAutoClose?.(null);
   }
 
   /** The work mode runtime exists after the engine in the shell's start: tried again until it is there. */
@@ -310,7 +587,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       holdsTender: this.checkout.legs.length > 0,
       cardInFlight: this.svc.pay.cardInFlight,
       tableOpen: false,
-      heldSales: 0,
+      heldSales: this.held.count(),
       employee: this.cashier ? { id: this.cashier.id, name: displayName(this.cashier) } : null,
       lastActivityAtMs: this.lastActivityAt,
     }));
@@ -442,15 +719,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'sell.setQty':
         return this.setQty(String(a.lineId ?? ''), a.qty as number);
       case 'sell.remove':
-        this.editable();
-        this.cart = this.cart.filter((l) => l.lineId !== a.lineId);
-        return undefined;
+        return this.remove(String(a.lineId ?? ''));
       case 'sell.discount':
-        return this.comingSoon('הנחה ידנית');
+        return this.lineDiscount(String(a.lineId ?? ''), a.pct);
       case 'sell.clear':
         this.editable();
-        this.cart = [];
-        this.sellApprovedFor = null;
+        this.clearBasket();
         return undefined;
       case 'sell.department': {
         const id = (a.departmentId as string | null) ?? null;
@@ -478,24 +752,32 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.recheckCard();
       case 'checkout.markNotApproved':
         return this.markNotApproved();
+      case 'checkout.returnCustomer':
+        return this.confirmReturnCustomer(a);
+      case 'checkout.exchange':
+        return this.confirmExchange();
+      case 'checkout.payout':
+        return this.payout(a.method === 'card' ? 'card' : a.method === 'cash' ? 'cash' : refuse('invalid_args'));
       case 'dialog.answer':
         return this.answerDialog(String(a.dialogId ?? ''), String(a.action ?? ''), (a.answers ?? {}) as Record<string, string>);
       case 'doc.history':
         return this.history();
       case 'doc.reprint':
         return this.reprint(String(a.documentId ?? ''));
+      case 'doc.detail':
+        return this.documentDetail(String(a.documentId ?? ''), a.quantities);
       case 'doc.refund':
-        return this.comingSoon('זיכוי');
+        return this.historyRefund(String(a.documentId ?? ''), a.quantities);
       case 'shift.open':
         return this.shiftOpen(a.openingCashAgorot);
       case 'shift.close':
-        return this.shiftClose(a.countedCashAgorot);
+        return this.shiftClose(a.countedCashAgorot, a.keepHeld === true);
       case 'report.x':
         return this.reportX();
       case 'report.shopX':
         return this.shopX(a.refresh === true, a.print === true);
       case 'z.produce':
-        return this.zProduce(a.countedCashAgorot);
+        return this.zProduce(a.countedCashAgorot, a.keepHeld === true);
       case 'mode.switch':
         return this.modeSwitch(a.to as DeviceRoleName, typeof a.managerCode === 'string' ? a.managerCode : null);
       case 'host.idle':
@@ -504,14 +786,60 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'hw.result':
         // The real engine carries out its own hardware: nothing arrives from a page (the role refuses it too).
         return undefined;
+      case 'discount.preview':
+        return this.discountPreview(a.mode, a.input);
+      case 'discount.apply':
+        return this.applyBasketDiscount(a.mode, a.input);
+      case 'discount.remove':
+        this.editable();
+        // One action, no confirm: removing a discount only ever raises what is owed.
+        this.cartDiscount = null;
+        return undefined;
+      case 'oth.confirm':
+        return this.othConfirm(a.lineIds, a.reason);
+      case 'oth.undo':
+        return this.othUndo(String(a.lineId ?? ''));
+      case 'refund.button':
+        return this.refundButton();
+      case 'refund.catalog':
+        this.signedIn();
+        if (!this.refundChooser) return refuse('invalid_args');
+        this.refundChooser = false;
+        this.refundMode = true;
+        return undefined;
+      case 'refund.end':
+        // "סיום זיכוי": stops adding returns; the ones in the cart stay.
+        this.refundMode = false;
+        this.refundChooser = false;
+        return undefined;
+      case 'refund.recent':
+        return this.recentReceipts();
+      case 'refund.find':
+        return this.findReceipt(a.query);
+      case 'refund.pick':
+        return this.pickReceipt(String(a.transactionId ?? ''));
+      case 'refund.add':
+        return this.addFromReceipt(String(a.transactionId ?? ''), a.quantities);
+      case 'held.hold':
+        return this.hold(a.label);
+      case 'held.list':
+        this.signedIn();
+        return this.held.summaries();
+      case 'held.resume':
+        return this.resumeHeld(String(a.id ?? ''), a.parkLive === true);
+      case 'held.cancel':
+        return this.cancelHeld(String(a.id ?? ''), a.reason);
+      case 'notice.ack':
+        this.svc.kv.delete(AUTO_CLOSE_NOTICE);
+        return undefined;
     }
     return refuse('unknown_op');
   }
 
   /* ------------------------------------------------------------------ staff */
 
-  private roster(): RosterUser[] {
-    return this.svc.cloud.posUsers() as RosterUser[];
+  private roster(): Array<RosterUser & ProfileUser> {
+    return this.svc.cloud.posUsers() as Array<RosterUser & ProfileUser>;
   }
 
   private shop(): string | null {
@@ -526,6 +854,23 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private operator() {
     const u = this.signedIn();
     return { id: u.id, name: displayName(u) };
+  }
+
+  /** The operator's role profile — the roster's states, limits and "כשאין הרשאה" (re-read: a roster pull may change it). */
+  private roleProfile(): PermissionProfile | null {
+    const u = this.cashier;
+    if (!u || this.locked) return null;
+    const fresh = this.roster().find((x) => x.id === u.id) ?? (u as RosterUser & ProfileUser);
+    return profileOf(fresh);
+  }
+
+  private deniedSettings() {
+    return deniedUiSettingsOf(this.svc.cloud.parameters());
+  }
+
+  /** The profile the till acts on: under "כשאין הרשאה" = לבקש קוד מנהל, a role's DENY asks a manager's code. */
+  private profile(): PermissionProfile | null {
+    return actingProfile(this.roleProfile(), this.deniedSettings(), CODES);
   }
 
   private async login(pin: string) {
@@ -553,40 +898,68 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.cashier = null;
     this.locked = true;
     this.pending = null;
-    // The shop's figures were for the user who asked: gone with them.
+    // The shop's figures were for the user who asked: gone with them; so is a refund's authority.
     this.shopXDoc = null;
     this.shopXError = null;
+    this.refundGrant = null;
+    this.refundChooser = false;
     return undefined;
   }
 
   /**
-   * The Android PermissionGate: the user's own answer for `code` — `allow` runs `resume` at once; `approval` asks a
-   * manager's code (a dialog, the engine's question); `deny` is "אין לך הרשאה" — or, with `askOnDeny`, asks a manager too
-   * (an action a cashier never has but a manager may approve at the till: the sold-out sale, the work mode).
+   * The Android PermissionGate on PermissionService.decide: the operator's own answer for `code` (at `amount` ₪ /
+   * `percent`, held to the role's limits) — `allowed` runs `resume` at once (no approver: the operator's own right);
+   * `approval` asks a manager's code — only someone allowed it alone within THEIR OWN limits may give it; `denied` is
+   * "אין לך הרשאה" — or, with `askOnDeny`, asks a manager too. Under "כשאין הרשאה" = לבקש קוד מנהל, a role's DENY is an
+   * approval already (the acting profile).
    */
-  private gate(code: string, resume: (approver: Approver | null) => Promise<unknown> | unknown, opts: { askOnDeny?: boolean; title?: string; body?: string } = {}): Promise<unknown> | unknown {
-    const user = this.signedIn();
-    const st = stateOf(user, code);
-    if (st === 'allow') return resume(null);
-    if (st === 'deny' && !opts.askOnDeny) return refuse('permission_denied', TEXT.denied(code));
+  private gate(
+    code: string,
+    resume: (approver: Approver | null) => Promise<unknown> | unknown,
+    opts: { askOnDeny?: boolean; title?: string; body?: string; amount?: number | null; percent?: number | null; relax?: boolean; force?: boolean; decision?: Decision; approveCode?: string } = {},
+  ): Promise<unknown> | unknown {
+    this.signedIn();
+    const d = opts.decision ?? decide(this.profile(), code, { amount: opts.amount, percent: opts.percent, relaxApproval: opts.relax, forceApproval: opts.force });
+    if (d.kind === 'allowed') return resume(null);
+    if (d.kind === 'denied' && !opts.askOnDeny) return refuse('permission_denied', deniedText(code, d.why));
     this.openDialog({
       kind: 'manager_approval',
       title: opts.title ?? WORDS.managerApprovalTitle,
-      body: opts.body ?? TEXT.approval(code),
+      body: opts.body ?? (d.kind === 'approval' ? approvalText(d) : TEXT.approval(code)),
       fields: [{ name: 'pin', label: WORDS.managerCode, kind: 'pin' }],
       actions: [
         { id: 'approve', label: WORDS.approve, primary: true },
         { id: 'cancel', label: WORDS.cancel },
       ],
-      code,
-      resume,
+      code: opts.approveCode ?? code,
+      amount: opts.amount ?? null,
+      percent: opts.percent ?? null,
+      resume: (by) => resume(by),
     });
     return { dialogId: this.pending!.dialog.id };
   }
 
-  private openDialog(d: { kind: EngineDialog['kind']; title: string; body: string; fields: EngineDialog['fields']; actions: EngineDialog['actions']; code: string | null; resume: PendingDialog['resume']; verify?: PendingDialog['verify'] }) {
+  private openDialog(d: {
+    kind: EngineDialog['kind'];
+    title: string;
+    body: string;
+    fields: EngineDialog['fields'];
+    actions: EngineDialog['actions'];
+    code: string | null;
+    amount?: number | null;
+    percent?: number | null;
+    resume: PendingDialog['resume'];
+    verify?: PendingDialog['verify'];
+  }) {
     this.dialogSeq += 1;
-    this.pending = { dialog: { id: `d${this.dialogSeq}`, kind: d.kind, title: d.title, body: d.body, fields: d.fields, actions: d.actions }, code: d.code, verify: d.verify, resume: d.resume };
+    this.pending = {
+      dialog: { id: `d${this.dialogSeq}`, kind: d.kind, title: d.title, body: d.body, fields: d.fields, actions: d.actions },
+      code: d.code,
+      amount: d.amount ?? null,
+      percent: d.percent ?? null,
+      verify: d.verify,
+      resume: d.resume,
+    };
   }
 
   private async answerDialog(id: string, action: string, answers: Record<string, string>) {
@@ -603,7 +976,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       if (!v.ok) return refuse('wrong_pin', v.message);
       approver = v.by;
     } else if (p.code) {
-      const out = await approve({
+      const out = await approveWithin({
         users: this.roster(),
         shopId: this.shop(),
         code: p.code,
@@ -611,16 +984,19 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         lock: this.svc.kv.getJson<ExitLock>(APPROVAL_LOCK) ?? NO_LOCK,
         nowMs: this.nowFn(),
         compare: this.compare,
+        amount: p.amount,
+        percent: p.percent,
       });
       if (!out.ok) {
         this.svc.kv.setJson(APPROVAL_LOCK, out.lock);
-        return refuse(out.reason === 'locked' ? 'login_locked' : out.reason === 'no_approver' ? 'manager_required' : 'wrong_pin', out.message);
+        const code: TillErrorCode = out.reason === 'locked' ? 'login_locked' : out.reason === 'no_approver' || out.reason === 'over_limit' ? 'manager_required' : 'wrong_pin';
+        return refuse(code, out.message);
       }
       this.svc.kv.setJson(APPROVAL_LOCK, NO_LOCK);
       approver = { id: out.user.id, name: displayName(out.user) };
     }
     this.pending = null;
-    const value = await p.resume(approver);
+    const value = await p.resume(approver, answers);
     return value === undefined ? undefined : value;
   }
 
@@ -675,12 +1051,29 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
   }
 
+  /** The basket and everything that goes with it: the next customer starts by selling. */
+  private clearBasket() {
+    this.cart = [];
+    this.sellApprovedFor = null;
+    this.cartDiscount = null;
+    this.discountApprover = null;
+    this.refundMode = false;
+    this.refundChooser = false;
+    this.refundGrant = null;
+    this.basketId = randomUUID();
+  }
+
   private add(productId: string, qty: number) {
     this.editable();
     if (!isInt(qty, 1, MAX_QTY)) refuse('invalid_args');
     const cat = this.svc.tillCatalogData();
     const p = cat.products.find((x) => x.id === productId);
     if (!p) return refuse('invalid_args');
+    // "מצב זיכוי": a tap takes one unit back (addReturn) — not behind the sale's gates: its own authority was asked.
+    if (this.refundMode) {
+      this.putRefund(p.id, qty, p.name);
+      return undefined;
+    }
     const settings = this.svc.settingsMap();
     const user = this.signedIn();
     const proceed = (soldOutApproved: boolean) => {
@@ -767,12 +1160,23 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     });
   }
 
+  /** A sale line: grows the plain line of the product (never a discounted, OTH, held-price or returned one). */
   private putLine(productId: string, qty: number) {
-    const same = this.cart.find((l) => l.productId === productId);
+    const same = this.cart.find((l) => l.productId === productId && !l.refund && !l.discount && !l.oth && (l.keptUnitAgorot ?? null) === null);
     if (same) same.qty = Math.min(MAX_QTY, same.qty + qty);
     else {
       this.lineSeq += 1;
       this.cart.push({ lineId: `l${this.lineSeq}`, productId, qty });
+    }
+  }
+
+  /** A catalog return: one more unit of the product's own return line (never folded into a sale or a receipt line). */
+  private putRefund(productId: string, qty: number, name: string) {
+    const same = this.cart.find((l) => l.productId === productId && l.refund && !l.receipt);
+    if (same) same.qty = Math.min(MAX_QTY, same.qty + qty);
+    else {
+      this.lineSeq += 1;
+      this.cart.push({ lineId: `l${this.lineSeq}`, productId, qty, refund: true, receipt: null, name });
     }
   }
 
@@ -781,23 +1185,624 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (!isInt(qty, 0, MAX_QTY)) refuse('invalid_args');
     const line = this.cart.find((l) => l.lineId === lineId);
     if (!line) return refuse('invalid_args');
-    if (qty === 0) this.cart = this.cart.filter((l) => l.lineId !== lineId);
-    else {
-      // More of a product is a line coming in again: the gate asks about it as for a tap (a block that arrived since refuses).
-      const grew = qty > line.qty;
-      if (grew) return this.add(line.productId, qty - line.qty);
-      line.qty = qty;
+    if (qty === 0) return this.remove(lineId);
+    if (line.refund) {
+      // A line from a receipt never takes back more than is left on it.
+      line.qty = line.receipt ? Math.min(qty, Math.max(0, line.receipt.originalQty - line.receipt.alreadyRefunded)) : qty;
+      return undefined;
     }
+    if (qty > line.qty) {
+      // More of an OTH line: the extra units are paid, on a line of their own right under it (othGrowth).
+      if (line.oth) {
+        this.lineSeq += 1;
+        const at = this.cart.indexOf(line);
+        this.cart.splice(at + 1, 0, { lineId: `l${this.lineSeq}`, productId: line.productId, qty: qty - line.qty });
+        return undefined;
+      }
+      // More of a product is a line coming in again: the gate asks about it as for a tap (a block that arrived since refuses).
+      if (!line.discount && (line.keptUnitAgorot ?? null) === null) return this.add(line.productId, qty - line.qty);
+    }
+    line.qty = qty;
     return undefined;
   }
 
-  /** The cart priced by the kiosk's own engine on the till channel (promotions by the clock). */
-  private priced(now = new Date(this.nowFn())): Frozen & { gone: string[] } {
-    const lines = this.cart.map((l) => ({ key: l.lineId, productId: l.productId, qty: l.qty, notes: [] as string[], options: [] as never[] }));
+  /** "הסר": LINE_VOID for a sale line (a manager's code where the role asks it); a return line goes without it. */
+  private remove(lineId: string) {
+    this.editable();
+    const line = this.cart.find((l) => l.lineId === lineId);
+    if (!line) return undefined;
+    const drop = (approver: Approver | null) => {
+      this.cart = this.cart.filter((l) => l.lineId !== lineId);
+      if (!line.refund) this.recordVoid(line, approver);
+      if (this.cart.length === 0) this.cartDiscount = null;
+      return undefined;
+    };
+    if (line.refund) return drop(null);
+    return this.gate(PERM.LINE_VOID, drop);
+  }
+
+  /** "ביטול שורה": the till event `line_void` (what was taken off, by whom, who approved it). */
+  private recordVoid(line: CartRec, approver: Approver | null) {
+    const p = this.svc.tillCatalogData().products.find((x) => x.id === line.productId);
+    const unit = line.keptUnitAgorot ?? p?.priceAgorot ?? 0;
+    const op = this.cashier;
+    this.svc.recordEngineEvent?.({
+      id: randomUUID(),
+      type: 'line_void',
+      occurredAt: new Date(this.nowFn()).toISOString(),
+      shiftId: this.svc.ledger.currentShift()?.id ?? null,
+      posUserId: op?.id ?? null,
+      amount: (unit * line.qty) / 100,
+      details: {
+        productName: line.name ?? p?.name ?? line.productId,
+        productId: line.productId,
+        quantity: line.qty,
+        unitPrice: unit / 100,
+        ...(approver ? { approvedBy: approver.id, approvedByName: approver.name } : {}),
+      },
+    });
+  }
+
+  /** The cart priced: the sale lines by the kiosk's own engine on the till channel (promotions by the clock), the returns. */
+  private priced(now = new Date(this.nowFn())): Priced {
+    const sales = this.cart.filter((l) => !l.refund);
+    const lines = sales.map((l) => ({ key: l.lineId, productId: l.productId, qty: l.qty, notes: [] as string[], options: [] as never[] }));
     const input = { lines, service: null, customerName: null, customerPhone: null, tableRef: null, tipPct: null, tipAgorot: null } as unknown as StartPaymentIn;
-    const r = this.svc.priceTillBasket(input, now);
+    const byKey = new Map(sales.map((l) => [l.lineId, l] as const));
+    const handOf = (rec: CartRec | undefined, gross: number, noDiscount: boolean) =>
+      rec?.oth ? lineDiscountAmount(gross, { type: 'percentage', value: OTH_PERCENT }) : lineDiscountAmount(gross, rec?.discount ?? null, false, noDiscount);
+    const r =
+      sales.length === 0
+        ? { lines: [] as SaleLine[], changes: [] as Array<{ kind: string; key?: string }>, tracked: [] as string[], promotions: [] as AppliedPromotionRow[] }
+        : this.svc.priceTillBasket(input, now, {
+            promo: (key, gross) => {
+              const rec = byKey.get(key);
+              if (!rec) return null;
+              if (rec.oth) return { exclude: true };
+              const hand = rec.discount ? lineDiscountAmount(gross, rec.discount) : 0;
+              return hand > 0 ? { handDiscountAgorot: hand } : null;
+            },
+            listPrice: (key) => byKey.get(key)?.keptUnitAgorot ?? null,
+          });
     const gone = r.changes.filter((c) => c.kind === 'removed').map((c) => c.key ?? '');
-    return { lines: r.lines, tracked: r.tracked, promotions: r.promotions, totals: saleTotals(r.lines, this.svc.vatRate()), gone };
+    // The cashier's discount and OTH on each line (Cart.discountAmount): in the document's discount, never its gross.
+    const saleLines: SaleLine[] = r.lines.map((l) => {
+      const rec = byKey.get(l.key);
+      const gross = lineGross(l);
+      const hand = handOf(rec, gross, l.noDiscount === true);
+      return {
+        ...l,
+        ...(hand > 0 ? { discountAgorot: hand } : {}),
+        ...(rec?.oth ? { oth: { reason: rec.oth.reason, by: rec.oth.by, approvedBy: rec.oth.approvedBy } } : {}),
+      };
+    });
+    const gross = saleLines.reduce((s, l) => s + lineGross(l), 0);
+    const hand = saleLines.reduce((s, l) => s + (l.discountAgorot ?? 0), 0);
+    const oth = saleLines.filter((l) => l.oth).reduce((s, l) => s + (l.discountAgorot ?? 0), 0);
+    const promotion = saleLines.reduce((s, l) => s + (l.promotionAgorot ?? 0), 0);
+    const afterLines = gross - hand - promotion;
+    // A product that takes no discount keeps its full price: the basket discount over the other lines only.
+    const nonDiscountable = saleLines.filter((l) => l.noDiscount).reduce((s, l) => s + lineGross(l) - (l.promotionAgorot ?? 0), 0);
+    const basketDiscountAgorot = documentDiscountAmount(afterLines - nonDiscountable, this.cartDiscount);
+    const totals = saleTotals(saleLines, this.svc.vatRate(), 0, basketDiscountAgorot);
+    const refunds = this.pricedRefunds();
+    const refundTotal = refunds.reduce((s, x) => s + x.totalAgorot, 0);
+    const saleTotal = sales.length > 0 ? totals.totalAgorot : 0;
+    return {
+      lines: saleLines,
+      tracked: r.tracked,
+      promotions: r.promotions,
+      totals,
+      basketDiscountAgorot,
+      basketDiscount: this.cartDiscount,
+      refunds,
+      gone,
+      saleTotalAgorot: saleTotal,
+      refundTotalAgorot: refundTotal,
+      netAgorot: saleTotal - refundTotal,
+      lineDiscountsAgorot: hand - oth,
+      othAgorot: oth,
+      nonDiscountableAgorot: nonDiscountable,
+    };
+  }
+
+  /** The return lines: a catalog return at the catalog's price now, a receipt line at what the customer paid for it. */
+  private pricedRefunds(): PricedRefund[] {
+    const recs = this.cart.filter((l) => l.refund);
+    if (recs.length === 0) return [];
+    const cat = this.svc.tillCatalogData();
+    const out: PricedRefund[] = [];
+    for (const rec of recs) {
+      const src = rec.receipt;
+      if (src) {
+        const total = creditFor(src.collectedAgorot, src.originalQty, src.alreadyRefunded, rec.qty);
+        out.push({
+          rec,
+          totalAgorot: total,
+          tracked: src.tracked,
+          line: { ...src.line, key: rec.lineId, qty: rec.qty, creditAgorot: total, refundOfItemId: src.itemId, promotionAgorot: undefined, voucherAgorot: undefined, discountAgorot: undefined, oth: undefined },
+        });
+        continue;
+      }
+      const p = cat.products.find((x) => x.id === rec.productId);
+      const unit = p?.priceAgorot ?? 0;
+      const total = times(unit, rec.qty);
+      out.push({
+        rec,
+        totalAgorot: total,
+        tracked: p?.trackStock === true,
+        line: { key: rec.lineId, productId: rec.productId, name: rec.name ?? p?.name ?? rec.productId, sku: p?.sku ?? null, basePriceAgorot: unit, options: [], notes: [], qty: rec.qty, categoryId: p?.categoryId ?? null, creditAgorot: total, refundOfItemId: null },
+      });
+    }
+    return out;
+  }
+
+  /* --------------------------------------------------------------- discounts */
+
+  /** "הנחה" on a line, in whole percent (0 takes it off — nobody is asked for that). */
+  private lineDiscount(lineId: string, pctRaw: unknown) {
+    this.editable();
+    if (!isInt(pctRaw, 0, 100)) return refuse('invalid_args');
+    const pct = pctRaw as number;
+    const line = this.cart.find((l) => l.lineId === lineId);
+    if (!line) return refuse('invalid_args');
+    // An OTH line takes no other discount: said, and nobody is asked.
+    if (line.oth) return refuse('discount_refused', WORDS.othRefusedLineDiscount);
+    // Clearing one needs nobody: it only ever raises what is owed.
+    if (pct <= 0) {
+      line.discount = null;
+      return undefined;
+    }
+    // A refund line: what goes back is what was paid, not a negotiated figure.
+    if (line.refund) return refuse('discount_refused', WORDS.lineNoDiscount);
+    const p = this.svc.tillCatalogData().products.find((x) => x.id === line.productId);
+    // "לא מקבל הנחות": said, not silently ignored — and no manager is asked for.
+    if (p?.noDiscount) return refuse('discount_refused', WORDS.lineNoDiscount, { title: WORDS.noDiscountTitle });
+    return this.withDiscountAuthority(pct, () => {
+      line.discount = { type: 'percentage', value: pct * 100 };
+      return undefined;
+    });
+  }
+
+  /**
+   * Give a discount if this operator may, and otherwise ask a manager first (withDiscountAuthority): DISCOUNT at the rate —
+   * a role allowed up to X% acts alone only within it; only an approver whose own ceiling covers the rate may approve. Named
+   * on the sale document: the operator acting alone, or the manager whose code was typed.
+   */
+  private withDiscountAuthority(percent: number | null, apply: () => unknown) {
+    return this.gate(
+      PERM.DISCOUNT,
+      (approver) => {
+        const value = apply();
+        this.discountApprover = approver ? approver.id : this.cashier!.id;
+        return value;
+      },
+      { percent },
+    );
+  }
+
+  private basketDiscountInput(modeRaw: unknown, inputRaw: unknown): { mode: BasketDiscountMode; input: string } {
+    const mode = modeRaw === 'percent' || modeRaw === 'fixed' || modeRaw === 'target' ? modeRaw : refuse('invalid_args');
+    if (typeof inputRaw !== 'string' || inputRaw.length > 12) return refuse('invalid_args');
+    return { mode, input: inputRaw };
+  }
+
+  /** What a keyed basket discount would do, the way the cart will compute it. */
+  private basketPreview(mode: BasketDiscountMode, input: string): BasketDiscountPreview {
+    const p = this.priced();
+    // payableBeforeBasketDiscount: what the basket comes to with its current basket discount taken back.
+    return basketDiscountPreview(mode, input, p.netAgorot + (p.basketDiscountAgorot ?? 0), p.nonDiscountableAgorot);
+  }
+
+  private discountPreview(modeRaw: unknown, inputRaw: unknown) {
+    this.signedIn();
+    const { mode, input } = this.basketDiscountInput(modeRaw, inputRaw);
+    return this.basketPreview(mode, input);
+  }
+
+  /**
+   * "הנחה לחשבון" (applyBasketDiscount): a fixed amount over what is owed is refused, never clamped in silence; the rate
+   * (as keyed, or the amount over the basket) is what DISCOUNT's ceiling is held to.
+   */
+  private applyBasketDiscount(modeRaw: unknown, inputRaw: unknown) {
+    this.editable();
+    const { mode, input } = this.basketDiscountInput(modeRaw, inputRaw);
+    if (this.cart.filter((l) => !l.refund).length === 0) return refuse('cart_empty');
+    const preview = this.basketPreview(mode, input);
+    if (!preview.canApply) return refuse('discount_refused', preview.exceedsBasket ? WORDS.basketDiscountExceeds : TILL_ERROR_DISCOUNT);
+    const rate = basketDiscountRate(mode, input, preview);
+    const committed = committedBasketDiscount(mode, input, preview);
+    if (!committed) return refuse('discount_refused', TILL_ERROR_DISCOUNT);
+    return this.withDiscountAuthority(rate, () => {
+      this.cartDiscount = committed;
+      return undefined;
+    });
+  }
+
+  /* --------------------------------------------------------------------- OTH */
+
+  /** "OTH": the lines picked given free with the reason — after a manager's code when one is needed (OthAuthority). */
+  private othConfirm(idsRaw: unknown, reasonRaw: unknown) {
+    this.editable();
+    const settings = othSettingsOf(this.svc.cloud.parameters());
+    if (!settings.enabled) return refuse('permission_denied', WORDS.othDisabled);
+    if (!Array.isArray(idsRaw) || idsRaw.length === 0 || idsRaw.some((x) => typeof x !== 'string')) return refuse('invalid_args');
+    const reason = typeof reasonRaw === 'string' ? reasonRaw.trim().slice(0, 100) : '';
+    if (!reason) return refuse('invalid_args');
+    const products = new Map(this.svc.tillCatalogData().products.map((p) => [p.id, p] as const));
+    const picked = (idsRaw as string[]).map((id) => this.cart.find((l) => l.lineId === id)).filter((l): l is CartRec => !!l);
+    for (const l of picked) {
+      const refusal = othRefusal({ refund: !!l.refund, noDiscount: products.get(l.productId)?.noDiscount === true, oth: l.oth ?? null });
+      if (refusal === 'no_discount') return refuse('discount_refused', WORDS.othRefusedNoDiscount(products.get(l.productId)?.name ?? l.name ?? ''));
+    }
+    const lines = picked.filter((l) => othRefusal({ refund: !!l.refund, noDiscount: products.get(l.productId)?.noDiscount === true, oth: l.oth ?? null }) === null);
+    if (lines.length === 0) return refuse('discount_refused', WORDS.othNoneEligible);
+    // What the lines are worth (their full price): OTH's ceiling holds to it.
+    const view = this.priced();
+    const worth = lines.reduce((s, l) => {
+      const sl = view.lines.find((x) => x.key === l.lineId);
+      return s + (sl ? lineGross(sl) : 0);
+    }, 0);
+    const decision = othDecide(this.profile(), settings.requiresManager, worth / 100);
+    const give = (approver: Approver | null) => {
+      const op = this.cashier!;
+      const mark: OthMark = approver
+        ? { reason, by: op.id, approvedBy: approver.id, approverName: approver.name }
+        : settings.requiresManager
+          ? // A manager at the till approves themselves.
+            { reason, by: op.id, approvedBy: op.id, approverName: displayName(op) }
+          : { reason, by: op.id, approvedBy: null, approverName: null };
+      for (const l of lines) {
+        l.oth = mark;
+        l.discount = null;
+      }
+      if (mark.approvedBy) this.discountApprover = mark.approvedBy;
+      return undefined;
+    };
+    if (decision.kind === 'denied') return refuse('permission_denied', deniedText('OTH', decision.why));
+    if (decision.kind === 'allowed') return give(null);
+    const need = othNeed(decision);
+    return this.gate('OTH', give, {
+      decision,
+      amount: need.amount,
+      approveCode: need.code,
+      title: WORDS.othTitle,
+      body: decision.why === 'over_limit' ? WORDS.othOver(sh(worth)) : approvalText(decision),
+    });
+  }
+
+  /** "בטל OTH": the line back at its price — approved like the OTH was (on the discount, no amount). */
+  private othUndo(lineId: string) {
+    this.editable();
+    const line = this.cart.find((l) => l.lineId === lineId);
+    if (!line || !line.oth) return refuse('invalid_args');
+    const settings = othSettingsOf(this.svc.cloud.parameters());
+    const decision = othDecide(this.profile(), settings.requiresManager, null);
+    const undo = () => {
+      line.oth = null;
+      line.discount = null;
+      return undefined;
+    };
+    if (decision.kind === 'denied') return refuse('permission_denied', deniedText('OTH', decision.why));
+    if (decision.kind === 'allowed') return undo();
+    const need = othNeed(decision);
+    return this.gate('OTH', undo, { decision, approveCode: need.code, title: WORDS.othUndoTitle });
+  }
+
+  /* ----------------------------------------------------- refunds: the sell screen */
+
+  /**
+   * The one "זיכוי" button (refundButton → withRefundAuthority): REFUND — the operator's own, or a manager's code; the
+   * approval is HELD for the basket and spent when it is paid. Then the two ways in ("זיכוי פריט מהקטלוג" / "זיכוי מקבלה").
+   * On: "סיום זיכוי".
+   */
+  private refundButton() {
+    this.editable();
+    if (this.refundMode) {
+      this.refundMode = false;
+      this.refundChooser = false;
+      return undefined;
+    }
+    const decision = decide(this.profile(), PERM.REFUND);
+    if (decision.kind === 'allowed' || this.refundGrant) {
+      this.refundChooser = true;
+      return undefined;
+    }
+    return this.gate(PERM.REFUND, (approver) => {
+      if (approver) {
+        const u = this.roster().find((x) => x.id === approver.id);
+        if (u) this.refundGrant = { approverId: approver.id, profile: profileOf(u) };
+      }
+      this.refundChooser = true;
+      return undefined;
+    });
+  }
+
+  /** "קבלות אחרונות": the most recent sales that may still have something to credit. */
+  private recentReceipts() {
+    this.signedIn();
+    return this.svc.ledger.recentRefundable(RECENT_RECEIPTS).map((d) => this.receiptRow(d));
+  }
+
+  private receiptRow(d: DocDraft) {
+    return { transactionId: d.id, number: formatDocNumber(d.prefix, String(d.number)), at: d.createdAt, documentType: d.documentType, totalAgorot: d.totals.totalAgorot };
+  }
+
+  /**
+   * The receipt the customer brought (findReceipt): the full number (`20000057`) or a short one (`57`). Each type has its
+   * own series, so a number may name more than one sale: then they are listed and the cashier picks — never the first.
+   */
+  private findReceipt(queryRaw: unknown) {
+    this.signedIn();
+    const text = typeof queryRaw === 'string' ? queryRaw.replace(/[\u2013\u2014\u05BE]/g, '-').replace(/[^0-9-]/g, '').slice(0, 16) : '';
+    const q = parseDocQuery(text);
+    if (!q) return { notFound: true, message: WORDS.receiptNotFound(text) };
+    const found = this.svc.ledger.refundableByNumbers(docQueryNumbers(q)).filter((d) => docQueryMatches(q, d.number, d.prefix));
+    if (found.length === 0) return { notFound: true, message: WORDS.receiptNotFound(text) };
+    if (found.length > 1) return { notFound: false, message: WORDS.receiptMatches, matches: found.map((d) => this.receiptRow(d)) };
+    return { notFound: false, ...this.pickReceipt(found[0].id) };
+  }
+
+  /** A receipt's lines: what is left on each (this cart's own picks included) and what the customer paid per unit. */
+  private pickReceipt(transactionId: string) {
+    this.signedIn();
+    const tx = this.svc.ledger.doc(transactionId);
+    if (!tx || !isSaleType(tx.documentType) || !settled(tx)) return refuse('invalid_args');
+    const items = refundItemsOf(tx);
+    const prior = this.priorRefundItems(tx.id);
+    const already = alreadyRefunded(items, prior);
+    const collected = collectedPerLine(items, tx.totals.discountAgorot);
+    const lines: RefundableLine[] = items.map((it, i) => {
+      const inCart = this.cart.filter((l) => l.receipt?.itemId === it.id).reduce((s, l) => s + l.qty, 0);
+      return {
+        itemId: it.id,
+        productId: it.productId,
+        name: tx.lines[i].name,
+        originalQty: it.quantity,
+        remainingQty: Math.max(0, it.quantity - (already.get(it.id) ?? 0) - inCart),
+        unitNetAgorot: it.quantity > 0 ? Math.round((collected.get(it.id) ?? 0) / it.quantity) : 0,
+        inCart,
+      };
+    });
+    return { document: this.receiptRow(tx), lines };
+  }
+
+  /**
+   * The receipt picker's "הוסף": the picked lines go in as returns (addFromReceipt) — capped by what is left on each line,
+   * this cart's own picks included. Not behind the sale's gates: the picker opens only behind the refund's own authority.
+   */
+  private addFromReceipt(transactionId: string, quantitiesRaw: unknown) {
+    this.editable();
+    if (!this.refundChooser && !this.refundMode && !this.refundGrant && decide(this.profile(), PERM.REFUND).kind !== 'allowed') return refuse('permission_denied', TEXT.denied(PERM.REFUND));
+    const tx = this.svc.ledger.doc(transactionId);
+    if (!tx || !isSaleType(tx.documentType) || !settled(tx)) return refuse('invalid_args');
+    if (!quantitiesRaw || typeof quantitiesRaw !== 'object' || Array.isArray(quantitiesRaw)) return refuse('invalid_args');
+    const items = refundItemsOf(tx);
+    const prior = this.priorRefundItems(tx.id);
+    const already = alreadyRefunded(items, prior);
+    const collected = collectedPerLine(items, tx.totals.discountAgorot);
+    const number = formatDocNumber(tx.prefix, String(tx.number));
+    let added = 0;
+    for (const [itemId, q] of Object.entries(quantitiesRaw as Record<string, unknown>)) {
+      if (!isInt(q, 0, MAX_QTY)) return refuse('invalid_args');
+      if ((q as number) <= 0) continue;
+      const i = items.findIndex((x) => x.id === itemId);
+      if (i < 0) return refuse('invalid_args');
+      const item = items[i];
+      const maxQty = Math.max(0, item.quantity - (already.get(item.id) ?? 0));
+      const existing = this.cart.find((l) => l.receipt?.itemId === item.id);
+      if (existing) {
+        const capped = Math.min(existing.qty + (q as number), maxQty);
+        if (capped > existing.qty) {
+          existing.qty = capped;
+          added += 1;
+        }
+        continue;
+      }
+      const capped = Math.min(q as number, maxQty);
+      if (capped <= 0) continue;
+      this.lineSeq += 1;
+      this.cart.push({
+        lineId: `l${this.lineSeq}`,
+        productId: item.productId,
+        qty: capped,
+        refund: true,
+        name: tx.lines[i].name,
+        receipt: {
+          transactionId: tx.id,
+          itemId: item.id,
+          documentNumber: number,
+          originalQty: item.quantity,
+          alreadyRefunded: already.get(item.id) ?? 0,
+          collectedAgorot: collected.get(item.id) ?? 0,
+          unitAgorot: item.unitAgorot,
+          line: tx.lines[i],
+          tracked: tx.tracked.includes(item.productId),
+        },
+      });
+      added += 1;
+    }
+    if (added === 0) return refuse('refund_refused', WORDS.refundNothingLeft);
+    // A receipt pick is a one-off: the next catalog tap is still a sale (the refund mode stays as it was).
+    this.refundChooser = false;
+    return undefined;
+  }
+
+  /** Line items across every credit note already issued against [originalId] (cancelled ones are not). */
+  private priorRefundItems(originalId: string): RefundItem[] {
+    return this.svc.ledger
+      .refundsOf(originalId)
+      .filter((d) => d.status !== 'cancelled')
+      .flatMap((d) =>
+        d.lines.map((l, i) => ({
+          id: d.itemIds[i],
+          productId: l.productId,
+          quantity: l.qty,
+          unitAgorot: unitAgorot(l),
+          refundOfItemId: l.refundOfItemId ?? null,
+        })),
+      );
+  }
+
+  /* ------------------------------------------------------- refunds: the history */
+
+  /** "זיכוי" from the history (DetailViewModel.reload): the document's lines, what is left on each, how the money goes back. */
+  private documentDetail(documentId: string, quantitiesRaw?: unknown): DocumentDetail {
+    this.signedIn();
+    const tx = this.svc.ledger.doc(documentId);
+    if (!tx) return refuse('invalid_args');
+    const items = refundItemsOf(tx);
+    const prior = isSaleType(tx.documentType) ? this.priorRefundItems(tx.id) : [];
+    const remaining = remainingQuantities(items, prior);
+    const already = alreadyRefunded(items, prior);
+    const collected = collectedPerLine(items, tx.totals.discountAgorot);
+    const credit = isCreditType(tx.documentType);
+    const lines: RefundableLine[] = items.map((it, i) => ({
+      itemId: it.id,
+      productId: it.productId,
+      name: tx.lines[i].name,
+      originalQty: it.quantity,
+      remainingQty: credit ? 0 : (remaining.get(it.id) ?? 0),
+      unitNetAgorot: it.quantity > 0 ? Math.round((collected.get(it.id) ?? 0) / it.quantity) : 0,
+    }));
+    const all = credit ? 0 : refundLines(items, remaining, tx.totals.discountAgorot, already).reduce((s, l) => s + l.totalAgorot, 0);
+    let selected: number | undefined;
+    if (!credit && quantitiesRaw && typeof quantitiesRaw === 'object' && !Array.isArray(quantitiesRaw)) {
+      const picks = new Map<string, number>();
+      for (const [id, q] of Object.entries(quantitiesRaw as Record<string, unknown>)) if (isInt(q, 0, MAX_QTY) && remaining.has(id)) picks.set(id, Math.min(q as number, remaining.get(id) ?? 0));
+      selected = refundLines(items, picks, tx.totals.discountAgorot, already).reduce((s, l) => s + l.totalAgorot, 0);
+    }
+    return {
+      id: tx.id,
+      ref: formatDocNumber(tx.prefix, String(tx.number)),
+      documentType: tx.documentType,
+      status: tx.status,
+      totalAgorot: tx.totals.totalAgorot,
+      cashier: tx.cashierName,
+      at: tx.createdAt,
+      methods: legsOf(tx).map((l) => l.method),
+      lines,
+      isRefundDocument: credit,
+      anythingRefundable: !credit && settled(tx) && lines.some((l) => l.remainingQty > 0),
+      refundMethod: this.historyRefundMethod(tx),
+      refundAllAgorot: all,
+      ...(selected !== undefined ? { selectedAgorot: selected } : {}),
+    };
+  }
+
+  /**
+   * The tender a credit from the history gives back (historyRefundTender): the original sale's (its last real leg; none:
+   * cash). A card sale on a till "ללא אשראי" is credited in cash — never to the card here.
+   */
+  private historyRefundMethod(tx: DocDraft): 'cash' | 'card' {
+    const legs = legsOf(tx).filter((l) => l.method !== EXCHANGE);
+    const method = legs.length > 0 ? legs[legs.length - 1].method : tx.card ? 'card' : 'cash';
+    return method === 'card' && !this.svc.pay.noCard ? 'card' : 'cash';
+  }
+
+  /**
+   * "בצע זיכוי" (DetailViewModel.refund): a credit note — a NEW document (330, or −400), linked to the original — for the
+   * picked quantities, the original never rewritten. In the Android order: nothing picked, no shift, then the refund gate
+   * (a card refund with no acquirer reference refused before any approval is spent; REFUND at the credited sum — a manager
+   * whose own refund limit covers it), then the money: a card refund is written PENDING before the terminal is asked (a
+   * decline voids it), a cash one completed and the drawer opened.
+   */
+  private historyRefund(documentId: string, quantitiesRaw: unknown) {
+    this.editable();
+    const tx = this.svc.ledger.doc(documentId);
+    if (!tx || isCreditType(tx.documentType) || !isSaleType(tx.documentType) || !settled(tx)) return refuse('refund_refused', WORDS.refundNothingLeft);
+    const items = refundItemsOf(tx);
+    const prior = this.priorRefundItems(tx.id);
+    const remaining = remainingQuantities(items, prior);
+    const already = alreadyRefunded(items, prior);
+    // The screen's picks, clamped to what is still refundable; absent: everything that is left (the common case).
+    const picks = new Map<string, number>();
+    if (quantitiesRaw === undefined) for (const [id, q] of remaining) picks.set(id, q);
+    else {
+      if (!quantitiesRaw || typeof quantitiesRaw !== 'object' || Array.isArray(quantitiesRaw)) return refuse('invalid_args');
+      for (const [id, q] of Object.entries(quantitiesRaw as Record<string, unknown>)) {
+        if (!isInt(q, 0, MAX_QTY) || !remaining.has(id)) return refuse('invalid_args');
+        picks.set(id, Math.min(q as number, remaining.get(id) ?? 0));
+      }
+    }
+    const lines = refundLines(items, picks, tx.totals.discountAgorot, already);
+    if (lines.length === 0) return refuse('refund_refused', WORDS.refundSelectItems);
+    const shift = this.svc.ledger.currentShift();
+    if (!shift && !this.shiftsHidden()) return refuse('shift_not_open', WORDS.refundNoShift);
+    const method = this.historyRefundMethod(tx);
+    const credited = creditedShekels(lines);
+    const originalTxnId = method === 'card' ? acquirerTransactionIdOf(tx.card?.meta ?? null) : null;
+    // RefundGate.MISSING_CARD_REFERENCE: before the approval is spent.
+    if (method === 'card' && !originalTxnId) return refuse('refund_refused', WORDS.refundCardMissingOriginal);
+    if (method === 'card' && !this.svc.pay.refundsSupported) return refuse('terminal_unavailable', WORDS.refundNotSupported);
+    const fullyRefunded = items.every((it) => (remaining.get(it.id) ?? 0) - (picks.get(it.id) ?? 0) <= 1e-9);
+    return this.gate(
+      PERM.REFUND,
+      (approver) => {
+        if (!this.ensureShift()) return refuse('shift_not_open', WORDS.refundNoShift);
+        const creditLines: SaleLine[] = lines.map((rl) => {
+          const i = items.findIndex((x) => x.id === rl.sourceItemId);
+          return { ...tx.lines[i], key: randomUUID(), qty: rl.quantity, creditAgorot: rl.totalAgorot, refundOfItemId: rl.sourceItemId, promotionAgorot: undefined, voucherAgorot: undefined, discountAgorot: undefined, oth: undefined, voucherMark: undefined };
+        });
+        const amount = lines.reduce((s, l) => s + l.totalAgorot, 0);
+        const docType = creditDocumentType(this.svc.business().dealerType, tx.documentType);
+        const doc: BasketDocInput = {
+          documentType: docType,
+          lines: creditLines,
+          tracked: creditLines.filter((l) => tx.tracked.includes(l.productId)).map((l) => l.productId),
+          totals: creditTotals(creditLines, vatRateForType(docType, this.svc.vatRate())),
+          payments: [{ method, amountAgorot: amount }],
+          // What went back to the customer: recorded like a sale's tender; a refund gives no change.
+          tenderedAgorot: amount,
+          changeAgorot: 0,
+          refundOfTransactionId: tx.id,
+          fullyRefunded,
+          approvedByPosUserId: approver ? approver.id : this.cashier!.id,
+        };
+        const written = this.svc.ledger.recordBasket(
+          { prefix: this.prefix(), branchId: this.svc.business().branchId, operator: this.operator(), basketId: null, documents: [doc] },
+          method === 'card' ? 'pending' : 'completed',
+        );
+        if (!written) return refuse('shift_not_open', WORDS.refundNoShift);
+        if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
+        const creditDoc = written[0];
+        if (method === 'cash') {
+          this.refundDrawer();
+          this.svc.printDocReceipt(creditDoc, false);
+          void this.svc.sync.flush();
+          this.toast(WORDS.refundDone, 'ok');
+          return { documentId: creditDoc.id, ref: formatDocNumber(creditDoc.prefix, String(creditDoc.number)) };
+        }
+        void this.runHistoryCardRefund(creditDoc, amount, originalTxnId!);
+        return { documentId: creditDoc.id, ref: formatDocNumber(creditDoc.prefix, String(creditDoc.number)), pending: true };
+      },
+      { amount: credited },
+    );
+  }
+
+  /** runCardRefund: one frame; approved completes the pending credit note, anything else voids it (nothing went back). */
+  private async runHistoryCardRefund(creditDoc: DocDraft, amount: number, originalTxnId: string) {
+    const outcome = await this.svc.pay.refund({ transactionId: creditDoc.id, amountAgorot: amount, originalTransactionId: originalTxnId, record: false });
+    await this.later(() => {
+      if (outcome.kind === 'approved') {
+        const done = this.svc.ledger.completeCardSale(creditDoc.id, outcome.card);
+        if (done) this.svc.printDocReceipt(done, false);
+        this.toast(WORDS.refundDone, 'ok');
+      } else {
+        this.svc.ledger.voidCardSale(creditDoc.id, null);
+        this.toast(outcome.kind === 'declined' || outcome.kind === 'unknown' ? outcome.message : WORDS.noPaymentOptions, 'error');
+      }
+      void this.svc.sync.flush();
+      this.dirty = true;
+      this.commit();
+    });
+  }
+
+  /** "מגירת מזומן": cash handed back opens the drawer under the refund's own approval (the drawer parameter on). */
+  private refundDrawer() {
+    const v = String(this.svc.cloud.parameters().cashDrawer ?? '').trim().toLowerCase();
+    if (v === '' || v === 'כבוי' || v === 'off' || v === 'false') return;
+    void this.svc.openDrawer().catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
   }
 
   /* ---------------------------------------------------------------- checkout */
@@ -814,51 +1819,246 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.toast('חלק מהפריטים כבר לא נמכרים והוסרו מהסל', 'error');
       return undefined;
     }
-    if (p.totals.totalAgorot < 1) return refuse('cart_empty');
-    this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: p.totals.totalAgorot, frozen: { lines: p.lines, tracked: p.tracked, promotions: p.promotions, totals: p.totals } };
+    const frozen: Frozen = { lines: p.lines, tracked: p.tracked, promotions: p.promotions, totals: p.totals, basketDiscountAgorot: p.basketDiscountAgorot, basketDiscount: p.basketDiscount, refunds: p.refunds };
+    if (p.refunds.length > 0) {
+      // A basket with returns: who the money goes back to first (RETURN_CUSTOMER), then by the net.
+      const hasUnlinked = p.refunds.some((r) => !r.rec.receipt);
+      const params = this.svc.cloud.parameters();
+      const basket: BasketRec = {
+        saleAgorot: p.saleTotalAgorot,
+        refundAgorot: p.refundTotalAgorot,
+        netAgorot: p.netAgorot,
+        hasUnlinked,
+        step: 'return_customer',
+        customer: { name: '', phone: '', address: '' },
+        customerRequired: returnCustomerRequired(hasUnlinked, onUnlessFalse(params[REFUND_CUSTOMER_DETAILS_PARAM])),
+        route: p.netAgorot < 0 ? this.payoutRouteOf(-p.netAgorot, p.refunds) : { kind: 'unavailable' },
+        handedBackAgorot: 0,
+      };
+      this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: Math.max(0, p.netAgorot), frozen, basket };
+      return undefined;
+    }
+    if (p.totals.totalAgorot < 1 && !p.lines.some((l) => l.oth)) return refuse('cart_empty');
+    this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: p.totals.totalAgorot, frozen };
     return undefined;
+  }
+
+  /**
+   * How a card payout would go (resolvePayoutRoute): linked to the one card original that can take it all — what this
+   * basket credits against it, and what that card was charged less its card refunds — else unlinked if the merchant allows.
+   */
+  private payoutRouteOf(payout: number, refunds: PricedRefund[]): CardPayoutRoute {
+    if (this.svc.pay.noCard || !this.svc.pay.refundsSupported) return { kind: 'unavailable' };
+    const candidates: LinkCandidate[] = [];
+    const originals = [...new Set(refunds.map((r) => r.rec.receipt?.transactionId).filter((x): x is string => !!x))];
+    for (const id of originals) {
+      const original = this.svc.ledger.doc(id);
+      if (!original) continue;
+      const credited = refunds.filter((r) => r.rec.receipt?.transactionId === id).reduce((s, r) => s + r.totalAgorot, 0);
+      const charged = legsOf(original).filter((l) => l.method === 'card').reduce((s, l) => s + l.amountAgorot, 0);
+      const refundedByCard = this.svc.ledger
+        .refundsOf(id)
+        .filter((d) => d.status !== 'cancelled')
+        .flatMap((d) => legsOf(d))
+        .filter((l) => l.method === 'card')
+        .reduce((s, l) => s + l.amountAgorot, 0);
+      candidates.push({ originalId: id, creditedAgorot: credited, cardAgorot: charged - refundedByCard, acquirerTransactionId: acquirerTransactionIdOf(original.card?.meta ?? null) });
+    }
+    return cardPayoutRoute(payout, candidates, onUnlessFalse(this.svc.cloud.parameters()[UNLINKED_CARD_CREDIT_PARAM]));
   }
 
   private tenderOpen() {
     if (this.checkout.phase !== 'tender') refuse('invalid_args');
+    const b = this.checkout.basket;
+    // A basket: the tenders only for a positive net, once its customer is taken down.
+    if (b && b.step !== 'tender') refuse('invalid_args');
   }
 
   private approvedLegs(): TenderLeg[] {
     return this.checkout.legs.filter((l) => l.status === 'approved');
   }
 
-  /**
-   * The owner's rule (10.10.2026): an INDEPENDENT till (`independentTill` from the cloud, Z on the till) has no shifts in its UI —
-   * the shift opens silently on the first sale (float 0) and is closed inside "הפק Z". The till parameter `independentTillZOnly`
-   * (default on; read when present) can give the shift screens back. Shop-Z and own-Z tills keep the normal shift flow.
-   */
-  private shiftsHidden(): boolean {
-    const beat = this.svc.cloud.heartbeat();
-    if (beat.independentTill !== true || zModeOf(beat.zMode) !== 'till') return false;
-    const p = this.svc.cloud.parameters().independentTillZOnly;
-    return p === undefined || p === null || p === '' ? true : parameterOn(p);
+  /** "פרטי הלקוח לזיכוי" (confirmReturnCustomer): required for returns with no receipt, unless the merchant relaxed it. */
+  private confirmReturnCustomer(a: Record<string, unknown>) {
+    this.signedIn();
+    const b = this.checkout.basket;
+    if (this.checkout.phase !== 'tender' || !b || b.step !== 'return_customer') return refuse('invalid_args');
+    const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    const name = text(a.name, 255);
+    const phone = text(a.phone, 30);
+    const address = text(a.address, 500);
+    if (b.customerRequired && !returnCustomerComplete(name, phone, address)) return refuse('invalid_args', WORDS.basketCustomerRequired);
+    b.customer = { name, phone, address };
+    b.step = basketNextStep(b.netAgorot);
+    return undefined;
   }
 
-  /** The shift a sale is written in: the open one, or — on an independent till — one opened now by the first sale. */
-  private ensureShift(): boolean {
-    if (this.svc.ledger.currentShift()) return true;
-    if (!this.shiftsHidden()) return false;
-    this.svc.ledger.openShift(this.operator(), new Date(this.nowFn()), 0);
-    return true;
+  /**
+   * Whether this basket's returns may be issued now, and on whose authority (refundAuthorised): REFUND at what the basket
+   * gives back — the operator alone within their limit; a manager's approval held from the refund button while ITS
+   * approver's own limit covers the sum; else a manager's code now, for this sum.
+   */
+  private withRefundAuthority(go: (approverId: string) => unknown) {
+    const b = this.checkout.basket;
+    if (!b) return go(this.cashier!.id);
+    const amount = Math.abs(b.refundAgorot) / 100;
+    const own = decide(this.profile(), PERM.REFUND, { amount });
+    if (own.kind === 'allowed') return go(this.cashier!.id);
+    const grant = this.refundGrant;
+    if (grant && mayApprove(grant.profile, PERM.REFUND, amount)) return go(grant.approverId);
+    // A grant held from the button that does not cover this basket is spent, not stretched over it.
+    this.refundGrant = null;
+    return this.gate(
+      PERM.REFUND,
+      (approver) => go(approver ? approver.id : this.cashier!.id),
+      { amount, decision: own.kind === 'denied' ? own : undefined, askOnDeny: false },
+    );
+  }
+
+  /** The credit notes of the frozen basket, re-priced from each stored original (verifiedCredit); null — one changed. */
+  private basketCredits(): { credits: BasketCredit[] } | { changed: true } {
+    const f = this.checkout.frozen!;
+    const refunds = f.refunds ?? [];
+    const credits = basketCreditsOf(
+      refunds.map((r) => ({
+        key: r.rec.lineId,
+        productId: r.line.productId,
+        name: r.line.name,
+        sku: r.line.sku,
+        qty: r.rec.qty,
+        unitAgorot: unitAgorot(r.line),
+        totalAgorot: r.totalAgorot,
+        refundOf: r.rec.receipt ? { transactionId: r.rec.receipt.transactionId, itemId: r.rec.receipt.itemId } : null,
+      })),
+    );
+    const out: BasketCredit[] = [];
+    for (const c of credits) {
+      if (!c.originalId) {
+        out.push(c);
+        continue;
+      }
+      const original = this.svc.ledger.doc(c.originalId);
+      if (!original || !isSaleType(original.documentType) || !settled(original)) return { changed: true };
+      const items = refundItemsOf(original);
+      const prior = this.priorRefundItems(original.id);
+      const remaining = remainingQuantities(items, prior);
+      const q = new Map<string, number>();
+      for (const l of c.lines) q.set(l.sourceItemId!, (q.get(l.sourceItemId!) ?? 0) + l.qty);
+      if ([...q].some(([id, n]) => n > (remaining.get(id) ?? 0) + 1e-9)) return { changed: true };
+      const repriced = refundLines(items, q, original.totals.discountAgorot, alreadyRefunded(items, prior));
+      const bySource = new Map(repriced.map((l) => [l.sourceItemId, l] as const));
+      const cartBySource = new Map<string, number>();
+      for (const l of c.lines) cartBySource.set(l.sourceItemId!, (cartBySource.get(l.sourceItemId!) ?? 0) + l.totalAgorot);
+      if ([...cartBySource].some(([id, total]) => bySource.get(id)?.totalAgorot !== total)) return { changed: true };
+      out.push({
+        ...c,
+        originalDocumentType: original.documentType,
+        fullyRefunded: items.every((it) => (remaining.get(it.id) ?? 0) - (q.get(it.id) ?? 0) <= 1e-9),
+      });
+    }
+    return { credits: out };
+  }
+
+  /**
+   * Every document of the basket (buildBasketDocuments): the sale (if any) and each credit note, their legs as planned —
+   * the real legs / the payout on top of the exchange — in one transaction. Null with no shift; `{refused}` when a
+   * credited original changed meanwhile.
+   */
+  private writeBasket(input: { realLegs?: DocLeg[]; payout?: { method: 'cash' | 'card'; onCreditOf?: string | null } | null; tenderedAgorot?: number; changeAgorot?: number; status: 'pending' | 'completed'; refundApprover: string }): DocDraft[] | { refused: string } | null {
+    const f = this.checkout.frozen!;
+    const b = this.checkout.basket!;
+    const verified = this.basketCredits();
+    if ('changed' in verified) return { refused: WORDS.basketOriginalChanged };
+    const credits = verified.credits;
+    const refundsByLine = new Map((f.refunds ?? []).map((r) => [r.rec.lineId, r] as const));
+    const hasSale = f.lines.length > 0;
+    const dealer = this.svc.business().dealerType;
+    let plan;
+    try {
+      plan = planBasketTenders({
+        saleTotalAgorot: hasSale ? f.totals.totalAgorot : 0,
+        creditTotals: credits.map(creditTotal),
+        creditOriginals: credits.map((c) => c.originalId),
+        realLegs: (input.realLegs ?? []).map((l) => ({ method: l.method, amountAgorot: l.amountAgorot }) as Tender),
+        payout: input.payout ?? null,
+      });
+    } catch (e) {
+      if (e instanceof BasketMismatch) return { refused: e.message };
+      throw e;
+    }
+    const customer = b.customer.name || b.customer.phone || b.customer.address ? { name: b.customer.name, phone: b.customer.phone || null, address: b.customer.address || null } : null;
+    const docs: BasketDocInput[] = [];
+    if (hasSale) {
+      const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
+      docs.push({
+        documentType: saleDocumentType(dealer),
+        lines: f.lines,
+        tracked: f.tracked,
+        totals: f.totals,
+        promotions: f.promotions,
+        payments: plan.sale.map((t) => ({ method: t.method, amountAgorot: t.amountAgorot })),
+        ...(typeof input.tenderedAgorot === 'number' ? { tenderedAgorot: input.tenderedAgorot, changeAgorot: input.changeAgorot ?? 0 } : {}),
+        ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
+        ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
+      });
+    }
+    credits.forEach((c, i) => {
+      const legs = plan.credits[i];
+      const paidOut = legs.filter((t) => t.method !== EXCHANGE).reduce((s, t) => s + t.amountAgorot, 0);
+      const docType = creditDocumentType(dealer, c.originalDocumentType);
+      const lines: SaleLine[] = c.lines.map((cl) => {
+        const priced = cl.key ? refundsByLine.get(cl.key) : undefined;
+        const base: SaleLine = priced?.line ?? { key: randomUUID(), productId: cl.productId, name: cl.name, sku: cl.sku, basePriceAgorot: cl.unitAgorot, options: [], notes: [], qty: cl.qty };
+        return { ...base, qty: cl.qty, creditAgorot: cl.totalAgorot, refundOfItemId: cl.sourceItemId };
+      });
+      const tracked = (f.refunds ?? []).filter((r) => r.tracked).map((r) => r.line.productId);
+      docs.push({
+        documentType: docType,
+        lines,
+        tracked: [...new Set(tracked)],
+        totals: creditTotals(lines, vatRateForType(docType, this.svc.vatRate())),
+        payments: legs.map((t) => ({ method: t.method, amountAgorot: t.amountAgorot })),
+        ...(paidOut > 0 ? { tenderedAgorot: paidOut, changeAgorot: 0 } : {}),
+        refundOfTransactionId: c.originalId,
+        fullyRefunded: c.fullyRefunded,
+        approvedByPosUserId: input.refundApprover,
+        ...(customer ? { customer } : {}),
+      });
+    });
+    return this.svc.ledger.recordBasket(
+      { prefix: this.prefix(), branchId: this.svc.business().branchId, operator: this.operator(), basketId: this.basketId, documents: docs },
+      input.status,
+    );
   }
 
   private async cashTender(amount: unknown) {
     this.signedIn();
     this.tenderOpen();
-    if (!validCashAmount(amount)) refuse('invalid_args');
     const total = this.checkout.totalAgorot;
-    const step = takeCash(total, this.approvedLegs(), amount as number);
+    // Nothing to pay (VoucherZeroDue: "סגור עסקה" — a ₪0 sale, e.g. every line on the house): closed with no money moved.
+    const zero = total === 0 && amount === 0;
+    if (!zero && !validCashAmount(amount)) refuse('invalid_args');
+    const step = zero
+      ? ({ kind: 'complete', leg: { method: 'cash', amountAgorot: 0, handedAgorot: 0 }, legs: [{ method: 'cash', amountAgorot: 0, handedAgorot: 0 }], tenderedAgorot: 0, changeAgorot: 0 } as const)
+      : takeCash(total, this.approvedLegs(), amount as number);
     if (step.kind === 'partial') {
       this.checkout.legs.push({ ...step.leg, status: 'approved' });
       return undefined;
     }
     const f = this.checkout.frozen!;
     if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
+    if (this.checkout.basket) {
+      // A basket with returns and a positive net: its documents, the cash legs for the net (refundAuthorised first).
+      return this.withRefundAuthority((refundApprover) => {
+        const written = this.writeBasket({ realLegs: step.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })), tenderedAgorot: step.tenderedAgorot, changeAgorot: step.changeAgorot, status: 'completed', refundApprover });
+        if (!written) return refuse('shift_not_open', WORDS.shiftNone);
+        if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
+        this.checkout.legs.push({ ...step.leg, status: 'approved' });
+        this.finalizeBasket(written, { changeAgorot: step.changeAgorot, tenderedAgorot: step.tenderedAgorot, handBack: 0 });
+        return undefined;
+      });
+    }
+    const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
     const doc = this.svc.ledger.recordCashSale({
       documentType: saleDocumentType(this.svc.business().dealerType),
       prefix: this.prefix(),
@@ -873,6 +2073,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tenderedAgorot: step.tenderedAgorot,
       changeAgorot: step.changeAgorot,
       channel: 'till',
+      ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
+      ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
     });
     if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
     this.checkout.legs.push({ ...step.leg, status: 'approved' });
@@ -885,22 +2087,37 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return prefixFor(me?.documentPrefix ?? null, me?.posNumber ?? null);
   }
 
-  private cardTender() {
-    this.signedIn();
-    this.tenderOpen();
+  private cardRefusals() {
     const pay = this.svc.pay;
     if (pay.cardInFlight) refuse('checkout_busy');
     // "ללא אשראי" (payment integration none): no card on this till, whatever a screen sends.
     if (pay.noCard) refuse('terminal_unavailable', WORDS.noCard);
     if (!pay.configured) refuse('terminal_unavailable', WORDS.noPaymentOptions);
     if (pay.blocked() || pay.unresolved()) refuse('terminal_unavailable', WORDS.cardPending);
+  }
+
+  private cardTender() {
+    this.signedIn();
+    this.tenderOpen();
+    this.cardRefusals();
     const f = this.checkout.frozen!;
     const legs = cardLast(this.checkout.totalAgorot, this.approvedLegs());
     const card = legs[legs.length - 1];
     if (card.amountAgorot < 1) return refuse('invalid_args');
     const handed = handedTotal(legs);
     if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
+    if (this.checkout.basket) {
+      return this.withRefundAuthority((refundApprover) => {
+        // The basket written pending (every document of it) BEFORE the terminal is asked.
+        const written = this.writeBasket({ realLegs: legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })), ...(handed > 0 ? { tenderedAgorot: handed, changeAgorot: 0 } : {}), status: 'pending', refundApprover });
+        if (!written) return refuse('shift_not_open', WORDS.shiftNone);
+        if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
+        this.startCard(written[0], card.amountAgorot, written.map((d) => d.id));
+        return undefined;
+      });
+    }
     // The pending document is written (numbered, the counter saved first) BEFORE the terminal is asked.
+    const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
     const doc = this.svc.ledger.openCardSale({
       documentType: saleDocumentType(this.svc.business().dealerType),
       prefix: this.prefix(),
@@ -914,36 +2131,53 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       payments: legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot })),
       ...(handed > 0 ? { tenderedAgorot: handed, changeAgorot: 0 } : {}),
       channel: 'till',
+      ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
+      ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
     });
     if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
-    this.checkout.docId = doc.id;
-    this.checkout.legs.push({ method: 'card', amountAgorot: card.amountAgorot, handedAgorot: 0, status: 'pending' });
-    this.checkout.phase = 'card_waiting';
-    this.checkout.cardError = null;
-    this.checkout.cardStatus = WORDS.presentCard;
-    void this.runCharge(doc, card.amountAgorot);
+    this.startCard(doc, card.amountAgorot, [doc.id]);
     return undefined;
   }
 
-  private async runCharge(doc: DocDraft, amount: number) {
-    const outcome = await this.svc.pay.charge({
-      transactionId: doc.id,
-      orderId: null,
-      amountAgorot: amount,
-      tipAgorot: 0,
-      onSent: () => this.later(() => this.setCardStatus(WORDS.presentCard)),
-      onProgress: (m) => void this.later(() => this.setCardStatus(m)),
-    });
+  private startCard(doc: DocDraft, amount: number, docIds: string[], payout: { originalTransactionId: string | null } | null = null) {
+    this.checkout.docId = doc.id;
+    this.checkout.docIds = docIds;
+    this.checkout.legs.push({ method: 'card', amountAgorot: amount, handedAgorot: 0, status: 'pending' });
+    this.checkout.phase = 'card_waiting';
+    this.checkout.cardError = null;
+    this.checkout.cardStatus = WORDS.presentCard;
+    void this.runCharge(doc, amount, payout);
+  }
+
+  private async runCharge(doc: DocDraft, amount: number, payout: { originalTransactionId: string | null } | null) {
+    const outcome = payout
+      ? await this.svc.pay.refund({
+          transactionId: doc.id,
+          amountAgorot: amount,
+          originalTransactionId: payout.originalTransactionId,
+          record: true,
+          onSent: () => this.later(() => this.setCardStatus(WORDS.presentCard)),
+          onProgress: (m) => void this.later(() => this.setCardStatus(m)),
+        })
+      : await this.svc.pay.charge({
+          transactionId: doc.id,
+          orderId: null,
+          amountAgorot: amount,
+          tipAgorot: 0,
+          onSent: () => this.later(() => this.setCardStatus(WORDS.presentCard)),
+          onProgress: (m) => void this.later(() => this.setCardStatus(m)),
+        });
     await this.later(() => {
       const ref = this.svc.pay.attempts().find((a) => a.transactionId === doc.id)?.vuid ?? null;
       if (outcome.kind === 'approved') {
         const done = this.svc.ledger.completeCardSale(doc.id, outcome.card);
         if (ref) this.svc.pay.forgetAttempt(ref);
-        if (done && done.status === 'completed') this.finalize(done);
+        if (done && settled(done)) this.finalizeAfterCard(done);
       } else if (outcome.kind === 'declined' || outcome.kind === 'refused') {
         this.svc.ledger.voidCardSale(doc.id, outcome.kind === 'declined' ? outcome.voidMeta : null);
         if (ref) this.svc.pay.forgetAttempt(ref);
-        this.cardFailed(outcome.kind === 'declined' ? outcome.message : WORDS.noPaymentOptions);
+        const message = outcome.kind === 'declined' ? outcome.message : WORDS.noPaymentOptions;
+        this.cardFailed(payout && !payout.originalTransactionId ? WORDS.basketUnlinkedDeclined(message) : message);
         void this.svc.sync.flush();
       } else {
         // Unknown: never a second charge — the document stays pending and every tender waits for the answer.
@@ -954,6 +2188,18 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.dirty = true;
       this.commit();
     });
+  }
+
+  /** The card approved: a single document finalises as before; a basket's (or a payout's) documents together. */
+  private finalizeAfterCard(done: DocDraft) {
+    if (this.checkout.basket || done.basketId) {
+      const docs = done.basketId ? this.svc.ledger.basketDocs(done.basketId) : [done];
+      const b = this.checkout.basket;
+      const payout = b && b.netAgorot < 0 ? -b.netAgorot : 0;
+      this.finalizeBasket(docs, { changeAgorot: 0, tenderedAgorot: done.tenderedAgorot ?? 0, handBack: payout, viaCard: true });
+      return;
+    }
+    this.finalize(done);
   }
 
   private setCardStatus(m: string) {
@@ -968,9 +2214,61 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private cardFailed(message: string) {
     this.checkout.legs = this.checkout.legs.filter((l) => !(l.method === 'card' && l.status === 'pending'));
     this.checkout.docId = null;
+    this.checkout.docIds = [];
     this.checkout.phase = 'tender';
     this.checkout.cardStatus = null;
     this.checkout.cardError = message;
+  }
+
+  /** "אישור החלפה" (confirmExchange): a basket that nets to zero — the goods swap, nothing is paid either way. */
+  private confirmExchange() {
+    this.signedIn();
+    const b = this.checkout.basket;
+    if (this.checkout.phase !== 'tender' || !b || b.step !== 'exchange' || b.netAgorot !== 0) return refuse('invalid_args');
+    if (!this.ensureShift()) return refuse('shift_not_open', WORDS.noShiftBlocksSale);
+    return this.withRefundAuthority((refundApprover) => {
+      const written = this.writeBasket({ status: 'completed', refundApprover });
+      if (!written) return refuse('shift_not_open', WORDS.noShiftBlocksSale);
+      if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
+      this.finalizeBasket(written, { changeAgorot: 0, tenderedAgorot: 0, handBack: 0 });
+      return undefined;
+    });
+  }
+
+  /**
+   * Money back on a basket that nets below zero (payoutCash / payoutCard): one leg, no split, no tip. Cash: written and
+   * the drawer opens. Card: a linked refund when one card original can take it all, else an unlinked credit — the basket
+   * written pending first, a decline voids all of it.
+   */
+  private payout(method: 'cash' | 'card') {
+    this.signedIn();
+    const b = this.checkout.basket;
+    if (this.checkout.phase !== 'tender' || !b || b.step !== 'payout' || b.netAgorot >= 0) return refuse('invalid_args');
+    if (!this.ensureShift()) return refuse('shift_not_open', WORDS.noShiftBlocksSale);
+    const payout = -b.netAgorot;
+    if (method === 'cash') {
+      return this.withRefundAuthority((refundApprover) => {
+        const written = this.writeBasket({ payout: { method: 'cash' }, status: 'completed', refundApprover });
+        if (!written) return refuse('shift_not_open', WORDS.noShiftBlocksSale);
+        if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
+        this.finalizeBasket(written, { changeAgorot: 0, tenderedAgorot: 0, handBack: payout });
+        return undefined;
+      });
+    }
+    if (this.svc.pay.noCard) return refuse('terminal_unavailable', WORDS.noCard);
+    const route = b.route;
+    if (route.kind === 'unavailable') return refuse('terminal_unavailable', WORDS.basketPayoutUnavailable);
+    this.cardRefusals();
+    return this.withRefundAuthority((refundApprover) => {
+      const linked = route.kind === 'linked' ? route : null;
+      const written = this.writeBasket({ payout: { method: 'card', onCreditOf: linked?.originalId ?? null }, status: 'pending', refundApprover });
+      if (!written) return refuse('shift_not_open', WORDS.noShiftBlocksSale);
+      if (!Array.isArray(written)) return refuse('basket_changed', written.refused);
+      // The attempt names the credit note that carries the card leg (the basket completes or voids as one).
+      const carrier = written.find((d) => (d.payments ?? []).some((l) => l.method === 'card')) ?? written[0];
+      this.startCard(carrier, payout, written.map((d) => d.id), { originalTransactionId: linked?.acquirerTransactionId ?? null });
+      return undefined;
+    });
   }
 
   private checkoutCancel() {
@@ -1017,18 +2315,54 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const c = this.checkout;
     c.phase = 'done';
     c.docId = doc.id;
+    c.docIds = [doc.id];
     c.documentRef = formatDocNumber(doc.prefix, String(doc.number));
     c.changeAgorot = doc.changeAgorot ?? 0;
     c.tenderedAgorot = doc.tenderedAgorot ?? 0;
-    c.legs = legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
+    c.legs = legs.filter((l) => l.method !== EXCHANGE).map((l) => ({ method: l.method as 'cash' | 'card', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
     c.cardStatus = null;
     c.cardError = null;
-    this.cart = [];
-    this.sellApprovedFor = null;
-    this.basketId = randomUUID();
+    this.clearBasket();
     void this.svc.sync.flush();
     this.kickDrawer(doc);
     this.printOrAsk(doc);
+  }
+
+  /**
+   * A basket written and settled (basketDone): the done screen, the drawer (cash taken or handed back), and the paper —
+   * every document in the order numbered, each credit note followed by the shop's copy for the customer's signature.
+   */
+  private finalizeBasket(docs: DocDraft[], o: { changeAgorot: number; tenderedAgorot: number; handBack: number; viaCard?: boolean }) {
+    const c = this.checkout;
+    const primary = docs[0];
+    c.phase = 'done';
+    c.docId = primary.id;
+    c.docIds = docs.map((d) => d.id);
+    c.documentRef = formatDocNumber(primary.prefix, String(primary.number));
+    c.changeAgorot = o.changeAgorot;
+    c.tenderedAgorot = o.tenderedAgorot;
+    c.legs = docs
+      .flatMap((d) => legsOf(d))
+      .filter((l) => l.method !== EXCHANGE)
+      .map((l) => ({ method: l.method as 'cash' | 'card', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
+    c.cardStatus = null;
+    c.cardError = null;
+    if (c.basket) c.basket.handedBackAgorot = o.handBack;
+    this.clearBasket();
+    void this.svc.sync.flush();
+    // Cash taken, or handed back (a return, change): the drawer opens.
+    const cashMoved = docs.some((d) => legsOf(d).some((l) => l.method === 'cash'));
+    if (cashMoved && !o.viaCard) {
+      const sale = docs.find((d) => isSaleType(d.documentType));
+      if (sale && legsOf(sale).some((l) => l.method === 'cash')) this.kickDrawer(sale);
+      else this.refundDrawer();
+    }
+    if (o.handBack > 0) this.toast(WORDS.checkoutRefundDone(sh(o.handBack)), 'ok');
+    if (this.printMode().off) return;
+    for (const d of docs) {
+      this.svc.printDocReceipt(d, false);
+      if (isCreditType(d.documentType)) this.svc.printDocReceipt(d, true, true);
+    }
   }
 
   /** "פתיחת מגירה": on every payment that moves cash, when the till parameter and the user's right say so (the Android drawer, without its audit yet). */
@@ -1115,7 +2449,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     await this.svc.settleOrphans();
     const doc = this.svc.ledger.doc(c.docId);
     if (!doc) return refuse('invalid_args');
-    if (doc.status === 'completed') this.finalize(doc);
+    if (settled(doc)) this.finalizeAfterCard(doc);
     else if (doc.status === 'cancelled') this.cardFailed('העסקה לא חויבה');
     else c.cardError = WORDS.cardPending;
     return undefined;
@@ -1149,15 +2483,26 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return this.svc.ledger
       .todaysDocs(localDate(this.nowFn()))
       .slice(0, 40)
-      .map((d) => ({ id: d.id, ref: formatDocNumber(d.prefix, String(d.number)), totalAgorot: d.totals.totalAgorot, at: d.createdAt, cashier: d.cashierName, methods: legsOf(d).map((l) => l.method) }));
+      .map((d) => ({
+        id: d.id,
+        ref: formatDocNumber(d.prefix, String(d.number)),
+        totalAgorot: d.totals.totalAgorot,
+        at: d.createdAt,
+        cashier: d.cashierName,
+        methods: legsOf(d)
+          .map((l) => l.method)
+          .filter((m) => m !== EXCHANGE),
+        documentType: d.documentType,
+        status: d.status,
+      }));
   }
 
   private reprint(documentId: string) {
     this.signedIn();
     const doc = this.svc.ledger.doc(documentId);
-    if (!doc || doc.status !== 'completed') return refuse('invalid_args');
+    if (!doc || !settled(doc)) return refuse('invalid_args');
     // The copy of the sale just done, on its own done screen, is the checkout's (Android CheckoutViewModel.reprint): no code.
-    if (this.checkout.phase === 'done' && this.checkout.docId === documentId) {
+    if (this.checkout.phase === 'done' && (this.checkout.docId === documentId || this.checkout.docIds.includes(documentId))) {
       this.svc.printDocReceipt(doc, true);
       return undefined;
     }
@@ -1166,6 +2511,115 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.svc.printDocReceipt(doc, true);
       return undefined;
     });
+  }
+
+  /* ------------------------------------------------------------- held sales */
+
+  /**
+   * "להמתנה" (hold): the basket parked and the screen handed back empty — not gated on the shift (a parked basket is not a
+   * document). Never with a return line, never empty; its basket discount kept with it in memory (parkedExtras).
+   */
+  private hold(labelRaw: unknown) {
+    this.editable();
+    const refusal = holdRefusal({ empty: this.cart.length === 0, hasRefundLines: this.cart.some((l) => l.refund) });
+    if (refusal) return refuse('invalid_args', refusal);
+    const p = this.priced();
+    const byKey = new Map(p.lines.map((l) => [l.key, l] as const));
+    const lines: HeldLine[] = this.cart.map((rec) => {
+      const l = byKey.get(rec.lineId);
+      return {
+        id: rec.lineId,
+        productId: rec.productId,
+        name: l?.name ?? rec.name ?? rec.productId,
+        qty: rec.qty,
+        unitAgorot: l ? unitAgorot(l) : (rec.keptUnitAgorot ?? 0),
+        discount: rec.discount ?? null,
+        oth: rec.oth ?? null,
+      };
+    });
+    // The lines' money as rung up (gross less each line's own discount): what the list shows.
+    const total = p.lines.reduce((s, l) => s + lineGross(l) - (l.discountAgorot ?? 0), 0);
+    const op = this.operator();
+    const id = this.held.hold(lines, { id: op.id, name: op.name }, holdLabelOf(labelRaw), total);
+    if (!id) return refuse('invalid_args', HELD_TEXT.holdFailed);
+    if (this.cartDiscount || this.discountApprover) this.parkedExtras.set(id, { discount: this.cartDiscount, approver: this.discountApprover });
+    this.clearBasket();
+    return { id };
+  }
+
+  /**
+   * "טען מכירה" (requestResume): with items rung up the cashier is asked first — the only offered answer parks what is on
+   * screen ([parkLive]); nothing is merged or lost. The row is TAKEN (never two live copies of one basket).
+   */
+  private resumeHeld(id: string, parkLive: boolean) {
+    this.editable();
+    if (this.cart.some((l) => l.refund)) return refuse('invalid_args', HELD_TEXT.holdRefundBlocked);
+    const target = this.held.peek(id);
+    if (!target) return refuse('invalid_args', HELD_TEXT.heldGone);
+    if (this.cart.length > 0) {
+      if (!parkLive) {
+        const p = this.priced();
+        return refuse('checkout_busy', HELD_TEXT.conflictMessage(`${p.lines.reduce((s, l) => s + l.qty, 0)} פריטים, ${sh(p.netAgorot)}`), { conflict: true, title: HELD_TEXT.conflictTitle });
+      }
+      this.hold(null);
+    }
+    const sale = this.held.resume(id);
+    if (!sale) return refuse('invalid_args', HELD_TEXT.heldGone);
+    const extras = this.parkedExtras.get(id) ?? null;
+    this.parkedExtras.delete(id);
+    this.clearBasket();
+    for (const l of sale.lines) {
+      this.lineSeq += 1;
+      this.cart.push({ lineId: `l${this.lineSeq}`, productId: l.productId, qty: l.qty, discount: l.discount, oth: l.oth, keptUnitAgorot: l.unitAgorot, name: l.name });
+    }
+    if (extras) {
+      this.cartDiscount = extras.discount;
+      this.discountApprover = extras.approver;
+    }
+    return undefined;
+  }
+
+  /**
+   * "בטל" on a held sale (heldCloseGate.requestCancel): HELD_SALE_CANCEL (a manager's code where the role asks it), a reason,
+   * and its `held_sale_cancelled` till event — recorded only when this cancel took the row.
+   */
+  private cancelHeld(id: string, reasonRaw: unknown) {
+    this.signedIn();
+    const reason = typeof reasonRaw === 'string' ? reasonRaw.trim().slice(0, 300) : '';
+    if (!reason) return refuse('invalid_args', WORDS.heldCancelReasonRequired);
+    const target = this.held.peek(id);
+    if (!target) return refuse('invalid_args', HELD_TEXT.heldGone);
+    return this.gate(PERM.HELD_SALE_CANCEL, (approver) => {
+      const summary = summaryOf(target);
+      if (!this.held.discard(id)) return refuse('invalid_args', HELD_TEXT.heldGone);
+      this.parkedExtras.delete(id);
+      const op = this.cashier!;
+      this.recordEvent(TILL_EVENT_HELD_SALE_CANCELLED, op.id, summary.totalAgorot, heldSaleCancelDetails(summary, HELD_CANCEL_LOCAL, reason, new Date(this.nowFn()).toISOString(), { approvedBy: approver?.id ?? op.id }));
+      return undefined;
+    });
+  }
+
+  private recordEvent(type: string, posUserId: string | null, amountAgorot: number | null, details: Record<string, unknown>, shiftId?: string | null) {
+    this.svc.recordEngineEvent?.({
+      id: randomUUID(),
+      type,
+      occurredAt: new Date(this.nowFn()).toISOString(),
+      shiftId: shiftId === undefined ? (this.svc.ledger.currentShift()?.id ?? null) : shiftId,
+      posUserId,
+      ...(amountAgorot !== null ? { amount: amountAgorot / 100 } : {}),
+      details,
+    });
+  }
+
+  /**
+   * Every local close asks first (heldSalesGate): "יש N מכירות מושהות" — paid or cancelled before the close; with
+   * `allowCloseWithHeldSales` the close may go on and leave them ([keepHeld]).
+   */
+  private heldGate(keepHeld: boolean) {
+    const n = this.held.count();
+    const gate = heldSalesGate(n, allowCloseWithHeldSales(this.svc.cloud.parameters()));
+    if (gate === 'proceed' || (gate === 'warn_with_keep_option' && keepHeld)) return;
+    refuse('held_sales', HELD_TEXT.closeTitle(n), { count: n, keepAllowed: gate === 'warn_with_keep_option', body: HELD_TEXT.closeBody, sales: this.held.summaries() });
   }
 
   /* ------------------------------------------------------------------- shift */
@@ -1217,7 +2671,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return { ...report, countedCashAgorot: counted, differenceAgorot: counted - report.expectedCashAgorot, message: this.svc.outbox.count() === 0 ? WORDS.shiftClosedSynced : WORDS.shiftClosedQueued };
   }
 
-  private shiftClose(counted: unknown) {
+  private shiftClose(counted: unknown, keepHeld: boolean) {
     const user = this.signedIn();
     if (this.shiftsHidden()) this.noShiftsHere();
     const shift = this.svc.ledger.currentShift();
@@ -1226,7 +2680,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (!isInt(counted, 0, 100_000_000)) refuse('invalid_args');
     const pendingDocs = this.svc.ledger.pendingInShift(shift.id);
     if (pendingDocs > 0) refuse('checkout_busy', WORDS.pendingBlocksClose(pendingDocs));
-    return this.gate(PERM.SHIFT_CLOSE, () => this.closeNow(user, counted as number));
+    return this.gate(PERM.SHIFT_CLOSE, () => {
+      this.heldGate(keepHeld);
+      return this.closeNow(user, counted as number);
+    });
   }
 
   private xReportOf(t: ReturnType<typeof buildXTill>['till'], number: number | null): XReport {
@@ -1330,13 +2787,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /**
    * "הפק Z" (Android TillZRepository): only where this till makes its own Z (zMode = till). An open shift is closed first
    * (counted, X printed), then the machine's Z through tillZService — the one path that numbers a Z, strictly sequential,
-   * offline-safe. In the shop's Z mode closing the shift is all this till does.
+   * offline-safe. In the shop's Z mode closing the shift is all this till does. The held sales are asked about first.
    */
-  private async zProduce(counted: unknown) {
+  private async zProduce(counted: unknown, keepHeld: boolean) {
     const user = this.signedIn();
     if (zModeOf(this.svc.cloud.heartbeat().zMode) !== 'till') refuse('permission_denied', WORDS.zDisabled);
     if (this.checkout.phase !== 'idle' || this.cart.length > 0) refuse('checkout_busy');
     return this.gate(PERM.Z, async () => {
+      this.heldGate(keepHeld);
       const open = this.svc.ledger.currentShift();
       if (open) {
         // "משמרת #N פתוחה. היא תיסגר קודם": counted, X printed, then the Z (the Z's own permission covers the close).
@@ -1359,6 +2817,170 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       if (z.kind === 'offline') return refuse('engine_offline', WORDS.zNeedsConnection);
       return refuse('invalid_args', WORDS.zCloudError);
     });
+  }
+
+  /**
+   * The owner's rule (10.10.2026): an INDEPENDENT till (`independentTill` from the cloud, Z on the till) has no shifts in its UI —
+   * the shift opens silently on the first sale (float 0) and is closed inside "הפק Z". The till parameter `independentTillZOnly`
+   * (default on; read when present) can give the shift screens back. Shop-Z and own-Z tills keep the normal shift flow.
+   */
+  private shiftsHidden(): boolean {
+    const beat = this.svc.cloud.heartbeat();
+    if (beat.independentTill !== true || zModeOf(beat.zMode) !== 'till') return false;
+    const p = this.svc.cloud.parameters().independentTillZOnly;
+    return p === undefined || p === null || p === '' ? true : parameterOn(p);
+  }
+
+  /** The shift a sale is written in: the open one, or — on an independent till — one opened now by the first sale. */
+  private ensureShift(): boolean {
+    if (this.svc.ledger.currentShift()) return true;
+    if (!this.shiftsHidden()) return false;
+    this.svc.ledger.openShift(this.operator(), new Date(this.nowFn()), 0);
+    return true;
+  }
+
+  /* --------------------------------------------------- the automatic close */
+
+  /** The till's sale as the automatic close looks at it. */
+  autoCloseLook(): AutoCloseSaleLook {
+    const c = this.checkout;
+    return {
+      cardInFlight: this.svc.pay.cardInFlight || c.phase === 'card_waiting' || c.phase === 'card_unknown',
+      checkoutOpen: c.phase !== 'idle',
+      paymentTaken: c.phase === 'done' || c.legs.length > 0 || c.docId !== null,
+      basketOpen: this.cart.length > 0,
+      tableOpen: false,
+    };
+  }
+
+  /**
+   * `hold` / `discard` (AutoCloseSale): the payment screen backed out first when [abandon] and nothing was taken; a basket
+   * with returns stays where it is (kept). Null when nothing could be handled now (looked at again on the next tick).
+   */
+  private autoCloseHandle(holds: boolean, abandon: boolean): AutoCloseCart | null {
+    const c = this.checkout;
+    if (c.phase !== 'idle') {
+      if (!abandon || c.legs.length > 0 || c.docId !== null) return null;
+      this.checkout = idleCheckout();
+      this.pending = null;
+    }
+    if (this.cart.length === 0) return null;
+    const p = this.priced();
+    const items = this.cart.map((rec) => ({ name: p.lines.find((l) => l.key === rec.lineId)?.name ?? rec.name ?? rec.productId, quantity: rec.qty }));
+    const itemCount = Math.ceil(this.cart.reduce((s, l) => s + l.qty, 0));
+    const amount = p.netAgorot;
+    const cashierId = this.cashier?.id ?? null;
+    if (this.cart.some((l) => l.refund)) {
+      return { action: 'kept', items, itemCount, amountAgorot: amount, heldSaleId: null, cashierId, paymentAbandoned: abandon, keptReason: 'refund_lines' };
+    }
+    if (holds) {
+      const byKey = new Map(p.lines.map((l) => [l.key, l] as const));
+      const lines: HeldLine[] = this.cart.map((rec) => {
+        const l = byKey.get(rec.lineId);
+        return { id: rec.lineId, productId: rec.productId, name: l?.name ?? rec.name ?? rec.productId, qty: rec.qty, unitAgorot: l ? unitAgorot(l) : (rec.keptUnitAgorot ?? 0), discount: rec.discount ?? null, oth: rec.oth ?? null };
+      });
+      const total = p.lines.reduce((s, l) => s + lineGross(l) - (l.discountAgorot ?? 0), 0);
+      const id = this.held.hold(lines, { id: cashierId ?? '', name: this.cashier ? displayName(this.cashier) : null }, AUTO_CLOSE_PARK_LABEL, total);
+      if (!id) return { action: 'kept', items, itemCount, amountAgorot: amount, heldSaleId: null, cashierId, paymentAbandoned: abandon, keptReason: 'hold_failed' };
+      if (this.cartDiscount || this.discountApprover) this.parkedExtras.set(id, { discount: this.cartDiscount, approver: this.discountApprover });
+      this.clearBasket();
+      return { action: 'held', items, itemCount, amountAgorot: total, heldSaleId: id, cashierId, paymentAbandoned: abandon, keptReason: null };
+    }
+    this.clearBasket();
+    return { action: 'discarded', items, itemCount, amountAgorot: amount, heldSaleId: null, cashierId, paymentAbandoned: abandon, keptReason: null };
+  }
+
+  /**
+   * The till's automatic close (CloseShiftCoordinator.closeIfDue with AutoCloseOpenCart): at `autoCloseShiftAt`, never in
+   * the middle of a card; the basket by `autoCloseOpenCart` (wait / hold / discard), the held sales by
+   * `autoCloseHeldSales`, a payment waited for up to `autoCloseMaxWaitMin`. Each step said in the till's journal (till
+   * events); the next shift is told once. A Z-only till: the Z follows (as the kiosk's automatic close).
+   */
+  async autoCloseTick(nowMs: number = this.nowFn()): Promise<AutoCloseRecord | null> {
+    if (this.autoCloseBusy || this.stopped || !this.svc.fiscal) return null;
+    const params = this.svc.cloud.parameters();
+    const at = autoCloseTimeOf(null, params.autoCloseShiftAt);
+    if (!at) return null;
+    const open = this.svc.ledger.currentShift();
+    if (!open || !autoCloseDue(nowMs, at, Date.parse(open.opened_at))) {
+      this.autoPaymentWait = null;
+      return null;
+    }
+    this.autoCloseBusy = true;
+    try {
+      const rules = autoCloseRulesOf(params);
+      const look = this.autoCloseLook();
+      if (!look.cardInFlight && !look.checkoutOpen) this.autoPaymentWait = null;
+      const waited = this.autoPaymentWait && this.autoPaymentWait.shiftId === open.id ? nowMs - this.autoPaymentWait.since : 0;
+      const decision = autoCloseDecision(rules, look, waited, true);
+      let cart: AutoCloseCart | null = null;
+      if (decision.step === 'wait_payment') {
+        if (this.autoPaymentWait?.shiftId !== open.id) this.autoPaymentWait = { shiftId: open.id, since: nowMs };
+        this.log(`automatic close at ${at} waits: a payment is under way (${Math.floor(waited / 1000)}s of ${rules.maxWaitMin} min)`);
+        return null;
+      }
+      if (decision.step === 'wait_cart') return null;
+      if (decision.step === 'hold' || decision.step === 'discard') {
+        // Before anything is touched: a document still being written holds the close as always.
+        if (this.svc.ledger.pendingInShift(open.id) > 0) return null;
+        cart = this.autoCloseHandle(decision.step === 'hold', decision.abandonPayment);
+        if (!cart) return null;
+        const type = autoCloseCartEventType(cart.action);
+        if (type) this.recordEvent(type, cart.cashierId, cart.amountAgorot, autoCloseCartDetails(cart, at, open.sequence_number), open.id);
+      }
+      // `autoCloseHeldSales` = `cancel`: the held sales cancelled — never the basket this close just parked.
+      const cancelled: HeldSaleSummary[] = [];
+      if (rules.held === 'cancel' && this.svc.ledger.pendingInShift(open.id) === 0) {
+        for (const sale of this.held.all()) {
+          if (sale.id === cart?.heldSaleId) continue;
+          const summary = summaryOf(sale);
+          if (!this.held.discard(sale.id)) continue;
+          this.parkedExtras.delete(sale.id);
+          this.recordEvent(TILL_EVENT_HELD_SALE_CANCELLED, null, summary.totalAgorot, heldSaleCancelDetails(summary, HELD_CANCEL_AUTO_CLOSE, `סגירה אוטומטית ב-${at}`, new Date(nowMs).toISOString()), open.id);
+          cancelled.push(summary);
+        }
+        if (cancelled.length > 0) this.recordEvent(TILL_EVENT_AUTO_CLOSE_HELD_CANCELLED, null, cancelled.reduce((s, h) => s + h.totalAgorot, 0), autoCloseHeldCancelledDetails(cancelled, at), open.id);
+      }
+      // The close counts the expected cash (unattended by the till's own clock), the X frozen into it.
+      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs) });
+      if (closed.kind !== 'closed') return null;
+      this.autoPaymentWait = null;
+      const record: AutoCloseRecord = {
+        shiftId: closed.shift.id,
+        at,
+        closedAt: closed.shift.closed_at,
+        cart,
+        heldCancelled: cancelled.length,
+        heldCancelledAgorot: cancelled.reduce((s, h) => s + h.totalAgorot, 0),
+        heldCarried: this.held.count(),
+        tablesCarried: 0,
+        overPayment: decision.overPayment,
+        waitedMs: waited,
+      };
+      this.recordEvent(TILL_EVENT_SHIFT_AUTO_CLOSED, null, null, shiftAutoClosedDetails(record, rules), closed.shift.id);
+      const kept = this.svc.kv.getJson<AutoCloseRecord[]>(AUTO_CLOSE_RECORDS) ?? [];
+      this.svc.kv.setJson(AUTO_CLOSE_RECORDS, [...kept.filter((r) => r.shiftId !== record.shiftId), record].slice(-40));
+      if (worthNotice(record)) this.svc.kv.setJson(AUTO_CLOSE_NOTICE, record);
+      this.log(`automatic close at ${at}: shift ${closed.shift.id} closed`);
+      void this.svc.sync.flush();
+      // A Z-only till: the automatic close is a Z (the expected cash filed as the count, as always).
+      if (this.shiftsHidden()) void this.svc.tillZ.produceOwed('סגירה אוטומטית').catch((e: unknown) => this.log(`automatic close: the Z did not start: ${String(e)}`));
+      this.dirty = true;
+      this.commit();
+      return record;
+    } finally {
+      this.autoCloseBusy = false;
+    }
+  }
+
+  /** The notice the shift opens with — never on the very shift it is about. */
+  private autoCloseNotice(): { title: string; text: string } | null {
+    const kept = this.svc.kv.getJson<AutoCloseRecord>(AUTO_CLOSE_NOTICE);
+    if (!kept) return null;
+    const open = this.svc.ledger.currentShift();
+    if (!open || open.id === kept.shiftId) return null;
+    const text = autoCloseNextShiftNotice(kept);
+    return text ? { title: WORDS.autoCloseNoticeTitle, text } : null;
   }
 
   /* -------------------------------------------------------------------- mode */
@@ -1412,33 +3034,99 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /* ------------------------------------------------------------------- state */
 
-  private cartView(): { lines: CartLine[]; totals: SaleTotals | null; gone: string[] } {
-    if (this.cart.length === 0) return { lines: [], totals: null, gone: [] };
+  private cartView(): { lines: CartLine[]; priced: Priced | null } {
+    if (this.cart.length === 0) return { lines: [], priced: null };
     // After a payment opened, what it was priced from; else the cart as priced now.
-    const p = this.checkout.frozen && this.checkout.phase !== 'idle' ? { ...this.checkout.frozen, gone: [] as string[] } : this.priced();
+    const f = this.checkout.frozen;
+    const p: Priced =
+      f && this.checkout.phase !== 'idle'
+        ? {
+            ...f,
+            gone: [],
+            refunds: f.refunds ?? [],
+            saleTotalAgorot: f.lines.length > 0 ? f.totals.totalAgorot : 0,
+            refundTotalAgorot: (f.refunds ?? []).reduce((s, r) => s + r.totalAgorot, 0),
+            netAgorot: (f.lines.length > 0 ? f.totals.totalAgorot : 0) - (f.refunds ?? []).reduce((s, r) => s + r.totalAgorot, 0),
+            lineDiscountsAgorot: f.lines.filter((l) => !l.oth).reduce((s, l) => s + (l.discountAgorot ?? 0), 0),
+            othAgorot: f.lines.filter((l) => l.oth).reduce((s, l) => s + (l.discountAgorot ?? 0), 0),
+            nonDiscountableAgorot: 0,
+          }
+        : this.priced();
     const byKey = new Map(p.lines.map((l) => [l.key, l] as const));
+    const refundsByKey = new Map(p.refunds.map((r) => [r.rec.lineId, r] as const));
     const lines: CartLine[] = [];
     for (const rec of this.cart) {
+      const r = refundsByKey.get(rec.lineId);
+      if (r) {
+        lines.push({
+          lineId: rec.lineId,
+          productId: rec.productId,
+          name: r.line.name,
+          qty: rec.qty,
+          unitAgorot: unitAgorot(r.line),
+          discountPct: 0,
+          totalAgorot: r.totalAgorot,
+          refund: true,
+          fromReceipt: rec.receipt?.documentNumber ?? null,
+        });
+        continue;
+      }
       const l = byKey.get(rec.lineId);
       if (!l) continue;
       const unit = unitAgorot(l);
       const gross = unit * l.qty;
-      lines.push({ lineId: rec.lineId, productId: rec.productId, name: l.name, qty: l.qty, unitAgorot: unit, discountPct: 0, totalAgorot: gross - (l.promotionAgorot ?? 0) });
+      const hand = l.discountAgorot ?? 0;
+      lines.push({
+        lineId: rec.lineId,
+        productId: rec.productId,
+        name: l.name,
+        qty: l.qty,
+        unitAgorot: unit,
+        discountPct: rec.oth ? 100 : rec.discount?.type === 'percentage' ? rec.discount.value / 100 : 0,
+        totalAgorot: gross - (l.promotionAgorot ?? 0) - hand,
+        ...(hand > 0 ? { discountAgorot: hand } : {}),
+        ...(rec.oth ? { oth: rec.oth.reason } : {}),
+        ...(l.noDiscount ? { noDiscount: true } : {}),
+      });
     }
-    return { lines, totals: p.totals, gone: p.gone };
+    return { lines, priced: p };
+  }
+
+  private sessionHidden(): string[] {
+    const role = this.roleProfile();
+    if (!role) return [];
+    const settings = this.deniedSettings();
+    return ENTRIES.filter(([code, kind]) => !shows(role, code, settings, kind, code === PERM.REFUND && !!this.refundGrant)).map(([code]) => code);
+  }
+
+  private basketState(): CheckoutBasket | null {
+    const b = this.checkout.basket;
+    if (!b) return null;
+    return {
+      saleAgorot: b.saleAgorot,
+      refundAgorot: b.refundAgorot,
+      netAgorot: b.netAgorot,
+      payoutAgorot: b.netAgorot < 0 ? -b.netAgorot : 0,
+      hasUnlinked: b.hasUnlinked,
+      step: b.step,
+      customer: { ...b.customer, required: b.customerRequired },
+      payoutRoute: b.route.kind,
+      ...(b.handedBackAgorot > 0 ? { handedBackAgorot: b.handedBackAgorot } : {}),
+    };
   }
 
   private buildState(): TillState {
     const user = this.cashier;
     const view = this.cartView();
     // A line the catalog no longer sells is dropped from the cart the next time it is looked at (never mid-payment).
-    if (view.gone.length > 0 && this.checkout.phase === 'idle') {
-      this.cart = this.cart.filter((l) => !view.gone.includes(l.lineId));
+    const gone = view.priced?.gone ?? [];
+    if (gone.length > 0 && this.checkout.phase === 'idle') {
+      this.cart = this.cart.filter((l) => !gone.includes(l.lineId));
     }
-    const t = view.totals;
+    const p = view.priced;
     const c = this.checkout;
     const approved = this.approvedLegs();
-    const paid = paidOf(approved) + (c.phase === 'done' ? 0 : 0);
+    const paid = paidOf(approved);
     const shift = this.svc.ledger.currentShift();
     const last = this.svc.ledger.lastClosedShift();
     const fig = shift ? this.xFigures(shift.id).till : null;
@@ -1452,18 +3140,37 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const terminal = this.svc.pay.cardInFlight ? 'busy' : this.svc.pay.configured && this.svc.pay.monitor.state !== 'unreachable' ? 'ok' : 'none';
     const checkoutPhase: CheckoutState['phase'] = c.phase === 'card_unknown' ? 'tender' : c.phase;
     const dialog = this.pending?.dialog ?? null;
+    const params = this.svc.cloud.parameters();
+    const oth = othSettingsOf(params);
+    const net = p ? p.netAgorot : 0;
+    const vatOfNet = net === 0 ? 0 : net - vatNet(net, this.svc.vatRate());
+    const hidden = this.sessionHidden();
+    const basket = this.basketState();
     const state: TillState = {
       protocol: TILL_PROTOCOL,
-      session: { cashier: user && !this.locked ? { id: user.id, name: displayName(user) } : null, locked: this.locked || !user, permissions, demo: false },
+      session: {
+        cashier: user && !this.locked ? { id: user.id, name: displayName(user) } : null,
+        locked: this.locked || !user,
+        permissions,
+        demo: false,
+        ...(hidden.length > 0 ? { hidden } : {}),
+      },
       sell: {
         catalogVersion: this.catalogVersion(),
         departmentId: this.department,
         search: this.search,
         lines: view.lines,
         itemCount: view.lines.reduce((s, l) => s + l.qty, 0),
-        totalAgorot: t?.totalAgorot ?? 0,
-        vatAgorot: t?.vatAgorot ?? 0,
-        promotionsAgorot: t?.discountAgorot ?? 0,
+        totalAgorot: net,
+        vatAgorot: p && p.refunds.length === 0 ? p.totals.vatAgorot : vatOfNet,
+        promotionsAgorot: p ? p.lines.reduce((s, l) => s + (l.promotionAgorot ?? 0), 0) : 0,
+        ...(this.refundMode ? { refundMode: true } : {}),
+        ...(this.refundChooser ? { refundChooser: true } : {}),
+        ...(p && p.refunds.length > 0 ? { saleTotalAgorot: p.saleTotalAgorot, refundTotalAgorot: p.refundTotalAgorot } : {}),
+        ...(this.cartDiscount && p ? { basketDiscount: { amountAgorot: p.basketDiscountAgorot ?? 0, type: this.cartDiscount.type, value: this.cartDiscount.value } } : {}),
+        ...(p && p.lineDiscountsAgorot > 0 ? { lineDiscountsAgorot: p.lineDiscountsAgorot } : {}),
+        ...(p && p.othAgorot > 0 ? { othAgorot: p.othAgorot } : {}),
+        ...(p && p.nonDiscountableAgorot > 0 ? { nonDiscountableAgorot: p.nonDiscountableAgorot } : {}),
       },
       checkout: {
         phase: checkoutPhase,
@@ -1480,6 +3187,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         cardStatus: c.cardStatus,
         cardError: c.phase === 'card_unknown' ? (c.cardError ?? WORDS.cardPending) : c.cardError,
         cardUnknown: c.phase === 'card_unknown',
+        ...(basket ? { basket } : {}),
+        ...(c.phase === 'done' && c.docIds.length > 1
+          ? {
+              documentRefs: c.docIds.map((id) => this.svc.docNumberOf(id) ?? id),
+            }
+          : {}),
       },
       shift: {
         hidden: this.shiftsHidden(),
@@ -1506,8 +3219,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         outbox: this.svc.outbox.count(),
       },
       dialog,
-      menuHidden: parseHiddenMenu(this.svc.cloud.parameters()[HIDDEN_MENU_PARAM]),
-      tileText: tileTextOf(this.svc.cloud.parameters()),
+      menuHidden: parseHiddenMenu(params[HIDDEN_MENU_PARAM]),
+      tileText: tileTextOf(params),
       shopX: {
         offered: this.shopXHere(),
         report: this.shopXDoc?.doc ?? null,
@@ -1522,6 +3235,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         switchLabel: homeTill ? WORDS.workModeMenuToKiosk : WORDS.workModeMenuBack,
         countdownSec: wm?.countdownSec() ?? null,
       },
+      held: {
+        count: this.held.count(),
+        sales: this.held.summaries().map((h) => ({ id: h.id, label: h.label, at: h.at, cashier: h.cashier, itemCount: h.itemCount, totalAgorot: h.totalAgorot, items: h.items })),
+        keepAllowed: allowCloseWithHeldSales(params),
+      },
+      oth: { enabled: oth.enabled, requiresManager: oth.requiresManager, reasons: oth.reasons },
+      notice: user && !this.locked ? this.autoCloseNotice() : null,
     };
     return state;
   }
@@ -1539,14 +3259,19 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private restorePending() {
     const doc = this.svc.ledger.pendingDocs().find((d) => d.channel === 'till');
     if (!doc) return;
+    const docs = doc.basketId ? this.svc.ledger.basketDocs(doc.basketId).filter((d) => d.status === 'pending') : [doc];
+    const carrier = docs.find((d) => (d.payments ?? []).some((l) => l.method === 'card')) ?? doc;
     this.checkout = {
       ...idleCheckout(),
       phase: 'card_unknown',
-      totalAgorot: doc.totals.totalAgorot,
-      docId: doc.id,
-      legs: (doc.payments ?? []).map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: l.method === 'card' ? ('pending' as const) : ('approved' as const) })),
+      totalAgorot: carrier.totals.totalAgorot,
+      docId: carrier.id,
+      docIds: docs.map((d) => d.id),
+      legs: (carrier.payments ?? [])
+        .filter((l) => l.method !== EXCHANGE)
+        .map((l) => ({ method: l.method as 'cash' | 'card', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: l.method === 'card' ? ('pending' as const) : ('approved' as const) })),
       cardError: WORDS.cardPending,
-      frozen: { lines: doc.lines, tracked: doc.tracked, promotions: doc.promotions ?? [], totals: doc.totals },
+      frozen: { lines: carrier.lines, tracked: carrier.tracked, promotions: carrier.promotions ?? [], totals: carrier.totals },
     };
   }
 }

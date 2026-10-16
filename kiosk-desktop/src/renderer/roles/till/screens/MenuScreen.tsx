@@ -7,7 +7,7 @@
 import type { TillState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx';
+export type MenuTarget = 'shift' | 'history' | 'caps' | 'shopx' | 'refund' | 'held';
 
 interface Row {
   /** The Android till's menu key (core/till/menuHide.ts): `hiddenMenuItems` hides the row. */
@@ -34,11 +34,11 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
       { key: 'till_z', label: 'הפק Z', to: 'shift', perm: 'Z', onlyTillZ: true },
       { key: 'open_cash_drawer', label: 'פתיחת מגירה' },
       { key: 'cash_menu', label: 'מזומן במגירה', sub: 'הכנסת מזומן · הוצאת מזומן · הפקדה · ספירת מגירה · לוג פתיחות' },
-      { key: 'refund', label: 'זיכוי' },
+      { key: 'refund', label: 'זיכוי', to: 'refund', perm: 'REFUND' },
       { key: 'attendance', label: 'נוכחות' },
       { key: 'sync_now', label: 'סנכרון מול הענן' },
       { key: 'kiosk_orders', label: 'הזמנות קיוסק לתשלום' },
-      { label: 'מכירות בהמתנה' },
+      { label: 'מכירות בהמתנה', to: 'held' },
       { key: 'tables', label: 'שולחנות' },
     ],
   },
@@ -66,7 +66,9 @@ const GROUPS: Array<{ title: string; rows: Row[] }> = [
 ];
 
 export function MenuScreen({ state, go, signOut, switchTo, back }: { state: TillState; go(to: MenuTarget): void; signOut(): void; switchTo(): void; back(): void }) {
-  const perms = state.session.permissions;
+  // "כשאין הרשאה" (core/till/permissions.ts): what the role denies is shown (a tap says "אין הרשאה") unless the engine says to
+  // leave it out (`session.hidden`): "להסתיר", and — at the entries that always read it — the older `permissionsDeniedUi`.
+  const denied = new Set(state.session.hidden ?? []);
   const tillZ = state.z.zMode === 'till';
   // An independent till has no shifts: no "משמרת (דו״ח X)", no "סגירת משמרת" — only "הפק Z".
   const noShifts = state.shift.hidden === true;
@@ -85,7 +87,7 @@ export function MenuScreen({ state, go, signOut, switchTo, back }: { state: Till
           <h2 className="t-menu-title">{g.title}</h2>
           <ul className="t-menu">
             {g.rows
-              .filter((r) => (!r.perm || perms.includes(r.perm)) && (!r.onlyTillZ || tillZ) && (!r.onlyShopX || state.shopX?.offered === true) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
+              .filter((r) => (!r.perm || !denied.has(r.perm)) && (!r.onlyTillZ || tillZ) && (!r.onlyShopX || state.shopX?.offered === true) && !(noShifts && r.shiftRow) && !(r.key && hidden.has(r.key)))
               .map((r) => (
                 <li key={r.label}>
                   {r.to ? (

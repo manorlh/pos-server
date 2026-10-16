@@ -816,6 +816,11 @@ export interface PromoLine {
   qty: number;
   /** "לא מקבל הנחות": counted towards a threshold, never discounted. */
   noDiscount?: boolean;
+  /**
+   * A till's line discount by hand (Promotions.kt basketOf): the line is never discounted by a promotion, and counts
+   * towards a spend threshold at what it costs after it. Absent / 0: none (the kiosk never has one).
+   */
+  handDiscountAgorot?: number;
 }
 
 export interface AppliedPromotion {
@@ -904,9 +909,10 @@ function basketOf(lines: readonly PromoLine[]): Basket {
   for (const l of lines) {
     if (!(l.qty > 0)) continue;
     const index = out.lines.length;
-    const eligible = !l.noDiscount;
+    const hand = Math.max(0, l.handDiscountAgorot ?? 0);
+    const eligible = !l.noDiscount && hand === 0;
     const gross = timesQty(l.unitAgorot, l.qty);
-    out.lines.push({ id: l.id, ids: [...new Set(l.productIds)], categoryId: l.categoryId, value: gross });
+    out.lines.push({ id: l.id, ids: [...new Set(l.productIds)], categoryId: l.categoryId, value: gross - hand });
     const whole = Math.abs(l.qty - Math.round(l.qty)) < 1e-9;
     if (whole) {
       const count = Math.round(l.qty);

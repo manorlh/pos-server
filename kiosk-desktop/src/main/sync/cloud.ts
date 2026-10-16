@@ -87,12 +87,19 @@ export interface PosUser {
    * approval | deny) — absent from an older server (the legacy `role` answers then).
    */
   permissions?: Record<string, string> | null;
+  /** The limits that apply (code → {maxAmount, maxPercent}): an "allow" above them asks a manager (core/till/permissions.ts). */
+  limits?: Record<string, Record<string, number>> | null;
   tillRoleKey?: string | null;
   tillRoleName?: string | null;
+  /**
+   * "כשאין הרשאה" (P:/specs/denied-actions-ui.md): the employee's own, else the role's — show | hide | code; null: the
+   * till's level parameter `deniedActionUi` decides (absent from a cloud before feat/denied-actions-ui: the same).
+   */
+  deniedUi?: string | null;
 }
 
-/** The roster's shape kept here; a copy from before it (no shop, no permissions) is pulled again in full. */
-const POS_USERS_SHAPE = '2';
+/** The roster's shape kept here; a copy from before it (no shop, no permissions, no limits) is pulled again in full. */
+const POS_USERS_SHAPE = '3';
 
 /** A secret store (Electron safeStorage) for the machine token; plain in Node tools. */
 export interface SecretBox {
@@ -330,8 +337,10 @@ export class CloudStore {
         isActive: u.isActive !== false,
         shopId: typeof u.shopId === 'string' ? u.shopId : null,
         permissions: permissionsOf(u.permissions),
+        limits: limitsOf(u.limits),
         tillRoleKey: typeof u.tillRoleKey === 'string' ? u.tillRoleKey : null,
         tillRoleName: typeof u.tillRoleName === 'string' ? u.tillRoleName : null,
+        deniedUi: typeof u.deniedUi === 'string' && ['show', 'hide', 'code'].includes(u.deniedUi.trim().toLowerCase()) ? u.deniedUi.trim().toLowerCase() : null,
       }),
     );
     const full = body.syncType === 'full';
@@ -348,6 +357,19 @@ function permissionsOf(v: unknown): Record<string, string> | null {
   const out: Record<string, string> = {};
   for (const [code, state] of Object.entries(v as Record<string, unknown>)) {
     if (state === 'allow' || state === 'approval' || state === 'deny') out[code] = state;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** `{code: {maxAmount, maxPercent}}` with numbers only; null when nothing is left. */
+function limitsOf(v: unknown): Record<string, Record<string, number>> | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const out: Record<string, Record<string, number>> = {};
+  for (const [code, inner] of Object.entries(v as Record<string, unknown>)) {
+    if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue;
+    const values: Record<string, number> = {};
+    for (const [k, n] of Object.entries(inner as Record<string, unknown>)) if (typeof n === 'number' && Number.isFinite(n)) values[k] = n;
+    if (Object.keys(values).length > 0) out[code] = values;
   }
   return Object.keys(out).length > 0 ? out : null;
 }

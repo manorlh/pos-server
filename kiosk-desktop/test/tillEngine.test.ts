@@ -122,11 +122,14 @@ describe('selling', () => {
     expect(h.state().sell.lines).toEqual([]);
   });
 
-  it('a manual discount is "בקרוב"; an unknown product is refused', async () => {
+  it('a manual discount asks a legacy cashier for a manager (DISCOUNT); an unknown product is refused', async () => {
     const h = await till();
     await h.ok('sell.add', { productId: 'p-cola' });
-    const e = await h.fail('sell.discount', { lineId: h.state().sell.lines[0].lineId, pct: 10 });
-    expect(e).toMatchObject({ code: 'coming_soon', message: 'הנחה ידנית — בקרוב' });
+    // A legacy cashier needs a manager for DISCOUNT (LEGACY_APPROVAL): the engine's dialog, nothing applied yet.
+    const r = await h.ok<{ dialogId: string }>('sell.discount', { lineId: h.state().sell.lines[0].lineId, pct: 10 });
+    expect(r.dialogId).toBeTruthy();
+    expect(h.state().dialog?.body).toBe('הנחה — דורש אישור מנהל');
+    expect(h.state().sell.lines[0].discountPct).toBe(0);
     expect((await h.fail('sell.add', { productId: 'nope' })).code).toBe('invalid_args');
   });
 

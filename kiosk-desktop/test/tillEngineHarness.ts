@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { KioskCoreTillEngine, type TillWorkMode } from '../src/main/till/engine';
 import { KioskService } from '../src/main/service';
-import type { ApprovedCard, PaymentProvider, SaleRequest, SaleResult, Resolution } from '../src/main/payment/provider';
+import type { ApprovedCard, PaymentProvider, RefundRequest, SaleRequest, SaleResult, Resolution } from '../src/main/payment/provider';
 import type { Transport } from '../src/main/printer/transports';
 import type { EngineEvent, EngineReply, TillOp, TillState } from '../src/shared/till/protocol';
 
@@ -35,6 +35,9 @@ export class FakeTerminal implements PaymentProvider {
   readonly kind = 'nayax_lan';
   sales: SaleRequest[] = [];
   next: () => SaleResult = () => ({ answer: 'APPROVED', card: card(), raw: '' });
+  /** Money back to a card (tranType 53): what was asked, and the answer the test gives. */
+  refunds: RefundRequest[] = [];
+  refundNext: () => SaleResult = () => ({ answer: 'APPROVED', card: card({ meta: { vuid: 'r', refund: true } }), raw: '' });
   resolveWith: () => Resolution = () => ({ kind: 'unknown', message: 'לא ידוע' });
   private n = 0;
   describe() {
@@ -50,6 +53,10 @@ export class FakeTerminal implements PaymentProvider {
   async sale(req: SaleRequest): Promise<SaleResult> {
     this.sales.push(req);
     return this.next();
+  }
+  async refund(req: RefundRequest): Promise<SaleResult> {
+    this.refunds.push(req);
+    return this.refundNext();
   }
   async resolve(): Promise<Resolution> {
     return this.resolveWith();

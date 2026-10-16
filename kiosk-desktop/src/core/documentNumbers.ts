@@ -39,6 +39,48 @@ export function formatDocNumber(prefix: string | null | undefined, number: strin
   return p + value.padStart(NUMBER_WIDTH, '0');
 }
 
+/**
+ * What a cashier typed to find a document (DocumentNumbers.parseQuery): the full number (`20000057` — 8 to 10 digits, the
+ * last 7 the number), a short one (`57` — this till's own), or the overflow form `2-10000000`. Null for anything else.
+ */
+export interface DocQuery {
+  prefix: string | null;
+  number: string;
+  /** The whole typed digits, too (a till with no prefix whose counter is that long). */
+  bare: string | null;
+}
+
+const DASHED = /^\s*([0-9]{1,3})\s*[-–—־]\s*([0-9]{1,20})\s*$/;
+const DIGITS = /^\s*([0-9]{1,20})\s*$/;
+const strip = (n: string) => n.replace(/^0+/, '') || '0';
+
+export function parseDocQuery(text: string | null | undefined): DocQuery | null {
+  if (text === null || text === undefined) return null;
+  const d = DASHED.exec(text);
+  if (d) return { prefix: d[1], number: strip(d[2]), bare: null };
+  const m = DIGITS.exec(text);
+  if (!m) return null;
+  const digits = m[1];
+  if (digits.length >= NUMBER_WIDTH + 1 && digits.length <= NUMBER_WIDTH + 3) {
+    return { prefix: digits.slice(0, digits.length - NUMBER_WIDTH), number: strip(digits.slice(-NUMBER_WIDTH)), bare: digits };
+  }
+  return { prefix: null, number: digits, bare: null };
+}
+
+/** The numbers to look up in the till's documents. */
+export function docQueryNumbers(q: DocQuery): number[] {
+  return [...new Set([q.number, q.bare].filter((x): x is string => x !== null))].map(Number).filter((n) => Number.isSafeInteger(n));
+}
+
+/** Whether a document numbered [number] under [documentPrefix] answers [q] (DocumentQuery.matches). */
+export function docQueryMatches(q: DocQuery, number: number | string, documentPrefix: string | null | undefined): boolean {
+  const p = documentPrefix?.trim() || null;
+  const n = String(number);
+  if (q.prefix === null) return n === q.number;
+  if (n === q.number && p === q.prefix) return true;
+  return q.bare !== null && n === q.bare && p === null;
+}
+
 /** The series a document type numbers in. */
 export function seriesOf(documentType: number): number {
   if (documentType === -400) return 400;

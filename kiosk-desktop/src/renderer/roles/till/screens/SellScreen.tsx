@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import type { Catalog, Product, TillState } from '../../../../shared/till/protocol';
 import type { TillLayout } from '../layout/tillLayout';
-import { CartPane, type CartActions } from '../parts/CartPane';
+import { CartPane, type CartActions, type CartView } from '../parts/CartPane';
 import { ProductGrid } from '../parts/ProductGrid';
 import { money, T } from '../text';
 
@@ -33,6 +33,7 @@ export function SellScreen({
   cart,
   shiftOpen = true,
   goShift,
+  cartView,
 }: {
   state: TillState;
   catalog: Catalog | null;
@@ -44,6 +45,8 @@ export function SellScreen({
   /** No shift: the till says why it cannot charge and offers the way to open one (Android sell_no_shift). */
   shiftOpen?: boolean;
   goShift?(): void;
+  /** What the cart shows for this operator (hidden options, OTH on, held sales). */
+  cartView?: CartView;
 }) {
   const [cartOpen, setCartOpen] = useState(false);
   /** The "i" window's item (P:/specs/product-tile-text.md §4). */
@@ -120,7 +123,7 @@ export function SellScreen({
     return (
       <div className="t-sell t-sell-side" style={{ gridTemplateColumns: `minmax(0, 1fr) ${layout.cartWidthDp}px` }}>
         {catalogPane}
-        <CartPane sell={sell} actions={cart} />
+        <CartPane sell={sell} actions={cart} view={cartView} />
       </div>
     );
   }
@@ -129,7 +132,7 @@ export function SellScreen({
     return (
       <div className="t-sell t-sell-stacked" style={{ gridTemplateRows: `minmax(0, 1fr) ${cartPct}%` }}>
         {catalogPane}
-        <CartPane sell={sell} actions={cart} compact />
+        <CartPane sell={sell} actions={cart} compact view={cartView} />
       </div>
     );
   }
@@ -141,7 +144,7 @@ export function SellScreen({
           <button type="button" className="t-btn t-btn-ghost" onClick={() => setCartOpen(false)}>
             {T.back}
           </button>
-          <CartPane sell={sell} actions={cart} />
+          <CartPane sell={sell} actions={cart} view={cartView} />
         </div>
       ) : (
         catalogPane

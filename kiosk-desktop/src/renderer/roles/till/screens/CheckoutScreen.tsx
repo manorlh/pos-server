@@ -22,6 +22,106 @@ export interface CheckoutActions {
   copy(): void;
   recheck(): void;
   markNotApproved(): void;
+  /** A basket with returns: who the money goes back to, an even exchange, the money back. */
+  returnCustomer?(c: { name: string; phone: string; address: string }): void;
+  exchange?(): void;
+  payout?(method: 'cash' | 'card'): void;
+}
+
+/** A basket with returns (core/till/basket.ts): its own steps before (or instead of) the tenders. */
+function BasketStep({ checkout, actions, noCard, style }: { checkout: CheckoutState; actions: CheckoutActions; noCard: boolean; style?: { maxWidth: number } }) {
+  const b = checkout.basket!;
+  const [name, setName] = useState(b.customer.name);
+  const [phone, setPhone] = useState(b.customer.phone);
+  const [address, setAddress] = useState(b.customer.address);
+  const complete = name.trim() !== '' && (phone.trim() !== '' || address.trim() !== '');
+  const figures = (
+    <dl className="t-figures">
+      <dt>{T.basketSold}</dt>
+      <dd>{money(b.saleAgorot)}</dd>
+      <dt>{T.basketReturned}</dt>
+      <dd>−{money(b.refundAgorot)}</dd>
+    </dl>
+  );
+  if (b.step === 'return_customer') {
+    return (
+      <div className="t-checkout" style={style}>
+        <h1 className="t-checkout-title">{T.basketCustomerTitle}</h1>
+        {figures}
+        <p className="t-small t-muted">{b.customer.required ? T.basketCustomerRequired : T.basketCustomerOptional}</p>
+        <label className="t-field">
+          <span>{T.basketCustomerName}</span>
+          <input className="t-input" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="t-field">
+          <span>{T.basketCustomerPhone}</span>
+          <input className="t-input" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </label>
+        <label className="t-field">
+          <span>{T.basketCustomerAddress}</span>
+          <input className="t-input" value={address} onChange={(e) => setAddress(e.target.value)} />
+        </label>
+        <button type="button" className="t-btn t-btn-primary t-btn-wide" disabled={b.customer.required && !complete} onClick={() => actions.returnCustomer?.({ name, phone, address })}>
+          {T.continue}
+        </button>
+        <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>
+          {T.checkoutBack}
+        </button>
+      </div>
+    );
+  }
+  if (b.step === 'exchange') {
+    return (
+      <div className="t-checkout" style={style}>
+        <h1 className="t-checkout-title">{T.basketEven}</h1>
+        {figures}
+        <p>{T.basketEvenBody}</p>
+        <button type="button" className="t-btn t-btn-primary t-btn-wide t-btn-big" onClick={actions.exchange}>
+          {T.basketConfirmExchange}
+        </button>
+        <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>
+          {T.checkoutBack}
+        </button>
+      </div>
+    );
+  }
+  // payout
+  const waiting = checkout.phase === 'card_waiting';
+  const cardLabel = b.payoutRoute === 'linked' ? T.basketPayoutCardLinked : b.payoutRoute === 'unlinked' ? T.basketPayoutCardUnlinked : T.basketPayoutCardUnavailable;
+  return (
+    <div className="t-checkout" style={style}>
+      <div className="t-amount-row">
+        <span>{T.basketHandBack('')}</span>
+        <strong className="t-amount">{money(b.payoutAgorot)}</strong>
+      </div>
+      {figures}
+      {checkout.cardError ? (
+        <div className="t-warn" role="alert">
+          <p>{checkout.cardError}</p>
+        </div>
+      ) : null}
+      {waiting ? (
+        <p className="t-waiting" role="status">
+          {checkout.cardStatus ?? T.cardWaiting}
+        </p>
+      ) : (
+        <div className="t-tenders">
+          <button type="button" className="t-tender t-tender-main" onClick={() => actions.payout?.('cash')}>
+            <span>{T.basketPayoutCash}</span>
+            <strong>{money(b.payoutAgorot)}</strong>
+          </button>
+          {noCard ? null : (
+            <button type="button" className={`t-tender${b.payoutRoute === 'unavailable' ? ' t-tender-off' : ''}`} disabled={b.payoutRoute === 'unavailable'} onClick={() => actions.payout?.('card')}>
+              <span>{cardLabel}</span>
+            </button>
+          )}
+        </div>
+      )}
+      <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>
+        {waiting ? T.checkoutCancel : T.checkoutBack}
+      </button>
+    </div>
+  );
 }
 
 export function CheckoutScreen({
@@ -44,9 +144,21 @@ export function CheckoutScreen({
   const style = layout.checkoutMaxWidthDp ? { maxWidth: layout.checkoutMaxWidthDp } : undefined;
 
   if (checkout.phase === 'done') {
+    const handBack = checkout.basket?.handedBackAgorot ?? 0;
     return (
       <div className="t-checkout" style={style}>
-        <h1 className="t-checkout-title t-ok">{T.done}</h1>
+        <h1 className="t-checkout-title t-ok">{handBack > 0 ? T.refundDoneScreen : T.done}</h1>
+        {handBack > 0 ? (
+          <div className="t-change-big">
+            <span>{T.basketHandBack('')}</span>
+            <strong className="t-amount">{money(handBack)}</strong>
+          </div>
+        ) : null}
+        {checkout.documentRefs && checkout.documentRefs.length > 1 ? (
+          <p className="t-muted t-small">
+            {T.documents}: {checkout.documentRefs.join(' · ')}
+          </p>
+        ) : null}
         {checkout.changeAgorot > 0 ? (
           <div className="t-change-big">
             <span>{T.changeToCustomer}</span>
@@ -106,6 +218,10 @@ export function CheckoutScreen({
 
   const waiting = checkout.phase === 'card_waiting';
   const hasLegs = checkout.legs.some((l) => l.status === 'approved');
+
+  if (checkout.basket && checkout.basket.step !== 'tender' && !checkout.cardUnknown) {
+    return <BasketStep checkout={checkout} actions={actions} noCard={noCard} style={style} />;
+  }
 
   if (checkout.cardUnknown) {
     return (
@@ -177,7 +293,7 @@ export function CheckoutScreen({
       ) : (
         <div className="t-tenders">
           <button type="button" className="t-tender t-tender-main" onClick={() => actions.cash(checkout.dueAgorot)}>
-            <span>{T.fastCash}</span>
+            <span>{checkout.totalAgorot === 0 ? 'סגור עסקה' : T.fastCash}</span>
             <strong>{money(checkout.dueAgorot)}</strong>
           </button>
           <button type="button" className="t-tender" onClick={() => setPadOpen(true)}>

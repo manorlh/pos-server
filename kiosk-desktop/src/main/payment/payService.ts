@@ -223,6 +223,86 @@ export class PayService {
     }
   }
 
+  /** The terminal set up here takes refunds from the till (its provider can send one). */
+  get refundsSupported(): boolean {
+    return !!this.provider?.refund;
+  }
+
+  /**
+   * Money back to a card for a pending credit note (or a basket that pays out) — inside the pending-card gate like a sale:
+   * refused before anything is sent when the terminal cannot; the frame once.
+   *
+   *  - [record] (a basket's payout, Android AttemptKind.PAYOUT): the attempt goes to disk before the frame, and an unknown
+   *    answer is asked about THE SAME reference (never a second refund) — approved, not refunded, or held for a person;
+   *  - not recorded (the history's refund, DetailViewModel.runCardRefund): anything but an approval is "not refunded" — the
+   *    pending credit note is voided by the caller.
+   */
+  async refund(input: {
+    transactionId: string;
+    amountAgorot: number;
+    originalTransactionId: string | null;
+    record: boolean;
+    onSent?: () => void;
+    onProgress?: (message: string) => void;
+  }): Promise<ChargeOutcome> {
+    const provider = this.provider;
+    if (!provider || this.monitor.config !== 'ready' || !provider.refund) return { kind: 'refused', reason: 'terminal' };
+    if (this.inFlight) return { kind: 'refused', reason: 'in_flight' };
+    if (this.blocked()) return { kind: 'refused', reason: 'unresolved' };
+    if (!Number.isInteger(input.amountAgorot) || input.amountAgorot < 1) return { kind: 'refused', reason: 'amount' };
+    const reference = provider.newReference();
+    const attempt: CardAttempt = {
+      vuid: reference,
+      transactionId: input.transactionId,
+      orderId: null,
+      amountAgorot: input.amountAgorot,
+      method: 'card',
+      kind: 'payout',
+      payments: 1,
+      terminalTip: false,
+      tipAgorot: 0,
+      startedAt: new Date().toISOString(),
+      state: 'sent',
+      note: null,
+      supersededBy: null,
+    };
+    if (input.record) this.saveAttempt(attempt); // on disk BEFORE the frame leaves
+    this.inFlight = { reference, sent: true, answered: false, abort: false };
+    this.emit();
+    input.onSent?.();
+    try {
+      const result = await provider.refund({
+        amountAgorot: input.amountAgorot,
+        reference,
+        originalTransactionId: input.originalTransactionId,
+        onProgress: input.onProgress,
+        onAnswered: () => {
+          if (this.inFlight?.reference === reference) this.inFlight.answered = true;
+        },
+      });
+      if (result.answer === 'NOT_SENT') {
+        this.forgetAttempt(reference);
+        return { kind: 'declined', message: result.message, voidMeta: null };
+      }
+      this.inFlight.answered = true;
+      this.lastCardAnswerAtMs = Date.now();
+      if (result.answer === 'APPROVED') return { kind: 'approved', card: result.card, recovered: false };
+      if (result.answer === 'DECLINED') return { kind: 'declined', message: result.message, voidMeta: null };
+      if (!input.record) return { kind: 'declined', message: result.message, voidMeta: null };
+      this.saveAttempt({ ...attempt, state: 'unknown', note: result.message });
+      input.onProgress?.('בודק סטטוס תשלום…');
+      const r = await provider.resolve({ reference, amountAgorot: input.amountAgorot, terminalTip: false });
+      return this.fromResolution(attempt, r);
+    } catch (e) {
+      if (!input.record) return { kind: 'declined', message: e instanceof Error ? e.message : String(e), voidMeta: null };
+      this.saveAttempt({ ...attempt, state: 'unknown', note: String(e) });
+      return { kind: 'unknown', message: e instanceof Error ? e.message : String(e) };
+    } finally {
+      this.inFlight = null;
+      this.emit();
+    }
+  }
+
   private fromResolution(a: CardAttempt, r: Resolution): ChargeOutcome {
     if (r.kind === 'approved') return { kind: 'approved', card: r.card, recovered: true };
     if (r.kind === 'not_charged') return { kind: 'declined', message: r.message, voidMeta: lookupVoidMeta(a, r.outcome, r.message, new Date().toISOString()) };

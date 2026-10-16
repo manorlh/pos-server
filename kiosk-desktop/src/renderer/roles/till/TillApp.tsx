@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { tillBusy, type DeviceRoleName, type XReport } from '../../../shared/till/protocol';
+import { tillBusy, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
 import { capabilityTiles, NO_CAPS } from '../../host/caps';
 import type { HostCaps, TillHost } from '../../host/TillHost';
 import type { DisplayProfile } from './layout/displayProfileAdapter';
@@ -25,6 +25,7 @@ import { AdminHoldBar, useAdminCornerHold } from '../../staff/adminHold';
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
+import { BasketDiscountSheet, HeldSheet, NoticeDialog, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
 import { CheckoutScreen } from './screens/CheckoutScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
 import { LockScreen } from './screens/LockScreen';
@@ -40,13 +41,17 @@ export const AT_REST_AFTER_MS = 60_000;
 
 type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx';
 
+/** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
+type Sheet = { kind: 'discount' } | { kind: 'oth'; lineId: string | null } | { kind: 'receipt' } | { kind: 'held' } | { kind: 'heldClose'; retry: (keepHeld: boolean) => void };
+
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
   const profile = useDisplayProfile(initialProfile);
   const layout = useMemo(() => tillLayout(profile), [profile]);
   const [caps, setCaps] = useState<HostCaps>(NO_CAPS);
   const [view, setView] = useState<View>('sell');
-  const { state, catalog, status, toasts, run } = engine;
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  const { state, catalog, status, toasts, run, attempt, say } = engine;
 
   useEffect(() => {
     let alive = true;
@@ -103,6 +108,49 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   };
 
   const loadHistory = useCallback(async () => (await run('doc.history', {})) as HistoryRow[] | undefined, [run]);
+  const loadDetail = useCallback(
+    async (documentId: string, quantities?: Record<string, number>) => (await run('doc.detail', quantities ? { documentId, quantities } : { documentId })) as DocumentDetail | undefined,
+    [run],
+  );
+  const previewDiscount = useCallback(
+    async (mode: BasketDiscountMode, input: string) => {
+      const r = await attempt('discount.preview', { mode, input });
+      return r.ok ? (r.value as DiscountPreview) : undefined;
+    },
+    [attempt],
+  );
+  const recentReceipts = useCallback(async () => (await run('refund.recent', {})) as ReceiptRow[] | undefined, [run]);
+  const findReceipt = useCallback(async (query: string) => (await run('refund.find', { query })) as ReceiptFind | undefined, [run]);
+  const pickReceipt = useCallback(async (transactionId: string) => (await run('refund.pick', { transactionId })) as ReceiptFind | undefined, [run]);
+
+  /**
+   * A close (the shift's, the Z) that may be held by the held sales ("יש N מכירות מושהות", core/till/heldSales.ts): the
+   * list opens — pay or cancel each — and, where the shop allows it, "סגור והשאר מושהות" closes over them.
+   */
+  const closing = useCallback(
+    async <R,>(op: 'shift.close' | 'z.produce', args: { countedCashAgorot?: number }): Promise<R | undefined> => {
+      const r = op === 'shift.close' ? await attempt('shift.close', { countedCashAgorot: args.countedCashAgorot ?? 0 }) : await attempt('z.produce', args);
+      if (r.ok) return r.value as R;
+      if (r.code === 'held_sales') {
+        setView('sell');
+        setSheet({
+          kind: 'heldClose',
+          retry: (keepHeld) => {
+            setSheet(null);
+            const again = op === 'shift.close' ? attempt('shift.close', { countedCashAgorot: args.countedCashAgorot ?? 0, keepHeld }) : attempt('z.produce', { ...args, keepHeld });
+            void again.then((x) => {
+              if (!x.ok) say(x.message, 'error');
+              else setView('shift');
+            });
+          },
+        });
+        return undefined;
+      }
+      say(r.message, 'error');
+      return undefined;
+    },
+    [attempt, say],
+  );
 
   // "ניהול הקיוסק": the shell's manager's menu from the till's corner — never while paying, never over a dialog.
   const adminHold = useAdminCornerHold({
@@ -151,6 +199,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             copy: () => void (s.checkout.documentId ? run('doc.reprint', { documentId: s.checkout.documentId }) : undefined),
             recheck: () => void run('checkout.recheckCard', {}),
             markNotApproved: () => void run('checkout.markNotApproved', {}),
+            returnCustomer: (c) => void run('checkout.returnCustomer', c),
+            exchange: () => void run('checkout.exchange', {}),
+            payout: (method) => void run('checkout.payout', { method }),
           }}
         />
       );
@@ -162,9 +213,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           layout={layout}
           actions={{
             open: (openingCashAgorot) => void run('shift.open', { openingCashAgorot }),
-            close: async (countedCashAgorot) => (await run('shift.close', { countedCashAgorot })) as CloseResult | undefined,
+            close: async (countedCashAgorot) => closing<CloseResult>('shift.close', { countedCashAgorot }),
             x: async () => (await run('report.x', {})) as XReport | undefined,
-            z: async (countedCashAgorot) => (await run('z.produce', countedCashAgorot === undefined ? {} : { countedCashAgorot })) as { message?: string } | undefined,
+            z: async (countedCashAgorot) => closing<{ message?: string }>('z.produce', countedCashAgorot === undefined ? {} : { countedCashAgorot }),
             switchTo: (to: DeviceRoleName) => void run('mode.switch', { to }),
             back: () => setView(host.demo ? 'sell' : 'menu'),
           }}
@@ -175,7 +226,19 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return (
         <MenuScreen
           state={s}
-          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : 'caps')}
+          go={(to) => {
+            if (to === 'refund') {
+              setView('sell');
+              void run('refund.button', {});
+              return;
+            }
+            if (to === 'held') {
+              setView('sell');
+              setSheet({ kind: 'held' });
+              return;
+            }
+            setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : to === 'shopx' ? 'shopx' : 'caps');
+          }}
           signOut={() => void run('session.logout', {})}
           switchTo={() => void run('mode.switch', { to: 'kiosk' })}
           back={() => setView('sell')}
@@ -193,7 +256,21 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       );
     }
     if (view === 'history') {
-      return <HistoryScreen load={loadHistory} reprint={(id) => void run('doc.reprint', { documentId: id })} back={() => setView('menu')} />;
+      return (
+        <HistoryScreen
+          load={loadHistory}
+          reprint={(id) => void run('doc.reprint', { documentId: id })}
+          back={() => setView('menu')}
+          detail={loadDetail}
+          refund={async (documentId, quantities) => {
+            const r = await attempt('doc.refund', { documentId, quantities });
+            if (!r.ok) say(r.message, 'error');
+            // A manager's code: the engine's dialog is up; the refund goes on when it is answered.
+            return r.ok && !(r.value && typeof r.value === 'object' && 'dialogId' in (r.value as object));
+          }}
+          refundHidden={(s.session.hidden ?? []).includes('REFUND')}
+        />
+      );
     }
     if (view === 'caps') {
       return (
@@ -220,12 +297,22 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         goShift={() => setView('shift')}
         cart={{
           setQty: (lineId, qty) => void run('sell.setQty', { lineId, qty }),
-          // The manual discount is the Android till's, soon here: only the demo engine has it.
-          ...(host.demo ? { discount: (lineId: string, pct: number) => void run('sell.discount', { lineId, pct }) } : {}),
+          discount: (lineId: string, pct: number) => void run('sell.discount', { lineId, pct }),
           remove: (lineId) => void run('sell.remove', { lineId }),
           clear: () => void run('sell.clear', {}),
           pay: () => void run('checkout.start', {}),
+          ...(host.demo
+            ? {}
+            : {
+                oth: (lineId: string) => setSheet({ kind: 'oth', lineId }),
+                othUndo: (lineId: string) => void run('oth.undo', { lineId }),
+                basketDiscount: () => setSheet({ kind: 'discount' }),
+                refund: () => void run('refund.button', {}),
+                hold: () => setSheet({ kind: 'held' }),
+                held: () => setSheet({ kind: 'held' }),
+              }),
         }}
+        cartView={{ hidden: s.session.hidden ?? [], othEnabled: s.oth?.enabled === true, heldCount: s.held?.count ?? 0 }}
       />
     );
   })();
@@ -299,6 +386,71 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         </div>
       ) : null}
       <main className="t-main">{main}</main>
+      {s.session.cashier && s.sell.refundChooser && !s.dialog && sheet?.kind !== 'receipt' ? (
+        <RefundChooser onCatalog={() => void run('refund.catalog', {})} onReceipt={() => setSheet({ kind: 'receipt' })} onClose={() => void run('refund.end', {})} />
+      ) : null}
+      {s.session.cashier && sheet?.kind === 'discount' ? (
+        <BasketDiscountSheet
+          preview={previewDiscount}
+          current={s.sell.basketDiscount ?? null}
+          apply={(mode, input) => void attempt('discount.apply', { mode, input }).then((r) => (r.ok ? setSheet(null) : say(r.message, 'error')))}
+          remove={() => void run('discount.remove', {}).then(() => setSheet(null))}
+          onClose={() => setSheet(null)}
+        />
+      ) : null}
+      {s.session.cashier && sheet?.kind === 'oth' ? (
+        <OthSheet
+          lines={s.sell.lines}
+          reasons={s.oth?.reasons ?? []}
+          requiresManager={s.oth?.requiresManager !== false}
+          initial={sheet.lineId}
+          onConfirm={(lineIds, reason) => void attempt('oth.confirm', { lineIds, reason }).then((r) => (r.ok ? setSheet(null) : say(r.message, 'error')))}
+          onClose={() => setSheet(null)}
+        />
+      ) : null}
+      {s.session.cashier && sheet?.kind === 'receipt' ? (
+        <ReceiptPicker
+          recent={recentReceipts}
+          find={findReceipt}
+          pick={pickReceipt}
+          add={async (transactionId, quantities) => {
+            const r = await attempt('refund.add', { transactionId, quantities });
+            if (!r.ok) say(r.message, 'error');
+            return r.ok;
+          }}
+          onClose={() => setSheet(null)}
+        />
+      ) : null}
+      {s.session.cashier && (sheet?.kind === 'held' || sheet?.kind === 'heldClose') && s.held ? (
+        <HeldSheet
+          held={s.held}
+          closing={sheet.kind === 'heldClose'}
+          canHold={sheet.kind === 'held' && s.sell.lines.length > 0}
+          hideCancel={(s.session.hidden ?? []).includes('HELD_SALE_CANCEL')}
+          onHold={(label) => void attempt('held.hold', label.trim() ? { label } : {}).then((r) => (r.ok ? setSheet(null) : say(r.message, 'error')))}
+          onResume={(id) =>
+            void attempt('held.resume', { id }).then(async (r) => {
+              if (r.ok) return setSheet(null);
+              // Items rung up: the live basket is parked first, never merged or lost.
+              if (r.details?.conflict === true && window.confirm(`${r.message}\n${T.heldConflictConfirm}?`)) {
+                const again = await attempt('held.resume', { id, parkLive: true });
+                if (again.ok) setSheet(null);
+                else say(again.message, 'error');
+                return;
+              }
+              say(r.message, 'error');
+            })
+          }
+          onCancel={(id, reason) => void attempt('held.cancel', { id, reason }).then((r) => !r.ok && say(r.message, 'error'))}
+          {...(sheet.kind === 'heldClose' ? { onKeepAndClose: () => sheet.retry(true) } : {})}
+          onClose={() => {
+            // The close goes on by itself once none is left.
+            if (sheet.kind === 'heldClose' && s.held!.count === 0) sheet.retry(false);
+            else setSheet(null);
+          }}
+        />
+      ) : null}
+      {s.notice && !s.dialog ? <NoticeDialog title={s.notice.title} text={s.notice.text} onOk={() => void run('notice.ack', {})} /> : null}
       {s.dialog ? <EngineDialog dialog={s.dialog} answer={(action, answers) => void run('dialog.answer', { dialogId: s.dialog!.id, action, answers })} /> : null}
       <div className="t-toasts" aria-live="polite">
         {toasts.map((t) => (

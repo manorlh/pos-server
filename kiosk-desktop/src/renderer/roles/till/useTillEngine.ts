@@ -21,6 +21,10 @@ export interface TillEngineView {
   toasts: Toast[];
   /** The op's value, or undefined after a refusal (already shown as a toast). */
   run<K extends TillOp>(op: K, args?: OpArgs[K]): Promise<unknown>;
+  /** The op's value or its refusal (code, Hebrew message, details) — nothing toasted: the caller shows it. */
+  attempt<K extends TillOp>(op: K, args?: OpArgs[K]): Promise<{ ok: true; value: unknown } | { ok: false; code: string; message: string; details?: Record<string, unknown> }>;
+  /** A line in the toasts (the caller's words). */
+  say(text: string, tone?: Toast['tone']): void;
   dismissToast(id: number): void;
 }
 
@@ -84,7 +88,20 @@ export function useTillEngine(link: EngineLink): TillEngineView {
     [link, toast],
   );
 
-  const dismissToast = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
+  const attempt = useCallback(
+    async <K extends TillOp>(op: K, args?: OpArgs[K]) => {
+      try {
+        return { ok: true as const, value: await link.call(op, args) };
+      } catch (e) {
+        if (e instanceof EngineCallError) return { ok: false as const, code: e.code, message: e.message, ...(e.details ? { details: e.details } : {}) };
+        return { ok: false as const, code: 'engine_offline', message: 'מנוע הקופה לא זמין' };
+      }
+    },
+    [link],
+  );
 
-  return { state: snap?.state ?? null, catalog, status, toasts, run, dismissToast };
+  const dismissToast = useCallback((id: number) => setToasts((list) => list.filter((t) => t.id !== id)), []);
+  const say = useCallback((text: string, tone: Toast['tone'] = 'info') => toast(text, tone), [toast]);
+
+  return { state: snap?.state ?? null, catalog, status, toasts, run, attempt, say, dismissToast };
 }
