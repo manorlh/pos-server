@@ -213,6 +213,8 @@ import { DRAWER_PERM } from '../../core/till/drawer';
 import { TillDrawer } from './tillDrawer';
 import { TillRemotePrint, type TillRemotePrintOptions } from './tillRemotePrint';
 import { TillTransmission } from './tillTransmission';
+import { TillShopXLan } from './tillShopXLan';
+import type { LanCall } from '../kitchen/kitchenNet';
 import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
 import { TillSessions } from './userSessions';
 import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
@@ -265,6 +267,8 @@ export interface TillEngineOptions {
   log?: (m: string) => void;
   /** "הדפסה בקופה אחרת": the transport, the clock and the drawing (tests). */
   remotePrint?: TillRemotePrintOptions;
+  /** "דוח X סניפי" over the LAN: the LAN call, the clock; `manual` — no poll timer (tests drive it). */
+  shopXLan?: { lanCall?: LanCall; sleep?: (ms: number) => Promise<void>; manual?: boolean };
 }
 
 class Refusal extends Error {
@@ -676,6 +680,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly remotePrint: TillRemotePrint;
   /** "פעולות אשראי": the transmission, the terminal's deferred mode, the §13 warning (tillTransmission.ts). */
   readonly transmission: TillTransmission;
+  /** "דוח X סניפי" over the LAN: this till's part in the main till's report (tillShopXLan.ts). */
+  readonly shopXLan: TillShopXLan;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -694,6 +700,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.remotePrint.start();
     this.transmission = new TillTransmission(this.ctx);
     this.transmission.start();
+    this.shopXLan = new TillShopXLan(this.ctx, {
+      openShiftTill: () => {
+        const s = this.svc.ledger.currentShift();
+        if (!s) return null;
+        return { id: s.id, businessDate: s.business_date, till: this.xFigures(s.id).till };
+      },
+      lanCall: o.shopXLan?.lanCall,
+      sleep: o.shopXLan?.sleep,
+    });
+    if (o.shopXLan?.manual !== true) this.shopXLan.start();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -773,6 +789,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.drawer.stop();
     this.remotePrint.stop();
     this.transmission.stop();
+    this.shopXLan.stop();
     if (this.pending?.timer) clearTimeout(this.pending.timer);
     this.offView?.();
     this.offMode?.();

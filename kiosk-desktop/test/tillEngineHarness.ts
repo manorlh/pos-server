@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import { mkdtempSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { KioskCoreTillEngine, type TillWorkMode } from '../src/main/till/engine';
+import { KioskCoreTillEngine, type TillEngineOptions, type TillWorkMode } from '../src/main/till/engine';
 import type { TillRemotePrintOptions } from '../src/main/till/tillRemotePrint';
 import { KioskService } from '../src/main/service';
 import type { ApprovedCard, PaymentProvider, RefundRequest, SaleRequest, SaleResult, Resolution } from '../src/main/payment/provider';
@@ -98,6 +98,7 @@ export interface HarnessOptions {
   now?: () => number;
   /** "הדפסה בקופה אחרת": the LAN, the clock, the drawing. */
   remotePrint?: TillRemotePrintOptions;
+  shopXLan?: TillEngineOptions['shopXLan'];
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -168,7 +169,7 @@ export function harness(o: HarnessOptions = {}): Harness {
   if (o.promotions) svc.cloud.setPromotions(o.promotions, null);
   svc.cloud.applyPosUsers({ syncType: 'full', users: o.users ?? roster(), serverTime: 't' });
   svc.applyProvider();
-  const engine = new KioskCoreTillEngine({ svc, compare: (p, h) => bcrypt.compare(p, h), workMode: () => o.workMode ?? null, now: o.now, remotePrint: o.remotePrint });
+  const engine = new KioskCoreTillEngine({ svc, compare: (p, h) => bcrypt.compare(p, h), workMode: () => o.workMode ?? null, now: o.now, remotePrint: o.remotePrint, shopXLan: o.shopXLan ?? { manual: true } });
   const states: TillState[] = [];
   const events: EngineEvent[] = [];
   engine.on((e) => {
