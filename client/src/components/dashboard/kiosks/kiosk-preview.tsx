@@ -817,7 +817,7 @@ export function KioskPreview({
       ) : null}
       {screen === 'paused' && pausedVariant === 'paused' && !bare ? <p className="text-xs text-muted-foreground">{t('rest.sampleEnd')}</p> : null}
 
-      <FitZoom width={size.w + (frame === 'phone' ? 20 : 24)} scale={bare ? 0.5 : 1}>
+      <FitZoom width={size.w + (frame === 'phone' ? 20 : 24)}>
         <div
           className={cn(
             'relative shrink-0 bg-neutral-900 shadow-2xl ring-1 ring-black/10 transition-all duration-500',

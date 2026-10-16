@@ -462,8 +462,9 @@ function EditorBody({
           <aside className={cn('lg:sticky lg:top-16', !showPreview && 'hidden lg:block')}>
             <div className="rounded-3xl border bg-gradient-to-b from-muted/60 to-background p-4">
               <PreviewTextHighlight textKey={section === 'texts' ? highlightText : null} lang={previewLang}>
+              <div className={cn(landscapeView && 'grid items-start gap-3 [grid-template-columns:minmax(0,1fr)_minmax(0,2.6fr)]')}>
               {landscapeView ? (
-                <div className="mb-4 flex justify-center">
+                <div className="min-w-0 pt-16">
                   <KioskPreview
                     config={draft}
                     previewLang={draft.general.languages?.[0] ?? 'he'}
@@ -480,6 +481,7 @@ function EditorBody({
                   />
                 </div>
               ) : null}
+              <div className="min-w-0">
               <KioskPreview
                 frame={landscapeView ? 'landscape' : undefined}
                 config={draft}
@@ -499,6 +501,8 @@ function EditorBody({
                     : undefined
                 }
               />
+              </div>
+              </div>
               </PreviewTextHighlight>
             </div>
           </aside>
