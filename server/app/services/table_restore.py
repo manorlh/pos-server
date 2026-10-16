@@ -194,7 +194,7 @@ FIRE_FLOW_GROUP = "fireFlow"
 
 
 def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
-    from app.services import course_auto_fire, fire_flow, table_assignments, table_map_display, table_policies
+    from app.services import course_auto_fire, fire_flow, table_assignments, table_map_display, table_policies, table_scope
     from app.services.till_parameters import TABLES_SEND_KEYS
 
     return (
@@ -203,6 +203,8 @@ def _page_groups() -> Tuple[Tuple[str, str, Tuple[str, ...]], ...]:
         (MAP_DISPLAY_GROUP, "מפת השולחנות בקופה — מקרא ותצוגה", table_map_display.LEVEL_KEYS),
         # "שיוך מלצרים ושולחן תפוס" (P:/specs/table-waiter-assignment.md §1, §5, §8).
         (table_assignments.PAGE_GROUP, table_assignments.PAGE_GROUP_LABEL, table_assignments.LEVEL_KEYS),
+        # "תחום שולחנות" and "תא" instead of "שולחן" (P:/specs/table-scope.md §3, §5, §6.4).
+        (table_scope.PAGE_GROUP, table_scope.PAGE_GROUP_LABEL, table_scope.LEVEL_KEYS),
         (SEND_GROUP, "שיגור מהשולחן: שגר נבחרים, שגר והמשך", TABLES_SEND_KEYS),
         (COURSES_GROUP, "שלבי הגשה: הוצאה אוטומטית", course_auto_fire.LEVEL_KEYS),
         (FIRE_FLOW_GROUP, "שלבי הגשה: \"מתי עיקריות?\", שיגור מתוזמן והסבר לעובד", fire_flow.LEVEL_KEYS),
@@ -480,7 +482,8 @@ def _text(value: Any) -> Optional[str]:
 
 
 def _table_words(details: Dict[str, Any]) -> Optional[str]:
-    number = _text(details.get("tableNumber"))
+    # "3B" (P:/specs/table-scope.md §6): a labelled table by its label, never its internal number.
+    number = _text(details.get("tableLabel")) or _text(details.get("tableNumber"))
     name = _text(details.get("tableName"))
     if name and number and name != number:
         return f"שולחן {name} ({number})"

@@ -289,11 +289,26 @@ def prints_tickets(kds_config: Dict[str, Any]) -> bool:
     return "printer" in targets or not any(t in ("kds", "kds_view") for t in targets)
 
 
-def table_title(number: Optional[int], name: Optional[str]) -> str:
-    """The till's tableTitle: "12", or "12 · VIP 1" for a named table."""
-    clean = (name or "").strip()
-    head = str(number) if number is not None else ""
-    return f"{head} · {clean}" if clean and head else (clean or head)
+def table_title(number: Optional[int], name: Optional[str], label: Optional[str] = None) -> str:
+    """The till's tableTitle: "12", "12 · VIP 1" for a named table, "3B" / "3B · VIP" for a labelled one."""
+    from app.services.table_labels import table_title as title
+
+    return title(number, label, name)
+
+
+def ticket_term(db: Session, table: Any) -> Optional[str]:
+    """
+    The word a table's ticket prints before its title (`tableTerm`, P:/specs/table-scope.md §6.4) — said only where
+    it changes the paper: a labelled table, or a shop whose word is not "שולחן" (else the printing till's rule: the
+    word before a number, as ever).
+    """
+    from app.services import table_scope as TSC
+    from app.services.table_notices import shop_term
+
+    term = shop_term(db, getattr(table, "shop_id", None))
+    if getattr(table, "label", None) or term != TSC.TERM_DEFAULT:
+        return None if getattr(table, "label_only", False) else term
+    return None
 
 
 # ── The cancel ────────────────────────────────────────────────────────────────
@@ -403,7 +418,7 @@ def queue_cancel_voids(
     guests = order.guests if order.guests is not None and 0 <= order.guests <= 10_000 else None
     head = {
         "source": "table",
-        "tableName": _clip(table_title(table.number, table.name)),
+        "tableName": _clip(table_title(table.number, table.name, getattr(table, "label", None))),
         "zoneName": _clip(zone.name) if zone is not None else None,
         "guests": guests,
         "waiterName": _clip(by_name),
@@ -412,6 +427,9 @@ def queue_cancel_voids(
         "orderRef": str(order.id)[:8],
         "sourceName": SOURCE_NAME,
     }
+    term = ticket_term(db, table)
+    if term:
+        head["tableTerm"] = term
     seed = cancel_seed(order.id)
     print_host = K.print_host_of_shop(db, order.shop_id)
     jobs: List[KitchenPrintJob] = []

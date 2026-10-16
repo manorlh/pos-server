@@ -813,6 +813,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/tables/types/{}/archive", S(TABLES_LAYOUT_SECTION)),
     (_GET, "/tables/layout", S("tables", TABLES_LAYOUT_SECTION, level=VIEW)),
     (_GET, "/tables/types", S("tables", TABLES_LAYOUT_SECTION, level=VIEW)),
+    # "מי רואה מה" (P:/specs/table-scope.md §9): the devices' and the employees' table scopes, read-only.
+    (_GET, "/tables/scopes", S("tables", TABLES_LAYOUT_SECTION, level=VIEW)),
     (_GET, "/tables/live", S("tables", "reports", level=VIEW)),
     # The live view's realtime (P:/specs/live-tables-cloud.md §6.8): whoever reads the live view.
     (_GET, "/tables/live/push", S("tables", "reports", level=VIEW)),

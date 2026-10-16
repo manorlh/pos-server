@@ -395,6 +395,8 @@ GET /machines/{machine_id}/support-z -> z:view
 POST /machines/{machine_id}/support-z -> z:edit
 POST /machines/{machine_id}/sync -> devices|device_control:edit
 GET /machines/{machine_id}/sync-status -> devices:view
+GET /machines/{machine_id}/table-scope -> devices:view
+PUT /machines/{machine_id}/table-scope -> devices:edit
 GET /machines/{machine_id}/till-reset -> devices:view
 POST /machines/{machine_id}/till-reset -> devices:edit
 POST /machines/{machine_id}/till-z -> z:edit
@@ -738,6 +740,7 @@ GET /shops/{shop_id}/payment-devices -> till_settings|devices:view
 POST /shops/{shop_id}/payment-devices -> till_settings:edit
 GET /shops/{shop_id}/pos-users -> pos_users:view
 POST /shops/{shop_id}/pos-users -> pos_users:edit
+GET /shops/{shop_id}/pos-users/table-scope-tree -> pos_users:view
 DELETE /shops/{shop_id}/pos-users/{pos_user_id} -> pos_users:edit
 PUT /shops/{shop_id}/pos-users/{pos_user_id} -> pos_users:edit
 GET /shops/{shop_id}/pos-users/{pos_user_id}/approval-overrides -> pos_users:view
@@ -936,6 +939,7 @@ GET /tables/report -> tables|reports:view
 GET /tables/reservations -> tables:view
 POST /tables/reservations -> tables:edit
 PATCH /tables/reservations/{reservation_id} -> tables:edit
+GET /tables/scopes -> tables|tables_layout:view
 POST /tables/tables -> tables_layout:edit
 PATCH /tables/tables/{table_id} -> tables_layout:edit
 POST /tables/tables/{table_id}/actions/{action} -> tables:edit

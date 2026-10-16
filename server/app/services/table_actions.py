@@ -621,6 +621,7 @@ def _move(db, user, shop, table, order, body, now) -> Dict[str, Any]:
     order.table_id = target.id
     order.zone_id = target.zone_id
     order.table_number = target.number
+    order.table_label = getattr(target, "label", None)
     order.table_name = target.name
     _touch(order, now)
     try:
@@ -634,7 +635,7 @@ def _move(db, user, shop, table, order, body, now) -> Dict[str, Any]:
     )
     from app.services.table_void_tickets import table_title
 
-    return {"toTableId": str(target.id), "toLabel": table_title(target.number, target.name), "_tables": [str(target.id)]}
+    return {"toTableId": str(target.id), "toLabel": table_title(target.number, target.name, getattr(target, "label", None)), "_tables": [str(target.id)]}
 
 
 def _merge(db, user, shop, table, order, body, now) -> Dict[str, Any]:
@@ -965,7 +966,7 @@ def _command_params(db: Session, shop: Shop, order: TableOrder, action: str, bod
         return out
     if action == "move":
         target = _other_table(db, shop, getattr(body, "target_table_id", None))
-        return {"targetTableId": str(target.id), "targetLabel": table_title(target.number, target.name)}
+        return {"targetTableId": str(target.id), "targetLabel": table_title(target.number, target.name, getattr(target, "label", None))}
     if action == "merge":
         out = []
         for src in getattr(body, "sources", None) or []:
@@ -974,7 +975,7 @@ def _command_params(db: Session, shop: Shop, order: TableOrder, action: str, bod
                 "tableId": str(other.id),
                 "orderId": str(src.order_id) if src.order_id else None,
                 "orderVersion": src.expected_version,
-                "tableLabel": table_title(other.number, other.name),
+                "tableLabel": table_title(other.number, other.name, getattr(other, "label", None)),
             })
         if not out:
             raise _bad("sources_required")
@@ -1023,7 +1024,7 @@ def _request(db, user, table, order, route: Route, action: str, params: Dict[str
     full = {
         "orderId": str(order.id),
         "tableId": str(table.id),
-        "tableLabel": table_title(table.number, table.name),
+        "tableLabel": table_title(table.number, table.name, getattr(table, "label", None)),
         "orderVersion": order.version,
         "requestId": request_id or str(uuid.uuid4()),
         "requestedBy": {"userId": str(user.id) if getattr(user, "id", None) else None, "name": name},

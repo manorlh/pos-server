@@ -71,6 +71,8 @@ class PosUserUpdate(BaseModel):
     pin: Optional[str] = None
     #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb`; null or "" — automatic again.
     table_color: Optional[str] = Field(None, alias="tableColor", max_length=9)
+    #: "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): `{zoneIds, tableIds}` of the shop; null — no fixed scope.
+    table_scope: Optional[dict] = Field(None, alias="tableScope")
 
     @field_validator("pin")
     @classmethod
@@ -119,6 +121,8 @@ class PosUserResponse(BaseModel):
     table_color: Optional[str] = Field(None, alias="tableColor")
     #: Set by the router (not a column): the colour on the floor (their own, else the automatic one).
     table_color_effective: Optional[str] = Field(None, alias="tableColorEffective")
+    #: "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): null — no fixed scope.
+    table_scope: Optional[dict] = Field(None, alias="tableScope")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

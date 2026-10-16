@@ -1481,6 +1481,7 @@ def load_shop_transactions_for_machine(
                 matched_by=matched_by,
                 table_number=at_table.get("tableNumber"),
                 table_name=at_table.get("tableName"),
+                table_label=at_table.get("tableLabel"),
                 table_order_id=at_table.get("tableOrderId"),
                 table_opened_at=at_table.get("tableOpenedAt"),
             )

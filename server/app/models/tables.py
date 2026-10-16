@@ -148,6 +148,16 @@ class DiningTable(Base):
             postgresql_where=text("archived_at IS NULL"),
             sqlite_where=text("archived_at IS NULL"),
         ),
+        # "3B" (P:/specs/table-scope.md §6.1): one live label per shop, by its normalised form ("3-B" is
+        # "3B", "3b" too — app/services/table_labels.py `label_key`).
+        Index(
+            "uq_dining_tables_shop_live_label",
+            "shop_id",
+            "label_key",
+            unique=True,
+            postgresql_where=text("archived_at IS NULL AND label_key IS NOT NULL"),
+            sqlite_where=text("archived_at IS NULL AND label_key IS NOT NULL"),
+        ),
         Index("ix_dining_tables_zone", "zone_id"),
         CheckConstraint("shape IN ('round', 'square', 'rect')", name="ck_dining_tables_shape"),
     )
@@ -176,6 +186,11 @@ class DiningTable(Base):
     #: Shown by its name alone ("ש-12"), never "9012 · ש-12": a restored table made beside its taken
     #: original (P:/specs/table-restore-payments.md §1); its number is the cloud's own. `labelOnly`.
     label_only = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "מספר שולחן עם אותיות" (P:/specs/table-scope.md §6.1): "3B" — shown instead of the number, which is then
+    #: the table's internal one (the highest free from 99,999 down). Null — the table is its number, as ever.
+    label = Column(String(12), nullable=True)
+    #: `label` normalised (no spaces or "-", upper case): what the shop's labels are unique by and searched by.
+    label_key = Column(String(12), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
@@ -224,6 +239,8 @@ class TableOrder(Base):
     zone_id = Column(UUID(as_uuid=True), nullable=True)
     table_number = Column(Integer, nullable=True)
     table_name = Column(String(60), nullable=True)
+    #: The table's label ("3B") when last written — the number beside it is then the internal one.
+    table_label = Column(String(12), nullable=True)
     status = Column(String(16), nullable=False, default="open", server_default="open")
     source = Column(String(8), nullable=False, default="synced", server_default="synced")
     version = Column(Integer, nullable=False, default=1, server_default="1")
@@ -294,7 +311,7 @@ class TableEvent(Base):
     shop_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     table_id = Column(UUID(as_uuid=True), nullable=True)
     order_id = Column(UUID(as_uuid=True), nullable=True)
-    #: open | save | send | bill | move | pay | cancel | void | force_release | report
+    #: open | save | send | bill | move | pay | cancel | void | force_release | report | scope_override
     kind = Column(String(24), nullable=False)
     occurred_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     machine_id = Column(UUID(as_uuid=True), nullable=True)
@@ -345,3 +362,30 @@ class TableReservation(Base):
     created_by_name = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class TableScopeChange(Base):
+    """
+    "שולחנות שהמכשיר / העובד רואה" changed (P:/specs/table-scope.md §10): who, when, whose, from what to what.
+    Never updated or deleted, and outlives what it describes: no foreign keys, the names kept as text.
+    """
+
+    __tablename__ = "table_scope_changes"
+    __table_args__ = (
+        Index("ix_table_scope_changes_shop_at", "shop_id", "created_at"),
+        Index("ix_table_scope_changes_target", "target_type", "target_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    shop_id = Column(UUID(as_uuid=True), nullable=True)
+    #: "machine" | "pos_user"
+    target_type = Column(String(16), nullable=False)
+    target_id = Column(UUID(as_uuid=True), nullable=False)
+    target_name = Column(String(200), nullable=True)
+    old_value = Column(JSONB(none_as_null=True), nullable=True)
+    new_value = Column(JSONB(none_as_null=True), nullable=True)
+    #: The dashboard user, kept as text too.
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    user_email = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

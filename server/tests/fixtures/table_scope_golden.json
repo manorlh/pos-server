@@ -1,0 +1,455 @@
+{
+  "_comment": "Who sees which tables (P:/specs/table-scope.md §3–§4, the owner's 16.10 decisions §13.1–4): the device's scope, the employee's (fixed, and their assignments with tableAssignmentScope — the table's assignees as the holder worked them out), cut by each other; TABLES.SEE_ALL and \"כל השולחנות\". `visible` null — no scope at all; ids not on the floor are dropped. Byte-identical in pos-server server/tests/fixtures and pos-android app/src/test/resources: server app/services/table_scope.py `visible_tables`, android domain/TableScope.kt.",
+  "zones": {
+    "Z2N": [
+      "2A",
+      "2B",
+      "2C"
+    ],
+    "Z3N": [
+      "3A",
+      "3B",
+      "3C",
+      "3D"
+    ],
+    "Z3S": [
+      "3E",
+      "3F",
+      "3G",
+      "3H"
+    ],
+    "VIP": [
+      "1",
+      "2",
+      "3"
+    ]
+  },
+  "assignees": {
+    "3A": [
+      "dana"
+    ],
+    "3B": [
+      "dana"
+    ],
+    "3C": [
+      "dana",
+      "yossi"
+    ],
+    "3D": [
+      "dana"
+    ],
+    "3E": [
+      "yossi"
+    ],
+    "3F": [
+      "yossi"
+    ],
+    "1": [
+      "rina"
+    ]
+  },
+  "cases": [
+    {
+      "name": "no scope anywhere: everything (today)",
+      "device": null,
+      "fixed": null,
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": null
+    },
+    {
+      "name": "§4 row 2 — the device's alone: מפלס 3",
+      "device": {
+        "zoneIds": [
+          "Z3N",
+          "Z3S"
+        ],
+        "tableIds": []
+      },
+      "fixed": null,
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D",
+        "3E",
+        "3F",
+        "3G",
+        "3H"
+      ]
+    },
+    {
+      "name": "§4 row 3 — the employee's alone: 3A–3D on any device",
+      "device": null,
+      "fixed": {
+        "zoneIds": [],
+        "tableIds": [
+          "3A",
+          "3B",
+          "3C",
+          "3D"
+        ]
+      },
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D"
+      ]
+    },
+    {
+      "name": "§4 row 4 — both: 3A–3D",
+      "device": {
+        "zoneIds": [
+          "Z3N",
+          "Z3S"
+        ],
+        "tableIds": []
+      },
+      "fixed": {
+        "zoneIds": [],
+        "tableIds": [
+          "3A",
+          "3B",
+          "3C",
+          "3D"
+        ]
+      },
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D"
+      ]
+    },
+    {
+      "name": "§4 row 5 — מפלס 2 and 3A–3D: nothing",
+      "device": {
+        "zoneIds": [
+          "Z2N"
+        ],
+        "tableIds": []
+      },
+      "fixed": {
+        "zoneIds": [],
+        "tableIds": [
+          "3A",
+          "3B",
+          "3C",
+          "3D"
+        ]
+      },
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": []
+    },
+    {
+      "name": "a zone in the scope takes every table in it",
+      "device": null,
+      "fixed": {
+        "zoneIds": [
+          "Z3S"
+        ],
+        "tableIds": [
+          "1"
+        ]
+      },
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "1",
+        "3E",
+        "3F",
+        "3G",
+        "3H"
+      ]
+    },
+    {
+      "name": "by assignment, unassigned open: hers and nobody's",
+      "device": null,
+      "fixed": null,
+      "byAssignment": true,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "2",
+        "2A",
+        "2B",
+        "2C",
+        "3",
+        "3A",
+        "3B",
+        "3C",
+        "3D",
+        "3G",
+        "3H"
+      ]
+    },
+    {
+      "name": "by assignment, unassigned restricted: hers alone",
+      "device": null,
+      "fixed": null,
+      "byAssignment": true,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": false,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D"
+      ]
+    },
+    {
+      "name": "by assignment, multi: the helper sees the table too",
+      "device": null,
+      "fixed": null,
+      "byAssignment": true,
+      "me": [
+        "yossi"
+      ],
+      "unassignedOpen": false,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3C",
+        "3E",
+        "3F"
+      ]
+    },
+    {
+      "name": "by assignment, nothing given and restricted: nothing",
+      "device": null,
+      "fixed": null,
+      "byAssignment": true,
+      "me": [
+        "avi"
+      ],
+      "unassignedOpen": false,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": []
+    },
+    {
+      "name": "the fixed scope and the assignment: their union",
+      "device": null,
+      "fixed": {
+        "zoneIds": [
+          "VIP"
+        ],
+        "tableIds": []
+      },
+      "byAssignment": true,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": false,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "1",
+        "2",
+        "3",
+        "3A",
+        "3B",
+        "3C",
+        "3D"
+      ]
+    },
+    {
+      "name": "the union cut by the device",
+      "device": {
+        "zoneIds": [
+          "Z3N"
+        ],
+        "tableIds": []
+      },
+      "fixed": {
+        "zoneIds": [
+          "VIP"
+        ],
+        "tableIds": []
+      },
+      "byAssignment": true,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": false,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D"
+      ]
+    },
+    {
+      "name": "TABLES.SEE_ALL allowed: the employee's does not hold, the device's does",
+      "device": {
+        "zoneIds": [
+          "Z3N",
+          "Z3S"
+        ],
+        "tableIds": []
+      },
+      "fixed": {
+        "zoneIds": [],
+        "tableIds": [
+          "3A"
+        ]
+      },
+      "byAssignment": true,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "allow",
+      "allTables": false,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D",
+        "3E",
+        "3F",
+        "3G",
+        "3H"
+      ]
+    },
+    {
+      "name": "TABLES.SEE_ALL allowed and \"כל השולחנות\": everything",
+      "device": {
+        "zoneIds": [
+          "Z3N",
+          "Z3S"
+        ],
+        "tableIds": []
+      },
+      "fixed": {
+        "zoneIds": [],
+        "tableIds": [
+          "3A"
+        ]
+      },
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "allow",
+      "allTables": true,
+      "visible": null
+    },
+    {
+      "name": "TABLES.SEE_ALL on approval: \"כל השולחנות\" lifts nothing",
+      "device": {
+        "zoneIds": [
+          "Z3N",
+          "Z3S"
+        ],
+        "tableIds": []
+      },
+      "fixed": null,
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": true,
+      "visible": [
+        "3A",
+        "3B",
+        "3C",
+        "3D",
+        "3E",
+        "3F",
+        "3G",
+        "3H"
+      ]
+    },
+    {
+      "name": "a zone archived since: dropped — an empty scope sees nothing",
+      "device": {
+        "zoneIds": [
+          "GONE"
+        ],
+        "tableIds": []
+      },
+      "fixed": null,
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": []
+    },
+    {
+      "name": "a table archived since: dropped, the rest kept",
+      "device": {
+        "zoneIds": [],
+        "tableIds": [
+          "3A",
+          "9Z"
+        ]
+      },
+      "fixed": null,
+      "byAssignment": false,
+      "me": [
+        "dana"
+      ],
+      "unassignedOpen": true,
+      "seeAll": "approval",
+      "allTables": false,
+      "visible": [
+        "3A"
+      ]
+    }
+  ]
+}

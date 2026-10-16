@@ -121,16 +121,22 @@ class TableFacts:
     zone: Optional[str] = None
     guests: Optional[int] = None
     waiter: Optional[str] = None
+    #: "3B" (P:/specs/table-scope.md §6.4): shown instead of the number, which is then an internal one.
+    label: Optional[str] = None
 
     @property
     def title(self) -> Optional[str]:
-        """"12", "12 · VIP 1" — or a restored table by its label alone ("ש-12"), as the till's floor shows it."""
-        label = (self.name or "").strip() or None
-        if self.number is None:
-            return label
-        if label is None:
-            return str(self.number)
-        return label if label.startswith(RESTORED_PREFIX) else f"{self.number}{SEPARATOR}{label}"
+        """
+        "12", "12 · VIP 1", "3B", "3B · VIP" — or a restored table by its label alone ("ש-12"), as the till's floor
+        shows it.
+        """
+        name = (self.name or "").strip() or None
+        shown = (self.label or "").strip() or (str(self.number) if self.number is not None else None)
+        if shown is None:
+            return name
+        if name is None:
+            return shown
+        return name if name.startswith(RESTORED_PREFIX) else f"{shown}{SEPARATOR}{name}"
 
 
 def _text(value: Any) -> Optional[str]:
@@ -138,8 +144,12 @@ def _text(value: Any) -> Optional[str]:
     return text or None
 
 
-def table_line(fields: Iterable[str], facts: Optional[TableFacts]) -> Optional[str]:
-    """"שולחן 12 · גן · 4 סועדים · מלצר: דנה" — or None: nothing asked, no table, or none of it known."""
+def table_line(fields: Iterable[str], facts: Optional[TableFacts], term: Optional[str] = None) -> Optional[str]:
+    """
+    "שולחן 12 · גן · 4 סועדים · מלצר: דנה" — or None: nothing asked, no table, or none of it known. [term]: the word
+    before the table (`tableTerm`, "תא 3B"); none — "שולחן".
+    """
+    word = (term or "").strip() or TABLE_WORD
     wanted = set(fields or ())
     if facts is None or not wanted:
         return None
@@ -150,7 +160,7 @@ def table_line(fields: Iterable[str], facts: Optional[TableFacts]) -> Optional[s
         if field == "table":
             title = facts.title
             if title:
-                parts.append(f"{TABLE_WORD} {title}")
+                parts.append(f"{word} {title}")
         elif field == "zone":
             zone = _text(facts.zone)
             if zone:
@@ -230,29 +240,37 @@ def facts_of_order(db, order: Any) -> Optional[TableFacts]:
         row = db.query(TableZone.name).filter(TableZone.id == order.zone_id).first()
         zone = row[0] if row is not None else None
     waiter = _text(getattr(order, "waiter_pos_user_name", None)) or _text(getattr(order, "opened_by_pos_user_name", None))
-    return TableFacts(number=order.table_number, name=order.table_name, zone=zone, guests=order.guests, waiter=waiter)
+    return TableFacts(
+        number=order.table_number, name=order.table_name, zone=zone, guests=order.guests, waiter=waiter,
+        label=getattr(order, "table_label", None),
+    )
 
 
-def fields_for_document(db, tx: Any) -> List[str]:
-    """`receiptTableInfo` as it stands for the document's till (else its shop)."""
+def _document_params(db, tx: Any) -> Dict[str, Any]:
     from app.services.till_parameters import raw_parameters_for_machine, resolve_for_shop
 
     machine = getattr(tx, "machine", None)
     try:
         if machine is not None:
-            params = raw_parameters_for_machine(db, machine)
-        elif getattr(tx, "shop", None) is not None:
-            params = resolve_for_shop(db, tx.shop)
-        else:
-            return []
+            return raw_parameters_for_machine(db, machine)
+        if getattr(tx, "shop", None) is not None:
+            return resolve_for_shop(db, tx.shop)
     except Exception:  # noqa: BLE001 - a copy prints without the line rather than not at all
-        return []
-    return parse_fields(params.get(KEY))
+        return {}
+    return {}
+
+
+def fields_for_document(db, tx: Any) -> List[str]:
+    """`receiptTableInfo` as it stands for the document's till (else its shop)."""
+    return parse_fields(_document_params(db, tx).get(KEY))
 
 
 def line_for_document(db, tx: Any) -> Optional[str]:
-    """The line the document's copy carries under its title, or None."""
-    fields = fields_for_document(db, tx)
+    """The line the document's copy carries under its title, or None — the word before it the till's `tableTerm`."""
+    from app.services.table_scope import term_of
+
+    params = _document_params(db, tx)
+    fields = parse_fields(params.get(KEY))
     if not fields:
         return None
-    return table_line(fields, facts_of_order(db, order_of_document(db, tx)))
+    return table_line(fields, facts_of_order(db, order_of_document(db, tx)), term=term_of(params))

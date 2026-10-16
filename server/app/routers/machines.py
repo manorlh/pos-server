@@ -1977,3 +1977,128 @@ def update_device_profile(
         device_profile.notify_settings(db, machine)
     db.refresh(machine)
     return _enrich_machine_status(machine, db)
+
+
+# ── "שולחנות שהמכשיר רואה" (P:/specs/table-scope.md §2, §9, §14) ─────────────────────
+
+
+class TableScopeIn(BaseModel):
+    """The device's table scope: `null` — every table (the default); else the zones and tables it sees."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    table_scope: Optional[Dict[str, Any]] = Field(None, alias="tableScope")
+    #: "החל גם על…": the same scope on these devices of the same shop too.
+    also_machine_ids: List[uuid_mod.UUID] = Field(default_factory=list, alias="alsoMachineIds", max_length=200)
+
+
+def _scope_machine(db: Session, machine_id: Any, current_user: User, active_tenant_id) -> POSMachine:
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return machine
+
+
+def _scope_device_out(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    from app.services import table_scope as TSC
+    from app.services.printers import machine_label
+
+    caps = TSC.capabilities_of(machine)
+    return {
+        "id": str(machine.id),
+        "name": machine_label(machine),
+        "posNumber": machine.pos_number,
+        "areaId": str(machine.area_id) if machine.area_id else None,
+        # The ids archived since dropped (§14.1): what the device sees of it.
+        "tableScope": TSC.live_out(db, machine.shop_id, machine.table_scope),
+        "appVersion": getattr(machine, "app_version", None),
+        "capable": {"scope": TSC.CAPABILITY_SCOPE in caps, "labels": TSC.CAPABILITY_LABELS in caps},
+    }
+
+
+@router.get("/{machine_id}/table-scope")
+def get_machine_table_scope(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The device's page, "שולחנות שהמכשיר רואה": its scope (`null` — every table), the tree it may pick from (its
+    point of sale's zones and the shop-wide ones, each with its tables), and the shop's other devices
+    ("החל גם על…") with theirs.
+    """
+    from app.services import table_scope as TSC
+
+    machine = _scope_machine(db, machine_id, current_user, active_tenant_id)
+    if machine.shop_id is None:
+        return {"device": _scope_device_out(db, machine), "zones": [], "devices": []}
+    others = (
+        db.query(POSMachine)
+        .filter(POSMachine.shop_id == machine.shop_id, POSMachine.is_active.is_(True), POSMachine.id != machine.id)
+        .order_by(POSMachine.pos_number.asc())
+        .all()
+    )
+    return {
+        "device": _scope_device_out(db, machine),
+        "zones": TSC.scope_tree(db, machine.shop_id, area_id=machine.area_id),
+        "devices": [_scope_device_out(db, m) for m in others if getattr(m, "is_fiscal", True) is not False],
+    }
+
+
+@router.put("/{machine_id}/table-scope")
+def put_machine_table_scope(
+    machine_id: uuid_mod.UUID,
+    body: TableScopeIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Set the device's scope — and ("החל גם על…") the same on other devices of its shop. Only zones and tables the
+    device's point of sale shows (a narrowing, never a widening: 422 `table_scope_invalid` with `reason`); another
+    shop's device: 400 `machine_other_shop`. Every change logged (who, when, before, after); the tills pull at once.
+    """
+    from app.services import table_scope as TSC
+    from app.services import tables as T
+    from app.services.printers import machine_label
+
+    machine = _scope_machine(db, machine_id, current_user, active_tenant_id)
+    if machine.shop_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
+    try:
+        scope = TSC.without_archived(db, machine.shop_id, TSC.clean_scope(body.table_scope))
+    except TSC.ScopeError as exc:
+        raise HTTPException(status_code=422, detail={"code": TSC.INVALID, "reason": exc.reason, **exc.extra})
+    targets = [machine]
+    for other_id in body.also_machine_ids:
+        if other_id == machine.id or any(t.id == other_id for t in targets):
+            continue
+        other = _scope_machine(db, other_id, current_user, active_tenant_id)
+        if other.shop_id != machine.shop_id:
+            raise HTTPException(status_code=400, detail={"code": "machine_other_shop", "machineId": str(other.id)})
+        targets.append(other)
+    for target in targets:
+        try:
+            TSC.check_against(db, target.shop_id, scope, area_id=target.area_id)
+        except TSC.ScopeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": TSC.INVALID, "reason": exc.reason, "machineId": str(target.id), **exc.extra},
+            )
+    for target in targets:
+        TSC.record_change(
+            db, target_type="machine", target=target, name=machine_label(target), before=target.table_scope,
+            after=scope, user=current_user,
+        )
+        target.table_scope = scope
+    db.commit()
+    # Every till of the shop pulls its tables (the LAN host takes every device's scope).
+    T.tables_changed(db, machine.shop_id, tenant_id=machine.tenant_id)
+    return {"devices": [_scope_device_out(db, t) for t in targets]}

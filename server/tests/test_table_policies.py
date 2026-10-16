@@ -361,11 +361,15 @@ class TestStaffTableDiscountCheck:
         # nine of the waiters' assignment and the busy table (table-waiter-assignment), send's three
         # (P:/specs/tables-send-selected-stay.md §1, §2), the courses' auto-fire two (P:/specs/courses-fire-v2.md §1),
         # and last "מתי עיקריות?", scheduled items and the hints' six (P:/specs/fire-restaurant-flow.md §8.1).
-        assert keys[0] == self.KEY and len(keys) == 33
+        # Beside the waiters', the table scope's three and the word before the number (P:/specs/table-scope.md).
+        assert keys[0] == self.KEY and len(keys) == 36
         first = got["parameters"][0]
         assert (first["valueType"], first["defaultValue"], first["group"]) == ("boolean", False, "staffTables")
         assert [p["group"] for p in got["parameters"][1:]] == (
-            ["restore"] * 8 + ["mapDisplay"] * 4 + ["waiters"] * 9 + ["send"] * 3 + ["courses"] * 2 + ["fireFlow"] * 6
+            ["restore"] * 8 + ["mapDisplay"] * 4 + ["waiters"] * 9 + ["scope"] * 3 + ["send"] * 3 + ["courses"] * 2
+            + ["fireFlow"] * 6
         )
-        assert [g["key"] for g in got["groups"]] == ["staffTables", "restore", "mapDisplay", "waiters", "send", "courses", "fireFlow"]
+        assert [g["key"] for g in got["groups"]] == [
+            "staffTables", "restore", "mapDisplay", "waiters", "scope", "send", "courses", "fireFlow",
+        ]
         assert got["groups"][0]["label"] == "שולחן עובדים / מנהלים"

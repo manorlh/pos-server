@@ -187,6 +187,9 @@ def set_machine_shop(db: Session, machine: POSMachine, shop_id: ShopId) -> Optio
             from app.services.areas import set_machine_area
 
             set_machine_area(machine, None)
+        # "שולחנות שהמכשיר רואה" names the old shop's zones (P:/specs/table-scope.md §2): it starts over.
+        if getattr(machine, "table_scope", None) is not None:
+            machine.table_scope = None
     number = assign_register_number(db, machine)
     if getattr(machine, "is_fiscal", True) is False:
         # A display device issues no documents: no prefix either.

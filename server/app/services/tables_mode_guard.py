@@ -74,11 +74,16 @@ def _host_id(db: Session, shop: Shop) -> Optional[str]:
 
 
 def _open(db: Session, shop: Shop) -> List[TableOrder]:
-    return (
+    from app.services.table_labels import natural_sorted
+
+    # The natural order ("3", "3A", "10" — P:/specs/table-scope.md §6.2).
+    return natural_sorted(
         db.query(TableOrder)
         .filter(TableOrder.shop_id == shop.id, TableOrder.status == "open")
         .order_by(TableOrder.table_number)
-        .all()
+        .all(),
+        number=lambda o: o.table_number,
+        label=lambda o: getattr(o, "table_label", None),
     )
 
 
@@ -99,7 +104,8 @@ def _label(machine: Optional[POSMachine]) -> str:
 
 def _table(order: TableOrder) -> str:
     name = (order.table_name or "").strip()
-    return name or str(order.table_number if order.table_number is not None else "?")
+    label = (getattr(order, "table_label", None) or "").strip()
+    return name or label or str(order.table_number if order.table_number is not None else "?")
 
 
 class TablesModeGuard:

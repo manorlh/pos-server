@@ -89,7 +89,7 @@ from app.models.prepaid_voucher import (
 # Settlement, deliveries, replacements, pauses, quotas, test batches (the helper's §14/§16/§18).
 from app.models import prepaid_voucher_extras  # noqa: F401,E402
 from app.models.promotion import Promotion, TransactionPromotion
-from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
+from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableScopeChange, TableType, TableZone
 from app.models.tables_state import TablesStateVersion  # noqa: F401
 # "שיוך שולחנות למלצרים" and the floor's notices (P:/specs/table-waiter-assignment.md).
 from app.models.table_assignment import TableAssignment, TableNotice  # noqa: F401
@@ -255,7 +255,7 @@ __all__ = [
     "PrepaidVoucherTestRedemption",
     "PrepaidProduction",
     "Promotion", "TransactionPromotion",
-    "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableType", "PlatformSetting",
+    "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableScopeChange", "TableType", "PlatformSetting",
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob", "KitchenTicketDesign",
     "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",

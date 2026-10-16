@@ -80,16 +80,37 @@ def _conflict(code: str, **extra: Any) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": code, **extra})
 
 
-def table_words(table: Optional[DiningTable], order: Optional[TableOrder] = None) -> str:
-    """"שולחן 12", or its label alone ("ש-12")."""
+def table_words(table: Optional[DiningTable], order: Optional[TableOrder] = None, term: Optional[str] = None) -> str:
+    """
+    "שולחן 12", "תא 3B" — the word before it the shop's `tableTerm` ([term], P:/specs/table-scope.md §6.4) — or a
+    restored table by its name alone ("ש-12").
+    """
+    from app.services.table_scope import TERM_DEFAULT
+
+    word = (term or "").strip() or TERM_DEFAULT
     if table is not None:
         name = (table.name or "").strip()
         if getattr(table, "label_only", False) and name:
             return name
-        return f"שולחן {table.number}" + (f" ({name})" if name else "")
-    if order is not None and order.table_number is not None:
-        return f"שולחן {order.table_number}"
-    return "שולחן"
+        shown = (getattr(table, "label", None) or "").strip() or str(table.number)
+        return f"{word} {shown}" + (f" ({name})" if name else "")
+    if order is not None and (getattr(order, "table_label", None) or order.table_number is not None):
+        return f"{word} {(getattr(order, 'table_label', None) or '').strip() or order.table_number}"
+    return word
+
+
+def shop_term(db: Session, shop_id: Any) -> str:
+    """The shop's `tableTerm` ("שולחן" unless set)."""
+    from app.services import table_scope as TSC
+    from app.services import till_parameters as TP
+
+    shop = db.get(Shop, shop_id) if shop_id is not None else None
+    if shop is None:
+        return TSC.TERM_DEFAULT
+    try:
+        return TSC.term_of(TP.resolve_for_shop(db, shop))
+    except Exception:  # noqa: BLE001 - the word, never the notice
+        return TSC.TERM_DEFAULT
 
 
 def status_of(n: TableNotice, now: datetime) -> str:
@@ -110,6 +131,7 @@ def notice_out(n: TableNotice, *, now: Optional[datetime] = None) -> Dict[str, A
         "orderId": str(n.order_id) if n.order_id else None,
         "tableNumber": payload.get("tableNumber"),
         "tableName": payload.get("tableName"),
+        **({"tableLabel": payload["tableLabel"]} if payload.get("tableLabel") else {}),
         "toMachineId": str(n.to_machine_id) if n.to_machine_id else None,
         "toPosUserId": n.to_pos_user_id,
         "from": {
@@ -218,7 +240,7 @@ def create_entry_request(db: Session, actor: Any, table: DiningTable, *, now: Op
         from_machine_id=actor.machine.id,
         from_pos_user_id=actor.pos_user_id,
         from_pos_user_name=actor.pos_user_name,
-        text=f"{who} מבקש להיכנס ל{table_words(table)}"[:300],
+        text=f"{who} מבקש להיכנס ל{table_words(table, term=shop_term(db, table.shop_id))}"[:300],
         payload={
             "tableNumber": table.number,
             "tableName": table.name,
@@ -267,12 +289,46 @@ def pending_for(db: Session, machine: POSMachine, pos_user_id: Optional[str], *,
         .limit(50)
         .all()
     )
+    rows = _in_device_scope(db, machine, rows)
     for n in rows:
         if n.delivered_at is None:
             n.delivered_at = now
     if rows:
         db.flush()
     return rows
+
+
+def _in_device_scope(db: Session, machine: POSMachine, rows: List[TableNotice]) -> List[TableNotice]:
+    """
+    "התראות" (P:/specs/table-scope.md §5): a waiter's notice on a table outside this device's scope is shown on the
+    devices whose scope has it — and, when no device of the shop has it, everywhere (a notice is never lost). A
+    request to leave (for the device inside the table) always.
+    """
+    from app.services import table_scope as TSC
+
+    device = TSC.device_scope_of(db, machine)
+    if device is None or not rows:
+        return rows
+    out: List[TableNotice] = []
+    others = None
+    for n in rows:
+        if n.kind == ENTRY_REQUEST or n.table_id is None:
+            out.append(n)
+            continue
+        table = db.get(DiningTable, n.table_id)
+        if table is None or device.covers(table.id, table.zone_id):
+            out.append(n)
+            continue
+        if others is None:
+            others = [
+                TSC.device_scope_of(db, m) for m in db.query(POSMachine).filter(
+                    POSMachine.shop_id == machine.shop_id, POSMachine.is_active.is_(True), POSMachine.id != machine.id,
+                ).all()
+            ]
+        # Shown here only when no device of the shop sees the table (one with no scope sees it all).
+        if not any(o is None or o.covers(table.id, table.zone_id) for o in others):
+            out.append(n)
+    return out
 
 
 def _visible(db: Session, machine: POSMachine, n: Optional[TableNotice]) -> bool:
@@ -388,7 +444,10 @@ def notify_assigned(
             id=uuid.uuid4(), tenant_id=table.tenant_id, shop_id=table.shop_id, table_id=table.id,
             order_id=order.id if order is not None else None, kind=kind,
             to_machine_id=waiter_device(db, shop.id, pid, now), to_pos_user_id=str(pid),
-            text=text[:300], payload={"tableNumber": table.number, "tableName": table.name, **(payload or {})},
+            text=text[:300], payload={
+                "tableNumber": table.number, "tableName": table.name,
+                **({"tableLabel": table.label} if getattr(table, "label", None) else {}), **(payload or {}),
+            },
             dedupe_key=key, created_at=now, expires_at=now + ttl,
         )
         try:
@@ -421,7 +480,7 @@ def on_kds_ready(db: Session, korder: Any, *, now: Optional[datetime] = None) ->
             now = now or _now()
             ready = _utc(getattr(korder, "ready_at", None)) or now
             return notify_assigned(
-                db, table, order, KDS_READY, f"מוכן להגשה — {table_words(table)}",
+                db, table, order, KDS_READY, f"מוכן להגשה — {table_words(table, term=shop_term(db, table.shop_id))}",
                 f"kds_ready:{korder.id}:{int(ready.timestamp())}", ttl=READY_TTL, now=now,
                 payload={"kdsOrderId": str(korder.id)},
             )
@@ -485,7 +544,7 @@ def overdue_pass(db: Session, *, now: Optional[datetime] = None) -> List[TableNo
                 continue
             quiet = int((now - quiet_since).total_seconds() // 60)
             out += notify_assigned(
-                db, table, o, OVERDUE, f"{table_words(table)} מתעכב — {quiet} דק׳ בלי פעולה",
+                db, table, o, OVERDUE, f"{table_words(table, term=shop_term(db, table.shop_id))} מתעכב — {quiet} דק׳ בלי פעולה",
                 f"overdue:{o.id}:{int(quiet_since.timestamp())}", ttl=OVERDUE_TTL, now=now,
                 payload={"quietMinutes": quiet},
             )

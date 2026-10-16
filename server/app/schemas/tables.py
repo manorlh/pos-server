@@ -189,15 +189,23 @@ class TableAdhocIn(PosUserRef):
     name: Optional[str] = Field(None, max_length=60)
     zone_id: Optional[uuid.UUID] = Field(None, alias="zoneId")
     near_table_id: Optional[uuid.UUID] = Field(None, alias="nearTableId")
+    #: "3B" typed on the keypad (P:/specs/table-scope.md §6.3): the labelled table — never made when there is none
+    #: (404 `table_not_found`); outside the till's scope, 403 `table_out_of_scope` with the table.
+    label: Optional[str] = Field(None, max_length=40)
 
     @field_validator("name", mode="before")
     @classmethod
     def _name(cls, value):
         return _clean_text(value, 60)
 
+    @field_validator("label", mode="before")
+    @classmethod
+    def _label(cls, value):
+        return _clean_text(value, 40)
+
     @model_validator(mode="after")
     def _number_or_name(self):
-        if self.number is None and not self.name:
+        if self.number is None and not self.name and not self.label:
             raise ValueError("number or name is required")
         return self
 
@@ -581,9 +589,14 @@ class ZoneUpdate(_Camel):
 TableKind = Literal["regular", "staff", "managers"]
 
 
+#: "מספר שולחן (אפשר עם אותיות, למשל 3B)" (P:/specs/table-scope.md §6.1): a number, or a text that is one ("12"),
+#: or a label ("3B") — checked by app/services/table_labels.py (422 `table_label_invalid`).
+NumberOrLabel = Union[int, str]
+
+
 class TableCreate(_Camel):
     zone_id: uuid.UUID = Field(..., alias="zoneId")
-    number: int = Field(..., ge=1, le=99_999)
+    number: NumberOrLabel
     name: Optional[str] = Field(None, max_length=60)
     seats: int = Field(4, ge=0, le=99)
     shape: Literal["round", "square", "rect"] = "square"
@@ -606,7 +619,8 @@ class TableCreate(_Camel):
 
 class TableUpdate(_Camel):
     zone_id: Optional[uuid.UUID] = Field(None, alias="zoneId")
-    number: Optional[int] = Field(None, ge=1, le=99_999)
+    #: A number makes the table its number (a label it had is dropped); a label ("3B") labels it.
+    number: Optional[NumberOrLabel] = None
     name: Optional[str] = Field(None, max_length=60)
     seats: Optional[int] = Field(None, ge=0, le=99)
     shape: Optional[Literal["round", "square", "rect"]] = None
@@ -627,10 +641,13 @@ class TableUpdate(_Camel):
 
 
 class BulkTablesIn(_Camel):
-    """"Add tables 1–100 to this zone": numbers already taken in the shop are skipped."""
+    """
+    "Add tables 1–100 to this zone": numbers already taken in the shop are skipped. With letters ("3A" … "3L",
+    P:/specs/table-scope.md §9): the same beginning, a letter or a number at the end — labels taken are skipped.
+    """
 
-    from_number: int = Field(..., alias="from", ge=1, le=99_999)
-    to_number: int = Field(..., alias="to", ge=1, le=99_999)
+    from_number: NumberOrLabel = Field(..., alias="from")
+    to_number: NumberOrLabel = Field(..., alias="to")
     seats: int = Field(4, ge=0, le=99)
     shape: Literal["round", "square", "rect"] = "square"
     #: Every table added of this type ("סוג שולחן"), when one is named.
@@ -720,6 +737,9 @@ class TillTableIn(_Camel):
     zone_client_id: Optional[str] = Field(None, alias="zoneClientId", min_length=1, max_length=64)
     number: Optional[int] = Field(None, ge=1, le=99_999)
     name: Optional[str] = Field(None, max_length=60)
+    #: "3B" (P:/specs/table-scope.md §6.1): sent — the table is labelled (null: its number again); absent (a till
+    #: from before labels) — its label stays. A new labelled table needs no `number` (an internal one is picked).
+    label: Optional[str] = Field(None, max_length=40)
     seats: Optional[int] = Field(None, ge=0, le=99)
     shape: Optional[Literal["round", "square", "rect"]] = None
     x: Optional[float] = Field(None, ge=0, le=5000)
@@ -733,6 +753,11 @@ class TillTableIn(_Camel):
     @classmethod
     def _name(cls, value):
         return _clean_text(value, 60)
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _label(cls, value):
+        return _clean_text(value, 40)
 
 
 class TillLayoutIn(PosUserRef):
