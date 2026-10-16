@@ -11,6 +11,7 @@ import { tipToCharge } from '../core/sale';
 /** The demo's tips: on, with "סכום אחר" (the demo config's checkout asks both). */
 const DEMO_TIPS = { tipEnabled: true, tipOther: true } as const;
 import { demoLayoutLayer, demoRich, richCatalog } from './demoLayouts';
+import { demoAdminAction, demoAdminInfo, demoHistory } from './staff/historyDemo';
 
 /** `?style=ios|wolt|classic|minimal_dark|tech` picks the demo's look, as a kiosk's `theme.uiStyle` would. */
 function demoStyle(): UiStyle {
@@ -243,10 +244,10 @@ function webBridge(): KioskBridge {
     receiptChoice: async () => undefined,
     helpRequest: async () => undefined,
     adminUnlock: async (pin) => (pin === '1234' ? { ok: true, name: 'מנהל הדגמה' } : { ok: false, error: 'קוד שגוי' }),
-    adminInfo: async () => {
-      throw new Error('web demo');
-    },
-    adminAction: async () => ({ ok: false, message: 'web demo' }),
+    // "ניהול הקיוסק" with demo data (staff/historyDemo.ts): the history and its reprints, another manager's code 1234.
+    adminInfo: async () => demoAdminInfo(),
+    adminHistory: async (input) => demoHistory(input),
+    adminAction: async (a) => demoAdminAction(a),
     technicianUnlock: async (code) => (code === '1995' ? { outcome: 'granted', triesLeft: 0, lockedForMs: 0 } : { outcome: 'wrong', triesLeft: 4, lockedForMs: 0 }),
     technicianInfo: async () => {
       throw new Error('web demo');
