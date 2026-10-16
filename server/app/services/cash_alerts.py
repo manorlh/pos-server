@@ -390,10 +390,15 @@ def scan_offline(db: Session, *, now: Optional[datetime] = None) -> int:
 
     now = _now(now)
     changed = 0
+    from sqlalchemy import or_
+
+    from app.services.cash_host import hosts_cash
+
     hosts = (
         db.query(POSMachine)
         .filter(
-            POSMachine.is_cash_host.is_(True),
+            # A dedicated cash host, or a host kiosk (P:/specs/cash-paylink.md §14.1).
+            or_(POSMachine.is_cash_host.is_(True), POSMachine.cash_host_embedded.is_(True)),
             POSMachine.is_active.is_(True),
             POSMachine.last_heartbeat_at.isnot(None),
             POSMachine.id.in_(db.query(CashStation.host_machine_id).filter(CashStation.is_active.is_(True))),
@@ -401,6 +406,8 @@ def scan_offline(db: Session, *, now: Optional[datetime] = None) -> int:
         .all()
     )
     for host in hosts:
+        if not hosts_cash(host):
+            continue
         beat = _aware(host.last_heartbeat_at)
         silent = beat is not None and now - beat >= OFFLINE_AFTER and now - beat <= LOOKBACK
         for station in stations_of_host(db, host.id):

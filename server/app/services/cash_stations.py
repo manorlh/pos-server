@@ -54,7 +54,7 @@ from app.models.cash_station import (
 )
 from app.models.pos_machine import PairingStatus, POSMachine
 from app.services import cash_params as CP
-from app.services.cash_host import is_cash_host
+from app.services.cash_host import hosts_cash, is_cash_host, is_embedded_host
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +188,9 @@ def station_label(station: Any) -> str:
 
 
 def host_of(db: Session, station: CashStation) -> Optional[POSMachine]:
+    """The station's host: a dedicated cash host or a host kiosk (§14.1), active — else None (no kiosk is given it)."""
     host = db.get(POSMachine, station.host_machine_id) if station.host_machine_id else None
-    if host is None or not host.is_active or not is_cash_host(host):
+    if host is None or not host.is_active or not hosts_cash(host):
         return None
     return host
 
@@ -384,11 +385,11 @@ def clean_status(raw: Any) -> Optional[Dict[str, Any]]:
 
 def apply_heartbeat(db: Session, machine: POSMachine, raw: Any, *, now: Optional[datetime] = None) -> bool:
     """
-    A cash host's `cash` block: kept on the machine (`cash_status`), and its stations' alerts reconciled
-    (cash_alerts.py) — opened when reported, closed when no longer. Another device's block is ignored.
-    The caller commits; never raises for a bad block (it is cleaned).
+    A cash host's `cash` block — a dedicated one's or a host kiosk's (§14.1): kept on the machine (`cash_status`),
+    and its stations' alerts reconciled (cash_alerts.py) — opened when reported, closed when no longer. Another
+    device's block is ignored. The caller commits; never raises for a bad block (it is cleaned).
     """
-    if not is_cash_host(machine):
+    if not hosts_cash(machine):
         return False
     cleaned = clean_status(raw)
     if cleaned is None:
@@ -440,10 +441,15 @@ def _shop_devices(db: Session, shop_id: Any) -> List[POSMachine]:
     )
 
 
-def clients_by_station(db: Session, shop_id: Any, stations: Optional[Sequence[CashStation]] = None) -> Dict[Any, List[POSMachine]]:
-    """The shop's kiosks and tills that take cash, by the station each is assigned (resolved)."""
+def client_routes(
+    db: Session, shop_id: Any, stations: Optional[Sequence[CashStation]] = None,
+) -> Dict[Any, List[Tuple[POSMachine, str]]]:
+    """
+    The shop's kiosks and tills that take cash, by the station each is assigned (resolved), each with its
+    `cashRoute` (§14.2: lan | cloud | auto; anything else — lan).
+    """
     stations = list(stations) if stations is not None else stations_of_shop(db, shop_id)
-    out: Dict[Any, List[POSMachine]] = {s.id: [] for s in stations}
+    out: Dict[Any, List[Tuple[POSMachine, str]]] = {s.id: [] for s in stations}
     if not stations:
         return out
     for machine in _shop_devices(db, shop_id):
@@ -456,12 +462,20 @@ def clients_by_station(db: Session, shop_id: Any, stations: Optional[Sequence[Ca
             continue
         station = resolve_station(stations, params.get(CP.STATION_KEY))
         if station is not None:
-            out.setdefault(station.id, []).append(machine)
+            out.setdefault(station.id, []).append((machine, CP.route_of(params.get(CP.ROUTE_KEY))))
     return out
 
 
-def client_ref(db: Session, machine: POSMachine) -> Dict[str, Any]:
-    return {"machineId": str(machine.id), "name": machine.name, "kind": kind_of(db, machine)}
+def clients_by_station(db: Session, shop_id: Any, stations: Optional[Sequence[CashStation]] = None) -> Dict[Any, List[POSMachine]]:
+    """The shop's kiosks and tills that take cash, by the station each is assigned (resolved)."""
+    return {sid: [m for m, _ in items] for sid, items in client_routes(db, shop_id, stations).items()}
+
+
+def client_ref(db: Session, machine: POSMachine, route: Optional[str] = None) -> Dict[str, Any]:
+    out = {"machineId": str(machine.id), "name": machine.name, "kind": kind_of(db, machine)}
+    if route is not None:
+        out["route"] = route
+    return out
 
 
 # ── GET /sync/{m}/cash (§11.2) ─────────────────────────────────────────────────
@@ -539,14 +553,19 @@ def lan_alert_targets(db: Session, host: POSMachine) -> List[Dict[str, Any]]:
 
 
 def host_view(db: Session, host: POSMachine) -> Dict[str, Any]:
-    """The cash host's answer (`role: "host"`)."""
+    """
+    The cash host's answer (`role: "host"`) — a dedicated host's, or the `host` block of a host kiosk (§14.1). Each
+    client with its `route` and each station's `relay` (§14.2: a client of it not on the LAN — the host then
+    listens to the cloud relay, §14.4; the host kiosk's own payments never go through it).
+    """
     base = machine_params(db, host)
     stations = stations_of_host(db, host.id)
-    clients = clients_by_station(db, host.shop_id, stations_of_shop(db, host.shop_id)) if host.shop_id else {}
+    clients = client_routes(db, host.shop_id, stations_of_shop(db, host.shop_id)) if host.shop_id else {}
     host_settings = CP.typed(base, CP.HOST_KEYS)
     out_stations = []
     for station in stations:
         eff = station_settings(db, station, host, base=base)
+        mine = clients.get(station.id, [])
         out_stations.append({
             "stationId": str(station.id),
             "name": station.name,
@@ -554,7 +573,8 @@ def host_view(db: Session, host: POSMachine) -> Dict[str, Any]:
             "serial": station.serial or "",
             "simulator": eff.get(CP.SIMULATOR_KEY) is True,
             "settings": eff,
-            "clients": [client_ref(db, m) for m in clients.get(station.id, [])],
+            "clients": [client_ref(db, m, route) for m, route in mine],
+            "relay": any(route != CP.ROUTE_LAN for m, route in mine if m.id != host.id),
         })
     return {
         "api": API,
@@ -569,7 +589,16 @@ def host_view(db: Session, host: POSMachine) -> Dict[str, Any]:
 
 
 def view_for(db: Session, machine: POSMachine) -> Dict[str, Any]:
-    return host_view(db, machine) if is_cash_host(machine) else client_view(db, machine)
+    """
+    §11.2: a dedicated cash host — the host's answer; a kiosk / till — the client's; a host kiosk (§14.1) — the
+    client's with the host's answer in `host`.
+    """
+    if is_cash_host(machine):
+        return host_view(db, machine)
+    out = client_view(db, machine)
+    if is_embedded_host(machine):
+        out["host"] = host_view(db, machine)
+    return out
 
 
 def etag_of(body: Dict[str, Any]) -> str:

@@ -9,18 +9,25 @@
  *  - the loop: every station ticks (~150 ms), the CheckOperation watchdog every 500 ms;
  *  - the journal to the cloud (`POST /sync/{m}/cash/journal`, idempotent) — later when offline;
  *  - its heartbeat block (`cash`: LAN address, port, each station's state, change, alerts);
- *  - with no cloud: the stations' alerts to the shop's LAN server (`POST /kiosk/alerts`), as a kiosk does.
+ *  - with no cloud: the stations' alerts to the shop's LAN server (`POST /kiosk/alerts`), as a kiosk does;
+ *  - the cloud relay (§14.4, relay.ts) while a station has a client whose `cashRoute` is not the LAN.
+ *
+ * The same host runs inside a kiosk whose PC has the PayLink on USB ("מארח עמדת מזומן", §14.1): its config is then
+ * the `host` part of the kiosk's own §11.2 answer, and the kiosk's own payments call it in-process (`via: local`).
  */
 
 import type { Api } from '../sync/api';
 import type { Kv } from '../db/schema';
 import type { CashDevice } from '../../core/cash/device';
 import { CASH_API, CASH_PORT, type CashEvent, type CashHealth, type CashRoute } from '../../core/cash/lanProtocol';
+import { CLOUD_LEASE_RENEW_MS, CLOUD_LEASE_TTL_MS, type CashVia } from '../../core/cash/route';
+import { NonceCache } from './auth';
+import { CashRelayWorker } from './relay';
 import { cashSettingsOf, type CashSettings } from '../../core/cash/settings';
 import { txView, type CashTx } from '../../core/cash/tx';
 import type { CashJournal, CashMove } from './journal';
 import { CashLanServer, type CashLanHost } from './lanServer';
-import { CashStation, type Reply, type StationConfig } from './station';
+import { CashStation, LAN_LEASE, type LeaseTiming, type Reply, type StationConfig } from './station';
 
 export interface HostStationConfig {
   stationId: string;
@@ -29,7 +36,9 @@ export interface HostStationConfig {
   serial: string;
   simulator: boolean;
   settings: Record<string, unknown>;
-  clients: Array<{ machineId: string; name: string; kind: string }>;
+  clients: Array<{ machineId: string; name: string; kind: string; route?: string }>;
+  /** A client of it reaches it through the cloud (§14.2): the host listens to the relay. */
+  relay?: boolean;
 }
 
 export interface HostCommand {
@@ -82,7 +91,12 @@ export const EMPTY_HOST_CONFIG: HostConfig = { hostSecret: null, stations: [], c
 /** The cloud's answer, read leniently (contract §11.2, host). */
 export function hostConfigOf(body: unknown): HostConfig | null {
   if (!body || typeof body !== 'object') return null;
-  const b = body as Record<string, unknown>;
+  let b = body as Record<string, unknown>;
+  // A host kiosk (§14.1): the client's answer, the host's in `host`.
+  if (b.role === 'client') {
+    if (!b.host || typeof b.host !== 'object') return null;
+    b = b.host as Record<string, unknown>;
+  }
   if (b.role !== undefined && b.role !== 'host') return null;
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const stations: HostStationConfig[] = Array.isArray(b.stations)
@@ -96,8 +110,11 @@ export function hostConfigOf(body: unknown): HostConfig | null {
           simulator: s.simulator === true,
           settings: s.settings && typeof s.settings === 'object' ? (s.settings as Record<string, unknown>) : {},
           clients: Array.isArray(s.clients)
-            ? (s.clients as Array<Record<string, unknown>>).filter((c) => c && typeof c.machineId === 'string').map((c) => ({ machineId: String(c.machineId), name: str(c.name), kind: str(c.kind) || 'kiosk' }))
+            ? (s.clients as Array<Record<string, unknown>>)
+                .filter((c) => c && typeof c.machineId === 'string')
+                .map((c) => ({ machineId: String(c.machineId), name: str(c.name), kind: str(c.kind) || 'kiosk', ...(typeof c.route === 'string' ? { route: c.route } : {}) }))
             : [],
+          relay: s.relay === true,
         }))
     : [];
   const commands: HostCommand[] = Array.isArray(b.commands)
@@ -164,17 +181,33 @@ export class CashHost implements CashLanHost {
   private readonly fetchFn: typeof fetch;
   private commandsRunning = false;
   private prunedAt = 0;
+  /** One nonce cache for the LAN API and the relay: a signed call is taken once, whichever way it came. */
+  readonly nonces = new NonceCache();
+  /** The cloud relay (§14.4): runs while a station has a client not on the LAN. */
+  readonly relay: CashRelayWorker;
 
   constructor(private readonly d: CashHostDeps) {
     this.cfg = d.kv.getJson<HostConfig>(K.config) ?? { ...EMPTY_HOST_CONFIG };
     this.fetchFn = d.fetch ?? ((...a) => fetch(...a));
+    this.relay = new CashRelayWorker({
+      api: d.api,
+      machineId: d.machineId,
+      host: this,
+      nonces: this.nonces,
+      wanted: () => this.relayWanted(),
+    });
+  }
+
+  /** A station of this host has a client whose `cashRoute` is not the LAN (§14.2). */
+  relayWanted(): boolean {
+    return this.cfg.stations.some((s) => s.relay === true);
   }
 
   /* ------------------------------------------------------------------ lifecycle */
 
   async start(): Promise<void> {
     this.apply(this.cfg);
-    this.server = new CashLanServer(this, { port: this.d.port ?? CASH_PORT });
+    this.server = new CashLanServer(this, { port: this.d.port ?? CASH_PORT, nonces: this.nonces });
     try {
       const port = await this.server.listen();
       this.d.log(`[cash] LAN API on port ${port}`);
@@ -182,6 +215,7 @@ export class CashHost implements CashLanHost {
       this.d.log(`[cash] LAN API could not listen: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (this.d.manualTimers) return;
+    this.relay.start();
     this.timers.push(setInterval(() => void this.tick(), TICK_MS));
     this.timers.push(setInterval(() => void this.watchdog(), WATCHDOG_MS));
     this.timers.push(setInterval(() => void this.pull(), PULL_MS));
@@ -193,6 +227,7 @@ export class CashHost implements CashLanHost {
   async stop(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    this.relay.stop();
     await this.server?.close();
     this.server = null;
     for (const s of this.stations.values()) await s.stop?.().catch(() => undefined);
@@ -494,16 +529,27 @@ export class CashHost implements CashLanHost {
     this.d.log(m);
   }
 
-  async call(route: CashRoute, clientId: string, body: Record<string, unknown>): Promise<Reply> {
+  /**
+   * A client's call, whichever way it came (§11.4): the LAN API (signed), the cloud relay (signed, `via: cloud` — its
+   * lease kept 20 s and renewed by every call, §14.4) or a host kiosk's own payment in this app (`via: local`).
+   */
+  async call(route: CashRoute, clientId: string, body: Record<string, unknown>, via: CashVia = 'lan'): Promise<Reply> {
     if (route.kind === 'health' || route.kind === 'events') return { status: 404, body: { error: 'not_found' } };
     const st = this.station(route.stationId);
     if (!st) return { status: 404, body: { error: 'unknown_station', message: 'העמדה אינה בשרת הזה' } };
     if (!st.isClient(clientId)) return { status: 403, body: { error: 'not_assigned', message: 'הקיוסק אינו משויך לעמדה הזו' } };
+    const timing: LeaseTiming = via === 'cloud' ? { ttlMs: CLOUD_LEASE_TTL_MS, renewMs: CLOUD_LEASE_RENEW_MS } : LAN_LEASE;
+    const r = await this.dispatch(st, route, clientId, body, timing);
+    if (via === 'cloud' && route.kind !== 'release') st.touchLease(clientId, timing);
+    return r;
+  }
+
+  private async dispatch(st: CashStation, route: Exclude<CashRoute, { kind: 'health' } | { kind: 'events' }>, clientId: string, body: Record<string, unknown>, timing: LeaseTiming): Promise<Reply> {
     switch (route.kind) {
       case 'status':
         return { status: 200, body: st.status(clientId) };
       case 'lease':
-        return st.lease(clientId, body);
+        return st.lease(clientId, body, timing);
       case 'release':
         return st.release(clientId, route.leaseId);
       case 'tx_start': {
@@ -535,6 +581,7 @@ export class CashHost implements CashLanHost {
       port: this.port,
       cloudOnline: this.d.cloudOnline(),
       lastPullAt: this.lastPullAt,
+      relay: this.relay.view(),
       uploadError: this.lastUploadError,
       pendingUploads: this.d.journal.toUpload(500).length + this.d.journal.movesToUpload(500).length,
       stations: [...this.stations.values()].map((r) => {

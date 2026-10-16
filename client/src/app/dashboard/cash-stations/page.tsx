@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 
 function StationCard({ s, showShop }: { s: CashStation; showShop: boolean }) {
   const t = useTranslations('cashStations.list');
+  const tHost = useTranslations('cashStations.hostCard');
   const kiosks = s.clients.map((c) => c.name ?? '—');
   return (
     <Card className={cn('transition-colors hover:border-primary/50', !s.isActive && 'opacity-70')}>
@@ -58,6 +59,7 @@ function StationCard({ s, showShop }: { s: CashStation; showShop: boolean }) {
                   <Link href={`/dashboard/machines/${s.host.machineId}`} className="truncate hover:underline">
                     {s.host.name ?? '—'}
                   </Link>
+                  {s.host.embedded ? <span className="shrink-0 text-xs text-muted-foreground">· {tHost('embedded')}</span> : null}
                 </>
               ) : (
                 <span className="text-amber-700 dark:text-amber-400">{t('noHost')}</span>

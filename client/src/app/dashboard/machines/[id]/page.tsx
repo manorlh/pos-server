@@ -47,6 +47,8 @@ import { WebScreenNote } from '@/components/dashboard/machines/web-screen-note';
 import { isCashHost, isDisplayDevice, isLocalServer } from '@/lib/deviceProfile';
 import { LocalServerDeviceCard } from '@/components/dashboard/local-server-dedicated';
 import { CashHostDeviceCard } from '@/components/dashboard/cash-stations/cash-host-card';
+import { EmbeddedHostCard } from '@/components/dashboard/cash-stations/embedded-host-card';
+import { mayHostEmbedded } from '@/lib/cashStations';
 import {
   DocumentPrefixBusinessStatus,
   DocumentPrefixDialog,
@@ -677,6 +679,10 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       {/* "שרת מזומן" (P:/specs/cash-paylink.md §12): online, its LAN address, version, and the cash
           stations (PayLink units) it runs, each linked to its page. */}
       {isCashHost(machine) ? <CashHostDeviceCard machine={machine} /> : null}
+
+      {/* "מארח עמדת מזומן" (P:/specs/cash-paylink.md §14.1): a Windows kiosk with the PayLink on USB runs its
+          cash station(s) itself — the switch and its stations. */}
+      {mayHostEmbedded(machine) && !removed ? <EmbeddedHostCard machine={machine} /> : null}
 
       {/* "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): how the device works, each value with
           where it comes from — set on the device or inherited from the shop / company. A local

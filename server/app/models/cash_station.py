@@ -16,12 +16,14 @@
   dump, deliver_pending, float), delivered with `GET /sync/{host}/cash`, acknowledged once.
 * `CashCreditRedemption` — stage 2 (§11.15א): a cash credit (change owed the customer kept for a next order, an
   owed item of kind `change_credit`) redeemed towards an order at a till or a kiosk, by the device's own id.
+* `CashRelayRequest` — §14.4 the cloud relay: one LAN call of a client (`cashRoute` cloud / auto) kept for its
+  station's host, signed by the client exactly as on the LAN, handed to the host once, and its answer for the client.
 
 Amounts are integer agorot throughout, as on the LAN (§11 preamble).
 """
 import uuid
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
@@ -227,3 +229,47 @@ class CashHostCommand(Base):
     movement_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     acked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+#: §14.4: pending (waits for its host) → taken (handed to the host, once) → done (the host's answer kept);
+#: `expired` — not taken in time; `lost` — taken and never answered.
+RELAY_STATES = ("pending", "taken", "done", "expired", "lost")
+
+
+class CashRelayRequest(Base):
+    """
+    §14.4 the cloud relay: one LAN call (§11.4) of a client whose `cashRoute` is cloud / auto, for its station's
+    host. Kept exactly as the client signed it (`signed` + `body`): the cloud never changes a byte, the host verifies
+    it as on the LAN. By the client's own `requestId` — the same id again is the same call. Kept a day.
+    """
+
+    __tablename__ = "cash_relay_requests"
+    __table_args__ = (
+        Index("ix_cash_relay_requests_host_state", "host_machine_id", "state", "created_at"),
+        Index("ix_cash_relay_requests_created", "created_at"),
+    )
+
+    #: The client's `requestId` (UUID v4, new per call).
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    station_id = Column(UUID(as_uuid=True), ForeignKey("cash_stations.id", ondelete="CASCADE"), nullable=False)
+    #: The station's host when the call came (a dedicated cash host or a host kiosk).
+    host_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="CASCADE"), nullable=False)
+    client_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="CASCADE"), nullable=False)
+    #: GET | POST | DELETE.
+    method = Column(String(8), nullable=False)
+    #: "/cash/stations/{stationId}/…" — as signed.
+    path = Column(String(300), nullable=False)
+    #: {"client", "ts", "nonce", "sig"} — the §11.3 headers as the client signed them.
+    signed = Column(JSONB, nullable=False)
+    #: The exact JSON text signed ('' for none).
+    body = Column(Text, nullable=False, default="", server_default="")
+    #: sha256 of what the call is (method, path, signed, body): the same `requestId` with another content is refused.
+    digest = Column(String(64), nullable=False)
+    #: pending | taken | done | expired | lost.
+    state = Column(String(12), nullable=False, default="pending", server_default="pending")
+    #: The host's answer: {"status", "body", "hostTime"}.
+    reply = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    taken_at = Column(DateTime(timezone=True), nullable=True)
+    done_at = Column(DateTime(timezone=True), nullable=True)
