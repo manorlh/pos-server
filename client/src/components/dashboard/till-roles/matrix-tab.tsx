@@ -4,7 +4,8 @@
  * The matrix editor: permissions (rows, in groups) × roles (columns), a tri-state chip per
  * cell and the limit boxes under an "allowed" chip that carries limits. Edits stay local
  * until "שמירה", which sends only the roles that changed and, per role, only what differs
- * from its template (lib/tillRoles.ts `matrixPayload`).
+ * from its template (lib/tillRoles.ts `matrixPayload`). The first row is "כשאין הרשאה"
+ * (P:/specs/denied-actions-ui.md): per role, what the till does with what the role denies.
  */
 
 import { Fragment, useMemo, useState } from 'react';
@@ -16,14 +17,17 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   changedCells,
   countStates,
+  deniedUiChanged,
   draftFromRoles,
   groupPermissions,
   matrixPayload,
   onlyDeviceLabel,
   parseLimit,
   setCell,
+  setDeniedUi,
   setLimit,
   visibleRoles,
+  type DeniedUi,
   type MatrixDraft,
   type PermissionCatalogue,
   type TillRole,
@@ -41,28 +45,34 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { StateChip } from './state-chip';
-import { ApplyDefaultsDialog, DeleteRoleDialog, EditRoleDialog, NewRoleDialog } from './role-dialogs';
+import { ApplyDefaultsDialog, DeleteRoleDialog, EditRoleDialog, NewRoleDialog, SELECT } from './role-dialogs';
+import { DeniedPreviewCard } from './denied-preview';
 
 export function MatrixTab({
   companyId,
+  shopId = null,
   catalogue,
   data,
 }: {
   companyId: string;
+  /** The shop in scope: the preview reads its "כשאין הרשאה" (else the company's). */
+  shopId?: string | null;
   catalogue: PermissionCatalogue;
   data: TillRolesResponse;
 }) {
   // Re-keyed on the server's answer, so a save (or another tab's change) restarts the draft.
   const key = data.roles.map((r) => `${r.id}:${r.updatedAt}`).join('|');
-  return <Matrix key={key} companyId={companyId} catalogue={catalogue} data={data} />;
+  return <Matrix key={key} companyId={companyId} shopId={shopId} catalogue={catalogue} data={data} />;
 }
 
 function Matrix({
   companyId,
+  shopId,
   catalogue,
   data,
 }: {
   companyId: string;
+  shopId: string | null;
   catalogue: PermissionCatalogue;
   data: TillRolesResponse;
 }) {
@@ -124,6 +134,8 @@ function Matrix({
         </label>
       </div>
       <p className="text-xs text-muted-foreground">{t('legend')}</p>
+      {/* "מה יראה מלצר": the role's till as the matrix stands now (P:/specs/denied-actions-ui.md §5). */}
+      <DeniedPreviewCard companyId={companyId} shopId={shopId} roles={roles} draft={draft} />
 
       <div className="overflow-x-auto rounded-lg border bg-card">
         <table className="w-full min-w-[720px] text-sm">
@@ -185,6 +197,33 @@ function Matrix({
             </tr>
           </thead>
           <tbody>
+            <tr className="border-b bg-primary/5 align-top">
+              <td className="sticky start-0 z-10 max-w-[18rem] bg-card p-2">
+                <div className="font-medium">{t('deniedUiRow')}</div>
+                <div className="text-xs text-muted-foreground">{t('deniedUiRowHint')}</div>
+              </td>
+              {roles.map((r) => {
+                const value = draft.deniedUi?.[r.id] ?? null;
+                return (
+                  <td key={r.id} className="p-2 text-center">
+                    <select
+                      className={`${SELECT} w-full min-w-[7.5rem] text-xs ${deniedUiChanged(r, draft) ? 'ring-2 ring-primary' : ''}`}
+                      aria-label={t('deniedUiAria', { role: r.name })}
+                      disabled={!canEdit}
+                      value={value ?? ''}
+                      onChange={(e) =>
+                        setDraft((d) => setDeniedUi(d, r.id, e.target.value ? (e.target.value as DeniedUi) : null))
+                      }
+                    >
+                      <option value="">{t('deniedUiInherit')}</option>
+                      <option value="show">{t('deniedUiShow')}</option>
+                      <option value="hide">{t('deniedUiHide')}</option>
+                      <option value="code">{t('deniedUiCode')}</option>
+                    </select>
+                  </td>
+                );
+              })}
+            </tr>
             {groups.map((g) => (
               <Fragment key={g.key}>
                 <tr className="border-b bg-muted/20">

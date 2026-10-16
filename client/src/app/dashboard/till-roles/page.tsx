@@ -60,7 +60,7 @@ function RolesBody({ companyId, shopId }: { companyId: string; shopId: string | 
     <div className="space-y-4">
       <TabBar tabs={tabs} value={tab} onChange={setTab} label={t('tabs.label')} />
       {tab === 'matrix' ? (
-        <MatrixTab companyId={companyId} catalogue={catalogue.data} data={data} />
+        <MatrixTab companyId={companyId} shopId={shopId} catalogue={catalogue.data} data={data} />
       ) : tab === 'users' ? (
         <UsersTab companyId={companyId} shopId={shopId} catalogue={catalogue.data} data={data} canAssign={canAssign} />
       ) : tab === 'drawer' ? (

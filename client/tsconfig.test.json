@@ -204,6 +204,8 @@
     "src/lib/prepaidVoucherProducts.test.ts",
     "src/lib/tillRoles.ts",
     "src/lib/tillRoles.test.ts",
+    "src/lib/deniedPreview.ts",
+    "src/lib/deniedPreview.test.ts",
     "src/lib/cashDrawer.ts",
     "src/lib/cashDrawer.test.ts",
     "src/lib/drawerTips.ts",

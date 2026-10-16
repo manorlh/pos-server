@@ -5,7 +5,14 @@
 import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { describeStateChanges, type PermState, type PermissionCatalogue, type TillRoleChange } from '@/lib/tillRoles';
+import {
+  describeDeniedUiChange,
+  describeStateChanges,
+  type DeniedUi,
+  type PermState,
+  type PermissionCatalogue,
+  type TillRoleChange,
+} from '@/lib/tillRoles';
 import { fetchTillRoleChanges } from '@/lib/tillRolesApi';
 import { formatDateTime } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,6 +38,11 @@ function detailLines(
   if (c.action === 'update' && oldV.name && newV.name && oldV.name !== newV.name) {
     lines.push(t('audit.renamed', { from: String(oldV.name), to: String(newV.name) }));
   }
+  // "כשאין הרשאה" (a role's, or an employee's own).
+  const deniedUiLabel = (v: DeniedUi | null) =>
+    v === 'show' ? t('deniedUiShow') : v === 'hide' ? t('deniedUiHide') : v === 'code' ? t('deniedUiCode') : t('deniedUiInherit');
+  const denied = describeDeniedUiChange(c.oldValue, c.newValue, deniedUiLabel, t('audit.deniedUi'));
+  if (denied) lines.push(denied);
   return lines.concat(describeStateChanges(c.oldValue, c.newValue, labels, stateLabel));
 }
 

@@ -14,9 +14,12 @@ import { ApprovalOverridesDialog, type OverridesTarget } from '@/components/dash
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   groupPermissions,
+  overridesCount,
+  overridesDeniedUi,
   overridesDraft,
   overridesPayload,
   visibleRoles,
+  type DeniedUi,
   type PermState,
   type PermissionCatalogue,
   type TillRoleUser,
@@ -123,7 +126,7 @@ export function UsersTab({
               </TableRow>
             ) : (
               (users.data ?? []).map((u) => {
-                const overrideCount = Object.keys(u.overrides?.states ?? {}).length;
+                const overrideCount = overridesCount(u);
                 return (
                   <TableRow key={u.id} className={u.isActive ? undefined : 'opacity-60'}>
                     <TableCell className="font-medium">
@@ -206,11 +209,15 @@ function OverridesDialog({
   const t = useTranslations('tillRoles');
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Record<string, PermState | ''>>(() => overridesDraft(user));
+  // "כשאין הרשאה" for this employee alone (P:/specs/denied-actions-ui.md): '' = as the role.
+  const [deniedUi, setDeniedUi] = useState<DeniedUi | ''>(() => overridesDeniedUi(user));
   const role = data.roles.find((r) => r.id === user.tillRoleId);
   const groups = useMemo(() => groupPermissions(catalogue), [catalogue]);
+  const deniedUiLabel = (v: DeniedUi | null | undefined) =>
+    v === 'show' ? t('deniedUiShow') : v === 'hide' ? t('deniedUiHide') : v === 'code' ? t('deniedUiCode') : t('deniedUiInherit');
   const save = useMutation({
     mutationFn: () => {
-      const payload = overridesPayload(draft);
+      const payload = overridesPayload(draft, deniedUi);
       return assignTillRole(user.shopId, user.id, {
         tillRoleId: user.tillRoleId as string,
         ...(payload ? { overrides: payload } : { clearOverrides: true }),
@@ -232,6 +239,26 @@ function OverridesDialog({
           <DialogDescription>{t('usersTab.overridesHint', { role: role?.name ?? user.tillRoleName ?? '—' })}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
+          <div className="space-y-1 rounded-md border bg-primary/5 p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="min-w-[12rem] flex-1 text-sm font-medium">{t('usersTab.deniedUi')}</span>
+              <span className="text-xs text-muted-foreground">
+                {t('usersTab.deniedUiRole', { value: deniedUiLabel(role?.deniedUi) })}
+              </span>
+              <select
+                className={`${SELECT} w-40`}
+                aria-label={t('usersTab.deniedUi')}
+                value={deniedUi}
+                onChange={(e) => setDeniedUi(e.target.value as DeniedUi | '')}
+              >
+                <option value="">{t('usersTab.deniedUiInherit')}</option>
+                <option value="show">{t('deniedUiShow')}</option>
+                <option value="hide">{t('deniedUiHide')}</option>
+                <option value="code">{t('deniedUiCode')}</option>
+              </select>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('usersTab.deniedUiHint')}</p>
+          </div>
           {groups.map((g) => (
             <div key={g.key} className="space-y-1">
               <div className="text-xs font-semibold text-muted-foreground">{g.label}</div>
@@ -264,7 +291,13 @@ function OverridesDialog({
           ))}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setDraft({})}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setDraft({});
+              setDeniedUi('');
+            }}
+          >
             {t('usersTab.clearAll')}
           </Button>
           <Button variant="outline" onClick={onClose}>

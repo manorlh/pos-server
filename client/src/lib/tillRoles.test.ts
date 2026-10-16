@@ -3,8 +3,14 @@ import assert from 'node:assert/strict';
 import {
   changedCells,
   countStates,
+  deniedUiChanged,
+  describeDeniedUiChange,
   describeStateChanges,
   draftFromRoles,
+  isDeniedUi,
+  overridesCount,
+  overridesDeniedUi,
+  setDeniedUi,
   groupPermissions,
   matrixPayload,
   nextState,
@@ -169,4 +175,66 @@ test('audit lines name the permission and both states', () => {
     (s) => ({ allow: 'מותר', approval: 'אישור', deny: 'אסור' })[s],
   );
   assert.deepEqual(lines, ['זיכוי: אישור → מותר', 'מכירה: — → אסור']);
+});
+
+// ── "כשאין הרשאה" (P:/specs/denied-actions-ui.md) ──────────────────────────
+
+test('deniedUi: inherit by default, sent only when changed, null inherits again', () => {
+  const roles = [role({}), role({ id: 'r2', name: 'מלצר', deniedUi: 'hide' })];
+  let draft = draftFromRoles(roles);
+  assert.deepEqual(draft.deniedUi, { r1: null, r2: 'hide' });
+  assert.equal(changedCells(roles, draft), 0);
+  draft = setDeniedUi(draft, 'r1', 'code');
+  assert.equal(deniedUiChanged(roles[0], draft), true);
+  assert.equal(roleChanged(roles[0], draft), true);
+  assert.equal(changedCells(roles, draft), 1);
+  // The role's matrix goes as ever (nothing differs from the template), with the new value.
+  assert.deepEqual(matrixPayload(roles, draft, catalogue), [{ id: 'r1', permissions: {}, limits: {}, deniedUi: 'code' }]);
+  draft = setDeniedUi(draft, 'r2', null);
+  assert.deepEqual(matrixPayload(roles, draft, catalogue)[1], { id: 'r2', permissions: {}, limits: {}, deniedUi: null });
+  // Back to what the server has: nothing to send.
+  draft = setDeniedUi(setDeniedUi(draft, 'r1', null), 'r2', 'hide');
+  assert.deepEqual(matrixPayload(roles, draft, catalogue), []);
+});
+
+test('deniedUi: a cell change alone does not send it', () => {
+  const roles = [role({ deniedUi: 'code' })];
+  const draft = setCell(draftFromRoles(roles), 'r1', 'REFUND', 'allow');
+  assert.equal('deniedUi' in matrixPayload(roles, draft, catalogue)[0], false);
+});
+
+test('deniedUi: an older server (no field) reads as inherit', () => {
+  const old = role({});
+  delete (old as Partial<TillRole>).deniedUi;
+  const draft = draftFromRoles([old]);
+  assert.equal(draft.deniedUi?.r1, null);
+  assert.equal(deniedUiChanged(old, draft), false);
+  // A draft built without the row at all changes nothing either.
+  assert.equal(deniedUiChanged(old, { states: {}, limits: {} }), false);
+});
+
+test('deniedUi: an employee of their own, counted as an exception and sent with the states', () => {
+  assert.equal(isDeniedUi('hide'), true);
+  assert.equal(isDeniedUi('later'), false);
+  assert.equal(overridesDeniedUi({ overrides: { deniedUi: 'code' } }), 'code');
+  assert.equal(overridesDeniedUi({ overrides: { deniedUi: 'later' as never } }), '');
+  assert.equal(overridesDeniedUi({ overrides: null }), '');
+  assert.equal(overridesCount({ overrides: { states: { REFUND: 'allow' }, deniedUi: 'hide' } }), 2);
+  assert.equal(overridesCount({ overrides: null }), 0);
+  assert.deepEqual(overridesPayload({ SELL: '' }, 'hide'), { states: {}, deniedUi: 'hide' });
+  assert.deepEqual(overridesPayload({ REFUND: 'deny' }, ''), { states: { REFUND: 'deny' } });
+  assert.equal(overridesPayload({}, ''), null);
+});
+
+test('deniedUi: the audit line', () => {
+  const label = (v: string | null) => ({ show: 'להציג', hide: 'להסתיר', code: 'לבקש קוד מנהל' } as Record<string, string>)[v ?? ''] ?? 'כמו בהגדרה';
+  assert.equal(
+    describeDeniedUiChange({ permissions: {} }, { permissions: {}, deniedUi: 'hide' }, label, 'כשאין הרשאה'),
+    'כשאין הרשאה: כמו בהגדרה → להסתיר',
+  );
+  assert.equal(
+    describeDeniedUiChange({ states: {}, deniedUi: 'code' }, null, label, 'כשאין הרשאה'),
+    'כשאין הרשאה: לבקש קוד מנהל → כמו בהגדרה',
+  );
+  assert.equal(describeDeniedUiChange({ deniedUi: 'hide' }, { deniedUi: 'hide' }, label, 'x'), null);
 });
