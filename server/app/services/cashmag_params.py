@@ -28,6 +28,10 @@ ROUNDING_KEY = "cashmagRounding"
 QUEUE_TIMEOUT_KEY = "cashmagQueueTimeoutSec"
 AUTO_CANCEL_KEY = "cashmagAutoCancelSec"
 CALL_TIMEOUT_KEY = "cashmagCallTimeoutSec"
+#: "זיכוי להזמנה הבאה" for change owed at a CashMag machine (P:/specs/cashmag-windows.md §6): the cloud makes the
+#: credit from the kiosk's / till's document (cash_stations.cashmag_credits_from_documents). On by default — the cloud
+#: supports it; read by the Android till / kiosk and the Windows kiosk alike, offered online only.
+OWED_CREDIT_KEY = "cashmagOwedCredit"
 
 PROTOCOL_JAR = "jar"
 PROTOCOL_JSON = "json"
@@ -106,6 +110,10 @@ PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
           f"(0–1800) — רק אחרי שהיצרן יאשר את היחידה. {_LEVELS}"),
     _spec(CALL_TIMEOUT_KEY, "מכשיר מזומן CashMag — זמן לקריאה (שניות)", "integer", 30,
           f"הזמן המקסימלי לקריאה שאינה תשלום (חיבור, רישיון, הפעלה) (5–120). ברירת מחדל 30. {_LEVELS}"),
+    _spec(OWED_CREDIT_KEY, "מכשיר מזומן CashMag — זיכוי בעודף חייב", "boolean", True,
+          "כשהמכונה לא נתנה את כל העודף, הלקוח יכול לבחור \"זיכוי להזמנה הבאה\": פתק עם קוד ו-QR שמממשים בכל קופה "
+          "או קיוסק של החברה (גם בחלקים). מוצע רק כשהמכשיר מחובר לענן. כבוי — פתק לקופה (או טיפ) בלבד. "
+          f"ברירת מחדל: פעיל. {_LEVELS}"),
 )
 
 

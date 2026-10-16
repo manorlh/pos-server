@@ -117,7 +117,7 @@ function kiosk(opts: { params?: Record<string, unknown>; local?: CashMagLocalCon
   return { svc, printed, progress, knocks, online, fresh };
 }
 
-const ON = (port: number, more: Record<string, unknown> = {}) => ({ cashmagEnabled: true, cashmagHost: '127.0.0.1', cashmagPort: port, ...more });
+const ON = (port: number, more: Record<string, unknown> = {}) => ({ cashmagEnabled: true, cashmagHost: '127.0.0.1', cashmagPort: port, cashmagOwedCredit: true, ...more });
 
 const basket = (over: Partial<StartPaymentIn> = {}): StartPaymentIn => ({
   lines: [{ key: 'L1', productId: 'p-burger', qty: 1, options: [], notes: [] }],
@@ -225,6 +225,19 @@ describe('the Windows kiosk pays at a CashMag machine', () => {
     expect(textOf(slip)).toContain(`"t":"qr","value":"CC:${doc.cash!.slipCode}"`);
     const receipt = await until(() => k.printed.find((d) => d.kind === 'receipt' && textOf(d).includes('זיכוי להזמנה הבאה') && textOf(d).includes('שולם במזומן')));
     expect(textOf(receipt)).not.toContain('עודף חייב');
+  });
+
+  it('`cashmagOwedCredit` off (or a cloud that does not send it): no credit, online too', async () => {
+    for (const params of [{ cashmagOwedCredit: false }, { cashmagOwedCredit: undefined }]) {
+      const s = await server({ handlers: { [FN.pay]: (c, conn) => conn.result(c.jobId, c.fn, 0, payResult({ balance: '-2.60', deposits: [['50', 1]], dispensed: [['10', 1, 2]] })) } });
+      const k = kiosk({ params: ON(s.port, params), tipEnabled: true });
+      k.online();
+      await k.svc.startPayment(basket());
+      const ask = await until(() => k.progress.find((p) => p.cash?.stage === 'owed_choice'));
+      expect(ask.cash!.owedChoices).toEqual(['slip', 'tip']);
+      await k.svc.cashOwedChoice('slip');
+      await until(() => k.progress.find((p) => p.phase === 'approved'));
+    }
   });
 
   it('"ביטול" while inserting: dialogCancel, the money back, the document voided — no fault', async () => {
