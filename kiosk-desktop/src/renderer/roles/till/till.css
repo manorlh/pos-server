@@ -1174,3 +1174,41 @@
 .t-owed-row span {
   flex: 1;
 }
+
+/* Vouchers at the payment (CheckoutScreen VoucherPanel): the list, the scan box, the orange "test mode" bar and alert. */
+.t-vouchers {
+  margin: 8px 0;
+}
+
+.t-voucher-test {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: var(--t-radius);
+  background: var(--t-warn-soft);
+  color: var(--t-warn);
+  border-inline-start: 6px solid var(--t-warn);
+  font-weight: 600;
+}
+
+.t-voucher-test p {
+  margin: 0 0 4px;
+}
+
+/* "מסך הצלחה במימוש שובר": the done screen's green block of a sale that redeemed vouchers. */
+.t-voucher-success {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: var(--t-radius);
+  background: var(--t-ok-soft);
+  color: var(--t-ok);
+  text-align: center;
+}
+
+.t-voucher-success p {
+  margin: 0 0 4px;
+}
+
+.t-voucher-success-title {
+  font-size: 1.6em;
+  font-weight: 700;
+}

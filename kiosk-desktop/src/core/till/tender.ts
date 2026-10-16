@@ -15,14 +15,19 @@
  */
 
 export interface TenderLeg {
-  /** `cash_credit`: a cash station's credit taken towards the goods (P:/specs/cash-paylink.md §11.15א) — never money handed over. */
-  method: 'cash' | 'card' | 'cash_credit';
+  /**
+   * `cash_credit`: a cash station's credit taken towards the goods (P:/specs/cash-paylink.md §11.15א) — never money handed over.
+   * `production_voucher`: a production voucher booked as a tender ("שוברי הפקה", core/till/vouchers.ts) — taken first.
+   */
+  method: 'cash' | 'card' | 'cash_credit' | 'production_voucher';
   /** The goods it settled. */
   amountAgorot: number;
   /** Cash: what was handed over for it (the closing leg's is the whole note, the change inside it). */
   handedAgorot: number;
   /** A cash credit's redemption (its leg confirms it on the document). */
   credit?: { code: string; redemptionId: string };
+  /** A production voucher's: its hold (or `/redeem` redemption) and its number. */
+  voucher?: { redemptionId: string; reservationId: string | null; serial: number };
 }
 
 export function paidOf(legs: readonly TenderLeg[]): number {

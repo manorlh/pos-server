@@ -77,6 +77,8 @@ export const PERM_LABEL: Record<string, string> = {
   DESKTOP_EXIT: 'יציאה לשולחן העבודה (Windows)',
   KIOSK_TILL_MODE: 'מעבר למצב קופה בקיוסק',
   CARD_UNRESOLVED: 'עסקת אשראי לא ידועה',
+  VOUCHER_DISCOUNT_OVERRIDE: 'אישור כפיית הנחה בשובר הפקה',
+  VOUCHER_TEST_REDEEM: 'מימוש שובר בדיקה',
 };
 
 export const permLabel = (code: string): string => PERM_LABEL[code] ?? code;

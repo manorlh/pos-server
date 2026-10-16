@@ -25,10 +25,91 @@ export interface CheckoutActions {
   /** "זיכוי מזומן": a station's credit code (`CC:…` scanned, or typed) towards the goods; absent — not on this engine. */
   credit?(code: string): void;
   removeCredit?(redemptionId: string): void;
+  /** Vouchers (main/till/tillVouchers.ts): a code scanned or typed, "הסר", "סיום בדיקה"; absent — not on this engine. */
+  voucher?(code: string): void;
+  removeVoucher?(id: string): void;
+  finishTest?(): void;
   /** A basket with returns: who the money goes back to, an even exchange, the money back. */
   returnCustomer?(c: { name: string; phone: string; address: string }): void;
   exchange?(): void;
   payout?(method: 'cash' | 'card'): void;
+}
+
+/**
+ * The payment's vouchers (main/till/tillVouchers.ts): the scan box ("שובר" — scanned or typed), what each voucher covers with
+ * "הסר", the orange "מצב בדיקה" bar and the entitlement alert, the green / red line of the last scan.
+ */
+function VoucherPanel({
+  vouchers,
+  actions,
+  code,
+  setCode,
+  open,
+}: {
+  vouchers: NonNullable<CheckoutState['vouchers']>;
+  actions: CheckoutActions;
+  code: string;
+  setCode(v: string): void;
+  open: boolean;
+}) {
+  return (
+    <div className="t-vouchers">
+      {vouchers.testBar ? (
+        <div className="t-voucher-test" role="status">
+          <p>{vouchers.testBar}</p>
+          {vouchers.testDue ? <p className="t-small">{vouchers.testDue}</p> : null}
+        </div>
+      ) : null}
+      {vouchers.items.length > 0 ? (
+        <ul className="t-legs">
+          {vouchers.items.map((v) => (
+            <li key={v.id}>
+              {v.label}
+              {v.what ? ` — ${v.what}` : ''} · {money(v.amountAgorot)}
+              {open && actions.removeVoucher ? (
+                <button type="button" className="t-btn t-btn-ghost t-btn-small" onClick={() => actions.removeVoucher!(v.id)}>
+                  הסר
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {vouchers.deductionAgorot > 0 ? <p className="t-small">קיזוז שוברי הפקה: −{money(vouchers.deductionAgorot)}</p> : null}
+      {vouchers.goodsValueAgorot > 0 ? <p className="t-small t-muted">שווי הפריטים בשובר: {money(vouchers.goodsValueAgorot)} · שולם בשובר הפקה</p> : null}
+      {vouchers.entitlement ? (
+        <div className="t-voucher-test" role="status">
+          <p>{vouchers.entitlement}</p>
+        </div>
+      ) : null}
+      {vouchers.applied ? <p className="t-ok">{vouchers.applied}</p> : null}
+      {vouchers.error ? (
+        <div className="t-warn" role="alert">
+          <p>{vouchers.error}</p>
+        </div>
+      ) : null}
+      {open && actions.voucher ? (
+        <form
+          className="t-credit"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (code.trim() && !vouchers.busy) {
+              actions.voucher!(code.trim());
+              setCode('');
+            }
+          }}
+        >
+          <label className="t-field">
+            <span>שובר</span>
+            <input className="t-input" value={code} maxLength={120} onChange={(e) => setCode(e.target.value)} placeholder="סריקה או הקלדה של קוד השובר" />
+          </label>
+          <button type="submit" className="t-btn" disabled={!code.trim() || vouchers.busy}>
+            {vouchers.busy ? 'בודק…' : 'מימוש'}
+          </button>
+        </form>
+      ) : null}
+    </div>
+  );
 }
 
 /** A basket with returns (core/till/basket.ts): its own steps before (or instead of) the tenders. */
@@ -145,13 +226,42 @@ export function CheckoutScreen({
 }) {
   const [padOpen, setPadOpen] = useState(false);
   const [creditCode, setCreditCode] = useState('');
+  const [voucherCode, setVoucherCode] = useState('');
   const style = layout.checkoutMaxWidthDp ? { maxWidth: layout.checkoutMaxWidthDp } : undefined;
+
+  // "סיום בדיקה": the simulation's end — what would have been covered and left to pay; nothing was written.
+  if (checkout.phase === 'done' && checkout.testEnd) {
+    return (
+      <div className="t-checkout" style={style}>
+        <div className="t-voucher-test" role="status">
+          {checkout.testEnd.map((line, i) => (
+            <p key={i} className={i === 0 ? 't-ok' : 't-small'}>
+              {line}
+            </p>
+          ))}
+        </div>
+        <div className="t-done-actions">
+          <button type="button" className="t-btn t-btn-primary t-btn-wide t-btn-big" onClick={actions.finish}>
+            {T.newSaleBtn}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (checkout.phase === 'done') {
     const handBack = checkout.basket?.handedBackAgorot ?? 0;
     return (
       <div className="t-checkout" style={style}>
         <h1 className="t-checkout-title t-ok">{handBack > 0 ? T.refundDoneScreen : T.done}</h1>
+        {checkout.voucherSuccess ? (
+          // "מסך הצלחה במימוש שובר": the vouchers redeemed, and (amber) what the customer did not take.
+          <div className="t-voucher-success" role="status">
+            <p className="t-voucher-success-title">✓ {checkout.voucherSuccess.title}</p>
+            {checkout.voucherSuccess.detail ? <p>{checkout.voucherSuccess.detail}</p> : null}
+            {checkout.voucherSuccess.notTaken ? <p className="t-voucher-test">{checkout.voucherSuccess.notTaken}</p> : null}
+          </div>
+        ) : null}
         {handBack > 0 ? (
           <div className="t-change-big">
             <span>{T.basketHandBack('')}</span>
@@ -227,6 +337,9 @@ export function CheckoutScreen({
 
   const waiting = checkout.phase === 'card_waiting';
   const hasLegs = checkout.legs.some((l) => l.status === 'approved');
+  const vouchers = checkout.vouchers ?? null;
+  const simulation = !!vouchers?.testBar;
+  const realLegs = checkout.legs.some((l) => l.method !== 'production_voucher');
 
   if (checkout.basket && checkout.basket.step !== 'tender' && !checkout.cardUnknown) {
     return <BasketStep checkout={checkout} actions={actions} noCard={noCard} style={style} />;
@@ -285,7 +398,8 @@ export function CheckoutScreen({
         <ul className="t-legs">
           {checkout.legs.map((l, i) => (
             <li key={i}>
-              {l.method === 'cash' ? T.cash : l.method === 'cash_credit' ? `זיכוי ${l.credit?.code ?? ''}` : T.card} · {money(l.amountAgorot)} {l.status === 'pending' ? '· ממתין' : ''}
+              {l.method === 'cash' ? T.cash : l.method === 'cash_credit' ? `זיכוי ${l.credit?.code ?? ''}` : l.method === 'production_voucher' ? `שובר הפקה${l.voucher ? ` #${l.voucher.serial}` : ''}` : T.card} · {money(l.amountAgorot)}{' '}
+              {l.status === 'pending' ? '· ממתין' : ''}
               {l.method === 'cash_credit' && l.credit && actions.removeCredit && !waiting ? (
                 <button type="button" className="t-btn t-btn-ghost t-btn-small" onClick={() => actions.removeCredit!(l.credit!.redemptionId)}>
                   הסרת הזיכוי
@@ -300,14 +414,22 @@ export function CheckoutScreen({
           <p>{checkout.cardError}</p>
         </div>
       ) : null}
+      {vouchers ? <VoucherPanel vouchers={vouchers} actions={actions} code={voucherCode} setCode={setVoucherCode} open={!waiting && !realLegs} /> : null}
       {waiting ? (
         <p className="t-waiting" role="status">
           {checkout.cardStatus ?? T.cardWaiting}
         </p>
+      ) : simulation ? (
+        // "מצב בדיקה": no real money in a test voucher's sale — only its end.
+        <div className="t-tenders">
+          <button type="button" className="t-tender t-tender-main" onClick={() => actions.finishTest?.()}>
+            <span>סיום בדיקה</span>
+          </button>
+        </div>
       ) : (
         <div className="t-tenders">
           <button type="button" className="t-tender t-tender-main" onClick={() => actions.cash(checkout.dueAgorot)}>
-            <span>{checkout.totalAgorot === 0 ? 'סגור עסקה' : T.fastCash}</span>
+            <span>{checkout.dueAgorot === 0 && (vouchers?.items.length ?? 0) > 0 ? 'סגור עסקה וממש שובר' : checkout.totalAgorot === 0 ? 'סגור עסקה' : T.fastCash}</span>
             <strong>{money(checkout.dueAgorot)}</strong>
           </button>
           <button type="button" className="t-tender" onClick={() => setPadOpen(true)}>
@@ -323,7 +445,7 @@ export function CheckoutScreen({
           )}
         </div>
       )}
-      {!waiting && actions.credit && !checkout.basket ? (
+      {!waiting && !simulation && actions.credit && !checkout.basket ? (
         // "זיכוי מזומן" (P:/specs/cash-paylink.md §11.15א): the code of a station's credit — scanned (`CC:…`) or typed.
         <form
           className="t-credit"

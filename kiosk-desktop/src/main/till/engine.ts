@@ -180,7 +180,32 @@ import {
   type TillState,
   type XReport,
 } from '../../shared/till/protocol';
-import { legsOf, settled, xDocOf, type AppliedPromotionRow, type BasketDocInput, type DocDraft, type DocLeg } from '../fiscal/ledger';
+import { docVoucherDiscounts, legsOf, settled, xDocOf, type AppliedPromotionRow, type BasketDocInput, type DocDraft, type DocLeg } from '../fiscal/ledger';
+import type { VoucherOutcome } from '@dash-lib/kioskVouchers';
+import {
+  VOUCHER_TEST_TEXT,
+  VOUCHER_TEXT,
+  bookProductionVouchers,
+  lineNet,
+  offVoucherLineValues,
+  voucherInfoEmpty,
+  voucherInfoFromJson,
+  voucherInfoJson,
+  voucherInfoLines,
+  voucherInfoOf,
+  voucherCloseMessages,
+  voucherLeaveText,
+  voucherLeftOf,
+  voucherRefundRefusal,
+  voucherSuccessModeOf,
+  voucherSuccessOf,
+  voucherSuccessShows,
+  VOUCHER_LEAVE_TEXT,
+  type VoucherCloseKind,
+  type DocPrepaidRedemption,
+  type VoucherInfoTotals,
+} from '../../core/till/vouchers';
+import { TillVouchers } from './tillVouchers';
 import type { KioskService } from '../service';
 import { HeldStore } from './heldStore';
 import { tillWithDrawer, type CashMovementTotals, type WalletTotals } from '../../core/till/drawer';
@@ -471,6 +496,12 @@ interface CheckoutRec {
   basket: BasketRec | null;
   /** Every document the payment wrote (a basket's sale and credit notes). */
   docIds: string[];
+  /** This payment's own id: a voucher's answer that comes back to another payment is given back (tillVouchers.ts). */
+  token: string;
+  /** "סיום בדיקה": the simulation's end (a test voucher's sale) — nothing was written. */
+  testEnd: string[] | null;
+  /** "מסך הצלחה במימוש שובר": the sale redeemed vouchers. */
+  voucherSuccess: NonNullable<CheckoutState['voucherSuccess']> | null;
 }
 
 /** A credit line as priced from the cart. */
@@ -491,6 +522,13 @@ interface Frozen {
   basketDiscount?: { type: DiscountType; value: number } | null;
   /** The returns of a mixed basket. */
   refunds?: PricedRefund[];
+  /** "שוברי הנחה": what each discount voucher took (tillVouchers.ts) — the document's `voucherDiscounts`, the holds it confirms. */
+  voucherOutcomes?: VoucherOutcome[];
+  /** "שוברי הפקה": the production vouchers as booked, and the legs the payment ones pay (in order). */
+  prepaid?: DocPrepaidRedemption[];
+  voucherLegs?: Array<{ amountAgorot: number; voucher: { redemptionId: string; reservationId: string | null; serial: number } }>;
+  /** A payment restored after a restart: the document's own voucher fields, written again as they were. */
+  restoredVouchers?: Pick<DocDraft, 'voucherDiscounts' | 'voucherReleases' | 'prepaidVouchers'>;
 }
 
 interface Priced extends Frozen {
@@ -521,6 +559,9 @@ const idleCheckout = (): CheckoutRec => ({
   receiptJob: null,
   basket: null,
   docIds: [],
+  token: '',
+  testEnd: null,
+  voucherSuccess: null,
 });
 
 function isInt(v: unknown, min: number, max: number): v is number {
@@ -599,6 +640,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly sessions: TillSessions;
   /** "עודף חייב ללקוח" / "שולם ללקוח", "זיכוי מזומן" (tillCash.ts). */
   readonly cash: TillCash;
+  /** Vouchers at the payment: discount and production vouchers, "מצב בדיקה" (tillVouchers.ts). */
+  readonly vouchers: TillVouchers;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -622,6 +665,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.sessions.start();
     this.cash = new TillCash(this.ctx, this.drawer);
     this.cash.start();
+    this.vouchers = new TillVouchers(this.ctx, {
+      payment: () => this.voucherPayment(),
+      reprice: () => this.repriceForVouchers(),
+      afterApply: () => this.afterVoucher(),
+      mayAlone: (code) => decide(this.profile(), code).kind === 'allowed',
+      setting: (key) => this.svc.cloud.parameters()[key] ?? this.svc.settingsMap()[key],
+    });
     this.restorePending();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
@@ -990,6 +1040,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.creditTender(a.code);
       case 'checkout.removeCredit':
         return this.removeCredit(a.redemptionId);
+      // Vouchers (tillVouchers.ts).
+      case 'checkout.voucher':
+        return this.vouchers.scan(a.code);
+      case 'checkout.removeVoucher':
+        return this.vouchers.remove(a.id);
+      case 'checkout.finishTest':
+        return this.finishTest();
+      case 'sell.voucher':
+        return this.sellVoucher(a.code);
     }
     return refuse('unknown_op');
   }
@@ -1264,6 +1323,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
             ...(sale ? { sale } : {}),
             ...(sale && p.sale?.reason ? { saleReason: p.sale.reason } : {}),
             ...(p.restricted ? { restricted: true } : {}),
+            ...(p.voucherId ? { voucher: true } : {}),
             // The "i" window's (P:/specs/product-tile-text.md §4): the description, allergens, dietary tags.
             ...(p.description ? { description: p.description } : {}),
             ...(p.allergens.length > 0 ? { allergens: p.allergens } : {}),
@@ -1305,6 +1365,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (!p) return refuse('invalid_args');
     // "מצב זיכוי": a tap takes one unit back (addReturn) — not behind the sale's gates: its own authority was asked.
     if (this.refundMode) {
+      // A voucher is credited from its receipt only (SellViewModel.refundRefusal).
+      const voucher = voucherRefundRefusal(p);
+      if (voucher) return refuse('refund_refused', voucher);
       this.putRefund(p.id, qty, p.name);
       return undefined;
     }
@@ -1481,13 +1544,26 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private priced(now = new Date(this.nowFn())): Priced {
     const sales = this.cart.filter((l) => !l.refund);
     const lines = sales.map((l) => ({ key: l.lineId, productId: l.productId, qty: l.qty, notes: [] as string[], options: [] as never[] }));
-    const input = { lines, service: null, customerName: null, customerPhone: null, tableRef: null, tipPct: null, tipAgorot: null } as unknown as StartPaymentIn;
+    // The payment's vouchers (tillVouchers.ts): the discount ones priced with the promotions, the production ones booked after.
+    const withVouchers = this.checkout.phase !== 'idle' && !this.checkout.basket;
+    const discounts = withVouchers ? this.vouchers.discounts : [];
+    const production = withVouchers ? this.vouchers.production : [];
+    const input = {
+      lines,
+      service: null,
+      customerName: null,
+      customerPhone: null,
+      tableRef: null,
+      tipPct: null,
+      tipAgorot: null,
+      ...(discounts.length > 0 ? { vouchers: { legs: [], discounts, saleRef: this.basketId } } : {}),
+    } as unknown as StartPaymentIn;
     const byKey = new Map(sales.map((l) => [l.lineId, l] as const));
     const handOf = (rec: CartRec | undefined, gross: number, noDiscount: boolean) =>
       rec?.oth ? lineDiscountAmount(gross, { type: 'percentage', value: OTH_PERCENT }) : lineDiscountAmount(gross, rec?.discount ?? null, false, noDiscount);
     const r =
       sales.length === 0
-        ? { lines: [] as SaleLine[], changes: [] as Array<{ kind: string; key?: string }>, tracked: [] as string[], promotions: [] as AppliedPromotionRow[] }
+        ? { lines: [] as SaleLine[], changes: [] as Array<{ kind: string; key?: string }>, tracked: [] as string[], promotions: [] as AppliedPromotionRow[], voucherOutcomes: [] as VoucherOutcome[] }
         : this.svc.priceTillBasket(input, now, {
             promo: (key, gross) => {
               const rec = byKey.get(key);
@@ -1500,7 +1576,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
           });
     const gone = r.changes.filter((c) => c.kind === 'removed').map((c) => c.key ?? '');
     // The cashier's discount and OTH on each line (Cart.discountAmount): in the document's discount, never its gross.
-    const saleLines: SaleLine[] = r.lines.map((l) => {
+    const handLines: SaleLine[] = r.lines.map((l) => {
       const rec = byKey.get(l.key);
       const gross = lineGross(l);
       const hand = handOf(rec, gross, l.noDiscount === true);
@@ -1510,34 +1586,63 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         ...(rec?.oth ? { oth: { reason: rec.oth.reason, by: rec.oth.by, approvedBy: rec.oth.approvedBy } } : {}),
       };
     });
-    const gross = saleLines.reduce((s, l) => s + lineGross(l), 0);
-    const hand = saleLines.reduce((s, l) => s + (l.discountAgorot ?? 0), 0);
-    const oth = saleLines.filter((l) => l.oth).reduce((s, l) => s + (l.discountAgorot ?? 0), 0);
-    const promotion = saleLines.reduce((s, l) => s + (l.promotionAgorot ?? 0), 0);
-    const afterLines = gross - hand - promotion;
-    // A product that takes no discount keeps its full price: the basket discount over the other lines only.
-    const nonDiscountable = saleLines.filter((l) => l.noDiscount).reduce((s, l) => s + lineGross(l) - (l.promotionAgorot ?? 0), 0);
-    const basketDiscountAgorot = documentDiscountAmount(afterLines - nonDiscountable, this.cartDiscount);
-    const totals = saleTotals(saleLines, this.svc.vatRate(), 0, basketDiscountAgorot);
+    // "שוברי הפקה" (core/till/vouchers.ts): each production voucher of the payment booked on the lines, in order.
+    let saleLines = handLines;
+    let promotions = r.promotions;
+    let prepaid: DocPrepaidRedemption[] = [];
+    let voucherLegs: NonNullable<Frozen['voucherLegs']> = [];
+    if (production.length > 0) {
+      const booked = bookProductionVouchers(handLines, production, (ls) => this.totalsOf(ls).totals.totalAgorot);
+      saleLines = booked.lines;
+      prepaid = booked.redemptions;
+      voucherLegs = booked.legs.map((l) => ({ amountAgorot: l.amountAgorot, voucher: { redemptionId: l.applied.redemptionId, reservationId: l.applied.reservationId, serial: l.applied.serial } }));
+      // The promotions lose what the covered units had of them.
+      promotions = promotions.flatMap((pr) => {
+        const lost = booked.promotionsLost.get(pr.promotionId ?? '') ?? 0;
+        const left = pr.discountAgorot - lost;
+        return lost <= 0 ? [pr] : left > 0 ? [{ ...pr, discountAgorot: left }] : [];
+      });
+    }
+    const t = this.totalsOf(saleLines);
     const refunds = this.pricedRefunds();
     const refundTotal = refunds.reduce((s, x) => s + x.totalAgorot, 0);
-    const saleTotal = sales.length > 0 ? totals.totalAgorot : 0;
+    const saleTotal = sales.length > 0 ? t.totals.totalAgorot : 0;
     return {
       lines: saleLines,
       tracked: r.tracked,
-      promotions: r.promotions,
-      totals,
-      basketDiscountAgorot,
+      promotions,
+      totals: t.totals,
+      basketDiscountAgorot: t.basketDiscountAgorot,
       basketDiscount: this.cartDiscount,
       refunds,
       gone,
       saleTotalAgorot: saleTotal,
       refundTotalAgorot: refundTotal,
       netAgorot: saleTotal - refundTotal,
-      lineDiscountsAgorot: hand - oth,
-      othAgorot: oth,
-      nonDiscountableAgorot: nonDiscountable,
+      lineDiscountsAgorot: t.hand - t.oth,
+      othAgorot: t.oth,
+      nonDiscountableAgorot: t.nonDiscountable,
+      ...(r.voucherOutcomes && r.voucherOutcomes.length > 0 ? { voucherOutcomes: r.voucherOutcomes } : {}),
+      ...(prepaid.length > 0 ? { prepaid, voucherLegs } : {}),
     };
+  }
+
+  /**
+   * The sale lines' totals (Cart.totals): the cashier's discounts, the promotions, the discount vouchers and the production
+   * vouchers' deductions first, then the basket discount over what is left of the lines that take discounts.
+   */
+  private totalsOf(lines: readonly SaleLine[]) {
+    const gross = lines.reduce((s, l) => s + lineGross(l), 0);
+    const hand = lines.reduce((s, l) => s + (l.discountAgorot ?? 0), 0);
+    const oth = lines.filter((l) => l.oth).reduce((s, l) => s + (l.discountAgorot ?? 0), 0);
+    const promotion = lines.reduce((s, l) => s + (l.promotionAgorot ?? 0), 0);
+    const voucher = lines.reduce((s, l) => s + Math.max(0, l.voucherAgorot ?? 0), 0);
+    const deduction = lines.reduce((s, l) => s + Math.max(0, l.prepaidDeductionAgorot ?? 0), 0);
+    const afterLines = gross - hand - promotion - voucher - deduction;
+    // A product that takes no discount keeps its full price (a voucher's own price too): the basket discount over the others.
+    const nonDiscountable = lines.filter((l) => l.noDiscount).reduce((s, l) => s + lineNet(l), 0);
+    const basketDiscountAgorot = documentDiscountAmount(afterLines - nonDiscountable, this.cartDiscount);
+    return { totals: saleTotals(lines, this.svc.vatRate(), 0, basketDiscountAgorot), basketDiscountAgorot, hand, oth, nonDiscountable };
   }
 
   /** The return lines: a catalog return at the catalog's price now, a receipt line at what the customer paid for it. */
@@ -2064,6 +2169,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       return undefined;
     }
     const frozen: Frozen = { lines: p.lines, tracked: p.tracked, promotions: p.promotions, totals: p.totals, basketDiscountAgorot: p.basketDiscountAgorot, basketDiscount: p.basketDiscount, refunds: p.refunds };
+    // A payment starts with no voucher (an earlier one's were given back or confirmed).
+    this.vouchers.clear();
     if (p.refunds.length > 0) {
       // A basket with returns: who the money goes back to first (RETURN_CUSTOMER), then by the net.
       const hasUnlinked = p.refunds.some((r) => !r.rec.receipt);
@@ -2079,12 +2186,196 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         route: p.netAgorot < 0 ? this.payoutRouteOf(-p.netAgorot, p.refunds) : { kind: 'unavailable' },
         handedBackAgorot: 0,
       };
-      this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: Math.max(0, p.netAgorot), frozen, basket };
+      this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: Math.max(0, p.netAgorot), frozen, basket, token: randomUUID() };
       return undefined;
     }
     if (p.totals.totalAgorot < 1 && !p.lines.some((l) => l.oth)) return refuse('cart_empty');
-    this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: p.totals.totalAgorot, frozen };
+    this.checkout = { ...idleCheckout(), phase: 'tender', totalAgorot: p.totals.totalAgorot, frozen, token: randomUUID() };
     return undefined;
+  }
+
+  /* ---------------------------------------------------------------- vouchers */
+
+  /** The payment open for vouchers (tillVouchers.ts), or why not: before any money was taken, never in a basket with returns. */
+  private voucherPayment() {
+    const c = this.checkout;
+    if (c.phase !== 'tender' || !c.frozen) return { refused: VOUCHER_TEXT.addItemsFirst };
+    if (c.basket) return { refused: VOUCHER_TEXT.inBasket };
+    if (this.svc.pay.cardInFlight || c.legs.some((l) => l.method !== 'production_voucher')) return { refused: VOUCHER_TEXT.afterTender };
+    return { token: c.token, lines: c.frozen.lines, prepaid: c.frozen.prepaid ?? [], saleRef: this.basketId };
+  }
+
+  /** The payment priced again with its vouchers as they stand: its lines, its total, the "שוברי הפקה" legs first. */
+  private repriceForVouchers(): string | null {
+    const c = this.checkout;
+    if (c.phase !== 'tender' || !c.frozen || c.basket) return VOUCHER_TEXT.addItemsFirst;
+    const p = this.priced();
+    if (p.gone.length > 0) return 'חלק מהפריטים כבר לא נמכרים — חזרו לסל';
+    c.frozen = {
+      lines: p.lines,
+      tracked: p.tracked,
+      promotions: p.promotions,
+      totals: p.totals,
+      basketDiscountAgorot: p.basketDiscountAgorot,
+      basketDiscount: p.basketDiscount,
+      refunds: p.refunds,
+      ...(p.voucherOutcomes ? { voucherOutcomes: p.voucherOutcomes } : {}),
+      ...(p.prepaid ? { prepaid: p.prepaid, voucherLegs: p.voucherLegs } : {}),
+    };
+    c.totalAgorot = p.totals.totalAgorot;
+    c.legs = [
+      ...(p.voucherLegs ?? []).filter((l) => l.amountAgorot > 0).map((l) => ({ method: 'production_voucher' as const, amountAgorot: l.amountAgorot, handedAgorot: 0, voucher: l.voucher, status: 'approved' as const })),
+      ...c.legs.filter((l) => l.method !== 'production_voucher'),
+    ];
+    this.dirty = true;
+    return null;
+  }
+
+  /**
+   * A voucher applied and nothing left to pay: the sale closes by itself (`voucherAutoClose`, on unless said off) — never a
+   * simulation, and never while a voucher still gives the customer something (the cashier offers it first).
+   */
+  private afterVoucher() {
+    const c = this.checkout;
+    if (c.phase !== 'tender' || dueOf(c.totalAgorot, this.approvedLegs()) > 0) return;
+    if (this.vouchers.simulation()) return;
+    const raw = String(this.svc.cloud.parameters().voucherAutoClose ?? this.svc.settingsMap().voucherAutoClose ?? '').trim().toLowerCase();
+    if (['off', 'false', '0', 'no'].includes(raw)) return;
+    if (this.vouchers.production.some((a) => a.entitlement)) return;
+    try {
+      this.closeKind = 'auto';
+      this.closeSettled();
+    } catch (e) {
+      this.log(`voucher auto close: ${String(e)}`);
+    } finally {
+      this.closeKind = null;
+    }
+  }
+
+  /** How the sale being closed now was closed (the success screen's rule): by itself, the cashier's tap, or with money. */
+  private closeKind: VoucherCloseKind | null = null;
+
+  /**
+   * "מסך הצלחה במימוש שובר" (`voucherSuccessScreen`, voucherSuccessFor): a sale that redeemed vouchers — what was redeemed, and
+   * what the customer did not take (the close's words). Read before the vouchers are let go.
+   */
+  private voucherSuccessNow(kind: VoucherCloseKind): CheckoutRec['voucherSuccess'] {
+    const v = this.vouchers;
+    const f = this.checkout.frozen;
+    const discounts = (f?.voucherOutcomes ?? []).filter((o) => o.amountAgorot > 0);
+    const count = v.production.filter((a) => !a.testMode).length + discounts.length;
+    const mode = voucherSuccessModeOf(this.svc.cloud.parameters().voucherSuccessScreen ?? this.svc.settingsMap().voucherSuccessScreen);
+    if (!voucherSuccessShows(mode, count > 0, kind)) return null;
+    const items = v.production.reduce((s, a) => s + a.units.length, 0);
+    const off = discounts.reduce((s, o) => s + o.amountAgorot, 0);
+    const success = voucherSuccessOf(count, items, off);
+    const left = v.production.map((a) => voucherLeftOf(a)).filter((x): x is NonNullable<typeof x> => !!x);
+    const close = voucherCloseMessages(left, new Date(this.nowFn()));
+    return { ...success, notTaken: close?.notTaken ?? null, note: close?.note ?? null };
+  }
+
+  /** The vouchers (and cash credits) paid it all: the document now — no cash handed over, no change, no drawer. */
+  private closeSettled() {
+    const f = this.checkout.frozen!;
+    if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
+    // No leg at all (a ₪0 voucher sale, a deduction of everything): one ₪0 cash leg, as "סגור עסקה" of a ₪0 sale writes.
+    const approved = this.approvedLegs();
+    const legs: TenderLeg[] = approved.length > 0 ? approved : [{ method: 'cash', amountAgorot: 0, handedAgorot: 0 }];
+    const doc = this.svc.ledger.recordCashSale({
+      documentType: saleDocumentType(this.svc.business().dealerType),
+      prefix: this.prefix(),
+      branchId: this.svc.business().branchId,
+      operator: this.operator(),
+      orderId: null,
+      lines: f.lines,
+      tracked: f.tracked,
+      totals: f.totals,
+      promotions: f.promotions,
+      payments: docLegs(legs),
+      creditLegs: creditLegsOf(legs),
+      tenderedAgorot: 0,
+      changeAgorot: 0,
+      channel: 'till',
+      ...this.voucherDocFields(f),
+      ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
+    });
+    if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
+    this.finalize(doc);
+    return undefined;
+  }
+
+  /** What the document keeps of the payment's vouchers: the discount ones (and the holds given back), the production ones. */
+  private voucherDocFields(f: Frozen): Pick<DocDraft, 'voucherDiscounts' | 'voucherReleases' | 'prepaidVouchers'> {
+    if (f.restoredVouchers) return f.restoredVouchers;
+    const outcomes = f.voucherOutcomes ?? [];
+    const taken = docVoucherDiscounts(outcomes);
+    const released = outcomes.filter((o) => o.amountAgorot <= 0).map((o) => o.voucher.reservationId);
+    return {
+      ...(taken.length > 0 ? { voucherDiscounts: taken } : {}),
+      ...(released.length > 0 ? { voucherReleases: released } : {}),
+      ...(f.prepaid && f.prepaid.length > 0 ? { prepaidVouchers: f.prepaid } : {}),
+    };
+  }
+
+  /** "מצב בדיקה": no real money in a test voucher's sale. */
+  private noRealMoneyInTest() {
+    if (this.vouchers.simulation()) refuse('voucher_refused', VOUCHER_TEST_TEXT.mixed);
+  }
+
+  /**
+   * "סגירה עכשיו — מה שלא מומש מהשובר יאבד (…)": the one confirmation before a close that gives up what a one-sale voucher
+   * still gives (VoucherCloseMessages) — then [go] again. Null: nothing to confirm.
+   */
+  private voucherCloseGate(go: () => unknown): { dialogId: string } | null {
+    const text = this.vouchers.closeConfirm(new Date(this.nowFn()));
+    if (!text) return null;
+    this.openDialog({
+      kind: 'confirm',
+      title: VOUCHER_TEXT.closeTitle,
+      body: text,
+      fields: [],
+      actions: [
+        { id: 'approve', label: VOUCHER_TEXT.close, primary: true },
+        { id: 'cancel', label: VOUCHER_TEXT.addItem },
+      ],
+      code: null,
+      resume: () => {
+        this.vouchers.closeConfirmed = true;
+        return go();
+      },
+    });
+    return { dialogId: this.pending!.dialog.id };
+  }
+
+  /** "סיום בדיקה" (CheckoutViewModel.finishTest): what the vouchers would have covered and left to pay — nothing written. */
+  private finishTest() {
+    this.signedIn();
+    const c = this.checkout;
+    if (c.phase !== 'tender' || !this.vouchers.simulation()) return refuse('invalid_args');
+    const due = dueOf(c.totalAgorot, this.approvedLegs());
+    const discount = (c.frozen?.voucherOutcomes ?? []).reduce((s, o) => s + Math.max(0, o.amountAgorot), 0);
+    const lines = this.vouchers.testEnd(due, discount);
+    // Nothing is confirmed or given back: the cloud consumed nothing (its test answers).
+    this.vouchers.clear();
+    this.log('voucher test: finished, nothing written');
+    this.checkout = { ...idleCheckout(), phase: 'done', totalAgorot: c.totalAgorot, testEnd: lines };
+    this.clearBasket();
+    return { lines };
+  }
+
+  /**
+   * A voucher scanned on the sell screen with items in the order: to the payment, where it is applied ("ברגע שהתחיל מימוש,
+   * תעביר אותו למסך התשלום") — the payment's own scan.
+   */
+  private sellVoucher(code: unknown) {
+    this.signedIn();
+    if (this.checkout.phase === 'tender') return this.vouchers.scan(code);
+    if (!this.cart.some((l) => !l.refund)) return refuse('voucher_refused', VOUCHER_TEXT.addItemsFirst);
+    if (this.cart.some((l) => l.refund)) return refuse('voucher_refused', VOUCHER_TEXT.inBasket);
+    this.checkoutStart();
+    // A basket the catalog changed under goes back to the cart (said); else the payment is open now.
+    if ((this.checkout.phase as CheckoutRec['phase']) !== 'tender') return undefined;
+    return this.vouchers.scan(code);
   }
 
   /**
@@ -2275,13 +2566,27 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     );
   }
 
-  private async cashTender(amount: unknown) {
+  private async cashTender(amount: unknown): Promise<unknown> {
     this.signedIn();
     this.tenderOpen();
     const total = this.checkout.totalAgorot;
+    // The vouchers paid it all ("סגור עסקה וממש שובר"): the document with their legs alone.
+    if (amount === 0 && total > 0 && this.approvedLegs().length > 0 && dueOf(total, this.approvedLegs()) === 0 && !this.checkout.basket) {
+      this.noRealMoneyInTest();
+      const tap = () => {
+        this.closeKind = 'tap';
+        try {
+          return this.closeSettled();
+        } finally {
+          this.closeKind = null;
+        }
+      };
+      return this.voucherCloseGate(tap) ?? tap();
+    }
     // Nothing to pay (VoucherZeroDue: "סגור עסקה" — a ₪0 sale, e.g. every line on the house): closed with no money moved.
     const zero = total === 0 && amount === 0;
     if (!zero && !validCashAmount(amount)) refuse('invalid_args');
+    if (!zero) this.noRealMoneyInTest();
     const step = zero
       ? ({ kind: 'complete', leg: { method: 'cash', amountAgorot: 0, handedAgorot: 0 }, legs: [{ method: 'cash', amountAgorot: 0, handedAgorot: 0 }], tenderedAgorot: 0, changeAgorot: 0 } as const)
       : takeCash(total, this.approvedLegs(), amount as number);
@@ -2289,6 +2594,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.checkout.legs.push({ ...step.leg, status: 'approved' });
       return undefined;
     }
+    const gate = this.voucherCloseGate(() => this.cashTender(amount));
+    if (gate) return gate;
     const f = this.checkout.frozen!;
     if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
     if (this.checkout.basket) {
@@ -2318,6 +2625,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       tenderedAgorot: step.tenderedAgorot,
       changeAgorot: step.changeAgorot,
       channel: 'till',
+      ...this.voucherDocFields(f),
       ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
       ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
     });
@@ -2341,10 +2649,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (pay.blocked() || pay.unresolved()) refuse('terminal_unavailable', WORDS.cardPending);
   }
 
-  private cardTender() {
+  private cardTender(): unknown {
     this.signedIn();
     this.tenderOpen();
+    this.noRealMoneyInTest();
     this.cardRefusals();
+    const gate = this.checkout.basket ? null : this.voucherCloseGate(() => this.cardTender());
+    if (gate) return gate;
     const f = this.checkout.frozen!;
     const legs = cardLast(this.checkout.totalAgorot, this.approvedLegs());
     const card = legs[legs.length - 1];
@@ -2377,6 +2688,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       creditLegs: creditLegsOf(legs),
       ...(handed > 0 ? { tenderedAgorot: handed, changeAgorot: 0 } : {}),
       channel: 'till',
+      ...this.voucherDocFields(f),
       ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
       ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
     });
@@ -2531,9 +2843,28 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const reset = () => {
       // "זיכוי מזומן" taken for a sale that is not closed: back on its credit (kept and retried until the cloud hears it).
       for (const l of this.checkout.legs) if (l.method === 'cash_credit' && l.credit) this.cash.credits.release(l.credit.redemptionId);
+      // The vouchers held for it: given back.
+      this.vouchers.abandon();
       this.checkout = idleCheckout();
       return undefined;
     };
+    // "השובר לא מומש" (VoucherLeavePayment): vouchers applied and not redeemed — asked first; a simulation holds nothing.
+    const leaving = this.vouchers.simulation() ? null : voucherLeaveText(this.vouchers.serials());
+    if (handed === 0 && leaving) {
+      this.openDialog({
+        kind: 'confirm',
+        title: VOUCHER_LEAVE_TEXT.title,
+        body: leaving,
+        fields: [],
+        actions: [
+          { id: 'approve', label: VOUCHER_LEAVE_TEXT.ok, primary: true },
+          { id: 'cancel', label: VOUCHER_LEAVE_TEXT.stay },
+        ],
+        code: null,
+        resume: () => reset(),
+      });
+      return { dialogId: this.pending!.dialog.id };
+    }
     if (handed === 0) return reset();
     // Cash was already taken: the sale is abandoned only with the money handed back (Android "בטל מכירה והחזר מזומן").
     this.openDialog({
@@ -2559,6 +2890,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private async creditTender(raw: unknown) {
     this.signedIn();
     this.tenderOpen();
+    this.noRealMoneyInTest();
     // A basket with returns takes no credit (Android redeemCashCredit: `isBasket` → "לא ניתן לממש את הזיכוי כרגע").
     if (this.checkout.basket) return refuse('invalid_args', CREDIT_IN_BASKET);
     if (typeof raw !== 'string' || raw.length > 80) return refuse('invalid_args');
@@ -2575,27 +2907,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.checkout.legs.push({ method: 'cash_credit', amountAgorot: amount, handedAgorot: 0, credit: { code: r.use.code, redemptionId: r.use.redemptionId }, status: 'approved' });
     if (dueOf(this.checkout.totalAgorot, this.approvedLegs()) > 0) return { creditAgorot: amount };
     // Settled by the credits: the document now — no cash handed over, no change.
-    const f = this.checkout.frozen!;
-    if (!this.ensureShift()) return refuse('shift_not_open', WORDS.shiftNone);
-    const legs = this.approvedLegs();
-    const doc = this.svc.ledger.recordCashSale({
-      documentType: saleDocumentType(this.svc.business().dealerType),
-      prefix: this.prefix(),
-      branchId: this.svc.business().branchId,
-      operator: this.operator(),
-      orderId: null,
-      lines: f.lines,
-      tracked: f.tracked,
-      totals: f.totals,
-      promotions: f.promotions,
-      payments: docLegs(legs),
-      creditLegs: creditLegsOf(legs),
-      tenderedAgorot: 0,
-      changeAgorot: 0,
-      channel: 'till',
-    });
-    if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
-    this.finalize(doc);
+    this.closeSettled();
     return { creditAgorot: amount };
   }
 
@@ -2612,6 +2924,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   private checkoutFinish() {
     if (this.checkout.phase !== 'done') refuse('invalid_args');
+    this.vouchers.clear();
     this.checkout = idleCheckout();
     return undefined;
   }
@@ -2629,14 +2942,21 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.legs = legs
       .filter((l) => l.method !== EXCHANGE)
       .map((l) => ({
-        method: l.method as 'cash' | 'card' | 'cash_credit',
+        method: l.method as 'cash' | 'card' | 'cash_credit' | 'production_voucher',
         amountAgorot: l.amountAgorot,
         handedAgorot: l.method === 'cash' ? l.amountAgorot : 0,
         status: 'approved' as const,
         ...(l.cashCredit ? { credit: l.cashCredit } : {}),
+        ...(l.voucher ? { voucher: l.voucher } : {}),
       }));
     c.cardStatus = null;
     c.cardError = null;
+    // "מסך הצלחה במימוש שובר": the vouchers this sale redeemed — by itself, the cashier's tap, or with money for the rest.
+    const paidByMoney = legs.some((l) => (l.method === 'cash' || l.method === 'card') && l.amountAgorot > 0);
+    c.voucherSuccess = this.voucherSuccessNow(this.closeKind ?? (paidByMoney ? 'with_payment' : 'tap'));
+    // The vouchers confirmed with the document (it names them too), then nothing held any more.
+    this.vouchers.settle(doc);
+    this.vouchers.clear();
     this.clearBasket();
     void this.svc.sync.flush();
     // "בונים במכירה" and the KDS (main/kitchen): queued durably before the receipt, never holding the sale.
@@ -2970,7 +3290,22 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const shift = this.svc.ledger.shift(shiftId)!;
     const x = buildXTill(this.svc.ledger.docsOfShift(shiftId).map(xDocOf), shift.opening_cash, this.svc.vatRate());
     // "מגירת מזומן": the shift's movements and wallets move the expected drawer (spec §8, drawer-away §5.6).
-    return { shift, ...x, till: this.withDrawer(x.till, shiftId) };
+    return { shift, ...x, till: this.withVouchers(this.withDrawer(x.till, shiftId), shiftId) };
+  }
+
+  /** The production vouchers redeemed in the shift's written sales (`prepaidVouchersInfo`) — information, in no figure. */
+  private voucherInfo(shiftId: string): VoucherInfoTotals {
+    return voucherInfoOf(
+      this.svc.ledger
+        .docsOfShift(shiftId)
+        .filter((d) => settled(d) && isSaleType(d.documentType))
+        .map((d) => d.prepaidVouchers ?? []),
+    );
+  }
+
+  private withVouchers(till: ReturnType<typeof buildXTill>['till'], shiftId: string) {
+    const info = this.voucherInfo(shiftId);
+    return voucherInfoEmpty(info) ? till : { ...till, prepaidVouchersInfo: voucherInfoJson(info) };
   }
 
   /** The X's `till` with the shift's Cash In / Out / deposits and wallets (only when not zero), as the close freezes them. */
@@ -2994,7 +3329,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       vatRate: this.svc.vatRate(),
       countedCashAgorot: counted,
       now: new Date(this.nowFn()),
-      tillExtra: (till, shiftId) => this.withDrawer(till, shiftId),
+      tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId),
     });
     if (closed.kind === 'pending') return refuse('checkout_busy', WORDS.pendingBlocksClose(closed.count));
     if (closed.kind === 'none') return refuse('shift_closed');
@@ -3055,6 +3390,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(t.deposits ? { depositsAgorot: a(t.deposits) } : {}),
       ...(t.walletIn ? { walletInAgorot: a(t.walletIn) } : {}),
       ...(t.walletDeposits ? { walletDepositsAgorot: a(t.walletDeposits) } : {}),
+      ...(t.totalVouchers ? { vouchersAgorot: a(t.totalVouchers) } : {}),
+      ...(t.prepaidVouchersInfo ? { voucherInfo: voucherInfoLines(voucherInfoFromJson(t.prepaidVouchersInfo)) } : {}),
     };
   }
 
@@ -3216,6 +3553,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const c = this.checkout;
     if (c.phase !== 'idle') {
       if (!abandon || c.legs.length > 0 || c.docId !== null) return null;
+      this.vouchers.abandon();
       this.checkout = idleCheckout();
       this.pending = null;
     }
@@ -3298,7 +3636,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       }
       // The close counts the expected cash (unattended by the till's own clock), the X frozen into it — with the drawer's
       // movements and wallets, as every close of this till.
-      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs), tillExtra: (till, shiftId) => this.withDrawer(till, shiftId) });
+      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs), tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId) });
       if (closed.kind !== 'closed') return null;
       this.autoPaymentWait = null;
       const record: AutoCloseRecord = {
@@ -3407,8 +3745,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
             nonDiscountableAgorot: 0,
           }
         : this.priced();
-    const byKey = new Map(p.lines.map((l) => [l.key, l] as const));
     const refundsByKey = new Map(p.refunds.map((r) => [r.rec.lineId, r] as const));
+    // A ₪0 voucher line's value (core/till/vouchers.ts): shown beside its mark, outside every total.
+    const memo = offVoucherLineValues(p.prepaid ?? []);
     const lines: CartLine[] = [];
     for (const rec of this.cart) {
       const r = refundsByKey.get(rec.lineId);
@@ -3426,25 +3765,35 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         });
         continue;
       }
-      const l = byKey.get(rec.lineId);
-      if (!l) continue;
-      const unit = unitAgorot(l);
-      const gross = unit * l.qty;
-      const hand = l.discountAgorot ?? 0;
-      lines.push({
-        lineId: rec.lineId,
-        productId: rec.productId,
-        name: l.name,
-        qty: l.qty,
-        unitAgorot: unit,
-        discountPct: rec.oth ? 100 : rec.discount?.type === 'percentage' ? rec.discount.value / 100 : 0,
-        totalAgorot: gross - (l.promotionAgorot ?? 0) - hand,
-        ...(hand > 0 ? { discountAgorot: hand } : {}),
-        ...(rec.oth ? { oth: rec.oth.reason } : {}),
-        ...(l.noDiscount ? { noDiscount: true } : {}),
-      });
+      // The line and the lines a voucher split off it (its covered units at their voucher price, "l1~v0").
+      for (const l of p.lines.filter((x) => x.key === rec.lineId || x.key.startsWith(`${rec.lineId}~v`))) {
+        const unit = unitAgorot(l);
+        const hand = l.discountAgorot ?? 0;
+        const own = l.key === rec.lineId;
+        lines.push({
+          lineId: l.key,
+          productId: rec.productId,
+          name: l.name,
+          qty: l.qty,
+          unitAgorot: unit,
+          discountPct: own ? (rec.oth ? 100 : rec.discount?.type === 'percentage' ? rec.discount.value / 100 : 0) : 0,
+          totalAgorot: lineNet(l),
+          ...(hand > 0 ? { discountAgorot: hand } : {}),
+          ...(own && rec.oth ? { oth: rec.oth.reason } : {}),
+          ...(l.noDiscount ? { noDiscount: true } : {}),
+          ...(l.voucherMark ? { voucher: l.voucherMark } : {}),
+          ...(memo.has(l.key) ? { voucherValueAgorot: memo.get(l.key)! } : {}),
+        });
+      }
     }
     return { lines, priced: p };
+  }
+
+  /** The payment's vouchers as the screens show them. */
+  private voucherView(f: Frozen, due: number) {
+    const v = this.vouchers.state(f.lines, due, f.voucherOutcomes ?? []);
+    const goods = [...offVoucherLineValues(f.prepaid ?? []).values()].reduce((s, x) => s + x, 0);
+    return { ...v, deductionAgorot: f.totals.prepaidDeductionAgorot ?? 0, goodsValueAgorot: goods };
   }
 
   private sessionHidden(): string[] {
@@ -3533,7 +3882,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         paidAgorot: c.phase === 'done' ? c.totalAgorot : paid,
         dueAgorot: c.phase === 'idle' || c.phase === 'done' ? 0 : dueOf(c.totalAgorot, approved),
         changeAgorot: c.changeAgorot,
-        legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status, ...(l.credit ? { credit: l.credit } : {}) })),
+        legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status, ...(l.credit ? { credit: l.credit } : {}), ...(l.voucher ? { voucher: { serial: l.voucher.serial } } : {}) })),
         documentRef: c.documentRef,
         documentId: c.phase === 'done' ? c.docId : null,
         tenderedAgorot: c.phase === 'done' ? c.tenderedAgorot : handedTotal(approved),
@@ -3549,6 +3898,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
               documentRefs: c.docIds.map((id) => this.svc.docNumberOf(id) ?? id),
             }
           : {}),
+        ...(c.phase !== 'idle' && c.phase !== 'done' && !c.basket && c.frozen ? { vouchers: this.voucherView(c.frozen, dueOf(c.totalAgorot, approved)) } : {}),
+        ...(c.testEnd ? { testEnd: c.testEnd } : {}),
+        ...(c.phase === 'done' && c.voucherSuccess ? { voucherSuccess: c.voucherSuccess } : {}),
       },
       shift: {
         hidden: this.shiftsHidden(),
@@ -3628,16 +3980,39 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       docIds: docs.map((d) => d.id),
       legs: (carrier.payments ?? [])
         .filter((l) => l.method !== EXCHANGE)
-        .map((l) => ({ method: l.method as 'cash' | 'card', amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: l.method === 'card' ? ('pending' as const) : ('approved' as const) })),
+        .map((l) => ({
+          method: l.method as 'cash' | 'card' | 'production_voucher',
+          amountAgorot: l.amountAgorot,
+          handedAgorot: l.method === 'cash' ? l.amountAgorot : 0,
+          status: l.method === 'card' ? ('pending' as const) : ('approved' as const),
+          ...(l.voucher ? { voucher: l.voucher } : {}),
+        })),
       cardError: WORDS.cardPending,
-      frozen: { lines: carrier.lines, tracked: carrier.tracked, promotions: carrier.promotions ?? [], totals: carrier.totals },
+      token: randomUUID(),
+      frozen: {
+        lines: carrier.lines,
+        tracked: carrier.tracked,
+        promotions: carrier.promotions ?? [],
+        totals: carrier.totals,
+        // Its vouchers as the document wrote them: a retry after a decline writes them again.
+        restoredVouchers: {
+          ...(carrier.voucherDiscounts ? { voucherDiscounts: carrier.voucherDiscounts } : {}),
+          ...(carrier.voucherReleases ? { voucherReleases: carrier.voucherReleases } : {}),
+          ...(carrier.prepaidVouchers ? { prepaidVouchers: carrier.prepaidVouchers } : {}),
+        },
+      },
     };
   }
 }
 
-/** A sale's tenders as the document keeps them: a cash credit's leg with its redemption. */
+/** A sale's tenders as the document keeps them: a cash credit's leg with its redemption, a production voucher's with its hold. */
 function docLegs(legs: readonly TenderLeg[]) {
-  return legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, ...(l.method === 'cash_credit' && l.credit ? { cashCredit: l.credit } : {}) }));
+  return legs.map((l) => ({
+    method: l.method,
+    amountAgorot: l.amountAgorot,
+    ...(l.method === 'cash_credit' && l.credit ? { cashCredit: l.credit } : {}),
+    ...(l.method === 'production_voucher' && l.voucher ? { voucher: l.voucher } : {}),
+  }));
 }
 
 /** The cash credits among the tenders: "זיכוי מזומן C-K7Q3MX" on the receipt. */

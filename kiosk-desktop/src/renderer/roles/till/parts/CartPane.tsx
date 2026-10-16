@@ -69,6 +69,8 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
               </span>
               {l.oth ? <span className="t-badge">{T.othTag(l.oth)}</span> : l.discountPct > 0 ? <span className="t-badge">-{l.discountPct}%</span> : null}
               {l.fromReceipt ? <span className="t-badge">{T.receiptDoc(l.fromReceipt)}</span> : null}
+              {/* "כלול בשובר #12" (a production voucher covers it); a ₪0 line's value beside it. */}
+              {l.voucher ? <span className="t-badge">{l.voucherValueAgorot ? `${money(l.voucherValueAgorot)} · ${l.voucher}` : l.voucher}</span> : null}
               <span className="t-line-total">{l.refund ? `−${money(l.totalAgorot)}` : money(l.totalAgorot)}</span>
             </button>
             <div className="t-qty">

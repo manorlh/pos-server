@@ -33,6 +33,7 @@ import {
   type XDoc,
   type XTill,
 } from '../../core/sale';
+import { countsAsPayment, isTestVoucherId, offVoucherLineValues, type DocPrepaidRedemption } from '../../core/till/vouchers';
 import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
 import type { ApprovedCard } from '../payment/provider';
@@ -77,6 +78,11 @@ export interface DocDraft {
   voucherLegs?: DocVoucherLeg[];
   /** Discount vouchers held for the sale that took nothing off it: given back once the sale is written. */
   voucherReleases?: string[];
+  /**
+   * A till sale's production vouchers ("שוברי הפקה", core/till/vouchers.ts), as it booked each — its accounting, its units by
+   * the document's lines: the deductions (`voucherDiscounts` kind `production_voucher`), the memo lines, the hold each names.
+   */
+  prepaidVouchers?: DocPrepaidRedemption[];
   /** The card's leg; null with the vouchers alone paying the sale (nothing was charged). */
   card: ApprovedCard | null;
   /**
@@ -115,11 +121,16 @@ export interface DocDraft {
 
 /** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
 export interface DocLeg {
-  /** `exchange`: what a mixed basket's returns paid of its sale (core/till/basket.ts) — never cash, card or the drawer. `cash_credit`: a CC: credit redeemed at the payment (§11.15א). */
-  method: 'cash' | 'card' | 'exchange' | 'cash_credit';
+  /**
+   * `exchange`: what a mixed basket's returns paid of its sale (core/till/basket.ts) — never cash, card or the drawer. `cash_credit`: a
+   * CC: credit redeemed at the payment (§11.15א). `production_voucher`: a production voucher booked as a tender ("שוברי הפקה").
+   */
+  method: 'cash' | 'card' | 'exchange' | 'cash_credit' | 'production_voucher';
   amountAgorot: number;
   /** A cash credit's leg (§11.15א): the redemption it confirms — sent as the payment's `cashCredit`. */
   cashCredit?: { code: string; redemptionId: string };
+  /** A production voucher's leg: its hold (the document confirms it, §4.2) or its `/redeem` redemption, its number. */
+  voucher?: { redemptionId: string; reservationId: string | null; serial: number };
 }
 
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
@@ -143,6 +154,8 @@ export interface SaleInput {
   voucherDiscounts?: DocVoucherDiscount[];
   voucherReleases?: string[];
   voucherLegs?: DocVoucherLeg[];
+  /** A till sale's production vouchers as booked (DocDraft.prepaidVouchers). */
+  prepaidVouchers?: DocPrepaidRedemption[];
   /** Cash credits redeemed for the sale (§11.15א): `cash_credit` legs. */
   creditLegs?: DocCreditLeg[];
   /** A till sale's tenders (see DocDraft.payments), the cash handed over and the change. */
@@ -555,6 +568,7 @@ export class Ledger {
       ...(input.voucherLegs && input.voucherLegs.length > 0 ? { voucherLegs: input.voucherLegs } : {}),
       ...(input.creditLegs && input.creditLegs.length > 0 ? { creditLegs: input.creditLegs } : {}),
       ...(input.voucherReleases && input.voucherReleases.length > 0 ? { voucherReleases: input.voucherReleases } : {}),
+      ...(input.prepaidVouchers && input.prepaidVouchers.length > 0 ? { prepaidVouchers: input.prepaidVouchers } : {}),
       card: null,
       paymentId: randomUUID(),
       voidMeta: null,
@@ -881,7 +895,21 @@ export function xDocOf(d: DocDraft): XDoc {
     vatRate: d.totals.vatRate,
     tipAgorot: d.totals.tipAgorot,
     tipPaymentMethod: tipMethodOf(d),
+    // Production vouchers (VoucherRedemption.kt): a deduction is out of the gross and out of the discounts alike (never more
+    // than the document's discount); a ₪0 voucher's goods are no items of the shift.
+    ...(prepaidDeductionOf(d) > 0 ? { prepaidDeductionAgorot: Math.min(prepaidDeductionOf(d), d.totals.discountAgorot) } : {}),
+    ...(offVoucherUnitsOf(d) > 0 ? { offVoucherUnits: offVoucherUnitsOf(d) } : {}),
   };
+}
+
+/** A document's production voucher deductions ("קיזוז שובר הפקה", discount mode). */
+export function prepaidDeductionOf(d: Pick<DocDraft, 'prepaidVouchers'>): number {
+  return (d.prepaidVouchers ?? []).filter((r) => r.accounting === 'discount').reduce((s, r) => s + Math.max(0, r.amountAgorot), 0);
+}
+
+/** The units of a document's zero-mode vouchers — counted in no item total. */
+export function offVoucherUnitsOf(d: Pick<DocDraft, 'prepaidVouchers'>): number {
+  return (d.prepaidVouchers ?? []).filter((r) => !countsAsPayment(r.accounting)).reduce((s, r) => s + r.units.length, 0);
 }
 
 /** A till document's discounts by hand: its lines' (OTH left out — printed at ₪0 on its line) and the basket's. */
@@ -926,6 +954,19 @@ function modifierWire(o: SaleOption): Record<string, unknown> {
 
 /** The document as POST /sync/{m}/transactions takes it (TransactionPayload). */
 export function documentWire(d: DocDraft): Record<string, unknown> {
+  // Production vouchers ("שוברי הפקה", core/till/vouchers.ts): a "test-…" one is a simulation's — never on a document.
+  const redemptions = (d.prepaidVouchers ?? []).filter((r) => !isTestVoucherId(r.reservationId) && !isTestVoucherId(r.redemptionId));
+  // Zero mode: each ₪0 line's memo value and the redemption or the hold it names (the contract's §4.3).
+  const memoValues = offVoucherLineValues(redemptions);
+  const memoRedemption = new Map<string, string>();
+  const memoReservation = new Map<string, string>();
+  for (const r of redemptions) {
+    if (countsAsPayment(r.accounting)) continue;
+    for (const u of r.units) {
+      if (r.reservationId && !r.legacy) memoReservation.set(u.lineKey, r.reservationId);
+      else memoRedemption.set(u.lineKey, r.redemptionId);
+    }
+  }
   const items = d.lines.map((l, i) => {
     const unit = unitAgorot(l);
     const item: Record<string, unknown> = {
@@ -977,6 +1018,15 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     }
     // The discount vouchers' share ("שוברי הנחה"): inside the same discount, a discount and never a tender.
     if ((l.voucherAgorot ?? 0) > 0) item.voucherDiscount = r2(l.voucherAgorot!);
+    // "קיזוז שובר הפקה": a production voucher's deduction from the line (inside documentDiscount, §4.1).
+    if ((l.prepaidDeductionAgorot ?? 0) > 0) item.prepaidDeduction = r2(l.prepaidDeductionAgorot!);
+    // A ₪0 voucher line: what its goods were worth (agorot), and the redemption or the hold it names (§4.3).
+    const memo = memoValues.get(l.key);
+    if (memo !== undefined) {
+      item.voucherMemoValueAgorot = memo;
+      if (memoRedemption.has(l.key)) item.voucherRedemptionId = memoRedemption.get(l.key);
+      if (memoReservation.has(l.key)) item.voucherReservationId = memoReservation.get(l.key);
+    }
     if (typeof l.creditAgorot === 'number') {
       // A credit-note line (SaleRepository.buildRefundItems): net, as on every credit note — the money credited; what of the
       // gross was not paid is its discount; the original line it credits.
@@ -1041,24 +1091,32 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     items,
-    // The discount vouchers ("שוברי הנחה"): what each took, the lines it took it from, the hold the document confirms.
-    ...(d.voucherDiscounts && d.voucherDiscounts.length > 0
+    // The discount vouchers ("שוברי הנחה"): what each took, the lines it took it from, the hold the document confirms — then
+    // the production vouchers' deductions (`kind: production_voucher`, §4.1), each naming its hold (or its redemption).
+    ...((d.voucherDiscounts ?? []).length > 0 || redemptions.some((r) => r.accounting === 'discount' && r.amountAgorot > 0)
       ? {
-          voucherDiscounts: d.voucherDiscounts.map((v) => ({
-            reservationId: v.reservationId,
-            voucherId: v.voucherId,
-            batchId: v.batchId,
-            serial: v.serial,
-            batchName: v.batchName,
-            kind: v.kind,
-            uses: v.uses,
-            amount: r2(v.amountAgorot),
-            lines: v.lines.flatMap((l) => {
-              const i = d.lines.findIndex((x) => x.key === l.lineKey);
-              return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(l.amountAgorot) }] : [];
-            }),
-          })),
+          voucherDiscounts: [
+            ...(d.voucherDiscounts ?? []).map((v) => ({
+              reservationId: v.reservationId,
+              voucherId: v.voucherId,
+              batchId: v.batchId,
+              serial: v.serial,
+              batchName: v.batchName,
+              kind: v.kind,
+              uses: v.uses,
+              amount: r2(v.amountAgorot),
+              lines: v.lines.flatMap((l) => {
+                const i = d.lines.findIndex((x) => x.key === l.lineKey);
+                return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(l.amountAgorot) }] : [];
+              }),
+            })),
+            ...productionDeductionsWire(d, redemptions),
+          ],
         }
+      : {}),
+    // A document made only of ₪0 voucher lines, with no money and no tip (§4.3) — never otherwise.
+    ...(d.lines.length > 0 && d.lines.every((l) => memoValues.has(l.key)) && d.totals.totalAgorot === 0 && d.totals.tipAgorot === 0 && legsOf(d).every((l) => l.amountAgorot === 0)
+      ? { voucherMemo: true }
       : {}),
     // The promotions ("מבצעים") the sale was priced with.
     ...(d.promotions && d.promotions.length > 0
@@ -1109,6 +1167,8 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
           method: leg.method,
           amount: r2(leg.amountAgorot),
           ...(leg.method === 'cash_credit' && leg.cashCredit ? { cashCredit: { code: leg.cashCredit.code, redemptionId: leg.cashCredit.redemptionId } } : {}),
+          // A "שוברי הפקה" leg names the hold it pays (§4.2): the document confirms it even when the till's confirm never landed.
+          ...(leg.method === 'production_voucher' && leg.voucher?.reservationId && !isTestVoucherId(leg.voucher.reservationId) ? { reservationId: leg.voucher.reservationId } : {}),
           createdAt: d.updatedAt,
         };
       });
@@ -1198,6 +1258,45 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
   }
   for (const k of Object.keys(wire)) if (wire[k] === undefined) delete wire[k];
   return wire;
+}
+
+/**
+ * The production vouchers' deductions of a document as `voucherDiscounts` entries of `kind` = `production_voucher`
+ * (OutboxSync.productionVoucherDeductions): each with its hold (or its redemption), batch and voucher, its share of each line
+ * and the units it covered, as the receipt lists them.
+ */
+function productionDeductionsWire(d: DocDraft, redemptions: readonly DocPrepaidRedemption[]): Array<Record<string, unknown>> {
+  return redemptions
+    .filter((r) => r.accounting === 'discount' && r.amountAgorot > 0)
+    .map((r) => {
+      const byLine = new Map<string, number>();
+      for (const u of r.units) byLine.set(u.lineKey, (byLine.get(u.lineKey) ?? 0) + u.coveredAgorot);
+      const units = new Map<string, { productName: string; groupName: string | null; quantity: number }>();
+      for (const u of r.units) {
+        const k = `${u.name || u.productId}|${u.groupName ?? ''}`;
+        const cur = units.get(k);
+        if (cur) cur.quantity += 1;
+        else units.set(k, { productName: u.name || u.productId, groupName: u.groupName, quantity: 1 });
+      }
+      return {
+        ...(r.legacy || !r.reservationId ? {} : { reservationId: r.reservationId }),
+        ...(r.voucherId ? { voucherId: r.voucherId } : {}),
+        ...(r.batchId ? { batchId: r.batchId } : {}),
+        serial: r.serial,
+        ...(r.batchName ? { batchName: r.batchName } : {}),
+        kind: 'production_voucher',
+        uses: 1,
+        amount: r2(r.amountAgorot),
+        lines: [...byLine.entries()].flatMap(([key, amount]) => {
+          const i = d.lines.findIndex((x) => x.key === key);
+          return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(amount) }] : [];
+        }),
+        // The cloud's hold confirms by its reservation; a `/redeem` redemption by its own id.
+        ...(r.legacy || !r.reservationId ? { redemptionId: r.redemptionId } : {}),
+        ...(r.typeName ? { typeName: r.typeName } : {}),
+        units: [...units.values()],
+      };
+    });
 }
 
 /** A UUID-shaped id derived from a string (the same input → the same id, so a re-push is idempotent). */

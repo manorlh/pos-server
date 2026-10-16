@@ -43,6 +43,7 @@ import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { lineMenuFacts, menuKey, presentTillCatalog, resolveTillMenu } from '../core/till/menus';
+import { offVoucherLineValues, voucherDeductionLabel, voucherLineMemo } from '../core/till/vouchers';
 import { effectiveSnapshot, kioskFactsOf, rawFactsOf, REFUSAL_TEXT, WORK_TEXT, workModeEvent, type KioskSideFacts, type WorkModeEvent } from '../core/workMode';
 import { attempt as techAttempt, codeMatches, NO_LOCK, type TechLock } from '../core/technician';
 import {
@@ -3018,6 +3019,8 @@ export class KioskService extends EventEmitter {
   /* ------------------------------------------------------------- printing */
 
   receiptLines(doc: DocDraft): ReceiptLine[] {
+    // A ₪0 voucher line's value (core/till/vouchers.ts): printed under it, outside every total.
+    const memo = offVoucherLineValues(doc.prepaidVouchers ?? []);
     return doc.lines.map((l) => {
       const unit = unitAgorot(l);
       return {
@@ -3027,6 +3030,7 @@ export class KioskService extends EventEmitter {
         // A credit-note line prints what it credits (net of its discount share), as the till's credit notes do.
         totalAgorot: typeof l.creditAgorot === 'number' ? l.creditAgorot : unit * l.qty,
         ...(l.oth ? { oth: l.oth.reason } : {}),
+        ...(memo.has(l.key) ? { memo: voucherLineMemo(memo.get(l.key)!, l.voucherMark) } : l.voucherMark ? { voucher: l.voucherMark } : {}),
         // What was charged (free choices are not printed), a meal's components with their upcharge (LineText.receiptSubLines).
         paid: [
           ...l.options.filter((o) => optionCharged(o) > 0).map((o) => ({ text: kitchenOptionText(o), priceAgorot: optionCharged(o) })),
@@ -3083,7 +3087,10 @@ export class KioskService extends EventEmitter {
         promotions: (doc.promotions ?? []).map((p) => ({ name: p.name, discountAgorot: p.discountAgorot })),
         // "שובר #12 — פסטיבל הקיץ" under the items (a discount) and "שובר הפקה" among the payments (the goods vouchers' legs).
         voucherDiscounts: (doc.voucherDiscounts ?? []).map((v) => ({ label: voucherLabel(v.serial, v.batchName), amountAgorot: v.amountAgorot })),
-        voucherLegs: (doc.voucherLegs ?? []).map((l) => ({ amountAgorot: l.amountAgorot })),
+        // A till sale's "שוברי הפקה" legs too (core/till/vouchers.ts), and its production vouchers' deductions and ₪0 goods.
+        voucherLegs: [...(doc.voucherLegs ?? []), ...(doc.payments ?? []).filter((l) => l.method === 'production_voucher')].map((l) => ({ amountAgorot: l.amountAgorot })),
+        prepaidDeductions: (doc.prepaidVouchers ?? []).filter((v) => v.accounting === 'discount' && v.amountAgorot > 0).map((v) => ({ label: voucherDeductionLabel(v.serial), amountAgorot: v.amountAgorot })),
+        voucherGoodsValueAgorot: [...offVoucherLineValues(doc.prepaidVouchers ?? []).values()].reduce((s, x) => s + x, 0),
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         // "מזומן" at the cash station: שולם / עודף (`cashReceiptLines`), what is owed and its code.
         cash: doc.cash
@@ -3104,7 +3111,7 @@ export class KioskService extends EventEmitter {
         // (A cash credit's leg is "זיכוי מזומן" above, never a tender here.)
         ...(doc.payments && doc.payments.length > 0
           ? {
-              tenders: doc.payments.filter((l): l is { method: 'cash' | 'card' | 'exchange'; amountAgorot: number } => l.method !== 'cash_credit'),
+              tenders: doc.payments.filter((l): l is { method: 'cash' | 'card' | 'exchange'; amountAgorot: number } => l.method !== 'cash_credit' && l.method !== 'production_voucher'),
               tenderedAgorot: doc.tenderedAgorot ?? null,
               changeAgorot: doc.changeAgorot ?? null,
             }

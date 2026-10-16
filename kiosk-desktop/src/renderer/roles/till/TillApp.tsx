@@ -211,6 +211,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               : {
                   credit: (code: string) => void run('checkout.credit', { code }),
                   removeCredit: (redemptionId: string) => void run('checkout.removeCredit', { redemptionId }),
+                  voucher: (code: string) => void run('checkout.voucher', { code }),
+                  removeVoucher: (id: string) => void run('checkout.removeVoucher', { id }),
+                  finishTest: () => void run('checkout.finishTest', {}),
                 }),
           }}
         />
@@ -351,6 +354,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         onAdd={(productId) => void run('sell.add', { productId })}
         onDepartment={(departmentId) => void run('sell.department', { departmentId })}
         onSearch={(text) => void run('sell.search', { text })}
+        onVoucher={host.demo ? undefined : (code) => void run('sell.voucher', { code })}
         shiftOpen={host.demo || s.shift.open || s.shift.hidden === true}
         goShift={() => setView('shift')}
         cart={{

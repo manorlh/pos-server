@@ -139,6 +139,12 @@ export const TILL_OPS = [
   'owed.pay',
   'checkout.credit',
   'checkout.removeCredit',
+  // Vouchers (main/till/tillVouchers.ts): a voucher scanned at the payment, "הסר", "סיום בדיקה"; a voucher scanned on the sell
+  // screen with items in the order goes to the payment and is applied there ("מימוש אוטומטי בסריקת שובר").
+  'checkout.voucher',
+  'checkout.removeVoucher',
+  'checkout.finishTest',
+  'sell.voucher',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -196,6 +202,10 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'owed.pay',
   'checkout.credit',
   'checkout.removeCredit',
+  'checkout.voucher',
+  'checkout.removeVoucher',
+  'checkout.finishTest',
+  'sell.voucher',
 ]);
 
 export interface OpArgs {
@@ -284,6 +294,13 @@ export interface OpArgs {
   /** The code as scanned (`CC:C-K7Q3MX`) or typed. */
   'checkout.credit': { code: string };
   'checkout.removeCredit': { redemptionId: string };
+  /** A voucher's code as scanned or typed. */
+  'checkout.voucher': { code: string };
+  /** A voucher of `checkout.vouchers.items` (its id). */
+  'checkout.removeVoucher': { id: string };
+  'checkout.finishTest': Record<string, never>;
+  /** A voucher scanned on the sell screen: the payment opens and the voucher is applied there. */
+  'sell.voucher': { code: string };
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -325,6 +342,7 @@ export const TILL_ERRORS = {
   held_sales: 'יש מכירות מושהות',
   basket_changed: 'הקבלה המקורית זוכתה בינתיים. יש לבחור את הפריטים מחדש.',
   discount_refused: 'ההנחה לא ניתנה',
+  voucher_refused: 'השובר לא מומש',
 } as const;
 
 export type TillErrorCode = keyof typeof TILL_ERRORS;
@@ -389,6 +407,8 @@ export interface Product {
   dietary?: string[];
   /** Why it is "חסום" / "אזל" now, when the rules say. */
   saleReason?: string;
+  /** The product is a voucher (the catalog's `voucherId`): credited from its receipt only. */
+  voucher?: boolean;
 }
 
 export interface Catalog {
@@ -426,6 +446,10 @@ export interface CartLine {
   oth?: string | null;
   /** "לא מקבל הנחות". */
   noDiscount?: boolean;
+  /** "כלול בשובר #12 · שובר ארוחה": a production voucher covers it (core/till/vouchers.ts). */
+  voucher?: string | null;
+  /** A ₪0 voucher line: what its goods were worth ("שווי"), outside every total. */
+  voucherValueAgorot?: number;
 }
 
 export interface SellState {
@@ -508,12 +532,36 @@ export interface DocumentDetail {
 export type CheckoutPhase = 'idle' | 'tender' | 'card_waiting' | 'done';
 
 export interface CheckoutLeg {
-  /** `cash_credit`: "זיכוי מזומן" (a station's credit, `CC:` code) towards the goods. */
-  method: 'cash' | 'card' | 'cash_credit';
+  /** `cash_credit`: "זיכוי מזומן" (a station's credit, `CC:` code) towards the goods. `production_voucher`: "שוברי הפקה". */
+  method: 'cash' | 'card' | 'cash_credit' | 'production_voucher';
   amountAgorot: number;
   status: 'approved' | 'pending';
   /** A cash credit's code and redemption ("הסרת הזיכוי" names it). */
   credit?: { code: string; redemptionId: string };
+  /** A production voucher's leg: its number ("שובר #12"). */
+  voucher?: { serial: number };
+}
+
+/** The payment's vouchers (main/till/tillVouchers.ts). */
+export interface CheckoutVouchers {
+  /** Each voucher of the sale: "הסר" takes it off (`checkout.removeVoucher`). */
+  items: Array<{ id: string; kind: 'production' | 'discount'; label: string; what: string; amountAgorot: number; test: boolean }>;
+  /** "מצב בדיקה — השובר לא ימומש ושום דבר לא יירשם": the orange bar; null — a real sale. */
+  testBar: string | null;
+  testDue: string | null;
+  /** "הלקוח זכאי לעוד פריט מהשובר: …" — the orange alert. */
+  entitlement: string | null;
+  /** A voucher is being checked with the cloud. */
+  busy: boolean;
+  /** "השובר הוחל: …" (green) / the refusal (red) of the last scan. */
+  applied: string | null;
+  error: string | null;
+  /** "מימוש אוטומטי בסריקת שובר". */
+  autoApply: boolean;
+  /** The production vouchers' deductions ("קיזוז שוברי הפקה") inside the total; and the total before them. */
+  deductionAgorot: number;
+  /** "שווי הפריטים בשובר": the ₪0 vouchers' goods, outside every total. */
+  goodsValueAgorot: number;
 }
 
 /** A basket with returns at the payment (core/till/basket.ts). */
@@ -563,6 +611,15 @@ export interface CheckoutState {
   basket?: CheckoutBasket | null;
   /** Every document the payment wrote (a basket: the sale and its credit notes), as printed. */
   documentRefs?: string[];
+  /** The payment's vouchers; absent — none, and none can be scanned here. */
+  vouchers?: CheckoutVouchers | null;
+  /** "סיום בדיקה": the simulation's end — what would have been covered and left to pay; nothing was written. */
+  testEnd?: string[] | null;
+  /**
+   * "מסך הצלחה במימוש שובר" (`voucherSuccessScreen`): the sale redeemed vouchers — "השובר מומש בהצלחה", what was redeemed,
+   * and (amber) what the customer did not take.
+   */
+  voucherSuccess?: { title: string; detail: string | null; notTaken: string | null; note: string | null } | null;
 }
 
 export interface ShiftState {
@@ -737,6 +794,9 @@ export interface XReport {
   depositsAgorot?: number;
   walletInAgorot?: number;
   walletDepositsAgorot?: number;
+  /** "שוברי הפקה": what production vouchers paid as a tender; and the vouchers' sections (information, in no figure above). */
+  vouchersAgorot?: number;
+  voucherInfo?: Array<{ label: string; value: string; title?: boolean }>;
   /** The paper went to the printer. */
   printed?: boolean;
 }

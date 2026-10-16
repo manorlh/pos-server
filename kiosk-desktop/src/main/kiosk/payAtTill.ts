@@ -162,7 +162,7 @@ export class PayAtTill {
   /**
    * The sale [transactionId] was written (PrepaidVoucherRepository.settleSale): each discount voucher that took something
    * off is confirmed (its uses taken), each that took nothing is given back, each goods voucher is linked to the document
-   * (`…/attach`). Best effort, retried a few times: the document itself confirms the discount vouchers in the cloud too.
+   * (`…/transaction`, as the cloud names the route). Best effort, retried a few times: the document itself confirms the discount vouchers in the cloud too.
    */
   async settle(
     transactionId: string,
@@ -172,7 +172,7 @@ export class PayAtTill {
   ): Promise<void> {
     for (const v of discounts) await confirmDiscount(this.post, v, { transactionId, amountAgorot: v.amountAgorot });
     for (const reservationId of releases) await releaseDiscount(this.post, { reservationId });
-    for (const l of legs) await this.post(`prepaid-vouchers/redemptions/${encodeURIComponent(l.redemptionId)}/attach`, { transactionId }, 12_000);
+    for (const l of legs) await this.post(`prepaid-vouchers/redemptions/${encodeURIComponent(l.redemptionId)}/transaction`, { transactionId }, 12_000);
   }
 
   /** The voucher goes back on itself (removed, the order left, the kiosk reset); kept until the cloud answers. */
