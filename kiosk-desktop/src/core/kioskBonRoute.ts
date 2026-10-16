@@ -4,9 +4,9 @@
  * pos-android domain/KioskOrders.kt `KioskBon.route` / `ownShare` / `isOwnPrinter`, pinned by the
  * shared cases test/fixtures/kiosk_bon_route.json (the same bytes as pos-android's).
  *
- * The Windows kiosk reaches no kitchen printer: every page it prints is on its own printer. So for
- * it `kitchenPrinters` is 0, `ownPrinter` true and a named bon printer is its own (`singleOwn`) —
- * off, it prints no bon at all; on, the bon prints as before.
+ * Before its kitchen queue (main/kitchen) the Windows kiosk reached no kitchen printer: `windowsBonRoute` is that
+ * route (every page on its own printer) — still what it does while it has never had the printers' settings.
+ * `windowsBonRouteFor` is the Android kiosk's route over the settings it now pulls.
  */
 
 export type KioskBonRoute = 'single' | 'kitchen' | 'own' | 'none';
@@ -52,6 +52,37 @@ export function windowsBonRoute(printing: { bonMode?: string | null; bonPrinterI
     kitchenPrinters: 0,
     ownPrinter: true,
   });
+}
+
+/**
+ * The Windows kiosk's bon now that it reaches the shop's kitchen printers (main/kitchen): the Android kiosk's
+ * `KioskBonService.bonRoute` over the printers' settings — the kitchen printers that may take its orders, and whether
+ * the one bon printer it names is its own (`namesOwnPrinter`). Settings never pulled (a cloud that predates them, a
+ * kiosk never online): as before ([windowsBonRoute]). Its own printer is its receipt printer: always there.
+ */
+export function windowsBonRouteFor(
+  printing: { bonMode?: string | null; bonPrinterId?: string | null; bonOnKiosk?: boolean | null },
+  config: { printers: ReadonlyArray<{ id: string; type: string | null; purpose: string | null; isHost: boolean; scope: string | null; inScope: boolean }> } | null,
+): KioskBonRoute {
+  if (!config) return windowsBonRoute(printing);
+  const single = printing.bonMode === 'single' && !!printing.bonPrinterId;
+  const named = single ? config.printers.find((p) => p.id === printing.bonPrinterId) : undefined;
+  return kioskBonRoute({
+    single,
+    singleOwn: !!named && isOwnPrinter(named),
+    bonOnKiosk: printing.bonOnKiosk === true,
+    kitchenPrinters: config.printers.filter((p) => p.inScope && (p.purpose ?? 'kitchen') !== 'receipt').length,
+    ownPrinter: true,
+  });
+}
+
+/** The bon goes through the kitchen queue (main/kitchen): the routing, or a named bon printer that is not the kiosk's own. */
+export function bonViaKitchen(route: KioskBonRoute, printing: { bonMode?: string | null; bonPrinterId?: string | null }, config: { printers: ReadonlyArray<{ id: string; type: string | null; purpose: string | null; isHost: boolean; scope: string | null }> } | null): boolean {
+  if (!config) return false;
+  if (route === 'kitchen') return true;
+  if (route !== 'single') return false;
+  const named = config.printers.find((p) => p.id === printing.bonPrinterId);
+  return !named || !isOwnPrinter(named);
 }
 
 /** Said on an order whose bon the kiosk did not print by this setting. */

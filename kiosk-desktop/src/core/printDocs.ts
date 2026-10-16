@@ -11,6 +11,7 @@
 import { BRAND_LABEL_HE, type CardBrand } from './nayax';
 import { formatAgorot, formatShekelSign, ltr } from './money';
 import { isTemplate, resolveStyle, type KitchenTicket, type TicketStyle } from './kitchenTicketStyle';
+import type { KitchenDoc } from './kitchen/doc';
 
 /* ---------------------------------------------------------- the receipt */
 
@@ -710,7 +711,8 @@ export function xDoc(x: XInput): ZDoc {
   return { kind: 'z', logoUrl: x.logoUrl, ops };
 }
 
-export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc;
+/** `kitchen`: a kitchen printer's ticket (core/kitchen/doc.ts, main/kitchen/kitchenService.ts). */
+export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc | KitchenDoc;
 
 /* ------------------------------------------------------- the cash station's slips (P:/specs/cash-paylink.md §11.7) */
 

@@ -60,6 +60,11 @@ export class PrintQueue {
     return this.working;
   }
 
+  /** The hidden print window's drawing, as set (the kitchen tickets draw with it too: main/kitchen). */
+  get pageRenderer(): PageRenderer | null {
+    return this.renderer;
+  }
+
   setRenderer(r: PageRenderer | null) {
     this.renderer = r;
     void this.work();

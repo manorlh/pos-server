@@ -312,6 +312,8 @@ export interface CheckoutState {
   askPrint?: boolean;
   /** The receipt's problem in words ("קבלה: …"), or "לא הוגדרה מדפסת לקבלות"; the sale stands. */
   printWarning?: string | null;
+  /** "פריטים שלא נותבו למדפסת: …" — lines of the sale no kitchen printer takes; said, the sale stands. */
+  kitchenWarning?: string | null;
   /** The card terminal's line while it waits ("הצמד, הכנס או העבר את הכרטיס"). */
   cardStatus?: string | null;
   /** A card that did not go through: its words; the sale is still open for another tender. */

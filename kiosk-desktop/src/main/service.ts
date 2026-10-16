@@ -37,7 +37,7 @@ import { cashSettingsOf, shekelText, type CashSettings } from '../core/cash/sett
 import { cardPrincipalAgorot, type DocCashLeg } from './fiscal/ledger';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
 import { bonDoc, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type XInput } from '../core/printDocs';
-import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
+import { BON_NOT_ON_KIOSK, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
@@ -97,6 +97,14 @@ import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type 
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
+import { KitchenService } from './kitchen/kitchenService';
+import { KdsOutbox } from './kitchen/kdsOutbox';
+import { KitchenHost } from './kitchen/kitchenHost';
+import { kioskBonToKitchen, tillSaleToKitchen } from './kitchen/kitchenFlows';
+import type { LanCall } from './kitchen/kitchenNet';
+import type { PrinterLink } from '../core/kitchen/delivery';
+import { bonJobState } from '../core/kitchen/queue';
+import { tillNameOf } from '../core/kitchen/tickets';
 import { FunnelStore } from './kiosk/funnel';
 import { WorkSessions, type WorkModeRuntime } from './workMode';
 import {
@@ -191,6 +199,11 @@ export interface ServiceOptions {
   cashmagDriver?: (cfg: CashMagConfig, functions: CashMagFunctions, session: SessionStore) => CashRecyclerDriver;
   cashmagDriverOptions?: CashMagDriverOptions;
   cashmagPollMs?: number;
+  /**
+   * Tests: the kitchen's wires (main/kitchen) — a network printer's link, the LAN print server's request, whether this
+   * PC is on a LAN, the kitchen's clock — and the LAN print host's port (0: any) and address.
+   */
+  kitchen?: { printerLink?: (host: string, port: number) => PrinterLink; lanCall?: LanCall; onLan?: () => boolean; now?: () => number; hostPort?: number; hostName?: string };
 }
 
 /** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
@@ -258,6 +271,12 @@ export class KioskService extends EventEmitter {
    * the cash station when the cloud turns `cashmagEnabled` on — off by default (nothing of it runs).
    */
   readonly cashMag: CashMagPay;
+  /** "בונים": the kitchen tickets to the shop's kitchen printers / print server / the cloud relay (main/kitchen). */
+  readonly kitchen: KitchenService;
+  /** A till's paid counter sales to the cloud's KDS (main/kitchen/kdsOutbox.ts). */
+  readonly kitchenKds: KdsOutbox;
+  /** This device printing for the shop's others when the cloud names it (main/kitchen/kitchenHost.ts). */
+  readonly kitchenHost: KitchenHost;
   readonly sync: SyncEngine;
   /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
   readonly relocator: PinpadRelocator;
@@ -343,6 +362,41 @@ export class KioskService extends EventEmitter {
     this.printQueue = new PrintQueue(this.db, this.transport, () => this.printerResolution().target, opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
+    const kitchenOpts = opts.kitchen ?? {};
+    this.kitchen = new KitchenService({
+      db: this.db,
+      kv: this.kv,
+      api: this.api,
+      machineId: () => this.machineId,
+      secretBox: opts.secretBox,
+      params: () => this.cloud.parameters(),
+      tillName: () => tillNameOf(this.cloud.machine()?.posNumber, this.cloud.machine()?.machineName),
+      ownTarget: () => this.printerResolution().target,
+      transport: this.transport,
+      renderer: () => this.printQueue.pageRenderer,
+      onLan: kitchenOpts.onLan ?? (() => localPrivateIpv4() !== null),
+      orderData: () => ({ courses: [], categories: this.kitchenCategories() }),
+      // A kiosk says its unprinted bons in its own alerts (the order's bon status): the cloud's list is a till's.
+      reportsBonAlerts: () => !this.isKiosk(),
+      log: this.log,
+      now: kitchenOpts.now,
+      printerLink: kitchenOpts.printerLink,
+      lanCall: kitchenOpts.lanCall,
+    });
+    this.kitchen.onChange(() => {
+      this.refreshBonStates();
+      this.dirty();
+    });
+    this.kitchenKds = new KdsOutbox({ kv: this.kv, api: this.api, machineId: () => this.machineId, kitchen: this.kitchen, log: this.log, now: kitchenOpts.now });
+    this.kitchenHost = new KitchenHost({
+      kitchen: this.kitchen,
+      api: this.api,
+      machineId: () => this.machineId,
+      lanAddress: () => localPrivateIpv4(),
+      log: this.log,
+      portOverride: kitchenOpts.hostPort,
+      hostname: kitchenOpts.hostName,
+    });
     this.payAtTill = new PayAtTill({
       kv: this.kv,
       api: this.api,
@@ -493,6 +547,10 @@ export class KioskService extends EventEmitter {
 
   async start(): Promise<void> {
     this.printQueue.recover();
+    // "בונים": what a restart left in flight recovered, the queue running (offline too: the LAN and the printers).
+    this.kitchen.start();
+    this.kitchenKds.start();
+    void this.kitchenHost.apply();
     this.orders.prune();
     if (this.paired) {
       this.sync.start();
@@ -527,6 +585,9 @@ export class KioskService extends EventEmitter {
     this.offUsbWatch();
     if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
+    this.kitchen.stop();
+    this.kitchenKds.stop();
+    void this.kitchenHost.stop();
     this.transport.dispose();
     this.db.close();
   }
@@ -1004,6 +1065,11 @@ export class KioskService extends EventEmitter {
         if (id && this.hasKioskRow()) await this.orders.push(this.api, id);
         // "ביצועי קיוסקים": the funnel's events, after the orders.
         if (id && this.hasKioskRow()) await this.funnel.push(this.api, id).catch(() => false);
+        // "בונים": the printers' settings (ETag), the jobs handed over asked about; hosting for the others when named.
+        if (id && this.fiscalRole) {
+          await this.kitchen.afterBeat().catch((e) => this.log(`kitchen: ${String(e)}`));
+          await this.kitchenHost.afterBeat().catch((e) => this.log(`kitchen host: ${String(e)}`));
+        }
         // "מזומן בקופה": where the shop's LAN host is (for the offline days), then the open orders the cloud has not
         // taken — with what a LAN till did with them — and the vouchers to give back.
         if (id && this.hasKioskRow()) await this.pullLanHost().catch((e) => this.log(`LAN host: ${String(e)}`));
@@ -2508,10 +2574,13 @@ export class KioskService extends EventEmitter {
       cloudState: null,
       rejected: null,
     };
-    // "שלח למטבח לפני תשלום": this kiosk's own printer has the bon ("ממתין לתשלום בקופה") — once the
-    // cloud has not refused the order (it may be offline: the bon prints all the same). With "בון מטבח
-    // במדפסת הקיוסק" off it never prints here: the till that takes the money prints it.
-    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && windowsBonRoute(cfg.printing) !== 'none';
+    // "שלח למטבח לפני תשלום": the bon ("ממתין לתשלום בקופה") goes now — to the shop's kitchen printers by the routing
+    // (main/kitchen, as the Android kiosk's bonBeforePay), or on this kiosk's own printer — once the cloud has not refused
+    // the order (it may be offline: the bon prints all the same). No kitchen printer and "בון מטבח במדפסת הקיוסק" off:
+    // never here — the till that takes the money prints it.
+    const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
+    const bonRoute: KioskBonRoute = windowsBonRouteFor(cfg.printing, kitchenConfig);
+    const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && bonRoute !== 'none';
     order.kitchenSent = kitchenFirst;
     const placed = await this.payAtTill.place(order, { offline });
     if (placed.rejected === PRICE_CHANGED) {
@@ -2525,7 +2594,28 @@ export class KioskService extends EventEmitter {
       this.dirty();
       return { ok: false, reason: 'rejected', message: `ההזמנה לא נקלטה (${placed.rejected}). אנא פנו לצוות.` };
     }
-    if (kitchenFirst) {
+    if (kitchenFirst && bonViaKitchen(bonRoute, cfg.printing, kitchenConfig)) {
+      // The shop's kitchen printers (or the bon printer it names): the bon marked unpaid, so the till never prints it again.
+      kioskBonToKitchen(
+        this.kitchen,
+        bonRoute,
+        cfg.printing,
+        {
+          orderId: localId,
+          pickupLabel: pickup.label,
+          customerName: order.customerName,
+          tableRef: order.tableRef,
+          transactionNumber: pickup.label,
+          service: order.serviceType,
+          createdAt: new Date(now).toISOString(),
+          kioskName: this.operator().name,
+          lines,
+          copies: 1,
+          notice: 'ממתין לתשלום בקופה',
+        },
+        this.productCategoryOf(),
+      );
+    } else if (kitchenFirst) {
       this.printQueue.enqueue(
         'bon',
         localId,
@@ -3001,7 +3091,7 @@ export class KioskService extends EventEmitter {
     const step = reprint ? 'enqueue' : bonStep({ fulfillmentMode: o.fulfillmentMode, paid: o.paid, bonRequestedAtMs: o.bonRequestedAtMs, jobIds: o.bonJobIds });
     if (step === 'none' || step === 'wait' || step === 'track') return;
     if (step === 'recover') {
-      const found = this.printQueue.jobsFor(orderId, 'bon').map((j) => j.id);
+      const found = [...this.printQueue.jobsFor(orderId, 'bon').map((j) => j.id), ...this.kitchen.jobsFor(orderId).map((j) => j.id)];
       if (found.length > 0) {
         this.orders.update(orderId, (x) => ({ ...x, bonJobIds: found }));
         return;
@@ -3010,14 +3100,47 @@ export class KioskService extends EventEmitter {
     const doc = o.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!doc) return;
     const cfg = this.config();
-    // "בון מטבח במדפסת הקיוסק" (off by default): every page this kiosk prints is on its own printer,
-    // so off it prints no bon — said on the order, never a staff alert (core/kioskBonRoute.ts).
-    if (windowsBonRoute(cfg.printing) === 'none') {
+    // "בון מטבח במדפסת הקיוסק" (off by default) and the shop's kitchen printers (core/kioskBonRoute.ts): the Android
+    // kiosk's route — the kitchen printers by the routing, the one bon printer it names, its own printer, or none.
+    const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
+    const route = windowsBonRouteFor(cfg.printing, kitchenConfig);
+    if (route === 'none') {
       this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'none', bonDetail: BON_NOT_ON_KIOSK }));
       return;
     }
     this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
     const copies = Math.max(1, Math.min(3, cfg.printing.bonCopies || 1));
+    if (bonViaKitchen(route, cfg.printing, kitchenConfig)) {
+      // Through the kitchen queue (main/kitchen): once — its job ids derive from the order (a reprint: fresh ones).
+      const q = kioskBonToKitchen(
+        this.kitchen,
+        route,
+        cfg.printing,
+        {
+          orderId,
+          pickupLabel: o.pickupLabel ?? String(o.pickupNumber ?? '?'),
+          customerName: o.customerName,
+          tableRef: o.tableRef,
+          transactionNumber: o.transactionNumber,
+          service: o.serviceType,
+          createdAt: doc.createdAt,
+          kioskName: this.operator().name,
+          lines: doc.lines,
+          copies,
+          notice: reprint ? 'הדפסה חוזרת' : null,
+          nonce: reprint ? String(Date.now()) : null,
+        },
+        this.productCategoryOf(),
+      );
+      if (q.jobIds.length === 0) {
+        // Asked, and no printer takes any of it: a staff alert, never "printed".
+        this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'failed', bonDetail: q.detail ?? 'אין מדפסת בונים למוצרי ההזמנה' }));
+        return;
+      }
+      this.orders.update(orderId, (x) => ({ ...x, bonJobIds: reprint ? [...x.bonJobIds, ...q.jobIds] : q.jobIds, bonDetail: q.detail }));
+      this.refreshBonStates();
+      return;
+    }
     const me = this.cloud.machine();
     const ids: string[] = [];
     for (let c = 1; c <= copies; c++) {
@@ -3044,6 +3167,53 @@ export class KioskService extends EventEmitter {
       );
     }
     this.orders.update(orderId, (x) => ({ ...x, bonJobIds: reprint ? [...x.bonJobIds, ...ids] : ids }));
+  }
+
+  /** The product's category now, from the catalog (printers hang on categories). */
+  private productCategoryOf(): (productId: string) => string | null {
+    const categories = new Map<string, string>();
+    for (const p of this.cloud.catalog().products) {
+      if (typeof p.id === 'string' && typeof p.categoryId === 'string') categories.set(p.id, p.categoryId);
+    }
+    return (id) => categories.get(id) ?? null;
+  }
+
+  /** The catalog's categories, for a ticket ordered by category ("סדר הפריטים בבון", §9). */
+  private kitchenCategories(): Array<{ id: string; name: string | null; parentId: string | null; sortOrder: number | null }> {
+    return this.cloud
+      .catalog()
+      .categories.filter((c) => typeof c.id === 'string')
+      .map((c) => ({
+        id: c.id as string,
+        name: typeof c.name === 'string' ? c.name : null,
+        parentId: typeof c.parentId === 'string' ? c.parentId : null,
+        sortOrder: typeof c.sortOrder === 'number' ? c.sortOrder : null,
+      }));
+  }
+
+  /**
+   * A till's completed counter sale to the kitchen (main/kitchen/kitchenFlows.ts): its tickets when "בונים במכירה" is on,
+   * its KDS release when the shop runs the KDS — queued durably, never holding the cashier. Not for a kiosk's sale (its
+   * bon is `printBon`). The lines no kitchen printer takes, by name.
+   */
+  tillKitchen(doc: DocDraft): string[] {
+    try {
+      const r = tillSaleToKitchen(
+        { kitchen: this.kitchen, kds: this.kitchenKds, params: this.cloud.parameters(), categoryOf: this.productCategoryOf(), log: this.log },
+        {
+          transactionId: doc.id,
+          documentType: doc.documentType,
+          documentNumber: formatDocNumber(doc.prefix, String(doc.number)),
+          lines: doc.lines,
+          cashierName: doc.cashierName || null,
+          createdAt: doc.createdAt,
+        },
+      );
+      return r.unrouted;
+    } catch (e) {
+      this.log(`kitchen tickets for sale ${doc.id}: ${String(e)}`);
+      return [];
+    }
   }
 
   /**
@@ -3079,10 +3249,19 @@ export class KioskService extends EventEmitter {
   /** The bon's state from its jobs ("sent" is never reported as "printed"). */
   private refreshBonStates() {
     for (const o of this.orders.todays()) {
-      if (o.bonJobIds.length === 0) continue;
-      const jobs = o.bonJobIds.map((id) => this.printQueue.job(id)?.status ?? 'failed');
-      const status = jobs.some((s) => s === 'failed') ? 'failed' : jobs.every((s) => s === 'sent') ? 'sent' : 'queued';
-      if (status !== o.bonStatus) this.orders.update(o.localId, (x) => ({ ...x, bonStatus: status, bonDetail: status === 'failed' ? 'לא הודפס' : null }));
+      // "printed" is final (every printer confirmed it); "none" has no jobs.
+      if (o.bonJobIds.length === 0 || o.bonStatus === 'printed' || o.bonStatus === 'none') continue;
+      // A page on its own printer (print_jobs), or a kitchen job (main/kitchen): "printed" only when every printer confirmed.
+      const jobs = o.bonJobIds.map((id) => this.printQueue.job(id)?.status ?? bonJobState(this.kitchen.job(id)));
+      const status = jobs.some((s) => s === 'failed') ? 'failed' : jobs.every((s) => s === 'printed') ? 'printed' : jobs.every((s) => s === 'sent' || s === 'printed') ? 'sent' : 'queued';
+      if (status === o.bonStatus) continue;
+      // A kitchen job's own words when it failed ("no_paper: …"); the lines no printer takes stay said.
+      const kitchenError = status === 'failed' ? (this.kitchen.jobs(o.bonJobIds).find((j) => j.state === 'failed')?.lastError ?? null) : null;
+      this.orders.update(o.localId, (x) => ({
+        ...x,
+        bonStatus: status,
+        bonDetail: status === 'failed' ? (kitchenError ? `לא הודפס — ${kitchenError.slice(0, 120)}` : 'לא הודפס') : x.bonDetail?.startsWith('פריטים שלא נותבו') ? x.bonDetail : null,
+      }));
     }
   }
 
@@ -3502,6 +3681,8 @@ export class KioskService extends EventEmitter {
         return { ok: true };
       case 'retryPrints':
         this.printQueue.retryFailed();
+        // The kitchen's too (main/kitchen): a person's "נסה שוב" — a ticket that may be on paper goes marked.
+        this.kitchen.retryAll();
         return { ok: true };
       case 'cashmagAcknowledge': {
         const ok = this.cashMag.acknowledge(a.txId, this.adminName ?? 'מנהל');
