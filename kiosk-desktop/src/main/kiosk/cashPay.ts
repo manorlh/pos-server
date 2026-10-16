@@ -56,6 +56,8 @@ export interface CashProgress {
   tx: TxView | null;
   /** Hebrew, as is. */
   message: string;
+  /** In the queue past `cashQueueTimeoutSec` ("ההמתנה ארוכה מהרגיל", §14.3). */
+  longWait?: boolean;
 }
 
 export type CashOutcome =
@@ -105,6 +107,8 @@ export class CashPay {
   private localHost: LocalCashHost | null = null;
   /** When the station last answered on the LAN (`auto` chooses by it). */
   private lastLanAt: number | null = null;
+  /** Payments whose own loop ended in this run: their ack goes their own way (§14.2.2), not a recovery's. */
+  private readonly endedHere = new Set<string>();
   private cancelRequested = false;
   private splitRequested = false;
   private running = false;
@@ -263,13 +267,13 @@ export class CashPay {
   }
 
   /**
-   * A call for a payment whose own loop is over (its ack, a restart's look, a cancel or finish): its own way first,
-   * then — `auto` — the other (§14.2.3); the first that answers.
+   * A call for a payment whose own loop is over: the ack right after it — its own way only (§14.2.2; not answered —
+   * the ack is retried later as a recovery); a recovery (a restart's look, an ack still owed, a cancel or finish) —
+   * the ways of §14.2.3 in order (`auto`: the LAN, then the cloud); the first that answers.
    */
-  private async settleCall<T>(txId: string, fn: (c: CashCalls) => Promise<CashReply<T>>): Promise<CashReply<T> | null> {
+  private async settleCall<T>(txId: string, fn: (c: CashCalls) => Promise<CashReply<T>>, own = false): Promise<CashReply<T> | null> {
     const p = this.pending().find((x) => x.txId === txId);
-    const order = recoveryVia(this.settings().route, this.ownHost());
-    const ways = p?.via ? [p.via, ...order.filter((v) => v !== p.via)] : order;
+    const ways = own && p?.via ? [p.via] : recoveryVia(this.settings().route, this.ownHost());
     let last: CashReply<T> | null = null;
     for (const via of ways) {
       const c = this.transport(via);
@@ -394,7 +398,7 @@ export class CashPay {
           }
           if (r.body.state === 'granted') break;
           const long = this.now() - queueStart > settings.queueTimeoutSec * 1000;
-          onProgress({ stage: 'queued', position: r.body.position, tx: null, message: queuedMessage(r.body.position, long) });
+          onProgress({ stage: 'queued', position: r.body.position, tx: null, message: queuedMessage(r.body.position, long), longWait: long });
         } else if (r.kind === 'refused') {
           if (r.error === 'unknown_lease') pending.leaseId = null;
           else {
@@ -492,6 +496,7 @@ export class CashPay {
           if (tx.state === 'DONE' || tx.state === 'HELD') {
             pending.finalState = tx.state;
             this.savePending(pending);
+            this.endedHere.add(txId);
             if (tx.state === 'HELD') return { kind: 'held', tx };
             if (tx.outcome === 'paid') return { kind: 'paid', tx };
             return { kind: 'refunded', tx, message: tx.outcome === 'nothing_inserted' ? 'לא הוכנס כסף' : 'הכסף הוחזר' };
@@ -514,7 +519,8 @@ export class CashPay {
    * [extra]: the customer's choice for the change owed (§11.15א); `void` — a split sale's document voided (§11.15ב).
    */
   async ack(txId: string, documentId: string | null, documentNumber: string | null, orderLabel: string | null = null, extra: { changeOwedAs?: OwedChoice | null; void?: boolean } = {}): Promise<boolean> {
-    const r = await this.settleCall(txId, (c) => c.ack(txId, documentId, documentNumber, orderLabel, extra));
+    const own = this.endedHere.delete(txId);
+    const r = await this.settleCall(txId, (c) => c.ack(txId, documentId, documentNumber, orderLabel, extra), own);
     if (!r) return false;
     if (r.kind === 'ok' || (r.kind === 'refused' && r.status === 404)) {
       this.forget(txId);

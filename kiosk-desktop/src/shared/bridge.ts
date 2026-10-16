@@ -264,6 +264,8 @@ export interface CashPayView {
   question?: { title: string; text: string } | null;
   /** In the queue: the place (1 = next). */
   position: number | null;
+  /** In the queue past `cashQueueTimeoutSec` ("ההמתנה ארוכה מהרגיל", P:/specs/cash-paylink.md §14.3). */
+  longWait?: boolean;
   stationName: string | null;
   insertedAgorot: number;
   dueAgorot: number;
