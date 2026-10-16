@@ -75,7 +75,10 @@ export function KioskWorkModeCard({
     },
     onError: (err) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
-  // An older server, or a closed gate the reader may not open: the feature does not exist here.
+  // "סוג רישיון" (lib/deviceLicense.ts): a licensed device's gate is its license's — no switch here.
+  const byLicense = !!till?.byLicense;
+  // An older server, or a closed gate the reader may not open: the feature does not exist here. (A super
+  // admin / distributor still sees the card of a closed licensed gate: it says the license decides.)
   if (!till || (!till.enabled && !mayGate)) return null;
   const inTill = till.mode === 'till';
   const display = kiosk.display;
@@ -107,13 +110,13 @@ export function KioskWorkModeCard({
           <p className="text-xs text-muted-foreground">{t('hint')}</p>
         </>
       ) : null}
-      {mayGate ? (
+      {mayGate && !byLicense ? (
         <label className="flex items-center gap-2 text-sm">
           <Switch checked={till.enabled} disabled={gate.isPending} onCheckedChange={(v) => gate.mutate(v)} />
           <span>{t('gate')}</span>
         </label>
       ) : null}
-      {mayGate && !till.enabled ? <p className="text-xs text-muted-foreground">{t('gateHint')}</p> : null}
+      {mayGate && !byLicense && !till.enabled ? <p className="text-xs text-muted-foreground">{t('gateHint')}</p> : null}
       {mayGate && till.enabled && startMode ? (
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -144,6 +147,12 @@ export function KioskWorkModeCard({
       ) : null}
       {!mayGate && till.enabled && startMode && startMode !== 'last' ? (
         <p className="text-xs text-muted-foreground">{t('startModeNow', { mode: t(START_LABELS[startMode]) })}</p>
+      ) : null}
+      {byLicense && till.licenseProductLabel ? (
+        <p className="text-xs text-muted-foreground">
+          {t('byLicense', { product: till.licenseProductLabel })}
+          {mayGate && !till.enabled ? ` · ${t('byLicenseHint')}` : null}
+        </p>
       ) : null}
       {display?.widthDp && display.heightDp ? (
         <p className="flex items-center gap-1 text-xs text-muted-foreground">

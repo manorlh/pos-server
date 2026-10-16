@@ -103,6 +103,7 @@ def create_pairing_code(
     kds_options: Optional[dict] = None,
     work_config: Optional[dict] = None,
     machine_name: Optional[str] = None,
+    license_product: Optional[str] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
@@ -119,6 +120,8 @@ def create_pairing_code(
     `work_config.check_pairing_request`) is applied to the new machine right after it pairs.
     `machine_name` (already cleaned, `machine_names.clean_machine_name`) is the name the new machine
     gets, over a name the device sends itself; None leaves the default (docs/SPEC_PAIRING_QR.md §4).
+    `license_product` ("סוג רישיון", checked by `device_license.check_pairing`) is the new till / kiosk's
+    product; None — the role's default (P:/specs/device-license-type.md §2).
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -148,6 +151,7 @@ def create_pairing_code(
         kds_options=kds_options,
         work_config=work_config,
         machine_name=machine_name,
+        license_product=license_product,
         expires_at=expires_at,
         is_used=False,
     )
@@ -237,6 +241,8 @@ def validate_pairing_code(
             is_local_server=getattr(pairing_code, "device_role", None) == display_devices.ROLE_LOCAL_SERVER,
             # "שרת מזומן" (P:/specs/cash-paylink.md §2): non-fiscal, the shop's cash units' host.
             is_cash_host=getattr(pairing_code, "device_role", None) == display_devices.ROLE_CASH_HOST,
+            # "סוג רישיון" (P:/specs/device-license-type.md §2): the code's, else its role's default.
+            license_product=_code_license(pairing_code),
         )
 
     pairing_code.is_used = True
@@ -279,6 +285,12 @@ def validate_pairing_code(
     work_config.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
+
+
+def _code_license(pairing_code: PairingCode) -> Optional[str]:
+    from app.services import device_license
+
+    return device_license.for_code(pairing_code)
 
 
 def refuse_inactive_target(db: Session, pairing_code: PairingCode) -> None:
@@ -340,11 +352,13 @@ def create_pos_machine(
     platform: Optional[str] = None,
     is_local_server: bool = False,
     is_cash_host: bool = False,
+    license_product: Optional[str] = None,
 ) -> POSMachine:
     """
     Create a new POS machine row in PAIRED status (not yet assigned to a shop).
     `is_fiscal` False: a display device (app/services/display_devices.py). `platform`
-    defaults to what `device_info` says.
+    defaults to what `device_info` says. A till / kiosk gets its "סוג רישיון" (`license_product`, else
+    "קופה בלבד") with the pairing's history entry (app/services/device_license.py).
     """
     from app.services.display_devices import platform_of_device_info
 
@@ -388,6 +402,12 @@ def create_pos_machine(
     db.add(pos_machine)
     db.flush()
     if pos_machine.is_fiscal:
+        from app.services import device_license
+
+        device_license.record(
+            pos_machine, license_product or device_license.TILL,
+            user=db.query(User).filter(User.id == distributor_id).first(), source=device_license.SOURCE_PAIRING,
+        )
         # The same device paired before as another machine (an ordinary code, not a
         # replacement): linked, so what it still delivers of that machine is filed under
         # it, and what that machine still owed is kept (docs/SHIFTS_API.md §1.2c-bis).

@@ -44,6 +44,7 @@ import {
   KioskPinpadWarning,
 } from '@/components/dashboard/machines/device-role';
 import { WebScreenNote } from '@/components/dashboard/machines/web-screen-note';
+import { DeviceLicenseMismatchNote, DeviceLicenseValue } from '@/components/dashboard/machines/device-license';
 import { isCashHost, isDisplayDevice, isLocalServer } from '@/lib/deviceProfile';
 import { LocalServerDeviceCard } from '@/components/dashboard/local-server-dedicated';
 import { CashHostDeviceCard } from '@/components/dashboard/cash-stations/cash-host-card';
@@ -433,6 +434,13 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </span>
             }
           />
+          {/* "סוג רישיון" (P:/specs/device-license-type.md): a till / kiosk only; changed by a super admin / distributor. */}
+          {machine.licenseProduct ? (
+            <Field
+              label={tMachines('license.label')}
+              value={<DeviceLicenseValue machine={machine} canEdit={!removed} />}
+            />
+          ) : null}
           <Field
             label={tMachines('deviceModel.label')}
             value={
@@ -618,6 +626,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               kiosk={machine.deviceRole === 'kiosk'}
             />
             <DeviceModelWarningNote m={machine} />
+            {/* "סוג רישיון" that does not fit the role (e.g. a kiosk code whose conversion failed). */}
+            <DeviceLicenseMismatchNote m={machine} />
             {/* "מכשירי הסליקה הם חיצוניים": a kiosk with no pinpad address cannot take a card. */}
             <KioskPinpadWarning m={machine} />
           </div>

@@ -19,6 +19,7 @@
  */
 
 import { findByPin, lockAt, LOCKOUT_MS, MAX_FAILURES, NO_LOCK, usersAllowed, type BcryptCompare, type ExitLock, type RosterUser } from './desktopExit';
+import { LICENSE_LABELS, LICENSE_TEXT, fillLicenseText, licenseForbidsWorkMode, parseLicenseProduct, workModeAllowed, type LicenseProduct } from './deviceLicense';
 
 /** The permission a manager's code must hold (till_permissions.py, the Android `Perm.KIOSK_TILL_MODE`). */
 export const KIOSK_TILL_MODE = 'KIOSK_TILL_MODE';
@@ -72,12 +73,17 @@ export function parseStartMode(value: unknown): StartMode {
 
 /** The till parameters of the feature (pos-server app/services/kiosk_till_mode.py, company → shop → area → device). */
 export interface TillModeParams {
-  /** The owner's gate: off — no button, no menu item, no dashboard switch. */
+  /**
+   * The owner's gate: off — no button, no menu item, no dashboard switch. With a "סוג רישיון" (core/deviceLicense.ts)
+   * it is the license's: on for `kiosk_till`, off for `till` / `kiosk` whatever the parameter says.
+   */
   enabled: boolean;
   /** A kiosk device in till mode goes back to the kiosk after this many idle minutes, at rest only; 0 = never. */
   idleReturnMinutes: number;
   /** The mode the device starts in (`startStep`); `last` — as before. */
   startMode: StartMode;
+  /** The device's "סוג רישיון" as the cloud last said it (null — none said: the gate decides). */
+  licenseProduct?: LicenseProduct | null;
 }
 
 export const NO_PARAMS: TillModeParams = { enabled: false, idleReturnMinutes: DEFAULT_IDLE_MINUTES, startMode: DEFAULT_START_MODE };
@@ -102,13 +108,19 @@ function boolOf(v: unknown, fallback: boolean): boolean {
   }
 }
 
-/** The till's parameters map (the cloud's `parameters`); anything missing or wrong — the default, never a fail-open. */
-export function paramsOf(parameters: Record<string, unknown> | null | undefined): TillModeParams {
+/**
+ * The till's parameters map (the cloud's `parameters`); anything missing or wrong — the default, never a fail-open.
+ * `licenseProduct` ("סוג רישיון", core/deviceLicense.ts): `kiosk_till` opens the gate, `till` / `kiosk` close it.
+ */
+export function paramsOf(parameters: Record<string, unknown> | null | undefined, licenseProduct?: unknown): TillModeParams {
   const p = parameters ?? {};
   const raw = p[PARAM_IDLE_RETURN];
   const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw.trim()) : Number.NaN;
   const idle = Number.isFinite(n) && n >= 0 && n === Math.floor(n) ? Math.min(MAX_IDLE_MINUTES, n) : DEFAULT_IDLE_MINUTES;
-  return { enabled: boolOf(p[PARAM_ENABLED], false), idleReturnMinutes: idle, startMode: parseStartMode(p[PARAM_START_MODE]) };
+  const license = parseLicenseProduct(licenseProduct);
+  const enabled = workModeAllowed(license, boolOf(p[PARAM_ENABLED], false));
+  const base: TillModeParams = { enabled, idleReturnMinutes: idle, startMode: parseStartMode(p[PARAM_START_MODE]) };
+  return license ? { ...base, licenseProduct: license } : base;
 }
 
 /* --------------------------------------------------------------- refusals */
@@ -121,9 +133,10 @@ export function paramsOf(parameters: Record<string, unknown> | null | undefined)
  *  - `basket_open`: the till's sell screen has lines rung up;
  *  - `payment_open`: the till's payment screen is up, holds a tender, or a card is on the terminal;
  *  - `table_open`: a table's order is open on screen;
- *  - `kiosk_config_missing`: a till's first kiosk mode — no kiosk config on the device yet, and the cloud did not answer.
+ *  - `kiosk_config_missing`: a till's first kiosk mode — no kiosk config on the device yet, and the cloud did not answer;
+ *  - `license`: the device's "סוג רישיון" is "קופה בלבד" / "קיוסק בלבד" — no work mode at all (core/deviceLicense.ts).
  */
-export type RefusalCode = 'disabled' | 'kiosk_payment' | 'customer_ordering' | 'basket_open' | 'payment_open' | 'table_open' | 'kiosk_config_missing';
+export type RefusalCode = 'disabled' | 'kiosk_payment' | 'customer_ordering' | 'basket_open' | 'payment_open' | 'table_open' | 'kiosk_config_missing' | 'license';
 
 /** The Android app's `kwork_refused_*`, word for word. */
 export const REFUSAL_TEXT: Record<RefusalCode, string> = {
@@ -134,6 +147,8 @@ export const REFUSAL_TEXT: Record<RefusalCode, string> = {
   payment_open: 'יש תשלום בתהליך — סיימו אותו קודם',
   table_open: 'הזמנת שולחן פתוחה במסך — סגרו אותה קודם',
   kiosk_config_missing: 'אין עדיין תצורת קיוסק במכשיר — נדרש חיבור לענן בפעם הראשונה',
+  // The words without the product (the cloud's `BLOCKED_TEXTS["license"]`); `licenseRefusal` names it.
+  license: LICENSE_TEXT.blocked,
 };
 
 /** A refusal: its wire code (for the cloud) and its Hebrew text (for the screen). */
@@ -152,7 +167,18 @@ export const REFUSALS: Readonly<Record<RefusalCode, TillModeRefusal>> = {
   payment_open: refusalOf('payment_open'),
   table_open: refusalOf('table_open'),
   kiosk_config_missing: refusalOf('kiosk_config_missing'),
+  license: refusalOf('license'),
 };
+
+/** "סוג הרישיון של המכשיר (קיוסק בלבד) אינו כולל מעבר בין קיוסק לקופה" — the license's refusal, named. */
+export function licenseRefusal(product: 'till' | 'kiosk'): TillModeRefusal {
+  return Object.freeze({ wire: 'license' as const, text: fillLicenseText(LICENSE_TEXT.refusal, { label: LICENSE_LABELS[product] }) });
+}
+
+/** Why the work mode is closed: the license that leaves it out, else the owner's gate. */
+export function closedRefusal(params: TillModeParams): TillModeRefusal {
+  return licenseForbidsWorkMode(params.licenseProduct) ? licenseRefusal(params.licenseProduct) : REFUSALS.disabled;
+}
 
 export function refusalText(r: TillModeRefusal | RefusalCode): string {
   return typeof r === 'string' ? REFUSAL_TEXT[r] : r.text;
@@ -363,7 +389,7 @@ export function approval(codeHolds: boolean): TillApproval {
 
 /** Whether the device may go to the till now; null — yes. */
 export function mayEnter(params: TillModeParams, kiosk: KioskSideFacts): TillModeRefusal | null {
-  if (!params.enabled) return REFUSALS.disabled;
+  if (!params.enabled) return closedRefusal(params);
   if (kiosk.paying || kiosk.cardInFlight) return REFUSALS.kiosk_payment;
   if (kiosk.ordering) return REFUSALS.customer_ordering;
   return null;
@@ -413,7 +439,7 @@ export interface CommandOutcome {
 }
 
 export function remote(command: WorkModeCommand, current: WorkMode, params: TillModeParams, kiosk: KioskSideFacts, till: TillSideFacts): CommandOutcome {
-  if (!params.enabled) return { run: false, done: true, blocked: REFUSALS.disabled };
+  if (!params.enabled) return { run: false, done: true, blocked: closedRefusal(params) };
   if (command.mode === current) return { run: false, done: true, blocked: null };
   const refusal = command.mode === 'till' ? mayEnter(params, kiosk) : mayReturn(till);
   return refusal === null ? { run: true, done: true, blocked: null } : { run: false, done: false, blocked: refusal };

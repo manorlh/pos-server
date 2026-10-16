@@ -64,3 +64,14 @@ class DeviceProfileIn(BaseModel):
     #: Used when a board becomes a KDS (its screen); ignored otherwise. A till never becomes
     #: a display device here, nor back (409 `device_role_change_requires_pairing`).
     kds: Optional[KdsScreenOptionsIn] = None
+    #: "סוג רישיון" with the change (P:/specs/device-license-type.md §2): a super admin / the device's
+    #: distributor only (403); the new role must fit it (409 `license_product_role_mismatch`).
+    license_product: Optional[str] = Field(None, alias="licenseProduct", max_length=32)
+
+
+class LicenseProductIn(BaseModel):
+    """`PUT /machines/{id}/license-product`: "till" | "kiosk" | "kiosk_till" (app/services/device_license.py)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    license_product: Optional[str] = Field(None, alias="licenseProduct", max_length=32)

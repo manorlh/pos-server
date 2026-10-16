@@ -96,6 +96,8 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
                 תפקיד: <b>{shellView.role ? ROLE_INFO[shellView.role].label : 'לא ידוע עדיין'}</b> (נקבע בענן, בהוספת המכשיר)
               </div>
               <div>{shellView.fiscal ? 'מכשיר קופתי' : 'מסך — לא קופה: בלי מכירות, משמרות, Z או תשלומים'}</div>
+              {info?.license?.info ? <div>{info.license.info}</div> : null}
+              {info?.license?.warning ? <div className="font-semibold text-amber-700">{info.license.warning}</div> : null}
               <div>
                 {info?.machine?.name ?? shellView.machineName ?? '—'} · {info?.shopName ?? shellView.shopName ?? '—'}
               </div>

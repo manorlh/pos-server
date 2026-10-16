@@ -86,6 +86,14 @@ def generate_pairing_code(
         )
     except device_profile.DeviceProfileRefused as refused:
         return JSONResponse(status_code=refused.status_code, content=refused.body)
+    # "סוג רישיון" (P:/specs/device-license-type.md §2): a till / kiosk code's product, checked against the
+    # role now (422 `license_product_role_mismatch` / `license_product_not_applicable`, Hebrew `message`).
+    from app.services import device_license
+
+    try:
+        license_product = device_license.check_pairing(device_role, body.license_product)
+    except device_license.LicenseRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.1): the Android app in its server role.
     from app.services import local_server_device
 
@@ -146,6 +154,7 @@ def generate_pairing_code(
             work_config=work_config,
             # "שם המכשיר — לא חובה": a till's name from the form (already cleaned by the schema).
             machine_name=body.name if device_role in (None, "till") else None,
+            license_product=license_product,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(
@@ -191,7 +200,21 @@ def validate_pairing(
         )
 
     machine_token = create_machine_token(str(machine.id), machine.token_version or 1)
-    return machine_realtime_connection_info(machine=machine, access_token=machine_token)
+    answer = machine_realtime_connection_info(machine=machine, access_token=machine_token)
+    # "סוג רישיון" (P:/specs/device-license-type.md §7.3): what the device was set up as, for its pairing
+    # screen ("המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד"). Never fails the pairing.
+    try:
+        from app.services import device_license
+
+        product = device_license.product_of(db, machine)
+        answer.update({
+            "deviceRole": device_profile.effective_role(db, machine),
+            "licenseProduct": product,
+            "licenseProductLabel": device_license.label(product),
+        })
+    except Exception:  # noqa: BLE001
+        pass
+    return answer
 
 
 @router.get("/codes", response_model=List[PairingCodeResponse])

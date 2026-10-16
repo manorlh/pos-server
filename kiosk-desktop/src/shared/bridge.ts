@@ -466,6 +466,8 @@ export interface AdminWorkMode {
 export interface TechnicianInfo {
   machine: KioskView['machine'];
   deviceRole: string | null;
+  /** "סוג רישיון" (core/deviceLicense.ts): the product, "סוג רישיון: …", and the mismatch warning; null — none said. */
+  license?: { product: string; label: string | null; info: string | null; warning: string | null } | null;
   shopName: string | null;
   companyName: string | null;
   network: { online: boolean; lastBeatOkAt: number | null; serverUrl: string | null; interfaces: Array<{ name: string; address: string }> };
@@ -490,6 +492,12 @@ export interface TechnicianInfo {
   quickSupport: string | null;
 }
 
+/**
+ * The pairing's answer: done — with "המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד" (`notice`) and, when the license does
+ * not fit the role it opened in, its warning (core/deviceLicense.ts) — or the cloud's refusal in Hebrew.
+ */
+export type PairOutcome = { ok: true; notice?: string | null; warning?: string | null } | { ok: false; error: string };
+
 export interface KioskEvents {
   view: KioskView;
   pay: PayProgress;
@@ -499,7 +507,7 @@ export interface KioskEvents {
 /** What the screens may ask (ipcRenderer.invoke under the hood). */
 export interface KioskBridge {
   bootstrap(): Promise<KioskView>;
-  pair(input: { serverUrl: string; code: string; machineName: string }): Promise<{ ok: true } | { ok: false; error: string }>;
+  pair(input: { serverUrl: string; code: string; machineName: string }): Promise<PairOutcome>;
   reportFlow(input: { flowState: string; screen: string; busy: boolean; idle: boolean }): void;
   /** "ביצועי קיוסקים": the funnel's events (core/kioskFunnel.ts), kept and sent to the cloud by the service. */
   funnel?(events: FunnelEvent[]): void;

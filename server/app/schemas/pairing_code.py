@@ -26,6 +26,9 @@ class PairingCodeGenerateRequest(BaseModel):
     device_role: Optional[DeviceRole] = Field(None, alias="deviceRole")
     #: The kiosk's name, controlling tills and device lock, for a kiosk code.
     kiosk: Optional[KioskOptionsIn] = None
+    #: "סוג רישיון" (P:/specs/device-license-type.md): "till" | "kiosk" | "kiosk_till" for a till / kiosk
+    #: code; absent — the role's default (till → till, kiosk → kiosk). Checked against the role (422).
+    license_product: Optional[str] = Field(None, alias="licenseProduct", max_length=32)
     #: "android" (the default) | "windows": a device of the other platform is refused at
     #: redemption (422 `platform_mismatch`).
     platform: Optional[DevicePlatform] = None
@@ -78,6 +81,8 @@ class PairingCodeResponse(BaseModel):
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
     device_model: Optional[str] = Field(None, alias="deviceModel")
     device_role: Optional[str] = Field(None, alias="deviceRole")
+    #: "סוג רישיון" the code gives the device (null: the role's default, or not a till / kiosk).
+    license_product: Optional[str] = Field(None, alias="licenseProduct")
     platform: Optional[str] = None
     #: The plan the code carries, and — once a device redeemed it — how applying it went.
     work_config: Optional[Dict[str, Any]] = Field(None, alias="workConfig")

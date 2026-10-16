@@ -38,6 +38,7 @@ import {
   START_RETRY_MS,
   TICK_MS,
   TILL_TICK_MS,
+  closedRefusal,
   decideManager,
   eventDetails,
   heldNoticeOf,
@@ -214,6 +215,8 @@ export interface WorkModeDeps {
   deviceRole(): unknown;
   /** The till parameters (`param.<key>`). */
   parameters(): Record<string, unknown>;
+  /** "סוג רישיון" as the cloud last said it (core/deviceLicense.ts); absent / null — the gate decides. */
+  licenseProduct?(): unknown;
   /** The shop's POS users, with their PIN hashes and effective permissions. */
   roster(): RosterUser[];
   shopId(): string | null;
@@ -334,7 +337,7 @@ export class WorkModeRuntime {
 
   /** The feature's parameters as this device has them. */
   params(): TillModeParams {
-    return paramsOf(this.d.parameters());
+    return paramsOf(this.d.parameters(), this.d.licenseProduct?.());
   }
 
   /**
@@ -567,7 +570,7 @@ export class WorkModeRuntime {
     return this.withLock(async () => {
       if (!this.applicable()) return REFUSALS.disabled;
       if (this.mode() === 'kiosk') return null;
-      if (this.homeTill() && !this.params().enabled) return REFUSALS.disabled;
+      if (this.homeTill() && !this.params().enabled) return closedRefusal(this.params());
       const till = this.tillFacts();
       const refusal = mayReturn(till);
       if (refusal) return refusal;
@@ -878,6 +881,7 @@ export function createWorkMode(svc: KioskService, log: (m: string) => void = () 
     cloudKnown: () => svc.cloud.parametersKnown() && svc.cloud.kioskSnapshot() !== null,
     deviceRole: () => svc.cloud.machine()?.deviceRole ?? null,
     parameters: () => svc.cloud.parameters(),
+    licenseProduct: () => svc.cloud.licenseProduct(),
     roster: () => svc.cloud.posUsers(),
     shopId: () => svc.shopIdHere(),
     kioskFacts: () => svc.kioskSideFacts(),

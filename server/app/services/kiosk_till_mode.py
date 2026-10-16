@@ -83,6 +83,8 @@ BLOCKED_TEXTS = {
     "kiosk_payment": "ממתין — לקוח משלם בקיוסק",
     "customer_ordering": "ממתין — לקוח באמצע הזמנה",
     "disabled": "מצב קופה אינו מופעל",
+    # "סוג רישיון" (app/services/device_license.py): the device's license has no work mode.
+    "license": "רישיון המכשיר אינו כולל מעבר בין קיוסק לקופה",
 }
 
 PARAMETER_SPECS = (
@@ -97,7 +99,9 @@ PARAMETER_SPECS = (
             "(והחוצה, גם מתפריט הקופה), והמצב נשמר גם אחרי הפעלה מחדש. בדשבורד מופיע אותו מתג לכל קיוסק. "
             "אותה מכונה, אותה סדרת מסמכים ואותם חוקי משמרת ו-Z; המסמכים על שם העובד שנכנס. "
             "לא באמצע הזמנה או תשלום. כשכבוי (ברירת המחדל) — האפשרות לא קיימת בכלל. "
-            "רק מנהל-על או מפיץ רשאים לשנות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או מכשיר."
+            "רק מנהל-על או מפיץ רשאים לשנות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או מכשיר. "
+            "למכשיר עם סוג רישיון הערך נקבע לפי הרישיון: \"משולב\" — מופעל, \"קופה בלבד\" / "
+            "\"קיוסק בלבד\" — כבוי; הפרמטר חל רק על מכשיר בלי סוג רישיון."
         ),
     ),
     dict(
@@ -228,6 +232,10 @@ def set_gate(db: Session, machine: Any, enabled: Optional[bool], user: Any, *, n
     A super admin or a distributor only (403 otherwise). The caller commits, then notifies the device.
     """
     refuse_admin_only(ENABLED_KEY, user)
+    # "סוג רישיון": a licensed device's gate is its license's — changed on the machine page (409 otherwise).
+    from app.services import device_license
+
+    device_license.check_gate_switch(machine)
     if enabled is not None and not isinstance(enabled, bool):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="enabled must be true, false or null")
     _set_machine_value(db, machine, ENABLED_KEY, enabled, user, now=now)
@@ -303,7 +311,12 @@ def check_work_mode(db: Session, machine: Any, action: str) -> str:
     if mode is None:
         raise KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_work_mode", "מצב עבודה: enter_till או return_kiosk")
     if not effective(db, machine)["enabled"]:
-        raise KioskCommandRefused(status.HTTP_409_CONFLICT, "till_mode_disabled", "מצב קופה אינו מופעל לקיוסק הזה")
+        from app.services import device_license
+
+        raise KioskCommandRefused(
+            status.HTTP_409_CONFLICT, "till_mode_disabled",
+            device_license.work_mode_refusal_message(machine) or "מצב קופה אינו מופעל לקיוסק הזה",
+        )
     return mode
 
 
@@ -347,7 +360,10 @@ def work_mode_of(status_report: Any) -> str:
 
 def summary_part(db: Session, machine: Any, status_report: Any) -> Dict[str, Any]:
     """What the dashboard's kiosk panels show of the feature: the gate, the mode, the waiting switch."""
+    from app.services import device_license
+
     settings = effective(db, machine)
+    product = device_license.product_of(db, machine)
     till = status_report.get("tillMode") if isinstance(status_report, dict) else None
     till = till if isinstance(till, dict) else {}
     blocked = till.get("returnBlocked")
@@ -362,6 +378,10 @@ def summary_part(db: Session, machine: Any, status_report: Any) -> Dict[str, Any
         "employee": till.get("employee"),
         "blocked": blocked,
         "blockedText": BLOCKED_TEXTS.get(blocked) if blocked else None,
+        # "סוג רישיון": the device's product, and whether the gate above is its (no switch on the kiosk page).
+        "licenseProduct": product,
+        "licenseProductLabel": device_license.label(product),
+        "byLicense": device_license.stored(machine) is not None,
     }
 
 

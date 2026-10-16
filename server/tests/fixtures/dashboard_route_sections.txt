@@ -363,6 +363,7 @@ PUT /machine-groups/{group_id}/machines -> devices|products:edit
 GET /machines -> reference
 POST /machines/close-day -> z:edit
 GET /machines/document-prefix-conflicts -> devices|reports:view
+GET /machines/license-products/counts -> devices:view
 GET /machines/search -> reference
 GET /machines/sync-status -> devices:view
 POST /machines/terminal-number/force -> till_settings|devices:edit
@@ -380,6 +381,7 @@ GET /machines/{machine_id}/document-prefix -> devices|reports:view
 POST /machines/{machine_id}/document-prefix/assign-free -> devices:edit
 GET /machines/{machine_id}/lan-server -> devices:view
 PUT /machines/{machine_id}/lan-server -> devices:edit
+PUT /machines/{machine_id}/license-product -> devices:edit
 GET /machines/{machine_id}/local-server -> devices|device_control:view
 POST /machines/{machine_id}/local-server/commands -> devices|device_control:edit
 GET /machines/{machine_id}/payment-devices -> till_settings|devices:view

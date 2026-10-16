@@ -271,6 +271,8 @@ describe('the Android app’s Hebrew, word for word', () => {
       payment_open: 'יש תשלום בתהליך — סיימו אותו קודם',
       table_open: 'הזמנת שולחן פתוחה במסך — סגרו אותה קודם',
       kiosk_config_missing: 'אין עדיין תצורת קיוסק במכשיר — נדרש חיבור לענן בפעם הראשונה',
+      // "סוג רישיון" (core/deviceLicense.ts): the words without the product; `licenseRefusal` names it.
+      license: 'רישיון המכשיר אינו כולל מעבר בין קיוסק לקופה',
     });
   });
   it('the section, the banner, the countdown', () => {
