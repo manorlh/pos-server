@@ -4,10 +4,12 @@
   admin; the row stays (tills' status rows point at it) and is never offered again.
 * `app_release_file_deletions` — the audit: one row per deleted file.
 
-Add-only and idempotent (the API's create_all may have made any of it first).
+Add-only and idempotent (the API's create_all may have made any of it first). Also the merge of
+main's two heads: d9e4b1f7a3c6 (unpair / cloud pairing) and b7e3a9d1c5f2 (windows7 platform),
+both on a1d5e8c3b7f2.
 
 Revision ID: c4e7a2f9b1d8
-Revises: d9e4b1f7a3c6
+Revises: d9e4b1f7a3c6, b7e3a9d1c5f2
 Create Date: 2026-10-17 12:00:00
 """
 from __future__ import annotations
@@ -19,7 +21,7 @@ from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "c4e7a2f9b1d8"
-down_revision: Union[str, Sequence[str], None] = "d9e4b1f7a3c6"
+down_revision: Union[str, Sequence[str], None] = ("d9e4b1f7a3c6", "b7e3a9d1c5f2")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
