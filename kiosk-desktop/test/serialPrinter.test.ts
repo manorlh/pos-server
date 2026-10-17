@@ -19,6 +19,8 @@ import {
 import { DefaultTransport, serialLineOf, type PrinterTarget } from '../src/main/printer/transports';
 import { targetText } from '../src/main/printer/usbPrinters';
 import { DRAWER_KICK } from '../src/core/escpos';
+import { PrinterStatusMemory } from '../src/core/kitchen/delivery';
+import { PrinterNotReady, PrintUncertain } from '../src/core/kitchen/queue';
 import { harness, type Harness } from './tillEngineHarness';
 
 /* ------------------------------------------------------------------ the fake port */
@@ -221,6 +223,25 @@ describe('a job, the status, the speed', () => {
     expect(world.openNow.get('COM3')).toBe(0);
     world.printers_('COM4', { baud: 9600, status: OK_STATUS, failAfter: 1500 });
     await expect(serial.send({ path: 'COM4', baudRate: 9600, flow: 'none' }, new Uint8Array(3000))).rejects.toMatchObject({ partial: true });
+  });
+
+  it('a page: DLE EOT before (paper out → nothing sent) and after (paper out → may be cut short), on one open port', async () => {
+    const { world, serial } = rig();
+    world.printers_('COM3', { baud: 9600, status: { 1: 0x16, 2: 0x12, 4: 0x72 } });
+    await expect(serial.sendPage({ path: 'COM3', baudRate: 9600, flow: 'none' }, new Uint8Array(100), new PrinterStatusMemory())).rejects.toBeInstanceOf(PrinterNotReady);
+    expect((world.received.get('COM3') ?? []).filter((b) => b === 0)).toEqual([]);
+    world.printers.get('COM3')!.status = OK_STATUS;
+    world.received.clear();
+    await serial.sendPage({ path: 'COM3', baudRate: 9600, flow: 'none' }, new Uint8Array(100), new PrinterStatusMemory());
+    expect(world.received.get('COM3')!.filter((b) => b === 0)).toHaveLength(100);
+    expect(world.trace.filter((t) => t.startsWith('open')).length).toBe(2);
+    // A printer silent on status: printed as before.
+    world.printers_('COM4', { baud: 9600, status: OK_STATUS, silent: true });
+    await serial.sendPage({ path: 'COM4', baudRate: 9600, flow: 'none' }, new Uint8Array(50), new PrinterStatusMemory());
+    expect(world.received.get('COM4')!.filter((b) => b === 0)).toHaveLength(50);
+    // Cut short: a failure after the first slice.
+    world.printers_('COM5', { baud: 9600, status: OK_STATUS, failAfter: 1100 });
+    await expect(serial.sendPage({ path: 'COM5', baudRate: 9600, flow: 'none' }, new Uint8Array(3000), new PrinterStatusMemory())).rejects.toBeInstanceOf(PrintUncertain);
   });
 
   it('without the serialport package: a clear refusal', async () => {

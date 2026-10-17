@@ -11,6 +11,7 @@ import { KioskCoreTillEngine, type TillEngineOptions, type TillWorkMode } from '
 import type { TillRemotePrintOptions } from '../src/main/till/tillRemotePrint';
 import { KioskService } from '../src/main/service';
 import type { ApprovedCard, PaymentProvider, RefundRequest, SaleRequest, SaleResult, Resolution } from '../src/main/payment/provider';
+import type { PageRenderer } from '../src/main/printer/printQueue';
 import type { Transport } from '../src/main/printer/transports';
 import type { EngineEvent, EngineReply, TillOp, TillState } from '../src/shared/till/protocol';
 
@@ -95,8 +96,6 @@ export interface HarnessOptions {
   /** The fake cloud's answers by `METHOD path` (a `…/*` key matches a prefix); a function gets the request's JSON body. */
   answers?: Record<string, (body: Record<string, unknown> | null) => unknown>;
   dealerType?: string;
-  /** The printer transport (default: a fake that prints nothing). */
-  transport?: Transport;
   now?: () => number;
   /** "הדפסה בקופה אחרת": the LAN, the clock, the drawing. */
   remotePrint?: TillRemotePrintOptions;
@@ -108,6 +107,10 @@ export interface HarnessOptions {
   unpairBackupDir?: string;
   /** "מזומן במכשיר": the till's CashMag / cash station clients (fakes), made over the service. */
   deviceCash?: (svc: KioskService) => TillEngineOptions['deviceCash'];
+  /** A printer transport of the test's own (test/fakePrinter.ts over TCP); default: one that keeps the bytes. */
+  transport?: Transport;
+  /** The page drawing (none: nothing is printed — the queue waits for a renderer). */
+  renderer?: PageRenderer;
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -153,6 +156,7 @@ export function harness(o: HarnessOptions = {}): Harness {
     appVersion: '0.5.0',
     deviceInfo: { platform: 'windows' },
     transport: o.transport ?? printer,
+    renderer: o.renderer,
     platform: o.platform,
     unpairBackupDir: o.unpairBackupDir,
     fetch: fetchFn,

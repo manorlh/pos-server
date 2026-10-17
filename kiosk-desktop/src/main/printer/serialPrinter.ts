@@ -17,6 +17,7 @@
  */
 
 import { parseStatus, STATUS_OFFLINE, STATUS_PAPER, STATUS_PRINTER, validStatusByte, type PrinterStatusBits } from '../../core/escpos';
+import { PartialWrite, printDirect, PrinterStatusMemory, readiness, rememberingLink, type PrinterLink } from '../../core/kitchen/delivery';
 
 export const SERIAL_BAUDS = [9600, 19200, 38400, 115200] as const;
 export const DEFAULT_BAUD = 9600;
@@ -174,6 +175,9 @@ export interface SerialPrintersOptions {
 
 const realSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** Which COM printers answer `DLE EOT` (one that never does is not asked before each page). */
+const serialStatusMemory = new PrinterStatusMemory();
+
 /** Every serial printer of the device: one lock per port, the port opened for a use and closed after it. */
 export class SerialPrinters {
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -246,30 +250,72 @@ export class SerialPrinters {
    * open) longer than the line needs plus 10 s fails the job. Throws [SerialPrinterError] (`partial` once a byte went).
    */
   async send(line: SerialLine, bytes: Uint8Array): Promise<void> {
-    const chunk = this.o.chunk ?? 1024;
     await this.withPort(line, async (port) => {
-      const perByteMs = 10_000 / normalizeBaud(line.baudRate);
-      let sent = 0;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        const slice = Buffer.from(bytes.subarray(i, i + chunk));
-        const limit = Math.ceil(slice.length * perByteMs) + (this.o.stallMs ?? 10_000);
-        try {
-          await this.timed(
-            (async () => {
-              await this.write(port, slice);
-              await this.drain(port);
-            })(),
-            limit,
-            'המדפסת לא קיבלה את הנתונים (זמן קצוב)',
-          );
-        } catch (e) {
-          throw new SerialPrinterError(`${line.path}: ${e instanceof Error ? e.message : String(e)}`, sent > 0);
-        }
-        sent += slice.length;
+      try {
+        await this.writeAll(port, line, bytes);
+      } catch (e) {
+        const written = e instanceof PartialWrite ? e.written : 0;
+        throw new SerialPrinterError(`${line.path}: ${e instanceof Error ? e.message : String(e)}`, written > 0);
       }
       // What the UART still holds goes out before the port closes.
       await this.sleep(150);
     });
+  }
+
+  /**
+   * A page (a receipt, a ticket, a report — transports.ts `SendOptions.page`), checked as a network printer's page is
+   * (core/kitchen/delivery.ts printDirect): `DLE EOT` first (paper out / cover open → `PrinterNotReady`, nothing sent), the
+   * bytes, `DLE EOT` after (paper out / cover open → `PrintUncertain`: it may be cut short). A printer silent on status is
+   * sent to as before (and not asked again for a while: [memory]). One open port for all of it — never a question inside the job.
+   */
+  async sendPage(line: SerialLine, bytes: Uint8Array, memory: PrinterStatusMemory = serialStatusMemory): Promise<void> {
+    const wait = this.o.answerMs ?? 150;
+    await this.withPort(line, async (port, answers) => {
+      const ask = async (n: 1 | 2 | 4): Promise<number | null> => {
+        const before = answers.length;
+        await this.write(port, Buffer.from(n === 1 ? STATUS_PRINTER : n === 2 ? STATUS_OFFLINE : STATUS_PAPER));
+        await this.sleep(wait);
+        return answers.length > before ? (answers[before] ?? null) : null;
+      };
+      const link: PrinterLink = {
+        open: async () => undefined,
+        status: async () => {
+          answers.length = 0;
+          const printer = await ask(1);
+          if (printer === null) return null;
+          return readiness(printer, await ask(2), await ask(4));
+        },
+        write: (b) => this.writeAll(port, line, b),
+        settle: () => this.sleep(Math.max(300, wait)),
+        drain: () => this.sleep(150),
+        close: () => undefined,
+      };
+      await printDirect(rememberingLink(link, memory, `com:${line.path}`), bytes, line.path, () => undefined);
+    });
+  }
+
+  /** The bytes in slices, each drained; a failure throws [PartialWrite] with how many went. */
+  private async writeAll(port: SerialPortHandle, line: SerialLine, bytes: Uint8Array): Promise<void> {
+    const chunk = this.o.chunk ?? 1024;
+    const perByteMs = 10_000 / normalizeBaud(line.baudRate);
+    let sent = 0;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      const slice = Buffer.from(bytes.subarray(i, i + chunk));
+      const limit = Math.ceil(slice.length * perByteMs) + (this.o.stallMs ?? 10_000);
+      try {
+        await this.timed(
+          (async () => {
+            await this.write(port, slice);
+            await this.drain(port);
+          })(),
+          limit,
+          'המדפסת לא קיבלה את הנתונים (זמן קצוב)',
+        );
+      } catch (e) {
+        throw new PartialWrite(sent, e);
+      }
+      sent += slice.length;
+    }
   }
 
   private async timed<T>(p: Promise<T>, ms: number, message: string): Promise<T> {

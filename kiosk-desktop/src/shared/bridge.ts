@@ -12,6 +12,7 @@ import type { StartVouchers, VoucherResult } from '@dash-lib/kioskVoucherClient'
 import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
+import type { PickerView, PickRole, PickTarget } from '../core/printerPicker';
 import type { BatteryAlertView } from '../core/batteryAlerts';
 import type { UnpairCheck } from '../core/unpairGuard';
 import type { LastPairing } from '../core/pairingMemory';
@@ -619,6 +620,8 @@ export interface TechSerialPort {
 export interface TechnicianActionResult {
   ok: boolean;
   message?: string;
+  /** "מדפסות": the picker as it is now. */
+  picker?: PickerView;
   /** A second press is asked ("נתק ועבור לענן החדש", "לחצו שוב"): its label. */
   confirm?: string;
   /** "מידע רשת" and "שיוך" from the cloud. */
@@ -853,6 +856,14 @@ export type TechnicianAction =
   | { type: 'serialDetect'; comPort: string; flow?: 'none' | 'rtscts' }
   /** "בדיקה": a test page straight to the port at that speed, before (or without) choosing it. */
   | { type: 'serialTest'; comPort: string; baudRate?: number; flow?: 'none' | 'rtscts' }
+  /** "מדפסות" (core/printerPicker.ts): the printers found ([lan]: scan the network now). */
+  | { type: 'printerDiscover'; lan?: boolean }
+  /** A printer for a role: the device's ("receipt" — every page; null: אוטומטי) or the bons' / item tickets' own (null: the device's). */
+  | { type: 'printerChoose'; role: PickRole; target: PickTarget | null }
+  /** "רוחב הדפסה" of the device's printer (576 / 512 / 432 / 384). */
+  | { type: 'printerWidth'; widthDots: number }
+  /** "בדיקה" on one row of the picker: a test page there, nothing chosen. */
+  | { type: 'printerTestTarget'; target: PickTarget }
   | { type: 'pinpadCheck' }
   | { type: 'updateCheck' }
   | { type: 'updateInstall' }

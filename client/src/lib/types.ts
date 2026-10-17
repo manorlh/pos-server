@@ -3504,6 +3504,22 @@ export interface AppRelease {
   bridgeApi?: number | null;
   /** Its stored file was deleted ("הקובץ נמחק"): never offered, downloaded or sent again. */
   fileDeletedAt?: string | null;
+  /**
+   * Its file can be served now. False (and not deleted): the file is in no storage — "הקובץ לא
+   * זמין — יש להעלות מחדש", never offered until attached again. Absent on an older server: true.
+   */
+  fileAvailable?: boolean;
+  /** Where it is kept: "s3" (the shared bucket) | "local" (an API machine's disk). */
+  fileStorage?: 's3' | 'local' | null;
+}
+
+/** `GET /app-releases/storage-status`: where release files are kept. */
+export interface AppReleaseStorageStatus {
+  backend: 's3' | 'local';
+  /** Every API machine serves the files. */
+  shared: boolean;
+  /** Local disk on Fly: the other machine 404s the file and the next deploy deletes it. */
+  ephemeral: boolean;
 }
 
 /** `GET /app-releases/{id}/file-delete-check`. */

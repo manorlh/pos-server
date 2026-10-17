@@ -74,6 +74,17 @@ npm run typecheck
 npm run lint
 ```
 
+הדפסה מקצה לקצה, בלי מדפסת אמיתית: `test/fakePrinter.ts` — מדפסת ESC/POS מדומה על TCP (עונה ל-DLE EOT,
+נייר נגמר / מכסה פתוח, מפענחת את ה-raster חזרה ל-PNG); `test/printingE2E.test.ts` מריץ דרכה קופה וקיוסק אמיתיים.
+ההרצה עם הציור האמיתי של Electron (44 ו-22), PNG לכל מסמך ו-`report.json`:
+
+```bash
+npm run print-e2e -- --out P:/specs/win-printing-e2e/win10
+# Windows 7 (Electron 22, אחרי npm run win7:setup):
+#   R2M_WIN7=1 npx vite build && node scripts/build-main.mjs --win7 && node scripts/build-main.mjs --print-e2e --win7
+#   legacy/node_modules/electron/dist/electron.exe legacy/dist-e2e/print-e2e.js --out P:/specs/win-printing-e2e/win7
+```
+
 `test/fixtures/contract/*.json` — מה שהקיוסק שולח (מסמך 320, מסמך שבוטל, פתיחה וסגירת משמרת, הזמנות
 קיוסק). אותם בתים נמצאים ב-`server/tests/fixtures/kiosk_desktop/` ונבדקים מול הסכמות של השרת
 (`server/tests/test_kiosk_desktop_contract.py`). עדכון: `UPDATE_GOLDEN=1 npm test`, והעתקה לשרת.

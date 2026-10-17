@@ -776,7 +776,7 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
     if (ct.outcome !== 'success' && ct.outcome !== 'skipped' && (ct.statusMessage || ct.error)) c(String(ct.statusMessage || ct.error), 16);
   }
   d();
-  c(`הופק ע״י ${typeof z.createdByName === 'string' ? z.createdByName : 'הקיוסק'}`);
+  c(`הופק ע״י ${typeof z.createdByName === 'string' && z.createdByName.trim() ? z.createdByName : '—'}`);
   return { kind: 'z', logoUrl: opts.logoUrl, ops };
 }
 
@@ -905,6 +905,31 @@ export function xDoc(x: XInput): ZDoc {
 
 /** `kitchen`: a kitchen printer's ticket (core/kitchen/doc.ts, main/kitchen/kitchenService.ts). */
 export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc | KitchenDoc;
+
+/**
+ * "סיכום עסקה" — after the documents of a mixed basket (a sale and its returns, pos-android ReceiptRenderer.renderSummary):
+ * the documents, when, what was sold and returned, and the one figure that crossed the counter ("שולם" / "הוחזר ללקוח" /
+ * "יתרה 0"). Not a document of its own: no number, nothing recorded.
+ */
+export function basketSummaryDoc(input: { soldAgorot: number; returnedAgorot: number; documentNumbers: string[]; printedAt: Date }): ReceiptDoc {
+  const net = input.soldAgorot - input.returnedAgorot;
+  const ops: ReceiptOp[] = [
+    { t: 'text', text: 'סיכום עסקה', style: 'heading', align: 'center' },
+    { t: 'divider', gap: 8 },
+    { t: 'row', label: 'מסמכים:', value: ltr(input.documentNumbers.map((n) => `#${n}`).join(', ')), style: 'small' },
+    { t: 'row', label: 'זמן הדפסה:', value: stamp(input.printedAt), style: 'small' },
+    { t: 'row', label: 'נמכר', value: formatAgorot(input.soldAgorot), style: 'body' },
+    { t: 'row', label: 'הוחזר', value: formatAgorot(-input.returnedAgorot), style: 'body' },
+    { t: 'divider', gap: 8 },
+    net > 0
+      ? { t: 'row', label: 'שולם', value: ltr(formatShekelSign(net)), style: 'grand' }
+      : net === 0
+        ? { t: 'row', label: 'יתרה 0', value: '', style: 'grand' }
+        : { t: 'row', label: 'הוחזר ללקוח', value: ltr(formatShekelSign(-net)), style: 'grand' },
+    { t: 'end' },
+  ];
+  return { kind: 'receipt', logoUrl: null, ops };
+}
 
 /* ------------------------------------------------------- the cash station's slips (P:/specs/cash-paylink.md §11.7) */
 

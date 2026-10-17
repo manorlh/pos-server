@@ -17,6 +17,8 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { parseStatus, STATUS_OFFLINE, STATUS_PAPER, STATUS_PRINTER, type PrinterStatusBits } from '../../core/escpos';
+import { printDirect, PrinterStatusMemory, rememberingLink } from '../../core/kitchen/delivery';
+import { tcpPrinterLink } from '../kitchen/kitchenNet';
 import { scanOf, type UsbScan } from './usbPrinters';
 import { normalizeBaud, normalizeFlow, SerialPrinterError, SerialPrinters, type SerialFlow, type SerialLine, type SerialPortView } from './serialPrinter';
 
@@ -30,6 +32,11 @@ export interface PrinterTarget {
   comPort?: string | null;
   baudRate?: number | null;
   flow?: SerialFlow | null;
+  /**
+   * "רוחב הדפסה" in dots (576 / 512 / 432 / 384 — core/escpos.ts printerRaster); none: 576. The width test ("בדיקת רוחב")
+   * shows which: the widest frame printed whole.
+   */
+  widthDots?: number | null;
 }
 
 /** A serial target's line; null when it names no port. */
@@ -40,8 +47,18 @@ export function serialLineOf(t: PrinterTarget): SerialLine | null {
 
 export type PrinterHealth = 'ok' | 'no_paper' | 'paper_low' | 'cover_open' | 'offline' | 'error' | 'unavailable' | 'unknown';
 
+/** How a send goes. */
+export interface SendOptions {
+  /**
+   * A page (a receipt, a ticket, a report) — over TCP the printer is asked first (`DLE EOT`: paper out, cover open → nothing
+   * sent, the queue tries again) and after, as the kitchen's tickets (core/kitchen/delivery.ts printDirect): a network
+   * printer with no paper takes the bytes and drops them, so "sent" alone would lose the receipt. Not for the drawer's pulse.
+   */
+  page?: boolean;
+}
+
 export interface Transport {
-  send(target: PrinterTarget, bytes: Uint8Array): Promise<void>;
+  send(target: PrinterTarget, bytes: Uint8Array, opts?: SendOptions): Promise<void>;
   status(target: PrinterTarget): Promise<{ health: PrinterHealth; detail: string | null }>;
   /** Installed Windows printers (for the technician screen). */
   list(): Promise<Array<{ name: string; port: string | null; health: PrinterHealth }>>;
@@ -98,6 +115,19 @@ export async function tcpSend(host: string, port: number, bytes: Uint8Array): Pr
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/** Which network printers answer `DLE EOT` (one that never does is not asked before each page). */
+const tcpStatusMemory = new PrinterStatusMemory();
+
+/**
+ * A page to a network printer, checked (SendOptions.page): connect, `DLE EOT` (not ready → `PrinterNotReady`, nothing
+ * sent), the bytes, `DLE EOT` again (paper out / cover open on it → `PrintUncertain`: it may be cut short). A printer that
+ * does not report is sent to as before.
+ */
+export async function tcpSendPage(host: string, port: number, bytes: Uint8Array, memory: PrinterStatusMemory = tcpStatusMemory): Promise<void> {
+  const where = `${host}:${port}`;
+  await printDirect(rememberingLink(tcpPrinterLink(host, port), memory, where), bytes, where, () => undefined);
 }
 
 /** DLE EOT 1 / 2 / 4 over TCP: one byte each, short waits (never during a job). */
@@ -158,6 +188,8 @@ export function healthOfWin32(detected: number | null, workOffline: boolean, pri
  */
 export const SPOOLER_HELPER_PS1 = String.raw`
 $ErrorActionPreference = 'Stop'
+# The answers in UTF-8 (a Hebrew queue name read back as it is; the commands come as ASCII JSON, asciiJson).
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
 $R2mLegacy = ($PSVersionTable.PSVersion.Major -lt 3) -or ($env:R2M_PS_LEGACY -eq '1')
 $R2mJson = $null
 if ($R2mLegacy) {
@@ -228,7 +260,15 @@ while ($true) {
   try {
     $cmd = R2mFromJson $line
     if ($cmd.op -eq 'send') {
-      $err = [R2mRaw]::Send($cmd.printer, [Convert]::FromBase64String($cmd.data), 'R2M Kiosk')
+      $bytes = [Convert]::FromBase64String($cmd.data)
+      if ($env:R2M_SPOOLER_RECORD) {
+        # Tests only (test/spoolerHelper.test.ts): the job written to a file, never to a printer.
+        [IO.File]::WriteAllBytes((Join-Path $env:R2M_SPOOLER_RECORD ($cmd.id + '.prn')), $bytes)
+        [IO.File]::WriteAllText((Join-Path $env:R2M_SPOOLER_RECORD ($cmd.id + '.txt')), [string]$cmd.printer)
+        $err = ''
+      } else {
+        $err = [R2mRaw]::Send($cmd.printer, $bytes, 'R2M Kiosk')
+      }
       if ($err -eq '') { $out = @{ id = $cmd.id; ok = $true } } else { $out = @{ id = $cmd.id; ok = $false; error = $err } }
     } elseif ($cmd.op -eq 'list') {
       $ps = @(R2mWmi 'Win32_Printer' '' | ForEach-Object { @{ name = $_.Name; port = $_.PortName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
@@ -260,6 +300,15 @@ while ($true) {
 }
 `;
 
+/**
+ * A command as pure ASCII JSON (every other character as `\uXXXX`): PowerShell reads its stdin in the console's code page
+ * (437 / 862 on a Hebrew Windows), so a Hebrew queue name sent as UTF-8 arrived garbled and OpenPrinter failed ("open:1801")
+ * — a printer called "קבלות" could never print. Escaped, it reaches the helper exactly, on PowerShell 2 as on 5.
+ */
+export function asciiJson(v: unknown): string {
+  return JSON.stringify(v).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 interface Pending {
   resolve: (v: Record<string, unknown>) => void;
   reject: (e: Error) => void;
@@ -268,11 +317,6 @@ interface Pending {
 
 /** How long PowerShell may take to compile the helper and say "ready" (a J1900 on Windows 7 is slow at it). */
 export const HELPER_START_MS = 45_000;
-
-/** JSON with every non-ASCII character escaped: Windows 7's PowerShell 2 reads its stdin in the console's code page. */
-export function asciiJson(v: unknown): string {
-  return JSON.stringify(v).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
-}
 
 /**
  * `wmic printer get … /format:list` (Windows 7 has it; no PowerShell needed): the queues when the helper cannot start.
@@ -426,10 +470,12 @@ export class DefaultTransport implements Transport {
     this.serial = serial ?? new SerialPrinters({ log });
   }
 
-  async send(target: PrinterTarget, bytes: Uint8Array): Promise<void> {
+  async send(target: PrinterTarget, bytes: Uint8Array, opts: SendOptions = {}): Promise<void> {
     if (target.transport === 'serial') {
       const line = serialLineOf(target);
       if (!line) throw new Error('no serial port chosen');
+      // A page: DLE EOT before and after (serialPrinter.ts sendPage) — its PrinterNotReady / PrintUncertain as a network page's.
+      if (opts.page) return this.serial.sendPage(line, bytes);
       try {
         return await this.serial.send(line, bytes);
       } catch (e) {
@@ -440,6 +486,7 @@ export class DefaultTransport implements Transport {
     }
     if (target.transport === 'tcp') {
       if (!target.host) throw new Error('no printer address');
+      if (opts.page) return tcpSendPage(target.host, target.port ?? 9100, bytes);
       return tcpSend(target.host, target.port ?? 9100, bytes);
     }
     if (target.transport === 'spooler') {

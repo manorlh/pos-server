@@ -49,7 +49,7 @@ import { CashDrawerService, type DrawerOutcome, type DrawerPerson, type DrawerTa
 import { DOCUMENT_RELAY, RemoteDrawers, hostDocumentJob, hostDrawerJob, remoteWhy } from './remoteDrawer';
 import type { PrintJobsHost, PrintJobsModule } from '../printer/printJobsHost';
 import { REMOTE_TEXT, type DrawerHost } from '../../core/till/remotePrint';
-import { centreOn, job as escposJob, toMono, RASTER_80MM, type MonoBitmap } from '../../core/escpos';
+import { centreOn, fitWidth, job as escposJob, printerRaster, toMono, type MonoBitmap } from '../../core/escpos';
 import { decodeMonoPng } from '../../core/monoPng';
 import type Sharp from 'sharp';
 import { normalizeRole } from '../../core/roles';
@@ -177,7 +177,9 @@ export class TillDrawer {
             now: () => c.now(),
             decodePng: decodePng,
             print: async (bmp) => {
-              await svc.sendToReceiptPrinter(escposJob(centreOn(bmp, RASTER_80MM)));
+              // On this till's head: its width ("רוחב הדפסה"), a wider page scaled to it rather than cut.
+              const raster = printerRaster(svc.printerResolution().target.widthDots);
+              await svc.sendToReceiptPrinter(escposJob(centreOn(fitWidth(bmp, raster), raster)));
             },
           }),
       },
