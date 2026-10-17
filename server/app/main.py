@@ -520,6 +520,10 @@ from app.routers import kiosk_live as kiosk_live_router  # noqa: E402
 app.include_router(kiosk_live_router.router, prefix=_prefix)
 app.include_router(kiosks_router.till_router, prefix=_prefix)
 app.include_router(kiosks_router.router, prefix=_prefix)
+# "עיצובים שמורים לקיוסק" (app/routers/kiosk_designs.py).
+from app.routers import kiosk_designs as kiosk_designs_router  # noqa: E402
+
+app.include_router(kiosk_designs_router.router, prefix=_prefix)
 # "עיצוב קופה" (app/routers/till_design.py, docs/SPEC_TILL_DESIGN.md): the till's design sync
 # and the dashboard's design layers company → shop → area → till.
 from app.routers import till_design as till_design_router  # noqa: E402
