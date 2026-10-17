@@ -278,6 +278,9 @@ class TicketIn(BaseModel):
     #: under "ממתין ל-FIRE" — never cooked. Apart from `lines`, so a printing till that does not know it prints
     #: nothing of them. Kept through the relay as the sending till wrote it.
     waiting: Optional[List[TicketLineIn]] = Field(None, max_length=TICKET_LINES_MAX)
+    #: "תא 3B" (P:/specs/table-scope.md §6.4): the word the printing till puts before a table's title (`tableTerm`);
+    #: absent — its own rule (the word before a number alone). Kept through the relay.
+    table_term: Optional[str] = Field(None, alias="tableTerm", max_length=10)
 
 
 DOCUMENT_TEXT_MAX = 120

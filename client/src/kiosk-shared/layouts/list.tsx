@@ -131,7 +131,7 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
         </span>
       ) : null}
       <span className="min-w-0 flex-1">
-        <span className="block truncate kt-13 font-bold" style={textSize(m, 'productName', 13)}>
+        <span className="k-name block truncate kt-13 font-bold" style={textSize(m, 'productName', 13)}>
           {p.name}
         </span>
         {m.cfg.theme.showDescriptions ? (
@@ -151,7 +151,7 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
             e.stopPropagation();
             tap(p, true, pic(e));
           }}
-          className="flex shrink-0 items-center justify-center rounded-full font-bold shadow-sm"
+          className="k-hit flex shrink-0 items-center justify-center rounded-full font-bold shadow-sm"
           style={{ width: 36 * u, height: 36 * u, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         >
           {added ? <Check className="h-1/2 w-1/2" /> : <Plus className="h-1/2 w-1/2" />}

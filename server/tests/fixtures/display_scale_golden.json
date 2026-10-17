@@ -1,0 +1,549 @@
+{
+  "comment": "גודל תצוגה (displayScale) — P:/specs/display-scale.md. ONE rule: pos-server app/services/display_scale.py, kiosk-desktop src/core/displayScale.ts, pos-android domain/DisplayScale.kt. Same bytes in server/tests/fixtures, kiosk-desktop/test/fixtures, android app/src/test/resources; SHA-256 pinned in all three.",
+  "version": 1,
+  "options": [
+    "auto",
+    "70",
+    "75",
+    "80",
+    "85",
+    "90",
+    "95",
+    "100",
+    "105",
+    "110",
+    "115",
+    "120",
+    "125",
+    "130",
+    "135",
+    "140",
+    "145",
+    "150"
+  ],
+  "default": "auto",
+  "minPercent": 70,
+  "maxPercent": 150,
+  "step": 5,
+  "minRead": 10,
+  "levels": [
+    "device",
+    "area",
+    "shop",
+    "company"
+  ],
+  "parse": [
+    {
+      "in": null,
+      "out": null
+    },
+    {
+      "in": "",
+      "out": null
+    },
+    {
+      "in": "  ",
+      "out": null
+    },
+    {
+      "in": "auto",
+      "out": "auto"
+    },
+    {
+      "in": "AUTO",
+      "out": "auto"
+    },
+    {
+      "in": " Auto ",
+      "out": "auto"
+    },
+    {
+      "in": "אוטומטי",
+      "out": "auto"
+    },
+    {
+      "in": 100,
+      "out": 100
+    },
+    {
+      "in": 70,
+      "out": 70
+    },
+    {
+      "in": 150,
+      "out": 150
+    },
+    {
+      "in": 85,
+      "out": 85
+    },
+    {
+      "in": "85",
+      "out": 85
+    },
+    {
+      "in": " 85 ",
+      "out": 85
+    },
+    {
+      "in": "85%",
+      "out": 85
+    },
+    {
+      "in": "120%",
+      "out": 120
+    },
+    {
+      "in": 69,
+      "out": 70
+    },
+    {
+      "in": 68,
+      "out": 70
+    },
+    {
+      "in": 67.4,
+      "out": 70
+    },
+    {
+      "in": 67.5,
+      "out": 70
+    },
+    {
+      "in": 72,
+      "out": 70
+    },
+    {
+      "in": 72.5,
+      "out": 75
+    },
+    {
+      "in": 73,
+      "out": 75
+    },
+    {
+      "in": 77.49,
+      "out": 75
+    },
+    {
+      "in": 77.5,
+      "out": 80
+    },
+    {
+      "in": 151,
+      "out": 150
+    },
+    {
+      "in": 152.5,
+      "out": 150
+    },
+    {
+      "in": 153,
+      "out": 150
+    },
+    {
+      "in": 1000,
+      "out": 150
+    },
+    {
+      "in": "1000",
+      "out": 150
+    },
+    {
+      "in": 10,
+      "out": 70
+    },
+    {
+      "in": 9,
+      "out": null
+    },
+    {
+      "in": 9.99,
+      "out": null
+    },
+    {
+      "in": 1.5,
+      "out": null
+    },
+    {
+      "in": "1.5",
+      "out": null
+    },
+    {
+      "in": 0,
+      "out": null
+    },
+    {
+      "in": -100,
+      "out": null
+    },
+    {
+      "in": "-100",
+      "out": null
+    },
+    {
+      "in": "abc",
+      "out": null
+    },
+    {
+      "in": "120 %",
+      "out": null
+    },
+    {
+      "in": "12a",
+      "out": null
+    },
+    {
+      "in": "0x64",
+      "out": null
+    },
+    {
+      "in": "1e2",
+      "out": null
+    },
+    {
+      "in": "%",
+      "out": null
+    },
+    {
+      "in": "85.0",
+      "out": 85
+    },
+    {
+      "in": "87.5",
+      "out": 90
+    },
+    {
+      "in": true,
+      "out": null
+    },
+    {
+      "in": false,
+      "out": null
+    },
+    {
+      "in": [],
+      "out": null
+    },
+    {
+      "in": {},
+      "out": null
+    },
+    {
+      "in": "NaN",
+      "out": null
+    },
+    {
+      "in": "Infinity",
+      "out": null
+    }
+  ],
+  "effective": [
+    {
+      "name": "nothing anywhere: automatic",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": null,
+        "company": null
+      },
+      "local": null,
+      "out": {
+        "setting": "auto",
+        "percent": 100,
+        "factor": 1.0,
+        "source": "auto",
+        "level": null
+      }
+    },
+    {
+      "name": "company only",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": null,
+        "company": "110"
+      },
+      "local": null,
+      "out": {
+        "setting": 110,
+        "percent": 110,
+        "factor": 1.1,
+        "source": "cloud",
+        "level": "company"
+      }
+    },
+    {
+      "name": "shop over company",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": "90",
+        "company": "110"
+      },
+      "local": null,
+      "out": {
+        "setting": 90,
+        "percent": 90,
+        "factor": 0.9,
+        "source": "cloud",
+        "level": "shop"
+      }
+    },
+    {
+      "name": "area over shop",
+      "levels": {
+        "device": null,
+        "area": "125",
+        "shop": "90",
+        "company": "110"
+      },
+      "local": null,
+      "out": {
+        "setting": 125,
+        "percent": 125,
+        "factor": 1.25,
+        "source": "cloud",
+        "level": "area"
+      }
+    },
+    {
+      "name": "device over area",
+      "levels": {
+        "device": "80",
+        "area": "125",
+        "shop": "90",
+        "company": "110"
+      },
+      "local": null,
+      "out": {
+        "setting": 80,
+        "percent": 80,
+        "factor": 0.8,
+        "source": "cloud",
+        "level": "device"
+      }
+    },
+    {
+      "name": "device auto over a shop percent",
+      "levels": {
+        "device": "auto",
+        "area": null,
+        "shop": "130",
+        "company": null
+      },
+      "local": null,
+      "out": {
+        "setting": "auto",
+        "percent": 100,
+        "factor": 1.0,
+        "source": "auto",
+        "level": "device"
+      }
+    },
+    {
+      "name": "company auto: automatic from the company",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": null,
+        "company": "auto"
+      },
+      "local": null,
+      "out": {
+        "setting": "auto",
+        "percent": 100,
+        "factor": 1.0,
+        "source": "auto",
+        "level": "company"
+      }
+    },
+    {
+      "name": "local percent wins over the device",
+      "levels": {
+        "device": "80",
+        "area": null,
+        "shop": "90",
+        "company": null
+      },
+      "local": "140",
+      "out": {
+        "setting": 140,
+        "percent": 140,
+        "factor": 1.4,
+        "source": "local",
+        "level": "local"
+      }
+    },
+    {
+      "name": "local auto wins over the device",
+      "levels": {
+        "device": "80",
+        "area": null,
+        "shop": null,
+        "company": null
+      },
+      "local": "auto",
+      "out": {
+        "setting": "auto",
+        "percent": 100,
+        "factor": 1.0,
+        "source": "local",
+        "level": "local"
+      }
+    },
+    {
+      "name": "local as a number",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": null,
+        "company": null
+      },
+      "local": 115,
+      "out": {
+        "setting": 115,
+        "percent": 115,
+        "factor": 1.15,
+        "source": "local",
+        "level": "local"
+      }
+    },
+    {
+      "name": "local not set follows the cloud",
+      "levels": {
+        "device": null,
+        "area": "95",
+        "shop": null,
+        "company": null
+      },
+      "local": null,
+      "out": {
+        "setting": 95,
+        "percent": 95,
+        "factor": 0.95,
+        "source": "cloud",
+        "level": "area"
+      }
+    },
+    {
+      "name": "local garbage follows the cloud",
+      "levels": {
+        "device": null,
+        "area": "95",
+        "shop": null,
+        "company": null
+      },
+      "local": "big",
+      "out": {
+        "setting": 95,
+        "percent": 95,
+        "factor": 0.95,
+        "source": "cloud",
+        "level": "area"
+      }
+    },
+    {
+      "name": "an invalid device value falls through to the area",
+      "levels": {
+        "device": "huge",
+        "area": "105",
+        "shop": null,
+        "company": "70"
+      },
+      "local": null,
+      "out": {
+        "setting": 105,
+        "percent": 105,
+        "factor": 1.05,
+        "source": "cloud",
+        "level": "area"
+      }
+    },
+    {
+      "name": "an invalid level everywhere: automatic",
+      "levels": {
+        "device": "x",
+        "area": null,
+        "shop": null,
+        "company": true
+      },
+      "local": null,
+      "out": {
+        "setting": "auto",
+        "percent": 100,
+        "factor": 1.0,
+        "source": "auto",
+        "level": null
+      }
+    },
+    {
+      "name": "cloud values are clamped and stepped",
+      "levels": {
+        "device": "153",
+        "area": null,
+        "shop": null,
+        "company": null
+      },
+      "local": null,
+      "out": {
+        "setting": 150,
+        "percent": 150,
+        "factor": 1.5,
+        "source": "cloud",
+        "level": "device"
+      }
+    },
+    {
+      "name": "cloud 100 is a percent from the cloud",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": "100",
+        "company": null
+      },
+      "local": null,
+      "out": {
+        "setting": 100,
+        "percent": 100,
+        "factor": 1.0,
+        "source": "cloud",
+        "level": "shop"
+      }
+    },
+    {
+      "name": "local clamped low",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": null,
+        "company": null
+      },
+      "local": "60",
+      "out": {
+        "setting": 70,
+        "percent": 70,
+        "factor": 0.7,
+        "source": "local",
+        "level": "local"
+      }
+    },
+    {
+      "name": "local below 10 is ignored",
+      "levels": {
+        "device": null,
+        "area": null,
+        "shop": null,
+        "company": "120"
+      },
+      "local": "1.5",
+      "out": {
+        "setting": 120,
+        "percent": 120,
+        "factor": 1.2,
+        "source": "cloud",
+        "level": "company"
+      }
+    }
+  ]
+}

@@ -343,7 +343,7 @@ describe('the C4 on USB: a link that never opens is "not sent", never "unknown"'
     const { p, tried, pauses } = overSerial(async () => null);
     svc.setProvider(p, 'nayax_usb');
     const out = await svc.charge({ transactionId: 't-30', orderId: 'o-30', amountAgorot: 100, tipAgorot: 0 });
-    expect(out).toEqual({ kind: 'declined', message: NO_PACKAGE, voidMeta: null });
+    expect(out).toEqual({ kind: 'declined', message: NO_PACKAGE, voidMeta: null, notSent: true });
     expect(tried).toEqual(['doTransaction']);
     expect(pauses).toEqual([]);
     expect(svc.attempts()).toEqual([]);

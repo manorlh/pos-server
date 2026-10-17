@@ -1,0 +1,48 @@
+{
+  "about": "קיוסק — כשאין מסופון אשראי (kioskNoTerminalFallback): one rule, kiosk-desktop core/noTerminalFallback.ts and pos-android domain/KioskTillFallback.kt. The same bytes in pos-server kiosk-desktop/test/fixtures and pos-android app/src/test/resources; both tests pin its SHA-256.",
+  "key": "kioskNoTerminalFallback",
+  "configField": "noTerminalFallback",
+  "options": ["pay_at_till", "block"],
+  "default": "pay_at_till",
+  "cardText": "האשראי לא זמין כרגע — אפשר לשלם בקופה",
+  "modeOf": [
+    { "param": null, "config": null, "mode": "pay_at_till" },
+    { "param": "block", "config": null, "mode": "block" },
+    { "param": null, "config": "block", "mode": "block" },
+    { "param": "pay_at_till", "config": "block", "mode": "pay_at_till" },
+    { "param": "block", "config": "pay_at_till", "mode": "block" },
+    { "param": "other", "config": "block", "mode": "block" },
+    { "param": "", "config": null, "mode": "pay_at_till" },
+    { "param": "BLOCK", "config": null, "mode": "pay_at_till" }
+  ],
+  "card": [
+    { "configured": true, "unreachable": false, "locked": false, "card": "ok" },
+    { "configured": true, "unreachable": true, "locked": false, "card": "flaky" },
+    { "configured": false, "unreachable": false, "locked": false, "card": "missing" },
+    { "configured": false, "unreachable": true, "locked": false, "card": "missing" },
+    { "configured": true, "unreachable": false, "locked": true, "card": "missing" },
+    { "configured": true, "unreachable": true, "locked": true, "card": "missing" }
+  ],
+  "cases": [
+    { "mode": "pay_at_till", "methods": ["card"], "card": "missing", "cashDeviceUsable": false, "applies": true, "out": ["card", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["card"], "card": "flaky", "cashDeviceUsable": false, "applies": true, "out": ["card", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["card"], "card": "ok", "cashDeviceUsable": false, "applies": false, "out": ["card"] },
+    { "mode": "block", "methods": ["card"], "card": "missing", "cashDeviceUsable": false, "applies": false, "out": ["card"] },
+    { "mode": "block", "methods": ["card"], "card": "flaky", "cashDeviceUsable": false, "applies": false, "out": ["card"] },
+    { "mode": "pay_at_till", "methods": ["card", "cash_at_till"], "card": "missing", "cashDeviceUsable": false, "applies": false, "out": ["card", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["card", "cash_device"], "card": "missing", "cashDeviceUsable": true, "applies": false, "out": ["card", "cash_device"] },
+    { "mode": "pay_at_till", "methods": ["card", "cash_device"], "card": "missing", "cashDeviceUsable": false, "applies": true, "out": ["card", "cash_device", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["card"], "card": "flaky", "cashDeviceUsable": true, "applies": true, "out": ["card", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["voucher"], "card": "missing", "cashDeviceUsable": false, "applies": true, "out": ["voucher", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": [], "card": "missing", "cashDeviceUsable": false, "applies": true, "out": ["cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["card", "voucher"], "card": "missing", "cashDeviceUsable": false, "applies": true, "out": ["card", "voucher", "cash_at_till"] },
+    { "mode": "pay_at_till", "methods": ["cash_device"], "card": "missing", "cashDeviceUsable": true, "applies": false, "out": ["cash_device"] },
+    { "mode": "block", "methods": [], "card": "missing", "cashDeviceUsable": false, "applies": false, "out": [] }
+  ],
+  "mayPayAtTill": [
+    { "methods": ["card"], "mode": "pay_at_till", "may": true },
+    { "methods": ["card"], "mode": "block", "may": false },
+    { "methods": ["card", "cash_at_till"], "mode": "block", "may": true },
+    { "methods": ["cash_at_till"], "mode": "pay_at_till", "may": true }
+  ]
+}

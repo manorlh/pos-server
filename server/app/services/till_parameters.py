@@ -515,6 +515,13 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     from app.services.battery_alerts import apply_to_parameters as _battery_monitoring
 
     _battery_monitoring(machine, resolved.parameters)
+    # "סוג רישיון" (app/services/device_license.py, P:/specs/device-license-type.md §3.2): a licensed till /
+    # kiosk gets the license's gate `kioskTillModeEnabled` whatever the levels say — an app that does not know
+    # the license obeys it too — and a change of license moves the watermark, so the device pulls again.
+    from app.services import device_license
+
+    device_license.apply_to_parameters(machine, resolved.parameters)
+    resolved.updated_at = _later(resolved.updated_at, device_license.changed_at(machine))
     return resolved
 
 
@@ -1966,7 +1973,7 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 
 
 # "מצב עבודה: קיוסק / קופה" and "כיוון מסך" (app/services/kiosk_till_mode.py): the owner's gate (admin
-# only), the idle return, the manager's code, the kiosk's orientation lock.
+# only), the idle return, the kiosk's orientation lock, the mode a device starts in (admin only).
 from app.services.kiosk_till_mode import PARAMETER_SPECS as _KIOSK_TILL_MODE_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KIOSK_TILL_MODE_SPECS)
@@ -2392,6 +2399,49 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
 )
 
 
+# "קיוסק — כשאין מסופון אשראי" (the owner, 16.10.2026: "גם אם אין מסופון שיעלה"): a kiosk with no card terminal to
+# charge on — none set up, "ללא אשראי", or one that does not answer — and nothing else that pays (no "תשלום בקופה" set,
+# no cash station that answers). `pay_at_till` (the default): the kiosk still opens its menu and offers "תשלום בקופה" at
+# the payment — the order goes to the till as pay-at-till does (the cloud, the shop's LAN host offline, else the
+# "לתשלום בקופה" slip); no tax document on the kiosk. `block`: as before — the kiosk rests on "התשלום אינו זמין כרגע".
+# Read by kiosk-desktop (the Windows kiosk from `GET /sync/{m}/parameters`; the Android web bundle from its kiosk
+# config, where `kiosk_no_terminal_fallback_overlay` puts `general.noTerminalFallback` only when not the default) and
+# by the Android kiosk (`param.kioskNoTerminalFallback`). A kiosk that does not know it yet behaves as the default.
+KIOSK_NO_TERMINAL_FALLBACK_KEY = "kioskNoTerminalFallback"
+KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL = "pay_at_till"
+KIOSK_NO_TERMINAL_FALLBACK_BLOCK = "block"
+KIOSK_NO_TERMINAL_FALLBACK_OPTIONS = (KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL, KIOSK_NO_TERMINAL_FALLBACK_BLOCK)
+KIOSK_NO_TERMINAL_FALLBACK_DEFAULT = KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL
+KIOSK_NO_TERMINAL_FALLBACK_LABELS = {
+    KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL: "הקיוסק עובד ומציע תשלום בקופה (ברירת מחדל)",
+    KIOSK_NO_TERMINAL_FALLBACK_BLOCK: "הקיוסק לא מקבל הזמנות",
+}
+#: Where the kiosk's config carries a choice other than the default (`general.noTerminalFallback`).
+KIOSK_NO_TERMINAL_FALLBACK_CONFIG_FIELD = "noTerminalFallback"
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=KIOSK_NO_TERMINAL_FALLBACK_KEY,
+        label="קיוסק — כשאין מסופון אשראי",
+        value_type="enum",
+        enum_options=KIOSK_NO_TERMINAL_FALLBACK_OPTIONS,
+        enum_labels=KIOSK_NO_TERMINAL_FALLBACK_LABELS,
+        default_value=KIOSK_NO_TERMINAL_FALLBACK_DEFAULT,
+        description=(
+            "מה הקיוסק עושה כשאין לו מסופון אשראי לחייב בו — לא הוגדר מסופון, הקיוסק מוגדר \"ללא אשראי\", או "
+            "שהמסופון לא עונה — ואין אמצעי תשלום אחר (לא הוגדר \"תשלום בקופה\" ואין עמדת מזומן שעונה). "
+            f"«{KIOSK_NO_TERMINAL_FALLBACK_LABELS[KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL]}» — הקיוסק עולה ומקבל הזמנות "
+            "כרגיל, ובתשלום מוצע \"תשלום בקופה\": ההזמנה עוברת לקופות (דרך הענן, ובלי אינטרנט דרך הקופה הראשית "
+            "ברשת המקומית; אם אף אחת לא זמינה מודפס פתק \"לתשלום בקופה\"). הקיוסק לא מפיק מסמך — הקופה שגובה "
+            "את התשלום מפיקה אותו. מסופון שהוגדר אך לא עונה נשאר זמין לניסיון, ו\"תשלום בקופה\" מוצע לידו. "
+            f"«{KIOSK_NO_TERMINAL_FALLBACK_LABELS[KIOSK_NO_TERMINAL_FALLBACK_BLOCK]}» — כמו קודם: הקיוסק מציג "
+            "\"התשלום אינו זמין כרגע\" עד שהמסופון חוזר. \"חסימת הזמנות כשאין אינטרנט\" ממשיכה לחול כרגיל. "
+            "חל על קיוסק Windows ועל הקיוסק באנדרואיד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
+
 def _kiosk_parameter(db: Session, machine: POSMachine, key: str) -> Any:
     """`key` as it resolves for this kiosk (till → area → shop → company → default); None: no active definition."""
     parameter = db.query(TillParameter).filter(TillParameter.key == key).first()
@@ -2424,6 +2474,34 @@ def kiosk_offline_block_scope(db: Session, machine: POSMachine) -> str:
 def kiosk_offline_block_cash(db: Session, machine: POSMachine) -> bool:
     """`kioskOfflineBlockCash` for this kiosk: true only when a level (or a re-defaulted definition) says so."""
     return _kiosk_parameter(db, machine, KIOSK_OFFLINE_BLOCK_CASH_KEY) is True
+
+
+def kiosk_no_terminal_fallback(db: Session, machine: POSMachine) -> str:
+    """
+    `kioskNoTerminalFallback` as it resolves for this kiosk (till → area → shop → company → default).
+    A missing or inactive definition, or a value that is not an option: the default (`pay_at_till`).
+    """
+    value = _kiosk_parameter(db, machine, KIOSK_NO_TERMINAL_FALLBACK_KEY)
+    return value if value in KIOSK_NO_TERMINAL_FALLBACK_OPTIONS else KIOSK_NO_TERMINAL_FALLBACK_DEFAULT
+
+
+def kiosk_no_terminal_fallback_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The kiosk's effective config with `general.noTerminalFallback` when `kioskNoTerminalFallback` resolves to
+    something other than the default (a new dict) — the Android web kiosk reads it there. At the default the
+    config is left exactly as it was (no new configVersion): a kiosk without it behaves as the default.
+    """
+    try:
+        choice = kiosk_no_terminal_fallback(db, machine)
+    except Exception:  # noqa: BLE001 - a missing table (an older test world) changes nothing
+        return cfg
+    if choice == KIOSK_NO_TERMINAL_FALLBACK_DEFAULT:
+        return cfg
+    out = dict(cfg)
+    general = dict(out.get("general") or {})
+    general[KIOSK_NO_TERMINAL_FALLBACK_CONFIG_FIELD] = choice
+    out["general"] = general
+    return out
 
 
 def kiosk_offline_block_overlay(db: Session, machine: Any, cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -2471,6 +2549,14 @@ from app.services.table_assignments import PARAMETER_SPECS as _TABLE_ASSIGNMENT_
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_ASSIGNMENT_SPECS)
 
+# "תחום שולחנות" and "תא" instead of "שולחן" (P:/specs/table-scope.md §3, §5, §6.4, app/services/table_scope.py):
+# `tableAssignmentScope` (off), `tableScopeOutside` (hide) and `tableTerm` ("שולחן") — read by the till; the first
+# two by the cloud too (the state, the writes). Edited on the dashboard's tables page (group `scope`). Defaults
+# change nothing.
+from app.services.table_scope import PARAMETER_SPECS as _TABLE_SCOPE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TABLE_SCOPE_SPECS)
+
 # "מספר שולחן על החשבונית" (P:/specs/receipt-table-number.md, app/services/receipt_table_info.py):
 # `receiptTableInfo` — what of the table (table, zone, guests, waiter) a table's document prints under
 # its title; empty by default (no line). Read by the till and by the cloud's copy of a document; edited
@@ -2486,6 +2572,13 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 from app.services.deferred_control import PARAMETER_SPECS as _DEFERRED_CONTROL_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _DEFERRED_CONTROL_SPECS)
+
+# "גודל תצוגה" (P:/specs/display-scale.md, app/services/display_scale.py): `displayScale` — auto (the default, as
+# today) or a percent 70–150 of the size each till / kiosk computes for its screen. Read by the devices only (Android
+# `param.displayScale`, Windows `GET /sync/{m}/parameters`); a device's own local choice wins over every level.
+from app.services.display_scale import PARAMETER_SPECS as _DISPLAY_SCALE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _DISPLAY_SCALE_SPECS)
 
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
@@ -2521,7 +2614,7 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         except till_menu.MenuKeysError as exc:
             raise TillParameterValueError(str(exc)) from exc
 
-    if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY):
+    if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY, kiosk_till_mode.START_MODE_KEY):
         try:
             return kiosk_till_mode.clean_value(key, value)
         except ValueError as exc:
@@ -2658,6 +2751,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     if key in table_assignments.VALIDATED_KEYS and value is not None:
         try:
             return table_assignments.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    # "שולחן מחוץ לתחום" hide / dim, "המילה לפני המספר" up to 10 characters.
+    from app.services import table_scope
+
+    if key in table_scope.VALIDATED_KEYS and value is not None:
+        try:
+            return table_scope.clean_value(key, value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     # "מספר שולחן על החשבונית": table / zone / guests / waiter in the line's order, or `none`.

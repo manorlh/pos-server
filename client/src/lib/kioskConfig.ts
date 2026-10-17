@@ -11,9 +11,16 @@
  * node test does not call.
  */
 
+import { validateLandscape, type KioskLandscape } from './kioskLandscape';
 import {
   KIOSK_LAYOUT_DEFAULTS,
   KIOSK_WELCOME_DEFAULTS,
+  LAYOUT_BASKETS,
+  LAYOUT_CARDS,
+  LAYOUT_CATALOGS,
+  LAYOUT_CATEGORY_ICONS,
+  LAYOUT_PRODUCT_SIZES,
+  LAYOUT_RAIL_SIZES,
   layoutTemplateLayer,
   repairLayout,
   templateOf,
@@ -868,6 +875,11 @@ export interface KioskConfig {
    * kiosk's first language keeps using the flat `texts` (an older kiosk reads only those).
    */
   textsByLang: KioskTextsByLang;
+  /**
+   * "עיצוב לרוחב" (kioskLandscape.ts, P:/specs/kiosk-landscape-design.md): the design keys that win only on a screen
+   * on its side, and the landscape sizes. Optional — absent (no level set it): today's kiosk.
+   */
+  landscape?: KioskLandscape;
 }
 
 export type KioskSectionKey = keyof KioskConfig;
@@ -2103,6 +2115,36 @@ export function validateKioskConfig(
   // "כיתוב רץ": its texts, their days and hours, the screens and the look.
   if (cfg.ticker !== undefined) validateTicker(e, cfg.ticker);
 
+  // "עיצוב לרוחב": the normal design's vocabularies, the sizes' ranges, its media.
+  if (cfg.landscape !== undefined && cfg.landscape !== null) {
+    e.push(
+      ...validateLandscape(cfg.landscape, {
+        'theme.categoryLayout': ['side', 'top'],
+        'theme.cartStyle': ['bar', 'panel'],
+        'theme.gridDensity': ['compact', 'comfortable', 'large'],
+        'theme.categoryStyle': ['chips', 'tabs', 'images'],
+        'theme.imageRatio': ['1:1', '4:3', '16:9'],
+        'theme.typeScale': ['normal', 'large', 'xlarge'],
+        'layout.catalog': LAYOUT_CATALOGS,
+        'layout.basket': LAYOUT_BASKETS,
+        'layout.railSize': LAYOUT_RAIL_SIZES,
+        'layout.productSize': LAYOUT_PRODUCT_SIZES,
+        'layout.categoryIcons': LAYOUT_CATEGORY_ICONS,
+        'layout.card': LAYOUT_CARDS,
+      }),
+    );
+    checkMedia(e, 'landscape.theme.backgroundImage', cfg.landscape.theme?.backgroundImage, ['image']);
+    const playlist = cfg.landscape.attract?.playlist;
+    if (Array.isArray(playlist)) {
+      if (playlist.length > L.playlistMax) e.push({ path: 'landscape.attract.playlist', code: 'tooMany', params: { max: L.playlistMax } });
+      playlist.forEach((item, i) => {
+        const it = (item ?? {}) as { media?: unknown; durationSec?: unknown };
+        checkMedia(e, `landscape.attract.playlist.${i}.media`, it.media, ['image', 'video'], false);
+        checkRange(e, `landscape.attract.playlist.${i}.durationSec`, it.durationSec, L.playlistDuration);
+      });
+    }
+  }
+
   // "מבנה הקיוסק" and "ברוכים הבאים" (kioskLayout.ts); every text in every language (kioskTexts.ts).
   e.push(...validateLayout(cfg));
   e.push(...validateKioskTexts(cfg));
@@ -2314,6 +2356,35 @@ export interface ResolvedThemeColors {
   accent: string;
   button: string;
   buttonText: string;
+  /**
+   * The words of a soft button — its colour on its own 10% tint (`${button}1A`): the button colour itself where it reads
+   * (4.5:1 on the tint over the cards and over the background), else that colour deepened until it does (layout audit
+   * 16.10: #1F6FEB on its tint was 4.06:1).
+   */
+  buttonInk: string;
+  /** The accent as words (a "בחינם", a promotion's line): readable on the cards, the background and its own tint (4.5:1). */
+  accentInk: string;
+  /** The primary as small words (a price, a total): readable on the cards, the background and a line's grey card (4.5:1). */
+  primaryInk: string;
+}
+
+/** The least contrast the words on a soft (tinted) button keep — WCAG AA for normal text. */
+export const SOFT_INK_MIN_CONTRAST = 4.5;
+
+/**
+ * `fg` as words on every one of `bgs`: itself where it reads (`min`), else moved towards black — or white, on dark
+ * grounds — in 5% steps until it does. Not hex: as it is.
+ */
+export function readableInk(fg: string, bgs: string[], min = SOFT_INK_MIN_CONTRAST): string {
+  if (!isHexColor(fg) || bgs.length === 0 || !bgs.every((b) => isHexColor(b))) return fg;
+  const reads = (c: string) => bgs.every((b) => contrastRatio(c, b) >= min);
+  if (reads(fg)) return fg.toUpperCase();
+  const toward = isDarkColor(bgs[0]) ? '#FFFFFF' : '#000000';
+  for (let step = 1; step <= 20; step++) {
+    const c = mixHex(fg, toward, step / 20);
+    if (reads(c)) return c;
+  }
+  return toward;
 }
 
 /** The least contrast the words keep on the background and on the cards (WCAG large text). */
@@ -2354,17 +2425,22 @@ export function kioskThemeColors(
 export function resolveThemeColors(theme: KioskTheme): ResolvedThemeColors {
   const { dark, background, surface, text } = kioskThemeColors(theme);
   const button = theme.buttonColor ?? theme.primaryColor;
+  const tint = (ground: string) => mixHex(ground, button, 0x1a / 255);
   return {
     dark,
     background,
     surface,
     text,
-    mutedText: dark ? '#9CA3AF' : '#6B7280',
+    // #646B76, not #6B7280 (4.47:1 on the light background — layout audit 16.10): 4.97:1 there, 5.38:1 on white.
+    mutedText: dark ? '#9CA3AF' : '#646B76',
     border: dark ? '#2A303B' : '#E5E7EB',
     primary: theme.primaryColor,
     accent: theme.accentColor,
     button,
     buttonText: theme.buttonTextColor ?? contrastText(button),
+    buttonInk: readableInk(button, [tint(surface), tint(background)]),
+    accentInk: readableInk(theme.accentColor, [surface, background, mixHex(surface, theme.accentColor, 0x1f / 255)]),
+    primaryInk: readableInk(theme.primaryColor, [surface, background, mixHex(surface, '#000000', 0x0a / 255), mixHex(surface, theme.primaryColor, 0x0f / 255), mixHex(background, theme.primaryColor, 0x0f / 255)]),
   };
 }
 

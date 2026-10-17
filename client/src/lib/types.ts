@@ -4,6 +4,8 @@ import type { TillDataState } from './zDataState';
 import type { AutoReopenMode } from './availabilityReopen';
 import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
+import type { LicenseProduct } from './deviceLicense';
+import type { PresetDiscount } from './presetDiscounts';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -79,6 +81,17 @@ export interface CurrentUser extends User, UserCapabilities {}
  * after the last day. Set by a super admin only.
  */
 export type LicenseType = 'permanent' | 'temporary';
+
+/** One setting of a machine's "סוג רישיון" (`license_product_history`). */
+export interface LicenseProductChange {
+  at: string;
+  from: LicenseProduct | null;
+  to: LicenseProduct | null;
+  by: string | null;
+  byName: string | null;
+  byRole?: string | null;
+  source: 'pairing' | 'dashboard' | string;
+}
 
 export interface Company {
   id: string;
@@ -418,6 +431,10 @@ export interface PosSettingsV1 {
   unlinkedCardCreditEnabled?: boolean;
   refundCustomerDetailsRequired?: boolean;
   tipPresets?: number[];
+  /** "הנחות קבועות" (lib/presetDiscounts.ts, P:/specs/preset-discounts.md §2): the deepest layer's list wins whole. */
+  presetDiscounts?: PresetDiscount[];
+  /** Which presets are one-tap buttons on the sell screen at this layer (ids); unset = every active `button`. */
+  presetDiscountButtons?: string[];
   tipDistribution?: TipDistribution;
   /** The question on the customer's tip screen; '' / unset = the till's default wording. */
   tipPromptText?: string;
@@ -534,6 +551,8 @@ export type PosSettingsPatch = Partial<
     | 'clearingServer'
     | 'forceTerminalNumber'
     | 'tipPresets'
+    | 'presetDiscounts'
+    | 'presetDiscountButtons'
     | 'tipDistribution'
     | 'tipPromptText'
     | 'payInstallmentsMax'
@@ -625,6 +644,10 @@ export type PosSettingsPatch = Partial<
   forceTerminalNumber?: boolean | null;
   /** `null` = unset this layer's percentages and inherit the level above's again. */
   tipPresets?: number[] | null;
+  /** `null` = inherit the level above's preset discounts again; [] = none at this level. */
+  presetDiscounts?: PresetDiscount[] | null;
+  /** `null` = inherit which presets are direct buttons; [] = none. */
+  presetDiscountButtons?: string[] | null;
   tipDistribution?: TipDistribution | null;
   /** `null` = inherit the level above's tip question again. */
   tipPromptText?: string | null;
@@ -852,6 +875,16 @@ export interface PosMachine {
   /** "לקוח זמני" on this till alone; the till keeps the earliest end above it too. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
+  /**
+   * "סוג רישיון" (lib/deviceLicense.ts): what the till / kiosk may be — the stored one, or derived from its
+   * state when none is stored (`licenseProductStored` null); null for a screen / server. `licenseMismatch`:
+   * the stored one does not fit the role. Absent on an older server.
+   */
+  licenseProduct?: LicenseProduct | null;
+  licenseProductStored?: LicenseProduct | null;
+  licenseProductLabel?: string | null;
+  licenseProductHistory?: LicenseProductChange[];
+  licenseMismatch?: boolean;
   mqttClientId?: string;
   deviceInfo?: Record<string, unknown>;
   /** "פתיחה אוטומטית" (lib/autoStart.ts): ready / missing / off; null — never reported (no indicator). */
@@ -1802,6 +1835,8 @@ export interface Transaction {
    */
   tableNumber?: number | null;
   tableName?: string | null;
+  /** "3B" (P:/specs/table-scope.md §6.4): shown instead of `tableNumber`, which is then an internal number. */
+  tableLabel?: string | null;
   tableOrderId?: string | null;
   tableOpenedAt?: string | null;
   /**
@@ -2791,6 +2826,8 @@ export interface PosUser {
   /** "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): their own (null — automatic) and the one shown. */
   tableColor?: string | null;
   tableColorEffective?: string | null;
+  /** "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): `{zoneIds, tableIds}` of the shop; null — no fixed scope. */
+  tableScope?: { zoneIds: string[]; tableIds: string[] } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -2817,6 +2854,8 @@ export interface PosUserUpdate {
   pin?: string;
   /** `#rrggbb`; '' or null — automatic again. */
   tableColor?: string | null;
+  /** "שולחנות שהעובד רואה": sent only when changed; null — no fixed scope (every table). */
+  tableScope?: { zoneIds: string[]; tableIds: string[] } | null;
 }
 
 // ── Operational reports (GET /reports/products, /reports/cashiers, /reports/tips) ──

@@ -131,6 +131,15 @@ class Transaction(Base):
     basket_discount = Column(Numeric(12, 2), nullable=True)
     basket_discount_percent = Column(Numeric(6, 2), nullable=True)
     basket_discount_kind = Column(String(16), nullable=True)
+    #: "הנחות קבועות" (app/services/preset_discounts.py, P:/specs/preset-discounts.md §5): when the
+    #: basket discount is a preset's (`basket_discount_kind` "preset") — which one, by id and by the
+    #: name it was given under (the button's text, as printed), and whom it was for (a name; how it
+    #: was picked: `employee` / `customer` / `typed`; the employee's or customer's id). Null otherwise.
+    preset_discount_id = Column(String(64), nullable=True, index=True)
+    preset_discount_name = Column(String(60), nullable=True)
+    preset_discount_for = Column(String(200), nullable=True)
+    preset_discount_for_kind = Column(String(16), nullable=True)
+    preset_discount_for_ref = Column(String(100), nullable=True)
     #: A document made only of production vouchers' ₪0 memo lines (`zero` mode): out of the
     #: Z's and the daily aggregates' document counts, as on the till.
     voucher_memo = Column(Boolean, nullable=False, default=False, server_default="false")

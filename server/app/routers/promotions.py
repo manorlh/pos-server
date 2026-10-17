@@ -211,6 +211,34 @@ def get_discounts_report(
     return build_discounts_report(db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id)
 
 
+@router.get("/reports/preset-discounts")
+def get_preset_discounts_report(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    from_hour: Optional[int] = Query(None, alias="fromHour"),
+    to_hour: Optional[int] = Query(None, alias="toHour"),
+    tz: Optional[str] = Query(None),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    preset_id: Optional[str] = Query(None, alias="presetId", max_length=64),
+    cashier_id: Optional[str] = Query(None, alias="cashierId", max_length=100),
+    person: Optional[str] = Query(None, max_length=200),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"מעקב הנחות קבועות" (P:/specs/preset-discounts.md §6): every use of a preset discount."""
+    from app.services.preset_discounts_report import build_preset_discount_tracking
+
+    window = resolve_report_window(
+        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+    )
+    return build_preset_discount_tracking(
+        db, current_user, active_tenant_id, window,
+        shop_id=shop_id, machine_id=machine_id, preset_id=preset_id, cashier_id=cashier_id, person=person,
+    )
+
+
 # ── The till's side ───────────────────────────────────────────────────────────
 
 

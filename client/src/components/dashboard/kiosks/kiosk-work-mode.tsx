@@ -5,8 +5,10 @@
  * P:/specs/kiosk-landscape-till-mode.md §5, P:/specs/web-till-spec-v2.md §6.6): the mode now and who
  * is on the till, the switch both ways as a non-blocking kiosk command (`enter_till` /
  * `return_kiosk` — the kiosk carries it out when no order or payment holds it, and says what holds
- * it meanwhile), and the owner's gate for a super admin or a distributor. Where the gate is closed
- * and the reader may not open it, nothing is drawn at all — the feature does not exist.
+ * it meanwhile), and the owner's gate for a super admin or a distributor — beside it, by the same people,
+ * "מצב עבודה בהפעלה" (`kioskTillModeStartMode`: the mode the device starts in at an app start or a
+ * re-pairing). Where the gate is closed and the reader may not open it, nothing is drawn at all — the
+ * feature does not exist.
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -15,14 +17,30 @@ import { toast } from 'sonner';
 import { Monitor } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { formatDateTime } from '@/lib/format';
-import { setKioskTillModeGate, type KioskCommandIn, type KioskSummary } from '@/lib/kioskApi';
+import {
+  KIOSK_START_MODES,
+  setKioskTillModeGate,
+  setKioskTillModeStart,
+  type KioskCommandIn,
+  type KioskStartMode,
+  type KioskSummary,
+} from '@/lib/kioskApi';
 
 /** Who may open or close the owner's gate (`kioskTillModeEnabled`, admin only on the server too). */
 const GATE_ROLES = ['super_admin', 'distributor'];
+
+/** The words of each start mode (`kiosks.workMode.start*`). */
+const START_LABELS: Record<KioskStartMode, 'startLast' | 'startHome' | 'startKiosk' | 'startTill'> = {
+  last: 'startLast',
+  home: 'startHome',
+  kiosk: 'startKiosk',
+  till: 'startTill',
+};
 
 export function KioskWorkModeCard({
   kiosk,
@@ -49,10 +67,24 @@ export function KioskWorkModeCard({
     },
     onError: (err) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
-  // An older server, or a closed gate the reader may not open: the feature does not exist here.
+  const start = useMutation({
+    mutationFn: (mode: KioskStartMode) => setKioskTillModeStart(kiosk.machineId, mode),
+    onSuccess: () => {
+      toast.success(t('gateSaved'));
+      void qc.invalidateQueries({ queryKey: ['kiosks'] });
+    },
+    onError: (err) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
+  });
+  // "סוג רישיון" (lib/deviceLicense.ts): a licensed device's gate is its license's — no switch here.
+  const byLicense = !!till?.byLicense;
+  // An older server, or a closed gate the reader may not open: the feature does not exist here. (A super
+  // admin / distributor still sees the card of a closed licensed gate: it says the license decides.)
   if (!till || (!till.enabled && !mayGate)) return null;
   const inTill = till.mode === 'till';
   const display = kiosk.display;
+  // "מצב עבודה בהפעלה": only from a server that knows it (an older one would read the body as the gate's).
+  const startMode = till.startMode;
+  const startItems = KIOSK_START_MODES.map((m) => ({ value: m, label: t(START_LABELS[m]) }));
 
   return (
     <div className="space-y-2 rounded-xl border p-3">
@@ -78,13 +110,50 @@ export function KioskWorkModeCard({
           <p className="text-xs text-muted-foreground">{t('hint')}</p>
         </>
       ) : null}
-      {mayGate ? (
+      {mayGate && !byLicense ? (
         <label className="flex items-center gap-2 text-sm">
           <Switch checked={till.enabled} disabled={gate.isPending} onCheckedChange={(v) => gate.mutate(v)} />
           <span>{t('gate')}</span>
         </label>
       ) : null}
-      {mayGate && !till.enabled ? <p className="text-xs text-muted-foreground">{t('gateHint')}</p> : null}
+      {mayGate && !byLicense && !till.enabled ? <p className="text-xs text-muted-foreground">{t('gateHint')}</p> : null}
+      {mayGate && till.enabled && startMode ? (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span>{t('startMode')}</span>
+            <Select
+              value={startMode}
+              onValueChange={(v) => {
+                const next = KIOSK_START_MODES.find((m) => m === v);
+                if (next && next !== startMode) start.mutate(next);
+              }}
+              items={startItems}
+              disabled={start.isPending}
+            >
+              <SelectTrigger className="w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {startItems.map((o) => (
+                  <SelectItem key={o.value} value={o.value} label={o.label}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground">{t('startModeHint')}</p>
+        </div>
+      ) : null}
+      {!mayGate && till.enabled && startMode && startMode !== 'last' ? (
+        <p className="text-xs text-muted-foreground">{t('startModeNow', { mode: t(START_LABELS[startMode]) })}</p>
+      ) : null}
+      {byLicense && till.licenseProductLabel ? (
+        <p className="text-xs text-muted-foreground">
+          {t('byLicense', { product: till.licenseProductLabel })}
+          {mayGate && !till.enabled ? ` · ${t('byLicenseHint')}` : null}
+        </p>
+      ) : null}
       {display?.widthDp && display.heightDp ? (
         <p className="flex items-center gap-1 text-xs text-muted-foreground">
           <Monitor className="h-3.5 w-3.5" />

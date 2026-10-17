@@ -49,8 +49,16 @@ export interface DiscountsReport {
     byTill: (ClubFigures & TillLabel)[];
     byDay: (ClubFigures & { date: string })[];
   };
-  /** The basket discounts by kind: the club's and the cashiers' own. */
-  basketByKind: (ClubFigures & { kind: 'club' | 'manual' })[];
+  /** The basket discounts by kind: the club's, the cashiers' own and the preset discounts ("הנחות קבועות"). */
+  basketByKind: (ClubFigures & { kind: 'club' | 'manual' | 'preset' })[];
+  /**
+   * "הנחות קבועות" (P:/specs/preset-discounts.md §6): the sales whose basket discount was a preset's,
+   * by preset (the name it was last given under). Absent from an older server.
+   */
+  presets?: {
+    totals: ClubFigures;
+    byPreset: (ClubFigures & { presetId: string | null; name: string | null })[];
+  };
   /**
    * Discount vouchers ("שוברי הנחה", docs/SPEC_VOUCHER_PRODUCTION.md §7): a discount on the
    * document, never a tender. Absent from a server that predates them.

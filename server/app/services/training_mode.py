@@ -862,7 +862,11 @@ def blockers(db: Session, shop: Shop) -> List[Dict[str, Any]]:
         out.append({
             "code": OPEN_TABLES,
             "count": len(open_orders),
-            "tables": [{"number": o.table_number, "name": o.table_name} for o in open_orders],
+            # A labelled table ("3B", P:/specs/table-scope.md §6.4) by its label, its number an internal one.
+            "tables": [
+                {"number": o.table_number, "name": o.table_name, **({"label": o.table_label} if o.table_label else {})}
+                for o in open_orders
+            ],
         })
     return out
 

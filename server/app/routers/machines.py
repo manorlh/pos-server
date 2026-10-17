@@ -10,6 +10,7 @@ from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.services import licenses
 from app.services import access
+from app.services import device_license
 from app.services import device_profile
 from app.services import display_devices
 from app.services import device_identity
@@ -22,7 +23,7 @@ from app.services import support_z, till_reset
 from app.services import shop_active
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
-from app.schemas.device_profile import DeviceProfileIn
+from app.schemas.device_profile import DeviceProfileIn, LicenseProductIn
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.user import User, UserRole
 from app.models.shop import Shop
@@ -190,6 +191,7 @@ def _enrich_machine_status(
     if timezones is None:
         timezones = _tenant_timezones(db, [machine])
     tz_name = timezones.get(machine.tenant_id)
+    kiosk_row = (kiosks if kiosks is not None else device_profile.kiosk_devices_by_machine(db, [machine.id])).get(machine.id)
 
     result: Dict[str, Any] = {
         "id": machine.id,
@@ -241,10 +243,9 @@ def _enrich_machine_status(
         "hasBuiltinTerminal": machine.has_builtin_terminal,
         # "סוג מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md): till / kiosk, the model the dashboard
         # chose and the one the device named, the drawer port and "בקרוב" for LANDI / Feitian.
-        **device_profile.machine_fields(
-            machine,
-            (kiosks if kiosks is not None else device_profile.kiosk_devices_by_machine(db, [machine.id])).get(machine.id),
-        ),
+        **device_profile.machine_fields(machine, kiosk_row),
+        # "סוג רישיון" (P:/specs/device-license-type.md §4): till / kiosk / kiosk_till, stored or derived.
+        **device_license.machine_fields(db, machine, kiosk_row),
         "isActive": machine.is_active,
         "lastHeartbeatAt": machine.last_heartbeat_at,
         "mqttConnected": machine.mqtt_connected,
@@ -490,6 +491,24 @@ def list_machines(
     return strip_money(_enrich_machines_batch(machines, db), db, current_user)
 
 
+@router.get("/license-products/counts")
+def license_product_counts(
+    all_tenants: bool = Query(False, alias="allTenants"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "רישיונות מכשירים" — for billing (P:/specs/device-license-type.md §8): active tills and kiosks per
+    "סוג רישיון", per organization, company and shop (and the ones in no shop). A super admin (the active
+    organization, or `allTenants=true` for all) or a distributor (their own devices); 403 otherwise.
+    """
+    try:
+        return device_license.counts(db, current_user, active_tenant_id, all_tenants=all_tenants)
+    except device_license.LicenseRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+
+
 @router.get("/unassigned", response_model=List[POSMachineResponse])
 def list_unassigned_machines(
     current_user: User = Depends(get_current_distributor),
@@ -585,6 +604,9 @@ def get_my_machine(
     """POS desktop: resolve shop/tenant and realtime (Ably) endpoint using machine JWT only."""
     shop = machine.shop
     company = shop.company if shop is not None else None
+    # "לקוח זמני": the license end this till keeps (app/services/licenses.py), with "סוג רישיון" (`product`).
+    # Called directly (a test), `db` is its Depends default: the machine's own session.
+    license_block = licenses.effective_license(db if isinstance(db, Session) else object_session(machine), machine)
     return {
         "machineId": str(machine.id),
         "machineCode": machine.machine_code,
@@ -628,11 +650,10 @@ def get_my_machine(
         "fiscal": display_devices.is_fiscal(machine),
         # "android" | "windows" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.3).
         "platform": display_devices.platform_of(machine),
-        # "לקוח זמני": the license end this till keeps (app/services/licenses.py).
-        # Called directly (a test), `db` is its Depends default: the machine's own session.
-        "license": licenses.effective_license(
-            db if isinstance(db, Session) else object_session(machine), machine
-        ),
+        "license": license_block,
+        # "סוג רישיון" (P:/specs/device-license-type.md §7.1): till | kiosk | kiosk_till; null for a device
+        # that is not a till / kiosk. Only kiosk_till has "מצב עבודה: קיוסק / קופה".
+        "licenseProduct": license_block.get("product"),
         # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): the shop's tills sell for practice.
         "trainingMode": bool(shop is not None and getattr(shop, "training_mode", False)),
         "trainingStartedAt": (
@@ -1002,6 +1023,7 @@ def post_my_heartbeat(
 
         fast_beat = kiosk_z.fast_beat(db, machine)
     db.commit()
+    license_block = licenses.effective_license(db, machine)
 
     response = {
         "ok": True,
@@ -1012,7 +1034,9 @@ def post_my_heartbeat(
         # A till Z's shifts are here exactly like a cloud Z's (§5.6).
         "recentShiftZs": recent,
         # A temporary customer's license end, every beat — a change reaches the till at once.
-        "license": licenses.effective_license(db, machine),
+        "license": license_block,
+        # "סוג רישיון" every beat too (P:/specs/device-license-type.md §7.1).
+        "licenseProduct": license_block.get("product"),
         # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
         "zMode": till_z.z_mode_of(machine),
         # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, never in the shop Z, and
@@ -1947,20 +1971,36 @@ def update_device_profile(
 
     sent = body.model_dump(exclude_unset=True, by_alias=False)
     changed = device_profile.RoleChange()
+    license_changed = False
     try:
         if "device_model" in sent:
             device_profile.check_model_change(db, machine, body.device_model)
             device_profile.change_model(machine, body.device_model)
+        # "סוג רישיון" with the change (P:/specs/device-license-type.md §2): a super admin / the device's
+        # distributor (403), checked as a pair with the role it will have (409).
+        new_license = None
+        if body.license_product is not None:
+            device_license.require_admin(current_user, machine)
+            new_license = device_license.clean(body.license_product, machine)
         if body.device_role is not None:
             # A display device's too ("kds" / "order_status_board"): a till never becomes one,
             # nor back — 409 `device_role_change_requires_pairing` (app/services/display_devices.py).
             current_role = device_profile.current_role(db, machine)
             if body.device_role != current_role:
                 kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
-                device_profile.check_role_switch(db, machine, body.device_role)
+                if new_license is None:
+                    device_profile.check_role_switch(db, machine, body.device_role)
+                else:
+                    device_profile.check_role_switch(db, machine, body.device_role, new_license)
+                    license_changed = device_license.set_product(
+                        db, machine, new_license, current_user, role=body.device_role,
+                    )
+                    new_license = None
                 changed = device_profile.change_role(
                     db, current_user, machine, body.device_role, body.kiosk, body.kds
                 )
+        if new_license is not None:
+            license_changed = device_license.set_product(db, machine, new_license, current_user)
         db.commit()
     except device_profile.DeviceProfileRefused as refused:
         db.rollback()
@@ -1971,9 +2011,165 @@ def update_device_profile(
             status_code=status.HTTP_409_CONFLICT,
             content={"detail": "already_kiosk", "message": "המכשיר כבר קיוסק."},
         )
-    if changed.lock:
+    if changed.lock or license_changed:
         kiosk_control.notify_device_lock(machine)
     if changed.pinpad:
         device_profile.notify_settings(db, machine)
     db.refresh(machine)
     return _enrich_machine_status(machine, db)
+
+
+@router.put("/{machine_id}/license-product", response_model=POSMachineResponse)
+def update_license_product(
+    machine_id: uuid_mod.UUID,
+    body: LicenseProductIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שינוי סוג רישיון" on the machine page (P:/specs/device-license-type.md §2): "till" (קופה בלבד),
+    "kiosk" (קיוסק בלבד) or "kiosk_till" (משולב). A super admin, or the device's distributor (403
+    `license_product_admin_only`); a till / kiosk only (409 `license_product_not_applicable`); one its role
+    fits (409 `license_product_role_mismatch` — the device-profile dialog changes both at once). Recorded
+    in the machine's license history; the device pulls its gate at once.
+    """
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    try:
+        changed = device_license.set_product(db, machine, body.license_product, current_user)
+        db.commit()
+    except device_license.LicenseRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    if changed:
+        device_license.notify(machine)
+    db.refresh(machine)
+    return _enrich_machine_status(machine, db)
+
+
+# ── "שולחנות שהמכשיר רואה" (P:/specs/table-scope.md §2, §9, §14) ─────────────────────
+
+
+class TableScopeIn(BaseModel):
+    """The device's table scope: `null` — every table (the default); else the zones and tables it sees."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    table_scope: Optional[Dict[str, Any]] = Field(None, alias="tableScope")
+    #: "החל גם על…": the same scope on these devices of the same shop too.
+    also_machine_ids: List[uuid_mod.UUID] = Field(default_factory=list, alias="alsoMachineIds", max_length=200)
+
+
+def _scope_machine(db: Session, machine_id: Any, current_user: User, active_tenant_id) -> POSMachine:
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return machine
+
+
+def _scope_device_out(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    from app.services import table_scope as TSC
+    from app.services.printers import machine_label
+
+    caps = TSC.capabilities_of(machine)
+    return {
+        "id": str(machine.id),
+        "name": machine_label(machine),
+        "posNumber": machine.pos_number,
+        "areaId": str(machine.area_id) if machine.area_id else None,
+        # The ids archived since dropped (§14.1): what the device sees of it.
+        "tableScope": TSC.live_out(db, machine.shop_id, machine.table_scope),
+        "appVersion": getattr(machine, "app_version", None),
+        "capable": {"scope": TSC.CAPABILITY_SCOPE in caps, "labels": TSC.CAPABILITY_LABELS in caps},
+    }
+
+
+@router.get("/{machine_id}/table-scope")
+def get_machine_table_scope(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The device's page, "שולחנות שהמכשיר רואה": its scope (`null` — every table), the tree it may pick from (its
+    point of sale's zones and the shop-wide ones, each with its tables), and the shop's other devices
+    ("החל גם על…") with theirs.
+    """
+    from app.services import table_scope as TSC
+
+    machine = _scope_machine(db, machine_id, current_user, active_tenant_id)
+    if machine.shop_id is None:
+        return {"device": _scope_device_out(db, machine), "zones": [], "devices": []}
+    others = (
+        db.query(POSMachine)
+        .filter(POSMachine.shop_id == machine.shop_id, POSMachine.is_active.is_(True), POSMachine.id != machine.id)
+        .order_by(POSMachine.pos_number.asc())
+        .all()
+    )
+    return {
+        "device": _scope_device_out(db, machine),
+        "zones": TSC.scope_tree(db, machine.shop_id, area_id=machine.area_id),
+        "devices": [_scope_device_out(db, m) for m in others if getattr(m, "is_fiscal", True) is not False],
+    }
+
+
+@router.put("/{machine_id}/table-scope")
+def put_machine_table_scope(
+    machine_id: uuid_mod.UUID,
+    body: TableScopeIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Set the device's scope — and ("החל גם על…") the same on other devices of its shop. Only zones and tables the
+    device's point of sale shows (a narrowing, never a widening: 422 `table_scope_invalid` with `reason`); another
+    shop's device: 400 `machine_other_shop`. Every change logged (who, when, before, after); the tills pull at once.
+    """
+    from app.services import table_scope as TSC
+    from app.services import tables as T
+    from app.services.printers import machine_label
+
+    machine = _scope_machine(db, machine_id, current_user, active_tenant_id)
+    if machine.shop_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
+    try:
+        scope = TSC.without_archived(db, machine.shop_id, TSC.clean_scope(body.table_scope))
+    except TSC.ScopeError as exc:
+        raise HTTPException(status_code=422, detail={"code": TSC.INVALID, "reason": exc.reason, **exc.extra})
+    targets = [machine]
+    for other_id in body.also_machine_ids:
+        if other_id == machine.id or any(t.id == other_id for t in targets):
+            continue
+        other = _scope_machine(db, other_id, current_user, active_tenant_id)
+        if other.shop_id != machine.shop_id:
+            raise HTTPException(status_code=400, detail={"code": "machine_other_shop", "machineId": str(other.id)})
+        targets.append(other)
+    for target in targets:
+        try:
+            TSC.check_against(db, target.shop_id, scope, area_id=target.area_id)
+        except TSC.ScopeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": TSC.INVALID, "reason": exc.reason, "machineId": str(target.id), **exc.extra},
+            )
+    for target in targets:
+        TSC.record_change(
+            db, target_type="machine", target=target, name=machine_label(target), before=target.table_scope,
+            after=scope, user=current_user,
+        )
+        target.table_scope = scope
+    db.commit()
+    # Every till of the shop pulls its tables (the LAN host takes every device's scope).
+    T.tables_changed(db, machine.shop_id, tenant_id=machine.tenant_id)
+    return {"devices": [_scope_device_out(db, t) for t in targets]}

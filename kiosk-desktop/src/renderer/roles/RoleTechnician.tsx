@@ -3,7 +3,7 @@
  * the placeholders) — the same gesture, code and service actions as the kiosk's
  * (staff/StaffLayer.tsx): six taps in the top-left corner within 3 s → the technician code (1995
  * unless the cloud set one) → what this device is (read-only: the cloud decides the role),
- * network, version and updates ("בדוק עכשיו" / "התקן עכשיו"), remote support, zoom, unpair.
+ * network, version and updates ("בדוק עכשיו" / "התקן עכשיו"), remote support, "גודל תצוגה", unpair.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import { ROLE_INFO } from '../../core/roles';
 import type { TechnicianInfo } from '../../shared/bridge';
 import type { ShellView } from '../../shared/roles';
 import { kiosk } from '../bridge';
+import { DISPLAY_SCALE_TEXT, DisplayScaleControl } from './DisplayScaleControl';
 import { updateLine } from './updateText';
 import { DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
 
@@ -96,6 +97,8 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
                 תפקיד: <b>{shellView.role ? ROLE_INFO[shellView.role].label : 'לא ידוע עדיין'}</b> (נקבע בענן, בהוספת המכשיר)
               </div>
               <div>{shellView.fiscal ? 'מכשיר קופתי' : 'מסך — לא קופה: בלי מכירות, משמרות, Z או תשלומים'}</div>
+              {info?.license?.info ? <div>{info.license.info}</div> : null}
+              {info?.license?.warning ? <div className="font-semibold text-amber-700">{info.license.warning}</div> : null}
               <div>
                 {info?.machine?.name ?? shellView.machineName ?? '—'} · {info?.shopName ?? shellView.shopName ?? '—'}
               </div>
@@ -142,12 +145,22 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
                 <button type="button" className={btn} onClick={() => act({ type: 'quickSupport' })}>
                   TeamViewer QuickSupport
                 </button>
-                {[1, 1.5, 2].map((z) => (
-                  <button key={z} type="button" className={btn} onClick={() => act({ type: 'setZoom', zoom: z })}>
-                    ×{z}
-                  </button>
-                ))}
               </div>
+              {/* "גודל תצוגה" (P:/specs/display-scale.md): the one size control, saved on this till over the cloud. */}
+              {info?.displayScale ? (
+                <div className="pt-2">
+                  <div className="font-bold">{DISPLAY_SCALE_TEXT.title}</div>
+                  <DisplayScaleControl
+                    view={info.displayScale}
+                    act={(a) => void act(a)}
+                    button={(label, onClick, disabled) => (
+                      <button key={label} type="button" className={btn} disabled={busy || disabled} onClick={onClick}>
+                        {label}
+                      </button>
+                    )}
+                  />
+                </div>
+              ) : null}
             </div>
             {/* "יציאה לשולחן העבודה": a manager's code (DESKTOP_EXIT), not the technician's. */}
             <DesktopExitMenuButton onOpen={() => setExitOpen(true)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 py-2 text-sm font-bold text-white" />

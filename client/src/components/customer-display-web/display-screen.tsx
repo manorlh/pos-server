@@ -37,6 +37,7 @@ import { WebPairing, type PairingTexts } from '@/components/kiosk-web/web-pairin
 import { isStandalone, useFullscreenOnTap, useKioskGuards, useWakeLock } from '@/components/kiosk-web/web-shell';
 import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
 import { shopLockShown } from '@/lib/shopActive';
+import { isHexColor, readableInk } from '@/lib/kioskConfig';
 
 export const WEB_DISPLAY_VERSION = '1.0.0';
 
@@ -194,10 +195,16 @@ export function DisplayWeb({ apiUrl }: { apiUrl: string }) {
   );
 }
 
+/** The accent as words (a promotion, the change): readable on the screen and its cards (4.5:1) — the shop's colour itself
+ * where it reads, else moved towards white / black (layout audit 16.10: #1F6FEB on the dark screen was 3.6:1). */
+function accentOn(color: string, grounds: string[]): string {
+  return isHexColor(color) ? readableInk(color, grounds) : color;
+}
+
 function themeOf(config: CdConfig, primary?: string | null) {
-  if (config.theme === 'light') return { bg: '#f7f7f8', fg: '#111318', muted: '#6b7280', card: '#ffffff', accent: primary || '#0ea5e9' };
+  if (config.theme === 'light') return { bg: '#f7f7f8', fg: '#111318', muted: '#6b7280', card: '#ffffff', accent: accentOn(primary || '#0ea5e9', ['#F7F7F8', '#FFFFFF']) };
   if (config.theme === 'brand' && primary) return { bg: primary, fg: '#ffffff', muted: 'rgba(255,255,255,.75)', card: 'rgba(0,0,0,.18)', accent: '#ffffff' };
-  return { bg: '#0d1016', fg: '#ffffff', muted: 'rgba(255,255,255,.6)', card: 'rgba(255,255,255,.06)', accent: primary || '#38bdf8' };
+  return { bg: '#0d1016', fg: '#ffffff', muted: 'rgba(255,255,255,.6)', card: 'rgba(255,255,255,.06)', accent: accentOn(primary || '#38bdf8', ['#0D1016', '#1C1F25']) };
 }
 
 /**
@@ -302,11 +309,14 @@ export function CustomerScreen({
         <span className="text-[2.2vmin]" style={{ color: c.muted }}>{state.itemCount} {t.items}</span>
       </div>
       {show.items ? (
-        <div className="min-h-0 flex-1 space-y-1 overflow-hidden">
+        // Anchored at the bottom: when the last lines do not all fit, the oldest go out at the top — the line just rung up
+        // always shows (layout audit 16.10: the newest lines were the ones cut off at the bottom).
+        <div data-cd-lines className="flex min-h-0 flex-1 flex-col justify-end gap-1 overflow-hidden">
           {state.lines.slice(-12).map((l) => (
             <div key={l.id} className="rounded-xl px-3 py-2" style={{ background: c.card }}>
               <div className="flex items-baseline justify-between gap-3 text-[2.8vmin] font-semibold">
-                <span className="min-w-0 truncate">
+                {/* In its own direction: an English name is cut at its end, not its start (its width is its own — no alignment). */}
+                <span className="min-w-0 truncate" style={{ unicodeBidi: 'plaintext' }}>
                   {l.qty !== 1 ? `${l.qty}${l.unit ? ` ${l.unit}` : ''} × ` : ''}
                   {l.name}
                 </span>

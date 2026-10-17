@@ -673,14 +673,32 @@ def kiosk_pays_at_till(cfg: Any) -> bool:
     return isinstance(methods, list) and any(m in methods for m in KIOSK_NON_CARD_METHODS)
 
 
+def kiosk_takes_payment_without_card(db: Any, machine: Any) -> bool:
+    """
+    A kiosk that still takes payment with no card: its config takes it at the till or the cash station
+    ([kiosk_pays_at_till]), or "קיוסק — כשאין מסופון אשראי" (`kioskNoTerminalFallback`) resolves to
+    `pay_at_till` (the default) — the kiosk then offers "תשלום בקופה" itself (app/services/till_parameters.py).
+    """
+    from app.services import kiosk_config
+    from app.services.till_parameters import KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL, kiosk_no_terminal_fallback
+
+    if kiosk_pays_at_till(kiosk_config.effective_config(db, machine)):
+        return True
+    try:
+        return kiosk_no_terminal_fallback(db, machine) == KIOSK_NO_TERMINAL_FALLBACK_PAY_AT_TILL
+    except Exception:  # noqa: BLE001 - a missing table (an older test world): the config alone
+        return False
+
+
 def kiosk_warnings(db: Any, machines: Sequence[Any]) -> List[Dict[str, Any]]:
     """
-    "לקיוסק לא יישאר אמצעי תשלום": of [machines], the kiosks "ללא אשראי" whose config does not
-    take payment at the till. One warning naming them (`{code, message, machineIds, names}`), or
-    none. For a save's answer: shown beside it, never a refusal (the owner, 14.10.2026).
+    "לקיוסק לא יישאר אמצעי תשלום": of [machines], the kiosks "ללא אשראי" that take no payment
+    without a card ([kiosk_takes_payment_without_card]: no "תשלום בקופה" in the config, and
+    "קיוסק — כשאין מסופון אשראי" set to `block`). One warning naming them (`{code, message,
+    machineIds, names}`), or none. For a save's answer: shown beside it, never a refusal (the owner,
+    14.10.2026).
     """
     from app.models.kiosk import KioskDevice
-    from app.services import kiosk_config
 
     ids = [m.id for m in machines if getattr(m, "id", None) is not None]
     if not ids:
@@ -694,7 +712,7 @@ def kiosk_warnings(db: Any, machines: Sequence[Any]) -> List[Dict[str, Any]]:
         device = devices.get(machine.id)
         if device is None or not no_card(resolve_machine(db, machine)):
             continue
-        if kiosk_pays_at_till(kiosk_config.effective_config(db, machine)):
+        if kiosk_takes_payment_without_card(db, machine):
             continue
         found.append((str(machine.id), device.name or machine.name or ""))
     if not found:

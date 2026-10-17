@@ -7,7 +7,8 @@
  */
 
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
-import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@dash-lib/displayProfile';
+import { browserFacts, displayProfile, kioskDisplay, kioskTargetCssPx } from '@dash-lib/displayProfile';
+import { applyLandscape, landscapeLook, lookColumns } from '@dash-lib/kioskLandscape';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -140,6 +141,7 @@ import { StaffLayer } from '../staff/StaffLayer';
 import { AdminHoldBar, useAdminCornerHold } from '../staff/adminHold';
 import { kioskCornerArmed } from '../../core/adminCorner';
 import { noPaymentBodyHe, noPaymentCause } from '../../core/noPaymentText';
+import { fallbackPayConfig } from '../../core/noTerminalFallback';
 import { KioskShopLock } from './KioskShopLock';
 import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
@@ -206,12 +208,9 @@ function useKioskDisplay() {
 
 export function KioskApp({ view }: { view: KioskView }) {
   const screenDisplay = useKioskDisplay();
-  const cfg = useMemo(() => {
-    const base = view.config as unknown as KioskConfig;
-    if (!screenDisplay.display.landscape) return base;
-    const theme = kioskDisplayTheme(base.theme, screenDisplay.display);
-    return theme === base.theme ? base : { ...base, theme };
-  }, [view.config, screenDisplay.display]);
+  // "עיצוב לרוחב" (lib/kioskLandscape.ts, P:/specs/kiosk-landscape-design.md): in landscape the block's design keys over
+  // the normal design, the automatic decisions (side cart, rail / tabs) for what it left unset; portrait as it is.
+  const cfg = useMemo(() => applyLandscape(view.config as unknown as KioskConfig, screenDisplay.display).config, [view.config, screenDisplay.display]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // "איך תרצו לשלם?" (payment.methods, stepModes.payMethod — payMethodAsk): what this kiosk can take now
   // (the card through its terminal, a voucher online, cash at the till), asked by the step's mode.
@@ -221,7 +220,9 @@ export function KioskApp({ view }: { view: KioskView }) {
   const oneCard = (list: PaymentMethod[]) => list.filter((m) => !MULTI_CARD_METHODS.includes(m));
   const payInfo = { ...payHost, methods: oneCard(payHost.methods), usable: oneCard(payHost.usable) };
   // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
-  const payAsk = kioskPayChooser(cfg, payInfo.methods, payInfo.usable);
+  // "קיוסק — כשאין מסופון אשראי" (core/noTerminalFallback.ts): the till offered for a terminal that is not there — the step is
+  // read over the methods offered now, and always asked.
+  const payAsk = kioskPayChooser(fallbackPayConfig(cfg, payInfo.methods, payHost.tillFallback === true), payInfo.methods, payInfo.usable);
   const asksPay = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' | 'cash_device' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : payAsk.fallback === 'cash_device' ? 'cash_device' : 'card';
   const flowReducer = useCallback((s: KioskFlowState, a: FlowAction) => reduce(s, a.event, { ...rulesOf(cfgIn, a.cartEmpty), asksPayMethod: asksPay }), [cfgIn, asksPay]);
@@ -732,7 +733,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
-  const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
+  // …and the landscape sizes ("לא ענקיים") in this window's CSS px (the page zoom: cssPerDip), never a dish wider than the
+  // landscape tile (the standard catalog's rail and side basket beside).
+  const look = landscapeLook(cfg, screenDisplay.display, size.w, screenDisplay.cssPerDip);
+  const panelPx = screenDisplay.display.sideCart ? Math.round(screenDisplay.display.panelWidthDp * screenDisplay.cssPerDip) : 132;
+  const cols = lookColumns(
+    look,
+    productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w),
+    size.w - (side && look ? look.columnPx : side ? 76 : 0) - (panel ? panelPx : 0),
+  );
   const rules = { ...rulesOf(cfgIn, cart.length === 0), asksPayMethod: asksPay };
   const back = () => {
     // An upsell window: "לא תודה" — unless it is "חובה" (answered only, never backed out of).
@@ -837,9 +846,12 @@ export function KioskApp({ view }: { view: KioskView }) {
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    landscape: look,
     // Landscape: the cart and the checkout's steps in two columns, a readable width (kiosk-shared ScreenBody).
     twoColumns: screenDisplay.display.twoColumns,
     contentMaxWidth: screenDisplay.display.contentMaxWidthDp ? Math.round(screenDisplay.display.contentMaxWidthDp * screenDisplay.cssPerDip) : null,
+    // The side basket at its width (§4: 340–480 dp), in this window's CSS px.
+    panelWidth: screenDisplay.display.sideCart ? Math.round(screenDisplay.display.panelWidthDp * screenDisplay.cssPerDip) : null,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
@@ -1104,13 +1116,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   const overlay = messageScreen && messagePlacement(messageScreen) === 'overlay-center';
   const weights = typeWeights(cfg.theme.typeWeight);
   const rootVars = {
-    '--k-scale': String(typeScaleFactor(cfg.theme.typeScale)),
+    '--k-scale': String(typeScaleFactor(cfg.theme.typeScale) * (look?.textFactor ?? 1)),
     '--k-w-body': String(weights.body),
     '--font-weight-medium': String(weights.medium),
     '--font-weight-semibold': String(weights.semibold),
     '--font-weight-bold': String(weights.bold),
     '--font-weight-extrabold': String(weights.extrabold),
     '--font-weight-black': String(weights.black),
+    // The smallest control, 48 dp at this window's zoom (kiosk-shared `.k-hit`; layout audit 16.10).
+    '--k-target': `${kioskTargetCssPx(screenDisplay.cssPerDip)}px`,
   } as CSSProperties;
   const onAttractService = serviceOnAttract(cfgIn);
   const chrome = chromeRoot(m);
@@ -1480,8 +1494,9 @@ function RestNote({ m, title, body }: { m: PreviewModel; title: string; body: st
 /** "הודעה ללקוח כשאין אינטרנט": the line at the top (the Android kiosk's KioskOfflineNotice) — it takes no tap. */
 function OfflineNotice({ m, text }: { m: PreviewModel; text: string }) {
   return (
-    // Clear of the corners (back, help, the logo): the line wraps rather than covering a button.
-    <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-[55] flex justify-center px-24">
+    // Clear of the corners (back, help, the logo, the menu's "ביטול ההזמנה" — 122 px from the edge): the line wraps rather
+    // than covering a button (layout audit 16.10: at 96 px it covered the cancel button's end).
+    <div role="status" className="pointer-events-none absolute inset-x-0 top-2 z-[55] flex justify-center px-32">
       <div className="max-w-[560px] px-4 py-1.5 text-center text-[13px] font-semibold leading-snug shadow-md animate-in fade-in duration-300" style={{ background: m.c.surface, color: m.c.text, borderRadius: 18, border: `1px solid ${m.c.border}` }}>
         {text}
       </div>

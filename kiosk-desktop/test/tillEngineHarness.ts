@@ -100,6 +100,8 @@ export interface HarnessOptions {
   remotePrint?: TillRemotePrintOptions;
   shopXLan?: TillEngineOptions['shopXLan'];
   voucherLan?: TillEngineOptions['voucherLan'];
+  /** The window's hooks ("גודל תצוגה": autoZoom / refreshZoom). */
+  platform?: ConstructorParameters<typeof KioskService>[0]['platform'];
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -145,6 +147,7 @@ export function harness(o: HarnessOptions = {}): Harness {
     appVersion: '0.5.0',
     deviceInfo: { platform: 'windows' },
     transport: printer,
+    platform: o.platform,
     fetch: fetchFn,
     providers: [() => terminal],
     downloader: async () => {

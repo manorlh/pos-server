@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "about": "סוג רישיון למכשיר (P:/specs/device-license-type.md §7.4): the same bytes in pos-server server/tests/fixtures, kiosk-desktop test/fixtures and pos-android app/src/test/resources; each side pins its SHA-256 (LF).",
+  "products": ["till", "kiosk", "kiosk_till"],
+  "labels": {
+    "till": "קופה בלבד",
+    "kiosk": "קיוסק בלבד",
+    "kiosk_till": "משולב"
+  },
+  "shortLabels": {
+    "till": "קופה בלבד",
+    "kiosk": "קיוסק בלבד",
+    "kiosk_till": "משולב"
+  },
+  "roleLabels": {
+    "till": "קופה",
+    "kiosk": "קיוסק"
+  },
+  "defaults": {
+    "till": "till",
+    "kiosk": "kiosk"
+  },
+  "fits": {
+    "till": ["till", "kiosk_till"],
+    "kiosk": ["kiosk", "kiosk_till"]
+  },
+  "parse": [
+    {"raw": "till", "product": "till"},
+    {"raw": "kiosk", "product": "kiosk"},
+    {"raw": "kiosk_till", "product": "kiosk_till"},
+    {"raw": " Kiosk_Till ", "product": "kiosk_till"},
+    {"raw": "", "product": null},
+    {"raw": null, "product": null},
+    {"raw": "kiosk_web", "product": null}
+  ],
+  "workMode": [
+    {"product": "till", "gate": false, "allowed": false},
+    {"product": "till", "gate": true, "allowed": false},
+    {"product": "kiosk", "gate": false, "allowed": false},
+    {"product": "kiosk", "gate": true, "allowed": false},
+    {"product": "kiosk_till", "gate": false, "allowed": true},
+    {"product": "kiosk_till", "gate": true, "allowed": true},
+    {"product": " KIOSK_TILL ", "gate": false, "allowed": true},
+    {"product": null, "gate": false, "allowed": false},
+    {"product": null, "gate": true, "allowed": true},
+    {"product": "kiosk_web", "gate": false, "allowed": false},
+    {"product": "kiosk_web", "gate": true, "allowed": true}
+  ],
+  "mismatch": [
+    {"product": "kiosk", "role": "till", "mismatch": true},
+    {"product": "till", "role": "kiosk", "mismatch": true},
+    {"product": "till", "role": "till", "mismatch": false},
+    {"product": "kiosk", "role": "kiosk", "mismatch": false},
+    {"product": "kiosk_till", "role": "till", "mismatch": false},
+    {"product": "kiosk_till", "role": "kiosk", "mismatch": false},
+    {"product": null, "role": "kiosk", "mismatch": false},
+    {"product": "till", "role": "kds", "mismatch": false},
+    {"product": "kiosk", "role": null, "mismatch": false}
+  ],
+  "derive": [
+    {"home": "kiosk", "kioskEnabled": true, "gate": false, "product": "kiosk"},
+    {"home": "kiosk", "kioskEnabled": true, "gate": true, "product": "kiosk_till"},
+    {"home": "kiosk", "kioskEnabled": false, "gate": false, "product": "kiosk_till"},
+    {"home": "kiosk", "kioskEnabled": false, "gate": true, "product": "kiosk_till"},
+    {"home": "till", "kioskEnabled": null, "gate": false, "product": "till"},
+    {"home": "till", "kioskEnabled": null, "gate": true, "product": "kiosk_till"}
+  ],
+  "texts": {
+    "refusal": "סוג הרישיון של המכשיר ({label}) אינו כולל מעבר בין קיוסק לקופה",
+    "refusalWire": "license",
+    "blocked": "רישיון המכשיר אינו כולל מעבר בין קיוסק לקופה",
+    "paired": "המכשיר הוגדר: {role} · סוג רישיון: {label}",
+    "mismatch": "סוג הרישיון ({label}) לא תואם את תפקיד המכשיר ({role}) — פנו למפיץ",
+    "info": "סוג רישיון: {label}"
+  }
+}

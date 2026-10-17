@@ -37,6 +37,7 @@ import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
 import { QUICKSUPPORT_PATHS } from '../core/technician';
+import { kioskWindowZoom } from '../core/windowZoom';
 import { IDLE_RETURN_MINUTES } from '../core/desktopExit';
 import { DesktopMode } from './shell/desktopMode';
 import { parseWindow } from '../core/updatePolicy';
@@ -221,14 +222,27 @@ const renderPage: PageRenderer = async (doc: PrintDoc, widthDots: number) => {
   return result;
 };
 
-function zoomFor(win: BrowserWindow): number {
-  const local = service?.localSettings().zoom;
-  if (local && local > 0.5 && local < 4) return local;
-  // The layout is drawn for ~540 CSS px across a portrait kiosk (a 1080-wide screen at ×2),
-  // ~960 across a landscape one; the zoom fills the screen at that size.
+/** The window's automatic zoom: ~540 CSS px across a portrait kiosk, the landscape rule (core/windowZoom.ts). */
+function autoZoomFor(win: BrowserWindow): number {
   const { width, height } = win.getContentBounds();
-  const short = Math.min(width, height);
-  return Math.max(1, Math.min(3, short / 540));
+  return kioskWindowZoom(width, height);
+}
+
+/**
+ * The window's page zoom — the kiosk's and the till's (one window): the automatic one × "גודל תצוגה" (the
+ * technician's preview or saved local choice, else an old "זום", else the cloud's `displayScale` —
+ * KioskService.windowZoom, core/displayScale.ts).
+ */
+function zoomFor(win: BrowserWindow): number {
+  const auto = autoZoomFor(win);
+  return service ? service.windowZoom(auto) : auto;
+}
+
+/** The zoom again — only when it changed (a preview, a save, the cloud's value on a sync, a resize). */
+function applyZoom() {
+  if (!main || main.isDestroyed()) return;
+  const z = zoomFor(main);
+  if (Math.abs(main.webContents.getZoomFactor() - z) > 1e-6) main.webContents.setZoomFactor(z);
 }
 
 function createMain() {
@@ -257,7 +271,7 @@ function createMain() {
   main.removeMenu();
   main.once('ready-to-show', () => main?.show());
   main.webContents.on('did-finish-load', () => main?.webContents.setZoomFactor(zoomFor(main)));
-  main.on('resize', () => main && main.webContents.setZoomFactor(zoomFor(main)));
+  main.on('resize', () => applyZoom());
   // Out on the desktop, the taskbar button brings the kiosk back — in full screen.
   main.on('restore', () => desktop?.onWindowRestored());
   // No way out for a customer: no new windows, no navigation, no reload / devtools / zoom keys.
@@ -309,7 +323,11 @@ function bridge(svc: KioskService) {
   const send = (channel: string, payload: unknown) => {
     if (main && !main.isDestroyed()) main.webContents.send(channel, payload);
   };
-  svc.on('view', (v) => send('kiosk:view', v));
+  svc.on('view', (v) => {
+    send('kiosk:view', v);
+    // "גודל תצוגה": the cloud's `displayScale` may have come with a sync.
+    applyZoom();
+  });
   svc.on('pay', (p) => send('kiosk:pay', p));
   svc.on('toast', (t) => send('kiosk:toast', t));
   ipcMain.handle('kiosk:bootstrap', () => svc.view());
@@ -494,7 +512,8 @@ void app.whenReady().then(async () => {
         const err = await shell.openPath(exe);
         return err ? null : exe;
       },
-      setZoom: (z) => main?.webContents.setZoomFactor(z),
+      autoZoom: () => (main && !main.isDestroyed() ? autoZoomFor(main) : 1),
+      refreshZoom: () => applyZoom(),
       checkUpdate: () => updater!.checkNow(),
       installUpdate: () => updater!.installNow(),
       updateStatus: () => updater!.view(),

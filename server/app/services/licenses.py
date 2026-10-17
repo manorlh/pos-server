@@ -19,6 +19,9 @@ closed (shift close, X / Z, card transmission), so no money is left unaccounted 
   P:/specs/dedicated-local-server.md §10.4) and a display device. A license's end never stops a
   local server: it sells nothing, and the tills need it to close the day.
   A cash host ("שרת מזומן", P:/specs/cash-paylink.md §2) is non-fiscal too: never a till license.
+* **What the device is licensed as** (`product`, P:/specs/device-license-type.md): "till" / "kiosk" /
+  "kiosk_till" for a till or a kiosk, null for any other device (app/services/device_license.py). Another
+  axis: the end date above applies to every product alike.
 """
 from __future__ import annotations
 
@@ -95,6 +98,9 @@ def effective_license(db: Session, machine: POSMachine) -> Dict[str, Any]:
     from app.services.local_server_device import counts_as_till_license
 
     counts = counts_as_till_license(machine)
+    from app.services import device_license
+
+    product = device_license.product_of(db, machine)
     best = None
     for source, entity in candidates:
         ends = _temporary_end(entity)
@@ -103,7 +109,7 @@ def effective_license(db: Session, machine: POSMachine) -> Dict[str, Any]:
     if best is None:
         return {
             "type": PERMANENT, "expiresOn": None, "source": None, "name": None, "warnDays": WARN_DAYS,
-            "countsAsTillLicense": counts,
+            "countsAsTillLicense": counts, "product": product,
         }
     ends, source, entity = best
     return {
@@ -113,4 +119,5 @@ def effective_license(db: Session, machine: POSMachine) -> Dict[str, Any]:
         "name": getattr(entity, "name", None),
         "warnDays": WARN_DAYS,
         "countsAsTillLicense": counts,
+        "product": product,
     }

@@ -32,7 +32,7 @@ from shift_world import accept_str_uuids, make_world
 
 FIXTURE = Path(__file__).parent / "fixtures" / "receipt_table_line_cases.json"
 #: The LF-normalised SHA-256 of the fixture — pos-android's ReceiptTableInfoTest pins the same.
-FIXTURE_SHA256 = "fa5e72fd3eb1b8e7202df857d3ede597bb84e3c6efa559420fac6edef64850d3"
+FIXTURE_SHA256 = "5066a6762feaed6278dc217edfd4e2fa00250becb3294d25cb36933b4cda6e50"
 
 ALL = "table,zone,guests,waiter"
 LINE = "שולחן 12 · גן · 4 סועדים · מלצר: דנה"
@@ -69,7 +69,18 @@ def test_every_combination_of_the_list_and_the_empty_one_prints_nothing():
 
 def test_the_named_cases():
     for case in _cases()["lines"]:
-        assert RT.table_line(case["fields"], _facts(case["facts"])) == case["line"], case["name"]
+        got = RT.table_line(case["fields"], _facts(case["facts"]), term=case.get("term"))
+        assert got == case["line"], case["name"]
+
+
+def test_a_labelled_table_and_the_word_before_it():
+    """"תא 3B" (P:/specs/table-scope.md §6.4): the label in place of the internal number, the word `tableTerm`."""
+    facts = RT.TableFacts(number=99999, label="3B", zone="מפלס 3")
+    assert RT.table_line(["table", "zone"], facts, term="תא") == "תא 3B · מפלס 3"
+    assert RT.table_line(["table"], facts) == "שולחן 3B"
+    assert RT.TableFacts(number=99998, label="3B", name="VIP").title == "3B · VIP"
+    # A restored labelled table ("ש-3B") is its name, never "99998".
+    assert RT.TableFacts(number=99998, label=None, name="ש-3B").title == "ש-3B"
 
 
 # ── The parameter ───────────────────────────────────────────────────────────────

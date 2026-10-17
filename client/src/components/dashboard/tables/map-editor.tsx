@@ -111,6 +111,7 @@ import {
 } from '@/lib/tableSketch';
 import { policyBadge } from '@/lib/tablePolicy';
 import { tableDisplay } from '@/lib/tableRestore';
+import { fittedFont, nextNumber, shownOf } from '@/lib/tableLabels';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -239,7 +240,7 @@ export function MapEditor({
       background,
       tables: tables.map((tb) => {
         const p = moved[tb.id] ?? { x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation };
-        return { id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
+        return { id: tb.id, number: tb.number, label: tb.label ?? null, name: tb.name, labelOnly: tb.labelOnly, shape: tb.shape, seats: tb.seats, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
       }),
     });
   }, [onLive, zone.id, sketch.elements, background, tables, moved]);
@@ -448,7 +449,7 @@ export function MapEditor({
 
   const duplicate = async () => {
     try {
-      let next = Math.max(0, ...tables.map((x) => x.number)) + 1;
+      let next = nextNumber(tables);
       for (const tb of selectedTables) {
         const cur = posOf(tb);
         await createTable({
@@ -522,7 +523,7 @@ export function MapEditor({
     const { stools } = counterGeometry(el);
     if (!stools.length) return;
     try {
-      let next = Math.max(0, ...tables.map((x) => x.number)) + 1;
+      let next = nextNumber(tables);
       for (const s of stools) {
         const size = clampSize(s.r * 2);
         const c = rotatePoint(el, s.cx, s.cy);
@@ -997,7 +998,7 @@ export function MapEditor({
         <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-card p-2">
           <span className="text-sm font-medium">
             {selectedTables.length === 1
-              ? t('tableTitle', { number: selectedTables[0].number })
+              ? t('tableTitle', { number: shownOf(selectedTables[0].number, selectedTables[0].label) })
               : t('sketch.selectedCount', { count: selectedTables.length })}
           </span>
           {firstPos ? (
@@ -1167,7 +1168,7 @@ export function MapEditor({
                       y={tableDisplay(tb).sub && p.height > fs * 2.2 ? cy - fs * 0.25 : cy}
                       textAnchor="middle"
                       dominantBaseline="central"
-                      fontSize={tb.labelOnly ? fs * 0.7 : fs}
+                      fontSize={fittedFont(tableDisplay(tb).main, tb.labelOnly ? fs * 0.7 : fs, p.width)}
                       fontWeight={700}
                       fill={TABLE_LOOK.number}
                     >
@@ -1210,7 +1211,7 @@ export function MapEditor({
           ch={ch}
           tables={tables.map((tb) => {
             const p = posOf(tb);
-            return { id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
+            return { id: tb.id, number: tb.number, label: tb.label ?? null, name: tb.name, labelOnly: tb.labelOnly, shape: tb.shape, seats: tb.seats, x: p.x, y: p.y, width: p.width, height: p.height, rotation: p.rotation };
           })}
           logoUrl={logoUrl}
           logoLabel={t('sketch.kind.logo')}

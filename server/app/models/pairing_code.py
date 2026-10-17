@@ -49,6 +49,9 @@ class PairingCode(Base):
     device_role = Column(String(32), nullable=True)
     #: The kiosk's options for a kiosk code: `{"name", "controllerMachineIds", "lockDevice"}`.
     kiosk_options = Column(JSON, nullable=True)
+    #: "סוג רישיון" for a till / kiosk code (app/services/device_license.py): "till" | "kiosk" | "kiosk_till",
+    #: checked against `device_role` when the code is made. Null (an older dashboard): the role's default.
+    license_product = Column(String(16), nullable=True)
     #: "android" | "windows": the platform the code is for. A device of the other platform
     #: is refused (422 `platform_mismatch`) before anything is created. Null: no check (a
     #: code from an older dashboard, a replacement code).

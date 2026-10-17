@@ -15,8 +15,9 @@ Read in one primary-key lookup.
   lock to run out (a lock ends by time alone) or `MAX_AGE` after the build, whichever is
   first. `MAX_AGE` also bounds what changes without a tables write (a parameter, a till
   renamed, a booking entering the window);
-* `fingerprint` — the till itself (id, shop, point of sale, independence, LAN exclusion):
-  another till's tag never matches.
+* `fingerprint` — the till itself (id, shop, point of sale, independence, LAN exclusion — and, once it has
+  them, its table scope and the capabilities that change what it is sent, P:/specs/table-scope.md §7):
+  another till's tag never matches, nor its "כל השולחנות" state its scoped one (`VARIANT_ALL`).
 
 A till that sends the tag back (`If-None-Match`, or `?since=`) while it is still good is
 answered 304 / `{"syncType": "unchanged"}` without the state being built. A till that sends
@@ -149,7 +150,25 @@ def bump_tenant(db: Session, tenant_id: Any) -> None:
 # ── The tag ──────────────────────────────────────────────────────────────────
 
 
-def fingerprint(machine: Any) -> str:
+#: "כל השולחנות" (P:/specs/table-scope.md §4, `?scope=all`): a state of its own, never the scoped one's tag.
+VARIANT_ALL = "all"
+
+
+def _scope_part(machine: Any, variant: str) -> str:
+    """The table scope's share of the fingerprint: "" for a till with none of it (its fingerprint as before)."""
+    from app.services import table_scope as TSC
+
+    caps = TSC.capabilities_of(machine)
+    parts = [
+        TSC.digest(getattr(machine, "table_scope", None)),
+        "L" if TSC.CAPABILITY_LABELS in caps else "",
+        "S" if TSC.CAPABILITY_SCOPE in caps else "",
+        variant or "",
+    ]
+    return "" if not any(parts) else ":".join(parts)
+
+
+def fingerprint(machine: Any, variant: str = "") -> str:
     """What makes a till's state its own, from the machine row alone (no query)."""
     raw = "|".join(
         str(v)
@@ -163,11 +182,14 @@ def fingerprint(machine: Any) -> str:
             getattr(machine, "is_active", None),
         )
     )
+    extra = _scope_part(machine, variant)
+    if extra:
+        raw += "|" + extra
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
 
 
-def make_tag(version: int, until: datetime, machine: Any) -> str:
-    return f"t{int(version)}.{_seconds(until)}.{fingerprint(machine)}"
+def make_tag(version: int, until: datetime, machine: Any, variant: str = "") -> str:
+    return f"t{int(version)}.{_seconds(until)}.{fingerprint(machine, variant)}"
 
 
 def parse_tags(header: Optional[str]) -> List[str]:
@@ -185,7 +207,7 @@ def parse_tags(header: Optional[str]) -> List[str]:
     return out
 
 
-def tag_matches(tag: str, machine: Any, version: int, now: datetime) -> bool:
+def tag_matches(tag: str, machine: Any, version: int, now: datetime, variant: str = "") -> bool:
     """Whether the till's tag still describes the state it would be given now."""
     try:
         head, until, fp = tag.split(".")
@@ -195,7 +217,7 @@ def tag_matches(tag: str, machine: Any, version: int, now: datetime) -> bool:
         until_s = int(until)
     except (AttributeError, ValueError):
         return False
-    return tagged == int(version) and fp == fingerprint(machine) and _seconds(now) < until_s
+    return tagged == int(version) and fp == fingerprint(machine, variant) and _seconds(now) < until_s
 
 
 # ── The shop snapshot ────────────────────────────────────────────────────────

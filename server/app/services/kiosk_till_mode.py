@@ -18,6 +18,15 @@ Till parameters (company → shop → area → device, the deepest wins):
   back to the kiosk after that many idle minutes, at rest only — never with a sale open.
 * `kioskOrientation` — `auto` (default) | `portrait` | `landscape`: an optional lock for a fixed
   install; the screens fit themselves to whatever the display is, locked or not.
+* `kioskTillModeStartMode` ("מצב עבודה בהפעלה", the owner 16.10.2026: "אפשר גם לבחור מברירת מחדל מה
+  המצב הראשון") — `last` (default: the mode last chosen survives a restart, as before) | `home` (the
+  role the device was given) | `kiosk` | `till`. Read by the device at an app start and after a
+  re-pairing, only where the gate is on; never over a sale, a payment or a table — a restart that
+  lands mid-sale restores it in its mode and the setting applies at the next idle point. **Admin
+  only**, as the gate. The rule is pinned for both apps by the shared golden
+  `work_mode_start_golden.json` (tests/fixtures/kiosk_desktop = kiosk-desktop test/fixtures/contract;
+  run by kiosk-desktop core/workMode.ts `startStep` and Android domain/KioskTillMode.kt
+  `KioskTillMode.startStep`).
 
 The device reports the mode on kiosk/sync: `flowState = till_mode` and `tillMode` (since, who,
 the employee signed in, what holds a pending switch back).
@@ -34,6 +43,7 @@ from sqlalchemy.orm import Session
 ENABLED_KEY = "kioskTillModeEnabled"
 IDLE_KEY = "kioskTillModeIdleReturnMinutes"
 ORIENTATION_KEY = "kioskOrientation"
+START_MODE_KEY = "kioskTillModeStartMode"
 
 ORIENTATIONS = ("auto", "portrait", "landscape")
 ORIENTATION_LABELS = {"auto": "אוטומטי", "portrait": "לאורך", "landscape": "לרוחב"}
@@ -41,8 +51,20 @@ DEFAULT_IDLE_MINUTES = 3
 MAX_IDLE_MINUTES = 240
 IDLE_MESSAGE = f"חזרה אוטומטית לקיוסק: מספר שלם של דקות, 0 (אף פעם) עד {MAX_IDLE_MINUTES}"
 
-#: Parameters only [ADMIN_ROLES] may change — "if the owner hasn't enabled it, the feature doesn't exist".
-ADMIN_ONLY_KEYS = frozenset({ENABLED_KEY})
+#: "מצב עבודה בהפעלה": the mode a device starts in (an app start, a re-pairing). `last` — as before.
+START_MODES = ("last", "home", "kiosk", "till")
+DEFAULT_START_MODE = "last"
+START_MODE_LABELS = {
+    "last": "המצב האחרון שנבחר (ברירת מחדל)",
+    "home": "לפי התפקיד שהוקצה למכשיר",
+    "kiosk": "תמיד קיוסק",
+    "till": "תמיד קופה",
+}
+START_MODE_MESSAGE = "מצב עבודה בהפעלה: last, home, kiosk או till"
+
+#: Parameters only [ADMIN_ROLES] may change — "if the owner hasn't enabled it, the feature doesn't exist";
+#: the start mode is set beside the gate, by the same people.
+ADMIN_ONLY_KEYS = frozenset({ENABLED_KEY, START_MODE_KEY})
 ADMIN_ROLES = ("super_admin", "distributor")
 ADMIN_ONLY_DETAIL = "till_parameter_admin_only"
 
@@ -61,6 +83,8 @@ BLOCKED_TEXTS = {
     "kiosk_payment": "ממתין — לקוח משלם בקיוסק",
     "customer_ordering": "ממתין — לקוח באמצע הזמנה",
     "disabled": "מצב קופה אינו מופעל",
+    # "סוג רישיון" (app/services/device_license.py): the device's license has no work mode.
+    "license": "רישיון המכשיר אינו כולל מעבר בין קיוסק לקופה",
 }
 
 PARAMETER_SPECS = (
@@ -75,7 +99,9 @@ PARAMETER_SPECS = (
             "(והחוצה, גם מתפריט הקופה), והמצב נשמר גם אחרי הפעלה מחדש. בדשבורד מופיע אותו מתג לכל קיוסק. "
             "אותה מכונה, אותה סדרת מסמכים ואותם חוקי משמרת ו-Z; המסמכים על שם העובד שנכנס. "
             "לא באמצע הזמנה או תשלום. כשכבוי (ברירת המחדל) — האפשרות לא קיימת בכלל. "
-            "רק מנהל-על או מפיץ רשאים לשנות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או מכשיר."
+            "רק מנהל-על או מפיץ רשאים לשנות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או מכשיר. "
+            "למכשיר עם סוג רישיון הערך נקבע לפי הרישיון: \"משולב\" — מופעל, \"קופה בלבד\" / "
+            "\"קיוסק בלבד\" — כבוי; הפרמטר חל רק על מכשיר בלי סוג רישיון."
         ),
     ),
     dict(
@@ -99,6 +125,23 @@ PARAMETER_SPECS = (
             "auto (ברירת המחדל) — המכשיר מזהה לבד כיוון, רזולוציה וגודל מסך (11\" עד 32\") ומתאים את המסכים, "
             "גם כשהמסך מסתובב או מוחלף. portrait (לאורך) / landscape (לרוחב) — נעילה להתקנה קבועה; המסכים "
             "ממשיכים להתאים את עצמם לגודל. אין צורך לקבוע גודל מסך."
+        ),
+    ),
+    dict(
+        key=START_MODE_KEY,
+        label="קיוסק — מצב עבודה בהפעלה",
+        value_type="enum",
+        enum_options=START_MODES,
+        enum_labels=START_MODE_LABELS,
+        default_value=DEFAULT_START_MODE,
+        admin_only=True,
+        description=(
+            "באיזה מצב המכשיר עולה בהפעלה מחדש של האפליקציה ואחרי צימוד מחדש: last — המצב האחרון שנבחר "
+            "(ברירת המחדל, כמו היום); home — לפי התפקיד שהוקצה למכשיר (קיוסק או קופה); kiosk — תמיד כקיוסק; "
+            "till — תמיד כקופה. חל רק כש\"קיוסק — מצב קופה\" מופעל. לעולם לא באמצע מכירה, תשלום או שולחן: "
+            "הפעלה מחדש באמצע מכירה מחזירה אותה במצב שלה, וההגדרה חלה ברגע הפנוי הבא. אחרי ההפעלה הכול כרגיל — "
+            "מעבר ידני, פקודה מהדשבורד והחזרה האוטומטית לקיוסק. רק מנהל-על או מפיץ רשאים לשנות. ניתן לקבוע "
+            "לפי חברה, סניף, נקודת מכירה או מכשיר."
         ),
     ),
 )
@@ -140,6 +183,10 @@ def clean_value(key: str, value: Any) -> Any:
         if value not in ORIENTATIONS:
             raise ValueError("כיוון מסך: auto, portrait או landscape")
         return value
+    if key == START_MODE_KEY:
+        if value not in START_MODES:
+            raise ValueError(START_MODE_MESSAGE)
+        return value
     return value
 
 
@@ -156,10 +203,12 @@ def settings_for(params: Dict[str, Any]) -> Dict[str, Any]:
     except ValueError:
         idle = DEFAULT_IDLE_MINUTES
     orientation = params.get(ORIENTATION_KEY)
+    start = params.get(START_MODE_KEY)
     return {
         "enabled": boolean(ENABLED_KEY, False),
         "idleReturnMinutes": idle,
         "orientation": orientation if orientation in ORIENTATIONS else "auto",
+        "startMode": start if start in START_MODES else DEFAULT_START_MODE,
     }
 
 
@@ -182,16 +231,42 @@ def set_gate(db: Session, machine: Any, enabled: Optional[bool], user: Any, *, n
     `kioskTillModeEnabled` at the device's own level: on, off, or `None` — back to what it inherits.
     A super admin or a distributor only (403 otherwise). The caller commits, then notifies the device.
     """
+    refuse_admin_only(ENABLED_KEY, user)
+    # "סוג רישיון": a licensed device's gate is its license's — changed on the machine page (409 otherwise).
+    from app.services import device_license
+
+    device_license.check_gate_switch(machine)
+    if enabled is not None and not isinstance(enabled, bool):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="enabled must be true, false or null")
+    _set_machine_value(db, machine, ENABLED_KEY, enabled, user, now=now)
+    return effective(db, machine)
+
+
+def set_start_mode(db: Session, machine: Any, mode: Optional[str], user: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    "מצב עבודה בהפעלה" (`kioskTillModeStartMode`) at the device's own level: one of [START_MODES], or
+    `None` — back to what it inherits. A super admin or a distributor only, as the gate (403 otherwise);
+    422 for anything else. The caller commits, then notifies the device.
+    """
+    refuse_admin_only(START_MODE_KEY, user)
+    if mode is not None:
+        try:
+            mode = clean_value(START_MODE_KEY, mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    _set_machine_value(db, machine, START_MODE_KEY, mode, user, now=now)
+    return effective(db, machine)
+
+
+def _set_machine_value(db: Session, machine: Any, key: str, value: Any, user: Any, *, now: Optional[datetime] = None) -> None:
+    """One of the feature's parameters at the device's own level (None clears it), recorded in the parameters' log."""
     from app.models.till_parameter import TillParameter, TillParameterValue
     from app.services import till_parameter_audit as AUDIT
     from app.services.till_parameters import ensure_builtin_parameters
 
-    refuse_admin_only(ENABLED_KEY, user)
-    if enabled is not None and not isinstance(enabled, bool):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="enabled must be true, false or null")
     now = now or datetime.now(timezone.utc)
     ensure_builtin_parameters(db)
-    parameter = db.query(TillParameter).filter(TillParameter.key == ENABLED_KEY).first()
+    parameter = db.query(TillParameter).filter(TillParameter.key == key).first()
     if parameter is None:  # pragma: no cover - created just above
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="parameter missing")
     row = (
@@ -204,26 +279,25 @@ def set_gate(db: Session, machine: Any, enabled: Optional[bool], user: Any, *, n
         .first()
     )
     old = row.value if row is not None else None
-    if enabled is None:
+    if value is None:
         if row is not None:
             db.delete(row)
         action = AUDIT.CLEAR
     else:
         if row is None:
             db.add(TillParameterValue(
-                id=uuid.uuid4(), parameter_id=parameter.id, scope_type="machine", scope_id=machine.id, value=enabled,
+                id=uuid.uuid4(), parameter_id=parameter.id, scope_type="machine", scope_id=machine.id, value=value,
             ))
         else:
-            row.value = enabled
+            row.value = value
         action = AUDIT.SET
     AUDIT.record_change(
         db, parameter=parameter, scope_type="machine", scope_id=machine.id,
-        action=action, old_value=old, new_value=enabled, user=user, now=now,
+        action=action, old_value=old, new_value=value, user=user, now=now,
     )
     # Moves the tills' parameters watermark, so the device pulls it on its next sync.
     parameter.updated_at = now
     db.flush()
-    return effective(db, machine)
 
 
 # ── The dashboard's switch (the kiosk commands `enter_till` / `return_kiosk`) ────────
@@ -237,7 +311,12 @@ def check_work_mode(db: Session, machine: Any, action: str) -> str:
     if mode is None:
         raise KioskCommandRefused(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_work_mode", "מצב עבודה: enter_till או return_kiosk")
     if not effective(db, machine)["enabled"]:
-        raise KioskCommandRefused(status.HTTP_409_CONFLICT, "till_mode_disabled", "מצב קופה אינו מופעל לקיוסק הזה")
+        from app.services import device_license
+
+        raise KioskCommandRefused(
+            status.HTTP_409_CONFLICT, "till_mode_disabled",
+            device_license.work_mode_refusal_message(machine) or "מצב קופה אינו מופעל לקיוסק הזה",
+        )
     return mode
 
 
@@ -281,7 +360,10 @@ def work_mode_of(status_report: Any) -> str:
 
 def summary_part(db: Session, machine: Any, status_report: Any) -> Dict[str, Any]:
     """What the dashboard's kiosk panels show of the feature: the gate, the mode, the waiting switch."""
+    from app.services import device_license
+
     settings = effective(db, machine)
+    product = device_license.product_of(db, machine)
     till = status_report.get("tillMode") if isinstance(status_report, dict) else None
     till = till if isinstance(till, dict) else {}
     blocked = till.get("returnBlocked")
@@ -289,12 +371,17 @@ def summary_part(db: Session, machine: Any, status_report: Any) -> Dict[str, Any
         "enabled": settings["enabled"],
         "idleReturnMinutes": settings["idleReturnMinutes"],
         "orientation": settings["orientation"],
+        "startMode": settings["startMode"],
         "mode": work_mode_of(status_report),
         "since": till.get("since"),
         "enteredBy": till.get("enteredBy"),
         "employee": till.get("employee"),
         "blocked": blocked,
         "blockedText": BLOCKED_TEXTS.get(blocked) if blocked else None,
+        # "סוג רישיון": the device's product, and whether the gate above is its (no switch on the kiosk page).
+        "licenseProduct": product,
+        "licenseProductLabel": device_license.label(product),
+        "byLicense": device_license.stored(machine) is not None,
     }
 
 

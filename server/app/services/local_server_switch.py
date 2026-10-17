@@ -1100,6 +1100,7 @@ def record_former_host_change(
         "tableId": str(getattr(row, "table_id", None) or item.table_id),
         "tableNumber": getattr(row, "table_number", None),
         "tableName": getattr(row, "table_name", None),
+        "tableLabel": getattr(row, "table_label", None),
         "till": {
             "status": item.status,
             "version": item.version,

@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react';
 import { Delete, X } from 'lucide-react';
 import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
 import type { AdminActionResult, AdminInfo, KioskView, SynqpayAdminInfo, SynqpayPairingView, TechnicianInfo } from '../../shared/bridge';
+import { DISPLAY_SCALE_TEXT, DisplayScaleControl } from '../roles/DisplayScaleControl';
 import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
 import { t } from '../i18n';
@@ -203,7 +204,7 @@ function Panel({ m, title, children }: { m: PreviewModel; title: string; childre
 
 function Btn({ m, onClick, children, danger = false }: { m: PreviewModel; onClick: () => void; children: React.ReactNode; danger?: boolean }) {
   return (
-    <button type="button" onClick={onClick} className="px-3 py-1.5 text-xs font-bold" style={{ background: danger ? '#DC2626' : `${m.c.button}1A`, color: danger ? '#fff' : m.c.button, borderRadius: 8 }}>
+    <button type="button" onClick={onClick} className="min-w-[var(--k-target,0px)] px-3 py-1.5 text-xs font-bold" style={{ background: danger ? '#DC2626' : `${m.c.button}1A`, color: danger ? '#fff' : m.c.buttonInk, borderRadius: 8 }}>
       {children}
     </button>
   );
@@ -215,10 +216,11 @@ function Shell({ m, title, onClose, children }: { m: PreviewModel; title: string
     return () => window.clearTimeout(id);
   }, [onClose]);
   return (
-    <div className="absolute inset-0 z-[80] flex flex-col" style={{ background: m.c.background, color: m.c.text }} dir="rtl">
+    // `k-staff`: every control of the manager's screens at least 48 dp tall at this window's zoom (kiosk-shared PREVIEW_CSS).
+    <div className="k-staff absolute inset-0 z-[80] flex flex-col" style={{ background: m.c.background, color: m.c.text }} dir="rtl">
       <div className="flex shrink-0 items-center gap-2 border-b px-4 py-3" style={{ borderColor: m.c.border }}>
         <h2 className="flex-1 text-lg font-extrabold">{title}</h2>
-        <button type="button" aria-label="סגירה" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-full" style={{ background: `${m.c.button}1A`, color: m.c.button }}>
+        <button type="button" aria-label="סגירה" onClick={onClose} className="k-hit flex h-9 w-9 items-center justify-center rounded-full" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk }}>
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -469,7 +471,7 @@ function AdminScreen({
               else show(r);
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold disabled:opacity-40"
-            style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }}
+            style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }}
           />
           <Btn m={m} danger onClick={() => act({ type: 'exitKiosk' })}>
             יציאה מהקיוסק (סגירת התוכנה)
@@ -480,7 +482,7 @@ function AdminScreen({
           <div className="text-xs" style={{ color: m.c.mutedText }}>
             {info.desktopExit?.reason ?? `נדרשת הרשאת "${PERMISSION_LABEL}"`} — יציאה מהתוכנה אינה זמינה.
           </div>
-          <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
+          <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />
         </div>
       )}
       {/* "מצב עבודה": always a manager's code with KIOSK_TILL_MODE (checked on the device, five wrong codes lock it for a minute). */}
@@ -671,6 +673,8 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
             <div>קיוסק: {info.machine?.name ?? '—'}</div>
             <div>סניף: {info.shopName ?? '—'} · חברה: {info.companyName ?? '—'}</div>
             <div>קופה מס׳ {info.machine?.posNumber ?? '—'} · תפקיד: {info.deviceRole ?? '—'}</div>
+            {info.license?.info ? <div>{info.license.info}</div> : null}
+            {info.license?.warning ? <div className="font-semibold text-amber-700">{info.license.warning}</div> : null}
             <div dir="ltr" className="text-end text-xs">
               {info.machine?.machineId}
             </div>
@@ -766,16 +770,28 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
               פתיחת TeamViewer QuickSupport
             </Btn>
           </Panel>
-          <Panel m={m} title="תצוגה">
-            <div className="flex gap-2">
-              {[1, 1.5, 2, 2.5].map((z) => (
-                <Btn key={z} m={m} onClick={() => act({ type: 'setZoom', zoom: z })}>
-                  ×{z}
-                </Btn>
-              ))}
-            </div>
-          </Panel>
-          <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
+          {/* "גודל תצוגה" (P:/specs/display-scale.md): the one size control, saved on this kiosk over the cloud. */}
+          {info.displayScale ? (
+            <Panel m={m} title={DISPLAY_SCALE_TEXT.title}>
+              <DisplayScaleControl
+                view={info.displayScale}
+                act={(a) => void act(a)}
+                button={(label, onClick, disabled) => (
+                  <button
+                    key={label}
+                    type="button"
+                    disabled={disabled}
+                    onClick={onClick}
+                    className="min-w-[var(--k-target,0px)] px-3 py-1.5 text-xs font-bold disabled:opacity-40"
+                    style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }}
+                  >
+                    {label}
+                  </button>
+                )}
+              />
+            </Panel>
+          ) : null}
+          <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />
           <Btn m={m} danger onClick={() => act({ type: 'unpair' })}>
             ניתוק הקיוסק מהענן
           </Btn>

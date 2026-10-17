@@ -97,7 +97,10 @@ export function savedFloor(layout: TablesLayout | undefined): FloorLive | null {
     elements: uniqueElements(zone.sketch?.elements ?? []),
     tables: layout.tables
       .filter((tb) => tb.zoneId === zone.id)
-      .map((tb) => ({ id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation })),
+      .map((tb) => ({
+        id: tb.id, number: tb.number, label: tb.label ?? null, name: tb.name, labelOnly: tb.labelOnly,
+        shape: tb.shape, seats: tb.seats, x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation,
+      })),
     logoUrl: layout.logoUrl ?? null,
     dirty: false,
   };

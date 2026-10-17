@@ -26,15 +26,42 @@ import {
   KIOSK_VIDEO_TYPES,
   uploadKioskMedia,
 } from '@/lib/kioskApi';
-import { sameSetting, useFieldErrors, useKioskEditor, useKioskField } from './editor-context';
+import { landscapePathOf, sameSetting, useFieldErrors, useKioskEditor, useKioskField } from './editor-context';
 
 /* ------------------------------------------------------------ the shell */
 
 /** "Set here" badge + reset, for any value at `path`. */
 export function OverrideMark({ path }: { path: string }) {
   const t = useTranslations('kiosks.settings');
-  const { overridden, reset, disabled } = useKioskField<unknown>(path);
-  const { level } = useKioskEditor();
+  const { overridden, reset, disabled, landscape } = useKioskField<unknown>(path);
+  const { level, orientation } = useKioskEditor();
+  // "לרוחב" (P:/specs/kiosk-landscape-design.md §5): a design key's landscape value — "כמו לאורך" when unset; a
+  // key with no landscape counterpart is shared by both orientations.
+  if (orientation === 'landscape') {
+    const tl = (k: string) => t(`landscapeMark.${k}`);
+    if (!landscape) {
+      return <span className="text-[11px] text-muted-foreground">{tl('shared')}</span>;
+    }
+    if (!landscape.set) {
+      return (
+        <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">
+          {tl('asPortrait')}
+        </Badge>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1">
+        <Badge variant="secondary" className="bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          {overridden ? tl('setHere') : tl('setAbove')}
+        </Badge>
+        {!disabled && overridden ? (
+          <Button type="button" size="xs" variant="ghost" className="h-6 gap-1 px-1.5 text-[11px]" title={tl('reset')} onClick={reset}>
+            <RotateCcw className="h-3 w-3" /> {tl('reset')}
+          </Button>
+        ) : null}
+      </span>
+    );
+  }
   if (!overridden) {
     return (
       <span className="text-[11px] text-muted-foreground" title={t(`inheritFrom.${level}`)}>
@@ -126,7 +153,9 @@ export function SectionCard({
 }) {
   const t = useTranslations('kiosks.settings');
   const ed = useKioskEditor();
-  const touched = paths.filter((p) => {
+  // In landscape the card resets its landscape values only (the shared ones stay).
+  const scoped = ed.orientation === 'landscape' ? paths.map(landscapePathOf).filter((p): p is string => !!p) : paths;
+  const touched = scoped.filter((p) => {
     const v = p.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), ed.draft);
     const i = p.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Record<string, unknown>)[k] : undefined), ed.inherited);
     return !sameSetting(v, i);

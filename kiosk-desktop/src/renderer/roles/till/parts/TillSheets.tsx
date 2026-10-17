@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { BasketDiscountMode, CartLine, HeldState, RefundableLine } from '../../../../shared/till/protocol';
+import type { BasketDiscountMode, CartLine, HeldState, PresetDiscountsState, RefundableLine } from '../../../../shared/till/protocol';
 import { money, T } from '../text';
 
 /* ---------------------------------------------------------------- the frame */
@@ -39,18 +39,46 @@ export interface DiscountPreview {
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'back'] as const;
 
+export type PresetItem = PresetDiscountsState['items'][number];
+
+/**
+ * "הנחות קבועות": one chip per preset (its name, in its colour), the one on the basket highlighted — a tap applies it, the
+ * same tap takes it off (the engine decides both).
+ */
+export function PresetChips({ items, activeId, disabled, onTap }: { items: readonly PresetItem[]; activeId: string | null; disabled?: boolean; onTap(id: string): void }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="t-quick t-presets" role="group" aria-label={T.presetDiscounts}>
+      {items.map((p) => {
+        const on = p.id === activeId;
+        const style = p.color ? (on ? { background: p.color, borderColor: p.color, color: '#fff' } : { borderColor: p.color, color: p.color }) : undefined;
+        return (
+          <button key={p.id} type="button" className={`t-chip${on ? ' t-chip-on' : ''}`} style={style} aria-pressed={on} disabled={disabled && !on} onClick={() => onTap(p.id)}>
+            {p.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** "הנחה לחשבון" (BasketDiscountSheet): %, ₪ or "לתשלום ₪" — keyed here, previewed and applied by the engine. */
 export function BasketDiscountSheet({
   preview,
   apply,
   remove,
   current,
+  presets,
+  onPreset,
   onClose,
 }: {
   preview(mode: BasketDiscountMode, input: string): Promise<DiscountPreview | undefined>;
   apply(mode: BasketDiscountMode, input: string): void;
   remove?(): void;
-  current: { amountAgorot: number } | null;
+  current: { amountAgorot: number; preset?: { id: string } } | null;
+  /** "הנחות קבועות" at the top (none: as before). */
+  presets?: readonly PresetItem[];
+  onPreset?(id: string): void;
   onClose(): void;
 }) {
   const [mode, setMode] = useState<BasketDiscountMode>('percent');
@@ -75,6 +103,7 @@ export function BasketDiscountSheet({
   };
   return (
     <Sheet title={T.basketDiscount} onClose={onClose}>
+      {presets && presets.length > 0 && onPreset ? <PresetChips items={presets} activeId={current?.preset?.id ?? null} onTap={onPreset} /> : null}
       <div className="t-departments" role="tablist">
         {(['percent', 'fixed', 'target'] as const).map((m) => (
           <button
@@ -115,6 +144,76 @@ export function BasketDiscountSheet({
       {current && remove ? (
         <button type="button" className="t-btn t-btn-wide" onClick={remove}>
           {T.basketDiscountRemove} (−{money(current.amountAgorot)})
+        </button>
+      ) : null}
+    </Sheet>
+  );
+}
+
+/**
+ * "עבור מי" before a preset that asks it: an employee picked (`employees`), or a name typed (`free`, and `club` — this till
+ * attaches no club customer to a sale, so it is typed). `required`: no name, no discount.
+ */
+export function PresetForSheet({
+  preset,
+  employees,
+  onApply,
+  onClose,
+}: {
+  preset: PresetItem;
+  employees: ReadonlyArray<{ id: string; name: string }>;
+  onApply(who: { for?: string; forKind?: 'employee' | 'typed'; forRef?: string }): void;
+  onClose(): void;
+}) {
+  const [picked, setPicked] = useState<{ id: string; name: string } | null>(null);
+  const [typed, setTyped] = useState('');
+  const pick = preset.forWhomSource === 'employees' ? employees : [];
+  const name = picked ? picked.name : typed.trim();
+  const required = preset.forWhom === 'required';
+  return (
+    <Sheet title={T.presetForTitle(preset.name)} onClose={onClose}>
+      {pick.length > 0 ? (
+        <>
+          <p className="t-small t-muted">{T.presetForEmployees}</p>
+          <div className="t-quick">
+            {pick.map((e) => (
+              <button
+                key={e.id}
+                type="button"
+                className={`t-chip${picked?.id === e.id ? ' t-chip-on' : ''}`}
+                onClick={() => {
+                  setPicked(picked?.id === e.id ? null : e);
+                  setTyped('');
+                }}
+              >
+                {e.name}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+      <input
+        className="t-input"
+        placeholder={T.presetForName}
+        maxLength={60}
+        value={picked ? '' : typed}
+        onChange={(e) => {
+          setPicked(null);
+          setTyped(e.target.value);
+        }}
+      />
+      {required && !name ? <p className="t-small t-muted">{T.presetForRequired}</p> : null}
+      <button
+        type="button"
+        className="t-btn t-btn-primary t-btn-wide"
+        disabled={required && !name}
+        onClick={() => onApply(picked ? { for: picked.name, forKind: 'employee', forRef: picked.id } : name ? { for: name, forKind: 'typed' } : {})}
+      >
+        {T.presetForApply}
+      </button>
+      {!required ? (
+        <button type="button" className="t-btn t-btn-wide" onClick={() => onApply({})}>
+          {T.presetForSkip}
         </button>
       ) : null}
     </Sheet>

@@ -87,6 +87,8 @@
     "src/lib/branchCode.test.ts",
     "src/lib/deviceProfile.ts",
     "src/lib/deviceProfile.test.ts",
+    "src/lib/deviceLicense.ts",
+    "src/lib/deviceLicense.test.ts",
     "src/lib/appReleases.ts",
     "src/lib/appReleases.test.ts",
     "src/lib/availabilityReopen.ts",
@@ -314,6 +316,8 @@
     "src/lib/customerDisplayWeb.test.ts",
     "src/lib/displayProfile.ts",
     "src/lib/displayProfile.test.ts",
+    "src/lib/kioskLandscape.ts",
+    "src/lib/kioskLandscape.test.ts",
     "src/lib/kioskPickupSearch.ts",
     "src/lib/kioskPickupSearch.test.ts",
     "src/lib/tableSearch.ts",
@@ -370,6 +374,10 @@
     "src/lib/tableAssignment.test.ts",
     "src/lib/receiptTableInfo.ts",
     "src/lib/receiptTableInfo.test.ts",
+    "src/lib/tableLabels.ts",
+    "src/lib/tableLabels.test.ts",
+    "src/lib/tableScope.ts",
+    "src/lib/tableScope.test.ts",
     "src/lib/csv.ts",
     "src/lib/designedReport.ts",
     "src/lib/designedReport.test.ts",
@@ -383,6 +391,8 @@
     "src/lib/tillDrawers.ts",
     "src/lib/tillDrawers.test.ts",
     "src/lib/cashStations.ts",
-    "src/lib/cashStations.test.ts"
+    "src/lib/cashStations.test.ts",
+    "src/lib/presetDiscounts.ts",
+    "src/lib/presetDiscounts.test.ts"
   ]
 }

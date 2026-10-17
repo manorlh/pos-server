@@ -35,7 +35,7 @@ export function Dialog({
         {children}
         <div className={secondary ? 'grid grid-cols-2 gap-2' : ''}>
           {secondary ? (
-            <button type="button" onClick={secondary.onClick} className="w-full px-4 py-3 kt-15 font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: m.btnRadius }}>
+            <button type="button" onClick={secondary.onClick} className="w-full px-4 py-3 kt-15 font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: m.btnRadius }}>
               {secondary.label}
             </button>
           ) : null}

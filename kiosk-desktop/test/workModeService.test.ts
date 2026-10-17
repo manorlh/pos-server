@@ -381,7 +381,7 @@ describe('"ניהול הקיוסק" → "מצב עבודה" — the manager’s 
     const w = world();
     try {
       await w.svc.adminUnlock('7001');
-      expect(w.svc.adminInfo().workMode).toEqual({ enabled: true, mode: 'kiosk', toTill: true, toKiosk: false, openerHolds: true });
+      expect(w.svc.adminInfo().workMode).toEqual({ enabled: true, mode: 'kiosk', toTill: true, toKiosk: false, openerHolds: true, startMode: 'last' });
       expect(await w.svc.adminAction({ type: 'workMode', mode: 'till' })).toEqual({ ok: true });
       expect(w.runtime.mode()).toBe('till');
       expect(w.svc.workSessions.till()).toMatchObject({ by: 'רונית מנהלת', byId: 'boss', source: 'manual' });
@@ -465,6 +465,49 @@ describe('nothing fiscal moves with the mode — the kiosk’s own closes wait w
       await w.runtime.returnToKiosk('manual', 'רונית', 'boss');
       expect(await w.svc.closeForShopZ('req-2')).toMatchObject({ state: 'done' });
     } finally {
+      w.done();
+    }
+  });
+});
+
+describe('"מצב עבודה בהפעלה" through the service — the cloud’s parameter, the till event, a re-pairing', () => {
+  it('a kiosk kept in till mode starts as the kiosk (home); the event says reason start; after a re-pairing it waits for the new pairing’s word', async () => {
+    const w = world();
+    let again: ReturnType<typeof createWorkMode> | null = null;
+    try {
+      expect(await w.runtime.enterTill('רונית מנהלת', 'boss', 'manual')).toBeNull();
+      // A restart: the parameter says `home`; a new runtime over the same service (the sessions are in its kv).
+      w.runtime.stop();
+      w.svc.cloud.setParameters({ kioskTillModeEnabled: true, kioskTillModeStartMode: 'home', kioskTillModeIdleReturnMinutes: 0 }, null);
+      again = createWorkMode(w.svc);
+      again.setTillFacts(() => NO_TILL_FACTS);
+      expect(again.mode()).toBe('till');
+      expect(w.svc.adminInfo().workMode).toMatchObject({ startMode: 'home' });
+      await again.tick();
+      expect(again.mode()).toBe('kiosk');
+      expect(w.svc.isKioskMode()).toBe(true);
+      await w.svc.sync.flush();
+      await w.svc.sync.flush();
+      const events = w.posted('events').map((s) => s.body as { type: string; details: Record<string, unknown> });
+      expect(events.at(-1)).toMatchObject({ type: 'kiosk_till_mode', details: { action: 'exit', mode: 'kiosk', reason: 'start' } });
+      // Unpaired (what "unpair" does) and paired again: nothing before the new pairing's parameters and kiosk/sync answer.
+      w.svc.cloud.forget();
+      w.svc.workSessions.clear();
+      await again.tick();
+      expect(again.startPending()).toBe(true);
+      w.svc.cloud.setCredentials({ serverUrl: 'http://localhost:8001/api/v1/', accessToken: 't2', machineId: MACHINE, machineCode: null, tenantId: null, shopId: SHOP, mqttClientId: null, realtimeChannel: null, pairedAt: '2026-10-16T00:00:00Z' });
+      w.svc.cloud.setMachine({ machineId: MACHINE, machineName: 'מכשיר', deviceRole: 'kiosk', shopId: SHOP });
+      w.svc.cloud.setKioskSnapshot(KIOSK_REPLY);
+      await again.tick();
+      expect(again.startPending()).toBe(true); // the parameters are not in yet
+      expect(again.mode()).toBe('kiosk');
+      w.svc.cloud.setParameters({ kioskTillModeEnabled: true, kioskTillModeStartMode: 'till', kioskTillModeIdleReturnMinutes: 0 }, null);
+      await again.tick();
+      expect(again.mode()).toBe('till');
+      expect(w.svc.workSessions.till()).toMatchObject({ source: 'start' });
+      expect(again.startPending()).toBe(false);
+    } finally {
+      again?.stop();
       w.done();
     }
   });

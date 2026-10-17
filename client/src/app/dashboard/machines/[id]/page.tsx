@@ -44,6 +44,7 @@ import {
   KioskPinpadWarning,
 } from '@/components/dashboard/machines/device-role';
 import { WebScreenNote } from '@/components/dashboard/machines/web-screen-note';
+import { DeviceLicenseMismatchNote, DeviceLicenseValue } from '@/components/dashboard/machines/device-license';
 import { isCashHost, isDisplayDevice, isLocalServer } from '@/lib/deviceProfile';
 import { LocalServerDeviceCard } from '@/components/dashboard/local-server-dedicated';
 import { CashHostDeviceCard } from '@/components/dashboard/cash-stations/cash-host-card';
@@ -78,6 +79,7 @@ import { MachineLanServerCard } from '@/components/dashboard/machines/machine-la
 import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
 import { ItemBlockRoleCard } from '@/components/dashboard/machines/item-block-role-card';
 import { TillMenuCard } from '@/components/dashboard/machines/till-menu-card';
+import { TableScopeCard } from '@/components/dashboard/machines/table-scope-card';
 import { DeferredTerminalCard } from '@/components/dashboard/machines/deferred-terminal-card';
 import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
 import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
@@ -432,6 +434,13 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </span>
             }
           />
+          {/* "סוג רישיון" (P:/specs/device-license-type.md): a till / kiosk only; changed by a super admin / distributor. */}
+          {machine.licenseProduct ? (
+            <Field
+              label={tMachines('license.label')}
+              value={<DeviceLicenseValue machine={machine} canEdit={!removed} />}
+            />
+          ) : null}
           <Field
             label={tMachines('deviceModel.label')}
             value={
@@ -617,6 +626,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               kiosk={machine.deviceRole === 'kiosk'}
             />
             <DeviceModelWarningNote m={machine} />
+            {/* "סוג רישיון" that does not fit the role (e.g. a kiosk code whose conversion failed). */}
+            <DeviceLicenseMismatchNote m={machine} />
             {/* "מכשירי הסליקה הם חיצוניים": a kiosk with no pinpad address cannot take a card. */}
             <KioskPinpadWarning m={machine} />
           </div>
@@ -705,6 +716,11 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       {/* "תפריט הקופה" (P:/specs/till-menu-hide.md §3): the menu items this till hides from everyone,
           whatever their permissions. A kiosk too — it shows the till's menu in "מצב קופה". */}
       {machine.shopId && !isLocalServer(machine) && !display && !removed ? <TillMenuCard machineId={machine.id} /> : null}
+
+      {/* "שולחנות שהמכשיר רואה" (P:/specs/table-scope.md §2, §14.9): every table, or only the zones and tables
+          picked — "החל גם על…" on other devices of the shop. A local server too (its own screen narrows by it);
+          not a screen or a cash server, which have no tables. Hidden for whoever may not edit devices. */}
+      {machine.shopId && !display && !removed && !isCashHost(machine) ? <TableScopeCard machineId={machine.id} /> : null}
 
       {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
       {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}

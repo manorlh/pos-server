@@ -5,6 +5,7 @@
  * Sizes are drawn for the kiosk's 540 CSS px across (a 1080 screen at ×2) and scale with the frame.
  */
 
+import { lookColumns } from '@/lib/kioskLandscape';
 import { createContext, useContext, type CSSProperties, type ReactNode } from 'react';
 import { Check, Plus, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -50,12 +51,17 @@ export function dishColumnsFor(m: PreviewModel, widthPx: number): number {
   const density = m.cfg.theme.gridDensity;
   const [phone, tablet] = density === 'compact' ? [3, 4] : density === 'large' ? [dp >= 400 ? 2 : 1, 2] : [2, 3];
   // "גודל מוצרים" (layout.productSize): a column more or fewer, as on the Android kiosk.
-  return productColumns(dp < 600 ? phone : dp >= 1100 ? tablet + 1 : tablet, layoutOf(m.cfg).productSize, dp);
+  // "עיצוב לרוחב": in landscape never a dish wider than the landscape tile (lib/kioskLandscape.ts).
+  return lookColumns(m.landscape, productColumns(dp < 600 ? phone : dp >= 1100 ? tablet + 1 : tablet, layoutOf(m.cfg).productSize, dp), widthPx);
 }
 
-/** The frame's scale against the kiosk's 540 CSS px. */
+/**
+ * The frame's scale against the kiosk's 540 CSS px. "עיצוב לרוחב" (lib/kioskLandscape.ts): on a landscape screen against
+ * its short side — the width there grew every chip, icon and badge to ×1.6 ("לא ענקיים").
+ */
 export function unitOf(m: PreviewModel): number {
-  return Math.min(1.6, Math.max(0.55, m.screen.w / 540));
+  const side = m.landscape ? Math.min(m.screen.w, m.screen.h) : m.screen.w;
+  return Math.min(1.6, Math.max(0.55, side / 540));
 }
 
 /** What a layout's dish card asks of its catalog: "רוצים להפוך לארוחה?" for a dish. */
@@ -90,7 +96,7 @@ export function itemsCount(m: PreviewModel, n: number): string {
 export function SectionTitle({ m, title, count }: { m: PreviewModel; title: string; count?: number }) {
   return (
     <h3 className="flex items-baseline gap-2 pt-1 text-base font-extrabold">
-      <span className="truncate">{title}</span>
+      <span className="k-name truncate">{title}</span>
       {count !== undefined ? (
         <span className="kt-11 font-medium" style={{ color: m.c.mutedText }}>
           {itemsCount(m, count)}
@@ -117,7 +123,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         role="button"
         data-add={p.addPath === 'direct' ? 'direct' : 'sheet'}
         aria-label={kt(m, 'quickAdd')}
-        className={cn('flex shrink-0 items-center justify-center shadow-md transition-transform duration-150 active:scale-90', className)}
+        className={cn('k-hit flex shrink-0 items-center justify-center shadow-md transition-transform duration-150 active:scale-90', className)}
         style={{ width: size, height: size, borderRadius: 999, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         onClick={(e) => {
           e.stopPropagation();
@@ -153,7 +159,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {soldTag}
         </div>
         <div className="min-w-0 flex-1 space-y-0.5">
-          <div className="line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
+          <div className="k-name-block line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
             {p.name}
           </div>
           {m.cfg.theme.showDescriptions && p.description ? (
@@ -187,7 +193,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {plus(42 * u, 'absolute bottom-0 end-0')}
           <DishCountBadge m={m} inCart={inCart} size={Math.round(28 * u)} className="end-0 top-0" />
         </div>
-        <div className="mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
+        <div className="k-name mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
           {p.name}
         </div>
         <div className={pill ? 'w-full' : 'mt-0.5'}>{priced}</div>
@@ -203,14 +209,14 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
       className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:opacity-60"
       style={dishCardStyle(m)}
     >
-      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
+      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, maxHeight: m.landscape?.productImageMaxPx, ...photoBgStyle(m) }}>
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {soldTag}
         {plus(34 * u, 'absolute bottom-2 end-2')}
         <DishCountBadge m={m} inCart={inCart} size={Math.round(26 * u)} className="end-2 top-2" />
       </div>
       <div className="space-y-0.5 p-2.5">
-        <div className="line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>
+        <div className="k-name-block line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>
           {p.name}
         </div>
         {m.cfg.theme.showDescriptions && p.description ? (

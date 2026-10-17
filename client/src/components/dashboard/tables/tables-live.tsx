@@ -53,6 +53,7 @@ import {
   type VisualState,
 } from '@/lib/liveTables';
 import { tableDisplay } from '@/lib/tableRestore';
+import { fittedFont } from '@/lib/tableLabels';
 import {
   assignedCounts,
   assignedWaiters,
@@ -688,7 +689,7 @@ function MapTable({ layer, f, perPx, tag, onPick }: {
       </g>
       <text
         x={cx} y={numberY} textAnchor="middle" dominantBaseline="central"
-        fontSize={tb.labelOnly ? fs * 0.7 : fs} fontWeight={700} fill={TABLE_LOOK.number} direction="rtl"
+        fontSize={fittedFont(label.main, tb.labelOnly ? fs * 0.7 : fs, tb.width)} fontWeight={700} fill={TABLE_LOOK.number} direction="rtl"
       >
         {label.main}
       </text>
@@ -722,7 +723,8 @@ function LiveGrid({ floor, now, onPick }: { floor: FloorTable[]; now: number; on
     return () => ro.disconnect();
   }, []);
   const columns = gridColumns(width);
-  const cells = gridCells(floor.map((f) => ({ ...f, number: f.table.number })), columns);
+  // In the natural order of labels and numbers (3, 3A, 3B, 10 — P:/specs/table-scope.md §6.2).
+  const cells = gridCells(floor.map((f) => ({ ...f, number: f.table.number, label: f.table.label ?? null })), columns);
   return (
     <div ref={boxRef} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
       {cells.map(({ table: f }) => {
@@ -757,7 +759,11 @@ function LiveGrid({ floor, now, onPick }: { floor: FloorTable[]; now: number; on
                 {(main.initials ?? '?') + (f.assigned.length > 1 ? `+${f.assigned.length - 1}` : '')}
               </span>
             ) : null}
-            <span className="text-2xl font-bold tabular-nums leading-tight text-slate-800">{label.main}</span>
+            <span
+              className={`max-w-full truncate font-bold tabular-nums leading-tight text-slate-800 ${Array.from(label.main).length > 4 ? 'text-lg' : 'text-2xl'}`}
+            >
+              {label.main}
+            </span>
             {label.sub ? <span className="max-w-full truncate text-xs text-slate-500">{label.sub}</span> : null}
             {tb.order ? (
               <>

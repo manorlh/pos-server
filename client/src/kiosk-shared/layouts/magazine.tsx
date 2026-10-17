@@ -113,7 +113,7 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
             {label}
           </div>
         ) : null}
-        <div className="line-clamp-2 text-xl font-extrabold leading-tight" style={textSize(m, 'productName', 20)}>
+        <div className="k-name-block line-clamp-2 text-xl font-extrabold leading-tight" style={textSize(m, 'productName', 20)}>
           {p.name}
         </div>
         {m.cfg.theme.showDescriptions && p.description ? (

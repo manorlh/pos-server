@@ -124,6 +124,8 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
         "tableName",
         "tableOrderId",
         "tableOpenedAt",
+        # Its table's label ("3B", P:/specs/table-scope.md §6.1) beside the number. Nullable, additive.
+        "tableLabel",
     }
 
 

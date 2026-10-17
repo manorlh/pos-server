@@ -17,6 +17,10 @@
  *  - The idle return, the dashboard's `enter_till` / `return_kiosk` (carried out when allowed, else kept
  *    and reported as `tillMode.returnBlocked`, done as `commandsDone`), and a till event `kiosk_till_mode`
  *    for every switch.
+ *  - "מצב עבודה בהפעלה" (`kioskTillModeStartMode`): at an app start and after a re-pairing the device goes to
+ *    the mode the setting asks for (`last` — what it kept, as before), at once when nothing is open; a sale
+ *    restored after the restart is finished in its mode first, and the setting applies at the next idle point
+ *    (core/workMode.ts `startStep`). Any switch made meanwhile (a manager, the dashboard, the idle return) wins.
  *
  * No Electron here: every door is injected (`WorkModeDeps`), so tests run it with fakes; `createWorkMode`
  * wires it to the KioskService.
@@ -31,8 +35,10 @@ import {
   KioskHomeRole,
   NO_TILL_FACTS,
   REFUSALS,
+  START_RETRY_MS,
   TICK_MS,
   TILL_TICK_MS,
+  closedRefusal,
   decideManager,
   eventDetails,
   heldNoticeOf,
@@ -47,6 +53,7 @@ import {
   rawFactsOf,
   remote,
   sessionToJson,
+  startStep,
   statusJson,
   userHolds,
   approval as approvalOf,
@@ -199,10 +206,17 @@ export interface WorkModeDeps {
   fiscal(): boolean;
   /** The cloud's last `kiosk/sync` answer as it said it (a till's kiosk-mode row says `kiosk: true, homeRole: "till"`). */
   snapshot(): Record<string, unknown> | null;
+  /**
+   * The cloud's word for this pairing is on the device — its parameters and a `kiosk/sync` answer (an unpairing
+   * forgets both). The start mode after a re-pairing waits for it; absent — always (a test's fakes).
+   */
+  cloudKnown?(): boolean;
   /** `machines/me` deviceRole. */
   deviceRole(): unknown;
   /** The till parameters (`param.<key>`). */
   parameters(): Record<string, unknown>;
+  /** "סוג רישיון" as the cloud last said it (core/deviceLicense.ts); absent / null — the gate decides. */
+  licenseProduct?(): unknown;
   /** The shop's POS users, with their PIN hashes and effective permissions. */
   roster(): RosterUser[];
   shopId(): string | null;
@@ -228,6 +242,19 @@ export type ManagerCheck =
 const FIRST_TICK_MS = 2_000;
 const COUNTDOWN_TICK_MS = 1_000;
 
+/**
+ * "מצב עבודה בהפעלה" still to apply: from the app's start (the runtime is built once per run) and from every
+ * re-pairing (`fresh`: the cloud's word for the new pairing first); gone once applied, found needless, or
+ * overtaken by any other switch.
+ */
+interface StartArm {
+  fresh: boolean;
+  /** A sale held it back already: from then on, the next idle point. */
+  heldBack: boolean;
+  /** The door refused it (no kiosk config yet, no cloud): not before then. */
+  retryAtMs: number;
+}
+
 export class WorkModeRuntime {
   private tillFactsFn: (() => TillFacts) | null = null;
   private signOutFn: (() => void | Promise<void>) | null = null;
@@ -244,6 +271,8 @@ export class WorkModeRuntime {
   private running: Promise<void> | null = null;
   private again = false;
   private lastSignature = '';
+  /** At the app's start: the start mode is looked at on the first tick. */
+  private startArm: StartArm | null = { fresh: false, heldBack: false, retryAtMs: 0 };
 
   constructor(private readonly d: WorkModeDeps) {}
 
@@ -308,7 +337,7 @@ export class WorkModeRuntime {
 
   /** The feature's parameters as this device has them. */
   params(): TillModeParams {
-    return paramsOf(this.d.parameters());
+    return paramsOf(this.d.parameters(), this.d.licenseProduct?.());
   }
 
   /**
@@ -522,6 +551,7 @@ export class WorkModeRuntime {
       // A kiosk by role starts its till session; a till by role comes home.
       if (this.homeTill()) this.d.sessions.leaveAway();
       else this.d.sessions.enterTill({ sinceMs: this.d.now(), by, byId, source });
+      this.overtakeStart(source);
       this.record('till', source, by, byId, null, 0, commandId ?? null);
       this.d.log(`work mode: till (${source}) by ${by ?? '?'}`);
       this.held = null;
@@ -540,7 +570,7 @@ export class WorkModeRuntime {
     return this.withLock(async () => {
       if (!this.applicable()) return REFUSALS.disabled;
       if (this.mode() === 'kiosk') return null;
-      if (this.homeTill() && !this.params().enabled) return REFUSALS.disabled;
+      if (this.homeTill() && !this.params().enabled) return closedRefusal(this.params());
       const till = this.tillFacts();
       const refusal = mayReturn(till);
       if (refusal) return refusal;
@@ -557,6 +587,7 @@ export class WorkModeRuntime {
       }
       if (this.homeTill()) this.d.sessions.enterAway({ sinceMs: this.d.now(), by: who, byId: whoId, source });
       else this.d.sessions.leaveTill();
+      this.overtakeStart(source);
       this.held = heldNoticeOf(till);
       this.d.log(`work mode: kiosk (${source})${till.heldSales > 0 ? ` — ${till.heldSales} held sales wait for the till` : ''}`);
       this.changed(true);
@@ -580,6 +611,66 @@ export class WorkModeRuntime {
       this.asking = false;
     }
     return this.raw().kiosk;
+  }
+
+  /* ------------------------------------------------------ the mode it starts in */
+
+  /** "מצב עבודה בהפעלה" is still to apply (from the start or a re-pairing). */
+  startPending(): boolean {
+    return this.startArm !== null;
+  }
+
+  /** Any switch but the start mode's own: the person (or the cloud) decided — the start mode has nothing more to do. */
+  private overtakeStart(source: WorkModeSource) {
+    if (source !== 'start' && this.startArm) {
+      this.startArm = null;
+      this.d.log(`work mode: the start mode is overtaken by a ${source} switch`);
+    }
+  }
+
+  private startSettled(arm: StartArm): boolean {
+    if (!arm.fresh) return true;
+    try {
+      return this.d.cloudKnown?.() ?? true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * One look at the start mode (core/workMode.ts `startStep`): done — forgotten; a sale restored after the restart —
+   * it waits, then the next idle point; the mode it asks for — switched, recorded as `reason: start`. A door that
+   * refuses (no kiosk config yet and no cloud) is tried again a minute later.
+   */
+  private async startLook(params: TillModeParams, raw: RawKioskFacts) {
+    const arm = this.startArm;
+    if (!arm) return;
+    const now = this.d.now();
+    if (arm.retryAtMs > now) return;
+    const facts = this.tillFacts();
+    const quietMs = Math.max(0, now - Math.max(facts.lastActivityAtMs ?? 0, this.touchedAt));
+    const step = startStep(params, raw, this.mode(), this.kioskFacts(), facts, { settled: this.startSettled(arm), heldBack: arm.heldBack, quietMs });
+    if (step.kind === 'done') {
+      this.startArm = null;
+      return;
+    }
+    if (step.kind === 'wait') {
+      if (step.blocked && !arm.heldBack) {
+        arm.heldBack = true;
+        this.d.log(`work mode: the start mode (${params.startMode}) waits — ${step.blocked.wire}; then the next idle point`);
+      }
+      return;
+    }
+    const refusal = step.to === 'till' ? await this.enterTill(null, null, 'start') : await this.returnToKiosk('start');
+    if (refusal === null) {
+      if (this.startArm === arm) this.startArm = null;
+      this.d.log(`work mode: started as ${step.to} (start mode ${params.startMode})`);
+      return;
+    }
+    // Refused at the door: a sale opened in between waits for rest; no kiosk config (no cloud) is asked again later.
+    if (refusal.wire === 'kiosk_config_missing' || refusal.wire === 'disabled') arm.retryAtMs = now + START_RETRY_MS;
+    else arm.heldBack = true;
+    this.d.log(`work mode: the start mode (${params.startMode}) was refused at the door — ${refusal.wire}`);
   }
 
   /** The kiosk/sync now (the cloud hears the new mode at once, not 15 s later). */
@@ -644,6 +735,7 @@ export class WorkModeRuntime {
       // Made a kiosk (by role) while an employee is signed in (perhaps mid-sale): never yanked away — the till
       // stays, with the way back to the kiosk for when they are done.
       this.d.sessions.enterTill({ sinceMs: this.d.now(), by: employee?.name ?? null, byId: employee?.id ?? null, source: 'cloud' });
+      this.overtakeStart('cloud');
       this.record('till', 'cloud', employee?.name ?? null, employee?.id ?? null, employee?.name ?? null, 0, null);
       this.d.log('work mode: made a kiosk while a till was signed in — the till stays');
     }
@@ -721,17 +813,24 @@ export class WorkModeRuntime {
         this.pending = null;
         this.blocked = null;
       }
+      // "מצב עבודה בהפעלה" applies again once paired — with the new pairing's word (`fresh`).
+      if (!this.startArm?.fresh) this.startArm = { fresh: true, heldBack: false, retryAtMs: 0 };
       this.changed();
       return;
     }
     if (!this.applicable()) {
       this.pending = null;
       this.blocked = null;
+      // A screen, or a till never allowed the kiosk mode: the start mode has nothing to do — once the cloud said so.
+      if (this.startArm && this.startSettled(this.startArm)) this.startArm = null;
       this.changed();
       return;
     }
     const params = this.params();
     const raw = this.raw();
+
+    // "מצב עבודה בהפעלה": the mode the device starts in, before anything else of this look.
+    await this.startLook(params, raw);
 
     // The owner's gate closed: there is no other mode — back home as soon as nothing is open.
     if (!params.enabled && this.mode() !== KioskHomeRole.home(raw)) {
@@ -778,8 +877,11 @@ export function createWorkMode(svc: KioskService, log: (m: string) => void = () 
     paired: () => svc.paired,
     fiscal: () => svc.fiscal,
     snapshot: () => svc.rawKioskSnapshot(),
+    // An unpairing forgets both: after a re-pairing the start mode waits for the new pairing's word.
+    cloudKnown: () => svc.cloud.parametersKnown() && svc.cloud.kioskSnapshot() !== null,
     deviceRole: () => svc.cloud.machine()?.deviceRole ?? null,
     parameters: () => svc.cloud.parameters(),
+    licenseProduct: () => svc.cloud.licenseProduct(),
     roster: () => svc.cloud.posUsers(),
     shopId: () => svc.shopIdHere(),
     kioskFacts: () => svc.kioskSideFacts(),

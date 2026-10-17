@@ -93,6 +93,11 @@ export interface KioskView {
     cardOff: string | null;
     /** "מזומן" at the cash station: why its tile is off now (Hebrew), else null / absent. */
     cashOff?: string | null;
+    /**
+     * "קיוסק — כשאין מסופון אשראי" (core/noTerminalFallback.ts): "תשלום בקופה" is among the methods only because the
+     * terminal is not there (none set up, or not answering) and nothing else pays. Absent: not so.
+     */
+    tillFallback?: true;
   };
   /**
    * "סניף לא פעיל" (client lib/shopActive.ts): false — the shop was turned off in the cloud; the
@@ -454,11 +459,15 @@ export interface AdminWorkMode {
   toKiosk?: boolean;
   /** The manager who opened this menu holds KIOSK_TILL_MODE: their code counts, no second one is asked. */
   openerHolds: boolean;
+  /** "מצב עבודה בהפעלה" (`kioskTillModeStartMode`): anything but `last` — a restart starts the device as it says. Absent: `last`. */
+  startMode?: 'last' | 'home' | 'kiosk' | 'till';
 }
 
 export interface TechnicianInfo {
   machine: KioskView['machine'];
   deviceRole: string | null;
+  /** "סוג רישיון" (core/deviceLicense.ts): the product, "סוג רישיון: …", and the mismatch warning; null — none said. */
+  license?: { product: string; label: string | null; info: string | null; warning: string | null } | null;
   shopName: string | null;
   companyName: string | null;
   network: { online: boolean; lastBeatOkAt: number | null; serverUrl: string | null; interfaces: Array<{ name: string; address: string }> };
@@ -481,7 +490,34 @@ export interface TechnicianInfo {
     installWindow?: { start: string; end: string } | null;
   };
   quickSupport: string | null;
+  /** "גודל תצוגה" (P:/specs/display-scale.md): the window's size now, its source, the cloud's and the local choice. */
+  displayScale?: DisplayScaleView;
 }
+
+/** "גודל תצוגה" on the technician's screen (core/displayScale.ts). */
+export interface DisplayScaleView {
+  /** The size now, in percent of the automatic size (an old "זום": its share of it). */
+  percent: number;
+  setting: 'auto' | number;
+  source: 'local' | 'cloud' | 'auto';
+  /** The cloud's value as it resolved for this device ("auto", "85"; null: none). */
+  cloud: string | null;
+  /** The saved local choice ("auto", "85"; null: follow the cloud). */
+  local: string | null;
+  /** An unsaved choice is being previewed (`displayScalePreview`): its value (null: follow the cloud). */
+  preview?: { local: string | null };
+  /** The old absolute "זום" still in force (no new choice saved over it). */
+  legacyZoom: number | null;
+  /** The window's page zoom now, and the automatic one. */
+  zoom: number;
+  autoZoom: number;
+}
+
+/**
+ * The pairing's answer: done — with "המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד" (`notice`) and, when the license does
+ * not fit the role it opened in, its warning (core/deviceLicense.ts) — or the cloud's refusal in Hebrew.
+ */
+export type PairOutcome = { ok: true; notice?: string | null; warning?: string | null } | { ok: false; error: string };
 
 export interface KioskEvents {
   view: KioskView;
@@ -492,7 +528,7 @@ export interface KioskEvents {
 /** What the screens may ask (ipcRenderer.invoke under the hood). */
 export interface KioskBridge {
   bootstrap(): Promise<KioskView>;
-  pair(input: { serverUrl: string; code: string; machineName: string }): Promise<{ ok: true } | { ok: false; error: string }>;
+  pair(input: { serverUrl: string; code: string; machineName: string }): Promise<PairOutcome>;
   reportFlow(input: { flowState: string; screen: string; busy: boolean; idle: boolean }): void;
   /** "ביצועי קיוסקים": the funnel's events (core/kioskFunnel.ts), kept and sent to the cloud by the service. */
   funnel?(events: FunnelEvent[]): void;
@@ -625,7 +661,14 @@ export type TechnicianAction =
   | { type: 'updateCheck' }
   | { type: 'updateInstall' }
   | { type: 'quickSupport' }
-  | { type: 'setZoom'; zoom: number }
+  /**
+   * "גודל תצוגה": `displayScalePreview` shows a choice at once without saving it ("auto", "85", or null — follow the
+   * cloud); `displayScaleEnd` drops the preview; `displayScaleSave` saves it on the device (over the cloud) and drops
+   * the old "זום". Replaces the old ×1 / ×1.5 / ×2 "זום" buttons (`setZoom`).
+   */
+  | { type: 'displayScalePreview'; local: string | null }
+  | { type: 'displayScaleEnd' }
+  | { type: 'displayScaleSave'; local: string | null }
   /** "מדפסת לקבלות ולמסמכים": a destination's id, `local`, `ask` — or null, "חזור להגדרת הענן". */
   | { type: 'setReceiptPrinter'; id: string | null }
   | { type: 'unpair' };

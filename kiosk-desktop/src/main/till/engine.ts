@@ -57,7 +57,7 @@ import { vatNet } from '../../core/money';
 import { zModeOf } from '../../core/tillZ';
 import { parameterOn } from '../sync/cloud';
 import { CODES, NO_LOCK, type BcryptCompare, type ExitLock } from '../../core/desktopExit';
-import { PERM, TEXT, displayName, permLabel, stateOf, tryLogin, type RosterUser } from '../../core/till/staff';
+import { PERM, TEXT, displayName, loginCandidates, permLabel, stateOf, tryLogin, type RosterUser } from '../../core/till/staff';
 import {
   actingProfile,
   approvalText,
@@ -117,6 +117,18 @@ import {
   type DiscountType,
   type OthMark,
 } from '../../core/till/discounts';
+import {
+  KIND_PRESET,
+  PRESET_DISCOUNTS_KEY,
+  PRESET_DISCOUNT_BUTTONS_KEY,
+  PRESET_ID_MAX,
+  applyPreset,
+  presetCartDiscount,
+  presetForOf,
+  resolvePresetDiscounts,
+  type PresetMark,
+  type ResolvedPresets,
+} from '../../core/till/presetDiscounts';
 import {
   HELD_CANCEL_AUTO_CLOSE,
   HELD_CANCEL_LOCAL,
@@ -237,7 +249,7 @@ import {
   type OrderFacts,
   type OrderQuestions,
 } from '../../core/till/orderDetails';
-import type { OrderAsk } from '../../shared/till/protocol';
+import type { OrderAsk, PresetDiscountsState } from '../../shared/till/protocol';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -422,6 +434,10 @@ const WORDS = {
   noDiscountTitle: 'לא מקבל הנחות',
   lineNoDiscount: 'הפריט לא מקבל הנחות.',
   basketDiscountExceeds: 'ההנחה גדולה מהסכום לתשלום',
+  // ── "הנחות קבועות" (core/till/presetDiscounts.ts) ──
+  presetGone: 'ההנחה הזו אינה מוגדרת בקופה',
+  presetForRequired: 'יש לבחור עבור מי ההנחה',
+  presetNothingToDiscount: 'אין בהזמנה פריטים שמקבלים הנחה',
   othNoneEligible: 'אין בהזמנה פריטים שאפשר לתת על חשבון הבית.',
   othRefusedNoDiscount: (n: string) => `${n} לא מקבל הנחות — אי אפשר לתת אותו על חשבון הבית.`,
   othRefusedLineDiscount: 'הפריט על חשבון הבית (OTH). כדי לתת עליו הנחה אחרת — קודם בטלו את ה-OTH.',
@@ -542,6 +558,9 @@ interface PricedRefund {
   tracked: boolean;
 }
 
+/** "הנחה לחשבון" on the cart; a preset's ("הנחות קבועות") carries its mark (kept on a held sale with it). */
+type CartDiscount = { type: DiscountType; value: number; preset?: PresetMark };
+
 interface Frozen {
   lines: SaleLine[];
   tracked: string[];
@@ -549,7 +568,7 @@ interface Frozen {
   totals: SaleTotals;
   /** The basket discount in money, its kind and rate (on the 320). */
   basketDiscountAgorot?: number;
-  basketDiscount?: { type: DiscountType; value: number } | null;
+  basketDiscount?: CartDiscount | null;
   /** The returns of a mixed basket. */
   refunds?: PricedRefund[];
   /** "שוברי הנחה": what each discount voucher took (tillVouchers.ts) — the document's `voucherDiscounts`, the holds it confirms. */
@@ -638,14 +657,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private sellApprovedFor: string | null = null;
   private basketId = randomUUID();
   /** "הנחה לחשבון" on this basket, and who authorised the discounts (named on the 320). */
-  private cartDiscount: { type: DiscountType; value: number } | null = null;
+  private cartDiscount: CartDiscount | null = null;
   private discountApprover: string | null = null;
   /** "מצב זיכוי" and the chooser; the manager who authorised the returns of this basket (a grant, spent at the commit). */
   private refundMode = false;
   private refundChooser = false;
   private refundGrant: { approverId: string; profile: PermissionProfile } | null = null;
   /** A held sale's basket discount and approver, kept in memory while it is parked (Android parkedExtras). */
-  private readonly parkedExtras = new Map<string, { discount: { type: DiscountType; value: number } | null; approver: string | null; dining?: Dining | null; orderName?: string | null }>();
+  private readonly parkedExtras = new Map<string, { discount: CartDiscount | null; approver: string | null; dining?: Dining | null; orderName?: string | null }>();
   /**
    * "פרטי הזמנה" (core/till/orderDetails.ts): the quick order's take-away / eat-in and name, the first item held for them
    * ("בפתיחת הזמנה"), the sheet the engine asks for now, and the basket whose opening questions were closed unanswered.
@@ -1054,6 +1073,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return this.discountPreview(a.mode, a.input);
       case 'discount.apply':
         return this.applyBasketDiscount(a.mode, a.input);
+      case 'discount.preset':
+        return this.applyPresetDiscount(a);
       case 'discount.remove':
         this.editable();
         // One action, no confirm: removing a discount only ever raises what is owed.
@@ -1961,7 +1982,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
    * a role allowed up to X% acts alone only within it; only an approver whose own ceiling covers the rate may approve. Named
    * on the sale document: the operator acting alone, or the manager whose code was typed.
    */
-  private withDiscountAuthority(percent: number | null, apply: () => unknown) {
+  private withDiscountAuthority(percent: number | null, apply: () => unknown, force = false) {
     return this.gate(
       PERM.DISCOUNT,
       (approver) => {
@@ -1969,7 +1990,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         this.discountApprover = approver ? approver.id : this.cashier!.id;
         return value;
       },
-      { percent },
+      { percent, ...(force ? { force: true } : {}) },
     );
   }
 
@@ -2009,6 +2030,75 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       this.cartDiscount = committed;
       return undefined;
     });
+  }
+
+  /* ---------------------------------------------------------- preset discounts */
+
+  /**
+   * "הנחות קבועות" as this till's merged settings set them (cached with the settings: offline too). None configured — none
+   * offered, as before.
+   */
+  private presetDiscounts(): ResolvedPresets {
+    const s = this.svc.settingsMap();
+    return resolvePresetDiscounts(s[PRESET_DISCOUNTS_KEY], s[PRESET_DISCOUNT_BUTTONS_KEY]);
+  }
+
+  /**
+   * A preset's one tap (P:/specs/preset-discounts.md §3): it REPLACES whatever basket discount there is (the tap is the
+   * decision); the same preset again takes it off. Held to DISCOUNT at its rate like the keyed basket discount — the same
+   * manager approval — and `requiresManager` always asks one. Over the lines that take discounts only; an amount larger than
+   * they come to is capped, never refused.
+   */
+  private applyPresetDiscount(a: Record<string, unknown>) {
+    this.editable();
+    const id = typeof a.presetId === 'string' && a.presetId.trim() && a.presetId.length <= PRESET_ID_MAX ? a.presetId.trim() : refuse('invalid_args');
+    if (this.cartDiscount?.preset?.id === id) {
+      // Taking it off only ever raises what is owed: nobody is asked.
+      this.cartDiscount = null;
+      return undefined;
+    }
+    const preset = this.presetDiscounts().presets.find((p) => p.id === id);
+    if (!preset) return refuse('discount_refused', WORDS.presetGone);
+    if (this.cart.filter((l) => !l.refund).length === 0) return refuse('cart_empty');
+    const whom = presetForOf(preset, { for: a.for, forKind: a.forKind, forRef: a.forRef });
+    if (whom === 'required') return refuse('invalid_args', WORDS.presetForRequired);
+    const p = this.priced();
+    // The sale lines after their own discounts, with no basket discount (what the cart takes it over).
+    const payable = p.totals.totalAgorot + (p.basketDiscountAgorot ?? 0);
+    const r = applyPreset(payable, p.nonDiscountableAgorot, preset.kind, preset.value);
+    const committed = presetCartDiscount(preset);
+    if (!r.canApply || !committed) return refuse('discount_refused', WORDS.presetNothingToDiscount);
+    const mark: PresetMark = { id: preset.id, name: preset.name, kind: preset.kind, ...whom };
+    return this.withDiscountAuthority(
+      r.ratePercent,
+      () => {
+        this.cartDiscount = { ...committed, preset: mark };
+        return undefined;
+      },
+      preset.requiresManager,
+    );
+  }
+
+  /** The presets the screens offer (absent: none configured — nothing shows); the employees when one picks from them. */
+  private presetDiscountsView(): PresetDiscountsState | null {
+    const r = this.presetDiscounts();
+    if (r.presets.length === 0) return null;
+    const employees = r.presets.some((p) => p.forWhom !== 'none' && p.forWhomSource === 'employees')
+      ? loginCandidates(this.roster(), this.shop()).map((u) => ({ id: u.id, name: displayName(u) }))
+      : [];
+    return {
+      items: r.presets.map((p) => ({ id: p.id, name: p.name, kind: p.kind, value: p.value, color: p.color, requiresManager: p.requiresManager, forWhom: p.forWhom, forWhomSource: p.forWhomSource })),
+      buttons: r.buttons,
+      ...(employees.length > 0 ? { employees } : {}),
+    };
+  }
+
+  /** The sale document's basket discount: its money, rate and kind ("preset" with the preset's mark). */
+  private basketDocField(f: { basketDiscountAgorot?: number; basketDiscount?: CartDiscount | null }) {
+    const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
+    if (!kind) return {};
+    const preset = f.basketDiscount?.preset ?? null;
+    return { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind: preset ? KIND_PRESET : kind, ...(preset ? { preset } : {}) } };
   }
 
   /* --------------------------------------------------------------------- OTH */
@@ -2782,7 +2872,6 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const customer = b.customer.name || b.customer.phone || b.customer.address ? { name: b.customer.name, phone: b.customer.phone || null, address: b.customer.address || null } : null;
     const docs: BasketDocInput[] = [];
     if (hasSale) {
-      const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
       docs.push({
         documentType: saleDocumentType(dealer),
         lines: f.lines,
@@ -2792,7 +2881,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         payments: plan.sale.map((t) => ({ method: t.method, amountAgorot: t.amountAgorot })),
         ...(typeof input.tenderedAgorot === 'number' ? { tenderedAgorot: input.tenderedAgorot, changeAgorot: input.changeAgorot ?? 0 } : {}),
         ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
-        ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
+        ...this.basketDocField(f),
       });
     }
     credits.forEach((c, i) => {
@@ -2867,7 +2956,6 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return undefined;
       });
     }
-    const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
     const doc = this.svc.ledger.recordCashSale({
       documentType: saleDocumentType(this.svc.business().dealerType),
       prefix: this.prefix(),
@@ -2885,7 +2973,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       channel: 'till',
       ...this.voucherDocFields(f),
       ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
-      ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
+      ...this.basketDocField(f),
     });
     if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
     this.checkout.legs.push({ ...step.leg, status: 'approved' });
@@ -2931,7 +3019,6 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       });
     }
     // The pending document is written (numbered, the counter saved first) BEFORE the terminal is asked.
-    const kind = basketDiscountKindOf(f.basketDiscountAgorot ?? 0);
     const doc = this.svc.ledger.openCardSale({
       documentType: saleDocumentType(this.svc.business().dealerType),
       prefix: this.prefix(),
@@ -2948,7 +3035,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       channel: 'till',
       ...this.voucherDocFields(f),
       ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
-      ...(kind ? { basketDiscount: { agorot: f.basketDiscountAgorot!, percent: basketDiscountPercentOf(f.basketDiscountAgorot ?? 0, f.basketDiscount), kind } } : {}),
+      ...this.basketDocField(f),
     });
     if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
     this.startCard(doc, card.amountAgorot, [doc.id]);
@@ -4221,7 +4308,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         ...(this.refundMode ? { refundMode: true } : {}),
         ...(this.refundChooser ? { refundChooser: true } : {}),
         ...(p && p.refunds.length > 0 ? { saleTotalAgorot: p.saleTotalAgorot, refundTotalAgorot: p.refundTotalAgorot } : {}),
-        ...(this.cartDiscount && p ? { basketDiscount: { amountAgorot: p.basketDiscountAgorot ?? 0, type: this.cartDiscount.type, value: this.cartDiscount.value } } : {}),
+        ...(this.cartDiscount && p
+          ? {
+              basketDiscount: {
+                amountAgorot: p.basketDiscountAgorot ?? 0,
+                type: this.cartDiscount.type,
+                value: this.cartDiscount.value,
+                ...(this.cartDiscount.preset ? { preset: { id: this.cartDiscount.preset.id, name: this.cartDiscount.preset.name, for: this.cartDiscount.preset.for } } : {}),
+              },
+            }
+          : {}),
         ...(p && p.lineDiscountsAgorot > 0 ? { lineDiscountsAgorot: p.lineDiscountsAgorot } : {}),
         ...(p && p.othAgorot > 0 ? { othAgorot: p.othAgorot } : {}),
         ...(p && p.nonDiscountableAgorot > 0 ? { nonDiscountableAgorot: p.nonDiscountableAgorot } : {}),
@@ -4307,6 +4403,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         keepAllowed: allowCloseWithHeldSales(params),
       },
       oth: { enabled: oth.enabled, requiresManager: oth.requiresManager, reasons: oth.reasons },
+      ...(() => {
+        const presets = user && !this.locked ? this.presetDiscountsView() : null;
+        return presets ? { presetDiscounts: presets } : {};
+      })(),
       notice: user && !this.locked ? this.autoCloseNotice() : null,
       ...(() => {
         const order = this.orderView();

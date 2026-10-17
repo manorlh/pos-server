@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { kiosk } from '../bridge';
 import { shell } from '../roles/shellBridge';
+import { setPairedNotice } from './pairedNotice';
 
 export function Pairing() {
   const [serverUrl, setServerUrl] = useState('https://');
@@ -21,11 +22,14 @@ export function Pairing() {
     const r = await kiosk.pair({ serverUrl: serverUrl.trim(), code: code.trim().toUpperCase(), machineName: name.trim() });
     setBusy(false);
     if (!r.ok) setError(r.error);
+    // "המכשיר הוגדר: … · סוג רישיון: …" over the first screen of the device (this one is gone by then).
+    else if (r.notice || r.warning) setPairedNotice({ text: r.notice ?? null, warning: r.warning ?? null });
   };
   const field = 'w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 text-lg outline-none focus:border-blue-600';
   return (
-    <div dir="rtl" className="flex h-screen w-screen items-center justify-center bg-gradient-to-br from-blue-50 to-white p-6">
-      <div className="w-full max-w-md space-y-4 rounded-3xl bg-white p-8 shadow-xl">
+    // Scrolls on a short window (a 14" laptop at 125%, 960×540 at the kiosk's zoom): centred by its own margins, never cut.
+    <div dir="rtl" className="flex h-screen w-screen flex-col items-center overflow-y-auto bg-gradient-to-br from-blue-50 to-white p-6">
+      <div className="my-auto w-full max-w-md shrink-0 space-y-4 rounded-3xl bg-white p-8 shadow-xl">
         <div className="text-center">
           <div className="text-3xl font-black tracking-tight">
             R2M <span className="font-bold text-blue-600">POS</span>
@@ -33,6 +37,7 @@ export function Pairing() {
           <h1 className="mt-2 text-xl font-extrabold">צימוד מכשיר</h1>
           <p className="text-sm text-neutral-500">הזינו את כתובת השרת ואת קוד הצימוד מהדשבורד (הוספת מכשיר).</p>
           <p className="mt-1 text-xs text-neutral-400">סוג המכשיר — קיוסק, קופה, מסך מטבח או מסך מוכן / לא מוכן — נקבע בענן עם הקוד.</p>
+          <p className="mt-1 text-xs text-neutral-400">גם סוג הרישיון — קופה בלבד, קיוסק בלבד או משולב — נקבע עם הקוד, ומוצג אחרי הצימוד.</p>
         </div>
         <label className="block space-y-1">
           <span className="text-sm font-semibold">כתובת השרת</span>

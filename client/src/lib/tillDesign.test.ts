@@ -198,6 +198,26 @@ describe('till design: validation of a complete config (the editor\'s draft)', (
     assert.ok(validateTillDesign(seven).some((e) => e.path === 'actionBar.quick' && e.code === 'too_many'));
   });
 
+  it('"הנחות קבועות": a discount button may name a preset (till_design.py _ActionItem)', () => {
+    const bar = [
+      { action: 'pay', label: '' },
+      { action: 'discount', label: '' },
+      { action: 'discount', label: '', presetId: ' staff ' },
+      { action: 'discount', label: 'מנוי', presetId: 'member' },
+    ];
+    const ok = setPath(TILL_DESIGN_DEFAULTS, 'actionBar.quick', bar);
+    assert.deepEqual(validateTillDesign(ok), []);
+    const stored = sanitizeStoredLayer({ actionBar: { quick: bar } }) as { actionBar: { quick: Array<Record<string, unknown>> } };
+    assert.deepEqual(stored.actionBar.quick[1], { action: 'discount', label: '' });
+    assert.equal(stored.actionBar.quick[2].presetId, 'staff');
+    const twice = setPath(TILL_DESIGN_DEFAULTS, 'actionBar.quick', [...bar, { action: 'discount', label: '', presetId: 'member' }]);
+    assert.deepEqual(validateTillDesign(twice).map((e) => [e.path, e.code]), [['actionBar.quick[4]', 'duplicate']]);
+    const notDiscount = setPath(TILL_DESIGN_DEFAULTS, 'actionBar.quick', [{ action: 'pay', label: '', presetId: 'x' }]);
+    assert.deepEqual(validateTillDesign(notDiscount).map((e) => [e.path, e.code]), [['actionBar.quick[0].presetId', 'invalid_value']]);
+    const tooLong = setPath(TILL_DESIGN_DEFAULTS, 'actionBar.quick', [{ action: 'pay', label: '' }, { action: 'discount', label: '', presetId: 'x'.repeat(65) }]);
+    assert.deepEqual(validateTillDesign(tooLong).map((e) => [e.path, e.code]), [['actionBar.quick[1].presetId', 'invalid_type']]);
+  });
+
   it('checks labels, presets, notes, columns, colours and texts', () => {
     const cases: Array<[string, unknown, string, string]> = [
       ['actionBar.quick', [{ action: 'pay', label: 'x'.repeat(25) }], 'actionBar.quick[0].label', 'too_long'],

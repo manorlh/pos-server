@@ -7,12 +7,13 @@
  * categories as chips with their emoji; one category at a time (catalog.oneCategory) or one wall.
  */
 
+import { lookColumns } from '@/lib/kioskLandscape';
 import { useRef } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { contrastText } from '@/lib/kioskConfig';
 import { kioskIcon } from '@/lib/kioskIcons';
-import { catalogContinuous, layoutOf, wallColumns } from '@/lib/kioskLayout';
+import { basketKindOf, catalogContinuous, layoutOf, wallColumns } from '@/lib/kioskLayout';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { cardStyle, textSize, type PCategory, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { categoryIconId } from './icons';
@@ -32,7 +33,8 @@ export function WallCatalog({ m, activeCategory, onCategory }: { m: PreviewModel
   const { spy, onScroll, jump } = useSectionSpy(m, scrollerRef);
   const current = m.categories.find((c) => c.id === activeCategory) ?? m.categories[0] ?? null;
   const lit = one ? current?.id ?? null : spy ?? current?.id ?? null;
-  const cols = wallColumns(widthDpOf(m), layoutOf(m.cfg).productSize);
+  // "עיצוב לרוחב": in landscape never a tile wider than the landscape size (lib/kioskLandscape.ts).
+  const cols = lookColumns(m.landscape, wallColumns(widthDpOf(m), layoutOf(m.cfg).productSize), m.screen.w - (m.panel && basketKindOf(m.cfg, widthDpOf(m)) === 'panel' ? (m.panelWidth ?? 132) : 0));
   const counts = cartCounts(m);
   const grid = (cat: PCategory, enter: boolean) => (
     <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
@@ -113,7 +115,7 @@ function WallButton({ m, p, tint, inCart }: { m: PreviewModel; p: PProduct; tint
       style={{ ...cardStyle(m), minHeight: 96 * u, background: added ? m.c.accent : cardStyle(m).background, color: ink }}
     >
       <span className="absolute inset-x-0 top-0 h-1.5" style={{ background: tint }} />
-      <span className="line-clamp-2 kt-15 font-bold leading-tight" style={{ minHeight: '2.5em', ...textSize(m, 'productName', 15) }}>
+      <span className="k-name line-clamp-2 kt-15 font-bold leading-tight" style={{ minHeight: '2.5em', ...textSize(m, 'productName', 15) }}>
         {p.name}
       </span>
       <span className="mt-1 kt-15 font-extrabold tabular-nums" style={{ color: added ? ink : m.c.primary, ...textSize(m, 'productPrice', 15) }}>

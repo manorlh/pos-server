@@ -204,6 +204,8 @@ export class SyncEngine {
     }
     const b = reply.body ?? {};
     this.noteShopActive(shopActiveSaid(b));
+    // "סוג רישיון" every beat (core/deviceLicense.ts): the work mode reads it on its next look.
+    this.cloud.noteLicense(b);
     const prev = this.cloud.heartbeat();
     const epoch = typeof b.tillZEpoch === 'number' ? b.tillZEpoch : prev.tillZEpoch;
     this.cloud.setHeartbeat({
@@ -273,6 +275,7 @@ export class SyncEngine {
     if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return null;
     this.cloud.setMachine(reply.body);
     this.noteShopActive(shopActiveSaid(reply.body));
+    this.cloud.noteLicense(reply.body);
     return reply.body;
   }
 
@@ -357,6 +360,7 @@ export class SyncEngine {
     if (!this.check(reply) || reply.kind !== 'ok' || !reply.body || typeof reply.body !== 'object') return false;
     const prev = this.cloud.kioskSnapshot();
     this.cloud.setKioskSnapshot(reply.body);
+    this.cloud.noteLicense(reply.body);
     this.status.lastKioskSyncAt = Date.now();
     this.hooks.onKioskSnapshot(reply.body, prev);
     return true;

@@ -146,7 +146,8 @@ const tipOf = (tx: Transaction): number => Number(tx.tipAmount ?? 0) || 0;
  */
 function TableBadge({ tx }: { tx: Transaction }) {
   const t = useTranslations('transactions');
-  const label = tableLabel(t('tableWord'), tx.tableNumber, tx.tableName);
+  // A labelled table by its label ("שולחן 3B", P:/specs/table-scope.md §6.4), never its internal number.
+  const label = tableLabel(t('tableWord'), tx.tableNumber, tx.tableName, tx.tableLabel);
   if (!label) return null;
   return (
     <Badge variant={tx.matchedBy?.includes('table') ? 'default' : 'outline'} className="ms-2 font-sans" title={t('tableTitle')}>

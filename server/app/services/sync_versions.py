@@ -364,6 +364,9 @@ def tables_layout(db: Session, shop_id: Any) -> CloudVersion:
             [str(t.id), str(t.zone_id), t.number, t.name, t.seats, t.shape, _num(t.x), _num(t.y), _num(t.width),
              _num(t.height), t.rotation, t.kind, _num(t.discount_percent), str(t.type_id) if t.type_id else None,
              bool(t.label_only)]
+            # "3B" (P:/specs/table-scope.md §9): a label is part of the plan — only where there is one, so an
+            # unlabelled floor keeps its hash.
+            + ([t.label] if getattr(t, "label", None) else [])
             for t in tables
         ],
         "types": [

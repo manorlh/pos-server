@@ -620,8 +620,11 @@ class ShopAssignments:
 
 
 def build_for_state(db: Session, shop: Shop, tables: Sequence[DiningTable], zones: Sequence[TableZone],
-                    now: datetime) -> ShopAssignments:
-    """What the tables state carries about the shop's assignments (app/services/tables.py)."""
+                    now: datetime, *, users: Optional[Sequence[PosUser]] = None) -> ShopAssignments:
+    """
+    What the tables state carries about the shop's assignments (app/services/tables.py). [users]: the shop's till
+    users (`shop_users`) when the caller read them already.
+    """
     ctx = _Ctx.of(db, shop, now)
     live_zone_ids = {str(z.id) for z in zones}
     live_table_ids = {str(t.id) for t in tables}
@@ -630,7 +633,7 @@ def build_for_state(db: Session, shop: Shop, tables: Sequence[DiningTable], zone
         if (r.zone_id is not None and str(r.zone_id) in live_zone_ids)
         or (r.table_id is not None and str(r.table_id) in live_table_ids)
     ]
-    users = shop_users(db, shop.id)
+    users = shop_users(db, shop.id) if users is None else list(users)
     active = {str(u.id) for u in users if u.is_active}
     rows = [r for r in rows if str(r.pos_user_id) in active]
     waiters = waiters_out(db, shop.id, now, users=users)

@@ -10,10 +10,16 @@
  * Phase 2 §3.4: "לכל המכשירים / רק ב<פרופיל>" — a device profile's own bars
  * (`profiles.<p>.actionBar`; "כמו הבסיס" = the base's, [] = the template's "auto"). The table's
  * "הוצא הבא" and tenders, a quick order's "עוד סבב"; "עגינת תשלום"'s own quick "auto".
+ *
+ * "הנחות קבועות" (P:/specs/preset-discounts.md §3): a `discount` button may name one preset of the
+ * level in scope (`presetId`) — it then applies that preset in one tap, its label (empty = the
+ * preset's name). Without one it opens the discount sheet, as before; several preset buttons may
+ * sit on one bar, each its own. A preset the till does not have (or not active) hides the button.
  */
 
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
+import { useQuery } from '@tanstack/react-query';
 import { Lock, Plus, RotateCcw, Trash2, Wand2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import {
   ACTION_BAR_MAX,
   ACTION_LABEL_MAX,
+  PRESET_ACTION,
   CASH_NOTE_VALUES,
   CASH_NOTES_MAX,
   LEGACY_FALLBACK,
@@ -43,11 +50,30 @@ import {
   type Mode,
   type Profile,
 } from '@/lib/tillDesign';
+import { formatPresetValue, type PresetDiscount } from '@/lib/presetDiscounts';
+import { loadLayer, presetsInForce } from '@/components/dashboard/preset-discounts/settings-layer';
 import { useTillEditor, useTillField } from './editor-context';
 import { AutoHint, ChipToggles, FieldErrors, FieldShell, MoveButtons, OptionSelect, OverrideMark, SectionCard, Segmented, SwitchField } from './fields';
 
 /** The example the banknotes show ("₪120 / עודף ₪2.80"): the owner's ₪117.20. */
 const EXAMPLE_TOTAL = 11720;
+
+/** A `discount` button's choice "no preset" (the select needs a value). */
+const SHEET = '__sheet__';
+/** The add menu's value for a preset's button: `discount:<id>`. */
+const PRESET_PREFIX = `${PRESET_ACTION}:`;
+
+/** The preset discounts in force at the level edited (its own list, else the one it inherits). */
+function useScopePresets(): PresetDiscount[] {
+  const ed = useTillEditor();
+  const { data } = useQuery({
+    queryKey: ['preset-discounts', ed.level, ed.targetId],
+    queryFn: () => loadLayer(ed.level, ed.targetId),
+    enabled: !!ed.targetId,
+    staleTime: 60_000,
+  });
+  return presetsInForce(data).presets;
+}
 
 /** The "auto" bar of a template in a mode: the table's from the template; a quick order's the template's own (payDock) or the till parameters'. */
 function autoBar(template: keyof typeof TEMPLATE_DEFAULTS, mode: Mode, legacy: typeof LEGACY_FALLBACK | null): ActionItem[] {
@@ -72,21 +98,42 @@ function ActionBarEditor({ mode, profile }: { mode: Mode; profile: Profile | nul
   const template = profile ? forProfile(ed.draft, profile).template : canonicalTemplate(ed.draft.template);
   const autoList = autoBar(template, mode, ed.legacy);
   const baseList = Array.isArray(ed.draft.actionBar[mode]) ? ed.draft.actionBar[mode] : [];
-  const free = allowed.filter((a) => !list.some((i) => i.action === a));
+  // A plain button once per bar; a preset's button once per preset (till_design.py's duplicate rule).
+  const free = allowed.filter((a) => !list.some((i) => i.action === a && !i.presetId));
   const [adding, setAdding] = useState<string>('');
+  const presets = useScopePresets();
+  const activePresets = presets.filter((p) => p.active !== false);
+  const presetOf = (id: string | undefined) => (id ? presets.find((p) => p.id === id) : undefined);
+  const freePresets = allowed.includes(PRESET_ACTION)
+    ? activePresets.filter((p) => !list.some((i) => i.action === PRESET_ACTION && i.presetId === p.id))
+    : [];
 
   const update = (next: ActionItem[]) => f.set(next);
   const label = (a: ActionId) => ta(a);
+  /** A button's label as the till shows it: its own, else its preset's name, else the action's. */
+  const shownLabel = (item: ActionItem) => {
+    const preset = presetOf(item.presetId);
+    return !item.label?.trim() && preset ? preset.name : actionLabelOf(item, ed.draft);
+  };
   const badges = (items: ActionItem[], prefix: ReactNode) => (
     <div className="flex flex-wrap items-center gap-2">
       <AutoHint>{prefix}</AutoHint>
       {items.map((a) => (
-        <Badge key={a.action} variant={a.action === required ? 'default' : 'outline'}>
-          {actionLabelOf(a, ed.draft)}
+        <Badge key={`${a.action}:${a.presetId ?? ''}`} variant={a.action === required ? 'default' : 'outline'}>
+          {shownLabel(a)}
         </Badge>
       ))}
     </div>
   );
+  /** Sets (or clears) the preset of the button at [i]. */
+  const setPreset = (i: number, id: string) =>
+    update(
+      list.map((x, j) => {
+        if (j !== i) return x;
+        const rest: ActionItem = { action: x.action, label: x.label };
+        return id === SHEET ? rest : { ...rest, presetId: id };
+      }),
+    );
 
   return (
     <FieldShell
@@ -130,14 +177,30 @@ function ActionBarEditor({ mode, profile }: { mode: Mode; profile: Profile | nul
             {list.map((item, i) => {
               const isRequired = item.action === required;
               const tooLong = (item.label ?? '').length > ACTION_LABEL_MAX;
+              const preset = presetOf(item.presetId);
+              const missing = !!item.presetId && (!preset || preset.active === false);
               return (
-                <li key={`${item.action}-${i}`} className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+                <li key={`${item.action}-${item.presetId ?? ''}-${i}`} className="flex flex-wrap items-center gap-2 px-2 py-1.5">
                   <span className="w-5 text-center text-xs tabular-nums text-muted-foreground">{i + 1}</span>
                   <span className="w-28 shrink-0 text-sm font-medium">{label(item.action)}</span>
+                  {item.action === PRESET_ACTION ? (
+                    <OptionSelect
+                      value={item.presetId ?? SHEET}
+                      disabled={f.disabled}
+                      ariaLabel={t('presetFor')}
+                      className="w-44 min-w-0"
+                      onChange={(v) => setPreset(i, v)}
+                      options={[
+                        { value: SHEET, label: t('presetSheet') },
+                        ...activePresets.map((p) => ({ value: p.id, label: `${p.name} ${formatPresetValue(p)}` })),
+                        ...(missing && item.presetId ? [{ value: item.presetId, label: t('presetMissing') }] : []),
+                      ]}
+                    />
+                  ) : null}
                   <Input
                     value={item.label ?? ''}
                     disabled={f.disabled}
-                    placeholder={actionLabelOf({ action: item.action, label: '' }, ed.draft)}
+                    placeholder={preset ? preset.name : actionLabelOf({ action: item.action, label: '' }, ed.draft)}
                     aria-label={t('labelFor', { action: label(item.action) })}
                     className={tooLong ? 'h-8 min-w-36 flex-1 border-destructive' : 'h-8 min-w-36 flex-1'}
                     onChange={(e) => update(list.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
@@ -163,6 +226,7 @@ function ActionBarEditor({ mode, profile }: { mode: Mode; profile: Profile | nul
                       <Trash2 />
                     </Button>
                   )}
+                  {missing ? <p className="w-full ps-7 text-xs text-amber-700 dark:text-amber-400">{t('presetMissingHint')}</p> : null}
                 </li>
               );
             })}
@@ -173,8 +237,14 @@ function ActionBarEditor({ mode, profile }: { mode: Mode; profile: Profile | nul
                 value={adding}
                 placeholder={t('addPlaceholder')}
                 ariaLabel={t('addPlaceholder')}
-                disabled={free.length === 0 || list.length >= ACTION_BAR_MAX}
-                options={free.map((a) => ({ value: a, label: label(a) }))}
+                disabled={free.length + freePresets.length === 0 || list.length >= ACTION_BAR_MAX}
+                options={[
+                  ...free.map((a) => ({ value: a, label: label(a) })),
+                  ...freePresets.map((p) => ({
+                    value: `${PRESET_PREFIX}${p.id}`,
+                    label: t('presetOption', { name: p.name, value: formatPresetValue(p) }),
+                  })),
+                ]}
                 onChange={setAdding}
                 className="w-48"
               />
@@ -184,7 +254,10 @@ function ActionBarEditor({ mode, profile }: { mode: Mode; profile: Profile | nul
                 variant="outline"
                 disabled={!adding || list.length >= ACTION_BAR_MAX}
                 onClick={() => {
-                  update([...list, { action: adding as ActionId, label: '' }]);
+                  const item: ActionItem = adding.startsWith(PRESET_PREFIX)
+                    ? { action: PRESET_ACTION, label: '', presetId: adding.slice(PRESET_PREFIX.length) }
+                    : { action: adding as ActionId, label: '' };
+                  update([...list, item]);
                   setAdding('');
                 }}
               >

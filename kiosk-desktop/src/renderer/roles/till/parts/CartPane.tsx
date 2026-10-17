@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import type { SellState } from '../../../../shared/till/protocol';
 import { money, T } from '../text';
+import { PresetChips, type PresetItem } from './TillSheets';
 
 export interface CartActions {
   setQty(lineId: string, qty: number): void;
@@ -26,6 +27,8 @@ export interface CartActions {
   held?(): void;
   /** "פרטי הזמנה": the strip's ✎ (the configured questions, the answers shown). */
   orderEdit?(): void;
+  /** "הנחות קבועות": a preset's one-tap button. */
+  preset?(id: string): void;
 }
 
 export interface CartView {
@@ -35,6 +38,8 @@ export interface CartView {
   heldCount?: number;
   /** "פרטי הזמנה": the answers in words ("לקחת  ·  דני"), and whether any question is on. */
   order?: { strip: string | null; configured: boolean } | null;
+  /** "הנחות קבועות": the one-tap buttons (in order, with their colours); none — no buttons. */
+  presetButtons?: ReadonlyArray<PresetItem>;
 }
 
 const CHIPS = [5, 10, 20] as const;
@@ -134,10 +139,11 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
       <footer className="t-cart-foot">
         {sell.basketDiscount ? (
           <div className="t-total-row t-small">
-            <span>{T.basketDiscount}</span>
+            <span>{sell.basketDiscount.preset ? sell.basketDiscount.preset.name : T.basketDiscount}</span>
             <span>−{money(sell.basketDiscount.amountAgorot)}</span>
           </div>
         ) : null}
+        {sell.basketDiscount?.preset?.for ? <div className="t-muted t-small">{T.presetFor(sell.basketDiscount.preset.for)}</div> : null}
         {mixed ? (
           <>
             <div className="t-total-row t-small">
@@ -161,6 +167,15 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
           <div className="t-muted t-small">
             הנחת מבצע −{money(sell.promotionsAgorot)}
           </div>
+        ) : null}
+        {actions.preset && view.presetButtons && view.presetButtons.length > 0 && (discountShown || sell.basketDiscount?.preset) ? (
+          // "הנחות קבועות": a tap applies (in the preset's colour), the same tap takes it off.
+          <PresetChips
+            items={discountShown ? view.presetButtons : view.presetButtons.filter((p) => p.id === sell.basketDiscount?.preset?.id)}
+            activeId={sell.basketDiscount?.preset?.id ?? null}
+            disabled={empty || sell.refundMode === true}
+            onTap={(id) => actions.preset?.(id)}
+          />
         ) : null}
         <div className="t-cart-tools">
           {actions.basketDiscount && (discountShown || sell.basketDiscount) ? (

@@ -13,6 +13,8 @@
  * `mapSymbolScale` — the preview's fit and display, ported from the till's DecorFit.kt).
  */
 
+import { sortTables } from './tableLabels';
+
 export type SketchKind =
   | 'wall'
   | 'bar'
@@ -879,6 +881,8 @@ export interface TablePlacement {
 /** What placing tables needs to know of each. */
 export interface PlaceableTable extends TablePlacement {
   number: number;
+  /** "3B" (P:/specs/table-scope.md §6.2): placed in the natural order, as the grid shows it. */
+  label?: string | null;
 }
 
 /**
@@ -899,12 +903,12 @@ export function tablesNeedPlacing(tables: PlaceableTable[], cw: number, ch: numb
 }
 
 /**
- * The tables in a tidy grid on a `cw` × `ch` canvas, by number (row by row, as the server's default
- * places them): each its own size, room for its chairs between them, the grid centred; squeezed
- * together when there are more than fit, never off the canvas.
+ * The tables in a tidy grid on a `cw` × `ch` canvas, in the natural order of their labels and numbers
+ * (row by row, as the grid of squares shows them — 3, 3A, 3B, 10): each its own size, room for its chairs
+ * between them, the grid centred; squeezed together when there are more than fit, never off the canvas.
  */
 export function arrangeTables(tables: PlaceableTable[], cw: number, ch: number): TablePlacement[] {
-  const list = [...tables].sort((a, b) => a.number - b.number);
+  const list = sortTables(tables);
   const n = list.length;
   if (!n) return [];
   const cellW = Math.max(...list.map((t) => t.width));

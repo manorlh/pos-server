@@ -6,6 +6,7 @@
  * guided flow: the step bar, the dishes as rows, and the main button on to the basket.
  */
 
+import { lookColumns } from '@/lib/kioskLandscape';
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -83,7 +84,8 @@ export function LandingCatalog({ m, onCategory }: { m: PreviewModel; onCategory?
 function LandingHome({ m, onEnter }: { m: PreviewModel; onEnter: (id: string) => void }) {
   const layout = layoutOf(m.cfg);
   const guided = layout.flow === 'guided';
-  const cols = landingColumnsFor(m.cfg, widthDpOf(m));
+  // "עיצוב לרוחב": in landscape the categories' tiles never wider than the landscape tile (lib/kioskLandscape.ts).
+  const cols = lookColumns(m.landscape, landingColumnsFor(m.cfg, widthDpOf(m)), m.screen.w - 24);
   const u = unitOf(m);
   const tileW = (m.screen.w - 24 - 10 * (cols - 1)) / cols;
   const icon = Math.round(Math.max(36, Math.min(110, tileW * (cols <= 2 ? 0.36 : 0.44))));
@@ -110,7 +112,7 @@ function LandingHome({ m, onEnter }: { m: PreviewModel; onEnter: (id: string) =>
                 style={{ ...cardStyle(m), minHeight: icon + 60 * u, paddingTop: 12 * u, paddingBottom: 12 * u }}
               >
                 <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'duotone'} size={icon} />
-                <span className="line-clamp-2 kt-15 font-bold leading-tight" style={textSize(m, 'categoryName', 15)}>
+                <span className="k-name line-clamp-2 kt-15 font-bold leading-tight" style={textSize(m, 'categoryName', 15)}>
                   {cat.name}
                 </span>
                 {layout.landingShowCounts ? (
@@ -132,8 +134,9 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
   const layout = layoutOf(m.cfg);
   const counts = cartCounts(m);
   const rows = layout.card === 'row';
-  const gridPx = m.screen.w - (m.panel ? 132 : 0);
-  const cols = rows ? 1 : productColumns(Math.max(2, Math.floor(gridPx / 210)), layout.productSize, gridPx * DP_PER_PX);
+  // The side basket only where it is drawn (a chosen bar / summary leaves the dishes the whole width).
+  const gridPx = m.screen.w - (m.panel && basketKindOf(m.cfg, widthDpOf(m)) === 'panel' ? (m.panelWidth ?? 132) : 0);
+  const cols = rows ? 1 : lookColumns(m.landscape, productColumns(Math.max(2, Math.floor(gridPx / 210)), layout.productSize, gridPx * DP_PER_PX), gridPx);
   const u = unitOf(m);
   return (
     <section data-section={cat.id} className="space-y-3 px-3 pb-4 pt-2">
@@ -153,7 +156,7 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
       <div className="flex items-center gap-3">
         <CategoryVisual m={m} cat={cat} mode={layout.categoryIcons ?? 'duotone'} size={Math.round(48 * u)} />
         <div className="min-w-0">
-          <h2 className="truncate text-xl font-extrabold leading-tight">{cat.name}</h2>
+          <h2 className="k-name truncate text-xl font-extrabold leading-tight">{cat.name}</h2>
           <div className="kt-11" style={{ color: m.c.mutedText }}>
             {itemsCount(m, cat.products.length)}
           </div>

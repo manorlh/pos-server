@@ -222,6 +222,7 @@ def list_transactions(
         if at_table:
             item.table_number = at_table["tableNumber"]
             item.table_name = at_table["tableName"]
+            item.table_label = at_table.get("tableLabel")
             item.table_order_id = at_table["tableOrderId"]
             item.table_opened_at = at_table["tableOpenedAt"]
         item.matched_by = table_documents.search_matches(searched, item.matched_by, at_table)

@@ -900,6 +900,8 @@ class TestMigration:
         # 6b3b29c7bc5b (17.10) joins the four heads built on cash stage 2 (e5a9c3d1f7b2): denied-actions UI, PWA push,
         # the cash host kiosk and CashMag credits.
         assert set(script.get_revision("6b3b29c7bc5b").down_revision) == {"d9e4b2a7c1f8", "b8f2c6e4a9d1", "f3a8c6e1d9b4", "f3b8d2c6a9e1"}
+        # b87054615214 (17.10b) joins the three built on that one: table scope, device license type, preset discounts.
+        assert set(script.get_revision("b87054615214").down_revision) == {"e7c4a1b9d3f6", "c5e1a8d3f7b9", "c4e8a2f6b19d"}
         assert set(script.get_revision("bb6205ba290c").down_revision) == {"e3b9d7a41c62", "5d1f8b3e7a92", "e4b7c2d9a6f1"}
         assert set(script.get_revision("ba584f6fb704").down_revision) == {"396f22daf19c", "a7d3e1c9b5f2"}
         assert script.get_revision("396f22daf19c").down_revision == "9f55dd368692"

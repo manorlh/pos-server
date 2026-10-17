@@ -7,6 +7,7 @@
  */
 
 import { shopActiveKept } from '@dash-lib/shopActive';
+import { parseLicenseProduct, saidLicense, type LicenseProduct } from '../../core/deviceLicense';
 import type { Kv } from '../db/schema';
 
 export interface Credentials {
@@ -131,6 +132,7 @@ const K = {
   promotionsEtag: 'cloud.promotionsEtag',
   stock: 'cloud.stockLevels',
   shopActive: 'cloud.shopActive',
+  license: 'cloud.licenseProduct',
 } as const;
 
 export class CloudStore {
@@ -194,6 +196,11 @@ export class CloudStore {
 
   parameters(): Record<string, unknown> {
     return this.read<Record<string, unknown>>(K.params) ?? {};
+  }
+
+  /** The till parameters were pulled for this pairing (an unpairing forgets them): their word, not the defaults. */
+  parametersKnown(): boolean {
+    return this.read<Record<string, unknown>>(K.params) !== null;
   }
 
   parametersEtag(): string | null {
@@ -284,6 +291,22 @@ export class CloudStore {
 
   kioskSnapshot(): Record<string, unknown> | null {
     return this.read<Record<string, unknown>>(K.kiosk);
+  }
+
+  /**
+   * "סוג רישיון" (core/deviceLicense.ts): the last the cloud said — machines/me, a heartbeat or kiosk/sync; null when
+   * it never said (an older cloud) or said none (a screen). Kept, so it holds with no network.
+   */
+  licenseProduct(): LicenseProduct | null {
+    return parseLicenseProduct(this.read<string>(K.license));
+  }
+
+  /** The license an answer carried, kept; true when it changed. An answer without the field changes nothing. */
+  noteLicense(body: unknown): boolean {
+    const said = saidLicense(body);
+    if (!said.said || said.product === this.licenseProduct()) return false;
+    this.write(K.license, said.product);
+    return true;
   }
 
   setKioskSnapshot(s: Record<string, unknown>) {

@@ -128,10 +128,14 @@ describe('a Windows kiosk "ללא אשראי"', () => {
     expect(terminal.asked).toEqual([]);
   });
 
-  it('card only: nothing left to take', () => {
+  it('card only: "קיוסק — כשאין מסופון אשראי" offers the till (the default); with `block` nothing is left to take', () => {
     const { svc } = kiosk('none', ['card']);
-    expect(svc.view().pay.methods).toEqual([]);
-    expect(svc.view().pay.usable).toEqual([]);
+    expect(svc.view().pay).toMatchObject({ methods: ['cash_at_till'], usable: ['cash_at_till'], cardOff: NO_CARD, tillFallback: true });
+    const blocked = kiosk('none', ['card']).svc;
+    blocked.cloud.setParameters({ kioskNoTerminalFallback: 'block' }, null);
+    expect(blocked.view().pay.methods).toEqual([]);
+    expect(blocked.view().pay.usable).toEqual([]);
+    expect(blocked.view().pay.tillFallback).toBeUndefined();
   });
 });
 

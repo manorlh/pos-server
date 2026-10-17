@@ -18,8 +18,22 @@ import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '
 import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
-import { OfflineTracker } from '../core/kioskHealth';
+import { OfflineTracker, terminalAlertReason } from '../core/kioskHealth';
+import { licenseFacts } from '../core/deviceLicense';
+import type { PairOutcome } from '../shared/bridge';
+import { DISPLAY_SCALE_PARAM, parseDisplayScale, displayScaleWire, windowZoomPlan, type WindowZoomPlan } from '../core/displayScale';
 import { OFFLINE_BLOCK_CASH_KEY, OFFLINE_BLOCK_SCOPE_KEY, configOfflineBlockScope, offlineBlockCashOf, offlineBlockScopeOf, offlineRests, offlineUsable, type OfflineBlockScope } from '../core/offlineBlock';
+import {
+  CARD_FALLBACK_TEXT,
+  NO_TERMINAL_FALLBACK_KEY,
+  configNoTerminalFallback,
+  fallbackCard,
+  mayPayAtTill,
+  noTerminalFallbackOf,
+  tillFallbackApplies,
+  withTillFallback,
+  type NoTerminalFallback,
+} from '../core/noTerminalFallback';
 import { lanTargetOf, type LanHost, type LanTarget } from '../core/lanOpenOrders';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
 import { CashCredits } from './kiosk/cashCredits';
@@ -113,6 +127,7 @@ import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } 
 import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
+import { KIND_PRESET, presetLabel } from '../core/till/presetDiscounts';
 import { TillZService } from './fiscal/tillZService';
 import { KioskZRunner, kioskZHold, kioskZKindOfDevice, kioskZOutcomeOk, kioskZOutcomeText, makesOwnZ, type KioskAdminZOutcome, type KioskZPort } from '../core/kioskZ';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
@@ -179,6 +194,7 @@ import type {
   StartPaymentOut,
   TechnicianAction,
   TechnicianInfo,
+  DisplayScaleView,
   AdminActionResult,
 } from '../shared/bridge';
 
@@ -188,7 +204,10 @@ export interface PlatformHooks {
   launchQuickSupport(): Promise<string | null>;
   networkUp(): boolean;
   interfaces(): Array<{ name: string; address: string }>;
-  setZoom?(zoom: number): void;
+  /** The window's automatic page zoom now (core/windowZoom.ts — its size, before "גודל תצוגה"). */
+  autoZoom?(): number;
+  /** "גודל תצוגה" changed (a preview, a save, the cloud's value): the window's zoom again (`windowZoom`). */
+  refreshZoom?(): void;
   checkUpdate?(): Promise<{ available: string | null; status: string }>;
   installUpdate?(): Promise<{ ok: boolean; message?: string }>;
   /** The updater's state, without asking the network (main/update/updater.ts). */
@@ -246,10 +265,15 @@ export interface ServiceOptions {
   kitchen?: { printerLink?: (host: string, port: number) => PrinterLink; lanCall?: LanCall; onLan?: () => boolean; now?: () => number; hostPort?: number; hostName?: string };
 }
 
-/** The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), the zoom. */
+/**
+ * The kiosk's own local settings (not the cloud's): the printer (an empty Windows queue: "אוטומטי"), "גודל תצוגה"
+ * (`displayScale`: "auto" / "85", null — follow the cloud; core/displayScale.ts) and the old absolute "זום" (`zoom`,
+ * read while no `displayScale` was saved over it — saving one clears it).
+ */
 export interface LocalSettings {
   printer: PrinterTarget;
   zoom: number | null;
+  displayScale: string | null;
 }
 
 const LOCAL_SETTINGS = 'local.settings';
@@ -389,6 +413,8 @@ export class KioskService extends EventEmitter {
   /** Cash credits taken for orders (§11.15א). */
   readonly cashCredits: CashCredits;
   private adminUntil = 0;
+  /** "גודל תצוגה": the technician's choice shown but not saved yet (null: none). */
+  private displayScalePreview: { local: string | null } | null = null;
   private adminName: string | null = null;
   /** The shop manager who opened the admin (their till user id): the authority of a SynqPay pairing. */
   private adminUserId: string | null = null;
@@ -734,7 +760,65 @@ export class KioskService extends EventEmitter {
       const mac = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(addr);
       printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
-    return { printer, zoom: s.zoom ?? null };
+    const scale = parseDisplayScale(s.displayScale);
+    return { printer, zoom: s.zoom ?? null, displayScale: scale === null ? null : displayScaleWire(scale) };
+  }
+
+  /* ----------------------------------------------------------- display size */
+
+  /**
+   * "גודל תצוגה": the window's zoom from its automatic one ([autoZoom], core/windowZoom.ts) — the technician's unsaved
+   * preview, else the saved local choice (else an old "זום"), else the cloud's `displayScale` (core/displayScale.ts).
+   */
+  displayScalePlan(autoZoom: number): WindowZoomPlan {
+    const s = this.localSettings();
+    const preview = this.displayScalePreview;
+    return windowZoomPlan(autoZoom, this.cloud.parameters()[DISPLAY_SCALE_PARAM], preview ? preview.local : s.displayScale, preview ? null : s.zoom);
+  }
+
+  /** The page zoom the window is given (main/index.ts). */
+  windowZoom(autoZoom: number): number {
+    return this.displayScalePlan(autoZoom).zoom;
+  }
+
+  /** The technician's view of it (TechnicianInfo.displayScale). */
+  displayScaleView(): DisplayScaleView {
+    const s = this.localSettings();
+    const plan = this.displayScalePlan(this.platform.autoZoom?.() ?? 1);
+    const cloud = parseDisplayScale(this.cloud.parameters()[DISPLAY_SCALE_PARAM]);
+    return {
+      percent: plan.effective.percent,
+      setting: plan.effective.setting,
+      source: plan.effective.source,
+      cloud: cloud === null ? null : displayScaleWire(cloud),
+      local: s.displayScale,
+      ...(this.displayScalePreview ? { preview: { ...this.displayScalePreview } } : {}),
+      legacyZoom: plan.legacyZoom,
+      zoom: plan.zoom,
+      autoZoom: plan.autoZoom,
+    };
+  }
+
+  private displayScaleAction(a: Extract<TechnicianAction, { type: 'displayScalePreview' | 'displayScaleEnd' | 'displayScaleSave' }>): { ok: boolean; message?: string } {
+    const valid = (v: string | null) => (v === null ? null : parseDisplayScale(v));
+    if (a.type === 'displayScaleEnd') {
+      this.displayScalePreview = null;
+    } else {
+      const parsed = valid(a.local);
+      if (a.local !== null && parsed === null) return { ok: false, message: 'גודל לא תקין' };
+      const local = parsed === null ? null : displayScaleWire(parsed);
+      if (a.type === 'displayScalePreview') {
+        this.displayScalePreview = { local };
+      } else {
+        this.displayScalePreview = null;
+        // One control: the old absolute "זום" goes with the first new choice saved.
+        this.setLocalSettings({ displayScale: local, zoom: null });
+        this.log(`display scale: saved locally ${local ?? 'none (follow the cloud)'}`);
+      }
+    }
+    this.platform.refreshZoom?.();
+    this.dirty();
+    return { ok: true };
   }
 
   setLocalSettings(patch: Partial<LocalSettings>) {
@@ -1064,12 +1148,15 @@ export class KioskService extends EventEmitter {
 
   /* ------------------------------------------------------------- pairing */
 
-  async pair(input: { serverUrl: string; code: string; machineName: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+  async pair(input: { serverUrl: string; code: string; machineName: string }): Promise<PairOutcome> {
     if (this.paired) return { ok: false, error: 'הקיוסק כבר מצומד' };
     const r = await pairRequest(this.api, { ...input, deviceInfo: this.opts.deviceInfo });
     if (!r.ok) return { ok: false, error: r.error };
     await this.adopt(r.credentials);
-    return { ok: true };
+    // "סוג רישיון" (core/deviceLicense.ts): "המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד" over the first screen, and a
+    // warning when the license does not fit the role it opened in (the cloud enforces roles; this only says it).
+    const license = licenseFacts(this.cloud.licenseProduct(), this.cloud.machine()?.deviceRole ?? null);
+    return { ok: true, ...(license.paired ? { notice: license.paired } : {}), ...(license.warning ? { warning: license.warning } : {}) };
   }
 
   /**
@@ -1227,9 +1314,11 @@ export class KioskService extends EventEmitter {
     if (health !== 'ok' && health !== 'unknown') alerts.push({ kind: 'printer', key: 'printer:receipt', reason: health === 'no_paper' ? 'no_paper' : health === 'offline' || health === 'unavailable' ? 'offline' : 'error' });
     const bonsFailed = today.filter((o) => o.bonStatus === 'failed').length;
     if (bonsFailed > 0) alerts.push({ kind: 'printer', key: 'printer:bon', reason: 'bon_failed', detail: { failed: bonsFailed } });
-    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does.
-    if (this.pay.monitor.state === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
-    else if (this.pay.monitor.state === 'unconfigured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
+    // "ללא אשראי" (state no_card) raises neither: there is no terminal. A card left unresolved still does. Kept while
+    // "קיוסק — כשאין מסופון אשראי" offers the till instead (core/kioskHealth.ts terminalAlertReason).
+    const terminalReason = terminalAlertReason({ state: this.pay.monitor.state, chargeNotSent: this.pay.chargeUnreachable });
+    if (terminalReason === 'unreachable') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'unreachable', detail: { address: this.pay.describe().address } });
+    else if (terminalReason === 'not_configured') alerts.push({ kind: 'terminal', key: 'terminal', reason: 'not_configured' });
     if (this.pay.unresolved()) alerts.push({ kind: 'terminal', key: 'terminal:card', reason: 'card_unknown' });
     // "אין קשר לעמדת המזומן" (§11.15ג): its station silent on the LAN a minute — the cloud routes it as a cash alert.
     const cashSilent = this.cashMag.enabled() ? this.cashMag.unreachableAlert() : this.cashPay.unreachableAlert();
@@ -1952,13 +2041,19 @@ export class KioskService extends EventEmitter {
     });
     if (outcome.kind === 'refused') {
       this.ledger.voidCardSale(doc.id, null);
-      this.progress({ orderId, phase: 'declined', message: 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.', amountAgorot, canCancel: false, cancelling: false });
+      // "קיוסק — כשאין מסופון אשראי": the till is offered back on "איך תרצו לשלם?" — said so.
+      const message = this.tillFallbackNow() ? CARD_FALLBACK_TEXT : 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.';
+      this.progress({ orderId, phase: 'declined', message, amountAgorot, canCancel: false, cancelling: false });
+      this.dirty();
       return;
     }
     if (outcome.kind === 'declined') {
       this.ledger.voidCardSale(doc.id, outcome.voidMeta);
       this.pay.forgetAttempt(this.lastReferenceOf(doc.id) ?? '');
-      this.progress({ orderId, phase: 'declined', message: outcome.message, amountAgorot, canCancel: false, cancelling: false });
+      // It never reached the terminal: with "קיוסק — כשאין מסופון אשראי" the till is offered beside the card now — said so.
+      const message = outcome.notSent && this.tillFallbackNow() ? CARD_FALLBACK_TEXT : outcome.message;
+      this.progress({ orderId, phase: 'declined', message, amountAgorot, canCancel: false, cancelling: false });
+      if (outcome.notSent) this.dirty();
       void this.sync.flush();
       return;
     }
@@ -2509,7 +2604,8 @@ export class KioskService extends EventEmitter {
   async pullLanHost(force = false): Promise<void> {
     const id = this.machineId;
     if (!id || !this.fiscalRole || this.opts.bridge || !this.isKiosk()) return;
-    if (!kioskPayMethods(this.config().payment.methods).includes('cash_at_till')) return;
+    // "תשלום בקופה" set — or offered when the terminal is not there ("קיוסק — כשאין מסופון אשראי"): known before the cloud goes.
+    if (!mayPayAtTill(kioskPayMethods(this.config().payment.methods), this.tillFallbackMode())) return;
     if (!force && Date.now() - this.lanHostPulledAt < LAN_HOST_PULL_MS) return;
     this.lanHostPulledAt = Date.now();
     const kept = this.kv.getJson<KeptLanHost>(LAN_HOST);
@@ -2531,14 +2627,42 @@ export class KioskService extends EventEmitter {
     return offlineBlockScopeOf(this.cloud.parameters()[OFFLINE_BLOCK_SCOPE_KEY], configOfflineBlockScope(this.snapshot()?.config));
   }
 
+  /** "קיוסק — כשאין מסופון אשראי" (`kioskNoTerminalFallback`): the parameter, else the config's, else `pay_at_till`. */
+  private tillFallbackMode(): NoTerminalFallback {
+    return noTerminalFallbackOf(this.cloud.parameters()[NO_TERMINAL_FALLBACK_KEY], configNoTerminalFallback(this.snapshot()?.config));
+  }
+
+  /** The kiosk's methods as configured, one card per document — "ללא אשראי" without the card ones. */
+  private configuredPayMethods(): PaymentMethod[] {
+    const set = tsKioskPayMethods(this.config().payment.methods);
+    return this.pay.noCard ? set.filter((m) => m !== 'card' && m !== 'split_card') : set;
+  }
+
+  /**
+   * "תשלום בקופה" is offered now for the terminal's sake (core/noTerminalFallback.ts): the card cannot be charged in
+   * advance, or its terminal does not answer, and nothing else pays.
+   */
+  private tillFallbackNow(): boolean {
+    if (!this.fiscalRole || !this.isKiosk()) return false;
+    return tillFallbackApplies({
+      mode: this.tillFallbackMode(),
+      methods: this.configuredPayMethods(),
+      card: fallbackCard({ configured: this.pay.configured, unreachable: this.pay.unreachable, locked: this.pay.blocked() }),
+      cashDeviceUsable: this.cashDeviceUsable(),
+    });
+  }
+
   private payView(kiosk: boolean): KioskView['pay'] {
-    const set = kiosk ? tsKioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
     // "ללא אשראי": no card tile at all (not one shown off) — cash at the till and the voucher stay.
-    const methods = this.pay.noCard ? set.filter((m) => m !== 'card' && m !== 'split_card') : set;
+    const configured = kiosk ? this.configuredPayMethods() : (['card'] as PaymentMethod[]);
+    // "קיוסק — כשאין מסופון אשראי" (`pay_at_till`, the default): no terminal to charge on (or one that does not answer)
+    // and nothing else that pays — "תשלום בקופה" is offered, so the kiosk never rests for the terminal alone.
+    const fallback = kiosk && this.tillFallbackNow();
+    const methods = withTillFallback(configured, fallback);
     const state = this.pay.monitor.state;
     // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
     // a terminal that did not answer its check is tried on the press.
-    const cardOff = this.pay.noCard
+    const cardOffNow = this.pay.noCard
       ? NO_CARD_TEXT
       : this.pay.blocked()
         ? 'תשלום קודם ממתין לבירור. אנא פנו לצוות.'
@@ -2547,6 +2671,8 @@ export class KioskService extends EventEmitter {
           : state === 'unconfigured'
             ? 'לא הוגדר מסופון אשראי לקיוסק'
             : 'מסופון האשראי לא זמין כרגע';
+    // The card's tile while the till is offered for it: the customer's words, not the staff's.
+    const cardOff = fallback && cardOffNow !== null && !this.pay.noCard ? CARD_FALLBACK_TEXT : cardOffNow;
     const usable = methods.filter((m) =>
       // A voucher only where its order can be finished: by the card (the vouchers are legs of the document) or at the till
       // (voucherCanFinish) — never a dead end.
@@ -2568,6 +2694,7 @@ export class KioskService extends EventEmitter {
       usable: kiosk ? offlineUsable(usable, this.offlineBlocked(this.config()), this.offlineScope(), blockCash) : usable,
       cardOff,
       cashOff: methods.includes('cash_device') ? (this.cashMag.enabled() ? this.cashMag.offReason() : this.cashPay.offReason()) : null,
+      ...(fallback ? { tillFallback: true as const } : {}),
     };
   }
 
@@ -2661,7 +2788,8 @@ export class KioskService extends EventEmitter {
     if (!this.fiscalRole || !this.isKiosk()) return { ok: false, reason: 'error', message: 'המכשיר אינו קיוסק פעיל' };
     if (!this.newSaleAllowed()) return { ok: false, reason: 'error', message: SHOP_LOCK_TEXT.title };
     const cfg = this.config();
-    if (!kioskPayMethods(cfg.payment.methods).includes('cash_at_till')) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
+    // Set on the kiosk, or offered when its terminal is not there ("קיוסק — כשאין מסופון אשראי", core/noTerminalFallback.ts).
+    if (!mayPayAtTill(kioskPayMethods(cfg.payment.methods), this.tillFallbackMode())) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
     // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
     if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'error', message: DISCOUNT_PAY_HERE };
     const basket: StartPaymentIn = { ...input, vouchers: undefined };
@@ -3213,6 +3341,16 @@ export class KioskService extends EventEmitter {
           : {}),
         // The till's discounts by hand (OTH lines print at ₪0 on their own), a credit note's original and customer.
         ...(tillManualDiscount(doc) > 0 ? { manualDiscountAgorot: tillManualDiscount(doc) } : {}),
+        // "הנחות קבועות": the preset's own row ("הנחת עובדים 40%") and whom it was for.
+        ...(doc.basketDiscount?.kind === KIND_PRESET && doc.basketDiscount.preset && doc.basketDiscount.agorot > 0
+          ? {
+              presetDiscount: {
+                label: presetLabel(doc.basketDiscount.preset.name, doc.basketDiscount.preset.kind, doc.basketDiscount.percent ?? 0),
+                amountAgorot: doc.basketDiscount.agorot,
+                forName: doc.basketDiscount.preset.for,
+              },
+            }
+          : {}),
         ...(doc.refundOfTransactionId ? { refundOfNumber: this.docNumberOf(doc.refundOfTransactionId) } : {}),
         ...(doc.customer ? { customer: doc.customer } : {}),
         ...(merchantCopy ? { merchantCopy: true } : {}),
@@ -3897,6 +4035,7 @@ export class KioskService extends EventEmitter {
             toTill: this.workMode.offered().toTill,
             toKiosk: this.workMode.offered().toKiosk,
             openerHolds: this.workMode.holds(this.adminUserId),
+            startMode: this.workMode.params().startMode,
           }
         : undefined,
     };
@@ -4566,9 +4705,12 @@ export class KioskService extends EventEmitter {
     const update = u
       ? { current: u.current, available: u.available, status: u.phase, message: u.message, progress: u.progress, lastCheckAt: u.lastCheckAt, autoInstall: u.autoInstall, installWindow: u.installWindow }
       : { current: this.opts.appVersion, available: null, status: 'not_checked' };
+    const license = licenseFacts(this.cloud.licenseProduct(), me?.deviceRole ?? null);
     return {
       machine: this.view().machine,
       deviceRole: me?.deviceRole ?? null,
+      // "סוג רישיון": what the cloud licensed the device as, and a warning when it does not fit the role.
+      license: license.product ? { product: license.product, label: license.label, info: license.info, warning: license.warning } : null,
       shopName: me?.shopName ?? null,
       companyName: me?.companyName ?? null,
       network: { online: !this.offlineNow, lastBeatOkAt: this.sync.status.lastBeatOkAt, serverUrl: this.cloud.credentials()?.serverUrl ?? null, interfaces: this.platform.interfaces() },
@@ -4580,6 +4722,7 @@ export class KioskService extends EventEmitter {
       })(),
       update,
       quickSupport: null,
+      displayScale: this.displayScaleView(),
     };
   }
 
@@ -4642,10 +4785,10 @@ export class KioskService extends EventEmitter {
         // A new choice: the question's memory starts again.
         this.kv.delete(DEFAULT_PRINTER_KEY);
         return { ok: true };
-      case 'setZoom':
-        this.setLocalSettings({ zoom: a.zoom });
-        this.platform.setZoom?.(a.zoom);
-        return { ok: true };
+      case 'displayScalePreview':
+      case 'displayScaleEnd':
+      case 'displayScaleSave':
+        return this.displayScaleAction(a);
       case 'unpair':
         if (this.outbox.count() > 0) return { ok: false, message: 'יש נתונים שטרם נשלחו לענן — לא ניתן לנתק' };
         this.sync.stop();

@@ -167,12 +167,12 @@ export function PagesProductSheet({
         <div className="flex items-center gap-2">
           <span
             className="rounded-full px-2 py-0.5 kt-11 font-semibold"
-            style={g.min > 0 ? { background: `${m.c.button}1A`, color: m.c.button } : { background: '#0000000D', color: m.c.mutedText }}
+            style={g.min > 0 ? { background: `${m.c.button}1A`, color: m.c.buttonInk } : { background: '#0000000D', color: m.c.mutedText }}
           >
             {g.min > 0 ? t('required') : g.max ? t('chooseUpTo', { n: g.max }) : t('optional')}
           </span>
           {g.freeCount ? (
-            <span className="rounded-full px-2 py-0.5 kt-11 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accent }}>
+            <span className="rounded-full px-2 py-0.5 kt-11 font-semibold" style={{ background: `${m.c.accent}1F`, color: m.c.accentInk }}>
               {t('freeChoices', { n: g.freeCount })}
             </span>
           ) : null}
@@ -224,7 +224,7 @@ export function PagesProductSheet({
                     {o.name}
                   </span>
                   {free ? (
-                    <span className="kt-11 font-bold" style={{ color: m.c.accent }}>
+                    <span className="kt-11 font-bold" style={{ color: m.c.accentInk }}>
                       {t('free')}
                     </span>
                   ) : o.price > 0 ? (
@@ -253,7 +253,7 @@ export function PagesProductSheet({
             <ProductImage m={m} p={product} className="h-full w-full" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="line-clamp-1 font-extrabold leading-tight" style={textSize(m, 'itemName', 17)}>
+            <div className="k-name-block line-clamp-1 font-extrabold leading-tight" style={textSize(m, 'itemName', 17)}>
               {product.name}
             </div>
             <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary }}>

@@ -106,12 +106,13 @@ def _options(machine: Any) -> List[Dict[str, Any]]:
 
 
 def _kiosk_pays_at_till(db: Session, machine: Any) -> Optional[bool]:
-    """For a kiosk, whether its effective config has "תשלום בקופה"; None for a till, or no machine."""
+    """
+    For a kiosk, whether it still takes payment with no card — "תשלום בקופה" in its effective config, or
+    "קיוסק — כשאין מסופון אשראי" offering it (PI.kiosk_takes_payment_without_card); None for a till, or no machine.
+    """
     if machine is None or not getattr(machine, "is_kiosk", False):
         return None
-    from app.services import kiosk_config
-
-    return PI.kiosk_pays_at_till(kiosk_config.effective_config(db, machine))
+    return PI.kiosk_takes_payment_without_card(db, machine)
 
 
 @router.get("/context")

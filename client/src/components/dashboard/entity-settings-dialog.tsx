@@ -64,6 +64,7 @@ export function EntityPosSettingsDialog({
   const tc = useTranslations('common');
   const tps = useTranslations('posSettings');
   const twf = useTranslations('kds.workflow');
+  const tpd = useTranslations('presetDiscounts');
   const [value, setValue] = useState<PosSettingsFormState>({});
   const [inherited, setInherited] = useState<PosSettingsV1 | undefined>();
   // Per key, the level above that set the inherited value ("נקבע ב" in the voucher settings).
@@ -248,6 +249,12 @@ export function EntityPosSettingsDialog({
             className="text-sm font-medium text-primary hover:underline"
           >
             מסך לקוח ←
+          </Link>
+        ) : null}
+        {/* "הנחות קבועות" (P:/specs/preset-discounts.md) have their own page, per level. */}
+        {level !== 'tenant' && entityId ? (
+          <Link href="/dashboard/preset-discounts" className="text-sm font-medium text-primary hover:underline">
+            {tpd('openFromSettings')} ←
           </Link>
         ) : null}
         {!payment.valid && !loading ? (

@@ -207,6 +207,9 @@ TIP_RESETTABLE_KEYS = (
     *payment_devices.SETTING_KEYS,
     # "חזרה אוטומטית לקיוסק" (Windows): "ירושה" sends `null`.
     "desktopIdleReturnMinutes",
+    # "הנחות קבועות": "ירושה" sends `null` ([] is "none at this level").
+    "presetDiscounts",
+    "presetDiscountButtons",
 )
 
 

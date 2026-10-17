@@ -254,6 +254,24 @@ def update_pos_user(
     color_changed = "table_color" in payload and payload["table_color"] != pu.table_color
     if "table_color" in payload:
         pu.table_color = payload["table_color"]
+    # "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3, §10): any zone or table of their shop; logged.
+    scope_changed = False
+    if "table_scope" in payload:
+        from app.services import table_scope as TSC
+
+        try:
+            scope = TSC.without_archived(db, shop.id, TSC.clean_scope(payload["table_scope"]))
+            TSC.check_against(db, shop.id, scope, any_area=True)
+        except TSC.ScopeError as exc:
+            raise HTTPException(status_code=422, detail={"code": TSC.INVALID, "reason": exc.reason, **exc.extra})
+        scope_changed = TSC.scope_out(pu.table_scope) != scope
+        if scope_changed:
+            name = " ".join(p for p in (pu.first_name or "", pu.last_name or "") if p).strip() or pu.username
+            TSC.record_change(
+                db, target_type="pos_user", target=pu, name=name, before=pu.table_scope, after=scope,
+                user=current_user,
+            )
+            pu.table_scope = scope
 
     if "pin" in payload and payload["pin"] is not None:
         pu.pin_hash = get_password_hash(payload["pin"])
@@ -269,13 +287,47 @@ def update_pos_user(
     db.refresh(pu)
 
     notify_machines_for_shop_pos_users(db, str(shop.id), reason="pos_user_updated")
-    if color_changed or "is_active" in payload or "first_name" in payload or "last_name" in payload:
+    if color_changed or scope_changed or "is_active" in payload or "first_name" in payload or "last_name" in payload:
         # The tables state names and colours the waiters ("שיוך מלצרים").
         from app.services import tables as T
 
         T.tables_changed(db, shop.id, tenant_id=shop.tenant_id)
         db.refresh(pu)
     return _with_role_names(db, [pu])[0]
+
+
+@router.get("/{shop_id}/pos-users/table-scope-tree")
+def pos_users_table_scope_tree(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The employee card's "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): every zone of the shop with its tables
+    (the employee may sit at any device of it), and the devices with a scope of their own — for the warning
+    "התחום של המכשיר והתחום של העובד לא חופפים".
+    """
+    from app.models.pos_machine import POSMachine
+    from app.services import table_scope as TSC
+    from app.services.printers import machine_label
+
+    shop = _get_shop_or_404(db, shop_id)
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    _check_read(current_user, shop, db)
+    devices = (
+        db.query(POSMachine)
+        .filter(POSMachine.shop_id == shop.id, POSMachine.is_active.is_(True), POSMachine.table_scope.isnot(None))
+        .order_by(POSMachine.pos_number.asc())
+        .all()
+    )
+    return {
+        "zones": TSC.scope_tree(db, shop.id, any_area=True),
+        "devices": [
+            {"id": str(m.id), "name": machine_label(m), "tableScope": TSC.live_out(db, shop.id, m.table_scope)}
+            for m in devices
+        ],
+    }
 
 
 @router.post(

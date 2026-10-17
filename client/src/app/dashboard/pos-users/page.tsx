@@ -8,6 +8,9 @@ import { api } from '@/lib/api';
 import { fetchTillRoles } from '@/lib/tillRolesApi';
 import { visibleRoles } from '@/lib/tillRoles';
 import { WAITER_PALETTE, cleanColor } from '@/lib/tableAssignment';
+import { fetchPosUserScopeTree, tablesErrorCode, type PosUserScopeTree } from '@/lib/tablesApi';
+import { devicesWithoutOverlap, liveScope, scopeOf, type TableScope } from '@/lib/tableScope';
+import { TableScopePicker } from '@/components/dashboard/tables/table-scope-picker';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { SignedInNowCard } from '@/components/dashboard/signed-in-now-card';
@@ -51,6 +54,10 @@ interface UserForm {
   tableColor: string;
   /** The colour the floor shows now (their own, else the automatic one). */
   tableColorEffective?: string | null;
+  /** "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): null — no fixed scope. */
+  tableScope: TableScope | null;
+  /** Changed in the dialog: only then is `tableScope` sent. */
+  tableScopeTouched: boolean;
 }
 
 const EMPTY: UserForm = {
@@ -63,6 +70,8 @@ const EMPTY: UserForm = {
   pin: '',
   isActive: true,
   tableColor: '',
+  tableScope: null,
+  tableScopeTouched: false,
 };
 
 const PIN_RE = /^\d{4,6}$/;
@@ -112,6 +121,13 @@ export default function PosUsersPage() {
     enabled: !!shopId,
   });
 
+  // "שולחנות שהעובד רואה": every zone of the shop with its tables, and the devices that have a scope of their own.
+  const scopeTree = useQuery<PosUserScopeTree>({
+    queryKey: ['pos-user-scope-tree', shopId],
+    queryFn: () => fetchPosUserScopeTree(shopId),
+    enabled: !!shopId && openEdit && !isNew,
+  });
+
   const save = useMutation({
     mutationFn: (u: UserForm) => {
       if (u.id) {
@@ -123,6 +139,8 @@ export default function PosUsersPage() {
           // The till role decides `role` on the server; the legacy select only without roles.
           ...(u.tillRoleId ? { tillRoleId: u.tillRoleId } : roleChoices.length ? {} : { role: u.role }),
           tableColor: cleanColor(u.tableColor) ?? '',
+          // Only when changed here, and only what the floor still has (an archived zone or table is refused).
+          ...(u.tableScopeTouched ? { tableScope: liveScope(u.tableScope, scopeTree.data?.zones ?? []) } : {}),
         };
         if (u.pin) payload.pin = u.pin;
         return api.put(`/shops/${shopId}/pos-users/${u.id}`, payload);
@@ -145,7 +163,10 @@ export default function PosUsersPage() {
       toast.success(isNew ? t('created') : t('updated'));
       setOpenEdit(false);
     },
-    onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, t('saveError'))),
+    onError: (err: unknown) =>
+      toast.error(
+        tablesErrorCode(err) === 'table_scope_invalid' ? t('tableScopeInvalid') : axiosErrorToToastMessage(err, t('saveError')),
+      ),
   });
 
   const resetPin = useMutation({
@@ -192,6 +213,8 @@ export default function PosUsersPage() {
       isActive: u.isActive,
       tableColor: u.tableColor ?? '',
       tableColorEffective: u.tableColorEffective ?? null,
+      tableScope: scopeOf(u.tableScope),
+      tableScopeTouched: false,
     });
     setOpenEdit(true);
   };
@@ -350,7 +373,7 @@ export default function PosUsersPage() {
 
       {/* Create / edit dialog */}
       <Dialog open={openEdit} onOpenChange={setOpenEdit}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={isNew ? 'max-w-md' : 'max-h-[92vh] max-w-lg overflow-y-auto'}>
           <DialogHeader>
             <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
             {selectedShop && (
@@ -435,6 +458,19 @@ export default function PosUsersPage() {
               shown={editing.tableColorEffective ?? null}
               onChange={(v) => setEditing((u) => ({ ...u, tableColor: v }))}
             />
+            {isNew ? (
+              <p className="text-xs text-muted-foreground">{t('tableScopeAfterCreate')}</p>
+            ) : (
+              <TableScopeField
+                key={editing.id}
+                userId={editing.id ?? ''}
+                tree={scopeTree.data ?? null}
+                loading={scopeTree.isLoading}
+                failed={scopeTree.isError}
+                value={editing.tableScope}
+                onChange={(v) => setEditing((u) => ({ ...u, tableScope: v, tableScopeTouched: true }))}
+              />
+            )}
             {!isNew && (
               <div className="flex items-center gap-2">
                 <Switch
@@ -494,6 +530,65 @@ export default function PosUsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3, §4, §10): every table (no fixed scope, the default), or the
+ * zones and tables picked in the shop's tree — any zone of the shop, the employee may sit at any of its devices.
+ * The scope from today's assignment ("מלצר רואה רק את מה ששויך לו") is a parameter of the tables page, not here.
+ * On a device with a scope of its own the employee sees what is in both: a device whose scope shares no table
+ * with theirs is named ("לא חופפים").
+ */
+function TableScopeField({
+  userId,
+  tree,
+  loading,
+  failed,
+  value,
+  onChange,
+}: {
+  userId: string;
+  tree: PosUserScopeTree | null;
+  loading: boolean;
+  failed: boolean;
+  value: TableScope | null;
+  onChange: (v: TableScope | null) => void;
+}) {
+  const t = useTranslations('posUsers');
+  const zones = tree?.zones ?? [];
+  const apart = devicesWithoutOverlap(
+    liveScope(value, zones),
+    (tree?.devices ?? []).map((d) => ({ ...d, tableScope: scopeOf(d.tableScope) })),
+    zones,
+  );
+  return (
+    <div className="space-y-1.5 rounded-md border p-2">
+      <Label>{t('tableScope')}</Label>
+      <p className="text-xs text-muted-foreground">{t('tableScopeHint')}</p>
+      {loading ? (
+        <Skeleton className="h-16 w-full" />
+      ) : failed || !tree ? (
+        <p className="text-xs text-destructive">{t('tableScopeLoadError')}</p>
+      ) : (
+        <TableScopePicker
+          name={`pos-user-scope-${userId}`}
+          zones={zones}
+          value={value}
+          onChange={onChange}
+          nothingHint={t('tableScopeNothing')}
+        />
+      )}
+      {apart.length ? (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <p className="font-medium">{t('tableScopeNoOverlap')}</p>
+          <p>{apart.map((d) => d.name).join(', ')}</p>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -71,6 +71,8 @@ ALIASES: Dict[str, str] = {
     # The dashboard's export keys (client/src/lib/reportPages.ts) that are not a type themselves.
     "home-board": "compare", "board": "compare", "event-report": "events", "live-event": "events",
     "producer-event": "events", "menu-sales": "menus", "oth-club": "promotions", "tables-report": "tables",
+    # "מעקב הנחות קבועות" (P:/specs/preset-discounts.md §6): a discounts report.
+    "preset-discounts": "promotions",
     "meals-report": "tables", "card-transmission": "transmissions", "prepaid-batch-groups": "prepaid-vouchers",
     "prepaid-settlement": "prepaid-vouchers", "day-summary-day": "day-summary",
     "product-sales-by-day": "products-by-day",

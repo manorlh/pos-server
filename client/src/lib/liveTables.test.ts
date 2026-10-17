@@ -140,6 +140,9 @@ describe('zones and the grid', () => {
   it('a grid zone by number, row after row', () => {
     const cells = gridCells([{ number: 3 }, { number: 1 }, { number: 12 }, { number: 2 }], 3);
     assert.deepEqual(cells.map((c) => [c.table.number, c.row, c.col]), [[1, 0, 0], [2, 0, 1], [3, 0, 2], [12, 1, 0]]);
+    // Labels in the natural order (P:/specs/table-scope.md §6.2): 3 before 3A, 3B before 10; never the internal number.
+    const labelled = gridCells([{ number: 10 }, { number: 99_998, label: '3B' }, { number: 3 }, { number: 99_999, label: '3A' }], 4);
+    assert.deepEqual(labelled.map((c) => c.table.label ?? c.table.number), [3, '3A', '3B', 10]);
     assert.equal(gridColumns(375), 2);
     assert.equal(gridColumns(1320), 10);
     assert.equal(gridColumns(0), 4);

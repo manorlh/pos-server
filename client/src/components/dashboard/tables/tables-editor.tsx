@@ -3,8 +3,12 @@
 /**
  * The floor editor: a shop's zones as tabs; each zone a map (see MapEditor: the floor,
  * a sketch from a template or drawn, tables dragged, resized, duplicated) or a grid
- * (squares by number). Tables are added one by one or as a range ("1–100"); their number
- * is unique in the shop. Each table has a name (shown on the till's map, or its number),
+ * (squares by number). Tables are added one by one or as a range ("1–100", "3A–3L"); their number
+ * is unique in the shop. "מספר שולחן (אפשר עם אותיות, למשל 3B)" (P:/specs/table-scope.md §6.1, §14.8): one field —
+ * "12" is the number 12, "3B" a label (unique in the shop by its normalised form, with an internal number never
+ * shown), checked here as the server does (lib/tableLabels.ts); a table is shown everywhere by its label instead of
+ * its number, and listed in the natural order (3, 3A, 3B, 10). The shop's first label warns of the tills on an
+ * older build, which show it but cannot type it (§6.5). Each table has a name (shown on the till's map, or its number),
  * seats (its chairs there) and a policy — "סוג שולחן": regular / staff / managers and a
  * discount %, or one of the shop's types ("סוגי שולחנות", table-types.tsx).
  *
@@ -36,6 +40,7 @@ import {
   fetchTablesLayout,
   saveTablePositions,
   tablesErrorCode,
+  tablesErrorDetail,
   updateTable,
   updateZone,
   type DiningTable,
@@ -51,6 +56,15 @@ import {
   type SketchElement,
 } from '@/lib/tableSketch';
 import { tableDisplay } from '@/lib/tableRestore';
+import {
+  checkRange,
+  checkTableNumber,
+  fieldValue,
+  nextNumber,
+  rangeEndValue,
+  shownOf,
+  sortTables,
+} from '@/lib/tableLabels';
 import { draftOf, policyBadge, policyBody, validatePolicyDraft, type PolicyDraft } from '@/lib/tablePolicy';
 import { PolicyFields, TableTypesDialog } from '@/components/dashboard/tables/table-types';
 import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
@@ -136,14 +150,25 @@ export function TablesEditor({
   // The map editor's plan and tables as they are now (for `onLive`).
   const [mapLive, setMapLive] = useState<MapLive | null>(null);
   const zone = zones.find((z) => z.id === zoneId) ?? zones[0] ?? null;
+  // In the natural order of labels and numbers: 3, 3A, 3B, 10 (P:/specs/table-scope.md §6.2).
   const tables = useMemo(
-    () => (data?.tables ?? []).filter((tb) => zone && tb.zoneId === zone.id).sort((a, b) => a.number - b.number),
+    () => sortTables((data?.tables ?? []).filter((tb) => zone && tb.zoneId === zone.id)),
     [data, zone],
   );
 
   const invalidate = () => qc.invalidateQueries({ queryKey: layoutKey });
   const fail = (err: unknown) => {
     const code = tablesErrorCode(err);
+    const detail = tablesErrorDetail(err);
+    // "3B" (§14.8): 409 `table_label_taken` {label}, 422 `table_label_invalid` {reason}.
+    if (code === 'table_label_taken') {
+      toast.error(t('errors.table_label_taken', { label: String(detail?.label ?? '') }));
+      return;
+    }
+    if (code === 'table_label_invalid') {
+      toast.error(t('labelError', { reason: String(detail?.reason ?? 'other') }));
+      return;
+    }
     toast.error(code && t.has(`errors.${code}`) ? t(`errors.${code}`) : axiosErrorToToastMessage(err, tc('error')));
   };
 
@@ -254,12 +279,22 @@ export function TablesEditor({
   // "סוג שולחן": a type, or the table's own kind and discount.
   const [tPolicy, setTPolicy] = useState<PolicyDraft>(draftOf(null));
   const policyErrors = validatePolicyDraft(tPolicy, tableTypes);
+  // "מספר שולחן (אפשר עם אותיות)": a number or a label, checked as the server checks it; the range too.
+  const numberCheck = checkTableNumber(tNumber);
+  const rangeCheck = checkRange(bFrom, bTo);
+  // The shop's first label (§6.5): the tills on a build that cannot type one.
+  const shopHasLabel = (data?.tables ?? []).some((x) => !!(x.label ?? '').trim());
+  const cannotType = (data?.oldDevices ?? []).filter((d) => d.labels === false);
+  const addsLabel =
+    tableDialog === 'bulk' ? !!rangeCheck.items?.[0]?.label : tableDialog !== null && !!numberCheck.parsed?.label;
+  const firstLabelWarning = addsLabel && !shopHasLabel && cannotType.length > 0;
 
   const openTable = (mode: 'new' | 'edit' | 'bulk', table?: DiningTable) => {
     setTableDialog(mode);
     setSelected(table ?? null);
-    const next = Math.max(0, ...(data?.tables ?? []).map((x) => x.number)) + 1;
-    setTNumber(String(table?.number ?? next));
+    // After the shop's highest plain number (a label's number is internal, 99,999 down).
+    const next = nextNumber(data?.tables ?? []);
+    setTNumber(table ? ((table.label ?? '').trim() || String(table.number)) : String(next));
     setTName(table?.name ?? '');
     setTSeats(String(table?.seats ?? 4));
     setTShape(table?.shape ?? 'square');
@@ -276,8 +311,11 @@ export function TablesEditor({
   const tableMut = useMutation({
     mutationFn: async () => {
       if (!zone) throw new Error('no zone');
+      const parsed = checkTableNumber(tNumber).parsed;
+      if (!parsed) throw new Error('invalid table number');
       const common = {
-        number: Number(tNumber),
+        // "12" goes as the number 12, "3b" as the label ("3B").
+        number: fieldValue(parsed),
         name: tName.trim() || null,
         seats: Number(tSeats) || 0,
         shape: tShape,
@@ -302,15 +340,20 @@ export function TablesEditor({
     mutationFn: () => {
       if (!zone) throw new Error('no zone');
       return bulkAddTables(zone.id, {
-        from: Number(bFrom),
-        to: Number(bTo),
+        // "1"–"20" as numbers, "3A"–"3L" as typed (the server expands it as lib/tableLabels.ts does).
+        from: rangeEndValue(bFrom),
+        to: rangeEndValue(bTo),
         seats: Number(tSeats) || 4,
         shape: tShape,
         typeId: tPolicy.typeId || null,
       });
     },
     onSuccess: (out) => {
-      toast.success(t('bulkDone', { created: out.created.length, skipped: out.skipped.length }));
+      toast.success(t('bulkDone', { created: out.created.length, skipped: out.skipped.length }), {
+        description: out.skipped.length
+          ? t('bulkSkipped', { list: out.skipped.slice(0, 24).join(', ') + (out.skipped.length > 24 ? ', …' : '') })
+          : undefined,
+      });
       setTableDialog(null);
       invalidate();
     },
@@ -340,7 +383,8 @@ export function TablesEditor({
     let liveTables: PreviewTable[] =
       fromMap?.tables ??
       tables.map((tb) => ({
-        id: tb.id, number: tb.number, shape: tb.shape, seats: tb.seats, x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation,
+        id: tb.id, number: tb.number, label: tb.label ?? null, name: tb.name, labelOnly: tb.labelOnly,
+        shape: tb.shape, seats: tb.seats, x: tb.x, y: tb.y, width: tb.width, height: tb.height, rotation: tb.rotation,
       }));
     if (layout === 'map' && zone.layout === 'grid') {
       // Squares about to become a map: the tables where "עבור לתצוגת מפה" would put them.
@@ -609,22 +653,47 @@ export function TablesEditor({
                 <p className="text-sm text-muted-foreground">{t('bulkHint', { zone: zone?.name ?? '' })}</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label>{t('bulkFrom')}</Label>
-                    <Input type="number" min={1} value={bFrom} onChange={(e) => setBFrom(e.target.value)} />
+                    <Label htmlFor="bulk-from">{t('bulkFrom')}</Label>
+                    <Input id="bulk-from" dir="auto" maxLength={16} value={bFrom} onChange={(e) => setBFrom(e.target.value)} />
                   </div>
                   <div className="space-y-1">
-                    <Label>{t('bulkTo')}</Label>
-                    <Input type="number" min={1} value={bTo} onChange={(e) => setBTo(e.target.value)} />
+                    <Label htmlFor="bulk-to">{t('bulkTo')}</Label>
+                    <Input id="bulk-to" dir="auto" maxLength={16} value={bTo} onChange={(e) => setBTo(e.target.value)} />
                   </div>
                 </div>
+                {bFrom.trim() && bTo.trim() ? (
+                  rangeCheck.error ? (
+                    <p role="alert" className="text-xs text-destructive">{t('labelError', { reason: rangeCheck.error })}</p>
+                  ) : rangeCheck.items?.length ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t('bulkPreview', {
+                        count: rangeCheck.items.length,
+                        first: shownOf(rangeCheck.items[0].number, rangeCheck.items[0].label),
+                        last: shownOf(rangeCheck.items[rangeCheck.items.length - 1].number, rangeCheck.items[rangeCheck.items.length - 1].label),
+                      })}
+                    </p>
+                  ) : null
+                ) : null}
               </>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label>{t('tableNumber')}</Label>
-                  <Input type="number" min={1} value={tNumber} onChange={(e) => setTNumber(e.target.value)} />
+                <div className="col-span-2 space-y-1">
+                  <Label htmlFor="table-number">{t('tableNumber')}</Label>
+                  <Input
+                    id="table-number"
+                    dir="auto"
+                    maxLength={16}
+                    value={tNumber}
+                    aria-invalid={!!tNumber.trim() && !!numberCheck.error}
+                    onChange={(e) => setTNumber(e.target.value)}
+                  />
+                  {tNumber.trim() && numberCheck.error ? (
+                    <p role="alert" className="text-xs text-destructive">{t('labelError', { reason: numberCheck.error })}</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">{t('tableNumberHint')}</p>
+                  )}
                 </div>
-                <div className="space-y-1">
+                <div className="col-span-2 space-y-1">
                   <Label>{t('tableName')}</Label>
                   <Input value={tName} onChange={(e) => setTName(e.target.value)} placeholder={t('tableNamePlaceholder')} />
                 </div>
@@ -667,6 +736,24 @@ export function TablesEditor({
                 ) : null}
               </div>
             ) : null}
+            {firstLabelWarning ? (
+              // §6.5: the shop's first label — the tills that show it but cannot type it on the keypad.
+              <div
+                role="alert"
+                className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <p className="font-medium">{t('labelsOldDevices')}</p>
+                <ul className="list-disc ps-4">
+                  {cannotType.map((d) => (
+                    <li key={d.machineId}>
+                      {d.name}
+                      {d.appVersion ? ` · ${t('oldDeviceVersion', { version: d.appVersion })}` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <p>{t('labelsOldDevicesHint')}</p>
+              </div>
+            ) : null}
             {tableDialog === 'bulk' ? (
               tableTypes.length > 0 ? (
                 <div className="space-y-1">
@@ -698,7 +785,7 @@ export function TablesEditor({
                 className="me-auto"
                 disabled={archiveTableMut.isPending}
                 onClick={() => {
-                  if (window.confirm(t('archiveTableConfirm', { number: selected.number }))) {
+                  if (window.confirm(t('archiveTableConfirm', { number: tableDisplay(selected).text }))) {
                     archiveTableMut.mutate(selected.id);
                   }
                 }}
@@ -711,11 +798,14 @@ export function TablesEditor({
               {tc('cancel')}
             </Button>
             {tableDialog === 'bulk' ? (
-              <Button onClick={() => bulkMut.mutate()} disabled={bulkMut.isPending || !bFrom || !bTo}>
+              <Button onClick={() => bulkMut.mutate()} disabled={bulkMut.isPending || !bFrom.trim() || !bTo.trim() || !!rangeCheck.error}>
                 {bulkMut.isPending ? tc('saving') : t('bulkAddAction')}
               </Button>
             ) : (
-              <Button onClick={() => tableMut.mutate()} disabled={tableMut.isPending || !tNumber || policyErrors.length > 0}>
+              <Button
+                onClick={() => tableMut.mutate()}
+                disabled={tableMut.isPending || !tNumber.trim() || !!numberCheck.error || policyErrors.length > 0}
+              >
                 {tableMut.isPending ? tc('saving') : tc('save')}
               </Button>
             )}

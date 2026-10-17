@@ -480,7 +480,9 @@ export function FormerHostChanges({ shopId }: { shopId: string }) {
           {changes.items.map((c) => (
             <li key={c.id} className="rounded-md border bg-background p-2 text-xs">
               <p className="font-medium">
-                {c.tableNumber !== null ? t('table', { n: String(c.tableNumber) }) : (c.tableName ?? c.orderId)}
+                {c.tableLabel || c.tableNumber !== null
+                  ? t('table', { n: c.tableLabel || String(c.tableNumber) })
+                  : (c.tableName ?? c.orderId)}
                 {' · '}
                 {t('at', { at: formatDateTime(c.at) })}
               </p>

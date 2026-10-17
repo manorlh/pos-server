@@ -41,7 +41,7 @@ export function WorkModePanel({
   const tillNow = info.mode === 'till';
   if (!info.enabled && !(tillNow && info.toKiosk)) return null;
   const current = { background: m.c.button, color: m.c.buttonText, borderRadius: 10 };
-  const other = { background: `${m.c.button}1A`, color: m.c.button, borderRadius: 10 };
+  const other = { background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 10 };
   return (
     <section className="space-y-1.5 p-3 text-sm" style={cardStyle(m)} data-work-mode data-mode={info.mode}>
       <h3 className="text-sm font-extrabold">{WORK_TEXT.title}</h3>
@@ -72,14 +72,23 @@ export function WorkModePanel({
             {refusal.text}
           </div>
           {refusal.code === 'customer_ordering' && onResetCustomer ? (
-            <button type="button" onClick={onResetCustomer} className="px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }}>
+            <button type="button" onClick={onResetCustomer} className="px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }}>
               {WORK_TEXT.resetCustomer}
             </button>
           ) : null}
         </div>
       ) : null}
       <div className="text-xs" style={{ color: m.c.mutedText }}>
-        {tillNow ? (info.openerHolds ? WORK_TEXT.hintToKiosk : WORK_TEXT.needsManagerToKiosk) : info.openerHolds ? WORK_TEXT.hint : WORK_TEXT.needsManager}
+        {tillNow
+          ? info.openerHolds
+            ? WORK_TEXT.hintToKiosk
+            : WORK_TEXT.needsManagerToKiosk
+          : !info.openerHolds
+            ? WORK_TEXT.needsManager
+            : // "מצב עבודה בהפעלה": a restart starts the device as the setting says, not as chosen here.
+              info.startMode && info.startMode !== 'last'
+              ? WORK_TEXT.hintStart
+              : WORK_TEXT.hint}
       </div>
     </section>
   );

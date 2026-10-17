@@ -57,6 +57,8 @@ const ORDER: DisplaySizeClass[] = CLASSES.map(([c]) => c);
 
 export const DENSITY_BUCKETS = [120, 160, 213, 240, 280, 320, 360, 400, 420, 480, 560, 640];
 export const HANDHELD_MAX_SMALLEST_DP = 600;
+/** A believable diagonal from this many inches is never a handheld (§2.3: "פחות מ-9"" — pos-android DisplayProfiles). */
+export const HANDHELD_MAX_TRUSTED_IN = 9.0;
 const HIRES_SMALLEST_DP = 1440;
 const HIRES_TARGET_SMALLEST_DP = 1080;
 const MIN_SCALE = 0.75;
@@ -120,7 +122,11 @@ export function displayProfile(f: DisplayFacts): DisplayProfile {
   const trusted = physicalTrusted(f);
   const diagonal = trusted ? Math.hypot(f.widthPx / f.xdpi, f.heightPx / f.ydpi) : Math.hypot(wNative, hNative) / 160;
   let sizeClass: DisplaySizeClass;
-  if (swNative < HANDHELD_MAX_SMALLEST_DP) sizeClass = 'handheld';
+  // A believable 9" or more is never a handheld, however large its density makes the dp (layout audit 16.10: a 15.6"
+  // 1366×768 at 150% read 910×512 dp — the handheld's layout on a counter screen); its class is its inches, and the band
+  // below corrects the density. A browser is never believable: unchanged there.
+  const handheld = swNative < HANDHELD_MAX_SMALLEST_DP && !(trusted && diagonal >= HANDHELD_MAX_TRUSTED_IN);
+  if (handheld) sizeClass = 'handheld';
   else {
     const byInches = CLASSES.find(([, upTo]) => diagonal < upTo)![0];
     sizeClass = byInches === 'handheld' ? '11' : byInches;
@@ -130,8 +136,10 @@ export function displayProfile(f: DisplayFacts): DisplayProfile {
   else if (trusted) {
     const mm = mmPerDp(f);
     const [lo, hi] = BANDS[sizeClass];
-    // Portrait: only a panel too dense is corrected — today's portrait kiosk stays as it is.
-    const target = landscape ? clamp(mm, lo, hi) : Math.max(mm, lo);
+    // Upright: only a panel too dense is corrected — today's portrait kiosk stays as it is. A square is not today's portrait
+    // kiosk: both ends, as on its side (layout audit 16.10, the same as pos-android).
+    const upright = f.heightPx > f.widthPx;
+    const target = upright ? Math.max(mm, lo) : clamp(mm, lo, hi);
     raw = target / mm;
   } else if (swNative >= HIRES_SMALLEST_DP) raw = swNative / HIRES_TARGET_SMALLEST_DP;
   else raw = 1;
@@ -168,6 +176,17 @@ export const PANEL_WIDTH_DP = 340;
 const RAIL_MIN_REMAINING_DP = 900;
 const TWO_COLUMNS_MIN_DP = 1100;
 export const MIN_TOUCH_DP = 48;
+
+/**
+ * The smallest control (§2.9: 48 dp at the app's scale) in the CSS px a kiosk's screens are drawn in — the root's
+ * `--k-target` (kiosk-shared `.k-hit`, `min-h-[var(--k-target)]`): `cssPerDp` CSS px make one dp (the Windows kiosk's
+ * page zoom ×2 → 0.5: 24 px; the WebView and the browser at ratio 1 → 48 px; a 4K root zoomed ×2 → 24 px).
+ * Layout audit 16.10: on a 10" tablet the screens' 24–36 px controls were 4–6 mm.
+ */
+export function kioskTargetCssPx(cssPerDp: number): number {
+  const k = Number.isFinite(cssPerDp) && cssPerDp > 0 ? cssPerDp : 1;
+  return Math.round(MIN_TOUCH_DP * k * 10) / 10;
+}
 
 export const AS_TODAY: KioskDisplayDecisions = {
   landscape: false,

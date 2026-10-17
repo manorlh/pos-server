@@ -201,6 +201,26 @@ class Actor:
     machine: POSMachine
     pos_user_id: Optional[str] = None
     pos_user_name: Optional[str] = None
+    #: "תחום שולחנות" (P:/specs/table-scope.md §5, §10): the employee as `X-Pos-User-Id` names them (else the body's),
+    #: and the till user who approved one action outside the scope with their code (`X-Scope-Approver`).
+    operator_id: Optional[str] = None
+    scope_approver: Optional[str] = None
+
+
+def scope_gate(db: Session, actor: "Actor", table: Any, action: str, now: Optional[datetime] = None) -> None:
+    """
+    A till's write on [table] within its scope (app/services/table_scope.py `check_write`): 403
+    `table_out_of_scope` outside it, unless the employee may see everything, or a till user who may approved it —
+    then the `scope_override` event names them.
+    """
+    from app.services import table_scope as TSC
+
+    details = TSC.check_write(
+        db, actor.machine, table, operator_id=actor.operator_id or actor.pos_user_id,
+        approver_id=actor.scope_approver, action=action,
+    )
+    if details is not None:
+        record_event(db, TSC.EVENT_OVERRIDE, table, None, actor=actor, details=details, now=now)
 
 
 @dataclass(frozen=True)
@@ -243,9 +263,12 @@ def zones_for(db: Session, shop_id: Any, area_id: Any = None, *, all_areas: bool
 
 
 def tables_in(db: Session, zone_ids: Sequence[uuid.UUID]) -> List[DiningTable]:
+    """The live tables of the zones, in the natural order ("3", "3A", "10" — app/services/table_labels.py)."""
+    from app.services.table_labels import natural_sorted
+
     if not zone_ids:
         return []
-    return (
+    return natural_sorted(
         db.query(DiningTable)
         .filter(DiningTable.zone_id.in_(list(zone_ids)), DiningTable.archived_at.is_(None))
         .order_by(DiningTable.number.asc())
@@ -501,7 +524,11 @@ def ensure_lock(
 
 
 def table_ref(table: DiningTable) -> dict:
-    return {"id": str(table.id), "number": table.number, "name": table.name}
+    out = {"id": str(table.id), "number": table.number, "name": table.name}
+    # "3B" (P:/specs/table-scope.md §6): only a labelled table says it.
+    if getattr(table, "label", None):
+        out["label"] = table.label
+    return out
 
 
 def zone_out(zone: TableZone) -> dict:
@@ -534,6 +561,8 @@ def table_out(table: DiningTable, types: Optional[Dict[Any, Any]] = None) -> dic
         "zoneId": str(table.zone_id),
         "number": table.number,
         "name": table.name,
+        # "3B" (P:/specs/table-scope.md §6.1): only on a labelled table — the number is then its internal one.
+        **({"label": table.label} if getattr(table, "label", None) else {}),
         "seats": table.seats,
         "shape": table.shape,
         "x": table.x,
@@ -782,6 +811,25 @@ class ShopTables:
     reservations: Tuple[Tuple[datetime, Optional[str], dict], ...]
     #: "שיוך שולחנות למלצרים" (app/services/table_assignments.py `build_for_state`); None: not read.
     assignments: Any = None
+    #: "תחום שולחנות" (P:/specs/table-scope.md §9): the active employees' stored scopes, ((pos user id, scope), …);
+    #: empty — nobody has one.
+    user_scopes: Tuple[Tuple[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class _View:
+    """
+    How one till is composed from the shop's state (`_compose`), beyond its point of sale: the device's scope it
+    is narrowed by (None — none; never the LAN host's, nor with "כל השולחנות"), what it is shown of a table outside
+    it, every area's zones (the LAN host that narrows each device itself, §7), whether it reads `label` (§6.5),
+    and the `scope` block (None — none: the state of today).
+    """
+
+    device: Any = None
+    outside: str = "hide"
+    all_areas: bool = False
+    labels: bool = True
+    block: Optional[Dict[str, Any]] = None
 
 
 #: The bookings a till shows, from `RESERVATION_GRACE` ago to this far ahead.
@@ -851,13 +899,22 @@ def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[
     # "שיוך שולחנות למלצרים": the live rows, the waiters and each table's effective assignment —
     # composed per till only where its `tableAssignmentMode` is on (`_compose`).
     assignments = None
+    # "תחום שולחנות" (P:/specs/table-scope.md §9): the employees' scopes — from the same read of the shop's till
+    # users as the assignments' waiters (no query of their own); the devices' are the LAN host's alone (`till_state`).
+    user_scopes: Tuple[Tuple[str, Any], ...] = ()
     shop_row = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
     if shop_row is not None:
         from app.services import table_assignments as TAS
 
         try:
             with db.begin_nested():
-                assignments = TAS.build_for_state(db, shop_row, tables, zones, now)
+                users = TAS.shop_users(db, shop_row.id)
+                user_scopes = tuple(
+                    (str(u.id), u.table_scope)
+                    for u in sorted(users, key=lambda u: str(u.id))
+                    if u.is_active and getattr(u, "table_scope", None) is not None
+                )
+                assignments = TAS.build_for_state(db, shop_row, tables, zones, now, users=users)
         except Exception:  # noqa: BLE001 - the floor is served without them
             logger.exception("table assignments of shop %s not read", machine.shop_id)
     shop = ShopTables(
@@ -870,34 +927,80 @@ def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[
             (as_utc(r.reserved_at), str(r.table_id) if r.table_id else None, reservation_out(r)) for r in bookings
         ),
         assignments=assignments,
+        user_scopes=user_scopes,
     )
     return shop, valid_until
 
 
+#: What a till keeps of a table outside its scope, drawn grey (`dim`).
+_SKELETON_KEYS = ("id", "zoneId", "number", "label", "name", "labelOnly", "seats", "shape", "x", "y", "width",
+                  "height", "rotation")
+
+
+def _old_till_table(base: dict) -> dict:
+    """
+    A labelled table for a till that predates labels (§6.5): its label as its name ("3B", "3B · VIP"), shown by
+    it alone (`labelOnly`) — every till from 0.1.627 draws it so; an older one, the internal number.
+    """
+    from app.services.table_labels import table_title
+
+    if not base.get("label"):
+        return base
+    out = {k: v for k, v in base.items() if k != "label"}
+    out["name"] = table_title(None, base["label"], base.get("name"))
+    out["labelOnly"] = True
+    return out
+
+
+def _skeleton(base: dict) -> dict:
+    """"מוצג באפור" (§5 `dim`): where it stands and what it is called — no order, lock, waiter or booking."""
+    out = {k: base[k] for k in _SKELETON_KEYS if k in base}
+    out.update({"order": None, "lock": None, "state": "free", "outOfScope": True})
+    return out
+
+
 def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str, Any],
-             assigning: Any = None) -> Dict[str, Any]:
+             assigning: Any = None, view: Optional[_View] = None) -> Dict[str, Any]:
     """
     The till's own view of the shop state: its point of sale's zones, its own lock, its bookings — and,
     where its `tableAssignmentMode` is on ([assigning]: its `Config`), the assignments of what it sees.
+
+    "תחום שולחנות" ([view], P:/specs/table-scope.md §5, §9): only the tables in the device's scope, and the zones
+    with one of them at least; outside it nothing (`hide`), or the table's skeleton (`dim`, `outOfScope`). The
+    LAN host: every area's zones, nobody's scope (it narrows each device itself). A till that predates labels
+    gets a labelled table by its name (`_old_till_table`).
     """
+    view = view or _View()
     area = str(machine.area_id) if machine.area_id else None
     me = str(machine.id)
-    visible = set()
-    for zone_area, zone_id, zone in shop.zones:
-        if zone_area is None or (area is not None and zone_area == area):
-            visible.add(zone_id)
+    in_area = set()
+    for zone_area, zone_id, _zone in shop.zones:
+        if view.all_areas or zone_area is None or (area is not None and zone_area == area):
+            in_area.add(zone_id)
+    device = view.device
+    if device is None:
+        visible = in_area
+    else:
+        visible = {row.zone_id for row in shop.tables if row.zone_id in in_area and device.covers(row.table_id, row.zone_id)}
+    for _zone_area, zone_id, zone in shop.zones:
+        if zone_id in visible:
             out["zones"].append(zone)
     seen = set()
     assigned = shop.assignments if assigning is not None and getattr(assigning, "on", False) else None
     for row in shop.tables:
         if row.zone_id not in visible:
             continue
+        base = row.base if view.labels else _old_till_table(row.base)
+        if device is not None and not device.covers(row.table_id, row.zone_id):
+            if view.outside == "dim":
+                out["tables"].append(_skeleton(base))
+            continue
         seen.add(row.table_id)
         lock = row.lock
         if lock is not None:
             lock = {**lock, "mine": row.lock_machine_id == me}
         item = {
-            **row.base,
+            **base,
             "order": row.order,
             "lock": lock,
             "state": "locked" if lock is not None and not lock["mine"] else row.order_state,
@@ -926,7 +1029,47 @@ def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str
     out["reservations"] = [
         r for table_id, r in window[:RESERVATIONS_LIMIT] if table_id is None or table_id in seen
     ]
+    if view.block is not None:
+        out["scope"] = view.block
     return out
+
+
+def scope_view(shop: ShopTables, machine: POSMachine, params: Dict[str, Any], *, host: bool, all_scope: bool,
+               device_scopes: Sequence[Tuple[str, Any]] = ()) -> _View:
+    """
+    How [machine] is composed (P:/specs/table-scope.md §5, §7, §9): [host] — the LAN mode's tables host, which
+    takes everything (a build that narrows the devices itself, `table_scope_v1`, gets every area's zones too) and
+    every device's scope ([device_scopes]); [all_scope] — "כל השולחנות" of an employee who may see everything
+    (`?scope=all`).
+    """
+    from app.services import table_scope as TSC
+
+    caps = TSC.capabilities_of(machine)
+    labels = TSC.CAPABILITY_LABELS in caps
+    all_areas = host and TSC.CAPABILITY_SCOPE in caps
+    raw = getattr(machine, "table_scope", None)
+    by_assignment = TSC.from_assignment(params)
+    outside = TSC.outside_of(params)
+    if raw is None and not shop.user_scopes and not by_assignment and not (host and device_scopes):
+        return _View(labels=labels, outside=outside, all_areas=all_areas)
+    zones = {zone_id for _a, zone_id, _z in shop.zones}
+    tables = {row.table_id for row in shop.tables}
+    device = TSC.resolve(raw, zones, tables)
+    block: Dict[str, Any] = {
+        "device": device.out() if device is not None else None,
+        "users": TSC.users_block(shop.user_scopes, zones, tables),
+        "fromAssignment": by_assignment,
+        "outside": outside,
+    }
+    if host:
+        block["devices"] = TSC.devices_block(device_scopes, zones, tables)
+    return _View(
+        device=None if (host or all_scope) else device,
+        outside=outside,
+        all_areas=all_areas,
+        labels=labels,
+        block=block,
+    )
 
 
 def till_state(
@@ -935,6 +1078,7 @@ def till_state(
     *,
     now: Optional[datetime] = None,
     shop: Optional[ShopTables] = None,
+    all_scope: bool = False,
 ) -> dict:
     """
     Everything the tables screen draws: the zones and tables this till sees, each with
@@ -946,7 +1090,9 @@ def till_state(
     the business day, the live `rows`, the `waiters` with their colours) and each table's `assignment`
     (`{via, posUserIds}` or null).
 
-    [shop]: the shop-wide part already built (`till_state_cached`); built here otherwise.
+    [shop]: the shop-wide part already built (`till_state_cached`); built here otherwise. "תחום שולחנות"
+    (P:/specs/table-scope.md §9): the device's scope narrows it (not the LAN host's, which gets every device's in
+    `scope.devices`, nor with [all_scope] — "כל השולחנות"), and the `scope` block says who has one.
     """
     from app.services import table_assignments as TAS
 
@@ -970,34 +1116,55 @@ def till_state(
     if shop is None:
         shop, _ = build_shop_tables(db, machine, now)
     out["cancelReasons"] = list(shop.reasons) if machine.tenant_id else []
-    _compose(shop, machine, now, out, assigning=cfg)
+    lan = lan_host_block(db, machine) if out["mode"] == MODE_LAN else None
+    host = bool(lan and lan.get("isSelf"))
+    device_scopes: Tuple[Tuple[str, Any], ...] = ()
+    if host:
+        # The LAN host narrows every device itself (§7): their scopes, read for it alone.
+        from app.services import table_scope as TSC
+
+        try:
+            with db.begin_nested():
+                device_scopes = TSC.device_scopes(db, machine.shop_id)
+        except Exception:  # noqa: BLE001 - served without them
+            logger.exception("device scopes of shop %s not read", machine.shop_id)
+    view = scope_view(shop, machine, params, host=host, all_scope=all_scope, device_scopes=device_scopes)
+    _compose(shop, machine, now, out, assigning=cfg, view=view)
+    if all_scope:
+        out["scopeAll"] = True
     if out["mode"] == MODE_LAN:
         # Who holds the shop's tables on the LAN, and the secret the tills present to it.
         from app.services.printers import print_secret
 
-        out["lanHost"] = lan_host_block(db, machine)
+        out["lanHost"] = lan
         out["lanSecret"] = print_secret(machine.shop_id)
+        if view.all_areas:
+            # Every area's zones, for the host to narrow each device to its own (§7).
+            out["hostAllAreas"] = True
     return out
 
 
-def till_state_cached(db: Session, machine: POSMachine, *, version: int, now: Optional[datetime] = None) -> Tuple[dict, str]:
+def till_state_cached(db: Session, machine: POSMachine, *, version: int, now: Optional[datetime] = None,
+                      all_scope: bool = False) -> Tuple[dict, str]:
     """
     `till_state` from the shop's snapshot for `version` (built once per shop and version, per
-    process — app/services/tables_state.py), and the tag that describes it.
+    process — app/services/tables_state.py), and the tag that describes it. [all_scope]: "כל השולחנות"
+    (its own tag: never the scoped state's).
     """
     from app.services import tables_state as TS
 
     now = now or _now()
+    variant = TS.VARIANT_ALL if all_scope else ""
     if machine.shop_id is None:
-        return till_state(db, machine, now=now), TS.make_tag(version, now + TS.MAX_AGE, machine)
+        return till_state(db, machine, now=now), TS.make_tag(version, now + TS.MAX_AGE, machine, variant)
 
     def build() -> "TS.Snapshot":
         data, valid_until = build_shop_tables(db, machine, now)
         return TS.Snapshot(version=version, built_at=now, valid_until=valid_until, data=data)
 
     snap = TS.SNAPSHOTS.get((str(machine.shop_id), str(machine.tenant_id)), version, now, build)
-    out = till_state(db, machine, now=now, shop=snap.data)
-    return out, TS.make_tag(version, snap.valid_until, machine)
+    out = till_state(db, machine, now=now, shop=snap.data, all_scope=all_scope)
+    return out, TS.make_tag(version, snap.valid_until, machine, variant)
 
 
 def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
@@ -1106,6 +1273,7 @@ def enter(db: Session, actor: Actor, table_id: Any, *, now: Optional[datetime] =
     now = now or _now()
     minutes, busy = _synced(db, actor.machine)
     table = table_for_machine(db, actor.machine, table_id)
+    scope_gate(db, actor, table, "enter", now)
     stale = stale_lock_out(db, table, now)
     if stale is not None and stale.get("machineId") == str(actor.machine.id):
         stale = None
@@ -1159,6 +1327,12 @@ def peek(db: Session, machine: POSMachine, table_id: Any, *, now: Optional[datet
     now = now or _now()
     _require_synced(db, machine)
     table = table_for_machine(db, machine, table_id)
+    # Never read past the device's scope (P:/specs/table-scope.md §5): no order, no total, no waiter.
+    from app.services import table_scope as TSC
+
+    device = TSC.device_scope_of(db, machine)
+    if device is not None and not device.covers(table.id, table.zone_id):
+        raise TSC.refusal(table, "device")
     order = open_order(db, table.id)
     return {
         "table": table_out(table),
@@ -1288,6 +1462,7 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
             zone_id=table.zone_id,
             table_number=table.number,
             table_name=table.name,
+            table_label=table.label,
             status="open",
             source="synced",
             version=1,
@@ -1328,6 +1503,7 @@ def save(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
     current.zone_id = table.zone_id
     current.table_number = table.number
     current.table_name = table.name
+    current.table_label = table.label
     if changed and body.action != "bill":
         current.bill_printed_at = None
     if body.action == "send":
@@ -1385,6 +1561,7 @@ def pay(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datetim
             zone_id=table.zone_id,
             table_number=table.number,
             table_name=table.name,
+            table_label=table.label,
             status="paid",
             source="synced",
             version=0,
@@ -1498,6 +1675,7 @@ def move(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
     target = table_for_machine(db, actor.machine, body.target_table_id)
     if target.id == table.id:
         raise _bad("move_same_table")
+    scope_gate(db, actor, target, "move", now)
 
     replay = _replayed(db, body.order_id, body.request_id)
     if replay is not None and replay.table_id == target.id:
@@ -1521,6 +1699,7 @@ def move(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[dateti
     current.zone_id = target.zone_id
     current.table_number = target.number
     current.table_name = target.name
+    current.table_label = target.label
     current.version = (current.version or 0) + 1
     _touch(current, actor, now, body.request_id)
     try:
@@ -1595,6 +1774,7 @@ def transfer(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[da
     target = table_for_machine(db, actor.machine, body.target_table_id)
     if target.id == table.id:
         raise _bad("transfer_same_table")
+    scope_gate(db, actor, target, "transfer", now)
 
     replay = _replayed(db, body.order_id, body.request_id)
     if replay is not None:
@@ -1623,7 +1803,7 @@ def transfer(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[da
             raise _conflict("table_target_changed", table=table_ref(target), order=None)
         there = TableOrder(
             id=body.target_order_id, tenant_id=actor.machine.tenant_id, shop_id=target.shop_id,
-            table_id=target.id, zone_id=target.zone_id, table_number=target.number, table_name=target.name,
+            table_id=target.id, zone_id=target.zone_id, table_number=target.number, table_name=target.name, table_label=target.label,
             status="open", source="synced", version=1, opened_at=now, opened_machine_id=actor.machine.id,
             opened_by_pos_user_id=actor.pos_user_id, opened_by_pos_user_name=actor.pos_user_name,
             waiter_pos_user_id=current.waiter_pos_user_id or actor.pos_user_id,
@@ -1724,6 +1904,8 @@ def merge_prepare(db: Session, actor: Actor, table_id: Any, source_ids: Sequence
     minutes = _require_synced(db, actor.machine)
     target = table_for_machine(db, actor.machine, table_id)
     sources = _distinct_tables(db, actor.machine, target, source_ids)
+    for table in [target, *sources]:
+        scope_gate(db, actor, table, "merge", now)
 
     taken: List[DiningTable] = []
     refused = []
@@ -1819,6 +2001,7 @@ def merge(db: Session, actor: Actor, table_id: Any, body, *, now: Optional[datet
     current.zone_id = target.zone_id
     current.table_number = target.number
     current.table_name = target.name
+    current.table_label = target.label
     current.cart_json = body.cart_json
     current.extras_json = body.extras_json
     current.guests = body.guests
@@ -2020,6 +2203,7 @@ def apply_local_report(
         row.zone_id = table.zone_id
         row.table_number = table.number
         row.table_name = table.name
+        row.table_label = table.label
         row.status = item.status
         row.version = item.version
         row.guests = item.guests
@@ -2134,6 +2318,7 @@ def _host_order_out(o: TableOrder) -> Dict[str, Any]:
         "zoneId": str(o.zone_id) if o.zone_id else None,
         "tableNumber": o.table_number,
         "tableName": o.table_name,
+        **({"tableLabel": o.table_label} if o.table_label else {}),
         "status": o.status,
         "version": o.version or 1,
         "guests": o.guests,
@@ -2195,15 +2380,24 @@ def open_tables_blocking(db: Session, shop: Shop, area_id: Any = None) -> List[d
     for order, table, zone in rows:
         if area_id is not None and zone.area_id is not None and str(zone.area_id) != str(area_id):
             continue
-        out.append({
+        row = {
             "tableId": str(table.id),
             "number": table.number,
             "name": table.name,
             "zoneName": zone.name,
             "total": _float(order.total),
             "openedAt": _iso(order.opened_at),
-        })
-    return sorted(out, key=lambda t: t["number"])
+        }
+        if table.label:
+            # "3B" (P:/specs/table-scope.md §6): the label, and the title a till shows ("3B · VIP").
+            from app.services.table_labels import table_title
+
+            row["label"] = table.label
+            row["title"] = table_title(table.number, table.label, table.name, bool(table.label_only))
+        out.append(row)
+    from app.services.table_labels import table_sort_key
+
+    return sorted(out, key=lambda t: table_sort_key(t["number"], t.get("label")))
 
 
 def refuse_z_with_open_tables(db: Session, shop: Shop, area_id: Any = None) -> None:
@@ -2251,6 +2445,88 @@ def _number_taken(db: Session, shop_id: Any, number: int, *, except_id: Any = No
     return q.first() is not None
 
 
+# ── Labels ("3B", P:/specs/table-scope.md §6.1) ─────────────────────────────
+
+
+def _label_invalid(exc: Any) -> HTTPException:
+    """422 `{code: table_label_invalid, reason}` (app/services/table_labels.py's reasons)."""
+    return HTTPException(
+        status_code=422, detail={"code": "table_label_invalid", "reason": getattr(exc, "reason", "characters")},
+    )
+
+
+def _label_taken_error(label: str) -> HTTPException:
+    return _conflict("table_label_taken", label=label)
+
+
+def parsed_number(value: Any):
+    """The dashboard's "מספר שולחן (אפשר עם אותיות)": a number or a label (422 `table_label_invalid`)."""
+    from app.services import table_labels as TL
+
+    try:
+        return TL.parse(value)
+    except TL.LabelError as exc:
+        raise _label_invalid(exc)
+
+
+def _label_taken(db: Session, shop_id: Any, key: Optional[str], *, except_id: Any = None) -> bool:
+    if not key:
+        return False
+    q = db.query(DiningTable.id).filter(
+        DiningTable.shop_id == shop_id, DiningTable.label_key == key, DiningTable.archived_at.is_(None)
+    )
+    if except_id is not None:
+        q = q.filter(DiningTable.id != except_id)
+    return q.first() is not None
+
+
+def _live_numbers(db: Session, shop_id: Any) -> set:
+    return {
+        n for (n,) in db.query(DiningTable.number).filter(
+            DiningTable.shop_id == shop_id, DiningTable.archived_at.is_(None)
+        ).all()
+    }
+
+
+def internal_number_for(db: Session, shop_id: Any, *, also_taken: Iterable[int] = ()) -> int:
+    """A labelled table's internal number: the highest free one from 99,999 down (never shown)."""
+    from app.services import table_labels as TL
+
+    return TL.internal_number(_live_numbers(db, shop_id) | set(also_taken))
+
+
+def label_readiness(db: Session, shop_id: Any) -> List[dict]:
+    """
+    "המכשירים האלה יציגו את התווית אבל לא יוכלו להקליד אותה" (§6.5): the shop's active tills whose build does not
+    read labels (`table_labels_v1`) — or does not narrow by scope (`table_scope_v1`) — with their version.
+    """
+    from app.services import table_scope as TSC
+    from app.services.printers import machine_label
+
+    out = []
+    for m in (
+        db.query(POSMachine)
+        .filter(POSMachine.shop_id == shop_id, POSMachine.is_active.is_(True))
+        .order_by(POSMachine.pos_number.asc())
+        .all()
+    ):
+        if getattr(m, "is_fiscal", True) is False:
+            continue
+        caps = TSC.capabilities_of(m)
+        labels, scope = TSC.CAPABILITY_LABELS in caps, TSC.CAPABILITY_SCOPE in caps
+        if labels and scope:
+            continue
+        out.append({
+            "machineId": str(m.id),
+            "name": machine_label(m),
+            "posNumber": m.pos_number,
+            "appVersion": getattr(m, "app_version", None),
+            "labels": labels,
+            "scope": scope,
+        })
+    return out
+
+
 def layout(db: Session, shop: Shop) -> dict:
     zones = zones_for(db, shop.id, all_areas=True)
     tables = tables_in(db, [z.id for z in zones])
@@ -2273,6 +2549,8 @@ def layout(db: Session, shop: Shop) -> dict:
         "tableTypes": [type_out(t) for t in types.values() if t.archived_at is None],
         # What a "logo" shape of the map shows when it has no picture of its own.
         "logoUrl": business_logo_url(db, shop),
+        # "3B" and "תחום שולחנות" (P:/specs/table-scope.md §6.5, §10): the tills whose build predates them.
+        "oldDevices": label_readiness(db, shop.id),
     }
 
 
@@ -2578,30 +2856,63 @@ def labelled_adhoc_table(
     raise _conflict("table_number_taken", number=number)
 
 
-def adhoc_table(db: Session, machine: POSMachine, number: int) -> dict:
+def adhoc_table(db: Session, machine: POSMachine, number: Optional[int], *, label: Optional[str] = None,
+                actor: Optional[Actor] = None) -> dict:
     """
     "פתיחת שולחן לפי מספר": a waiter keys a table number. The table of that number the till
     sees, if there is one; otherwise one is made — in the zone "שולחנות מזדמנים" of the till's
     point of sale (made too, the first time; a plain grid) — and from then on it is a table
     like any other: every till sees it, and the dashboard can move, rename or remove it.
     409 `table_number_elsewhere` for a number another point of sale's map holds.
+
+    "תחום שולחנות" (P:/specs/table-scope.md §5, §6.3; [actor]: the employee and the approver): a table outside the
+    till's scope — 403 `table_out_of_scope` with the table (the till then asks a manager's code); a new one only
+    where "שולחנות מזדמנים" is in the scope (else 403 with the `number`). [label] ("3B"): the labelled table, never
+    made when there is none (404 `table_not_found`, the owner's §13.6). A number that is a labelled table's internal
+    one is no table to key (409 `table_number_taken`).
     """
     if machine.shop_id is None:
         raise _not_found("table_not_found")
+    from app.services import table_scope as TSC
+
+    actor = actor or Actor(machine=machine)
+    operator = actor.operator_id or actor.pos_user_id
     zones = zones_for(db, machine.shop_id, machine.area_id)
+    if label is not None:
+        from app.services import table_labels as TL
+
+        try:
+            key = TL.label_key(TL.clean_label(label))
+        except TL.LabelError as exc:
+            raise _label_invalid(exc)
+        existing = (
+            db.query(DiningTable)
+            .filter(DiningTable.shop_id == machine.shop_id, DiningTable.label_key == key, DiningTable.archived_at.is_(None))
+            .first()
+        )
+        if existing is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "table_not_found", "label": label})
+        if existing.zone_id not in {z.id for z in zones}:
+            raise _conflict("table_number_elsewhere", number=existing.number, label=existing.label)
+        scope_gate(db, actor, existing, "adhoc")
+        return {"table": table_out(existing), "created": False}
     existing = (
         db.query(DiningTable)
         .filter(DiningTable.shop_id == machine.shop_id, DiningTable.number == number, DiningTable.archived_at.is_(None))
         .first()
     )
     if existing is not None:
+        if existing.label:
+            raise _conflict("table_number_taken", number=number)
         if existing.zone_id not in {z.id for z in zones}:
             raise _conflict("table_number_elsewhere", number=number)
+        scope_gate(db, actor, existing, "adhoc")
         return {"table": table_out(existing), "created": False}
     zone = next(
         (z for z in zones if z.name == ADHOC_ZONE_NAME and str(z.area_id or "") == str(machine.area_id or "")),
         None,
     )
+    override = TSC.check_new(db, machine, zone, number=number, operator_id=operator, approver_id=actor.scope_approver)
     if zone is None:
         zone = TableZone(
             id=uuid.uuid4(), tenant_id=machine.tenant_id, shop_id=machine.shop_id, area_id=machine.area_id,
@@ -2622,12 +2933,25 @@ def adhoc_table(db: Session, machine: POSMachine, number: int) -> dict:
             db.flush()
     except IntegrityError:
         raise _conflict("table_number_taken", number=number)
+    if override is not None:
+        record_event(db, TSC.EVENT_OVERRIDE, table, None, actor=actor, details=override)
     return {"table": table_out(table), "created": True}
 
 
 def create_table(db: Session, zone: TableZone, body) -> DiningTable:
-    if _number_taken(db, zone.shop_id, body.number):
-        raise _conflict("table_number_taken", number=body.number)
+    """
+    A table of the zone: by its number ("12"), or by a label ("3B", P:/specs/table-scope.md §6.1) — then with an
+    internal number, the highest free one from 99,999 down. 409 `table_number_taken` / `table_label_taken`.
+    """
+    parsed = parsed_number(body.number)
+    if parsed.is_label:
+        if _label_taken(db, zone.shop_id, parsed.key):
+            raise _label_taken_error(parsed.label)
+        number = internal_number_for(db, zone.shop_id)
+    else:
+        number = parsed.number
+        if _number_taken(db, zone.shop_id, number):
+            raise _conflict("table_number_taken", number=number)
     x, y = body.x, body.y
     if x is None or y is None:
         x, y = _next_slot(zone, len(tables_in(db, [zone.id])), body.width, body.height)
@@ -2636,7 +2960,9 @@ def create_table(db: Session, zone: TableZone, body) -> DiningTable:
         tenant_id=zone.tenant_id,
         shop_id=zone.shop_id,
         zone_id=zone.id,
-        number=body.number,
+        number=number,
+        label=parsed.label,
+        label_key=parsed.key,
         name=body.name,
         seats=body.seats,
         shape=body.shape,
@@ -2655,15 +2981,28 @@ def create_table(db: Session, zone: TableZone, body) -> DiningTable:
             db.add(table)
             db.flush()
     except IntegrityError:
-        raise _conflict("table_number_taken", number=body.number)
+        if parsed.is_label:
+            raise _label_taken_error(parsed.label)
+        raise _conflict("table_number_taken", number=number)
     return table
 
 
 def bulk_create(db: Session, zone: TableZone, body) -> dict:
-    """Tables `from`..`to` in this zone; numbers already live in the shop are skipped."""
-    low, high = sorted((body.from_number, body.to_number))
-    if high - low >= 500:
-        raise _bad("bulk_too_many")
+    """
+    Tables `from`..`to` in this zone; numbers already live in the shop are skipped. With letters ("3A" … "3L",
+    P:/specs/table-scope.md §9): labels already live are skipped, each new one an internal number.
+    """
+    from app.services import table_labels as TL
+
+    try:
+        items = TL.expand_range(body.from_number, body.to_number)
+    except TL.LabelError as exc:
+        if exc.reason == TL.RANGE_TOO_MANY:
+            raise _bad("bulk_too_many")
+        raise _label_invalid(exc)
+    if items and items[0].is_label:
+        return _bulk_labels(db, zone, body, items)
+    low, high = items[0].number, items[-1].number
     taken = {
         n for (n,) in db.query(DiningTable.number).filter(
             DiningTable.shop_id == zone.shop_id, DiningTable.archived_at.is_(None),
@@ -2696,6 +3035,43 @@ def bulk_create(db: Session, zone: TableZone, body) -> dict:
     return {"created": created, "skipped": skipped}
 
 
+def _bulk_labels(db: Session, zone: TableZone, body, items: Sequence[Any]) -> dict:
+    """"מ-3A עד 3L": the labelled tables, each with the next internal number down from 99,999."""
+    keys = [p.key for p in items]
+    taken_keys = {
+        k for (k,) in db.query(DiningTable.label_key).filter(
+            DiningTable.shop_id == zone.shop_id, DiningTable.archived_at.is_(None), DiningTable.label_key.in_(keys),
+        ).all()
+    }
+    numbers = _live_numbers(db, zone.shop_id)
+    width, height = default_table_size(zone, body.shape)
+    index = len(tables_in(db, [zone.id]))
+    type_id = getattr(body, "type_id", None)
+    if type_id is not None:
+        from app.services.table_policies import live_type
+
+        type_id = live_type(db, zone.shop_id, type_id).id
+    from app.services import table_labels as TL
+
+    created, skipped = [], []
+    for item in items:
+        if item.key in taken_keys:
+            skipped.append(item.label)
+            continue
+        number = TL.internal_number(numbers)
+        numbers.add(number)
+        x, y = _next_slot(zone, index, width, height)
+        index += 1
+        db.add(DiningTable(
+            id=uuid.uuid4(), tenant_id=zone.tenant_id, shop_id=zone.shop_id, zone_id=zone.id,
+            number=number, label=item.label, label_key=item.key, seats=body.seats, shape=body.shape,
+            x=x, y=y, width=width, height=height, kind="regular", type_id=type_id,
+        ))
+        created.append(item.label)
+    db.flush()
+    return {"created": created, "skipped": skipped}
+
+
 def update_table(db: Session, table: DiningTable, body, tenant_id: Any) -> DiningTable:
     fields = body.model_fields_set
     if body.zone_id is not None and body.zone_id != table.zone_id:
@@ -2703,10 +3079,20 @@ def update_table(db: Session, table: DiningTable, body, tenant_id: Any) -> Dinin
         if zone.shop_id != table.shop_id:
             raise _bad("zone_not_in_shop")
         table.zone_id = zone.id
-    if body.number is not None and body.number != table.number:
-        if _number_taken(db, table.shop_id, body.number, except_id=table.id):
-            raise _conflict("table_number_taken", number=body.number)
-        table.number = body.number
+    if body.number is not None:
+        parsed = parsed_number(body.number)
+        if parsed.is_label:
+            # "3B" (P:/specs/table-scope.md §6.1): labelled; a table that was its number gets an internal one.
+            if parsed.key != table.label_key and _label_taken(db, table.shop_id, parsed.key, except_id=table.id):
+                raise _label_taken_error(parsed.label)
+            if not table.label:
+                table.number = internal_number_for(db, table.shop_id)
+            table.label, table.label_key = parsed.label, parsed.key
+        else:
+            if parsed.number != table.number and _number_taken(db, table.shop_id, parsed.number, except_id=table.id):
+                raise _conflict("table_number_taken", number=parsed.number)
+            table.number = parsed.number
+            table.label = table.label_key = None
     if "name" in fields:
         table.name = body.name
     for attr in ("seats", "shape", "x", "y", "width", "height", "rotation"):
@@ -2722,12 +3108,15 @@ def update_table(db: Session, table: DiningTable, body, tenant_id: Any) -> Dinin
         with db.begin_nested():
             db.flush()
     except IntegrityError:
+        if table.label:
+            raise _label_taken_error(table.label)
         raise _conflict("table_number_taken", number=table.number)
     # Keep the open order's snapshot in step, so the till and the live view agree.
     order = open_order(db, table.id)
     if order is not None:
         order.table_number = table.number
         order.table_name = table.name
+        order.table_label = table.label
         order.zone_id = table.zone_id
         db.flush()
     return table
@@ -2845,9 +3234,21 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
     """
     if machine.shop_id is None:
         raise _not_found("zone_not_found")
+    from app.services import table_labels as TL
+    from app.services import table_scope as TSC
+
     now = now or _now()
     shop = db.get(Shop, machine.shop_id)
     visible = {z.id: z for z in zones_for(db, shop.id, machine.area_id)}
+    # "3B" (P:/specs/table-scope.md §6.1): a till that reads labels sends `label`; one from before them never does
+    # (the label stays) and shows a labelled table by its name — which it sends back as it got it (kept as it was).
+    reads_labels = TSC.capable(machine, TSC.CAPABILITY_LABELS)
+
+    def label_of(raw: Any) -> Optional[str]:
+        try:
+            return TL.clean_label(raw)
+        except TL.LabelError as exc:
+            raise _label_invalid(exc)
 
     # 1. Zones created or edited. Removing one waits for its tables (step 3).
     created: Dict[str, TableZone] = {}
@@ -2917,15 +3318,17 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
         return zone
 
     # 2. Tables. Numbers are checked over the whole shop once everything is in place, and
-    # written in two steps, so two tables may swap their numbers in one batch.
+    # written in two steps, so two tables may swap their numbers in one batch. Labels too.
     renumbered: List[Tuple[DiningTable, int]] = []
-    new_tables: List[Tuple[DiningTable, int]] = []
+    new_tables: List[Tuple[DiningTable, Optional[int], Optional[str]]] = []
+    relabelled: List[Tuple[DiningTable, Optional[str]]] = []
     for item in body.tables:
         fields = item.model_fields_set
         if item.id is None:
             if item.archive:
                 continue
-            if item.number is None:
+            new_label = label_of(item.label) if "label" in fields else None
+            if item.number is None and new_label is None:
                 raise _bad("table_number_required")
             zone = zone_for(item)
             shape = item.shape or "round"
@@ -2941,7 +3344,7 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
                 x=min(x, float(zone.canvas_width)), y=min(y, float(zone.canvas_height)),
                 width=width, height=height, rotation=item.rotation or 0,
             )
-            new_tables.append((table, item.number))
+            new_tables.append((table, item.number, new_label))
             continue
         table = table_for_machine(db, machine, item.id)
         target_zone = zone_for(item) if (item.zone_id is not None or item.zone_client_id is not None) else None
@@ -2960,8 +3363,17 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
         zone = target_zone or visible.get(table.zone_id) or db.get(TableZone, table.zone_id)
         if renumbering:
             renumbered.append((table, item.number))
+        if "label" in fields:
+            new_label = label_of(item.label)
+            if new_label is None and table.label and item.number is None:
+                # Its label taken off: it is its number again — which one, the till must say.
+                raise _bad("table_number_required")
+            if new_label != table.label:
+                relabelled.append((table, new_label))
         if "name" in fields:
-            table.name = item.name
+            compat = TL.table_title(None, table.label, table.name) if table.label and not reads_labels else None
+            if compat is None or (item.name or "") != compat:
+                table.name = item.name
         for attr in ("seats", "shape", "width", "height", "rotation"):
             value = getattr(item, attr)
             if value is not None:
@@ -2987,23 +3399,65 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
         if number in seen:
             raise _conflict("table_number_taken", number=number)
         seen[number] = tid
-    for table, number in new_tables:
+    for table, number, _label in new_tables:
+        if number is None:
+            continue
         if number in seen:
             raise _conflict("table_number_taken", number=number)
         seen[number] = table.id
+    # A new labelled table with no number: its internal one, the highest free from 99,999 down.
+    numbered: List[Tuple[DiningTable, int, Optional[str]]] = []
+    for table, number, label in new_tables:
+        if number is None:
+            number = TL.internal_number(seen)
+            seen[number] = table.id
+        numbered.append((table, number, label))
+    # Every live label of the shop once the batch is applied: no two the same (by their key).
+    keys: Dict[uuid.UUID, str] = {
+        tid: key
+        for tid, key in db.query(DiningTable.id, DiningTable.label_key).filter(
+            DiningTable.shop_id == shop.id, DiningTable.archived_at.is_(None), DiningTable.label_key.isnot(None)
+        ).all()
+    }
+    for table, label in relabelled:
+        if label is None:
+            keys.pop(table.id, None)
+        else:
+            keys[table.id] = TL.label_key(label)
+    for table, _number, label in numbered:
+        if label is not None:
+            keys[table.id] = TL.label_key(label)
+    by_key: Dict[str, uuid.UUID] = {}
+    for tid, key in keys.items():
+        if key in by_key:
+            raise _label_taken_error(next(
+                (lab for t, lab in [*relabelled, *[(t, lab) for t, _n, lab in numbered]] if lab and TL.label_key(lab) == key),
+                key,
+            ))
+        by_key[key] = tid
     for k, (table, _) in enumerate(renumbered):
         table.number = -(k + 1)
+    for table, _label in relabelled:
+        table.label_key = None
     db.flush()
     for table, number in renumbered:
         table.number = number
-    for table, number in new_tables:
+    for table, label in relabelled:
+        table.label, table.label_key = label, TL.label_key(label)
+    for table, number, label in numbered:
         table.number = number
+        table.label, table.label_key = label, TL.label_key(label)
         db.add(table)
     try:
         with db.begin_nested():
             db.flush()
     except IntegrityError:
         raise _conflict("table_number_taken")
+    # Keep the open orders' snapshot in step (a relabelled table someone is at).
+    for table, _label in relabelled:
+        order = open_order(db, table.id)
+        if order is not None:
+            order.table_label = table.label
 
     # 3. Zones removed: only once nothing is left in them.
     for item in body.zones:
@@ -3300,12 +3754,21 @@ def _order_zone_area(db: Session, order: TableOrder, zone_areas: Optional[Dict[A
 
 
 def _area_locked_orders(db: Session, machine: POSMachine, orders: Sequence[TableOrder], zone_areas: Dict[Any, Any]) -> List[TableOrder]:
+    """
+    The orders a till's own lists show ("נסגרו היום", its tables reports): its point of sale's when it is locked to it
+    (app/services/area_lock.py), and those of its device's scope ("תחום שולחנות", P:/specs/table-scope.md §5).
+    """
     from app.services import area_lock
+    from app.services import table_scope as TSC
 
     scope = area_lock.scope_for(db, machine)
-    if not scope.locked:
-        return list(orders)
-    return [o for o in orders if scope.covers_shared(_order_zone_area(db, o, zone_areas))]
+    out = list(orders) if not scope.locked else [
+        o for o in orders if scope.covers_shared(_order_zone_area(db, o, zone_areas))
+    ]
+    device = TSC.device_scope_of(db, machine)
+    if device is not None:
+        out = [o for o in out if device.covers(o.table_id, o.zone_id)]
+    return out
 
 
 def closed_orders(
@@ -3356,6 +3819,7 @@ def closed_orders(
             "tableId": str(o.table_id),
             "tableNumber": o.table_number,
             "tableName": o.table_name,
+            **({"tableLabel": o.table_label} if o.table_label else {}),
             "zoneName": zone_names.get(o.zone_id),
             "status": o.status,
             "closedAt": _iso(o.closed_at),
@@ -3504,6 +3968,7 @@ def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional
             key = (order.table_id)
             t = by_table.setdefault(key, {
                 "tableId": str(order.table_id), "number": order.table_number, "name": order.table_name,
+                **({"label": order.table_label} if order.table_label else {}),
                 "zoneName": zone_names.get(order.zone_id), "orders": 0, "revenue": Decimal("0"),
                 "guests": 0, "_minutes": 0.0, "_n": 0,
             })
@@ -3539,6 +4004,7 @@ def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional
                 "closedAt": _iso(order.closed_at),
                 "tableNumber": order.table_number,
                 "tableName": order.table_name,
+                **({"tableLabel": order.table_label} if order.table_label else {}),
                 "zoneName": zone_names.get(order.zone_id),
                 "reason": reason,
                 "reasonText": order.cancel_reason_text,
@@ -3603,6 +4069,7 @@ def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional
             waiter_rows.append({
                 "orderId": str(o.id), "waiter": name, "waiterId": wr["waiterId"],
                 "tableNumber": o.table_number, "tableName": o.table_name, "zoneName": zone_names.get(o.zone_id),
+                **({"tableLabel": o.table_label} if o.table_label else {}),
                 "openedAt": _iso(o.opened_at), "closedAt": _iso(o.closed_at),
                 "minutes": round(m, 1) if m is not None else None, "guests": o.guests,
                 "total": float(amount), "tip": float(tip), "transactionNumber": o.transaction_number,
@@ -3614,6 +4081,7 @@ def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional
             waiter_rows.append({
                 "orderId": str(o.id), "waiter": name, "waiterId": wr["waiterId"],
                 "tableNumber": o.table_number, "tableName": o.table_name, "zoneName": zone_names.get(o.zone_id),
+                **({"tableLabel": o.table_label} if o.table_label else {}),
                 "openedAt": _iso(o.opened_at), "closedAt": _iso(o.closed_at), "minutes": None,
                 "guests": o.guests, "total": float(_money(o.total)), "tip": 0.0,
                 "transactionNumber": None, "status": "cancelled",
@@ -3650,7 +4118,11 @@ def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional
             "cancelledTotal": float(cancelled_total),
             "payConflicts": conflicts,
         },
-        "byTable": sorted((finish(r) for r in by_table.values()), key=lambda r: (r["number"] is None, r["number"] or 0)),
+        # The natural order (P:/specs/table-scope.md §6.2): 2A … 3L, 3 before 3A.
+        "byTable": sorted(
+            (finish(r) for r in by_table.values()),
+            key=lambda r: (r["number"] is None, _table_order(r["number"], r.get("label"))),
+        ),
         "byZone": sorted((finish(r) for r in by_zone.values()), key=lambda r: -r["revenue"]),
         "byWaiter": sorted((finish_waiter(r) for r in by_waiter.values()), key=lambda r: -r["revenue"]),
         "waiterTables": sorted(waiter_rows, key=lambda r: (r["waiter"] or "", r["closedAt"] or "")),
@@ -3664,6 +4136,12 @@ def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional
             "rows": sorted(cancel_rows, key=lambda r: r["closedAt"] or "", reverse=True),
         },
     }
+
+
+def _table_order(number: Optional[int], label: Optional[str]):
+    from app.services.table_labels import table_sort_key
+
+    return table_sort_key(number, label)
 
 
 def parse_json_or_none(raw: Optional[str]) -> Any:
@@ -3687,6 +4165,8 @@ def reservation_out(r: TableReservation, table: Optional[DiningTable] = None) ->
         "id": str(r.id),
         "tableId": str(r.table_id) if r.table_id else None,
         "tableNumber": table.number if table is not None else None,
+        # "3B" (P:/specs/table-scope.md §6.4): beside the number, only when the table has one.
+        **({"tableLabel": table.label} if table is not None and getattr(table, "label", None) else {}),
         "reservedAt": _iso(r.reserved_at),
         "durationMinutes": r.duration_minutes,
         "guests": r.guests,
@@ -3724,6 +4204,20 @@ def check_reservation_area(db: Session, machine: POSMachine, table_id: Any, *, k
     zone = db.get(TableZone, table.zone_id) if table is not None else None
     if zone is not None and not scope.covers_shared(zone.area_id):
         raise area_lock.refusal(kind)
+
+
+def check_reservation_scope(db: Session, machine: POSMachine, table_id: Any) -> None:
+    """A till's booking on a table outside its device's scope (P:/specs/table-scope.md §5): 403 `table_out_of_scope`."""
+    if table_id is None:
+        return
+    from app.services import table_scope as TSC
+
+    device = TSC.device_scope_of(db, machine)
+    if device is None:
+        return
+    table = db.get(DiningTable, _uuid(table_id))
+    if table is not None and not device.covers(table.id, table.zone_id):
+        raise TSC.refusal(table, "device")
 
 
 def _refuse_overlap(db: Session, r: TableReservation) -> None:

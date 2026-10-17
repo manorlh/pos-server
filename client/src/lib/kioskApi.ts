@@ -34,6 +34,14 @@ export type KioskFlowState =
   | 'till_mode';
 
 /**
+ * The mode a device starts in at an app start or a re-pairing (`kioskTillModeStartMode`, pos-server
+ * kiosk_till_mode.START_MODES): `last` — the mode last chosen (as before), `home` — the role it was given,
+ * `kiosk` / `till` — always that one. Only where the owner's gate is on; never over a sale.
+ */
+export type KioskStartMode = 'last' | 'home' | 'kiosk' | 'till';
+export const KIOSK_START_MODES: readonly KioskStartMode[] = ['last', 'home', 'kiosk', 'till'];
+
+/**
  * "מצב עבודה: קיוסק / קופה" of one kiosk (pos-server kiosk_till_mode.summary_part): the owner's gate
  * (`kioskTillModeEnabled` — a super admin or a distributor sets it), the mode now, who is on it, and
  * what holds a switch sent from here (the kiosk's own refusal code and its Hebrew words).
@@ -42,12 +50,18 @@ export interface KioskTillMode {
   enabled: boolean;
   idleReturnMinutes: number;
   orientation: 'auto' | 'portrait' | 'landscape';
+  /** The mode the device starts in (`kioskTillModeStartMode`); absent from an older server — `last`. */
+  startMode?: KioskStartMode;
   mode: 'kiosk' | 'till';
   since: string | null;
   enteredBy: string | null;
   employee: string | null;
   blocked: string | null;
   blockedText: string | null;
+  /** "סוג רישיון" (lib/deviceLicense.ts): the device's product, and whether the gate above is its (no switch here). */
+  licenseProduct?: 'till' | 'kiosk' | 'kiosk_till' | null;
+  licenseProductLabel?: string | null;
+  byLicense?: boolean;
 }
 
 /** The screen the kiosk lays itself out on (P:/specs/kiosk-landscape-till-mode.md §2), as it reported it. */
@@ -392,6 +406,12 @@ export async function sendKioskCommand(machineId: string, body: KioskCommandIn):
 /** "קיוסק — מצב קופה" at this kiosk's own level: on, off, or null (inherit). A super admin or a distributor only. */
 export async function setKioskTillModeGate(machineId: string, enabled: boolean | null): Promise<KioskSummary> {
   const { data } = await api.put<KioskSummary>(`/kiosks/${machineId}/till-mode`, { enabled });
+  return data;
+}
+
+/** "מצב עבודה בהפעלה" at this kiosk's own level (null: inherit); the gate is left as it is. A super admin or a distributor only. */
+export async function setKioskTillModeStart(machineId: string, startMode: KioskStartMode | null): Promise<KioskSummary> {
+  const { data } = await api.put<KioskSummary>(`/kiosks/${machineId}/till-mode`, { startMode });
   return data;
 }
 

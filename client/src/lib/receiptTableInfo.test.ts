@@ -22,7 +22,8 @@ import {
 interface Cases {
   parse: { value: string | null; fields: string[] }[];
   combinations: { fields: string[]; facts: ReceiptTableFacts | null; line: string | null }[];
-  lines: { name: string; fields: string[]; facts: ReceiptTableFacts | null; line: string | null }[];
+  /** `term`: the till's `tableTerm` ("תא"), the word before the table (P:/specs/table-scope.md §14.10). */
+  lines: { name: string; fields: string[]; term?: string; facts: ReceiptTableFacts | null; line: string | null }[];
 }
 
 const cases: Cases = JSON.parse(
@@ -40,8 +41,16 @@ describe('receiptTableInfo', () => {
     for (const c of cases.combinations) assert.equal(receiptTableLine(c.fields, c.facts), c.line, c.fields.join(','));
   });
 
-  it('the named cases: a named or restored table, one guest, a quick sale', () => {
-    for (const c of cases.lines) assert.equal(receiptTableLine(c.fields, c.facts), c.line, c.name);
+  it('the named cases: a named or restored table, one guest, a quick sale, a label, the word before it', () => {
+    assert.ok(cases.lines.some((c) => c.facts?.label) && cases.lines.some((c) => c.term !== undefined));
+    for (const c of cases.lines) assert.equal(receiptTableLine(c.fields, c.facts, c.term), c.line, c.name);
+  });
+
+  it('a blank or absent term is "שולחן"', () => {
+    const facts: ReceiptTableFacts = { number: 99_999, name: 'VIP', zone: null, guests: null, waiter: null, label: '3B' };
+    assert.equal(receiptTableLine(['table'], facts), 'שולחן 3B · VIP');
+    assert.equal(receiptTableLine(['table'], facts, '  '), 'שולחן 3B · VIP');
+    assert.equal(receiptTableLine(['table'], { ...facts, name: 'ש-3B' }, 'תא'), 'תא ש-3B');
   });
 
   it('the chips toggle the stored list in the line order, none when empty', () => {

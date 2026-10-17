@@ -78,6 +78,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/events', '/dashboard/offline-transactions', '/dashboard/product-sales',
       '/dashboard/cashier-sales', '/dashboard/area-sales', '/dashboard/tips',
       '/dashboard/sales-by-payment', '/dashboard/card-brands', '/dashboard/promotions-report',
+      // "מעקב הנחות קבועות" (P:/specs/preset-discounts.md §6); the promotions section opens it too.
+      '/dashboard/preset-discounts-report',
       '/dashboard/menu-reports', '/dashboard/hourly-sales', '/dashboard/department-sales',
       '/dashboard/document-sequence', '/dashboard/cash-variance', '/dashboard/exceptions',
       '/dashboard/exceptions-log', '/dashboard/cash-drawer', '/dashboard/tax-reports', '/dashboard/targets',
@@ -148,7 +150,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'till_design', pages: ['/dashboard/till-design'] },
   { id: 'kds', pages: ['/dashboard/kds', '/dashboard/workflow'] },
   { id: 'printers', pages: ['/dashboard/kitchen-printers'] },
-  { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings', '/dashboard/customer-display'] },
+  { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings', '/dashboard/customer-display', '/dashboard/preset-discounts'] },
   { id: 'pos_users', pages: ['/dashboard/pos-users', '/dashboard/till-roles'] },
   // "שחרור עובד מחובר במכשיר" (exclusive login v2 §2): "מחוברים כעת במכשירים" on the employees page and the
   // cockpit (the phone) — view sees it, edit releases. No page of its own (lib/userSessions.ts).
@@ -182,6 +184,8 @@ export const PAGES_ALSO_OPENED_BY: Readonly<Record<string, readonly SectionId[]>
   '/dashboard/stock/quick-block': ['item_blocks'],
   // The server lets the kiosks' people read the cash stations (`GET /cash-stations*`: devices | kiosks, view).
   '/dashboard/cash-stations': ['kiosks'],
+  // The server maps `GET /reports/preset-discounts` to reports | promotions (as the discounts report).
+  '/dashboard/preset-discounts-report': ['promotions'],
 };
 
 function alsoOpened(access: DashboardAccess, pathname: string): boolean {

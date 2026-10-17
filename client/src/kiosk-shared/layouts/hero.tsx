@@ -78,7 +78,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
       </div>
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 px-3 py-2" style={{ background: 'rgba(17,17,17,0.8)', color: '#fff' }}>
         <span className="min-w-0 flex-1">
-          <span className="block truncate kt-15 font-bold" style={textSize(m, 'productName', 15)}>
+          <span className="k-name block truncate kt-15 font-bold" style={textSize(m, 'productName', 15)}>
             {p.name}
           </span>
           <span className="block kt-13 font-extrabold tabular-nums" style={textSize(m, 'productPrice', 13)}>
@@ -92,7 +92,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
             e.stopPropagation();
             tap(p, true, e.currentTarget.closest('[data-dish]')?.querySelector('[data-pic]')?.getBoundingClientRect() ?? null);
           }}
-          className="flex shrink-0 items-center justify-center rounded-full font-bold shadow-md"
+          className="k-hit flex shrink-0 items-center justify-center rounded-full font-bold shadow-md"
           style={{ width: 38 * u, height: 38 * u, background: added ? m.c.accent : m.c.button, color: m.c.buttonText }}
         >
           {added ? <Check className="h-1/2 w-1/2" /> : <Plus className="h-1/2 w-1/2" />}
