@@ -86,7 +86,7 @@ import {
 } from '../core/kioskReprint';
 import { BON_NOT_ON_KIOSK, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
-import { DRAWER_KICK } from '../core/escpos';
+import { centreOn, job as escposJob } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { lineMenuFacts, menuKey, presentTillCatalog, resolveTillMenu } from '../core/till/menus';
@@ -138,12 +138,17 @@ import { PayService } from './payment/payService';
 import { identifyPinpad, localPrivateIpv4, PinpadRelocator, readArpTable, sweepPort } from './payment/pinpadRelocator';
 import { pinpadAddressOf } from '../core/nayax';
 import type { PinpadIdentity } from '../core/pinpadRelocation';
+import { TechnicianSetup } from './technician/technicianSetup';
+import { machineFacts, networkFacts, originOf, scanLanPrinters, timedGet } from './technician/technicianTools';
+import { cloudLight, DRAWER_PULSES, drawerKickBytes, mediaLight, parseDrawerKick, TECH_TEXT, widthTestBitmap, type DrawerKick, type TechLight } from '../core/technicianSetup';
+import type { RollingLog } from './deviceLog';
 import { PROVIDERS } from './payment/registry';
 import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalSynqKey, type PairingUpload } from './payment/synqpay/pairing';
 import type { SynqPayProvider } from './payment/synqpay/provider';
 import type { PaymentProvider, ProviderContext, ProviderFactory, TransmitResult } from './payment/provider';
 import { PrintQueue, type JobKind, type PageRenderer } from './printer/printQueue';
-import { DefaultTransport, type PrinterTarget, type Transport } from './printer/transports';
+import { connect as netConnect } from 'node:net';
+import { DefaultTransport, tcpSend, type PrinterTarget, type Transport } from './printer/transports';
 import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
@@ -216,6 +221,13 @@ export interface PlatformHooks {
   updateStatus?(): UpdateView;
   /** "יציאה לשולחן העבודה": out of kiosk / full screen, minimised, the way back offered (main/index.ts). */
   exitToDesktop?(): Promise<{ ok: boolean; message?: string }>;
+  /** "הפעלה מחדש של האפליקציה" (the technician's screen). */
+  restartApp?(): void;
+  /** "הפעלה אוטומטית" with Windows: as it stands (null: not known — a dev build), and on again. */
+  autostart?(): { enabled: boolean } | null;
+  setAutostart?(on: boolean): void;
+  /** TeamViewer QuickSupport's path when installed (null: none). */
+  quickSupportPath?(): string | null;
 }
 
 export interface ServiceOptions {
@@ -262,6 +274,8 @@ export interface ServiceOptions {
   cashmagPollMs?: number;
   /** Tests: the kiosk admin's Z waits between its looks for the close in the cloud (core/kioskZ.ts KioskZRunner). */
   kioskZPause?: (ms: number) => Promise<void>;
+  /** The app's rolling log (main/deviceLog.ts): "שלח לוגים לתמיכה" and "יומן אפליקציה" on the technician's screen. */
+  logs?: RollingLog | null;
   /**
    * Tests: the kitchen's wires (main/kitchen) — a network printer's link, the LAN print server's request, whether this
    * PC is on a LAN, the kitchen's clock — and the LAN print host's port (0: any) and address.
@@ -278,11 +292,15 @@ export interface LocalSettings {
   printer: PrinterTarget;
   zoom: number | null;
   displayScale: string | null;
+  /** "מגירת כסף": the kick through the receipt printer — its pin and pulse (core/technicianSetup.ts; null: pin 2, 50 ms). */
+  drawer?: DrawerKick | null;
 }
 
 const LOCAL_SETTINGS = 'local.settings';
 const LOCAL_PAUSE = 'local.pause';
 const TECH_LOCK = 'technician.lock';
+/** The Nayax LAN pinpad's pinned certificate (payment/nayaxProvider.ts `pinpad.pin:<host:port>`, under the providers' `provider.`). */
+const PINPAD_PIN_PREFIX = 'provider.pinpad.pin:';
 /** Why there is no card on a kiosk set "ללא אשראי" (`paymentIntegration` = `none`): staff and the bridge's tile. */
 const NO_CARD_TEXT = 'הקיוסק מוגדר ללא אשראי';
 const HELP = 'kiosk.helpRequest';
@@ -382,6 +400,8 @@ export class KioskService extends EventEmitter {
   readonly sync: SyncEngine;
   /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
   readonly relocator: PinpadRelocator;
+  /** The technician's setup actions (main/technician/technicianSetup.ts). */
+  readonly techSetup: TechnicianSetup;
   /** The cloud's word on the basket a moment ago (core/basketCheck.ts), until the catalog catches up. */
   private cloudBasket: CloudOverrides | null = null;
   /** "סוללה חלשה": the battery as the screen last read it (null: never — a PC on mains reports none). */
@@ -556,6 +576,44 @@ export class KioskService extends EventEmitter {
       save: (host, port, id, previous) => this.savePinpadHost(host, port, id, previous),
       log: this.log,
     });
+    this.techSetup = new TechnicianSetup({
+      api: this.api,
+      fetch: opts.fetch ?? ((...a) => fetch(...a)),
+      appVersion: opts.appVersion,
+      machineId: () => this.machineId,
+      credentials: () => {
+        const c = this.cloud.credentials();
+        return c ? { serverUrl: c.serverUrl, accessToken: c.accessToken ?? null } : null;
+      },
+      moveServer: (serverUrl) => {
+        const c = this.cloud.credentials();
+        if (!c) return;
+        this.cloud.setCredentials({ ...c, serverUrl });
+        this.api.setBase(serverUrl);
+        this.dirty();
+      },
+      unpair: () => this.technicianAction({ type: 'unpair' }),
+      outboxCount: () => this.outbox.count(),
+      roster: () => this.cloud.posUsers(),
+      shopId: () => this.shopIdHere(),
+      afterSettings: async () => {
+        await this.sync.pullSettings().catch(() => undefined);
+        this.applyProvider();
+        this.dirty();
+      },
+      afterPrinters: async () => {
+        await this.kitchen.pull(true).catch(() => false);
+        this.dirty();
+      },
+      pinpadHere: () => this.pinpadHere(),
+      expectedTerminal: () => this.expectedTerminal(),
+      sweep: sweepPort,
+      localIpv4: localPrivateIpv4,
+      identify: (host, port) => identifyPinpad(host, port, this.pinpadHere()?.path ?? '/SPICy'),
+      savePinpadHost: (host, port, id, previous, reason) => this.savePinpadHost(host, port, id, previous, reason),
+      logs: opts.logs ?? null,
+      log: this.log,
+    });
     this.media.onChange(() => this.dirty());
     this.pay.onChange(() => this.dirty());
     this.printQueue.onChange(() => this.dirty());
@@ -631,14 +689,14 @@ export class KioskService extends EventEmitter {
    * The pinpad found at a new address: saved in the cloud (`PUT /sync/{id}/pinpad-host` — this
    * machine's host only, the same terminal), then the settings pulled so the provider follows.
    */
-  private async savePinpadHost(host: string, port: number, id: PinpadIdentity, previous: string): Promise<'ok' | 'offline' | 'refused'> {
+  private async savePinpadHost(host: string, port: number, id: PinpadIdentity, previous: string, reason: 'relocated' | 'technician' = 'relocated'): Promise<'ok' | 'offline' | 'refused'> {
     const mid = this.machineId;
     if (!mid) return 'offline';
     const here = this.pinpadHere();
     const r = await this.api.put(`sync/${mid}/pinpad-host`, {
       host,
       port: here && here.port === port ? undefined : port,
-      reason: 'relocated',
+      reason,
       terminalNumber: id.terminal ?? undefined,
       serial: id.serial ?? undefined,
       previousHost: previous,
@@ -765,7 +823,7 @@ export class KioskService extends EventEmitter {
       printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
     const scale = parseDisplayScale(s.displayScale);
-    return { printer, zoom: s.zoom ?? null, displayScale: scale === null ? null : displayScaleWire(scale) };
+    return { printer, zoom: s.zoom ?? null, displayScale: scale === null ? null : displayScaleWire(scale), drawer: s.drawer ? parseDrawerKick(s.drawer) : null };
   }
 
   /* ----------------------------------------------------------- display size */
@@ -3223,7 +3281,17 @@ export class KioskService extends EventEmitter {
 
   /** The cash drawer's kick through the receipt printer (its RJ11 port). */
   async openDrawer(): Promise<void> {
-    await this.transport.send(this.printerResolution().target, DRAWER_KICK);
+    await this.transport.send(this.printerResolution().target, drawerKickBytes(this.localSettings().drawer ?? undefined));
+  }
+
+  /**
+   * "פתח מגירה (בדיקה)": the till's drawer service registers its own test (an opening like any other — audited, `TEST`, the
+   * technician's); none (a kiosk, a KDS) — the kick itself.
+   */
+  private drawerTester: (() => Promise<{ ok: boolean; message: string }>) | null = null;
+
+  setDrawerTester(fn: (() => Promise<{ ok: boolean; message: string }>) | null): void {
+    this.drawerTester = fn;
   }
 
   /** Raw ESC/POS bytes to the receipt printer now (a document another till sent to print here, main/till/remoteDrawer.ts). */
@@ -4725,8 +4793,117 @@ export class KioskService extends EventEmitter {
         return r ? { receipts: r } : {};
       })(),
       update,
-      quickSupport: null,
+      quickSupport: this.platform.quickSupportPath?.() ?? null,
       displayScale: this.displayScaleView(),
+      setup: this.technicianSetupView(admin, admin.printer),
+    };
+  }
+
+  /** The pinpad's terminal as the device knows it: the cloud's `expectedTerminalNumber`, else the one it learned. */
+  private expectedTerminal(): string | null {
+    const s = (this.cloud.settings().settings ?? {}) as Record<string, unknown>;
+    const set = typeof s.expectedTerminalNumber === 'string' && s.expectedTerminalNumber.trim() ? s.expectedTerminalNumber.trim() : null;
+    return set ?? this.relocator.remembered().terminal ?? null;
+  }
+
+  /** The rest of the technician's screen (TechnicianInfo.setup). */
+  private technicianSetupView(admin: AdminInfo, printer: AdminInfo['printer']): NonNullable<TechnicianInfo['setup']> {
+    const me = this.cloud.machine();
+    const media = this.media.getStatus();
+    const res = this.printerResolution();
+    const target = res.target;
+    const pay = this.pay.describe();
+    const term = this.pay.monitor.state;
+    const pinpadLight: TechLight = this.pay.noCard ? 'unknown' : !pay.kind ? 'bad' : term === 'ready' ? 'ok' : term === 'unreachable' ? 'bad' : 'unknown';
+    const health = this.printQueue.health();
+    const printerLight: TechLight = health === 'ok' ? 'ok' : health === 'unknown' ? 'unknown' : health === 'paper_low' ? 'warn' : 'bad';
+    const params = this.cloud.parameters();
+    const branch = typeof params.receiptPrinterAddress === 'string' && params.receiptPrinterAddress.trim() ? params.receiptPrinterAddress.trim() : null;
+    const kick = this.localSettings().drawer ?? parseDrawerKick(null);
+    const here = this.pinpadHere();
+    const expected = this.expectedTerminal();
+    const move = this.relocator.lastMove();
+    const kitchen = this.kitchen.config();
+    const dealer = this.business().dealerType;
+    const audit = (this.kv.getJson<Array<{ at: number; access: string }>>('technician.audit') ?? []).slice(-8).reverse();
+    const lastOk = this.printQueue.lastOkAt ?? null;
+    const lastFailure = printer.lastError ?? null;
+    return {
+      role: this.isKiosk() ? 'kiosk' : this.fiscal ? 'till' : 'other',
+      appVersion: this.opts.appVersion,
+      lights: { cloud: cloudLight(this.cloudOnline(), this.platform.networkUp()), pinpad: pinpadLight, printer: printerLight, media: mediaLight(media.missing), mediaFiles: media.files, mediaMissing: media.missing },
+      identity: {
+        company: me?.companyName ?? null,
+        shop: me?.shopName ?? null,
+        machineName: me?.machineName ?? null,
+        machineId: this.machineId,
+        posNumber: me?.posNumber ?? null,
+        documentPrefix: me?.documentPrefix ?? null,
+        role: me?.deviceRole ?? null,
+        zMode: admin.zMode ?? null,
+        lastSyncAt: this.sync.status.lastKioskSyncAt ?? this.sync.status.lastBeatOkAt,
+        configVersion: admin.sync.configVersion,
+        serverUrl: this.cloud.credentials()?.serverUrl ?? null,
+        products: this.cloud.catalog().products.length,
+        catalogAt: this.sync.status.lastCatalogAt,
+        staff: this.cloud.posUsers().filter((u) => u.isActive).length,
+      },
+      quickSupportPath: this.platform.quickSupportPath?.() ?? null,
+      computer: {
+        ...(({ hostname, os, cpu, memoryGb }) => ({ hostname, os, cpu, memoryGb }))(machineFacts()),
+        serial: this.opts.deviceInfo.serial ?? null,
+        clockSkewMs: this.sync.status.clockSkewMs,
+        battery: this.batteryNow,
+      },
+      autostart: this.platform.autostart?.() ?? null,
+      tax: { dealer: dealer === 'exempt' ? 'עוסק פטור' : dealer === 'licensed' ? 'עוסק מורשה' : 'חברה בע״מ (ח.פ.)', vatPercent: Math.round(this.vatRate() * 1000) / 10 },
+      printer: {
+        kind: target.transport === 'tcp' ? 'network' : target.transport === 'none' ? 'none' : res.via === 'usb' ? 'usb' : 'windows',
+        branch,
+        widthDots: 576,
+        cut: true,
+        lastOkAt: lastOk,
+        lastFailure,
+        port: target.transport === 'tcp' ? (target.port ?? 9100) : null,
+      },
+      drawer: { via: TECH_TEXT.drawerViaPrinter(printer.target), pin: kick.pin, onMs: kick.onMs, pulses: [...DRAWER_PULSES], audited: this.drawerTester !== null },
+      pinpad: {
+        network: here !== null,
+        usb: pay.kind === 'nayax_usb',
+        cardless: this.pay.noCard,
+        host: here?.host ?? null,
+        port: here?.port ?? null,
+        expectedTerminal: expected,
+        auto: expected ? TECH_TEXT.relinkAutoOn(expected) : TECH_TEXT.relinkAutoUnknown,
+        lastMove: move ? `${move.from} ← ${move.to} · ${new Date(move.at).toLocaleString('he-IL')}` : null,
+        certPin: here ? this.kv.get(`${PINPAD_PIN_PREFIX}${here.host}:${here.port}`) : null,
+      },
+      kitchen: {
+        printers: kitchen.printers
+          .filter((k) => k.purpose !== 'receipt')
+          .map((k) => ({
+            id: k.id,
+            name: k.name,
+            where:
+              k.type === 'network'
+                ? `רשת · ${k.host ?? '—'}:${k.port ?? 9100}${k.isHost ? ' · מודפס מכאן' : ''}`
+                : k.type === 'cloud'
+                  ? `דרך ${k.hostMachineName ?? 'מכשיר אחר'}`
+                  : k.type === 'bluetooth'
+                    ? 'Bluetooth (מודפס במכשיר אחר)'
+                    : k.type === 'usb'
+                      ? 'USB'
+                      : 'מדפסת הקופה',
+            network: k.type === 'network' && k.host ? { host: k.host, port: k.port ?? 9100 } : null,
+          })),
+        hostsRelay: kitchen.hostsRelay,
+      },
+      cash: admin.cash ?? null,
+      cashmag: admin.cashmag ?? null,
+      synqpay: admin.terminal.synqpay ?? null,
+      kioskZ: admin.kioskZ ?? null,
+      audit,
+      outbox: this.outbox.count(),
     };
   }
 
@@ -4793,6 +4970,107 @@ export class KioskService extends EventEmitter {
       case 'displayScaleEnd':
       case 'displayScaleSave':
         return this.displayScaleAction(a);
+      case 'syncNow':
+      case 'cashRecheck':
+      case 'cashmagCheck':
+      case 'kioskZ':
+        return this.adminAction(a);
+      case 'restart': {
+        const guard = paymentGuard(this.activity());
+        if (guard) return { ok: false, message: TECH_TEXT.blocked };
+        if (!this.platform.restartApp) return { ok: false, message: 'לא נתמך' };
+        this.log('technician: restart');
+        setTimeout(() => this.platform.restartApp?.(), 300);
+        return { ok: true, message: 'האפליקציה עולה מחדש…' };
+      }
+      case 'networkCheck':
+        return this.technicianNetwork();
+      case 'serverTest':
+        return this.techSetup.testServer(a.url);
+      case 'serverSave':
+        return this.techSetup.saveServer(a.url, a.confirm === true);
+      case 'printerWidthTest':
+        return this.printerWidthTest(a.printerId ?? null);
+      case 'printerScan': {
+        const r = await scanLanPrinters();
+        if (!r.ok) return { ok: false, message: 'המחשב לא מחובר לרשת מקומית' };
+        const known = this.kitchen.config().printers;
+        const own = this.printerResolution().target;
+        const found = r.printers.map((p) => ({
+          host: p.host,
+          port: p.port,
+          health: p.health,
+          known: known.find((k) => k.host === p.host && (k.port ?? 9100) === p.port)?.name ?? (own.transport === 'tcp' && own.host === p.host ? 'המדפסת של המכשיר' : null),
+        }));
+        return { ok: true, message: found.length === 0 ? TECH_TEXT.discoveryNone : undefined, printers: { subnet: r.subnet, found } };
+      }
+      case 'printerAdd': {
+        const m = this.machineId;
+        if (!m) return { ok: false, message: 'המכשיר לא משויך' };
+        const grant = await this.techSetup.managerGrant(a.code, 'catalog:write');
+        if (!grant.ok) return grant;
+        const r = await this.api.post(`sync/${m}/printers`, { name: a.name.trim() || `מדפסת ${a.host}`, host: a.host, port: a.port, purpose: a.purpose }, { headers: { 'X-Elevation-Token': grant.token }, timeoutMs: 20_000 });
+        if (r.kind === 'offline') return { ok: false, message: 'אין חיבור לענן — לא נוסף' };
+        if (r.kind === 'refused') return { ok: false, message: r.detail === 'printer_already_configured' ? 'המדפסת כבר מוגדרת בסניף' : `הענן סירב: ${r.detail ?? r.status}` };
+        this.log(`technician: printer ${a.host}:${a.port} added to the shop (${a.purpose}) by ${grant.name}`);
+        await this.kitchen.pull(true).catch(() => false);
+        this.dirty();
+        return { ok: true, message: `נוספה לסניף: ${a.name || a.host}` };
+      }
+      case 'drawerSet': {
+        const k = parseDrawerKick({ pin: a.pin, onMs: a.onMs, offMs: 500 });
+        this.setLocalSettings({ drawer: k });
+        this.log(`technician: drawer kick pin ${k.pin}, ${k.onMs} ms`);
+        return { ok: true, message: `נשמר · פין ${k.pin} · ${k.onMs} ms` };
+      }
+      case 'drawerTest': {
+        if (paymentGuard(this.activity())) return { ok: false, message: TECH_TEXT.blocked };
+        if (this.drawerTester) return this.drawerTester();
+        try {
+          await this.openDrawer();
+          this.log('technician: drawer test kick sent');
+          return { ok: true, message: 'נשלחה פתיחה למגירה דרך המדפסת' };
+        } catch (e) {
+          return { ok: false, message: `המגירה לא נפתחה: ${String((e as Error)?.message ?? e)}` };
+        }
+      }
+      case 'pinpadProbe':
+        return this.pinpadProbe();
+      case 'pinpadSearch': {
+        if (this.pay.cardInFlight || this.flow.busy) return { ok: false, message: 'עסקה במסופון — נסו שוב בסיומה' };
+        const r = await this.techSetup.searchPinpads();
+        return { ok: r.ok, message: r.message, pinpads: r.found };
+      }
+      case 'pinpadLink':
+        return this.techSetup.linkPinpad(a.host, a.port);
+      case 'pinpadPinReset': {
+        const here = this.pinpadHere();
+        if (!here) return { ok: false, message: 'אין מסופון ברשת' };
+        this.kv.delete(`${PINPAD_PIN_PREFIX}${here.host}:${here.port}`);
+        this.log(`technician: pinpad certificate pin reset for ${here.host}:${here.port}`);
+        return { ok: true, message: 'הצמדת התעודה אופסה — התשובה הבאה של המסופון תוצמד מחדש' };
+      }
+      case 'pinpadSetup':
+        return this.techSetup.setPinpad(a.connection === 'usb' ? { connection: 'usb' } : { connection: 'lan', host: a.host, port: a.port }, a.code);
+      case 'kitchenTest': {
+        const p = this.kitchen.config().printers.find((k) => k.id === a.printerId);
+        if (!p) return { ok: false, message: 'המדפסת לא נמצאה' };
+        this.kitchen.testPrint(a.printerId, 'טכנאי');
+        return { ok: true, message: `בון בדיקה נשלח ל${p.name}` };
+      }
+      case 'kitchenSync': {
+        const ok = await this.kitchen.pull(true).catch(() => false);
+        this.dirty();
+        return { ok, message: ok ? 'המדפסות רועננו מהענן' : 'הענן לא ענה' };
+      }
+      case 'sendLogs':
+        return this.techSetup.sendLogs(a.range, a.note ?? null);
+      case 'appLog':
+        return { ok: true, log: this.techSetup.appLog(20) };
+      case 'autostartOn':
+        if (!this.platform.setAutostart) return { ok: false, message: 'לא נתמך בגרסת פיתוח' };
+        this.platform.setAutostart(true);
+        return { ok: this.platform.autostart?.()?.enabled === true, message: this.platform.autostart?.()?.enabled ? TECH_TEXT.autostartOn : 'Windows לא אישר' };
       case 'unpair':
         return this.unpair(a);
     }
@@ -4913,6 +5191,117 @@ export class KioskService extends EventEmitter {
     const file = path.join(dir, `${stem}.json`);
     writeFileSync(file, JSON.stringify(out, null, 2), 'utf8');
     return file;
+  }
+
+  /**
+   * "מידע רשת" + "שיוך" from the cloud (Android KioskTechnicianChecks): the adapters and the Wi-Fi, the server's `/health`
+   * (no token — the internet), `GET /sync/{m}/kiosk/technician` (the token — the cloud API, and where the device stands), and
+   * the shop's LAN print server when another device is it.
+   */
+  private async technicianNetwork(): Promise<TechnicianActionResult> {
+    const fetchFn = this.opts.fetch ?? ((...x: Parameters<typeof fetch>) => fetch(...x));
+    const creds = this.cloud.credentials();
+    const origin = creds ? originOf(creds.serverUrl) : null;
+    const [net, internet, api] = await Promise.all([
+      networkFacts(),
+      origin ? timedGet(fetchFn, `${origin}/health`, null) : Promise.resolve(null),
+      creds && this.machineId ? timedGet(fetchFn, this.api.url(`sync/${this.machineId}/kiosk/technician`), creds.accessToken ?? null) : Promise.resolve(null),
+    ]);
+    const host = this.kitchen.config().printHost;
+    let lan: NonNullable<TechnicianActionResult['network']>['lan'] = null;
+    if (host && !host.isSelf && host.lanAddress) {
+      const c = await timedGet(fetchFn, `http://${host.lanAddress}:${host.port}/health`, null, 4_000);
+      lan = { label: `${host.name ?? 'שרת הדפסות'} · ${host.lanAddress}:${host.port}`, check: { url: c.url, ok: c.ok || c.code !== null, code: c.code, ms: c.ms, error: c.error } };
+    } else if (host?.isSelf) {
+      lan = { label: 'המכשיר עצמו הוא שרת ההדפסות של הסניף', check: null };
+    }
+    const b = (api?.ok ? api.body : null) as Record<string, unknown> | null;
+    const o = (k: string) => (b && b[k] && typeof b[k] === 'object' ? (b[k] as Record<string, unknown>) : null);
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+    const kioskPart = o('kiosk');
+    const identity = b
+      ? {
+          tenant: str(o('tenant')?.name),
+          company: str(o('company')?.name),
+          shop: str(o('shop')?.name),
+          branchCode: str(o('shop')?.branchCode),
+          area: str(o('area')?.name),
+          machineName: str(o('machine')?.name),
+          posNumber: str(o('machine')?.posNumber),
+          documentPrefix: str(o('machine')?.documentPrefix),
+          role: str(o('machine')?.role),
+          zRole: str(o('machine')?.zRole),
+          controllers: Array.isArray(kioskPart?.controllers)
+            ? (kioskPart!.controllers as Array<Record<string, unknown>>).map((c) => [str(c.name), str(c.posNumber) ? `#${str(c.posNumber)}` : null].filter(Boolean).join(' '))
+            : null,
+        }
+      : null;
+    const plain = (c: { url: string; ok: boolean; code: number | null; ms: number; error: string | null } | null) => (c ? { url: c.url, ok: c.ok, code: c.code, ms: c.ms, error: c.error } : null);
+    return {
+      ok: !!api?.ok,
+      network: {
+        connection: net.connection,
+        ssid: net.ssid,
+        signal: net.signal,
+        adapters: net.adapters.map(({ name, addresses, gateways, dns }) => ({ name, addresses, gateways, dns })),
+        internet: plain(internet),
+        api: plain(api),
+        lan,
+        identity,
+      },
+    };
+  }
+
+  /** "בדיקת מסופון / תקשורת" (Android KioskTechnicianChecks.pinpad): reads only — a TCP connect, getStatus, who it is. */
+  private async pinpadProbe(): Promise<TechnicianActionResult> {
+    const d = this.pay.describe();
+    const base = { kind: d.kind, address: d.address, tcp: null, status: null, terminal: null, merchant: null, serial: null };
+    if (this.pay.noCard) return { ok: false, message: NO_CARD_TEXT, pinpad: { ...base, skipped: 'ללא אשראי — אין מסופון לבדוק' } };
+    const p = this.pay.current;
+    if (!p) return { ok: false, message: 'לא הוגדר מסופון', pinpad: { ...base, skipped: 'לא הוגדר מסופון' } };
+    if (this.pay.cardInFlight) return { ok: false, message: 'כרטיס בתהליך במסוף — לא נשלח דבר', pinpad: { ...base, skipped: 'כרטיס בתהליך במסוף — לא נשלח דבר' } };
+    const here = this.pinpadHere();
+    let tcp: { ok: boolean; ms: number; error: string | null } | null = null;
+    if (here) {
+      const t0 = Date.now();
+      tcp = await new Promise((resolve) => {
+        const sock = netConnect({ host: here.host, port: here.port });
+        const done = (ok: boolean, error: string | null) => {
+          sock.destroy();
+          resolve({ ok, ms: Date.now() - t0, error });
+        };
+        sock.setTimeout(4_000, () => done(false, 'timeout'));
+        sock.once('connect', () => done(true, null));
+        sock.once('error', (e: NodeJS.ErrnoException) => done(false, e.code ?? e.message));
+      });
+    }
+    const t1 = Date.now();
+    const st = await p.check().catch((e: unknown) => ({ ok: false, detail: String(e) }));
+    const status = { ok: st.ok, ms: Date.now() - t1, detail: st.ok ? null : (st.detail ?? 'אין תשובה') };
+    const id = here && st.ok ? await identifyPinpad(here.host, here.port, here.path).catch(() => null) : null;
+    return {
+      ok: st.ok,
+      message: st.ok ? 'המסופון עונה' : (st.detail ?? 'אין תשובה'),
+      pinpad: { kind: d.kind, address: d.address, tcp, status, terminal: id?.terminal ?? null, merchant: id?.merchant ?? null, serial: id?.serial ?? null, skipped: null },
+    };
+  }
+
+  /** "בדיקת רוחב" (Android PrintersScreen): frames of 384 / 432 / 512 / 576 dots — the receipt printer, or a kitchen printer on the network. */
+  private async printerWidthTest(printerId: string | null): Promise<TechnicianActionResult> {
+    const bytes = escposJob(centreOn(widthTestBitmap(), 576), { cut: true });
+    try {
+      if (printerId) {
+        const k = this.kitchen.config().printers.find((x) => x.id === printerId);
+        if (!k || k.type !== 'network' || !k.host) return { ok: false, message: 'בדיקת רוחב — רק למדפסת ברשת' };
+        await tcpSend(k.host, k.port ?? 9100, bytes);
+        return { ok: true, message: `בדיקת רוחב נשלחה ל${k.name}` };
+      }
+      await this.lookForPrinter();
+      await this.transport.send(this.printerResolution().target, bytes);
+      return { ok: true, message: 'בדיקת רוחב נשלחה למדפסת' };
+    } catch (e) {
+      return { ok: false, message: `לא הודפס: ${String((e as Error)?.message ?? e)}` };
+    }
   }
 
   /** For tools and tests: the wire of a document as it goes to the cloud. */

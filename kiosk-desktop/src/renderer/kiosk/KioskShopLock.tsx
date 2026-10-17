@@ -12,7 +12,7 @@ import type { PreviewModel } from '@kiosk-shared/index';
 import { ShopLockScreen } from '@kiosk-shared/shop-lock';
 import { SHOP_LOCK_TEXT, type CloseDayKind } from '@dash-lib/shopActive';
 import { kiosk } from '../bridge';
-import { PinPad } from '../staff/StaffLayer';
+import { PinPad } from '../staff/staffParts';
 
 export function KioskShopLock({ m, closeDay }: { m: PreviewModel; closeDay: CloseDayKind | null }) {
   const [asking, setAsking] = useState(false);
