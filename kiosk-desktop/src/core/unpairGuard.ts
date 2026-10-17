@@ -137,4 +137,8 @@ export const FOREIGN_TEXT = {
   exported: (file: string) => `נשמר: ${file}`,
   exportFailed: (e: string) => `הייצוא נכשל: ${e}`,
   none: 'אין רשומות מהמכשיר הקודם',
+  uploaded: (till: string, n: number) => `הועלו ל${till}: ${n}`,
+  refused: (n: number) => `נדחו: ${n} — נשמרו בגיבוי`,
+  requestRefused: (till: string, code: string) => `השרת לא קיבל את הרשומות של ${till} (${code}) — נשמרו בגיבוי`,
+  unsupported: 'השרת עוד לא מקבל רשומות של קופה קודמת — הן נשמרות במכשיר ובגיבוי',
 } as const;
