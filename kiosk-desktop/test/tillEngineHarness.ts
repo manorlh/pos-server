@@ -104,6 +104,8 @@ export interface HarnessOptions {
   platform?: ConstructorParameters<typeof KioskService>[0]['platform'];
   /** "ניתוק בכל זאת": where the backups go. */
   unpairBackupDir?: string;
+  /** "מזומן במכשיר": the till's CashMag / cash station clients (fakes), made over the service. */
+  deviceCash?: (svc: KioskService) => TillEngineOptions['deviceCash'];
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -176,7 +178,7 @@ export function harness(o: HarnessOptions = {}): Harness {
   if (o.promotions) svc.cloud.setPromotions(o.promotions, null);
   svc.cloud.applyPosUsers({ syncType: 'full', users: o.users ?? roster(), serverTime: 't' });
   svc.applyProvider();
-  const engine = new KioskCoreTillEngine({ svc, compare: (p, h) => bcrypt.compare(p, h), workMode: () => o.workMode ?? null, now: o.now, remotePrint: o.remotePrint, shopXLan: o.shopXLan ?? { manual: true }, voucherLan: o.voucherLan });
+  const engine = new KioskCoreTillEngine({ svc, compare: (p, h) => bcrypt.compare(p, h), workMode: () => o.workMode ?? null, now: o.now, remotePrint: o.remotePrint, shopXLan: o.shopXLan ?? { manual: true }, voucherLan: o.voucherLan, deviceCash: o.deviceCash?.(svc) });
   const states: TillState[] = [];
   const events: EngineEvent[] = [];
   engine.on((e) => {
