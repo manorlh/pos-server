@@ -719,7 +719,7 @@ export function KioskSettingsEditor({
           targetId={targetId}
           settings={settings.data}
           companyId={level === 'company' ? companyId : null}
-          shopId={level === 'company' ? null : level === 'shop' ? shopId : kiosk?.shopId ?? null}
+          shopId={level === 'company' ? null : level === 'machine' ? kiosk?.shopId ?? null : shopId}
           canEdit={canEdit}
           guard={guard}
         />
@@ -756,8 +756,8 @@ export function KioskSettingsEditor({
             canEdit
               ? {
                   companyId: level === 'machine' ? kiosk?.companyId ?? companyId : companyId,
-                  shopId: level === 'company' ? null : level === 'shop' ? shopId : kiosk?.shopId ?? null,
-                  shopName: level === 'company' ? null : level === 'shop' ? shopName : kiosk?.shopName ?? null,
+                  shopId: level === 'company' ? null : level === 'machine' ? kiosk?.shopId ?? null : shopId,
+                  shopName: level === 'company' ? null : level === 'machine' ? kiosk?.shopName ?? null : shopName,
                   canCompany: !!role && COMPANY_WRITERS.includes(role),
                 }
               : null

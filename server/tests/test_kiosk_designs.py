@@ -294,3 +294,24 @@ def test_the_dashboard_has_the_same_groups():
     for (gid, paths, default), group in zip(rows, KD.GROUPS):
         assert re.findall(r"'([\w.]+)'", paths) == [".".join(p) for p in group.paths], gid
         assert (default == "true") == (gid in KD.DEFAULT_GROUPS), gid
+
+
+def test_a_point_of_sale_assigns_a_design_to_its_kiosks(w):
+    """With the point-of-sale layer (feat/area-management): an area's design reaches only its kiosks."""
+    if not hasattr(KioskSettings, "area_id"):
+        pytest.skip("no point-of-sale kiosk layer on this branch yet")
+    from app.models.shop_area import ShopArea
+
+    area = ShopArea(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, name="Bar")
+    w.db.add(area)
+    w.db.flush()
+    w.kiosk.area_id = area.id
+    w.db.commit()
+    put(w, "shop", w.shop.id, {"theme": {"primaryColor": RED}})
+    a = create(w, "A", ["look"], overrides={"theme": {"primaryColor": BLUE}})
+    view = assign(w, "area", area.id, a["id"])
+    assert view["design"]["effective"]["level"] == "area"
+    assert eff(w, w.kiosk)["config"]["theme"]["primaryColor"] == BLUE
+    assert eff(w, w.kiosk2)["config"]["theme"]["primaryColor"] == RED
+    put(w, "machine", w.kiosk.id, {"theme": {"primaryColor": GREEN}})
+    assert eff(w, w.kiosk)["config"]["theme"]["primaryColor"] == GREEN
