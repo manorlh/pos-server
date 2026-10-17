@@ -870,7 +870,15 @@ export interface PosMachine {
    * Its KDS screen, or null. On a fiscal till: a screen paired on the KDS page before
    * display devices existed (flagged "מסך מטבח על קופה").
    */
-  kdsScreen?: { role: 'station' | 'expo' | 'pickup' | 'manager'; name: string; isActive: boolean; shopId: string | null } | null;
+  kdsScreen?: {
+    role: 'station' | 'expo' | 'pickup' | 'manager';
+    name: string;
+    isActive: boolean;
+    shopId: string | null;
+    /** "מציג: נקודת מכירה בר" / "מציג: כל הסניף". */
+    scopeLabel?: string;
+    scopeWarningText?: string | null;
+  } | null;
   /** The model chosen on the dashboard, and the one the device named itself at pairing. */
   deviceModelChosen?: DeviceModel | null;
   deviceModelReported?: DeviceModel | null;

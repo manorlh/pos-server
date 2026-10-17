@@ -1376,6 +1376,12 @@ export default function MachinesPage() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">{t('pairAreaHint')}</p>
+                    {/* A kitchen screen / the board: its orders follow its point of sale ("תצוגה לפי נקודת המכירה של המסך"). */}
+                    {pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board' ? (
+                      <p role="note" className="rounded-md bg-primary/10 px-3 py-2 text-xs text-primary">
+                        {pairAreaId ? t('pairAreaScreenHint') : t('pairAreaScreenNoneHint')}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

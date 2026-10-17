@@ -532,9 +532,10 @@ export class BoardModule {
 export function boardView(s: FeedState): BoardView {
   const body = s.body ?? {};
   const cols = boardOf(body.pickup);
-  const device = body.device && typeof body.device === 'object' ? (body.device as { display?: unknown }) : null;
+  const device = body.device && typeof body.device === 'object' ? (body.device as { display?: unknown; scopeLabel?: unknown }) : null;
   return {
     shopName: typeof body.shopName === 'string' ? body.shopName : null,
+    scopeLabel: device && typeof device.scopeLabel === 'string' ? device.scopeLabel : null,
     preparing: cols.preparing,
     ready: cols.ready,
     updatedAt: s.okAt,

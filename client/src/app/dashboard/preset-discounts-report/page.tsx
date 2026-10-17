@@ -37,7 +37,7 @@ import {
   type ReportTableSpec,
 } from '@/components/dashboard/report-framework';
 
-const SPEC: ReportFilterSpec = { filters: ['hours', 'cashier'], extras: { preset: '', person: '' } };
+const SPEC: ReportFilterSpec = { filters: ['hours', 'area', 'cashier'], extras: { preset: '', person: '' } };
 
 const PRESET_ID_MAX = 64;
 const PERSON_MAX = 200;

@@ -24,6 +24,9 @@ export function BoardScopeFields({
   machines,
   tillLabel,
   kitchen = false,
+  follow = false,
+  onFollow,
+  deviceAreaName = null,
 }: {
   /** null = the whole shop. */
   value: KdsBoardScope | null;
@@ -34,9 +37,15 @@ export function BoardScopeFields({
   tillLabel: (m: KdsShopMachine) => string;
   /** A kitchen screen: the scope narrows its stations' orders. */
   kitchen?: boolean;
+  /** "תצוגה לפי נקודת המכירה של המסך": the orders of the point of sale the screen's device stands in. */
+  follow?: boolean;
+  onFollow?: (on: boolean) => void;
+  /** The point of sale of the screen's device (null: none — the option is not offered). */
+  deviceAreaName?: string | null;
 }) {
   const t = useTranslations('kds.page.devices.dialog.scope');
-  const some = value !== null;
+  const followOn = follow && !!deviceAreaName;
+  const some = value !== null && !followOn;
   const scope = value ?? { areaIds: [], machineIds: [] };
   const toggle = (key: 'areaIds' | 'machineIds', id: string, on: boolean) =>
     onChange({ ...scope, [key]: on ? [...scope[key], id] : scope[key].filter((x) => x !== id) });
@@ -52,20 +61,35 @@ export function BoardScopeFields({
   return (
     <div className="space-y-3 rounded-lg border border-dashed p-3">
       <p className="text-sm font-medium">{t('title')}</p>
-      <div role="radiogroup" aria-label={t('title')} className="grid gap-2 sm:grid-cols-2">
+      <div role="radiogroup" aria-label={t('title')} className={cn('grid gap-2', deviceAreaName ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
+        {deviceAreaName ? (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={followOn}
+            onClick={() => onFollow?.(true)}
+            className={cn('min-h-10 rounded-md border-2 px-3 py-2 text-start text-sm', followOn ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50')}
+          >
+            {t('follow', { area: deviceAreaName })}
+          </button>
+        ) : null}
         {[false, true].map((s) => (
           <button
             key={String(s)}
             type="button"
             role="radio"
-            aria-checked={some === s}
-            onClick={() => onChange(s ? scope : null)}
-            className={cn('min-h-10 rounded-md border-2 px-3 py-2 text-start text-sm', some === s ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50')}
+            aria-checked={!followOn && some === s}
+            onClick={() => {
+              onFollow?.(false);
+              onChange(s ? scope : null);
+            }}
+            className={cn('min-h-10 rounded-md border-2 px-3 py-2 text-start text-sm', !followOn && some === s ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50')}
           >
             {s ? t('some') : t('all')}
           </button>
         ))}
       </div>
+      {followOn ? <p className="text-xs text-muted-foreground">{t('followHint', { area: deviceAreaName ?? '' })}</p> : null}
       {some ? (
         <div className="space-y-3">
           <p className="text-xs text-muted-foreground">

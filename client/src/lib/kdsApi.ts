@@ -71,13 +71,23 @@ export interface KdsDevice {
   display?: ScreenDisplay | null;
   /** Whether `display` is the screen's own (false: the shop's default / the built-in look). */
   displayOwn?: boolean;
-  /** The screen's orders (any role): these points of sale / tills and kiosks; both empty = the whole shop (§15). */
+  /** The screen's orders (any role) as shown now: these points of sale / tills and kiosks; both empty = the whole shop (§15). */
   scope?: KdsBoardScope;
+  /** As set (the dialog edits this): the lists and `followArea` ("תצוגה לפי נקודת המכירה של המסך"). */
+  scopeSetting?: KdsBoardScope;
+  /** "shop" | "area" (follows its device's point of sale) | "own" (the lists). */
+  scopeSource?: 'shop' | 'area' | 'own';
+  /** "מציג: נקודת מכירה בר" / "מציג: כל הסניף" — the cloud's words, shown on every screen too. */
+  scopeLabel?: string;
+  scopeWarning?: 'area_has_no_sellers' | 'whole_shop_with_areas' | null;
+  scopeWarningText?: string | null;
 }
 
 export interface KdsBoardScope {
   areaIds: string[];
   machineIds: string[];
+  /** True: the orders of the point of sale the screen's own device stands in (follows it when moved). */
+  followArea?: boolean;
 }
 
 /** The shop's default look per kind — the screens without a look of their own show it. */

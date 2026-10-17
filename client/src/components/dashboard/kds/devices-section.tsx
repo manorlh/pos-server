@@ -107,6 +107,17 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
       {overview.canEdit && free.length === 0 && overview.machines.length > 0 ? (
         <p className="text-xs text-muted-foreground">{t('noFreeTills')}</p>
       ) : null}
+      {/* The shop has points of sale, and some screens still show the whole shop's orders. */}
+      {overview.devices.some((d) => d.scopeWarning === 'whole_shop_with_areas') ? (
+        <p role="note" className="rounded-md bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          {t('wholeShopWarning', {
+            names: overview.devices
+              .filter((d) => d.scopeWarning === 'whole_shop_with_areas')
+              .map((d) => d.name)
+              .join(', '),
+          })}
+        </p>
+      ) : null}
 
       {overview.devices.length === 0 ? (
         <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">{t('empty')}</div>
@@ -155,13 +166,17 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
                   </TableCell>
                   <TableCell className="text-sm">
                     {d.role === 'station' ? d.stations.map((s) => s.name).join(' · ') || '—' : d.role === 'pickup' ? null : t('allStations')}
-                    {/* Its orders: the whole shop, or some points of sale / tills and kiosks (SPEC_KDS §15). */}
-                    {d.role === 'pickup' || !scopeIsWholeShop(d.scope) ? (
-                      <span className={d.role === 'pickup' ? undefined : 'ms-1 text-xs text-muted-foreground'}>
-                        {d.role === 'pickup' ? '' : '· '}
-                        {scopeIsWholeShop(d.scope)
+                    {/* Its orders, in the cloud's words ("מציג: נקודת מכירה בר" / "מציג: כל הסניף") — as every screen shows them. */}
+                    <span className={d.role === 'pickup' ? 'block' : 'ms-1 text-xs text-muted-foreground'}>
+                      {d.role === 'pickup' ? '' : '· '}
+                      {d.scopeLabel ??
+                        (scopeIsWholeShop(d.scope)
                           ? td('summaryAll')
-                          : td('summarySome', { count: String((d.scope?.areaIds.length ?? 0) + (d.scope?.machineIds.length ?? 0)) })}
+                          : td('summarySome', { count: String((d.scope?.areaIds.length ?? 0) + (d.scope?.machineIds.length ?? 0)) }))}
+                    </span>
+                    {d.scopeWarningText ? (
+                      <span role="note" className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">
+                        {d.scopeWarningText}
                       </span>
                     ) : null}
                   </TableCell>
@@ -256,14 +271,20 @@ function DeviceDialog({
   // The screen's orders, on top of its stations (null = the whole shop, as before). A new screen, with a
   // point of sale chosen in the top bar, starts on it (P:/specs/chain-areas.md §7).
   const barScope = useScope();
+  const setting = device ? (device.scopeSetting ?? device.scope) : undefined;
+  // "תצוגה לפי נקודת המכירה של המסך": on for a new screen (when its device stands in a point of sale).
+  const [follow, setFollow] = useState<boolean>(() => (device ? !!setting?.followArea : true));
   const [scope, setScope] = useState<KdsBoardScope | null>(() => {
-    if (device) return scopeIsWholeShop(device.scope) ? null : (device.scope ?? null);
+    if (device) return !setting || scopeIsWholeShop(setting) ? null : { areaIds: setting.areaIds, machineIds: setting.machineIds };
     const barArea = barScope.areaId && sameId(barScope.shopId, shopId) ? barScope.areaId : null;
     return barArea && (overview.areas ?? []).some((a) => sameId(a.id, barArea)) ? { areaIds: [barArea], machineIds: [] } : null;
   });
 
   const needsStation = role === 'station' && stationIds.length === 0;
-  const scopeEmpty = scope !== null && scopeIsWholeShop(scope);
+  const deviceAreaId = overview.machines.find((m) => m.id === machineId)?.areaId ?? null;
+  const deviceAreaName = deviceAreaId ? ((overview.areas ?? []).find((a) => sameId(a.id, deviceAreaId))?.name ?? null) : null;
+  const following = follow && !!deviceAreaName;
+  const scopeEmpty = !following && scope !== null && scopeIsWholeShop(scope);
   const valid = !!machineId && !needsStation && !scopeEmpty;
   // The machines whose orders a screen may show: the shop's tills and kiosks, not its screens.
   const screens = new Set(overview.devices.map((d) => d.machineId).filter((id): id is string => !!id));
@@ -390,7 +411,7 @@ function DeviceDialog({
           ) : null}
 
           {/* The screen's orders, any role (the cloud filters what it serves: Android, Windows, the browser). The look: "עיצוב" in the table. */}
-          <BoardScopeFields value={scope} onChange={setScope} areas={overview.areas ?? []} machines={sources} tillLabel={(m) => tillLabel(m)} kitchen={role !== 'pickup'} />
+          <BoardScopeFields value={scope} onChange={setScope} areas={overview.areas ?? []} machines={sources} tillLabel={(m) => tillLabel(m)} kitchen={role !== 'pickup'} follow={follow} onFollow={setFollow} deviceAreaName={deviceAreaName} />
 
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border p-3">
             <span className="text-sm font-medium">{td('active')}</span>
@@ -410,7 +431,9 @@ function DeviceDialog({
                 role,
                 stationIds: role === 'station' ? stationIds : [],
                 isActive,
-                scope: scope ?? { areaIds: [], machineIds: [] },
+                scope: following
+                  ? { areaIds: [], machineIds: [], followArea: true }
+                  : { ...(scope ?? { areaIds: [], machineIds: [] }), followArea: false },
               })
             }
           >
