@@ -301,11 +301,6 @@ interface Pending {
 /** How long PowerShell may take to compile the helper and say "ready" (a J1900 on Windows 7 is slow at it). */
 export const HELPER_START_MS = 45_000;
 
-/** JSON with every non-ASCII character escaped: Windows 7's PowerShell 2 reads its stdin in the console's code page. */
-export function asciiJson(v: unknown): string {
-  return JSON.stringify(v).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
-}
-
 /**
  * `wmic printer get … /format:list` (Windows 7 has it; no PowerShell needed): the queues when the helper cannot start.
  * Redirected, wmic writes UTF-16 on some systems and the ANSI page on others.
