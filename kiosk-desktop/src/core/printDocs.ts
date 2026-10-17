@@ -13,6 +13,7 @@ import { formatAgorot, formatShekelSign, ltr } from './money';
 import { isTemplate, resolveStyle, type KitchenTicket, type TicketStyle } from './kitchenTicketStyle';
 import type { KitchenDoc } from './kitchen/doc';
 import { voucherInfoFromJson, voucherInfoLines } from './till/vouchers';
+import { CASH_WITH_TIPS_LABELS, cashBlock, tillTable, xCashBlock, zDrawer, type CashLine } from './till/cashWithTips';
 
 /* ---------------------------------------------------------- the receipt */
 
@@ -637,6 +638,47 @@ export interface ZDoc {
   ops: ZOp[];
 }
 
+/**
+ * "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1) on paper: its title and lines — bold where the spec says (the total,
+ * the shortfall); paper has no red.
+ */
+function cashBlockOps(lines: CashLine[], c: (text: string, size?: number, bold?: boolean) => void, r: (label: string, value: string, bold?: boolean) => void): void {
+  c(CASH_WITH_TIPS_LABELS.title, 20, true);
+  for (const l of lines) r(l.label, money(l.agorot / 100), l.bold);
+}
+
+/**
+ * A Z over several tills (§3): the summary of all the drawers first, then — unless `zPrintPerTillCash` = summary_only —
+ * "מזומן במגירה לפי קופה", each drawer by its own frozen figures, the totals, the unpaid tips.
+ */
+function tillTableOps(sections: Array<Record<string, unknown>>, c: (text: string, size?: number, bold?: boolean) => void, r: (label: string, value: string, bold?: boolean) => void, d: () => void, perTill: boolean): void {
+  const table = tillTable(
+    sections.map((s) => {
+      const z = zDrawer(s);
+      const pos = typeof s.posNumber === 'string' && s.posNumber.trim() ? `קופה ${s.posNumber.trim()}` : null;
+      return { till: pos ?? (typeof s.machineName === 'string' ? s.machineName : 'קופה'), input: z.input, paid: z.paid, unpaid: z.unpaid };
+    }),
+    true,
+  );
+  const f = (a: number | null) => (a === null ? '—' : money(a / 100));
+  c(CASH_WITH_TIPS_LABELS.title, 20, true);
+  for (const l of table.summary.lines) r(l.label, f(l.agorot), l.bold);
+  if (!perTill) return;
+  d();
+  c(CASH_WITH_TIPS_LABELS.tillTable, 20, true);
+  for (const row of [...table.rows, { till: CASH_WITH_TIPS_LABELS.tillTotals, cashSales: table.totals.cashSales, cashTips: table.totals.cashTips, cardTipsPaid: table.totals.cardTipsPaid, cardTipsUnpaid: table.totals.cardTipsUnpaid, drawerCash: table.totals.drawerCash, short: table.totals.anyShort }]) {
+    r(row.till, f(row.drawerCash), true);
+    r(`  ${CASH_WITH_TIPS_LABELS.cashSales}`, f(row.cashSales));
+    r(`  ${CASH_WITH_TIPS_LABELS.cashTips}`, f(row.cashTips));
+    if (row.cardTipsPaid !== null) {
+      r(`  ${CASH_WITH_TIPS_LABELS.cardTipsPaid}`, f(row.cardTipsPaid));
+      r(`  ${CASH_WITH_TIPS_LABELS.cardTipsUnpaid}`, f(row.cardTipsUnpaid));
+    }
+  }
+  d();
+  r(CASH_WITH_TIPS_LABELS.unpaidDay, f(table.unpaidTotal), true);
+}
+
 const money = (v: unknown): string => {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
   if (!Number.isFinite(n)) return 'לא ידוע';
@@ -653,7 +695,7 @@ const Z_BREAKDOWN_APART = new Set(['cash', 'card', 'exchange']);
 const Z_METHOD_NAMES: Record<string, string> = { voucher: 'שוברי הפקה', production_voucher: 'שוברי הפקה', cash_credit: 'זיכוי מזומן', check: 'המחאה', credit: 'זיכוי', other: 'אחר' };
 
 /** The till Z on paper (TillZRenderer), from the cloud's zReport (POST till-z answer). */
-export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo; shopName: string | null; posNumber: string | null; machineName: string | null; copy: boolean; logoUrl: string | null; printedAt: Date }): ZDoc {
+export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo; shopName: string | null; posNumber: string | null; machineName: string | null; copy: boolean; logoUrl: string | null; printedAt: Date; perTillCash?: boolean }): ZDoc {
   const ops: ZOp[] = [];
   const c = (text: string, size = 18, bold = false) => ops.push({ t: 'centred', text, size, bold });
   const r = (label: string, value: string, bold = false) => ops.push({ t: 'row', label, value, bold });
@@ -718,6 +760,14 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
   r('קופה פותחת', money(z.openingCash));
   r('מזומן צפוי', money(z.expectedCash), true);
   r('מזומן שנספר', z.actualCash === null || z.actualCash === undefined ? 'לא נספר' : money(z.actualCash));
+  // "מזומן במגירה" (x-z-cash-with-tips §1): always — its total is the Z's expected cash; over several tills, by till (§3).
+  d();
+  const sections = Array.isArray(z.perMachine) ? (z.perMachine as unknown[]).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object') : [];
+  if (sections.length > 1) tillTableOps(sections, c, r, d, opts.perTillCash !== false);
+  else {
+    const one = zDrawer({ ...z, ...(sections[0] ?? {}), expectedCash: z.expectedCash ?? sections[0]?.expectedCash });
+    cashBlockOps(cashBlock(one.input, one.paid, one.unpaid).lines, c, r);
+  }
   const ct = z.cardTransmission && typeof z.cardTransmission === 'object' ? (z.cardTransmission as Record<string, unknown>) : null;
   if (ct) {
     d();
@@ -768,6 +818,13 @@ export interface XInput {
     totalVouchers?: number;
     /** The production vouchers' sections (core/till/vouchers.ts voucherInfoJson): information, in no figure above. */
     prepaidVouchersInfo?: Record<string, unknown>;
+    /** The tips by method (the block's "טיפים במזומן", the card tips the drawer pays). */
+    totalCashTips?: number;
+    totalCardTips?: number;
+    /** "טיפ באשראי משולם מהמזומן" (core/till/cashWithTips.ts): absent with the parameter off. */
+    cardTipsFromDrawer?: number;
+    cardTipsUnpaid?: number;
+    drawerCash?: number;
   };
   /** Counted cash on the close (shekels), null on an interim X or an uncounted close. */
   countedCash: number | null;
@@ -836,6 +893,9 @@ export function xDoc(x: XInput): ZDoc {
       r('הפרש', money(Math.round((x.countedCash - t.expectedCash) * 100) / 100), true);
     }
   }
+  // "מזומן במגירה" (x-z-cash-with-tips §1): always; its total (== מזומן צפוי) only where the expected cash may be seen.
+  d();
+  cashBlockOps(xCashBlock({ ...t, totalCashTips: t.totalCashTips ?? 0, totalCardTips: t.totalCardTips ?? 0 }, !!x.closedAt || !x.blindCount), c, r);
   return { kind: 'z', logoUrl: x.logoUrl, ops };
 }
 

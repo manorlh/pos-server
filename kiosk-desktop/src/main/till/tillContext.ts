@@ -62,4 +62,48 @@ export interface TillContext {
   paying(): boolean;
   /** A question is on the screen now (a new one would take its place): a module's own question waits for it. */
   dialogOpen?(): boolean;
+  /**
+   * The engine's permission gate (Android PermissionGate): `allowed` runs `resume(null)` at once; `approval` asks a manager's
+   * code (only someone allowed it alone within their own limits) and runs `resume(approver)` when it is typed — the call
+   * returns `{dialogId}` then; `denied` refuses "אין לך הרשאה: …" (or, with `askOnDeny`, asks a manager too). Every override
+   * goes into the drawer's audit as the engine's own gates do.
+   */
+  gate(code: string, resume: (approver: ApproverRef | null) => unknown, opts?: GateOptions): unknown;
+  /** The operator's own answer for `code` now (the acting profile: "כשאין הרשאה" = לבקש קוד מנהל included). */
+  decide(code: string, opts?: { amount?: number | null; percent?: number | null }): 'allowed' | 'approval' | 'denied';
+  /** The codes whose options the screens leave out for this operator ("כשאין הרשאה" = להסתיר, the engine's `session.hidden`). */
+  hiddenCodes(): string[];
+  /**
+   * Another op of the engine, carried out INSIDE the op (or the `later` work) running now — the same rules and gates as from
+   * a screen (e.g. `sell.add`, `checkout.start`, `checkout.voucher`). Never from outside an op: it does not queue.
+   */
+  run(op: string, args?: Record<string, unknown>): Promise<unknown>;
+}
+
+/**
+ * A feature module the engine carries (registered with `engine.register`): its ops — routed to `apply` — and its slice of the
+ * state, under `key` (omitted while `state()` says undefined). The engine stays the one door: the ops keep their
+ * clientOpId bookkeeping, the touch, the refusal envelope.
+ */
+export interface TillFeature {
+  readonly key: string;
+  readonly ops: readonly string[];
+  /** The ops that change something (each needs a clientOpId, never applied twice). */
+  readonly mutating: readonly string[];
+  apply(op: string, args: Record<string, unknown>): unknown;
+  state(): unknown;
+  stop?(): void;
+}
+
+export interface GateOptions {
+  askOnDeny?: boolean;
+  title?: string;
+  body?: string;
+  /** The money at stake (₪), held to the role's and the approver's limits. */
+  amount?: number | null;
+  percent?: number | null;
+  /** A setting waives the second person (never turns a denial into an allowance). */
+  relax?: boolean;
+  /** A setting asks a second person even when the role allows it. */
+  force?: boolean;
 }

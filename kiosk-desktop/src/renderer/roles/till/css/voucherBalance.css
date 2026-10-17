@@ -1,0 +1,125 @@
+/*
+ * "בירור יתרת שובר" (screens/VoucherBalanceScreen.tsx). Plain CSS for Chromium 108 on a Celeron: hex colours, no blur, no
+ * shadows, no :has(), no nesting. The status colours are Android's (green #16A34A, orange #EA580C, red #DC2626, white on them).
+ */
+
+.vbal {
+  max-width: 720px;
+}
+
+.vbal-body {
+  gap: 12px;
+}
+
+.vbal-input {
+  min-height: 52px;
+  font-size: 20px;
+  letter-spacing: 1px;
+  direction: ltr;
+  text-align: center;
+}
+
+.vbal-box {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--t-radius, 10px);
+  color: #ffffff;
+}
+
+.vbal-box p {
+  margin: 0;
+}
+
+.vbal-box-text {
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.vbal-box-detail {
+  margin-top: 6px;
+  font-size: 16px;
+}
+
+.vbal-green {
+  background: #15803d;
+}
+
+.vbal-orange {
+  background: #c2410c;
+}
+
+.vbal-red {
+  background: #dc2626;
+}
+
+.vbal-test {
+  padding: 10px 12px;
+  border-radius: var(--t-radius, 10px);
+  background: #c2410c;
+  color: #ffffff;
+  font-weight: 700;
+  text-align: center;
+}
+
+.vbal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border-radius: var(--t-radius, 10px);
+  background: var(--t-surface, #ffffff);
+  border: 1px solid var(--t-line, #e1e4e9);
+}
+
+.vbal-card p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.vbal-serial {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.vbal-type {
+  font-size: 17px;
+  color: var(--t-accent, #1f5fd1);
+}
+
+.vbal-left {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.vbal-last {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.vbal-history .t-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vbal-history-row {
+  min-height: 0;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.vbal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vbal-actions .t-btn {
+  flex: 1 1 160px;
+  min-height: 52px;
+}
