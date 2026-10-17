@@ -77,6 +77,10 @@ class ZReportOut(BaseModel):
     #: them — already out of `expectedCash`. Tips are no revenue: sales, VAT and the tips
     #: totals are untouched. Null when no included close carried the figure.
     card_tips_from_drawer: Optional[Decimal] = Field(None, alias="cardTipsFromDrawer")
+    #: "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2, `cashDrawer.cardTipsShortfall`): the card
+    #: tips the drawers could not pay, owed to staff — Σ of what the closes froze (0 for an older close).
+    #: Information: not in `expectedCash`. Null with `cardTipsFromDrawer`.
+    card_tips_unpaid: Optional[Decimal] = Field(None, alias="cardTipsUnpaid")
     #: "מזומן במגירה": cash sales (net of cash refunds) + cash tips − `cardTipsFromDrawer`.
     #: Null with it.
     drawer_cash: Optional[Decimal] = Field(None, alias="drawerCash")
@@ -199,6 +203,9 @@ class ZReportBusinessOut(BaseModel):
 
 
 class ZReportDetailOut(ZReportOut):
+    #: The Z print setting `zPrintPerTillCash` (P:/specs/x-z-cash-with-tips.md §3): False = `summary_only`, a
+    #: print of a shop / area Z carries the drawers' summary without the per-till table.
+    print_per_till_cash: bool = Field(True, alias="printPerTillCash")
     #: The per-register sections, as stored at build time (money as decimal strings).
     per_machine: List[Dict[str, Any]] = Field(default_factory=list, alias="perMachine")
     #: A till Z: the till's own sum as it sent it (audit; never the figures).

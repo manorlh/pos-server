@@ -20,7 +20,7 @@ import { use, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { zShowsExempt } from '@/lib/dealerType';
-import { hasDrawerTips } from '@/lib/drawerTips';
+import { CashWithTipsCard, SectionTipsRows } from '@/components/dashboard/z-report/cash-with-tips';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
@@ -304,13 +304,9 @@ function TillCard({
             <MoneyRow label={t('discrepancy')}>
               <OverShort value={uncounted ? null : s.overShort} uncountedLabel={t('discrepancyWithheld')} />
             </MoneyRow>
-            {/* "טיפ באשראי משולם מהמזומן": card tips paid from the drawer, and what it holds. */}
-            {hasDrawerTips(s.cardTipsFromDrawer) ? (
-              <>
-                <MoneyRow label={t('cardTipsFromDrawer')} value={s.cardTipsFromDrawer} />
-                <MoneyRow label={t('drawerCash')} value={s.drawerCash} strong />
-              </>
-            ) : null}
+            {/* "מזומן במגירה כולל טיפים" (x-z-cash-with-tips §1): where the old two rows were — the card
+                tips this drawer paid and owes, and "חסר במגירה" below zero (the Z's block is above). */}
+            <SectionTipsRows s={s} />
           </div>
         </div>
         {offline ? (
@@ -621,12 +617,6 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <MoneyRow label={t('discrepancy')}>
                 <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
               </MoneyRow>
-              {hasDrawerTips(z.cardTipsFromDrawer) ? (
-                <>
-                  <MoneyRow label={t('cardTipsFromDrawer')} value={z.cardTipsFromDrawer} />
-                  <MoneyRow label={t('drawerCash')} value={z.drawerCash} strong />
-                </>
-              ) : null}
               {withheld ? <p className="text-muted-foreground pt-1 text-xs">{t('cashWithheldHint')}</p> : null}
               {/* "מזומן אצל עובדים (טרם הופקד)" (drawer-away §5.6): as frozen when the Z was built. */}
               {cashWithStaffRows(z.cashWithStaff).rows.length > 0 ? (
@@ -641,6 +631,9 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             </CardContent>
           </Card>
         </div>
+
+        {/* "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md): always; over several drawers, per till. */}
+        <CashWithTipsCard z={z} />
 
         {/* "דו״ח Z — גרסה 2": the owner's sections, the lines the till and the cloud print. */}
         <ZReportSectionsCards

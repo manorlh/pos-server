@@ -10,14 +10,15 @@ Two halves, kept apart so the bookkeeping can be tested without a database:
 
 The entry, signed debit-positive::
 
-    D cash           cash takings + cash tips + over/short   (the money actually counted)
+    D cash           cash takings + cash tips + over/short − card tips paid from the drawer
+                     (the money actually counted)
     D card[/brand]   card takings + card tips − declined offline
     D cardDeclined   offline-approved card sales the acquirer declined (a receivable)
     D vouchers       redeemed vouchers (voucher-like tenders)
     D otherTenders   any other tender, one line per method
     C income*        net sales before VAT, per VAT rate (taxable / exempt)
     C vatOutput      the Z's VAT
-    C tips           tips owed to staff (cash and card)
+    C tips           tips owed to staff (cash and card) − card tips paid from the drawer
     C voucherSales   vouchers sold, when they are booked as a liability
     C cashOverShort  counted − expected
     ± rounding       the remainder, only if it is at most ₪1
@@ -27,6 +28,12 @@ line that comes out negative moves to the other side. The sum of the tenders is 
 the income and VAT are taken from, so the entry balances by construction; what is left
 is the `exchange` net of an incomplete mixed basket and cent rounding — and anything over
 ₪1 refuses the export instead of hiding in a rounding line.
+
+Card tips paid to staff in cash from the drawer ("טיפ באשראי משולם מהמזומן",
+P:/specs/x-z-cash-with-tips.md §4): that cash left the till, and the liability to staff is
+settled by it — so both `D cash` and `C tips` come down by the amount the Z froze as paid
+(`cardTipsFromDrawer`, 0 when none). What stays on `C tips` is "טיפים לעובדים — לתשלום": the cash
+tips and the card tips not yet paid. Income never moves; the entry still balances.
 """
 from __future__ import annotations
 
@@ -125,6 +132,9 @@ class ZFacts:
     #: the reply did not say.
     card_legs: Dict[Tuple[str, str], Decimal] = field(default_factory=dict)
     voucher_sales: Decimal = ZERO
+    #: Card tips the tills paid staff in cash out of their drawers, as the Z froze them
+    #: (`cardTipsFromDrawer`; 0 when none): out of `D cash` and out of `C tips` (spec §4).
+    card_tips_paid_from_drawer: Decimal = ZERO
     #: The shop's cost centre / branch code in the books, written per line when a
     #: company-level export consolidates shops into one entry.
     cost_center: str = ""
@@ -213,6 +223,14 @@ def _till_label_of(z: ZReport) -> Optional[str]:
     return f"{label} ({run})" if label and run else label
 
 
+def _paid_from_drawer(z: ZReport) -> Decimal:
+    """The card tips the Z's drawers paid staff, as it froze them (P:/specs/x-z-cash-with-tips.md §4)."""
+    from app.services.z_print import drawer_tips_of
+
+    tips = drawer_tips_of(z)
+    return _dec(tips["cardTipsFromDrawer"]) if tips is not None else ZERO
+
+
 def load_z_facts(
     db: Session,
     z: ZReport,
@@ -256,6 +274,7 @@ def load_z_facts(
         net=sum(breakdown.values(), ZERO),
         # A till's own Z (`zMode = till`): named by its register, "קופה 2".
         till_label=_till_label_of(z),
+        card_tips_paid_from_drawer=_paid_from_drawer(z),
     )
 
     if z.per_machine is None:
@@ -402,7 +421,9 @@ def build_lines(facts: ZFacts, settings: Dict) -> Tuple[List[JournalLine], List[
     breakdown.pop(EXCHANGE_PAYMENT_METHOD, None)  # nets to zero; any rest is the remainder
 
     variance = facts.variance or ZERO
-    raw.append(("cash", cash + facts.cash_tips + variance, LABELS["cash"]))
+    # Card tips paid out of the drawer: cash that left the till, settling the tips owed (spec §4).
+    paid_out = facts.card_tips_paid_from_drawer or ZERO
+    raw.append(("cash", cash + facts.cash_tips + variance - paid_out, LABELS["cash"]))
 
     # Card legs to the account of their acquirer (חברת סליקה — what the settlement
     # report is per) when one is mapped, else of their brand (מותג), else the generic
@@ -476,7 +497,7 @@ def build_lines(facts: ZFacts, settings: Dict) -> Tuple[List[JournalLine], List[
         raw.append((key, -(income_gross - vat), LABELS[key]))
         raw.append(("vatOutput", -vat, LABELS["vatOutput"]))
 
-    raw.append(("tips", -(facts.cash_tips + facts.card_tips), LABELS["tips"]))
+    raw.append(("tips", -(facts.cash_tips + facts.card_tips - paid_out), LABELS["tips"]))
     raw.append(("voucherSales", -voucher_sales, LABELS["voucherSales"]))
     raw.append(("cashOverShort", -variance, LABELS["cashOverShort"]))
 

@@ -2345,6 +2345,17 @@ export interface ZReport {
    * already out of expectedCash. Null/absent when no included close carried the figure.
    */
   cardTipsFromDrawer?: Money | null;
+  /**
+   * "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): the card tips the drawers could not
+   * pay, owed to staff — Σ of what the closes froze (0 for an older close). Not in expectedCash.
+   * Null/absent with cardTipsFromDrawer.
+   */
+  cardTipsUnpaid?: Money | null;
+  /**
+   * The Z print setting `zPrintPerTillCash` (x-z-cash-with-tips §3): false = `summary_only` — a print of a
+   * shop / area Z carries the drawers' summary without the per-till table. Absent on older servers (true).
+   */
+  printPerTillCash?: boolean;
   /** "מזומן במגירה": cash sales net + cash tips − cardTipsFromDrawer. Null/absent with it. */
   drawerCash?: Money | null;
   /**
@@ -2568,6 +2579,12 @@ export interface ZReportMachineSection {
   betweenShiftAdjustments?: Money | null;
   /** Card tips this till paid out of the drawer (Σ of its closes'); absent without the parameter. */
   cardTipsFromDrawer?: Money | null;
+  /** Card tips this till's drawer could not pay, owed to staff (x-z-cash-with-tips §2); absent with the above. */
+  cardTipsUnpaid?: Money | null;
+  /** Net of cash refunds: the cash the period took (the block's "מזומן ממכירות"). */
+  cashSalesNet?: Money | null;
+  /** A self-order kiosk's part: no drawer. */
+  kiosk?: boolean | null;
   /** "זיכויים וביטולי תשלום בשולחנות" of this till — absent when it had none. */
   tablePaymentReversals?: TablePaymentReversals | null;
   /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
