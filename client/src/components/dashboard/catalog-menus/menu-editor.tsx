@@ -2,9 +2,11 @@
 
 /**
  * A menu ("תפריט"): its name, whose it is (a company, or the whole organization — super
- * admin / distributor only), where it sells (קופות / קיוסק / both), whether it is on, its
- * colour, when ("מתי") and what ("קטגוריות ומוצרים"). Server: `POST /catalog-menus`,
- * `PUT /catalog-menus/{id}` (the arrays in the order shown).
+ * admin / distributor only), where it applies ("פעיל ב": חברה › סניף › נקודת מכירה › קופה, or
+ * a device group — the "שיוך" tab's own rows), where it sells (קופות / קיוסק / both), whether it
+ * is on, its colour, when ("מתי") and what ("קטגוריות ומוצרים", the shared two-pane picker).
+ * Server: `POST /catalog-menus`, `PUT /catalog-menus/{id}` (the arrays in the order shown;
+ * `assignments` only when the places changed).
  */
 
 import { useState } from 'react';
@@ -26,7 +28,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input';
 import { IosCard, IosFootnote, IosRow, IosSectionHeader, IosSegmented, IosSwitch } from '@/components/dashboard/menu/ios';
 import { ScheduleEditor, type ScheduleDraft } from './schedule-editor';
-import { ItemsEditor, draftCategoriesOf, itemsInput, priceOk, type DraftCategory } from './items-editor';
+import { ItemsEditor, badPriceOf, itemsDraftOf, itemsEmpty, itemsInput, type MenuItemsDraft } from './items-editor';
+import { MenuTargetsField, defaultTargets, type DraftTarget } from './targets-field';
 import { MENU_COLORS, useInvalidateMenus, useMenuErrorText } from './shared';
 
 interface Draft {
@@ -39,10 +42,17 @@ interface Draft {
   isActive: boolean;
   color: string | null;
   schedule: ScheduleDraft;
-  categories: DraftCategory[];
+  items: MenuItemsDraft;
+  /** "פעיל ב" — the menu's places (the "שיוך" rows). */
+  targets: DraftTarget[];
+  /** Sent only when changed (or a new menu): an untouched list never rewrites the "שיוך" rows. */
+  targetsChanged: boolean;
 }
 
-function draftOf(m: CatalogMenu | null, company: string): Draft {
+function draftOf(m: CatalogMenu | null, company: string, scope: { shopId?: string | null; areaId?: string | null }): Draft {
+  const targets: DraftTarget[] = m
+    ? m.assignments.map((a) => ({ level: a.level, targetId: a.targetId, priority: a.priority, name: a.targetName }))
+    : defaultTargets(scope);
   return {
     name: m?.name ?? '',
     companyId: m ? (m.companyId ?? '') : company,
@@ -57,7 +67,9 @@ function draftOf(m: CatalogMenu | null, company: string): Draft {
       validFrom: m?.validFrom ?? '',
       validTo: m?.validTo ?? '',
     },
-    categories: draftCategoriesOf(m),
+    items: itemsDraftOf(m),
+    targets,
+    targetsChanged: !m && targets.length > 0,
   };
 }
 
@@ -76,7 +88,7 @@ export function MenuEditorDialog({
   const readOnly = !!menu && !menu.canEdit;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto bg-[#F2F2F7] dark:bg-black">
+      <DialogContent className="max-h-[94dvh] w-[calc(100vw-1rem)] max-w-5xl overflow-y-auto bg-[#F2F2F7] sm:max-w-5xl dark:bg-black">
         <DialogHeader>
           <DialogTitle>{readOnly ? t('titleView') : menu ? t('titleEdit') : t('titleNew')}</DialogTitle>
         </DialogHeader>
@@ -93,8 +105,13 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
   const { user } = useAuth();
   const scope = useScope();
   const admin = user?.role === 'super_admin' || user?.role === 'distributor';
+  // The scope bar's point of sale (`?area=`, feat/area-management) where this dashboard has it.
+  const scopeAreaId = (scope as unknown as { areaId?: string | null }).areaId ?? null;
   const [d, setD] = useState<Draft>(() =>
-    draftOf(menu, scope.companyId ?? (admin ? '' : (user?.companyId ?? scope.companies[0]?.id ?? ''))),
+    draftOf(menu, scope.companyId ?? (admin ? '' : (user?.companyId ?? scope.companies[0]?.id ?? '')), {
+      shopId: scope.shopId,
+      areaId: scopeAreaId,
+    }),
   );
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((x) => ({ ...x, [k]: v }));
   const invalidate = useInvalidateMenus();
@@ -112,7 +129,10 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
     validFrom: d.schedule.validFrom || null,
     validTo: d.schedule.validTo || null,
   };
-  const badPrice = d.categories.flatMap((c) => c.products).find((p) => !priceOk(p.price));
+  const badPriceId = badPriceOf(d.items);
+  const badPrice = badPriceId
+    ? { name: d.items.extraProducts.find((p) => p.id === badPriceId)?.name ?? t('anItem') }
+    : null;
   const problem = !d.name.trim()
     ? t('problemName')
     : scheduleProblems(schedule).length
@@ -122,7 +142,7 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
         : d.color && !COLOR.test(d.color)
           ? t('problemColor')
           : null;
-  const empty = d.categories.every((c) => c.products.length === 0 && (!c.allProducts || c.categoryId === null));
+  const empty = itemsEmpty(d.items);
 
   const body = (): CatalogMenuInput => ({
     name: d.name.trim().slice(0, NAME_MAX),
@@ -136,7 +156,8 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
     validFrom: schedule.validFrom,
     validTo: schedule.validTo,
     color: d.color ? d.color.toUpperCase() : null,
-    ...itemsInput(d.categories),
+    ...itemsInput(d.items),
+    ...(d.targetsChanged ? { assignments: d.targets.map((x) => ({ level: x.level, targetId: x.targetId, priority: x.priority })) } : {}),
   });
 
   const save = useMutation({
@@ -263,11 +284,22 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
       </IosCard>
       {d.companyId === '' ? <IosFootnote>{t('wholeOrgHint')}</IosFootnote> : <IosFootnote>{t('companyHint')}</IosFootnote>}
 
+      <IosSectionHeader>{t('where')}</IosSectionHeader>
+      <IosCard>
+        <MenuTargetsField
+          companyId={d.companyId}
+          value={d.targets}
+          onChange={(v) => setD((x) => ({ ...x, targets: v, targetsChanged: true }))}
+          disabled={readOnly}
+          initialShopId={scope.shopId ?? null}
+        />
+      </IosCard>
+
       <IosSectionHeader>{t('schedule')}</IosSectionHeader>
       <ScheduleEditor value={d.schedule} onChange={(v) => set('schedule', v)} disabled={readOnly} />
 
       <IosSectionHeader>{t('items')}</IosSectionHeader>
-      <ItemsEditor value={d.categories} onChange={(v) => set('categories', v)} disabled={readOnly} />
+      <ItemsEditor value={d.items} onChange={(v) => set('items', v)} disabled={readOnly} />
       {empty ? <p className="px-4 pt-1 text-[12px] font-medium text-[#C93400] dark:text-[#FF9F0A]">{t('emptyWarning')}</p> : null}
 
       {readOnly ? <p className="px-4 pt-3 text-[13px] text-[#6D6D72]">{t('readOnly')}</p> : null}

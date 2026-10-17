@@ -404,6 +404,8 @@
     "src/lib/cashStations.ts",
     "src/lib/cashStations.test.ts",
     "src/lib/presetDiscounts.ts",
-    "src/lib/presetDiscounts.test.ts"
+    "src/lib/presetDiscounts.test.ts",
+    "src/lib/catalogPicker.ts",
+    "src/lib/catalogPicker.test.ts"
   ]
 }
