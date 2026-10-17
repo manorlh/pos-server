@@ -53,7 +53,7 @@ import { KIOSK_ICON_DATA } from './kioskIconData';
 import { KIOSK_TEXT_REGISTRY_DATA } from './kioskTextRegistryData';
 import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, textShownUnder, validateKioskTexts, webTextOverride } from './kioskTexts';
 
-const TEMPLATES_SHA256 = '34d09102310f1731829cee38cf32731cf89140c9294288438bf854f41a217e00';
+const TEMPLATES_SHA256 = '76adf38cfe6b67e2b0e0c5534acc2dbab030f9c95a429b9a713acbc225e83f4d';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
 const REGISTRY_SHA256 = 'fc07e8b1f8350ea35238ef67c012e7c63129a81b4f229a3fd4ba0f4c708c3240';
 
@@ -401,7 +401,8 @@ import {
 describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additive, today\'s look by default', () => {
   const NEW_KEYS = ['railStyle', 'railEmphasis', 'catalogScroll', 'railFollow', 'pricePill', 'sheetMotion', 'topBar', 'helpButton', 'doneScreen', 'payMethodView'];
   // Added after the baseline was taken: "תג כמות" (14.10, kioskCountBadge.test.ts), on by default.
-  const LATER_KEYS = ['cartCountBadge'];
+  // …and "כפתור פרטים" (ⓘ, 17.10), auto by default.
+  const LATER_KEYS = ['cartCountBadge', 'infoButton'];
   const baseline = JSON.parse(fixture('kiosk_resolve_baseline_1013.json')) as { cases: Array<{ name: string; layers: Layers; resolved: Record<string, unknown> }> };
 
   it('the baseline holds every older template in every style', () => {
@@ -427,6 +428,12 @@ describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additi
       // "תמונת מחלקה מהקטלוג" (P:/specs/category-color-image.md §3), added after the baseline: on.
       assert.equal(cfg.catalog.categoryImagesFromCatalog, true);
       delete cfg.catalog.categoryImagesFromCatalog;
+      // 17.10 (owner): "הוספה מהירה" defaults to no_required — only where no level chose it; the rest as before.
+      const chose = c.layers.some((l) => !!l && typeof l === 'object' && 'quickAdd' in ((l as { layout?: object }).layout ?? {}));
+      if ((c.resolved.layout as Record<string, unknown>).quickAdd === 'off' && !chose) {
+        assert.equal(cfg.layout.quickAdd, 'no_required');
+        cfg.layout.quickAdd = 'off';
+      }
       assert.deepEqual(cfg, c.resolved);
     });
   }

@@ -20,6 +20,7 @@ import { categoryIconId } from './icons';
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { Empty, SectionTitle, cartCounts, unitOf, useTapDish, widthDpOf } from './parts';
 import { DishCountBadge } from './count-badge';
+import { DishInfoButton } from './info-button';
 
 /** A category's colour on the wall: its icon's hue (else the brand colour). */
 function tintOf(m: PreviewModel, cat: PCategory): string {
@@ -123,6 +124,8 @@ function WallButton({ m, p, tint, inCart }: { m: PreviewModel; p: PProduct; tint
       </span>
       {added ? <Check className="absolute start-1.5 top-2.5 h-5 w-5" /> : null}
       <DishCountBadge m={m} inCart={inCart} size={Math.round(22 * u)} className="end-1.5 top-2.5" />
+      {/* A button without a picture or a description: its window holds them (ⓘ at the bottom corner, clear of the ✓). */}
+      <DishInfoButton m={m} p={p} card={{ descriptionLines: 0, dietaryOnCard: false, cardPicture: 'none' }} size={Math.round(24 * u)} className="absolute bottom-1.5 start-1.5" />
     </button>
   );
 }

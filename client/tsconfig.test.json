@@ -75,6 +75,7 @@
     "src/lib/kioskLayout.ts",
     "src/lib/kioskLayout.test.ts",
     "src/lib/kioskCountBadge.test.ts",
+    "src/lib/kioskInfoButton.test.ts",
     "src/lib/kioskTopBar.ts",
     "src/lib/kioskTopBar.test.ts",
     "src/lib/kioskBonPrinters.ts",

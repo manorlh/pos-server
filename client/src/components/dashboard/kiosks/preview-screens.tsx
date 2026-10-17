@@ -107,6 +107,7 @@ import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
 import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
 import { catalogContinuous, dishCartCounts, doneCard, layoutOf, pricePillOn, reachLow, sheetMotionOf, tapPathOf, topBarItems, type LayoutTopBarItem } from '@/lib/kioskLayout';
 import { DishCountBadge } from '@/kiosk-shared/layouts/count-badge';
+import { DishInfoButton } from '@/kiosk-shared/layouts/info-button';
 import { catalogSearch } from '@/lib/kioskTopBar';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
 import { ERROR_COLOR, FEEDBACK_CSS, SuccessMark, badgePop, engineRoot, errorFx, revealIn, successFx } from './preview-feedback';
@@ -135,6 +136,8 @@ export interface PProduct {
   description: string | null;
   categoryId: string | null;
   dietaryTags: DietaryTag[];
+  /** The real kiosk: the dish's allergen codes (its window lists them) — the ⓘ's rule counts them (info-button.tsx). */
+  allergens?: string[];
   /** The real kiosk: a bigger picture for the product sheet (imageUrl is the card's). */
   imageLarge?: string | null;
   /**
@@ -1800,6 +1803,8 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
           </span>
         )}
         <DishCountBadge m={m} inCart={inCart} size={large ? 28 : 24} className="end-2 top-2" />
+        {/* "כפתור פרטים" (ⓘ): the window a quick-add tap skips. */}
+        <DishInfoButton m={m} p={p} card={{ descriptionLines: 2, dietaryOnCard: true, cardPicture: 'large' }} size={large ? 28 : 24} className="absolute start-2 top-2" />
       </div>
       <div className={large ? 'space-y-1 p-3' : 'space-y-0.5 p-2'} style={p.soldOut ? { opacity: 0.6 } : undefined}>
         <div className={`line-clamp-2 font-bold leading-snug ${large ? 'text-base' : 'kt-13'}`} style={textSize(m, 'productName', large ? 16 : 13)}>

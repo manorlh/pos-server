@@ -11,6 +11,7 @@ import { HERO_TURN_MS, layoutOf, shelfCardDp } from '@/lib/kioskLayout';
 import { ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { DP_PER_PX, cartCounts, kt, unitOf, useTapDish, widthDpOf } from './parts';
 import { DishCountBadge } from './count-badge';
+import { DishInfoButton } from './info-button';
 
 export function HeroBanner({ m }: { m: PreviewModel }) {
   const stripRef = useRef<HTMLDivElement>(null);
@@ -75,6 +76,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
       <div data-pic className="absolute inset-0">
         <ProductImage m={m} p={p} className="h-full w-full" />
         <DishCountBadge m={m} inCart={inCart} size={Math.round(30 * u)} className="end-2.5 top-2.5" />
+        <DishInfoButton m={m} p={p} card={{ descriptionLines: 0, dietaryOnCard: false, cardPicture: 'large' }} size={Math.round(30 * u)} className="absolute start-2.5 top-2.5" />
       </div>
       <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 px-3 py-2" style={{ background: 'rgba(17,17,17,0.8)', color: '#fff' }}>
         <span className="min-w-0 flex-1">

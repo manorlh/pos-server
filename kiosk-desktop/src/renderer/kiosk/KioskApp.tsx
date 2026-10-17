@@ -1432,6 +1432,8 @@ function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requ
     description: p.description,
     categoryId: p.categoryId,
     dietaryTags: p.dietaryTags,
+    // "כפתור פרטים" (ⓘ): the window lists them — the button's rule counts them.
+    allergens: p.allergens ?? [],
   };
 }
 
