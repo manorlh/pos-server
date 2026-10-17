@@ -16,6 +16,7 @@
 
 import { formatAgorot } from '../money';
 import type { DiscountType, OthMark } from './discounts';
+import type { LineChoices } from './choices';
 
 /** The longest label a held sale takes (HoldLabelMaxChars). */
 export const HOLD_LABEL_MAX = 24;
@@ -32,6 +33,9 @@ export interface HeldLine {
   oth: OthMark | null;
   /** "מחייב אישור מנהל במכירה": who let it in (so the pick-up does not ask twice). */
   managerApproval?: { byId: string; byName: string; at: string; self: boolean } | null;
+  /** "תוספות / ארוחה / הערות" (core/till/choices.ts): what the line was ordered with; its dish's own price then (`baseAgorot`). */
+  choices?: LineChoices | null;
+  baseAgorot?: number | null;
 }
 
 /** A held sale as it is kept on the till. */
@@ -211,6 +215,9 @@ export function heldSaleOf(raw: unknown): HeldSale | null {
       discount,
       oth,
       ...(l.managerApproval && typeof l.managerApproval === 'object' ? { managerApproval: l.managerApproval as HeldLine['managerApproval'] } : {}),
+      // "תוספות / ארוחה / הערות": kept as written (the engine checks them against the catalog again on the way in).
+      ...(l.choices && typeof l.choices === 'object' && Array.isArray((l.choices as LineChoices).options) ? { choices: l.choices as LineChoices } : {}),
+      ...(typeof l.baseAgorot === 'number' ? { baseAgorot: l.baseAgorot } : {}),
     });
   }
   return {

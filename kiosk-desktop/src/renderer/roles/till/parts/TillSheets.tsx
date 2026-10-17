@@ -628,3 +628,23 @@ export function OrderDetailsSheet({
     </div>
   );
 }
+
+/**
+ * "כשאין מספיק מזומן לטיפים באשראי" = ask (P:/specs/x-z-cash-with-tips.md §2): at the close, only when the drawer is short
+ * of the card tips — pay only what is there (the rest owed to staff) or pay all, the drawer below zero.
+ */
+export function CardTipsChoiceSheet({ title, body, partial, negative, onChoose, onClose }: { title: string; body: string; partial: string; negative: string; onChoose(choice: 'partial' | 'negative'): void; onClose(): void }) {
+  return (
+    <Sheet title={title} onClose={onClose}>
+      {body ? <p className="t-small">{body}</p> : null}
+      <div className="t-shift-actions">
+        <button type="button" className="t-btn t-btn-primary" onClick={() => onChoose('partial')}>
+          {partial}
+        </button>
+        <button type="button" className="t-btn" onClick={() => onChoose('negative')}>
+          {negative}
+        </button>
+      </div>
+    </Sheet>
+  );
+}

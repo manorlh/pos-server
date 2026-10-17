@@ -1,0 +1,100 @@
+/* "מדפסות" (screens/PrintersScreen.tsx). Plain CSS for Chromium 108: no nesting, no :has(), no blur, no keyframes. */
+
+.t-prn-card {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+  overflow-wrap: anywhere;
+}
+
+.t-prn-card p {
+  margin: 0 0 4px;
+}
+
+.t-prn-attention {
+  border-color: var(--t-danger);
+}
+
+.t-prn-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.t-prn-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.t-prn-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #9e9e9e;
+}
+
+.t-prn-dot-ok {
+  background: #2e7d32;
+}
+
+.t-prn-dot-warn {
+  background: #f9a825;
+}
+
+.t-prn-dot-error {
+  background: #c62828;
+}
+
+.t-prn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.t-prn-message {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--t-radius);
+  background: var(--t-accent-soft);
+  overflow-wrap: anywhere;
+}
+
+.t-prn-history {
+  margin: 0;
+}
+
+.t-prn-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--t-touch);
+}
+
+.t-prn-history-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-prn-found {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--t-line);
+}
+
+.t-prn-add {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

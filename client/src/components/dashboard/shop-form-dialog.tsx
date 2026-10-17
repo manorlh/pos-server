@@ -3,10 +3,14 @@
 /**
  * Create / edit a shop. Shared by the shops list and the shop drill-down page.
  *
- * Creating is two steps: the shop's details, then "תצורת עבודה" — how the whole shop works with
+ * Creating is three steps: the shop's details, then "תצורת עבודה" — how the whole shop works with
  * its tills (a template, a copy of another shop's, or the fields; spec shop-work-config.md),
- * sent with `POST /shops`. "דלג" creates the shop as before, with no profile. After creating
- * with a profile the dialog shows what the server applied and what waits for the first till.
+ * sent with `POST /shops` — then "טיפים" (components/dashboard/shop-tips.tsx): whether the shop
+ * takes tips and how, written at the new shop's own level after it exists (only what differs from
+ * what it inherits; "ללא טיפ" on a company without tips writes nothing). "דלג" on "תצורת עבודה"
+ * creates the shop with no profile, as before. The tips' choice also sets the profile's `tips`
+ * (on / the distribution), so the two never disagree. After creating, the dialog shows what the
+ * server applied, what waits for the first till, and what of the tips was saved.
  * Editing an existing shop is the details alone; its profile is on the shop page.
  *
  * "קוד סניף" of a new shop comes filled with the company's next code ("אוטומטי: הבא בתור. אפשר
@@ -63,6 +67,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import {
+  ShopTipsStep,
+  TipsResult,
+  saveShopTips,
+  seedTipsStep,
+  tipsReady,
+  type TipsStepValue,
+} from '@/components/dashboard/shop-tips';
+import { tillTips, type TipSaveResult, type TipSetup } from '@/lib/shopTips';
+import {
   LicenseFields,
   licenseIncomplete,
   licensePayload,
@@ -87,8 +100,26 @@ import { cn } from '@/lib/utils';
 
 const EMPTY: Partial<Shop> = { name: '', branchId: '', address: '', city: '' };
 
-/** details → "תצורת עבודה" → done (the new shop's profile as applied). */
-type Step = 'details' | 'profile' | 'done';
+/** details → "תצורת עבודה" → "טיפים" → done (the new shop's profile and tips as applied). */
+type Step = 'details' | 'profile' | 'tips' | 'done';
+
+/**
+ * The work profile's `tips` follow the tips step: on when the till asks for a tip, and the
+ * distribution chosen there. A copy the server makes (its profile not read here) stays as it is.
+ */
+function choiceWithTips(choice: CreateChoice, tips: TipSetup): CreateChoice {
+  const want = { enabled: tillTips(tips), distribution: tips.distribution };
+  switch (choice.kind) {
+    case 'skip':
+      return choice;
+    case 'profile':
+      return { kind: 'profile', profile: { ...choice.profile, tips: want } };
+    case 'copy':
+      if (!choice.profile) return choice;
+      if (choice.profile.tips.enabled === want.enabled && choice.profile.tips.distribution === want.distribution) return choice;
+      return { ...choice, profile: { ...choice.profile, tips: want }, edited: true };
+  }
+}
 
 export function ShopFormDialog({
   shop,
@@ -138,8 +169,9 @@ function StepHeader({ step }: { step: Step }) {
   const items: { id: Step; label: string }[] = [
     { id: 'details', label: t('stepDetails') },
     { id: 'profile', label: t('stepProfile') },
+    { id: 'tips', label: t('stepTips') },
   ];
-  const at = step === 'details' ? 0 : 1;
+  const at = step === 'details' ? 0 : step === 'profile' ? 1 : 2;
   return (
     <ol className="flex flex-wrap items-center gap-2 text-xs" aria-label={t('stepsLabel')}>
       {items.map((it, i) => (
@@ -214,10 +246,33 @@ function ShopForm({
   }
   // Step 2: "תצורת עבודה" of the new shop.
   const [profileStep, setProfileStep] = useState<WorkProfileStepValue>(EMPTY_STEP_VALUE);
-  // After creating with a profile: the shop, what the server said of the profile, what was sent.
-  const [created, setCreated] = useState<{ shop: Shop; result: CreatedProfile | null; sent: WorkProfile | null } | null>(
-    null,
-  );
+  // "דלג" on "תצורת עבודה": the shop without a profile (the tips step still follows).
+  const [profileSkipped, setProfileSkipped] = useState(false);
+  // Step 3: "טיפים" — seeded from the company, or from the shop the profile was copied from.
+  const [tipsStep, setTipsStep] = useState<TipsStepValue>({
+    from: { kind: 'company', companyId: '' },
+    value: null,
+    error: false,
+  });
+  // After creating: the shop, what the server said of the profile, what was sent, the tips' save.
+  const [created, setCreated] = useState<{
+    shop: Shop;
+    result: CreatedProfile | null;
+    sent: WorkProfile | null;
+    profile: boolean;
+    tips: TipSaveResult | null;
+  } | null>(null);
+
+  const toTips = (skipped: boolean) => {
+    setProfileSkipped(skipped);
+    const companyId = draft.companyId ?? '';
+    const copy = skipped ? null : profileStep.copy;
+    const from: TipsStepValue['from'] = copy
+      ? { kind: 'copy', companyId, shopId: copy.shopId, shopName: copy.shopName }
+      : { kind: 'company', companyId };
+    void seedTipsStep(qc, from, tipsStep, setTipsStep);
+    setStep('tips');
+  };
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -226,7 +281,7 @@ function ShopForm({
   const tree = buildCompanyTree(companies);
 
   const save = useMutation({
-    mutationFn: async ({ s, choice }: { s: Partial<Shop>; choice: CreateChoice }) => {
+    mutationFn: async ({ s, choice, tips }: { s: Partial<Shop>; choice: CreateChoice; tips?: TipSetup | null }) => {
       // The draft is the row as read, license included; only a super admin may send that
       // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
       // "קוד סניף" is mandatory: an internal code identifying the branch (lib/branchCode.ts). A new
@@ -246,9 +301,22 @@ function ShopForm({
       const { data } = s.id
         ? await api.put<Shop>(`/shops/${s.id}`, payload)
         : await api.post<Shop>('/shops', payload);
-      return { data, choice, code };
+      // "טיפים": at the new shop's own level, now that it exists. A failure here never undoes the
+      // shop: the result says what was and was not saved, and the shop page's card changes it later.
+      let tipsResult: TipSaveResult | null = null;
+      if (!s.id && tips) {
+        try {
+          tipsResult = await saveShopTips(data.companyId, data.id, tips);
+        } catch (err) {
+          tipsResult = {
+            ok: false,
+            outcomes: [{ part: 'settings', state: 'failed', message: axiosErrorToToastMessage(err, tc('error')) }],
+          };
+        }
+      }
+      return { data, choice, code, tipsResult };
     },
-    onSuccess: ({ data, choice, code }) => {
+    onSuccess: ({ data, choice, code, tipsResult }) => {
       qc.invalidateQueries({ queryKey: ['shops'] });
       qc.invalidateQueries({ queryKey: ['next-branch-code'] });
       toast.success(isNew ? t('created') : t('updated'));
@@ -256,8 +324,16 @@ function ShopForm({
       const reassigned = isNew ? branchCodeReassigned(code, data.branchId) : null;
       if (reassigned) toast.info(t('branchIdReassigned', { sent: code.branchId, code: reassigned }));
       onSaved?.(data);
-      if (isNew && choice.kind !== 'skip') {
-        setCreated({ shop: data, result: createdWorkProfileOf(data), sent: createPayloadOf(choice).workProfile ?? null });
+      qc.invalidateQueries({ queryKey: ['shop-tips'] });
+      const tipsWrote = !!tipsResult && tipsResult.outcomes.length > 0;
+      if (isNew && (choice.kind !== 'skip' || tipsWrote)) {
+        setCreated({
+          shop: data,
+          result: createdWorkProfileOf(data),
+          sent: createPayloadOf(choice).workProfile ?? null,
+          profile: choice.kind !== 'skip',
+          tips: tipsResult,
+        });
         setStep('done');
         return;
       }
@@ -274,7 +350,10 @@ function ShopForm({
         <DialogHeader>
           <DialogTitle>{tw('createdTitle', { name: created.shop.name })}</DialogTitle>
         </DialogHeader>
-        <CreatedWorkProfile shopId={created.shop.id} created={created.result} sent={created.sent} />
+        {created.profile ? (
+          <CreatedWorkProfile shopId={created.shop.id} created={created.result} sent={created.sent} />
+        ) : null}
+        {created.tips ? <TipsResult result={created.tips} /> : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tw('close')}
@@ -305,20 +384,47 @@ function ShopForm({
             {tw('back')}
           </Button>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button
-              variant="ghost"
-              disabled={save.isPending}
-              onClick={() => save.mutate({ s: draft, choice: { kind: 'skip' } })}
-            >
+            <Button variant="ghost" disabled={save.isPending} onClick={() => toTips(true)}>
               {tw('skip')}
             </Button>
-            <Button
-              disabled={save.isPending || !stepReady(profileStep) || detailsBlocked}
-              onClick={() => save.mutate({ s: draft, choice: stepChoice(profileStep) })}
-            >
-              {save.isPending ? tw('creating') : tw('create')}
+            <Button disabled={save.isPending || !stepReady(profileStep) || detailsBlocked} onClick={() => toTips(false)}>
+              {tw('nextTips')}
             </Button>
           </div>
+        </DialogFooter>
+      </>
+    );
+  }
+
+  if (isNew && step === 'tips') {
+    const tipsValue = tipsStep.value;
+    const choice: CreateChoice = profileSkipped ? { kind: 'skip' } : stepChoice(profileStep);
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>
+            {t('addTitle')} — {tw('stepTips')}
+          </DialogTitle>
+          <StepHeader step={step} />
+        </DialogHeader>
+        <ShopTipsStep step={tipsStep} onChange={setTipsStep} />
+        <DialogFooter className="sm:justify-between">
+          <Button variant="outline" onClick={() => setStep('profile')} disabled={save.isPending}>
+            {tw('back')}
+          </Button>
+          <Button
+            // The tips not readable: the shop is created without them (set later on its page).
+            disabled={save.isPending || (tipsValue ? !tipsReady(tipsValue) : !tipsStep.error) || detailsBlocked}
+            onClick={() =>
+              save.mutate(
+                tipsValue
+                  ? { s: draft, choice: choiceWithTips(choice, tipsValue.setup), tips: tipsValue.setup }
+                  : { s: draft, choice },
+              )
+            }
+          >
+            {save.isPending ? tw('creating') : tw('create')}
+          </Button>
         </DialogFooter>
       </>
     );

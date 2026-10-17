@@ -15,6 +15,7 @@ import type { SellState, TillDesignAction } from '../../../../shared/till/protoc
 import { money, T } from '../text';
 import { PresetChips, type PresetItem } from './TillSheets';
 import { Icon } from '../theme/icons';
+import { CHOICES_TEXT } from '../../../../core/till/choices';
 
 export interface CartActions {
   setQty(lineId: string, qty: number): void;
@@ -34,6 +35,8 @@ export interface CartActions {
   orderEdit?(): void;
   /** "הנחות קבועות": a preset's one-tap button. */
   preset?(id: string): void;
+  /** "עריכת המנה": a line with choices opened again in its sheet. */
+  editLine?(lineId: string): void;
   /**
    * A quick-bar button (Android QuickPayButtonView / DesignBarButtonView): a tender straight into the payment's own flow
    * (fastCard, cashWithChange, fastCash, a banknote), or one of the order's own actions. Absent: the bar shows "תשלום" only.
@@ -205,6 +208,14 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
                   {/* "כלול בשובר #12" (a production voucher covers it); a ₪0 line's value beside it. */}
                   {l.voucher ? <span className="t-badge">{l.voucherValueAgorot ? `${money(l.voucherValueAgorot)} · ${l.voucher}` : l.voucher}</span> : null}
                 </span>
+                {l.subLines && l.subLines.length > 0
+                  ? // What it was ordered with (CartLineMenuInfo): the choices, a meal's components, the notes, the allergy.
+                    l.subLines.map((w, i) => (
+                      <span key={i} className={`t-line-note${w.startsWith('!') || w.startsWith(CHOICES_TEXT.allergyDeclared('')) ? ' t-line-sub-alert' : ''}`}>
+                        {w}
+                      </span>
+                    ))
+                  : null}
               </span>
               <span className="t-line-chev" aria-hidden="true">
                 {open === l.lineId ? '⌃' : '⌄'}
@@ -221,6 +232,11 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
             </div>
             {open === l.lineId ? (
               <div className="t-line-actions">
+                {!l.refund && l.choices && actions.editLine ? (
+                  <button type="button" className="t-chip t-chip-on" onClick={() => actions.editLine?.(l.lineId)}>
+                    {CHOICES_TEXT.edit}
+                  </button>
+                ) : null}
                 {!l.refund && !l.oth && !l.noDiscount && actions.discount ? (
                   <>
                     {discountShown

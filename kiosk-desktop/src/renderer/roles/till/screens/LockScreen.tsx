@@ -6,7 +6,7 @@
  * the round keys — and "כניסה" at the foot, "טכנאי" under it.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { PinPad } from '../parts/PinPad';
 import { T } from '../text';
 
@@ -31,7 +31,7 @@ export function dayLine(d: Date): string {
  * `onTechnician`: "טכנאי" under the pad (Android's login screen `TechnicianButton`) — the technician's code, then the one
  * technician screen of every role (P:/specs/windows-setup-parity.md); absent where the host has none (a browser).
  */
-export function LockScreen({ demo, onLogin, onTechnician }: { demo: boolean; onLogin(pin: string): void; onTechnician?: () => void }) {
+export function LockScreen({ demo, onLogin, onTechnician, extra }: { demo: boolean; onLogin(pin: string): void; onTechnician?: () => void; /** "שעון נוכחות" and the like, under the pad. */ extra?: ReactNode }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = window.setInterval(() => setNow(new Date()), 15_000);
@@ -55,6 +55,7 @@ export function LockScreen({ demo, onLogin, onTechnician }: { demo: boolean; onL
       <h1 className="t-report-title">{T.loginTitle}</h1>
       {demo ? <p className="t-muted">הדגמה: כל קוד של 4 ספרות; 1234 — מנהלת</p> : null}
       <PinPad label={T.loginEnterCode} submitLabel={T.loginSignIn} onSubmit={onLogin} />
+      {extra}
       {onTechnician ? (
         <button type="button" className="t-link t-lock-tech" onClick={onTechnician}>
           טכנאי

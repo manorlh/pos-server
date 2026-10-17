@@ -11,6 +11,7 @@ import type { DeviceRoleName, TillState, XReport } from '../../../../shared/till
 import { parseAmount } from '../amount';
 import type { TillLayout } from '../layout/tillLayout';
 import { money, T } from '../text';
+import { CASH_WITH_TIPS_LABELS } from '../../../../core/till/cashWithTips';
 
 export { parseAmount };
 
@@ -161,6 +162,19 @@ export function ShiftScreen({ state, layout, actions }: { state: TillState; layo
                   <dd>{money(closed.countedCashAgorot)}</dd>
                   <dt>{T.difference}</dt>
                   <dd>{money(closed.differenceAgorot ?? 0)}</dd>
+                </>
+              ) : null}
+              {/* "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1): always — the total (== מזומן צפוי) red below zero. */}
+              {figures.cashBlock && figures.cashBlock.length > 0 ? (
+                <>
+                  <dt className="t-cash-block-title">{CASH_WITH_TIPS_LABELS.title}</dt>
+                  <dd />
+                  {figures.cashBlock.map((l) => (
+                    <Fragment key={l.key}>
+                      <dt className={`${l.bold ? 't-cash-bold' : ''}${l.warn ? ' t-cash-warn' : ''}`.trim() || undefined}>{l.label}</dt>
+                      <dd className={`${l.bold ? 't-cash-bold' : ''}${l.warn ? ' t-cash-warn' : ''}`.trim() || undefined}>{money(l.amountAgorot)}</dd>
+                    </Fragment>
+                  ))}
                 </>
               ) : null}
             </>

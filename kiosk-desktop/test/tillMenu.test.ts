@@ -375,3 +375,71 @@ describe('"קיוסקים" on a controlling till (core/till/kioskControl.ts, mai
     }
   });
 });
+
+describe('phase 2: the rows the modules brought (P:/specs/windows-till-menu-parity.md §7), in the Android order', () => {
+  const PHASE2: TillMenuFacts = {
+    ...FULL,
+    catalogAdmin: true,
+    shopZ: true,
+    attendance: { line: 'במשמרת מ־17:02' },
+    readyOrders: true,
+    kioskOrders: 2,
+    voucherStation: { label: 'יציאה למסך רגיל' },
+    voucherBalance: true,
+    cloudZ: true,
+    printers: true,
+    screenEdit: true,
+    alerts: { line: '3 פתוחות' },
+  };
+
+  it('every row in its place, with its words and second lines', () => {
+    const g = buildTillMenu(PHASE2);
+    expect(labels(g)).toEqual([
+      { id: 'top', title: null, rows: ['ניהול קטלוג', 'סגירת Z סניפי'], folder: [] },
+      {
+        id: 'shift',
+        title: 'משמרת',
+        rows: [
+          'משמרת (דו״ח X)',
+          'סגירת משמרת',
+          'הפק Z',
+          'פתיחת מגירה',
+          'מזומן במגירה',
+          'זיכוי',
+          'פעולות אשראי',
+          'נוכחות',
+          'סנכרון מול הענן',
+          'הזמנות להכנה',
+          'הזמנות קיוסק לתשלום',
+          'יציאה למסך רגיל',
+          'בירור יתרת שובר',
+          'עדכון גרסה 0.5.12',
+        ],
+        folder: [],
+      },
+      { id: 'reports', title: 'דוחות', rows: ['היסטוריה'], folder: ['24 השעות האחרונות', 'היסטוריית משמרות', 'דוחות Z', 'מכירות לפי מוצר', 'דוח לפי עובד', 'דוח תשר', 'דוחות Z', 'דוח X סניפי'] },
+      { id: 'manage', title: 'ניהול', rows: ['הגדרות', 'מדפסות', 'תור הדפסה', 'עריכת מסך', 'אבחון'], folder: [] },
+      { id: 'device', title: null, rows: ['מעבר לקיוסק', 'התראות', 'חסומים כעת', 'עובדים מחוברים', 'תמיכה מרחוק', 'יציאה מהמשתמש'], folder: [] },
+    ]);
+    const rows = g.flatMap((x) => [...x.rows, ...(x.folder ?? [])]);
+    const row = (key: string) => rows.find((r) => r.key === key)!;
+    expect([row('attendance').sub, row('kiosk_orders').sub, row('alerts').sub]).toEqual(['במשמרת מ־17:02', '2 ממתינות', '3 פתוחות']);
+    expect([row('catalog_admin').tile, row('catalog_admin').glyph, row('shop_z').tile, row('ready_orders').glyph, row('alerts').glyph, row('screen_edit').tile]).toEqual(['orange', 'edit', 'pink', 'done', 'bell', 'teal']);
+    expect(row('z_reports').target).toBe('cloudZ');
+  });
+
+  it('a closed till: the top, attendance, the station and the balance, the cloud\'s Zs and alerts stay; the rest go', () => {
+    const g = buildTillMenu({ ...PHASE2, shiftOpen: false });
+    const shown = keys(g);
+    for (const k of ['catalog_admin', 'shop_z', 'attendance', 'voucher_station', 'voucher_balance', 'z_reports', 'alerts']) expect(shown).toContain(k);
+    for (const k of ['ready_orders', 'kiosk_orders', 'printers', 'screen_edit']) expect(shown).not.toContain(k);
+  });
+
+  it('each one hidden by its MenuHide key; none offered — none shown; the cloud\'s Zs behind "דוחות בקופה"', () => {
+    const all = ['catalog_admin', 'shop_z', 'attendance', 'ready_orders', 'kiosk_orders', 'voucher_station', 'voucher_balance', 'z_reports', 'printers', 'screen_edit', 'alerts'];
+    expect(keys(buildTillMenu({ ...PHASE2, hidden: all })).filter((k) => all.includes(k))).toEqual([]);
+    expect(keys(buildTillMenu(FULL)).filter((k) => all.includes(k))).toEqual([]);
+    expect(keys(buildTillMenu({ ...PHASE2, kioskOrders: 0 }))).not.toContain('kiosk_orders');
+    expect(keys(buildTillMenu({ ...PHASE2, denied: ['VIEW_REPORTS'] }))).not.toContain('z_reports');
+  });
+});

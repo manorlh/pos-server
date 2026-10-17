@@ -21,6 +21,21 @@ export const TILL_PROTOCOL = 1;
 /** Where these names come from until the golden file lands (S0-1). */
 export const PROTOCOL_SOURCE = 'local-mock-v0';
 
+import type { ChoiceGroupView, ProductChoices } from '../../core/till/choices';
+import type { CatalogAdminState } from '../../core/till/catalogAdmin';
+import type { ShopZState } from '../../core/till/shopZRun';
+import type { AttendanceState } from '../../core/till/attendance';
+import type { ReadyOrdersState } from '../../core/till/readyOrders';
+import type { TillAlertsState } from '../../core/till/tillAlerts';
+import type { VoucherBalanceState } from '../../core/till/voucherBalance';
+import type { VoucherStationState } from '../../core/till/voucherStation';
+import type { CloudZState } from '../../core/till/cloudZ';
+import type { PrintersState } from '../../core/till/printersView';
+import type { ScreenEditState } from '../../core/till/screenEdit';
+import type { KioskOrdersState } from '../../core/till/kioskOrders';
+
+export type { ChoiceGroupView, ProductChoices };
+
 /* ----------------------------------------------------------------- envelopes */
 
 export interface EngineCall {
@@ -55,6 +70,8 @@ export const TILL_OPS = [
   'session.logout',
   'catalog.snapshot',
   'sell.add',
+  // "תוספות / ארוחה / הערות" (core/till/choices.ts): a configured line changed from its sheet ("עדכן").
+  'sell.configure',
   'sell.setQty',
   'sell.remove',
   'sell.discount',
@@ -184,13 +201,22 @@ export const TILL_OPS = [
   'kiosks.command',
 ] as const;
 
-export type TillOp = (typeof TILL_OPS)[number];
+/**
+ * The feature modules' ops (main/till/tillContext.ts `TillFeature`, registered by the engine): each module's prefix — its
+ * ops are routed to it, never in [TILL_OPS]. Their arguments are each module's own (checked there).
+ */
+export const FEATURE_PREFIXES = ['catalog', 'shopZ', 'attendance', 'ready', 'alerts', 'voucherBalance', 'voucherStation', 'cloudZ', 'printers', 'screenEdit', 'kioskOrders'] as const;
+export type FeaturePrefix = (typeof FEATURE_PREFIXES)[number];
+export type FeatureOp = `${FeaturePrefix}.${string}`;
+
+export type TillOp = (typeof TILL_OPS)[number] | FeatureOp;
 
 /** Ops that change something: each needs a clientOpId (the engine refuses one without). */
 export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'session.login',
   'session.logout',
   'sell.add',
+  'sell.configure',
   'sell.setQty',
   'sell.remove',
   'sell.discount',
@@ -263,13 +289,25 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'kiosks.command',
 ]);
 
-export interface OpArgs {
+/** A feature module's op arguments (its own module checks them). */
+export type FeatureOpArgs = { [K in FeatureOp]: Record<string, unknown> };
+
+export type OpArgs = CoreOpArgs & FeatureOpArgs;
+
+export interface CoreOpArgs {
   'session.hello': { since?: number; protocol?: number };
   /** `pin` (the screens' word) or `code` (the golden protocol's): the engine reads either. */
   'session.login': { pin?: string; code?: string };
   'session.logout': Record<string, never>;
   'catalog.snapshot': Record<string, never>;
-  'sell.add': { productId: string; qty?: number };
+  /**
+   * A product into the cart. A plain tap (no `configured`): a meal or a dish with a required group answers `{choices: true}`
+   * and adds nothing — the screen opens its sheet; any other dish goes in on its options' defaults. From the sheet
+   * (`configured: true`): its choices, notes, meal, "חשוב" and the diner's allergies, checked against the catalog's groups.
+   */
+  'sell.add': { productId: string; qty?: number; configured?: boolean } & Partial<LineChoicesArgs>;
+  /** "עדכן": a configured line's choices and quantity, from its sheet. */
+  'sell.configure': { lineId: string; qty: number } & LineChoicesArgs;
   'sell.setQty': { lineId: string; qty: number };
   'sell.remove': { lineId: string };
   /** A line's discount in whole percent (5 / 10 / 20; 0 takes it off). */
@@ -292,11 +330,12 @@ export interface OpArgs {
   'doc.detail': { documentId: string; quantities?: Record<string, number> };
   'shift.open': { openingCashAgorot: number };
   /** `keepHeld`: "סגור והשאר מושהות" where the shop allows it (`allowCloseWithHeldSales`). */
-  'shift.close': { countedCashAgorot: number; keepHeld?: boolean };
+  /** `cardTipsChoice`: the manager's answer when the close asked (`card_tips_choice`, x-z-cash-with-tips §2 ask). */
+  'shift.close': { countedCashAgorot: number; keepHeld?: boolean; cardTipsChoice?: 'partial' | 'negative' };
   'report.x': Record<string, never>;
   'report.shopX': { refresh?: boolean; print?: boolean };
   /** `countedCashAgorot`: the drawer's count when the shift is still open (it is closed first). */
-  'z.produce': { countedCashAgorot?: number; keepHeld?: boolean };
+  'z.produce': { countedCashAgorot?: number; keepHeld?: boolean; cardTipsChoice?: 'partial' | 'negative' };
   'discount.preview': { mode: BasketDiscountMode; input: string };
   'discount.apply': { mode: BasketDiscountMode; input: string };
   'discount.remove': Record<string, never>;
@@ -399,7 +438,7 @@ export interface OpArgs {
   'report.reprintZ': { id: string };
   'kiosks.refresh': Record<string, never>;
   /** `minutes`: "נעילה למכירה" for so long (absent: until reopened by hand); `message`: to the customers. */
-  'kiosks.command': { kioskId: string; action: 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt'; message?: string | null; minutes?: number | null };
+  'kiosks.command': { kioskId: string; action: 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt' | 'enter_till' | 'return_kiosk'; message?: string | null; minutes?: number | null };
 }
 
 /** One kiosk as the panel shows it. */
@@ -418,6 +457,10 @@ export interface KioskControlRow {
   /** By its Z mode: "סגירת משמרת" (the shop's Z) or "הפקת Z" (its own); null with no shift open there. */
   z: { action: 'close_shift' | 'till_z'; label: string } | null;
   zNote: string | null;
+  /** "נקודת מכירה: …" — the kiosk's point of sale under its name; null — none. */
+  areaLine?: string | null;
+  /** "מצב עבודה" (only where the cloud lets this till switch it): where it works, the button, what waits. */
+  workMode?: { inTill: boolean; stateLine: string; action: 'enter_till' | 'return_kiosk'; label: string; pending: string | null } | null;
 }
 
 /** "קיוסקים" (core/till/kioskControl.ts): the kiosks this till controls, a command on its way, how the last went. */
@@ -508,6 +551,10 @@ export const TILL_ERRORS = {
   basket_changed: 'הקבלה המקורית זוכתה בינתיים. יש לבחור את הפריטים מחדש.',
   discount_refused: 'ההנחה לא ניתנה',
   voucher_refused: 'השובר לא מומש',
+  // "נוכחות" (core/till/attendance.ts): selling waits for the employee's clock-in / the end of the break.
+  attendance_required: 'יש להיכנס למשמרת נוכחות לפני מכירה',
+  // "כשאין מספיק מזומן לטיפים באשראי" = ask (x-z-cash-with-tips §2): the close waits for the manager's choice.
+  card_tips_choice: 'אין מספיק מזומן לטיפים באשראי',
 } as const;
 
 export type TillErrorCode = keyof typeof TILL_ERRORS;
@@ -574,12 +621,25 @@ export interface Product {
   saleReason?: string;
   /** The product is a voucher (the catalog's `voucherId`): credited from its receipt only. */
   voucher?: boolean;
+  /** "תוספות / ארוחה": what may be chosen with it (core/till/choices.ts); absent — nothing (a plain tap adds it). */
+  choices?: ProductChoices;
 }
 
 export interface Catalog {
   version: number;
   departments: Department[];
   products: Product[];
+  /** The groups the products' sheets use (core/till/choices.ts), by id; absent — none. */
+  choiceGroups?: Record<string, ChoiceGroupView>;
+}
+
+/** A line's choices as an op carries them (core/till/choices.ts LineChoices). */
+export interface LineChoicesArgs {
+  options: Array<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
+  notes: string[];
+  meal: { components: Array<{ slotId: string; productId: string; options?: Array<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null;
+  important: boolean;
+  allergies: string[];
 }
 
 /**
@@ -737,6 +797,10 @@ export interface CartLine {
   voucher?: string | null;
   /** A ₪0 voucher line: what its goods were worth ("שווי"), outside every total. */
   voucherValueAgorot?: number;
+  /** What it was ordered with, in words (the choices, a meal's components, the notes, the allergy) — under the line. */
+  subLines?: string[];
+  /** A dish / meal line: its choices as the sheet reopens them ("עריכת המנה"). Absent — nothing to choose. */
+  choices?: LineChoicesArgs;
 }
 
 export interface SellState {
@@ -772,6 +836,8 @@ export interface SellState {
   othAgorot?: number;
   /** What the lines that take no discount come to (out of the basket discount's base). */
   nonDiscountableAgorot?: number;
+  /** "תוספות — חלון קופץ אוטומטי" / "הערות — חלון קופץ אוטומטי" (`modifiersAutoOpen` / `notesAutoOpen`). */
+  choicesAuto?: { addOns: boolean; notes: boolean };
 }
 
 /** "מכירות בהמתנה" on this till. */
@@ -1059,6 +1125,31 @@ export interface TillState {
   terminalOffline?: { text: string; tone: 'amber' };
   /** "בון לא הודפס במדפסת מטבח": the red strip, how many, and the redirects in force ("«בר» נשלחת ל«מטבח» עד 14:20"). */
   printQueue?: { banner: string | null; count: number; redirects: Array<{ fromId: string; text: string }> };
+  /* ── phase 2 (P:/specs/windows-till-menu-parity.md §7): the feature modules' slices (each absent while it says nothing) ── */
+  /** Rows of the menu the modules offer before their screen is open (the shop's Z master, the cloud's Zs). */
+  menuOffers?: { shopZ: boolean; cloudZ: boolean };
+  /** "ניהול קטלוג" (main/till/tillCatalogAdmin.ts). */
+  catalogAdmin?: CatalogAdminState;
+  /** "סגירת Z סניפי" (main/till/tillShopZ.ts). */
+  shopZ?: ShopZState;
+  /** "נוכחות" (main/till/tillAttendance.ts) — signed out too (the clock on the lock screen). */
+  attendance?: AttendanceState;
+  /** "הזמנות להכנה" (main/till/tillReadyOrders.ts). */
+  readyOrders?: ReadyOrdersState;
+  /** "התראות" (main/till/tillAlertsService.ts). */
+  alerts?: TillAlertsState;
+  /** "בירור יתרת שובר" (main/till/tillVoucherBalance.ts). */
+  voucherBalance?: VoucherBalanceState;
+  /** "עמדת שובר" (main/till/tillVoucherStation.ts). */
+  voucherStation?: VoucherStationState;
+  /** "דוחות Z" from the cloud (main/till/tillCloudZ.ts). */
+  cloudZ?: CloudZState;
+  /** "מדפסות" (main/till/tillPrinters.ts). */
+  printers?: PrintersState;
+  /** "עריכת מסך" (main/till/tillScreenEdit.ts). */
+  screenEdit?: ScreenEditState;
+  /** "הזמנות קיוסק לתשלום" (main/till/tillKioskOrders.ts). */
+  kioskOrders?: KioskOrdersState;
   order?: {
     dining: 'take_away' | 'eat_in' | null;
     name: string | null;
@@ -1177,6 +1268,14 @@ export interface XReport {
   /** "שוברי הפקה": what production vouchers paid as a tender; and the vouchers' sections (information, in no figure above). */
   vouchersAgorot?: number;
   voucherInfo?: Array<{ label: string; value: string; title?: boolean }>;
+  /** "טיפ באשראי משולם מהמזומן" (core/till/cashWithTips.ts): paid out of the drawer, owed to staff, the old "מזומן במגירה". */
+  cardTipsFromDrawerAgorot?: number;
+  cardTipsUnpaidAgorot?: number;
+  drawerCashAgorot?: number;
+  /** `ask` and short: the close will ask the manager (this X previews partial). */
+  cardTipsNeedsChoice?: boolean;
+  /** "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1): the block, in order; `warn` red. */
+  cashBlock?: Array<{ key: string; label: string; amountAgorot: number; bold: boolean; warn: boolean }>;
   /** The paper went to the printer. */
   printed?: boolean;
 }

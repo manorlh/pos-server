@@ -75,6 +75,12 @@ export const PERM_LABEL: Record<string, string> = {
   'CASH_DRAWER.OPEN_ON_CASH_SALE': 'פתיחת מגירה בעסקת מזומן',
   'CASH_DRAWER.OPEN_MANUALLY': 'פתיחת מגירה ידנית',
   CATALOG_WRITE: 'עריכת קטלוג',
+  // "ניהול קטלוג" (core/till/catalogAdmin.ts): the cloud's per-action codes (PermissionService.LABELS).
+  CATALOG_VIEW: 'ניהול קטלוג — כניסה וצפייה',
+  CATALOG_AVAILABILITY: 'ניהול קטלוג — פעיל / לא פעיל ואזל',
+  CATALOG_PRICE: 'ניהול קטלוג — שינוי מחיר',
+  CATALOG_EDIT: 'ניהול קטלוג — עריכת מוצר',
+  CATALOG_CREATE: 'ניהול קטלוג — מוצר ומחלקה חדשים',
   ITEM_BLOCK: 'חסימת פריט / אזל',
   ITEM_BLOCK_WIDE: 'חסימה מעבר לקופה',
   KIOSK_UNLOCK: 'יציאה מנעילת קופה',
