@@ -459,6 +459,8 @@ OFFLINE_COMPARED = (
 #: two figures the till prints for it are compared too.
 OFFLINE_COMPARED_DRAWER = (
     "openingCash", "expectedCash", "countedCash", "overShort", "cardTipsFromDrawer", "drawerCash",
+    # "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): Σ of what the closes froze.
+    "cardTipsUnpaid",
 )
 
 #: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": the figures of the `cashMovements` block a till

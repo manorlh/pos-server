@@ -29,6 +29,7 @@ const ORDER = [
   'countedCash',
   'overShort',
   'cardTipsFromDrawer',
+  'cardTipsUnpaid',
   'drawerCash',
 ];
 

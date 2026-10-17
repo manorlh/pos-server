@@ -3,8 +3,8 @@
  * renders its print document with — no network, so `npm test` runs them.
  */
 
-/** One row of the print document. */
-export type ShopXPrintRow = { label: string; value: string; emphasis: boolean };
+/** One row of the print document. `warn`: red ("חסר במגירה", a drawer below zero) — only on such a line. */
+export type ShopXPrintRow = { label: string; value: string; emphasis: boolean; warn?: boolean };
 export type ShopXPrintSection = { title: string; rows: ShopXPrintRow[] };
 /** The print document, in the shape the till prints its X / Z with (`z_print`). */
 export type ShopXPrintDocument = {

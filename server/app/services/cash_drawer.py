@@ -45,6 +45,18 @@ NEAR_VARIANCE_MINUTES_KEY = "cashDrawer.nearVarianceMinutes"
 #: till freezes the amount on each shift's close (`till.cardTipsFromDrawer`); the cloud's
 #: drawer maths read that frozen amount, never this parameter (app/services/z_builder.py).
 CARD_TIPS_FROM_DRAWER_KEY = "cashDrawer.cardTipsFromDrawer"
+#: "כשאין מספיק מזומן לטיפים באשראי" (P:/specs/x-z-cash-with-tips.md §2): with card tips paid from the
+#: drawer, what the till does when the drawer holds less than them — `partial` (default: pay what is
+#: there, the rest owed to staff), `negative` (pay all, the drawer may go below zero) or `ask` (the
+#: manager chooses at the close, only when short). Read by the till; it freezes the outcome on the close
+#: (`till.cardTipsFromDrawer` = paid, `cardTipsUnpaid`, `cardTipsShortfall`, app/services/cash_with_tips.py).
+CARD_TIPS_SHORTFALL_KEY = "cashDrawer.cardTipsShortfall"
+CARD_TIPS_SHORTFALL_OPTIONS = ("partial", "negative", "ask")
+CARD_TIPS_SHORTFALL_LABELS = {
+    "partial": "לשלם מהמגירה רק מה שיש (ברירת מחדל)",
+    "negative": "לשלם הכל, גם אם המגירה במינוס",
+    "ask": "לשאול בסגירת המשמרת",
+}
 #: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (the owner, 10.10.2026): the Z's expected cash
 #: takes off the safe deposits and counts Cash In / Cash Out, as the till's X always did. Off by
 #: default ("ברירת מחדל שלא יופיע"). Resolved per till (company → shop → area → till) when a Z is
@@ -174,10 +186,21 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
     dict(
         key=CARD_TIPS_FROM_DRAWER_KEY, label="טיפ באשראי משולם מהמזומן", value_type="boolean", default_value=False,
         description=(
-            "טיפים שהתקבלו באשראי משולמים לעובדים במזומן מהמגירה. ב-X וב-Z מופיעות למטה השורות "
-            "\"טיפים באשראי ששולמו מהמגירה\" ו\"מזומן במגירה\", והמזומן הצפוי במגירה (בספירה, ב-Blind Count "
-            "ובסגירת משמרת) מופחת בהם. הטיפים אינם הכנסה — המכירות, המע״מ וה-Z הפיסקלי לא משתנים. "
-            "לא חל על קיוסקים."
+            "טיפים שהתקבלו באשראי משולמים לעובדים במזומן מהמגירה. ב-X וב-Z, בחלק \"מזומן במגירה\", מופיעות "
+            "השורות \"טיפים באשראי\", \"שולמו מהמגירה\" ו\"לא שולמו — לתשלום לעובדים\", והמזומן הצפוי במגירה "
+            "(בספירה, ב-Blind Count ובסגירת משמרת) מופחת במה ששולם. כשאין מספיק מזומן — לפי הפרמטר הבא. "
+            "הטיפים אינם הכנסה — המכירות, המע״מ וה-Z הפיסקלי לא משתנים. לא חל על קיוסקים."
+        ),
+    ),
+    dict(
+        key=CARD_TIPS_SHORTFALL_KEY, label="כשאין מספיק מזומן לטיפים באשראי", value_type="enum",
+        enum_options=CARD_TIPS_SHORTFALL_OPTIONS, default_value="partial", enum_labels=CARD_TIPS_SHORTFALL_LABELS,
+        description=(
+            "חל כש\"טיפ באשראי משולם מהמזומן\" מופעל והטיפים באשראי גדולים מהמזומן שבמגירה. «לשלם מהמגירה רק "
+            "מה שיש» (ברירת המחדל) — משולם רק מה שיש, המגירה לא יורדת למינוס בגלל הטיפים, והיתרה מופיעה "
+            "כ\"לא שולמו — לתשלום לעובדים\". «לשלם הכל» — כל הטיפים משולמים מהמגירה; היא עלולה לרדת למינוס "
+            "ומוצגת באדום עם \"חסר במגירה\". «לשאול» — בסגירת המשמרת, רק כשחסר, המנהל בוחר. מה שנקבע נשמר "
+            "על סגירת המשמרת וב-Z; ה-Z הפיסקלי לא משתנה. לא חל על קיוסקים."
         ),
     ),
     dict(

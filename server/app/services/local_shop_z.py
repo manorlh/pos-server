@@ -1203,7 +1203,7 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
     if printed_drawer:
         # The drawer as printed: card tips paid out of it ("cardTipsFromDrawer") and its cash
         # ("drawerCash") are then read from the printed sections, never the cloud's build.
-        for key in ("cardTipsFromDrawer", "drawerCash"):
+        for key in ("cardTipsFromDrawer", "cardTipsUnpaid", "drawerCash"):
             header.pop(key, None)
         # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": likewise — what went into the printed
         # expected cash is what the tills' printed sections say (their `cashMovements` blocks,

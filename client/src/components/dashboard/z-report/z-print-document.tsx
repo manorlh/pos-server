@@ -23,7 +23,7 @@ import { useTranslations } from 'next-intl';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
-import { hasDrawerTips } from '@/lib/drawerTips';
+import { LABELS as CASH_WITH_TIPS_LABELS, cashWithTipsOfZ, sectionTipsLines, type LabelKey } from '@/lib/cashWithTips';
 import { cashMovementRows } from '@/lib/zCashMovements';
 import { cashWalletRows, cashWithStaffRows } from '@/lib/zCashWallets';
 import { zSectionLines, type ZReportSections, type ZSectionsLabels } from '@/lib/zReportSections';
@@ -103,6 +103,105 @@ function ZSectionsPrintBlocks({ sections, exempt }: { sections: ZReportSections;
 }
 
 /** A sub-heading row inside a section's table. */
+/** he.json `cashWithTips.labels`, as the block's lines take them. */
+function useCashWithTipsLabels(): Record<LabelKey, string> {
+  const t = useTranslations('cashWithTips.labels');
+  return Object.fromEntries(
+    (Object.keys(CASH_WITH_TIPS_LABELS) as LabelKey[]).map((k) => [k, t(k)]),
+  ) as Record<LabelKey, string>;
+}
+
+/** A line of the block: bold where it says, red (and bold) where it warns. */
+function BlockRow({ label, value, bold, warn }: { label: string; value: string; bold?: boolean; warn?: boolean }) {
+  return (
+    <tr className={`border-b border-neutral-300 ${bold ? 'font-bold' : ''} ${warn ? 'text-red-700' : ''}`}>
+      <td className="py-0.5 pe-4">{label}</td>
+      <td className="py-0.5 text-end tabular-nums">{value}</td>
+    </tr>
+  );
+}
+
+/**
+ * "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1) — always, where the old "טיפים באשראי ששולמו
+ * מהמגירה" / "מזומן במגירה" rows were — and over several drawers "מזומן במגירה לפי קופה" (§3).
+ */
+function CashWithTipsSections({ z }: { z: ZReportDetail }) {
+  const t = useTranslations('cashWithTips');
+  const labels = useCashWithTipsLabels();
+  const block = cashWithTipsOfZ(z, { labels, tillWord: t('tillWord') });
+  if (!block) return null;
+  const table = block.table;
+  return (
+    <>
+      {/* A shop / area Z: the drawers' summary first (x-z-cash-with-tips §3). */}
+      {table ? (
+        <Section title={t('summaryTitle')}>
+          <table className="w-full text-xs">
+            <tbody>
+              {table.summary.lines.map((l) => (
+                <BlockRow key={l.key} label={l.label} value={formatCurrency(l.amount)} bold={l.bold} warn={l.warn} />
+              ))}
+            </tbody>
+          </table>
+        </Section>
+      ) : null}
+      <Section title={labels.title}>
+        <table className="w-full text-xs">
+          <tbody>
+            {block.lines.map((l) => (
+              <BlockRow key={l.key} label={l.label} value={formatCurrency(l.amount)} bold={l.bold} warn={l.warn} />
+            ))}
+          </tbody>
+        </table>
+      </Section>
+      {/* "zPrintPerTillCash" = summary_only: the summary without the per-till table. */}
+      {table && z.printPerTillCash !== false ? (
+        <Section title={labels.perTill}>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-neutral-400">
+                <th className="py-0.5 text-start">{t('table.till')}</th>
+                <th className="py-0.5 text-end">{t('table.cashSales')}</th>
+                <th className="py-0.5 text-end">{t('table.cashTips')}</th>
+                <th className="py-0.5 text-end">{t('table.paid')}</th>
+                <th className="py-0.5 text-end">{t('table.unpaid')}</th>
+                {table.totals.drawerCash !== null ? <th className="py-0.5 text-end">{t('table.drawer')}</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {[...table.rows, { ...table.totals, till: labels.tillTotals, short: table.totals.anyShort }].map((r, i) => (
+                <tr key={`${r.till}-${i}`} className={`border-b border-neutral-300 ${i === table.rows.length ? 'font-bold' : ''}`}>
+                  <td className="py-0.5">{r.till}</td>
+                  <td className="py-0.5 text-end tabular-nums">{formatCurrency(r.cashSales)}</td>
+                  <td className="py-0.5 text-end tabular-nums">{formatCurrency(r.cashTips)}</td>
+                  <td className="py-0.5 text-end tabular-nums">{formatCurrency(r.cardTipsPaid)}</td>
+                  <td className="py-0.5 text-end tabular-nums">{formatCurrency(r.cardTipsUnpaid)}</td>
+                  {table.totals.drawerCash !== null ? (
+                    <td className={`py-0.5 text-end tabular-nums ${r.short ? 'text-red-700' : ''}`}>{formatCurrency(r.drawerCash)}</td>
+                  ) : null}
+                </tr>
+              ))}
+              <BlockRow label={labels.unpaidDay} value={formatCurrency(table.unpaidTotal)} bold />
+            </tbody>
+          </table>
+        </Section>
+      ) : null}
+    </>
+  );
+}
+
+/** One till's part, where the old two rows were: paid, unpaid, "חסר במגירה". */
+function SectionTipsPrintRows({ s }: { s: ZReportMachineSection }) {
+  const labels = useCashWithTipsLabels();
+  return (
+    <>
+      {sectionTipsLines(s, labels).map((l) => (
+        <BlockRow key={l.key} label={l.label} value={formatCurrency(l.amount)} bold={l.bold} warn={l.warn} />
+      ))}
+    </>
+  );
+}
+
 function SubHeading({ children }: { children: React.ReactNode }) {
   return (
     <tr>
@@ -240,13 +339,8 @@ function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?:
             value={uncounted ? t('notCounted', { count: s.uncountedShiftCount ?? 0 }) : formatCurrency(s.countedCash)}
           />
           <Row label={t('overShort')} value={uncounted ? t('withheld') : signedMoney(s.overShort)} />
-          {/* "טיפ באשראי משולם מהמזומן": card tips paid from the drawer, and what it holds. */}
-          {hasDrawerTips(s.cardTipsFromDrawer) ? (
-            <>
-              <Row label={t('cardTipsFromDrawer')} value={formatCurrency(s.cardTipsFromDrawer)} />
-              <Row label={t('drawerCash')} value={formatCurrency(s.drawerCash)} />
-            </>
-          ) : null}
+          {/* "מזומן במגירה כולל טיפים": the card tips this drawer paid and owes, "חסר במגירה" below zero. */}
+          <SectionTipsPrintRows s={s} />
           {(s.reconstructedShiftCount ?? 0) > 0 ? (
             <Row label={t('reconstructedShifts')} value={s.reconstructedShiftCount} />
           ) : null}
@@ -402,15 +496,10 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
               label={t('overShort')}
               value={withheld || z.discrepancy == null ? t('withheld') : signedMoney(z.discrepancy)}
             />
-            {hasDrawerTips(z.cardTipsFromDrawer) ? (
-              <>
-                <Row label={t('cardTipsFromDrawer')} value={formatCurrency(z.cardTipsFromDrawer)} />
-                <Row label={t('drawerCash')} value={formatCurrency(z.drawerCash)} />
-              </>
-            ) : null}
           </tbody>
         </table>
       </Section>
+      <CashWithTipsSections z={z} />
       {/* "מזומן אצל עובדים (טרם הופקד)" (drawer-away §5.6): as frozen when the Z was built. */}
       {cashWithStaffRows(z.cashWithStaff).rows.length > 0 ? (
         <Section title={t('cashWithStaff')}>

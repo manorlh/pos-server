@@ -548,6 +548,35 @@ class TillPart:
     views: List[_ShiftView]
     totals: DocumentTotals
     with_movements: bool
+    #: `cashDrawer.cardTipsShortfall` = ask and the open shift's drawer is short: previewed as `partial`,
+    #: the close will ask (P:/specs/x-z-cash-with-tips.md §2).
+    needs_choice: bool = False
+
+
+def _preview_card_tips(db: Session, machine: POSMachine, view: _ShiftView, totals: DocumentTotals) -> bool:
+    """
+    "מזומן במגירה כולל טיפים" on an **open** shift (P:/specs/x-z-cash-with-tips.md §2): nothing is frozen
+    yet, so the X previews what its close would pay from the drawer — with `cashDrawer.cardTipsFromDrawer`
+    on for the till, the payout under `cashDrawer.cardTipsShortfall` (ask: `partial` until the close),
+    put on the view as a close would freeze it. Returns whether the close will have to ask.
+    """
+    from app.services import cash_with_tips as CWT
+    from app.services.cash_drawer import CARD_TIPS_FROM_DRAWER_KEY
+    from app.services.z_builder import _shift_expected
+
+    try:
+        params = TP.till_parameters_for_machine(db, machine).parameters
+    except Exception:  # noqa: BLE001 - no preview, never a failed report
+        logger.exception("shop x: parameters of %s unreadable", getattr(machine, "id", None))
+        return False
+    if not _flag(params.get(CARD_TIPS_FROM_DRAWER_KEY), False):
+        return False
+    available = _shift_expected(view, with_movements=True)  # type: ignore[arg-type]
+    pay = CWT.payout(True, params.get(CWT.SHORTFALL_KEY), None, available, totals.total_card_tips)
+    view.till_totals[CWT.PAID_KEY] = str(pay.paid)
+    view.till_totals[CWT.UNPAID_KEY] = str(pay.unpaid)
+    view.till_totals[CWT.FROZEN_SHORTFALL_KEY] = pay.mode
+    return pay.needs_choice
 
 
 def _part(db: Session, machine: POSMachine, shop_id: uuid.UUID) -> TillPart:
@@ -555,13 +584,20 @@ def _part(db: Session, machine: POSMachine, shop_id: uuid.UUID) -> TillPart:
     open_ids = [s.id for s in shifts if s.status != ShiftStatus.CLOSED]
     moved = cash_movements(db, open_ids)
     wallets = wallet_movements(db, open_ids)
-    views = [
-        _ShiftView(s, compute_totals(db, [s.id]), moved.get(s.id, ZEC.NONE), wallets.get(s.id, (ZERO, ZERO)))
-        if s.status != ShiftStatus.CLOSED else _ShiftView(s)
-        for s in shifts
-    ]
+    kiosk = bool(getattr(machine, "is_kiosk", False))
+    views = []
+    needs_choice = False
+    for s in shifts:
+        if s.status == ShiftStatus.CLOSED:
+            views.append(_ShiftView(s))
+            continue
+        own = compute_totals(db, [s.id])
+        view = _ShiftView(s, own, moved.get(s.id, ZEC.NONE), wallets.get(s.id, (ZERO, ZERO)))
+        if not kiosk:
+            needs_choice = _preview_card_tips(db, machine, view, own) or needs_choice
+        views.append(view)
     totals = compute_totals(db, [s.id for s in shifts]) if shifts else DocumentTotals()
-    return TillPart(machine, shifts, views, totals, not bool(getattr(machine, "is_kiosk", False)))
+    return TillPart(machine, shifts, views, totals, not kiosk, needs_choice)
 
 
 def _counted_amount(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -638,6 +674,9 @@ def build(
             "untransmittedAmount": block.get("untransmittedAmount") or "0.00",
             **fresh,
         })
+        if p.needs_choice:
+            # "כשאין מספיק מזומן לטיפים באשראי" = ask, short: previewed as partial; the close will ask.
+            section["cardTipsNeedsChoice"] = True
         sections.append(section)
         for acc, entry in ((voids, events["line_void"]), (cancels, events["basket_cancel"]),
                            (tables_cancelled, events["table_cancelled"]), (oth, till_oth)):
@@ -709,8 +748,14 @@ def build(
                 # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): in the expected, always — zero when none.
                 "walletIn": _money(cash["cash_wallets"][0]),
                 "walletDeposits": _money(cash["cash_wallets"][1]),
+                # "מזומן במגירה כולל טיפים" (P:/specs/x-z-cash-with-tips.md): the card tips the drawers
+                # paid (frozen, or previewed for an open shift) and those owed to staff — null when off.
+                "cardTipsFromDrawer": _money(cash["card_tips_from_drawer"]),
+                "cardTipsUnpaid": _money(cash["card_tips_unpaid"]),
                 "expected": _money(cash["expected"]),
             },
+            # The block "מזומן במגירה" and, over several tills, "מזומן במגירה לפי קופה" (§1, §3).
+            "cashWithTips": _cash_with_tips(cash, sections, any(p.needs_choice for p in parts)),
             # "מזומן אצל עובדים (טרם הופקד)", per employee, now — null when nobody holds any.
             "cashWithStaff": _cash_with_staff(db, shop.id, [p.machine.id for p in parts], now),
             "openTables": open_tables(db, shop),
@@ -723,6 +768,36 @@ def build(
     # read them), dropped from the paper with `perTill` off.
     report["_sections"] = sections
     return report
+
+
+def _cash_with_tips(cash: Dict[str, Any], sections: Sequence[Dict[str, Any]], needs_choice: bool) -> Dict[str, Any]:
+    """
+    "מזומן במגירה" over the report's drawer (`z_cash_summary`, movements in as on every X): the block's
+    lines, its total (= `drawer.expected`), the per-till table over several drawers, and whether a
+    close will ask (`needsChoice`). Money as decimal strings.
+    """
+    from app.services import cash_with_tips as CWT
+
+    movements = cash["cash_movements"] or ZEC.NONE
+    inp = {
+        "opening": cash["opening"], "cashSales": cash["cash_sales"], "cashTips": cash["cash_tips"],
+        "movements": {"cashIn": movements[0], "cashOut": movements[1], "deposits": movements[2]},
+        "wallet": {"walletIn": cash["cash_wallets"][0], "walletDeposits": cash["cash_wallets"][1]},
+        "between": cash["between_shifts"],
+    }
+    paid, unpaid = cash["card_tips_from_drawer"], cash["card_tips_unpaid"]
+    if paid is not None and unpaid is None:
+        unpaid = ZERO
+    lines, total = CWT.block(inp, paid, unpaid)
+    return {
+        "lines": lines,
+        "total": CWT.money(total),
+        "short": total < 0,
+        "cardTipsFromDrawer": CWT.money(paid),
+        "cardTipsUnpaid": CWT.money(unpaid),
+        "needsChoice": bool(needs_choice),
+        "table": CWT.table_of_sections(sections),
+    }
 
 
 def _cash_with_staff(db: Session, shop_id: Any, machine_ids: Sequence[Any], now: datetime) -> Optional[Dict[str, Any]]:
@@ -881,7 +956,9 @@ def print_document(
     now = now or datetime.now(timezone.utc)
     local_now = now.astimezone(tzinfo) if tzinfo is not None else now
     view = _ReportAsZ(report, shop, snapshot_header(db, shop, now=now), now, local_now.date())
-    doc = ZP.build_print_document(view, tzinfo, printed_at=now)  # type: ignore[arg-type]
+    # "מזומן במגירה" (x-z-cash-with-tips §3): the drawers' summary, the per-till table by `zPrintPerTillCash`.
+    per_till_cash = ZP.per_till_cash_of(db, view)
+    doc = ZP.build_print_document(view, tzinfo, printed_at=now, per_till_cash=per_till_cash)  # type: ignore[arg-type]
     sections = list(doc["sections"])
     till_count = len(view.per_machine)
     if not report["settings"]["perTill"] and till_count:

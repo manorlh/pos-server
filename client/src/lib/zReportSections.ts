@@ -52,6 +52,8 @@ export interface ZReportSections {
     cardRefunds: Money;
     net: Money;
     paidFromDrawer: Money;
+    /** "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): only when the drawer froze the figure. */
+    unpaidFromDrawer?: Money;
     direct: Money;
     toDistribute: Money;
   };
@@ -210,7 +212,10 @@ export function zSectionLines(s: ZReportSections | null | undefined, L: ZSection
     ];
     if (ag(t.refunds)) rows.push([l('tipRefunds'), fmt(neg(t.refunds)), false]);
     rows.push([l('tipNet'), fmt(t.net), true]);
-    if ((t.paidFromDrawer ?? null) !== null) rows.push([l('tipPaidFromDrawer'), fmt(neg(t.paidFromDrawer)), false]);
+    if ((t.paidFromDrawer ?? null) !== null) {
+      rows.push([l('tipPaidFromDrawer'), fmt(neg(t.paidFromDrawer)), false]);
+      if (ag(t.unpaidFromDrawer)) rows.push([l('tipUnpaidFromDrawer'), fmt(t.unpaidFromDrawer ?? null), false]);
+    }
     rows.push([l('tipToDistribute'), fmt(t.toDistribute), true]);
     if (ag(t.direct)) rows.push([l('tipDirect'), fmt(t.direct), false]);
     out.push([l('tips'), rows]);

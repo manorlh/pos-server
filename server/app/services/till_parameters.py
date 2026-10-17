@@ -758,6 +758,22 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "מוצג כשהפרמטר מופעל באחת הקופות הכלולות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # "מזומן במגירה" of a shop / area Z (P:/specs/x-z-cash-with-tips.md §3): read by the cloud when it
+    # prints a Z (app/services/z_print.py `per_till_cash_of`) and by the tills for their paper.
+    BuiltinParameter(
+        key="zPrintPerTillCash",
+        label="Z — הדפסת מזומן במגירה לפי קופה",
+        value_type="enum",
+        enum_options=("summary_only", "with_per_till"),
+        default_value="with_per_till",
+        enum_labels={"summary_only": "סיכום בלבד", "with_per_till": "סיכום ופירוט לפי קופה (ברירת מחדל)"},
+        description=(
+            "ב-Z סניפי וב-Z לפי נקודת מכירה מודפס קודם סיכום המזומן של כל הקופות יחד (סה״כ מזומן, טיפים, טיפים "
+            "באשראי שטרם שולמו ו\"סה״כ מזומן נטו אחרי טיפים\"). «סיכום ופירוט לפי קופה» — מתחתיו מודפסת גם "
+            "הטבלה \"פירוט לפי קופה\" (ברירת המחדל). «סיכום בלבד» — בלי הטבלה. במסך הדשבורד הפירוט תמיד זמין "
+            "בלחיצה. תצוגה בלבד — הנתונים הפיסקליים לא משתנים."
+        ),
+    ),
     # Read by the till, not the cloud; built in because the dashboard edits it with an
     # image picker (`IMAGE_PARAMETER_KEYS`). No default: a till with no value at any
     # level keeps printing the branding receipt logo, as before.

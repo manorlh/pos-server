@@ -408,6 +408,7 @@ class _Acc:
             "counted": opt(d.get("counted")),
             "overShort": opt(d.get("gap")),
             "tipsPaidFromDrawer": opt(d.get("tipsPaidFromDrawer")),
+            "tipsUnpaidFromDrawer": opt(d.get("tipsUnpaidFromDrawer")),
             "betweenShifts": _ag(d.get("betweenShifts")),
             "cashIn": opt(d.get("cashIn")),
             "expenses": opt(d.get("expenses")),
@@ -426,7 +427,7 @@ class _Acc:
         for k in ("counted", "overShort"):
             acc[k] = None if acc[k] is None or part[k] is None else acc[k] + part[k]
         # The optional lines: the sum of those that have one; none when none does.
-        for k in ("tipsPaidFromDrawer", "cashIn", "expenses", "safeDrop", "walletIn", "walletDeposits"):
+        for k in ("tipsPaidFromDrawer", "tipsUnpaidFromDrawer", "cashIn", "expenses", "safeDrop", "walletIn", "walletDeposits"):
             if part[k] is not None:
                 acc[k] = (acc[k] or 0) + part[k]
         acc["countRequired"] = acc["countRequired"] or part["countRequired"]
@@ -441,6 +442,7 @@ class _Acc:
             "counted": agorot(drawer.get("counted")),
             "overShort": agorot(drawer.get("overShort")),
             "tipsPaidFromDrawer": agorot(drawer.get("tipsPaidFromDrawer")),
+            "tipsUnpaidFromDrawer": agorot(drawer.get("tipsUnpaidFromDrawer")),
             "betweenShifts": _ag(drawer.get("betweenShifts")),
             "cashIn": agorot(drawer.get("cashIn")),
             "expenses": agorot(drawer.get("expenses")),
@@ -491,6 +493,9 @@ class _Acc:
         tip_refunds = self.tip_cash_refunds + self.tip_card_refunds
         tips_net = self.tip_cash + self.tip_card - tip_refunds
         paid_out = self.drawer.get("tipsPaidFromDrawer") if self.drawer is not None else None
+        # "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): only when the drawer said so —
+        # a drawer without the figure (and the shared golden's cases) reads exactly as before.
+        unpaid_out = self.drawer.get("tipsUnpaidFromDrawer") if self.drawer is not None else None
         receipts = []
         for row in pay_rows:
             m = row["method"]
@@ -614,6 +619,7 @@ class _Acc:
                 "cardRefunds": money(self.tip_card_refunds),
                 "net": money(tips_net),
                 "paidFromDrawer": money(paid_out),
+                **({"unpaidFromDrawer": money(unpaid_out)} if unpaid_out is not None and paid_out is not None else {}),
                 "direct": money(self.tip_direct),
                 "toDistribute": money(tips_net - (paid_out or 0) - self.tip_direct),
             },
@@ -697,6 +703,7 @@ LABELS_HE: Dict[str, Any] = {
     "tipRefunds": "החזרי טיפ",
     "tipNet": "סה״כ טיפים נטו",
     "tipPaidFromDrawer": "שולם לעובדים מהמגירה",
+    "tipUnpaidFromDrawer": "לא שולמו, לתשלום לעובדים",
     "tipToDistribute": "יתרה לחלוקה",
     "tipDirect": "טיפ ישיר",
     "receipts": "תקבולים ממכירות וטיפים",
@@ -864,6 +871,8 @@ def lines(
         rows.append((L["tipNet"], fmt(tips.get("net")), True))
         if tips.get("paidFromDrawer") is not None:
             rows.append((L["tipPaidFromDrawer"], fmt(_neg(tips.get("paidFromDrawer"))), False))
+            if _ag(tips.get("unpaidFromDrawer")):
+                rows.append((L.get("tipUnpaidFromDrawer", LABELS_HE["tipUnpaidFromDrawer"]), fmt(tips.get("unpaidFromDrawer")), False))
         rows.append((L["tipToDistribute"], fmt(tips.get("toDistribute")), True))
         if _ag(tips.get("direct")):
             rows.append((L["tipDirect"], fmt(tips.get("direct")), False))
@@ -1222,6 +1231,7 @@ def _drawer_of(cash: Dict[str, Any]) -> Dict[str, Any]:
         "counted": _money_text(cash.get("counted")),
         "overShort": _money_text(cash.get("over_short")),
         "tipsPaidFromDrawer": _money_text(cash.get("card_tips_from_drawer")),
+        "tipsUnpaidFromDrawer": _money_text(cash.get("card_tips_unpaid")),
         "betweenShifts": _money_text(cash.get("between_shifts")),
         "cashIn": _money_text(cash_in),
         "expenses": _money_text(cash_out),

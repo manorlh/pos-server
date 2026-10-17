@@ -120,8 +120,12 @@ def _clip(label: str, limit: int = LABEL_MAX) -> str:
     return label if len(label) <= limit else label[: limit - 1].rstrip() + "…"
 
 
-def row(label: str, value: Any, emphasis: bool = False) -> Dict[str, Any]:
-    return {"label": _clip(label), "value": DASH if value is None else str(value), "emphasis": bool(emphasis)}
+def row(label: str, value: Any, emphasis: bool = False, warn: bool = False) -> Dict[str, Any]:
+    """One line. `warn`: red on a screen — only on a line that has it, so every other line is as it was."""
+    out = {"label": _clip(label), "value": DASH if value is None else str(value), "emphasis": bool(emphasis)}
+    if warn:
+        out["warn"] = True
+    return out
 
 
 def section(title: str, rows: Iterable[Optional[Dict[str, Any]]]) -> Dict[str, Any]:
@@ -316,32 +320,195 @@ def drawer_tips_of(z: ZReport) -> Optional[Dict[str, Optional[Decimal]]]:
     """
     header = getattr(z, "header", None) or {}
     if header.get("cardTipsFromDrawer") is not None:
-        return {"cardTipsFromDrawer": _dec(header.get("cardTipsFromDrawer")), "drawerCash": _dec(header.get("drawerCash"))}
+        return {
+            "cardTipsFromDrawer": _dec(header.get("cardTipsFromDrawer")),
+            # "לא שולמו" (P:/specs/x-z-cash-with-tips.md §2): 0 on a Z built before the figure.
+            "cardTipsUnpaid": _dec(header.get("cardTipsUnpaid")) or ZERO,
+            "drawerCash": _dec(header.get("drawerCash")),
+        }
     sections = _sections_of(z)
     if not any(s.get("cardTipsFromDrawer") is not None for s in sections):
         return None
     paid_out = sum((_dec(s.get("cardTipsFromDrawer")) or ZERO for s in sections), ZERO)
+    owed = sum(
+        (_dec(s.get("cardTipsUnpaid")) or ZERO for s in sections if s.get("cardTipsFromDrawer") is not None), ZERO,
+    )
     drawer = [_section_drawer_cash(s) for s in sections]
     return {
         "cardTipsFromDrawer": paid_out,
+        "cardTipsUnpaid": owed,
         "drawerCash": None if any(d is None for d in drawer) else sum(drawer, ZERO),
     }
 
 
-def _section_drawer_tips(s: dict) -> Optional[Dict[str, Optional[Decimal]]]:
-    """One till's section: its frozen card tips paid from the drawer, None without them."""
-    if s.get("cardTipsFromDrawer") is None:
+def _section_tips_rows(s: dict) -> List[Optional[dict]]:
+    """
+    One till's section, where the old "טיפ אשראי ששולם מהמגירה" / "מזומן במגירה" rows were: the card
+    tips its drawer paid and those it owes staff (P:/specs/x-z-cash-with-tips.md §1), and "חסר במגירה"
+    when its drawer is below zero — its "מזומן צפוי" above is the block's total.
+    """
+    from app.services import cash_with_tips as CWT
+
+    out: List[Optional[dict]] = []
+    paid = _dec(s.get("cardTipsFromDrawer"))
+    if paid is not None:
+        owed = _dec(s.get("cardTipsUnpaid")) or ZERO
+        out.append(row(CWT.PAPER_LABELS["cardTipsPaid"], money(-paid)))
+        if owed > 0:
+            out.append(row(CWT.PAPER_LABELS["cardTipsUnpaid"], money(owed)))
+    expected = _dec(s.get("expectedCash"))
+    if expected is not None and expected < 0 and not s.get("kiosk"):
+        out.append(row(CWT.PAPER_LABELS["short"], money(-expected), emphasis=True, warn=True))
+    return out
+
+
+# ── "מזומן במגירה כולל טיפים" (P:/specs/x-z-cash-with-tips.md, app/services/cash_with_tips.py) ──
+
+
+def cash_with_tips_input(z: Any):
+    """
+    The Z's (or X's) drawer as the block's input — `(input, paid, unpaid)` — from what it froze:
+    its opening and expected cash, its sections' cash sales, the movements and wallets in its
+    expected, the between-shift adjustments and the card tips paid / owed. None for a Z with no
+    drawer (legacy, kiosks only). The block's total is the Z's `expectedCash` exactly.
+    """
+    from app.services import cash_wallets as CW
+    from app.services import cash_with_tips as CWT
+
+    sections = _sections_of(z)
+    if sections and all(s.get("kiosk") for s in sections):
         return None
-    return {"cardTipsFromDrawer": _dec(s.get("cardTipsFromDrawer")), "drawerCash": _section_drawer_cash(s)}
+    opening, expected = _dec(getattr(z, "opening_cash", None)), _dec(getattr(z, "expected_cash", None))
+    if opening is None or expected is None:
+        return None
+    if sections and all(s.get("cashSalesNet") is not None for s in sections):
+        cash_sales = sum((_dec(s.get("cashSalesNet")) or ZERO for s in sections), ZERO)
+    else:
+        cash_sales = _dec(getattr(z, "total_cash_sales", None)) or ZERO
+    between = sum((_dec(s.get("betweenShiftAdjustments")) or ZERO for s in sections), ZERO)
+    movements = cash_movements_of(z)
+    tips = drawer_tips_of(z)
+    pseudo = {
+        "openingCash": opening, "expectedCash": expected, "cashSalesNet": cash_sales,
+        "betweenShiftAdjustments": between,
+        "cashMovements": ZEC.block(movements) if movements is not None else None,
+        "cashWallets": CW.block(cash_wallets_of(z)) or None,
+        "cardTipsFromDrawer": None if tips is None else tips["cardTipsFromDrawer"],
+        "cardTipsUnpaid": None if tips is None else tips.get("cardTipsUnpaid"),
+    }
+    return CWT.figures_of_section(pseudo)
 
 
-def _drawer_tips_rows(tips: Optional[Dict[str, Optional[Decimal]]]) -> List[Optional[dict]]:
-    if tips is None:
+def cash_with_tips_of(z: Any, *, show: bool = True, labels: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
+    """
+    The block and, over several drawers, the per-till table — `{lines, total, short,
+    cardTipsFromDrawer, cardTipsUnpaid, table}` (money as decimal strings) — or None when the Z has
+    no drawer. The cloud shows the expected cash wherever it shows a Z: `show` is on unless a caller
+    hides it.
+    """
+    from app.services import cash_with_tips as CWT
+
+    figures = cash_with_tips_input(z)
+    if figures is None:
+        return None
+    inp, paid, unpaid = figures
+    lines, total = CWT.block(inp, paid, unpaid, show=show, labels=labels)
+    return {
+        "lines": lines,
+        "total": CWT.money(total) if show else None,
+        "short": bool(show and total < 0),
+        "cardTipsFromDrawer": CWT.money(paid),
+        "cardTipsUnpaid": CWT.money(unpaid),
+        "table": CWT.table_of_sections(_sections_of(z), show, labels),
+    }
+
+
+#: The summary of a shop / area Z's drawers, printed first (P:/specs/x-z-cash-with-tips.md §3).
+SUMMARY_TITLE = "מזומן — כל הקופות"
+
+
+def cash_with_tips_sections(z: Any, per_till: bool = True) -> List[dict]:
+    """
+    The paper: "מזומן במגירה" — and over several drawers (a shop / area Z or X) the summary of all the
+    drawers first, then the block, then "פירוט לפי קופה" (each till a few lines) unless the Z print
+    setting `zPrintPerTillCash` is `summary_only` (`per_till` False).
+    """
+    from app.services import cash_with_tips as CWT
+
+    block = cash_with_tips_of(z, labels=CWT.PAPER_LABELS)
+    if block is None:
         return []
-    return [
-        row(CARD_TIPS_FROM_DRAWER_LABEL, money(tips["cardTipsFromDrawer"])),
-        row(DRAWER_CASH_LABEL, money(tips["drawerCash"]), emphasis=True),
-    ]
+    L = CWT.PAPER_LABELS
+    out = [section(L["title"], [
+        row(line["label"], money(line["amount"]), emphasis=line["bold"], warn=line["warn"]) for line in block["lines"]
+    ])]
+    table = block["table"]
+    if table is not None:
+        out.insert(0, section(SUMMARY_TITLE, [
+            row(line["label"], money(line["amount"]), emphasis=line["bold"], warn=line["warn"])
+            for line in table["summary"]["lines"]
+        ]))
+    if table is not None and per_till:
+        rows: List[Optional[dict]] = []
+
+        def figures(r: Dict[str, Any]) -> None:
+            rows.append(row(f"  {L['cashSales']}", money(r["cashSales"])))
+            rows.append(row(f"  {L['cashTips']}", money(r["cashTips"])))
+            if r["cardTipsPaid"] is not None:
+                rows.append(row(f"  {L['cardTipsPaid']}", money(r["cardTipsPaid"])))
+                rows.append(row(f"  {TABLE_UNPAID_LABEL}", money(r["cardTipsUnpaid"])))
+
+        for r in table["rows"]:
+            rows.append(row(r["till"], money(r["drawerCash"]), emphasis=True, warn=r["short"]))
+            figures(r)
+        t = table["totals"]
+        rows.append(row(L["tillTotals"], money(t["drawerCash"]), emphasis=True, warn=t["anyShort"]))
+        figures(t)
+        rows.append(row(L["unpaidDay"], money(table["unpaidTotal"]), emphasis=True))
+        out.append(section(L["perTill"], rows))
+    return out
+
+
+def per_till_cash_of(db: Any, z: Any) -> bool:
+    """
+    The Z print setting `zPrintPerTillCash` (§3): False for `summary_only`. Resolved for the Z's till
+    (a till Z) or its first till's section; any failure prints the per-till table (the default).
+    """
+    from app.services import cash_with_tips as CWT
+
+    try:
+        from app.models.pos_machine import POSMachine
+        from app.services.till_parameters import till_parameters_for_machine
+
+        machine = getattr(z, "machine", None)
+        if machine is None:
+            ids = [s.get("machineId") for s in _sections_of(z) if s.get("machineId")]
+            machine = db.get(POSMachine, _uuid(ids[0])) if ids else None
+        if machine is None:
+            return True
+        value = till_parameters_for_machine(db, machine).parameters.get(CWT.PRINT_PER_TILL_KEY)
+        return str(value or "").strip().lower() != CWT.PRINT_SUMMARY_ONLY
+    except Exception:  # noqa: BLE001 - a print setting never fails a print
+        return True
+
+
+def _uuid(value: Any):
+    import uuid as _u
+
+    return value if isinstance(value, _u.UUID) else _u.UUID(str(value))
+
+
+#: The table's column "לא שולמו" (P:/specs/x-z-cash-with-tips.md §3).
+TABLE_UNPAID_LABEL = "לא שולמו"
+
+
+def _with_cash_with_tips(z: Any, sections: List[dict], after: str, per_till: bool = True) -> List[dict]:
+    """`sections` with the block (and table) right after the section titled `after` (else at the end)."""
+    extra = cash_with_tips_sections(z, per_till)
+    if not extra:
+        return sections
+    at = next((i + 1 for i, s in enumerate(sections) if s["title"] == after), len(sections))
+    return sections[:at] + extra + sections[at:]
 
 
 #: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" on paper, in the drawer block above the expected cash
@@ -449,8 +616,7 @@ def _cash_rows(z: ZReport) -> List[Optional[dict]]:
         row("מזומן שנספר", counted),
         # Withheld, not a balanced zero, when any drawer was not counted.
         row("הפרש", "לא חושב" if withheld or z.discrepancy is None else signed(z.discrepancy), emphasis=True),
-        # Card tips paid to staff from the drawer, and what it holds: at the bottom.
-        *_drawer_tips_rows(drawer_tips_of(z)),
+        # The card tips paid from the drawer and what it holds: the "מזומן במגירה" block right after.
     ]
 
 
@@ -620,7 +786,7 @@ def _till_section(s: dict) -> dict:
             *_wallet_rows(_section_wallets(s)),
             row("מזומן צפוי", money(s.get("expectedCash"))),
             row("הפרש", "לא נספר" if uncounted else signed(s.get("overShort"))),
-            *_drawer_tips_rows(_section_drawer_tips(s)),
+            *_section_tips_rows(s),
             row("ממתינות לשידור", str(pending), emphasis=True) if pending else None,
             row("אופליין שנדחה", f"{declined_count} · {money(declined_amount)}", emphasis=True)
             if declined_count
@@ -846,7 +1012,7 @@ def _v2_blocks(sections: dict, dealer_type: Optional[str], tzinfo) -> List[dict]
     return [section(title, [row(label, value, emphasis=bold) for label, value, bold in rows]) for title, rows in blocks]
 
 
-def _v2_body(z: Any, sections: dict, tzinfo, period_rows: List[Optional[dict]]) -> List[dict]:
+def _v2_body(z: Any, sections: dict, tzinfo, period_rows: List[Optional[dict]], per_till: bool = True) -> List[dict]:
     """The owner's layout: the period, the v2 blocks — the production vouchers' section after the payments."""
     from app.services import z_sections
 
@@ -857,7 +1023,10 @@ def _v2_body(z: Any, sections: dict, tzinfo, period_rows: List[Optional[dict]]) 
         if block["title"] == payments_title:
             out += _voucher_sections(z)
             out += _table_reversal_sections(z)
-    return out
+    # "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1): after the drawer reconciliation, always.
+    titles = [s["title"] for s in out]
+    after = z_sections.LABELS_HE["drawer"] if z_sections.LABELS_HE["drawer"] in titles else z_sections.LABELS_HE["receipts"]
+    return _with_cash_with_tips(z, out, after, per_till)
 
 
 def _acquirer_section(z: Any) -> List[dict]:
@@ -865,8 +1034,14 @@ def _acquirer_section(z: Any) -> List[dict]:
     return [s for s in _card_brand_sections(z) if s["title"] == "אשראי לפי חברת סליקה"]
 
 
-def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] = None) -> Dict[str, Any]:
-    """The Z as an 80 mm print document (the module docstring has the shape)."""
+def build_print_document(
+    z: ZReport, tzinfo, *, printed_at: Optional[datetime] = None, per_till_cash: bool = True,
+) -> Dict[str, Any]:
+    """
+    The Z as an 80 mm print document (the module docstring has the shape). `per_till_cash`: the Z print
+    setting `zPrintPerTillCash` (`per_till_cash_of`) — False prints the drawers' summary without the
+    per-till table.
+    """
     header = z.header or {}
     shop = z.shop
     shop_name = header.get("shopName") or (shop.name if shop is not None else None)
@@ -879,7 +1054,7 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
             row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
             row("משמרות", _count(z.shift_count)),
             row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
-        ])
+        ], per_till_cash)
         sections += _acquirer_section(z)
         sections += _cash_station_sections(z)
         offline = _offline_section(z)
@@ -921,6 +1096,8 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
         *_table_reversal_sections(z),
         section("תשר", _tips_rows(z)),
         section("קופה", _cash_rows(z)),
+        # "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1) and, over several drawers, per till.
+        *cash_with_tips_sections(z, per_till_cash),
     ]
     staff = staff_section(z)
     if staff is not None:
@@ -1008,7 +1185,9 @@ def _till_line(s: dict) -> dict:
     return row(label, f"{money(_section_net(s))} · {_count(s.get('transactionsCount'))} מס׳")
 
 
-def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] = None) -> Dict[str, Any]:
+def build_summary_document(
+    z: ZReport, tzinfo, *, printed_at: Optional[datetime] = None, per_till_cash: bool = True,
+) -> Dict[str, Any]:
     """
     The shop Z's summary: the shop's totals and one compact line per till (number,
     shifts, net, documents) — no till's detail. `tills` lists them for printing apart.
@@ -1021,7 +1200,7 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     ]
     v2 = report_sections_of(z)
     if v2 is not None:
-        sections: List[dict] = _v2_body(z, v2, tzinfo, period_rows) + _acquirer_section(z)
+        sections: List[dict] = _v2_body(z, v2, tzinfo, period_rows, per_till_cash) + _acquirer_section(z)
     else:
         sections = [
             section("תקופה", period_rows),
@@ -1032,6 +1211,7 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
             *_table_reversal_sections(z),
             section("תשר", _tips_rows(z)),
             section("קופה", _cash_rows(z)),
+            *cash_with_tips_sections(z, per_till_cash),
         ]
         sections += _card_brand_sections(z)
         transmission = _transmission_section(z, tzinfo)
@@ -1130,6 +1310,7 @@ def build_till_document(
             *_table_reversal_sections(view),  # type: ignore[arg-type]
             section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
             section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
+            *cash_with_tips_sections(view),
         ]
         sections += _card_brand_sections(view)  # type: ignore[arg-type]
         transmission = _transmission_section(view, tzinfo)  # type: ignore[arg-type]

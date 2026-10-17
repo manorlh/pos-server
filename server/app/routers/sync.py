@@ -2052,8 +2052,10 @@ def get_own_shop_z_print_document(
         # "עסקאות שלא הושלמו" / "מכירות שבוטלו" of that till (informational, docs/SPEC_FAILED_PAYMENTS.md).
         return failed_payments.with_print_sections(db, z, doc, tzinfo, machine_id=till)
     if isinstance(part, str) and part == "summary":
-        return z_print.build_summary_document(z, tzinfo)
-    return failed_payments.with_print_sections(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
+        return z_print.build_summary_document(z, tzinfo, per_till_cash=z_print.per_till_cash_of(db, z))
+    return failed_payments.with_print_sections(
+        db, z, z_print.build_print_document(z, tzinfo, per_till_cash=z_print.per_till_cash_of(db, z)), tzinfo,
+    )
 
 
 @router.post("/{machine_id}/transmit/ack", dependencies=FISCAL_MACHINE_TOKEN)
