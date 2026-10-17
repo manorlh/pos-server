@@ -347,12 +347,33 @@ class PlatformMismatch(ValueError):
         }
 
 
+class Windows7TillOnly(PlatformMismatch):
+    """
+    The Windows 7 build (`device_info.appBuild == "win7"`, app/services/windows7.py) redeemed a code of a role it
+    does not run — anything but a till. 422 `windows7_till_only`, nothing created, the code stays unused.
+    """
+
+    def __init__(self, role: Optional[str]):
+        from app.services import windows7
+
+        ValueError.__init__(self, windows7.TILL_ONLY)
+        self.body = windows7.refusal_body(codeRole=role)
+
+
 def check_platform(pairing_code: Any, device_info: Any) -> str:
-    """The device's platform; `PlatformMismatch` when the code names the other one."""
+    """
+    The device's platform; `PlatformMismatch` when the code names the other one, `Windows7TillOnly` when the
+    Windows 7 build redeems a code of another role than the till.
+    """
+    from app.services import windows7
+
     device_platform = platform_of_device_info(device_info)
     wanted = getattr(pairing_code, "platform", None)
     if wanted in PLATFORMS and wanted != device_platform:
         raise PlatformMismatch(wanted, device_platform)
+    role = getattr(pairing_code, "device_role", None)
+    if windows7.is_windows7_device_info(device_info) and not windows7.role_allowed(role):
+        raise Windows7TillOnly(role)
     return device_platform
 
 

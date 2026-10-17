@@ -2980,7 +2980,8 @@
       "platforms": {
         "android": "Android",
         "windows": "Windows",
-        "web": "דפדפן (Web)"
+        "web": "דפדפן (Web)",
+        "windows7": "Windows 7 (קופה)"
       },
       "windowsNoModel": "מחשב ווינדוס — אין צורך לבחור דגם.",
       "webNoModel": "קיוסק בדפדפן — אין צורך לבחור דגם: כל טאבלט, מחשב או מסך מגע עם דפדפן (Chrome, Edge, Safari).",
@@ -3038,7 +3039,8 @@
       "cashHostNeedsShop": "שרת מזומן משרת סניף מסוים — בחרו חברה וסניף.",
       "cashHostNotTill": "שרת מזומן — לא קופה",
       "cashHostNotTillHint": "מנהל את עמדות המזומן (PayLink) של הקיוסקים ברשת המקומית. אין בו מכירות, משמרות, Z או תשלומים, והוא לא נספר כרישיון קופה. חבילת היצרן (דרייבר וספרייה) מותקנת בו בנפרד.",
-      "cashStationsLink": "עמדות מזומן"
+      "cashStationsLink": "עמדות מזומן",
+      "windows7Note": "מחשב ישן — Windows 7 / 8.1 ‏64-bit (למשל Celeron J1900, ‏4 GB): קופה בלבד, רישיון \"קופה בלבד\". במחשב מתקינים את R2M-POS-Win7-Till (לא את ההתקנה הרגילה של Windows), והעדכונים שלו נשלחים בפלטפורמה \"Windows 7 (קופה)\" בעדכוני גרסה."
     },
     "documentPrefix": {
       "label": "קידומת מסמכים",
@@ -9248,7 +9250,8 @@
       "all": "הכל",
       "android": "אנדרואיד",
       "windows": "Windows",
-      "kiosk_web": "מסכי קיוסק (ווב)"
+      "kiosk_web": "מסכי קיוסק (ווב)",
+      "windows7": "Windows 7 (קופה)"
     },
     "fileInstaller": "קובץ התקנה (EXE)",
     "fromFileName": "מתוך שם הקובץ",

@@ -4,7 +4,8 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'release/**', 'node_modules/**', 'build/**'] },
+  // legacy/: the Windows 7 build's own package (node_modules, its dist / dist-check / release outputs).
+  { ignores: ['dist/**', 'release/**', 'node_modules/**', 'build/**', 'legacy/node_modules/**', 'legacy/dist/**', 'legacy/dist-check/**', 'legacy/release/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -19,6 +20,12 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
       'no-console': 'off',
     },
+  },
+  {
+    // CommonJS scripts run by Electron itself (scripts/win7-render-check.cjs).
+    files: ['scripts/**/*.cjs'],
+    languageOptions: { sourceType: 'commonjs', globals: { ...globals.node } },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
   {
     files: ['src/renderer/**/*.tsx', 'src/renderer/**/*.ts'],

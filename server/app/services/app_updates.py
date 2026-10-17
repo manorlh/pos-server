@@ -67,15 +67,23 @@ PLATFORM_WINDOWS = "windows"
 #: Kiosk web bundles (a zip of the kiosk's screens as static files): taken by the ANDROID
 #: devices, which ask for them explicitly (`?platform=kiosk_web`) besides their APK.
 PLATFORM_KIOSK_WEB = "kiosk_web"
-PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB)
+#: "Windows 7 (קופה)" (app/services/windows7.py, P:/specs/windows7-till.md): the Windows app's build for
+#: old PCs (Electron 22, till only). Its devices ask `?platform=windows7` and are its machines on the
+#: dashboard (`machine_platform`); a standard (Electron 44) installer never reaches them — it would not
+#: start on Windows 7. The same NSIS installer rules as "windows".
+PLATFORM_WINDOWS7 = "windows7"
+PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB, PLATFORM_WINDOWS7)
+#: The Windows installers' platforms (an NSIS .exe, versionName a.b.c).
+WINDOWS_PLATFORMS = (PLATFORM_WINDOWS, PLATFORM_WINDOWS7)
 #: The platforms whose assignment may roll a device back to a lower versionCode: the Windows
-#: app, and a kiosk web bundle (a bundle rollback is assigning an older bundle). Never Android.
-DOWNGRADE_PLATFORMS = (PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB)
+#: app (both builds), and a kiosk web bundle (a bundle rollback is assigning an older bundle). Never Android.
+DOWNGRADE_PLATFORMS = (PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB, PLATFORM_WINDOWS7)
 
 #: A Windows version name: "a.b.c", an optional "-pre" / "+build" suffix ignored.
 _WINDOWS_VERSION = re.compile(r"^\s*(\d+)\.(\d+)\.(\d+)(?:[-+].*)?\s*$")
-#: The version in an installer's file name: `R2M-Kiosk-0.2.0-setup.exe`.
-_INSTALLER_NAME = re.compile(r"[-_ ](\d+\.\d+\.\d+)-setup\.exe$", re.IGNORECASE)
+#: The version in an installer's file name: `R2M-Kiosk-0.2.0-setup.exe`, or the Windows 7 build's
+#: `R2M-POS-Win7-Till-setup-0.5.11.exe`.
+_INSTALLER_NAME = re.compile(r"(?:[-_ ](\d+\.\d+\.\d+)-setup|[-_ ]setup-(\d+\.\d+\.\d+))\.exe$", re.IGNORECASE)
 _INT32_MAX = 2_147_483_647
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -98,10 +106,15 @@ def release_platform(release: Any) -> str:
 
 
 def machine_platform(machine: Any) -> str:
-    """'windows' when the device said so at pairing (`device_info.platform`), else 'android'."""
+    """
+    'windows' when the device said so at pairing (`device_info.platform`) — 'windows7' when it is the
+    Windows 7 build (`device_info.appBuild == "win7"`, app/services/windows7.py) — else 'android'.
+    """
+    from app.services import windows7
+
     info = getattr(machine, "device_info", None)
     if isinstance(info, dict) and str(info.get("platform") or "").strip().lower() == PLATFORM_WINDOWS:
-        return PLATFORM_WINDOWS
+        return PLATFORM_WINDOWS7 if windows7.is_windows7_device_info(info) else PLATFORM_WINDOWS
     return PLATFORM_ANDROID
 
 
@@ -124,9 +137,9 @@ def windows_version_code(version_name: str) -> int:
 
 
 def version_from_installer_name(filename: Optional[str]) -> Optional[str]:
-    """`R2M-Kiosk-0.2.0-setup.exe` → "0.2.0"; None when the name carries no version."""
+    """`R2M-Kiosk-0.2.0-setup.exe` / `R2M-POS-Win7-Till-setup-0.2.0.exe` → "0.2.0"; None when the name carries no version."""
     match = _INSTALLER_NAME.search((filename or "").strip())
-    return match.group(1) if match else None
+    return (match.group(1) or match.group(2)) if match else None
 
 
 def clean_install_window(start: Optional[str], end: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
