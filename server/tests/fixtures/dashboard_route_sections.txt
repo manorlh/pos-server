@@ -156,6 +156,8 @@ PUT /companies/{company_id}/till-roles/matrix -> pos_users:edit
 GET /companies/{company_id}/till-roles/users -> pos_users:view
 DELETE /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
 PUT /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
+GET /companies/{company_id}/till-tip-params -> till_settings|organization:view
+PUT /companies/{company_id}/till-tip-params -> till_settings|organization:edit
 GET /customer-display/displays -> till_settings|devices:view
 PUT /customer-display/displays/{machine_id}/till -> till_settings|devices:edit
 GET /customer-display/media -> till_settings|devices:view
