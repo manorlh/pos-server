@@ -124,6 +124,19 @@ def generate_pairing_code(
         except TM.DeviceUnsupported as refused:
             return JSONResponse(status_code=refused.status_code, content=refused.body)
     kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
+    # "מסופון אשראי" (app/services/device_terminal.py): the type and its fields, as the device's platform and
+    # role can charge — refused now (422, Hebrew), while the dialog is open.
+    from app.services import device_terminal
+
+    try:
+        terminal_options = device_terminal.clean_request(
+            body.terminal, role=device_role, platform=body.platform, device_model=body.device_model,
+        )
+    except device_terminal.DeviceTerminalRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    if terminal_options is not None and kiosk_options:
+        # The kiosk's old pinpad fields give way to the type chosen beside them.
+        kiosk_options = {k: v for k, v in kiosk_options.items() if k not in ("pinpadHost", "pinpadPort")}
     if device_role in (display_devices.ROLE_LOCAL_SERVER, display_devices.ROLE_CASH_HOST) and body.name:
         # "שם המכשיר": a server's typed name is kept with its options (it has no register number).
         kds_options = {**(kds_options or {}), "name": body.name}
@@ -152,6 +165,7 @@ def generate_pairing_code(
             platform=body.platform or display_devices.PLATFORM_ANDROID,
             kds_options=kds_options,
             work_config=work_config,
+            terminal_options=terminal_options,
             # "שם המכשיר — לא חובה": a till's name from the form (already cleaned by the schema).
             machine_name=body.name if device_role in (None, "till") else None,
             license_product=license_product,

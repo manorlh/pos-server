@@ -87,6 +87,8 @@
     "src/lib/branchCode.test.ts",
     "src/lib/deviceProfile.ts",
     "src/lib/deviceProfile.test.ts",
+    "src/lib/deviceTerminal.ts",
+    "src/lib/deviceTerminal.test.ts",
     "src/lib/deviceLicense.ts",
     "src/lib/deviceLicense.test.ts",
     "src/lib/appReleases.ts",
