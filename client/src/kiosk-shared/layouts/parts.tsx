@@ -28,6 +28,7 @@ import {
 } from '@/components/dashboard/kiosks/preview-screens';
 import { badgePop } from '@/components/dashboard/kiosks/preview-feedback';
 import { DishCountBadge } from './count-badge';
+import { DishInfoButton } from './info-button';
 
 /** A layout's word: the registry's text (as the business set it, in the screen's language), placeholders filled. */
 export function kt(m: PreviewModel, key: string, values?: Record<string, string | number>): string {
@@ -169,6 +170,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           ) : null}
           {priced}
         </div>
+        <DishInfoButton m={m} p={p} card={{ descriptionLines: 2, dietaryOnCard: false, cardPicture: 'small' }} size={Math.round(28 * u)} />
         {plus(40 * u)}
         <DishCountBadge m={m} inCart={inCart} size={Math.round(24 * u)} />
       </button>
@@ -192,6 +194,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           {soldTag}
           {plus(42 * u, 'absolute bottom-0 end-0')}
           <DishCountBadge m={m} inCart={inCart} size={Math.round(28 * u)} className="end-0 top-0" />
+          <DishInfoButton m={m} p={p} card={{ descriptionLines: 0, dietaryOnCard: false, cardPicture: 'large' }} size={Math.round(28 * u)} className="absolute start-0 top-0" />
         </div>
         <div className="k-name mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
           {p.name}
@@ -214,6 +217,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         {soldTag}
         {plus(34 * u, 'absolute bottom-2 end-2')}
         <DishCountBadge m={m} inCart={inCart} size={Math.round(26 * u)} className="end-2 top-2" />
+        <DishInfoButton m={m} p={p} card={{ descriptionLines: 2, dietaryOnCard: true, cardPicture: 'large' }} size={Math.round(26 * u)} className="absolute start-2 top-2" />
       </div>
       <div className="space-y-0.5 p-2.5">
         <div className="k-name-block line-clamp-2 kt-13 font-bold leading-snug" style={textSize(m, 'productName', 13)}>

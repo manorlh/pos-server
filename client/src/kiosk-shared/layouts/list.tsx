@@ -14,6 +14,7 @@ import { ProductImage, cardStyle, textSize, type PProduct, type PreviewModel } f
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { Empty, SectionTitle, cartCounts, kt, unitOf, useTapDish, widthDpOf } from './parts';
 import { DishCountBadge } from './count-badge';
+import { DishInfoButton } from './info-button';
 
 /** The search's longest query (the till's KioskKeyboardLayout.SEARCH_MAX). */
 const SEARCH_MAX = 40;
@@ -143,6 +144,7 @@ function ListLine({ m, p, inCart }: { m: PreviewModel; p: PProduct; inCart: numb
       <span className="shrink-0 kt-13 font-extrabold tabular-nums" style={{ color: p.soldOut ? m.c.mutedText : m.c.text, textDecoration: p.soldOut ? 'line-through' : undefined, ...textSize(m, 'productPrice', 13) }}>
         {m.money(p.price)}
       </span>
+      <DishInfoButton m={m} p={p} card={{ descriptionLines: 1, dietaryOnCard: false, cardPicture: p.imageUrl ? 'small' : 'none' }} size={Math.round(28 * u)} />
       {p.soldOut ? null : (
         <span
           role="button"
