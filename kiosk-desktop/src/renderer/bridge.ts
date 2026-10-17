@@ -4,6 +4,7 @@
  * it never charges anything and never reaches the network.
  */
 
+import { demoTechnicianAction, demoTechnicianSetup } from './technician/technicianDemo';
 import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
 import type { CashPayView, KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
@@ -324,14 +325,16 @@ function webBridge(): KioskBridge {
         network: { online: true, lastBeatOkAt: Date.now() - 20_000, serverUrl: 'https://api.example.invalid', interfaces: [{ name: 'Ethernet', address: '192.168.1.57' }, { name: 'Wi-Fi', address: '10.0.0.12' }] },
         printer: admin.printer,
         terminal: admin.terminal,
-        update: { current: '0.5.9', available: '0.5.10', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
+        update: { current: '0.5.10', available: '0.5.11', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
         quickSupport: null,
+        // The rest of the screen (technician/technicianDemo.ts): made-up facts.
+        setup: demoTechnicianSetup(),
       };
     },
     cashOwedChoice: async () => undefined,
     cashSplit: async () => ({ ok: false, message: 'web demo' }),
     cashQuestion: async () => undefined,
-    technicianAction: async () => ({ ok: false, message: 'web demo' }),
+    technicianAction: (a) => demoTechnicianAction(a),
     on: (event, fn) => {
       const set = listeners.get(event) ?? new Set();
       listeners.set(event, set);
