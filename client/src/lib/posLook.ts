@@ -451,13 +451,13 @@ export function schemeVars(s: PosScheme): Record<string, string> {
 // ── the kiosk (pos-android ui/kiosk, the native renderer) ─────────────────────────────────
 
 /**
- * The Android kiosk's dp per CSS px of the kiosk's web screens: those screens are drawn for 540 CSS px across a portrait
- * kiosk (the Windows window's zoom, kiosk-desktop core/windowZoom.ts), which the Android kiosk lays out as ~785 dp
- * (kiosk-shared/layouts/parts.tsx DP_PER_PX, the same number). A native size in dp is `kioskPx(dp)` CSS px here — the
- * same proportion to the screens' type (a 22 sp button word is 15 CSS px here). Side by side with an mdpi Android shot
- * of the same panel (P:/specs/till-visual-parity/android, 1080 dp across a 1080 px portrait) the Windows window's zoom
- * (×2 there, ×1.8 at 1920×1080, ×1.44 at 1536×864) draws the web ~1.38× / 1.24× / 1.0× larger: that is the window's
- * zoom (KIOSK_DESIGN_SHORT_SIDE_PX), not these sizes.
+ * The Android kiosk's dp per CSS px of the kiosk's web screens: the web's sizes are the native dp ÷ 1.45 (a 22 sp button
+ * word is 15 CSS px; kiosk-shared/layouts/parts.tsx DP_PER_PX, the same number), so `kioskPx(dp)` is a native size here.
+ * The upright Windows kiosk is zoomed to match (kiosk-desktop core/windowZoom.ts, 17.10): the Android kiosk's 540 dp
+ * across (1080×1920 at xhdpi) are 371 CSS px, and the two draw every screen at one size, side by side. The values the
+ * screens take as dp (the attract button's box, the theme's corners) pass through PreviewModel.cssPerDp. A landscape
+ * window keeps the web's own landscape scale (600 CSS px tall), and the dashboard's preview and the Android WebView
+ * bundle (CSS px = dp, no zoom) still draw at 1 / 1.45 of the native size.
  */
 export const KIOSK_DP_PER_PX = 785 / 540;
 

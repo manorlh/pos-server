@@ -25,7 +25,7 @@ import {
   ArrowRight,
   Check,
   ChevronRight,
-  CircleHelp,
+  Info,
   Clock,
   Heart,
   Languages,
@@ -427,6 +427,12 @@ export interface PreviewModel {
    * (264 dp) wide, every name cut to a word.
    */
   panelWidth?: number | null;
+  /**
+   * CSS px per Android dp of the values these screens take as dp — the attract button's box and label (KioskCtaLayout),
+   * the theme's corners: the upright Windows kiosk draws the Android kiosk's 540 dp in 371 CSS px (1 / 1.45, kiosk-desktop
+   * core/windowZoom.ts); absent / 1 — the dashboard's preview, a landscape window, a WebView: a dp is a CSS px.
+   */
+  cssPerDp?: number;
   /** The frame's screen, in px (= dp for the layout rules). */
   screen: { w: number; h: number };
   /** The attract button's box on that screen (ctaBox). */
@@ -1189,7 +1195,9 @@ export function AttractCta({
   const fill = cta.fillColor ?? m.c.button;
   const text = cta.textColor ?? m.c.buttonText;
   const radius = ctaRadiusPx(cta, box.h, m.cfg.theme);
-  const fontSp = ctaFontSp(cta, box.h);
+  // The label in sp on the box's height in dp (the box arrives in CSS px: m.cssPerDp per dp).
+  const dpK = m.cssPerDp ?? 1;
+  const fontSp = ctaFontSp(cta, box.h / dpK) * dpK;
   const subtitle = cta.subtitle.trim();
   const animation = ctaAnimation(cta, m.cfg.general);
   const draggable = cta.position === 'custom' && !!onMove;
@@ -1297,7 +1305,7 @@ export function AttractCta({
             {m.txt('attractCta')}
           </span>
           {subtitle ? (
-            <span className="max-w-full truncate opacity-85" style={{ fontSize: ctaSubtitleSp(cta, box.h), fontWeight: 400 }}>
+            <span className="max-w-full truncate opacity-85" style={{ fontSize: ctaSubtitleSp(cta, box.h / dpK) * dpK, fontWeight: 400 }}>
               {subtitle}
             </span>
           ) : null}
@@ -1442,7 +1450,7 @@ export function AttractServiceButtons({ m, box, onPick }: { m: PreviewModel; box
   const w = sz?.cardMaxWidthPx != null ? Math.min(each, sz.cardMaxWidthPx) : each;
   const inner = sz ? w * 2 + gap : box.w;
   const radius = ctaRadiusPx(cta, h, m.cfg.theme);
-  const fontSp = ctaFontSp({ ...cta, subtitle: '' }, h);
+  const fontSp = ctaFontSp({ ...cta, subtitle: '' }, h / (m.cssPerDp ?? 1)) * (m.cssPerDp ?? 1);
   return (
     <div
       data-service-buttons
@@ -1577,7 +1585,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
               <HelpPill m={m} />
             ) : (
               <span className="flex items-center gap-1.5 px-3 kt-13 font-semibold" style={{ ...ATTRACT_PILL, minHeight: ATTRACT_PILL_PX }} title={m.txt('helpText')}>
-                <CircleHelp className="h-4 w-4" /> {m.t('help')}
+                <HelpIcon m={m} /> {m.t('help')}
               </span>
             )
           ) : null}
@@ -1677,6 +1685,11 @@ export function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
   );
 }
 
+/** The help pill's mark as the Android kiosk's (Material Info): a filled disc in the brand colour, a white "i". */
+function HelpIcon({ m }: { m: PreviewModel }) {
+  return <Info aria-hidden style={{ width: kioskPx(22), height: kioskPx(22) }} fill={m.c.primary} color="#FFFFFF" strokeWidth={2.25} />;
+}
+
 /** "עזרה" as the Android kiosk's KioskPill (52 dp, white, the words #14161A) — calls the staff (the live kiosk only). */
 export function HelpPill({ m }: { m: PreviewModel }) {
   return (
@@ -1690,7 +1703,7 @@ export function HelpPill({ m }: { m: PreviewModel }) {
         m.live?.help?.();
       }}
     >
-      <CircleHelp className="h-4 w-4" aria-hidden /> {m.t('help')}
+      <HelpIcon m={m} /> {m.t('help')}
     </button>
   );
 }
@@ -2680,12 +2693,21 @@ export function ProductSheet({
             <X className="h-5 w-5" />
           </button>
         ) : compact ? null : (
-          <div className="absolute inset-x-0 top-2 z-10 mx-auto h-1.5 w-10 rounded-full bg-white/80 shadow" />
+          // The Android kiosk's sheet: a quiet round close (52 dp, surfaceAlt) at the picture's top end, no grab handle.
+          <button
+            type="button"
+            aria-label={m.t('close')}
+            onClick={onClose}
+            className="k-hit absolute end-3 top-3 z-10 flex items-center justify-center rounded-full shadow-sm"
+            style={{ width: kioskPx(52), height: kioskPx(52), background: kioskSurfaceAlt(m.c.dark), color: m.c.text }}
+          >
+            <X className="h-5 w-5" />
+          </button>
         )}
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">
           {/* In the accessible mode the dish shows in the display half (kiosk-shared/layouts/reach.tsx). */}
           {reachLow(m.cfg, m.reach?.toggled ?? false) || compact ? null : (
-            <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio }}>
+            <div ref={pictureRef} className="w-full" style={{ aspectRatio: m.ratio, maxHeight: kioskPx(260) }}>
               <ProductImage m={m} p={picture} className="h-full w-full" />
             </div>
           )}
@@ -3340,7 +3362,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
     <button
       type="button"
       data-add-more
-      className="k-tap k-min-target relative flex items-center justify-center px-3 py-3 kt-15 font-semibold"
+      className="k-tap k-min-target relative flex min-w-0 items-center justify-center px-3 py-3 kt-15 font-semibold"
       style={{ flex: m.twoColumns ? undefined : '1 1 0', background: kioskSurfaceAlt(m.c.dark), color: m.c.text, borderRadius: m.btnRadius, ...textSize(m, 'buttons', 15) }}
       onClick={() => m.go('catalog')}
     >
@@ -3358,8 +3380,9 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
           landscape side column under it ("לתשלום" first, right under the summary). */}
       <div className={cn('flex gap-2.5', m.twoColumns && 'flex-col')}>
         {m.twoColumns ? null : addMore}
-        <div style={{ flex: m.twoColumns ? undefined : '1.4 1 0' }}>
-          <BigButton m={m} onClick={() => m.go('pay')} disabledLook={below || m.cart.length === 0}>
+        {/* The amount never wraps under the words (₪100,932.30): "לתשלום" takes what it needs, the secondary the rest. */}
+        <div style={{ flex: m.twoColumns ? undefined : '1.4 1 auto' }}>
+          <BigButton m={m} className="whitespace-nowrap" onClick={() => m.go('pay')} disabledLook={below || m.cart.length === 0}>
             <span>{m.txt('checkoutCta')}</span>
             <span className="tabular-nums">· {m.money(total)}</span>
           </BigButton>
@@ -3426,9 +3449,9 @@ export function cartSideColumnPx(contentPx: number): number {
 function CheckoutBarRow({ m, steps, current }: { m: PreviewModel; steps: CheckoutStep[]; current: CheckoutStep }) {
   const items = checkoutBar(steps, current);
   return (
-    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 kt-11">
+    <div className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1 kt-11">
       {items.map((it, i) => (
-        <span key={it.key} className="inline-flex items-center gap-2">
+        <span key={it.key} className="inline-flex items-center gap-1">
           {i > 0 ? <span aria-hidden className="h-1 w-1 rounded-full" style={{ background: `${m.c.mutedText}99` }} /> : null}
           <span
             className={it.state === 'current' ? 'font-extrabold' : 'font-medium'}
@@ -3492,7 +3515,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
   });
   return (
     <div className="relative flex h-full flex-col">
-      <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
+      <div className={cn('flex min-h-0 flex-1 flex-col items-center overflow-y-auto [scrollbar-width:none]', two ? 'p-3' : 'p-2')}>
         {/* Never squeezed (shrink-0): a short window scrolls the whole card, "המשך ללא טיפ" included (layout audit 16.10). */}
         <div
           data-tip-card
@@ -3501,14 +3524,15 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
         >
           <CardHeader m={m} caption={m.txt('tipCaption')} start={<LiveBack m={m} size={32} />} />
           <div
-            className={two ? 'grid items-start gap-x-5 gap-y-4 p-4' : 'flex flex-col gap-4 p-4'}
+            // The Android kiosk's tip card: padding 24 / 18 dp, 12 dp between its parts (here in CSS px).
+            className={two ? 'grid items-start gap-x-5 gap-y-4 p-4' : 'flex flex-col gap-3 px-4 py-3'}
             style={two ? { gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr)', gridTemplateAreas: '"bar bar" "head sum" "tiles act"' } : undefined}
           >
             <div style={area('bar')}>
               <CheckoutBarRow m={m} steps={steps} current="tip" />
             </div>
             <div className="flex flex-col items-center gap-2 text-center" style={area('head')}>
-              <span className="flex h-12 w-12 items-center justify-center" style={{ background: `${m.c.primary}1F`, color: m.c.primary, borderRadius: 14 }}>
+              <span className="flex items-center justify-center" style={{ width: kioskPx(60), height: kioskPx(60), background: `${m.c.primary}1F`, color: m.c.primary, borderRadius: kioskPx(18) }}>
                 <Heart className="h-6 w-6" />
               </span>
               <h2 className="text-2xl font-extrabold leading-tight">{m.txt('tipTitle')}</h2>
@@ -3558,7 +3582,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
                 </button>
               ) : null}
             </div>
-            <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius, ...area('sum') }}>
+            <div className="space-y-1.5 p-3" style={{ background: `${m.c.primary}0D`, borderRadius: radius, ...area('sum') }}>
               <div className="flex items-center justify-between kt-13">
                 <span style={{ color: m.c.mutedText }}>{m.txt('tipOrderTotal')}</span>
                 <span className="font-semibold tabular-nums">{money(goods)}</span>
@@ -3567,9 +3591,9 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
                 <span style={{ color: m.c.mutedText }}>{m.txt('tipLine')}</span>
                 <span className="font-semibold tabular-nums">{money(tip)}</span>
               </div>
-              <div className="flex items-center justify-between border-t pt-2" style={{ borderColor: m.c.border }}>
+              <div className="flex items-center justify-between border-t pt-1.5" style={{ borderColor: m.c.border }}>
                 <span className="text-base font-bold">{m.txt('tipTotal')}</span>
-                <span className="text-xl font-extrabold tabular-nums" style={{ color: m.c.primaryInk }}>
+                <span className="text-lg font-extrabold tabular-nums" style={{ color: m.c.primaryInk }}>
                   {money(total)}
                 </span>
               </div>
@@ -4341,7 +4365,7 @@ function RestNotice({ m, title, body }: { m: PreviewModel; title: string; body: 
               style={{ ...ATTRACT_PILL, minHeight: ATTRACT_PILL_PX }}
               onClick={() => m.live?.help?.()}
             >
-              <CircleHelp className="h-4 w-4" aria-hidden /> {m.t('help')}
+              <HelpIcon m={m} /> {m.t('help')}
             </button>
           ) : null}
         </>
