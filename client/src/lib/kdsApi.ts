@@ -10,6 +10,7 @@
  */
 import { api } from './api';
 import type { ScreenDisplay } from './kdsScreenTypes';
+import type { KdsPrintJob, KdsPrintPath, KdsPrintStatus } from './kdsPrint';
 import type { WorkflowLevelView, WorkflowScopeType, WorkflowValues } from './workflowMode';
 
 // ── Workflow configuration ──────────────────────────────────────────────────────
@@ -289,5 +290,59 @@ export interface KdsShopBoard {
 
 export async function getKdsBoard(shopId: string): Promise<KdsShopBoard> {
   const { data } = await api.get<KdsShopBoard>(`/kds/shops/${shopId}/board`);
+  return data;
+}
+
+// ── KDS: how a screen prints ("הדפסה", docs/SPEC_KDS.md §17) ──────────────────────
+
+export interface KdsPrintTarget {
+  key: string;
+  printerId: string | null;
+  printerName: string | null;
+  name: string;
+  hostMachineId: string;
+  hostName: string | null;
+  connection: string;
+  /** A till's own printer (its head, its USB / Bluetooth printer). */
+  local: boolean;
+  sameArea: boolean;
+  printServer: boolean;
+  online: boolean;
+  /** Within the screen's `remotePrintHosts`. */
+  allowed: boolean;
+}
+
+export interface KdsPrintCard {
+  machineId: string;
+  machineName: string | null;
+  /** This screen's own values (null — as its shop / point of sale says). */
+  own: { path: KdsPrintPath | null; hostMachineId: string | null; printerId: string | null };
+  effective: { path: KdsPrintPath; hostMachineId: string | null; printerId: string | null };
+  status: KdsPrintStatus;
+  targets: KdsPrintTarget[];
+  remotePrint: { enabled: boolean; timeoutSec: number; hostsLimited: boolean };
+  recentJobs: KdsPrintJob[];
+  canEdit: boolean;
+}
+
+export interface KdsPrintSettingsInput {
+  path: KdsPrintPath | null;
+  hostMachineId: string | null;
+  printerId: string | null;
+}
+
+export async function getScreenPrint(shopId: string, machineId: string): Promise<KdsPrintCard> {
+  const { data } = await api.get<KdsPrintCard>(`/kds/shops/${shopId}/devices/${machineId}/print`);
+  return data;
+}
+
+export async function saveScreenPrint(shopId: string, machineId: string, body: KdsPrintSettingsInput): Promise<KdsPrintCard> {
+  const { data } = await api.put<KdsPrintCard>(`/kds/shops/${shopId}/devices/${machineId}/print`, body);
+  return data;
+}
+
+/** "הדפסת בדיקה" on the screen's path (the job; follow it with `getScreenPrint`'s `recentJobs`). */
+export async function testScreenPrint(shopId: string, machineId: string): Promise<KdsPrintJob> {
+  const { data } = await api.post<KdsPrintJob>(`/kds/shops/${shopId}/devices/${machineId}/print/test`);
   return data;
 }

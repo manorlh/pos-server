@@ -488,6 +488,10 @@ def start_customer_display_media_worker():
 from app.routers import kds as kds_router  # noqa: E402
 
 app.include_router(kds_router.router, prefix=_prefix)
+# "איך המסך מדפיס" (app/routers/kds_print.py): a browser KDS / board prints through a till of the shop.
+from app.routers import kds_print as kds_print_router  # noqa: E402
+
+app.include_router(kds_print_router.router, prefix=_prefix)
 # The customer self-order kiosk (app/routers/kiosks.py): the till's kiosk sync, orders,
 # pickup numbers and controller commands, and the dashboard's kiosks and their config.
 from app.routers import kiosks as kiosks_router  # noqa: E402
