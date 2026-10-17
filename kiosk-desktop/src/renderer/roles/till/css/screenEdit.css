@@ -91,7 +91,7 @@
 .se-badge {
   position: absolute;
   top: 0;
-  right: 0;
+  left: 0;
   width: var(--t-touch);
   height: var(--t-touch);
   display: flex;
@@ -108,7 +108,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: #8e8e93;
+  background: #5f6670;
   color: #ffffff;
   font-size: 15px;
   font-weight: 700;
@@ -116,7 +116,7 @@
 }
 
 .se-badge-on .se-badge-dot {
-  background: #34c759;
+  background: #15803d;
   font-size: 19px;
 }
 
@@ -124,8 +124,9 @@
   cursor: default;
 }
 
+/* The badge's 48 × 48 at the tile's end corner (left in Hebrew): the name keeps clear of it. */
 .se-tile .t-tile-name {
-  padding-right: 22px;
+  padding-left: 48px;
 }
 
 @media (max-width: 900px) {

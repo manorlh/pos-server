@@ -86,16 +86,21 @@ export function SellScreen({
   const catalogPane = (
     <section className="t-catalog" aria-label={T.sell}>
       <div className="t-catalog-bar">
-        <div className="t-departments" role="tablist">
-          <button type="button" role="tab" aria-selected={sell.departmentId === null} className={`t-chip${sell.departmentId === null ? ' t-chip-on' : ''}`} onClick={() => onDepartment(null)}>
-            {T.allDepartments}
-          </button>
-          {(catalog?.departments ?? []).map((d) => (
-            <button key={d.id} type="button" role="tab" aria-selected={sell.departmentId === d.id} className={`t-chip${sell.departmentId === d.id ? ' t-chip-on' : ''}`} onClick={() => onDepartment(d.id)}>
-              {d.name}
+        {screenEdit?.view.on ? (
+          // "עריכת מסך": the categories are arranged in their own row, in place of the tabs.
+          <ScreenEditCategoryRow departments={catalog?.departments ?? []} selectedId={sell.departmentId} allLabel={T.allDepartments} onSelect={onDepartment} onMove={screenEdit.actions.moveCategory} />
+        ) : (
+          <div className="t-departments" role="tablist">
+            <button type="button" role="tab" aria-selected={sell.departmentId === null} className={`t-chip${sell.departmentId === null ? ' t-chip-on' : ''}`} onClick={() => onDepartment(null)}>
+              {T.allDepartments}
             </button>
-          ))}
-        </div>
+            {(catalog?.departments ?? []).map((d) => (
+              <button key={d.id} type="button" role="tab" aria-selected={sell.departmentId === d.id} className={`t-chip${sell.departmentId === d.id ? ' t-chip-on' : ''}`} onClick={() => onDepartment(d.id)}>
+                {d.name}
+              </button>
+            ))}
+          </div>
+        )}
         <input
           className="t-search"
           type="search"
@@ -137,9 +142,6 @@ export function SellScreen({
         </div>
       ) : null}
       {screenEdit?.view.on ? <ScreenEditBar view={screenEdit.view} actions={screenEdit.actions} /> : null}
-      {screenEdit?.view.on ? (
-        <ScreenEditCategoryRow departments={catalog?.departments ?? []} selectedId={sell.departmentId} allLabel={T.allDepartments} onSelect={onDepartment} onMove={screenEdit.actions.moveCategory} />
-      ) : null}
       <ProductGrid
         arrange={screenEdit?.view.on ? { onMove: screenEdit.actions.move, onLock: screenEdit.actions.lock, busyId: screenEdit.view.lockBusy } : undefined}
         products={products}

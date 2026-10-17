@@ -2001,6 +2001,7 @@
 }
 .t-ch-pre {
   min-height: var(--t-touch);
+  min-width: var(--t-touch);
   padding: 2px 12px;
   border-radius: 18px;
   background: var(--t-accent-soft);
@@ -2030,6 +2031,7 @@
 }
 .t-ch-allergy {
   min-height: var(--t-touch);
+  min-width: var(--t-touch);
   padding: 4px 12px;
   border-radius: 20px;
   background: var(--t-off-soft);
