@@ -94,6 +94,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     pages: [
       '/dashboard/products', '/dashboard/categories', '/dashboard/modifiers', '/dashboard/upsells',
       '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
+      // "מחירים" (P:/specs/chain-areas.md §9): its API is `products` (bulk / schedules / price policy).
+      '/dashboard/prices',
       // "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone (its menu gate,
       // the page's role check, and its API `/till-parameters/catalog-admin` is SUPER_ADMIN).
       '/dashboard/catalog-admin',
@@ -134,7 +136,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
-  { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
+  // "ניהול נקודות מכירה" (P:/specs/chain-areas.md §12) sits with the shops; its API
+  // (`GET /shops/{id}/areas/overview`) is devices | item_blocks | organization — PAGES_ALSO_OPENED_BY.
+  { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops', '/dashboard/areas'] },
   // "עמדות מזומן" (P:/specs/cash-paylink.md §12) are devices too: the server's `/cash-stations*` routes are
   // `devices` (and read by `kiosks` as well — PAGES_ALSO_OPENED_BY).
   { id: 'devices', pages: ['/dashboard/machines', '/dashboard/cash-stations'] },
@@ -185,6 +189,7 @@ export function canEditTablesLayout(access: DashboardAccess): boolean {
  */
 export const PAGES_ALSO_OPENED_BY: Readonly<Record<string, readonly SectionId[]>> = {
   '/dashboard/stock/quick-block': ['item_blocks'],
+  '/dashboard/areas': ['devices', 'item_blocks'],
   // The server lets the kiosks' people read the cash stations (`GET /cash-stations*`: devices | kiosks, view).
   '/dashboard/cash-stations': ['kiosks'],
   // "עיצובים שמורים לקיוסק": the server lets the kiosks' people read the library (`GET /kiosk-designs*`: kiosk_designs | kiosks, view).
@@ -202,7 +207,7 @@ function alsoOpened(access: DashboardAccess, pathname: string): boolean {
   );
 }
 
-/** "מנהל סניף / אירוע" and "מנהל אזור" — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
+/** "מנהל סניף / אירוע" and "מנהל נקודת מכירה" (id `area_manager`) — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
 export const MANAGER_TEMPLATES = ['branch_manager', 'area_manager'] as const;
 
 /** "מנהל ארגון" — what a new user gets until the super admin opens more (server `ORG_MANAGER_SECTIONS`). */
@@ -220,6 +225,32 @@ export interface DashboardAccess {
   companyIds?: string[];
   shopIds?: string[];
   template?: string | null;
+  /**
+   * "מנהל נקודת מכירה" (P:/specs/chain-areas.md §3): the points of sale the user is narrowed to (with their shop),
+   * whatever their sections. Empty — the whole shops of their role.
+   */
+  areaIds?: string[];
+  areas?: AccessArea[];
+}
+
+export interface AccessArea {
+  id: string;
+  name: string;
+  shopId: string;
+}
+
+/** The user's points of sale, read whether or not their sections are restricted. */
+export function parseAccessAreas(raw: unknown): { areaIds: string[]; areas: AccessArea[] } {
+  if (!raw || typeof raw !== 'object') return { areaIds: [], areas: [] };
+  const value = raw as Record<string, unknown>;
+  const areaIds = Array.isArray(value.areaIds) ? value.areaIds.map(String) : [];
+  const areas = Array.isArray(value.areas)
+    ? value.areas
+        .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+        .map((a) => ({ id: String(a.id ?? ''), name: String(a.name ?? ''), shopId: String(a.shopId ?? '') }))
+        .filter((a) => a.id && a.shopId)
+    : [];
+  return { areaIds, areas };
 }
 
 /** Nothing narrowed: the super admin, a full-access user, or a server that predates profiles. */
@@ -229,7 +260,8 @@ export const UNRESTRICTED: DashboardAccess = { restricted: false, sections: {} }
 export function parseDashboardAccess(raw: unknown): DashboardAccess {
   if (!raw || typeof raw !== 'object') return UNRESTRICTED;
   const value = raw as Record<string, unknown>;
-  if (value.restricted !== true) return UNRESTRICTED;
+  const reach = parseAccessAreas(value);
+  if (value.restricted !== true) return reach.areaIds.length ? { ...UNRESTRICTED, ...reach } : UNRESTRICTED;
   const sections: Partial<Record<SectionId, AccessLevel>> = {};
   const rawSections = value.sections;
   if (rawSections && typeof rawSections === 'object') {
@@ -247,6 +279,7 @@ export function parseDashboardAccess(raw: unknown): DashboardAccess {
     companyIds: ids(value.companyIds),
     shopIds: ids(value.shopIds),
     template: typeof value.template === 'string' ? value.template : null,
+    ...reach,
   };
 }
 

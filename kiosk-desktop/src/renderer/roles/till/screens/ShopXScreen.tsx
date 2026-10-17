@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react';
 import type { ShopXState } from '../../../../shared/till/protocol';
 import { T } from '../text';
 
-export function ShopXScreen({ shopX, load, print, back }: { shopX: ShopXState | undefined; load(refresh: boolean): void; print(): void; back(): void }) {
+export function ShopXScreen({ shopX, load, print, back }: { shopX: ShopXState | undefined; load(refresh: boolean, scope?: 'shop' | 'area'): void; print(): void; back(): void }) {
   const asked = useRef(false);
   useEffect(() => {
     // Opened: the report as the cloud holds it now (once); "רענן" asks the other tills first.
@@ -17,6 +17,9 @@ export function ShopXScreen({ shopX, load, print, back }: { shopX: ShopXState | 
     load(false);
   }, [shopX?.report, load]);
   const r = shopX?.report ?? null;
+  // "X לנקודת המכירה" (chain-areas §11.2d): offered when the till stands in a point of sale; "רענן" keeps the scope shown.
+  const scope = shopX?.scope ?? 'shop';
+  const areaName = shopX?.areaName ?? null;
   return (
     <div className="t-report">
       <div className="t-report-head">
@@ -25,6 +28,16 @@ export function ShopXScreen({ shopX, load, print, back }: { shopX: ShopXState | 
           {T.back}
         </button>
       </div>
+      {areaName ? (
+        <div className="t-shift-actions" role="group" aria-label={T.shopX}>
+          <button type="button" className={scope === 'shop' ? 't-btn t-btn-primary' : 't-btn'} aria-pressed={scope === 'shop'} disabled={shopX?.busy} onClick={() => load(false, 'shop')}>
+            {T.shopXWholeShop}
+          </button>
+          <button type="button" className={scope === 'area' ? 't-btn t-btn-primary' : 't-btn'} aria-pressed={scope === 'area'} disabled={shopX?.busy} onClick={() => load(false, 'area')} title={areaName}>
+            {T.shopXArea}
+          </button>
+        </div>
+      ) : null}
       {r?.businessName ? <p className="t-muted">{r.businessName}</p> : null}
       {r?.subtitle ? <p className="t-muted t-small">{r.subtitle}</p> : null}
       {shopX?.busy ? <p className="t-muted">{T.shopXLoading}</p> : null}
@@ -50,7 +63,7 @@ export function ShopXScreen({ shopX, load, print, back }: { shopX: ShopXState | 
         : null}
       {r?.footer ? <p className="t-muted t-small">{r.footer}</p> : null}
       <div className="t-shift-actions">
-        <button type="button" className="t-btn" disabled={shopX?.busy} onClick={() => load(true)}>
+        <button type="button" className="t-btn" disabled={shopX?.busy} onClick={() => load(true, scope)}>
           {T.shopXRefresh}
         </button>
         <button type="button" className="t-btn t-btn-primary" disabled={!r || shopX?.busy} onClick={print}>

@@ -378,14 +378,25 @@ def test_each_leg_gets_its_own_payment_type_code() -> None:
     assert card[offset] == "3"
 
 
-def test_unrecognised_tenders_keep_landing_on_the_cash_code() -> None:
-    # Deliberate: the מבנה אחיד table has codes for cheque and bank transfer, but
-    # mapping new tender strings onto tax codes is a filing decision, not a refactor.
+def test_an_unrecognised_tender_is_other_never_cash() -> None:
+    # 1306 code 9 "אחר" (1.31 §4.5) for a tender string the table does not know, counted for
+    # the export's log and production report — never 1, which would overstate the cash.
+    unmapped: dict = {}
     record = build_d120_record(
-        _of_tx(), 1, "123456789", 7, "0000001", payment_method="bit", payment_amount_override=10.0
+        _of_tx(), 1, "123456789", 7, "0000001", payment_method="crypto", payment_amount_override=10.0,
+        unmapped=unmapped,
     )
     offset = 4 + 9 + 9 + 3 + 20 + 4
-    assert record[offset] == "1"
+    assert record[offset] == "9"
+    assert unmapped == {"crypto": 1}
+
+
+@pytest.mark.parametrize("method, code", [("check", "2"), ("cheque", "2"), ("transfer", "4"), ("bit", "4")])
+def test_cheque_and_bank_transfer_have_their_codes(method, code) -> None:
+    record = build_d120_record(
+        _of_tx(), 1, "123456789", 7, "0000001", payment_method=method, payment_amount_override=10.0
+    )
+    assert record[4 + 9 + 9 + 3 + 20 + 4] == code
 
 
 @pytest.mark.parametrize("legs", [None, [], [{"method": "cash", "amount": 0.0}]])

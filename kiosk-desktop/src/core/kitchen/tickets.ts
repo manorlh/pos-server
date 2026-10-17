@@ -95,6 +95,8 @@ export function kitchenLinesOfSale(lines: readonly SaleLine[], categoryOf: (prod
           mods: mods.length > 0 ? mods : null,
           removals: removals.length > 0 ? removals : null,
           mealName: nonBlank(l.meal?.name ?? l.name),
+          ...(l.important ? { important: true } : {}),
+          ...(l.allergies && l.allergies.length > 0 ? { allergies: [...l.allergies] } : {}),
         });
       }
       continue;
@@ -109,6 +111,9 @@ export function kitchenLinesOfSale(lines: readonly SaleLine[], categoryOf: (prod
       notes,
       mods: mods.length > 0 ? mods : null,
       removals: removals.length > 0 ? removals : null,
+      // The till's dish sheet: "! חשוב" boxed, the diner's allergies (Android KitchenTicketDesigns).
+      ...(l.important ? { important: true } : {}),
+      ...(l.allergies && l.allergies.length > 0 ? { allergies: [...l.allergies] } : {}),
     });
   }
   return out;

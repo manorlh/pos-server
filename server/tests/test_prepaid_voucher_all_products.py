@@ -191,6 +191,17 @@ class TestPicker:
         assert rows["גבינה במשקל"]["unitLabel"] == 'ק"ג'  # none of its own: by the kg
         assert rows["מנה של הקופה"]["shopName"] == w.shop.name
 
+    def test_the_two_pane_picker_gets_each_products_category_and_the_whole_list(self, w):
+        rows = picker(w)
+        assert rows["נקניקייה"]["categoryId"] == str(w.food.id)
+        assert rows["זיתים"]["categoryId"] == str(w.deli.id)
+        assert rows["נקניקייה"]["isActive"] is True
+        # The two-pane picker loads the whole catalog once: more than the search's 200.
+        out = R.list_prepaid_voucher_products(
+            company_id=str(w.company.id), search=None, limit=5000, purpose="items", shop_ids=None, **_ctx(w),
+        )["items"]
+        assert len(out) == len(rows)
+
     def test_usable_first_for_the_purpose(self, w):
         names = list(picker(w))
         assert names.index("פריט כללי") > names.index("נקניקייה")

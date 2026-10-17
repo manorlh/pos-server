@@ -12,6 +12,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ExternalLink, Globe, Pencil, Plus, Trash2 } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { sameId } from '@/lib/entityLookup';
+import { useScope } from '@/lib/scope';
 import { formatDateTime } from '@/lib/format';
 import {
   KDS_ROLES,
@@ -251,8 +253,14 @@ function DeviceDialog({
   const [role, setRole] = useState<KdsRole>(device?.role ?? 'station');
   const [stationIds, setStationIds] = useState<string[]>(device?.stations.map((s) => s.id) ?? []);
   const [isActive, setIsActive] = useState(device?.isActive ?? true);
-  // The screen's orders, on top of its stations (null = the whole shop, as before).
-  const [scope, setScope] = useState<KdsBoardScope | null>(() => (scopeIsWholeShop(device?.scope) ? null : (device?.scope ?? null)));
+  // The screen's orders, on top of its stations (null = the whole shop, as before). A new screen, with a
+  // point of sale chosen in the top bar, starts on it (P:/specs/chain-areas.md §7).
+  const barScope = useScope();
+  const [scope, setScope] = useState<KdsBoardScope | null>(() => {
+    if (device) return scopeIsWholeShop(device.scope) ? null : (device.scope ?? null);
+    const barArea = barScope.areaId && sameId(barScope.shopId, shopId) ? barScope.areaId : null;
+    return barArea && (overview.areas ?? []).some((a) => sameId(a.id, barArea)) ? { areaIds: [barArea], machineIds: [] } : null;
+  });
 
   const needsStation = role === 'station' && stationIds.length === 0;
   const scopeEmpty = scope !== null && scopeIsWholeShop(scope);

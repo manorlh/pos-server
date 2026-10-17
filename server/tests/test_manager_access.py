@@ -61,8 +61,8 @@ def test_the_branch_manager_template():
 
 def test_the_area_manager_template_is_the_same_for_an_area():
     spec = DS.BUILTIN_TEMPLATES[DS.AREA_MANAGER_TEMPLATE]
-    # No area scope yet: the label says so, and it is not offered (`hidden`).
-    assert spec["label"] == "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)" and spec["hidden"] is True
+    # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §3): offered, and saving it needs the user's points of sale.
+    assert spec["label"] == "מנהל נקודת מכירה" and spec.get("needsAreas") is True and not spec.get("hidden")
     # The same, less "שחרור עובד מחובר במכשיר" (exclusive login v2 §2: off for the area manager) and
     # "מסופונים — מצב לא מקוון" (the whole shop's terminals, nayax-deferred-all §9).
     branch = dict(DS.BUILTIN_TEMPLATES[DS.BRANCH_MANAGER_TEMPLATE]["sections"])
@@ -74,9 +74,9 @@ def test_the_area_manager_template_is_the_same_for_an_area():
 
 def test_the_templates_are_offered_where_admins_assign_them():
     ids = [t["id"] for t in DA.builtin_templates_out()]
-    # "מנהל אזור" is kept out of the assign UI until dashboard users can be scoped to an area.
+    # "מנהל נקודת מכירה" is offered now that dashboard users are scoped to points of sale (chain-areas §3).
     # "מאשר" (P:/specs/manager-approval-mobile.md §4): the approval requests alone.
-    assert ids == ["org_manager", "full", "branch_manager", "approver"]
+    assert ids == ["org_manager", "full", "branch_manager", "area_manager", "approver"]
 
 
 @pytest.mark.parametrize(

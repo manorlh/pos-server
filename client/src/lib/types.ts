@@ -6,6 +6,7 @@ import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
 import type { LicenseProduct } from './deviceLicense';
 import type { PresetDiscount } from './presetDiscounts';
+import type { OpenFormatProductionReport } from './taxOpenFormatForm';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -143,6 +144,11 @@ export interface ScopeSelection {
   companyId: string | null;
   shopId: string | null;
   machineId: string | null;
+  /**
+   * "נקודת מכירה" (P:/specs/chain-areas.md §2): a point of sale of the selected shop, or null — "כל הנקודות".
+   * Not a level of its own: it narrows the shop level (`?area=`), and only with a shop.
+   */
+  areaId?: string | null;
 }
 
 /**
@@ -1592,6 +1598,8 @@ export interface TaxOpenFormatPreview {
   flaggedDocuments?: { transactionId: string; documentNumber: string | null; code: string; text: string }[];
   /** Duplicate copies left out of the file (each document once). */
   excludedDuplicateCopies?: number;
+  /** The production report (1.31 §2.6) of the preview run; absent on an older server. */
+  productionReport?: OpenFormatProductionReport;
 }
 
 export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';

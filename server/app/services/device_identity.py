@@ -328,12 +328,17 @@ def _scope(query, db: Session, user: User, active_tenant_id: Any, tenant_filter:
             POSMachine.distributor_id == user.id,
             or_(POSMachine.tenant_id == active_tenant_id, POSMachine.tenant_id.is_(None)),
         )
+    from app.services import area_scope
+
     query = query.filter(POSMachine.tenant_id == active_tenant_id)
     if user.role == UserRole.COMPANY_MANAGER:
-        return query.filter(POSMachine.shop_id.in_(visible_shop_ids(db, user)))
-    if user.role in SHOP_SCOPED_ROLES:
-        return query.filter(POSMachine.shop_id == user.shop_id)
-    return None
+        query = query.filter(POSMachine.shop_id.in_(visible_shop_ids(db, user)))
+    elif user.role in SHOP_SCOPED_ROLES:
+        query = query.filter(POSMachine.shop_id == user.shop_id)
+    else:
+        return None
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the devices of their points of sale.
+    return area_scope.filter_machine_column(query, db, user, POSMachine.id)
 
 
 def _is_kiosk():

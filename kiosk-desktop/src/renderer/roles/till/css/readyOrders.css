@@ -1,0 +1,164 @@
+/* "הזמנות להכנה" (ReadyOrdersScreen): flat cards, the till's accent on each row's main button, nothing else coloured but a
+   failure. Plain CSS for Chromium 108 on a Celeron: no shadows, blur, keyframes or :has(). */
+
+.t-ready-center {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 18px;
+}
+
+.t-ready-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.t-ready-section-title {
+  margin: 8px 4px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--t-muted);
+}
+
+.t-ready-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.t-ready-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--t-line);
+  border-radius: 14px;
+  background: var(--t-surface);
+}
+
+.t-ready-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.t-ready-headline {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.t-ready-handed .t-ready-headline {
+  color: var(--t-muted);
+}
+
+.t-ready-minutes {
+  flex: 0 0 auto;
+  font-size: 16px;
+  color: var(--t-muted);
+}
+
+.t-ready-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  color: var(--t-muted);
+}
+
+/* At most three lines of items (Android maxLines 3). */
+.t-ready-items {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.t-ready-item {
+  margin-inline-end: 12px;
+}
+
+/* What the kitchen has done reads lighter: what is left stands out. */
+.t-ready-item-done {
+  margin-inline-end: 12px;
+  color: var(--t-muted);
+}
+
+.t-ready-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.t-ready-btn {
+  flex: 1 1 0;
+  min-height: 56px;
+  font-size: 18px;
+}
+
+.t-ready-btn-minor {
+  flex: 0.6 1 0;
+}
+
+.t-ready-btn-alone {
+  flex: 0 0 auto;
+  min-width: 160px;
+}
+
+.t-ready-sending {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  font-size: 16px;
+}
+
+.t-ready-failed p {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.t-ready-strip {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--t-danger-soft);
+  color: var(--t-danger);
+}
+
+.t-ready-strip-close {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.t-ready-strip-close span {
+  flex: 1 1 auto;
+}
+
+.t-ready-strip-close .t-btn {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.t-ready-empty {
+  padding: 48px 24px;
+  text-align: center;
+  font-size: 18px;
+}
+
+.t-ready-empty p {
+  margin: 8px 0 0;
+  font-size: 16px;
+}

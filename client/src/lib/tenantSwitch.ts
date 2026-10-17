@@ -18,6 +18,8 @@ export const SCOPE_PARAM = {
   company: 'company',
   shop: 'shop',
   machine: 'machine',
+  /** "נקודת מכירה" (P:/specs/chain-areas.md §2). */
+  area: 'area',
 } as const;
 
 /**

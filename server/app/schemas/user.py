@@ -125,6 +125,8 @@ class UserPreferencesUpdate(BaseModel):
     report_columns: Optional[Dict[str, Optional[ReportColumnsPreference]]] = Field(None, alias="reportColumns")
     #: "בקשות אישור גם בשעות שקטות" (app/services/exception_alerts/push.py `deliver_to_user`).
     approvals_in_quiet_hours: Optional[bool] = Field(None, alias="approvalsInQuietHours")
+    #: "עובדים על" (P:/specs/chain-areas.md §2): merged per organization; an organization's null removes it.
+    dashboard_scope: Optional[Dict[str, Optional[Dict[str, Optional[str]]]]] = Field(None, alias="dashboardScope")
 
 
 class UserPreferencesResponse(BaseModel):
@@ -139,6 +141,7 @@ class UserPreferencesResponse(BaseModel):
     #: `{reportKey: {visible, order}}`; `{}` when none was chosen.
     report_columns: Dict[str, Dict[str, List[str]]] = Field(default_factory=dict, alias="reportColumns")
     approvals_in_quiet_hours: bool = Field(False, alias="approvalsInQuietHours")
+    dashboard_scope: Dict[str, Dict[str, str]] = Field(default_factory=dict, alias="dashboardScope")
 
 
 class UserResponse(UserBase):

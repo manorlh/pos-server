@@ -165,6 +165,11 @@ def resolve_access(db: Session, target: User, body: AccessScopeIn, *, tenant_ids
         if len(found) != len(set(machine_ids)) or any(m.shop_id not in allowed_shops for m in found):
             raise _error("machine_out_of_scope", "אחד המכשירים אינו בסניפים של המשתמש.")
 
+    # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §3): never without its points of sale.
+    if builtin == DS.AREA_MANAGER_TEMPLATE:
+        effective_areas = area_ids if area_ids is not None else list(getattr(DA.load_profile(db, target.id), "area_ids", None) or [])
+        if not effective_areas:
+            raise _error("area_manager_needs_areas", "למנהל נקודת מכירה יש לבחור את נקודות המכירה שלו.")
     return {
         "full_access": bool(full_access),
         "sections": sections,

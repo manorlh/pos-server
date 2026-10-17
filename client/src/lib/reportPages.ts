@@ -135,6 +135,7 @@ export const REPORT_PAGES: ReportPageEntry[] = [
 export const NOT_REPORT_PAGES: PageExclusion[] = [
   { route: 'access-settings', reason: "settings: who may open which dashboard section" },
   { route: 'accounting-settings', reason: "settings: the accounting software's account mapping" },
+  { route: 'areas', reason: "point-of-sale management: each point of sale's devices, blocks and menus side by side, with quick actions (no period figures)" },
   { route: 'app-updates', reason: "device management: till app releases and their assignment" },
   { route: 'approval-settings', reason: "settings: which till actions ask a manager" },
   { route: 'approvals/[id]', reason: "one approval request to answer (the list /approvals has the export)" },
@@ -169,6 +170,7 @@ export const NOT_REPORT_PAGES: PageExclusion[] = [
   { route: 'payment-methods', reason: "settings: payment methods" },
   { route: 'preset-discounts', reason: "settings: the preset basket discounts per level (their uses: preset-discounts-report)" },
   { route: 'pos-users', reason: "settings: till users" },
+  { route: 'prices', reason: "catalog editing: bulk and scheduled price changes and the chain's price policy" },
   { route: 'producer', reason: "a producer's list of events that opens the one event (producer/[id] exports)" },
   { route: 'products', reason: "catalog editing: products" },
   { route: 'products/broadcast', reason: "sends catalog changes to the tills" },

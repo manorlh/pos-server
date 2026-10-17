@@ -33,7 +33,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -77,6 +77,8 @@ class _TillActor:
 class ShopZStartIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    #: "area" — the Z of this till's point of sale only (P:/specs/chain-areas.md §11.2a); else the whole shop.
+    scope: Optional[str] = Field(None, pattern="^(shop|area)$")
     #: The operator typed "סגור" for the tills the Z goes without.
     confirm_open_tills: bool = Field(False, alias="confirmOpenTills")
     pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=120)
@@ -142,20 +144,50 @@ def _live_run(db: Session, shop_id: uuid.UUID, machine_ids: Optional[set] = None
     return None
 
 
-def _shop_z_tills(db: Session, machine: POSMachine, shop: Shop, tenant: Optional[Tenant]):
+def _shop_z_tills(db: Session, machine: POSMachine, shop: Shop, tenant: Optional[Tenant], *, area: bool = False):
     """
     The tills the shop Z is for — the shop's, but those in `zMode = till`, which make
-    their own — from the master till only.
+    their own — from the master till only. `area`: the till's point of sale's (its area master's).
     """
-    _require_master(db, machine)
+    if area:
+        _require_area_master(db, machine)
+    else:
+        _require_master(db, machine)
     shop_machines = ZR.shop_tills(db, shop.id)
+    if area:
+        shop_machines = [m for m in shop_machines if m.area_id is not None and m.area_id == machine.area_id]
     own_z = ZR.per_till_ids(db, shop_machines, tenant, shop)
     return [m for m in shop_machines if m.id not in own_z]
+
+
+def _require_area_master(db: Session, machine: POSMachine) -> None:
+    refusal = MT.till_area_z_refusal(db, machine)
+    if refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": refusal, "message": MT.AREA_REFUSAL_TEXT.get(refusal, "")},
+        )
+
+
+def _area_z_info(db: Session, machine: POSMachine) -> dict:
+    """`areaZ` on the status: may this till close its point of sale's Z, and why not."""
+    from app.models.shop_area import ShopArea
+
+    area = db.get(ShopArea, machine.area_id) if machine.area_id is not None else None
+    refusal = MT.till_area_z_refusal(db, machine)
+    return {
+        "available": refusal is None,
+        "areaId": str(area.id) if area is not None else None,
+        "areaName": area.name if area is not None else None,
+        "reason": refusal,
+        "message": MT.AREA_REFUSAL_TEXT.get(refusal) if refusal else None,
+    }
 
 
 @router.get("/sync/{machine_id}/shop-z")
 def till_shop_z_status(
     machine_id: str,
+    scope: Optional[str] = Query(None, pattern="^(shop|area)$"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
@@ -163,7 +195,11 @@ def till_shop_z_status(
     ZR.expire_overdue_runs(db)
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     tenant = db.query(Tenant).filter(Tenant.id == machine.tenant_id).first()
-    shop_machines = _shop_z_tills(db, machine, shop, tenant)
+    area_z = isinstance(scope, str) and scope == "area"
+    if not area_z and MT.till_shop_z_refusal(db, machine) is not None and MT.till_area_z_refusal(db, machine) is None:
+        # An area's master that may not run the whole shop's Z: its screen is its point of sale's.
+        area_z = True
+    shop_machines = _shop_z_tills(db, machine, shop, tenant, area=area_z)
     now = datetime.now(timezone.utc)
     # The screen is open: the shop's tills beat fast until shortly after it closes, so the
     # close this screen sends reaches them in seconds even without realtime.
@@ -207,6 +243,9 @@ def till_shop_z_status(
         "activity": activity,
         "tills": tills,
         "run": ZRunOut.model_validate(ZR.run_to_out(db, live)).model_dump(mode="json", by_alias=True) if live else None,
+        # "Z לנקודת מכירה" (P:/specs/chain-areas.md §11.2a): which this screen is, and whether the area's is offered.
+        "scope": "area" if area_z else "shop",
+        "areaZ": _area_z_info(db, machine),
     }
 
 
@@ -227,7 +266,8 @@ def till_shop_z_start(
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     tenant = db.query(Tenant).filter(Tenant.id == machine.tenant_id).first()
     operator = _operator(machine, body.pos_user_name)
-    shop_machines = _shop_z_tills(db, machine, shop, tenant)
+    area_z = body.scope == "area"
+    shop_machines = _shop_z_tills(db, machine, shop, tenant, area=area_z)
     selections = [ZR.MachineSelection(machine_id=m.id) for m in shop_machines]
     ZR.note_shop_z_screen(machine)
     run = ZR.create_z_run(
@@ -236,6 +276,7 @@ def till_shop_z_start(
         tenant,
         shop,
         selections,
+        area_id=machine.area_id if area_z else None,
         confirm_open_tills=body.confirm_open_tills,
         # "Don't close the Z until the cloud confirms every till is closed."
         strict_cloud_check=True,
@@ -251,6 +292,8 @@ def _own_run(db: Session, machine: POSMachine, run_id: uuid.UUID) -> ZRun:
     run = ZR.get_run(db, run_id, machine.tenant_id)
     if run is None or run.shop_id != machine.shop_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run_not_found")
+    if run.area_id is not None and run.area_id == machine.area_id and MT.till_area_z_refusal(db, machine) is None:
+        return run
     _require_master(db, machine)
     return run
 

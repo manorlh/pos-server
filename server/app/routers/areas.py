@@ -57,7 +57,14 @@ def list_shop_areas(
     """The shop's areas by `sortOrder, name`, each with its tills and status roll-up."""
     shop = _shop(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
-    return A.areas_out(db, A.shop_areas(db, shop.id, include_archived=include_archived))
+    rows = A.shop_areas(db, shop.id, include_archived=include_archived)
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): their own points of sale only.
+    from app.services import area_scope
+
+    mine = area_scope.allowed_area_ids(db, current_user)
+    if mine is not None:
+        rows = [a for a in rows if a.id in mine]
+    return A.areas_out(db, rows)
 
 
 @router.post(

@@ -41,6 +41,8 @@ export interface MachineMe {
   fiscal?: boolean | null;
   platform?: string | null;
   hasBuiltinTerminal?: boolean | null;
+  /** The point of sale the device stands in (`{id, name}`), null for none; absent from an older cloud. */
+  area?: { id: string; name: string } | null;
   [key: string]: unknown;
 }
 
@@ -49,6 +51,8 @@ export interface SettingsSnapshot {
   businessInfo: Record<string, unknown> | null;
   settingsUpdatedAt: string | null;
   serverTime: string | null;
+  /** The device's point of sale as the settings sync says it (`{id, name}` | null); absent — an older copy / cloud. */
+  area?: unknown;
 }
 
 export interface CatalogSnapshot {
@@ -97,14 +101,16 @@ export interface PosUser {
    * till's level parameter `deniedActionUi` decides (absent from a cloud before feat/denied-actions-ui: the same).
    */
   deniedUi?: string | null;
+  /** "עובדי קופה לפי נקודת מכירה" (P:/specs/chain-areas.md §8): null — every device of the shop; a list — only those points of sale. */
+  areaIds?: string[] | null;
 }
 
 /**
  * The roster's shape kept here; a copy from before it is pulled again in full. '4': shop, permissions, the role's limits
  * and "כשאין הרשאה" (`deniedUi`) — one shape for the whole Windows till ('3' was written by two separate builds, one
- * without `deniedUi`, so no '3' copy is trusted).
+ * without `deniedUi`, so no '3' copy is trusted). '5': + the points of sale (`areaIds`, chain-areas §8).
  */
-const POS_USERS_SHAPE = '4';
+const POS_USERS_SHAPE = '5';
 
 /** A secret store (Electron safeStorage) for the machine token; plain in Node tools. */
 export interface SecretBox {
@@ -368,6 +374,7 @@ export class CloudStore {
         tillRoleKey: typeof u.tillRoleKey === 'string' ? u.tillRoleKey : null,
         tillRoleName: typeof u.tillRoleName === 'string' ? u.tillRoleName : null,
         deniedUi: typeof u.deniedUi === 'string' && ['show', 'hide', 'code'].includes(u.deniedUi.trim().toLowerCase()) ? u.deniedUi.trim().toLowerCase() : null,
+        areaIds: areaIdsOf(u.areaIds),
       }),
     );
     const full = body.syncType === 'full';
@@ -376,6 +383,13 @@ export class CloudStore {
     if (typeof body.serverTime === 'string') this.kv.set(K.usersAt, body.serverTime);
     if (full) this.kv.set(K.usersShape, POS_USERS_SHAPE);
   }
+}
+
+/** A user's points of sale: the ids the cloud listed; null for none (every device of the shop — an empty list too). */
+function areaIdsOf(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const ids = v.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  return ids.length > 0 ? ids : null;
 }
 
 /** `{code: state}` with the states the cloud uses; anything else dropped (null when nothing is left). */

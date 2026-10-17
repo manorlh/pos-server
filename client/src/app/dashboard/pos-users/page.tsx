@@ -33,6 +33,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Plus, Pencil, KeyRound, Power, ClipboardCheck } from 'lucide-react';
 import { ApprovalOverridesDialog, type OverridesTarget } from '@/components/dashboard/approvals/approval-overrides-dialog';
+import { AreaChips } from '@/components/dashboard/prices/area-chips';
+
+/** "נקודות מכירה" of a till user (P:/specs/chain-areas.md §8): null / [] — every device of the shop. */
+type WithAreas = { areaIds?: string[] | null };
 
 const ALL_ROLES: PosUserRole[] = ['cashier', 'shop_manager'];
 
@@ -58,6 +62,10 @@ interface UserForm {
   tableScope: TableScope | null;
   /** Changed in the dialog: only then is `tableScope` sent. */
   tableScopeTouched: boolean;
+  /** "נקודות מכירה": [] — "כל הנקודות". */
+  areaIds: string[];
+  /** Changed in the dialog: only then is `areaIds` sent on an edit. */
+  areaIdsTouched: boolean;
 }
 
 const EMPTY: UserForm = {
@@ -72,6 +80,8 @@ const EMPTY: UserForm = {
   tableColor: '',
   tableScope: null,
   tableScopeTouched: false,
+  areaIds: [],
+  areaIdsTouched: false,
 };
 
 const PIN_RE = /^\d{4,6}$/;
@@ -143,7 +153,8 @@ export default function PosUsersPage() {
           ...(u.tableScopeTouched ? { tableScope: liveScope(u.tableScope, scopeTree.data?.zones ?? []) } : {}),
         };
         if (u.pin) payload.pin = u.pin;
-        return api.put(`/shops/${shopId}/pos-users/${u.id}`, payload);
+        const withAreas: PosUserUpdate & WithAreas = u.areaIdsTouched ? { ...payload, areaIds: u.areaIds } : payload;
+        return api.put(`/shops/${shopId}/pos-users/${u.id}`, withAreas);
       }
       const payload: PosUserCreate = {
         username: u.username,
@@ -155,7 +166,8 @@ export default function PosUsersPage() {
         pin: u.pin,
         ...(cleanColor(u.tableColor) ? { tableColor: cleanColor(u.tableColor) } : {}),
       };
-      return api.post(`/shops/${shopId}/pos-users`, payload);
+      const withAreas: PosUserCreate & WithAreas = u.areaIds.length ? { ...payload, areaIds: u.areaIds } : payload;
+      return api.post(`/shops/${shopId}/pos-users`, withAreas);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pos-users', shopId] });
@@ -196,7 +208,8 @@ export default function PosUsersPage() {
   const openCreate = () => {
     // A new employee starts as the spec's cashier when the company's roles exist.
     const cashier = roleChoices.find((r) => r.builtinKey === 'cashier');
-    setEditing({ ...EMPTY, tillRoleId: cashier?.id ?? '' });
+    // On a point of sale in the top bar, a new employee starts there (§7).
+    setEditing({ ...EMPTY, tillRoleId: cashier?.id ?? '', areaIds: scope.areaId ? [scope.areaId] : [] });
     setOpenEdit(true);
   };
 
@@ -215,6 +228,8 @@ export default function PosUsersPage() {
       tableColorEffective: u.tableColorEffective ?? null,
       tableScope: scopeOf(u.tableScope),
       tableScopeTouched: false,
+      areaIds: [...((u as PosUser & WithAreas).areaIds ?? [])],
+      areaIdsTouched: false,
     });
     setOpenEdit(true);
   };
@@ -228,6 +243,8 @@ export default function PosUsersPage() {
   // The server decides, not a role comparison here: `canManagePosUsers` is
   // computed by the same code that guards the write endpoints.
   const canManage = me?.canManagePosUsers === true;
+  const areaNames = (ids: string[]) =>
+    ids.map((id) => scope.areas.find((a) => a.id.toLowerCase() === id.toLowerCase())?.name ?? '').filter(Boolean).join(', ');
 
   const handleSave = () => {
     if (!editing.username.trim()) return toast.error(tc('error'));
@@ -318,6 +335,11 @@ export default function PosUsersPage() {
                     <TableCell>{u.workerNumber ?? '—'}</TableCell>
                     <TableCell>
                       <Badge variant="secondary">{u.tillRoleName ?? t(`roles.${u.role}`)}</Badge>
+                      {(u as PosUser & WithAreas).areaIds?.length ? (
+                        <span className="ms-1.5 text-xs text-muted-foreground">
+                          {areaNames((u as PosUser & WithAreas).areaIds ?? [])}
+                        </span>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <Badge variant={u.isActive ? 'outline' : 'destructive'}>
@@ -453,6 +475,21 @@ export default function PosUsersPage() {
               />
               <p className="text-xs text-muted-foreground">{t('pinHint')}</p>
             </div>
+            {scope.areas.length ? (
+              <div className="space-y-1.5 rounded-md border p-2">
+                <Label>נקודות מכירה</Label>
+                <AreaChips
+                  areas={scope.areas.map((a) => ({ id: a.id, name: a.name }))}
+                  value={editing.areaIds}
+                  onChange={(areaIds) => setEditing((u) => ({ ...u, areaIds, areaIdsTouched: true }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {editing.areaIds.length
+                    ? 'העובד יתחבר רק במכשירים של הנקודות שנבחרו.'
+                    : 'כל הנקודות — העובד מתחבר בכל מכשיר של הסניף.'}
+                </p>
+              </div>
+            ) : null}
             <TableColorField
               value={editing.tableColor}
               shown={editing.tableColorEffective ?? null}

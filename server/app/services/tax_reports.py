@@ -616,6 +616,17 @@ def _cashier_name(tx: Transaction, user_names: Optional[Dict[str, str]]) -> str:
     return (user_names or {}).get(key, "")
 
 
+def _customer_key(customer: Any, vat_on_document: Optional[str]) -> str:
+    """
+    C100 1225 "מפתח הלקוח אצל המוכר" (X(15)): the customer's id in this system (its first
+    15 hex digits — the customers table has no other number), else the ח.פ. the document
+    was made out to. Blank for the general customer and a walk-in buyer.
+    """
+    if customer is not None and getattr(customer, "id", None) is not None:
+        return uuid.UUID(str(customer.id)).hex[:15].upper()
+    return "".join(c for c in str(vat_on_document or "") if c.isdigit())[:15]
+
+
 def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
     """
     The customer block for the C100 document record.
@@ -645,6 +656,8 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
                 "country": customer.country or "",
             }
         return {
+            # C100 1225: the linked customer's key, else the buyer's number on the invoice.
+            "key": _customer_key(customer, vat_on_document),
             "name": tx.customer_name or (customer.name if customer is not None else None) or "לקוח כללי",
             "vatNumber": vat_on_document,
             "phone": tx.customer_phone or (customer.phone if customer is not None else None) or None,
@@ -661,6 +674,7 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
             }
         return {"name": "לקוח כללי"}
     return {
+        "key": _customer_key(customer, None),
         "name": customer.name or "לקוח כללי",
         "vatNumber": customer.vat_number or None,
         "phone": customer.phone or None,
@@ -724,6 +738,22 @@ def transform_transaction_for_open_format(
         "customer": _customer_for_open_format(tx),
         "cart": _build_cart_from_items(tx, global_tax_rate, bases),
     }
+
+
+def open_format_file_name(ctx: "TaxExportContext", result: TaxReportResult) -> str:
+    """`OPENFRMT-<8 digits of the VAT number>-<MMDDhhmm of the production>.zip`."""
+    vat8 = (ctx.business_info.get("vatNumber") or "00000000")[:8].zfill(8)
+    produced = result.process_date or datetime.now(ctx.zone)
+    return f"OPENFRMT-{vat8}-{produced:%m%d%H%M}.zip"
+
+
+def production_report(ctx: "TaxExportContext", result: TaxReportResult) -> Dict[str, Any]:
+    """The §2.6 production report of the file just produced (`production_report.py`)."""
+    from app.services.open_format.production_report import build_production_report
+
+    return build_production_report(
+        result, ctx.business_info, ctx.software_info, ctx.date_range, file_name=open_format_file_name(ctx, result),
+    )
 
 
 def flagged_documents(tx_dicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

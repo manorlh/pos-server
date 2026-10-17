@@ -4,9 +4,9 @@
  * What a promotion speaks of ("קבוצת מבצע"): products, categories (with their
  * sub-categories), or the whole basket — and the exclusions taken out of it.
  *
- * Products are found by search, as on the prepaid-vouchers page; categories are a
- * checkbox list (`EntityMultiSelect`) labelled with their parent, so "שתייה › קלה" and
- * "שתייה" are told apart.
+ * The group's products and categories are picked in the shared two-pane picker (a category's
+ * tick = all its items, its sub-categories with it); `ProductListPicker` stays for the screens
+ * that pick a product or two by search.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -20,7 +20,10 @@ import {
   type PromoCategoryOption,
   type PromoGroup,
 } from '@/lib/promotionsApi';
-import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
+import { type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
+import { buildIndex, compressWhole, expandWhole, groupOf, selectionOf, type PickerCategory, type PickerProduct } from '@/lib/catalogPicker';
+import { usePickerCatalog } from '@/lib/catalogPickerApi';
+import { ProductCategoryPicker } from '@/components/dashboard/catalog/product-category-picker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -157,6 +160,44 @@ export function ProductListPicker({
   );
 }
 
+/**
+ * Products and categories (a category with its sub-categories) in the shared two-pane picker
+ * (components/dashboard/catalog/product-category-picker.tsx) — `GET /catalog-picker`.
+ */
+function GroupItems({
+  categoryIds,
+  productIds,
+  onChange,
+  listHeight,
+}: {
+  categoryIds: string[];
+  productIds: string[];
+  onChange: (next: { categoryIds: string[]; productIds: string[] }) => void;
+  listHeight?: number;
+}) {
+  const q = usePickerCatalog();
+  const categories = q.data?.categories ?? NO_CATEGORIES;
+  const products = q.data?.products ?? NO_PRODUCTS;
+  const index = useMemo(() => buildIndex(categories, products), [categories, products]);
+  const selection = useMemo(() => selectionOf(index, expandWhole(index, categoryIds), productIds), [index, categoryIds, productIds]);
+  return (
+    <ProductCategoryPicker
+      categories={categories}
+      products={products}
+      loading={q.isPending}
+      value={selection}
+      listHeight={listHeight}
+      onChange={(next) => {
+        const g = groupOf(index, next);
+        onChange({ categoryIds: compressWhole(index, g.categoryIds), productIds: g.productIds });
+      }}
+    />
+  );
+}
+
+const NO_CATEGORIES: PickerCategory[] = [];
+const NO_PRODUCTS: PickerProduct[] = [];
+
 /** A whole group: everything, or products and categories; and its exclusions. */
 export function GroupPicker({
   value,
@@ -171,7 +212,6 @@ export function GroupPicker({
   allLabel?: string;
 }) {
   const t = useTranslations('promotions.group');
-  const categories = useCategoryOptions();
   const [showExclusions, setShowExclusions] = useState(
     !!(value.excludeProductIds?.length || value.excludeCategoryIds?.length),
   );
@@ -187,15 +227,11 @@ export function GroupPicker({
       ) : null}
       {!value.all ? (
         <>
-          <ProductListPicker label={t('products')} value={value.productIds ?? []} onChange={(productIds) => set({ productIds })} />
-          <EntityMultiSelect
-            label={t('categories')}
-            options={categories}
-            selected={value.categoryIds ?? []}
-            onChange={(categoryIds) => set({ categoryIds })}
-            allLabel={t('noCategories')}
-            clearLabel={t('clearCategories')}
-            emptyLabel={t('noCategoriesDefined')}
+          <span className="text-sm font-medium">{t('itemsPick')}</span>
+          <GroupItems
+            categoryIds={value.categoryIds ?? []}
+            productIds={value.productIds ?? []}
+            onChange={(g) => set({ categoryIds: g.categoryIds, productIds: g.productIds })}
           />
           <p className="text-xs text-muted-foreground">{t('subcategoriesHint')}</p>
         </>
@@ -203,19 +239,11 @@ export function GroupPicker({
       {showExclusions ? (
         <div className="space-y-3 border-t pt-3">
           <p className="text-sm font-medium">{t('exclusions')}</p>
-          <ProductListPicker
-            label={t('excludeProducts')}
-            value={value.excludeProductIds ?? []}
-            onChange={(excludeProductIds) => set({ excludeProductIds })}
-          />
-          <EntityMultiSelect
-            label={t('excludeCategories')}
-            options={categories}
-            selected={value.excludeCategoryIds ?? []}
-            onChange={(excludeCategoryIds) => set({ excludeCategoryIds })}
-            allLabel={t('noCategories')}
-            clearLabel={t('clearCategories')}
-            emptyLabel={t('noCategoriesDefined')}
+          <GroupItems
+            listHeight={280}
+            categoryIds={value.excludeCategoryIds ?? []}
+            productIds={value.excludeProductIds ?? []}
+            onChange={(g) => set({ excludeCategoryIds: g.categoryIds, excludeProductIds: g.productIds })}
           />
         </div>
       ) : (

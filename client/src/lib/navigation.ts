@@ -48,6 +48,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   LayoutTemplate,
+  MapPin,
   Layers,
   Lightbulb,
   ListFilter,
@@ -183,6 +184,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.
       { href: '/dashboard/assortment', labelKey: 'assortment', icon: ListFilter },
+      // "מחירים" (P:/specs/chain-areas.md §9): many prices at once for a shop or its points of sale, the
+      // scheduled changes, and the chain's price policy.
+      { href: '/dashboard/prices', labelKey: 'prices', icon: Coins },
       { href: '/dashboard/stock', labelKey: 'stock', icon: Boxes },
     ],
   },
@@ -282,6 +286,8 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Store,
         matchPrefixes: ['/dashboard/shops/'],
       },
+      // "ניהול נקודות מכירה" (P:/specs/chain-areas.md §12): the shop's points of sale side by side.
+      { href: '/dashboard/areas', labelKey: 'areasManage', icon: MapPin },
       {
         href: '/dashboard/machines',
         labelKey: 'machines',

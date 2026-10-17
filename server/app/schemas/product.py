@@ -237,6 +237,9 @@ class ProductCreate(ProductBase):
     # added from the assortment page).
     shop_scope: Optional[ShopScopeIn] = Field(None, alias="shopScope")
     shop_prices: Optional[List[ShopPriceIn]] = Field(None, alias="shopPrices")
+    # "שיוך מוצר לנקודות מכירה" (P:/specs/chain-areas.md §6): the points of sale it starts in, in the shops its
+    # scope lists it in (the top bar's point of sale). Omitted: a manager of points of sale's own, else all.
+    area_ids: Optional[List[uuid.UUID]] = Field(None, alias="areaIds", max_length=200)
     # Accepted only so that asking for a general item is refused out loud rather than
     # silently ignored: every company's one general item is built in (see
     # app/services/general_item.py).

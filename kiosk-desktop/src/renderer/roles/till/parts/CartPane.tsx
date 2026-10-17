@@ -10,6 +10,7 @@ import { useState } from 'react';
 import type { SellState } from '../../../../shared/till/protocol';
 import { money, T } from '../text';
 import { PresetChips, type PresetItem } from './TillSheets';
+import { CHOICES_TEXT } from '../../../../core/till/choices';
 
 export interface CartActions {
   setQty(lineId: string, qty: number): void;
@@ -29,6 +30,8 @@ export interface CartActions {
   orderEdit?(): void;
   /** "הנחות קבועות": a preset's one-tap button. */
   preset?(id: string): void;
+  /** "עריכת המנה": a line with choices opened again in its sheet. */
+  editLine?(lineId: string): void;
 }
 
 export interface CartView {
@@ -88,6 +91,16 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
               {/* "כלול בשובר #12" (a production voucher covers it); a ₪0 line's value beside it. */}
               {l.voucher ? <span className="t-badge">{l.voucherValueAgorot ? `${money(l.voucherValueAgorot)} · ${l.voucher}` : l.voucher}</span> : null}
               <span className="t-line-total">{l.refund ? `−${money(l.totalAgorot)}` : money(l.totalAgorot)}</span>
+              {l.subLines && l.subLines.length > 0 ? (
+                // What it was ordered with (CartLineMenuInfo): the choices, a meal's components, the notes, the allergy.
+                <span className="t-line-subs">
+                  {l.subLines.map((w, i) => (
+                    <span key={i} className={`t-line-sub${w.startsWith('!') || w.startsWith(CHOICES_TEXT.allergyDeclared('')) ? ' t-line-sub-alert' : ''}`}>
+                      {w}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
             </button>
             <div className="t-qty">
               <button type="button" className="t-step" aria-label="פחות" disabled={l.qty <= 1 && !voidShown && !l.refund} onClick={() => actions.setQty(l.lineId, l.qty - 1)}>
@@ -100,6 +113,11 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
             </div>
             {open === l.lineId ? (
               <div className="t-line-actions">
+                {!l.refund && l.choices && actions.editLine ? (
+                  <button type="button" className="t-chip t-chip-on" onClick={() => actions.editLine?.(l.lineId)}>
+                    {CHOICES_TEXT.edit}
+                  </button>
+                ) : null}
                 {!l.refund && !l.oth && !l.noDiscount && actions.discount ? (
                   <>
                     {discountShown

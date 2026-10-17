@@ -2151,6 +2151,7 @@ def _layer_row(db: Session, level: str, entity_id) -> Any:
     column = {
         "company": KioskSettings.company_id,
         "shop": KioskSettings.shop_id,
+        "area": KioskSettings.area_id,
         "machine": KioskSettings.machine_id,
     }[level]
     return db.query(KioskSettings).filter(KioskSettings.level == level, column == entity_id).first()
@@ -2172,13 +2173,20 @@ class Layers:
     company: Dict[str, Any] = field(default_factory=dict)
     shop: Dict[str, Any] = field(default_factory=dict)
     machine: Dict[str, Any] = field(default_factory=dict)
+    #: The kiosk's point of sale's layer (P:/specs/chain-areas.md §5), between the shop's and the kiosk's.
+    area: Dict[str, Any] = field(default_factory=dict)
 
 
-def layers_for(db: Session, *, company_id=None, shop_id=None, machine_id=None) -> Layers:
+def layers_for(db: Session, *, company_id=None, shop_id=None, machine_id=None, area_id=None) -> Layers:
+    try:
+        area = _overrides(_layer_row(db, "area", area_id))
+    except Exception:  # noqa: BLE001 - a database before the column: no point-of-sale layer
+        area = {}
     return Layers(
         company=_overrides(_layer_row(db, "company", company_id)),
         shop=_overrides(_layer_row(db, "shop", shop_id)),
         machine=_overrides(_layer_row(db, "machine", machine_id)),
+        area=area,
     )
 
 
@@ -2189,12 +2197,13 @@ def machine_layers(db: Session, machine) -> Layers:
         company_id=shop.company_id if shop is not None else None,
         shop_id=machine.shop_id,
         machine_id=machine.id,
+        area_id=getattr(machine, "area_id", None),
     )
 
 
 def effective_config(db: Session, machine) -> Dict[str, Any]:
     """
-    What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ machine (sanitised, repaired), with the saved design its
+    What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ its point of sale ⊕ machine (sanitised, repaired), with the saved design its
     nearest level assigns right before that level's own layer ("עיצובים שמורים לקיוסק", kiosk_designs.py).
     """
     from app.services import kiosk_designs

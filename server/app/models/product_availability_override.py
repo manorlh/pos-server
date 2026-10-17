@@ -21,7 +21,7 @@ till means nothing once that row is gone, and must never be what blocks deleting
 """
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -90,6 +90,9 @@ class AreaProductOverride(Base):
     #: "חסימה קבועה" and when the lock began — see `ShopProductOverride`.
     block_permanent = Column(Boolean, nullable=False, default=False, server_default="false")
     blocked_at = Column(DateTime(timezone=True), nullable=True)
+    #: "מחיר בנקודת המכירה" (P:/specs/chain-areas.md §9): this point of sale's own price, between the shop's
+    #: (`shop_product_overrides.price`) and the till; null = the shop's. Resolved in app/services/price_policy.py.
+    price = Column(Numeric(10, 2), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

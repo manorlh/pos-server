@@ -28,6 +28,8 @@ export interface TenderLeg {
   credit?: { code: string; redemptionId: string };
   /** A production voucher's: its hold (or `/redeem` redemption) and its number. */
   voucher?: { redemptionId: string; reservationId: string | null; serial: number };
+  /** A voucher the kiosk redeemed towards a kiosk order paid here (core/till/kioskOrders.ts): kept through every repricing. */
+  external?: boolean;
 }
 
 export function paidOf(legs: readonly TenderLeg[]): number {

@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject, type React
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { AlertTriangle, BookmarkPlus, Building2, Eye, EyeOff, Monitor, Store } from 'lucide-react';
+import { AlertTriangle, BookmarkPlus, Building2, Eye, EyeOff, MapPin, Monitor, Store } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -618,6 +618,11 @@ export function KioskSettingsEditor({
   role,
   fallbackMachineIds,
   brandName,
+  areas = [],
+  areaId = null,
+  onAreaChange,
+  areaManager = false,
+  kioskAreaOf,
 }: {
   companyId: string | null;
   companyName: string | null;
@@ -632,6 +637,14 @@ export function KioskSettingsEditor({
   /** Tills in scope to read a catalog from when no kiosk is (shop first). */
   fallbackMachineIds: { id: string; shopId: string | null }[];
   brandName: string;
+  /** "נקודת מכירה" (P:/specs/chain-areas.md §5): the shop's live points of sale the user may pick, and the one picked. */
+  areas?: { id: string; name: string }[];
+  areaId?: string | null;
+  onAreaChange?: (id: string | null) => void;
+  /** A manager of points of sale: only the point-of-sale and kiosk levels. */
+  areaManager?: boolean;
+  /** A kiosk's point of sale (its machine's), to find the area's kiosks. */
+  kioskAreaOf?: (machineId: string) => string | null;
 }) {
   const t = useTranslations('kiosks.settings');
   const dirtyRef = useRef(false);
@@ -641,7 +654,9 @@ export function KioskSettingsEditor({
   const kdsAvailable = defaults.data?.kdsAvailable === true;
 
   const kiosk = kiosks.find((k) => k.machineId === kioskId) ?? null;
-  const targetId = level === 'company' ? companyId : level === 'shop' ? shopId : kiosk?.machineId ?? null;
+  const areaPicked = areaId && areas.some((a) => a.id === areaId) ? areaId : null;
+  const targetId =
+    level === 'company' ? companyId : level === 'shop' ? shopId : level === 'area' ? areaPicked : kiosk?.machineId ?? null;
 
   const settings = useQuery({
     queryKey: ['kiosk-settings', level, targetId],
@@ -655,14 +670,21 @@ export function KioskSettingsEditor({
   const writers = level === 'company' ? COMPANY_WRITERS : SHOP_WRITERS;
   const canEdit = !!role && writers.includes(role);
 
-  const printerShopId = level === 'machine' ? kiosk?.shopId ?? null : level === 'shop' ? shopId : null;
+  const printerShopId = level === 'machine' ? kiosk?.shopId ?? null : level === 'shop' || level === 'area' ? shopId : null;
   const catalogMachineId = useMemo(() => {
     if (level === 'machine') return kiosk?.machineId ?? null;
-    const inScope = kiosks.filter((k) => (level === 'shop' ? k.shopId === shopId : k.companyId === companyId));
+    const inScope = kiosks.filter((k) =>
+      level === 'area'
+        ? k.shopId === shopId && kioskAreaOf?.(k.machineId) === areaPicked
+        : level === 'shop'
+          ? k.shopId === shopId
+          : k.companyId === companyId,
+    );
     if (inScope[0]) return inScope[0].machineId;
-    const fallback = level === 'shop' ? fallbackMachineIds.find((m) => m.shopId === shopId) : fallbackMachineIds[0];
+    const fallback =
+      level === 'shop' || level === 'area' ? fallbackMachineIds.find((m) => m.shopId === shopId) : fallbackMachineIds[0];
     return fallback?.id ?? null;
-  }, [level, kiosk, kiosks, shopId, companyId, fallbackMachineIds]);
+  }, [level, kiosk, kiosks, shopId, companyId, fallbackMachineIds, kioskAreaOf, areaPicked]);
 
   const guard = (fn: () => void) => {
     if (dirtyRef.current && !window.confirm(t('unsavedLeave'))) return;
@@ -692,11 +714,28 @@ export function KioskSettingsEditor({
     <div className="space-y-4">
       <div className="flex flex-col gap-2 rounded-2xl bg-muted p-1.5 sm:flex-row">
         {/* A shop manager neither reads nor writes the company's layer (the server's scope rule). */}
-        {levelButton('company', <Building2 className="h-4 w-4" />, companyName, !!companyId && !!role && COMPANY_WRITERS.includes(role))}
-        {levelButton('shop', <Store className="h-4 w-4" />, shopName, !!shopId)}
+        {/* A manager of points of sale has neither the company's nor the shop's layer (P:/specs/chain-areas.md §3). */}
+        {areaManager
+          ? null
+          : levelButton('company', <Building2 className="h-4 w-4" />, companyName, !!companyId && !!role && COMPANY_WRITERS.includes(role))}
+        {areaManager ? null : levelButton('shop', <Store className="h-4 w-4" />, shopName, !!shopId)}
+        {areas.length > 0 || areaManager
+          ? levelButton('area', <MapPin className="h-4 w-4" />, areas.find((a) => a.id === areaPicked)?.name ?? null, !!shopId && areas.length > 0)
+          : null}
         {levelButton('machine', <Monitor className="h-4 w-4" />, kiosk?.name ?? null, kiosks.length > 0)}
       </div>
       <p className="text-xs text-muted-foreground">{t(`levelHint.${level}`)}</p>
+
+      {level === 'area' && areas.length > 0 ? (
+        <OptionSelect
+          value={areaPicked ?? ''}
+          placeholder={t('pickArea')}
+          ariaLabel={t('pickArea')}
+          options={areas.map((a) => ({ value: a.id, label: a.name }))}
+          onChange={(id) => guard(() => onAreaChange?.(id || null))}
+          className="w-full sm:w-80"
+        />
+      ) : null}
 
       {level === 'machine' ? (
         kiosks.length === 0 ? (
@@ -728,7 +767,7 @@ export function KioskSettingsEditor({
       {!targetId ? (
         level === 'machine' ? null : (
           <p className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">
-            {level === 'company' ? t('pickCompany') : t('pickShop')}
+            {level === 'company' ? t('pickCompany') : level === 'area' && shopId ? t('pickArea') : t('pickShop')}
           </p>
         )
       ) : settings.isLoading ? (

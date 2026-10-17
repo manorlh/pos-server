@@ -18,6 +18,17 @@
  *    a menu screen lights neither, and leaving it goes back to the till.
  */
 
+// The phase-2 screens' own styles (plain CSS, as till.css).
+import './css/catalogAdmin.css';
+import './css/shopZ.css';
+import './css/attendance.css';
+import './css/readyOrders.css';
+import './css/alerts.css';
+import './css/voucherBalance.css';
+import './css/voucherStation.css';
+import './css/cloudZ.css';
+import './css/printers.css';
+import './css/screenEdit.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { tillBusy, type OpArgs, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type LocalReportKind, type ReportPreset, type TillState, type XReport } from '../../../shared/till/protocol';
 import { capabilityTiles, NO_CAPS } from '../../host/caps';
@@ -29,7 +40,7 @@ import { TechnicianCorner, tillTechnicianArmed } from '../../../core/technician'
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
-import { BasketDiscountSheet, PresetForSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { BasketDiscountSheet, CardTipsChoiceSheet, PresetForSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
 import { ORDER_TEXT } from '../../../core/till/orderDetails';
 import { FAILOVER_TEXT } from '../../../core/kitchen/failover';
 import { CheckoutScreen } from './screens/CheckoutScreen';
@@ -41,6 +52,19 @@ import { KiosksScreen } from './screens/KiosksScreen';
 import { MenuActionSheet, TillMenuDrawer } from './parts/TillMenuDrawer';
 import { MENU_TEXT, buildTillMenu, folderOpenAtStart, type MenuTarget, type TillMenuFacts } from '../../../core/till/tillMenu';
 import { SellScreen } from './screens/SellScreen';
+import { ChoicesSheet, type ChoicesTarget } from './parts/ChoicesSheet';
+import { CatalogAdminScreen } from './screens/CatalogAdminScreen';
+import { ShopZScreen } from './screens/ShopZScreen';
+import { AttendanceClockButton, AttendanceScreen } from './screens/AttendanceScreen';
+import { ReadyOrdersScreen, type ReadyOrdersActions } from './screens/ReadyOrdersScreen';
+import { AlertsLine, AlertsScreen } from './screens/AlertsScreen';
+import { VoucherBalanceScreen } from './screens/VoucherBalanceScreen';
+import { VoucherStationScreen } from './screens/VoucherStationScreen';
+import { CloudZScreen } from './screens/CloudZScreen';
+import { PrintersScreen } from './screens/PrintersScreen';
+import { KioskOrdersSheet, KioskOrdersStrip } from './screens/KioskOrdersScreen';
+import { useAlertSound } from './parts/alertSound';
+import { opensSheet } from '../../../core/till/choices';
 import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
 import { UsersScreen } from './screens/UsersScreen';
@@ -55,7 +79,29 @@ import { useTillEngine } from './useTillEngine';
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'history' | 'recent' | 'report' | 'caps' | 'shopx' | 'drawer' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue' | 'kiosks';
+type View =
+  | 'sell'
+  | 'shift'
+  | 'history'
+  | 'recent'
+  | 'report'
+  | 'caps'
+  | 'shopx'
+  | 'drawer'
+  | 'users'
+  | 'owed'
+  | 'transmission'
+  | 'blocks'
+  | 'printQueue'
+  | 'kiosks'
+  // Phase 2 (P:/specs/windows-till-menu-parity.md §7).
+  | 'catalogAdmin'
+  | 'shopZ'
+  | 'readyOrders'
+  | 'voucherBalance'
+  | 'cloudZ'
+  | 'printers'
+  | 'alerts';
 
 /** The menu's report rows and the local report each is. */
 const REPORT_OF: Partial<Record<MenuTarget, LocalReportKind>> = { shiftHistory: 'shifts', tillZHistory: 'tillZs', productSales: 'products', workers: 'workers', tips: 'tips' };
@@ -78,6 +124,7 @@ type Sheet =
   | { kind: 'receipt' }
   | { kind: 'held' }
   | { kind: 'heldClose'; retry: (keepHeld: boolean) => void }
+  | { kind: 'cardTipsChoice'; title: string; body: string; partial: string; negative: string; retry: (choice: 'partial' | 'negative') => void }
   | { kind: 'block'; productId: string };
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
@@ -93,7 +140,13 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   const [cashSheet, setCashSheet] = useState(false);
   const [drawerAt, setDrawerAt] = useState<DrawerSheet>('menu');
   const [reportKind, setReportKind] = useState<LocalReportKind>('products');
+  /** "תוספות / ארוחה / הערות": the sheet open for a product tapped, or for a cart line ("עריכת המנה"). */
+  const [choices, setChoices] = useState<ChoicesTarget | null>(null);
+  /** "הזמנות קיוסק ממתינות לתשלום": the list over the till. */
+  const [kioskList, setKioskList] = useState(false);
   const { state, catalog, status, toasts, run, attempt, say } = engine;
+  // "התראות": the notice's sound, once per new one (core/till/tillAlerts.ts).
+  useAlertSound(state?.alerts?.beep ?? null);
 
   useEffect(() => {
     let alive = true;
@@ -209,6 +262,19 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     [run],
   );
   const refreshKiosks = useCallback(() => void run('kiosks.refresh', {}), [run]);
+  // "הזמנות להכנה": memoised — its screen polls with them every 5 s.
+  const readyActions = useMemo<ReadyOrdersActions>(
+    () => ({
+      refresh: () => void run('ready.refresh', {}),
+      tap: (orderId, action) => void run('ready.tap', { orderId, action }),
+      retry: (orderId) => void run('ready.retry', { orderId }),
+      discard: (orderId) => void run('ready.discard', { orderId }),
+      dismiss: () => void run('ready.dismiss', {}),
+    }),
+    [run],
+  );
+  /** An op whose refusal is said (the module's words). */
+  const act = useCallback((op: Parameters<typeof attempt>[0], args: Record<string, unknown> = {}) => void attempt(op, args).then((r) => !r.ok && say(r.message, 'error')), [attempt, say]);
   const askReport = useCallback(
     (kind: LocalReportKind, preset: ReportPreset) =>
       void attempt('report.local', { kind, preset }).then((r) => {
@@ -230,6 +296,26 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     async <R,>(op: 'shift.close' | 'z.produce', args: { countedCashAgorot?: number }): Promise<R | undefined> => {
       const r = op === 'shift.close' ? await attempt('shift.close', { countedCashAgorot: args.countedCashAgorot ?? 0 }) : await attempt('z.produce', args);
       if (r.ok) return r.value as R;
+      // "כשאין מספיק מזומן לטיפים באשראי" = ask (x-z-cash-with-tips §2): the manager chooses, the close goes again.
+      if (r.code === 'card_tips_choice') {
+        const d = (r.details ?? {}) as Record<string, unknown>;
+        setSheet({
+          kind: 'cardTipsChoice',
+          title: r.message,
+          body: String(d.body ?? ''),
+          partial: String(d.partial ?? ''),
+          negative: String(d.negative ?? ''),
+          retry: (cardTipsChoice) => {
+            setSheet(null);
+            const again = op === 'shift.close' ? attempt('shift.close', { countedCashAgorot: args.countedCashAgorot ?? 0, cardTipsChoice }) : attempt('z.produce', { ...args, cardTipsChoice });
+            void again.then((x) => {
+              if (!x.ok) say(x.message, 'error');
+              else setView('shift');
+            });
+          },
+        });
+        return undefined;
+      }
       if (r.code === 'held_sales') {
         setView('sell');
         setSheet({
@@ -292,6 +378,22 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   if (!state) return root(<div className="t-blocking">{status === 'offline' ? T.engineOffline : T.engineStarting}</div>);
 
   const s = state;
+  /**
+   * A tile tapped (or a code scanned): a meal, a dish with a required group, or — as the parameters say — one with add-ons /
+   * note chips of its own opens its sheet first (core/till/choices.ts opensSheet); the engine's answer `{choices: true}`
+   * opens it too (a product it knows asks).
+   */
+  const addProduct = (productId: string) => {
+    const p = catalog?.products.find((x) => x.id === productId);
+    if (p?.choices && s.sell.refundMode !== true && opensSheet(p.choices, s.sell.choicesAuto ?? { addOns: false, notes: false })) return setChoices({ productId });
+    void run('sell.add', { productId }).then((v) => {
+      if (v && typeof v === 'object' && (v as { choices?: unknown }).choices === true) setChoices({ productId });
+    });
+  };
+  const confirmChoices = (target: ChoicesTarget, args: Omit<OpArgs['sell.configure'], 'lineId'>) => {
+    const done = target.line ? attempt('sell.configure', { ...args, lineId: target.line.lineId }) : attempt('sell.add', { ...args, productId: target.productId, configured: true });
+    void done.then((r) => (r.ok ? setChoices(null) : say(r.message, 'error')));
+  };
   // "הנחות קבועות": the one on the basket again takes it off; one that asks "עבור מי" opens its sheet first.
   const presets = s.presetDiscounts?.items ?? [];
   const presetButtons = presets.filter((p) => (s.presetDiscounts?.buttons ?? []).includes(p.id));
@@ -311,7 +413,22 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         ? ((Object.keys(REPORT_OF) as MenuTarget[]).find((t) => REPORT_OF[t] === reportKind) ?? null)
         : view === 'caps'
           ? 'diagnostics'
-          : view === 'shopx' || view === 'history' || view === 'recent' || view === 'transmission' || view === 'printQueue' || view === 'blocks' || view === 'users' || view === 'owed' || view === 'kiosks'
+          : view === 'shopx' ||
+              view === 'history' ||
+              view === 'recent' ||
+              view === 'transmission' ||
+              view === 'printQueue' ||
+              view === 'blocks' ||
+              view === 'users' ||
+              view === 'owed' ||
+              view === 'kiosks' ||
+              view === 'catalogAdmin' ||
+              view === 'shopZ' ||
+              view === 'readyOrders' ||
+              view === 'voucherBalance' ||
+              view === 'cloudZ' ||
+              view === 'printers' ||
+              view === 'alerts'
             ? view
             : null;
   const menuGroups = buildTillMenu(menuFactsOf(s, { demo: host.demo, settings: !!host.ui.openAdmin, current: menuCurrent }));
@@ -358,6 +475,39 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         return setView('caps');
       case 'workMode':
         return void run('mode.switch', { to: 'kiosk' });
+      // Phase 2: each module's screen, opened through its own op.
+      case 'catalogAdmin':
+        setMenuAt(t);
+        setView('catalogAdmin');
+        return act('catalog.open');
+      case 'shopZ':
+      case 'readyOrders':
+      case 'alerts':
+        setMenuAt(t);
+        return setView(t);
+      case 'attendance':
+        return act('attendance.open');
+      case 'kioskOrders':
+        setView('sell');
+        return setKioskList(true);
+      case 'voucherStation':
+        setView('sell');
+        return act(s.voucherStation?.active ? 'voucherStation.leave' : 'voucherStation.return');
+      case 'voucherBalance':
+        setMenuAt(t);
+        setView('voucherBalance');
+        return act('voucherBalance.open');
+      case 'cloudZ':
+        setMenuAt(t);
+        setView('cloudZ');
+        return act('cloudZ.open');
+      case 'printers':
+        setMenuAt(t);
+        setView('printers');
+        return act('printers.open');
+      case 'screenEdit':
+        setView('sell');
+        return act('screenEdit.start');
       case 'signOut':
         return void run('session.logout', {});
       case 'shopx':
@@ -378,7 +528,14 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   const main = (() => {
     if (s.session.locked || !s.session.cashier)
       // "טכנאי" under the pad, as Android's login screen (the six taps work here too).
-      return <LockScreen demo={host.demo} onLogin={(pin) => void run('session.login', { pin })} onTechnician={host.ui.openTechnician ? () => host.ui.openTechnician!() : undefined} />;
+      return (
+        <LockScreen
+          demo={host.demo}
+          onLogin={(pin) => void run('session.login', { pin })}
+          onTechnician={host.ui.openTechnician ? () => host.ui.openTechnician!() : undefined}
+          extra={<AttendanceClockButton view={s.attendance} onOpen={() => act('attendance.clock')} />}
+        />
+      );
     if (s.checkout.phase !== 'idle') {
       return (
         <CheckoutScreen
@@ -444,6 +601,170 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             return r.ok && !(r.value && typeof r.value === 'object' && 'dialogId' in (r.value as object));
           }}
           refundHidden={(s.session.hidden ?? []).includes('REFUND')}
+        />
+      );
+    }
+    if (view === 'catalogAdmin' && s.catalogAdmin?.open) {
+      return (
+        <CatalogAdminScreen
+          view={s.catalogAdmin}
+          actions={{
+            panel: (panel) => act('catalog.panel', { panel }),
+            filter: (f) => act('catalog.filter', f),
+            more: () => act('catalog.more'),
+            page: (productId) => act('catalog.page', { productId }),
+            pageClose: () => act('catalog.pageClose'),
+            save: (productId, draft, photo) => act('catalog.save', { productId, draft, photo }),
+            add: (draft, photo) => act('catalog.add', { draft, photo }),
+            priceLevel: (level) => act('catalog.priceLevel', { level }),
+            priceCancel: () => act('catalog.priceCancel'),
+            setAvailable: (a) => act('catalog.setAvailable', a),
+            moveCategory: (productIds, categoryId) => act('catalog.moveCategory', { productIds, categoryId }),
+            categoryAdd: (name) => act('catalog.categoryAdd', { name }),
+            categoryRename: (categoryId, name) => act('catalog.categoryRename', { categoryId, name }),
+            categoryActive: (a) => act('catalog.categoryActive', a),
+            machineAuth: () => act('catalog.machineAuth'),
+            machineSave: (mode, productIds) => act('catalog.machineSave', { mode, productIds }),
+            release: () => act('catalog.release'),
+            dismiss: () => act('catalog.dismiss'),
+            block: (item) => (item.productId ? setSheet({ kind: 'block', productId: item.productId }) : undefined),
+          }}
+          back={() => {
+            act('catalog.close');
+            setView('sell');
+          }}
+        />
+      );
+    }
+    if (view === 'shopZ') {
+      return (
+        <ShopZScreen
+          view={s.shopZ}
+          actions={{
+            open: () => act('shopZ.open'),
+            leave: () => void run('shopZ.leave', {}),
+            refresh: () => act('shopZ.refresh'),
+            scope: (area) => act('shopZ.scope', { area }),
+            start: (confirm) =>
+              void attempt('shopZ.start', { confirm }).then((r) => {
+                if (r.ok) return;
+                if (r.code === 'held_sales') {
+                  // "יש N מכירות מושהות": paid or cancelled first — or kept where the shop allows it.
+                  setSheet({
+                    kind: 'heldClose',
+                    retry: (keepHeld) => {
+                      setSheet(null);
+                      act('shopZ.start', { confirm, keepHeld });
+                    },
+                  });
+                  return;
+                }
+                say(r.message, 'error');
+              }),
+            proceed: () => act('shopZ.proceed'),
+            dismiss: () => act('shopZ.dismiss'),
+            printSummary: () => act('shopZ.printSummary'),
+            details: (answer) => act('shopZ.details', { answer }),
+            printDetails: (machineIds) => act('shopZ.printDetails', { machineIds }),
+            cancelDetails: () => act('shopZ.cancelDetails'),
+          }}
+          back={() => setView('sell')}
+        />
+      );
+    }
+    if (view === 'readyOrders') {
+      return <ReadyOrdersScreen view={s.readyOrders} actions={readyActions} back={() => setView('sell')} />;
+    }
+    if (view === 'alerts') {
+      return (
+        <AlertsScreen
+          view={s.alerts}
+          actions={{
+            refresh: () => void run('alerts.refresh', {}),
+            seen: (keys) => act('alerts.seen', { keys }),
+            seenAll: () => act('alerts.seenAll'),
+            onMyWay: (key) => act('alerts.onMyWay', { key }),
+            pay: (key) => act('alerts.pay', { key }),
+            ...((s.menuHidden ?? []).includes('print_queue') ? {} : { openQueue: () => setView('printQueue') }),
+            ...((s.menuHidden ?? []).includes('printers') ? {} : { openPrinters: () => {
+              setView('printers');
+              act('printers.open');
+            } }),
+            ...((s.menuHidden ?? []).includes('managed_kiosks') || !s.kiosks ? {} : { openKiosks: () => setView('kiosks') }),
+          }}
+          back={() => setView('sell')}
+        />
+      );
+    }
+    if (view === 'voucherBalance' && s.voucherBalance) {
+      return (
+        <VoucherBalanceScreen
+          view={s.voucherBalance}
+          actions={{
+            lookup: (code, typed) => act('voucherBalance.lookup', { code, typed }),
+            again: () => act('voucherBalance.again'),
+            ...(s.voucherStation?.active
+              ? {
+                  redeem: (code: string) => {
+                    void run('voucherBalance.close', {});
+                    setView('sell');
+                    act('voucherStation.scan', { code: `PV:${code}`, typed: false });
+                  },
+                }
+              : {}),
+          }}
+          back={() => {
+            void run('voucherBalance.close', {});
+            setView('sell');
+          }}
+        />
+      );
+    }
+    if (view === 'cloudZ') {
+      return (
+        <CloudZScreen
+          view={s.cloudZ ?? null}
+          actions={{
+            toggle: (id) => act('cloudZ.toggle', { id }),
+            selectAll: () => act('cloudZ.selectAll'),
+            print: (id) => act('cloudZ.print', { id }),
+            printSequence: () => act('cloudZ.printSequence'),
+            printSummary: (id) => act('cloudZ.printSummary', { id }),
+            printTill: (id, machineId) => act('cloudZ.printTills', { id, machineIds: [machineId] }),
+            printAllTills: (id) => act('cloudZ.printTills', { id }),
+            dismissChoice: () => act('cloudZ.dismissChoice'),
+            cancelTills: () => act('cloudZ.cancelTills'),
+          }}
+          back={() => {
+            void run('cloudZ.close', {});
+            setView('sell');
+          }}
+        />
+      );
+    }
+    if (view === 'printers') {
+      return (
+        <PrintersScreen
+          view={s.printers ?? null}
+          actions={{
+            check: (printerId) => act('printers.check', { printerId }),
+            test: (printerId) => act('printers.test', { printerId }),
+            designTest: (printerId) => act('printers.designTest', { printerId }),
+            widthTest: (printerId) => act('printers.widthTest', { printerId }),
+            reprint: (jobId) => act('printers.reprint', { jobId }),
+            retry: (jobId) => act('printQueue.retry', { jobId }),
+            handled: (jobId) => act('printQueue.handled', { jobId }),
+            move: (jobId) => act('printers.move', { jobId }),
+            toTill: (jobId) => act('printers.toTill', { jobId }),
+            receipt: (choice) => act('printers.receipt', { choice }),
+            scan: () => act('printers.scan'),
+            scanStop: () => act('printers.scanStop'),
+            add: (p) => act('printers.add', p),
+          }}
+          back={() => {
+            void run('printers.close', {});
+            setView('sell');
+          }}
         />
       );
     }
@@ -535,7 +856,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return (
         <ShopXScreen
           shopX={s.shopX}
-          load={(refresh) => void run('report.shopX', refresh ? { refresh: true } : {})}
+          load={(refresh, scope) => void run('report.shopX', { ...(refresh ? { refresh: true } : {}), ...(scope === 'area' ? { scope } : {}) })}
           print={() => void run('report.shopX', { print: true })}
           back={() => setView('sell')}
         />
@@ -571,12 +892,53 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         </div>
       );
     }
+    // "עמדת שובר": the station replaces the sell screen while it is on (the payment shows as usual over it).
+    if (s.voucherStation?.active) {
+      return (
+        <VoucherStationScreen
+          view={s.voucherStation}
+          back={() => setMenuOpen(true)}
+          actions={{
+            scan: (code, typed) => act('voucherStation.scan', { code, typed }),
+            dismiss: () => act('voucherStation.dismiss'),
+            pick: (productId, groupKey, delta) => act('voucherStation.pick', { productId, groupKey, delta }),
+            commit: () => act('voucherStation.commit'),
+            closePicker: () => act('voucherStation.closePicker'),
+            basket: () => act('voucherStation.basket'),
+            add: (productId) => act('voucherStation.add', { productId }),
+            toggle: (lineId, toVoucher) => act('voucherStation.toggle', { lineId, toVoucher }),
+            category: (categoryId) => act('voucherStation.category', { categoryId }),
+            backToScan: () => act('voucherStation.back'),
+            removeVoucher: (voucherId) => act('voucherStation.removeVoucher', { voucherId }),
+            pay: () => act('voucherStation.pay'),
+            payOpen: () => act('voucherStation.payOpen'),
+            clear: () => act('voucherStation.clear'),
+          }}
+        />
+      );
+    }
     return (
       <SellScreen
         state={s}
         catalog={catalog}
         layout={layout}
-        onAdd={(productId) => void run('sell.add', { productId })}
+        onAdd={addProduct}
+        onCustomize={(productId) => setChoices({ productId })}
+        onKioskSlip={host.demo ? undefined : (code) => act('kioskOrders.scan', { code })}
+        screenEdit={
+          s.screenEdit?.on
+            ? {
+                view: s.screenEdit,
+                actions: {
+                  done: () => act('screenEdit.done'),
+                  cancel: () => act('screenEdit.cancel'),
+                  moveCategory: (fromId, toId) => act('screenEdit.moveCategory', { fromId, toId }),
+                  move: (fromId, toId, shown) => act('screenEdit.move', { fromId, toId, shown }),
+                  lock: (productId, locked) => act('screenEdit.lock', { productId, locked }),
+                },
+              }
+            : null
+        }
         onDepartment={(departmentId) => void run('sell.department', { departmentId })}
         onSearch={(text) => void run('sell.search', { text })}
         onVoucher={host.demo ? undefined : (code) => void run('sell.voucher', { code })}
@@ -600,6 +962,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
                 held: () => setSheet({ kind: 'held' }),
                 orderEdit: () => void run('order.edit', {}),
                 preset: (presetId: string) => tapPreset(presetId, false),
+                editLine: (lineId: string) => {
+                  const l = s.sell.lines.find((x) => x.lineId === lineId);
+                  if (l?.choices) setChoices({ productId: l.productId, line: { lineId, qty: l.qty, choices: l.choices } });
+                },
               }),
         }}
         cartView={{
@@ -685,6 +1051,13 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               שולם ללקוח
             </button>
           </div>
+        ) : null}
+        {s.kioskOrders && !s.session.locked && view === 'sell' && s.checkout.phase === 'idle' && !(s.menuHidden ?? []).includes('kiosk_orders') ? (
+          // "הזמנות קיוסק ממתינות לתשלום (N)" (KioskOpenOrdersBadge): a tap opens the list.
+          <KioskOrdersStrip count={s.kioskOrders.waiting} onOpen={() => setKioskList(true)} />
+        ) : null}
+        {s.alerts && !s.session.locked && view === 'sell' && s.checkout.phase === 'idle' && s.alerts.line ? (
+          <AlertsLine view={s.alerts} onOpen={(s.menuHidden ?? []).includes('alerts') ? undefined : () => setView('alerts')} onSeenAll={() => act('alerts.seenAll')} />
         ) : null}
         {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
           // "בון לא הודפס במדפסת מטבח" (KitchenPrintBanner): never quieted; a tap opens the queue.
@@ -815,6 +1188,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           onClose={() => setSheet(null)}
         />
       ) : null}
+      {sheet?.kind === 'cardTipsChoice' ? (
+        <CardTipsChoiceSheet title={sheet.title} body={sheet.body} partial={sheet.partial} negative={sheet.negative} onChoose={sheet.retry} onClose={() => setSheet(null)} />
+      ) : null}
       {s.session.cashier && (sheet?.kind === 'held' || sheet?.kind === 'heldClose') && s.held ? (
         <HeldSheet
           held={s.held}
@@ -856,6 +1232,43 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           onDismiss={() => void run('order.dismiss', {})}
         />
       ) : null}
+      {s.session.cashier && kioskList && s.checkout.phase === 'idle' ? (
+        <KioskOrdersSheet
+          view={s.kioskOrders}
+          actions={{
+            refresh: () => void run('kioskOrders.refresh', {}),
+            pay: (id) =>
+              void attempt('kioskOrders.pay', { id }).then((r) => {
+                if (r.ok) setKioskList(false);
+                else say(r.message, 'error');
+              }),
+            cancel: (id, reason) => act('kioskOrders.cancel', { id, reason }),
+          }}
+          onClose={() => setKioskList(false)}
+        />
+      ) : null}
+      {s.attendance ? (
+        // "נוכחות": its card and sheets over whatever is on (the lock screen's clock too); the gate card covers the till.
+        <AttendanceScreen
+          view={s.attendance}
+          actions={{
+            close: () => void run('attendance.close', {}),
+            act: (action) => act('attendance.act', { action }),
+            code: (pin) => act('attendance.code', { pin }),
+            behalf: () => act('attendance.behalf'),
+            manager: (pin) => act('attendance.manager', { pin }),
+            pick: (userId) => act('attendance.pick', { userId }),
+            clockOutChoice: (choice) => act('attendance.clockOutChoice', { choice }),
+            transfer: () => act('attendance.transfer'),
+            correction: () => act('attendance.correction'),
+            correctionSend: (form) => act('attendance.correctionSend', { ...form }),
+            signOut: () => act('attendance.signOut'),
+          }}
+        />
+      ) : null}
+      {s.session.cashier && choices && s.checkout.phase === 'idle' && !s.dialog ? (
+        <ChoicesSheet key={`${choices.productId}:${choices.line?.lineId ?? ''}`} catalog={catalog} target={choices} onConfirm={(args) => confirmChoices(choices, args)} onClose={() => setChoices(null)} />
+      ) : null}
       {s.session.cashier && sheet?.kind === 'block' ? <BlockSheet item={{ productId: sheet.productId }} actions={blocksActions} onDone={() => setSheet(null)} /> : null}
       {s.notice && !s.dialog ? <NoticeDialog title={s.notice.title} text={s.notice.text} onOk={() => void run('notice.ack', {})} /> : null}
       {s.dialog ? <EngineDialog dialog={s.dialog} answer={(action, answers) => void run('dialog.answer', { dialogId: s.dialog!.id, action, answers })} /> : null}
@@ -896,6 +1309,18 @@ export function menuFactsOf(s: TillState, host: { demo: boolean; settings: boole
     kiosks: s.kiosks?.rows.length ?? 0,
     support: s.menu?.support === true,
     current: host.current,
+    // Phase 2: each module's own word on its row.
+    catalogAdmin: s.catalogAdmin?.entryShown === true,
+    shopZ: s.menuOffers?.shopZ === true,
+    attendance: s.attendance && s.attendance.menuLine !== null ? { line: s.attendance.menuLine } : null,
+    readyOrders: !!s.readyOrders,
+    kioskOrders: s.kioskOrders?.waiting ?? 0,
+    voucherStation: s.voucherStation?.menu ?? null,
+    voucherBalance: s.voucherBalance?.enabled === true,
+    cloudZ: s.menuOffers?.cloudZ === true,
+    printers: !host.demo && !!s.menu,
+    screenEdit: s.screenEdit?.available === true,
+    alerts: s.alerts ? { line: s.alerts.subtitle } : null,
   };
 }
 

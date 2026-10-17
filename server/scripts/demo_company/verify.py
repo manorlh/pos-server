@@ -596,6 +596,8 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
                 problems.append("1221+1222≠1223")
             if head["1203"] == "330" and pays:
                 problems.append("D120 under 330")
+            if head["1228"] == "1" and pays:  # a cancelled document received no money (1.31 §4.5)
+                problems.append("D120 under a cancelled document")
             if head["1203"] != "330" and head["1228"] != "1" and sum(_d120(x)["1312"] for x in pays) != head["1223"]:
                 problems.append("Σ1312≠1223")
             if any(r["1254"] != head["1204"] or r["1253"] != head["1203"] for r in rows):

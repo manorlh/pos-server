@@ -142,6 +142,11 @@ function AccessEditor({
     (areaLists[i]?.data ?? []).map((a) => ({ id: a.id, name: a.name, shop: detail.shops.find((s) => s.id === shopId)?.name ?? '' })),
   );
   const areasLoaded = areaLists.every((q) => q.isSuccess);
+  const chosenAreaIds = areaIds.filter((id) => areaChoices.some((a) => a.id === id));
+  // "מנהל נקודת מכירה" is that only with a point of sale: without one the profile would be a whole shop's.
+  const chosenTemplate = template ? catalog.templates.find((x) => x.id === template) : undefined;
+  const needsAreas = Boolean(chosenTemplate?.needsAreas ?? template === 'area_manager');
+  const missingAreas = needsAreas && areasLoaded && chosenAreaIds.length === 0;
 
   const applyTemplate = (id: string) => {
     const chosen = catalog.templates.find((x) => x.id === id);
@@ -161,7 +166,7 @@ function AccessEditor({
         companyIds: detail.orgScopeAllowed && mode === 'companies' ? companyIds : [],
         shopIds: detail.orgScopeAllowed ? shopIds.filter((id) => shopsInScope.some((s) => s.id === id)) : [],
         // Only once the choices are known: an area outside the shops chosen is dropped, not refused.
-        ...(areasLoaded ? { areaIds: areaIds.filter((id) => areaChoices.some((a) => a.id === id)) } : {}),
+        ...(areasLoaded ? { areaIds: chosenAreaIds } : {}),
         tenantIds,
       }),
     onSuccess: (out) => {
@@ -289,6 +294,11 @@ function AccessEditor({
             <p className="text-xs text-muted-foreground">{t('areasHint')}</p>
           </div>
         ) : null}
+        {missingAreas ? (
+          <p role="alert" className="text-xs font-medium text-destructive">
+            {areaChoices.length > 0 ? t('areasRequired') : t('areasRequiredNoChoices')}
+          </p>
+        ) : null}
       </section>
 
       {/* ── Sections ── */}
@@ -413,7 +423,7 @@ function AccessEditor({
 
       <DialogFooter>
         <Button variant="outline" onClick={onDone}>{tc('cancel')}</Button>
-        <Button onClick={() => save.mutate()} disabled={save.isPending}>
+        <Button onClick={() => save.mutate()} disabled={save.isPending || missingAreas}>
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </DialogFooter>
