@@ -62,6 +62,7 @@ function KioskCard({ k, busy, send }: { k: KioskControlRow; busy: boolean; send(
   return (
     <section className="t-menu-group t-kiosk" data-kiosk={k.machineId}>
       <h2 className="t-menu-title t-kiosk-name">{k.name}</h2>
+      {k.areaLine ? <p className="t-muted t-small t-kiosk-area">{k.areaLine}</p> : null}
       <div className="t-kiosk-card">
         <p className={k.online ? 't-ok' : 't-muted'}>{k.stateLine}</p>
         <p>{k.ordersLine}</p>
@@ -100,6 +101,17 @@ function KioskCard({ k, busy, send }: { k: KioskControlRow; busy: boolean; send(
         ) : (
           <LockForm busy={busy} onLock={(minutes, message) => send({ action: 'pause', minutes, message: message || null })} />
         )}
+        {k.workMode ? (
+          // "מצב עבודה" (area-gaps §3): where the kiosk works, the switch (an employee's code with KIOSK_TILL_MODE), what waits.
+          <div className="t-kiosk-lock" data-workmode={k.workMode.action}>
+            <p className="t-strong">{K.workModeTitle}</p>
+            <p className="t-muted t-small">{k.workMode.stateLine}</p>
+            <button type="button" className="t-btn t-btn-primary" disabled={busy} onClick={() => send({ action: k.workMode!.action })}>
+              {k.workMode.label}
+            </button>
+            {k.workMode.pending ? <p className="t-warn t-small">{k.workMode.pending}</p> : null}
+          </div>
+        ) : null}
         {k.z ? (
           <button type="button" className="t-btn" disabled={busy} onClick={() => send({ action: k.z!.action })}>
             {k.z.label}

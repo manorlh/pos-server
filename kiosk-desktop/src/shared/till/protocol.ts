@@ -330,11 +330,12 @@ export interface CoreOpArgs {
   'doc.detail': { documentId: string; quantities?: Record<string, number> };
   'shift.open': { openingCashAgorot: number };
   /** `keepHeld`: "סגור והשאר מושהות" where the shop allows it (`allowCloseWithHeldSales`). */
-  'shift.close': { countedCashAgorot: number; keepHeld?: boolean };
+  /** `cardTipsChoice`: the manager's answer when the close asked (`card_tips_choice`, x-z-cash-with-tips §2 ask). */
+  'shift.close': { countedCashAgorot: number; keepHeld?: boolean; cardTipsChoice?: 'partial' | 'negative' };
   'report.x': Record<string, never>;
   'report.shopX': { refresh?: boolean; print?: boolean };
   /** `countedCashAgorot`: the drawer's count when the shift is still open (it is closed first). */
-  'z.produce': { countedCashAgorot?: number; keepHeld?: boolean };
+  'z.produce': { countedCashAgorot?: number; keepHeld?: boolean; cardTipsChoice?: 'partial' | 'negative' };
   'discount.preview': { mode: BasketDiscountMode; input: string };
   'discount.apply': { mode: BasketDiscountMode; input: string };
   'discount.remove': Record<string, never>;
@@ -437,7 +438,7 @@ export interface CoreOpArgs {
   'report.reprintZ': { id: string };
   'kiosks.refresh': Record<string, never>;
   /** `minutes`: "נעילה למכירה" for so long (absent: until reopened by hand); `message`: to the customers. */
-  'kiosks.command': { kioskId: string; action: 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt'; message?: string | null; minutes?: number | null };
+  'kiosks.command': { kioskId: string; action: 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt' | 'enter_till' | 'return_kiosk'; message?: string | null; minutes?: number | null };
 }
 
 /** One kiosk as the panel shows it. */
@@ -456,6 +457,10 @@ export interface KioskControlRow {
   /** By its Z mode: "סגירת משמרת" (the shop's Z) or "הפקת Z" (its own); null with no shift open there. */
   z: { action: 'close_shift' | 'till_z'; label: string } | null;
   zNote: string | null;
+  /** "נקודת מכירה: …" — the kiosk's point of sale under its name; null — none. */
+  areaLine?: string | null;
+  /** "מצב עבודה" (only where the cloud lets this till switch it): where it works, the button, what waits. */
+  workMode?: { inTill: boolean; stateLine: string; action: 'enter_till' | 'return_kiosk'; label: string; pending: string | null } | null;
 }
 
 /** "קיוסקים" (core/till/kioskControl.ts): the kiosks this till controls, a command on its way, how the last went. */
@@ -548,6 +553,8 @@ export const TILL_ERRORS = {
   voucher_refused: 'השובר לא מומש',
   // "נוכחות" (core/till/attendance.ts): selling waits for the employee's clock-in / the end of the break.
   attendance_required: 'יש להיכנס למשמרת נוכחות לפני מכירה',
+  // "כשאין מספיק מזומן לטיפים באשראי" = ask (x-z-cash-with-tips §2): the close waits for the manager's choice.
+  card_tips_choice: 'אין מספיק מזומן לטיפים באשראי',
 } as const;
 
 export type TillErrorCode = keyof typeof TILL_ERRORS;
@@ -1130,6 +1137,14 @@ export interface XReport {
   /** "שוברי הפקה": what production vouchers paid as a tender; and the vouchers' sections (information, in no figure above). */
   vouchersAgorot?: number;
   voucherInfo?: Array<{ label: string; value: string; title?: boolean }>;
+  /** "טיפ באשראי משולם מהמזומן" (core/till/cashWithTips.ts): paid out of the drawer, owed to staff, the old "מזומן במגירה". */
+  cardTipsFromDrawerAgorot?: number;
+  cardTipsUnpaidAgorot?: number;
+  drawerCashAgorot?: number;
+  /** `ask` and short: the close will ask the manager (this X previews partial). */
+  cardTipsNeedsChoice?: boolean;
+  /** "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1): the block, in order; `warn` red. */
+  cashBlock?: Array<{ key: string; label: string; amountAgorot: number; bold: boolean; warn: boolean }>;
   /** The paper went to the printer. */
   printed?: boolean;
 }

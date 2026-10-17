@@ -353,6 +353,16 @@ export interface XTill {
   totalVouchers?: number;
   /** The X's production vouchers sections (core/till/vouchers.ts voucherInfoJson) — information, in no figure above. */
   prepaidVouchersInfo?: Record<string, unknown>;
+  /**
+   * "טיפ באשראי משולם מהמזומן" (core/till/cashWithTips.ts, P:/specs/x-z-cash-with-tips.md §2): the card tips paid out of
+   * the drawer — already off expectedCash —, those owed to staff, the shortfall mode, "מזומן במגירה" of the old figure
+   * (cash takings + cash tips − paid). Absent with the parameter off; `cardTipsNeedsChoice` only on an X under `ask`.
+   */
+  cardTipsFromDrawer?: number;
+  cardTipsUnpaid?: number;
+  cardTipsShortfall?: 'partial' | 'negative';
+  cardTipsNeedsChoice?: boolean;
+  drawerCash?: number;
 }
 
 export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, currentRate: number): { till: XTill; reportableIds: string[] } {

@@ -40,7 +40,7 @@ import { TechnicianCorner, tillTechnicianArmed } from '../../../core/technician'
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
-import { BasketDiscountSheet, PresetForSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
+import { BasketDiscountSheet, CardTipsChoiceSheet, PresetForSheet, HeldSheet, NoticeDialog, OrderDetailsSheet, OthSheet, ReceiptPicker, RefundChooser, type DiscountPreview, type ReceiptFind, type ReceiptRow } from './parts/TillSheets';
 import { ORDER_TEXT } from '../../../core/till/orderDetails';
 import { FAILOVER_TEXT } from '../../../core/kitchen/failover';
 import { CheckoutScreen } from './screens/CheckoutScreen';
@@ -124,6 +124,7 @@ type Sheet =
   | { kind: 'receipt' }
   | { kind: 'held' }
   | { kind: 'heldClose'; retry: (keepHeld: boolean) => void }
+  | { kind: 'cardTipsChoice'; title: string; body: string; partial: string; negative: string; retry: (choice: 'partial' | 'negative') => void }
   | { kind: 'block'; productId: string };
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
@@ -295,6 +296,26 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     async <R,>(op: 'shift.close' | 'z.produce', args: { countedCashAgorot?: number }): Promise<R | undefined> => {
       const r = op === 'shift.close' ? await attempt('shift.close', { countedCashAgorot: args.countedCashAgorot ?? 0 }) : await attempt('z.produce', args);
       if (r.ok) return r.value as R;
+      // "כשאין מספיק מזומן לטיפים באשראי" = ask (x-z-cash-with-tips §2): the manager chooses, the close goes again.
+      if (r.code === 'card_tips_choice') {
+        const d = (r.details ?? {}) as Record<string, unknown>;
+        setSheet({
+          kind: 'cardTipsChoice',
+          title: r.message,
+          body: String(d.body ?? ''),
+          partial: String(d.partial ?? ''),
+          negative: String(d.negative ?? ''),
+          retry: (cardTipsChoice) => {
+            setSheet(null);
+            const again = op === 'shift.close' ? attempt('shift.close', { countedCashAgorot: args.countedCashAgorot ?? 0, cardTipsChoice }) : attempt('z.produce', { ...args, cardTipsChoice });
+            void again.then((x) => {
+              if (!x.ok) say(x.message, 'error');
+              else setView('shift');
+            });
+          },
+        });
+        return undefined;
+      }
       if (r.code === 'held_sales') {
         setView('sell');
         setSheet({
@@ -1166,6 +1187,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           }}
           onClose={() => setSheet(null)}
         />
+      ) : null}
+      {sheet?.kind === 'cardTipsChoice' ? (
+        <CardTipsChoiceSheet title={sheet.title} body={sheet.body} partial={sheet.partial} negative={sheet.negative} onChoose={sheet.retry} onClose={() => setSheet(null)} />
       ) : null}
       {s.session.cashier && (sheet?.kind === 'held' || sheet?.kind === 'heldClose') && s.held ? (
         <HeldSheet

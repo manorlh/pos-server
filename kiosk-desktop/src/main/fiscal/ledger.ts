@@ -137,8 +137,25 @@ export interface DocLeg {
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
 export function legsOf(d: Pick<DocDraft, 'payments' | 'card' | 'status' | 'totals'>): DocLeg[] {
   if (!settled(d)) return [];
-  if (d.payments && d.payments.length > 0) return d.payments;
+  if (d.payments && d.payments.length > 0) return principalLegs(d.payments, d.totals.tipAgorot);
   return d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [];
+}
+
+/**
+ * A till document's legs as the goods' tenders: a tip (a kiosk order's, paid at the till) rides on the money leg that closed
+ * it — that leg's principal is the document's, the tip its own figure (`tipAmount`), as the kiosk's documents keep it
+ * (tenderAmounts: "what the cash leg and the card leg each pay of the principal").
+ */
+export function principalLegs(legs: readonly DocLeg[], tipAgorot: number): DocLeg[] {
+  if (!(tipAgorot > 0)) return [...legs];
+  let at = -1;
+  for (let i = legs.length - 1; i >= 0; i--) {
+    if ((legs[i].method === 'cash' || legs[i].method === 'card') && legs[i].amountAgorot >= tipAgorot) {
+      at = i;
+      break;
+    }
+  }
+  return at < 0 ? [...legs] : legs.map((l, i) => (i === at ? { ...l, amountAgorot: l.amountAgorot - tipAgorot } : l));
 }
 
 /** What a sale document is written from (a kiosk's card sale, a till's cash or card-last sale). */

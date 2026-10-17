@@ -231,6 +231,7 @@ import { TillPrintQueue } from './tillPrintQueue';
 import { TillCustomerDisplay } from './tillCustomerDisplay';
 import { TillMenuService } from './tillMenuService';
 import { TillKiosks } from './tillKiosks';
+import { KIOSK_CONTROL_TEXT } from '../../core/till/kioskControl';
 import { TillKioskOrders } from './tillKioskOrders';
 import { TillCatalogAdmin } from './tillCatalogAdmin';
 import { TillShopZ } from './tillShopZ';
@@ -286,6 +287,7 @@ import {
   type MealSlotView,
 } from '../../core/till/choices';
 import { moneyGroupOf } from '../kiosk/catalog';
+import { CARD_TIPS_ASK_TEXT, amountText, cardTipsFromDrawerOn, cardTipsShortfallOf, withCashWithTips, xCashBlock, type CardTipsChoice } from '../../core/till/cashWithTips';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -888,7 +890,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
             closeRequestId: requestId,
             vatRate: this.svc.vatRate(),
             now: new Date(this.nowFn()),
-            tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId),
+            tillExtra: (till, shiftId) => this.withTipsChoice('partial', () => this.tillFigures(till, shiftId)),
           });
           if (closed.kind === 'pending') return 'pending';
           if (closed.kind === 'none') return 'none';
@@ -1256,13 +1258,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'shift.open':
         return this.shiftOpen(a.openingCashAgorot);
       case 'shift.close':
-        return this.shiftClose(a.countedCashAgorot, a.keepHeld === true);
+        return this.shiftClose(a.countedCashAgorot, a.keepHeld === true, tipsChoiceOf(a.cardTipsChoice));
       case 'report.x':
         return this.reportX();
       case 'report.shopX':
         return this.shopX(a.refresh === true, a.print === true);
       case 'z.produce':
-        return this.zProduce(a.countedCashAgorot, a.keepHeld === true);
+        return this.zProduce(a.countedCashAgorot, a.keepHeld === true, tipsChoiceOf(a.cardTipsChoice));
       case 'mode.switch':
         return this.modeSwitch(a.to as DeviceRoleName, typeof a.managerCode === 'string' ? a.managerCode : null);
       case 'host.idle':
@@ -1422,12 +1424,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         this.kiosks.refresh();
         return undefined;
       case 'kiosks.command': {
-        const action = (['pause', 'resume', 'close_shift', 'till_z', 'bon_print', 'bon_handled', 'reprint_bon', 'reprint_receipt'] as const).find((x) => x === a.action);
+        const action = (['pause', 'resume', 'close_shift', 'till_z', 'bon_print', 'bon_handled', 'reprint_bon', 'reprint_receipt', 'enter_till', 'return_kiosk'] as const).find((x) => x === a.action);
         if (!action) return refuse('invalid_args');
         const kioskId = String(a.kioskId ?? '');
         const extra = { message: typeof a.message === 'string' ? a.message : null, minutes: typeof a.minutes === 'number' ? a.minutes : null };
         // "שליטה בקיוסק" (KIOSK_CONTROL): the lock, the reopening and a kiosk's own Z — a manager's code where the role asks.
         if (action === 'pause' || action === 'resume' || action === 'till_z') return this.gate('KIOSK_CONTROL', (by) => this.kiosks.command(kioskId, action, extra, by), { relax: false });
+        // "מצב עבודה" (area-gaps §3): an employee whose code holds KIOSK_TILL_MODE — the one signed in when they hold it.
+        if (action === 'enter_till' || action === 'return_kiosk') {
+          return this.gate(PERM.KIOSK_TILL_MODE, (by) => this.kiosks.command(kioskId, action, extra, by), { askOnDeny: true, title: KIOSK_CONTROL_TEXT.workModeTitle, body: KIOSK_CONTROL_TEXT.workModeApprove });
+        }
         this.kiosks.command(kioskId, action, extra, null);
         return undefined;
       }
@@ -4173,7 +4179,44 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const shift = this.svc.ledger.shift(shiftId)!;
     const x = buildXTill(this.svc.ledger.docsOfShift(shiftId).map(xDocOf), shift.opening_cash, this.svc.vatRate());
     // "מגירת מזומן": the shift's movements and wallets move the expected drawer (spec §8, drawer-away §5.6).
-    return { shift, ...x, till: this.withVouchers(this.withDrawer(x.till, shiftId), shiftId) };
+    return { shift, ...x, till: this.tillFigures(x.till, shiftId) };
+  }
+
+  /**
+   * The X's till as every close of this till freezes it: the card tips paid out of the drawer ("טיפ באשראי משולם מהמזומן",
+   * core/till/cardTipsFromDrawer.ts — the parameter now), the drawer's movements and wallets, the vouchers' sections.
+   */
+  private tillFigures(till: ReturnType<typeof buildXTill>['till'], shiftId: string) {
+    const p = this.svc.cloud.parameters();
+    // After the movements and wallets: the expected cash then is what the drawer has before the tips payout (§2 `available`).
+    const tipsOut = withCashWithTips(this.withDrawer(till, shiftId), { param: cardTipsFromDrawerOn(p, false), shortfall: cardTipsShortfallOf(p), askChoice: this.cardTipsChoice });
+    return this.withVouchers(tipsOut, shiftId);
+  }
+
+  /**
+   * "כשאין מספיק מזומן לטיפים באשראי" (x-z-cash-with-tips §2) at a close: the manager's choice under `ask` (only when short),
+   * 'partial' for a close nobody stands at (automatic, from the cloud, the shop Z's participant) — null: an X, a preview.
+   */
+  private cardTipsChoice: CardTipsChoice | null = null;
+
+  private withTipsChoice<R>(choice: CardTipsChoice | null, f: () => R): R {
+    const before = this.cardTipsChoice;
+    this.cardTipsChoice = choice;
+    try {
+      return f();
+    } finally {
+      this.cardTipsChoice = before;
+    }
+  }
+
+  /** `ask` and short with no choice: the close refuses with the question (the screen asks the manager and closes again). */
+  private askTipsChoice(shiftId: string, choice: CardTipsChoice | null): void {
+    if (choice) return;
+    const t = this.xFigures(shiftId).till;
+    if (t.cardTipsNeedsChoice !== true) return;
+    const tips = Math.round(t.totalCardTips * 100);
+    const room = Math.max(Math.round(t.expectedCash * 100) + Math.round((t.cardTipsFromDrawer ?? 0) * 100), 0);
+    refuse('card_tips_choice', CARD_TIPS_ASK_TEXT.title, { body: CARD_TIPS_ASK_TEXT.body(amountText(tips), amountText(room)), partial: CARD_TIPS_ASK_TEXT.partial, negative: CARD_TIPS_ASK_TEXT.negative });
   }
 
   /** The production vouchers redeemed in the shift's written sales (`prepaidVouchersInfo`) — information, in no figure. */
@@ -4205,14 +4248,18 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   }
 
   /** The shift closed with the counted cash: X frozen into the close and printed, the documents flushed (no gate: the callers' own). */
-  private closeNow(user: RosterUser, counted: number) {
+  private closeNow(user: RosterUser, counted: number, choice: CardTipsChoice | null = null) {
+    return this.withTipsChoice(choice, () => this.closeNowWith(user, counted));
+  }
+
+  private closeNowWith(user: RosterUser, counted: number) {
     const closed = this.svc.ledger.closeShift({
       closedByName: displayName(user),
       closedByUserId: user.id,
       vatRate: this.svc.vatRate(),
       countedCashAgorot: counted,
       now: new Date(this.nowFn()),
-      tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId),
+      tillExtra: (till, shiftId) => this.tillFigures(till, shiftId),
     });
     if (closed.kind === 'pending') return refuse('checkout_busy', WORDS.pendingBlocksClose(closed.count));
     if (closed.kind === 'none') return refuse('shift_closed');
@@ -4233,11 +4280,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       });
     }
     void this.svc.sync.flush();
-    const report = this.xReportOf(fig.till, closed.shift.sequence_number);
+    const report = this.xReportOf(fig.till, closed.shift.sequence_number, true);
     return { ...report, countedCashAgorot: counted, differenceAgorot: counted - report.expectedCashAgorot, message: this.svc.outbox.count() === 0 ? WORDS.shiftClosedSynced : WORDS.shiftClosedQueued };
   }
 
-  private shiftClose(counted: unknown, keepHeld: boolean) {
+  private shiftClose(counted: unknown, keepHeld: boolean, choice: CardTipsChoice | null = null) {
     const user = this.signedIn();
     if (this.shiftsHidden()) this.noShiftsHere();
     const shift = this.svc.ledger.currentShift();
@@ -4248,11 +4295,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (pendingDocs > 0) refuse('checkout_busy', WORDS.pendingBlocksClose(pendingDocs));
     return this.gate(PERM.SHIFT_CLOSE, () => {
       this.heldGate(keepHeld);
-      return this.closeNow(user, counted as number);
+      this.askTipsChoice(shift.id, choice);
+      return this.closeNow(user, counted as number, choice);
     });
   }
 
-  private xReportOf(t: ReturnType<typeof buildXTill>['till'], number: number | null): XReport {
+  private xReportOf(t: ReturnType<typeof buildXTill>['till'], number: number | null, showDrawerCash: boolean): XReport {
     const a = (shekels: number) => ofShekels(shekels);
     return {
       shiftNumber: number,
@@ -4274,6 +4322,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(t.walletIn ? { walletInAgorot: a(t.walletIn) } : {}),
       ...(t.walletDeposits ? { walletDepositsAgorot: a(t.walletDeposits) } : {}),
       ...(t.totalVouchers ? { vouchersAgorot: a(t.totalVouchers) } : {}),
+      ...(typeof t.cardTipsFromDrawer === 'number' ? { cardTipsFromDrawerAgorot: a(t.cardTipsFromDrawer), cardTipsUnpaidAgorot: a(t.cardTipsUnpaid ?? 0), drawerCashAgorot: a(t.drawerCash ?? 0) } : {}),
+      ...(t.cardTipsNeedsChoice ? { cardTipsNeedsChoice: true } : {}),
+      // "מזומן במגירה" (x-z-cash-with-tips §1): always; total / short only where the expected cash may be seen.
+      cashBlock: xCashBlock(t, showDrawerCash).map((l) => ({ key: l.key, label: l.label, amountAgorot: l.agorot, bold: l.bold, warn: l.warn })),
       ...(t.prepaidVouchersInfo ? { voucherInfo: voucherInfoLines(voucherInfoFromJson(t.prepaidVouchersInfo)) } : {}),
     };
   }
@@ -4355,7 +4407,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         // "ספירה עיוורת": the interim X does not state the expected cash.
         blindCount: this.drawer.service.settings().blindCount,
       });
-      return { ...this.xReportOf(fig.till, shift.sequence_number), printed: true };
+      return { ...this.xReportOf(fig.till, shift.sequence_number, !this.drawer.service.settings().blindCount), printed: true };
     });
   }
 
@@ -4364,7 +4416,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
    * (counted, X printed), then the machine's Z through tillZService — the one path that numbers a Z, strictly sequential,
    * offline-safe. In the shop's Z mode closing the shift is all this till does. The held sales are asked about first.
    */
-  private async zProduce(counted: unknown, keepHeld: boolean) {
+  private async zProduce(counted: unknown, keepHeld: boolean, choice: CardTipsChoice | null = null) {
     const user = this.signedIn();
     if (zModeOf(this.svc.cloud.heartbeat().zMode) !== 'till') refuse('permission_denied', WORDS.zDisabled);
     if (this.checkout.phase !== 'idle' || this.cart.length > 0) refuse('checkout_busy');
@@ -4376,7 +4428,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         if (!isInt(counted, 0, 100_000_000)) refuse('invalid_args', WORDS.zConfirmOpenShift(open.sequence_number));
         const pendingDocs = this.svc.ledger.pendingInShift(open.id);
         if (pendingDocs > 0) refuse('checkout_busy', WORDS.pendingBlocksClose(pendingDocs));
-        this.closeNow(user, counted as number);
+        this.askTipsChoice(open.id, choice);
+        this.closeNow(user, counted as number, choice);
         // The close must be on the cloud before its Z (a flush already under way may have missed it: again, a few times).
         for (let i = 0; i < 3 && this.svc.ledger.closingCount() > 0; i++) await this.svc.sync.flush();
       }
@@ -4535,7 +4588,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       }
       // The close counts the expected cash (unattended by the till's own clock), the X frozen into it — with the drawer's
       // movements and wallets, as every close of this till.
-      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs), tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId) });
+      const closed = this.svc.ledger.closeShift({ closedByName: 'סגירה אוטומטית', vatRate: this.svc.vatRate(), now: new Date(nowMs), tillExtra: (till, shiftId) => this.withTipsChoice('partial', () => this.tillFigures(till, shiftId)) });
       if (closed.kind !== 'closed') return null;
       this.autoPaymentWait = null;
       const record: AutoCloseRecord = {
@@ -4585,7 +4638,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       closeRequestId: requestId,
       vatRate: this.svc.vatRate(),
       now: new Date(this.nowFn()),
-      tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId),
+      tillExtra: (till, shiftId) => this.withTipsChoice('partial', () => this.tillFigures(till, shiftId)),
     });
     if (closed.kind === 'pending') return 'pending';
     if (closed.kind === 'none') return 'none';
@@ -5004,3 +5057,8 @@ function creditLegsOf(legs: readonly TenderLeg[]) {
 }
 
 export { quickNotes, permLabel };
+
+/** The manager's answer to "כשאין מספיק מזומן לטיפים באשראי" sent with a close; anything else — none. */
+function tipsChoiceOf(v: unknown): CardTipsChoice | null {
+  return v === 'partial' || v === 'negative' ? v : null;
+}

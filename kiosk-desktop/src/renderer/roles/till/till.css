@@ -1163,6 +1163,18 @@
   font-weight: 700;
 }
 
+/* "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1) on the X / close screen: its title, the bold total, red below zero. */
+.t-figures .t-cash-block-title {
+  margin-top: 8px;
+  font-weight: 700;
+}
+.t-figures .t-cash-bold {
+  font-weight: 700;
+}
+.t-figures .t-cash-warn {
+  color: var(--t-danger);
+}
+
 /* ── refunds, discounts, OTH, held sales (main/till/engine.ts; parts/TillSheets.tsx) ── */
 .t-line-refund .t-line-name,
 .t-line-refund .t-line-total {
