@@ -358,6 +358,11 @@ class POSMachineResponse(POSMachineBase):
     till_reset: Optional[Dict[str, Any]] = Field(None, alias="tillReset")
     #: "הוחלפה קופה": every replacement of the till's device, oldest first (§4.6.2).
     replacements: Optional[List[Dict[str, Any]]] = None
+    #: "לא מצומד — ממתין לצימוד מחדש" (P:/specs/foreign-records-upload.md §5.1): the device said it
+    #: unpaired — when, by whom, and {reason, pending, deviceInfo}. Null once it is paired again.
+    unpaired_at: Optional[datetime] = Field(None, alias="unpairedAt")
+    unpaired_by: Optional[str] = Field(None, alias="unpairedBy")
+    unpaired_info: Optional[Dict[str, Any]] = Field(None, alias="unpairedInfo")
     #: "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, outside the shop's LAN group.
     independent_till: bool = Field(False, alias="independentTill")
     #: The devices page's filters (the machines list carries them): its shop in "מצב הדרכה",

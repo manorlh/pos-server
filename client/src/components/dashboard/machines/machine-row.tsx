@@ -17,6 +17,7 @@
  *   page has already shipped once.
  */
 
+import { UnpairedBadge } from '@/components/dashboard/machines/device-pairing-card';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -445,6 +446,7 @@ export function MachineRowDetails({
                   ? t('pairingStatusLabels.assigned')
                   : m.pairingStatus}
           </Badge>
+          <UnpairedBadge m={m} />
         </div>
         <div className="flex items-center justify-between gap-2">
           <span className="text-muted-foreground">{t('deviceRole.label')}</span>

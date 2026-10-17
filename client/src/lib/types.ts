@@ -1086,6 +1086,18 @@ export interface PosMachine {
   /** "הוחלפה קופה": every replacement of the till's device, oldest first (§4.6.2). */
   replacements?: TillReplacement[] | null;
   /**
+   * "לא מצומד — ממתין לצימוד מחדש" (P:/specs/foreign-records-upload.md §5.1): the device said it unpaired —
+   * when, by whom, and {reason, pending, pendingTotal, deviceInfo}. Null once it is paired again.
+   */
+  unpairedAt?: string | null;
+  unpairedBy?: string | null;
+  unpairedInfo?: {
+    reason?: string | null;
+    pending?: Record<string, number>;
+    pendingTotal?: number;
+    deviceInfo?: Record<string, unknown> | null;
+  } | null;
+  /**
    * "קופה עצמאית" (always zMode `till`): its own Z, never part of the shop Z, and never
    * leaning on the shop's main till. Absent on a server that predates it.
    */

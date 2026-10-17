@@ -367,6 +367,10 @@ class TransactionIn(BaseModel):
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: The machine that issued the document — the pairing it was made under (P:/specs/foreign-records-upload.md
+    #: §2). Optional: an older till sends none. Another machine's (not this one, not one this device was
+    #: before) is refused on the ordinary sync (`document_foreign_machine`, §3). Unreadable = not sent.
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     #: The till's "קידומת מסמכים" the document was issued under (`2` of `20000057`), frozen
     #: by the till (docs/SPEC_DOCUMENT_PREFIX.md). Optional: an older till sends none.
     #: Trimmed and cut to the column, never a reason to refuse the document.
@@ -528,6 +532,17 @@ class TransactionIn(BaseModel):
     @classmethod
     def _cut_prefix(cls, value):
         return cut_text(value, 10)
+
+    @field_validator("machine_id", mode="before")
+    @classmethod
+    def _readable_machine_id(cls, value):
+        """An unreadable stamp is no stamp: never a reason to refuse the document."""
+        if value is None or isinstance(value, uuid.UUID):
+            return value
+        try:
+            return uuid.UUID(str(value).strip())
+        except (TypeError, ValueError, AttributeError):
+            return None
 
     @field_validator("customer_phone", mode="before")
     @classmethod
