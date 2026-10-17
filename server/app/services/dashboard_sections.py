@@ -586,6 +586,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/companies/{}/till-roles*", S("pos_users")),
     (_GET, "/companies/{}/till-drawer-params", S("till_settings", "pos_users", level=VIEW)),
     (_ALL, "/companies/{}/till-drawer-params", S("till_settings")),
+    # "טיפים" (app/services/tip_params.py): the tip till parameters, set with the shop's tip setup.
+    (_GET, "/companies/{}/till-tip-params", S("till_settings", "organization", level=VIEW)),
+    (_ALL, "/companies/{}/till-tip-params", S("till_settings", "organization")),
     # "התראות בנייד" for the company's users (app/routers/push_policy.py): a users' requirement.
     (_ALL, "/companies/{}/push-policy", S("users", "organization")),
     # "שחזור שולחן ותשלומים" (app/routers/table_restore.py): till parameters edited on the tables page.

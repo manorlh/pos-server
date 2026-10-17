@@ -1,0 +1,169 @@
+/* "סגירת Z סניפי" (screens/ShopZScreen.tsx): the tills' rows with their live line, the run's box, the scope's choice. */
+
+.t-shopz-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* A shop of many tills: the report scrolls (an inner scroll area below the fold was out of the window — layout audit). */
+}
+
+.t-shopz-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+}
+
+.t-shopz-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #c7c7cc;
+}
+
+.t-shopz-dot-on {
+  background: #34c759;
+}
+
+.t-shopz-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.t-shopz-name p {
+  margin: 0;
+}
+
+.t-shopz-till {
+  font-weight: 700;
+}
+
+.t-shopz-live {
+  flex: 0 1 auto;
+  max-width: 50%;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.t-shopz-working,
+.t-shopz-waiting {
+  color: #9a5b00;
+  background: #fdf1dc;
+}
+
+.t-shopz-done {
+  color: #157a35;
+  background: #e3f3e8;
+}
+
+.t-shopz-off,
+.t-shopz-failed {
+  color: #b42318;
+  background: #fbe9e7;
+}
+
+.t-shopz-muted {
+  color: #636b78;
+  background: #eceef1;
+}
+
+.t-shopz-box {
+  padding: 12px;
+  border-radius: var(--t-radius);
+  background: #e5edfb;
+}
+
+.t-shopz-box p {
+  margin: 0;
+}
+
+.t-shopz-error {
+  padding: 12px;
+  border-radius: var(--t-radius);
+  color: #b42318;
+  background: #fbe9e7;
+  overflow-wrap: anywhere;
+}
+
+.t-shopz-done-box {
+  padding: 16px;
+  border-radius: var(--t-radius);
+  text-align: center;
+  background: #e3f3e8;
+}
+
+.t-shopz-done-box h2 {
+  margin: 0 0 6px;
+  font-size: 24px;
+}
+
+.t-shopz-done-box p {
+  margin: 0;
+}
+
+.t-shopz-big {
+  width: 100%;
+  min-height: 60px;
+  font-size: 18px;
+}
+
+.t-shopz-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.t-shopz-pair > .t-btn {
+  flex: 1 1 160px;
+  min-height: 52px;
+}
+
+.t-shopz-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--t-radius);
+  background: #e5edfb;
+}
+
+.t-shopz-progress > div {
+  flex: 1 1 160px;
+}
+
+.t-shopz-progress p {
+  margin: 0;
+}
+
+.t-shopz-list {
+  margin: 8px 0;
+  padding: 0 18px 0 0;
+  white-space: normal;
+}
+
+.t-shopz-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.t-shopz-pick input {
+  width: 22px;
+  height: 22px;
+}
+
+.t-shopz-picks {
+  max-height: 50vh;
+  overflow-y: auto;
+}

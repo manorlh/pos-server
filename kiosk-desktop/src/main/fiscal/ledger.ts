@@ -137,8 +137,25 @@ export interface DocLeg {
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
 export function legsOf(d: Pick<DocDraft, 'payments' | 'card' | 'status' | 'totals'>): DocLeg[] {
   if (!settled(d)) return [];
-  if (d.payments && d.payments.length > 0) return d.payments;
+  if (d.payments && d.payments.length > 0) return principalLegs(d.payments, d.totals.tipAgorot);
   return d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [];
+}
+
+/**
+ * A till document's legs as the goods' tenders: a tip (a kiosk order's, paid at the till) rides on the money leg that closed
+ * it — that leg's principal is the document's, the tip its own figure (`tipAmount`), as the kiosk's documents keep it
+ * (tenderAmounts: "what the cash leg and the card leg each pay of the principal").
+ */
+export function principalLegs(legs: readonly DocLeg[], tipAgorot: number): DocLeg[] {
+  if (!(tipAgorot > 0)) return [...legs];
+  let at = -1;
+  for (let i = legs.length - 1; i >= 0; i--) {
+    if ((legs[i].method === 'cash' || legs[i].method === 'card') && legs[i].amountAgorot >= tipAgorot) {
+      at = i;
+      break;
+    }
+  }
+  return at < 0 ? [...legs] : legs.map((l, i) => (i === at ? { ...l, amountAgorot: l.amountAgorot - tipAgorot } : l));
 }
 
 /** What a sale document is written from (a kiosk's card sale, a till's cash or card-last sale). */
@@ -302,8 +319,11 @@ export function docPaymentMethod(d: Pick<DocDraft, 'cash' | 'card' | 'voucherLeg
 }
 
 /** Whose the tip is: the card's in a split (the card was charged the rest and the tip), the cash's when cash paid it. */
-export function tipMethodOf(d: Pick<DocDraft, 'cash' | 'card' | 'totals'>): 'cash' | 'card' | null {
+export function tipMethodOf(d: Pick<DocDraft, 'cash' | 'card' | 'totals'> & { payments?: DocDraft['payments'] }): 'cash' | 'card' | null {
   if (d.totals.tipAgorot <= 0) return null;
+  // A till's document (its legs): the tip is the money leg's that closed it — a kiosk order's tip taken at the till.
+  const money = (d.payments ?? []).filter((l) => (l.method === 'cash' || l.method === 'card') && l.amountAgorot > 0);
+  if (money.length > 0) return money[money.length - 1].method as 'cash' | 'card';
   if (isSplit(d)) return 'card';
   return d.cash ? 'cash' : 'card';
 }

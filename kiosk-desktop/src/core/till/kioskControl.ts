@@ -61,9 +61,44 @@ export const KIOSK_CONTROL_TEXT = {
   flowOrdering: 'לקוח מזמין',
   flowPaying: 'בתשלום',
   approve: 'אישור מנהל לשליטה בקיוסק',
+  // "מצב עבודה" from the controlling till and the kiosk's point of sale (pos-android feat/area-gaps strings `agap_*`).
+  workModeTitle: 'מצב עבודה',
+  modeKiosk: 'עובד כקיוסק',
+  modeTill: 'עובד כקופה',
+  enterTill: 'העבר למצב קופה',
+  returnKiosk: 'החזר למצב קיוסק',
+  waiting: 'ממתין',
+  workModeSent: 'הבקשה נשלחה — הקיוסק יעבור כשיתפנה',
+  workModeApprove: 'קוד עובד עם הרשאת מעבר למצב קופה בקיוסק',
+  area: (name: string) => `נקודת מכירה: ${name}`,
 } as const;
 
-export type KioskAction = 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt';
+export type KioskAction = 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt' | 'enter_till' | 'return_kiosk';
+
+/** "ממתין — {why}": the cloud's text as is when it already says it waits (KioskRemoteWorkMode.pendingLine). */
+export function pendingLine(pending: string): string {
+  return pending.startsWith(KIOSK_CONTROL_TEXT.waiting) ? pending : `${KIOSK_CONTROL_TEXT.waiting} — ${pending}`;
+}
+
+/**
+ * "מצב עבודה" of a kiosk on its controlling till (pos-android domain/KioskRemoteWorkMode.kt): only where the cloud lets this
+ * till switch it (`controls[].tillMode.tillSwitch` — license "משולב" and the gate on); where it works now, the button
+ * (`enter_till` in kiosk mode, `return_kiosk` in till mode), "ממתין — …" while a switch asked waits. An older cloud: none.
+ */
+export function workModeRow(tillMode: unknown): KioskControlRow['workMode'] {
+  if (!tillMode || typeof tillMode !== 'object') return null;
+  const t = tillMode as Record<string, unknown>;
+  if (t.tillSwitch !== true) return null;
+  const inTill = t.mode === 'till';
+  const pending = str(t.blockedText);
+  return {
+    inTill,
+    stateLine: inTill ? KIOSK_CONTROL_TEXT.modeTill : KIOSK_CONTROL_TEXT.modeKiosk,
+    action: inTill ? 'return_kiosk' : 'enter_till',
+    label: inTill ? KIOSK_CONTROL_TEXT.returnKiosk : KIOSK_CONTROL_TEXT.enterTill,
+    pending: pending ? pendingLine(pending) : null,
+  };
+}
 
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -142,6 +177,9 @@ export function kioskControlRows(controls: unknown): KioskControlRow[] {
       locked: paused ? { by: KIOSK_CONTROL_TEXT.lockedBy(str(k.pausedBy) ?? '—', kioskClock(k.pausedAt) ?? '—'), until: until ?? '' } : null,
       z: shiftOpen || ownZ ? { action: ownZ ? 'till_z' : 'close_shift', label: ownZ ? KIOSK_CONTROL_TEXT.tillZ : KIOSK_CONTROL_TEXT.closeShift } : null,
       zNote: !shiftOpen && !ownZ ? KIOSK_CONTROL_TEXT.noOpenShift : null,
+      // The kiosk's point of sale under its name (area-gaps §4), and "מצב עבודה" (§3).
+      areaLine: str(k.areaName) ? KIOSK_CONTROL_TEXT.area(str(k.areaName)!) : null,
+      workMode: workModeRow(k.tillMode),
     });
   }
   return rows;
@@ -155,6 +193,7 @@ export function kioskCommandText(action: KioskAction, reply: { kind: 'ok' } | { 
     return { text: KIOSK_CONTROL_TEXT.refused(reply.message ?? reply.code ?? String(reply.status)), ok: false };
   }
   if (action === 'pause' || action === 'resume') return { text: KIOSK_CONTROL_TEXT.done, ok: true };
+  if (action === 'enter_till' || action === 'return_kiosk') return { text: KIOSK_CONTROL_TEXT.workModeSent, ok: true };
   return { text: action === 'till_z' ? KIOSK_CONTROL_TEXT.sentZ : KIOSK_CONTROL_TEXT.sent, ok: true };
 }
 

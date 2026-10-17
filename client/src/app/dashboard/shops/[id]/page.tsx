@@ -47,6 +47,7 @@ import { MainTillCard } from '@/components/dashboard/main-till-card';
 import { LocalServerShopCard } from '@/components/dashboard/local-server-dedicated';
 import { WorkTypesCard } from '@/components/dashboard/work-types-card';
 import { ShopWorkProfileCard } from '@/components/dashboard/shop-work-profile';
+import { ShopTipsCard } from '@/components/dashboard/shop-tips';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { ShopInactiveBadge, ShopInactiveStripe } from '@/components/dashboard/shop-active';
 import { TrainingModeCard } from '@/components/dashboard/training-mode-card';
@@ -270,6 +271,8 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* "תצורת עבודה": the whole shop's profile, each field applied / waiting for a till / blocked. */}
       <ShopWorkProfileCard shopId={shop.id} shopName={shop.name} />
+      {/* "טיפים": the same choices as the shop dialog's step, to change later. */}
+      <ShopTipsCard companyId={shop.companyId} shopId={shop.id} />
 
       <ZScopeCard shopId={shop.id} />
 

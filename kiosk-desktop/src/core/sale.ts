@@ -102,6 +102,12 @@ export interface SaleLine {
   /** A credit-note line: the original line it credits (null: a return with no receipt), and what it credits (net). */
   refundOfItemId?: string | null;
   creditAgorot?: number;
+  /**
+   * The till's dish sheet (core/till/choices.ts): "! חשוב" and the diner's allergies (Hebrew names) — the kitchen ticket's
+   * (KitchenTicketDesigns `important` / `allergies`), never a price or a document field.
+   */
+  important?: boolean;
+  allergies?: string[];
 }
 
 /** What a line takes off by hand (the cashier's discount, OTH): never on a credit line. */
@@ -347,6 +353,16 @@ export interface XTill {
   totalVouchers?: number;
   /** The X's production vouchers sections (core/till/vouchers.ts voucherInfoJson) — information, in no figure above. */
   prepaidVouchersInfo?: Record<string, unknown>;
+  /**
+   * "טיפ באשראי משולם מהמזומן" (core/till/cashWithTips.ts, P:/specs/x-z-cash-with-tips.md §2): the card tips paid out of
+   * the drawer — already off expectedCash —, those owed to staff, the shortfall mode, "מזומן במגירה" of the old figure
+   * (cash takings + cash tips − paid). Absent with the parameter off; `cardTipsNeedsChoice` only on an X under `ask`.
+   */
+  cardTipsFromDrawer?: number;
+  cardTipsUnpaid?: number;
+  cardTipsShortfall?: 'partial' | 'negative';
+  cardTipsNeedsChoice?: boolean;
+  drawerCash?: number;
 }
 
 export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, currentRate: number): { till: XTill; reportableIds: string[] } {

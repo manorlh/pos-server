@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.services import till_permissions as _TP
 
@@ -260,17 +260,25 @@ LEVEL_KEYS: Tuple[str, ...] = (HARDWARE_KEY,) + tuple(spec["key"] for spec in CA
 SCOPE_TYPES = ("company", "shop", "area", "machine")
 
 
-def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
+def level_view(
+    db,
+    scope_type: str,
+    scope_id: Any,
+    keys: Tuple[str, ...] = LEVEL_KEYS,
+    enum_labels: Optional[Dict[str, Dict[str, str]]] = None,
+) -> Dict[str, Any]:
     """
     What a level sets itself, what it inherits from above, the definitions — the roles
-    page's "פרמטרי מגירה" card for one level.
+    page's "פרמטרי מגירה" card for one level. `keys` / `enum_labels`: another card's set of
+    till parameters read the same way ("טיפים", app/services/tip_params.py).
     """
+    labels = _ENUM_LABELS if enum_labels is None else enum_labels
     from app.models.till_parameter import TillParameter, TillParameterValue
     from app.services.kds_workflow import chain_for_scope
     from app.services.till_parameters import ensure_builtin_parameters, resolve_till_parameters
 
     ensure_builtin_parameters(db)
-    params = db.query(TillParameter).filter(TillParameter.key.in_(LEVEL_KEYS)).all()
+    params = db.query(TillParameter).filter(TillParameter.key.in_(keys)).all()
     by_key = {p.key: p for p in params}
     ident = scope_id if isinstance(scope_id, uuid.UUID) else uuid.UUID(str(scope_id))
     own_rows = (
@@ -325,16 +333,25 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
                 "valueType": by_key[key].value_type,
                 "enumOptions": by_key[key].enum_options,
                 # An option's Hebrew where its stored value is a code the till reads (drawer-away §5.1).
-                "enumLabels": _ENUM_LABELS.get(key),
+                "enumLabels": labels.get(key),
                 "defaultValue": by_key[key].default_value,
             }
-            for key in LEVEL_KEYS
+            for key in keys
             if key in by_key and by_key[key].is_active
         ],
     }
 
 
-def save_values(db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, user: Any) -> List[Tuple[str, str]]:
+def save_values(
+    db,
+    scope_type: str,
+    scope_id: Any,
+    values: Dict[str, Any],
+    *,
+    user: Any,
+    keys: Tuple[str, ...] = LEVEL_KEYS,
+    clean: Optional[Callable[[str, Any], Any]] = None,
+) -> List[Tuple[str, str]]:
     """
     Write `values` (key → value; None clears the level's own value) at one level, with an
     audit row each (till_parameter_changes). Returns the tills to notify. Raises
@@ -349,11 +366,11 @@ def save_values(db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, u
         validate_value,
     )
 
-    unknown = [k for k in values if k not in LEVEL_KEYS]
+    unknown = [k for k in values if k not in keys]
     if unknown:
         raise TillParameterValueError(f"unknown parameter {unknown[0]}")
     ensure_builtin_parameters(db)
-    params = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(LEVEL_KEYS)).all()}
+    params = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(keys)).all()}
     ident = scope_id if isinstance(scope_id, uuid.UUID) else uuid.UUID(str(scope_id))
     now = datetime.now(timezone.utc)
     for key, value in values.items():
@@ -361,6 +378,11 @@ def save_values(db, scope_type: str, scope_id: Any, values: Dict[str, Any], *, u
         if parameter is None:
             continue
         stored = None if value is None else validate_value(parameter.value_type, value, parameter.enum_options)
+        if stored is not None and clean is not None:
+            try:
+                stored = clean(key, stored)
+            except ValueError as exc:
+                raise TillParameterValueError(str(exc)) from exc
         row = (
             db.query(TillParameterValue)
             .filter(

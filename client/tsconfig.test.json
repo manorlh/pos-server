@@ -10,6 +10,8 @@
   },
   "files": [
     "src/lib/tenantSwitch.ts",
+    "src/lib/shopTips.ts",
+    "src/lib/shopTips.test.ts",
     "src/lib/tenantSwitch.test.ts",
     "src/lib/tillZ.ts",
     "src/lib/tillZ.test.ts",

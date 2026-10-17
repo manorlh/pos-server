@@ -15,6 +15,8 @@ of till users and the audit (docs/SPEC_ROLES_PERMISSIONS.md).
     PUT    /shops/{shop_id}/pos-users/{id}/till-role         assign a role (+ overrides)
     GET    /companies/{id}/till-drawer-params?scopeType=&scopeId=   the drawer's parameters at a level (spec §17)
     PUT    /companies/{id}/till-drawer-params                set / clear them at a level
+    GET    /companies/{id}/till-tip-params?scopeType=&scopeId=      the tip parameters at a level (app/services/tip_params.py)
+    PUT    /companies/{id}/till-tip-params                  set / clear them at a level (who: as the drawer's)
 
 Who: reading — the super admin, a distributor, a company manager over the company, and a
 shop's managers / shift supervisors for their own shop's company. Defining roles — the
@@ -455,6 +457,59 @@ def put_drawer_params(
     db.commit()
     publish_parameters_notify(targets)
     return CD.level_view(db, body.scope_type, body.scope_id)
+
+
+# ── "טיפים": the tip parameters per level (the shop's tip setup) ────────────────
+
+
+@router.get("/companies/{company_id}/till-tip-params")
+def get_tip_params(
+    company_id: str,
+    scope_type: str = Query(..., alias="scopeType"),
+    scope_id: uuid.UUID = Query(..., alias="scopeId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import cash_drawer as CD
+    from app.services import tip_params as TIPS
+
+    company = _readable(db, company_id, current_user, active_tenant_id)
+    _level_access(db, company, scope_type, scope_id, current_user, write=False)
+    view = TIPS.level_view(db, scope_type, scope_id)
+    view["canEdit"] = may_edit(db, current_user, company) or (
+        scope_type != "company"
+        and current_user.role == UserRole.SHOP_MANAGER
+        and str(CD.scope_company(db, scope_type, scope_id)[1]) == str(current_user.shop_id)
+    )
+    db.commit()  # `ensure_builtin_parameters` may have created them
+    return view
+
+
+@router.put("/companies/{company_id}/till-tip-params")
+def put_tip_params(
+    company_id: str,
+    body: DrawerParamsIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """All the values in one transaction: a value refused (422) writes none of them."""
+    from app.services import tip_params as TIPS
+    from app.services.till_parameters import TillParameterValueError, publish_parameters_notify
+
+    company = _company(db, company_id, active_tenant_id)
+    _level_access(db, company, body.scope_type, body.scope_id, current_user, write=True)
+    try:
+        targets = TIPS.save_values(db, body.scope_type, body.scope_id, body.values, user=current_user)
+    except TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail={"code": "invalid_value", "message": str(exc)})
+    db.commit()
+    publish_parameters_notify(targets)
+    view = TIPS.level_view(db, body.scope_type, body.scope_id)
+    view["canEdit"] = True
+    return view
 
 
 @router.put("/shops/{shop_id}/pos-users/{pos_user_id}/till-role")
