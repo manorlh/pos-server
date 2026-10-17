@@ -126,6 +126,15 @@ function Glyph({ name }: { name: MenuGlyph }) {
         <path d="M10 21.5h4M12 17.5v4" />
       </>
     ),
+    // Android Icons.Filled.Edit / Done / Notifications.
+    edit: <path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" />,
+    done: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+    bell: (
+      <>
+        <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15L6 16.5z" />
+        <path d="M10 20.5a2 2 0 0 0 4 0" />
+      </>
+    ),
   };
   return <svg {...common}>{body[name]}</svg>;
 }

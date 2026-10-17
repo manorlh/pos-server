@@ -21,6 +21,7 @@ import {
 } from '../../shared/till/protocol';
 import { initialState } from '../../shared/till/mockEngine';
 import { kioskControlRows } from '../../core/till/kioskControl';
+import * as P2 from './phase2Fixtures';
 
 const LONG = [
   'שניצל עוף בציפוי פנקו עם פירה תפוחי אדמה ורוטב פטריות שמנת',
@@ -197,6 +198,19 @@ function richState(): TillState {
       support: true,
       report: null,
     },
+    // Phase 2 (P:/specs/windows-till-menu-parity.md §7): every module's slice, so its row and its screen show.
+    menuOffers: { shopZ: true, cloudZ: true },
+    catalogAdmin: P2.catalogAdmin,
+    shopZ: P2.shopZ,
+    attendance: P2.attendanceQuiet,
+    readyOrders: P2.readyOrders,
+    alerts: P2.alerts,
+    voucherBalance: P2.voucherBalance,
+    voucherStation: { ...P2.voucherStation, active: false, menu: { label: 'חזרה לעמדת שובר' } },
+    cloudZ: P2.cloudZ,
+    printers: P2.printers,
+    screenEdit: P2.screenEditOff,
+    kioskOrders: P2.kioskOrders(),
     transmission: {
       supported: true,
       deferredSupported: true,
@@ -293,6 +307,12 @@ export function stateFor(name: string): TillState {
       };
     case 'notice':
       return { ...s, notice: { title: 'סגירה אוטומטית במשמרת הקודמת', text: 'הסל שנשאר פתוח במשמרת 1286 (12 פריטים, 9,999.90 ₪) הועבר למכירות בהמתנה בשם "סל פתוח מ-03:12". 2 מכירות בהמתנה בוטלו אחרי 24 שעות.' } };
+    case 'attendance':
+      return { ...s, attendance: P2.attendance };
+    case 'station':
+      return { ...s, voucherStation: P2.voucherStation };
+    case 'screen-edit':
+      return { ...s, screenEdit: P2.screenEditOn };
     case 'order-ask':
       return { ...s, order: { ...s.order!, ask: { purpose: 'start', dining: true, name: true, confirmLabel: 'התחלת הזמנה' } } };
     case 'sell':
@@ -428,7 +448,7 @@ export class AuditEngine implements EngineEndpoint {
   private readonly listeners = new Set<(e: EngineEvent) => void>();
   private st: TillState;
   private seq = 1;
-  readonly catalog = stressCatalog();
+  readonly catalog = P2.withChoices(stressCatalog());
 
   constructor(state: string) {
     this.st = stateFor(state);

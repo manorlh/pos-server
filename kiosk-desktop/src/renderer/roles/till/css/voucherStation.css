@@ -1,0 +1,507 @@
+/*
+ * "עמדת שובר" (screens/VoucherStationScreen.tsx). Plain CSS for Chromium 108 on a Celeron: hex colours, no blur, no shadows,
+ * no keyframes, no :has(), no nesting, no container queries. Green #16A34A / red #DC2626 / orange #EA580C are Android's.
+ * Fits 1024x720 … 3840x2160 landscape and 800x1280 portrait: grids by auto-fill, nothing wider than the window.
+ */
+
+.vst {
+  max-width: 1400px;
+  min-height: 100%;
+}
+
+.vst-head {
+  gap: 8px;
+}
+
+.vst-menu {
+  min-width: 52px;
+  min-height: 52px;
+  font-size: 24px;
+}
+
+.vst-title {
+  flex: 1;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.vst-scanfield {
+  display: flex;
+  gap: 8px;
+}
+
+.vst-scanfield .t-btn {
+  min-height: 52px;
+}
+
+.vst-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 52px;
+  font-size: 20px;
+  direction: ltr;
+  text-align: center;
+}
+
+/* No typing at this till: the field stays for the scanner, small and quiet. */
+.vst-scanfield-quiet .vst-input {
+  min-height: 48px;
+  border-color: transparent;
+  background: transparent;
+  color: transparent;
+}
+
+.vst-test {
+  padding: 10px 12px;
+  border-radius: var(--t-radius, 10px);
+  background: #ea580c;
+  color: #ffffff;
+  font-weight: 700;
+  text-align: center;
+}
+
+.vst-center {
+  text-align: center;
+}
+
+.vst-strong {
+  font-weight: 700;
+}
+
+.vst-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vst-row .t-btn {
+  flex: 1 1 180px;
+  min-height: 52px;
+}
+
+/* ---------------------------------------------------------------- home */
+
+.vst-home {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.vst-frame-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 24px 40px;
+  padding: 16px 0;
+}
+
+.vst-frame {
+  box-sizing: border-box;
+  width: 280px;
+  max-width: 70vw;
+  height: 280px;
+  max-height: 70vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 6px solid #1f5fd1;
+  border-radius: 28px;
+  background: #e5edfb;
+}
+
+.vst-glyph {
+  width: 62%;
+  height: auto;
+}
+
+.vst-words {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 520px;
+  text-align: center;
+}
+
+.vst-words p {
+  margin: 0;
+}
+
+.vst-scan-text {
+  font-size: 36px;
+  font-weight: 700;
+}
+
+.vst-sale,
+.vst-open {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--t-radius, 10px);
+  background: var(--t-surface, #ffffff);
+  border: 1px solid var(--t-line, #e1e4e9);
+}
+
+.vst-sale p,
+.vst-open p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.vst-strip {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.vst-vouchers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vst-voucher-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- checking, refused */
+
+.vst-checking {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  font-size: 34px;
+  font-weight: 700;
+}
+
+.vst-refused-screen {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  border: 0;
+  border-radius: var(--t-radius, 10px);
+  background: #dc2626;
+  color: #ffffff;
+  text-align: center;
+  font: inherit;
+}
+
+.vst-x {
+  font-size: 64px;
+  line-height: 1;
+}
+
+.vst-refused-text {
+  font-size: 28px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.vst-refused-detail {
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.vst-next {
+  font-size: 16px;
+  color: #fde2e2;
+}
+
+.vst-refused {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--t-radius, 10px);
+  background: #dc2626;
+  color: #ffffff;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- the picker */
+
+.vst-picker,
+.vst-basket {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vst-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border-radius: var(--t-radius, 10px);
+  background: var(--t-surface, #ffffff);
+  border: 1px solid var(--t-line, #e1e4e9);
+}
+
+.vst-card p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.vst-card-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.vst-card-type {
+  color: var(--t-accent, #1f5fd1);
+  font-size: 17px;
+}
+
+.vst-conditions ul {
+  margin: 6px 0 0;
+  padding-inline-start: 20px;
+}
+
+.vst-conditions li {
+  overflow-wrap: anywhere;
+}
+
+.vst-conditions summary {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.vst-alert {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--t-radius, 10px);
+  background: #ea580c;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.vst-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.vst-item {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.vst-item-main {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--t-line, #e1e4e9);
+  border-radius: var(--t-radius, 10px);
+  background: var(--t-surface, #ffffff);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.vst-item-main:disabled {
+  color: var(--t-off, #9aa1ab);
+}
+
+.vst-item-off .vst-item-main {
+  background: var(--t-off-soft, #eceef1);
+}
+
+.vst-item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.vst-item-price {
+  font-size: 14px;
+  color: var(--t-muted, #636b78);
+}
+
+.vst-item-why {
+  font-size: 12px;
+  color: var(--t-muted, #636b78);
+}
+
+.vst-tag-completes .vst-item-main {
+  border-color: #ea580c;
+  background: #fff1e8;
+}
+
+.vst-tag-voucher .vst-item-main {
+  border-color: #16a34a;
+  background: #e3f3e8;
+}
+
+.vst-item-count {
+  position: absolute;
+  top: 4px;
+  inset-inline-end: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #1f5fd1;
+  color: #ffffff;
+}
+
+.vst-item-count .t-btn-small {
+  min-height: 32px;
+  padding: 0 8px;
+  background: #ffffff;
+  color: #1f5fd1;
+}
+
+/* ---------------------------------------------------------------- the bar */
+
+.vst-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 0;
+  background: var(--t-bg, #f3f4f6);
+  border-top: 1px solid var(--t-line, #e1e4e9);
+}
+
+.vst-bar-text {
+  flex: 1 1 160px;
+  font-weight: 700;
+}
+
+.vst-bar .t-btn-big {
+  flex: 1 1 260px;
+}
+
+.vst-green {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
+/* ---------------------------------------------------------------- the basket */
+
+.vst-banner {
+  padding: 12px 14px;
+  border-radius: var(--t-radius, 10px);
+  background: var(--t-surface, #ffffff);
+  border: 1px solid var(--t-line, #e1e4e9);
+}
+
+.vst-banner p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.vst-banner-missing,
+.vst-banner-alert {
+  background: #ea580c;
+  border-color: #ea580c;
+  color: #ffffff;
+}
+
+.vst-banner-full {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
+.vst-basket-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.vst-catalog,
+.vst-cart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.vst-chips {
+  flex-wrap: wrap;
+}
+
+.vst-cart .t-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vst-cart-row {
+  padding: 0;
+}
+
+.vst-cart-main {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.vst-chip-voucher {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #16a34a;
+  color: #ffffff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.vst-chip-paid {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--t-off-soft, #eceef1);
+  color: var(--t-text, #1d2433);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.vst-totals {
+  padding: 12px;
+}
+
+/* Portrait (800x1280) and narrow windows: the basket under the catalog. */
+@media (max-width: 900px) {
+  .vst-basket-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vst-scan-text {
+    font-size: 28px;
+  }
+}

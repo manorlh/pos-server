@@ -231,13 +231,26 @@ import { TillPrintQueue } from './tillPrintQueue';
 import { TillCustomerDisplay } from './tillCustomerDisplay';
 import { TillMenuService } from './tillMenuService';
 import { TillKiosks } from './tillKiosks';
+import { TillKioskOrders } from './tillKioskOrders';
+import { TillCatalogAdmin } from './tillCatalogAdmin';
+import { TillShopZ } from './tillShopZ';
+import { TillAttendance } from './tillAttendance';
+import { TillReadyOrders } from './tillReadyOrders';
+import { TillAlertsService } from './tillAlertsService';
+import { TillVoucherBalance } from './tillVoucherBalance';
+import { TillVoucherStation } from './tillVoucherStation';
+import { TillCloudZ } from './tillCloudZ';
+import { TillPrinters } from './tillPrinters';
+import { TillScreenEdit } from './tillScreenEdit';
+import { arrangeCatalog } from '../../core/till/screenEdit';
+import { KPAY_TEXT, orderNameOf, type KioskBasketLine, type KioskOpenOrder } from '../../core/till/kioskOrders';
 import { FAILOVER_TEXT, ticketTitleOf } from '../../core/kitchen/failover';
 import { IB_TEXT } from '../../core/till/itemBlocks';
 import type { LanCall } from '../kitchen/kitchenNet';
 import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
 import { TillSessions } from './userSessions';
 import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
-import type { DialogSpec, TillContext } from './tillContext';
+import type { DialogSpec, TillContext, TillFeature } from './tillContext';
 import {
   ORDER_TEXT,
   anyQuestion,
@@ -252,6 +265,27 @@ import {
   type OrderQuestions,
 } from '../../core/till/orderDetails';
 import type { OrderAsk, PresetDiscountsState } from '../../shared/till/protocol';
+import {
+  NO_CHOICES,
+  PARAM_MODIFIERS_AUTO_OPEN,
+  PARAM_NOTES_AUTO_OPEN,
+  SHEET_QTY_MAX,
+  cleanAllergies,
+  cleanMeal,
+  cleanNotes,
+  cleanOptions,
+  defaultOptions,
+  lineWords,
+  mealRefusal,
+  needsSheet,
+  optionsRefusal,
+  paramOn,
+  sameChoices,
+  type ChoiceGroupView,
+  type LineChoices,
+  type MealSlotView,
+} from '../../core/till/choices';
+import { moneyGroupOf } from '../kiosk/catalog';
 
 /** The parts of the work-mode runtime (main/workMode.ts) the till asks of; null until it is wired. */
 export interface TillWorkMode {
@@ -482,6 +516,8 @@ interface CartRec {
   keptUnitAgorot?: number | null;
   /** The name it was parked under / sold under (a product the catalog lost since still shows). */
   name?: string;
+  /** "תוספות / ארוחה / הערות" (core/till/choices.ts): what the line was ordered with; absent — a plain line. */
+  choices?: LineChoices | null;
 }
 
 /** Who approved: a manager by their code, or nobody (the user's own right, a confirmation). */
@@ -551,6 +587,8 @@ interface CheckoutRec {
   testEnd: string[] | null;
   /** "מסך הצלחה במימוש שובר": the sale redeemed vouchers. */
   voucherSuccess: NonNullable<CheckoutState['voucherSuccess']> | null;
+  /** "הזמנות קיוסק לתשלום": the kiosk order this payment takes the money for (its basket is never edited). */
+  kioskOrder: KioskOpenOrder | null;
 }
 
 /** A credit line as priced from the cart. */
@@ -614,6 +652,7 @@ const idleCheckout = (): CheckoutRec => ({
   token: '',
   testEnd: null,
   voucherSuccess: null,
+  kioskOrder: null,
 });
 
 function isInt(v: unknown, min: number, max: number): v is number {
@@ -674,7 +713,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
    */
   private orderDining: Dining | null = null;
   private orderName: string | null = null;
-  private orderStart: { productId: string; qty: number } | null = null;
+  private orderStart: { productId: string; qty: number; choices: LineChoices | null } | null = null;
   private orderAsk: 'open' | 'payment' | 'edit' | null = null;
   /** "פעולות אשראי" was opened since the sign-in: its view goes in the state. */
   private transmissionShown = false;
@@ -721,8 +760,49 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly menu: TillMenuService;
   /** "קיוסקים": a controlling till's kiosks (tillKiosks.ts). */
   readonly kiosks: TillKiosks;
+  /** "הזמנות קיוסק לתשלום": the kiosks' orders paid at this till (tillKioskOrders.ts) — `kioskOrders` below. */
+  /*
+   * Phase 2 (P:/specs/windows-till-menu-parity.md §7): the Android menu's features, each its own module registered with the
+   * engine (tillContext.ts TillFeature) — its ops routed to it, its slice in the state.
+   */
+  get catalogAdmin(): TillCatalogAdmin {
+    return this.feature('catalogAdmin');
+  }
+  get shopZ(): TillShopZ {
+    return this.feature('shopZ');
+  }
+  get attendance(): TillAttendance {
+    return this.feature('attendance');
+  }
+  get readyOrders(): TillReadyOrders {
+    return this.feature('readyOrders');
+  }
+  get alerts(): TillAlertsService {
+    return this.feature('alerts');
+  }
+  get voucherBalance(): TillVoucherBalance {
+    return this.feature('voucherBalance');
+  }
+  get voucherStation(): TillVoucherStation {
+    return this.feature('voucherStation');
+  }
+  get cloudZ(): TillCloudZ {
+    return this.feature('cloudZ');
+  }
+  get printers(): TillPrinters {
+    return this.feature('printers');
+  }
+  get screenEdit(): TillScreenEdit {
+    return this.feature('screenEdit');
+  }
+  get kioskOrders(): TillKioskOrders {
+    return this.feature('kioskOrders');
+  }
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
+  /** The feature modules registered (tillContext.ts TillFeature): their ops and their slices of the state. */
+  private readonly features: TillFeature[] = [];
+  private readonly featureOps = new Map<string, TillFeature>();
 
   constructor(private readonly o: TillEngineOptions) {
     this.svc = o.svc;
@@ -787,7 +867,72 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       mayAlone: (code) => decide(this.profile(), code).kind === 'allowed',
       setting: (key) => this.svc.cloud.parameters()[key] ?? this.svc.settingsMap()[key],
     }, undefined, { lanCall: o.voucherLan });
+    this.register(
+      new TillKioskOrders(this.ctx, {
+        basketBusy: () => this.cart.length > 0 || this.checkout.phase !== 'idle',
+        load: (order, lines) => this.loadKioskOrder(order, lines),
+      }),
+    );
+    // "ניהול קטלוג": open with a shift (or no shifts here); a manager's without one (catalogWithoutShift).
+    this.register(new TillCatalogAdmin(this.ctx, { shiftOpen: () => !!this.svc.ledger.currentShift() || this.shiftsHidden() }));
+    // "סגירת Z סניפי": this till's own close is the engine's (the drawer and the vouchers on its X), its held sales asked first.
+    this.register(
+      new TillShopZ(this.ctx, {
+        closeOwnShift: ({ requestId, closer }) => {
+          if (this.svc.ledger.shiftByCloseRequest(requestId)) return 'already';
+          if (this.paying()) return 'pending';
+          const closed = this.svc.ledger.closeShift({
+            closedByName: closer.name,
+            closedByUserId: closer.id || null,
+            unattended: true,
+            closeRequestId: requestId,
+            vatRate: this.svc.vatRate(),
+            now: new Date(this.nowFn()),
+            tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId),
+          });
+          if (closed.kind === 'pending') return 'pending';
+          if (closed.kind === 'none') return 'none';
+          void this.svc.sync.flush();
+          return 'closed';
+        },
+        heldGate: (keepHeld) => this.heldGate(keepHeld),
+        print: (doc, refId, title) => this.svc.printReport(doc, refId, title),
+      }),
+    );
+    // "נוכחות": "הכסף אצלי" from the drawer's wallets.
+    this.register(
+      new TillAttendance(this.ctx, {
+        walletAgorot: async (u) => {
+          const r = await this.drawer.listWallets();
+          return r.offline ? null : (r.wallets.find((w) => w.employeeId === u.id)?.balanceAgorot ?? null);
+        },
+      }),
+    );
+    this.register(new TillReadyOrders(this.ctx));
+    // "התראות": the change owed from the cash stations' (tillCash.ts), the kitchen queue, the kiosks.
+    this.register(new TillAlertsService(this.ctx, { owed: () => ({ items: this.cash.owed.items, loaded: this.cash.owed.loaded }) }));
+    this.register(new TillVoucherBalance(this.ctx));
+    // "עמדת שובר": the sale built through the engine's own ops (ctx.run); the payment's voucher flow paces it.
+    this.register(
+      new TillVoucherStation(this.ctx, {
+        sale: () => ({
+          ref: this.basketId,
+          lines: this.cart.map((l) => ({ lineId: l.lineId, productId: l.productId, qty: l.qty, refund: l.refund === true, name: l.name })),
+          phase: this.checkout.phase,
+          dueAgorot: this.checkout.phase === 'tender' ? dueOf(this.checkout.totalAgorot, this.approvedLegs()) : 0,
+        }),
+        scanDone: () => this.vouchers.lastScan,
+        lanCall: o.voucherLan,
+      }),
+    );
+    this.register(new TillCloudZ(this.ctx, { print: (doc, refId, title) => this.svc.printReport(doc, refId, title) }));
+    this.register(new TillPrinters(this.ctx));
+    this.register(new TillScreenEdit(this.ctx));
     this.restorePending();
+    // A kiosk order this till was paying when it stopped, with no document of it pending: back to the list.
+    if (this.kioskOrders.current() && !this.checkout.kioskOrder) this.kioskOrders.abandoned();
+    this.kioskOrders.start();
+    this.alerts.start();
     // What the kiosk learns (catalog, stock, settings, the shift closed by the cloud…) reaches the screens.
     const onView = () => this.refresh();
     this.svc.on('view', onView);
@@ -800,6 +945,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.attachWorkMode();
     // "סגירת משמרת אוטומטית גם עם עגלה פתוחה": the service's half-minute tick asks the till (a till by role only).
     this.svc.attachTillAutoClose?.(() => this.later(() => this.autoCloseTick()));
+    // The cloud's close of this shift (a shop Z run, the dashboard): the till's own close, never over a card.
+    this.svc.attachTillRemoteClose?.((requestId) => this.later(() => this.remoteClose(requestId)));
   }
 
   private makeContext(): TillContext {
@@ -824,6 +971,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       later: (fn) => this.later(fn),
       paying: () => this.paying(),
       dialogOpen: () => this.pending !== null,
+      gate: (code, resume, opts = {}) => this.gate(code, resume, opts),
+      decide: (code, opts = {}) => decide(this.profile(), code, opts).kind,
+      hiddenCodes: () => this.sessionHidden(),
+      run: async (op, args = {}) => this.apply(op as TillOp, args),
     };
   }
 
@@ -846,8 +997,34 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return { dialogId: this.pending!.dialog.id };
   }
 
+  /** A feature module joins the engine: its ops go to it, its slice goes into the state. */
+  register<F extends TillFeature>(f: F): F {
+    // The same key again (a test's own configured module): the one before stops and leaves, its ops with it.
+    const before = this.features.find((x) => x.key === f.key);
+    if (before) {
+      before.stop?.();
+      this.features.splice(this.features.indexOf(before), 1);
+      for (const op of before.ops) this.featureOps.delete(op);
+    }
+    for (const op of f.ops) {
+      if ((TILL_OPS as readonly string[]).includes(op) || this.featureOps.has(op)) throw new Error(`till op ${op} is taken`);
+      this.featureOps.set(op, f);
+    }
+    this.features.push(f);
+    this.dirty = true;
+    return f;
+  }
+
+  /** The feature module registered under [key] (the engine's own hooks reach the one on duty). */
+  private feature<F extends TillFeature>(key: string): F {
+    const f = this.features.find((x) => x.key === key);
+    if (!f) throw new Error(`till feature ${key} is not registered`);
+    return f as F;
+  }
+
   stop() {
     this.stopped = true;
+    for (const f of this.features) f.stop?.();
     this.sessions.stop();
     this.cash.stop();
     this.drawer.stop();
@@ -862,6 +1039,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.tick) clearInterval(this.tick);
     this.tick = null;
     this.svc.attachTillAutoClose?.(null);
+    this.svc.attachTillRemoteClose?.(null);
   }
 
   /** The work mode runtime exists after the engine in the shell's start: tried again until it is there. */
@@ -970,8 +1148,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   }
 
   private async exec(c: EngineCall): Promise<EngineReply> {
-    if (!(TILL_OPS as readonly string[]).includes(c.op)) return { id: c.id, ok: false, error: engineError('unknown_op') };
-    const mutating = MUTATING_OPS.has(c.op);
+    const feature = this.featureOps.get(c.op) ?? null;
+    if (!feature && !(TILL_OPS as readonly string[]).includes(c.op)) return { id: c.id, ok: false, error: engineError('unknown_op') };
+    const mutating = feature ? feature.mutating.includes(c.op) : MUTATING_OPS.has(c.op);
     if (mutating) {
       if (!c.clientOpId) return { id: c.id, ok: false, error: engineError('missing_client_op_id') };
       const before = this.applied.get(c.clientOpId);
@@ -1001,6 +1180,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   }
 
   private async apply(op: TillOp, a: Record<string, unknown>): Promise<unknown> {
+    // A feature module's op (register).
+    const feature = this.featureOps.get(op);
+    if (feature) return feature.apply(op, a);
     switch (op) {
       case 'session.hello':
         return this.hello();
@@ -1013,8 +1195,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return undefined;
       case 'catalog.snapshot':
         return this.catalogSnapshot();
-      case 'sell.add':
-        return this.add(String(a.productId ?? ''), a.qty === undefined ? 1 : (a.qty as number));
+      case 'sell.add': {
+        const configured = a.configured === true ? this.choicesArg(a) : null;
+        return this.add(String(a.productId ?? ''), a.qty === undefined ? 1 : (a.qty as number), configured ? { choices: configured } : {});
+      }
+      case 'sell.configure':
+        return this.configureLine(String(a.lineId ?? ''), a.qty, this.choicesArg(a));
       case 'sell.setQty':
         return this.setQty(String(a.lineId ?? ''), a.qty as number);
       case 'sell.remove':
@@ -1348,6 +1534,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.lastActivityAt = this.nowFn();
     this.lastTouchAt = this.lastActivityAt;
     this.sessions.signedIn(user);
+    // "נוכחות": the employee's card (clock in first / on a break) — never a refused sign-in (Android).
+    this.attendance?.signedIn(user);
     return { cashier: { id: user.id, name: displayName(user) } };
   }
 
@@ -1526,7 +1714,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /** The kiosk catalog's version, and whether this user sees manager-approval items (another sign-in may see another list). */
   private catalogVersion(): number {
     const user = this.cashier;
-    return this.svc.tillCatalogVersion() * 2 + (user && stateOf(user, PERM.SELL_RESTRICTED) !== 'deny' ? 1 : 0);
+    // "עריכת מסך": the arrangement on show (being made, or just saved) moves the version too.
+    return (this.svc.tillCatalogVersion() * 2 + (user && stateOf(user, PERM.SELL_RESTRICTED) !== 'deny' ? 1 : 0)) * 4096 + ((this.screenEdit?.rev() ?? 0) % 4096);
   }
 
   private catalogSnapshot(): Catalog {
@@ -1534,8 +1723,33 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const user = this.cashier;
     const mayRestricted = !!user && stateOf(user, PERM.SELL_RESTRICTED) !== 'deny';
     const ids = new Map(cat.categories.map((c, i) => [c.id, i] as const));
-    return {
+    // "תוספות / ארוחה": the groups the sheets use (once, by id), and what each product may be chosen with.
+    const choiceGroups: Record<string, ChoiceGroupView> = {};
+    for (const list of Object.values(cat.groups)) {
+      for (const g of list) {
+        choiceGroups[g.id] ??= {
+          id: g.id,
+          name: g.name,
+          kind: g.kind,
+          min: g.min,
+          max: g.max,
+          freeCount: g.freeCount,
+          allowQuantity: g.allowQuantity,
+          allowPre: g.allowPre,
+          options: g.options.map((o) => ({ id: o.id, name: o.name, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+        };
+      }
+    }
+    const choicesOf = (pid: string): Product['choices'] => {
+      const groups = cat.groups[pid] ?? [];
+      const meal = (cat.meals[pid] ?? []).length > 0 ? this.mealSlotViews(pid) : null;
+      const notes = cat.quickNotes[pid] ?? [];
+      if (groups.length === 0 && !meal && notes.length === 0) return undefined;
+      return { groupIds: groups.map((g) => g.id), ...(meal ? { meal } : {}), notes, ownNotes: cat.ownNotes?.[pid] === true, needsSheet: needsSheet(groups, meal) };
+    };
+    return arrangeCatalog({
       version: this.catalogVersion(),
+      ...(Object.keys(choiceGroups).length > 0 ? { choiceGroups } : {}),
       departments: cat.categories.map((c, i) => ({ id: c.id, name: c.name, color: PALETTE[i % PALETTE.length] })),
       products: cat.products
         .filter((p) => p.categoryId !== null && ids.has(p.categoryId) && (!p.restricted || mayRestricted))
@@ -1556,9 +1770,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
             ...(p.description ? { description: p.description } : {}),
             ...(p.allergens.length > 0 ? { allergens: p.allergens } : {}),
             ...(p.dietaryTags.length > 0 ? { dietary: [...p.dietaryTags] } : {}),
+            ...(() => {
+              const choices = choicesOf(p.id);
+              return choices ? { choices } : {};
+            })(),
           };
         }),
-    };
+    }, this.screenEdit?.overlay() ?? null);
   }
 
   /* -------------------------------------------------------------------- cart */
@@ -1626,7 +1844,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (ask === 'open' && this.orderStart) {
       const start = this.orderStart;
       this.orderStart = null;
-      return this.add(start.productId, start.qty);
+      return this.add(start.productId, start.qty, start.choices ? { choices: start.choices } : {});
     }
     if (ask === 'payment') return this.checkoutStart();
     return undefined;
@@ -1671,12 +1889,34 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return { dining: this.orderDining, name: this.orderName, strip, configured: anyQuestion(q), ask };
   }
 
-  private add(productId: string, qty: number) {
+  /**
+   * A product into the cart (`sell.add`). `choices`: from its sheet ("הוסף") — checked against the catalog's groups / meal
+   * slots before any gate; none: a plain tap — a meal or a dish with a required group answers `{choices: true}` (the screen
+   * opens the sheet, nothing is added), any other dish goes in on its options' defaults (DishDraft.start). `onProceed`: what
+   * passing every gate does instead of a new line (a configured line grown from its sheet).
+   */
+  private add(productId: string, qty: number, o: { choices?: LineChoices; onProceed?: () => unknown } = {}) {
     this.editable();
+    this.attendanceGate();
     if (!isInt(qty, 1, MAX_QTY)) refuse('invalid_args');
     const cat = this.svc.tillCatalogData();
     const p = cat.products.find((x) => x.id === productId);
     if (!p) return refuse('invalid_args');
+    const groups = cat.groups[p.id] ?? [];
+    const slots = cat.meals[p.id] ?? [];
+    let choices: LineChoices | null = null;
+    if (!this.refundMode) {
+      if (o.choices) {
+        const why = this.choicesRefusal(p.id, o.choices);
+        if (why) return refuse('sell_refused', why);
+        choices = o.choices;
+      } else if (needsSheet(groups, slots)) {
+        // Menu.needsSheet: the sheet first — nothing in the cart until it is confirmed.
+        return { choices: true };
+      } else if (groups.length > 0) {
+        choices = { ...NO_CHOICES, options: defaultOptions(groups.map(moneyGroupOf)) };
+      }
+    }
     // "מצב זיכוי": a tap takes one unit back (addReturn) — not behind the sale's gates: its own authority was asked.
     if (this.refundMode) {
       // A voucher is credited from its receipt only (SellViewModel.refundRefusal).
@@ -1686,20 +1926,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       return undefined;
     }
     // "בפתיחת הזמנה": the first item of a new quick order waits for the order's details.
-    if (this.cart.length === 0 && !this.orderStart && this.orderQuestions().atOpen && this.orderDetailsMissing()) {
-      this.orderStart = { productId: p.id, qty };
+    if (!o.onProceed && this.cart.length === 0 && !this.orderStart && this.orderQuestions().atOpen && this.orderDetailsMissing()) {
+      this.orderStart = { productId: p.id, qty, choices: o.choices ?? null };
       this.orderAsk = 'open';
       return { orderDetails: true };
     }
     const settings = this.svc.settingsMap();
     const user = this.signedIn();
     const proceed = (soldOutApproved: boolean) => {
-      // A meal and a dish with a required choice open their sheet on the Android till: soon.
-      if (p.meal) return this.comingSoon('ארוחות');
-      const groups = cat.groups[p.id] ?? [];
-      if (groups.some((g) => g.min > 0)) return this.comingSoon('פריט עם תוספות חובה');
-      this.putLine(p.id, qty);
       void soldOutApproved;
+      if (o.onProceed) return o.onProceed();
+      this.putLine(p.id, qty, choices);
       return undefined;
     };
     const afterSellGate = (): unknown => {
@@ -1777,14 +2014,124 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     });
   }
 
-  /** A sale line: grows the plain line of the product (never a discounted, OTH, held-price or returned one). */
-  private putLine(productId: string, qty: number) {
-    const same = this.cart.find((l) => l.productId === productId && !l.refund && !l.discount && !l.oth && (l.keptUnitAgorot ?? null) === null);
+  /**
+   * A sale line: grows the plain line of the product (never a discounted, OTH, held-price or returned one) — a dish on the same
+   * choices with no notes counts as plain; a meal, notes, "חשוב" or an allergy always make a line of their own.
+   */
+  private putLine(productId: string, qty: number, choices: LineChoices | null = null) {
+    const same = this.cart.find(
+      (l) => l.productId === productId && !l.refund && !l.discount && !l.oth && (l.keptUnitAgorot ?? null) === null && sameChoices(l.choices ?? NO_CHOICES, choices ?? NO_CHOICES),
+    );
     if (same) same.qty = Math.min(MAX_QTY, same.qty + qty);
     else {
       this.lineSeq += 1;
-      this.cart.push({ lineId: `l${this.lineSeq}`, productId, qty });
+      this.cart.push({ lineId: `l${this.lineSeq}`, productId, qty, ...(choices ? { choices } : {}) });
     }
+  }
+
+  /**
+   * "הזמנות קיוסק לתשלום" (tillKioskOrders.ts): the kiosk order's basket into the cart line for line — each dish at its own
+   * price as the kiosk took it, its choices priced by the till's rules, as a held sale comes back — the order's name ("A-17 ·
+   * דנה") and service for the kitchen, then the payment: the kiosk's vouchers as legs taken first (never more than the
+   * order), its tip on top. Not behind the sale's gates: the kiosk sold it; the till takes the money. The refusal's words, or null.
+   */
+  private loadKioskOrder(order: KioskOpenOrder, lines: KioskBasketLine[]): string | null {
+    if (!this.cashier || this.locked) return TEXT.notSignedIn;
+    if (this.cart.length > 0 || this.checkout.phase !== 'idle') return KPAY_TEXT.basketBusy;
+    if (!this.svc.ledger.currentShift() && !this.shiftsHidden()) return WORDS.noShiftBlocksSale;
+    this.clearBasket();
+    for (const l of lines) {
+      this.lineSeq += 1;
+      this.cart.push({ lineId: `l${this.lineSeq}`, productId: l.productId, qty: l.qty, keptUnitAgorot: l.baseAgorot, name: l.name, ...(l.choices ? { choices: l.choices } : {}) });
+    }
+    this.orderName = orderNameOf(order);
+    this.orderDining = order.service;
+    const p = this.priced();
+    if (p.gone.length > 0) {
+      const names = this.cart.filter((r) => p.gone.includes(r.lineId)).map((r) => r.name ?? r.productId);
+      this.clearBasket();
+      return KPAY_TEXT.notSoldHere(names.join(', '));
+    }
+    const tip = Math.max(0, order.tipAgorot);
+    const totals = tip > 0 ? { ...p.totals, tipAgorot: tip, chargeAgorot: p.totals.totalAgorot + tip } : p.totals;
+    let left = totals.chargeAgorot;
+    const legs = order.vouchers.flatMap((v) => {
+      const amount = Math.min(v.amountAgorot, left);
+      left -= amount;
+      return amount > 0
+        ? [{ method: 'production_voucher' as const, amountAgorot: amount, handedAgorot: 0, voucher: { redemptionId: v.redemptionId, reservationId: null, serial: v.serial }, status: 'approved' as const, external: true }]
+        : [];
+    });
+    this.vouchers.clear();
+    this.checkout = {
+      ...idleCheckout(),
+      phase: 'tender',
+      totalAgorot: totals.chargeAgorot,
+      frozen: { lines: p.lines, tracked: p.tracked, promotions: p.promotions, totals, basketDiscountAgorot: p.basketDiscountAgorot, basketDiscount: null, refunds: [] },
+      legs,
+      token: randomUUID(),
+      kioskOrder: order,
+    };
+    return null;
+  }
+
+  /** A line's choices as an op sent them (shape only — the catalog's groups decide the rest); refused when malformed. */
+  private choicesArg(a: Record<string, unknown>): LineChoices {
+    const options = cleanOptions(a.options);
+    const meal = cleanMeal(a.meal);
+    if (options === null || meal === undefined) return refuse('invalid_args');
+    return { options, notes: cleanNotes(a.notes), meal, important: a.important === true, allergies: cleanAllergies(a.allergies) };
+  }
+
+  /** Why [choices] do not answer the product's groups / meal slots now (Android's words), or null. */
+  private choicesRefusal(productId: string, choices: LineChoices): string | null {
+    const cat = this.svc.tillCatalogData();
+    const slots = cat.meals[productId] ?? [];
+    const groupsOf = (id: string) => (cat.groups[id] ?? []).map(moneyGroupOf);
+    if (slots.length > 0) {
+      if (choices.options.length > 0) return 'בחירה לא מוכרת';
+      return mealRefusal(this.mealSlotViews(productId), choices.meal ?? { components: [] }, groupsOf);
+    }
+    if (choices.meal) return 'בחירה לא מוכרת';
+    return optionsRefusal(groupsOf(productId), choices.options);
+  }
+
+  /** A meal's slots as the sheets read them: each choice named, with its own groups. */
+  private mealSlotViews(productId: string): MealSlotView[] {
+    const cat = this.svc.tillCatalogData();
+    const names = new Map([...cat.products, ...cat.held].map((p) => [p.id, p.name] as const));
+    return (cat.meals[productId] ?? []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      minSelect: s.minSelect,
+      maxSelect: s.maxSelect,
+      quantity: s.quantity,
+      allowRepeat: s.allowRepeat,
+      choices: s.choices.map((c) => ({ productId: c.productId, name: names.get(c.productId) ?? c.productId, upchargeAgorot: c.upchargeAgorot, isDefault: c.isDefault, groupIds: (cat.groups[c.productId] ?? []).map((g) => g.id) })),
+    }));
+  }
+
+  /**
+   * "עדכן" on a configured line (Android editLine → confirmDish): its new choices and quantity, checked as a new line's; more
+   * units than before go through the sale's gates as a tap would (a block or "אזל" that arrived since refuses them).
+   */
+  private configureLine(lineId: string, qtyRaw: unknown, choices: LineChoices) {
+    this.editable();
+    if (!isInt(qtyRaw, 1, SHEET_QTY_MAX)) return refuse('invalid_args');
+    const qty = qtyRaw as number;
+    const line = this.cart.find((l) => l.lineId === lineId);
+    if (!line || line.refund || line.receipt) return refuse('invalid_args');
+    const why = this.choicesRefusal(line.productId, choices);
+    if (why) return refuse('sell_refused', why);
+    const apply = () => {
+      const current = this.cart.find((l) => l.lineId === lineId);
+      if (!current) return refuse('invalid_args');
+      current.choices = choices;
+      current.qty = qty;
+      return undefined;
+    };
+    if (qty > line.qty) return this.add(line.productId, qty - line.qty, { choices, onProceed: apply });
+    return apply();
   }
 
   /** A catalog return: one more unit of the product's own return line (never folded into a sale or a receipt line). */
@@ -1817,6 +2164,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return undefined;
       }
       // More of a product is a line coming in again: the gate asks about it as for a tap (a block that arrived since refuses).
+      // A configured line grows itself (its choices kept), through the same gates.
+      if (line.choices && !line.discount && (line.keptUnitAgorot ?? null) === null) {
+        const grow = () => {
+          const current = this.cart.find((l) => l.lineId === lineId);
+          if (current) current.qty = qty;
+          return undefined;
+        };
+        return this.add(line.productId, qty - line.qty, { choices: line.choices, onProceed: grow });
+      }
       if (!line.discount && (line.keptUnitAgorot ?? null) === null) return this.add(line.productId, qty - line.qty);
     }
     line.qty = qty;
@@ -1863,7 +2219,14 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /** The cart priced: the sale lines by the kiosk's own engine on the till channel (promotions by the clock), the returns. */
   private priced(now = new Date(this.nowFn())): Priced {
     const sales = this.cart.filter((l) => !l.refund);
-    const lines = sales.map((l) => ({ key: l.lineId, productId: l.productId, qty: l.qty, notes: [] as string[], options: [] as never[] }));
+    const lines = sales.map((l) => ({
+      key: l.lineId,
+      productId: l.productId,
+      qty: l.qty,
+      notes: l.choices?.notes ?? [],
+      options: l.choices?.options ?? [],
+      ...(l.choices?.meal ? { meal: l.choices.meal } : {}),
+    }));
     // The payment's vouchers (tillVouchers.ts): the discount ones priced with the promotions, the production ones booked after.
     const withVouchers = this.checkout.phase !== 'idle' && !this.checkout.basket;
     const discounts = withVouchers ? this.vouchers.discounts : [];
@@ -1904,6 +2267,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         ...l,
         ...(hand > 0 ? { discountAgorot: hand } : {}),
         ...(rec?.oth ? { oth: { reason: rec.oth.reason, by: rec.oth.by, approvedBy: rec.oth.approvedBy } } : {}),
+        // "חשוב" and the diner's allergies: the kitchen ticket's (KitchenTicketDesigns), never a price.
+        ...(rec?.choices?.important ? { important: true } : {}),
+        ...(rec?.choices && rec.choices.allergies.length > 0 ? { allergies: [...rec.choices.allergies] } : {}),
       };
     });
     // "שוברי הפקה" (core/till/vouchers.ts): each production voucher of the payment booked on the lines, in order.
@@ -2545,8 +2911,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /* ---------------------------------------------------------------- checkout */
 
+  /** "נוכחות": selling waits for the clock-in / the end of the break (Android blocks the sale behind its card). */
+  private attendanceGate() {
+    const why = this.attendance?.sellRefusal();
+    if (why) refuse('attendance_required', why);
+  }
+
   private checkoutStart() {
     this.signedIn();
+    this.attendanceGate();
     if (this.cart.length === 0) refuse('cart_empty');
     if (this.checkout.phase !== 'idle') refuse('checkout_busy');
     if (!this.svc.ledger.currentShift() && !this.shiftsHidden()) refuse('shift_not_open', WORDS.noShiftBlocksSale);
@@ -2618,6 +2991,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     };
     c.totalAgorot = p.totals.totalAgorot;
     c.legs = [
+      ...c.legs.filter((l) => l.external),
       ...(p.voucherLegs ?? []).filter((l) => l.amountAgorot > 0).map((l) => ({ method: 'production_voucher' as const, amountAgorot: l.amountAgorot, handedAgorot: 0, voucher: l.voucher, status: 'approved' as const })),
       ...c.legs.filter((l) => l.method !== 'production_voucher'),
     ];
@@ -3320,7 +3694,13 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       for (const l of this.checkout.legs) if (l.method === 'cash_credit' && l.credit) this.cash.credits.release(l.credit.redemptionId);
       // The vouchers held for it: given back.
       this.vouchers.abandon();
+      const kiosk = this.checkout.kioskOrder;
       this.checkout = idleCheckout();
+      // A kiosk order's basket is never edited here: backing out puts the order back on the list.
+      if (kiosk) {
+        this.kioskOrders.abandoned();
+        this.clearBasket();
+      }
       return undefined;
     };
     // "השובר לא מומש" (VoucherLeavePayment): vouchers applied and not redeemed — asked first; a simulation holds nothing.
@@ -3434,10 +3814,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.vouchers.clear();
     // The order's name and take-away / eat-in: on its kitchen tickets (the headline, the band), never on the receipt.
     const order = { orderName: this.orderName, dining: this.orderDining };
+    const kiosk = c.kioskOrder;
+    c.kioskOrder = null;
     this.clearBasket();
     void this.svc.sync.flush();
-    // "בונים במכירה" and the KDS (main/kitchen): queued durably before the receipt, never holding the sale.
-    const unrouted = this.svc.tillKitchen(doc, order);
+    // A kiosk order paid here: reported paid (kept until the cloud has it).
+    if (kiosk) this.kioskOrders.paid(kiosk, doc.id, formatDocNumber(doc.prefix, String(doc.number)));
+    // "בונים במכירה" and the KDS (main/kitchen): queued durably before the receipt, never holding the sale — a kiosk order's
+    // only when the kiosk did not send its bon before payment.
+    const unrouted = kiosk?.kitchenSent ? [] : this.svc.tillKitchen(doc, order);
     c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     this.kickDrawer(doc);
     this.printOrAsk(doc);
@@ -3658,6 +4043,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         unitAgorot: l ? unitAgorot(l) : (rec.keptUnitAgorot ?? 0),
         discount: rec.discount ?? null,
         oth: rec.oth ?? null,
+        // A configured line keeps its choices; its kept price is the dish's own (the choices are priced again on top).
+        ...(rec.choices ? { choices: rec.choices, baseAgorot: l ? l.basePriceAgorot : (rec.keptUnitAgorot ?? 0) } : {}),
       };
     });
     // The lines' money as rung up (gross less each line's own discount): what the list shows.
@@ -3696,7 +4083,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.clearBasket();
     for (const l of sale.lines) {
       this.lineSeq += 1;
-      this.cart.push({ lineId: `l${this.lineSeq}`, productId: l.productId, qty: l.qty, discount: l.discount, oth: l.oth, keptUnitAgorot: l.unitAgorot, name: l.name });
+      this.cart.push({
+        lineId: `l${this.lineSeq}`,
+        productId: l.productId,
+        qty: l.qty,
+        discount: l.discount,
+        oth: l.oth,
+        keptUnitAgorot: l.choices ? (l.baseAgorot ?? null) : l.unitAgorot,
+        name: l.name,
+        ...(l.choices ? { choices: l.choices } : {}),
+      });
     }
     if (extras) {
       this.cartDiscount = extras.discount;
@@ -4036,10 +4432,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private autoCloseHandle(holds: boolean, abandon: boolean): AutoCloseCart | null {
     const c = this.checkout;
     if (c.phase !== 'idle') {
-      if (!abandon || c.legs.length > 0 || c.docId !== null) return null;
+      if (!abandon || c.legs.some((l) => !l.external) || c.docId !== null) return null;
       this.vouchers.abandon();
+      const kiosk = c.kioskOrder;
       this.checkout = idleCheckout();
       this.pending = null;
+      // A kiosk order on the payment: back to the list (its basket is the kiosk's, never parked here).
+      if (kiosk) {
+        this.kioskOrders.abandoned();
+        this.clearBasket();
+        return null;
+      }
     }
     if (this.cart.length === 0) return null;
     const p = this.priced();
@@ -4054,7 +4457,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       const byKey = new Map(p.lines.map((l) => [l.key, l] as const));
       const lines: HeldLine[] = this.cart.map((rec) => {
         const l = byKey.get(rec.lineId);
-        return { id: rec.lineId, productId: rec.productId, name: l?.name ?? rec.name ?? rec.productId, qty: rec.qty, unitAgorot: l ? unitAgorot(l) : (rec.keptUnitAgorot ?? 0), discount: rec.discount ?? null, oth: rec.oth ?? null };
+        return {
+          id: rec.lineId,
+          productId: rec.productId,
+          name: l?.name ?? rec.name ?? rec.productId,
+          qty: rec.qty,
+          unitAgorot: l ? unitAgorot(l) : (rec.keptUnitAgorot ?? 0),
+          discount: rec.discount ?? null,
+          oth: rec.oth ?? null,
+          ...(rec.choices ? { choices: rec.choices, baseAgorot: l ? l.basePriceAgorot : (rec.keptUnitAgorot ?? 0) } : {}),
+        };
       });
       const total = p.lines.reduce((s, l) => s + lineGross(l) - (l.discountAgorot ?? 0), 0);
       const id = this.held.hold(lines, { id: cashierId ?? '', name: this.cashier ? displayName(this.cashier) : null }, AUTO_CLOSE_PARK_LABEL, total);
@@ -4151,6 +4563,37 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     }
   }
 
+  /**
+   * The cloud asked this till to close its shift (CloseShiftCoordinator.handleCloudRequest — a shop Z run's item, or the
+   * dashboard): unattended, the request's id on the close (the cloud ties it to the run), the drawer's movements and the
+   * vouchers on its X as every close of this till; a card under way or a document still pending holds it (`pending`). The
+   * basket stays where it is (not a document). A Z-only till: its Z follows, as the automatic close's.
+   */
+  async remoteClose(requestId: string): Promise<'closed' | 'none' | 'pending'> {
+    if (this.stopped || !this.svc.fiscal) return 'pending';
+    if (this.svc.ledger.shiftByCloseRequest(requestId)) return 'closed';
+    const c = this.checkout;
+    if (this.svc.pay.cardInFlight || c.phase === 'card_waiting' || c.phase === 'card_unknown') return 'pending';
+    const open = this.svc.ledger.currentShift();
+    if (!open) return 'none';
+    const closed = this.svc.ledger.closeShift({
+      closedByName: 'סגירה מהענן',
+      unattended: true,
+      closeRequestId: requestId,
+      vatRate: this.svc.vatRate(),
+      now: new Date(this.nowFn()),
+      tillExtra: (till, shiftId) => this.withVouchers(this.withDrawer(till, shiftId), shiftId),
+    });
+    if (closed.kind === 'pending') return 'pending';
+    if (closed.kind === 'none') return 'none';
+    this.log(`cloud close ${requestId}: shift ${closed.shift.id} closed`);
+    void this.svc.sync.flush();
+    if (this.shiftsHidden()) void this.svc.tillZ.produceOwed('סגירה מהענן').catch((e: unknown) => this.log(`cloud close: the Z did not start: ${String(e)}`));
+    this.dirty = true;
+    this.commit();
+    return 'closed';
+  }
+
   /** The notice the shift opens with — never on the very shift it is about. */
   private autoCloseNotice(): { title: string; text: string } | null {
     const kept = this.svc.kv.getJson<AutoCloseRecord>(AUTO_CLOSE_NOTICE);
@@ -4211,6 +4654,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /* ------------------------------------------------------------------- state */
 
+  /** The product has something its sheet chooses (groups, a meal, note chips) — its line may be opened again. */
+  private configurable(productId: string): boolean {
+    const cat = this.svc.tillCatalogData();
+    return (cat.groups[productId] ?? []).length > 0 || (cat.meals[productId] ?? []).length > 0 || (cat.quickNotes[productId] ?? []).length > 0;
+  }
+
   private cartView(): { lines: CartLine[]; priced: Priced | null } {
     if (this.cart.length === 0) return { lines: [], priced: null };
     // After a payment opened, what it was priced from; else the cart as priced now.
@@ -4267,6 +4716,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
           ...(l.noDiscount ? { noDiscount: true } : {}),
           ...(l.voucherMark ? { voucher: l.voucherMark } : {}),
           ...(memo.has(l.key) ? { voucherValueAgorot: memo.get(l.key)! } : {}),
+          ...(() => {
+            const words = lineWords({ options: l.options, meal: l.meal ? { components: l.meal.components } : null, notes: l.notes, important: l.important, allergies: l.allergies });
+            return words.length > 0 ? { subLines: words } : {};
+          })(),
+          // "עריכת המנה": the line's own (not a voucher's split) with something to choose.
+          ...(own && rec.choices && this.configurable(rec.productId) ? { choices: { ...rec.choices } } : {}),
         });
       }
     }
@@ -4368,6 +4823,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         ...(p && p.lineDiscountsAgorot > 0 ? { lineDiscountsAgorot: p.lineDiscountsAgorot } : {}),
         ...(p && p.othAgorot > 0 ? { othAgorot: p.othAgorot } : {}),
         ...(p && p.nonDiscountableAgorot > 0 ? { nonDiscountableAgorot: p.nonDiscountableAgorot } : {}),
+        choicesAuto: { addOns: paramOn(params[PARAM_MODIFIERS_AUTO_OPEN]), notes: paramOn(params[PARAM_NOTES_AUTO_OPEN]) },
       },
       checkout: {
         phase: checkoutPhase,
@@ -4428,6 +4884,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       menuHidden: parseHiddenMenu(params[HIDDEN_MENU_PARAM]),
       ...(user && !this.locked ? { menu: this.menu.state() } : {}),
       ...(user && !this.locked && this.kiosks.count() > 0 ? { kiosks: this.kiosks.state() } : {}),
+      ...(user && !this.locked ? { menuOffers: { shopZ: this.shopZ.menuShown([]), cloudZ: this.cloudZ.available() } } : {}),
       tileText: tileTextOf(params),
       drawer: this.drawer.state(),
       users: this.sessions.state(),
@@ -4471,6 +4928,11 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         return banner ? { terminalOffline: banner } : {};
       })(),
     };
+    // The feature modules' slices (each omitted while it says nothing).
+    for (const f of this.features) {
+      const v = f.state();
+      if (v !== undefined) (state as unknown as Record<string, unknown>)[f.key] = v;
+    }
     return state;
   }
 
@@ -4506,6 +4968,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         })),
       cardError: WORDS.cardPending,
       token: randomUUID(),
+      kioskOrder: this.kioskOrders?.current() ?? null,
       frozen: {
         lines: carrier.lines,
         tracked: carrier.tracked,

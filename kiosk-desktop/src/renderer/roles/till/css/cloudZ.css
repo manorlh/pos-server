@@ -1,0 +1,109 @@
+/* "דוחות Z" from the cloud (screens/CloudZScreen.tsx). Plain CSS for Chromium 108: no nesting, no :has(), no blur. */
+
+.t-cloudz-message {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--t-radius);
+  background: var(--t-accent-soft);
+  color: var(--t-text);
+  overflow-wrap: anywhere;
+}
+
+.t-cloudz-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--t-radius);
+  background: var(--t-warn-soft);
+}
+
+.t-cloudz-progress-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+}
+
+.t-cloudz-choice {
+  padding: 12px;
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+}
+
+.t-cloudz-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.t-cloudz-choice-list .t-btn {
+  width: 100%;
+  min-height: var(--t-touch);
+  white-space: normal;
+}
+
+.t-cloudz-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.t-cloudz-sequence {
+  flex: 1 1 200px;
+}
+
+.t-cloudz-list {
+  margin: 0;
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+}
+
+.t-cloudz-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--t-touch);
+  padding: 6px 12px;
+}
+
+.t-cloudz-row:last-child {
+  border-bottom: 0;
+}
+
+.t-cloudz-tick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--t-touch);
+  cursor: pointer;
+}
+
+.t-cloudz-tick input {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.t-cloudz-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.t-cloudz-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.t-cloudz-print {
+  flex: 0 0 auto;
+}

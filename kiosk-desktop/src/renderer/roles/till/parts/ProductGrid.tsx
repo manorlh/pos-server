@@ -6,11 +6,15 @@
  * "שם פריט מלא על הכפתור, ותג i" (core/tile text, P:/specs/product-tile-text.md): the name laid out by `productNameFit`
  * (shrunk, then broken over lines, "…" last), the price never cut, and the "i" at the tile's top left — a tap on it opens
  * the item's window (`onInfo`), never the cart. Worked out once per name per tile width.
+ *
+ * "עריכת מסך" (`arrange`, core/till/screenEdit.ts — Android ArrangeMode.kt): the tiles are arranged, not sold — held a
+ * moment and dragged onto another tile's place (or tapped, then the place tapped), ✕ makes one inactive and + active again.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Department, Product, TileTextState } from '../../../../shared/till/protocol';
 import { nameLayout, priceLayout, showsInfo, TILE_TEXT_DEFAULTS, type NameLayout } from '../../../../core/till/tileText';
+import { SCREEN_EDIT_TEXT } from '../../../../core/till/screenEdit';
 import { money, T } from '../text';
 
 /** The tile's padding and its price line (CSS px): what is left for the name. */
@@ -40,6 +44,26 @@ export function gridWindow(rows: number, rowHeight: number, scrollTop: number, v
 /** A tile held this long opens "חסום / אזל" (Android SellViewModel LOCK_PRESS_MS). */
 export const HOLD_MS = 7_000;
 
+/** While arranging, a tile is picked up after this short hold (a quick swipe still scrolls; Android ArrangeTouch). */
+export const PICK_MS = 250;
+
+/** "עריכת מסך": what the grid needs of the edit mode (absent: the tiles sell). */
+export interface GridArrange {
+  /** The tile `fromId` dropped on `toId`'s place; `shown` — the ids on screen, in order (`screenEdit.move`). */
+  onMove(fromId: string, toId: string, shown: string[]): void;
+  /** ✕ (`locked` true) or + on a tile (`screenEdit.lock`). */
+  onLock(productId: string, locked: boolean): void;
+  /** A ✕ / + on its way: that tile's badge waits. */
+  busyId?: string | null;
+}
+
+/** Where a tap lands while arranging (pure; tested): pick a tile, put the picked one in this tile's place, or let go. */
+export function arrangeTap(picked: string | null, tapped: string): { picked: string | null; move: [string, string] | null } {
+  if (picked === null) return { picked: tapped, move: null };
+  if (picked === tapped) return { picked: null, move: null };
+  return { picked: null, move: [picked, tapped] };
+}
+
 export function ProductGrid({
   products,
   departments,
@@ -49,6 +73,7 @@ export function ProductGrid({
   onInfo,
   onHold,
   tileText = TILE_TEXT_DEFAULTS,
+  arrange,
 }: {
   products: Product[];
   departments: Department[];
@@ -60,8 +85,105 @@ export function ProductGrid({
   /** A tile held 7 s (Android LOCK_PRESS_MS): "חסום / אזל" for it (absent: a hold is a tap). */
   onHold?(productId: string): void;
   tileText?: TileTextState;
+  /** "עריכת מסך" on: the tiles are arranged (no sale, no "i", no 7 s hold). */
+  arrange?: GridArrange;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // "עריכת מסך": the tile picked (a tap, or held and dragged), the tile under the finger, and the drag itself.
+  const [picked, setPicked] = useState<string | null>(null);
+  const [target, setTarget] = useState<string | null>(null);
+  const drag = useRef<{ id: string; timer: number; on: boolean; x: number; y: number; done: boolean } | null>(null);
+  const arranging = !!arrange;
+  useEffect(() => {
+    if (!arranging) {
+      setPicked(null);
+      setTarget(null);
+    }
+  }, [arranging]);
+  // A lifted tile is not a scroll: the grid's touchmove is held back while one is dragged (non-passive on purpose).
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !arranging) return;
+    const stop = (e: TouchEvent) => {
+      if (drag.current?.on) e.preventDefault();
+    };
+    el.addEventListener('touchmove', stop, { passive: false });
+    return () => el.removeEventListener('touchmove', stop);
+  }, [arranging]);
+  const shownIds = () => products.map((p) => p.id);
+  const tileAt = (x: number, y: number): string | null => {
+    const hit = typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null;
+    const tile = hit ? hit.closest('[data-pid]') : null;
+    return tile ? tile.getAttribute('data-pid') : null;
+  };
+  const dragStart = (id: string, e: ReactPointerEvent<HTMLElement>) => {
+    if (drag.current) window.clearTimeout(drag.current.timer);
+    const d = { id, timer: 0, on: false, x: e.clientX, y: e.clientY, done: false };
+    const el = e.currentTarget;
+    const pointer = e.pointerId;
+    d.timer = window.setTimeout(() => {
+      d.on = true;
+      setPicked(id);
+      setTarget(null);
+      try {
+        el.setPointerCapture(pointer);
+      } catch {
+        /* the pointer is gone already */
+      }
+    }, PICK_MS);
+    drag.current = d;
+  };
+  const dragMove = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = drag.current;
+    if (!d || d.done) return;
+    if (!d.on) {
+      // Moved before the hold: a scroll, not a pick.
+      if (Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8) {
+        window.clearTimeout(d.timer);
+        drag.current = null;
+      }
+      return;
+    }
+    const over = tileAt(e.clientX, e.clientY);
+    setTarget(over && over !== d.id ? over : null);
+    // Near the grid's top or bottom: it scrolls under the tile.
+    const grid = ref.current;
+    if (grid) {
+      const r = grid.getBoundingClientRect();
+      if (e.clientY < r.top + 40) grid.scrollTop -= 24;
+      else if (e.clientY > r.bottom - 40) grid.scrollTop += 24;
+    }
+  };
+  const dragEnd = (e: ReactPointerEvent<HTMLElement>) => {
+    const d = drag.current;
+    if (!d || d.done) return;
+    window.clearTimeout(d.timer);
+    if (!d.on) {
+      drag.current = null;
+      return;
+    }
+    d.done = true;
+    const over = tileAt(e.clientX, e.clientY);
+    if (over && over !== d.id) arrange?.onMove(d.id, over, shownIds());
+    setPicked(null);
+    setTarget(null);
+  };
+  const dragCancel = () => {
+    if (drag.current) window.clearTimeout(drag.current.timer);
+    drag.current = null;
+    setTarget(null);
+  };
+  const arrangeClick = (id: string) => {
+    // The click that ends a drag is not a tap.
+    if (drag.current?.done) {
+      drag.current = null;
+      return;
+    }
+    drag.current = null;
+    const next = arrangeTap(picked, id);
+    setPicked(next.picked);
+    if (next.move) arrange?.onMove(next.move[0], next.move[1], shownIds());
+  };
   const hold = useRef<{ timer: number; fired: boolean } | null>(null);
   const holdStart = (id: string) => {
     if (!onHold) return;
@@ -139,7 +261,58 @@ export function ProductGrid({
           {row.map((p) => {
             const name = layoutOf(p.name);
             const price = priceLayout(money(p.priceAgorot), textWidth);
-            const info = !!onInfo && showsInfo(tileText.infoBadge, !!p.description, name.whole);
+            const info = !arrange && !!onInfo && showsInfo(tileText.infoBadge, !!p.description, name.whole);
+            if (arrange) {
+              const inactive = p.sale === 'unavailable';
+              const busy = arrange.busyId === p.id;
+              const lock = () => {
+                if (!busy) arrange.onLock(p.id, !inactive);
+              };
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  data-pid={p.id}
+                  className={`t-tile se-tile${p.sale ? ' t-tile-off' : ''}${picked === p.id ? ' se-tile-picked' : ''}${target === p.id ? ' se-tile-target' : ''}`}
+                  style={{ borderInlineStartColor: colorOf.get(p.departmentId) ?? '#9aa1ab' }}
+                  aria-pressed={picked === p.id}
+                  onPointerDown={(e) => dragStart(p.id, e)}
+                  onPointerMove={dragMove}
+                  onPointerUp={dragEnd}
+                  onPointerCancel={dragCancel}
+                  onClick={() => arrangeClick(p.id)}
+                >
+                  <span className="t-tile-name" style={{ fontSize: name.px, WebkitLineClamp: name.lines }} title={name.whole ? undefined : p.name}>
+                    {p.name}
+                  </span>
+                  <span className="t-tile-price" style={{ fontSize: price.px }}>
+                    {price.text}
+                  </span>
+                  {/* ✕ (inactive) or + (active again) at the tile's start corner — a span, so the tile stays one button. */}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={inactive ? SCREEN_EDIT_TEXT.restoreTitle(p.name) : SCREEN_EDIT_TEXT.removeTitle(p.name)}
+                    aria-disabled={busy}
+                    className={`se-badge${inactive ? ' se-badge-on' : ''}`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      lock();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return;
+                      e.stopPropagation();
+                      e.preventDefault();
+                      lock();
+                    }}
+                  >
+                    <span className="se-badge-dot">{busy ? '…' : inactive ? '+' : '✕'}</span>
+                  </span>
+                </button>
+              );
+            }
             return (
               <button
                 key={p.id}

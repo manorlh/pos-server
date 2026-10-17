@@ -54,7 +54,7 @@ import { LOCAL_DESTINATION, REMOTE_DOC_TEXT, TILL_CHOICE_ASK, remoteDestinations
 import { rowOf as transmissionRowOf, type TransmissionRow } from '../core/till/transmission';
 import { DEFAULT_PRINTER_KEY, TILL_PRINTER_KEY, type RemoteDocumentsRouter } from './till/tillRemotePrint';
 import { isCreditType as isCreditDoc } from '../core/sale';
-import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput } from '../core/printDocs';
+import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput, type ZDoc } from '../core/printDocs';
 import {
   appendLog,
   bonText,
@@ -3697,6 +3697,14 @@ export class KioskService extends EventEmitter {
    * Z's own ops (core/printDocs.ts xDoc), queued like any page. Returns the print job's id.
    */
   /** "דוח X סניפי" (core/till/shopX.ts): the cloud's paper on the receipt printer, as the till's X. */
+  /**
+   * A report page the cloud drew (the shop's Z of "סגירת Z סניפי", a Z of "דוחות Z"): on this till's printer, or where
+   * "הדפסה בקופה אחרת" sends reports — as every page of the till. The local job's id, or null when it went elsewhere.
+   */
+  printReport(doc: ZDoc, refId: string, title: string): string | null {
+    return this.pagePrint('z', refId, doc, { kind: 'report', code: 'z', title });
+  }
+
   printShopX(doc: Parameters<typeof shopXPrintDoc>[0], refId: string): string {
     return (
       this.pagePrint('z', refId, shopXPrintDoc(doc, (this.settingsMap().brandReceiptLogoUrl as string | null | undefined) ?? null), { kind: 'report', code: 'x', title: doc.title }) ?? ''
@@ -3913,6 +3921,25 @@ export class KioskService extends EventEmitter {
       if (r.kind === 'refused' && r.refusal === 'nothing_to_report') this.ack('z', req.requestId, 'failed', { errorCode: 'nothing_to_report' });
     }
     await this.tillZ.tick({ mayRun, kioskAt: cfg?.operations.autoCloseAt, paramAt: this.cloud.parameters().autoCloseShiftAt, closerName: closerName(op), vatRate: this.vatRate() });
+    // A till by role: the cloud's close of its shift (a shop Z run's item) — the till's engine carries it out, never over a card.
+    if (this.fiscalRole && !this.isKiosk() && this.pendingClose && this.tillRemoteClose) {
+      const req = this.pendingClose;
+      const r = await this.tillRemoteClose(req.requestId).catch((e: unknown) => {
+        this.log(`till remote close: ${String(e)}`);
+        return 'pending' as const;
+      });
+      if (r === 'pending') {
+        const key = `close:${req.requestId}`;
+        if (this.deferredSaid.get(key) !== 'till_paying') {
+          this.deferredSaid.set(key, 'till_paying');
+          this.ack('close', req.requestId, 'deferred', { errorCode: 'card_in_flight' });
+        }
+      } else {
+        this.pendingClose = null;
+        this.ack('close', req.requestId, 'received');
+        void this.sync.flush();
+      }
+    }
     // A till by role: its own automatic close, with what is open on it (the till's engine decides).
     if (this.fiscalRole && !this.isKiosk() && this.tillAutoClose) await this.tillAutoClose().catch((e: unknown) => this.log(`till automatic close: ${String(e)}`));
     this.dirty();
@@ -4747,6 +4774,17 @@ export class KioskService extends EventEmitter {
 
   attachTillAutoClose(fn: (() => Promise<unknown>) | null) {
     this.tillAutoClose = fn;
+  }
+
+  /**
+   * The cloud's close of this till's shift ("סגירת Z סניפי" from the main till, a close asked from the dashboard): on a till
+   * by role the till's engine carries it out (its drawer and vouchers on the X; never over a card) — Android
+   * CloseShiftCoordinator.handleCloudRequest. `pending`: held for now (asked again on the next tick).
+   */
+  private tillRemoteClose: ((requestId: string) => Promise<'closed' | 'none' | 'pending'>) | null = null;
+
+  attachTillRemoteClose(fn: ((requestId: string) => Promise<'closed' | 'none' | 'pending'>) | null) {
+    this.tillRemoteClose = fn;
   }
 
   /**

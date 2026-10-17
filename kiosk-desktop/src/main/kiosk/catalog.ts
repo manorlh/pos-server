@@ -152,6 +152,8 @@ export interface KioskCatalogData {
   /** The meals' slots by meal product id (menu.meals). */
   meals: Record<string, MealSlot[]>;
   quickNotes: Record<string, string[]>;
+  /** A dish with note chips of its own or its category's (not only the shop's for every dish): "הערות — חלון קופץ אוטומטי" opens it. */
+  ownNotes?: Record<string, true>;
   /** "הערה עם תמונה": a note chip's picture (local) by its text — an image tile, chosen like an option. */
   noteImages: Record<string, string>;
   /** Upsell candidates by trigger: product ids offered for a product, a category, or any order. */
@@ -338,6 +340,7 @@ export function buildKioskCatalog(
   const notes = (menu.notes ?? {}) as MenuNotes;
   const groups: Record<string, KGroup[]> = {};
   const quickNotes: Record<string, string[]> = {};
+  const ownNotes: Record<string, true> = {};
   // The groups and notes of what is held too: a line already in the basket is priced and checked by them.
   for (const p of [...products, ...held]) {
     // Menu.groupsFor: the product's own list, else the nearest category up its tree that has one.
@@ -347,6 +350,8 @@ export function buildKioskCatalog(
     // Menu.notesFor: its own chips, else the nearest category's up the tree; then the shop's for every dish.
     const q = menuNotesFor(notes, [p.id], p.categoryId, parentOf);
     if (q.length > 0) quickNotes[p.id] = q;
+    // Menu.hasOwnNotes: chips of its own or its category's — the shop's for every dish never open a sheet.
+    if (q.length > 0 && menuNotesFor({ ...notes, all: undefined }, [p.id], p.categoryId, parentOf).length > 0) ownNotes[p.id] = true;
   }
   const upsells = (Array.isArray(menu.upsells) ? (menu.upsells as Row[]) : []).map((u) => {
     const options = Array.isArray(u.options) ? (u.options as Row[]) : [];
@@ -367,7 +372,7 @@ export function buildKioskCatalog(
     const usable = slots.map((s) => ({ ...s, choices: s.choices.filter((c) => sold.has(c.productId)) })).filter((s) => s.choices.length > 0);
     if (usable.length > 0) meals[id] = usable;
   }
-  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, noteImages, upsells, upsellRules: upsellRulesOf(menu) };
+  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, ownNotes, noteImages, upsells, upsellRules: upsellRulesOf(menu) };
 }
 
 /** `autoSoldOutAtZero`: on unless a layer turns it off (SoldOutRules.autoOn). */

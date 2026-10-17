@@ -1,0 +1,178 @@
+/* "נוכחות" (AttendanceScreen): one layer over the till — the card after a PIN, the menu's panel, "שעון נוכחות", the codes,
+   the clock-out checks, the correction form, and the short word after an action. Under the engine's own dialog (z 20) and
+   the toasts (z 30). Plain CSS for Chromium 108 on a Celeron: hex colours, no blur, no shadows, no keyframes. */
+
+.t-att-overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(20, 24, 33, 0.45);
+  z-index: 19;
+}
+
+.t-att-sheet {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  border-radius: 20px;
+  border: 1px solid #e1e4e9;
+  background: #ffffff;
+  color: #1d2433;
+  min-width: 0;
+}
+
+.t-att-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.t-att-status {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #5856d6;
+}
+
+.t-att-line {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.t-att-rule {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid #e1e4e9;
+}
+
+.t-att-btn {
+  width: 100%;
+  min-height: 56px;
+  font-size: 18px;
+  font-weight: 600;
+  border-radius: 14px;
+}
+
+.t-att-tonal {
+  background: #e8e8fb;
+  color: #2f2d8f;
+  border: 1px solid #d3d2f5;
+}
+
+.t-att-code .t-pin {
+  align-self: center;
+  width: 100%;
+  max-width: 340px;
+}
+
+.t-att-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.t-att-name {
+  min-height: 52px;
+  padding: 0 18px;
+  font-size: 18px;
+}
+
+.t-att-tables {
+  margin: 0;
+  padding: 0 18px 0 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-size: 18px;
+}
+
+.t-att-tables li {
+  padding: 4px 0;
+}
+
+.t-att-time {
+  direction: ltr;
+  text-align: right;
+  font-size: 20px;
+}
+
+.t-att-invalid {
+  border-color: #b42318;
+}
+
+.t-att-done {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 560px;
+  padding: 28px 20px;
+  border: 0;
+  border-radius: 20px;
+  background: #5856d6;
+  color: #ffffff;
+  font-size: 24px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.t-att-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  max-width: calc(100% - 32px);
+  padding: 10px 18px;
+  border-radius: 14px;
+  background: #5856d6;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+  z-index: 25;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.t-att-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 22px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.t-att-clock-glyph {
+  color: #5856d6;
+  font-size: 14px;
+}
+
+@media (max-width: 600px) {
+  .t-att-overlay {
+    padding: 8px;
+  }
+  .t-att-sheet {
+    padding: 14px;
+  }
+}

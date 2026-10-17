@@ -1,0 +1,135 @@
+/*
+ * "עריכת מסך" (parts/ScreenEditOverlay.tsx, ProductGrid's `arrange`): the bar over the tiles, the category row while
+ * arranging, and the tiles' ✕ / + — Android ArrangeMode.kt's colours (iOS gray ✕, green +). Plain CSS for Chromium 108
+ * on a Celeron: hex colours, no blur, no keyframes (no jiggle — the picked tile is outlined instead), no :has().
+ */
+
+.se-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--t-line);
+  border-radius: 18px;
+  background: var(--t-surface);
+  min-width: 0;
+}
+
+.se-bar .t-btn {
+  min-height: var(--t-touch);
+  flex-shrink: 0;
+}
+
+.se-bar-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.se-bar-title {
+  font-size: 16px;
+}
+
+.se-bar-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.se-cats {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.se-cats-hint {
+  padding: 0 4px;
+}
+
+.se-chip {
+  touch-action: pan-x;
+}
+
+.se-chip-lifted {
+  background: #1f5fd1;
+  color: #ffffff;
+  border-color: #1f5fd1;
+}
+
+.se-chip-target {
+  outline: 3px dashed #1f5fd1;
+  outline-offset: 2px;
+}
+
+/* The tiles while arranging: the corner badge sits where the "i" would (the "i" is not shown then). */
+.se-tile {
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.se-tile-picked {
+  outline: 3px solid #1f5fd1;
+  outline-offset: -3px;
+  background: #e5edfb;
+}
+
+.se-tile-target {
+  outline: 3px dashed #1f5fd1;
+  outline-offset: -3px;
+}
+
+/* ✕ / +: drawn 26 px at the tile's start corner, touched over 48 × 48 of it (inside the tile). */
+.se-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--t-touch);
+  height: var(--t-touch);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.se-badge-dot {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #8e8e93;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.se-badge-on .se-badge-dot {
+  background: #34c759;
+  font-size: 19px;
+}
+
+.se-badge[aria-disabled='true'] {
+  cursor: default;
+}
+
+.se-tile .t-tile-name {
+  padding-right: 22px;
+}
+
+@media (max-width: 900px) {
+  .se-bar-hint {
+    font-size: 12px;
+  }
+}

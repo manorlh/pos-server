@@ -133,6 +133,21 @@ const TILL = [
   { id: 't-owed', query: 'state=sell', steps: menu('עודף חייב ללקוח') },
   { id: 't-transmission', query: 'state=sell', steps: menu('פעולות אשראי') },
   { id: 't-shop-x', query: 'state=sell', steps: [...report('דוח X סניפי'), { wait: 600 }] },
+  // Phase 2 (P:/specs/windows-till-menu-parity.md §7): the modules' screens and sheets.
+  { id: 't-menu-phase2', query: 'state=sell', steps: [{ tap: 'תפריט', after: 900 }], expect: has('ניהול קטלוג') },
+  { id: 't-dish-sheet', query: 'state=sell-empty', steps: [{ tap: 'פיצה מרגריטה של השף', after: 1000 }], expect: has('גודל המנה') },
+  { id: 't-meal-sheet', query: 'state=sell-empty', steps: [{ tap: 'ארוחת המבורגר עסקית', after: 1000 }], expect: has('סיכום') },
+  { id: 't-catalog-admin', query: 'state=sell', steps: menu('ניהול קטלוג'), expect: has('מצב: הכל') },
+  { id: 't-shop-z', query: 'state=sell', steps: menu('סגירת Z סניפי') },
+  { id: 't-attendance', query: 'state=attendance', expect: has('יציאה להפסקה') },
+  { id: 't-ready-orders', query: 'state=sell', steps: menu('הזמנות להכנה'), expect: has('מוכן לאיסוף') },
+  { id: 't-kiosk-orders', query: 'state=sell', steps: menu('הזמנות קיוסק לתשלום'), expect: has('A-17') },
+  { id: 't-voucher-balance', query: 'state=sell', steps: menu('בירור יתרת שובר'), expect: has('מומש חלקית') },
+  { id: 't-voucher-station', query: 'state=station', expect: has('סרקו שובר נוסף') },
+  { id: 't-cloud-z', query: 'state=sell', steps: [{ tap: 'תפריט', after: 700 }, { sel: '[data-menu=reports]', after: 500 }, { sel: '[data-menu=z_reports]', after: 1000 }], expect: has('הדפס רצף') },
+  { id: 't-printers', query: 'state=sell', steps: menu('מדפסות'), expect: has('בדיקת תקשורת') },
+  { id: 't-alerts', query: 'state=sell', steps: menu('התראות'), expect: has('בקשת עזרה מקיוסק') },
+  { id: 't-screen-edit', query: 'state=screen-edit' },
 ];
 
 export const SCENARIOS = [

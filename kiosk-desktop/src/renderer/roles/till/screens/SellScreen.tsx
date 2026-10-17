@@ -10,6 +10,10 @@ import type { TillLayout } from '../layout/tillLayout';
 import { CartPane, type CartActions, type CartView } from '../parts/CartPane';
 import { ProductGrid } from '../parts/ProductGrid';
 import { money, T } from '../text';
+import { CHOICES_TEXT } from '../../../../core/till/choices';
+import { slipCode } from '../../../../core/till/kioskOrders';
+import { ScreenEditBar, ScreenEditCategoryRow, type ScreenEditActions } from '../parts/ScreenEditOverlay';
+import type { ScreenEditState } from '../../../../core/till/screenEdit';
 
 export function filterProducts(catalog: Catalog, departmentId: string | null, search: string) {
   const q = search.trim();
@@ -39,6 +43,9 @@ export function SellScreen({
   catalog,
   layout,
   onAdd,
+  onCustomize,
+  onKioskSlip,
+  screenEdit,
   onDepartment,
   onSearch,
   onVoucher,
@@ -52,6 +59,12 @@ export function SellScreen({
   catalog: Catalog | null;
   layout: TillLayout;
   onAdd(productId: string): void;
+  /** "התאמה אישית": a product with something to choose opens its sheet from the "i" window. */
+  onCustomize?(productId: string): void;
+  /** "תשלום בקופה": a kiosk's slip ("KO:…") scanned — its order opens to be paid. */
+  onKioskSlip?(code: string): void;
+  /** "עריכת מסך" (core/till/screenEdit.ts): the tiles and the categories arranged in place. */
+  screenEdit?: { view: ScreenEditState; actions: ScreenEditActions & { move(fromId: string, toId: string, shown: string[]): void; lock(productId: string, locked: boolean): void } } | null;
   onDepartment(id: string | null): void;
   onSearch(text: string): void;
   /** A voucher scanned with items in the order: the payment opens and applies it (`sell.voucher`); absent — none here. */
@@ -93,6 +106,12 @@ export function SellScreen({
           onKeyDown={(e) => {
             // A USB scanner types the code and presses Enter: the product goes in and the box is cleared.
             if (e.key !== 'Enter' || !catalog) return;
+            // A kiosk's slip is not a product: its order opens to be paid (SellViewModel's KioskOpenOrderCode).
+            if (onKioskSlip && slipCode(sell.search)) {
+              onKioskSlip(sell.search.trim());
+              onSearch('');
+              return;
+            }
             const p = scanned(catalog, sell.search);
             if (p) {
               onAdd(p.id);
@@ -117,7 +136,12 @@ export function SellScreen({
           ) : null}
         </div>
       ) : null}
+      {screenEdit?.view.on ? <ScreenEditBar view={screenEdit.view} actions={screenEdit.actions} /> : null}
+      {screenEdit?.view.on ? (
+        <ScreenEditCategoryRow departments={catalog?.departments ?? []} selectedId={sell.departmentId} allLabel={T.allDepartments} onSelect={onDepartment} onMove={screenEdit.actions.moveCategory} />
+      ) : null}
       <ProductGrid
+        arrange={screenEdit?.view.on ? { onMove: screenEdit.actions.move, onLock: screenEdit.actions.lock, busyId: screenEdit.view.lockBusy } : undefined}
         products={products}
         departments={catalog?.departments ?? []}
         columns={layout.columns}
@@ -135,6 +159,14 @@ export function SellScreen({
             onAdd(info.id);
             setInfo(null);
           }}
+          onCustomize={
+            onCustomize && info.choices && (info.choices.groupIds.length > 0 || (info.choices.meal?.length ?? 0) > 0)
+              ? () => {
+                  onCustomize(info.id);
+                  setInfo(null);
+                }
+              : undefined
+          }
           onClose={() => setInfo(null)}
         />
       ) : null}
@@ -188,7 +220,7 @@ export function SellScreen({
  * the dietary tags and allergens, "אזל" / "חסום" with why, and "הוסף לסל" — which is a tap on the tile (the engine's gates
  * and approvals as always).
  */
-export function ItemInfo({ product: p, department, onAdd, onClose }: { product: Product; department: string | null; onAdd(): void; onClose(): void }) {
+export function ItemInfo({ product: p, department, onAdd, onCustomize, onClose }: { product: Product; department: string | null; onAdd(): void; onCustomize?: () => void; onClose(): void }) {
   const state = p.sale === 'blocked' ? T.blockedBadge : p.sale === 'unavailable' ? T.unavailableBadge : p.sale === 'sold_out' ? T.soldOutBadge : null;
   return (
     <div className="t-overlay" role="dialog" aria-modal="true" aria-label={T.itemInfo} onClick={onClose}>
@@ -216,6 +248,12 @@ export function ItemInfo({ product: p, department, onAdd, onClose }: { product: 
         <button type="button" className="t-btn t-btn-primary t-btn-wide" onClick={onAdd}>
           {T.infoAdd}
         </button>
+        {onCustomize ? (
+          // The tile's "+" on the Android till ("התאמה אישית"): the dish's sheet or the meal builder.
+          <button type="button" className="t-btn t-btn-wide" onClick={onCustomize}>
+            {CHOICES_TEXT.customize}
+          </button>
+        ) : null}
         <div className="t-dialog-actions">
           <button type="button" className="t-btn t-btn-ghost" onClick={onClose}>
             {T.infoClose}

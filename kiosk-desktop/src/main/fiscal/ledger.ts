@@ -302,8 +302,11 @@ export function docPaymentMethod(d: Pick<DocDraft, 'cash' | 'card' | 'voucherLeg
 }
 
 /** Whose the tip is: the card's in a split (the card was charged the rest and the tip), the cash's when cash paid it. */
-export function tipMethodOf(d: Pick<DocDraft, 'cash' | 'card' | 'totals'>): 'cash' | 'card' | null {
+export function tipMethodOf(d: Pick<DocDraft, 'cash' | 'card' | 'totals'> & { payments?: DocDraft['payments'] }): 'cash' | 'card' | null {
   if (d.totals.tipAgorot <= 0) return null;
+  // A till's document (its legs): the tip is the money leg's that closed it — a kiosk order's tip taken at the till.
+  const money = (d.payments ?? []).filter((l) => (l.method === 'cash' || l.method === 'card') && l.amountAgorot > 0);
+  if (money.length > 0) return money[money.length - 1].method as 'cash' | 'card';
   if (isSplit(d)) return 'card';
   return d.cash ? 'cash' : 'card';
 }

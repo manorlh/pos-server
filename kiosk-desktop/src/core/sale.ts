@@ -102,6 +102,12 @@ export interface SaleLine {
   /** A credit-note line: the original line it credits (null: a return with no receipt), and what it credits (net). */
   refundOfItemId?: string | null;
   creditAgorot?: number;
+  /**
+   * The till's dish sheet (core/till/choices.ts): "! חשוב" and the diner's allergies (Hebrew names) — the kitchen ticket's
+   * (KitchenTicketDesigns `important` / `allergies`), never a price or a document field.
+   */
+  important?: boolean;
+  allergies?: string[];
 }
 
 /** What a line takes off by hand (the cashier's discount, OTH): never on a credit line. */
