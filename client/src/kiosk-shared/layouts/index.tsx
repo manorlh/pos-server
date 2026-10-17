@@ -12,6 +12,7 @@
  */
 
 import { useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { dishQuickNotesOn } from '@/lib/kioskNotes';
 import { HandHelping } from 'lucide-react';
 import { catalogKindOf, helpFloats, itemViewOf, layoutOf, mealViewOf, type LayoutCatalog } from '@/lib/kioskLayout';
 import { CatalogScreen, ProductSheet, searchedModel, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
@@ -174,7 +175,8 @@ export function LayoutProductSheet(props: SheetProps) {
   if (meal) return <MealSheet m={props.m} product={props.product} meal={meal} onClose={props.onClose} onAdd={props.onAdd} tray={mealViewOf(props.m.cfg) === 'tray'} />;
   // "תהליך פריט": page after page — a page per add-on group the dish has, then its notes (motion.itemFlow = pages).
   const { m } = props;
-  const notes = m.cfg.general.quickNotesEnabled ? (props.quickNotes ?? [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')]) : [];
+  // "הערה בקיוסק" (lib/kioskNotes.ts): the kiosk's switch and the dish's own say.
+  const notes = dishQuickNotesOn(m.cfg, props.product) ? (props.quickNotes ?? [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')]) : [];
   const pages = itemFlowPages(props.groups, notes);
   if (usesItemPages(itemFlowOf(m.cfg), pages)) {
     return (

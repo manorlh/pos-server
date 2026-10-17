@@ -17,6 +17,10 @@ class CategoryBase(BaseModel):
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     # Item-ticket ("שובר") mode — see app/services/item_ticket.py. Null is "off".
     ticket_mode: Optional[TicketMode] = Field(None, alias="ticketMode")
+    # "הערה בקיוסק" for its dishes (app/services/kiosk_notes.py): null inherits the parent's (none: off).
+    kiosk_notes: Optional[bool] = Field(None, alias="kioskNotes")
+    # "בקיוסק: פתיחת חלון" (app/services/kiosk_tap.py): "window" | "direct"; null — as the category / the kiosk.
+    kiosk_open: Optional[Literal["window", "direct"]] = Field(None, alias="kioskOpen")
     # "מחייב אישור מנהל במכירה": every product here and beneath it needs a manager's code at
     # the till and is not on a kiosk (app/services/restricted_items.py).
     requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
@@ -57,6 +61,10 @@ class CategoryUpdate(BaseModel):
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     # Item-ticket ("שובר") mode — see app/services/item_ticket.py. Null is "off".
     ticket_mode: Optional[TicketMode] = Field(None, alias="ticketMode")
+    # "הערה בקיוסק" for its dishes (app/services/kiosk_notes.py): null inherits the parent's (none: off).
+    kiosk_notes: Optional[bool] = Field(None, alias="kioskNotes")
+    # "בקיוסק: פתיחת חלון" (app/services/kiosk_tap.py): "window" | "direct"; null — as the category / the kiosk.
+    kiosk_open: Optional[Literal["window", "direct"]] = Field(None, alias="kioskOpen")
     # "מחייב אישור מנהל במכירה": omitted (or null) — left as it is.
     requires_manager_approval: Optional[bool] = Field(None, alias="requiresManagerApproval")
     is_active: Optional[bool] = Field(None, alias="isActive")
@@ -150,6 +158,9 @@ class CategoryResponse(BaseModel):
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     ticket_mode: Optional[str] = Field(None, alias="ticketMode")
+    # "הערה בקיוסק" for its dishes (app/services/kiosk_notes.py): null inherits the parent's (none: off).
+    kiosk_notes: Optional[bool] = Field(None, alias="kioskNotes")
+    kiosk_open: Optional[str] = Field(None, alias="kioskOpen")
     #: The category's own flag (a parent may restrict it too).
     requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
     is_active: bool = Field(..., alias="isActive")

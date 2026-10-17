@@ -6,6 +6,7 @@
  * network.
  */
 
+import { dishNotesOpen } from '@dash-lib/kioskNotes';
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
 import { browserFacts, displayProfile, kioskDisplay, kioskTargetCssPx } from '@dash-lib/displayProfile';
 import { applyLandscape, landscapeLook, lookColumns } from '@dash-lib/kioskLandscape';
@@ -315,10 +316,17 @@ export function KioskApp({ view }: { view: KioskView }) {
     return kioskCatalogView(view.catalog.categories, products, withMenuOrder(cfg, view.catalog.menu));
   }, [view.catalog, cfg]);
   const required = useCallback((id: string) => (view.catalog.groups[id] ?? []).some((g) => g.min > 0), [view.catalog.groups]);
+  // "הוספה מהירה" no_choices (lib/kioskLayout.ts tapPathOf): any group at all — required or optional — opens the dish.
+  const choices = useCallback((id: string) => (view.catalog.groups[id] ?? []).length > 0, [view.catalog.groups]);
   // quickAdd "always" (the wall): the dishes whose options' defaults answer what they require (never a meal).
   const answered = useCallback(
     (p: KioskView['catalog']['products'][number]) => !p.meal && defaultsLine(p, pGroupsOf(view.catalog.groups[p.id] ?? [])) !== null,
     [view.catalog.groups],
+  );
+  // "הערה בקיוסק" (lib/kioskNotes.ts dishNotesOpen): a dish that offers a note here opens its window on a tap.
+  const notesOpen = useCallback(
+    (p: KioskView['catalog']['products'][number]) => dishNotesOpen(cfg, p, (view.catalog.quickNotes[p.id] ?? []).length),
+    [cfg, view.catalog.quickNotes],
   );
   const catalogImages = useMemo(() => Object.fromEntries(view.catalog.categories.map((c) => [c.id, c.imageUrl])), [view.catalog.categories]);
   const catalogColors = useMemo(() => Object.fromEntries(view.catalog.categories.map((c) => [c.id, c.color ?? null])), [view.catalog.categories]);
@@ -338,11 +346,11 @@ export function KioskApp({ view }: { view: KioskView }) {
           catalogImages,
         ),
         color: categoryRailColor(row.category.id, { categoryImagesFromCatalog: fromCatalog }, catalogColors),
-        products: row.products.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))),
+        products: row.products.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product), notesOpen(x.product), choices(x.product.id))),
       })),
-    [view2, view.catalog.categoryImages, catalogImages, catalogColors, fromCatalog, required, answered],
+    [view2, view.catalog.categoryImages, catalogImages, catalogColors, fromCatalog, required, answered, notesOpen, choices],
   );
-  const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))), [view2, required, answered]);
+  const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product), notesOpen(x.product), choices(x.product.id))), [view2, required, answered, notesOpen, choices]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
   const product = productId && productAt === flow.screen ? (allProducts.find((p) => p.id === productId) ?? null) : null;
   /** A line now added through a window's sheet: it opens no window of its own, the flow's "added" follows. */
@@ -1417,7 +1425,7 @@ function defaultsLineKey(productId: string): string {
   return `${productId}-defaults-${defaultsLineSeq}`;
 }
 
-function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requiredChoice: boolean, defaultsAnswer = false): PProduct {
+function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requiredChoice: boolean, defaultsAnswer = false, notesOn = false, hasChoices = false): PProduct {
   return {
     addPath: kioskAddPath(soldOut, p.meal, requiredChoice),
     defaultsAnswer: requiredChoice && defaultsAnswer,
@@ -1434,6 +1442,12 @@ function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requ
     dietaryTags: p.dietaryTags,
     // "כפתור פרטים" (ⓘ): the window lists them — the button's rule counts them.
     allergens: p.allergens ?? [],
+    // "הערה בקיוסק" (lib/kioskNotes.ts): false — no note on this dish.
+    notesAllowed: p.notesAllowed,
+    // The tap (lib/kioskLayout.ts tapPathOf): its groups, its "בקיוסק: פתיחת חלון", a note it offers here.
+    hasChoices,
+    kioskOpen: p.kioskOpen ?? null,
+    notesOn,
   };
 }
 

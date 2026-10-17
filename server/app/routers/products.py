@@ -469,6 +469,8 @@ def create_product(
         voucher_id=data.voucher_id,
         ticket_mode=item_ticket.normalize(data.ticket_mode),
         ticket_entries=data.ticket_entries,
+        kiosk_notes=data.kiosk_notes,
+        kiosk_open=data.kiosk_open,
         track_stock=data.track_stock,
         is_open_price=data.is_open_price,
         is_weighed=data.is_weighed,
@@ -504,6 +506,11 @@ def create_product(
                 detail="shopPrices needs shopScope on a new product",
             )
         _apply_shop_prices(db, current_user, product, data.shop_prices, active_tenant_id)
+    if data.kiosk_notes is not None or data.kiosk_open is not None:
+        # "הערה בקיוסק" / "בקיוסק: פתיחת חלון" ride the menu block (app/services/kiosk_notes.py, kiosk_tap.py).
+        from app.services import menu as menu_svc
+
+        menu_svc.bump(db, product.tenant_id)
     db.commit()
     db.refresh(product)
     # Tenant-wide notify already covers every shop the scope touched.
@@ -594,8 +601,16 @@ def update_product(
         # Cleaned by the schema; none at all is stored as NULL, like the allergens.
         updates["dietary_tags"] = updates["dietary_tags"] or None
 
+    kiosk_notes_changed = any(
+        k in updates and updates[k] != getattr(product, k) for k in ("kiosk_notes", "kiosk_open")
+    )
     for field, value in updates.items():
         setattr(product, field, value)
+    if kiosk_notes_changed:
+        # "הערה בקיוסק" rides the menu block (app/services/kiosk_notes.py): the next delta pull carries it.
+        from app.services import menu as menu_svc
+
+        menu_svc.bump(db, product.tenant_id)
     # "מופיע ב" (app/services/product_channels.py): sent, it sets `sales_channel` too; a new
     # `sales_channel` alone moves the pos / kiosk part of a product with its own list.
     from app.services import product_channels

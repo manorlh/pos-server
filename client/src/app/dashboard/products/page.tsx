@@ -83,6 +83,7 @@ import {
   ProductChannelSection,
 } from '@/components/dashboard/products/product-channel-section';
 import { AddonRoleBadge } from '@/components/dashboard/products/addon-role-badge';
+import { KioskNotesField, KioskOpenField } from '@/components/dashboard/products/kiosk-notes-field';
 import { ADDON_ROLES, addonRoleOf } from '@/lib/addonRole';
 
 type SkuMode = 'auto' | 'manual';
@@ -793,6 +794,10 @@ export default function ProductsPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{tt('productHint')}</p>
             </div>
+            {/* "הערה בקיוסק" (lib/kioskNotes.ts): the kiosk offers a note on the dish — off unless it or its category allows. */}
+            <KioskNotesField level="product" value={editing.kioskNotes} onChange={(v) => setEditing((p) => ({ ...p, kioskNotes: v }))} />
+            {/* "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts tapPathOf): a tap on the dish at the kiosk. */}
+            <KioskOpenField level="product" value={editing.kioskOpen} onChange={(v) => setEditing((p) => ({ ...p, kioskOpen: v }))} />
             {/* An entry ticket: N entries per unit, each its own printed ticket. */}
             <div className="space-y-2 rounded-md border p-3">
               <div className="flex items-center justify-between gap-4">

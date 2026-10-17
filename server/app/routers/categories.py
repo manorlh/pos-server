@@ -245,12 +245,19 @@ def create_category(
         parent_id=data.parent_id,
         voucher_id=data.voucher_id,
         ticket_mode=item_ticket.normalize(data.ticket_mode),
+        kiosk_notes=data.kiosk_notes,
+        kiosk_open=data.kiosk_open,
         # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py).
         requires_manager_approval=data.requires_manager_approval,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )
     db.add(category)
+    if data.kiosk_notes is not None or data.kiosk_open is not None:
+        # "הערה בקיוסק" / "בקיוסק: פתיחת חלון" ride the menu block (app/services/kiosk_notes.py, kiosk_tap.py).
+        from app.services import menu as menu_svc
+
+        menu_svc.bump(db, category.tenant_id)
     db.commit()
     db.refresh(category)
     _trigger_catalog_notify(db, category)
@@ -362,8 +369,16 @@ def update_category(
     # mode off each product — so a change has to reach them through delta sync too.
     ticket_changed = "ticket_mode" in patch and patch["ticket_mode"] != category.ticket_mode
 
+    kiosk_notes_changed = any(
+        k in patch and patch[k] != getattr(category, k) for k in ("kiosk_notes", "kiosk_open")
+    )
     for field, value in patch.items():
         setattr(category, field, value)
+    if kiosk_notes_changed:
+        # "הערה בקיוסק" rides the menu block (app/services/kiosk_notes.py): the next delta pull carries it.
+        from app.services import menu as menu_svc
+
+        menu_svc.bump(db, category.tenant_id)
 
     # Products inherit the category voucher when they have none of their own. Their own
     # updated_at is unchanged by a category edit, so bump it to keep delta sync correct.

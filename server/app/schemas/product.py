@@ -178,6 +178,10 @@ class ProductBase(BaseModel):
     # as null) uses the category's mode.
     ticket_mode: Optional[ProductTicketMode] = Field(None, alias="ticketMode")
     ticket_entries: Optional[int] = Field(None, ge=1, le=50, alias="ticketEntries")
+    # "הערה בקיוסק" (app/services/kiosk_notes.py): true / false; null inherits the category's.
+    kiosk_notes: Optional[bool] = Field(None, alias="kioskNotes")
+    # "בקיוסק: פתיחת חלון" (app/services/kiosk_tap.py): "window" | "direct"; null — as the category / the kiosk.
+    kiosk_open: Optional[Literal["window", "direct"]] = Field(None, alias="kioskOpen")
     track_stock: bool = Field(False, alias="trackStock")
     # "General item": the cashier types the amount at the till, so `price` is only the
     # suggestion the till pre-fills.
@@ -280,6 +284,10 @@ class ProductUpdate(BaseModel):
     # as null) uses the category's mode.
     ticket_mode: Optional[ProductTicketMode] = Field(None, alias="ticketMode")
     ticket_entries: Optional[int] = Field(None, ge=1, le=50, alias="ticketEntries")
+    # "הערה בקיוסק" (app/services/kiosk_notes.py): true / false; null inherits the category's.
+    kiosk_notes: Optional[bool] = Field(None, alias="kioskNotes")
+    # "בקיוסק: פתיחת חלון" (app/services/kiosk_tap.py): "window" | "direct"; null — as the category / the kiosk.
+    kiosk_open: Optional[Literal["window", "direct"]] = Field(None, alias="kioskOpen")
     track_stock: Optional[bool] = Field(None, alias="trackStock")
     is_open_price: Optional[bool] = Field(None, alias="isOpenPrice")
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
@@ -385,6 +393,9 @@ class ProductResponse(BaseModel):
     # Own value; null inherits the category's.
     ticket_mode: Optional[str] = Field(None, alias="ticketMode")
     ticket_entries: Optional[int] = Field(None, alias="ticketEntries")
+    # "הערה בקיוסק" (app/services/kiosk_notes.py): true / false; null inherits the category's.
+    kiosk_notes: Optional[bool] = Field(None, alias="kioskNotes")
+    kiosk_open: Optional[str] = Field(None, alias="kioskOpen")
     track_stock: bool = Field(False, alias="trackStock")
     is_open_price: bool = Field(False, alias="isOpenPrice")
     is_weighed: bool = Field(False, alias="isWeighed")

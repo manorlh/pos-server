@@ -32,6 +32,8 @@ import type { MenuBlock } from '@dash-lib/menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import { addonOnlyRow, sellableOnKiosk } from '@dash-lib/kioskSellable';
 import { noteImagesOf, optionImagesOf } from '@dash-lib/kioskItemFlow';
+import { kioskNotesAllowed } from '@dash-lib/kioskNotes';
+import { kioskOpenFor } from '@dash-lib/kioskLayout';
 import { decideSoldOut, itemBlocksOf, kioskSoldOut, rowAvailable, type SaleState, type SoldOutState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
@@ -127,6 +129,10 @@ export interface KProduct {
   trackStock: boolean;
   /** A meal (menu.meals): its window opens, never the card's quick "+". */
   meal: boolean;
+  /** "הערה בקיוסק" (client lib/kioskNotes.ts): the kiosk offers a note on it (with its switches on). */
+  notesAllowed?: boolean;
+  /** "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor): null — as the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
   /**
    * The till's catalog only (`buildKioskCatalog` channel `till`): "מחייב אישור מנהל במכירה" (itself or its
    * category) — the till sells it to a user who may (SELL_RESTRICTED_ITEMS), never a kiosk.
@@ -344,8 +350,12 @@ export function buildKioskCatalog(
     const ids = menuGroupIdsFor(links, [p.id], p.categoryId, parentOf);
     const list = ids.map((id) => groupsById.get(id)).filter((g): g is KGroup => !!g && g.options.length > 0);
     if (list.length > 0) groups[p.id] = list;
+    // "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor): the dish's own, inherited from its category.
+    p.kioskOpen = kioskOpenFor(menu.kioskOpen, [p.id], p.categoryId, parentOf);
     // Menu.notesFor: its own chips, else the nearest category's up the tree; then the shop's for every dish.
-    const q = menuNotesFor(notes, [p.id], p.categoryId, parentOf);
+    // "הערה בקיוסק" (client lib/kioskNotes.ts): the dish's own, else its category's up the tree, else none.
+    p.notesAllowed = kioskNotesAllowed(menu.kioskNotes, [p.id], p.categoryId, parentOf);
+    const q = p.notesAllowed ? menuNotesFor(notes, [p.id], p.categoryId, parentOf) : [];
     if (q.length > 0) quickNotes[p.id] = q;
   }
   const upsells = (Array.isArray(menu.upsells) ? (menu.upsells as Row[]) : []).map((u) => {
