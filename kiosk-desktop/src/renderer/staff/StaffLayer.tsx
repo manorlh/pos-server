@@ -30,6 +30,7 @@ import { t } from '../i18n';
 import { DESKTOP_EXIT_LABEL, DesktopExitButton, DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
 import { PERMISSION_LABEL } from '../../core/desktopExit';
 import { WORK_TEXT } from '../../core/workMode';
+import { DEMO_TEXT, demoBridge } from '../../core/demoMode';
 import { WorkModePanel } from './WorkModePanel';
 import { KioskZPanel } from './KioskZPanel';
 import { KioskHistoryPanel } from './KioskHistoryPanel';
@@ -153,6 +154,8 @@ function AdminScreen({
   const [info, setInfo] = useState<AdminInfo | null>(null);
   const [note, show] = useNote();
   const [exiting, setExiting] = useState(false);
+  /** The installed app's "מצב הדגמה" (null in the real app and in the web demo). */
+  const demo = demoBridge();
   /** "מצב עבודה": the manager's code pad, when the switch needs one (to the till, or back to the kiosk). */
   const [workPad, setWorkPad] = useState<'none' | 'till' | 'kiosk'>('none');
   const [workRefusal, setWorkRefusal] = useState<{ code: string; text: string } | null>(null);
@@ -189,6 +192,17 @@ function AdminScreen({
   return (
     <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>
       <NoteBar m={m} note={note} />
+      {demo ? (
+        // "מצב הדגמה" of the installed app (core/demoMode.ts): out of it — a restart at the real, unpaired pairing screen.
+        <Panel m={m} title={DEMO_TEXT.ribbon}>
+          <div>{DEMO_TEXT.exitBody}</div>
+          <div className="flex flex-wrap gap-2 pt-1" data-demo-exit>
+            <Btn m={m} danger onClick={() => demo.exit()}>
+              {DEMO_TEXT.exit}
+            </Btn>
+          </div>
+        </Panel>
+      ) : null}
       {info.workMode ? (
         <WorkModePanel
           m={m}

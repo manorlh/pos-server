@@ -14,6 +14,7 @@ import { parseSellAllTab } from '../../core/till/sellAllTab';
 import { job, type MonoBitmap } from '../../core/escpos';
 import { demoDesignConfig, designState, resolveTillDesign, tendersOf, themeOf, withTotal, type TillDesignConfig } from '../../core/till/tillDesign';
 import { bytesToBase64 } from './bytes';
+import { DEMO_TEXT, demoCardDelayMs, type DemoCardOutcome } from '../../core/demoMode';
 import { demoCatalog } from './catalogDemo';
 import {
   engineError,
@@ -56,6 +57,13 @@ export interface MockEngineOptions {
   /** The drawer's printer (`hw.drawer`); null: no drawer. */
   drawerTarget?: string | null;
   cardDelayMs?: number;
+  /**
+   * What the simulated terminal answers (the installed app's demo ribbon, core/demoMode.ts): approved (default),
+   * declined, or no answer in time — the pending leg is dropped and the tender stays, as the real engine's decline.
+   */
+  cardOutcome?: () => DemoCardOutcome;
+  /** "מצב עבודה" switched (`mode.switch`): the installed app's demo shows the other role's screens. */
+  onModeSwitch?: (to: DeviceRoleName) => void;
   role?: DeviceRoleName;
   rolesAllowed?: DeviceRoleName[];
   now?: () => number;
@@ -472,16 +480,26 @@ export class MockTillEngine implements EngineEndpoint {
     c.phase = 'card_waiting';
     this.st.health.terminal = 'busy';
     this.dirty = true;
+    const outcome = this.o.cardOutcome?.() ?? 'approve';
     this.schedule(() => {
       const leg = this.st.checkout.legs.find((l) => l.method === 'card' && l.status === 'pending');
       if (!leg) return;
+      if (outcome !== 'approve') {
+        this.st.checkout.legs = this.st.checkout.legs.filter((l) => l !== leg);
+        this.st.checkout.phase = 'tender';
+        this.st.health.terminal = 'ok';
+        this.dirty = true;
+        this.commit();
+        this.emit('toast', { tone: 'error', text: outcome === 'decline' ? DEMO_TEXT.declined : DEMO_TEXT.timedOut });
+        return;
+      }
       leg.status = 'approved';
       this.st.checkout.paidAgorot += leg.amountAgorot;
       this.st.checkout.phase = 'tender';
       this.st.health.terminal = 'ok';
       this.settle();
       this.commit();
-    }, this.o.cardDelayMs ?? 1500);
+    }, this.o.cardDelayMs ?? (outcome === 'approve' ? 1500 : demoCardDelayMs(outcome)));
     return undefined;
   }
 
@@ -565,6 +583,7 @@ export class MockTillEngine implements EngineEndpoint {
     if (!fiscal && this.st.shift.open) refuse('role_switch_open_shift');
     this.st.mode = { ...this.st.mode, current: to };
     this.dirty = true;
+    this.o.onModeSwitch?.(to);
     return undefined;
   }
 

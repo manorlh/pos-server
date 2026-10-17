@@ -50,6 +50,8 @@ import type { CashStaffAction } from '../shared/cash';
 import { cashmagLocalOf } from './kiosk/cashmagPay';
 import type { WorkerLink } from './cash/paylinkDevice';
 import type { WorkerReply } from './cash/paylinkCore';
+import { demoRelaunchArgs, demoRoleOf, demoStartAllowed, demoUserDataOf, isDemoRole, type DemoRole } from '../core/demoMode';
+import { startDemoShell, type DemoShell } from './demo/demoShell';
 
 const isDev = process.argv.includes('--dev');
 const windowedArg = process.argv.includes('--windowed') || isDev;
@@ -58,9 +60,27 @@ let windowed = windowedArg;
 // The data folder is pinned (shell/identity.ts): the paired machine, its counters and Zs live there.
 app.setPath('userData', path.join(app.getPath('appData'), DATA_DIR_NAME));
 app.setAppUserModelId(APP_ID);
+/** The real data folder: the PC's own settings (kiosk.json) are read from it — in a demo too, never written. */
+const realUserData = app.getPath('userData');
+
+/**
+ * "מצב הדגמה" (core/demoMode.ts, demo/demoShell.ts): `--demo=kiosk|till`, the pairing screen's restart. The single
+ * instance is the real app's (a second start finds the demo, not a second app), then the data folder moves to
+ * `<userData>\demo` before anything opens one — the real machine, its credentials and its data are never read.
+ */
+const demoRole = demoRoleOf(process.argv);
+const demoLock = demoRole ? app.requestSingleInstanceLock() : true;
+if (demoRole) app.setPath('userData', demoUserDataOf(realUserData, path.join));
+let demoShell: DemoShell | null = null;
+
+/** A restart as the real app (`null`) or as a demo of `role` — the same command line otherwise. */
+function relaunchAs(role: DemoRole | null) {
+  app.relaunch({ args: demoRelaunchArgs(process.argv.slice(1), role) });
+  app.exit(0);
+}
 
 /** "גשר לדפדפן" (shell/mode.ts): a tray program for a browser kiosk / KDS / board on this PC. */
-const shellMode = shellModeOf({
+const shellMode = demoRole ? 'app' : shellModeOf({
   argv: process.argv,
   markerExists: existsSync(path.join(app.getPath('userData'), BRIDGE_MARKER)),
   config: (() => {
@@ -105,7 +125,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (demoRole ? !demoLock : !app.requestSingleInstanceLock()) app.quit();
 
 const MIME: Record<string, string> = {
   html: 'text/html; charset=utf-8',
@@ -202,7 +222,7 @@ function installConfig(): {
   cashmag?: unknown;
 } {
   try {
-    return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
+    return JSON.parse(readFileSync(path.join(realUserData, 'kiosk.json'), 'utf8'));
   } catch {
     return {};
   }
@@ -269,7 +289,8 @@ function applyZoom() {
   if (Math.abs(main.webContents.getZoomFactor() - z) > 1e-6) main.webContents.setZoomFactor(z);
 }
 
-function createMain() {
+/** The full-screen window; `preload`/`url` other than the app's own only for "מצב הדגמה" (it loads its own page). */
+function createMain(o: { preload?: string; url?: string | null } = {}): BrowserWindow {
   const display = screen.getPrimaryDisplay();
   main = new BrowserWindow({
     x: display.bounds.x,
@@ -284,7 +305,7 @@ function createMain() {
     title: SHELL_NAME,
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'index.js'),
+      preload: o.preload ?? path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
       sandbox: true,
       backgroundThrottling: false,
@@ -313,7 +334,8 @@ function createMain() {
     // Never a dead screen: the screens come back at once from local data.
     setTimeout(() => main?.reload(), 500);
   });
-  void main.loadURL('kiosk://app/index.html');
+  if (o.url !== null) void main.loadURL(o.url ?? 'kiosk://app/index.html');
+  return main;
 }
 
 /** "חזרה לקיוסק" next to the clock while the kiosk is out on the desktop. */
@@ -395,6 +417,14 @@ function bridge(svc: KioskService) {
   ipcMain.handle('shell:cashAction', (_e, a: CashStaffAction) => roles?.cashAction(a) ?? { ok: false, message: 'אין שרת מזומן' });
   // "יציאה לשולחן העבודה": the PIN and the rules in the service (core/desktopExit.ts), the window in shell/desktopMode.ts.
   ipcMain.handle('shell:desktopExit', (_e, pin: unknown) => svc.desktopExit(typeof pin === 'string' ? pin : '', roles?.activity() ?? svc.activity()));
+  // "מצב הדגמה — קופה / קיוסק" on the pairing screen (an unpaired device only): a restart as the demo (core/demoMode.ts).
+  ipcMain.handle('shell:startDemo', (_e, role: unknown) => {
+    if (!isDemoRole(role)) return { ok: false, message: 'תפקיד לא מוכר' };
+    const allowed = demoStartAllowed(svc.paired);
+    if (!allowed.ok) return allowed;
+    setTimeout(() => relaunchAs(role), 200);
+    return { ok: true };
+  });
   // "הפעלה כגשר לדפדפן" on the pairing screen (an unpaired device only): the marker, then a restart in bridge mode.
   ipcMain.handle('shell:becomeBridge', () => {
     if (svc.paired) return { ok: false, message: 'המכשיר מצומד — אי אפשר להפוך אותו לגשר' };
@@ -468,6 +498,22 @@ function secretBoxOf() {
 
 void app.whenReady().then(async () => {
   const install = installConfig();
+  if (demoRole) {
+    // "מצב הדגמה": the screens and their demos only — no service, no cloud, no updater, no terminal (demo/demoShell.ts).
+    windowed = windowedArg || install.windowed === true;
+    registerKioskProtocol();
+    powerSaveBlocker.start('prevent-display-sleep');
+    demoShell = startDemoShell({
+      role: demoRole,
+      createWindow: (preload) => createMain({ preload, url: null }),
+      preload: path.join(__dirname, '..', 'preload', 'demo.js'),
+      builtInBundleDir: app.isPackaged ? path.join(process.resourcesPath, 'app-bundle') : path.join(__dirname, '..', 'app-bundle'),
+      isDev,
+      relaunch: relaunchAs,
+      log: (m) => console.log(`[shell] ${m}`),
+    });
+    return;
+  }
   if (shellMode === 'bridge') {
     // "גשר לדפדפן": no kiosk window — the tray, the local API, the hidden print window when printing.
     registerKioskProtocol();
@@ -684,6 +730,7 @@ app.on('second-instance', (_e, argv) => {
 app.on('window-all-closed', () => {
   // The bridge lives in the tray: its window is hidden, never the end of the app.
   if (shellMode === 'bridge') return;
+  demoShell?.stop();
   desktop?.stop();
   hideReturnTray();
   updater?.stop();

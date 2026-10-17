@@ -31,7 +31,8 @@ const MIME: Record<string, string> = {
   woff2: 'font/woff2',
 };
 
-interface ViewLike {
+/** A WebContentsView (Electron 44) or a BrowserView (Electron 22) — the demo's till view too (main/demo/demoShell.ts). */
+export interface ViewLike {
   webContents: Electron.WebContents;
   setBounds(b: { x: number; y: number; width: number; height: number }): void;
 }
@@ -60,7 +61,7 @@ export interface TillElectron {
   stop(): void;
 }
 
-function makeView(preload: string, isDev: boolean): ViewLike {
+export function makeView(preload: string, isDev: boolean): ViewLike {
   const webPreferences = { preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, devTools: isDev };
   const e = electron as unknown as {
     WebContentsView?: new (o: { webPreferences: typeof webPreferences }) => ViewLike;
@@ -71,13 +72,13 @@ function makeView(preload: string, isDev: boolean): ViewLike {
   throw new Error('no view class in this Electron');
 }
 
-function attach(win: BrowserWindow, view: ViewLike) {
+export function attachView(win: BrowserWindow, view: ViewLike) {
   const w = win as unknown as { contentView?: { addChildView(v: ViewLike): void }; setBrowserView?(v: ViewLike): void };
   if (w.contentView?.addChildView) w.contentView.addChildView(view);
   else w.setBrowserView?.(view);
 }
 
-function detach(win: BrowserWindow, view: ViewLike) {
+export function detachView(win: BrowserWindow, view: ViewLike) {
   const w = win as unknown as { contentView?: { removeChildView(v: ViewLike): void }; setBrowserView?(v: ViewLike | null): void };
   if (w.contentView?.removeChildView) w.contentView.removeChildView(view);
   else w.setBrowserView?.(null);
@@ -156,7 +157,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
       return;
     }
     view = makeView(o.preload, o.isDev);
-    attach(win, view);
+    attachView(win, view);
     fit();
     win.on('resize', fit);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -187,7 +188,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     if (!view) return;
     if (win) {
       win.removeListener('resize', fit);
-      detach(win, view);
+      detachView(win, view);
     }
     // Electron 22 (Windows 7) has no webContents.close(): destroy() there.
     const wc = view.webContents as unknown as { close?(): void; destroy?(): void };

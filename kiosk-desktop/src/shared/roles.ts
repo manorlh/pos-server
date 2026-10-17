@@ -143,6 +143,8 @@ export interface ShellBridge {
   activity(): void;
   /** "הפעלה כגשר לדפדפן" (an unpaired device): restarts as the bridge (main/shell/mode.ts). */
   becomeBridge?(): Promise<{ ok: boolean; message?: string }>;
+  /** "מצב הדגמה — קופה / קיוסק" (an unpaired device): restarts as the demo of that role (core/demoMode.ts). */
+  startDemo?(role: 'kiosk' | 'till'): Promise<{ ok: boolean; message?: string }>;
   /** "יציאה לשולחן העבודה": a manager's PIN (DESKTOP_EXIT, checked offline) → out of full screen. */
   desktopExit?(pin: string): Promise<DesktopExitResult>;
   /** The cash host's staff screen: its view, a manager's code, an action. */

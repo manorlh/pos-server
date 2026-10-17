@@ -8,6 +8,7 @@
  */
 
 import type { R2mAppBridge } from '../../shared/till/appBridge';
+import { demoBridge, isDemoRole } from '../../core/demoMode';
 import { createBrowserHost } from '../host/browser/browserHost';
 import { browserEnv } from '../host/caps';
 import { createElectronHost } from '../host/electron';
@@ -24,8 +25,24 @@ export async function pickHost(): Promise<TillHost> {
     return createElectronHost(bridge, { ...info, device: { ...info.device, lite: liteFromPage(info.device.lite) } });
   }
   const params = new URLSearchParams(window.location.search);
+  // The installed app's "מצב הדגמה" (core/demoMode.ts, main/demo/demoShell.ts): a combined licence (kiosk ↔ till), the
+  // ribbon's card answer, and the shell's manager menu from the till's corner — the engine is still the mock.
+  const demo = demoBridge();
   return createBrowserHost({
-    engine: { kind: 'demo', terminal: params.get('terminal') === '1' },
+    engine: {
+      kind: 'demo',
+      terminal: params.get('terminal') === '1',
+      ...(demo
+        ? {
+            rolesAllowed: ['till', 'kiosk'],
+            cardOutcome: () => demo.cardOutcome(),
+            onModeSwitch: (to) => {
+              if (isDemoRole(to)) demo.switchTo(to);
+            },
+          }
+        : {}),
+    },
+    ...(demo ? { openAdmin: () => demo.openAdmin('admin'), openTechnician: () => demo.openAdmin('technician') } : {}),
     env: browserEnv(navigator as unknown as Parameters<typeof browserEnv>[0], window as unknown as Parameters<typeof browserEnv>[1]),
     lite: liteFromPage(),
     onIdleReport: (idle, busy) => window.dispatchEvent(new CustomEvent(SALE_STATE_EVENT, { detail: { idle, busy } })),

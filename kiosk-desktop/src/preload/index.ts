@@ -58,6 +58,7 @@ const shellApi: ShellBridge = {
   kdsAction: (a) => ipcRenderer.invoke('shell:kdsAction', a),
   activity: () => ipcRenderer.send('shell:activity'),
   becomeBridge: () => ipcRenderer.invoke('shell:becomeBridge'),
+  startDemo: (role) => ipcRenderer.invoke('shell:startDemo', role),
   desktopExit: (pin) => ipcRenderer.invoke('shell:desktopExit', pin),
   cash: () => ipcRenderer.invoke('shell:cash'),
   cashUnlock: (pin) => ipcRenderer.invoke('shell:cashUnlock', pin),
