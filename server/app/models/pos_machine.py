@@ -576,6 +576,12 @@ class POSMachine(Base):
     #: What the predecessor still owed when the device was re-paired: its open shift, the
     #: documents it last reported unsent, its counters (app/services/document_filing.py).
     repair_handover = Column(JSONB, nullable=True)
+    # ── "לא מצומד — ממתין לצימוד מחדש" (P:/specs/foreign-records-upload.md §5.1) ──
+    #: The device said it unpaired (`POST /sync/{m}/unpaired`): when, by whom (its user's name), and
+    #: {reason, pending: {kind: count}, deviceInfo}. Cleared at the machine's next pairing.
+    unpaired_at = Column(DateTime(timezone=True), nullable=True)
+    unpaired_by = Column(String(200), nullable=True)
+    unpaired_info = Column(JSON, nullable=True)
     #: Corrections to documents already in a Z (a re-push with other fiscal content),
     #: waiting for this till's next Z, which carries each as an adjustment (§1.2-amended).
     pending_z_adjustments = Column(JSONB, nullable=True)

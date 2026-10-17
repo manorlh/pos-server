@@ -23,7 +23,10 @@ import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { handleScheme, textReply, type SchemeReply, type SchemeRequest } from './shell/schemeHandler';
+import { APP_BUILD } from './appBuild';
+import { nativeImageVariantMaker } from './media/nativeVariant';
+import { gpuDecision, gpuSettingOf, recentGpuCrashes, updatePlatformOf } from '../core/appBuild';
 import { KioskService } from './service';
 import type { PageRenderer } from './printer/printQueue';
 import { UpdateManager } from './update/updater';
@@ -76,9 +79,28 @@ protocol.registerSchemesAsPrivileged([
   APP_SCHEME,
 ]);
 
-// Smooth: GPU raster, no throttling, autoplaying videos.
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
+// Smooth: GPU raster, no throttling, autoplaying videos. The Windows 7 build leaves the GPU to Chromium's blocklist
+// (a J1900's old drivers → software compositing) and turns it off after GPU crashes (core/appBuild.ts `gpuDecision`).
+const gpuCrashFile = path.join(app.getPath('userData'), 'gpu-crashes.json');
+const gpuCrashes = (() => {
+  try {
+    return recentGpuCrashes(JSON.parse(readFileSync(gpuCrashFile, 'utf8')), Date.now());
+  } catch {
+    return [];
+  }
+})();
+const gpu = gpuDecision({ build: APP_BUILD, setting: gpuSettingOf(installConfig().hardwareAcceleration), recentCrashes: gpuCrashes.length });
+if (gpu.disable) app.disableHardwareAcceleration();
+for (const sw of gpu.switches) app.commandLine.appendSwitch(sw);
+if (APP_BUILD !== 'standard') console.log(`[shell] build ${APP_BUILD} on ${os.release()}: gpu ${gpu.disable ? 'off' : 'on'} (${gpu.reason})`);
+app.on('child-process-gone', (_e, d) => {
+  if (d.type !== 'GPU' || d.reason === 'clean-exit') return;
+  try {
+    writeFileSync(gpuCrashFile, JSON.stringify([...recentGpuCrashes(gpuCrashes, Date.now()), Date.now()]));
+  } catch {
+    /* a read-only profile: the next start just does not know */
+  }
+});
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -111,21 +133,21 @@ function mimeOf(file: string): string {
   return MIME[path.extname(file).slice(1).toLowerCase()] ?? 'application/octet-stream';
 }
 
-/** A file as a Response, honouring a byte range (video seeking). */
-function fileResponse(file: string, request: Request, cache: string): Response {
+/** A file as the scheme's reply, honouring a byte range (video seeking). */
+function fileResponse(file: string, request: SchemeRequest, cache: string): SchemeReply {
   const size = statSync(file).size;
   const range = /bytes=(\d*)-(\d*)/.exec(request.headers.get('range') ?? '');
   const headers: Record<string, string> = { 'Content-Type': mimeOf(file), 'Accept-Ranges': 'bytes', 'Cache-Control': cache };
   if (range) {
     const start = range[1] ? Number(range[1]) : 0;
     const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
-    if (start >= size || end < start) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+    if (start >= size || end < start) return { status: 416, headers: { 'Content-Range': `bytes */${size}` }, body: null };
     headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
     headers['Content-Length'] = String(end - start + 1);
-    return new Response(Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream, { status: 206, headers });
+    return { status: 206, headers, body: createReadStream(file, { start, end }) };
   }
   headers['Content-Length'] = String(size);
-  return new Response(Readable.toWeb(createReadStream(file)) as ReadableStream, { status: 200, headers });
+  return { status: 200, headers, body: createReadStream(file) };
 }
 
 let service: KioskService | null = null;
@@ -171,6 +193,8 @@ function installConfig(): {
   desktopIdleReturnMinutes?: number;
   /** "שרת מזומן": the LAN API's port (default 47630, core/cash/lanProtocol.ts). */
   cashPort?: number;
+  /** "auto" (default) / "on" / "off" — off = software rendering (core/appBuild.ts `gpuDecision`; old PCs, Windows 7). */
+  hardwareAcceleration?: unknown;
   /**
    * CashMag (P:/specs/cashmag-windows.md §2): this kiosk's own server address / name / user code over the cloud's,
    * and function names — { "cashmag": { "host": "192.168.1.40", "port": 65000, "terminal": "קיוסק 1" } }.
@@ -332,6 +356,7 @@ function bridge(svc: KioskService) {
   svc.on('toast', (t) => send('kiosk:toast', t));
   ipcMain.handle('kiosk:bootstrap', () => svc.view());
   ipcMain.handle('kiosk:pair', (_e, input) => svc.pair(input));
+  ipcMain.handle('kiosk:pairingScreen', (_e, a) => svc.pairingScreen(a ?? { type: 'view' }));
   ipcMain.on('kiosk:reportFlow', (_e, input) => svc.reportFlow(input));
   ipcMain.on('kiosk:funnel', (_e, events) => svc.funnelEvents(events));
   ipcMain.handle('kiosk:battery', (_e, reading) => svc.battery(reading));
@@ -394,21 +419,22 @@ function bridge(svc: KioskService) {
 let mediaFile: (name: string) => string | null = (name) => service?.media.resolveFile(name) ?? null;
 
 function registerKioskProtocol() {
-  protocol.handle('kiosk', (request) => {
+  // `protocol.handle` on Electron 44; Electron 22 (the Windows 7 build) has only stream protocols (shell/schemeHandler.ts).
+  handleScheme(protocol, 'kiosk', (request) => {
     const url = new URL(request.url);
     if (url.host === 'media') {
       const file = mediaFile(decodeURIComponent(url.pathname.slice(1)));
-      if (!file) return new Response('not found', { status: 404 });
+      if (!file) return textReply(404, 'not found');
       return fileResponse(file, request, 'public, max-age=31536000, immutable');
     }
     if (url.host === 'app') {
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
       const file = path.normalize(path.join(rendererDir(), rel));
-      if (!file.startsWith(rendererDir()) || !existsSync(file)) return new Response('not found', { status: 404 });
+      if (!file.startsWith(rendererDir()) || !existsSync(file)) return textReply(404, 'not found');
       return fileResponse(file, request, 'no-cache');
     }
-    return new Response('not found', { status: 404 });
-  });
+    return textReply(404, 'not found');
+  }, (m) => console.log(`[shell] ${m}`));
 }
 
 /** One PayLink unit's utility process (the vendor's DLL never loads in the main process). */
@@ -427,6 +453,8 @@ function deviceInfoOf(model: string): Record<string, string> {
     model,
     manufacturer: os.hostname(),
     platform: 'windows',
+    // "win7": the Windows 7 build — the cloud lets it pair only as a till and sends it `windows7` releases.
+    ...(APP_BUILD === 'win7' ? { appBuild: 'win7' } : {}),
     serial: KioskService.deviceSerial(`${os.hostname()}|${os.userInfo().username}|${os.cpus()[0]?.model ?? ''}`),
     firmware_build: `${os.type()} ${os.release()}`,
   };
@@ -497,6 +525,8 @@ void app.whenReady().then(async () => {
     dataDir,
     appVersion: appVersion(),
     deviceInfo: deviceInfoOf('Windows kiosk'),
+    // The Windows 7 build has no sharp: picture variants through Electron's nativeImage (media/nativeVariant.ts).
+    ...(APP_BUILD === 'win7' ? { variantMaker: nativeImageVariantMaker(nativeImage) } : {}),
     secretBox: secretBoxOf(),
     // "שלח לוגים לתמיכה" / "יומן אפליקציה" on the technician's screen.
     logs: rollingLog,
@@ -552,6 +582,8 @@ void app.whenReady().then(async () => {
       spawn(file, args, { detached: true, stdio: 'ignore', windowsHide: true }).on('error', (e) => console.log(`[update] installer: ${e.message}`)).unref();
     },
     quit: () => app.quit(),
+    // The Windows 7 build asks for `windows7` releases (never an Electron 44 installer) — `windows` once the PC runs Windows 10+.
+    platform: updatePlatformOf(APP_BUILD, os.release()),
     log: (m) => console.log(`[update] ${m}`),
   });
   roles = new RoleManager(svc, () => updater!.view(), (m) => console.log(`[shell] ${m}`), {

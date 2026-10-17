@@ -120,7 +120,9 @@ import {
   capabilitiesOf,
   modelNeeded,
   pairingRequestBody,
+  platformOfChoice,
   platformsFor,
+  WINDOWS7_CHOICE,
   roleNeedsShop,
   type DevicePlatform,
   type DeviceRole,
@@ -207,6 +209,8 @@ export default function MachinesPage() {
   const [pairTerminalState, setPairTerminal] = useState<{ role: DeviceRole | ''; draft: TerminalDraft } | null>(null);
   /** Android unless chosen: a Windows install cannot redeem an Android code, nor back. */
   const [pairPlatform, setPairPlatform] = useState<DevicePlatform>('android');
+  /** "Windows 7 (קופה)" (P:/specs/windows7-till.md): a Windows till for the Windows 7 build — till only, "קופה בלבד". */
+  const [pairWin7, setPairWin7] = useState(false);
   /** A KDS's screen (kind, stations) / the board's name: made as it pairs. */
   const [pairKds, setPairKds] = useState<KdsScreenDraft>(EMPTY_KDS_SCREEN);
   /** "מסך לקוח": the till it mirrors ('' = chosen later on the customer-display page). */
@@ -459,6 +463,7 @@ export default function MachinesPage() {
     setPairKiosk(EMPTY_KIOSK_DRAFT);
     setPairTerminal(null);
     setPairPlatform('android');
+    setPairWin7(false);
     setPairKds(EMPTY_KDS_SCREEN);
     setPairMirrorTill('');
     setPairWorkConfig(EMPTY_WORK_CONFIG);
@@ -505,6 +510,7 @@ export default function MachinesPage() {
     shopId: pairShopId,
     areaId: pairAreaId,
     platform: pairPlatform,
+    windows7: pairWin7,
     kds: pairKds,
     mirrorTillId: pairMirrorTill,
   };
@@ -1165,6 +1171,8 @@ export default function MachinesPage() {
                     setPairWorkConfig(EMPTY_WORK_CONFIG);
                     // The browser runs a kiosk, a KDS or a board — never a till; a cash server is Windows only.
                     if (!platformsFor(role).includes(pairPlatform)) setPairPlatform(platformsFor(role)[0] ?? 'android');
+                    // "Windows 7 (קופה)" is a till's only.
+                    if (role !== 'till') setPairWin7(false);
                   }}
                 />
                 {pairIsDisplay ? (
@@ -1189,8 +1197,10 @@ export default function MachinesPage() {
                   <Label>{t('license.label')}</Label>
                   <DeviceLicensePicker
                     role={pairDeviceRole}
-                    value={pairingLicenseOf(pairDeviceRole, pairLicense) ?? ''}
+                    value={pairWin7 ? 'till' : pairingLicenseOf(pairDeviceRole, pairLicense) ?? ''}
                     onChange={setPairLicense}
+                    // Windows 7 runs the till only: "קופה בלבד", nothing else.
+                    options={pairWin7 ? ['till'] : undefined}
                   />
                   <p className="text-xs text-muted-foreground">{t('license.hint')}</p>
                 </div>
@@ -1198,14 +1208,25 @@ export default function MachinesPage() {
               <div className="space-y-2">
                 <Label>{t('deviceRole.platform')}</Label>
                 <DevicePlatformPicker
-                  value={pairPlatform}
-                  onChange={(platform) => {
-                    setPairPlatform(platform);
+                  value={pairWin7 ? WINDOWS7_CHOICE : pairPlatform}
+                  onChange={(choice) => {
+                    setPairPlatform(platformOfChoice(choice));
+                    setPairWin7(choice === WINDOWS7_CHOICE);
+                    // Windows 7 is a till only (role and license fixed).
+                    if (choice === WINDOWS7_CHOICE) {
+                      setPairDeviceRole('till');
+                      setPairLicense('till');
+                    }
                     setPairWorkConfig(EMPTY_WORK_CONFIG);
                   }}
                   role={pairDeviceRole}
                 />
                 <p className="text-xs text-muted-foreground">{t('deviceRole.platformHint')}</p>
+                {pairWin7 ? (
+                  <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                    {t('deviceRole.windows7Note')}
+                  </p>
+                ) : null}
               </div>
               {modelNeeded({ platform: pairPlatform }) ? (
                 <div className="space-y-2">
@@ -1430,7 +1451,7 @@ export default function MachinesPage() {
                     }
                     if (pairMissing) return;
                     setPairWorkConfigOutcome(null);
-                    const pairLicenseProduct = pairingLicenseOf(pairDeviceRole, pairLicense);
+                    const pairLicenseProduct = pairWin7 ? 'till' : pairingLicenseOf(pairDeviceRole, pairLicense);
                     generateCode.mutate({
                       ...pairingRequestBody(pairDraft, pairKiosk),
                       ...(pairTerminalBody ? { terminal: pairTerminalBody } : {}),

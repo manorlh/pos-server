@@ -73,6 +73,9 @@ class CashMovementIn(BaseModel):
     """
 
     id: uuid.UUID
+    #: The machine the movement was made under (P:/specs/foreign-records-upload.md §2-§3); optional.
+    #: Another machine's is `409 document_foreign_machine` on the ordinary push.
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     type: Literal["cash_in", "cash_out", "deposit", "count", "wallet_in", "wallet_deposit"]
     amount: Decimal = Field(..., ge=0, le=10_000_000)
     expected_before: Optional[Decimal] = Field(None, alias="expectedBefore", ge=-10_000_000, le=10_000_000)

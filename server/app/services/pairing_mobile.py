@@ -174,6 +174,10 @@ def register_device_pairing_request(
         device_info=device_info,
         machine_name=machine_name,
     )
+    # "קוד מכשיר" (P:/specs/foreign-records-upload.md §6.1): the short code the dashboard claims it by.
+    from app.services.cloud_pairing import stamp_request
+
+    stamp_request(db, row)
     db.add(row)
     db.commit()
     db.refresh(row)

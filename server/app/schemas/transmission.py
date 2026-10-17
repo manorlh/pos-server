@@ -147,6 +147,9 @@ class TransmissionReportIn(BaseModel):
     #: (`transmissions.assume_unnamed`); a list, even empty, is the till's own word.
     assumed_terminal_transaction_ids: Optional[List[str]] = Field(None, alias="assumedTerminalTransactionIds")
     report_text: Optional[str] = Field(None, alias="reportText")
+    #: The machine the attempt was made under (P:/specs/foreign-records-upload.md §2-§3); optional.
+    #: Another machine's is `409 document_foreign_machine` on the ordinary push.
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     error: Optional[str] = None
 
     @field_validator("request_id", "finished_at", mode="wrap")

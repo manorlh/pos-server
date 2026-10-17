@@ -71,6 +71,7 @@ import { SupportZButton } from '@/components/dashboard/machines/support-z-dialog
 import { CloseFromCloudButton } from '@/components/dashboard/machines/close-from-cloud';
 import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
+import { DevicePairingCard, UnpairedBadge } from '@/components/dashboard/machines/device-pairing-card';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
 import { RemoteSupportCard } from '@/components/dashboard/machines/remote-support-card';
 import { DeviceLogsCard } from '@/components/dashboard/machines/device-logs';
@@ -292,6 +293,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                 {t('removed')}
               </Badge>
             ) : null}
+            <UnpairedBadge m={machine} />
             <ClockSkewChip machine={machine} />
             {/* The last command sent to this device and its status ("פקודות שנשלחו"). */}
             <DeviceCommandChip machineId={machine.id} />
@@ -654,6 +656,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
 
       {/* "הוחלפה קופה": the till's device replacements (offline till Z §4.6.2). */}
       <TillReplacements replacements={machine.replacements} />
+
+      {/* "צימוד המכשיר" (P:/specs/foreign-records-upload.md §5-§6): unpaired, re-pair code, claim, move. */}
+      {!removed ? <DevicePairingCard m={machine} superAdmin={isSuperAdmin} /> : null}
 
       <Card>
         <CardHeader className="pb-2">

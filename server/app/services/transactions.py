@@ -973,9 +973,15 @@ def upsert_transactions(
     db: Session,
     machine: POSMachine,
     transactions: List[TransactionIn],
+    *,
+    pushed_by: Optional[POSMachine] = None,
 ) -> List[TransactionUpsertResult]:
     """
     Idempotently upsert a batch of transactions and their items.
+
+    `pushed_by`: the device that delivered them when it is not `machine` — a device's records of its
+    previous pairing uploaded to their own till (`POST /sync/{B}/foreign-records`,
+    app/services/foreign_records.py); kept in `pushed_by_machine_id`.
 
     **Every document the till issued lands** — the owner's rule (2026-10-07): "כל מסמך
     שבוצע במכשירים חייב לעלות לענן ולהיות חלק מהזד והאיקס/משמרת". Nothing about a
@@ -1352,7 +1358,9 @@ def upsert_transactions(
                 reissue_of_transaction_id=reissue_of,
                 filing_fields={
                     "claimed_shift_id": tx.shift_id,
-                    "pushed_by_machine_id": machine.id if issuer is not machine else None,
+                    "pushed_by_machine_id": (
+                        machine.id if issuer is not machine else (pushed_by.id if pushed_by is not None else None)
+                    ),
                     "number_conflict_of": number_conflict_of,
                     "duplicate_copy": duplicate_copy,
                 },

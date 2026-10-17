@@ -133,6 +133,7 @@ from app.services.shifts import (
 from app.services.remote_close import apply_close_shift_ack, on_shift_close_accepted
 from app.services.stock import effective_stock_updated_at, get_levels_for_shop, levels_for_machine
 from app.schemas.transmission import TransmissionReportIn, TransmitAckIn
+from app.schemas.foreign_records import ForeignRecordsIn, UnpairedIn
 from app.services import transmissions, transmit_requests
 from app.schemas.offline_authorization import OfflineAuthorizationIn
 from app.services import offline_authorizations
@@ -1621,6 +1622,14 @@ def post_transactions(
         refused = [(positions[i], r) for i, r in refused]
         for u in unidentified:
             u.index = positions[u.index]
+    # "רשומות של קופה אחרת" (P:/specs/foreign-records-upload.md §3): a document provably another
+    # machine's — stamped with it, or naming its shift — is refused, nothing stored; the device keeps
+    # it and uploads it to its own till (`POST /sync/{m}/foreign-records`). Unstamped documents with
+    # no foreign shift go on exactly as before.
+    from app.services import foreign_records as FR
+
+    valid, foreign_refused, foreign_found = FR.split_foreign(db, machine, valid)
+    refused = refused + foreign_refused
     try:
         upserted = upsert_transactions(db, machine, [tx for _i, tx, _w in valid])
     except ShiftConflict as conflict:
@@ -1674,6 +1683,8 @@ def post_transactions(
     DR.record_push_safely(
         db, machine, raw_by_ref=raw_by_ref, results=results, unidentified=unidentified_raw,
     )
+    # One `document_foreign_machine` exception per refused document, for support (never failing the push).
+    FR.alert_refused_on_sync(db, machine, foreign_found)
     db.commit()
 
     if accepted_count > 0:
@@ -1901,6 +1912,11 @@ def post_transmission_report(
     time, `200` after. A success marks the card legs it carried. Not refused for a till
     that has left its shop: a batch is money, whatever the till's assignment now.
     """
+    # Another machine's attempt (its own `machineId`): `409 document_foreign_machine` — it goes to
+    # its own till through `POST /sync/{m}/foreign-records` (P:/specs/foreign-records-upload.md §3).
+    from app.services import foreign_records as FR
+
+    FR.refuse_foreign_stamp(db, machine, body.machine_id)
     outcome = transmissions.record_report(db, machine, body)
     transmit_requests.on_report(db, machine, outcome.transmission)
     db.commit()
@@ -1917,6 +1933,61 @@ def post_transmission_report(
         status_code=status.HTTP_201_CREATED if outcome.created else status.HTTP_200_OK,
         content=payload,
     )
+
+
+# ── Previous-pairing records and unpairing (P:/specs/foreign-records-upload.md §4, §5.1) ──
+
+
+@router.post("/{machine_id}/foreign-records", dependencies=FISCAL_MACHINE_TOKEN)
+def post_foreign_records(
+    machine_id: str,
+    body: ForeignRecordsIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "רשומות מהמכשיר הקודם": this device's unsent records of its previous pairing (machine A =
+    `machineId`), filed exactly as A's — A's tenant, shop, register number, shift and Z linkage —
+    with this machine as who delivered them. At most 200 records, processed in the order sent.
+
+    `409 {"detail": foreign_machine_unknown | foreign_machine_other_tenant | foreign_machine_is_self}`
+    for the whole call, nothing written. Else 200 `{machineId, machineName, posNumber, shopName,
+    results: [{kind, id, status: accepted|duplicate|refused|retry, code, message}]}`.
+    """
+    from app.services import foreign_records as FR
+
+    try:
+        target = FR.resolve_target(db, machine, body.machine_id, body.tenant_id)
+    except FR.ForeignUploadRefused as refused:
+        db.rollback()
+        FR.record_request_refused(db, machine, refused, body.machine_id, len(body.records))
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT, content={"detail": refused.code, "message": refused.message},
+        )
+    results = FR.upload(db, machine, target, body.records)
+    return {**FR.target_out(db, target), "results": results}
+
+
+@router.post("/{machine_id}/unpaired")
+def post_unpaired(
+    machine_id: str,
+    body: UnpairedIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The device is unpairing (best effort, before it clears its credentials): the machine is marked
+    "לא מצומד — ממתין לצימוד מחדש" (`unpairedAt`, `unpairedBy`, `unpairedInfo` = {reason, pending,
+    deviceInfo}) and its token is revoked (`token_version` bumped). Cleared at its next pairing.
+    Any device role may say it (a display device unpairs too).
+    """
+    from app.services import cloud_pairing
+
+    cloud_pairing.mark_unpaired(
+        db, machine, by=body.by, reason=body.reason, pending=body.pending, device_info=body.device_info,
+    )
+    db.commit()
+    return {"ok": True, "machineId": str(machine.id), "unpairedAt": machine.unpaired_at.isoformat()}
 
 
 @router.get("/{machine_id}/transmissions")
@@ -2796,7 +2867,8 @@ def get_app_update(
     """
     The release assigned to this device, if it should take it. Asked on every sync with
     the version the device runs. `platform` "android" (absent — the Android till's call)
-    or "windows" (the Windows app); `422 invalid_platform` otherwise. Only releases of
+    or "windows" (the Windows app), "windows7" (its Windows 7 till build — app/services/windows7.py: it never
+    gets a "windows" release, nor a standard device a "windows7" one); `422 invalid_platform` otherwise. Only releases of
     that platform count. Resolved device → area → shop → company → tenant, newest at a
     level, rollout stage applied (app/services/app_updates.py); `available` only when
     that release is not what the device runs and not a lower versionCode — unless the
@@ -2834,6 +2906,7 @@ def get_app_update(
 _RELEASE_DOWNLOAD = {
     "android": ("application/vnd.android.package-archive", "app-{version}.apk"),
     "windows": ("application/vnd.microsoft.portable-executable", "R2M-POS-Windows-{version}-setup.exe"),
+    "windows7": ("application/vnd.microsoft.portable-executable", "R2M-POS-Win7-Till-setup-{version}.exe"),
     "kiosk_web": ("application/zip", "kiosk-web-{version}.zip"),
 }
 

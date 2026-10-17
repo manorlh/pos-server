@@ -1,21 +1,29 @@
 /**
  * "עדכוני גרסה" — the pure rules of the app-updates page (app/dashboard/app-updates),
- * for every platform: the Android till app (APK), the Windows app (installer) and the
- * kiosk web bundle (`kiosk_web`: a zip of the kiosk's screens, shown by the Android kiosk).
+ * for every platform: the Android till app (APK), the Windows app (installer), its Windows 7
+ * till build (`windows7`: Electron 22, till only — never sent a standard installer, which does
+ * not start on Windows 7; P:/specs/windows7-till.md) and the kiosk web bundle (`kiosk_web`: a
+ * zip of the kiosk's screens, shown by the Android kiosk).
  *
  * Self-contained (no `@/` imports) so `npm test` compiles it on its own; the server's
  * twin is pos-server `app/services/app_updates.py` — keep the version-code rule, the
  * installer file-name rule and the install-window rule equal on both sides.
  */
 
-export type AppPlatform = 'android' | 'windows' | 'kiosk_web';
+export type AppPlatform = 'android' | 'windows' | 'windows7' | 'kiosk_web';
 export type PlatformFilter = 'all' | AppPlatform;
 
-export const APP_PLATFORMS: readonly AppPlatform[] = ['android', 'windows', 'kiosk_web'];
+export const APP_PLATFORMS: readonly AppPlatform[] = ['android', 'windows', 'windows7', 'kiosk_web'];
+
+/** The Windows installers' platforms (an NSIS .exe, versionName "a.b.c" — the same upload rules). */
+export function isWindowsPlatform(platform: AppPlatform | null | undefined): platform is 'windows' | 'windows7' {
+  return platform === 'windows' || platform === 'windows7';
+}
 
 /** A row's platform; rows from before there were two platforms are Android. */
 export function platformOf(row: { platform?: string | null }): AppPlatform {
   if (row.platform === 'windows') return 'windows';
+  if (row.platform === 'windows7') return 'windows7';
   if (row.platform === 'kiosk_web') return 'kiosk_web';
   return 'android';
 }
@@ -26,7 +34,7 @@ export function platformOf(row: { platform?: string | null }): AppPlatform {
  * `DOWNGRADE_PLATFORMS`).
  */
 export function allowsDowngrade(platform: AppPlatform | null | undefined): boolean {
-  return platform === 'windows' || platform === 'kiosk_web';
+  return platform === 'windows' || platform === 'windows7' || platform === 'kiosk_web';
 }
 
 /** Why a kiosk shows its built-in screens although web is configured — the reasons it reports. */
@@ -53,7 +61,7 @@ export function filterByPlatform<T extends { platform?: string | null }>(rows: r
 
 /** Per platform, how many devices are behind their assigned target. */
 export function behindCounts(rows: readonly { platform?: string | null; behind?: boolean | null }[]): Record<AppPlatform, number> {
-  const out: Record<AppPlatform, number> = { android: 0, windows: 0, kiosk_web: 0 };
+  const out: Record<AppPlatform, number> = { android: 0, windows: 0, windows7: 0, kiosk_web: 0 };
   for (const r of rows) if (r.behind) out[platformOf(r)] += 1;
   return out;
 }
@@ -89,12 +97,12 @@ export function windowsVersionCode(versionName: string): number | null {
   return code >= 1 && code <= INT32_MAX ? code : null;
 }
 
-const INSTALLER_NAME = /[-_ ](\d+\.\d+\.\d+)-setup\.exe$/i;
+const INSTALLER_NAME = /(?:[-_ ](\d+\.\d+\.\d+)-setup|[-_ ]setup-(\d+\.\d+\.\d+))\.exe$/i;
 
-/** `R2M-Kiosk-0.2.0-setup.exe` → "0.2.0"; null when the file name carries no version. */
+/** `R2M-Kiosk-0.2.0-setup.exe` / `R2M-POS-Win7-Till-setup-0.2.0.exe` → "0.2.0"; null when the file name carries no version. */
 export function versionFromInstallerName(fileName: string | null | undefined): string | null {
   const m = INSTALLER_NAME.exec((fileName ?? '').trim());
-  return m ? m[1] : null;
+  return m ? (m[1] ?? m[2] ?? null) : null;
 }
 
 /**
@@ -103,7 +111,8 @@ export function versionFromInstallerName(fileName: string | null | undefined): s
  */
 export function platformOfFile(fileName: string | null | undefined): AppPlatform | null {
   const name = (fileName ?? '').trim().toLowerCase();
-  if (name.endsWith('.exe')) return 'windows';
+  // The Windows 7 till build's installer (R2M-POS-Win7-Till-setup-x.y.z.exe) is its own platform.
+  if (name.endsWith('.exe')) return /win7/.test(name) ? 'windows7' : 'windows';
   if (name.endsWith('.apk')) return 'android';
   if (name.endsWith('.zip')) return 'kiosk_web';
   return null;

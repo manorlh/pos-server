@@ -386,7 +386,9 @@ PUT /machines/{machine_id}/lan-server -> devices:edit
 PUT /machines/{machine_id}/license-product -> devices:edit
 GET /machines/{machine_id}/local-server -> devices|device_control:view
 POST /machines/{machine_id}/local-server/commands -> devices|device_control:edit
+POST /machines/{machine_id}/move-pairing -> devices:edit
 GET /machines/{machine_id}/payment-devices -> till_settings|devices:view
+POST /machines/{machine_id}/re-pair-code -> devices:edit
 DELETE /machines/{machine_id}/reboot -> devices|device_control:edit
 POST /machines/{machine_id}/reboot -> devices|device_control:edit
 POST /machines/{machine_id}/replacement-code -> devices:edit
@@ -476,6 +478,8 @@ POST /online-ordering/profiles/{profile_id}/unarchive -> online_ordering:edit
 POST /online-ordering/profiles/{profile_id}/validate -> online_ordering:view
 GET /pairing/codes -> devices:view
 GET /pairing/codes/{code_id} -> devices:view
+GET /pairing/device-requests -> devices:view
+POST /pairing/device-requests/claim -> devices:edit
 POST /pairing/generate -> devices:edit
 POST /pairing/machines/{machine_id}/assign -> devices:edit
 POST /pairing/sessions -> devices:edit

@@ -44,6 +44,10 @@ DEVICE_ACTIONS = (
     # "מצב לא מקוון לכל המסופונים" from the dashboard (P:/specs/nayax-deferred-all.md §8.5,
     # app/services/deferred_control.py): the till's card terminal to deferred / back, once it is free.
     "terminal_offline",  # (params = the LAN switch's body: {requestId, on, issuedAt, by, requestedBy, from, source})
+    # "העבר מכשיר לקופה אחרת" (P:/specs/foreign-records-upload.md §6.3, app/services/cloud_pairing.py): the device
+    # runs its unpair guard, backs up, unpairs and re-pairs to the target with the single-use bound code it carries;
+    # answered done (result.outcome "ok") / refused ("refused_pending") / failed.
+    "move_pairing",  # (params {targetMachineId, targetMachineName, targetPosNumber, targetShopName, forced, pairingCode, pairingCodeExpiresAt})
 )
 OPEN_STATUSES = ("pending", "delivered")
 FINAL_STATUSES = ("done", "refused", "failed", "cancelled", "expired")
