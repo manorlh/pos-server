@@ -12,7 +12,7 @@ export function LockScreen({ demo, onLogin, onTechnician }: { demo: boolean; onL
     <div className="t-lock">
       <h1 className="t-report-title">{T.loginTitle}</h1>
       {demo ? <p className="t-muted">הדגמה: כל קוד של 4 ספרות; 1234 — מנהלת</p> : null}
-      <PinPad label={T.enterCode} submitLabel={T.loginSignIn} onSubmit={onLogin} />
+      <PinPad label={T.loginEnterCode} submitLabel={T.loginSignIn} onSubmit={onLogin} />
       {onTechnician ? (
         <button type="button" className="t-link" onClick={onTechnician}>
           טכנאי

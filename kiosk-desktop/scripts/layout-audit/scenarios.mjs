@@ -100,8 +100,9 @@ const TILL = [
   { id: 't-order-ask', query: 'state=order-ask' },
   { id: 't-notice', query: 'state=notice' },
   { id: 't-dialog', query: 'state=dialog' },
-  { id: 't-held', query: 'state=sell', steps: [{ sel: '.t-cart-bar', optional: true }, { tap: 'מכירות בהמתנה', after: 900 }], expect: has('שולחן 12') },
-  { id: 't-discount', query: 'state=sell', steps: [{ sel: '.t-cart-bar', optional: true }, { tap: 'הנחה לחשבון', after: 900 }] },
+  // The order panel's "⋮" (Android QuickOrderMenu) holds the parked sales and the discount.
+  { id: 't-held', query: 'state=sell', steps: [{ sel: '.t-cart-bar', optional: true }, { sel: '.t-more', after: 500 }, { tap: 'הזמנות בהמתנה', after: 900 }], expect: has('שולחן 12') },
+  { id: 't-discount', query: 'state=sell', steps: [{ sel: '.t-cart-bar', optional: true }, { sel: '.t-more', after: 500 }, { tap: 'הנחה', after: 900 }] },
   { id: 't-refund-chooser', query: 'state=refund-mode' },
   { id: 't-receipt-picker', query: 'state=refund-mode', steps: [{ tap: 'זיכוי מקבלה', after: 1200 }] },
   { id: 't-pay', query: 'state=pay' },
@@ -191,6 +192,16 @@ export const SCENARIOS = [
  * Intended exceptions, each with its reason (the checker skips these rules on these elements).
  */
 export const ALLOW = [
+  // The Windows till in the Android till's colours (P:/specs/till-visual-parity): the owner's iOS system blue (#007AFF, the
+  // brand when the cloud sets none) as a fill under white (4.0:1) and as text on the grouped grey (3.6:1) — exactly what the
+  // Android till draws; a brand colour from the cloud repaints both alike.
+  {
+    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge',
+    rules: ['contrast'],
+    reason: "the Android till's brand colour (iOS blue) as Android draws it",
+  },
+  // An unavailable product at half strength, as Android's ProductTile (alpha 0.5): shown as off, not meant to be read as on.
+  { selector: '.t-root .t-tile-off', rules: ['contrast'], reason: 'an unavailable tile at half strength, as Android ProductTile' },
   // The customer display's basket is bottom-anchored on purpose: older lines go out at the top so the newest always shows.
   { selector: '[data-cd-lines] > *', rules: ['clipped', 'outside'], screens: ['d-basket', 'd-basket-split-light', 'd-tip', 'd-paying', 'd-change'], reason: 'the oldest lines leave at the top by design' },
 ];

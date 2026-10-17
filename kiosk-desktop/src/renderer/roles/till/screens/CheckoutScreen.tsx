@@ -6,12 +6,13 @@
  * ("להדפיס חשבונית?", "הדפס העתק"). Centred to a readable width on big screens.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { CheckoutState } from '../../../../shared/till/protocol';
 import type { CapabilityTile } from '../../../host/caps';
 import type { TillLayout } from '../layout/tillLayout';
 import { CashPad } from '../parts/CashPad';
 import { money, T } from '../text';
+import { Icon, TenderIcon } from '../theme/icons';
 
 export interface CheckoutActions {
   cash(amountAgorot: number): void;
@@ -215,6 +216,7 @@ export function CheckoutScreen({
   demo,
   actions,
   noCard = false,
+  startWithPad = false,
 }: {
   checkout: CheckoutState;
   layout: TillLayout;
@@ -223,8 +225,10 @@ export function CheckoutScreen({
   actions: CheckoutActions;
   /** "ללא אשראי": the business takes no card (payment integration none). */
   noCard?: boolean;
+  /** "מזומן עם עודף" from the order's quick bar (Android QuickPayButton.CASH_WITH_CHANGE): the cash pad first. */
+  startWithPad?: boolean;
 }) {
-  const [padOpen, setPadOpen] = useState(false);
+  const [padOpen, setPadOpen] = useState(startWithPad);
   const [creditCode, setCreditCode] = useState('');
   const [voucherCode, setVoucherCode] = useState('');
   const style = layout.checkoutMaxWidthDp ? { maxWidth: layout.checkoutMaxWidthDp } : undefined;
@@ -370,30 +374,39 @@ export function CheckoutScreen({
 
   if (padOpen && !waiting) {
     return (
-      <div className="t-checkout" style={style}>
-        <CashPad
-          dueAgorot={checkout.dueAgorot}
-          onConfirm={(handed) => {
-            actions.cash(handed);
-            if (handed >= checkout.dueAgorot) setPadOpen(false);
-          }}
-          onBack={() => setPadOpen(false)}
-        />
-      </div>
+      <PayFrame onBack={() => setPadOpen(false)} back={T.back}>
+        <div className="t-checkout" style={style}>
+          <CashPad
+            dueAgorot={checkout.dueAgorot}
+            onConfirm={(handed) => {
+              actions.cash(handed);
+              if (handed >= checkout.dueAgorot) setPadOpen(false);
+            }}
+            onBack={() => setPadOpen(false)}
+          />
+        </div>
+      </PayFrame>
     );
   }
 
   return (
+    <PayFrame onBack={actions.cancel} back={waiting ? T.checkoutCancel : hasLegs ? T.checkoutCancelPayment : T.checkoutBack}>
     <div className="t-checkout" style={style}>
-      <div className="t-amount-row">
-        <span>{T.amountDue}</span>
-        <strong className="t-amount">{money(checkout.totalAgorot)}</strong>
-      </div>
-      {hasLegs ? (
-        <div className="t-amount-row t-small">
-          <span>{T.splitProgress(money(checkout.paidAgorot), money(checkout.dueAgorot))}</span>
+      {/* The summary (Android SummaryCard): what is left, large; the bill and what was paid under it. */}
+      <section className="t-pay-summary" aria-label={T.amountDue}>
+        <span className="t-pay-summary-label">{hasLegs ? T.remaining : T.amountDue}</span>
+        <strong className="t-amount">{money(hasLegs ? checkout.dueAgorot : checkout.totalAgorot)}</strong>
+        <div className="t-pay-cells">
+          <div>
+            <span>{T.billTotal}</span>
+            <strong>{money(checkout.totalAgorot)}</strong>
+          </div>
+          <div>
+            <span>{T.paid}</span>
+            <strong>{money(checkout.paidAgorot)}</strong>
+          </div>
         </div>
-      ) : null}
+      </section>
       {checkout.legs.length > 0 ? (
         <ul className="t-legs">
           {checkout.legs.map((l, i) => (
@@ -432,23 +445,33 @@ export function CheckoutScreen({
             <span>סיום בדיקה</span>
           </button>
         </div>
-      ) : (
+      ) : checkout.dueAgorot === 0 || checkout.totalAgorot === 0 ? (
         <div className="t-tenders">
           <button type="button" className="t-tender t-tender-main" onClick={() => actions.cash(checkout.dueAgorot)}>
-            <span>{checkout.dueAgorot === 0 && (vouchers?.items.length ?? 0) > 0 ? 'סגור עסקה וממש שובר' : checkout.totalAgorot === 0 ? 'סגור עסקה' : T.fastCash}</span>
-            <strong>{money(checkout.dueAgorot)}</strong>
+            <span>{(vouchers?.items.length ?? 0) > 0 ? 'סגור עסקה וממש שובר' : 'סגור עסקה'}</span>
           </button>
-          <button type="button" className="t-tender" onClick={() => setPadOpen(true)}>
-            <span>{T.cashWithChange}</span>
-            <small className="t-reason">{T.cashChangeCaption}</small>
-          </button>
-          {/* "ללא אשראי" (payment integration none): no card tender at all, as the Android till. */}
-          {noCard ? null : (
-            <button type="button" className={`t-tender${cardTile.available ? '' : ' t-tender-off'}`} disabled={!cardTile.available} onClick={actions.card} title={cardTile.reason}>
-              <span>{T.cardPay}</span>
-              <small className="t-reason">{cardTile.available ? (checkout.cardError ? T.retry : money(checkout.dueAgorot)) : cardTile.reason}</small>
+        </div>
+      ) : (
+        // The pay-now buttons (Android PayNowButtons): the card and the cash with change side by side, 96 high with
+        // their pictures; the exact cash a bar of its own under them — each in its tender's colour, with the amount.
+        <div className="t-tenders t-paynow">
+          <div className="t-paynow-row">
+            {/* "ללא אשראי" (payment integration none): no card tender at all, as the Android till. */}
+            {noCard ? null : (
+              <button type="button" className={`t-paynow-btn t-paynow-card${cardTile.available ? '' : ' t-tender-off'}`} disabled={!cardTile.available} onClick={actions.card} title={cardTile.reason}>
+                <TenderIcon glyph="card" />
+                <span>{checkout.cardError ? T.retry : T.cardNow(money(checkout.dueAgorot))}</span>
+                {cardTile.available ? null : <small className="t-reason">{cardTile.reason}</small>}
+              </button>
+            )}
+            <button type="button" className="t-paynow-btn t-paynow-cash" onClick={() => setPadOpen(true)}>
+              <TenderIcon glyph="cash" />
+              <span>{T.cashChangeNow(money(checkout.dueAgorot))}</span>
             </button>
-          )}
+          </div>
+          <button type="button" className="t-paynow-btn t-paynow-fastcash t-tender-main" onClick={() => actions.cash(checkout.dueAgorot)}>
+            <span>{T.fastCashNow(money(checkout.dueAgorot))}</span>
+          </button>
         </div>
       )}
       {!waiting && !simulation && actions.credit && !checkout.basket ? (
@@ -475,6 +498,26 @@ export function CheckoutScreen({
       <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>
         {waiting ? T.checkoutCancel : hasLegs ? T.checkoutCancelPayment : T.checkoutBack}
       </button>
+    </div>
+    </PayFrame>
+  );
+}
+
+/**
+ * The payment's frame (Android CheckoutHeader): the bar across the top in the brand colour — back at the start, "תשלום"
+ * in the middle — over the screen's own content.
+ */
+function PayFrame({ onBack, back, children }: { onBack(): void; back: string; children: ReactNode }) {
+  return (
+    <div className="t-pay">
+      <header className="t-pay-head">
+        <button type="button" className="t-pay-back" aria-label={back} onClick={onBack}>
+          <Icon name="arrowBack" />
+        </button>
+        <strong>{T.checkoutTitle}</strong>
+        <span className="t-pay-back-space" />
+      </header>
+      {children}
     </div>
   );
 }

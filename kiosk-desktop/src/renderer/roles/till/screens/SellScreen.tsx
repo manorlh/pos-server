@@ -4,12 +4,19 @@
  * department and the search are the engine's state too (`sell.department`, `sell.search`).
  */
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Catalog, Product, TillState } from '../../../../shared/till/protocol';
 import type { TillLayout } from '../layout/tillLayout';
-import { CartPane, type CartActions, type CartView } from '../parts/CartPane';
+import { CartPane, type CartActions, type CartView, type QuickButton } from '../parts/CartPane';
+import type { TillDesignView } from '../../../../core/till/tillDesign';
 import { ProductGrid } from '../parts/ProductGrid';
 import { money, T } from '../text';
+import { useSystemDark } from '../theme/tillTheme';
+import { Icon } from '../theme/icons';
+import { orderedCatalog, shownProducts } from '../design/designLayout';
+import { DesignedSell, type DesignOps } from '../design/DesignedSell';
+import { FlowHome } from '../design/FlowHome';
+import { DT } from '../design/designText';
 
 export function filterProducts(catalog: Catalog, departmentId: string | null, search: string) {
   const q = search.trim();
@@ -47,6 +54,10 @@ export function SellScreen({
   shiftOpen = true,
   goShift,
   cartView,
+  identity = null,
+  design = null,
+  quick,
+  ops,
 }: {
   state: TillState;
   catalog: Catalog | null;
@@ -64,46 +75,137 @@ export function SellScreen({
   goShift?(): void;
   /** What the cart shows for this operator (hidden options, OTH on, held sales). */
   cartView?: CartView;
+  /** "הקופה · קופה 3" above the products (Android TillIdentityLine); null — none. */
+  identity?: string | null;
+  /** "עיצוב קופה" for this window's profile (core/till/tillDesign.ts designFor); null — none held (today's screen). */
+  design?: TillDesignView | null;
+  /** A quick-bar button (CartPane's QuickButton) — the designed screens' bar too. */
+  quick?(button: QuickButton): void;
+  /** The engine's ops the designed screens add (DesignOps: an add with a quantity, the order's details, a held sale back, a park). */
+  ops?: DesignOps;
 }) {
   const [cartOpen, setCartOpen] = useState(false);
   /** The "i" window's item (P:/specs/product-tile-text.md §4). */
   const [info, setInfo] = useState<Product | null>(null);
   const sell = state.sell;
-  const products = catalog ? filterProducts(catalog, sell.departmentId, sell.search) : [];
+  // "עיצוב קופה" menu (design.menu): the departments and products in its order, a hidden department off the tabs — on
+  // every template, clean included (Android MenuOrder).
+  const ordered = useMemo(() => (catalog ? orderedCatalog(catalog, design?.menu) : null), [catalog, design?.menu]);
+  const departments = ordered?.departments ?? [];
+  const products = catalog && ordered ? shownProducts(catalog.products, ordered.products, sell.departmentId, sell.search) : [];
+  // "הדבורה" (flow): the orders' home first; an order opened (or the one on the screen) shows the order screen, and a
+  // sale done or cleared goes home again.
+  const flow = design?.shell === 'flow';
+  const [flowHome, setFlowHome] = useState(true);
+  const hadLines = useRef(sell.lines.length > 0);
+  useEffect(() => {
+    const has = sell.lines.length > 0;
+    if (flow && hadLines.current && !has) setFlowHome(true);
+    hadLines.current = has;
+  }, [flow, sell.lines.length]);
+  const systemDark = useSystemDark();
+  const searchInput = (className: string, autoFocus: boolean) => (
+    <input
+      className={className}
+      type="search"
+      inputMode="search"
+      autoFocus={autoFocus}
+      placeholder={design && design.drawn !== 'clean' ? DT.searchHint : T.searchOrScan}
+      value={sell.search}
+      onChange={(e) => onSearch(e.target.value)}
+      onKeyDown={(e) => {
+        // A USB scanner types the code and presses Enter: the product goes in and the box is cleared.
+        if (e.key !== 'Enter' || !catalog) return;
+        const p = scanned(catalog, sell.search);
+        if (p) {
+          onAdd(p.id);
+          onSearch('');
+        } else if (onVoucher && sell.lines.some((l) => !l.refund) && looksLikeVoucher(sell.search)) {
+          // "בחרתי פריטים > סרקתי שובר": to the payment, where the voucher is applied.
+          onVoucher(sell.search.trim());
+          onSearch('');
+        }
+      }}
+    />
+  );
+  const infoWindow = info ? (
+    <ItemInfo
+      product={info}
+      department={(catalog?.departments ?? []).find((d) => d.id === info.departmentId)?.name ?? null}
+      onAdd={() => {
+        onAdd(info.id);
+        setInfo(null);
+      }}
+      onClose={() => setInfo(null)}
+    />
+  ) : null;
+
+  if (flow && design && flowHome) {
+    const mode = state.theme?.mode;
+    const dark = design.drawn === 'night' || (mode === 'dark' ? true : mode === 'light' ? false : systemDark);
+    return (
+      <FlowHome
+        state={state}
+        design={design}
+        dark={dark}
+        brand={state.theme?.brand ?? null}
+        onOrder={() => setFlowHome(false)}
+        onHeldSheet={cart.held}
+        ops={ops}
+      />
+    );
+  }
+  const onBack = flow ? () => setFlowHome(true) : undefined;
+
+  if (design && design.drawn !== 'clean') {
+    return (
+      <>
+        <DesignedSell
+          state={state}
+          catalog={catalog}
+          departments={departments}
+          products={products}
+          design={design}
+          cart={cart}
+          cartView={cartView ?? {}}
+          quick={quick}
+          onAdd={onAdd}
+          onDepartment={onDepartment}
+          onSearch={onSearch}
+          onHold={onHold}
+          onInfo={setInfo}
+          searchInput={searchInput}
+          shiftOpen={shiftOpen}
+          goShift={goShift}
+          ops={ops}
+          onBack={onBack}
+        />
+        {infoWindow}
+      </>
+    );
+  }
+
   const catalogPane = (
     <section className="t-catalog" aria-label={T.sell}>
+      {onBack ? (
+        <button type="button" className="d-flow-back" onClick={onBack}>
+          <Icon name="arrowBack" size={20} />
+          <span>{DT.flowOrders}</span>
+        </button>
+      ) : null}
+      {identity && layout.panes !== 'single' ? <div className="t-identity">{identity}</div> : null}
       <div className="t-catalog-bar">
         <div className="t-departments" role="tablist">
           <button type="button" role="tab" aria-selected={sell.departmentId === null} className={`t-chip${sell.departmentId === null ? ' t-chip-on' : ''}`} onClick={() => onDepartment(null)}>
             {T.allDepartments}
           </button>
-          {(catalog?.departments ?? []).map((d) => (
+          {departments.map((d) => (
             <button key={d.id} type="button" role="tab" aria-selected={sell.departmentId === d.id} className={`t-chip${sell.departmentId === d.id ? ' t-chip-on' : ''}`} onClick={() => onDepartment(d.id)}>
               {d.name}
             </button>
           ))}
         </div>
-        <input
-          className="t-search"
-          type="search"
-          inputMode="search"
-          placeholder={T.searchOrScan}
-          value={sell.search}
-          onChange={(e) => onSearch(e.target.value)}
-          onKeyDown={(e) => {
-            // A USB scanner types the code and presses Enter: the product goes in and the box is cleared.
-            if (e.key !== 'Enter' || !catalog) return;
-            const p = scanned(catalog, sell.search);
-            if (p) {
-              onAdd(p.id);
-              onSearch('');
-            } else if (onVoucher && sell.lines.some((l) => !l.refund) && looksLikeVoucher(sell.search)) {
-              // "בחרתי פריטים > סרקתי שובר": to the payment, where the voucher is applied.
-              onVoucher(sell.search.trim());
-              onSearch('');
-            }
-          }}
-        />
+        {searchInput('t-search', false)}
       </div>
       {!shiftOpen ? (
         <div className="t-warn" role="note">
@@ -119,7 +221,7 @@ export function SellScreen({
       ) : null}
       <ProductGrid
         products={products}
-        departments={catalog?.departments ?? []}
+        departments={departments}
         columns={layout.columns}
         tileHeight={layout.tileHeightDp}
         onAdd={onAdd}
@@ -127,17 +229,7 @@ export function SellScreen({
         onHold={onHold}
         tileText={state.tileText}
       />
-      {info ? (
-        <ItemInfo
-          product={info}
-          department={(catalog?.departments ?? []).find((d) => d.id === info.departmentId)?.name ?? null}
-          onAdd={() => {
-            onAdd(info.id);
-            setInfo(null);
-          }}
-          onClose={() => setInfo(null)}
-        />
-      ) : null}
+      {infoWindow}
     </section>
   );
 
