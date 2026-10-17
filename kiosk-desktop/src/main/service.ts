@@ -7,7 +7,7 @@
 
 import { createHash, pbkdf2Sync, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
@@ -121,6 +121,7 @@ import { paymentGuard, type Activity } from '../core/updatePolicy';
 import { TERMINAL_CHECK_BYPASS_KEY } from '../core/terminalCheckBypass';
 import type { DesktopExitResult, UpdateView } from '../shared/roles';
 import { openDb, type Db } from './db/sqlite';
+import { backupStem, forceRefusal, MONEY_OUTBOX_KINDS, pendingSummary, UNPAIR_TEXT, unpairCheck, unpairMessage, type PendingSummary, type UnpairCheck } from '../core/unpairGuard';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
@@ -193,6 +194,7 @@ import type {
   StartPaymentIn,
   StartPaymentOut,
   TechnicianAction,
+  TechnicianActionResult,
   TechnicianInfo,
   DisplayScaleView,
   AdminActionResult,
@@ -218,6 +220,8 @@ export interface PlatformHooks {
 
 export interface ServiceOptions {
   dataDir: string;
+  /** "ניתוק בכל זאת": where the backups go (default: `unpair-backups` next to `dataDir` — %APPDATA%\R2M Kiosk\unpair-backups). */
+  unpairBackupDir?: string;
   /**
    * The screen it lays itself out on, for the cloud's fleet view (`status.display`, pos-server
    * kiosk_till_mode.clean_display): the primary display in DIPs and its scale (displayReport.ts).
@@ -4739,7 +4743,7 @@ export class KioskService extends EventEmitter {
     };
   }
 
-  async technicianAction(a: TechnicianAction): Promise<{ ok: boolean; message?: string }> {
+  async technicianAction(a: TechnicianAction): Promise<TechnicianActionResult> {
     if (!this.adminOk()) return { ok: false, message: 'נדרש קוד טכנאי' };
     this.adminUntil = Date.now() + 5 * 60_000;
     switch (a.type) {
@@ -4791,13 +4795,125 @@ export class KioskService extends EventEmitter {
       case 'displayScaleSave':
         return this.displayScaleAction(a);
       case 'unpair':
-        if (this.outbox.count() > 0) return { ok: false, message: 'יש נתונים שטרם נשלחו לענן — לא ניתן לנתק' };
-        this.sync.stop();
-        this.cloud.forget();
-        this.workSessions.clear();
-        this.dirty();
-        return { ok: true };
+        return this.unpair(a);
     }
+  }
+
+  /** What waits in the outbox, per kind. */
+  private pendingOutbox(): PendingSummary {
+    return pendingSummary(this.db.all<{ kind: string; n: number }>('SELECT kind, COUNT(*) AS n FROM outbox GROUP BY kind'));
+  }
+
+  /** Does the server answer this device? (machines/me — a gone server, a deleted machine or a revoked token: no.) */
+  private async serverReach(): Promise<'reachable' | 'unreachable'> {
+    if (!this.cloud.credentials()) return 'unreachable';
+    const r = await this.api.get('machines/me', { timeoutMs: UNPAIR_PROBE_MS }).catch(() => null);
+    return r?.kind === 'ok' ? 'reachable' : 'unreachable';
+  }
+
+  /**
+   * "ניתוק הקיוסק מהענן" (core/unpairGuard.ts): at once when nothing waits for the cloud; else refused with what waits —
+   * and, where the rules allow it, "ניתוק בכל זאת" (`force`, the technician's code again, `confirm`, `confirmMoney`
+   * for money records): everything pending exported first, then the pairing forgotten.
+   */
+  private async unpair(a: Extract<TechnicianAction, { type: 'unpair' }>): Promise<TechnicianActionResult> {
+    let pending = this.pendingOutbox();
+    const serverUrl = this.cloud.credentials()?.serverUrl ?? null;
+    const server = pending.total > 0 ? await this.serverReach() : 'reachable';
+    if (pending.total > 0 && server === 'reachable' && !a.force) {
+      // The server answers: one delivery first — what drains is no reason to refuse.
+      await within(this.sync.flush(), UNPAIR_FLUSH_MS);
+      pending = this.pendingOutbox();
+    }
+    const check = unpairCheck(pending, server, serverUrl);
+    if (!check) {
+      this.forgetPairing('unpair');
+      return { ok: true, message: 'הקיוסק נותק מהענן' };
+    }
+    if (!a.force) {
+      this.log(`unpair refused: ${pending.total} pending (${JSON.stringify(pending.byKind)}), server ${server}`);
+      return { ok: false, message: unpairMessage(check), unpair: check };
+    }
+    const codeOk = typeof a.code === 'string' && a.code.length > 0 && this.technicianUnlock(a.code).outcome === 'granted';
+    const why = forceRefusal(check, { codeOk, confirm: a.confirm === true, confirmMoney: a.confirmMoney === true });
+    if (why) return { ok: false, message: why, unpair: check };
+    let file: string;
+    try {
+      file = this.unpairBackup(check);
+    } catch (e) {
+      this.log(`unpair backup failed: ${String(e)}`);
+      return { ok: false, message: UNPAIR_TEXT.backupFailed(e instanceof Error ? e.message : String(e)), unpair: check };
+    }
+    // Event rows are in the backup and go nowhere now; money rows stay on the device (never deleted).
+    this.db.tx(() => {
+      for (const kind of Object.keys(pending.byKind)) if (!MONEY_OUTBOX_KINDS.has(kind)) this.db.run('DELETE FROM outbox WHERE kind = ?', kind);
+    });
+    const audit = this.kv.getJson<Array<Record<string, unknown>>>('technician.audit') ?? [];
+    this.kv.setJson('technician.audit', [...audit, { at: Date.now(), access: 'unpair_forced', server, serverUrl, pending: pending.byKind, backup: file }].slice(-50));
+    this.log(`UNPAIR FORCED: server ${serverUrl ?? '-'} ${server}, pending ${JSON.stringify(pending.byKind)}, backup ${file}`);
+    this.forgetPairing('unpair (forced)');
+    return { ok: true, message: UNPAIR_TEXT.done(file) };
+  }
+
+  private forgetPairing(why: string) {
+    this.log(`${why}: pairing forgotten`);
+    this.sync.stop();
+    this.cloud.forget();
+    this.workSessions.clear();
+    this.dirty();
+  }
+
+  /**
+   * Before "ניתוק בכל זאת": every outbox row with the record it refers to (a document, a shift, a side row's request),
+   * in `unpair-<time>.json`, and a copy of kiosk.db beside it (`VACUUM INTO` — a consistent copy under WAL).
+   */
+  private unpairBackup(check: UnpairCheck): string {
+    const dir = this.opts.unpairBackupDir ?? path.join(path.dirname(this.opts.dataDir), 'unpair-backups');
+    mkdirSync(dir, { recursive: true });
+    const stem = backupStem(Date.now());
+    const dbCopy = path.join(dir, `${stem}.kiosk.db`);
+    this.db.exec(`VACUUM INTO '${dbCopy.replace(/'/g, "''")}'`);
+    const parse = (v: unknown) => {
+      if (typeof v !== 'string') return v;
+      try {
+        return JSON.parse(v) as unknown;
+      } catch {
+        return v;
+      }
+    };
+    const rows = this.outbox.all().map((row) => {
+      let record: unknown = null;
+      try {
+        if (row.kind === 'transaction') {
+          const d = this.db.get<Record<string, unknown>>('SELECT * FROM documents WHERE id = ?', row.ref_id);
+          record = d ? { ...d, payload: parse(d.payload) } : null;
+        } else if (row.kind === 'shift_open' || row.kind === 'shift_close') {
+          const sh = this.db.get<Record<string, unknown>>('SELECT * FROM shifts WHERE id = ?', row.ref_id);
+          record = sh ? { ...sh, close_payload: parse(sh.close_payload) } : null;
+        } else {
+          record = this.sideRequest(row);
+        }
+      } catch (e) {
+        record = { error: String(e) };
+      }
+      return { ...row, record };
+    });
+    const me = this.cloud.machine();
+    const out = {
+      kind: 'r2m-kiosk-unpair-backup',
+      version: 1,
+      at: new Date().toISOString(),
+      appVersion: this.opts.appVersion,
+      serverUrl: check.serverUrl,
+      server: check.server,
+      machine: { machineId: this.machineId, name: me?.machineName ?? null, posNumber: me?.posNumber ?? null, shopName: me?.shopName ?? null, companyName: me?.companyName ?? null },
+      pending: { money: check.money, events: check.events, lines: check.pending },
+      kioskDbCopy: path.basename(dbCopy),
+      outbox: rows,
+    };
+    const file = path.join(dir, `${stem}.json`);
+    writeFileSync(file, JSON.stringify(out, null, 2), 'utf8');
+    return file;
   }
 
   /** For tools and tests: the wire of a document as it goes to the cloud. */
@@ -4815,6 +4931,10 @@ export class KioskService extends EventEmitter {
     return parameterOn(this.cloud.parameters()[key]);
   }
 }
+
+/** "ניתוק הקיוסק מהענן": how long the server's answer is waited for, and one delivery of the outbox before refusing. */
+const UNPAIR_PROBE_MS = 6_000;
+const UNPAIR_FLUSH_MS = 10_000;
 
 /** After the cloud refused an order's prices, the catalog is pulled for at most this long before the customer is asked again. */
 const CATALOG_CATCH_UP_MS = 8_000;

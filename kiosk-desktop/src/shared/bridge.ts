@@ -13,6 +13,7 @@ import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import type { BatteryAlertView } from '../core/batteryAlerts';
+import type { UnpairCheck } from '../core/unpairGuard';
 import type { CloseDayKind } from '@dash-lib/shopActive';
 
 export type KioskPhase = 'unpaired' | 'waiting' | 'kiosk';
@@ -585,7 +586,7 @@ export interface KioskBridge {
   adminAction(action: AdminAction): Promise<AdminActionResult>;
   technicianUnlock(code: string): Promise<{ outcome: 'granted' | 'wrong' | 'locked_out' | 'locked'; triesLeft: number; lockedForMs: number }>;
   technicianInfo(): Promise<TechnicianInfo>;
-  technicianAction(action: TechnicianAction): Promise<{ ok: boolean; message?: string }>;
+  technicianAction(action: TechnicianAction): Promise<TechnicianActionResult>;
   /**
    * "סגירת משמרת ו-Z" on the shop's lock ("סניף לא פעיל"): a manager's code, then the kiosk's own
    * close for its Z mode; the lock stays. Absent where the host has none (the Android bundle, a demo).
@@ -673,4 +674,16 @@ export type TechnicianAction =
   | { type: 'displayScaleSave'; local: string | null }
   /** "מדפסת לקבלות ולמסמכים": a destination's id, `local`, `ask` — or null, "חזור להגדרת הענן". */
   | { type: 'setReceiptPrinter'; id: string | null }
-  | { type: 'unpair' };
+  /**
+   * "ניתוק המכשיר מהענן" (core/unpairGuard.ts): refused while rows wait for the cloud (`unpair` in the answer says what
+   * and whether "ניתוק בכל זאת" may go); `force` with the technician's `code` again and `confirm` (and `confirmMoney`
+   * when money records wait) exports everything pending to a backup, then unpairs.
+   */
+  | { type: 'unpair'; force?: boolean; code?: string; confirm?: boolean; confirmMoney?: boolean };
+
+export interface TechnicianActionResult {
+  ok: boolean;
+  message?: string;
+  /** An unpair that was refused: what waits, and whether it may be forced. */
+  unpair?: UnpairCheck;
+}

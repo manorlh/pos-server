@@ -98,6 +98,12 @@ export interface TillHost {
      * manager's menu (staff/ShellStaff.tsx). Absent: a host with no such menu (a browser) — the corner is not armed.
      */
     openAdmin?(): void;
+    /**
+     * "בדיקות ומידע" from the till's six taps in the top-left corner (core/technician.ts) — on every till screen, the PIN
+     * screen too: the Windows shell asks the technician's code and shows its screen (unpair, display size, network,
+     * updates). Absent: a host with no such screen — the taps do nothing.
+     */
+    openTechnician?(): void;
   };
   /** A demo engine: the screens say so on every screen. */
   demo: boolean;
