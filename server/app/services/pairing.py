@@ -184,7 +184,13 @@ def validate_pairing_code(
     if pairing_code.is_used:
         return None
 
-    if datetime.now(timezone.utc) > pairing_code.expires_at:
+    # SQLite hands `expires_at` back naive: both sides compared as aware UTC.
+    expires_at, now_ = pairing_code.expires_at, datetime.now(timezone.utc)
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if now_.tzinfo is None:
+        now_ = now_.replace(tzinfo=timezone.utc)
+    if now_ > expires_at:
         return None
 
     # "התקנה לווינדוס או לאנדרואיד": a code for one platform refuses a device of the other —
@@ -213,13 +219,19 @@ def validate_pairing_code(
         # one takes its place.
         from app.services import till_replacement
 
+        from app.services.cloud_pairing import is_re_pair
+
         replaced_before = till_replacement.snapshot(db, pairing_code.target_machine_id)
+        # "צימוד מחדש" (P:/specs/foreign-records-upload.md §5.2): the device the code was bound to, back as
+        # the same till (`deviceInfo.previousMachineId`) — its own open shift and card batch do not block it.
+        re_pair = is_re_pair(device_info, pairing_code.target_machine_id)
         pos_machine = adopt_machine(
             db,
             pairing_code.target_machine_id,
             device_info=device_info,
             machine_name=machine_name,
             untransmitted_acknowledged=pairing_code.untransmitted_acknowledged_at is not None,
+            re_pair=re_pair,
         )
         if pos_machine is None:
             return None
@@ -232,7 +244,9 @@ def validate_pairing_code(
             pos_machine.device_model_chosen = pairing_code.device_model
         # The new unit's platform; its role and fiscal status are the row's own.
         pos_machine.platform = device_platform
-        till_replacement.record(db, pos_machine, pairing_code, replaced_before, device_info=device_info)
+        till_replacement.record(
+            db, pos_machine, pairing_code, replaced_before, device_info=device_info, re_pair=re_pair,
+        )
     else:
         pos_machine = create_pos_machine(
             db,
@@ -510,6 +524,7 @@ def adopt_machine(
     device_info: Optional[dict] = None,
     machine_name: Optional[str] = None,
     untransmitted_acknowledged: bool = False,
+    re_pair: bool = False,
 ) -> Optional[POSMachine]:
     """
     Hand an existing terminal's identity to a replacement device.
@@ -529,6 +544,10 @@ def adopt_machine(
       shift must be closed first, which is what `administrative_close` is for.
 
     `device_info` and the name are refreshed, because the hardware genuinely changed.
+
+    `re_pair` (P:/specs/foreign-records-upload.md §5.2): the same device the code was bound to, back as
+    this till — the open shift is its own and its card batch is still on it, so neither blocks it,
+    and its card tracking is kept.
     """
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if machine is None:
@@ -542,7 +561,7 @@ def adopt_machine(
         )
         .first()
     )
-    if open_shift is not None:
+    if open_shift is not None and not re_pair:
         raise AdoptionRefused(
             "This terminal still has an open shift. Close it first — a replacement "
             "cannot close a shift whose sales it never saw."
@@ -550,7 +569,7 @@ def adopt_machine(
     # Card sales the old device never transmitted die with its card application: the new
     # one has none of them (docs/SHIFTS_API.md §4.9). Refused unless the code was created
     # with that acknowledged.
-    if not untransmitted_acknowledged and transmissions.has_untransmitted(db, machine):
+    if not re_pair and not untransmitted_acknowledged and transmissions.has_untransmitted(db, machine):
         raise AdoptionRefused("untransmitted_card_sales")
 
     if device_info:
@@ -575,8 +594,13 @@ def adopt_machine(
     machine.pending_count = None
     machine.pending_documents = None
     machine.pending_count_at = None
-    # Nor the old device's card batch: tracking starts again with the new one.
-    transmissions.reset_for_replacement(machine)
+    # Nor the old device's card batch: tracking starts again with the new one (a re-pair is that device).
+    if not re_pair:
+        transmissions.reset_for_replacement(machine)
+    # "לא מצומד — ממתין לצימוד מחדש" ends here (§5.1).
+    from app.services.cloud_pairing import clear_unpaired
+
+    clear_unpaired(machine)
     # Same row, so the same register number — the replacement is the till the shop
     # already calls "register 2". This keeps it; it only draws a number if the row is
     # in a shop and somehow never got one.

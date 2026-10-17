@@ -85,6 +85,8 @@ REFUSAL_REASONS = (
     # `terminal_offline` (app/services/deferred_control.py REFUSALS; `not_eligible:<reason>` as the till says it).
     "not_eligible", "stale", "expired", "bad_request", "timeout_busy", "superseded", "interrupted", "not_active",
     "conflict", "no_line",
+    # `move_pairing` (app/services/cloud_pairing.py): the device holds unsent records and the move was not forced.
+    "refused_pending", "offline_z_pending",
 )
 
 
@@ -535,6 +537,10 @@ def ack(
         from app.services import remote_table_cancel
 
         detail, result = remote_table_cancel.clean_answer(ack_status, detail, raw_result)
+    elif row.action == "move_pairing":
+        from app.services import cloud_pairing
+
+        detail, result = cloud_pairing.clean_move_answer(ack_status, detail, raw_result)
     elif row.action in DEADLINE_ACTIONS:
         from app.services import table_actions
 

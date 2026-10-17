@@ -676,6 +676,65 @@ export async function createReplacementCode(
   return data;
 }
 
+// ── Re-pair and pairing from the cloud (P:/specs/foreign-records-upload.md §5.2, §6) ──
+
+export interface RePairCode {
+  code: string;
+  expiresAt: string;
+  machineId: string;
+  machineName: string;
+  posNumber?: string | null;
+  shopName?: string | null;
+}
+
+/** "קוד צימוד מחדש לקופה הזו": a code bound to this machine (not refused for an open shift). */
+export async function createRePairCode(machineId: string): Promise<RePairCode> {
+  const { data } = await api.post<RePairCode>(`/machines/${machineId}/re-pair-code`, {});
+  return data;
+}
+
+export interface DeviceRequest {
+  id: string;
+  deviceCode: string;
+  codeExpiresAt: string;
+  platform?: string | null;
+  model?: string | null;
+  serial?: string | null;
+  machineName?: string | null;
+  lastPairing?: Record<string, unknown> | null;
+  registeredAt?: string | null;
+}
+
+/** "מכשירים שממתינים לצימוד": this tenant's waiting devices, plus any one by its exact code. */
+export async function fetchDeviceRequests(opts: { shopId?: string; code?: string } = {}): Promise<DeviceRequest[]> {
+  const { data } = await api.get<{ items: DeviceRequest[] }>('/pairing/device-requests', {
+    params: { ...(opts.shopId ? { shopId: opts.shopId } : {}), ...(opts.code ? { code: opts.code } : {}) },
+  });
+  return data.items ?? [];
+}
+
+/** Claim a waiting device by its code — into an existing machine, or a new one in a shop. */
+export async function claimDeviceRequest(body: {
+  deviceCode: string;
+  machineId?: string;
+  companyId?: string;
+  shopId?: string;
+  machineName?: string;
+}): Promise<{ ok: boolean; machineId: string; machineName: string; posNumber?: string | null; bound: boolean }> {
+  const { data } = await api.post('/pairing/device-requests/claim', { ...body, confirm: true });
+  return data;
+}
+
+/** "העבר מכשיר לקופה אחרת": a `move_pairing` command to this machine's device. */
+export async function moveDevicePairing(
+  machineId: string,
+  targetMachineId: string,
+  forced = false,
+): Promise<{ id: string; status: string }> {
+  const { data } = await api.post(`/machines/${machineId}/move-pairing`, { targetMachineId, forced });
+  return data;
+}
+
 /**
  * Which companies may be this one's parent, and what a move would carry with it.
  *

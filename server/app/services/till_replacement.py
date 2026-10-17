@@ -89,8 +89,13 @@ def record(
     *,
     device_info: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
+    re_pair: bool = False,
 ) -> Dict[str, Any]:
-    """Document the replacement the new device just made. The caller commits."""
+    """
+    Document the replacement the new device just made. The caller commits. `re_pair`: the same device
+    back as this till (P:/specs/foreign-records-upload.md §5.2) — recorded (`rePair`), and no Z says
+    "המכשיר הוחלף".
+    """
     now = now or datetime.now(timezone.utc)
     previous = list(getattr(machine, "replacements", None) or [])
     support = getattr(machine, "support_z", None) or None
@@ -110,13 +115,15 @@ def record(
                                getattr(machine, "device_model", None)),
         "posNumber": getattr(machine, "pos_number", None),
         "supportZFirst": support_first,
+        "rePair": bool(re_pair),
         "supportZ": (
             {k: support.get(k) for k in ("at", "by", "reasonText", "zNumber", "zReportId")}
             if support_first else None
         ),
     }
     machine.replacements = previous + [entry]
-    machine.replacement_note_pending = {"id": entry["id"], "at": entry["at"]}
+    if not re_pair:
+        machine.replacement_note_pending = {"id": entry["id"], "at": entry["at"]}
     _audit(db, machine, entry, now)
     logger.warning("till %s replaced: %s", machine.id, entry)
     return entry
@@ -125,7 +132,7 @@ def record(
 def _audit(db: Session, machine: POSMachine, entry: Dict[str, Any], now: datetime) -> None:
     from app.services.exceptions import record_z_exception
 
-    parts = [f"{LABEL} ע״י {entry.get('by') or '—'}"]
+    parts = [f"{'צימוד מחדש של אותו מכשיר' if entry.get('rePair') else LABEL} ע״י {entry.get('by') or '—'}"]
     if entry.get("reason"):
         parts.append(entry["reason"])
     old, new = entry.get("oldDevice") or {}, entry.get("newDevice") or {}

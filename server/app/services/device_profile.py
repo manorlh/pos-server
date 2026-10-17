@@ -424,6 +424,11 @@ def check_role_switch(db: Session, machine: POSMachine, role: str, license_produ
     current = current_role(db, machine)
     if role == current:
         return
+    # "Windows 7 (קופה)" (app/services/windows7.py): the Windows 7 build runs the till only.
+    from app.services import windows7
+
+    if windows7.is_windows7_machine(machine) and not windows7.role_allowed(role):
+        raise _refuse(windows7.TILL_ONLY, machine, windows7.TILL_ONLY_MESSAGE)
     if DD.is_fiscal_role(role) != DD.is_fiscal_role(current):
         raise DD.role_change_refusal(machine, current, role)
     if role in DD.NON_FISCAL_ROLES:

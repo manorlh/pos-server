@@ -75,6 +75,11 @@ export interface ShellView {
   shopActive?: boolean;
   /** "מצב עבודה: קיוסק / קופה"; absent / null before the runtime is up. */
   workMode?: WorkModeView | null;
+  /**
+   * The Windows 7 build runs only the till (core/appBuild.ts): the role the cloud gave instead, and what the
+   * screen says ("גרסת Windows 7 תומכת בקופה בלבד"). `role` is null meanwhile and nothing of that role runs.
+   */
+  roleLock?: { role: AppRole; title: string; message: string } | null;
 }
 
 /* ------------------------------------------------- the KDS and the order status board */

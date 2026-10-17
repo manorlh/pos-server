@@ -7,7 +7,7 @@
 
 import { createHash, pbkdf2Sync, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
@@ -121,11 +121,11 @@ import { paymentGuard, type Activity } from '../core/updatePolicy';
 import { TERMINAL_CHECK_BYPASS_KEY } from '../core/terminalCheckBypass';
 import type { DesktopExitResult, UpdateView } from '../shared/roles';
 import { openDb, type Db } from './db/sqlite';
-import { backupStem, forceRefusal, MONEY_OUTBOX_KINDS, pendingSummary, UNPAIR_TEXT, unpairCheck, unpairMessage, type PendingSummary, type UnpairCheck } from '../core/unpairGuard';
+import { backupStem, FOREIGN_TEXT, forceRefusal, MONEY_OUTBOX_KINDS, pendingLines, pendingSummary, UNPAIR_TEXT, unpairCheck, unpairMessage, type PendingSummary, type UnpairCheck } from '../core/unpairGuard';
 import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
-import { Outbox, type OutboxKind, type OutboxRow } from './sync/outbox';
+import { Outbox, UNKNOWN_OWNER, type OutboxKind, type OutboxOwner, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { KIND_PRESET, presetLabel } from '../core/till/presetDiscounts';
@@ -475,7 +475,12 @@ export class KioskService extends EventEmitter {
     this.cloud = new CloudStore(this.kv, opts.secretBox ?? PLAIN_BOX);
     const creds = this.cloud.credentials();
     this.api = new Api(creds?.serverUrl ?? 'http://localhost/', () => this.cloud.credentials()?.accessToken ?? null, opts.fetch, `R2M-Kiosk-Windows/${opts.appVersion}`);
-    this.outbox = new Outbox(this.db);
+    // Each row is the pairing's it was made under: another pairing's rows are never sent under this one (a forced unpair).
+    this.outbox = new Outbox(this.db, () => {
+      const c = this.cloud.credentials();
+      return c ? { machineId: c.machineId, tenantId: c.tenantId ?? null } : null;
+    });
+    this.stampLegacyOutbox();
     this.ledger = new Ledger(this.db, this.kv, this.outbox);
     this.media = new MediaStore(this.db, path.join(opts.dataDir, 'media'), opts.downloader, opts.variantMaker, this.log);
     this.pay = new PayService(this.db, this.log);
@@ -1228,6 +1233,8 @@ export class KioskService extends EventEmitter {
    */
   async adopt(credentials: Credentials): Promise<void> {
     const r = { credentials };
+    // Rows made while unpaired, or left from before: the previous pairing's (or nobody's) — never the new one's.
+    this.stampUnownedOutbox(this.previousPairing());
     this.cloud.setCredentials(r.credentials);
     this.api.setBase(r.credentials.serverUrl);
     await this.sync.pullMachine();
@@ -1341,13 +1348,7 @@ export class KioskService extends EventEmitter {
         }
       },
       sideRequest: (row: OutboxRow) => this.sideRequest(row),
-      onRevoked: () => {
-        this.log('machine token revoked: back to pairing');
-        this.sync.stop();
-        this.cloud.forget();
-        this.workSessions.clear();
-        this.dirty();
-      },
+      onRevoked: () => this.forgetPairing('machine token revoked: back to pairing'),
       log: this.log,
     };
   }
@@ -4852,6 +4853,7 @@ export class KioskService extends EventEmitter {
       update,
       quickSupport: this.platform.quickSupportPath?.() ?? null,
       displayScale: this.displayScaleView(),
+      foreignRows: this.foreignRowsView(),
       setup: this.technicianSetupView(admin, admin.printer),
     };
   }
@@ -5145,12 +5147,79 @@ export class KioskService extends EventEmitter {
         return { ok: this.platform.autostart?.()?.enabled === true, message: this.platform.autostart?.()?.enabled ? TECH_TEXT.autostartOn : 'Windows לא אישר' };
       case 'unpair':
         return this.unpair(a);
+      case 'exportForeign':
+        return this.exportForeignRows();
     }
   }
 
-  /** What waits in the outbox, per kind. */
+  /** What waits in the outbox for this pairing, per kind (another pairing's rows are held, never sent: foreignRows). */
   private pendingOutbox(): PendingSummary {
-    return pendingSummary(this.db.all<{ kind: string; n: number }>('SELECT kind, COUNT(*) AS n FROM outbox GROUP BY kind'));
+    return pendingSummary(this.outbox.countsByKind());
+  }
+
+  /* ------------------------------------------------- rows of another pairing */
+
+  private static readonly PREVIOUS_PAIRING = 'pairing.previous';
+
+  /** The pairing forgotten last (forgetPairing), if any. */
+  private previousPairing(): OutboxOwner | null {
+    const p = this.kv.getJson<OutboxOwner>(KioskService.PREVIOUS_PAIRING);
+    return p && typeof p.machineId === 'string' ? { machineId: p.machineId, tenantId: p.tenantId ?? null } : null;
+  }
+
+  private backupDir(): string {
+    return this.opts.unpairBackupDir ?? path.join(path.dirname(this.opts.dataDir), 'unpair-backups');
+  }
+
+  /** "kind|ref" → the machine an unpair backup says the row was of (rows from 0.5.10, made before rows had owners). */
+  private backedUpOwners(): Map<string, OutboxOwner> {
+    const out = new Map<string, OutboxOwner>();
+    let files: string[] = [];
+    try {
+      files = readdirSync(this.backupDir()).filter((f) => f.endsWith('.json')).sort();
+    } catch {
+      return out;
+    }
+    for (const f of files) {
+      try {
+        const b = JSON.parse(readFileSync(path.join(this.backupDir(), f), 'utf8')) as { machine?: { machineId?: unknown }; outbox?: Array<{ kind?: unknown; ref_id?: unknown; machine_id?: unknown }> };
+        const machine = typeof b.machine?.machineId === 'string' ? b.machine.machineId : null;
+        for (const r of b.outbox ?? []) {
+          const m = typeof r.machine_id === 'string' ? r.machine_id : machine;
+          if (m && typeof r.kind === 'string' && typeof r.ref_id === 'string') out.set(`${r.kind}|${r.ref_id}`, { machineId: m, tenantId: null });
+        }
+      } catch {
+        /* a backup that does not read: skipped */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * At start: rows from before rows had owners. A row an unpair backup lists is that backup's machine's; the rest are
+   * this pairing's (they were made under it) — or, unpaired, the previous pairing's (else nobody's: held for ever).
+   */
+  private stampLegacyOutbox(): void {
+    const c = this.cloud.credentials();
+    const fallback: OutboxOwner | null = c ? { machineId: c.machineId, tenantId: c.tenantId ?? null } : this.previousPairing();
+    this.stampUnownedOutbox(fallback);
+  }
+
+  private stampUnownedOutbox(fallback: OutboxOwner | null): void {
+    let backups: Map<string, OutboxOwner> | null = null;
+    const n = this.outbox.stampUnowned((row) => {
+      backups ??= this.backedUpOwners();
+      return backups.get(`${row.kind}|${row.ref_id}`) ?? fallback ?? { machineId: UNKNOWN_OWNER, tenantId: null };
+    });
+    if (n > 0) this.log(`outbox: ${n} row(s) without an owner stamped (fallback ${fallback?.machineId ?? UNKNOWN_OWNER})`);
+  }
+
+  /** "רשומות מהמכשיר הקודם": another pairing's rows, held (null — none). */
+  foreignRowsView(): TechnicianInfo['foreignRows'] {
+    const rows = this.outbox.foreign();
+    if (rows.length === 0) return null;
+    const s = pendingSummary(Object.entries(rows.reduce<Record<string, number>>((m, r) => ((m[r.kind] = (m[r.kind] ?? 0) + 1), m), {})).map(([kind, n]) => ({ kind, n })));
+    return { count: rows.length, title: FOREIGN_TEXT.title(rows.length), lines: pendingLines(s), machineIds: [...new Set(rows.map((r) => r.machine_id ?? UNKNOWN_OWNER))] };
   }
 
   /** Does the server answer this device? (machines/me — a gone server, a deleted machine or a revoked token: no.) */
@@ -5193,10 +5262,9 @@ export class KioskService extends EventEmitter {
       this.log(`unpair backup failed: ${String(e)}`);
       return { ok: false, message: UNPAIR_TEXT.backupFailed(e instanceof Error ? e.message : String(e)), unpair: check };
     }
-    // Event rows are in the backup and go nowhere now; money rows stay on the device (never deleted).
-    this.db.tx(() => {
-      for (const kind of Object.keys(pending.byKind)) if (!MONEY_OUTBOX_KINDS.has(kind)) this.db.run('DELETE FROM outbox WHERE kind = ?', kind);
-    });
+    // Event rows are in the backup and go nowhere now; money rows stay on the device (never deleted) — stamped with this
+    // pairing, so a pairing to another machine holds them (never sends them), the same machine again sends them.
+    this.outbox.removeKinds(Object.keys(pending.byKind).filter((k) => !MONEY_OUTBOX_KINDS.has(k)));
     const audit = this.kv.getJson<Array<Record<string, unknown>>>('technician.audit') ?? [];
     this.kv.setJson('technician.audit', [...audit, { at: Date.now(), access: 'unpair_forced', server, serverUrl, pending: pending.byKind, backup: file }].slice(-50));
     this.log(`UNPAIR FORCED: server ${serverUrl ?? '-'} ${server}, pending ${JSON.stringify(pending.byKind)}, backup ${file}`);
@@ -5206,6 +5274,8 @@ export class KioskService extends EventEmitter {
 
   private forgetPairing(why: string) {
     this.log(`${why}: pairing forgotten`);
+    const c = this.cloud.credentials();
+    if (c) this.kv.setJson(KioskService.PREVIOUS_PAIRING, { machineId: c.machineId, tenantId: c.tenantId ?? null });
     this.sync.stop();
     this.cloud.forget();
     this.workSessions.clear();
@@ -5217,9 +5287,33 @@ export class KioskService extends EventEmitter {
    * in `unpair-<time>.json`, and a copy of kiosk.db beside it (`VACUUM INTO` — a consistent copy under WAL).
    */
   private unpairBackup(check: UnpairCheck): string {
-    const dir = this.opts.unpairBackupDir ?? path.join(path.dirname(this.opts.dataDir), 'unpair-backups');
+    const me = this.cloud.machine();
+    return this.writeBackup('unpair', this.outbox.everything(), {
+      serverUrl: check.serverUrl,
+      server: check.server,
+      machine: { machineId: this.machineId, name: me?.machineName ?? null, posNumber: me?.posNumber ?? null, shopName: me?.shopName ?? null, companyName: me?.companyName ?? null },
+      pending: { money: check.money, events: check.events, lines: check.pending },
+    });
+  }
+
+  /** "ייצוא לקובץ": another pairing's rows (held, never sent here), with their records, to unpair-backups. */
+  exportForeignRows(): { ok: boolean; message: string } {
+    const rows = this.outbox.foreign();
+    if (rows.length === 0) return { ok: true, message: FOREIGN_TEXT.none };
+    try {
+      const file = this.writeBackup('foreign', rows, { currentMachineId: this.machineId, machineIds: [...new Set(rows.map((r) => r.machine_id ?? UNKNOWN_OWNER))] });
+      this.log(`outbox: ${rows.length} row(s) of another pairing exported to ${file}`);
+      return { ok: true, message: FOREIGN_TEXT.exported(file) };
+    } catch (e) {
+      return { ok: false, message: FOREIGN_TEXT.exportFailed(e instanceof Error ? e.message : String(e)) };
+    }
+  }
+
+  /** `<prefix>-<time>.json` (the rows with their records and `meta`) and `<prefix>-<time>.kiosk.db` beside it. */
+  private writeBackup(prefix: 'unpair' | 'foreign', outboxRows: OutboxRow[], meta: Record<string, unknown>): string {
+    const dir = this.backupDir();
     mkdirSync(dir, { recursive: true });
-    const stem = backupStem(Date.now());
+    const stem = backupStem(Date.now(), prefix);
     const dbCopy = path.join(dir, `${stem}.kiosk.db`);
     this.db.exec(`VACUUM INTO '${dbCopy.replace(/'/g, "''")}'`);
     const parse = (v: unknown) => {
@@ -5230,7 +5324,7 @@ export class KioskService extends EventEmitter {
         return v;
       }
     };
-    const rows = this.outbox.all().map((row) => {
+    const rows = outboxRows.map((row) => {
       let record: unknown = null;
       try {
         if (row.kind === 'transaction') {
@@ -5247,16 +5341,12 @@ export class KioskService extends EventEmitter {
       }
       return { ...row, record };
     });
-    const me = this.cloud.machine();
     const out = {
-      kind: 'r2m-kiosk-unpair-backup',
+      kind: prefix === 'unpair' ? 'r2m-kiosk-unpair-backup' : 'r2m-kiosk-foreign-rows',
       version: 1,
       at: new Date().toISOString(),
       appVersion: this.opts.appVersion,
-      serverUrl: check.serverUrl,
-      server: check.server,
-      machine: { machineId: this.machineId, name: me?.machineName ?? null, posNumber: me?.posNumber ?? null, shopName: me?.shopName ?? null, companyName: me?.companyName ?? null },
-      pending: { money: check.money, events: check.events, lines: check.pending },
+      ...meta,
       kioskDbCopy: path.basename(dbCopy),
       outbox: rows,
     };

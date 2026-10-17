@@ -13,7 +13,7 @@ AppReleaseLevel = Literal["tenant", "company", "shop", "area", "machine"]
 #: The same set as `APP_UPDATE_STATUSES` (app/models/app_release.py).
 AppUpdateStatus = Literal["downloading", "downloaded", "installing", "installed", "failed", "declined"]
 #: The same set as `APP_RELEASE_PLATFORMS`.
-AppPlatform = Literal["android", "windows", "kiosk_web"]
+AppPlatform = Literal["android", "windows", "kiosk_web", "windows7"]
 
 
 class InstallWindow(BaseModel):

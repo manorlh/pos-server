@@ -229,13 +229,17 @@ class TestRule1TheIssuingTill:
         assert "filed_under_issuing_till" in _codes(stray)
 
     def test_without_a_device_link_another_tills_shift_never_takes_the_document(self, w):
-        """Security: a shift id alone (no shared serial) never files a document under another till."""
+        """
+        Security: a shift id alone (no shared serial) never files a document under another till — nor, since
+        P:/specs/foreign-records-upload.md §3, under the pushing till by time: provably another machine's, it is
+        refused on the ordinary sync and stays on the device for its own till (`POST /sync/{m}/foreign-records`).
+        """
         stranger = w.tills[1]
         theirs = w.shift(stranger, 4, status=ShiftStatus.OPEN)
         doc = _doc(theirs.id, at=NOW - timedelta(hours=1))
-        _push(w, w.tills[0], [doc])
-        stored = _stored(w, doc)
-        assert stored.machine_id == w.tills[0].id
+        out = _push(w, w.tills[0], [doc])
+        assert [(r.status, r.reason) for r in out.results] == [("rejected", "document_foreign_machine")]
+        assert _stored(w, doc) is None
         assert compute_totals(w.db, [theirs.id]).transactions_count == 0
 
     def test_the_reconciliation_says_what_the_old_till_owes_and_what_to_do(self, w):

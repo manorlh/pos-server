@@ -155,6 +155,14 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // 3 — whose each outbox row is (main/sync/outbox.ts): the pairing (machine, tenant) it was made under. A row of another
+  // pairing is never sent under this one (a forced unpair, then a pairing to another machine): held and exportable.
+  // Rows from before (NULL) are given their owner once at start (KioskService.stampLegacyOutbox).
+  `
+  ALTER TABLE outbox ADD COLUMN machine_id TEXT;
+  ALTER TABLE outbox ADD COLUMN tenant_id TEXT;
+  CREATE INDEX IF NOT EXISTS ix_outbox_machine ON outbox(machine_id);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
