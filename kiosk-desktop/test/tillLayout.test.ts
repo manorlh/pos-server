@@ -129,3 +129,19 @@ describe('money and amounts', () => {
     expect(parseAmount('abc')).toBeNull();
   });
 });
+
+describe('the Windows 7 till at 1024×768 (the owner, 17.10: the order and its pay button in sight)', () => {
+  it('100%: the order beside the products', () => {
+    expect(tillLayout(p(1024, 768)).panes).toBe('side');
+  });
+
+  it('125% (819×614 dp): still beside them — narrower than Android 840 on a screen on its side', () => {
+    const l = tillLayout(p(1024, 768, 1.25));
+    expect(l.panes).toBe('side');
+    expect(l.columns).toBeGreaterThanOrEqual(2);
+  });
+
+  it('upright stays as it was: under 840 wide is never side by side', () => {
+    expect(tillLayout(p(768, 1024)).panes).not.toBe('side');
+  });
+});

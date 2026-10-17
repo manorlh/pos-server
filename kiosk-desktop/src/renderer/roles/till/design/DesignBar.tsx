@@ -48,19 +48,22 @@ export function ActionBar({
   stacked,
   handheld,
   night,
+  short = false,
   onClick,
 }: {
   faces: Face[];
   stacked: boolean;
   handheld: boolean;
   night: boolean;
+  /** A screen too short for לילה's 92 / 64 dp bar (a 1024×768 window at 125% under the till's notices): the day's 56 / 52 — pay stays in sight. */
+  short?: boolean;
   onClick(b: BarButton): void;
 }) {
   if (faces.length === 0) return null;
   const primary = faces.filter((f) => f.primary);
   const secondary = faces.filter((f) => !f.primary);
-  const primaryH = night ? (handheld ? 64 : 92) : handheld ? 52 : 56;
-  const secondaryH = night ? 64 : handheld ? 48 : 52;
+  const primaryH = short ? (handheld ? 52 : 56) : night ? (handheld ? 64 : 92) : handheld ? 52 : 56;
+  const secondaryH = short ? (handheld ? 48 : 52) : night ? 64 : handheld ? 48 : 52;
   const how = barArrangement(faces.length, stacked);
   const rows: Face[][] = [];
   for (let i = 0; i < secondary.length; i += 2) rows.push(secondary.slice(i, i + 2));

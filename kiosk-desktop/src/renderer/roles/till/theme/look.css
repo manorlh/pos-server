@@ -1501,3 +1501,48 @@
   box-sizing: border-box;
   width: 100%;
 }
+
+/*
+ * The way to pay always in sight (the owner, 17.10, Windows 7 at 1024×768): the order panel keeps its head and its foot
+ * ("סה״כ", the quick-pay bar, "תשלום") and only the lines scroll between them — the panel itself never scrolls its pay
+ * button below the fold (layout audit PAY_IN_SIGHT).
+ */
+.t-sell-side .t-cart,
+.t-sell-stacked .t-cart {
+  overflow: hidden;
+}
+
+.t-cart-head,
+.t-cart-foot {
+  flex-shrink: 0;
+}
+
+.t-cart .t-lines {
+  flex: 1 1 auto;
+  min-height: 48px;
+}
+
+/* A short window: the foot's quieter lines give way first. */
+@media (max-height: 800px) {
+  .t-cart-foot {
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .t-cart-foot .t-vat {
+    display: none;
+  }
+
+  .t-quickpay-btn {
+    min-height: 56px;
+  }
+
+  .t-payall {
+    min-height: 52px;
+  }
+}
+
+/* A short tile: the name from the top of the picture, its sides clear of the count and the "i". */
+.t-tile-short .t-tile-name {
+  padding: 2px 22px 0;
+}

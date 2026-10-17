@@ -12,7 +12,8 @@
 .d-root {
   --d-stroke: 1px;
   --d-selected-stroke: 2px;
-  --d-target: 44px;
+  /* Android's 44 dp, raised to the Windows till's 48 dp floor (layout audit). */
+  --d-target: 48px;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -385,7 +386,8 @@
 
 .d-strip-label {
   font-size: calc(13px * var(--d-scale, 1));
-  color: var(--pos-d-secondary);
+  /* On the page's grey (not the surface): the scheme's variant ink reads 4.7:1 there, the designed grey only 4.4:1. */
+  color: var(--pos-on-surface-variant);
   white-space: nowrap;
   flex: none;
 }
@@ -485,7 +487,8 @@
   align-items: center;
   gap: 8px;
   margin: 6px 12px;
-  min-height: 48px;
+  /* 48 inside its border: the field's input is the target. */
+  min-height: 50px;
   padding: 0 4px 0 12px;
   border-radius: 10px;
   border: var(--d-stroke) solid var(--pos-d-border);
@@ -495,6 +498,8 @@
 }
 
 .d-search-input {
+  align-self: stretch;
+  min-height: 48px;
   flex: 1;
   min-width: 0;
   border: 0;
@@ -712,6 +717,7 @@
 }
 
 .d-info {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -726,6 +732,15 @@
   font-weight: 700;
   font-style: italic;
   cursor: pointer;
+}
+
+.d-info::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  bottom: -12px;
+  left: -12px;
 }
 
 .d-price {
@@ -961,6 +976,7 @@
 }
 
 .d-root .d-add {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -972,6 +988,16 @@
   color: var(--pos-on-primary);
   cursor: pointer;
   flex: none;
+}
+
+/* Android's 44 dp "+", its hit area 48 dp. */
+.d-root .d-add::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  bottom: -2px;
+  left: -2px;
 }
 
 .d-dish-row .d-add {
@@ -1064,6 +1090,8 @@
 }
 
 .d-lrow-text {
+  min-height: 48px;
+  justify-content: center;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -1121,9 +1149,9 @@
 }
 
 .d-step {
-  width: 42px;
-  height: 42px;
-  margin: 3px;
+  width: 48px;
+  height: 48px;
+  margin: 0;
   border-radius: 8px;
   border: var(--d-stroke) solid var(--pos-d-border);
   background: var(--pos-d-surface);
@@ -1152,6 +1180,7 @@
 }
 
 .d-lcard-main {
+  min-height: 48px;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -1189,6 +1218,7 @@
 }
 
 .d-cline-main {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1199,6 +1229,16 @@
   background: transparent;
   cursor: pointer;
   text-align: start;
+}
+
+/* Android's 36 dp compact line, its hit area 48 dp (over half of each neighbour's gap). */
+.d-cline-main::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  right: 0;
+  bottom: -6px;
+  left: 0;
 }
 
 .d-cline-name {
@@ -1397,11 +1437,22 @@
 }
 
 /* תפריט ויזואלי: the pill in the bottom corner (the end — the left, in Hebrew), the drawer over the menu. */
+.d-pill-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 12px;
+  flex: none;
+}
+
+.d-root .d-pill-pay {
+  height: 56px;
+  min-width: 240px;
+  max-width: 45%;
+  padding: 0 20px;
+}
+
 .d-pill {
-  position: absolute;
-  bottom: 16px;
-  left: 16px;
-  z-index: 4;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1912,6 +1963,66 @@
   border: 1px solid var(--t-line);
   background: var(--t-surface);
   color: var(--t-text);
+}
+
+/* A screen short of room (a 1024×768 window at 125% under the till's notices): the header and the bill's head tighter,
+   so the categories, the products, the order and its payment all stay in sight. */
+.d-short .d-header {
+  min-height: 52px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.d-short .d-bill-head {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* ------------------------------------------------------------ the fold (the owner, 17.10: a 1024×768 till) */
+
+/* The categories, the products, the order and its payment in sight without a scroll. */
+
+/* A designed screen's menu over a bill under it: its strips scroll inside it (a row of products always kept), never
+   over the bill. */
+.d-menu {
+  overflow-y: auto;
+}
+
+.d-menu-body {
+  min-height: 120px;
+}
+
+/* Today's stacked screen: the catalogue and the cart share the height by the layout's fraction, the cart never under its
+   head and foot (a flex item's automatic minimum — its lines shrink to nothing first, then scroll). */
+.t-sell.t-sell-stacked {
+  display: flex;
+  flex-direction: column;
+}
+
+.t-sell-stacked > .t-catalog {
+  flex: 1 1 calc(100% - var(--t-cart-pct, 40%));
+  min-height: 160px;
+}
+
+.t-sell-stacked > .t-cart {
+  flex: 1 1 var(--t-cart-pct, 40%);
+  min-height: auto;
+  overflow: visible;
+}
+
+.t-sell-stacked .t-lines {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+}
+
+/* לילה (the night palette over the till's strips): the amber pill under dark words, the light banner on the dark amber. */
+.t-root[data-template='night'] .t-pill {
+  color: #000000;
+}
+
+.t-root[data-template='night'] .t-deferred-banner {
+  background: var(--t-warn-soft);
 }
 
 /* "הדבורה"'s side menu (FlowDrawer.kt): the page's colour, flat rows, the far corners rounded. */

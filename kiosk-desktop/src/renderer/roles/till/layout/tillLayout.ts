@@ -16,6 +16,12 @@
 import { bigBasketWidthDp, tillLayoutOf, type DisplayProfile, type TillLayoutClass } from './displayProfileAdapter';
 
 export const TWO_PANE_MIN_WIDTH_DP = 840;
+/**
+ * A screen on its side keeps the order beside the products from this width (the owner, 17.10: a Windows 7 till at
+ * 1024×768 and 125% — 819 dp — shows the categories, the products, the order and its pay button at once, as an Android
+ * tablet on its side does). Narrower than Android's 840 on purpose.
+ */
+export const LANDSCAPE_TWO_PANE_MIN_WIDTH_DP = 760;
 export const STACKED_MIN_HEIGHT_DP = 900;
 export const TABLET_MIN_SMALLEST_WIDTH_DP = 600;
 export const MIN_TOUCH_DP = 48;
@@ -84,7 +90,7 @@ export function tillLayout(p: DisplayProfile, opts: { phoneColumns?: number } = 
   const h = p.heightDp;
   let panes: Panes;
   if (cls === 'HANDHELD') panes = 'single';
-  else if (w >= TWO_PANE_MIN_WIDTH_DP) panes = 'side';
+  else if (w >= TWO_PANE_MIN_WIDTH_DP || (w > h && w >= LANDSCAPE_TWO_PANE_MIN_WIDTH_DP)) panes = 'side';
   else if (w >= TABLET_MIN_SMALLEST_WIDTH_DP && h >= STACKED_MIN_HEIGHT_DP) panes = 'stacked';
   else panes = 'single';
   // BIG upright: stacked, the cart 34% of the height (§6.1).

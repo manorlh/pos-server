@@ -97,9 +97,12 @@ export function windowCases(host, spec) {
     .map((w) => w.trim())
     .filter(Boolean)
     .map((w) => {
-      const [widthPx, heightPx] = w.split('x').map(Number);
+      // "1024x768" at 100%, "1024x768@125" at Windows' 125% display scaling (the window's pixels, then the scale).
+      const [size, pct] = w.split('@');
+      const [widthPx, heightPx] = size.split('x').map(Number);
+      const scale = pct ? Number(pct) / 100 : 1;
       const orientation = widthPx === heightPx ? 'square' : widthPx > heightPx ? 'landscape' : 'portrait';
-      return withMm(hostCase(host, { id: `win-${w}`, diagonalInches: null, widthPx, heightPx }, { orientation, widthPx, heightPx }, 1));
+      return withMm(hostCase(host, { id: `win-${size}`, diagonalInches: null, widthPx, heightPx }, { orientation, widthPx, heightPx }, scale));
     });
 }
 
