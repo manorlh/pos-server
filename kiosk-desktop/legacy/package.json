@@ -1,0 +1,76 @@
+{
+  "name": "r2m-kiosk-desktop",
+  "productName": "R2M Kiosk",
+  "version": "0.5.11",
+  "description": "R2M POS for Windows 7 (till only): the same app as kiosk-desktop, built on Electron 22 (Chromium 108, Node 16.17)",
+  "private": true,
+  "author": "Runner Systems",
+  "main": "dist/main/index.js",
+  "dependencies": {
+    "better-sqlite3": "9.6.0",
+    "serialport": "12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "16.18.126",
+    "electron": "22.3.27",
+    "undici": "5.29.0"
+  },
+  "build": {
+    "appId": "il.co.runnersys.kiosk",
+    "productName": "R2M Kiosk",
+    "electronVersion": "22.3.27",
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "../build"
+    },
+    "files": [
+      "dist/main/**",
+      "dist/preload/**",
+      "dist/renderer/**",
+      "package.json",
+      "!node_modules/better-sqlite3/deps/**",
+      "!node_modules/better-sqlite3/src/**",
+      "!node_modules/better-sqlite3/docs/**",
+      "!node_modules/better-sqlite3/build/Release/obj/**",
+      "!node_modules/@serialport/bindings-cpp/prebuilds/android-*/**",
+      "!node_modules/@serialport/bindings-cpp/prebuilds/darwin-*/**",
+      "!node_modules/@serialport/bindings-cpp/prebuilds/linux-*/**",
+      "!node_modules/@serialport/bindings-cpp/prebuilds/win32-ia32/**",
+      "!node_modules/@serialport/bindings-cpp/src/**"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/app-bundle",
+        "to": "app-bundle"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "node_modules/@serialport/**",
+      "**/*.node"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "R2M-POS-Win7-Till-setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "R2M POS"
+    }
+  }
+}

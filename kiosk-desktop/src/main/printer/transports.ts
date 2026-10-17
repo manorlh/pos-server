@@ -132,9 +132,38 @@ export function healthOfWin32(detected: number | null, workOffline: boolean, pri
 
 /* --------------------------------------------------------------- spooler */
 
-/** The helper: C# over winspool.drv, commands as JSON lines on stdin, answers on stdout. */
+/**
+ * The helper: C# over winspool.drv, commands as JSON lines on stdin, answers on stdout.
+ *
+ * Windows 7 ships PowerShell 2.0 (P:/specs/windows7-till.md): no ConvertFrom-Json / ConvertTo-Json, no Get-CimInstance.
+ * There (`$PSVersionTable` below 3, or `R2M_PS_LEGACY=1` to try it on a newer one) the JSON goes through .NET's
+ * JavaScriptSerializer and WMI through Get-WmiObject; on PowerShell 3+ the helper is what it always was.
+ */
 export const SPOOLER_HELPER_PS1 = String.raw`
 $ErrorActionPreference = 'Stop'
+$R2mLegacy = ($PSVersionTable.PSVersion.Major -lt 3) -or ($env:R2M_PS_LEGACY -eq '1')
+$R2mJson = $null
+if ($R2mLegacy) {
+  Add-Type -AssemblyName System.Web.Extensions
+  $R2mJson = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+  $R2mJson.MaxJsonLength = [int]::MaxValue
+}
+function R2mFromJson([string]$s) {
+  if ($R2mJson) { return New-Object PSObject -Property ($R2mJson.DeserializeObject($s)) }
+  return ($s | ConvertFrom-Json)
+}
+function R2mToJson($o) {
+  if ($R2mJson) { return $R2mJson.Serialize($o) }
+  return ($o | ConvertTo-Json -Compress -Depth 4)
+}
+function R2mWmi([string]$class, [string]$filter) {
+  if ($R2mLegacy) {
+    if ($filter) { return Get-WmiObject -Class $class -Filter $filter }
+    return Get-WmiObject -Class $class
+  }
+  if ($filter) { return Get-CimInstance $class -Filter $filter }
+  return Get-CimInstance $class
+}
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
@@ -171,17 +200,17 @@ while ($true) {
   $line = [Console]::In.ReadLine()
   if ($line -eq $null) { break }
   try {
-    $cmd = $line | ConvertFrom-Json
+    $cmd = R2mFromJson $line
     if ($cmd.op -eq 'send') {
       $err = [R2mRaw]::Send($cmd.printer, [Convert]::FromBase64String($cmd.data), 'R2M Kiosk')
       if ($err -eq '') { $out = @{ id = $cmd.id; ok = $true } } else { $out = @{ id = $cmd.id; ok = $false; error = $err } }
     } elseif ($cmd.op -eq 'list') {
-      $ps = @(Get-CimInstance Win32_Printer | ForEach-Object { @{ name = $_.Name; port = $_.PortName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
+      $ps = @(R2mWmi 'Win32_Printer' '' | ForEach-Object { @{ name = $_.Name; port = $_.PortName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
       $out = @{ id = $cmd.id; ok = $true; printers = $ps }
     } elseif ($cmd.op -eq 'usb') {
-      $qs = @(Get-CimInstance Win32_Printer | ForEach-Object { @{ name = $_.Name; port = $_.PortName; driver = $_.DriverName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
+      $qs = @(R2mWmi 'Win32_Printer' '' | ForEach-Object { @{ name = $_.Name; port = $_.PortName; driver = $_.DriverName; detected = $_.DetectedErrorState; offline = [bool]$_.WorkOffline; status = $_.PrinterStatus } })
       $ds = $null
-      try { $ds = @(Get-CimInstance Win32_PnPEntity -Filter "PNPDeviceID LIKE 'USB%'" | Where-Object { $_.Service -eq 'usbprint' -or $_.PNPDeviceID -like 'USBPRINT\*' -or $_.PNPDeviceID -match '^USB\\VID_(1504|04B8|0519|1D90|2730|0DD4|154F|0D3A|0619)&' } | ForEach-Object { @{ name = $_.Name; id = $_.PNPDeviceID; error = $_.ConfigManagerErrorCode; service = $_.Service; cls = $_.PNPClass } }) } catch { $ds = $null }
+      try { $ds = @(R2mWmi 'Win32_PnPEntity' "PNPDeviceID LIKE 'USB%'" | Where-Object { $_.Service -eq 'usbprint' -or $_.PNPDeviceID -like 'USBPRINT\*' -or $_.PNPDeviceID -match '^USB\\VID_(1504|04B8|0519|1D90|2730|0DD4|154F|0D3A|0619)&' } | ForEach-Object { @{ name = $_.Name; id = $_.PNPDeviceID; error = $_.ConfigManagerErrorCode; service = $_.Service; cls = $_.PNPClass } }) } catch { $ds = $null }
       $pts = $null
       try {
         $base = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceClasses\{28d78fad-5a12-11d1-ae5b-0000f803a8c2}'
@@ -201,7 +230,7 @@ while ($true) {
       $out = @{ id = $cmd.id; ok = $true; queues = $qs; devices = $ds; ports = $pts }
     } else { $out = @{ id = $cmd.id; ok = $false; error = 'unknown op' } }
   } catch { $out = @{ id = $cmd.id; ok = $false; error = $_.Exception.Message } }
-  [Console]::Out.WriteLine(($out | ConvertTo-Json -Compress -Depth 4))
+  [Console]::Out.WriteLine((R2mToJson $out))
 }
 `;
 

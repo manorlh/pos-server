@@ -71,6 +71,9 @@
   "exclude": [
     "node_modules",
     "dist",
-    "release"
+    "release",
+    "legacy",
+    "src/legacy",
+    "scripts/win7-check.ts"
   ]
 }

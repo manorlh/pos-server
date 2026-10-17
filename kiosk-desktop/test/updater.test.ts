@@ -50,6 +50,10 @@ describe('update policy (pure)', () => {
     expect(acceptOffer(offer({ available: false }), '0.1.0')).toBe(false);
     expect(acceptOffer(offer({ versionName: '0.1.5', versionCode: 1005 }), '0.2.0')).toBe(false);
     expect(acceptOffer(offer({ versionName: '0.1.5', versionCode: 1005, allowDowngrade: true }), '0.2.0')).toBe(true);
+    // The Windows 7 build (core/appBuild.ts): its own platform only.
+    expect(acceptOffer(offer({ platform: 'windows7' }), '0.1.0')).toBe(false);
+    expect(acceptOffer(offer({ platform: 'windows7' }), '0.1.0', 'windows7')).toBe(true);
+    expect(acceptOffer(offer(), '0.1.0', 'windows7')).toBe(false);
   });
 
   it('versions compare numerically, as the cloud computes them', () => {
@@ -121,7 +125,7 @@ describe('update policy (pure)', () => {
 const INSTALLER = Buffer.concat([Buffer.from('MZ'), Buffer.alloc(4096, 7)]);
 const INSTALLER_SHA = createHash('sha256').update(INSTALLER).digest('hex');
 
-function world(opts: { offer?: Partial<UpdateOffer> | null; bytes?: Buffer; activity?: Partial<Activity>; now?: Date; version?: string } = {}) {
+function world(opts: { offer?: Partial<UpdateOffer> | null; bytes?: Buffer; activity?: Partial<Activity>; now?: Date; version?: string; platform?: 'windows' | 'windows7' } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'r2m-upd-'));
   const db = openDb(path.join(dir, 'k.db'));
   migrate(db);
@@ -159,12 +163,26 @@ function world(opts: { offer?: Partial<UpdateOffer> | null; bytes?: Buffer; acti
     runInstaller,
     quit,
     fetch: fetchFn,
+    platform: opts.platform,
     now: () => now.getTime(),
   });
   return { m, kv, calls, reports, runInstaller, quit, activity, dir };
 }
 
 describe('the updater', () => {
+  it('the Windows 7 build asks for windows7 and takes only a windows7 release (never an Electron 44 installer)', async () => {
+    const w7 = world({ platform: 'windows7', offer: { platform: 'windows7', autoInstall: false } });
+    expect(await w7.m.checkNow()).toEqual({ available: '0.2.0', status: 'ready' });
+    expect(w7.calls.find((c) => c.url.includes('/app-update?'))!.url).toContain('platform=windows7');
+    // A standard release answered to the Windows 7 build (an old cloud, a wrong assignment): refused, nothing downloaded.
+    const wrong = world({ platform: 'windows7', offer: { platform: 'windows' } });
+    expect(await wrong.m.checkNow()).toEqual({ available: null, status: 'up_to_date' });
+    expect(wrong.calls.some((c) => c.url.includes('/apk'))).toBe(false);
+    // And the standard build never takes a Windows 7 release.
+    const std = world({ offer: { platform: 'windows7' } });
+    expect(await std.m.checkNow()).toEqual({ available: null, status: 'up_to_date' });
+  });
+
   it('asks as a Windows app, downloads in the background, verifies, reports', async () => {
     const w = world({ offer: { autoInstall: false } });
     const r = await w.m.checkNow();
