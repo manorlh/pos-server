@@ -32,6 +32,9 @@ class PairingCodeGenerateRequest(BaseModel):
     #: "android" (the default) | "windows": a device of the other platform is refused at
     #: redemption (422 `platform_mismatch`).
     platform: Optional[DevicePlatform] = None
+    #: "Windows 7 (קופה)" (app/services/windows7.py, P:/specs/windows7-till.md): a code for the Windows app's
+    #: Windows 7 build — a till only, licensed "קופה בלבד", on Windows (422 `windows7_*` otherwise).
+    windows7: bool = False
     #: A KDS code's screen (`screenRole` station / expo / manager, `stationIds`, `name`); a
     #: board code's `name`. Ignored for a till / kiosk.
     kds: Optional[KdsScreenOptionsIn] = None

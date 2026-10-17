@@ -86,6 +86,15 @@ def generate_pairing_code(
         )
     except device_profile.DeviceProfileRefused as refused:
         return JSONResponse(status_code=refused.status_code, content=refused.body)
+    # "Windows 7 (קופה)" (app/services/windows7.py): the Windows 7 build runs the till only — a Windows till code
+    # licensed "קופה בלבד", or 422 `windows7_*` (Hebrew `message`) while the dialog is open.
+    if body.windows7:
+        from app.services import windows7
+
+        win7_refused = windows7.check_pairing_request(body.platform, device_role, body.license_product)
+        if win7_refused is not None:
+            return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=win7_refused)
+        body = body.model_copy(update={"platform": display_devices.PLATFORM_WINDOWS, "license_product": "till"})
     # "סוג רישיון" (P:/specs/device-license-type.md §2): a till / kiosk code's product, checked against the
     # role now (422 `license_product_role_mismatch` / `license_product_not_applicable`, Hebrew `message`).
     from app.services import device_license

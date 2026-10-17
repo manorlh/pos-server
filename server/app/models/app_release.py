@@ -28,7 +28,7 @@ APP_UPDATE_STATUSES = ("downloading", "downloaded", "installing", "installed", "
 
 #: Which app a release is: the Android till APK, the Windows app's installer (.exe), or a
 #: kiosk web bundle (.zip: the kiosk's screens as static files, shown by the Android kiosk).
-APP_RELEASE_PLATFORMS = ("android", "windows", "kiosk_web")
+APP_RELEASE_PLATFORMS = ("android", "windows", "kiosk_web", "windows7")
 
 
 class AppRelease(Base):
@@ -49,7 +49,7 @@ class AppRelease(Base):
 
     __tablename__ = "app_releases"
     __table_args__ = (
-        CheckConstraint("platform IN ('android', 'windows', 'kiosk_web')", name="ck_app_releases_platform"),
+        CheckConstraint("platform IN ('android', 'windows', 'kiosk_web', 'windows7')", name="ck_app_releases_platform"),
         # A version name is unique within its platform (Windows 0.2.0 and Android 0.2.0 may both exist).
         UniqueConstraint("platform", "version_name", name="uq_app_releases_platform_version_name"),
     )

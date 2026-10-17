@@ -50,8 +50,8 @@ import {
   deviceRoleOf,
   isDisplayDevice,
   kioskPinpadMissing,
-  platformsFor,
-  type DevicePlatform,
+  platformChoicesFor,
+  type PlatformChoice,
   type DeviceRole,
   type KdsScreenDraft,
   type KioskDraft,
@@ -219,20 +219,23 @@ export function KioskOptionsFields({
   );
 }
 
-/** Android / Windows (/ the browser, for a kiosk, a KDS or a board: SPEC_KIOSK §27, SPEC_KDS §13): what redeems the code. */
+/**
+ * Android / Windows (/ the browser, for a kiosk, a KDS or a board: SPEC_KIOSK §27, SPEC_KDS §13) / "Windows 7 (קופה)"
+ * (a till only, P:/specs/windows7-till.md): what redeems the code.
+ */
 export function DevicePlatformPicker({
   value,
   onChange,
   role,
 }: {
-  value: DevicePlatform;
-  onChange: (next: DevicePlatform) => void;
-  /** The role chosen: "דפדפן" is offered for a kiosk, a KDS and a board (never a till). */
+  value: PlatformChoice;
+  onChange: (next: PlatformChoice) => void;
+  /** The role chosen: "דפדפן" is offered for a kiosk, a KDS and a board (never a till); "Windows 7" for a till. */
   role?: DeviceRole | '';
 }) {
   const t = useTranslations('machines.deviceRole');
-  const icons: Record<DevicePlatform, typeof Store> = { android: Smartphone, windows: Monitor, web: Globe };
-  const options = platformsFor(role ?? '').map((platform) => ({ platform, icon: icons[platform] }));
+  const icons: Record<PlatformChoice, typeof Store> = { android: Smartphone, windows: Monitor, web: Globe, windows7: Monitor };
+  const options = platformChoicesFor(role ?? '').map((platform) => ({ platform, icon: icons[platform] }));
   return (
     <div role="radiogroup" aria-label={t('platform')} className={cn('grid gap-2', options.length > 2 ? 'grid-cols-3' : 'grid-cols-2')}>
       {options.map(({ platform, icon: Icon }) => {

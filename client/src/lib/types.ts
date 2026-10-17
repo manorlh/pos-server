@@ -3410,10 +3410,11 @@ export type AppUpdateStatus =
   | 'declined';
 
 /**
- * Which app a release is: the Android till APK, the Windows app's installer, or a kiosk web
- * bundle (`kiosk_web`: a zip of the kiosk's screens the Android kiosk shows in a WebView).
+ * Which app a release is: the Android till APK, the Windows app's installer, its Windows 7 till
+ * build's installer (`windows7`, P:/specs/windows7-till.md), or a kiosk web bundle (`kiosk_web`: a
+ * zip of the kiosk's screens the Android kiosk shows in a WebView).
  */
-export type AppPlatform = 'android' | 'windows' | 'kiosk_web';
+export type AppPlatform = 'android' | 'windows' | 'windows7' | 'kiosk_web';
 
 /** Auto-install only between these device-local times ("HH:MM"; may cross midnight). */
 export interface AppInstallWindow {

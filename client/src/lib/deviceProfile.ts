@@ -93,6 +93,26 @@ export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
   return (WEB_ROLES as readonly string[]).includes(role) ? [...DEVICE_PLATFORMS] : ['android', 'windows'];
 }
 
+/**
+ * "Windows 7 (קופה)" (P:/specs/windows7-till.md): a choice of the add-device dialog beside Android / Windows / the
+ * browser — the Windows app's build for old PCs (Windows 7 / 8.1 x64, Electron 22) runs only the till. It is no
+ * platform of its own: the code is a Windows till's, licensed "קופה בלבד", sent with `windows7: true` (the server
+ * checks the same: app/services/windows7.py). Offered for a till (or before a role is chosen) only.
+ */
+export const WINDOWS7_CHOICE = 'windows7' as const;
+export type PlatformChoice = DevicePlatform | typeof WINDOWS7_CHOICE;
+
+/** The add-device dialog's platform choices for the role: `platformsFor` + "Windows 7 (קופה)" for a till. */
+export function platformChoicesFor(role: DeviceRole | ''): PlatformChoice[] {
+  const base: PlatformChoice[] = platformsFor(role);
+  return (role === 'till' || role === '') && base.includes('windows') ? [...base, WINDOWS7_CHOICE] : base;
+}
+
+/** The platform a choice pairs on ("Windows 7 (קופה)" is a Windows device). */
+export function platformOfChoice(choice: PlatformChoice): DevicePlatform {
+  return choice === WINDOWS7_CHOICE ? 'windows' : choice;
+}
+
 /** The page on the dashboard's site a browser of this role opens: `/k`, `/kds`, `/board`. */
 export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kds' | '/board' | '/display' | null {
   if (role === 'kiosk') return '/k';
@@ -459,6 +479,8 @@ export interface AddDeviceDraft {
   shopId: string;
   /** Android unless said: a device of the other platform cannot redeem the code. */
   platform?: DevicePlatform;
+  /** "Windows 7 (קופה)": a Windows till code for the Windows 7 build (till only, license "קופה בלבד"). */
+  windows7?: boolean;
   /** A KDS's screen (kds only; the board takes only its name). */
   kds?: KdsScreenDraft;
   /** "מסך לקוח": the till it mirrors ('' = chosen later, on the customer-display page). */
@@ -548,6 +570,8 @@ export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record
     ...(d.companyId ? { companyId: d.companyId } : {}),
     ...(d.shopId ? { shopId: d.shopId } : {}),
   };
+  // "Windows 7 (קופה)": the server refuses it for anything but a Windows till licensed "קופה בלבד".
+  if (d.windows7 && (d.platform ?? 'android') === 'windows' && d.role === 'till') body.windows7 = true;
   // "שם המכשיר — לא חובה": a till's (or a server's) own name; blank sends none and the server names it.
   const name = cleanDeviceName(d.name);
   if ((d.role === 'till' || isServerRole(d.role)) && name) body.name = name.slice(0, DEVICE_NAME_MAX);
