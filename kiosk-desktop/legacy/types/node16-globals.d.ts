@@ -6,6 +6,7 @@
 import type * as U from 'undici';
 import type * as W from 'node:stream/web';
 import type { webcrypto } from 'node:crypto';
+import type * as B from 'node:buffer';
 
 declare global {
   var fetch: typeof U.fetch;
@@ -19,6 +20,9 @@ declare global {
   type HeadersInit = U.HeadersInit;
   type ReadableStream<R = unknown> = W.ReadableStream<R>;
   var ReadableStream: typeof W.ReadableStream;
+  var FormData: typeof U.FormData;
+  var File: typeof U.File;
+  var Blob: typeof B.Blob;
   var crypto: webcrypto.Crypto;
   function structuredClone<T>(value: T): T;
 }

@@ -209,6 +209,7 @@ import type {
   TechnicianAction,
   TechnicianActionResult,
   TechnicianInfo,
+  OskMode,
   DisplayScaleView,
   AdminActionResult,
 } from '../shared/bridge';
@@ -306,6 +307,8 @@ export interface LocalSettings {
 
 const LOCAL_SETTINGS = 'local.settings';
 const LOCAL_PAUSE = 'local.pause';
+/** "מקלדת מסך" (renderer/osk/OnScreenKeyboard.tsx): auto / always / off, this device's own. */
+const LOCAL_OSK = 'local.osk';
 const TECH_LOCK = 'technician.lock';
 /** The Nayax LAN pinpad's pinned certificate (payment/nayaxProvider.ts `pinpad.pin:<host:port>`, under the providers' `provider.`). */
 const PINPAD_PIN_PREFIX = 'provider.pinpad.pin:';
@@ -4933,9 +4936,12 @@ export class KioskService extends EventEmitter {
   }
 
   async technicianInfo(): Promise<TechnicianInfo> {
-    const scan = await this.usbWatch.refresh();
+    // The screen opens at once: a fresh USB scan only if it answers within 2.5 s (PowerShell on a Windows 7 J1900 can
+    // take far longer — the screen looked like it never opened), else the last one; "בדוק הכל שוב" asks again.
+    const fresh = this.usbWatch.refresh().catch(() => null);
+    const scan = await Promise.race([fresh, new Promise<null>((r) => setTimeout(() => r(null), 2_500))]) ?? this.usbWatch.current();
     const admin = this.adminInfo();
-    const queues = scan?.queues ?? (await this.transport.list().catch(() => []));
+    const queues = scan?.queues ?? (await Promise.race([this.transport.list().catch(() => []), new Promise<never[]>((r) => setTimeout(() => r([]), 2_500))]));
     const me = this.cloud.machine();
     // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
     const u = this.platform.updateStatus?.() ?? null;
@@ -4963,7 +4969,14 @@ export class KioskService extends EventEmitter {
       displayScale: this.displayScaleView(),
       foreignRows: this.foreignRowsView(),
       setup: this.technicianSetupView(admin, admin.printer),
+      osk: this.oskMode(),
     };
+  }
+
+  /** "מקלדת מסך" on this device (default auto). */
+  oskMode(): OskMode {
+    const v = this.kv.get(LOCAL_OSK);
+    return v === 'always' || v === 'off' ? v : 'auto';
   }
 
   /** The pinpad's terminal as the device knows it: the cloud's `expectedTerminalNumber`, else the one it learned. */
@@ -5164,6 +5177,19 @@ export class KioskService extends EventEmitter {
         this.log('technician: restart');
         setTimeout(() => this.platform.restartApp?.(), 300);
         return { ok: true, message: 'האפליקציה עולה מחדש…' };
+      }
+      case 'setOsk': {
+        if (a.mode !== 'auto' && a.mode !== 'always' && a.mode !== 'off') return { ok: false, message: 'ערך לא חוקי' };
+        this.kv.set(LOCAL_OSK, a.mode);
+        this.log(`technician: on-screen keyboard ${a.mode}`);
+        return { ok: true, message: 'נשמר' };
+      }
+      case 'quitApp': {
+        const guard = paymentGuard(this.activity());
+        if (guard) return { ok: false, message: TECH_TEXT.blocked };
+        this.log('technician: the app closed (יציאה מהתוכנה)');
+        setTimeout(() => this.platform.quit(), 300);
+        return { ok: true, message: 'התוכנה נסגרת…' };
       }
       case 'networkCheck':
         return this.technicianNetwork();

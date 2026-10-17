@@ -8,7 +8,7 @@ import { base64ToBytes, bytesToBase64 } from '../src/shared/till/bytes';
 import { MockTillEngine } from '../src/shared/till/mockEngine';
 import type { EngineCall, HwRequest } from '../src/shared/till/protocol';
 import { browserCaps, browserEnv, capabilityTiles, NO_CAPS } from '../src/renderer/host/caps';
-import { endpointLink, newClientOpId, wsEngineLink, type WsLike } from '../src/renderer/host/engineLink';
+import { endpointLink, newClientOpId, wantsClientOpId, wsEngineLink, type WsLike } from '../src/renderer/host/engineLink';
 import { DRAWER_KICK } from '../src/renderer/host/escpos';
 import { composePorts, DemoPrinterPort, executeHw, HwError, parseTarget, type ByteChannel, type HardwarePort, type ParsedTarget } from '../src/renderer/host/HardwarePort';
 import { liteMode } from '../src/renderer/host/lite';
@@ -178,6 +178,19 @@ describe('engine links', () => {
     const link = endpointLink({ hello: () => ({ ...engine.hello(), protocol: 99 }), on: (fn) => engine.on(fn), call: (c) => engine.call(c) });
     expect(link.status()).toBe('mismatch');
     await expect(link.call('sell.add', { productId: 'p1' })).rejects.toMatchObject({ code: 'protocol_mismatch' });
+  });
+
+  it('feature modules\' ops carry a clientOpId too (shop Z, cloud Z printing — the engine refused them without)', async () => {
+    const engine = new MockTillEngine();
+    const calls: EngineCall[] = [];
+    const link = endpointLink({ hello: (s) => engine.hello(s), on: (fn) => engine.on(fn), call: (c) => (calls.push(c), engine.call(c)) });
+    for (const op of ['shopZ.start', 'shopZ.printSummary', 'cloudZ.print', 'printers.test', 'attendance.clockIn'] as const) {
+      await link.call(op as never, {}).catch(() => undefined);
+      expect(calls.at(-1)?.clientOpId, op).toMatch(/^[0-9a-f]{32}$/);
+    }
+    expect(wantsClientOpId('catalog.snapshot')).toBe(false);
+    expect(wantsClientOpId('z.produce')).toBe(true);
+    expect(wantsClientOpId('session.hello')).toBe(false);
   });
 
   it('client op ids are unique', () => {
