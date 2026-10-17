@@ -54,6 +54,8 @@ export function screenOf(basket: CdState, c: CheckoutState | null, notice: strin
     phase: 'paying',
     payment: { method: 'card', status, due: c.dueAgorot, paid: c.paidAgorot, ...(notice ? { notice } : {}) },
   });
+  // "מזומן במכשיר": the money goes into the cash device — no card to present.
+  if (c.deviceCash && c.deviceCash.stage !== 'done') return { ...base, phase: 'paying', payment: { method: 'other', status: 'processing', due: c.dueAgorot, paid: c.paidAgorot } };
   if (c.cardUnknown || (c.phase as string) === 'card_unknown') return card('processing');
   if (c.phase === 'card_waiting') return card('waiting_card');
   if (c.cardError) return card('declined');

@@ -55,6 +55,7 @@ def build_preset_discount_tracking(
     preset_id: Optional[str] = None,
     cashier_id: Optional[str] = None,
     person: Optional[str] = None,
+    area_filter=None,
 ) -> Dict[str, Any]:
     """`{window, generatedAt, totals, byPreset, byPerson, byCashier, rows, truncated}` — see the module."""
     from app.services.document_prefix import document_number_from
@@ -72,6 +73,7 @@ def build_preset_discount_tracking(
     }
     tx_q = build_scoped_transaction_query(
         db, user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id or None,
+        area_filter=area_filter,
     )
     if tx_q is None:
         return out

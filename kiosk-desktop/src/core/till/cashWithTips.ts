@@ -288,6 +288,8 @@ export function agorotOf(v: unknown): number | null {
 export interface XCashFigures {
   openingCash: number;
   totalCash: number;
+  /** "מזומן במכשיר" (core/sale.ts): inside totalCash, never the drawer's. Absent: none. */
+  totalDeviceCash?: number;
   totalCashTips: number;
   totalCardTips: number;
   expectedCash: number;
@@ -307,7 +309,8 @@ const ag = (shekels: number | undefined) => Math.round((shekels ?? 0) * 100);
 export function xDrawerInput(t: XCashFigures, show: boolean): DrawerInput {
   return {
     opening: ag(t.openingCash),
-    cashSales: ag(t.totalCash),
+    // The drawer's cash takings: the cash device's are in the device.
+    cashSales: ag(t.totalCash) - ag(t.totalDeviceCash),
     cashTips: ag(t.totalCashTips),
     cardTips: ag(t.totalCardTips),
     movements: { cashIn: ag(t.cashIn), cashOut: ag(t.cashOut), deposits: ag(t.deposits) },
@@ -385,7 +388,7 @@ export function withCashWithTips<T extends XCashFigures & XTillCashFields>(
     cardTipsFromDrawer: paid / 100,
     cardTipsUnpaid: (p.unpaid ?? 0) / 100,
     cardTipsShortfall: p.mode ?? 'partial',
-    drawerCash: (ag(till.totalCash) + ag(till.totalCashTips) - paid) / 100,
+    drawerCash: (ag(till.totalCash) - ag(till.totalDeviceCash) + ag(till.totalCashTips) - paid) / 100,
   };
   if (p.needsChoice) out.cardTipsNeedsChoice = true;
   else delete out.cardTipsNeedsChoice;

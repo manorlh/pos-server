@@ -323,6 +323,9 @@ GET /kds/shops/{shop_id} -> kds|devices:view
 GET /kds/shops/{shop_id}/board -> kds:view
 DELETE /kds/shops/{shop_id}/devices/{machine_id} -> kds:edit
 PUT /kds/shops/{shop_id}/devices/{machine_id} -> kds:edit
+GET /kds/shops/{shop_id}/devices/{machine_id}/print -> kds:view
+PUT /kds/shops/{shop_id}/devices/{machine_id}/print -> kds:edit
+POST /kds/shops/{shop_id}/devices/{machine_id}/print/test -> kds:edit
 PUT /kds/shops/{shop_id}/display-defaults -> kds:edit
 POST /kds/shops/{shop_id}/overrides -> kds:edit
 DELETE /kds/shops/{shop_id}/overrides/{override_id} -> kds:edit
@@ -868,6 +871,9 @@ POST /sync/{machine_id}/kds/actions -> till
 GET /sync/{machine_id}/kds/board -> till
 GET /sync/{machine_id}/kds/device -> till
 GET /sync/{machine_id}/kds/orders/status -> till
+GET /sync/{machine_id}/kds/print -> till
+POST /sync/{machine_id}/kds/print-jobs -> till
+GET /sync/{machine_id}/kds/print-jobs/status -> till
 POST /sync/{machine_id}/kds/ready-actions -> till
 GET /sync/{machine_id}/kds/ready-orders -> till
 POST /sync/{machine_id}/kds/release -> till

@@ -11,6 +11,8 @@ import type { CartLine, CheckoutState } from '../../../../shared/till/protocol';
 import type { CapabilityTile } from '../../../host/caps';
 import type { TillLayout } from '../layout/tillLayout';
 import { CashPad } from '../parts/CashPad';
+import { DeviceCashDone, DeviceCashLive, DeviceCashTender, type DeviceCashActions } from '../parts/DeviceCashPanel';
+import type { DeviceCashState } from '../../../../core/till/deviceCash';
 import { money, T } from '../text';
 import { Icon, TenderIcon } from '../theme/icons';
 
@@ -34,6 +36,8 @@ export interface CheckoutActions {
   returnCustomer?(c: { name: string; phone: string; address: string }): void;
   exchange?(): void;
   payout?(method: 'cash' | 'card'): void;
+  /** "מזומן במכשיר" (main/till/tillDeviceCash.ts): absent — not on this engine. */
+  device?: DeviceCashActions;
 }
 
 /**
@@ -219,6 +223,7 @@ export function CheckoutScreen({
   startWithPad = false,
   wideCash = false,
   lines = [],
+  deviceCash = null,
 }: {
   checkout: CheckoutState;
   layout: TillLayout;
@@ -233,6 +238,8 @@ export function CheckoutScreen({
   wideCash?: boolean;
   /** The sale's lines, for "פרטי חשבון ▾" under the summary (Android SummaryCard). */
   lines?: readonly CartLine[];
+  /** "מזומן במכשיר": the till's cash device (CashMag / the cash station); absent — none. */
+  deviceCash?: DeviceCashState | null;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [padOpen, setPadOpen] = useState(startWithPad);
@@ -324,6 +331,7 @@ export function CheckoutScreen({
             <p>{checkout.kitchenWarning}</p>
           </div>
         ) : null}
+        {checkout.deviceCash && actions.device ? <DeviceCashDone view={checkout.deviceCash} onOwedPaid={actions.device.owedPaid} /> : null}
         {checkout.printWarning ? (
           <div className="t-warn" role="alert">
             <p>{checkout.printWarning}</p>
@@ -354,6 +362,11 @@ export function CheckoutScreen({
 
   if (checkout.basket && checkout.basket.step !== 'tender' && !checkout.cardUnknown) {
     return <BasketStep checkout={checkout} actions={actions} noCard={noCard} style={style} />;
+  }
+
+  // "מזומן במכשיר": the device takes the money (or its answer was lost) — its own panel until it ends.
+  if (checkout.deviceCash && checkout.deviceCash.stage !== 'done' && actions.device) {
+    return <DeviceCashLive view={checkout.deviceCash} actions={actions.device} style={style} />;
   }
 
   if (checkout.cardUnknown) {
@@ -498,6 +511,8 @@ export function CheckoutScreen({
           <button type="button" className="t-paynow-btn t-paynow-fastcash t-tender-main" onClick={() => actions.cash(checkout.dueAgorot)}>
             <span>{T.fastCashNow(money(checkout.dueAgorot))}</span>
           </button>
+          {/* "מזומן במכשיר" (Android CashMagCheckout): beside the cash at the counter, never instead of it. */}
+          {deviceCash && actions.device && !checkout.basket ? <DeviceCashTender state={deviceCash} dueAgorot={checkout.dueAgorot} onPay={actions.device.pay} /> : null}
         </div>
       )}
       {!waiting && !simulation && actions.credit && !checkout.basket ? (

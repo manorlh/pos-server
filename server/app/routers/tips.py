@@ -35,12 +35,21 @@ def get_tips_report(
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
     shift_id: Optional[str] = Query(None, alias="shiftId"),
+    area_id: Optional[str] = Query(None, alias="areaId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    from app.services import area_scope
+    from app.services.areas import parse_area_filter
+
     shop = _get_shop_or_404(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
+    area_filter = parse_area_filter(area_id if isinstance(area_id, str) else None)
+    if area_filter is not None and not isinstance(area_filter, str):
+        area_scope.check_area(db, current_user, area_filter)
+    # A manager of some points of sale: their devices' tips only.
+    reach = area_scope.allowed_machine_ids(db, current_user)
 
     td_uuid: Optional[uuid.UUID] = None
     if shift_id:
@@ -61,4 +70,6 @@ def get_tips_report(
         from_date=from_date,
         to_date=to_date,
         shift_id=td_uuid,
+        area_filter=area_filter,
+        machine_ids=reach,
     )

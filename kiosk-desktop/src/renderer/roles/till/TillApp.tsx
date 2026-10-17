@@ -25,6 +25,7 @@ import './css/attendance.css';
 import './css/readyOrders.css';
 import './css/alerts.css';
 import './css/voucherBalance.css';
+import './css/deviceCash.css';
 import './css/voucherStation.css';
 import './css/cloudZ.css';
 import './css/printers.css';
@@ -60,6 +61,7 @@ import { AttendanceClockButton, AttendanceScreen } from './screens/AttendanceScr
 import { ReadyOrdersScreen, type ReadyOrdersActions } from './screens/ReadyOrdersScreen';
 import { AlertsLine, AlertsScreen } from './screens/AlertsScreen';
 import { VoucherBalanceScreen } from './screens/VoucherBalanceScreen';
+import { DeviceCashScreen } from './screens/DeviceCashScreen';
 import { VoucherStationScreen } from './screens/VoucherStationScreen';
 import { CloudZScreen } from './screens/CloudZScreen';
 import { PrintersScreen } from './screens/PrintersScreen';
@@ -104,7 +106,8 @@ type View =
   | 'voucherBalance'
   | 'cloudZ'
   | 'printers'
-  | 'alerts';
+  | 'alerts'
+  | 'deviceCash';
 
 /** The menu's report rows and the local report each is. */
 const REPORT_OF: Partial<Record<MenuTarget, LocalReportKind>> = { shiftHistory: 'shifts', tillZHistory: 'tillZs', productSales: 'products', workers: 'workers', tips: 'tips' };
@@ -444,7 +447,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               view === 'voucherBalance' ||
               view === 'cloudZ' ||
               view === 'printers' ||
-              view === 'alerts'
+              view === 'alerts' ||
+              view === 'deviceCash'
             ? view
             : null;
   const menuGroups = buildTillMenu(menuFactsOf(s, { demo: host.demo, settings: !!host.ui.openAdmin, current: menuCurrent }));
@@ -521,6 +525,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         setMenuAt(t);
         setView('printers');
         return act('printers.open');
+      case 'deviceCash':
+        setMenuAt(t);
+        setView('deviceCash');
+        return act('deviceCash.open');
       case 'screenEdit':
         setView('sell');
         return act('screenEdit.start');
@@ -599,6 +607,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           lines={s.sell.lines}
           wideCash={profile.widthDp >= 840 && profile.widthDp > profile.heightDp && profile.heightDp >= 600}
           demo={s.session.demo}
+          deviceCash={s.deviceCash ?? null}
           actions={{
             cash: (amountAgorot) => void run('checkout.cash', { amountAgorot }),
             card: () => void run('checkout.card', {}),
@@ -621,6 +630,15 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
                   voucher: (code: string) => void run('checkout.voucher', { code }),
                   removeVoucher: (id: string) => void run('checkout.removeVoucher', { id }),
                   finishTest: () => void run('checkout.finishTest', {}),
+                  // "מזומן במכשיר" (main/till/tillDeviceCash.ts).
+                  device: {
+                    pay: () => act('deviceCash.pay'),
+                    cancel: () => act('deviceCash.cancel'),
+                    answer: (confirm: boolean) => act('deviceCash.answer', { confirm }),
+                    recheck: () => act('deviceCash.recheck'),
+                    markNotPaid: () => act('deviceCash.markNotPaid'),
+                    owedPaid: () => act('deviceCash.owedPaid'),
+                  },
                 }),
           }}
         />
@@ -853,6 +871,21 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             deposit: (employeeId, countedAgorot) => run('drawer.walletDeposit', { employeeId, countedAgorot }),
             log: async () => (await run('drawer.log', {})) as DrawerLog | undefined,
             back: () => setView('sell'),
+          }}
+        />
+      );
+    }
+    if (view === 'deviceCash' && s.deviceCash) {
+      return (
+        <DeviceCashScreen
+          state={s.deviceCash}
+          actions={{
+            check: () => act('deviceCash.check'),
+            acknowledge: (txId) => act('deviceCash.acknowledge', { txId }),
+            back: () => {
+              void run('deviceCash.close', {});
+              setView('sell');
+            },
           }}
         />
       );
@@ -1399,6 +1432,7 @@ export function menuFactsOf(s: TillState, host: { demo: boolean; settings: boole
     printers: !host.demo && !!s.menu,
     screenEdit: s.screenEdit?.available === true,
     alerts: s.alerts ? { line: s.alerts.subtitle } : null,
+    deviceCash: s.deviceCash && (s.deviceCash.kind || s.deviceCash.unresolvedCount > 0) ? { name: s.deviceCash.name, unresolved: s.deviceCash.unresolvedCount } : null,
   };
 }
 

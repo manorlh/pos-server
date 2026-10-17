@@ -65,7 +65,27 @@ class AckIn(BaseModel):
 
 
 def scoped(db: Session, user: User, tenant_id: Any) -> Optional[OrmQuery]:
-    """The entries this user may see in the active tenant; None = none at all."""
+    """
+    The entries this user may see in the active tenant; None = none at all. A manager of some points
+    of sale only ("מנהל נקודת מכירה", app/services/area_scope.py) sees — and is pushed
+    (exception_alerts/push.owner_may_see) — the entries of their points of sale and devices only
+    (P:/specs/area-coverage-audit.md).
+    """
+    q = _scoped_by_role(db, user, tenant_id)
+    if q is None or user.role == UserRole.SUPER_ADMIN:
+        return q
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, user)
+    if not reach.narrowed:
+        return q
+    return q.filter(or_(
+        area_scope.machine_filter(db, user, ExceptionLogEntry.machine_id),
+        area_scope.area_filter(db, user, ExceptionLogEntry.area_id),
+    ))
+
+
+def _scoped_by_role(db: Session, user: User, tenant_id: Any) -> Optional[OrmQuery]:
     if user.role in NO_READ_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     q = db.query(ExceptionLogEntry).filter(ExceptionLogEntry.tenant_id == tenant_id)

@@ -256,7 +256,18 @@ def assign_machine_area(db: Session, machine: POSMachine, area_id: AreaId) -> bo
         return set_machine_area(machine, None)
     area = area_in_shop(db, area_id, machine.shop_id, detail=AREA_NOT_IN_MACHINE_SHOP)
     refuse_archived(area)
-    return set_machine_area(machine, area.id)
+    changed = set_machine_area(machine, area.id)
+    if changed:
+        _screens_follow(db, [machine])
+    return changed
+
+
+def _screens_follow(db: Session, machines: Iterable[POSMachine]) -> None:
+    """KDS / board screens follow their device's point of sale (app/services/kds.on_machine_area_changed)."""
+    from app.services import kds
+
+    for machine in machines:
+        kds.on_machine_area_changed(db, machine)
 
 
 def set_membership(db: Session, area: ShopArea, machine_ids: Sequence[uuid.UUID]) -> List[POSMachine]:
@@ -296,6 +307,7 @@ def set_membership(db: Session, area: ShopArea, machine_ids: Sequence[uuid.UUID]
         if set_machine_area(machine, area.id):
             changed.append(machine)
     db.flush()
+    _screens_follow(db, changed)
     return changed
 
 

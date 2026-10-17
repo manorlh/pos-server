@@ -135,6 +135,9 @@ class LocalShopZIn(BaseModel):
     report: Optional[Dict[str, Any]] = None
     #: The dashboard's request this Z answers (`pendingShopZ`), if it was asked for.
     shop_z_request_id: Optional[str] = Field(None, alias="shopZRequestId", max_length=64)
+    #: "Z לנקודת מכירה" in local mode (P:/specs/area-z-configs.md §3): the main till closed only this
+    #: point of sale's tills. The shop's numbering, as any shop Z; null — the whole shop.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
 
 
 class LocalShopZRefused(Exception):
@@ -198,6 +201,8 @@ def _participant(db: Session, machine: POSMachine, remote: Optional[set] = None)
     out = _ref(machine)
     out["kiosk"] = bool(getattr(machine, "is_kiosk", False))
     out["remote"] = closes_through_cloud(machine, remote)
+    # Its point of sale (P:/specs/area-z-configs.md §3): the main till's area Z closes only these.
+    out["areaId"] = str(machine.area_id) if getattr(machine, "area_id", None) is not None else None
     section = lan_section(db, machine)
     if section is not None:
         out["supportClosed"] = section
@@ -281,6 +286,10 @@ def history(db: Session, machine: POSMachine, *, days: int = HISTORY_DAYS, now: 
         # the main till takes it as that till's "closed" answer instead of waiting for it.
         "participants": [_participant(db, m, remote_till_ids(shop)) for m in participants(db, shop.id)],
         "independentTills": [_ref(m) for m in sorted(seated, key=MT.till_order) if is_independent(m)],
+        # "Z לנקודת מכירה" in local mode (P:/specs/area-z-configs.md §3): the shop's live points of sale, and
+        # whether this till may produce one now (the producer only — the shop's numbering).
+        "areas": lan_areas(db, shop),
+        "areaZ": lan_area_z(db, shop, machine, producer),
         "days": days,
         "zs": [_z_row(z) for z in zs],
         **producer.to_json(db),
@@ -374,6 +383,14 @@ def upload(db: Session, machine: POSMachine, body: LocalShopZIn, *, now: Optiona
 
     from app.services import z_runs as ZR
 
+    area = None
+    if body.area_id is not None:
+        from app.models.shop_area import ShopArea
+
+        area = db.get(ShopArea, body.area_id)
+        if area is None or str(area.shop_id) != str(shop.id):
+            raise _conflict("area_not_in_shop", areaId=str(body.area_id))
+        # An area archived after the main till printed its Z still files it: the paper is final.
     tills = {m.id: m for m in ZR.shop_tills(db, shop.id)}
     part_machines: List[POSMachine] = []
     for t in body.tills:
@@ -381,6 +398,10 @@ def upload(db: Session, machine: POSMachine, body: LocalShopZIn, *, now: Optiona
         m = tills.get(t.machine_id) or _former_till(db, shop, t.machine_id)
         if m is None:
             raise _conflict("machine_not_in_shop", machineId=str(t.machine_id))
+        if area is not None and t.shift_ids and str(getattr(m, "area_id", None)) != str(area.id):
+            # An area Z takes only that point of sale's tills — a till moved out since the round is refused
+            # (the main till's round listed the area's tills from the same history).
+            raise _conflict("machine_not_in_area", machineId=str(m.id), areaId=str(area.id))
         if getattr(m, "z_mode", None) == "till":
             raise _conflict("machine_issues_its_own_z", machineId=str(m.id))
         if not t.shift_ids:
@@ -405,8 +426,12 @@ def upload(db: Session, machine: POSMachine, body: LocalShopZIn, *, now: Optiona
     z = _z_as_printed(db, shop, machine, body, part_machines, closed_at)
     z.built_offline = True
     z.uploaded_at = now
+    if area is not None:
+        z.area_id = area.id
     z.offline_report = {
         "kind": "local_shop_z",
+        "areaId": str(area.id) if area is not None else None,
+        "areaName": area.name if area is not None else None,
         "shopSequenceNumber": body.shop_sequence_number,
         "closedAt": closed_at.isoformat(),
         "businessDate": body.business_date.isoformat() if body.business_date else None,
@@ -424,6 +449,9 @@ def upload(db: Session, machine: POSMachine, body: LocalShopZIn, *, now: Optiona
     missing = []
     for p in participants(db, shop.id):
         if p.id in taken:
+            continue
+        if area is not None and str(getattr(p, "area_id", None)) != str(area.id):
+            # Another point of sale's tills wait for their own Z (or the shop's): not missing here.
             continue
         left = [
             s for s in db.query(Shift).filter(
@@ -1296,11 +1324,24 @@ def request_state(db: Session, shop: Shop, *, now: Optional[datetime] = None) ->
     }
 
 
-def request_from_dashboard(db: Session, user, shop: Shop, *, now: Optional[datetime] = None) -> dict:
-    """Ask the shop's main till for the shop Z; the pending one again if there is one."""
+def request_from_dashboard(
+    db: Session, user, shop: Shop, *, area_id: Optional[uuid.UUID] = None, now: Optional[datetime] = None,
+) -> dict:
+    """
+    Ask the shop's main till for the shop Z — or (`area_id`) a point of sale's Z
+    (P:/specs/area-z-configs.md §3); the pending one again if there is one for the same scope. A
+    pending request for another scope refuses (409 `request_pending_other_scope`): the main till
+    runs one round at a time.
+    """
     from app.services import main_till as MT
 
     now = now or datetime.now(timezone.utc)
+    area = None
+    if area_id is not None:
+        from app.services.areas import area_in_shop, refuse_archived
+
+        area = area_in_shop(db, area_id, shop.id)
+        refuse_archived(area)
     producer = effective_producer(db, shop, now=now)
     if producer.kind != LOCAL and producer.configured_kind != LOCAL:
         raise LocalShopZRefused(status.HTTP_409_CONFLICT, {
@@ -1309,11 +1350,28 @@ def request_from_dashboard(db: Session, user, shop: Shop, *, now: Optional[datet
         })
     held = _request_of(shop, now)
     if held is not None and held.get("status") in ("waiting", "in_progress"):
+        if (held.get("areaId") or None) != (str(area.id) if area is not None else None):
+            what = f"Z לנקודת המכירה {held.get('areaName')}" if held.get("areaId") else "Z לכל הסניף"
+            raise LocalShopZRefused(status.HTTP_409_CONFLICT, {
+                "detail": "request_pending_other_scope",
+                "message": f"כבר נשלחה לקופה הראשית בקשה ל-{what} — חכו לסיומה או בטלו אותה.",
+                "request": held,
+            })
         return held
     main = MT.main_till_of_shop(db, shop.id)
+    if area is not None:
+        producer_till = _producer_machine(db, shop, now) or main
+        if producer_till is not None and not supports_lan_area_z(producer_till):
+            # An older main till would ignore the area and close the whole shop: never hand it one.
+            raise LocalShopZRefused(status.HTTP_409_CONFLICT, {
+                "detail": "main_till_needs_update",
+                "message": "הקופה הראשית בגרסה שלא מכירה Z לנקודת מכירה במצב מקומי — עדכנו אותה ונסו שוב.",
+            })
     req = {
         "id": str(uuid.uuid4()),
         "status": "waiting",
+        "areaId": str(area.id) if area is not None else None,
+        "areaName": area.name if area is not None else None,
         "mainTill": MT.till_ref(main),
         "createdAt": now.isoformat(),
         "expiresAt": (now + timedelta(hours=REQUEST_TTL_HOURS)).isoformat(),
@@ -1353,9 +1411,16 @@ def take_pending_for_main(db: Session, machine: POSMachine, *, now: Optional[dat
     # To the shop's producer only (it decides, and says why when it cannot).
     if not effective_producer(db, shop, now=now).is_local_of(machine.id):
         return None
+    if req.get("areaId") and not supports_lan_area_z(machine):
+        # An older build would run the whole shop's Z for it: it never gets an area's request.
+        return None
     if not req.get("sentAt"):
         _put_request(shop, {**req, "sentAt": now.isoformat()})
-    return {"requestId": req["id"], "initiatedBy": req.get("createdBy"), "createdAt": req.get("createdAt")}
+    out = {"requestId": req["id"], "initiatedBy": req.get("createdBy"), "createdAt": req.get("createdAt")}
+    if req.get("areaId"):
+        # "Z לנקודת מכירה": the main till closes only that point of sale's tills.
+        out.update(scope="area", areaId=req["areaId"], areaName=req.get("areaName"))
+    return out
 
 
 def ack_request(db: Session, machine: POSMachine, request_id: str, phase: str, message: Optional[str]) -> dict:
@@ -1381,6 +1446,9 @@ def complete_request(shop: Shop, request_id: Optional[str], z: ZReport) -> None:
     if req is None or req.get("status") not in REQUEST_PENDING:
         return
     if request_id is not None and req.get("id") != str(request_id):
+        return
+    if (req.get("areaId") or None) != (str(z.area_id) if getattr(z, "area_id", None) is not None else None):
+        # A Z of another scope does not answer it (an area's Z is not the shop's, nor another area's).
         return
     _put_request(shop, {
         **req, "status": "completed", "message": None,
@@ -2276,6 +2344,73 @@ def _taken_by_a_z(db: Session, machine: POSMachine, body: dict) -> Dict[str, Opt
         for sid, shop_number, till_number in rows:
             out[str(sid)] = shop_number if shop_number is not None else till_number
     return out
+
+
+# ── "Z לנקודת מכירה" in local mode (P:/specs/area-z-configs.md §3) ──────────────
+
+#: Said on the heartbeat (`capabilities`) by a build whose local shop Z can close one point of sale.
+LAN_AREA_Z_CAPABILITY = "lan_area_z_v1"
+
+
+def supports_lan_area_z(machine: Optional[POSMachine]) -> bool:
+    if machine is None:
+        return False
+    words = list(getattr(machine, "capabilities", None) or [])
+    reported = getattr(machine, "reported_capabilities", None) or {}
+    if isinstance(reported, dict):
+        words += list(reported.get("list") or [])
+    return LAN_AREA_Z_CAPABILITY in words
+
+
+def _producer_machine(db: Session, shop: Shop, now: Optional[datetime] = None) -> Optional[POSMachine]:
+    producer = effective_producer(db, shop, now=now)
+    mid = producer.machine_id or producer.configured_machine_id
+    if not mid:
+        return None
+    try:
+        return db.get(POSMachine, uuid.UUID(str(mid)))
+    except ValueError:
+        return None
+
+
+LAN_AREA_NOT_PRODUCER = "lan_area_z_not_producer"
+LAN_AREA_NO_AREAS = "lan_area_z_no_areas"
+LAN_AREA_TEXT = {
+    LAN_AREA_NOT_PRODUCER: "במצב מקומי Z לנקודת מכירה מופק בקופה הראשית של הסניף",
+    LAN_AREA_NO_AREAS: "אין בסניף נקודות מכירה עם קופות ב-Z הסניפי",
+}
+
+
+def lan_areas(db: Session, shop: Shop) -> List[dict]:
+    """The shop's live points of sale with their participants (the main till's choice "כל הסניף / <נקודה>")."""
+    from app.models.shop_area import ShopArea
+
+    parts = participants(db, shop.id)
+    out = []
+    for area in (
+        db.query(ShopArea)
+        .filter(ShopArea.shop_id == shop.id, ShopArea.archived_at.is_(None))
+        .order_by(ShopArea.sort_order, ShopArea.name)
+        .all()
+    ):
+        tills = [str(m.id) for m in parts if str(getattr(m, "area_id", None)) == str(area.id)]
+        if tills:
+            out.append({"areaId": str(area.id), "name": area.name, "tills": tills})
+    return out
+
+
+def lan_area_z(db: Session, shop: Shop, machine: POSMachine, producer=None) -> dict:
+    """
+    May this till produce a point of sale's Z in local mode: only the shop's producer (the main till /
+    the local server — the one that numbers), and only when a live point of sale has participants.
+    """
+    producer = producer or effective_producer(db, shop)
+    reason = None
+    if not producer.is_local_of(machine.id):
+        reason = LAN_AREA_NOT_PRODUCER
+    elif not lan_areas(db, shop):
+        reason = LAN_AREA_NO_AREAS
+    return {"available": reason is None, "reason": reason, "message": LAN_AREA_TEXT.get(reason) if reason else None}
 
 
 def take_remote_parts(db: Session, shop: Shop, z: ZReport) -> None:
