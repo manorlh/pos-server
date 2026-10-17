@@ -321,7 +321,7 @@ def apply_on_pairing(db: Session, pairing_code, machine: POSMachine) -> bool:
         kiosk_control.convert(
             db, user, machine, name=options.get("name"), controller_ids=controllers, lock_device=lock,
         )
-        # "מסופון חיצוני ברשת — חובה לקיוסק": the address given with the code, if any.
+        # An older dashboard's kiosk pinpad, given with the code, if any ("מסופון אשראי" is device_terminal's).
         pinpad_written = apply_pinpad(machine, options.get("pinpadHost"), options.get("pinpadPort"))
         db.commit()
     except (HTTPException, IntegrityError, DeviceProfileRefused) as exc:

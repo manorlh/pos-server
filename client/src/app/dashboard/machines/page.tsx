@@ -81,6 +81,16 @@ import {
 import { DeviceLicensePicker, LicenseCountsPanel } from '@/components/dashboard/machines/device-license';
 import { licensedRoleOf, pairingLicenseOf, type LicenseProduct } from '@/lib/deviceLicense';
 import { WebKioskLink } from '@/components/dashboard/machines/web-kiosk-link';
+import { DeviceTerminalFields } from '@/components/dashboard/machines/device-terminal';
+import {
+  defaultTerminalType,
+  emptyTerminalDraft,
+  takesTerminal,
+  terminalDraftHasErrors,
+  terminalPairingBody,
+  terminalTypesFor,
+  type TerminalDraft,
+} from '@/lib/deviceTerminal';
 import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
 import { CustomerDisplayPairingFields, CustomerDisplayWebLink } from '@/components/dashboard/customer-display/customer-display-devices';
 import { WorkConfigStep } from '@/components/dashboard/machines/work-config';
@@ -105,7 +115,7 @@ import {
   deviceProfileErrorMessage,
   expectedRegisterNumber,
   isFiscalRole,
-  kioskDraftError,
+  capabilitiesOf,
   modelNeeded,
   pairingRequestBody,
   platformsFor,
@@ -182,6 +192,12 @@ export default function MachinesPage() {
   /** "סוג רישיון" for a till / kiosk ('' — the role's default; lib/deviceLicense.ts). */
   const [pairLicense, setPairLicense] = useState<LicenseProduct | ''>('');
   const [pairKiosk, setPairKiosk] = useState<KioskDraft>(EMPTY_KIOSK_DRAFT);
+  /**
+   * "מסופון אשראי" (lib/deviceTerminal.ts): a till's or a kiosk's terminal type and its fields, for the role it
+   * was chosen for. Null (or a type the device cannot take after a role / platform / model change): today's
+   * default — a kiosk on a Nayax pinpad, a till by the shop.
+   */
+  const [pairTerminalState, setPairTerminal] = useState<{ role: DeviceRole | ''; draft: TerminalDraft } | null>(null);
   /** Android unless chosen: a Windows install cannot redeem an Android code, nor back. */
   const [pairPlatform, setPairPlatform] = useState<DevicePlatform>('android');
   /** A KDS's screen (kind, stations) / the board's name: made as it pairs. */
@@ -417,6 +433,7 @@ export default function MachinesPage() {
     setPairDeviceRole('');
     setPairLicense('');
     setPairKiosk(EMPTY_KIOSK_DRAFT);
+    setPairTerminal(null);
     setPairPlatform('android');
     setPairKds(EMPTY_KDS_SCREEN);
     setPairMirrorTill('');
@@ -467,6 +484,15 @@ export default function MachinesPage() {
     mirrorTillId: pairMirrorTill,
   };
   const pairMissing = addDeviceMissing(pairDraft);
+  const pairSells = takesTerminal(pairDeviceRole);
+  const pairBuiltinTerminal =
+    pairPlatform !== 'android' ? false : pairDeviceModel ? capabilitiesOf(pairDeviceModel, { kiosk: pairDeviceRole === 'kiosk' }).builtinTerminal : null;
+  const pairTerminalTypes = terminalTypesFor({ role: pairDeviceRole, platform: pairPlatform, builtinTerminal: pairBuiltinTerminal });
+  const pairTerminal: TerminalDraft =
+    pairTerminalState && pairTerminalState.role === pairDeviceRole && pairTerminalTypes.includes(pairTerminalState.draft.type)
+      ? pairTerminalState.draft
+      : emptyTerminalDraft(defaultTerminalType(pairDeviceRole));
+  const pairTerminalBody = pairSells ? terminalPairingBody(pairTerminal, pairDeviceRole) : null;
   /** "הקופה תקבל מספר N": the server's own peek for the chosen shop, before anything is created. */
   const pairExpectedNumber = expectedRegisterNumber(
     { role: pairDeviceRole, shopId: pairShopId },
@@ -1277,6 +1303,17 @@ export default function MachinesPage() {
                   onChange={setPairKiosk}
                 />
               ) : null}
+              {/* "מסופון אשראי": the terminal type the device's platform and role can charge on, and its fields. */}
+              {pairSells ? (
+                <DeviceTerminalFields
+                  role={pairDeviceRole as 'till' | 'kiosk'}
+                  platform={pairPlatform}
+                  builtinTerminal={pairBuiltinTerminal}
+                  value={pairTerminal}
+                  onChange={(draft) => setPairTerminal({ role: pairDeviceRole, draft })}
+                  idPrefix="pair-terminal"
+                />
+              ) : null}
               {/* A KDS's screen (kind, stations) or the board's name — made as it pairs. */}
               {pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board' ? (
                 <KdsScreenFields
@@ -1330,6 +1367,7 @@ export default function MachinesPage() {
                     const pairLicenseProduct = pairingLicenseOf(pairDeviceRole, pairLicense);
                     generateCode.mutate({
                       ...pairingRequestBody(pairDraft, pairKiosk),
+                      ...(pairTerminalBody ? { terminal: pairTerminalBody } : {}),
                       ...(pairWorkConfigPlan ? { workConfig: pairWorkConfigPlan } : {}),
                       ...(pairLicenseProduct ? { licenseProduct: pairLicenseProduct } : {}),
                     });
@@ -1338,7 +1376,7 @@ export default function MachinesPage() {
                     !!pairMissing ||
                     generateCode.isPending ||
                     (!!pairWorkConfigPlan && !!workConfigDraftError(pairWorkConfig, null)) ||
-                    (pairDeviceRole === 'kiosk' && !!kioskDraftError(pairKiosk))
+                    (pairSells && terminalDraftHasErrors(pairTerminal))
                   }
                   title={pairMissingHint}
                 >

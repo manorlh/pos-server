@@ -31,7 +31,6 @@ import {
   expectedRegisterNumber,
   isDisplayDevice,
   isFiscalRole,
-  kioskDraftError,
   kioskPinpadMissing,
   modelNeeded,
   pairingRequestBody,
@@ -48,7 +47,7 @@ import {
   webScreenLink,
 } from './deviceProfile';
 
-const noKiosk = { name: '', controllerMachineIds: [], lockDevice: false, pinpadHost: '', pinpadPort: '' };
+const noKiosk = { name: '', controllerMachineIds: [], lockDevice: false };
 
 describe('the model catalog', () => {
   it('six models, then the SUNMI family, in the order the picker shows them', () => {
@@ -566,21 +565,10 @@ describe('a kiosk charges on an external pinpad', () => {
     assert.equal(pinpadPortError(''), null);
     assert.equal(pinpadPortError('8080'), null);
     assert.equal(pinpadPortError('70000'), 'invalid');
-    assert.equal(kioskDraftError({ ...noKiosk, pinpadHost: 'a b' }), 'pinpadHost');
-    assert.equal(kioskDraftError({ ...noKiosk, pinpadHost: '10.0.0.5', pinpadPort: 'x' }), 'pinpadPort');
-    assert.equal(kioskDraftError({ ...noKiosk, pinpadPort: 'x' }), null);
   });
 
-  it('a typed address travels with the kiosk, as the existing pinpad keys', () => {
-    const body = pairingRequestBody(
-      { role: 'kiosk', model: 'P18', companyId: 'c', shopId: 's' },
-      { ...noKiosk, pinpadHost: ' 10.0.0.5 ', pinpadPort: '9000' },
-    );
-    assert.deepEqual(body.kiosk, { controllerMachineIds: [], lockDevice: false, pinpadHost: '10.0.0.5', pinpadPort: 9000 });
-    const noPort = pairingRequestBody(
-      { role: 'kiosk', model: 'P18', companyId: 'c', shopId: 's' },
-      { ...noKiosk, pinpadHost: '10.0.0.5' },
-    );
-    assert.deepEqual(noPort.kiosk, { controllerMachineIds: [], lockDevice: false, pinpadHost: '10.0.0.5' });
+  it('the kiosk carries no pinpad any more: "מסופון אשראי" is sent beside it (lib/deviceTerminal.ts)', () => {
+    const body = pairingRequestBody({ role: 'kiosk', model: 'P18', companyId: 'c', shopId: 's' }, noKiosk);
+    assert.deepEqual(body.kiosk, { controllerMachineIds: [], lockDevice: false });
   });
 });
