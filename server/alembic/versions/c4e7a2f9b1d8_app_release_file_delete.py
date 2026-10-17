@@ -7,7 +7,7 @@
 Add-only and idempotent (the API's create_all may have made any of it first).
 
 Revision ID: c4e7a2f9b1d8
-Revises: e8c1f4a7b2d9
+Revises: c7d2e9f4a1b8
 Create Date: 2026-10-17 12:00:00
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "c4e7a2f9b1d8"
-down_revision: Union[str, Sequence[str], None] = "e8c1f4a7b2d9"
+down_revision: Union[str, Sequence[str], None] = "c7d2e9f4a1b8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
