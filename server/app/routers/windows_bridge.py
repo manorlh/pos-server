@@ -14,11 +14,9 @@ and the browser in kiosk mode at start. One installer, one updater.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -26,6 +24,7 @@ from app.middleware.auth import get_current_machine_admin
 from app.models.app_release import AppRelease
 from app.models.user import User
 from app.services import app_updates as AU
+from app.services import release_storage as RS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["app-releases"])
@@ -38,10 +37,8 @@ WINDOWS_MEDIA_TYPE = "application/vnd.microsoft.portable-executable"
 
 
 def _newest_windows(db: Session) -> Optional[AppRelease]:
-    release = AU.newest_releases(db).get(AU.PLATFORM_WINDOWS)
-    if release is None or not release.file_path or not os.path.isfile(release.file_path):
-        return None
-    return release
+    # newest_releases skips a release whose file is in no storage (app/services/release_storage.py).
+    return AU.newest_releases(db).get(AU.PLATFORM_WINDOWS)
 
 
 @router.get("/app-releases/windows/latest")
@@ -70,6 +67,7 @@ def download_newest_windows_installer(
     flavor: Annotated[Optional[str], Query()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_machine_admin),
+    request: Request = None,  # type: ignore[assignment]  # injected by FastAPI; tests call without it
 ):
     """
     The newest Windows installer itself — `?flavor=bridge` (the default) under the bridge's name,
@@ -84,4 +82,4 @@ def download_newest_windows_installer(
         else BRIDGE_INSTALLER_NAME
     )
     logger.info("windows installer %s downloaded by %s as %s", release.version_name, current_user.id, name)
-    return FileResponse(release.file_path, media_type=WINDOWS_MEDIA_TYPE, filename=name)
+    return RS.serve(release, request, WINDOWS_MEDIA_TYPE, name)

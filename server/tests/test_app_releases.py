@@ -1055,7 +1055,7 @@ def test_every_release_route_but_the_rollout_hangs_on_the_super_admin_gate():
             yield from calls(sub)
 
     routes = [r for r in R.router.routes if hasattr(r, "dependant")]
-    assert len(routes) == 8  # + PATCH /app-release-assignments/{id}
+    assert len(routes) == 10  # + PATCH /app-release-assignments/{id}, storage-status, POST {id}/file (re-upload)
     for route in routes:
         gates = set(calls(route.dependant))
         if route.path == "/app-releases/rollout":

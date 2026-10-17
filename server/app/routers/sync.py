@@ -19,14 +19,13 @@ GET  /sync/{machine_id}/app-update/{id}/apk    → its APK / Windows installer (
 POST /sync/{machine_id}/app-update/status      → how taking it is going
 """
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -146,6 +145,7 @@ from app.services.till_parameters import till_parameters_for_machine
 from app.models.app_release import AppRelease, AppReleaseMachineStatus
 from app.schemas.app_release import AppUpdateOffer, AppUpdateStatusIn, AppUpdateStatusOut
 from app.services import app_updates
+from app.services import release_storage
 from app.schemas.till_z import TillZAckIn, TillZIn
 from app.services import till_z
 from app.services import sync_versions
@@ -2918,12 +2918,14 @@ def get_app_update_apk(
     release_id: uuid.UUID,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    request: Request = None,  # type: ignore[assignment]  # injected by FastAPI; tests call without it
 ):
     """
     The file of the release this device resolves to now — the APK, or the Windows
     installer (`/apk` and its alias `/file` serve both). The release is looked up by id
     and the device resolved among releases of THAT release's platform: `404` unless it is
-    the resolved one, so a device can only ever fetch what it was sent. Streamed from disk.
+    the resolved one, so a device can only ever fetch what it was sent. Streamed from release
+    storage (local disk or the shared bucket), with Range support.
     """
     release = db.query(AppRelease).filter(AppRelease.id == release_id).first()
     if release is None:
@@ -2935,15 +2937,10 @@ def get_app_update_apk(
     release = resolved[1]
     if getattr(release, "file_deleted_at", None) is not None:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="app_release_file_deleted")
-    if not os.path.isfile(release.file_path):
-        logger.error("app release %s: file missing at %s", release.id, release.file_path)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release file missing")
     media_type, filename = _RELEASE_DOWNLOAD.get(platform, _RELEASE_DOWNLOAD["android"])
-    return FileResponse(
-        release.file_path,
-        media_type=media_type,
-        filename=filename.format(version=release.version_name),
-    )
+    # Local disk or the shared bucket (app/services/release_storage.py) — streamed either way,
+    # Range requests included; `404 App release file missing` when it is in neither.
+    return release_storage.serve(release, request, media_type, filename.format(version=release.version_name))
 
 
 @router.post(

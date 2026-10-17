@@ -17,10 +17,9 @@ Devices that still report running that version do not block: the dashboard warns
 count (deleting the file does not touch them, it only means the version cannot be installed
 again).
 
-Storage: the files live on the API's local disk under `settings.app_releases_dir`
-(`{id}.apk|.exe|.zip`, written by `upload_app_release`), so they are deleted with the same
-filesystem calls. Only a file inside that directory, named after the release's id, is ever
-touched. Idempotent: a file already gone counts as deleted (`already_missing`). When the
+Storage (app/services/release_storage.py): the shared bucket (`s3://…/{prefix}{id}.ext`) or, for
+releases kept on local disk, `settings.app_releases_dir` (`{id}.apk|.exe|.zip`). Only an object /
+a file inside that directory named after the release's id is ever touched. Idempotent: a file already gone counts as deleted (`already_missing`). When the
 storage delete fails the row is NOT marked (and a retire in the same confirm is rolled back).
 Every delete writes one `AppReleaseFileDeletion` audit row.
 """
@@ -46,6 +45,7 @@ from app.models.app_release import (
 from app.models.kiosk_web import KioskWebDeviceStatus
 from app.models.pos_machine import POSMachine
 from app.services import app_updates as AU
+from app.services import release_storage as RS
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,16 @@ def delete_stored_file(release: AppRelease) -> str:
     there (idempotent). `StorageDeleteError` when it is there and cannot be removed, or when the
     row does not name a file of ours.
     """
+    loc = RS.location_of(release)
+    if loc is not None and loc.kind == RS.BACKEND_S3:
+        # The shared bucket: only an object named after the release, under our prefix.
+        if not loc.name.startswith(str(release.id)):
+            raise StorageDeleteError("file_path_not_in_release_storage")
+        try:
+            gone = RS.remove_stored(release.file_path)
+        except RS.StorageError as exc:
+            raise StorageDeleteError(str(exc)) from exc
+        return STORAGE_DELETED if gone else STORAGE_ALREADY_MISSING
     path = stored_file(release)
     if path is None:
         raise StorageDeleteError("file_path_not_in_release_storage")

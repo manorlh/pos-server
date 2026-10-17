@@ -13,12 +13,14 @@ POST /app-releases -> super_admin
 GET /app-releases/file-cleanup -> super_admin
 POST /app-releases/file-cleanup -> super_admin
 GET /app-releases/rollout -> devices|reports|cockpit:view
+GET /app-releases/storage-status -> super_admin
 GET /app-releases/windows/latest -> kiosks|devices:view
 GET /app-releases/windows/latest/download -> kiosks|devices:view
 PATCH /app-releases/{release_id} -> super_admin
 GET /app-releases/{release_id}/assignments -> super_admin
 POST /app-releases/{release_id}/assignments -> super_admin
 DELETE /app-releases/{release_id}/file -> super_admin
+POST /app-releases/{release_id}/file -> super_admin
 GET /app-releases/{release_id}/file-delete-check -> super_admin
 GET /approvals -> approvals:view
 GET /approvals/catalog -> approval_settings|approvals|pos_users:view

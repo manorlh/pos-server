@@ -18,12 +18,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import uuid
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -41,6 +39,7 @@ from app.models.shop import Shop
 from app.models.user import User
 from app.services import app_updates as AU
 from app.services import device_management as DM
+from app.services import release_storage as RS
 from app.services.apk_signing import ApkSigningError, provisioning_checksum, signing_certificate
 
 logger = logging.getLogger(__name__)
@@ -123,11 +122,18 @@ def create_provisioning_qr(
     release, source = provisioning_release(db, shop, machine)
     if release is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_android_release")
-    if not os.path.isfile(release.file_path):
+    if not RS.available(release):
         logger.error("provisioning: release %s file missing at %s", release.id, release.file_path)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_file_missing")
     try:
-        cert = signing_certificate(release.file_path)
+        with RS.local_copy(release) as path:
+            cert = signing_certificate(str(path))
+    except FileNotFoundError:
+        logger.error("provisioning: release %s file missing at %s", release.id, release.file_path)
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_file_missing")
+    except RS.StorageError as exc:
+        logger.error("provisioning: release %s: %s", release.id, exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="app_release_storage_unavailable")
     except (ApkSigningError, OSError) as exc:
         logger.warning("provisioning: release %s signature unreadable (%s)", release.id, exc)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="apk_signature_unreadable")
@@ -175,7 +181,11 @@ def create_provisioning_qr(
 
 
 @router.api_route(DM.APK_PATH + "/{token}", methods=["GET", "HEAD"])
-def provisioning_apk(token: str, db: Session = Depends(get_db)):
+def provisioning_apk(
+    token: str,
+    db: Session = Depends(get_db),
+    request: Request = None,  # type: ignore[assignment]  # injected by FastAPI; tests call without it
+):
     """
     The APK for a device in setup, by the QR's token (no auth header is possible there). `404`
     for a forged / unknown token or a retired release, `410 provisioning_link_expired`.
@@ -192,14 +202,12 @@ def provisioning_apk(token: str, db: Session = Depends(get_db)):
         or not release.is_active
         or getattr(release, "file_deleted_at", None) is not None
         or AU.release_platform(release) != AU.PLATFORM_ANDROID
-        or not os.path.isfile(release.file_path)
+        or not RS.available(release)
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     logger.info("provisioning: APK %s (%s) downloaded by a device in setup", release.id, release.version_name)
-    return FileResponse(
-        release.file_path,
-        media_type="application/vnd.android.package-archive",
-        filename=f"R2M-POS-{release.version_name}.apk",
+    return RS.serve(
+        release, request, "application/vnd.android.package-archive", f"R2M-POS-{release.version_name}.apk"
     )
 
 
