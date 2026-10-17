@@ -76,6 +76,7 @@ from app.schemas.kitchen_printers import (
     TestPrintIn,
 )
 from app.services import remote_print as RP
+from app.services import kds_print as KP
 from app.services.areas import as_utc
 from app.services.company_hierarchy import user_covers_shop
 from app.services.kitchen_ticket_designs import (
@@ -1725,6 +1726,9 @@ def expire_jobs(db: Session, jobs: Iterable[KitchenPrintJob], now: Optional[date
             # A document is no ticket the host keeps for hours: the sender may print it itself; a
             # drawer opening minutes late is worse than none.
             taken_ttl = {"document": RP.TAKEN_TTL, "drawer": RP.DRAWER_TAKEN_TTL}.get(job.kind, TAKEN_JOB_TTL)
+            if KP.is_kds_job(job):
+                # A kitchen screen's bon (app/services/kds_print.py): the screen waits for its word.
+                taken_ttl = KP.TAKEN_TTL
             if as_utc(job.created_at) + taken_ttl > now:
                 continue
         elif as_utc(job.expires_at) > now:
@@ -1736,6 +1740,9 @@ def expire_jobs(db: Session, jobs: Iterable[KitchenPrintJob], now: Optional[date
             # "לא הודפס" on "בעיות" (unless the host's rules say not), and the image goes.
             RP.drop_image(job)
             RP.record_unprinted(db, job, now)
+        else:
+            # A kitchen screen's bon: "בון לא הודפס".
+            KP.unprinted(db, job, now)
 
 
 def job_out(
@@ -2174,7 +2181,9 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
             "kind": job.kind,
             "printerId": str(job.printer_id) if job.printer_id else None,
             "printer": _job_printer_block(printers.get(job.printer_id), styles.get(job.printer_id)),
-            "ticket": None if (is_document or is_drawer) else job.payload,
+            "ticket": None if (is_document or is_drawer) else KP.ticket_out(job.payload),
+            # Sent from a kitchen screen in a browser (app/services/kds_print.py): printed like any ticket.
+            **({"origin": KP.ORIGIN} if KP.is_kds_job(job) else {}),
             # A design test print: the look it prints in, over the printer's (the ticket is the sample).
             "ticketStyle": (job.payload or {}).get("style") if job.kind == "test" else None,
             # A bill / receipt to print as it is (its own printer block above, or null: this till's
@@ -2225,6 +2234,10 @@ def ack_job(db: Session, machine: POSMachine, job_id: Any, body: PrintJobAckIn) 
             RP.record_unprinted(db, job, now)
         else:
             RP.resolve_unprinted(db, job, now)
+    elif body.status == "failed":
+        KP.unprinted(db, job, now)
+    else:
+        KP.printed(db, job, now)
     db.flush()
     return job
 

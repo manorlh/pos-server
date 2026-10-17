@@ -1,0 +1,68 @@
+{
+  "createdAt": "<createdAt>",
+  "expiresAt": "<expiresAt>",
+  "id": "<job>",
+  "kind": "ticket",
+  "origin": "kds",
+  "printer": {
+    "beep": false,
+    "btAddress": null,
+    "btName": null,
+    "connection": "till",
+    "copies": 1,
+    "cutPaper": false,
+    "host": null,
+    "id": "<printer>",
+    "name": "המדפסת המובנית — 1 · ראשית",
+    "paperWidth": 58,
+    "port": null,
+    "printWidthDots": null,
+    "ticketStyle": null,
+    "type": "cloud"
+  },
+  "printerId": "<printer>",
+  "resent": false,
+  "ticket": {
+    "createdAt": "2026-10-17T10:00:00Z",
+    "customerName": null,
+    "dining": null,
+    "fire": null,
+    "guests": 2,
+    "isAddition": false,
+    "lines": [
+      {
+        "allergies": [
+          "גלוטן"
+        ],
+        "categoryId": null,
+        "course": null,
+        "held": null,
+        "important": true,
+        "mealName": null,
+        "mods": [
+          "צ'דר"
+        ],
+        "name": "המבורגר",
+        "notes": "מידיום",
+        "productId": null,
+        "quantity": 2.0,
+        "refill": null,
+        "removals": [
+          "בלי בצל"
+        ],
+        "seat": null
+      }
+    ],
+    "notice": "גריל",
+    "openedAt": null,
+    "orderRef": "T-12",
+    "source": "table",
+    "sourceName": "מסך גריל",
+    "tableName": "12",
+    "training": null,
+    "waiterName": "דנה",
+    "waiting": null,
+    "zoneName": "בר"
+  },
+  "ticketStyle": null
+}

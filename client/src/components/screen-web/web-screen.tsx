@@ -29,6 +29,8 @@ import type { RoleScreenBridge, RoleScreenEvents } from '@/kiosk-shared/roles/br
 import { describeBrowser, webDeviceInfo, type FetchFn, type KioskCredentials } from '@/lib/kioskWebApi';
 import { BridgeAgent, BridgeClient, bridgeCodeFromHash, bridgeWorthProbing, hashWithoutBridgeCode } from '@/lib/kioskBridge';
 import { bridgeCanPrint, bridgeRoleOf, kdsBonDoc } from '@/lib/screenBridge';
+import { kdsRelayTicket } from '@/lib/kdsPrint';
+import { orderTitle } from '@/lib/kdsBoard';
 import { KV, openKioskStore, type StorageLike } from '@/lib/kioskWebStore';
 import { boardDemo, DEMO_MEDIA, kdsDemo } from '@/lib/kdsScreenDemo';
 import { boardDisplayOf } from '@/lib/pickupBoard';
@@ -40,6 +42,7 @@ import { askPersistentStorage, isStandalone, useFullscreenOnTap, useKioskGuards,
 import { registerScreenWorker, screenManifest, useManifestLink } from './screen-shell';
 import { ScreenStaff } from './screen-staff';
 import { ScreenBridgePrompt, bridgePromptDue, useBridgeState } from './screen-bridge';
+import { PrintTray, useRelayPrinter } from './screen-print';
 import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
 import { shopLockShown } from '@/lib/shopActive';
 
@@ -141,6 +144,7 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
   const [promptClosed, setPromptClosed] = useState(false);
   const bridgeState = useBridgeState(agent);
   const taps = useRef(new TapSequence());
+  const relay = useRelayPrinter(svc?.printer ?? null);
 
   useKioskGuards();
   useManifestLink(screenManifest(route));
@@ -278,15 +282,27 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
   if (failed) return <Splash title="המסך לא נפתח" body={failed} />;
   if (demo && bridge) return <Screen route={route} shows={route} bridge={bridge} forced={forcedDisplay} />;
   if (!svc || !view || view.phase === 'loading' || !bridge) return <Splash title="טוען…" spin />;
-  // "הדפס" on the KDS's cards: the bridge prints the card as a bon (only when it can now).
+  // "הדפס" on the KDS's cards, by how the screen prints (docs/SPEC_KDS.md §17): through a till of the shop (the
+  // cloud relay — the tray follows the bon, never blocking the screen), or the Windows bridge (only when it can now).
+  // "ללא הדפסה": no button. Not known yet (no answer since the start): as before — the bridge when there is one.
+  const printPath = relay.status?.effectivePath ?? null;
+  const printer = svc.printer;
   const onPrint: KdsScreenProps['onPrint'] =
-    agent && view.shows === 'kds' && bridgeCanPrint(bridgeState)
-      ? async (o, device) => {
-          const doc = kdsBonDoc(o, { device, machineName: view.machine?.name ?? null, now: new Date() });
-          const r = await agent.print({ kind: 'bon', doc: { ...doc }, refId: o.id });
-          return r.kind === 'ok' ? { ok: true } : { ok: false, message: r.kind === 'refused' ? (r.message ?? 'ההדפסה נכשלה') : 'הגשר לא ענה' };
-        }
-      : undefined;
+    view.shows !== 'kds' || printPath === 'none'
+      ? undefined
+      : printPath === 'relay'
+        ? async (o, device) => {
+            await printer.print(kdsRelayTicket(o, { device, now: new Date() }), orderTitle(o));
+            // Its fate is on the tray ("ממתין למדפסת", "הודפס בקופה…", "לא הודפס — נסו שוב").
+            return { ok: true };
+          }
+        : agent && bridgeCanPrint(bridgeState)
+          ? async (o, device) => {
+              const doc = kdsBonDoc(o, { device, machineName: view.machine?.name ?? null, now: new Date() });
+              const r = await agent.print({ kind: 'bon', doc: { ...doc }, refId: o.id });
+              return r.kind === 'ok' ? { ok: true } : { ok: false, message: r.kind === 'refused' ? (r.message ?? 'ההדפסה נכשלה') : 'הגשר לא ענה' };
+            }
+          : undefined;
   const prompt = !!agent && !staff && !promptClosed && bridgePromptDue(bridgeState, route, bridgeState?.checkedAt ?? 0);
 
   if (view.phase === 'unpaired') {
@@ -303,12 +319,13 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
       />
     );
   }
-  const staffSheet = staff ? <ScreenStaff view={view} svc={svc} bridge={agent} onClose={() => setStaff(false)} /> : null;
+  const staffSheet = staff ? <ScreenStaff view={view} svc={svc} bridge={agent} bridgeState={bridgeState} onClose={() => setStaff(false)} /> : null;
   // "סניף לא פעיל" (lib/shopActive.ts): a screen sells nothing — locked at once; the technician's corner stays.
   if (shopLockShown({ shopActive: view.shopActive, surface: view.shows === 'board' ? 'board' : 'kds' })) {
     return <ShopLockScreen onPointerDown={corner}>{staffSheet}</ShopLockScreen>;
   }
   return (
+    <>
     <Screen
       route={route}
       shows={view.shows}
@@ -325,6 +342,8 @@ export function WebScreen({ route, apiUrl }: { route: ScreenRoute; apiUrl: strin
         ) : null
       }
     />
+    {staffSheet ? null : <PrintTray printer={printer} items={relay.items} />}
+    </>
   );
 }
 
