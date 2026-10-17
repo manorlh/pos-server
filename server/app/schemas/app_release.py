@@ -65,6 +65,11 @@ class AppReleaseOut(BaseModel):
     signing_cert_sha256: Optional[str] = Field(None, alias="signingCertSha256")
     #: Its stored file was deleted ("הקובץ נמחק"): never offered, downloaded or sent again.
     file_deleted_at: Optional[datetime] = Field(None, alias="fileDeletedAt")
+    #: Its file can be served now (app/services/release_storage.py). False and not deleted: the
+    #: file is in no storage ("הקובץ לא זמין — יש להעלות מחדש") — never offered until uploaded again.
+    file_available: bool = Field(True, alias="fileAvailable")
+    #: Where it is kept: "s3" (the shared bucket) | "local" (an API machine's disk) | null.
+    file_storage: Optional[str] = Field(None, alias="fileStorage")
 
 
 class AppReleaseUpdate(BaseModel):

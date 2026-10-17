@@ -23,6 +23,7 @@ import { answered, Btn, NoteBar, Panel, PinPad, Shell, SynqpayPairing, time } fr
 import { ForeignRowsPanel, UnpairControl } from '../roles/UnpairControl';
 import { deviceLine } from '../../core/pairingMemory';
 import { clockRowView } from '../../core/clockTrust';
+import { PrinterPicker } from './PrinterPicker';
 
 const LIGHT: Record<TechLightView, string> = { ok: '#16A34A', warn: '#D97706', bad: '#DC2626', unknown: '#9CA3AF' };
 const dateTime = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'אף פעם');
@@ -75,6 +76,7 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
   const [net, setNet] = useState<TechnicianActionResult['network'] | null>(null);
   const [probe, setProbe] = useState<TechnicianActionResult['pinpad'] | null>(null);
   const [restartArmed, setRestartArmed] = useState(false);
+  const [quitArmed, setQuitArmed] = useState(false);
   const [manager, setManager] = useState<ManagerAsk | null>(null);
   const top = useRef<HTMLDivElement>(null);
   const refresh = () => void kiosk.technicianInfo().then(setInfo).catch(() => undefined);
@@ -159,6 +161,22 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
           >
             {restartArmed ? T.restartConfirm : T.restart}
           </Btn>
+          <Btn
+            m={m}
+            danger
+            onClick={() => {
+              if (!quitArmed) {
+                setQuitArmed(true);
+                setNote(T.quitConfirm);
+                window.setTimeout(() => setQuitArmed(false), 5_000);
+                return;
+              }
+              setQuitArmed(false);
+              void act({ type: 'quitApp' });
+            }}
+          >
+            {quitArmed ? T.quitConfirm : T.quit}
+          </Btn>
           {/* Android's "הגדרות Android": on Windows, the desktop (a manager's DESKTOP_EXIT). */}
           <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />
         </div>
@@ -219,6 +237,31 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
         </Panel>
       ) : null}
 
+      {/* "מקלדת מסך": the app's own keyboard (renderer/osk) — Windows 7 has no touch keyboard of its own. */}
+      {info.osk ? (
+        <Panel m={m} title="מקלדת מסך">
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ['auto', 'אוטומטי (במסך מגע)'],
+                ['always', 'תמיד'],
+                ['off', 'כבויה'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => void act({ type: 'setOsk', mode })}
+                className="px-3 py-1.5 text-xs font-bold"
+                style={{ background: info.osk === mode ? m.c.button : `${m.c.button}1A`, color: info.osk === mode ? '#fff' : m.c.buttonInk, borderRadius: 8 }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
       <Panel m={m} title={T.network}>
         {!net ? <div className="text-xs">בודק…</div> : null}
         {net ? (
@@ -271,6 +314,8 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
         </Panel>
       ) : null}
 
+      {/* "מדפסות": every printer found, one for everything, the overrides, the width (core/printerPicker.ts). */}
+      <PrinterPicker m={m} act={act} />
       <PrinterPanel m={m} info={info} act={act} askManager={setManager} />
 
       {s ? <DrawerPanel m={m} s={s} act={act} /> : null}
@@ -607,7 +652,7 @@ function PrinterPanel({ m, info, act, askManager }: { m: PreviewModel; info: Tec
       </div>
       {/* "המדפסת של הקופה — הגדרה מקומית" (Android ReceiptDefaultCard): אוטומטי / USB-Windows / רשת (IP:פורט). */}
       <div className="space-y-1.5 border-t pt-1.5" style={{ borderColor: m.c.border }}>
-        <div className="text-xs font-bold">המדפסת של המכשיר — הגדרה מקומית</div>
+        <div className="text-xs font-bold">המדפסת של המכשיר — הגדרה ידנית</div>
         <div className="text-xs" style={{ color: m.c.mutedText }}>
           מדפסות Windows: {info.printer.queues.join(' · ') || '—'}
         </div>

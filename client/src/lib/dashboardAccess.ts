@@ -45,6 +45,7 @@ export type SectionId =
   | 'tables_manage'
   | 'tables_layout'
   | 'kiosks'
+  | 'kiosk_designs'
   | 'till_design'
   | 'kds'
   | 'printers'
@@ -151,6 +152,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   // design's "שולחנות ומפה" tab (TABLES_LAYOUT_SECTION). No page of its own; viewing stays `tables`.
   { id: 'tables_layout', pages: [] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
+  // "עיצובים שמורים לקיוסק" (P:/specs/kiosk-saved-designs.md): the library page; read with `kiosks` too.
+  { id: 'kiosk_designs', pages: ['/dashboard/kiosk-designs'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },
   { id: 'kds', pages: ['/dashboard/kds', '/dashboard/workflow'] },
   { id: 'printers', pages: ['/dashboard/kitchen-printers'] },
@@ -189,6 +192,8 @@ export const PAGES_ALSO_OPENED_BY: Readonly<Record<string, readonly SectionId[]>
   '/dashboard/areas': ['devices', 'item_blocks'],
   // The server lets the kiosks' people read the cash stations (`GET /cash-stations*`: devices | kiosks, view).
   '/dashboard/cash-stations': ['kiosks'],
+  // "עיצובים שמורים לקיוסק": the server lets the kiosks' people read the library (`GET /kiosk-designs*`: kiosk_designs | kiosks, view).
+  '/dashboard/kiosk-designs': ['kiosks'],
   // The server maps `GET /reports/preset-discounts` to reports | promotions (as the discounts report).
   '/dashboard/preset-discounts-report': ['promotions'],
 };

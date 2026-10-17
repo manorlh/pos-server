@@ -92,6 +92,12 @@ class KioskSettings(Base):
     overrides = Column(KioskJSON, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
     updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    #: "עיצוב: <שם>" (app/models/kiosk_design.py): the saved design this level assigns — it sits right before
+    #: this layer's own overrides and wins over everything inherited above (app/services/kiosk_designs.py).
+    #: NULL: inherit the nearest assignment above.
+    design_id = Column(UUID(as_uuid=True), ForeignKey("kiosk_designs.id", ondelete="SET NULL"), nullable=True)
+    #: "ללא עיצוב": stop an assignment from above here (design_id is then NULL).
+    design_off = Column(Boolean, nullable=False, default=False, server_default="false")
 
 
 class KioskDevice(Base):

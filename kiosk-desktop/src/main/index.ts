@@ -40,7 +40,7 @@ import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
 import { QUICKSUPPORT_PATHS } from '../core/technician';
-import { kioskWindowZoom } from '../core/windowZoom';
+import { shellAutoZoom } from '../core/windowZoom';
 import { IDLE_RETURN_MINUTES } from '../core/desktopExit';
 import { DesktopMode } from './shell/desktopMode';
 import { parseWindow } from '../core/updatePolicy';
@@ -167,6 +167,28 @@ let printSeq = 0;
 /** "יציאה לשולחן העבודה" (shell/desktopMode.ts): the window out of full screen and the ways back. */
 let desktop: DesktopMode | null = null;
 let returnTray: Tray | null = null;
+/** The Windows 7 build's tray, always there (Windows 7 users never find a minimised kiosk window): back / technician. */
+let appTray: Tray | null = null;
+/** The shell's menu / technician's screen from a key or the tray (set once the till's glue is up). */
+let openShellScreen: ((screen: 'admin' | 'technician') => void) | null = null;
+let shuttingDown = false;
+/**
+ * Windows 10/11's own touch keyboard set to come up in desktop mode (TabletTip 1.7, EnableDesktopModeAutoInvoke = 1):
+ * then "מקלדת מסך" on `auto` stays down — never two keyboards. Read once at start; Windows 7 has no such thing.
+ */
+let systemTouchKeyboard = false;
+function readSystemTouchKeyboard() {
+  if (process.platform !== 'win32' || (Number(os.release().split('.')[0]) || 0) < 10) return;
+  execFile('reg', ['query', String.raw`HKCU\Software\Microsoft\TabletTip\1.7`, '/v', 'EnableDesktopModeAutoInvoke'], { windowsHide: true, timeout: 5_000 }, (err, out) => {
+    systemTouchKeyboard = !err && /EnableDesktopModeAutoInvoke\s+REG_DWORD\s+0x0*1\s*$/im.test(String(out));
+    if (systemTouchKeyboard) console.log('[shell] Windows touch keyboard comes up by itself — "מקלדת מסך" auto stays down');
+  });
+}
+/** "מקלדת מסך" as the pages get it: the technician's choice; `auto` gives way to Windows' own auto keyboard. */
+function oskModeNow(): 'auto' | 'always' | 'off' {
+  const mode = service?.oskMode() ?? 'auto';
+  return mode === 'auto' && systemTouchKeyboard ? 'off' : mode;
+}
 /** The desktop shortcut "חזרה לקיוסק" launches the app with this; the running one takes it (second-instance). */
 const RETURN_ARG = '--return-to-kiosk';
 const printWaiters = new Map<number, (r: { width: number; height: number; rgba: Uint8Array } | { error: string }) => void>();
@@ -249,7 +271,8 @@ const renderPage: PageRenderer = async (doc: PrintDoc, widthDots: number) => {
 /** The window's automatic zoom: ~540 CSS px across a portrait kiosk, the landscape rule (core/windowZoom.ts). */
 function autoZoomFor(win: BrowserWindow): number {
   const { width, height } = win.getContentBounds();
-  return kioskWindowZoom(width, height);
+  // The till (and the whole Windows 7 build) at 100%, as the Android tablet; the kiosk its ~540-px design.
+  return shellAutoZoom({ build: APP_BUILD, role: roles?.role() ?? null, width, height });
 }
 
 /**
@@ -297,17 +320,25 @@ function createMain() {
   main.webContents.on('did-finish-load', () => main?.webContents.setZoomFactor(zoomFor(main)));
   main.on('resize', () => applyZoom());
   // Out on the desktop, the taskbar button brings the kiosk back — in full screen.
-  main.on('restore', () => desktop?.onWindowRestored());
+  main.on('restore', () => {
+    desktop?.onWindowRestored();
+    tillView?.refit();
+  });
   // No way out for a customer: no new windows, no navigation, no reload / devtools / zoom keys.
   main.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   main.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('kiosk://app/')) e.preventDefault();
   });
   main.webContents.on('before-input-event', (e, input) => {
-    if (isDev) return;
-    const k = input.key.toLowerCase();
-    if ((input.control || input.meta) && ['r', 'w', 'q', 'n', 't', 'p', '+', '-', '=', '0', 'shift'].includes(k)) e.preventDefault();
-    if (k === 'f5' || k === 'f11' || k === 'f12' || (input.alt && k === 'f4')) e.preventDefault();
+    if (guardKey(input)) e.preventDefault();
+  });
+  // The window back up (the taskbar, the desktop): the till's view fitted and focused again.
+  main.on('show', () => tillView?.refit());
+  // The kiosk's window gone (the taskbar's "close", Alt+F4 where it slipped through): the app ends — never a process
+  // left running behind the hidden print window with no window to come back to.
+  main.on('closed', () => {
+    main = null;
+    if (shellMode !== 'bridge') shutdown();
   });
   main.webContents.on('render-process-gone', () => {
     // Never a dead screen: the screens come back at once from local data.
@@ -316,9 +347,81 @@ function createMain() {
   void main.loadURL('kiosk://app/index.html');
 }
 
+/**
+ * Keys on the app's pages (the kiosk's window and the till's view alike): no reload / devtools / zoom / Alt+F4 for a
+ * customer, and the support keys — Ctrl+Alt+Shift+T or Q: the technician's code and screen; Ctrl+Alt+Shift+M: the
+ * manager's menu. True when the key was taken.
+ */
+function guardKey(input: { type?: string; key: string; control: boolean; meta: boolean; alt: boolean; shift: boolean }): boolean {
+  const k = input.key.toLowerCase();
+  if (input.control && input.alt && input.shift && (k === 't' || k === 'q' || k === 'm')) {
+    if (input.type === undefined || input.type === 'keyDown') {
+      console.log(`[shell] support key Ctrl+Alt+Shift+${k.toUpperCase()}`);
+      bringBack();
+      openShellScreen?.(k === 'm' ? 'admin' : 'technician');
+    }
+    return true;
+  }
+  if (isDev) return false;
+  if ((input.control || input.meta) && ['r', 'w', 'q', 'n', 't', 'p', '+', '-', '=', '0', 'shift'].includes(k)) return true;
+  return k === 'f5' || k === 'f11' || k === 'f12' || (input.alt && k === 'f4');
+}
+
+/** The window up and in front (from the desktop, a second launch, the tray), the till's view fitted again. */
+function bringBack(via: 'tray' | 'relaunch' | 'shortcut' = 'tray') {
+  if (desktop?.active) desktop.back(via);
+  else if (main && !main.isDestroyed()) {
+    if (main.isMinimized()) main.restore();
+    main.show();
+    main.focus();
+  }
+  tillView?.refit();
+}
+
+/** The Windows 7 build's own tray: "חזרה לקופה", "מסך טכנאי", "יציאה מהתוכנה" (in the technician's screen, by code). */
+function showAppTray() {
+  if (appTray || process.platform !== 'win32') return;
+  const file = path.join(rendererDir(), 'tray.png');
+  const icon = existsSync(file) ? nativeImage.createFromPath(file).resize({ width: 16, height: 16 }) : nativeImage.createEmpty();
+  appTray = new Tray(icon);
+  appTray.setToolTip(`${SHELL_NAME} · קופה`);
+  appTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'חזרה לקופה', click: () => bringBack('tray') },
+      { label: 'מסך טכנאי (קוד טכנאי)', click: () => (bringBack('tray'), openShellScreen?.('technician')) },
+      { label: 'יציאה מהתוכנה (במסך הטכנאי)', click: () => (bringBack('tray'), openShellScreen?.('technician')) },
+    ]),
+  );
+  appTray.on('click', () => bringBack('tray'));
+  appTray.on('double-click', () => bringBack('tray'));
+}
+
+/** Everything stopped once, then the app ends (the last window closed, or the kiosk's window closed while others stay). */
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  desktop?.stop();
+  hideReturnTray();
+  appTray?.destroy();
+  appTray = null;
+  updater?.stop();
+  tillView?.stop();
+  customerDisplay?.stop();
+  tillEngine?.stop();
+  workMode?.stop();
+  roles?.stop();
+  service?.stop();
+  app.quit();
+}
+
 /** "חזרה לקיוסק" next to the clock while the kiosk is out on the desktop. */
 function showReturnTray(onReturn: () => void) {
   if (returnTray) return;
+  if (appTray) {
+    // The Windows 7 build's tray is already there: it says where the way back is.
+    appTray.displayBalloon({ title: SHELL_NAME, content: 'הקופה ממוזערת. חזרה: האייקון כאן (חזרה לקופה), או הפעלת התוכנה שוב.', iconType: 'info' });
+    return;
+  }
   const file = path.join(rendererDir(), 'tray.png');
   const icon = existsSync(file) ? nativeImage.createFromPath(file).resize({ width: 16, height: 16 }) : nativeImage.createEmpty();
   returnTray = new Tray(icon);
@@ -379,6 +482,9 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:adminHistory', (_e, input) => svc.adminHistory(input));
   ipcMain.handle('kiosk:technicianUnlock', (_e, code: string) => svc.technicianUnlock(code));
   ipcMain.handle('kiosk:technicianInfo', () => svc.technicianInfo());
+  // "מקלדת מסך" on the shell's screens — never on the kiosk's (it draws its own keyboard for the customer).
+  ipcMain.handle('kiosk:oskMode', () => (roles?.role() === 'kiosk' ? 'off' : oskModeNow()));
+  readSystemTouchKeyboard();
   ipcMain.handle('kiosk:technicianAction', (_e, a) => svc.technicianAction(a));
   ipcMain.handle('kiosk:shopLockCloseDay', (_e, pin: unknown) => svc.shopLockCloseDay(typeof pin === 'string' ? pin.slice(0, 12) : ''));
   // The shell (shared/roles.ts): the role, the update status, the KDS and board screens.
@@ -439,6 +545,8 @@ function registerKioskProtocol() {
 
 /** One PayLink unit's utility process (the vendor's DLL never loads in the main process). */
 function paylinkWorker(): WorkerLink {
+  // utilityProcess came in Electron 22 (the Windows 7 build's line); guarded so an older/odd runtime fails here, not at start.
+  if (typeof utilityProcess?.fork !== 'function') throw new Error('utilityProcess is missing in this Electron — PayLink needs it');
   const child = utilityProcess.fork(path.join(__dirname, 'paylinkWorker.js'), [], { serviceName: 'R2M PayLink', stdio: 'ignore' });
   return {
     post: (msg) => child.postMessage(msg),
@@ -650,6 +758,8 @@ void app.whenReady().then(async () => {
     preload: path.join(__dirname, '..', 'preload', 'app.js'),
     isDev,
     enabled: () => true,
+    onKey: (input) => guardKey(input),
+    oskMode: () => oskModeNow(),
     log: (m) => console.log(`[shell] ${m}`),
     // "ניהול הקיוסק" from the till's corner: never during a payment; the shell's window shows the menu (staff/ShellStaff.tsx).
     admin: {
@@ -657,7 +767,21 @@ void app.whenReady().then(async () => {
       open: (screen) => sendShell('shell:admin', { from: 'till', screen }),
     },
   });
-  roles.on('view', (v) => tillView?.onRole(v.role));
+  openShellScreen = (screen) => {
+    if (roles?.role() === 'till' && tillView) tillView.open(screen);
+    else sendShell('shell:admin', { from: 'shortcut', screen });
+  };
+  if (APP_BUILD === 'win7') {
+    try {
+      showAppTray();
+    } catch (e) {
+      console.log(`[shell] tray: ${String(e)}`);
+    }
+  }
+  roles.on('view', (v) => {
+    tillView?.onRole(v.role);
+    applyZoom();
+  });
   // "מסך לקוח": the till's second screen, when its settings want it and a second display is there.
   customerDisplay = attachCustomerDisplay({ source: tillEngine.customerDisplay, preload: path.join(__dirname, '..', 'preload', 'index.js'), log: (m) => console.log(`[shell] ${m}`) });
 
@@ -682,28 +806,13 @@ app.on('second-instance', (_e, argv) => {
     bridgeMode.show();
     return;
   }
-  // "חזרה לקיוסק" (the desktop shortcut), or the app launched again from the Start menu: the running one comes back.
-  if (desktop) {
-    desktop.back(argv.includes(RETURN_ARG) ? 'shortcut' : 'relaunch');
-    return;
-  }
-  if (main) {
-    if (main.isMinimized()) main.restore();
-    main.focus();
-  }
+  // "חזרה לקיוסק" (the desktop shortcut), or the app launched again from the Start menu: the running one comes back,
+  // the till's view with it.
+  bringBack(argv.includes(RETURN_ARG) ? 'shortcut' : 'relaunch');
 });
 
 app.on('window-all-closed', () => {
   // The bridge lives in the tray: its window is hidden, never the end of the app.
   if (shellMode === 'bridge') return;
-  desktop?.stop();
-  hideReturnTray();
-  updater?.stop();
-  tillView?.stop();
-  customerDisplay?.stop();
-  tillEngine?.stop();
-  workMode?.stop();
-  roles?.stop();
-  service?.stop();
-  app.quit();
+  shutdown();
 });

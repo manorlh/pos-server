@@ -199,6 +199,11 @@ describe('the rules (core/till/deviceCash.ts)', () => {
     expect(till.expectedCash).toBe(250);
     const block = xCashBlock(till, true);
     expect(block.find((l) => l.bold)?.agorot).toBe(25_000);
+    // Every cash taking on "מזומן ממכירות", the device's on its own "מזומן במכשיר" line (the shared golden's rule).
+    expect(block.filter((l) => l.key === 'cashSales' || l.key === 'deviceCash').map((l) => [l.key, l.agorot, l.label])).toEqual([
+      ['cashSales', 10_000, 'מזומן ממכירות'],
+      ['deviceCash', -5_000, 'מזומן במכשיר'],
+    ]);
     const tips = withCashWithTips({ ...till, totalCardTips: 0 }, { param: true, shortfall: 'partial', askChoice: null });
     expect(tips.drawerCash).toBe(50);
     const paper = JSON.stringify(xDoc({ business: { companyName: 'x', dealerType: 'company' } as never, till, cashierName: 'דנה', shiftNumber: 1, businessDate: null, openedAt: new Date(), closedAt: null, printedAt: new Date(), countedCash: null } as never));

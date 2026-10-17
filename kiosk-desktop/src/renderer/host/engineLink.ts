@@ -12,7 +12,7 @@
  * "נדרש עדכון" and never sell, §8.4).
  */
 
-import { MUTATING_OPS, TILL_PROTOCOL, type EngineCall, type EngineEndpoint, type EngineEvent, type EngineReply, type HelloReply, type OpArgs, type TillOp, type TillState } from '../../shared/till/protocol';
+import { FEATURE_PREFIXES, MUTATING_OPS, TILL_PROTOCOL, type EngineCall, type EngineEndpoint, type EngineEvent, type EngineReply, type HelloReply, type OpArgs, type TillOp, type TillState } from '../../shared/till/protocol';
 import { EngineCallError, type CallOptions, type EngineLink, type LinkStatus } from './TillHost';
 
 /** The protocols these screens speak (§8.4: an engine supports at least N-1). */
@@ -31,6 +31,18 @@ export function newClientOpId(): string {
   let out = '';
   for (let i = 0; i < bytes.length; i++) out += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
   return out;
+}
+
+/**
+ * Whether a call carries a clientOpId: every changing core op, and every feature module's op (shopZ.*, cloudZ.*,
+ * printers.*, …) — which of those change something is each module's own list in the engine, so the screens send one
+ * on all of them (an id on a read is ignored). Without it the engine refused "פעולה בלי מזהה (clientOpId)" — the
+ * shop Z and the cloud Z's printing among them.
+ */
+export function wantsClientOpId(op: string): boolean {
+  if (MUTATING_OPS.has(op as TillOp)) return true;
+  const dot = op.indexOf('.');
+  return dot > 0 && op !== 'catalog.snapshot' && (FEATURE_PREFIXES as readonly string[]).includes(op.slice(0, dot));
 }
 
 function isThenable<T>(v: T | Promise<T>): v is Promise<T> {
@@ -105,7 +117,7 @@ export function endpointLink(endpoint: EngineEndpoint): EngineLink {
     if (core.status === 'mismatch') throw new EngineCallError('protocol_mismatch', 'נדרש עדכון — המסך והמנוע בגרסאות שונות');
     nextId += 1;
     const c: EngineCall = { id: nextId, op, args };
-    if (MUTATING_OPS.has(op)) c.clientOpId = opts?.clientOpId ?? newClientOpId();
+    if (wantsClientOpId(op)) c.clientOpId = opts?.clientOpId ?? newClientOpId();
     return unwrap(await endpoint.call(c));
   };
   return core.link(call, hello);
@@ -226,7 +238,7 @@ export function wsEngineLink(o: WsLinkOptions): EngineLink & { close(): void } {
     if (core.status === 'mismatch') return Promise.reject(new EngineCallError('protocol_mismatch', 'נדרש עדכון — המסך והמנוע בגרסאות שונות'));
     nextId += 1;
     const c: EngineCall = { id: nextId, op, args };
-    if (MUTATING_OPS.has(op)) c.clientOpId = opts?.clientOpId ?? newClientOpId();
+    if (wantsClientOpId(op)) c.clientOpId = opts?.clientOpId ?? newClientOpId();
     return new Promise((resolve, reject) => {
       const cancelTimer = schedule(() => {
         pending.delete(c.id);

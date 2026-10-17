@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject, type React
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { AlertTriangle, Building2, Eye, EyeOff, MapPin, Monitor, Store } from 'lucide-react';
+import { AlertTriangle, BookmarkPlus, Building2, Eye, EyeOff, MapPin, Monitor, Store } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,6 +31,7 @@ import {
   setPath,
   validateKioskConfig,
   type KioskConfig,
+  type KioskLayer,
   type UiStyle,
 } from '@/lib/kioskConfig';
 import { rebaseLayout, switchLayoutTemplate, type LayoutTemplate } from '@/lib/kioskLayout';
@@ -67,6 +68,9 @@ import { TimersSection } from './section-timers';
 import { AlertsSection } from './section-alerts';
 import { UpsellSection } from './section-upsell';
 import { PreviewTextHighlight, TextsSection } from './section-texts';
+import { DesignAssignBar } from './design-assign-bar';
+import { SaveDesignDialog } from './save-design-dialog';
+import { KIOSK_DESIGN_GROUPS, designSections } from '@/lib/kioskDesigns';
 
 /**
  * After an edit under `landscape`: the objects it left empty are dropped (a block with nothing in it is no block —
@@ -155,9 +159,22 @@ interface EditorBodyProps {
   kiosks: KioskSummary[];
   brandName: string;
   dirtyRef: MutableRefObject<boolean>;
+  /** "שמירה כעיצוב…": where a new design may go (null: the button is hidden). */
+  saveAsDesign?: { companyId: string | null; shopId: string | null; shopName: string | null; canCompany: boolean } | null;
+  /** Editing a saved design (lib/kioskDesigns.ts) instead of a level: its groups and its own save. */
+  design?: KioskDesignEditing | null;
 }
 
-function EditorBody({
+/** The kiosk editor on a saved design ("עריכת עיצוב"): only the design's groups are kept on save. */
+export interface KioskDesignEditing {
+  name: string;
+  groups: string[];
+  /** How many kiosks use it now (said on the bar). */
+  kioskCount: number;
+  onSave: (layer: KioskLayer) => Promise<KioskSettings>;
+}
+
+export function EditorBody({
   level,
   targetId,
   settings,
@@ -169,6 +186,8 @@ function EditorBody({
   kiosks,
   brandName,
   dirtyRef,
+  saveAsDesign = null,
+  design = null,
 }: EditorBodyProps) {
   const t = useTranslations('kiosks.settings');
   const tc = useTranslations('common');
@@ -180,7 +199,6 @@ function EditorBody({
   const inherited = useMemo(() => deepMergeKiosk(KIOSK_DEFAULTS, settings.inherited as unknown as Record<string, unknown>), [settings.inherited]);
   const saved = useMemo(() => deepMergeKiosk(KIOSK_DEFAULTS, settings.effective as unknown as Record<string, unknown>), [settings.effective]);
   const [draft, setDraft] = useState<KioskConfig>(() => cloneJson(saved));
-  const [section, setSection] = useState<SectionKey>('general');
   const [screen, setScreen] = useState<PreviewScreen>('attract');
   const [serverErrors, setServerErrors] = useState<KioskServerError[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -190,6 +208,10 @@ function EditorBody({
   const [highlightText, setHighlightText] = useState<string | null>(null);
   // "לאורך / לרוחב" (P:/specs/kiosk-landscape-design.md §5): which design the fields edit, and the previews shown.
   const [orientation, setOrientation] = useState<KioskEditorOrientation>('portrait');
+  const [saveDesignOpen, setSaveDesignOpen] = useState(false);
+  // A saved design shows only the sections its groups can hold something in.
+  const sections = useMemo(() => (design ? SECTIONS.filter((x) => designSections(design.groups).includes(x.key)) : SECTIONS), [design]);
+  const [section, setSection] = useState<SectionKey>(() => (design ? 'appearance' : 'general'));
 
   const dirty = !jsonEqual(draft, saved);
   useEffect(() => {
@@ -233,16 +255,17 @@ function EditorBody({
   });
 
   const save = useMutation({
-    mutationFn: () => saveKioskSettings(level, targetId, layer, settings.menuVersion),
+    mutationFn: () => (design ? design.onSave(layer) : saveKioskSettings(level, targetId, layer, settings.menuVersion)),
     onSuccess: (next) => {
       toast.success(t('saved'));
       // Saved, and a kiosk "ללא אשראי" left without "תשלום בקופה" is said so (never refused).
       for (const warning of saveWarningMessages(next)) toast.warning(warning);
       setReviewOpen(false);
       setServerErrors([]);
-      qc.setQueryData(['kiosk-settings', level, targetId], next);
+      if (!design) qc.setQueryData(['kiosk-settings', level, targetId], next);
       void qc.invalidateQueries({ queryKey: ['kiosk-settings'] });
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
+      if (design) void qc.invalidateQueries({ queryKey: ['kiosk-designs'] });
     },
     onError: (err) => {
       if (isKioskMenuChanged(err)) {
@@ -338,7 +361,7 @@ function EditorBody({
 
   const pickSection = (key: SectionKey) => {
     setSection(key);
-    const s = SECTIONS.find((x) => x.key === key);
+    const s = sections.find((x) => x.key === key);
     if (s) setScreen(s.screen);
   };
   const sectionErrors = (key: SectionKey) => {
@@ -371,13 +394,29 @@ function EditorBody({
             </span>
           ) : null}
           {!canEdit ? <Badge variant="outline">{t('readOnly')}</Badge> : null}
+          {saveAsDesign && !design ? (
+            <Button type="button" size="xs" variant="outline" onClick={() => setSaveDesignOpen(true)}>
+              <BookmarkPlus /> שמירה כעיצוב…
+            </Button>
+          ) : null}
           <Button type="button" size="xs" variant="ghost" className="ms-auto lg:hidden" onClick={() => setShowPreview((v) => !v)}>
             {showPreview ? <EyeOff /> : <Eye />} {t('previewToggle')}
           </Button>
         </div>
 
+        {design ? (
+          <p className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-2.5 text-xs">
+            עריכת העיצוב <span className="font-semibold">{design.name}</span>
+            {design.kioskCount > 0 ? ` — בשימוש ב-${design.kioskCount} קיוסקים, שיקבלו את השינוי בסנכרון הבא` : ''}. נשמרים רק:{' '}
+            {KIOSK_DESIGN_GROUPS.filter((g) => design.groups.includes(g.id))
+              .map((g) => g.label)
+              .join(' · ')}
+            . שדות אחרים בעורך (תשלום, הדפסה, שעות…) לא נשמרים בעיצוב.
+          </p>
+        ) : null}
+
         <nav className="sticky top-0 z-20 -mx-1 flex gap-1 overflow-x-auto bg-background/90 px-1 py-2 backdrop-blur [scrollbar-width:none]">
-          {SECTIONS.map((s) => {
+          {sections.map((s) => {
             const errs = sectionErrors(s.key);
             return (
               <button
@@ -538,7 +577,7 @@ function EditorBody({
           <ReviewDialog
             open={reviewOpen}
             onOpenChange={setReviewOpen}
-            level={level}
+            level={design ? 'machine' : level}
             targetId={targetId}
             saved={saved}
             draft={draft}
@@ -548,6 +587,17 @@ function EditorBody({
             names={names}
             saving={save.isPending}
             onConfirm={() => save.mutate()}
+          />
+        ) : null}
+        {saveDesignOpen && saveAsDesign ? (
+          <SaveDesignDialog
+            open={saveDesignOpen}
+            onOpenChange={setSaveDesignOpen}
+            config={draft}
+            companyId={saveAsDesign.companyId}
+            shopId={saveAsDesign.shopId}
+            shopName={saveAsDesign.shopName}
+            canCompany={saveAsDesign.canCompany}
           />
         ) : null}
       </div>
@@ -702,6 +752,18 @@ export function KioskSettingsEditor({
         )
       ) : null}
 
+      {targetId && settings.data?.design ? (
+        <DesignAssignBar
+          level={level}
+          targetId={targetId}
+          settings={settings.data}
+          companyId={level === 'company' ? companyId : null}
+          shopId={level === 'company' ? null : level === 'machine' ? kiosk?.shopId ?? null : shopId}
+          canEdit={canEdit}
+          guard={guard}
+        />
+      ) : null}
+
       {!targetId ? (
         level === 'machine' ? null : (
           <p className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">
@@ -729,6 +791,16 @@ export function KioskSettingsEditor({
           kiosks={kiosks}
           brandName={brandName}
           dirtyRef={dirtyRef}
+          saveAsDesign={
+            canEdit
+              ? {
+                  companyId: level === 'machine' ? kiosk?.companyId ?? companyId : companyId,
+                  shopId: level === 'company' ? null : level === 'machine' ? kiosk?.shopId ?? null : shopId,
+                  shopName: level === 'company' ? null : level === 'machine' ? kiosk?.shopName ?? null : shopName,
+                  canCompany: !!role && COMPANY_WRITERS.includes(role),
+                }
+              : null
+          }
         />
       )}
     </div>

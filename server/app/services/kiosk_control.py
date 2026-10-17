@@ -821,6 +821,16 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
     from app.services import device_license
 
     license_product = device_license.product_of(db, machine, device)
+    if device is None and isinstance(raw_status, dict) and "alerts" in raw_status:
+        # "מכשיר מזומן" on a till (its CashMag / PayLink unreachable or at fault): the till reports it here like a
+        # kiosk, kind "cash" only — the device's cash alert (kiosk_ops.reconcile_till_cash). Never fails the sync.
+        from app.services import kiosk_ops
+
+        try:
+            with db.begin_nested():
+                kiosk_ops.reconcile_till_cash(db, machine, raw_status.get("alerts"), now=now)
+        except Exception:  # noqa: BLE001
+            logger.exception("till cash alerts failed for %s", machine.id)
     if device is None or not device.enabled:
         return {"kiosk": False, "serverTime": _iso(now), "controls": controls, "licenseProduct": license_product}
     bundle = cfgsvc.effective_bundle(db, machine)
@@ -1563,20 +1573,18 @@ def settings_scope(db: Session, user: User, level: str, scope_id: Any, tenant_id
 
 
 def _parent_layers(db: Session, scope: SettingsScope) -> List[Dict[str, Any]]:
-    layers = cfgsvc.layers_for(
-        db, company_id=scope.company_id, shop_id=scope.shop_id, machine_id=scope.machine_id,
-        area_id=getattr(scope, "area_id", None),
-    )
-    if scope.level == "company":
-        return []
-    if scope.level == "shop":
-        return [layers.company]
-    if scope.level == "area":
-        return [layers.company, layers.shop]
-    return [layers.company, layers.shop, layers.area]
+    """
+    What a level inherits: the layers above it and, placed right before its own, the saved design it or a
+    parent assigns ("עיצובים שמורים לקיוסק", app/services/kiosk_designs.py `compose`).
+    """
+    from app.services import kiosk_designs
+
+    return kiosk_designs.parent_stack(db, scope)
 
 
 def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
+    from app.services import kiosk_designs
+
     row = cfgsvc.layer_row(db, scope.level, scope.entity_id)
     parents = _parent_layers(db, scope)
     overrides = cfgsvc.sanitize_stored_layer(row.overrides if row is not None else {})
@@ -1601,6 +1609,8 @@ def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
         "updatedAt": _iso(row.updated_at) if row is not None else None,
         "updatedBy": updated_by,
         "updatedByUserId": str(row.updated_by_user_id) if row is not None and row.updated_by_user_id else None,
+        # "עיצוב: <שם>": the design this level assigns, the one it ends up with, and its own edits over it.
+        "design": kiosk_designs.assignment_view(db, scope, overrides),
     }
 
 

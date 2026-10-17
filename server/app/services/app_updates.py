@@ -52,6 +52,7 @@ from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.tenant import Tenant
 from app.services.ably_notify import publish_settings_notify
+from app.services import release_storage
 from app.services.areas import as_utc
 from app.services.till_parameters import as_uuid
 
@@ -298,7 +299,7 @@ def _rows_on_chains(db: Session, chains: Sequence[MachineChain]) -> List[Resolve
         and_(AppReleaseAssignment.level == level, AppReleaseAssignment.target_id == ident)
         for level, ident in on_chain
     ]
-    return (
+    rows = (
         db.query(AppReleaseAssignment, AppRelease)
         .join(AppRelease, AppRelease.id == AppReleaseAssignment.release_id)
         .filter(
@@ -309,6 +310,10 @@ def _rows_on_chains(db: Session, chains: Sequence[MachineChain]) -> List[Resolve
         )
         .all()
     )
+    # A release whose file is in no storage (e.g. a local file a deploy wiped) is never offered:
+    # the device falls back to what else applies to it (app/services/release_storage.py).
+    present = release_storage.availability({r.id: r for _, r in rows}.values())
+    return [(a, r) for a, r in rows if present.get(r.id, False)]
 
 
 def resolved_for_machine(db: Session, machine: POSMachine, platform: Optional[str] = None) -> Optional[Resolved]:
@@ -352,7 +357,7 @@ def resolved_for_machines(
 
 def newest_releases(db: Session) -> Dict[str, AppRelease]:
     """Per platform, its newest active release (highest versionCode, then the latest upload)
-    whose file is still kept."""
+    whose file is still kept and available in storage."""
     out: Dict[str, AppRelease] = {}
     for release in (
         db.query(AppRelease)
@@ -360,7 +365,10 @@ def newest_releases(db: Session) -> Dict[str, AppRelease]:
         .order_by(AppRelease.version_code.desc(), AppRelease.created_at.desc())
         .all()
     ):
-        out.setdefault(release_platform(release), release)
+        platform = release_platform(release)
+        if platform in out or not release_storage.available(release):
+            continue
+        out[platform] = release
     return out
 
 

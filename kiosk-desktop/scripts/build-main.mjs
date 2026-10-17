@@ -6,6 +6,7 @@
  *   node scripts/build-main.mjs           production build
  *   node scripts/build-main.mjs --dev     with source maps
  *   node scripts/build-main.mjs --smoke   the Node smoke tool (pairing + sync against a dev API)
+ *   node scripts/build-main.mjs --print-e2e [--win7]  the print smoke run under Electron (scripts/print-e2e.ts)
  *   node scripts/build-main.mjs --win7    the Windows 7 build (P:/specs/windows7-till.md): Node 16.17 / Electron 22,
  *                                         into legacy/dist/, src/legacy/main.ts first (Node 16's missing globals),
  *                                         undici from legacy/node_modules, better-sqlite3 + serialport left to it
@@ -23,6 +24,7 @@ const dev = process.argv.includes('--dev');
 const smoke = process.argv.includes('--smoke');
 const cashSim = process.argv.includes('--cash-sim');
 const win7Check = process.argv.includes('--win7-check');
+const printE2e = process.argv.includes('--print-e2e');
 const win7 = process.argv.includes('--win7') || win7Check;
 /** Where dist/ goes: the Windows 7 build packs from legacy/ (its own package.json and node_modules). */
 const out = win7 ? path.join(root, 'legacy') : root;
@@ -52,6 +54,10 @@ if (cashSim) {
   await build({ ...common, entryPoints: [path.join(root, 'scripts/cash-sim.ts')], outfile: path.join(root, 'dist/cash-sim/cash-sim.js'), minify: false, sourcemap: true });
 } else if (smoke) {
   await build({ ...common, entryPoints: [path.join(root, 'scripts/smoke.ts')], outfile: path.join(root, 'dist/smoke/smoke.js'), minify: false, sourcemap: true });
+} else if (printE2e) {
+  // The print smoke run under Electron (scripts/print-e2e.ts): beside the build it checks (dist/ or legacy/dist/) — not packed.
+  // Windows 7: Node 16's missing globals first, as src/legacy/main.ts does for the app.
+  await build({ ...common, entryPoints: [path.join(root, 'scripts/print-e2e.ts')], outfile: path.join(out, 'dist-e2e/print-e2e.js'), minify: false, sourcemap: true, inject: win7 ? [path.join(root, 'src/legacy/polyfills.ts')] : [] });
 } else if (win7Check) {
   // The Windows 7 build's runtime check under Electron 22's Node (scripts/win7-check.ts) — not packed.
   await build({ ...common, entryPoints: [path.join(root, 'scripts/win7-check.ts')], outfile: path.join(out, 'dist-check/win7-check.js'), minify: false });

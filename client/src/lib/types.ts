@@ -1932,6 +1932,8 @@ export interface ShiftTotals {
   discountsTotal?: Money | null;
   totalRefunds?: Money | null;
   totalCash?: Money | null;
+  /** "מזומן במכשיר": the part of the cash a cash device (CashMag / PayLink) took — never in the drawer. */
+  totalDeviceCash?: Money | null;
   totalCard?: Money | null;
   totalTips?: Money | null;
   totalCashTips?: Money | null;
@@ -2348,6 +2350,21 @@ export interface ZReport {
    * already out of expectedCash. Null/absent when no included close carried the figure.
    */
   cardTipsFromDrawer?: Money | null;
+  /**
+   * "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): the card tips the drawers could not
+   * pay, owed to staff — Σ of what the closes froze (0 for an older close). Not in expectedCash.
+   * Null/absent with cardTipsFromDrawer.
+   */
+  cardTipsUnpaid?: Money | null;
+  /** "מזומן במכשיר": the part of the cash a cash device (CashMag / PayLink) took — never in the drawer. */
+  deviceCash?: Money | null;
+  /** Per device kind (`cashmag` / `paylink`). */
+  deviceCashByKind?: Record<string, Money> | null;
+  /**
+   * The Z print setting `zPrintPerTillCash` (x-z-cash-with-tips §3): false = `summary_only` — a print of a
+   * shop / area Z carries the drawers' summary without the per-till table. Absent on older servers (true).
+   */
+  printPerTillCash?: boolean;
   /** "מזומן במגירה": cash sales net + cash tips − cardTipsFromDrawer. Null/absent with it. */
   drawerCash?: Money | null;
   /**
@@ -2571,6 +2588,16 @@ export interface ZReportMachineSection {
   betweenShiftAdjustments?: Money | null;
   /** Card tips this till paid out of the drawer (Σ of its closes'); absent without the parameter. */
   cardTipsFromDrawer?: Money | null;
+  /** Card tips this till's drawer could not pay, owed to staff (x-z-cash-with-tips §2); absent with the above. */
+  cardTipsUnpaid?: Money | null;
+  /** "מזומן במכשיר": the part of the cash a cash device (CashMag / PayLink) took — never in the drawer. */
+  deviceCash?: Money | null;
+  /** Per device kind (`cashmag` / `paylink`). */
+  deviceCashByKind?: Record<string, Money> | null;
+  /** Net of cash refunds: the cash the period took (the block's "מזומן ממכירות"). */
+  cashSalesNet?: Money | null;
+  /** A self-order kiosk's part: no drawer. */
+  kiosk?: boolean | null;
   /** "זיכויים וביטולי תשלום בשולחנות" of this till — absent when it had none. */
   tablePaymentReversals?: TablePaymentReversals | null;
   /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
@@ -3480,6 +3507,22 @@ export interface AppRelease {
   bridgeApi?: number | null;
   /** Its stored file was deleted ("הקובץ נמחק"): never offered, downloaded or sent again. */
   fileDeletedAt?: string | null;
+  /**
+   * Its file can be served now. False (and not deleted): the file is in no storage — "הקובץ לא
+   * זמין — יש להעלות מחדש", never offered until attached again. Absent on an older server: true.
+   */
+  fileAvailable?: boolean;
+  /** Where it is kept: "s3" (the shared bucket) | "local" (an API machine's disk). */
+  fileStorage?: 's3' | 'local' | null;
+}
+
+/** `GET /app-releases/storage-status`: where release files are kept. */
+export interface AppReleaseStorageStatus {
+  backend: 's3' | 'local';
+  /** Every API machine serves the files. */
+  shared: boolean;
+  /** Local disk on Fly: the other machine 404s the file and the next deploy deletes it. */
+  ephemeral: boolean;
 }
 
 /** `GET /app-releases/{id}/file-delete-check`. */

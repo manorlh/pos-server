@@ -5,6 +5,7 @@
  * screens (shared/bridge.ts) from local data only.
  */
 
+import { cloudPrinterOf, PROBE_EVERY_MS } from '../core/printerPaper';
 import { createHash, pbkdf2Sync, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -55,7 +56,7 @@ import { LOCAL_DESTINATION, REMOTE_DOC_TEXT, TILL_CHOICE_ASK, remoteDestinations
 import { rowOf as transmissionRowOf, type TransmissionRow } from '../core/till/transmission';
 import { DEFAULT_PRINTER_KEY, TILL_PRINTER_KEY, type RemoteDocumentsRouter } from './till/tillRemotePrint';
 import { isCreditType as isCreditDoc } from '../core/sale';
-import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput, type ZDoc } from '../core/printDocs';
+import { basketSummaryDoc, bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput, type ZDoc } from '../core/printDocs';
 import { zPrintPerTill } from '../core/till/cashWithTips';
 import {
   appendLog,
@@ -88,7 +89,7 @@ import {
 } from '../core/kioskReprint';
 import { BON_NOT_ON_KIOSK, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
-import { centreOn, job as escposJob } from '../core/escpos';
+import { centreOn, job as escposJob, printerRaster, RECEIPT_WIDTHS } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { lineMenuFacts, menuKey, presentTillCatalog, resolveTillMenu } from '../core/till/menus';
@@ -146,7 +147,8 @@ import { identifyPinpad, localPrivateIpv4, PinpadRelocator, readArpTable, sweepP
 import { pinpadAddressOf } from '../core/nayax';
 import type { PinpadIdentity } from '../core/pinpadRelocation';
 import { TechnicianSetup } from './technician/technicianSetup';
-import { machineFacts, networkFacts, originOf, scanLanPrinters, timedGet } from './technician/technicianTools';
+import { machineFacts, networkFacts, originOf, scanLanPrinters, timedGet, type PrinterScanDeps } from './technician/technicianTools';
+import { pickerView, type PickerView } from '../core/printerPicker';
 import { cloudLight, DRAWER_PULSES, drawerKickBytes, mediaLight, parseDrawerKick, TECH_TEXT, widthTestBitmap, type DrawerKick, type TechLight } from '../core/technicianSetup';
 import type { RollingLog } from './deviceLog';
 import { PROVIDERS } from './payment/registry';
@@ -154,9 +156,11 @@ import { mergeLocalKey, PAIRING_TEXT, PairingSession, uploadOutcome, type LocalS
 import type { SynqPayProvider } from './payment/synqpay/provider';
 import type { PaymentProvider, ProviderContext, ProviderFactory, TransmitResult } from './payment/provider';
 import { PrintQueue, type JobKind, type PageRenderer } from './printer/printQueue';
+import { printerKey, withPrinter } from './printer/printerLock';
+import { probePrinter } from './kitchen/kitchenNet';
 import { connect as netConnect } from 'node:net';
-import { DefaultTransport, tcpSend, type PrinterTarget, type Transport } from './printer/transports';
-import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
+import { DefaultTransport, healthOfBits, tcpSend, tcpStatus, type PrinterTarget, type Transport } from './printer/transports';
+import { isAutoTarget, isUsbPrinterDevice, resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
 import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
@@ -208,6 +212,7 @@ import type {
   TechnicianAction,
   TechnicianActionResult,
   TechnicianInfo,
+  OskMode,
   DisplayScaleView,
   AdminActionResult,
 } from '../shared/bridge';
@@ -293,6 +298,8 @@ export interface ServiceOptions {
    * PC is on a LAN, the kitchen's clock — and the LAN print host's port (0: any) and address.
    */
   kitchen?: { printerLink?: (host: string, port: number) => PrinterLink; lanCall?: LanCall; onLan?: () => boolean; now?: () => number; hostPort?: number; hostName?: string };
+  /** Tests and the print smoke run: the LAN scan's wires ("חיפוש ברשת" — this PC's address, the sweep, the status). */
+  printerScan?: PrinterScanDeps;
 }
 
 /**
@@ -306,10 +313,17 @@ export interface LocalSettings {
   displayScale: string | null;
   /** "מגירת כסף": the kick through the receipt printer — its pin and pulse (core/technicianSetup.ts; null: pin 2, 50 ms). */
   drawer?: DrawerKick | null;
+  /**
+   * "מדפסת נפרדת לבונים / לשוברי פריט" (core/printerPicker.ts): optional — unset (the default), the bon and the item tickets
+   * print on [printer], the one printer of the device ("אותה מדפסת יכולה להיות הכל").
+   */
+  printerRoles?: { bon?: PrinterTarget | null; ticket?: PrinterTarget | null } | null;
 }
 
 const LOCAL_SETTINGS = 'local.settings';
 const LOCAL_PAUSE = 'local.pause';
+/** "מקלדת מסך" (renderer/osk/OnScreenKeyboard.tsx): auto / always / off, this device's own. */
+const LOCAL_OSK = 'local.osk';
 const TECH_LOCK = 'technician.lock';
 /** The Nayax LAN pinpad's pinned certificate (payment/nayaxProvider.ts `pinpad.pin:<host:port>`, under the providers' `provider.`). */
 const PINPAD_PIN_PREFIX = 'provider.pinpad.pin:';
@@ -387,6 +401,8 @@ export class KioskService extends EventEmitter {
   /** "העבר מכשיר לקופה אחרת" (§6.3): the dashboard's `move_pairing` command, polled every minute (not on a cash host). */
   readonly moveCommands: DeviceCommands;
   private lastCommandPoll = 0;
+  /** When the receipt printer was last asked how it is (tick30). */
+  private lastPrinterProbe = 0;
   readonly ledger: Ledger;
   readonly media: MediaStore;
   readonly pay: PayService;
@@ -521,7 +537,7 @@ export class KioskService extends EventEmitter {
     this.ownsUsbWatch = !opts.usbWatch;
     this.usbWatch = opts.usbWatch ?? new UsbPrinterWatch(this.transport, this.log, () => this.printQueue.busy);
     this.offUsbWatch = this.usbWatch.onChange(() => this.dirty());
-    this.printQueue = new PrintQueue(this.db, this.transport, () => this.printerResolution().target, opts.renderer ?? null, this.log);
+    this.printQueue = new PrintQueue(this.db, this.transport, (kind) => this.targetFor(kind ?? null), opts.renderer ?? null, this.log);
     this.orders = new OrderStore(this.db);
     this.funnel = new FunnelStore(this.kv);
     const kitchenOpts = opts.kitchen ?? {};
@@ -534,7 +550,7 @@ export class KioskService extends EventEmitter {
       secretBox: opts.secretBox,
       params: () => this.cloud.parameters(),
       tillName: () => tillNameOf(this.cloud.machine()?.posNumber, this.cloud.machine()?.machineName),
-      ownTarget: () => this.printerResolution().target,
+      ownTarget: () => this.targetFor('kitchen'),
       transport: this.transport,
       renderer: () => this.printQueue.pageRenderer,
       onLan: kitchenOpts.onLan ?? (() => localPrivateIpv4() !== null),
@@ -899,7 +915,14 @@ export class KioskService extends EventEmitter {
       printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
     const scale = parseDisplayScale(s.displayScale);
-    return { printer, zoom: s.zoom ?? null, displayScale: scale === null ? null : displayScaleWire(scale), drawer: s.drawer ? parseDrawerKick(s.drawer) : null };
+    const roles = s.printerRoles && typeof s.printerRoles === 'object' ? s.printerRoles : null;
+    return {
+      printer,
+      zoom: s.zoom ?? null,
+      displayScale: scale === null ? null : displayScaleWire(scale),
+      drawer: s.drawer ? parseDrawerKick(s.drawer) : null,
+      ...(roles && (roles.bon || roles.ticket) ? { printerRoles: { bon: roles.bon ?? null, ticket: roles.ticket ?? null } } : {}),
+    };
   }
 
   /* ----------------------------------------------------------- display size */
@@ -970,7 +993,21 @@ export class KioskService extends EventEmitter {
    * the next printer plugged in is found again.
    */
   printerResolution(): PrinterResolution {
-    return resolvePrinterTarget(this.localSettings().printer, this.usbWatch.current());
+    const set = this.localSettings().printer;
+    const r = resolvePrinterTarget(set, this.usbWatch.current());
+    // "רוחב הדפסה" belongs to the device's printer, "אוטומטי" too.
+    return set?.widthDots ? { ...r, target: { ...r.target, widthDots: set.widthDots } } : r;
+  }
+
+  /**
+   * Where a page of [kind] goes: the device's printer — every page, the drawer's pulse included — unless the technician set
+   * a printer of its own for the bons or the item tickets (core/printerPicker.ts). An override that is not set: never a
+   * page lost for want of a printer, it prints on the device's printer.
+   */
+  targetFor(kind: JobKind | 'kitchen' | null = null): PrinterTarget {
+    const roles = this.localSettings().printerRoles;
+    const own = kind === 'ticket' ? roles?.ticket : kind === 'bon' || kind === 'kitchen' ? roles?.bon : null;
+    return own && !isAutoTarget(own) ? own : this.printerResolution().target;
   }
 
   /** Look at the printers now (a test page, the technician's screen), not 15 s later. */
@@ -1345,6 +1382,8 @@ export class KioskService extends EventEmitter {
         const lastNumber = Math.max(lastLocal ?? 0, beat.lastTillZNumber ?? 0);
         const failure = this.printQueue.lastFailure;
         const health = this.printQueue.health();
+        const cloud = cloudPrinterOf(health);
+        const probed = this.printQueue.probed;
         return {
           ...(this.opts.deviceInfo.serial ? { serialNumber: this.opts.deviceInfo.serial } : {}),
           // "עקיפת בדיקת מספר מסוף" as this kiosk applies it (core/terminalCheckBypass.ts).
@@ -1358,9 +1397,16 @@ export class KioskService extends EventEmitter {
           clockTrust: this.clockFix.report(),
           ...(this.fiscalRole ? { offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch } } : {}),
           ...Object.fromEntries([...this.heartbeatParts].map(([key, part]) => [key, part()])),
+          // The cloud's words (core/printerPaper.ts) — "אין נייר במדפסת" reaches the manager (status_watch.py).
           printer: {
-            status: health === 'no_paper' ? 'no_paper' : health === 'ok' ? 'ok' : health === 'unknown' ? 'unknown' : health === 'unavailable' ? 'unavailable' : 'error',
-            ...(failure ? { message: failure.error, at: new Date(failure.at).toISOString() } : {}),
+            status: cloud.status,
+            ...(probed && (!failure || probed.at > failure.at)
+              ? { ...(cloud.message ? { message: cloud.message } : {}), at: new Date(probed.at).toISOString() }
+              : failure
+                ? { message: failure.error, at: new Date(failure.at).toISOString() }
+                : cloud.message
+                  ? { message: cloud.message }
+                  : {}),
             ...(this.printQueue.lastOkAt ? { lastPrintOkAt: new Date(this.printQueue.lastOkAt).toISOString() } : {}),
           },
         };
@@ -3120,6 +3166,8 @@ export class KioskService extends EventEmitter {
   async receiptChoice(orderId: string, print: boolean): Promise<void> {
     const o = this.orders.get(orderId);
     if (!o || !o.paid) return;
+    // Once, and only where it was asked ("ask"): a second tap, a stale screen's answer or a "never" kiosk prints none.
+    if (o.receiptStatus !== 'pending') return;
     if (print) this.printReceipt(orderId, false);
     this.orders.update(orderId, (x) => ({ ...x, receiptStatus: print ? 'printed' : 'declined' }));
     const p = this.payProgress;
@@ -3379,7 +3427,9 @@ export class KioskService extends EventEmitter {
 
   /** The cash drawer's kick through the receipt printer (its RJ11 port). */
   async openDrawer(): Promise<void> {
-    await this.transport.send(this.printerResolution().target, drawerKickBytes(this.localSettings().drawer ?? undefined));
+    // Through the device's printer, between its pages (never in the middle of one: printer/printerLock.ts).
+    const target = this.printerResolution().target;
+    await withPrinter(printerKey(target), () => this.transport.send(target, drawerKickBytes(this.localSettings().drawer ?? undefined)));
   }
 
   /**
@@ -3394,7 +3444,9 @@ export class KioskService extends EventEmitter {
 
   /** Raw ESC/POS bytes to the receipt printer now (a document another till sent to print here, main/till/remoteDrawer.ts). */
   async sendToReceiptPrinter(bytes: Uint8Array): Promise<void> {
-    await this.transport.send(this.printerResolution().target, bytes);
+    // A page: a network printer with no paper is found before the bytes go (transports.ts SendOptions.page), one at a time.
+    const target = this.printerResolution().target;
+    await withPrinter(printerKey(target), () => this.transport.send(target, bytes, { page: true }));
   }
 
   /* ------------------------------------------------------------- printing */
@@ -3558,6 +3610,27 @@ export class KioskService extends EventEmitter {
     const pages = this.itemTicketDocs(doc, o.transactionNumber, null);
     for (const page of pages) this.printQueue.enqueue('ticket', orderId, page);
     return pages.length;
+  }
+
+  /**
+   * "שוברים" of a till's sale (the till role, main/till/engine.ts — pos-android CheckoutViewModel.printItemTickets): after
+   * its receipt, on this device's own printer, whatever "דוחות בלבד" says (operational paper, not a document); none for a
+   * credit note. Queued like any page; once per document (a second call — a retry of the done screen — prints none).
+   */
+  printTillItemTickets(doc: DocDraft): number {
+    if (this.printQueue.jobsFor(doc.id, 'ticket').length > 0) return 0;
+    const pages = this.itemTicketDocs(doc, formatDocNumber(doc.prefix, String(doc.number)), null);
+    for (const page of pages) this.printQueue.enqueue('ticket', doc.id, page);
+    return pages.length;
+  }
+
+  /** "סיכום עסקה" after a mixed basket's documents (core/printDocs.ts basketSummaryDoc), where its receipts print. */
+  printBasketSummary(docs: DocDraft[]): string | null {
+    const collected = (d: DocDraft) => Math.abs(d.totals.totalAgorot);
+    const sold = docs.filter((d) => !isCreditDoc(d.documentType)).reduce((n, d) => n + collected(d), 0);
+    const returned = docs.filter((d) => isCreditDoc(d.documentType)).reduce((n, d) => n + collected(d), 0);
+    const doc = basketSummaryDoc({ soldAgorot: sold, returnedAgorot: returned, documentNumbers: docs.map((d) => formatDocNumber(d.prefix, String(d.number))), printedAt: new Date() });
+    return this.pagePrint('receipt', `${docs[0].id}:summary`, doc, { kind: 'receipt', code: 'summary', title: 'סיכום עסקה' });
   }
 
   /**
@@ -3973,6 +4046,11 @@ export class KioskService extends EventEmitter {
 
   private async tick30() {
     if (!this.paired) return;
+    // The receipt printer asked how it is, idle, once a minute (core/printerPaper.ts): paper out is known at once.
+    if (Date.now() - this.lastPrinterProbe >= PROBE_EVERY_MS) {
+      this.lastPrinterProbe = Date.now();
+      void this.printQueue.probe();
+    }
     if (Date.now() - this.lastCommandPoll >= 60_000) {
       this.lastCommandPoll = Date.now();
       void this.moveCommands.poll();
@@ -4945,9 +5023,12 @@ export class KioskService extends EventEmitter {
   }
 
   async technicianInfo(): Promise<TechnicianInfo> {
-    const scan = await this.usbWatch.refresh();
+    // The screen opens at once: a fresh USB scan only if it answers within 2.5 s (PowerShell on a Windows 7 J1900 can
+    // take far longer — the screen looked like it never opened), else the last one; "בדוק הכל שוב" asks again.
+    const fresh = this.usbWatch.refresh().catch(() => null);
+    const scan = await Promise.race([fresh, new Promise<null>((r) => setTimeout(() => r(null), 2_500))]) ?? this.usbWatch.current();
     const admin = this.adminInfo();
-    const queues = scan?.queues ?? (await this.transport.list().catch(() => []));
+    const queues = scan?.queues ?? (await Promise.race([this.transport.list().catch(() => []), new Promise<never[]>((r) => setTimeout(() => r([]), 2_500))]));
     const me = this.cloud.machine();
     // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
     const u = this.platform.updateStatus?.() ?? null;
@@ -4975,7 +5056,14 @@ export class KioskService extends EventEmitter {
       displayScale: this.displayScaleView(),
       foreignRows: this.foreignRowsView(),
       setup: this.technicianSetupView(admin, admin.printer),
+      osk: this.oskMode(),
     };
+  }
+
+  /** "מקלדת מסך" on this device (default auto). */
+  oskMode(): OskMode {
+    const v = this.kv.get(LOCAL_OSK);
+    return v === 'always' || v === 'off' ? v : 'auto';
   }
 
   /** The pinpad's terminal as the device knows it: the cloud's `expectedTerminalNumber`, else the one it learned. */
@@ -5040,7 +5128,7 @@ export class KioskService extends EventEmitter {
       printer: {
         kind: target.transport === 'tcp' ? 'network' : target.transport === 'none' ? 'none' : res.via === 'usb' ? 'usb' : 'windows',
         branch,
-        widthDots: 576,
+        widthDots: printerRaster(target.widthDots),
         cut: true,
         lastOkAt: lastOk,
         lastFailure,
@@ -5085,6 +5173,93 @@ export class KioskService extends EventEmitter {
       audit,
       outbox: this.outbox.count(),
     };
+  }
+
+  /* ------------------------------------------------- "מדפסות": the one picker (core/printerPicker.ts) */
+
+  private pickerLan: { at: number; subnet: string | null; found: Array<{ host: string; port: number; health: string }> } | null = null;
+  private pickerLanRun: Promise<void> | null = null;
+
+  /** A target from the screen, checked: a Windows queue by name, a network address, a COM port. Null — not one. */
+  private pickTarget(raw: unknown): PrinterTarget | null {
+    const t = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+    if (!t) return null;
+    if (t.transport === 'spooler' && typeof t.queueName === 'string' && t.queueName.trim()) return { transport: 'spooler', queueName: t.queueName.trim().slice(0, 200) };
+    if (t.transport === 'tcp' && typeof t.host === 'string' && /^[\w.-]{1,253}$/.test(t.host.trim())) {
+      const port = Number(t.port ?? 9100);
+      return { transport: 'tcp', host: t.host.trim(), port: Number.isInteger(port) && port > 0 && port < 65536 ? port : 9100 };
+    }
+    // A COM port: the serial transport's target (main/printer/serialPrinter.ts, where this build has it).
+    if (t.transport === 'serial' && typeof t.comPort === 'string' && /^COM\d{1,3}$/i.test(t.comPort.trim())) {
+      return { transport: 'serial', comPort: t.comPort.trim().toUpperCase(), ...(typeof t.baudRate === 'number' ? { baudRate: t.baudRate } : {}) } as unknown as PrinterTarget;
+    }
+    return null;
+  }
+
+  /** A network printer asked how it is (DLE EOT); no answer — reachable at all (a printer that does not report), or not. */
+  private async networkHealth(host: string, port: number): Promise<string> {
+    const bits = await tcpStatus(host, port).catch(() => null);
+    if (bits) return healthOfBits(bits);
+    return (await probePrinter(host, port, 1_500).catch(() => false)) ? 'unknown' : 'unavailable';
+  }
+
+  /** "בדיקה" on a row: a test page on that printer now, at the device's width (nothing queued, nothing chosen). */
+  private async testPageOn(target: PrinterTarget): Promise<TechnicianActionResult> {
+    if (!this.printQueue.pageRenderer) return { ok: false, message: 'חלון ההדפסה לא מוכן' };
+    try {
+      const doc = slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: 'TEST', service: 'take_away', itemCount: 0, totalAgorot: 0 });
+      const bytes = await this.printQueue.bytesFor(doc, { ...target, widthDots: target.widthDots ?? this.localSettings().printer.widthDots ?? null });
+      await this.transport.send(target, bytes, { page: true });
+      return { ok: true, message: 'דף בדיקה נשלח' };
+    } catch (e) {
+      return { ok: false, message: `לא הודפס: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
+  /**
+   * The picker's view: the Windows queues and the USB printers present (the spooler helper's look, PowerShell 2 on Windows 7),
+   * the COM ports (the serial transport's list where it has one), the network printers on 9100 ([lan]: scan now — a few
+   * seconds; else the last scan) and the saved addresses (asked their status), with what each role prints on.
+   */
+  async printerPicker(lan: boolean): Promise<PickerView> {
+    const scan = await this.usbWatch.refresh().catch(() => null);
+    const serialList = (this.transport as { serialPorts?: () => Promise<Array<{ path: string; friendlyName?: string | null; name?: string | null; likely?: boolean }>> }).serialPorts;
+    const serial = serialList ? await serialList.call(this.transport).catch(() => []) : [];
+    if (lan) {
+      this.pickerLanRun ??= (async () => {
+        const r = await scanLanPrinters(this.opts.printerScan ?? undefined).catch(() => null);
+        this.pickerLan = r && r.ok ? { at: Date.now(), subnet: r.subnet, found: r.printers } : { at: Date.now(), subnet: null, found: [] };
+      })().finally(() => {
+        this.pickerLanRun = null;
+      });
+      await this.pickerLanRun;
+    }
+    const local = this.localSettings();
+    const chosen = { receipt: isAutoTarget(local.printer) ? null : local.printer, bon: local.printerRoles?.bon ?? null, ticket: local.printerRoles?.ticket ?? null };
+    // The saved addresses: the choices, the shop's network printers — each asked how it is (DLE EOT, nothing printed).
+    const saved = new Map<string, { host: string; port: number; name: string | null }>();
+    for (const t of [chosen.receipt, chosen.bon, chosen.ticket]) if (t?.transport === 'tcp' && t.host) saved.set(`${t.host}:${t.port ?? 9100}`, { host: t.host, port: t.port ?? 9100, name: null });
+    for (const k of this.kitchen.config().printers) if (k.type === 'network' && k.host) saved.set(`${k.host}:${k.port ?? 9100}`, { host: k.host, port: k.port ?? 9100, name: k.name });
+    const scanned = new Set((this.pickerLan?.found ?? []).map((f) => `${f.host}:${f.port}`));
+    const savedRows = await Promise.all(
+      [...saved.entries()].map(async ([key, s]) => ({
+        ...s,
+        health: scanned.has(key) ? (this.pickerLan!.found.find((f) => `${f.host}:${f.port}` === key)?.health ?? 'unknown') : await this.networkHealth(s.host, s.port),
+      })),
+    );
+    const res = this.printerResolution();
+    return pickerView(
+      {
+        queues: (scan?.queues ?? []).map((q) => ({ name: q.name, port: q.port, health: q.health })),
+        usbNoDriver: (scan?.devices ?? []).filter((d) => isUsbPrinterDevice(d) && d.error !== null && d.error !== 0).map((d) => ({ name: d.name, id: d.id })),
+        serial: serial.map((p) => ({ path: p.path, name: p.friendlyName ?? p.name ?? null, likely: p.likely })),
+        network: this.pickerLan?.found ?? [],
+        saved: savedRows.map((s) => ({ host: s.host, port: s.port, health: s.health, name: s.name })),
+        chosen,
+        autoQueue: res.auto && res.target.transport === 'spooler' ? (res.target.queueName ?? null) : null,
+      },
+      { widthDots: printerRaster(local.printer.widthDots), widths: [...RECEIPT_WIDTHS], scannedAt: this.pickerLan?.at ?? null, lanScanning: this.pickerLanRun !== null, subnet: this.pickerLan?.subnet ?? null },
+    );
   }
 
   /** "מדפסת לקבלות ולמסמכים": the choices when another till's printer is offered to this one (none — undefined). */
@@ -5155,6 +5330,34 @@ export class KioskService extends EventEmitter {
         const launched = await this.platform.launchQuickSupport();
         return launched ? { ok: true, message: launched } : { ok: false, message: 'TeamViewer QuickSupport לא מותקן במחשב' };
       }
+      case 'printerDiscover':
+        return { ok: true, picker: await this.printerPicker(a.lan === true) };
+      case 'printerChoose': {
+        const t = a.target ? (this.pickTarget(a.target) ?? undefined) : null;
+        if (t === undefined) return { ok: false, message: 'מדפסת לא תקינה' };
+        if (a.role === 'receipt') {
+          // The width stays the device printer's; null: "אוטומטי".
+          const width = this.localSettings().printer.widthDots ?? null;
+          this.setLocalSettings({ printer: t ? { ...t, ...(width ? { widthDots: width } : {}) } : { transport: 'spooler', queueName: null, ...(width ? { widthDots: width } : {}) } });
+        } else {
+          const roles = this.localSettings().printerRoles ?? {};
+          this.setLocalSettings({ printerRoles: { ...roles, [a.role]: t } });
+        }
+        this.log(`technician: printer for ${a.role} → ${t ? JSON.stringify(t) : 'default'}`);
+        void this.usbWatch.refresh();
+        return { ok: true, picker: await this.printerPicker(false) };
+      }
+      case 'printerWidth': {
+        const w = printerRaster(a.widthDots);
+        this.setLocalSettings({ printer: { ...this.localSettings().printer, widthDots: w } });
+        this.log(`technician: print width ${w} dots`);
+        return { ok: true, message: `רוחב הדפסה: ${w} נקודות`, picker: await this.printerPicker(false) };
+      }
+      case 'printerTestTarget': {
+        const t = this.pickTarget(a.target);
+        if (!t) return { ok: false, message: 'מדפסת לא תקינה' };
+        return this.testPageOn(t);
+      }
       case 'setReceiptPrinter':
         if (a.id === null) this.kv.delete(TILL_PRINTER_KEY);
         else this.kv.set(TILL_PRINTER_KEY, a.id);
@@ -5177,6 +5380,19 @@ export class KioskService extends EventEmitter {
         this.log('technician: restart');
         setTimeout(() => this.platform.restartApp?.(), 300);
         return { ok: true, message: 'האפליקציה עולה מחדש…' };
+      }
+      case 'setOsk': {
+        if (a.mode !== 'auto' && a.mode !== 'always' && a.mode !== 'off') return { ok: false, message: 'ערך לא חוקי' };
+        this.kv.set(LOCAL_OSK, a.mode);
+        this.log(`technician: on-screen keyboard ${a.mode}`);
+        return { ok: true, message: 'נשמר' };
+      }
+      case 'quitApp': {
+        const guard = paymentGuard(this.activity());
+        if (guard) return { ok: false, message: TECH_TEXT.blocked };
+        this.log('technician: the app closed (יציאה מהתוכנה)');
+        setTimeout(() => this.platform.quit(), 300);
+        return { ok: true, message: 'התוכנה נסגרת…' };
       }
       case 'networkCheck':
         return this.technicianNetwork();

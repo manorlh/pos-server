@@ -222,6 +222,17 @@ class DocumentTotals:
     #: Card legs per (brand, acquirer): [sales count, sales amount, refunds count,
     #: refunds amount] — refunds positive. Tips are not legs, so not in here.
     card_brands: Dict[tuple, list] = field(default_factory=dict)
+    #: "מזומן במכשיר": the cash legs a cash device took (`nayax_meta.cashDevice`, P:/specs/cash-paylink.md §11.7 —
+    #: a CashMag recycler, `hostId` "cashmag", or a PayLink station), per device kind, refunds negative. Inside
+    #: `total_cash` (the fiscal cash is unchanged); never in a drawer, so never in an expected cash.
+    device_cash: Dict[str, Decimal] = field(default_factory=dict)
+
+    @property
+    def total_device_cash(self) -> Decimal:
+        return sum(self.device_cash.values(), ZERO)
+
+    def device_cash_json(self) -> Dict[str, str]:
+        return {k: str(v.quantize(CENT)) for k, v in sorted(self.device_cash.items()) if v != ZERO}
 
     def add_card_leg(self, brand: Optional[str], acquirer: Optional[str], amount: Decimal, refund: bool) -> None:
         key = (brand or "other", acquirer or "unknown")
@@ -300,6 +311,8 @@ class DocumentTotals:
         out.update({k: str(_dec(getattr(self, k))) for k in self._MONEY})
         out["payment_breakdown"] = {k: str(v) for k, v in sorted(self.payment_breakdown.items())}
         out["card_brands"] = [[b, a, sc, str(sa), rc, str(ra)] for (b, a), (sc, sa, rc, ra) in self.card_brands.items()]
+        if self.device_cash:
+            out["device_cash"] = {k: str(v) for k, v in sorted(self.device_cash.items())}
         return out
 
     @classmethod
@@ -328,6 +341,11 @@ class DocumentTotals:
                 out.card_brands[(b, a)] = [int(sc), Decimal(str(sa)), int(rc), Decimal(str(ra))]
             except (TypeError, ValueError, ArithmeticError):
                 continue
+        for kind, amount in (raw.get("device_cash") or {}).items():
+            try:
+                out.device_cash[str(kind)] = Decimal(str(amount))
+            except (ArithmeticError, ValueError):
+                continue
         return out
 
     def add(self, other: "DocumentTotals", sign: int = 1) -> "DocumentTotals":
@@ -349,6 +367,10 @@ class DocumentTotals:
             bucket[3] += s * ra
             if bucket == [0, ZERO, 0, ZERO]:
                 del self.card_brands[key]
+        for kind, amount in other.device_cash.items():
+            self.device_cash[kind] = self.device_cash.get(kind, ZERO) + s * amount
+            if self.device_cash[kind] == ZERO:
+                del self.device_cash[kind]
         return self
 
     def is_zero(self) -> bool:
@@ -356,6 +378,7 @@ class DocumentTotals:
             all(getattr(self, k) == 0 for k in self._COUNTS)
             and all(_dec(getattr(self, k)) == ZERO for k in self._MONEY)
             and not any(v != ZERO for v in self.payment_breakdown.values())
+            and not any(v != ZERO for v in self.device_cash.values())
         )
 
     def as_x(self) -> Dict[str, object]:
@@ -366,6 +389,7 @@ class DocumentTotals:
             "discounts_total": self.discounts_total,
             "total_refunds": self.total_refunds,
             "total_cash": self.total_cash,
+            "total_device_cash": self.total_device_cash,
             "total_card": self.total_card,
             "total_exchange": self.total_exchange,
             "total_tips": self.total_tips,
@@ -376,6 +400,24 @@ class DocumentTotals:
             "first_transaction_number": self.first_transaction_number,
             "last_transaction_number": self.last_transaction_number,
         }
+
+
+#: "מזומן במכשיר" per device kind: a CashMag recycler's leg (`cashDevice.hostId` "cashmag") or a PayLink station's.
+DEVICE_CASHMAG = "cashmag"
+DEVICE_PAYLINK = "paylink"
+DEVICE_KINDS = (DEVICE_CASHMAG, DEVICE_PAYLINK)
+
+
+def device_kind_of(leg) -> Optional[str]:
+    """
+    The cash device a cash leg's money went into (its `nayax_meta.cashDevice`, P:/specs/cash-paylink.md §11.7 —
+    how the Android till / kiosk and the Windows till / kiosk record it), None for notes at the counter.
+    """
+    meta = getattr(leg, "nayax_meta", None)
+    block = meta.get("cashDevice") if isinstance(meta, dict) else None
+    if not isinstance(block, dict) or not block.get("txId"):
+        return None
+    return DEVICE_CASHMAG if str(block.get("hostId") or "").strip().lower() == DEVICE_CASHMAG else DEVICE_PAYLINK
 
 
 def tip_goes_to_cash(tip_method: Optional[str], sale_method: Optional[str]) -> bool:
@@ -580,6 +622,10 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
                 totals.payment_breakdown[method] = (
                     totals.payment_breakdown.get(method, ZERO) + sign * _dec(leg.amount)
                 )
+                if method == "cash":
+                    kind = device_kind_of(leg)
+                    if kind is not None:
+                        totals.device_cash[kind] = totals.device_cash.get(kind, ZERO) + sign * _dec(leg.amount)
                 if method == "card":
                     totals.add_card_leg(
                         getattr(leg, "card_brand", None), getattr(leg, "card_acquirer", None),

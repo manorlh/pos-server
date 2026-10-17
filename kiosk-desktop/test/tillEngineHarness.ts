@@ -11,6 +11,7 @@ import { KioskCoreTillEngine, type TillEngineOptions, type TillWorkMode } from '
 import type { TillRemotePrintOptions } from '../src/main/till/tillRemotePrint';
 import { KioskService } from '../src/main/service';
 import type { ApprovedCard, PaymentProvider, RefundRequest, SaleRequest, SaleResult, Resolution } from '../src/main/payment/provider';
+import type { PageRenderer } from '../src/main/printer/printQueue';
 import type { Transport } from '../src/main/printer/transports';
 import type { EngineEvent, EngineReply, TillOp, TillState } from '../src/shared/till/protocol';
 
@@ -106,6 +107,10 @@ export interface HarnessOptions {
   unpairBackupDir?: string;
   /** "מזומן במכשיר": the till's CashMag / cash station clients (fakes), made over the service. */
   deviceCash?: (svc: KioskService) => TillEngineOptions['deviceCash'];
+  /** A printer transport of the test's own (test/fakePrinter.ts over TCP); default: one that keeps the bytes. */
+  transport?: Transport;
+  /** The page drawing (none: nothing is printed — the queue waits for a renderer). */
+  renderer?: PageRenderer;
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -150,7 +155,8 @@ export function harness(o: HarnessOptions = {}): Harness {
     dataDir: mkdtempSync(path.join(os.tmpdir(), 'kd-till-')),
     appVersion: '0.5.0',
     deviceInfo: { platform: 'windows' },
-    transport: printer,
+    transport: o.transport ?? printer,
+    renderer: o.renderer,
     platform: o.platform,
     unpairBackupDir: o.unpairBackupDir,
     fetch: fetchFn,

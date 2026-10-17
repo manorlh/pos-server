@@ -12,6 +12,7 @@ import type { StartVouchers, VoucherResult } from '@dash-lib/kioskVoucherClient'
 import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
+import type { PickerView, PickRole, PickTarget } from '../core/printerPicker';
 import type { BatteryAlertView } from '../core/batteryAlerts';
 import type { UnpairCheck } from '../core/unpairGuard';
 import type { LastPairing } from '../core/pairingMemory';
@@ -514,7 +515,12 @@ export interface TechnicianInfo {
    * same on a kiosk and a till. Absent from an older service (the screen shows what it has).
    */
   setup?: TechnicianSetupView;
+  /** "מקלדת מסך" on this device (renderer/osk/OnScreenKeyboard.tsx). Absent from an older service. */
+  osk?: OskMode;
 }
+
+/** "מקלדת מסך": the app's on-screen keyboard — after a touch on a touch screen (`auto`), always, or never. */
+export type OskMode = 'auto' | 'always' | 'off';
 
 export type TechLightView = 'ok' | 'warn' | 'bad' | 'unknown';
 
@@ -594,6 +600,8 @@ export interface TechnicianSetupView {
 export interface TechnicianActionResult {
   ok: boolean;
   message?: string;
+  /** "מדפסות": the picker as it is now. */
+  picker?: PickerView;
   /** A second press is asked ("נתק ועבור לענן החדש", "לחצו שוב"): its label. */
   confirm?: string;
   /** "מידע רשת" and "שיוך" from the cloud. */
@@ -741,6 +749,8 @@ export interface KioskBridge {
   adminAction(action: AdminAction): Promise<AdminActionResult>;
   technicianUnlock(code: string): Promise<{ outcome: 'granted' | 'wrong' | 'locked_out' | 'locked'; triesLeft: number; lockedForMs: number }>;
   technicianInfo(): Promise<TechnicianInfo>;
+  /** "מקלדת מסך" for the shell's screens ('off' on the kiosk, which draws its own). Absent from an older preload. */
+  oskMode?(): Promise<OskMode>;
   technicianAction(action: TechnicianAction): Promise<TechnicianActionResult>;
   /**
    * "סגירת משמרת ו-Z" on the shop's lock ("סניף לא פעיל"): a manager's code, then the kiosk's own
@@ -815,6 +825,14 @@ export interface AdminActionResult {
 export type TechnicianAction =
   | { type: 'printerTest' }
   | { type: 'setPrinter'; transport: 'spooler' | 'tcp'; queueName?: string; host?: string; port?: number }
+  /** "מדפסות" (core/printerPicker.ts): the printers found ([lan]: scan the network now). */
+  | { type: 'printerDiscover'; lan?: boolean }
+  /** A printer for a role: the device's ("receipt" — every page; null: אוטומטי) or the bons' / item tickets' own (null: the device's). */
+  | { type: 'printerChoose'; role: PickRole; target: PickTarget | null }
+  /** "רוחב הדפסה" of the device's printer (576 / 512 / 432 / 384). */
+  | { type: 'printerWidth'; widthDots: number }
+  /** "בדיקה" on one row of the picker: a test page there, nothing chosen. */
+  | { type: 'printerTestTarget'; target: PickTarget }
   | { type: 'pinpadCheck' }
   | { type: 'updateCheck' }
   | { type: 'updateInstall' }
@@ -840,6 +858,9 @@ export type TechnicianAction =
   | { type: 'syncNow' }
   /** "הפעלה מחדש של האפליקציה" — never over an order or a payment. */
   | { type: 'restart' }
+  /** "יציאה מהתוכנה": the app closes (never during a payment) — the technician's way out, Windows 7 too. */
+  | { type: 'quitApp' }
+  | { type: 'setOsk'; mode: OskMode }
   /** "מידע רשת" + "שיוך" from the cloud: the adapters, Wi-Fi, `/health`, the cloud API (its answer is the identity), the LAN host. */
   | { type: 'networkCheck' }
   /** "כתובת שרת": "בדיקת חיבור" of a new address, then "שמירה" (`confirm`: "נתק ועבור לענן החדש"). */

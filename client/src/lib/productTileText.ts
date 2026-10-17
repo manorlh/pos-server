@@ -146,8 +146,10 @@ export function estimateTextWidth(text: string, size: number): number {
  * (widths are linear in the size), kept. Null where there is no canvas (Node, a server render).
  */
 export function canvasMeasure(fontFamily: string, weight: number | string = 700): MeasureText | null {
-  if (typeof document === 'undefined') return null;
-  const ctx = document.createElement('canvas').getContext('2d');
+  // Through globalThis: this file is type-checked for Node too (the Windows 7 build's main, no DOM lib).
+  const doc = (globalThis as { document?: { createElement(tag: 'canvas'): { getContext(kind: '2d'): { font: string; measureText(text: string): { width: number } } | null } } }).document;
+  if (!doc) return null;
+  const ctx = doc.createElement('canvas').getContext('2d');
   if (!ctx) return null;
   const REF = 100;
   ctx.font = `${weight} ${REF}px ${fontFamily}`;

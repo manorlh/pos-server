@@ -38,6 +38,7 @@ import type {
   AppReleaseFileDeleteResult,
   AppReleaseLevel,
   AppReleaseRolloutRow,
+  AppReleaseStorageStatus,
   StockLevel,
   TipsRangeReport,
   TipsReport,
@@ -1264,6 +1265,32 @@ export async function uploadAppRelease(
       if (onProgress && e.total) onProgress(e.loaded / e.total);
     },
   });
+  return data;
+}
+
+/**
+ * "העלאה מחדש": attach the same build's file again to a release whose file is no longer
+ * available (`422 app_release_sha_mismatch` for another file, `409 app_release_file_deleted`).
+ */
+export async function reuploadAppReleaseFile(
+  id: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<AppRelease> {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post<AppRelease>(`/app-releases/${id}/file`, form, {
+    headers: { 'Content-Type': undefined },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) onProgress(e.loaded / e.total);
+    },
+  });
+  return data;
+}
+
+/** Where release files are kept (the dashboard warns when it is one machine's disk on Fly). */
+export async function fetchAppReleaseStorageStatus(): Promise<AppReleaseStorageStatus> {
+  const { data } = await api.get<AppReleaseStorageStatus>('/app-releases/storage-status');
   return data;
 }
 

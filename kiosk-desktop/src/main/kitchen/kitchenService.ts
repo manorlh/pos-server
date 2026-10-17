@@ -22,6 +22,7 @@
  * till (core/kitchenTicketStyle.ts), in the printer's design (core/kitchen/style.ts).
  */
 
+import { printerKey, withPrinter } from '../printer/printerLock';
 import { randomUUID } from 'node:crypto';
 import type { Api } from '../sync/api';
 import type { Kv } from '../db/schema';
@@ -199,7 +200,6 @@ export class KitchenService {
   /** The settings answered since this process started (the role is known). */
   private roleKnown = false;
   /** One lock per physical printer: its tickets never overlap on this device (a lane and a hand-over's fallback). */
-  private readonly locks = new Map<string, Promise<unknown>>();
   /** "לשלוח לשם גם את הבאים": the temporary redirects (core/kitchen/failover.ts) — in memory, as on Android. */
   private tempRedirects: TempRedirect[] = [];
   private redirectWatch: NodeJS.Timeout | null = null;
@@ -865,8 +865,10 @@ export class KitchenService {
     const renderer = this.d.renderer();
     if (!renderer) throw new Error('the print window is not ready');
     const style = styleForPrinter(printer, this.d.params(), ticket.style ?? null);
-    const raster = rasterWidthOf(printer.paperWidth, printer.printWidthDots);
-    const width = contentWidthOf(printer.paperWidth, printer.printWidthDots);
+    // This device's own printer ("קופה"): the width its technician set for the receipt printer ("רוחב הדפסה").
+    const dots = printer.printWidthDots ?? (printer.type === 'till' ? (this.d.ownTarget().widthDots ?? null) : null);
+    const raster = rasterWidthOf(printer.paperWidth, dots);
+    const width = contentWidthOf(printer.paperWidth, dots);
     const copies = Math.max(1, Math.min(5, printer.copies));
     const drawn: WireTicket = kind === 'copy' ? { ...ticket, notice: withNotice(ticket.notice, LABELS.tillCopy) } : ticket;
     const { style: _s, waiting: _w, ...plain } = drawn;
@@ -890,16 +892,9 @@ export class KitchenService {
     return concat(parts);
   }
 
+  /** One page at a time per printer — shared with the receipt queue and the drawer (main/printer/printerLock.ts). */
   private async locked<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const before = this.locks.get(key) ?? Promise.resolve();
-    const run = before.then(fn, fn);
-    const tail = run.catch(() => undefined);
-    this.locks.set(key, tail);
-    try {
-      return await run;
-    } finally {
-      if (this.locks.get(key) === tail) this.locks.delete(key);
-    }
+    return withPrinter(key, fn);
   }
 
   private statusCheckOn(): boolean {
@@ -940,11 +935,11 @@ export class KitchenService {
       if (target.transport === 'tcp' && target.host) {
         const host = target.host;
         const port = target.port ?? DEFAULT_PRINTER_PORT;
-        const r = await this.locked('own', () => printDirect(this.link(host, port), bytes, `${printer.name} (${host})`, markSending));
+        const r = await this.locked(`net:${host}:${port}`, () => printDirect(this.link(host, port), bytes, `${printer.name} (${host})`, markSending));
         return { kind: 'here', confirmed: r.confirmed };
       }
       if (target.transport === 'spooler' && target.queueName) {
-        await this.locked('own', async () => {
+        await this.locked(printerKey(target) ?? 'own', async () => {
           markSending();
           try {
             await this.d.transport.send(target, bytes);

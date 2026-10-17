@@ -166,13 +166,15 @@ type ReleaseLike = {
   createdAt?: string | null;
   assignmentCount: number;
   fileDeletedAt?: string | null;
+  fileAvailable?: boolean | null;
 };
 
 /** Per platform, the id of its newest active release whose file is kept (the server's `newest_releases`). */
 export function newestActiveIds(releases: readonly ReleaseLike[]): Set<string> {
   const best = new Map<AppPlatform, ReleaseLike>();
   for (const r of releases) {
-    if (!r.isActive || r.fileDeletedAt) continue;
+    // The server's newest_releases skips a release whose file is in no storage.
+    if (!r.isActive || r.fileDeletedAt || fileMissing(r)) continue;
     const p = platformOf(r);
     const cur = best.get(p);
     if (
@@ -196,7 +198,22 @@ export function fileDeleteBlock(release: ReleaseLike, newestIds: ReadonlySet<str
   return null;
 }
 
-/** A release whose file was deleted can never be sent again (download / assign disabled). */
-export function canSend(release: { isActive: boolean; fileDeletedAt?: string | null }): boolean {
-  return release.isActive && !release.fileDeletedAt;
+/**
+ * The release's file is in no storage (not deleted on purpose): "הקובץ לא זמין — יש להעלות
+ * מחדש". An older server that does not send `fileAvailable` means available.
+ */
+export function fileMissing(release: { fileDeletedAt?: string | null; fileAvailable?: boolean | null }): boolean {
+  return !release.fileDeletedAt && release.fileAvailable === false;
+}
+
+/**
+ * A release whose file was deleted can never be sent again (download / assign disabled); one whose
+ * file is missing only after it is uploaded again.
+ */
+export function canSend(release: {
+  isActive: boolean;
+  fileDeletedAt?: string | null;
+  fileAvailable?: boolean | null;
+}): boolean {
+  return release.isActive && !release.fileDeletedAt && !fileMissing(release);
 }

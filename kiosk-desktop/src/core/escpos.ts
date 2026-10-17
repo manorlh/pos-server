@@ -19,6 +19,15 @@ export const EOT = 0x04;
 
 /** The 80 mm printers' raster width (dots). */
 export const RASTER_80MM = 576;
+/** The print widths a receipt printer may have ("רוחב הדפסה"): 80 mm heads 576 (or 512 on some), 72 mm 432, 58 mm 384. */
+export const RECEIPT_WIDTHS = [576, 512, 432, 384] as const;
+
+/** The raster of a printer set to [widthDots] (the technician's "רוחב הדפסה"); anything else — 576, as before. */
+export function printerRaster(widthDots: unknown): number {
+  const n = typeof widthDots === 'number' ? widthDots : Number(widthDots);
+  return (RECEIPT_WIDTHS as readonly number[]).includes(n) ? n : RASTER_80MM;
+}
+
 /** Rows per `GS v 0` command (the till's BAND_ROWS). */
 export const BAND_ROWS = 256;
 
@@ -85,6 +94,31 @@ export function centreOn(bmp: MonoBitmap, rasterWidth: number = RASTER_80MM): Mo
     }
   }
   return { width, height: bmp.height, rowBytes, data: out };
+}
+
+/**
+ * [bmp] no wider than [maxWidth]: a wider picture (another till's 576-dot page on a 512 / 384-dot head) scaled down (a dot
+ * black when any it covers is), its height in proportion — never cut (the labels are at the right edge). One that fits is returned as it is.
+ */
+export function fitWidth(bmp: MonoBitmap, maxWidth: number): MonoBitmap {
+  if (bmp.width <= maxWidth || bmp.width === 0) return bmp;
+  const width = Math.max(1, Math.floor(maxWidth));
+  const height = Math.max(1, Math.round((bmp.height * width) / bmp.width));
+  const rowBytes = Math.ceil(width / 8);
+  const data = new Uint8Array(rowBytes * height);
+  // A dot is black when any dot it covers is: thin strokes (Hebrew text) survive the shrink.
+  for (let y = 0; y < height; y++) {
+    const sy0 = Math.floor((y * bmp.height) / height);
+    const sy1 = Math.max(sy0 + 1, Math.min(bmp.height, Math.floor(((y + 1) * bmp.height) / height)));
+    for (let x = 0; x < width; x++) {
+      const sx0 = Math.floor((x * bmp.width) / width);
+      const sx1 = Math.max(sx0 + 1, Math.min(bmp.width, Math.floor(((x + 1) * bmp.width) / width)));
+      let on = false;
+      for (let sy = sy0; sy < sy1 && !on; sy++) for (let sx = sx0; sx < sx1 && !on; sx++) on = (bmp.data[sy * bmp.rowBytes + (sx >> 3)] & (0x80 >> (sx & 7))) !== 0;
+      if (on) data[y * rowBytes + (x >> 3)] |= 0x80 >> (x & 7);
+    }
+  }
+  return { width, height, rowBytes, data };
 }
 
 /** `GS v 0` bands of at most [BAND_ROWS] rows. */
