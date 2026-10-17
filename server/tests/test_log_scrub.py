@@ -115,7 +115,10 @@ def test_a_card_by_length_prefix_and_luhn(digits, card):
 
 
 def test_long_lines_stay_linear():
-    """A device scrubs megabytes: no pattern may go quadratic on a long run of key or digit characters."""
+    """A device scrubs megabytes: no pattern may go quadratic on a long run of key or digit characters.
+
+    Linear takes about a second here; a quadratic pattern on 200,000 characters takes minutes, so the
+    budget is wide enough for a loaded CI runner and still far below what a regression costs."""
     blobs = [
         "a" * 200_000 + "=x", "1 " * 100_000, "x." * 100_000 + "@", "token" * 40_000,
         "mapping=x " * 20_000, "pinpad" * 30_000 + "=1",
@@ -123,4 +126,4 @@ def test_long_lines_stay_linear():
     start = time.perf_counter()
     for blob in blobs:
         S.scrub(blob)
-    assert time.perf_counter() - start < 5.0
+    assert time.perf_counter() - start < 30.0

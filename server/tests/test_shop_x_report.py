@@ -44,13 +44,14 @@ from app.services.permissions import Scope
 from app.services.shifts import apply_shift_close
 from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
-REAL_NOW = datetime.now(timezone.utc)
-
 
 @pytest.fixture
 def w(monkeypatch):
     accept_str_uuids(monkeypatch)
     world = make_world()
+    # The heartbeats are "now" for each test, not once at import: the full suite reaches these tests
+    # long after collection, past the 5-minute online window, and the tills would read as offline.
+    world.real_now = datetime.now(timezone.utc)
     monkeypatch.setattr(ably_notify, "publish_close_shift_notify", lambda *a, **k: None)
     monkeypatch.setattr(DC, "wake", lambda machines: None)
     TP.ensure_builtin_parameters(world.db)
@@ -61,11 +62,11 @@ def w(monkeypatch):
     world.t3 = POSMachine(
         id=uuid.uuid4(), tenant_id=world.tenant.id, shop_id=world.shop.id, distributor_id=world.admin.id,
         name="Bar", machine_code="M-9", pos_number="3", is_active=True,
-        pairing_status=world.t1.pairing_status, last_heartbeat_at=REAL_NOW, z_mode="till",
+        pairing_status=world.t1.pairing_status, last_heartbeat_at=world.real_now, z_mode="till",
     )
     db.add(world.t3)
     for m in (world.t1, world.t2):
-        m.last_heartbeat_at = REAL_NOW
+        m.last_heartbeat_at = world.real_now
     world.manager = PosUser(
         id=uuid.uuid4(), tenant_id=world.tenant.id, shop_id=world.shop.id, username="mgr",
         first_name="רותי", last_name="מנהלת", pin_hash="x", role=PosUserRole.SHOP_MANAGER, is_active=True,
@@ -238,7 +239,7 @@ def test_a_till_that_did_not_answer_is_marked_and_the_report_is_built(w):
         w.db.flush()
 
     refresh = SX.refresh_tills(
-        w.db, w.shop, [w.t1, w.t2, w.t3], requester=w.t1, by_name="רותי", wait_sec=3, now=REAL_NOW,
+        w.db, w.shop, [w.t1, w.t2, w.t3], requester=w.t1, by_name="רותי", wait_sec=3, now=w.real_now,
         sleep=sleep, clock=lambda: next(ticks),
     )
     asked = {str(w.t2.id), str(w.t3.id)}
@@ -258,9 +259,9 @@ def test_a_till_that_did_not_answer_is_marked_and_the_report_is_built(w):
 
 
 def test_an_offline_till_gets_no_command(w):
-    w.t2.last_heartbeat_at = REAL_NOW - timedelta(hours=1)
+    w.t2.last_heartbeat_at = w.real_now - timedelta(hours=1)
     w.db.flush()
-    refresh = SX.refresh_tills(w.db, w.shop, [w.t1, w.t2], requester=None, by_name="x", wait_sec=0, now=REAL_NOW,
+    refresh = SX.refresh_tills(w.db, w.shop, [w.t1, w.t2], requester=None, by_name="x", wait_sec=0, now=w.real_now,
                                sleep=lambda s: None)
     assert refresh.asked == [str(w.t1.id)]
 

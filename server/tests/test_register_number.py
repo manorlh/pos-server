@@ -191,6 +191,12 @@ class _Db:
     def query(self, *entities):
         return _Query(self, entities[0])
 
+    def get(self, entity, ident):
+        """`Session.get` by primary key: the machines and shops held here; no other row (no
+        users, so the pairing's work-profile step sees "not a super admin" and does nothing)."""
+        rows = self.machines if entity is POSMachine else self.shops if entity is Shop else []
+        return next((r for r in rows if str(r.id) == str(ident)), None)
+
     def execute(self, stmt):
         compiled = stmt.compile(dialect=postgresql.dialect())
         self.inserts.append(str(compiled))
