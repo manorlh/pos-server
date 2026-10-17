@@ -60,6 +60,21 @@ def _scope_by_user(query, current_user: User, db: Session):
         return query.filter(
             or_(ZReport.machine_id.in_(mine), ZReport.id.in_(_machine_z_ids(mine)))
         )
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, current_user)
+    if reach.narrowed:
+        # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §11.2c): the Zs of their points of sale and their tills'
+        # own Zs — never a whole-shop Z (it carries the other points of sale's takings).
+        from app.services.scoping import _role_scope
+
+        scoped = _role_scope(query, current_user, db, shop_column=ZReport.shop_id, machine_column=ZReport.machine_id)
+        if scoped is None:
+            return None
+        return scoped.filter(or_(
+            ZReport.area_id.in_(list(reach.area_ids) or [uuid.uuid4()]),
+            ZReport.machine_id.in_(list(reach.reachable_machine_ids) or [uuid.uuid4()]),
+        ))
     return scope_query_by_user(
         query,
         current_user,

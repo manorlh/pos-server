@@ -622,4 +622,23 @@ def summary_for(db: Session, user: Any) -> dict:
         "companyIds": [str(c) for c in access.company_ids],
         "shopIds": [str(s) for s in access.shop_ids],
         "template": access.template,
+        # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §2-§3): the dashboard's switcher is forced to these.
+        **_area_reach_summary(db, user),
     }
+
+
+def _area_reach_summary(db: Session, user: Any) -> dict:
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, user)
+    out = {
+        "areaIds": sorted(str(a) for a in reach.area_ids),
+        "machineIds": sorted(str(m) for m in reach.machine_ids),
+        "areas": [],
+    }
+    if reach.area_ids and isinstance(db, Session):
+        from app.models.shop_area import ShopArea
+
+        rows = db.query(ShopArea).filter(ShopArea.id.in_(list(reach.area_ids))).order_by(ShopArea.sort_order, ShopArea.name).all()
+        out["areas"] = [{"id": str(a.id), "name": a.name, "shopId": str(a.shop_id)} for a in rows if a.archived_at is None]
+    return out

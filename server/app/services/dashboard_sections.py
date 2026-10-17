@@ -467,6 +467,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/shops", REFERENCE),
     (_GET, "/shops/{}", REFERENCE),
     (_GET, "/shops/{}/areas", REFERENCE),
+    # "ניהול נקודות מכירה" (P:/specs/chain-areas.md §12): a read of the shop's points of sale and what is on them.
+    (_GET, "/shops/{}/areas/overview", S("devices", "item_blocks", "organization", level=VIEW)),
     # The work profile's six ready-made templates: fixed texts, the shop-setup form's.
     (_GET, "/work-profile/templates", REFERENCE),
     (_GET, "/machines", REFERENCE),
@@ -493,6 +495,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # (Patterns are anchored: `/products/{}` is not `/products/{}/availability`, below.)
     (_GET, "/products", S("products", "quick_actions", "promotions", level=VIEW)),
     (_GET, "/products/{}", S("products", "quick_actions", "promotions", level=VIEW)),
+    # "שיוך מוצר לנקודות מכירה", the prices along the chain and their log (P:/specs/chain-areas.md §6, §9).
+    (_GET, "/products/{}/areas", S("products", level=VIEW)),
+    (_GET, "/products/{}/prices", S("products", level=VIEW)),
+    (_GET, "/products/{}/price-changes", S("products", level=VIEW)),
+    (_GET, "/products/{}/levels-summary", S("products", "item_blocks", level=VIEW)),
     (_GET, "/categories", S("products", "quick_actions", "promotions", level=VIEW)),
     # "חסימות ואזל": a product's sold-out / blocked state, also for a manager without the catalog.
     (_GET, "/availability/reopens", S("products", "item_blocks")),
@@ -589,6 +596,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # "שחזור שולחן ותשלומים" (app/routers/table_restore.py): till parameters edited on the tables page.
     (_GET, "/companies/{}/table-restore-params", S("tables", "till_settings", level=VIEW)),
     (_ALL, "/companies/{}/table-restore-params", S("tables", "till_settings")),
+    # "מדיניות מחירים של הרשת" (P:/specs/chain-areas.md §9.2).
+    (_GET, "/companies/{}/price-policy", S("products", level=VIEW)),
+    (_ALL, "/companies/{}/price-policy", S("products")),
     (_ALL, "/companies*", S("organization")),
     # ── Reports ──
     (_GET, "/dashboard/*", S("reports")),

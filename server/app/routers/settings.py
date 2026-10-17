@@ -646,6 +646,10 @@ def patch_shop_settings(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_shop_settings_write(current_user, shop, db)
+    # The shop's own layer is the whole shop's (P:/specs/chain-areas.md §4).
+    from app.services import area_scope
+
+    area_scope.refuse_shop_level(db, current_user)
 
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
@@ -747,6 +751,10 @@ def patch_area_settings(
     """
     area, shop = _area_and_shop(db, area_id, active_tenant_id)
     _check_shop_settings_write(current_user, shop, db)
+    # "מנהל נקודת מכירה": their own point of sale's layer only (app/services/area_scope.py).
+    from app.services import area_scope
+
+    area_scope.check_area(db, current_user, area.id)
     _refuse_tenant_only_keys(data)
     patch = _build_patch(data, current_user)
     payment_devices.check_settings_patch(db, "area", area, patch)

@@ -348,6 +348,14 @@ def put_settings(
     "errors": [{path, code, message}]}}`, validated on the parents ⊕ this layer.
     """
     scope = svc.settings_scope(db, current_user, level, scope_id, active_tenant_id)
+    # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §5): a kiosk of their own point of sale — never the shop's or
+    # the company's layer (there is no point-of-sale layer in the kiosk settings).
+    from app.services import area_scope
+
+    if level == "machine":
+        area_scope.check_machine_ids(db, current_user, [scope_id])
+    else:
+        area_scope.refuse_shop_level(db, current_user)
     # "עריכת תפריט הקיוסק": the shop's menu changed on a kiosk since the dashboard loaded it.
     if scope.level == "shop" and body.menu_version is not None:
         stored = kiosk_menu.shop_layer(db, scope.shop_id)

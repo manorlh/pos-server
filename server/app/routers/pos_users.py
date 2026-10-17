@@ -5,7 +5,7 @@ Mounted under /shops/{shop_id}/pos-users so RBAC and shop scoping match the rest
 of the dashboard. Soft-delete (is_active = false) keeps historical
 transactions.cashier_id references intact.
 """
-from typing import List
+from typing import List, Optional
 import uuid as uuid_mod
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -188,6 +188,7 @@ def create_pos_user(
         role=data.role,
         is_active=True,
         table_color=data.table_color,
+        area_ids=_new_user_areas(db, current_user, shop, data.area_ids),
     )
     db.add(user)
     db.flush()
@@ -200,6 +201,18 @@ def create_pos_user(
 
 
 # ── Update / Reset-PIN / Soft-Delete ─────────────────────────────────────────
+
+def _new_user_areas(db: Session, user: User, shop: Shop, wanted) -> Optional[List[str]]:
+    """A new employee's points of sale: as chosen; a manager of points of sale's own (and only theirs)."""
+    from app.services import area_scope
+    from app.services import product_areas as PA
+
+    if wanted is None and area_scope.narrowed(db, user):
+        wanted = area_scope.default_area_ids_for_new(db, user, shop.id) or []
+    chosen = PA.clean_user_areas(db, shop.id, wanted) if wanted is not None else None
+    PA.check_user_areas_write(db, user, chosen, chosen)
+    return chosen
+
 
 def _get_pos_user_in_shop_or_404(db: Session, shop: Shop, pos_user_id: str) -> PosUser:
     try:
@@ -246,6 +259,12 @@ def update_pos_user(
                     detail="Worker number already exists in this shop",
                 )
 
+    # "נקודות מכירה" (P:/specs/chain-areas.md §8): a manager of points of sale edits only their own employees.
+    from app.services import product_areas as PA
+
+    PA.check_user_areas_write(db, current_user, pu.area_ids, pu.area_ids if "area_ids" not in payload else payload["area_ids"])
+    if "area_ids" in payload:
+        pu.area_ids = PA.clean_user_areas(db, shop.id, payload["area_ids"] or [])
     role_changed = "role" in payload and payload["role"] is not None and payload["role"] != pu.role
     for field in ("first_name", "last_name", "worker_number", "role", "is_active"):
         if field in payload:
@@ -346,6 +365,9 @@ def reset_pos_user_pin(
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_write(current_user, shop, db)
     pu = _get_pos_user_in_shop_or_404(db, shop, pos_user_id)
+    from app.services import product_areas as PA
+
+    PA.check_user_areas_write(db, current_user, pu.area_ids, pu.area_ids)
 
     pu.pin_hash = get_password_hash(body.pin)
     db.commit()
@@ -371,6 +393,9 @@ def deactivate_pos_user(
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_write(current_user, shop, db)
     pu = _get_pos_user_in_shop_or_404(db, shop, pos_user_id)
+    from app.services import product_areas as PA
+
+    PA.check_user_areas_write(db, current_user, pu.area_ids, pu.area_ids)
 
     if pu.is_active:
         pu.is_active = False

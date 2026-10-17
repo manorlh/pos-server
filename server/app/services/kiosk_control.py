@@ -154,7 +154,10 @@ def _scoped_machine_query(db: Session, user: User, tenant_id):
         query = query.filter(POSMachine.shop_id == user.shop_id)
     elif user.role != UserRole.SUPER_ADMIN:
         raise _forbidden()
-    return query
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the devices of their points of sale.
+    from app.services import area_scope
+
+    return area_scope.filter_machine_column(query, db, user, POSMachine.id)
 
 
 # ── Devices ──────────────────────────────────────────────────────────────────

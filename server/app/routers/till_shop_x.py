@@ -101,12 +101,28 @@ def _available(db: Session, machine: POSMachine, settings: SX.Settings) -> None:
         )
 
 
+def _till_area(db: Session, machine: POSMachine, scope: Optional[str]):
+    """`scope=area`: the point of sale the till stands in (P:/specs/chain-areas.md §11.2d); else the whole shop."""
+    if scope != "area":
+        return None
+    from app.models.shop_area import ShopArea
+
+    area = db.get(ShopArea, machine.area_id) if machine.area_id is not None else None
+    if area is None or area.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "till_not_in_area", "message": "הקופה אינה משויכת לנקודת מכירה"},
+        )
+    return area
+
+
 def _answer(db: Session, machine: POSMachine, shop: Shop, settings: SX.Settings, who: Dict[str, Any],
-            refresh: Optional[SX.Refresh], by_name: Optional[str]) -> Dict[str, Any]:
+            refresh: Optional[SX.Refresh], by_name: Optional[str], area=None) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     tzinfo = _tz(db, machine.tenant_id)
     report = SX.build(
         db, shop, settings=settings, refresh=refresh, requester=machine, requested_by=by_name, tzinfo=tzinfo, now=now,
+        area=area,
     )
     doc = SX.print_document(db, report, shop, tzinfo=tzinfo, printed_by=by_name, till=machine, now=now)
     SX.journal(db, machine, pos_user_id=who.get("posUserId"), by_name=by_name, refreshed=refresh is not None, now=now)
@@ -117,18 +133,20 @@ def _answer(db: Session, machine: POSMachine, shop: Shop, settings: SX.Settings,
 @router.get("/sync/{machine_id}/shop-x")
 def till_shop_x(
     machine_id: str,
+    scope: Optional[str] = Query(None, pattern="^(shop|area)$"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     elevation_token: Optional[str] = Header(None, alias=ELEVATION_HEADER),
     operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
     db: Session = Depends(get_db),
 ):
-    """The report as the cloud holds it now — no refresh of the other tills."""
+    """The report as the cloud holds it now — no refresh of the other tills. `scope=area`: the till's point of sale."""
     machine = _machine(machine_id, machine)
     settings = SX.machine_settings(db, machine)
     _available(db, machine, settings)
     who = _authorize(db, machine, elevation_token, operator_id)
     shop = db.get(Shop, machine.shop_id)
-    return _answer(db, machine, shop, settings, who, None, who.get("name"))
+    scope = scope if isinstance(scope, str) else None  # called directly: the Query default
+    return _answer(db, machine, shop, settings, who, None, who.get("name"), area=_till_area(db, machine, scope))
 
 
 #: A till's, as the shop Z's: a display device never asks the shop's tills for "שלח עכשיו" (403 `device_not_fiscal`).
@@ -156,20 +174,25 @@ def till_shop_x_refresh(
     by_name = (str(data.get("posUserName") or "").strip()[:120] or None) or who.get("name")
     SS.apply_report(machine, data.get("syncState"), data.get("outbox"))
     shop = db.get(Shop, machine.shop_id)
+    area = _till_area(db, machine, data.get("scope") if isinstance(data.get("scope"), str) else None)
     refresh = None
     if data.get("refresh", True) is not False:
         from app.services.z_runs import shop_tills
 
+        tills = shop_tills(db, shop.id)
+        if area is not None:
+            tills = [m for m in tills if str(m.area_id) == str(area.id)]
         refresh = SX.refresh_tills(
-            db, shop, shop_tills(db, shop.id), requester=machine, by_name=by_name, wait_sec=settings.refresh_sec,
+            db, shop, tills, requester=machine, by_name=by_name, wait_sec=settings.refresh_sec,
         )
-    return _answer(db, machine, shop, settings, who, refresh, by_name)
+    return _answer(db, machine, shop, settings, who, refresh, by_name, area=area)
 
 
 @router.get("/shops/{shop_id}/shop-x")
 def dashboard_shop_x(
     shop_id: uuid.UUID,
     refresh: bool = Query(False),
+    area_id: Optional[uuid.UUID] = Query(None, alias="areaId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -187,16 +210,26 @@ def dashboard_shop_x(
     _check_shop_access(current_user, shop, db)
     if not DA.effective_access(db, current_user).allows("reports", "view"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # "X לנקודת מכירה" (P:/specs/chain-areas.md §11.2d); a manager of points of sale — their own only.
+    from app.services import area_scope
+    from app.services import areas as A
+
+    area_id = area_id if isinstance(area_id, uuid.UUID) else None  # called directly: the Query default
+    area_scope.check_area(db, current_user, area_id)
+    area = A.area_in_shop(db, area_id, shop.id) if area_id is not None else None
     settings = SX.shop_settings(db, shop)
     by_name = current_user.username or current_user.email
     result = None
     if refresh:
         from app.services.z_runs import shop_tills
 
-        result = SX.refresh_tills(db, shop, shop_tills(db, shop.id), requester=None, by_name=by_name, wait_sec=settings.refresh_sec)
+        tills = shop_tills(db, shop.id)
+        if area is not None:
+            tills = [m for m in tills if str(m.area_id) == str(area.id)]
+        result = SX.refresh_tills(db, shop, tills, requester=None, by_name=by_name, wait_sec=settings.refresh_sec)
     now = datetime.now(timezone.utc)
     tzinfo = _tz(db, shop.tenant_id)
-    report = SX.build(db, shop, settings=settings, refresh=result, requested_by=by_name, tzinfo=tzinfo, now=now)
+    report = SX.build(db, shop, settings=settings, refresh=result, requested_by=by_name, tzinfo=tzinfo, now=now, area=area)
     doc = SX.print_document(db, report, shop, tzinfo=tzinfo, printed_by=by_name, now=now)
     logger.info("shop x for shop %s by %s (refresh=%s)", shop.id, by_name, bool(refresh))
     db.commit()
