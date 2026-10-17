@@ -8,7 +8,7 @@ it is in the device, never in the till's drawer: a Z's / shift's expected cash l
 its till's frozen `till.totalDeviceCash` if any, else none.
 
 Revision ID: d4e8b2a6c9f1
-Revises: c7d2e9f4a1b8
+Revises: c4e7a2f9b1d8
 Create Date: 2026-10-17 21:00:00
 """
 from typing import Sequence, Union
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d4e8b2a6c9f1"
-down_revision: Union[str, Sequence[str], None] = "c7d2e9f4a1b8"
+down_revision: Union[str, Sequence[str], None] = "c4e7a2f9b1d8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
