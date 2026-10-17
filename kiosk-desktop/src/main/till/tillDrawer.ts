@@ -50,6 +50,8 @@ import { DOCUMENT_RELAY, RemoteDrawers, hostDocumentJob, hostDrawerJob, remoteWh
 import type { PrintJobsHost, PrintJobsModule } from '../printer/printJobsHost';
 import { REMOTE_TEXT, type DrawerHost } from '../../core/till/remotePrint';
 import { centreOn, job as escposJob, toMono, RASTER_80MM, type MonoBitmap } from '../../core/escpos';
+import { decodeMonoPng } from '../../core/monoPng';
+import type Sharp from 'sharp';
 import { normalizeRole } from '../../core/roles';
 import { DrawerStore, cashMovementWire, drawerEventWire } from './drawerStore';
 import type { TillContext } from './tillContext';
@@ -751,8 +753,19 @@ export class TillDrawer {
 /** The ops this module answers (`drawer.*`), for the engine's dispatch. */
 /** A document's PNG as the printer's dots (sharp, as the media store loads it); null when it is not one of that size. */
 async function decodePng(bytes: Buffer, widthDots: number, heightDots: number): Promise<MonoBitmap | null> {
+  let sharp: typeof Sharp;
   try {
-    const { default: sharp } = await import('sharp');
+    sharp = (await import('sharp')).default;
+  } catch {
+    // No sharp (the Windows 7 build, P:/specs/windows7-till.md): a 1-bit page — what the cloud and the tills send — still decodes.
+    try {
+      const bmp = decodeMonoPng(bytes);
+      return bmp.width === widthDots && bmp.height === heightDots ? bmp : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
     const { data, info } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     if (info.width !== widthDots || info.height !== heightDots) return null;
     return toMono(data, info.width, info.height);

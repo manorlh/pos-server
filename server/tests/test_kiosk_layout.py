@@ -23,7 +23,7 @@ from app.services import kiosk_layout as L
 FIX = Path(__file__).parent / "fixtures"
 
 #: The fixtures' SHA-256 — the same constants in pos-android's KioskLayoutTest and the dashboard's kioskLayout.test.ts.
-TEMPLATES_SHA256 = "34d09102310f1731829cee38cf32731cf89140c9294288438bf854f41a217e00"
+TEMPLATES_SHA256 = "76adf38cfe6b67e2b0e0c5534acc2dbab030f9c95a429b9a713acbc225e83f4d"
 ICONS_SHA256 = "75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6"
 REGISTRY_SHA256 = "fc07e8b1f8350ea35238ef67c012e7c63129a81b4f229a3fd4ba0f4c708c3240"
 

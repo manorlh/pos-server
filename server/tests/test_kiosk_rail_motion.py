@@ -21,7 +21,9 @@ BASELINE = json.loads((FIX / "kiosk_resolve_baseline_1013.json").read_bytes().de
 NEW_LAYOUT_KEYS = ("railStyle", "railEmphasis", "catalogScroll", "railFollow", "pricePill", "sheetMotion", "topBar", "helpButton",
                    "doneScreen", "payMethodView",
                    # Added after the baseline (14.10, "תג כמות" — tests/test_kiosk_count_badge.py), on by default.
-                   "cartCountBadge")
+                   "cartCountBadge",
+                   # 17.10: "כפתור פרטים" (ⓘ), auto by default.
+                   "infoButton")
 
 
 def _without_new_keys(cfg):
@@ -39,10 +41,19 @@ def _without_new_keys(cfg):
 # ── Nothing that existed changes ─────────────────────────────────────────────
 
 
+def _chose_quick_add(layers):
+    return any(isinstance(l, dict) and "quickAdd" in (l.get("layout") or {}) for l in layers)
+
+
 @pytest.mark.parametrize("case", BASELINE, ids=lambda c: c["name"][:60])
 def test_every_existing_template_and_style_resolves_as_before(case):
     cfg = C.resolve(*case["layers"])
-    assert _without_new_keys(cfg) == case["resolved"]
+    seen = _without_new_keys(cfg)
+    # 17.10 (owner): "הוספה מהירה" defaults to no_required — only where no level chose it; the rest as before.
+    if case["resolved"]["layout"]["quickAdd"] == "off" and not _chose_quick_add(case["layers"]):
+        assert seen["layout"]["quickAdd"] == "no_required"
+        seen["layout"]["quickAdd"] = "off"
+    assert seen == case["resolved"]
     assert {k: cfg["layout"][k] for k in NEW_LAYOUT_KEYS} == {k: L.LAYOUT_DEFAULTS[k] for k in NEW_LAYOUT_KEYS}
     assert all(cfg["theme"][k] is None for k in C.RAIL_MOTION_COLOR_KEYS)
     assert cfg["payment"]["paymentChooserSkip"] == "auto"

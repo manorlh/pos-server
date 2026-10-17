@@ -11,6 +11,7 @@ import {
   behindCounts,
   checkInstallWindow,
   filterByPlatform,
+  isWindowsPlatform,
   knownFallbackReason,
   onlyBehind,
   parseRolloutPercent,
@@ -43,6 +44,14 @@ describe('platforms', () => {
 
   it('an .exe is a Windows installer, an .apk an Android build', () => {
     assert.equal(platformOfFile('R2M-Kiosk-0.2.0-setup.exe'), 'windows');
+    // The Windows 7 till build's installer is its own platform (P:/specs/windows7-till.md).
+    assert.equal(platformOfFile('R2M-POS-Win7-Till-setup-0.5.11.exe'), 'windows7');
+    assert.equal(versionFromInstallerName('R2M-POS-Win7-Till-setup-0.5.11.exe'), '0.5.11');
+    assert.equal(platformOf({ platform: 'windows7' }), 'windows7');
+    assert.equal(allowsDowngrade('windows7'), true);
+    assert.equal(isWindowsPlatform('windows7'), true);
+    assert.equal(isWindowsPlatform('windows'), true);
+    assert.equal(isWindowsPlatform('kiosk_web'), false);
     assert.equal(platformOfFile('APP.EXE'), 'windows');
     assert.equal(platformOfFile('till-release.apk'), 'android');
     assert.equal(platformOfFile('notes.txt'), null);
@@ -61,11 +70,11 @@ describe('devices behind their target', () => {
   ];
 
   it('counts per platform', () => {
-    assert.deepEqual(behindCounts(rollout), { android: 2, windows: 2, kiosk_web: 0 });
-    assert.deepEqual(behindCounts([]), { android: 0, windows: 0, kiosk_web: 0 });
+    assert.deepEqual(behindCounts(rollout), { android: 2, windows: 2, windows7: 0, kiosk_web: 0 });
+    assert.deepEqual(behindCounts([]), { android: 0, windows: 0, windows7: 0, kiosk_web: 0 });
     assert.deepEqual(
       behindCounts([...rollout, { platform: 'kiosk_web', behind: true }, { platform: 'kiosk_web', behind: false }]),
-      { android: 2, windows: 2, kiosk_web: 1 },
+      { android: 2, windows: 2, windows7: 0, kiosk_web: 1 },
     );
   });
 
@@ -127,7 +136,7 @@ describe('install window', () => {
 
 describe('kiosk web bundles', () => {
   it('is a third platform, a .zip is a bundle', () => {
-    assert.deepEqual([...APP_PLATFORMS], ['android', 'windows', 'kiosk_web']);
+    assert.deepEqual([...APP_PLATFORMS], ['android', 'windows', 'windows7', 'kiosk_web']);
     assert.equal(platformOf({ platform: 'kiosk_web' }), 'kiosk_web');
     assert.equal(platformOfFile('kiosk-web-2026.10.07-1530.zip'), 'kiosk_web');
     assert.equal(platformOfFile('BUNDLE.ZIP'), 'kiosk_web');

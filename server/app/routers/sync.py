@@ -2847,7 +2847,8 @@ def get_app_update(
     """
     The release assigned to this device, if it should take it. Asked on every sync with
     the version the device runs. `platform` "android" (absent — the Android till's call)
-    or "windows" (the Windows app); `422 invalid_platform` otherwise. Only releases of
+    or "windows" (the Windows app), "windows7" (its Windows 7 till build — app/services/windows7.py: it never
+    gets a "windows" release, nor a standard device a "windows7" one); `422 invalid_platform` otherwise. Only releases of
     that platform count. Resolved device → area → shop → company → tenant, newest at a
     level, rollout stage applied (app/services/app_updates.py); `available` only when
     that release is not what the device runs and not a lower versionCode — unless the
@@ -2885,6 +2886,7 @@ def get_app_update(
 _RELEASE_DOWNLOAD = {
     "android": ("application/vnd.android.package-archive", "app-{version}.apk"),
     "windows": ("application/vnd.microsoft.portable-executable", "R2M-POS-Windows-{version}-setup.exe"),
+    "windows7": ("application/vnd.microsoft.portable-executable", "R2M-POS-Win7-Till-setup-{version}.exe"),
     "kiosk_web": ("application/zip", "kiosk-web-{version}.zip"),
 }
 

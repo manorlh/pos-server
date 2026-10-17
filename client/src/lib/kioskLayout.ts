@@ -31,6 +31,8 @@ export type LayoutCard = 'tile' | 'row' | 'plate' | 'bleed' | 'button' | 'outlin
 export type LayoutFlow = 'free' | 'guided';
 export type LayoutItemView = 'sheet' | 'full' | 'modal' | 'inline' | 'steps' | 'popover';
 export type LayoutQuickAdd = 'off' | 'no_required' | 'always';
+/** "כפתור פרטים" (ⓘ) on a dish's card: auto — when a tap skips the window and it holds more; always; off. */
+export type LayoutInfoButton = 'auto' | 'always' | 'off';
 export type LayoutMealView = 'sheet' | 'steps' | 'tray';
 export type LayoutMealUpsell = 'off' | 'first' | 'after';
 export type LayoutBasket = 'bar' | 'panel' | 'summary' | 'fab' | 'drawer' | 'receipt';
@@ -64,6 +66,7 @@ export const LAYOUT_CARDS: LayoutCard[] = ['tile', 'row', 'plate', 'bleed', 'but
 export const LAYOUT_FLOWS: LayoutFlow[] = ['free', 'guided'];
 export const LAYOUT_ITEM_VIEWS: LayoutItemView[] = ['sheet', 'full', 'modal', 'inline', 'steps', 'popover'];
 export const LAYOUT_QUICK_ADDS: LayoutQuickAdd[] = ['off', 'no_required', 'always'];
+export const LAYOUT_INFO_BUTTONS: LayoutInfoButton[] = ['auto', 'always', 'off'];
 export const LAYOUT_MEAL_VIEWS: LayoutMealView[] = ['sheet', 'steps', 'tray'];
 export const LAYOUT_MEAL_UPSELLS: LayoutMealUpsell[] = ['off', 'first', 'after'];
 export const LAYOUT_BASKETS: LayoutBasket[] = ['bar', 'panel', 'summary', 'fab', 'drawer', 'receipt'];
@@ -95,6 +98,7 @@ export const LAYOUT_VOCABULARY = {
   flow: LAYOUT_FLOWS,
   itemView: LAYOUT_ITEM_VIEWS,
   quickAdd: LAYOUT_QUICK_ADDS,
+  infoButton: LAYOUT_INFO_BUTTONS,
   mealView: LAYOUT_MEAL_VIEWS,
   mealUpsell: LAYOUT_MEAL_UPSELLS,
   basket: LAYOUT_BASKETS,
@@ -139,8 +143,10 @@ export interface KioskLayout {
   flow: LayoutFlow;
   /** The dish's window; sheet — as today. */
   itemView: LayoutItemView;
-  /** A tap on a dish with nothing required adds it (wall: always). */
+  /** A tap on a dish with nothing required adds it (default no_required since 17.10; wall: always). */
   quickAdd: LayoutQuickAdd;
+  /** "כפתור פרטים": the ⓘ on a dish's card that opens its window (dishInfoButtonOn). */
+  infoButton: LayoutInfoButton;
   /** "תג כמות": how many of the dish the basket holds, a circle on its card in every template (on by default). */
   cartCountBadge: boolean;
   /** A meal: its steps in the sheet (today), or a tray filling up. */
@@ -195,7 +201,8 @@ export const KIOSK_LAYOUT_DEFAULTS: KioskLayout = {
   card: null,
   flow: 'free',
   itemView: 'sheet',
-  quickAdd: 'off',
+  quickAdd: 'no_required',
+  infoButton: 'auto',
   cartCountBadge: true,
   mealView: 'sheet',
   mealUpsell: 'off',
@@ -533,6 +540,7 @@ export function validateLayout(cfg: Pick<KioskConfig, 'layout' | 'attract'>): La
       checkIn(out, p('flow'), l.flow, LAYOUT_FLOWS);
       checkIn(out, p('itemView'), l.itemView, LAYOUT_ITEM_VIEWS);
       checkIn(out, p('quickAdd'), l.quickAdd, LAYOUT_QUICK_ADDS);
+      if (l.infoButton !== undefined) checkIn(out, p('infoButton'), l.infoButton, LAYOUT_INFO_BUTTONS);
       checkIn(out, p('mealView'), l.mealView, LAYOUT_MEAL_VIEWS);
       checkIn(out, p('mealUpsell'), l.mealUpsell, LAYOUT_MEAL_UPSELLS);
       checkIn(out, p('basket'), l.basket, LAYOUT_BASKETS, true);
@@ -721,6 +729,54 @@ export function tapPathOf(
   if (p.soldOut || p.addPath === 'none') return 'none';
   if (!plus && quickAdd === 'off') return 'sheet';
   return addPathOnTap(p.addPath ?? 'sheet', quickAdd, meal, p.defaultsAnswer === true);
+}
+
+/* ------------------------------------------------------------ "כפתור פרטים" (ⓘ, layout.infoButton) */
+
+/**
+ * With quick add a tap skips the dish's window, so its full description, allergens and big picture are
+ * out of reach; the ⓘ on its card opens the window (view, with "הוספה לסל"). The same rule in the Android
+ * kiosk's KioskLayouts.infoButtonOn; the shared golden server/tests/fixtures/kiosk_info_button_golden.json.
+ */
+export const INFO_DESCRIPTION_LINE_CHARS = 30;
+/** The ⓘ's touch target (dp / CSS px) — never under the kiosk's minimum. */
+export const INFO_BUTTON_TOUCH = 48;
+
+/** What a dish's window holds beyond its card. */
+export interface DishInfoFacts {
+  /** The description's length (trimmed); 0 — none. */
+  descriptionChars: number;
+  /** Lines of it the card shows (0 — none: showDescriptions off, or a card without it). */
+  descriptionLines: number;
+  /** Allergens the window lists (0 when general.showAllergens is off). */
+  allergens: number;
+  /** Dietary marks, and whether the card already shows them. */
+  dietary: number;
+  dietaryOnCard: boolean;
+  /** The dish has a picture, and how the card shows it (small — a thumbnail; the window's is bigger). */
+  picture: boolean;
+  cardPicture: 'none' | 'small' | 'large';
+}
+
+/** The window shows something the card does not. */
+export function dishHasMoreInfo(f: DishInfoFacts): boolean {
+  if (f.descriptionChars > Math.max(0, f.descriptionLines) * INFO_DESCRIPTION_LINE_CHARS) return true;
+  if (f.allergens > 0) return true;
+  if (f.dietary > 0 && !f.dietaryOnCard) return true;
+  return f.picture && f.cardPicture !== 'large';
+}
+
+/**
+ * The ⓘ on a dish's card: never on a sold-out one; off — never; always — on every dish; auto — when a
+ * tap puts the dish straight in (`skipsWindow`: tapPathOf(..., plus=false) is 'direct') and its window
+ * holds more than the card.
+ */
+export function dishInfoButtonOn(mode: LayoutInfoButton | null | undefined, skipsWindow: boolean, soldOut: boolean, f: DishInfoFacts): boolean {
+  if (soldOut) return false;
+  const m: LayoutInfoButton = mode === 'always' || mode === 'off' ? mode : 'auto';
+  if (m === 'off') return false;
+  if (m === 'always') return true;
+  return skipsWindow && dishHasMoreInfo(f);
 }
 
 /* ------------------------------------------------------------ "תג כמות" (P:/specs/kiosk-tap-add-count-badge.md) */

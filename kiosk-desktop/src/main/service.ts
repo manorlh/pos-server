@@ -126,6 +126,10 @@ import { Kv, migrate } from './db/schema';
 import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
 import { Outbox, UNKNOWN_OWNER, type OutboxKind, type OutboxOwner, type OutboxRow } from './sync/outbox';
+import { ForeignUploader, REFUSED_PREFIX } from './sync/foreignUpload';
+import { DeviceCommands } from './deviceCommands';
+import { CloudPairing, type CloudPairingView } from './sync/cloudPairing';
+import { boundCodeQuestion, tillLabel, type LastPairing } from '../core/pairingMemory';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
 import { docVoucherDiscounts, documentWire, Ledger, settled, tillManualDiscount, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { KIND_PRESET, presetLabel } from '../core/till/presetDiscounts';
@@ -368,6 +372,13 @@ export class KioskService extends EventEmitter {
   readonly cloud: CloudStore;
   readonly api: Api;
   readonly outbox: Outbox;
+  /** "רשומות מהמכשיר הקודם" uploaded to their own till (P:/specs/foreign-records-upload.md §4). */
+  readonly foreignUpload: ForeignUploader;
+  /** "צימוד מהענן" (§6.1): the device code and the poll, while unpaired. */
+  readonly cloudPairing: CloudPairing;
+  /** "העבר מכשיר לקופה אחרת" (§6.3): the dashboard's `move_pairing` command, polled every minute (not on a cash host). */
+  readonly moveCommands: DeviceCommands;
+  private lastCommandPoll = 0;
   readonly ledger: Ledger;
   readonly media: MediaStore;
   readonly pay: PayService;
@@ -570,6 +581,35 @@ export class KioskService extends EventEmitter {
       online: () => !this.isOffline,
     });
     this.sync = new SyncEngine(this.api, this.cloud, this.ledger, this.outbox, this.remoteHooks(), opts.appVersion);
+    this.foreignUpload = new ForeignUploader({
+      api: this.api,
+      outbox: this.outbox,
+      kv: this.kv,
+      machineId: () => this.machineId,
+      body: (row) => this.foreignBody(row),
+      synced: (ids) => this.ledger.markSynced(ids),
+      log: this.log,
+    });
+    this.moveCommands = new DeviceCommands({
+      api: this.api,
+      // A cash host answers its own commands (main/cash/module.ts).
+      machineId: () => (this.cloud.machine()?.deviceRole === 'cash_host' ? null : this.machineId),
+      log: this.log,
+      logs: null,
+      appVersion: opts.appVersion,
+      busy: () => null,
+      restart: () => undefined,
+      only: ['move_pairing'],
+      handlers: { move_pairing: (c) => this.movePairing(c.params) },
+    });
+    this.cloudPairing = new CloudPairing({
+      api: this.api,
+      deviceInfo: () => this.pairingDeviceInfo(),
+      machineName: () => null,
+      adopt: (c) => this.adopt(c),
+      changed: () => this.dirty(),
+      log: this.log,
+    });
     this.relocator = new PinpadRelocator({
       now: () => Date.now(),
       kvGet: (k) => this.kv.get(k),
@@ -773,6 +813,7 @@ export class KioskService extends EventEmitter {
   stop() {
     if (this.stopped) return;
     this.stopped = true;
+    this.cloudPairing.stop();
     this.cashPay.stop();
     this.cashMag.stop();
     if (this.emitTimer) clearTimeout(this.emitTimer);
@@ -1215,9 +1256,20 @@ export class KioskService extends EventEmitter {
 
   /* ------------------------------------------------------------- pairing */
 
-  async pair(input: { serverUrl: string; code: string; machineName: string }): Promise<PairOutcome> {
+  async pair(input: { serverUrl: string; code: string; machineName: string; confirmMachine?: boolean }): Promise<PairOutcome> {
     if (this.paired) return { ok: false, error: 'הקיוסק כבר מצומד' };
-    const r = await pairRequest(this.api, { ...input, deviceInfo: this.opts.deviceInfo });
+    // "קוד צימוד מחדש לקופה הזו" (§5.2): a code bound to another machine than the one this device was — asked first.
+    const last = this.lastPairing();
+    if (last && !input.confirmMachine) {
+      this.api.setBase(input.serverUrl);
+      const code = input.code.trim().toUpperCase().replace(/\s+/g, '');
+      const preview = await this.api.get<Record<string, unknown>>(`pairing/code-preview?code=${encodeURIComponent(code)}`, { auth: false, timeoutMs: 10_000 }).catch(() => null);
+      const ask = preview?.kind === 'ok' ? boundCodeQuestion(last, preview.body ?? null) : null;
+      if (ask) return { ok: false, error: ask, confirm: ask };
+    }
+    this.cloudPairing.stop();
+    const deviceInfo: Record<string, string> = { ...this.opts.deviceInfo, ...(last ? { previousMachineId: last.machineId } : {}) };
+    const r = await pairRequest(this.api, { serverUrl: input.serverUrl, code: input.code, machineName: input.machineName, deviceInfo });
     if (!r.ok) return { ok: false, error: r.error };
     await this.adopt(r.credentials);
     // "סוג רישיון" (core/deviceLicense.ts): "המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד" over the first screen, and a
@@ -1326,6 +1378,8 @@ export class KioskService extends EventEmitter {
         // What the kiosk made is delivered whatever mode the device works in now (a kiosk row, not the effective
         // word): a till by role at home still sends the orders it took while away, a kiosk by role in its till
         // session the ones its customers placed before (Android syncNow: `if (next.kiosk)` on the cloud's own word).
+        // "רשומות מהמכשיר הקודם": a previous pairing's rows to their own till (held where the server cannot take them).
+        if (id) await this.foreignUpload.run();
         if (id && this.hasKioskRow()) await this.orders.push(this.api, id);
         // "ביצועי קיוסקים": the funnel's events, after the orders.
         if (id && this.hasKioskRow()) await this.funnel.push(this.api, id).catch(() => false);
@@ -3868,6 +3922,10 @@ export class KioskService extends EventEmitter {
 
   private async tick30() {
     if (!this.paired) return;
+    if (Date.now() - this.lastCommandPoll >= 60_000) {
+      this.lastCommandPoll = Date.now();
+      void this.moveCommands.poll();
+    }
     // The kiosk's own closes (the shop Z's request, the cloud's close / Z / transmit, the automatic Z) run in kiosk mode only,
     // at rest: while a kiosk by role works as a till the till rules apply and nothing fiscal moves under the till's feet
     // (spec §5.5; Android KioskZHold is null in till mode); a till by role at home was never a kiosk here.
@@ -5176,12 +5234,93 @@ export class KioskService extends EventEmitter {
     if (n > 0) this.log(`outbox: ${n} row(s) without an owner stamped (fallback ${fallback?.machineId ?? UNKNOWN_OWNER})`);
   }
 
-  /** "רשומות מהמכשיר הקודם": another pairing's rows, held (null — none). */
+  /**
+   * "רשומות מהמכשיר הקודם": another pairing's rows still on the device (null — none, and nothing was uploaded): what
+   * waits per kind, and per previous till "הועלו לקופה X: N" / "נדחו: M — נשמרו בגיבוי" (§4).
+   */
   foreignRowsView(): TechnicianInfo['foreignRows'] {
     const rows = this.outbox.foreign();
-    if (rows.length === 0) return null;
+    const st = this.foreignUpload.state();
+    const uploadedSomewhere = Object.values(st.machines).some((m) => m.uploaded > 0);
+    if (rows.length === 0 && !uploadedSomewhere) return null;
     const s = pendingSummary(Object.entries(rows.reduce<Record<string, number>>((m, r) => ((m[r.kind] = (m[r.kind] ?? 0) + 1), m), {})).map(([kind, n]) => ({ kind, n })));
-    return { count: rows.length, title: FOREIGN_TEXT.title(rows.length), lines: pendingLines(s), machineIds: [...new Set(rows.map((r) => r.machine_id ?? UNKNOWN_OWNER))] };
+    const ids = [...new Set([...rows.map((r) => r.machine_id ?? UNKNOWN_OWNER), ...Object.keys(st.machines)])];
+    const last = this.lastPairing();
+    const machines = ids.map((id) => {
+      const known = st.machines[id];
+      // What the till's answer did not say (before one, or a refusal): the last pairing's own words for it.
+      const mine0 = last?.machineId === id ? last : null;
+      const m = {
+        posNumber: known?.posNumber ?? mine0?.posNumber ?? null,
+        machineName: known?.machineName ?? mine0?.machineName ?? null,
+        uploaded: known?.uploaded ?? 0,
+        lastError: known?.lastError ?? null,
+      };
+      const mine = rows.filter((r) => (r.machine_id ?? UNKNOWN_OWNER) === id);
+      const refused = mine.filter((r) => (r.last_error ?? '').startsWith(REFUSED_PREFIX)).length;
+      return {
+        machineId: id,
+        label: id === UNKNOWN_OWNER ? 'מכשיר לא ידוע' : tillLabel({ posNumber: m?.posNumber, machineName: m?.machineName, machineId: id }),
+        held: mine.length,
+        uploaded: m?.uploaded ?? 0,
+        refused,
+        error: m?.lastError ?? null,
+      };
+    });
+    const lines = [
+      ...pendingLines(s),
+      ...machines.flatMap((m) => [
+        ...(m.uploaded > 0 ? [FOREIGN_TEXT.uploaded(m.label, m.uploaded)] : []),
+        ...(m.refused > 0 ? [FOREIGN_TEXT.refused(m.refused)] : []),
+        ...(m.error ? [FOREIGN_TEXT.requestRefused(m.label, m.error)] : []),
+      ]),
+      ...(st.unsupportedAt !== null && rows.length > 0 ? [FOREIGN_TEXT.unsupported] : []),
+    ];
+    return { count: rows.length, title: FOREIGN_TEXT.title(rows.length), lines, machineIds: ids, machines };
+  }
+
+  /** A previous pairing's row as the upload sends it (§4): the body of the ordinary push of its kind. */
+  private foreignBody(row: OutboxRow): unknown {
+    if (row.kind === 'transaction') {
+      const d = this.ledger.doc(row.ref_id);
+      return d ? { ...documentWire(d), machineId: row.machine_id ?? null } : null;
+    }
+    if (row.kind === 'shift_open') {
+      const sh = this.ledger.shift(row.ref_id);
+      return sh ? this.ledger.shiftOpenWire(sh) : null;
+    }
+    if (row.kind === 'shift_close') {
+      const sh = this.ledger.shift(row.ref_id);
+      return sh?.close_payload ? (JSON.parse(sh.close_payload) as unknown) : null;
+    }
+    return this.sideRequest(row)?.body ?? null;
+  }
+
+  /* ---------------------------------------------- the last pairing (§5.1) */
+
+  private static readonly LAST_PAIRING = 'pairing.last';
+
+  /** What the device remembers of its last pairing after an unpair (no secret), or null. */
+  lastPairing(): LastPairing | null {
+    const p = this.kv.getJson<LastPairing>(KioskService.LAST_PAIRING);
+    return p && typeof p.machineId === 'string' ? p : null;
+  }
+
+  /** The pairing screen: the last pairing's card and the pairing from the cloud. */
+  pairingScreen(a: { type: 'view' } | { type: 'cloudStart'; serverUrl: string } | { type: 'cloudStop' } = { type: 'view' }): Promise<{ lastPairing: LastPairing | null; cloud: CloudPairingView }> | { lastPairing: LastPairing | null; cloud: CloudPairingView } {
+    const out = () => ({ lastPairing: this.lastPairing(), cloud: this.cloudPairing.view() });
+    if (a.type === 'cloudStart') {
+      if (this.paired) return out();
+      return this.cloudPairing.start(a.serverUrl).then(out);
+    }
+    if (a.type === 'cloudStop') this.cloudPairing.stop();
+    return out();
+  }
+
+  /** The device's facts at a pairing request: its platform, and its last pairing (§6.1). */
+  private pairingDeviceInfo(): Record<string, unknown> {
+    const last = this.lastPairing();
+    return { ...this.opts.deviceInfo, platform: 'windows', ...(last ? { previousMachineId: last.machineId, lastPairing: last } : {}) };
   }
 
   /** Does the server answer this device? (machines/me — a gone server, a deleted machine or a revoked token: no.) */
@@ -5207,7 +5346,8 @@ export class KioskService extends EventEmitter {
     }
     const check = unpairCheck(pending, server, serverUrl);
     if (!check) {
-      this.forgetPairing('unpair');
+      await this.tellUnpaired('manual', pending, server);
+      this.forgetPairing('unpair', { reason: 'manual', by: 'טכנאי' });
       return { ok: true, message: 'הקיוסק נותק מהענן' };
     }
     if (!a.force) {
@@ -5230,14 +5370,87 @@ export class KioskService extends EventEmitter {
     const audit = this.kv.getJson<Array<Record<string, unknown>>>('technician.audit') ?? [];
     this.kv.setJson('technician.audit', [...audit, { at: Date.now(), access: 'unpair_forced', server, serverUrl, pending: pending.byKind, backup: file }].slice(-50));
     this.log(`UNPAIR FORCED: server ${serverUrl ?? '-'} ${server}, pending ${JSON.stringify(pending.byKind)}, backup ${file}`);
-    this.forgetPairing('unpair (forced)');
+    await this.tellUnpaired('forced', this.pendingOutbox(), server);
+    this.forgetPairing('unpair (forced)', { reason: 'forced', by: 'טכנאי' });
     return { ok: true, message: UNPAIR_TEXT.done(file) };
   }
 
-  private forgetPairing(why: string) {
+  /**
+   * `move_pairing` (§6.3): the unpair guard (one delivery first; money rows left → `refused_pending` unless `forced`),
+   * never over an order or a payment; a backup of what is left; the code bound to the target redeemed; then the answer
+   * (with the old pairing's token), "unpaired", the old pairing forgotten and the new one taken — the old pairing's
+   * money rows go up to their own till from there (§4).
+   */
+  async movePairing(p: Record<string, unknown>): Promise<{ status: 'done' | 'refused' | 'failed'; detail: string | null; result?: Record<string, unknown>; after?: () => Promise<void> }> {
+    const code = typeof p.pairingCode === 'string' ? p.pairingCode : null;
+    const c = this.cloud.credentials();
+    if (!code || !c) return { status: 'failed', detail: 'bad_request', result: { outcome: 'failed' } };
+    const guard = paymentGuard(this.activity());
+    if (guard) return { status: 'refused', detail: 'payment_in_progress', result: { outcome: 'failed' } };
+    await within(this.sync.flush(), UNPAIR_FLUSH_MS);
+    const pending = this.pendingOutbox();
+    if (pending.money > 0 && p.forced !== true) {
+      this.log(`move_pairing refused: ${JSON.stringify(pending.byKind)} unsent`);
+      return { status: 'refused', detail: 'refused_pending', result: { outcome: 'refused_pending', pending: pending.byKind } };
+    }
+    let file: string | null = null;
+    if (pending.total > 0) {
+      try {
+        file = this.unpairBackup({ reason: '', pending: pendingLines(pending), money: pending.money, events: pending.events, server: 'reachable', serverUrl: c.serverUrl, canForce: true, needsMoneyConfirm: pending.money > 0 });
+      } catch (e) {
+        return { status: 'failed', detail: `backup_failed: ${String(e)}`.slice(0, 300), result: { outcome: 'failed' } };
+      }
+    }
+    const me = this.cloud.machine();
+    const r = await pairRequest(this.api, { serverUrl: c.serverUrl, code, machineName: me?.machineName ?? '', deviceInfo: { ...this.opts.deviceInfo, previousMachineId: c.machineId } });
+    this.api.setBase(c.serverUrl);
+    if (!r.ok) return { status: 'failed', detail: `pairing: ${r.error}`.slice(0, 300), result: { outcome: 'failed' } };
+    const id = c.machineId;
+    this.outbox.removeKinds(Object.keys(pending.byKind).filter((k) => !MONEY_OUTBOX_KINDS.has(k)));
+    this.log(`MOVE PAIRING: ${id} → ${r.credentials.machineId}${file ? `, backup ${file}` : ''}, pending ${JSON.stringify(pending.byKind)}`);
+    // The answer goes first (with the old pairing's token), then "unpaired" and the new pairing.
+    return { status: 'done', detail: null, result: { outcome: 'ok', pending: pending.byKind, targetMachineId: r.credentials.machineId }, after: () => this.finishMove(id, r.credentials, pending) };
+  }
+
+  private async finishMove(oldId: string, next: Credentials, pending: PendingSummary) {
+    if (this.cloud.credentials()?.machineId !== oldId) return;
+    await this.tellUnpaired('cloud_move', pending, 'reachable');
+    this.forgetPairing('move_pairing', { reason: 'cloud_move', by: 'הענן' });
+    await this.adopt(next).catch((e) => this.log(`move_pairing: adopting the new pairing failed: ${String(e)}`));
+  }
+
+  /** `POST /sync/{m}/unpaired` (§5.1), best effort, before the credentials are gone: the dashboard says "לא מצומד". */
+  private async tellUnpaired(reason: string, pending: PendingSummary, server: 'reachable' | 'unreachable') {
+    const id = this.machineId;
+    if (!id || server === 'unreachable') return;
+    const r = await this.api
+      .post(`sync/${id}/unpaired`, { by: 'טכנאי', reason, pending: pending.byKind, deviceInfo: this.opts.deviceInfo }, { timeoutMs: UNPAIR_PROBE_MS })
+      .catch(() => null);
+    if (r?.kind !== 'ok') this.log(`unpaired notice not taken (${r?.kind === 'refused' ? `HTTP ${r.status}` : 'no answer'})`);
+  }
+
+  private forgetPairing(why: string, how: { reason: string; by: string | null } = { reason: 'revoked', by: null }) {
     this.log(`${why}: pairing forgotten`);
     const c = this.cloud.credentials();
-    if (c) this.kv.setJson(KioskService.PREVIOUS_PAIRING, { machineId: c.machineId, tenantId: c.tenantId ?? null });
+    if (c) {
+      this.kv.setJson(KioskService.PREVIOUS_PAIRING, { machineId: c.machineId, tenantId: c.tenantId ?? null });
+      // "המכשיר היה: קופה 3 · סניף X" on the pairing screen — never the token.
+      const me = this.cloud.machine();
+      const last: LastPairing = {
+        machineId: c.machineId,
+        tenantId: c.tenantId ?? null,
+        machineName: me?.machineName ?? null,
+        posNumber: me?.posNumber ?? null,
+        shopName: me?.shopName ?? null,
+        companyName: me?.companyName ?? null,
+        serverUrl: c.serverUrl ?? null,
+        unpairedAt: new Date().toISOString(),
+        unpairedBy: how.by,
+        reason: how.reason,
+        pending: this.pendingOutbox().byKind,
+      };
+      this.kv.setJson(KioskService.LAST_PAIRING, last);
+    }
     this.sync.stop();
     this.cloud.forget();
     this.workSessions.clear();

@@ -12,7 +12,7 @@ import { ipcMain, protocol, type BrowserWindow } from 'electron';
 import * as electron from 'electron';
 import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { handleScheme, textReply, unhandleScheme } from '../shell/schemeHandler';
 import { APP_IPC } from '../../shared/till/appBridge';
 import type { DeviceRoleName, EngineEvent, HwRequest } from '../../shared/till/protocol';
 import type { TillRole } from './till';
@@ -90,17 +90,19 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   let parked = false;
   const role = o.role;
 
-  protocol.handle('r2m', (request) => {
+  // `protocol.handle` on Electron 44; Electron 22 (the Windows 7 build) has only stream protocols (shell/schemeHandler.ts).
+  handleScheme(protocol, 'r2m', (request) => {
     const url = new URL(request.url);
-    if (url.host !== 'app') return new Response('not found', { status: 404 });
+    if (url.host !== 'app') return textReply(404, 'not found');
     const hit = role.serve(url.pathname);
-    if (!hit) return new Response('not found', { status: 404 });
+    if (!hit) return textReply(404, 'not found');
     const ext = path.extname(hit.file).slice(1).toLowerCase();
-    return new Response(Readable.toWeb(createReadStream(hit.file)) as ReadableStream, {
+    return {
       status: 200,
       headers: { ...hit.headers, 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Length': String(statSync(hit.file).size) },
-    });
-  });
+      body: createReadStream(hit.file),
+    };
+  }, o.log);
 
   const fromTill = (e: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) => !!view && e.sender === view.webContents;
   ipcMain.handle(APP_IPC.info, (e) => (fromTill(e) ? role.info() : null));
@@ -215,7 +217,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
         ipcMain.removeHandler(ch);
         ipcMain.removeAllListeners(ch);
       }
-      protocol.unhandle('r2m');
+      unhandleScheme(protocol, 'r2m');
     },
   };
 }

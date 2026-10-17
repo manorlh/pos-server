@@ -5,8 +5,8 @@
  * carries the machine's own token, and every step is reported back to the dashboard.
  *
  *  1. Check — at start (after a minute) and every `checkEveryMs` (15 min), and on "בדוק עכשיו":
- *     GET /sync/{m}/app-update?versionCode=&versionName=&platform=windows. Only a Windows offer is
- *     taken (core/updatePolicy.ts `acceptOffer`).
+ *     GET /sync/{m}/app-update?versionCode=&versionName=&platform=windows (`windows7` from the Windows 7
+ *     build, core/appBuild.ts). Only an offer of that platform is taken (core/updatePolicy.ts `acceptOffer`).
  *  2. Download in the background to %APPDATA%\R2M Kiosk\updates\<release>.exe.part, hashing on the
  *     way; the file must match the cloud's SHA-256 (and size) or it is thrown away. Then
  *     `<release>.exe`. Reported: downloading → downloaded (or failed + reason).
@@ -29,6 +29,7 @@ import path from 'node:path';
 import type { Api } from '../sync/api';
 import type { Kv } from '../db/schema';
 import type { UpdateView } from '../../shared/roles';
+import type { UpdatePlatform } from '../../core/appBuild';
 import {
   acceptOffer,
   autoInstallDecision,
@@ -79,6 +80,8 @@ export interface UpdaterDeps {
   /** Quit the app (the installer restarts it). */
   quit(): void;
   fetch?: typeof fetch;
+  /** The platform asked for and taken (core/appBuild.ts `updatePlatformOf`): `windows`, or `windows7` from the Windows 7 build. */
+  platform?: UpdatePlatform;
   now?: () => number;
   log?: (m: string) => void;
   checkEveryMs?: number;
@@ -101,11 +104,13 @@ export class UpdateManager {
   private readonly now: () => number;
   private readonly log: (m: string) => void;
   private readonly fetchFn: typeof fetch;
+  private readonly platform: UpdatePlatform;
 
   constructor(private readonly d: UpdaterDeps) {
     this.now = d.now ?? Date.now;
     this.log = d.log ?? (() => undefined);
     this.fetchFn = d.fetch ?? ((...a) => fetch(...a));
+    this.platform = d.platform ?? 'windows';
     this.state = {
       current: d.currentVersion,
       phase: 'idle',
@@ -208,7 +213,7 @@ export class UpdateManager {
     const prevPhase = this.state.phase;
     if (prevPhase !== 'downloading') this.set({ phase: 'checking' });
     const v = this.d.currentVersion;
-    const q = `versionCode=${versionCodeOf(v)}&versionName=${encodeURIComponent(v)}&platform=windows`;
+    const q = `versionCode=${versionCodeOf(v)}&versionName=${encodeURIComponent(v)}&platform=${this.platform}`;
     const reply = await this.d.api.get<UpdateOffer>(`sync/${id}/app-update?${q}`, { timeoutMs: 20_000 });
     this.set({ lastCheckAt: this.now() });
     if (reply.kind !== 'ok') {
@@ -217,7 +222,7 @@ export class UpdateManager {
       return { available: this.ready?.versionName ?? null, status: 'offline' };
     }
     const offer = reply.body;
-    if (!acceptOffer(offer, v)) {
+    if (!acceptOffer(offer, v, this.platform)) {
       this.offer = null;
       this.clearReady();
       this.cleanup(null);
