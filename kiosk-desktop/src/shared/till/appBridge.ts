@@ -34,6 +34,8 @@ export interface R2mAppBridge {
   keepAwake(on: boolean): void;
   /** "ניהול הקיוסק" from the till's corner: the shell sets the till's view aside and opens its manager's menu. */
   openAdmin?(): void;
+  /** "בדיקות ומידע" from the till's six taps (top-left): the shell sets the till's view aside and asks the technician's code. */
+  openTechnician?(): void;
 }
 
 /** The IPC channel names (one place, for the preload and the main process). */
@@ -47,4 +49,5 @@ export const APP_IPC = {
   idle: 'app:idle',
   keepAwake: 'app:keepAwake',
   admin: 'app:admin',
+  technician: 'app:technician',
 } as const;

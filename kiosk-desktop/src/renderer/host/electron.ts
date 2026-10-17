@@ -44,6 +44,7 @@ export function createElectronHost(bridge: R2mAppBridge, info: AppHostInfo): Til
       fullscreen: () => undefined,
       // A shell that predates the manager's corner over the till has no door for it: the corner stays unarmed.
       ...(bridge.openAdmin ? { openAdmin: () => bridge.openAdmin!() } : {}),
+      ...(bridge.openTechnician ? { openTechnician: () => bridge.openTechnician!() } : {}),
     },
   };
 }

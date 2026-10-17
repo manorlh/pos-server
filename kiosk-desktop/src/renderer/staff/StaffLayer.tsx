@@ -36,6 +36,7 @@ import { WORK_TEXT } from '../../core/workMode';
 import { WorkModePanel } from './WorkModePanel';
 import { KioskZPanel } from './KioskZPanel';
 import { KioskHistoryPanel } from './KioskHistoryPanel';
+import { UnpairControl } from '../roles/UnpairControl';
 
 /** CashMag on the manager's screen: where the server's address came from, what an unclear payment was. */
 const CASHMAG_SOURCE: Record<string, string> = { cloud: 'מהענן', local: 'מקומי (kiosk.json)', default: 'לא מוגדר' };
@@ -234,6 +235,24 @@ function useNote(): [string | null, (r: { ok: boolean; message?: string }) => vo
   return [note, (r) => setNote(r.message ?? (r.ok ? 'בוצע' : 'לא בוצע'))];
 }
 
+/** An action's answer, failures too: an IPC error is a refusal with its words, never nothing at all. */
+async function answered<T extends { ok: boolean; message?: string }>(p: Promise<T>): Promise<{ ok: boolean; message?: string }> {
+  return p.catch((e: unknown) => ({ ok: false, message: `שגיאה: ${e instanceof Error ? e.message : String(e)}` }));
+}
+
+/**
+ * The answer of the last action, pinned to the top of the screen's scroll (sticky): a button far down the screen
+ * ("ניתוק הקיוסק מהענן") still shows its refusal where the technician is looking.
+ */
+function NoteBar({ m, note }: { m: PreviewModel; note: string | null }) {
+  if (!note) return null;
+  return (
+    <div role="status" className="sticky top-0 z-10 -mx-1 whitespace-pre-wrap break-words rounded-lg p-2 text-center text-xs font-semibold shadow" style={{ background: m.c.background, color: m.c.text, border: `1px solid ${m.c.border}` }}>
+      {note}
+    </div>
+  );
+}
+
 function AdminScreen({
   m,
   onClose,
@@ -256,7 +275,7 @@ function AdminScreen({
   const refresh = () => void kiosk.adminInfo().then(setInfo).catch(() => undefined);
   useEffect(refresh, []);
   const act = async (a: Parameters<typeof kiosk.adminAction>[0]) => {
-    show(await kiosk.adminAction(a));
+    show(await answered(kiosk.adminAction(a)));
     refresh();
   };
   if (!info) return <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>…</Shell>;
@@ -285,7 +304,7 @@ function AdminScreen({
   const goKiosk = (code?: string) => switchMode('kiosk', code);
   return (
     <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>
-      {note ? <div className="rounded-lg bg-black/5 p-2 text-center text-xs font-semibold">{note}</div> : null}
+      <NoteBar m={m} note={note} />
       {info.workMode ? (
         <WorkModePanel
           m={m}
@@ -658,13 +677,13 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
   const refresh = () => void kiosk.technicianInfo().then(setInfo).catch(() => undefined);
   useEffect(refresh, []);
   const act = async (a: Parameters<typeof kiosk.technicianAction>[0]) => {
-    show(await kiosk.technicianAction(a));
+    show(await answered(kiosk.technicianAction(a)));
     refresh();
   };
   return (
     <Shell m={m} title="בדיקות ומידע קיוסק" onClose={onClose}>
       {/* Several lines at times ("בדיקת מסופון USB": the raw replies and the framing). */}
-      {note ? <div className="whitespace-pre-wrap break-words rounded-lg bg-black/5 p-2 text-center text-xs font-semibold">{note}</div> : null}
+      <NoteBar m={m} note={note} />
       {!info ? (
         <div>…</div>
       ) : (
@@ -792,9 +811,13 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
             </Panel>
           ) : null}
           <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />
-          <Btn m={m} danger onClick={() => act({ type: 'unpair' })}>
-            ניתוק הקיוסק מהענן
-          </Btn>
+          {/* Why it was refused, what waits, "ניתוק בכל זאת" — under the button, where the technician looks. */}
+          <UnpairControl
+            label="ניתוק הקיוסק מהענן"
+            buttonClassName="min-w-[var(--k-target,0px)] px-3 py-1.5 text-xs font-bold disabled:opacity-40"
+            buttonStyle={{ background: '#DC2626', color: '#fff', borderRadius: 8 }}
+            onDone={refresh}
+          />
         </>
       )}
     </Shell>

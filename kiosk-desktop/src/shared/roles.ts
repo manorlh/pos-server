@@ -110,7 +110,7 @@ export interface ShellEvents {
   /** The cash host's staff screen (shared/cash.ts). */
   cash: CashHostView;
   /** "ניהול הקיוסק" asked by the till's own corner (its view is set aside until `adminClosed`). */
-  admin: { from: 'till' };
+  admin: { from: 'till'; screen?: 'admin' | 'technician' };
 }
 
 /**
