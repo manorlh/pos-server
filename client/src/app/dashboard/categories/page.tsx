@@ -51,6 +51,7 @@ import { RestrictedBadge, RestrictedSwitch } from '@/components/dashboard/produc
 import { categoryRestrictionOf, restrictedCategoryIds } from '@/lib/restrictedItems';
 import { categoryPath, parentOptions, wouldCycle } from '@/lib/categoryTree';
 import { CategoryColorField } from '@/components/dashboard/categories/category-color-field';
+import { KioskNotesField, KioskOpenField } from '@/components/dashboard/products/kiosk-notes-field';
 import { CategoryChipPreview } from '@/components/dashboard/categories/category-chip-preview';
 import { CategoryImageField, type PendingCategoryImage } from '@/components/dashboard/categories/category-image-field';
 
@@ -534,6 +535,9 @@ export default function CategoriesPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{tt('hint')}</p>
             </div>
+            {/* "הערה בקיוסק" (lib/kioskNotes.ts) for the category's dishes. */}
+            <KioskNotesField level="category" value={editing.kioskNotes} onChange={(v) => setEditing((c) => ({ ...c, kioskNotes: v }))} />
+            <KioskOpenField level="category" value={editing.kioskOpen} onChange={(v) => setEditing((c) => ({ ...c, kioskOpen: v }))} />
             {/* "מחייב אישור מנהל במכירה": every product here and beneath — a manager's code at the till, never at a kiosk. */}
             <RestrictedSwitch
               checked={editing.requiresManagerApproval ?? false}

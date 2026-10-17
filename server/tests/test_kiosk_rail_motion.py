@@ -49,9 +49,9 @@ def _chose_quick_add(layers):
 def test_every_existing_template_and_style_resolves_as_before(case):
     cfg = C.resolve(*case["layers"])
     seen = _without_new_keys(cfg)
-    # 17.10 (owner): "הוספה מהירה" defaults to no_required — only where no level chose it; the rest as before.
+    # 17.10 (owner): "הוספה מהירה" defaults to no_choices — only where no level chose it; the rest as before.
     if case["resolved"]["layout"]["quickAdd"] == "off" and not _chose_quick_add(case["layers"]):
-        assert seen["layout"]["quickAdd"] == "no_required"
+        assert seen["layout"]["quickAdd"] == "no_choices"
         seen["layout"]["quickAdd"] = "off"
     assert seen == case["resolved"]
     assert {k: cfg["layout"][k] for k in NEW_LAYOUT_KEYS} == {k: L.LAYOUT_DEFAULTS[k] for k in NEW_LAYOUT_KEYS}

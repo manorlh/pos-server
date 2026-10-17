@@ -73,6 +73,7 @@
     ],
     "quickAdd": [
       "off",
+      "no_choices",
       "no_required",
       "always"
     ],
@@ -173,7 +174,7 @@
     "card": null,
     "flow": "free",
     "itemView": "sheet",
-    "quickAdd": "no_required",
+    "quickAdd": "no_choices",
     "infoButton": "auto",
     "cartCountBadge": true,
     "mealView": "sheet",
@@ -753,7 +754,7 @@
       ],
       "expect": {
         "layout.cartCountBadge": true,
-        "layout.quickAdd": "no_required"
+        "layout.quickAdd": "no_choices"
       }
     },
     {
@@ -809,7 +810,7 @@
       }
     },
     {
-      "name": "no level chose quick add: a tap adds a dish with nothing to choose",
+      "name": "no level chose quick add: a tap adds a dish with no choices and no add-ons",
       "layers": [
         {
           "layout": {
@@ -818,7 +819,7 @@
         }
       ],
       "expect": {
-        "layout.quickAdd": "no_required",
+        "layout.quickAdd": "no_choices",
         "layout.infoButton": "auto"
       }
     }
@@ -840,7 +841,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -881,7 +882,7 @@
         "card": null,
         "flow": "free",
         "itemView": "full",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -923,7 +924,7 @@
         "card": "plate",
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -965,7 +966,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1008,7 +1009,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1050,7 +1051,7 @@
         "card": null,
         "flow": "free",
         "itemView": "modal",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1092,7 +1093,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1194,7 +1195,7 @@
         "card": null,
         "flow": "free",
         "itemView": "modal",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1236,7 +1237,7 @@
         "card": null,
         "flow": "free",
         "itemView": "modal",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1277,7 +1278,7 @@
         "card": "tile",
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1327,7 +1328,7 @@
         "card": "tile",
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1384,7 +1385,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1432,7 +1433,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1476,7 +1477,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1518,7 +1519,7 @@
         "card": null,
         "flow": "free",
         "itemView": "sheet",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": false,
         "mealView": "sheet",
@@ -1560,7 +1561,7 @@
         "card": null,
         "flow": "free",
         "itemView": "full",
-        "quickAdd": "no_required",
+        "quickAdd": "no_choices",
         "infoButton": "auto",
         "cartCountBadge": true,
         "mealView": "sheet",
@@ -1670,6 +1671,47 @@
       "name": "the info button: an unknown value is the default (auto)",
       "layout": {
         "infoButton": "sometimes"
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "no_choices",
+        "infoButton": "auto",
+        "cartCountBadge": true,
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
+      }
+    },
+    {
+      "name": "quick add: an explicit no_required stays (only an unset key follows the default)",
+      "layout": {
+        "quickAdd": "no_required"
       },
       "expect": {
         "template": "standard",

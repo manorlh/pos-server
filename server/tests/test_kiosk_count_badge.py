@@ -4,8 +4,8 @@
 `layout.cartCountBadge` — how many of a dish the basket holds, on the dish's card in every template:
 on by default (no template sets it), a level may turn it off and a lower one back on, refused when it
 is not a boolean, and it reaches the kiosk in its config (a new config version when it changes).
-`layout.quickAdd` ("הוספה מהירה"): since 17.10 (owner) no_required by default — a tap on a dish with nothing to
-choose puts it in — always on the wall; a level that chose "off" keeps it (only an unset key follows the default).
+`layout.quickAdd` ("הוספה מהירה"): since 17.10 (owner) no_choices by default — a tap puts in a dish with no
+choices and no add-ons at all (app/services/kiosk_tap.py) — always on the wall; a level that chose "off" keeps it (only an unset key follows the default).
 `layout.infoButton` ("כפתור פרטים", ⓘ): auto | always | off, default auto.
 """
 from __future__ import annotations
@@ -20,11 +20,12 @@ from test_kiosks import convert, get_settings, paths, put, refused, sync, w  # n
 # ── The default ──────────────────────────────────────────────────────────────
 
 
-def test_the_badge_is_on_by_default_and_quick_add_is_no_required():
+def test_the_badge_is_on_by_default_and_quick_add_is_no_choices():
     assert L.LAYOUT_DEFAULTS["cartCountBadge"] is True
     assert C.DEFAULT_CONFIG["layout"]["cartCountBadge"] is True
-    assert L.LAYOUT_DEFAULTS["quickAdd"] == "no_required"
-    assert C.DEFAULT_CONFIG["layout"]["quickAdd"] == "no_required"
+    assert L.LAYOUT_DEFAULTS["quickAdd"] == "no_choices"
+    assert C.DEFAULT_CONFIG["layout"]["quickAdd"] == "no_choices"
+    assert L.LAYOUT_QUICK_ADDS == ("off", "no_choices", "no_required", "always")
     assert L.LAYOUT_DEFAULTS["infoButton"] == "auto" and "infoButton" in L.LAYOUT_TEMPLATE_KEYS
     assert "cartCountBadge" in L.LAYOUT_TEMPLATE_KEYS
     assert C.validate_config(C.default_config()) == []
@@ -36,7 +37,7 @@ def test_every_template_draws_the_badge_and_keeps_its_quick_add(template):
     for style in C.UI_PRESETS:
         cfg = C.resolve({"theme": {"uiStyle": style}, "layout": {"template": template}})
         assert cfg["layout"]["cartCountBadge"] is True, style
-        assert cfg["layout"]["quickAdd"] == ("always" if template == "wall" else "no_required"), style
+        assert cfg["layout"]["quickAdd"] == ("always" if template == "wall" else "no_choices"), style
         assert cfg["layout"]["infoButton"] == "auto", style
         assert C.validate_config(cfg) == []
 
@@ -131,12 +132,12 @@ def test_a_level_that_chose_off_keeps_it():
 
 def test_a_level_that_never_chose_gets_the_new_default():
     for layers in ([], [{}], [{"layout": {"cartCountBadge": False}}], [{"theme": {"uiStyle": "wolt"}}, {}, {"layout": {"template": "list"}}]):
-        assert C.resolve(*layers)["layout"]["quickAdd"] == "no_required", layers
+        assert C.resolve(*layers)["layout"]["quickAdd"] == "no_choices", layers
 
 
 def test_off_saves_as_an_explicit_choice_and_reaches_the_kiosk(w):
     convert(w)
-    assert sync(w, w.kiosk)["config"]["layout"]["quickAdd"] == "no_required"
+    assert sync(w, w.kiosk)["config"]["layout"]["quickAdd"] == "no_choices"
     view = put(w, "company", w.company.id, {"layout": {"quickAdd": "off"}})
     assert view["overrides"] == {"layout": {"quickAdd": "off"}}
     assert sync(w, w.kiosk)["config"]["layout"]["quickAdd"] == "off"

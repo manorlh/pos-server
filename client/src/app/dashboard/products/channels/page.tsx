@@ -9,6 +9,7 @@
  * loaded included, run on the server. "תצוגה מקדימה" first: how many match, change, stay as they
  * are, and are not the user's to edit (reported, never skipped silently), with a sample; then
  * "החל". The web channels only allow a product: it reaches the public through a published profile.
+ * "הערה בקיוסק" (lib/kioskNotes.ts) is one more target: allow / block / back to the category's.
  */
 
 import { useMemo, useState } from 'react';
@@ -24,7 +25,11 @@ import {
   CHANNEL_LABEL_KEYS,
   appearsInChannel,
   bulkBody,
+  kioskNotesBulkBody,
+  kioskOpenBulkBody,
   type BulkFilter,
+  type KioskNotesBulk,
+  type KioskOpenBulk,
   type BulkResult,
   type Channel,
   type ChannelRow,
@@ -43,6 +48,8 @@ type ChannelFilter = 'any' | 'on' | 'off';
 
 export default function ProductChannelsBulkPage() {
   const t = useTranslations('productChannels');
+  const tn = useTranslations('kioskNotes');
+  const to = useTranslations('kioskOpen');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
@@ -51,8 +58,14 @@ export default function ProductChannelsBulkPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [allMatching, setAllMatching] = useState(false);
-  const [target, setTarget] = useState<Channel>('online');
+  const [target, setTarget] = useState<Channel | 'kioskNotes' | 'kioskOpen'>('online');
+  const [openTo, setOpenTo] = useState<KioskOpenBulk>('window');
   const [turnOn, setTurnOn] = useState(true);
+  const [notesTo, setNotesTo] = useState<KioskNotesBulk>('on');
+  const notesLabel = (v: KioskNotesBulk) => (v === 'inherit' ? t('kioskNotesInherit') : tn(v));
+  const targetLabel = (c: Channel | 'kioskNotes' | 'kioskOpen') =>
+    c === 'kioskNotes' ? t('kioskNotesTarget') : c === 'kioskOpen' ? t('kioskOpenTarget') : t(CHANNEL_LABEL_KEYS[c]);
+  const targets: Array<Channel | 'kioskNotes' | 'kioskOpen'> = [...CHANNELS, 'kioskNotes', 'kioskOpen'];
   const [preview, setPreview] = useState<BulkResult | null>(null);
 
   const filter: BulkFilter = useMemo(
@@ -107,7 +120,16 @@ export default function ProductChannelsBulkPage() {
   const selection = () => (allMatching ? { allMatching: filter } : { ids: [...selected] });
   const run = useMutation({
     mutationFn: (dryRun: boolean) =>
-      api.post('/product-channels/bulk', bulkBody(selection(), { [target]: turnOn }, dryRun)).then((r) => r.data as BulkResult),
+      api
+        .post(
+          '/product-channels/bulk',
+          target === 'kioskNotes'
+            ? kioskNotesBulkBody(selection(), notesTo, dryRun)
+            : target === 'kioskOpen'
+              ? kioskOpenBulkBody(selection(), openTo, dryRun)
+              : bulkBody(selection(), { [target]: turnOn }, dryRun),
+        )
+        .then((r) => r.data as BulkResult),
     onSuccess: (result) => {
       if (result.applied) {
         toast.success(t('bulkApplied', { count: result.changed }));
@@ -220,15 +242,44 @@ export default function ProductChannelsBulkPage() {
             <Label>{t('channel')}</Label>
             <Select
               value={target}
-              onValueChange={(v) => { setTarget((v as Channel) ?? 'online'); setPreview(null); }}
-              items={CHANNELS.map((c) => ({ value: c, label: t(CHANNEL_LABEL_KEYS[c]) }))}
+              onValueChange={(v) => { setTarget((v as Channel | 'kioskNotes' | 'kioskOpen') ?? 'online'); setPreview(null); }}
+              items={targets.map((c) => ({ value: c, label: targetLabel(c) }))}
             >
               <SelectTrigger className="w-40" size="sm"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {CHANNELS.map((c) => <SelectItem key={c} value={c} label={t(CHANNEL_LABEL_KEYS[c])}>{t(CHANNEL_LABEL_KEYS[c])}</SelectItem>)}
+                {targets.map((c) => <SelectItem key={c} value={c} label={targetLabel(c)}>{targetLabel(c)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
+          {target === 'kioskNotes' ? (
+            <div className="space-y-1">
+              <Label>{t('state')}</Label>
+              <Select
+                value={notesTo}
+                onValueChange={(v) => { setNotesTo((v as KioskNotesBulk) ?? 'on'); setPreview(null); }}
+                items={(['on', 'off', 'inherit'] as const).map((v) => ({ value: v, label: notesLabel(v) }))}
+              >
+                <SelectTrigger className="w-36" size="sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(['on', 'off', 'inherit'] as const).map((v) => <SelectItem key={v} value={v} label={notesLabel(v)}>{notesLabel(v)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : target === 'kioskOpen' ? (
+            <div className="space-y-1">
+              <Label>{t('state')}</Label>
+              <Select
+                value={openTo}
+                onValueChange={(v) => { setOpenTo((v as KioskOpenBulk) ?? 'window'); setPreview(null); }}
+                items={(['kiosk', 'window', 'direct'] as const).map((v) => ({ value: v, label: to(v) }))}
+              >
+                <SelectTrigger className="w-40" size="sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(['kiosk', 'window', 'direct'] as const).map((v) => <SelectItem key={v} value={v} label={to(v)}>{to(v)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
           <div className="space-y-1">
             <Label>{t('state')}</Label>
             <Select
@@ -243,6 +294,7 @@ export default function ProductChannelsBulkPage() {
               </SelectContent>
             </Select>
           </div>
+          )}
           <Button type="button" variant="outline" disabled={count === 0 || run.isPending} onClick={() => run.mutate(true)}>
             {t('preview')}
           </Button>
@@ -291,13 +343,15 @@ export default function ProductChannelsBulkPage() {
               </TableHead>
               <TableHead>{t('product')}</TableHead>
               {CHANNELS.map((c) => <TableHead key={c} className="text-center">{t(CHANNEL_LABEL_KEYS[c])}</TableHead>)}
+              <TableHead className="text-center">{t('kioskNotesTarget')}</TableHead>
+              <TableHead className="text-center">{t('kioskOpenTarget')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={6}>{tc('loading')}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8}>{tc('loading')}</TableCell></TableRow>
             ) : products.length === 0 ? (
-              <TableRow><TableCell colSpan={6} className="text-muted-foreground">{t('noResults')}</TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-muted-foreground">{t('noResults')}</TableCell></TableRow>
             ) : (
               products.map((p) => {
                 return (
@@ -321,6 +375,12 @@ export default function ProductChannelsBulkPage() {
                         )}
                       </TableCell>
                     ))}
+                    <TableCell className="text-center text-sm">
+                      {p.kioskNotes === true ? tn('on') : p.kioskNotes === false ? tn('off') : <span className="text-muted-foreground">{t('kioskNotesInherit')}</span>}
+                    </TableCell>
+                    <TableCell className="text-center text-sm">
+                      {p.kioskOpen === 'window' || p.kioskOpen === 'direct' ? to(p.kioskOpen) : <span className="text-muted-foreground">{to('kiosk')}</span>}
+                    </TableCell>
                   </TableRow>
                 );
               })

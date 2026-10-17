@@ -71,6 +71,8 @@ from app.schemas.menu import (
     UpsellStatsIn,
 )
 from app.services.company_hierarchy import ancestor_company_ids, catalog_company_ids, user_covers_company
+from app.services.kiosk_notes import block as kiosk_notes_block
+from app.services.kiosk_tap import block as kiosk_tap_block
 from app.services.permission_matrix import Action, Resource, roles_for
 
 logger = logging.getLogger(__name__)
@@ -1596,6 +1598,10 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
         "kioskUpsells": kiosk_upsells,
         "courses": courses,
         "productLimits": limits,
+        # "הערה בקיוסק" (app/services/kiosk_notes.py): the dishes' and categories' own values.
+        "kioskNotes": kiosk_notes_block(db, tenant_id),
+        # "בקיוסק: פתיחת חלון" (app/services/kiosk_tap.py): the dishes' and categories' own values.
+        "kioskOpen": kiosk_tap_block(db, tenant_id),
     }
 
 

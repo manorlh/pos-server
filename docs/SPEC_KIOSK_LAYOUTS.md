@@ -28,7 +28,7 @@
 | `card` | null, tile, row, plate, bleed, button, outlined | null | כרטיס מנה; null = אריח (כמו היום) |
 | `flow` | free, guided | free | guided: פס שלבים וכפתור "המשך" |
 | `itemView` | sheet, full, modal, inline, steps, popover | sheet | חלון המנה |
-| `quickAdd` | off, no_required, always | no_required | נגיעה במנה בלי בחירות חובה מוסיפה אותה. ברירת המחדל no_required מ-17.10 (הבעלים; קודם off) — רק לקיוסק שאף רמה לא בחרה לו: השכבות השמורות מחזיקות רק מה שרמה בחרה (העורך גוזם ערך ששווה למה שהיא יורשת), אז "off" שנבחר במפורש נשאר off |
+| `quickAdd` | off, no_choices, no_required, always | no_choices | נגיעה במנה מוסיפה אותה ישר לסל. no_choices (ברירת המחדל מ-17.10, הבעלים: "ואם יש לו תוספות ובחירות — זה גם יפתח") — רק מנה בלי שום קבוצת אפשרויות (חובה או רשות) ולא ארוחה; no_required — כשאין בחירת חובה; always — גם כשברירות המחדל עונות. מנה שמציעה הערה בקיוסק נפתחת; "בקיוסק: פתיחת חלון" של המוצר / הקטגוריה (`kiosk_open`: window / direct, ירושה, המוצר גובר) גובר על כל אלה. כלל אחד: `app/services/kiosk_tap.py` = `tapPathOf` = `KioskLayouts.tapPath`, גולדן `kiosk_tap_golden.json`. השכבות השמורות מחזיקות רק מה שרמה בחרה, אז ערך שנבחר במפורש נשאר |
 | `infoButton` | auto, always, off | auto | "כפתור פרטים" (ⓘ) על כרטיס מנה, פותח את חלון המנה עם "הוספה לסל". auto: כשנגיעה מכניסה את המנה ישר לסל ובחלון יש יותר מהכרטיס (תיאור ארוך מהשורות שבכרטיס — 30 תווים לשורה, אלרגנים, סימוני תזונה שהכרטיס לא מראה, תמונה שהכרטיס מראה קטנה או לא בכלל). כלל אחד: `dishInfoButtonOn` / `KioskLayouts.infoButtonOn`, גולדן `kiosk_info_button_golden.json`. מטרת מגע 48dp |
 | `mealView` | sheet, steps, tray | sheet | בניית ארוחה (tray — שלב 2) |
 | `mealUpsell` | off, first, after | off | "רוצים להפוך לארוחה?" (after — שלב 2) |
@@ -214,3 +214,10 @@ Android שהוא מחליף, מפתחות ה-web שהוא מחליף, ו-`legacy
   `domain/KioskCategoryIconData.kt`, `domain/KioskTextRegistryData.kt`.
 
 שינוי בפיקסצ'ר: להריץ את המחולל, לחשב את ה-SHA החדש (LF) ולעדכן את שלושת הקבועים.
+
+## הערה בקיוסק ופתיחת חלון — לפי מוצר (17.10)
+
+- **"הערה בקיוסק"** (`products.kiosk_notes` / `categories.kiosk_notes`, NULL יורש מהקטגוריה ומעלה; כלום לא מוגדר — אין הערה): הקיוסק מציע שדה "הוספת הערה" והערות מהירות רק במנה שמאפשרת. מתגי הקיוסק (`general.notesEnabled`, `general.quickNotesEnabled`) נשארים המאסטר. נשלח לקיוסקים בבלוק התפריט (`kioskNotes`, ערכים מפורשים בלבד); תפריט בלי הבלוק (ענן ישן) — הערות כמו קודם. `app/services/kiosk_notes.py` = `lib/kioskNotes.ts` = `Menu.kioskNotesAllowed`, גולדן `kiosk_notes_golden.json`.
+- **"בקיוסק: פתיחת חלון"** (`kiosk_open`: NULL — לפי הקיוסק, `window` — תמיד חלון, `direct` — תמיד ישר כשאין בחירת חובה בלי ברירת מחדל). בבלוק התפריט `kioskOpen`.
+- עריכה: עורך המוצר והקטגוריה, ו"מופיע ב — עריכה בכמות" (`kioskNotes`: on / off / inherit, `kioskOpen`: kiosk / window / direct). כל שינוי מקפיץ את התפריט (`menu.bump`).
+

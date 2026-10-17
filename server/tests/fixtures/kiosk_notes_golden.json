@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "about": "\"הערה בקיוסק\" per dish: server app/services/kiosk_notes.py allowed ⇔ client lib/kioskNotes.ts kioskNotesAllowed ⇔ pos-android domain Menu.kioskNotesAllowed. Same bytes in pos-server server/tests/fixtures and pos-android app/src/test/resources.",
+  "default": false,
+  "parents": {
+    "burgers": "mains",
+    "mains": "food",
+    "food": null,
+    "drinks": null,
+    "loopA": "loopB",
+    "loopB": "loopA"
+  },
+  "cases": [
+    {
+      "name": "an older cloud (no kioskNotes in the menu): notes as before",
+      "kioskNotes": null,
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": true
+    },
+    {
+      "name": "nothing set anywhere: no note (the default)",
+      "kioskNotes": {
+        "categories": {},
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    },
+    {
+      "name": "no category, nothing set: no note",
+      "kioskNotes": {
+        "categories": {},
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": null,
+      "allowed": false
+    },
+    {
+      "name": "the dish allows it",
+      "kioskNotes": {
+        "categories": {},
+        "products": {
+          "p1": true
+        }
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": true
+    },
+    {
+      "name": "the dish blocks it",
+      "kioskNotes": {
+        "categories": {},
+        "products": {
+          "p1": false
+        }
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    },
+    {
+      "name": "its category allows it",
+      "kioskNotes": {
+        "categories": {
+          "burgers": true
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": true
+    },
+    {
+      "name": "a parent category allows it",
+      "kioskNotes": {
+        "categories": {
+          "food": true
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": true
+    },
+    {
+      "name": "the nearest category wins over a parent",
+      "kioskNotes": {
+        "categories": {
+          "mains": false,
+          "food": true
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    },
+    {
+      "name": "the nearest category wins over a parent (allows)",
+      "kioskNotes": {
+        "categories": {
+          "mains": true,
+          "food": false
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": true
+    },
+    {
+      "name": "the dish's own false wins over its category's true",
+      "kioskNotes": {
+        "categories": {
+          "burgers": true
+        },
+        "products": {
+          "p1": false
+        }
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    },
+    {
+      "name": "the dish's own true wins over its category's false",
+      "kioskNotes": {
+        "categories": {
+          "burgers": false
+        },
+        "products": {
+          "p1": true
+        }
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": true
+    },
+    {
+      "name": "another dish's value does not count",
+      "kioskNotes": {
+        "categories": {},
+        "products": {
+          "p2": true
+        }
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    },
+    {
+      "name": "any of the dish's ids (local and cloud)",
+      "kioskNotes": {
+        "categories": {},
+        "products": {
+          "cloud-1": true
+        }
+      },
+      "productIds": [
+        "local-1",
+        "cloud-1"
+      ],
+      "categoryId": "drinks",
+      "allowed": true
+    },
+    {
+      "name": "a category of another tree does not count",
+      "kioskNotes": {
+        "categories": {
+          "drinks": true
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    },
+    {
+      "name": "an unknown category: no note",
+      "kioskNotes": {
+        "categories": {
+          "food": true
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "nowhere",
+      "allowed": false
+    },
+    {
+      "name": "a loop in the tree ends (nothing set)",
+      "kioskNotes": {
+        "categories": {},
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "loopA",
+      "allowed": false
+    },
+    {
+      "name": "a loop in the tree ends (set on the loop)",
+      "kioskNotes": {
+        "categories": {
+          "loopB": true
+        },
+        "products": {}
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "loopA",
+      "allowed": true
+    },
+    {
+      "name": "a value that is not a boolean is not set",
+      "kioskNotes": {
+        "categories": {
+          "burgers": "yes"
+        },
+        "products": {
+          "p1": 1
+        }
+      },
+      "productIds": [
+        "p1"
+      ],
+      "categoryId": "burgers",
+      "allowed": false
+    }
+  ]
+}

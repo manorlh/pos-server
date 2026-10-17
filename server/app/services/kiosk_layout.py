@@ -40,7 +40,9 @@ LAYOUT_HEROES = ("off", "manual", "auto")
 LAYOUT_CARDS = ("tile", "row", "plate", "bleed", "button", "outlined")
 LAYOUT_FLOWS = ("free", "guided")
 LAYOUT_ITEM_VIEWS = ("sheet", "full", "modal", "inline", "steps", "popover")
-LAYOUT_QUICK_ADDS = ("off", "no_required", "always")
+#: "no_choices" (17.10, the default): straight in only when the dish has no choices and no add-ons at all
+#: (app/services/kiosk_tap.py).
+LAYOUT_QUICK_ADDS = ("off", "no_choices", "no_required", "always")
 #: "כפתור פרטים" (ⓘ) on a dish's card: auto — when a tap skips its window and it holds more; always; off.
 LAYOUT_INFO_BUTTONS = ("auto", "always", "off")
 LAYOUT_MEAL_VIEWS = ("sheet", "steps", "tray")
@@ -114,9 +116,10 @@ LAYOUT_DEFAULTS: Dict[str, Any] = {
     "card": None,
     "flow": "free",
     "itemView": "sheet",
-    # "הוספה מהירה": a tap on a dish with nothing to choose puts it in (owner 17.10; was "off"). A layer
-    # that set "off" explicitly keeps it — the stored layers hold only what a level chose.
-    "quickAdd": "no_required",
+    # "הוספה מהירה": a tap on a dish with no choices and no add-ons puts it in (owner 17.10: "no_choices";
+    # was "off", then "no_required"). A layer that chose a value keeps it — the stored layers hold only what a
+    # level chose. app/services/kiosk_tap.py has the whole tap.
+    "quickAdd": "no_choices",
     "infoButton": "auto",
     # "תג כמות" (P:/specs/kiosk-tap-add-count-badge.md): how many of the dish the basket holds, on its
     # card in every template — on unless a level turns it off (no template sets it).

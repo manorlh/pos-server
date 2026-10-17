@@ -30,7 +30,10 @@ export type LayoutHero = 'off' | 'manual' | 'auto';
 export type LayoutCard = 'tile' | 'row' | 'plate' | 'bleed' | 'button' | 'outlined';
 export type LayoutFlow = 'free' | 'guided';
 export type LayoutItemView = 'sheet' | 'full' | 'modal' | 'inline' | 'steps' | 'popover';
-export type LayoutQuickAdd = 'off' | 'no_required' | 'always';
+/** "הוספה מהירה": no_choices (the default) — straight in only with no choices and no add-ons at all (tapPathOf). */
+export type LayoutQuickAdd = 'off' | 'no_choices' | 'no_required' | 'always';
+/** "בקיוסק: פתיחת חלון" of a dish (kioskOpenFor): its window always, or straight in; null — as the kiosk. */
+export type KioskOpen = 'window' | 'direct';
 /** "כפתור פרטים" (ⓘ) on a dish's card: auto — when a tap skips the window and it holds more; always; off. */
 export type LayoutInfoButton = 'auto' | 'always' | 'off';
 export type LayoutMealView = 'sheet' | 'steps' | 'tray';
@@ -65,7 +68,8 @@ export const LAYOUT_HEROES: LayoutHero[] = ['off', 'manual', 'auto'];
 export const LAYOUT_CARDS: LayoutCard[] = ['tile', 'row', 'plate', 'bleed', 'button', 'outlined'];
 export const LAYOUT_FLOWS: LayoutFlow[] = ['free', 'guided'];
 export const LAYOUT_ITEM_VIEWS: LayoutItemView[] = ['sheet', 'full', 'modal', 'inline', 'steps', 'popover'];
-export const LAYOUT_QUICK_ADDS: LayoutQuickAdd[] = ['off', 'no_required', 'always'];
+export const LAYOUT_QUICK_ADDS: LayoutQuickAdd[] = ['off', 'no_choices', 'no_required', 'always'];
+export const KIOSK_OPEN_VALUES: KioskOpen[] = ['window', 'direct'];
 export const LAYOUT_INFO_BUTTONS: LayoutInfoButton[] = ['auto', 'always', 'off'];
 export const LAYOUT_MEAL_VIEWS: LayoutMealView[] = ['sheet', 'steps', 'tray'];
 export const LAYOUT_MEAL_UPSELLS: LayoutMealUpsell[] = ['off', 'first', 'after'];
@@ -143,7 +147,7 @@ export interface KioskLayout {
   flow: LayoutFlow;
   /** The dish's window; sheet — as today. */
   itemView: LayoutItemView;
-  /** A tap on a dish with nothing required adds it (default no_required since 17.10; wall: always). */
+  /** A tap on a dish adds it: no_choices (the default since 17.10) — no choices and no add-ons; wall: always (tapPathOf). */
   quickAdd: LayoutQuickAdd;
   /** "כפתור פרטים": the ⓘ on a dish's card that opens its window (dishInfoButtonOn). */
   infoButton: LayoutInfoButton;
@@ -201,7 +205,7 @@ export const KIOSK_LAYOUT_DEFAULTS: KioskLayout = {
   card: null,
   flow: 'free',
   itemView: 'sheet',
-  quickAdd: 'no_required',
+  quickAdd: 'no_choices',
   infoButton: 'auto',
   cartCountBadge: true,
   mealView: 'sheet',
@@ -721,14 +725,60 @@ export function addPathOnTap(path: 'direct' | 'sheet' | 'none', quickAdd: Layout
  * one nothing. The Android kiosk's KioskLayoutModel.tapItem / KioskViewModel.quickAdd.
  */
 export function tapPathOf(
-  p: { addPath?: 'direct' | 'sheet' | 'none'; defaultsAnswer?: boolean; soldOut?: boolean },
+  p: {
+    addPath?: 'direct' | 'sheet' | 'none';
+    defaultsAnswer?: boolean;
+    soldOut?: boolean;
+    /** Any option group at all, required or optional (absent: none). */
+    hasChoices?: boolean;
+    /** The dish's "בקיוסק: פתיחת חלון" (kioskOpenFor); null / absent — as the kiosk. */
+    kioskOpen?: KioskOpen | null;
+    /** The dish offers a note at this kiosk (lib/kioskNotes.ts dishNotesOpen): its window, so the note is reachable. */
+    notesOn?: boolean;
+  },
   quickAdd: LayoutQuickAdd,
   plus: boolean,
   meal: boolean,
 ): 'direct' | 'sheet' | 'none' {
+  // The shared rule: pos-server app/services/kiosk_tap.py tap_path, golden kiosk_tap_golden.json.
   if (p.soldOut || p.addPath === 'none') return 'none';
-  if (!plus && quickAdd === 'off') return 'sheet';
-  return addPathOnTap(p.addPath ?? 'sheet', quickAdd, meal, p.defaultsAnswer === true);
+  const path = p.addPath ?? 'sheet';
+  const onDefaults = !meal && (path === 'direct' || (path === 'sheet' && p.defaultsAnswer === true));
+  if (p.kioskOpen === 'window') return 'sheet';
+  if (plus) return path === 'direct' ? 'direct' : quickAdd === 'always' && onDefaults ? 'direct' : 'sheet';
+  if (p.kioskOpen === 'direct') return onDefaults ? 'direct' : 'sheet';
+  if (p.notesOn) return 'sheet';
+  const mode: LayoutQuickAdd = (LAYOUT_QUICK_ADDS as string[]).includes(quickAdd) ? quickAdd : 'no_choices';
+  if (mode === 'off') return 'sheet';
+  if (mode === 'no_choices') return path === 'direct' && !p.hasChoices && !meal ? 'direct' : 'sheet';
+  if (mode === 'no_required') return path === 'direct' ? 'direct' : 'sheet';
+  return onDefaults ? 'direct' : 'sheet';
+}
+
+/**
+ * A dish's "בקיוסק: פתיחת חלון" under the menu's `kioskOpen` ([block]): its own, else the nearest category's up
+ * the tree; null — as the kiosk (also with no block: an older cloud). pos-server kiosk_tap.py open_for.
+ */
+export function kioskOpenFor(
+  block: unknown,
+  productIds: readonly string[],
+  categoryId: string | null | undefined,
+  parentOf: (id: string) => string | null | undefined,
+): KioskOpen | null {
+  const isDict = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isDict(block)) return null;
+  const known = (v: unknown): v is KioskOpen => (KIOSK_OPEN_VALUES as unknown[]).includes(v);
+  const products = isDict(block.products) ? block.products : {};
+  const categories = isDict(block.categories) ? block.categories : {};
+  for (const id of productIds) if (known(products[id])) return products[id] as KioskOpen;
+  const seen = new Set<string>();
+  let current = categoryId ?? null;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    if (known(categories[current])) return categories[current] as KioskOpen;
+    current = parentOf(current) ?? null;
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------ "כפתור פרטים" (ⓘ, layout.infoButton) */

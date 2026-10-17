@@ -30,6 +30,36 @@ export interface ChannelRow {
   name: string;
   categoryId: string | null;
   appearsIn: Channel[];
+  /** "הערה בקיוסק" (lib/kioskNotes.ts): the product's own value; null — as its category. */
+  kioskNotes?: boolean | null;
+  /** "בקיוסק: פתיחת חלון": the product's own value; null — as its category / the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
+}
+
+/** "בקיוסק: פתיחת חלון" in bulk: as the kiosk (clears the product's own), always the window, straight in. */
+export type KioskOpenBulk = 'kiosk' | 'window' | 'direct';
+
+/** The bulk body for "בקיוסק: פתיחת חלון" (no channel changes). */
+export function kioskOpenBulkBody(
+  selection: { ids: string[] } | { allMatching: BulkFilter },
+  value: KioskOpenBulk,
+  dryRun: boolean,
+): { selection: { ids?: string[]; allMatching?: BulkFilter }; set: Record<string, never>; kioskOpen: KioskOpenBulk; dryRun: boolean } {
+  const base = bulkBody(selection, {}, dryRun);
+  return { selection: base.selection, set: {}, kioskOpen: value, dryRun };
+}
+
+/** "הערה בקיוסק" in bulk: allow, block, or back to the category's. */
+export type KioskNotesBulk = 'on' | 'off' | 'inherit';
+
+/** The bulk body for "הערה בקיוסק" (no channel changes). */
+export function kioskNotesBulkBody(
+  selection: { ids: string[] } | { allMatching: BulkFilter },
+  value: KioskNotesBulk,
+  dryRun: boolean,
+): { selection: { ids?: string[]; allMatching?: BulkFilter }; set: Record<string, never>; kioskNotes: KioskNotesBulk; dryRun: boolean } {
+  const base = bulkBody(selection, {}, dryRun);
+  return { selection: base.selection, set: {}, kioskNotes: value, dryRun };
 }
 
 /** Whether a row appears in a channel (an unknown value never does). */
