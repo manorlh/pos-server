@@ -20,16 +20,20 @@ import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Send, Trash2, Upload } from 'lucide-react';
+import { Eraser, Send, Trash2, Upload } from 'lucide-react';
 import {
   cancelAppReleaseAssignment,
   createAppReleaseAssignment,
+  deleteAppReleaseFile,
   fetchAppReleaseAssignments,
+  fetchAppReleaseCleanup,
+  fetchAppReleaseFileDeleteCheck,
   fetchAppReleaseRollout,
   fetchAppReleases,
   fetchCompanies,
   fetchShops,
   updateAppRelease,
+  runAppReleaseCleanup,
   updateAppReleaseAssignment,
   uploadAppRelease,
 } from '@/lib/api';
@@ -38,11 +42,18 @@ import { useAuth } from '@/lib/auth';
 import { formatDateTime } from '@/lib/format';
 import {
   APP_PLATFORMS,
+  CLEANUP_CONFIRM_WORD,
+  CLEANUP_DEFAULT_KEEP,
   allowsDowngrade,
   isWindowsPlatform,
   behindCounts,
+  canSend,
   checkInstallWindow,
+  cleanupConfirmed,
+  fileDeleteBlock,
   filterByPlatform,
+  newestActiveIds,
+  parseKeep,
   knownFallbackReason,
   onlyBehind,
   parseRolloutPercent,
@@ -57,12 +68,21 @@ import {
 import type {
   AppRelease,
   AppReleaseAssignment,
+  AppReleaseCleanupRow,
   AppReleaseRolloutRow,
   AppUpdateStatus,
   Company,
   Shop,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -137,6 +157,13 @@ function useAppUpdateErrorText() {
     if (code === 'invalid_bundle') return withMsg(t('invalidBundle'));
     if (code === 'bundle_version_mismatch') return withMsg(t('bundleVersionMismatch'));
     if (code === 'app_release_retired') return t('retired');
+    if (code === 'app_release_file_deleted') return t('fileDeleted');
+    if (code === 'app_release_has_assignments') return t('fileHasAssignments');
+    if (code === 'app_release_latest') return t('fileLatest');
+    if (code === 'app_release_not_retired') return t('fileNotRetired');
+    if (code === 'app_release_file_delete_failed') return t('fileDeleteFailed');
+    if (code === 'cleanup_confirm_required') return t('cleanupConfirmRequired');
+    if (code === 'keep_invalid') return t('keepInvalid');
     if (code?.endsWith('_not_found')) return t('targetNotFound');
     return axiosErrorToToastMessage(err, fallback);
   };
@@ -315,12 +342,21 @@ function ReleasesCard({
   const codeInvalid =
     !isWindows && !isKioskWeb && versionCode.trim() !== '' && !/^[1-9][0-9]*$/.test(versionCode.trim());
   const shown = filterByPlatform(releases, platform);
+  const newestIds = newestActiveIds(releases);
+  const [deleting, setDeleting] = useState<AppRelease | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle>{t('releasesTitle')}</CardTitle>
+        <Button size="sm" variant="outline" onClick={() => setCleanupOpen(true)}>
+          <Eraser className="h-4 w-4 ms-1" />
+          {t('cleanup.button')}
+        </Button>
       </CardHeader>
+      <FileDeleteDialog release={deleting} onClose={() => setDeleting(null)} />
+      <CleanupDialog open={cleanupOpen} platform={platform} onClose={() => setCleanupOpen(false)} />
       <CardContent className="space-y-4">
         <div className="space-y-3 rounded-lg border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -430,23 +466,28 @@ function ReleasesCard({
                 <TableHead>{t('notes')}</TableHead>
                 <TableHead>{t('assignments')}</TableHead>
                 <TableHead>{tc('active')}</TableHead>
+                <TableHead className="w-12">
+                  <span className="sr-only">{t('fileDelete.action')}</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={8}>
                     <Skeleton className="h-4 w-full" />
                   </TableCell>
                 </TableRow>
               ) : shown.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="py-6 text-center text-muted-foreground">
                     {t('noReleases')}
                   </TableCell>
                 </TableRow>
               ) : (
-                shown.map((r) => (
+                shown.map((r) => {
+                  const block = fileDeleteBlock(r, newestIds);
+                  return (
                   <TableRow key={r.id} className={cn(!r.isActive && 'text-muted-foreground')}>
                     <TableCell>
                       <div className="font-medium font-mono text-xs" dir="ltr">
@@ -464,8 +505,21 @@ function ReleasesCard({
                     <TableCell>
                       <PlatformBadge platform={r.platform} />
                     </TableCell>
-                    <TableCell className="tabular-nums" dir="ltr">
-                      {formatBytes(r.sizeBytes)}
+                    <TableCell className="tabular-nums">
+                      <span dir="ltr" className={cn(r.fileDeletedAt && 'line-through')}>
+                        {formatBytes(r.sizeBytes)}
+                      </span>
+                      {r.fileDeletedAt ? (
+                        <div>
+                          <Badge
+                            variant="outline"
+                            className="border-rose-300 text-rose-800 dark:border-rose-800 dark:text-rose-300"
+                            title={formatWhen(r.fileDeletedAt)}
+                          >
+                            {t('fileDelete.deletedBadge')}
+                          </Badge>
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-xs">{formatWhen(r.createdAt)}</TableCell>
                     <TableCell className="max-w-72 whitespace-pre-wrap text-xs">{r.notes ?? ''}</TableCell>
@@ -473,7 +527,7 @@ function ReleasesCard({
                     <TableCell>
                       <Switch
                         checked={r.isActive}
-                        disabled={toggle.isPending}
+                        disabled={toggle.isPending || !!r.fileDeletedAt}
                         onCheckedChange={() => {
                           if (r.isActive && !window.confirm(t('retireConfirm', { version: r.versionName }))) {
                             return;
@@ -482,14 +536,294 @@ function ReleasesCard({
                         }}
                       />
                     </TableCell>
+                    <TableCell>
+                      {block === 'deleted' ? null : (
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={t('fileDelete.action')}
+                          title={block ? t(`fileDelete.blocked.${block}`) : t('fileDelete.action')}
+                          disabled={block !== null}
+                          onClick={() => setDeleting(r)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Deleting old files ───────────────────────────────────────────────────────
+
+function invalidateReleases(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['app-releases'] });
+  qc.invalidateQueries({ queryKey: ['app-release-assignments'] });
+  qc.invalidateQueries({ queryKey: ['app-release-rollout'] });
+}
+
+/** A refusal code as the page's error text (the reasons the server lists). */
+function codeText(errorText: ReturnType<typeof useAppUpdateErrorText>, code: string): string {
+  return errorText({ response: { data: { detail: code } } }, code);
+}
+
+/** "מחיקת קובץ": the server's check first (guards + devices still on it), then one confirm. */
+function FileDeleteDialog({ release, onClose }: { release: AppRelease | null; onClose: () => void }) {
+  const t = useTranslations('appUpdates');
+  const tc = useTranslations('common');
+  const qc = useQueryClient();
+  const errorText = useAppUpdateErrorText();
+  const check = useQuery({
+    queryKey: ['app-release-file-check', release?.id],
+    queryFn: () => fetchAppReleaseFileDeleteCheck(release!.id),
+    enabled: release !== null,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteAppReleaseFile(release!.id, !!check.data?.needsRetire),
+    onSuccess: (out) => {
+      invalidateReleases(qc);
+      toast.success(t('fileDelete.done', { version: out.release.versionName, size: formatBytes(out.freedBytes) }));
+      onClose();
+    },
+    onError: (err: unknown) => toast.error(errorText(err, tc('error'))),
+  });
+  const data = check.data;
+
+  return (
+    <Dialog open={release !== null} onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('fileDelete.title', { version: release?.versionName ?? '' })}</DialogTitle>
+          <DialogDescription>{t('fileDelete.explain')}</DialogDescription>
+        </DialogHeader>
+        {check.isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : check.isError ? (
+          <p className="text-destructive text-sm">{errorText(check.error, tc('error'))}</p>
+        ) : data ? (
+          <div className="space-y-2 text-sm">
+            <p>
+              {t('fileDelete.size')}:{' '}
+              <span dir="ltr" className="tabular-nums">
+                {formatBytes(data.sizeBytes)}
+              </span>
+            </p>
+            {data.reasons.length > 0 ? (
+              <ul className="text-destructive list-disc ps-5">
+                {data.reasons.map((code) => (
+                  <li key={code}>{codeText(errorText, code)}</li>
+                ))}
+              </ul>
+            ) : null}
+            {data.allowed && data.needsRetire ? (
+              <p className="text-amber-700 dark:text-amber-400">{t('fileDelete.alsoRetire')}</p>
+            ) : null}
+            {data.devicesOnVersion > 0 ? (
+              <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                {t('fileDelete.devicesWarning', { count: data.devicesOnVersion })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {tc('cancel')}
+          </Button>
+          <Button variant="destructive" disabled={!data?.allowed || remove.isPending} onClick={() => remove.mutate()}>
+            <Trash2 className="h-4 w-4 ms-1" />
+            {remove.isPending
+              ? t('fileDelete.deleting')
+              : data?.needsRetire
+                ? t('fileDelete.confirmRetire')
+                : t('fileDelete.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function reasonsText(row: AppReleaseCleanupRow, errorText: ReturnType<typeof useAppUpdateErrorText>): string {
+  return row.reasons.map((code) => codeText(errorText, code)).join(' · ');
+}
+
+/**
+ * "ניקוי גרסאות ישנות": per platform keep the newest N (default 3) releases that still have
+ * their file; preview what goes (and the space it frees), confirm by typing "מחק".
+ */
+function CleanupDialog({
+  open,
+  platform,
+  onClose,
+}: {
+  open: boolean;
+  platform: PlatformFilter;
+  onClose: () => void;
+}) {
+  const t = useTranslations('appUpdates');
+  const tc = useTranslations('common');
+  const qc = useQueryClient();
+  const errorText = useAppUpdateErrorText();
+  const [keepText, setKeepText] = useState(String(CLEANUP_DEFAULT_KEEP));
+  const [typed, setTyped] = useState('');
+  const keep = parseKeep(keepText);
+  const only = platform === 'all' ? undefined : platform;
+  const preview = useQuery({
+    queryKey: ['app-release-cleanup', keep, only],
+    queryFn: () => fetchAppReleaseCleanup(keep as number, only),
+    enabled: open && keep !== null,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const ids = (preview.data?.platforms ?? []).flatMap((p) => p.delete.map((r) => r.releaseId));
+  const close = () => {
+    setTyped('');
+    onClose();
+  };
+  const run = useMutation({
+    mutationFn: () =>
+      runAppReleaseCleanup({ keep: keep as number, platform: only, releaseIds: ids, confirm: typed.trim() }),
+    onSuccess: (out) => {
+      invalidateReleases(qc);
+      qc.invalidateQueries({ queryKey: ['app-release-cleanup'] });
+      if (out.failed.length > 0) {
+        toast.warning(
+          t('cleanup.partial', { count: out.deleted.length, failed: out.failed.length, size: formatBytes(out.freedBytes) }),
+        );
+      } else {
+        toast.success(t('cleanup.done', { count: out.deleted.length, size: formatBytes(out.freedBytes) }));
+      }
+      close();
+    },
+    onError: (err: unknown) => toast.error(errorText(err, tc('error'))),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => (!o ? close() : undefined)}>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t('cleanup.title')}</DialogTitle>
+          <DialogDescription>{t('cleanup.explain')}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Label htmlFor="cleanup-keep">{t('cleanup.keep')}</Label>
+          <Input
+            id="cleanup-keep"
+            dir="ltr"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={50}
+            className="h-8 w-20"
+            value={keepText}
+            aria-invalid={keep === null || undefined}
+            onChange={(e) => setKeepText(e.target.value)}
+          />
+          <span className="text-muted-foreground text-xs">
+            {platform === 'all' ? t('cleanup.perPlatform') : t(`platforms.${platform}`)}
+          </span>
+        </div>
+        {keep === null ? <p className="text-destructive text-xs">{t('errors.keepInvalid')}</p> : null}
+        {preview.isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : preview.isError ? (
+          <p className="text-destructive text-sm">{errorText(preview.error, tc('error'))}</p>
+        ) : preview.data ? (
+          <div className="space-y-3">
+            {preview.data.platforms.length === 0 ? (
+              <p className="text-muted-foreground text-sm">{t('cleanup.nothing')}</p>
+            ) : (
+              preview.data.platforms.map((p) => (
+                <div key={p.platform} className="space-y-1 rounded-lg border p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <PlatformBadge platform={p.platform} />
+                    <span className="text-muted-foreground text-xs">
+                      {t('cleanup.platformSummary', {
+                        kept: p.kept.length,
+                        count: p.delete.length,
+                        size: formatBytes(p.totalBytes),
+                      })}
+                    </span>
+                  </div>
+                  {p.delete.length > 0 ? (
+                    <ul className="space-y-0.5 text-sm">
+                      {p.delete.map((r) => (
+                        <li key={r.releaseId} className="flex flex-wrap items-center gap-x-2">
+                          <span className="font-mono text-xs" dir="ltr">
+                            {r.versionName}
+                          </span>
+                          <span className="text-muted-foreground text-xs tabular-nums" dir="ltr">
+                            {formatBytes(r.sizeBytes)}
+                          </span>
+                          {r.isActive ? (
+                            <span className="text-amber-700 dark:text-amber-400 text-xs">{t('cleanup.willRetire')}</span>
+                          ) : null}
+                          {r.devicesOnVersion > 0 ? (
+                            <span className="text-amber-700 dark:text-amber-400 text-xs">
+                              {t('cleanup.devicesOn', { count: r.devicesOnVersion })}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {p.skipped.length > 0 ? (
+                    <ul className="text-muted-foreground space-y-0.5 text-xs">
+                      {p.skipped.map((r) => (
+                        <li key={r.releaseId}>
+                          <span className="font-mono" dir="ltr">
+                            {r.versionName}
+                          </span>{' '}
+                          — {t('cleanup.skipped')}: {reasonsText(r, errorText)}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ))
+            )}
+            <p className="text-sm font-medium">
+              {t('cleanup.total', { count: preview.data.totalCount, size: formatBytes(preview.data.totalBytes) })}
+            </p>
+            {preview.data.totalCount > 0 ? (
+              <div className="space-y-1">
+                <Label htmlFor="cleanup-confirm">{t('cleanup.typeToConfirm', { word: CLEANUP_CONFIRM_WORD })}</Label>
+                <Input
+                  id="cleanup-confirm"
+                  className="max-w-40"
+                  value={typed}
+                  autoComplete="off"
+                  onChange={(e) => setTyped(e.target.value)}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            {tc('cancel')}
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={ids.length === 0 || !cleanupConfirmed(typed) || keep === null || run.isPending}
+            onClick={() => run.mutate()}
+          >
+            <Trash2 className="h-4 w-4 ms-1" />
+            {run.isPending ? t('fileDelete.deleting') : t('cleanup.run', { count: ids.length })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -509,10 +843,8 @@ function SendCard({ releases, platform }: { releases: AppRelease[]; platform: Pl
   const [windowStart, setWindowStart] = useState('');
   const [windowEnd, setWindowEnd] = useState('');
 
-  const active = filterByPlatform(
-    releases.filter((r) => r.isActive),
-    platform,
-  );
+  // A release whose file was deleted can never be sent again.
+  const active = filterByPlatform(releases.filter(canSend), platform);
   const release = active.find((r) => r.id === releaseId) ?? null;
   const releasePlatform = release ? platformOf(release) : null;
   const isWindows = isWindowsPlatform(releasePlatform);

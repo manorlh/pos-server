@@ -243,6 +243,10 @@ app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
 app.include_router(till_parameters_router.router, prefix=_prefix)
 app.include_router(app_releases_router.router, prefix=_prefix)
+# "מחיקת קובץ" / "ניקוי גרסאות ישנות" (app/routers/app_release_files.py): old release files, super admin.
+from app.routers import app_release_files as app_release_files_router  # noqa: E402
+
+app.include_router(app_release_files_router.router, prefix=_prefix)
 # "התקנת גשר ל-Windows" (app/routers/windows_bridge.py, docs/SPEC_KIOSK.md §28): the installer for machine admins.
 from app.routers import windows_bridge as windows_bridge_router  # noqa: E402
 

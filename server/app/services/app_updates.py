@@ -222,6 +222,8 @@ def resolve_assignment(
     for assignment, release in rows:
         if assignment.cancelled_at is not None or not release.is_active:
             continue
+        if getattr(release, "file_deleted_at", None) is not None:  # its file was deleted
+            continue
         if release_platform(release) != platform:
             continue
         position = rank.get((assignment.level, as_uuid(assignment.target_id)))
@@ -302,6 +304,7 @@ def _rows_on_chains(db: Session, chains: Sequence[MachineChain]) -> List[Resolve
         .filter(
             AppReleaseAssignment.cancelled_at.is_(None),
             AppRelease.is_active.is_(True),
+            AppRelease.file_deleted_at.is_(None),
             or_(*predicates),
         )
         .all()
@@ -348,11 +351,12 @@ def resolved_for_machines(
 
 
 def newest_releases(db: Session) -> Dict[str, AppRelease]:
-    """Per platform, its newest active release (highest versionCode, then the latest upload)."""
+    """Per platform, its newest active release (highest versionCode, then the latest upload)
+    whose file is still kept."""
     out: Dict[str, AppRelease] = {}
     for release in (
         db.query(AppRelease)
-        .filter(AppRelease.is_active.is_(True))
+        .filter(AppRelease.is_active.is_(True), AppRelease.file_deleted_at.is_(None))
         .order_by(AppRelease.version_code.desc(), AppRelease.created_at.desc())
         .all()
     ):
