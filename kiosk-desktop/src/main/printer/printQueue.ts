@@ -9,9 +9,10 @@
 
 import { currentLook, type PrinterSeen } from '../../core/printerPaper';
 import { randomUUID } from 'node:crypto';
-import { centreOn, job, receiptContentWidth, RASTER_80MM, toMono, trimBottom, type MonoBitmap } from '../../core/escpos';
+import { centreOn, job, printerRaster, receiptContentWidth, toMono, trimBottom, type MonoBitmap } from '../../core/escpos';
 import type { PrintDoc } from '../../core/printDocs';
 import type { Db } from '../db/sqlite';
+import { printerKey, withPrinter } from './printerLock';
 import type { PrinterHealth, PrinterTarget, Transport } from './transports';
 
 export type JobStatus = 'queued' | 'sending' | 'sent' | 'failed';
@@ -53,7 +54,8 @@ export class PrintQueue {
   constructor(
     private readonly db: Db,
     private readonly transport: Transport,
-    private readonly target: () => PrinterTarget,
+    /** Where a page of a kind goes (the device's printer, or the bons' / item tickets' own — main/service.ts targetFor). */
+    private readonly target: (kind?: JobKind) => PrinterTarget,
     private renderer: PageRenderer | null,
     private readonly log: (m: string) => void = () => undefined,
   ) {}
@@ -147,8 +149,9 @@ export class PrintQueue {
         this.db.run("UPDATE print_jobs SET status = 'sending', attempts = attempts + 1, updated_at = ? WHERE id = ?", Date.now(), next.id);
         this.emit();
         try {
-          const bytes = await this.bytesOf(JSON.parse(next.doc) as PrintDoc);
-          await this.transport.send(this.target(), bytes);
+          const target = this.target(next.kind);
+          const bytes = await this.bytesFor(JSON.parse(next.doc) as PrintDoc, target);
+          await withPrinter(printerKey(target), () => this.transport.send(target, bytes, { page: true }));
           this.db.run("UPDATE print_jobs SET status = 'sent', last_error = NULL, updated_at = ? WHERE id = ?", Date.now(), next.id);
           this.lastOkAt = Date.now();
         } catch (e) {
@@ -156,12 +159,16 @@ export class PrintQueue {
           this.log(`print ${next.kind}: ${msg}`);
           const attempts = next.attempts + 1;
           const health = await this.transport
-            .status(this.target())
+            .status(this.target(next.kind))
             .then((s) => s.health)
             .catch(() => 'unknown' as PrinterHealth);
           this.lastFailure = { at: Date.now(), error: msg, health: health === 'ok' ? 'error' : health };
-          this.db.run('UPDATE print_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?', attempts >= MAX_ATTEMPTS ? 'failed' : 'queued', msg.slice(0, 500), Date.now(), next.id);
-          if (attempts < MAX_ATTEMPTS) {
+          // The paper ran out on it (it may be on paper, cut short): an item ticket is exchanged for goods — never again by
+          // itself (a person reprints it, marked "הדפסה חוזרת"); any other page is tried again, as a failure.
+          const uncertain = e instanceof Error && e.name === 'PrintUncertain';
+          const final = attempts >= MAX_ATTEMPTS || (uncertain && next.kind === 'ticket');
+          this.db.run('UPDATE print_jobs SET status = ?, last_error = ?, updated_at = ? WHERE id = ?', final ? 'failed' : 'queued', msg.slice(0, 500), Date.now(), next.id);
+          if (!final) {
             this.emit();
             await new Promise((r) => setTimeout(r, 1_500 * attempts));
           }
@@ -173,13 +180,22 @@ export class PrintQueue {
     }
   }
 
-  /** A document → ESC/POS: drawn, 1-bit by the till's threshold, centred on 576, cut. */
+  /**
+   * A document → ESC/POS: drawn at the printer's width ("רוחב הדפסה", 576 unless set — a 512 / 432 / 384-dot head would cut a
+   * 576 picture), 1-bit by the till's threshold, centred on that raster, cut.
+   */
   async bytesOf(doc: PrintDoc): Promise<Uint8Array> {
+    return this.bytesFor(doc, this.target());
+  }
+
+  /** [doc] as ESC/POS for [target] (its width). */
+  async bytesFor(doc: PrintDoc, target: PrinterTarget): Promise<Uint8Array> {
     if (!this.renderer) throw new Error('no renderer');
-    const width = doc.kind === 'bon' ? RASTER_80MM : receiptContentWidth(RASTER_80MM);
+    const raster = printerRaster(target.widthDots);
+    const width = doc.kind === 'bon' ? raster : receiptContentWidth(raster);
     const page = await this.renderer(doc, width);
     const mono: MonoBitmap = trimBottom(toMono(page.rgba, page.width, page.height), 24);
-    return job(centreOn(mono, RASTER_80MM), { cut: true });
+    return job(centreOn(mono, raster), { cut: true });
   }
 
   /**

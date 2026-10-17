@@ -5,7 +5,7 @@ import globals from 'globals';
 
 export default tseslint.config(
   // legacy/: the Windows 7 build's own package (node_modules, its dist / dist-check / release outputs).
-  { ignores: ['dist/**', 'release/**', 'node_modules/**', 'build/**', 'legacy/node_modules/**', 'legacy/dist/**', 'legacy/dist-check/**', 'legacy/release/**'] },
+  { ignores: ['dist/**', 'release/**', 'node_modules/**', 'build/**', 'legacy/node_modules/**', 'legacy/dist/**', 'legacy/dist-check/**', 'dist-e2e/**', 'legacy/dist-e2e/**', 'legacy/release/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

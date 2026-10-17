@@ -30,11 +30,77 @@ function font(ctx: Ctx, size: number, weight: number | 'bold' | 'normal' = 'norm
   ctx.font = `${w} ${size}px ${FONT}`;
 }
 
+/* ------------------------------------------------- Chromium 108 (the Windows 7 build, Electron 22) */
+
+/** Chromium's major version: the Windows 7 build draws with 108, the standard one with a current one. */
+const CHROME_MAJOR = Number(/Chrome\/(\d+)/.exec(typeof navigator !== 'undefined' ? navigator.userAgent : '')?.[1] ?? 0);
+/**
+ * Chromium 108 draws regular-weight text lighter (thinner stems): through the till's 1-bit threshold, small Hebrew lost
+ * parts of its letters ("הרצליה" printed as "הר צ'ליה"). There a regular text gets a hairline stroke over its fill.
+ */
+const THIN_TEXT = CHROME_MAJOR > 0 && CHROME_MAJOR < 120;
+const HAIRLINE = 0.5;
+
+let isolates: boolean | null = null;
+/**
+ * Whether this canvas honours the bidi isolates (U+2066…2069) every number and label is wrapped in (core/money.ts `ltr`) —
+ * Chromium 108's does not: "K-1" in a right-to-left line printed "1-K". Asked once, by drawing both ways.
+ */
+function isolatesHonoured(): boolean {
+  if (isolates !== null) return isolates;
+  const draw = (text: string) => {
+    const c = document.createElement('canvas');
+    c.width = 80;
+    c.height = 24;
+    const x = c.getContext('2d')!;
+    x.direction = 'rtl';
+    x.font = '700 18px Arial';
+    x.fillText(text, 78, 19);
+    return x.getImageData(0, 0, 80, 24).data;
+  };
+  const a = draw('\u2066K-1\u2069');
+  const b = draw('\u202AK-1\u202C');
+  isolates = a.length === b.length && a.every((v, i) => v === b[i]);
+  return isolates;
+}
+
+/** [text] as this canvas lays it out right: isolates as the embeddings older bidi code knows (LRE / RLE … PDF). */
+export function bidiForCanvas(text: string, honoured: boolean): string {
+  if (honoured || !/[\u2066-\u2069]/.test(text)) return text;
+  return text.replace(/[\u2066\u2068]/g, '\u202A').replace(/\u2067/g, '\u202B').replace(/\u2069/g, '\u202C');
+}
+
+/** The context's text drawing with the two fixes above (none of them on a current Chromium). */
+function legacySafe(ctx: Ctx): Ctx {
+  const honoured = isolatesHonoured();
+  if (honoured && !THIN_TEXT) return ctx;
+  const fill = ctx.fillText.bind(ctx);
+  const measure = ctx.measureText.bind(ctx);
+  ctx.fillText = (text: string, x: number, y: number, maxWidth?: number) => {
+    const t = bidiForCanvas(text, honoured);
+    if (maxWidth === undefined) fill(t, x, y);
+    else fill(t, x, y, maxWidth);
+    if (THIN_TEXT && !/(bold|bolder|[5-9]00)/.test(ctx.font) && ctx.fillStyle === '#000000') {
+      const lw = ctx.lineWidth;
+      const ss = ctx.strokeStyle;
+      ctx.lineWidth = HAIRLINE;
+      ctx.strokeStyle = '#000000';
+      ctx.setLineDash([]);
+      if (maxWidth === undefined) ctx.strokeText(t, x, y);
+      else ctx.strokeText(t, x, y, maxWidth);
+      ctx.lineWidth = lw;
+      ctx.strokeStyle = ss;
+    }
+  };
+  ctx.measureText = (text: string) => measure(bidiForCanvas(text, honoured));
+  return ctx;
+}
+
 function canvas(w: number, h: number): { c: HTMLCanvasElement; ctx: Ctx } {
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(w));
   c.height = Math.max(1, Math.round(h));
-  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  const ctx = legacySafe(c.getContext('2d', { willReadFrequently: true })!);
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, c.width, c.height);
   ctx.fillStyle = '#000000';
