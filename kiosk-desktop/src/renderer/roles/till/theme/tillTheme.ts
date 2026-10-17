@@ -35,7 +35,8 @@ export function tillTokens(s: PosScheme): Record<string, string> {
     '--t-danger': s.error,
     '--t-danger-soft': s.errorContainer,
     '--t-off': s.dark ? '#636366' : '#AEAEB2',
-    '--t-off-soft': s.surfaceContainerHigh,
+    // A step under the grouped grey, light enough for the secondary label on it (4.5:1).
+    '--t-off-soft': s.dark ? s.surfaceContainerHigh : '#EFEFF4',
   };
 }
 

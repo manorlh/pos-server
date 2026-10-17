@@ -213,7 +213,7 @@ export const ALLOW = [
   // brand when the cloud sets none) as a fill under white (4.0:1) and as text on the grouped grey (3.6:1) — exactly what the
   // Android till draws; a brand colour from the cloud repaints both alike.
   {
-    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge, .t-root .t-key-bare, .t-root .t-lock-hello, .t-root .t-pay-details-toggle, .t-root .t-tile-info-dot, .t-root .t-tile-count',
+    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge, .t-root .t-key-bare, .t-root .t-lock-hello, .t-root .t-pay-details-toggle, .t-root .t-tile-info-dot, .t-root .t-tile-count, .t-root .t-cart-bar, .t-root .t-ch-chip-on, .t-root .t-ch-pill, .t-root .t-ch-price, .t-root .t-ch-close, .t-root .t-ch-pre, .t-root .t-alert-group-name, .t-root .vbal-type',
     rules: ['contrast'],
     reason: "the Android till's brand colour (iOS blue) as Android draws it",
   },

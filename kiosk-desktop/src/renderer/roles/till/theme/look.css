@@ -279,7 +279,7 @@
 
 .t-tile-badge {
   z-index: 2;
-  bottom: 40px;
+  bottom: 9px;
   right: 9px;
   left: auto;
   border-radius: 4px;
@@ -1481,7 +1481,23 @@
   font-weight: 400;
 }
 
-.t-report-body > section,
-.t-list {
-  background: var(--pos-container-high);
+.t-sell-single .t-catalog {
+  overflow-y: auto;
+}
+
+/* Heebo's tall ascenders: the stacked short lines of a row get a little more line. */
+.t-shopz-name p {
+  line-height: 1.45;
+}
+
+/* A dialog's parts keep their height (it scrolls instead): a 48 dp field never squeezed under the list after it. */
+.t-dialog > * {
+  flex-shrink: 0;
+}
+
+.t-dialog > .t-input {
+  display: block;
+  margin: 4px 0 8px;
+  box-sizing: border-box;
+  width: 100%;
 }
