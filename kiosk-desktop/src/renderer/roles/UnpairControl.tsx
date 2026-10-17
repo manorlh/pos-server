@@ -10,7 +10,21 @@ import { FOREIGN_TEXT, UNPAIR_TEXT, type UnpairCheck } from '../../core/unpairGu
 import type { TechnicianActionResult, TechnicianInfo } from '../../shared/bridge';
 import { kiosk } from '../bridge';
 
-export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: { label: string; buttonClassName: string; buttonStyle?: React.CSSProperties; onDone?: () => void }) {
+export function UnpairControl({
+  label,
+  buttonClassName,
+  buttonStyle,
+  onDone,
+  deviceLine,
+}: {
+  label: string;
+  buttonClassName: string;
+  buttonStyle?: React.CSSProperties;
+  onDone?: () => void;
+  /** "המכשיר הזה הוא קופה 3 · סניף X" — asked before the unpair goes (P:/specs/foreign-records-upload.md §1). */
+  deviceLine?: string | null;
+}) {
+  const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [check, setCheck] = useState<UnpairCheck | null>(null);
@@ -34,6 +48,7 @@ export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: {
   };
 
   const start = () => {
+    setAsking(false);
     setForcing(false);
     setConfirm(false);
     setConfirmMoney(false);
@@ -44,9 +59,23 @@ export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: {
 
   return (
     <div className="space-y-2">
-      <button type="button" disabled={busy} className={buttonClassName} style={buttonStyle} onClick={start}>
+      <button type="button" disabled={busy} className={buttonClassName} style={buttonStyle} onClick={() => (deviceLine ? setAsking(true) : start())}>
         {busy ? '…' : label}
       </button>
+      {asking ? (
+        <div className="space-y-2 rounded-lg border border-red-300 bg-white p-3 text-xs text-neutral-900" data-unpair-confirm>
+          <div className="font-bold">{deviceLine}</div>
+          <div>לנתק את המכשיר מהענן? אחרי הניתוק יוצג במסך הצימוד לאיזו קופה הוא היה מצומד.</div>
+          <div className="flex gap-2">
+            <button type="button" className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40" disabled={busy} onClick={start}>
+              כן, לנתק
+            </button>
+            <button type="button" className="rounded-lg bg-neutral-200 px-3 py-1.5 text-xs font-bold text-neutral-900" onClick={() => setAsking(false)}>
+              ביטול
+            </button>
+          </div>
+        </div>
+      ) : null}
       {result ? (
         <div
           role={result.ok ? 'status' : 'alert'}

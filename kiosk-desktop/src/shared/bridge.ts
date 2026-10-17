@@ -14,6 +14,7 @@ import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import type { BatteryAlertView } from '../core/batteryAlerts';
 import type { UnpairCheck } from '../core/unpairGuard';
+import type { LastPairing } from '../core/pairingMemory';
 import type { CloseDayKind } from '@dash-lib/shopActive';
 
 export type KioskPhase = 'unpaired' | 'waiting' | 'kiosk';
@@ -470,7 +471,14 @@ export interface TechnicianInfo {
    * "רשומות מהמכשיר הקודם (N) — לא נשלחו, נשמרו בגיבוי": outbox rows made under another pairing (a forced unpair, then a
    * pairing to another machine) — held, never sent here; they go again only if the device is paired to their machine.
    */
-  foreignRows?: { count: number; title: string; lines: string[]; machineIds: string[] } | null;
+  foreignRows?: {
+    count: number;
+    title: string;
+    lines: string[];
+    machineIds: string[];
+    /** Per previous till (§4): its rows still here, uploaded to it so far, refused for good, a whole-request refusal. */
+    machines?: Array<{ machineId: string; label: string; held: number; uploaded: number; refused: number; error: string | null }>;
+  } | null;
   deviceRole: string | null;
   /** "סוג רישיון" (core/deviceLicense.ts): the product, "סוג רישיון: …", and the mismatch warning; null — none said. */
   license?: { product: string; label: string | null; info: string | null; warning: string | null } | null;
@@ -654,7 +662,14 @@ export interface DisplayScaleView {
  * The pairing's answer: done — with "המכשיר הוגדר: קיוסק · סוג רישיון: קיוסק בלבד" (`notice`) and, when the license does
  * not fit the role it opened in, its warning (core/deviceLicense.ts) — or the cloud's refusal in Hebrew.
  */
-export type PairOutcome = { ok: true; notice?: string | null; warning?: string | null } | { ok: false; error: string };
+export type PairOutcome = { ok: true; notice?: string | null; warning?: string | null } | { ok: false; error: string; confirm?: string };
+
+export type PairingScreenAction = { type: 'view' } | { type: 'cloudStart'; serverUrl: string } | { type: 'cloudStop' };
+
+export interface PairingScreenView {
+  lastPairing: LastPairing | null;
+  cloud: { phase: 'idle' | 'starting' | 'waiting' | 'unsupported' | 'error' | 'paired'; serverUrl: string | null; code: string | null; codeExpiresAt: string | null; error: string | null };
+}
 
 export interface KioskEvents {
   view: KioskView;
@@ -665,7 +680,10 @@ export interface KioskEvents {
 /** What the screens may ask (ipcRenderer.invoke under the hood). */
 export interface KioskBridge {
   bootstrap(): Promise<KioskView>;
-  pair(input: { serverUrl: string; code: string; machineName: string }): Promise<PairOutcome>;
+  /** `confirmMachine`: the answer to "המכשיר הזה היה קופה 5 — לצמד אותו כקופה 3?" (a bound code, §5.2). */
+  pair(input: { serverUrl: string; code: string; machineName: string; confirmMachine?: boolean }): Promise<PairOutcome>;
+  /** The pairing screen (§5.1, §6.1): the last pairing's card, the pairing from the cloud (start / stop / its state). */
+  pairingScreen?(action?: PairingScreenAction): Promise<PairingScreenView>;
   reportFlow(input: { flowState: string; screen: string; busy: boolean; idle: boolean }): void;
   /** "ביצועי קיוסקים": the funnel's events (core/kioskFunnel.ts), kept and sent to the cloud by the service. */
   funnel?(events: FunnelEvent[]): void;

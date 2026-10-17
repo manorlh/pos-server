@@ -21,6 +21,7 @@ import { updateLine } from '../roles/updateText';
 import { DesktopExitMenuButton } from '../desktop/DesktopExit';
 import { answered, Btn, NoteBar, Panel, PinPad, Shell, SynqpayPairing, time } from '../staff/staffParts';
 import { ForeignRowsPanel, UnpairControl } from '../roles/UnpairControl';
+import { deviceLine } from '../../core/pairingMemory';
 
 const LIGHT: Record<TechLightView, string> = { ok: '#16A34A', warn: '#D97706', bad: '#DC2626', unknown: '#9CA3AF' };
 const dateTime = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'אף פעם');
@@ -409,6 +410,7 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
           buttonClassName="min-w-[var(--k-target,0px)] px-3 py-1.5 text-xs font-bold disabled:opacity-40"
           buttonStyle={{ background: '#DC2626', color: '#fff', borderRadius: 8 }}
           onDone={refresh}
+          deviceLine={info?.machine ? deviceLine({ posNumber: info.machine.posNumber ?? null, machineName: info.machine.name, machineId: info.machine.machineId, shopName: info.shopName ?? info.machine.shopName }) : null}
         />
       </section>
 
