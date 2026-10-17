@@ -29,6 +29,7 @@ import { errorCodeOf } from '@/lib/workflowMode';
 import type { KdsBoardScope } from '@/lib/kdsApi';
 import { BoardScopeFields, scopeIsWholeShop } from './board-scope-fields';
 import { DesignCell, ScreenDesignDialog } from './screen-design';
+import { PrintCell, ScreenPrintDialog } from './screen-print';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -73,6 +74,7 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
   const tillLabel = useTillLabel();
   const [dialog, setDialog] = useState<{ device: KdsDevice | null } | null>(null);
   const [design, setDesign] = useState<KdsDevice | null>(null);
+  const [printing, setPrinting] = useState<KdsDevice | null>(null);
   const td = useTranslations('kds.page.devices.dialog.scope');
 
   const machines = new Map(overview.machines.map((m) => [m.id, m]));
@@ -131,6 +133,7 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
                 <TableHead>{t('columns.role')}</TableHead>
                 <TableHead>{t('columns.stations')}</TableHead>
                 <TableHead>{tDesign('screenButton')}</TableHead>
+                <TableHead>הדפסה</TableHead>
                 <TableHead>{tc('status')}</TableHead>
                 <TableHead>{t('columns.lastSeen')}</TableHead>
                 <TableHead className="w-24" />
@@ -184,6 +187,10 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
                     <DesignCell device={d} canEdit={overview.canEdit} onEdit={() => setDesign(d)} />
                   </TableCell>
                   <TableCell>
+                    {/* "איך המסך מדפיס" (SPEC_KDS §17): ללא / דרך קופה בסניף / גשר / האפליקציה. */}
+                    <PrintCell device={d} canEdit={overview.canEdit} onEdit={() => setPrinting(d)} />
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={d.isActive ? 'secondary' : 'outline'}>
                       {d.isActive ? tc('active') : tc('inactive')}
                     </Badge>
@@ -223,6 +230,7 @@ export function DevicesSection({ shopId, overview }: { shopId: string; overview:
         </div>
       )}
 
+      {printing ? <ScreenPrintDialog key={printing.id} shopId={shopId} device={printing} onClose={() => setPrinting(null)} /> : null}
       {design ? <ScreenDesignDialog key={design.id} shopId={shopId} overview={overview} device={design} onClose={() => setDesign(null)} /> : null}
       {dialog ? (
         <DeviceDialog

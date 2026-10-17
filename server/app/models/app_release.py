@@ -44,7 +44,10 @@ class AppRelease(Base):
     upload, and the device verifies the hash before installing.
 
     Retired (`is_active` false), never deleted: a till's status rows keep pointing at it,
-    and a retired release is simply not offered to anyone any more.
+    and a retired release is simply not offered to anyone any more. Its stored FILE may be
+    deleted ("מחיקת קובץ", app/services/app_release_files.py): the row stays for history,
+    `file_deleted_at` / `file_deleted_by` say when and by whom, and a release without its
+    file is never offered, downloaded, assigned or reinstated again.
     """
 
     __tablename__ = "app_releases"
@@ -79,6 +82,33 @@ class AppRelease(Base):
     uploaded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    #: The stored file was deleted (super admin, "מחיקת קובץ"): when, and by whom. Null while
+    #: the file is kept. `file_path` keeps naming where it was.
+    file_deleted_at = Column(DateTime(timezone=True), nullable=True)
+    file_deleted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+
+class AppReleaseFileDeletion(Base):
+    """
+    Audit: one row per deleted release file — who, when, what it freed, whether the release
+    was retired in the same confirm, how many devices still reported running that version,
+    and whether the file was still in storage (`deleted`) or already gone (`already_missing`).
+    """
+
+    __tablename__ = "app_release_file_deletions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    release_id = Column(UUID(as_uuid=True), ForeignKey("app_releases.id"), nullable=False, index=True)
+    platform = Column(String(16), nullable=False)
+    version_name = Column(String(64), nullable=False)
+    size_bytes = Column(BigInteger, nullable=False, default=0, server_default="0")
+    #: "single" (the row's trash icon) | "cleanup" ("ניקוי גרסאות ישנות").
+    mode = Column(String(16), nullable=False, default="single", server_default="single")
+    retired = Column(Boolean, nullable=False, default=False, server_default="false")
+    devices_on_version = Column(Integer, nullable=False, default=0, server_default="0")
+    storage_result = Column(String(32), nullable=False)
+    deleted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class AppReleaseAssignment(Base):

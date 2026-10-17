@@ -2012,6 +2012,12 @@ from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ON
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
 
+# "איך המסך מדפיס" (app/services/kds_print.py): a kitchen screen / the board in a browser prints through a till
+# of the shop (the cloud relay), the Windows bridge, or the app's own printer; and which till / printer.
+from app.services.kds_print import PARAMETER_SPECS as _KDS_PRINT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KDS_PRINT_SPECS)
+
 # "העברת שרת מקומי מהקופה" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §9):
 # `off` — the cloud only (the till's take-over answers 410); `manager` — the till's own button, a
 # manager approving, the same full move as the dashboard's switch.
@@ -2640,6 +2646,14 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         try:
             return kiosk_till_mode.clean_value(key, value)
         except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+
+    from app.services import kds_print
+
+    if key in (kds_print.HOST_KEY, kds_print.PRINTER_KEY) and value is not None:
+        try:
+            return kds_print.clean_value(key, value)
+        except kds_print.KdsPrintValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
 
     if key == kiosk_technician.TECHNICIAN_CODE_KEY and value is not None:

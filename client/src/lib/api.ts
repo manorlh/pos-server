@@ -32,6 +32,10 @@ import type {
   AppPlatform,
   AppRelease,
   AppReleaseAssignment,
+  AppReleaseCleanupPreview,
+  AppReleaseCleanupResult,
+  AppReleaseFileDeleteCheck,
+  AppReleaseFileDeleteResult,
   AppReleaseLevel,
   AppReleaseRolloutRow,
   StockLevel,
@@ -1269,6 +1273,40 @@ export async function updateAppRelease(
   body: { notes?: string | null; isActive?: boolean },
 ): Promise<AppRelease> {
   const { data } = await api.patch<AppRelease>(`/app-releases/${id}`, body);
+  return data;
+}
+
+/** "מחיקת קובץ": may the release's file be deleted, and how many devices still run it. */
+export async function fetchAppReleaseFileDeleteCheck(id: string): Promise<AppReleaseFileDeleteCheck> {
+  const { data } = await api.get<AppReleaseFileDeleteCheck>(`/app-releases/${id}/file-delete-check`, {
+    params: { retire: true },
+  });
+  return data;
+}
+
+/** Delete the release's stored file (the row stays); `retire` retires an active one in the same confirm. */
+export async function deleteAppReleaseFile(id: string, retire: boolean): Promise<AppReleaseFileDeleteResult> {
+  const { data } = await api.delete<AppReleaseFileDeleteResult>(`/app-releases/${id}/file`, {
+    params: { retire },
+  });
+  return data;
+}
+
+/** "ניקוי גרסאות ישנות" preview: per platform what is kept, deleted and skipped. */
+export async function fetchAppReleaseCleanup(keep: number, platform?: AppPlatform): Promise<AppReleaseCleanupPreview> {
+  const { data } = await api.get<AppReleaseCleanupPreview>('/app-releases/file-cleanup', {
+    params: { keep, ...(platform ? { platform } : {}) },
+  });
+  return data;
+}
+
+export async function runAppReleaseCleanup(body: {
+  keep: number;
+  platform?: AppPlatform;
+  releaseIds: string[];
+  confirm: string;
+}): Promise<AppReleaseCleanupResult> {
+  const { data } = await api.post<AppReleaseCleanupResult>('/app-releases/file-cleanup', body);
   return data;
 }
 
