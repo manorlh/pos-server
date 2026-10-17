@@ -22,6 +22,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { createKiosk, fetchKioskCandidates, type KioskSummary } from '@/lib/kioskApi';
 import type { PosMachine, Shop } from '@/lib/types';
 import { OptionSelect } from './fields';
+import { ControllerSourceSelect, type ControllerSourceChoice } from './controller-source';
 
 /** Tills that may control a kiosk: the same company's, not itself, not a kiosk. */
 export function controllerOptions(
@@ -64,6 +65,7 @@ export function ConvertDialog({
   const [name, setName] = useState('');
   const [controllers, setControllers] = useState<string[]>([]);
   const [lockDevice, setLockDevice] = useState(true);
+  const [source, setSource] = useState<ControllerSourceChoice>('');
 
   const candidates = useQuery({
     queryKey: ['kiosk-candidates', shopId],
@@ -85,6 +87,7 @@ export function ConvertDialog({
         name: name.trim() || undefined,
         controllerMachineIds: controllers,
         lockDevice,
+        ...(source ? { controllerSource: source } : {}),
       }),
     onSuccess: (k) => {
       toast.success(t('created'));
@@ -153,6 +156,14 @@ export function ConvertDialog({
             />
             <p className="text-xs text-muted-foreground">{t('controllersHint')}</p>
           </div>
+
+          <ControllerSourceSelect
+            id="kiosk-convert-controller-source"
+            value={source}
+            onChange={setSource}
+            disabled={!candidate}
+            hasArea={candidate ? machines.some((m) => m.id === candidate.machineId && !!m.areaId) : null}
+          />
 
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-0.5 h-4 w-4" checked={lockDevice} onChange={(e) => setLockDevice(e.target.checked)} />

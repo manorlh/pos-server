@@ -49,6 +49,7 @@ import {
 import type { PosMachine, Shop } from '@/lib/types';
 import { agoText, ConnectionBadge, ModeBadge, StateBadges } from './kiosk-list';
 import { controllerOptions } from './convert-dialog';
+import { ControllerSourceSelect, type ControllerSourceChoice } from './controller-source';
 import { KioskLockControls, KioskScheduleControls } from './kiosk-lock-schedule';
 import { KioskOpsNotes, KioskTerminalIdentityNote } from './kiosk-ops-notes';
 import { KioskZActions, KioskZBadge, KioskZModeSwitch } from './kiosk-z-actions';
@@ -132,13 +133,23 @@ function DetailsForm({
   const [name, setName] = useState(kiosk.name);
   const [enabled, setEnabled] = useState(kiosk.enabled);
   const [controllers, setControllers] = useState<string[]>(kiosk.controllerMachineIds ?? []);
+  // "שליטה מקופות" on the kiosk itself ('' — by the levels above).
+  const [source, setSource] = useState<ControllerSourceChoice>(kiosk.controllerSourceOwn ?? '');
+  const sourceChanged = source !== (kiosk.controllerSourceOwn ?? '');
   const dirty =
     name.trim() !== kiosk.name ||
     enabled !== kiosk.enabled ||
+    sourceChanged ||
     JSON.stringify([...controllers].sort()) !== JSON.stringify([...(kiosk.controllerMachineIds ?? [])].sort());
 
   const save = useMutation({
-    mutationFn: () => updateKiosk(kiosk.machineId, { name: name.trim(), enabled, controllerMachineIds: controllers }),
+    mutationFn: () =>
+      updateKiosk(kiosk.machineId, {
+        name: name.trim(),
+        enabled,
+        controllerMachineIds: controllers,
+        ...(sourceChanged ? { controllerSource: source || 'inherit' } : {}),
+      }),
     onSuccess: () => {
       toast.success(t('saved'));
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
@@ -181,6 +192,15 @@ function DetailsForm({
         />
         <p className="text-xs text-muted-foreground">{t('controllersHint')}</p>
       </div>
+      <ControllerSourceSelect
+        id={`kiosk-controller-source-${kiosk.machineId}`}
+        value={source}
+        onChange={setSource}
+        disabled={!canWrite}
+        inherited={kiosk.controllerSourceOwn ? null : kiosk.controllerSource ?? null}
+        hasArea={!!kiosk.areaId}
+        areaTills={(kiosk.areaControllers ?? []).map((c) => c.name ?? c.machineId)}
+      />
       {canWrite ? (
         <div className="flex justify-end">
           <Button size="sm" disabled={!dirty || !name.trim() || save.isPending} onClick={() => save.mutate()}>
@@ -342,7 +362,7 @@ export function KioskDetailDialog({
           </div>
         </section>
 
-        <DetailsForm key={`${kiosk.machineId}:${kiosk.name}:${kiosk.enabled}:${(kiosk.controllerMachineIds ?? []).join(',')}`} kiosk={kiosk} options={options} canWrite={canWrite} />
+        <DetailsForm key={`${kiosk.machineId}:${kiosk.name}:${kiosk.enabled}:${(kiosk.controllerMachineIds ?? []).join(',')}:${kiosk.controllerSourceOwn ?? ''}`} kiosk={kiosk} options={options} canWrite={canWrite} />
 
         {/* Today's orders — or, searching, the orders of that number over the last 30 days */}
         <section className="space-y-2">
