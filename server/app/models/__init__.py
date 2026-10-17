@@ -146,6 +146,8 @@ from app.models.kiosk import (
     KioskPickupCounter,
     KioskSettings,
 )
+# "עיצובים שמורים לקיוסק" (app/services/kiosk_designs.py).
+from app.models.kiosk_design import KioskDesign, KioskDesignAudit
 # The kiosk's alerts to the tills and its close with the shop Z (docs/SPEC_KIOSK.md §16).
 from app.models.kiosk_ops import KioskAlert, KioskCloseRequest
 # "ביצועי קיוסקים": the kiosk's anonymous funnel (docs/SPEC_KIOSK_INSIGHTS.md).
@@ -279,7 +281,7 @@ __all__ = [
     "ClubAuditEvent", "ClubBenefitGrant", "ClubConsentEvent", "ClubCustomer", "ClubDocumentVersion",
     "ClubLandingPage", "ClubMembership", "ClubOtpChallenge", "ClubPointsLedger", "ClubProgram",
     "ClubRedemptionReservation", "ClubSaleLink", "ClubSourceToken", "ClubSuppression",
-    "KioskSettings", "KioskDevice", "KioskOrder", "KioskPickupCounter", "KioskPickupAllocation", "KioskCommand",
+    "KioskSettings", "KioskDesign", "KioskDesignAudit", "KioskDevice", "KioskOrder", "KioskPickupCounter", "KioskPickupAllocation", "KioskCommand",
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
     "CloudCardRefund", "CloudCardRefundEvent",

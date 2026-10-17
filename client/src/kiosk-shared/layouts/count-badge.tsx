@@ -13,6 +13,7 @@ import { contrastText } from '@/lib/kioskConfig';
 import { dishBadgeCount, dishBadgeText } from '@/lib/kioskLayout';
 import type { PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { badgePop } from '@/components/dashboard/kiosks/preview-feedback';
+import { kioskPx } from '@/lib/posLook';
 
 /**
  * The dish's count badge, absolutely placed in its nearest positioned box (the card, or its picture
@@ -37,7 +38,8 @@ export function DishCountBadge({ m, inCart, size = 26, className }: { m: Preview
     fontSize: Math.round(size * 0.52),
     background: m.c.primary,
     color: contrastText(m.c.primary),
-    boxShadow: m.light ? undefined : '0 2px 6px rgba(0,0,0,0.22)',
+    // The Android kiosk's KioskDishCountBadge: a 2 dp ring in the card's colour (it reads on any picture), no shadow.
+    boxShadow: `0 0 0 ${kioskPx(2)}px ${m.c.surface}`,
     ...pop?.style,
   };
   return (

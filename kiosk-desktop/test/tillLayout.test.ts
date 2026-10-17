@@ -62,7 +62,7 @@ describe('the till layout', () => {
     expect(l.cartWidthDp).toBe(sideBasketWidthDp(1280));
     expect(l.cartWidthDp).toBe(384);
     expect(l.columns).toBe(productColumnsFor(1280 - 384, 200));
-    expect(l.checkoutMaxWidthDp).toBe(720);
+    expect(l.checkoutMaxWidthDp).toBeNull();
   });
 
   it('a tablet upright 800×1280: the cart under the products (38%)', () => {

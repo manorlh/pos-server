@@ -1,0 +1,1932 @@
+/*
+ * "עיצוב קופה" on the Windows till: the designed order screens (roles/till/design/*), as the Android till draws them
+ * (pos-android ui/sell/design/*.kt — TillDesignLocal.kt DesignColors / DesignType, NightLook.kt DesignMetrics) and
+ * "הדבורה"'s home (ui/flow/FlowTheme.kt, FlowHome.kt). Flat: one accent, the designed neutrals (--pos-d-*, set on the
+ * root by theme/tillTheme.ts; לילה's palette there too), 1 px borders (2 at night), 10 / 8 px corners, Heebo.
+ * The same floor as till.css and look.css (test/appBundleFloor.test.ts): Chromium 108, no nesting, no :has, no
+ * colour functions, no filter; transitions on transform / background-color / opacity only; no shadow.
+ */
+
+/* ------------------------------------------------------------ the screen */
+
+.d-root {
+  --d-stroke: 1px;
+  --d-selected-stroke: 2px;
+  --d-target: 44px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--pos-d-page);
+  color: var(--pos-d-text);
+  overflow: hidden;
+  position: relative;
+}
+
+.d-root.d-night {
+  --d-stroke: 2px;
+  --d-selected-stroke: 3px;
+  --d-target: 64px;
+}
+
+.d-root.d-night.d-handheld {
+  --d-target: 56px;
+}
+
+:where(.d-root, .f-home) * {
+  box-sizing: border-box;
+}
+
+/* Zero specificity, after till.css / look.css: today's button (a pill, the touch height, 600) is not the designed one. */
+:where(.d-root, .f-home) button {
+  min-height: 0;
+  font-weight: 400;
+  border-radius: 0;
+  background: transparent;
+}
+
+.d-grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.d-grow-15 {
+  flex: 1.5 1 0;
+  min-width: 0;
+}
+
+.d-grow-14 {
+  flex: 1.4 1 0;
+  min-width: 0;
+}
+
+.d-wide {
+  width: 100%;
+}
+
+.d-rel {
+  position: relative;
+  display: inline-flex;
+}
+
+.d-red {
+  color: var(--pos-d-red);
+}
+
+.d-muted {
+  color: var(--pos-d-secondary);
+}
+
+.d-small {
+  font-size: 13px;
+}
+
+.d-surface {
+  background: var(--pos-d-surface);
+}
+
+.d-scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.d-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* ------------------------------------------------------------ the header (OrderHeader) */
+
+.d-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 60px;
+  padding: 6px 16px 6px 4px;
+  background: var(--pos-d-surface);
+  border-bottom: var(--d-stroke) solid var(--pos-d-border);
+  flex: none;
+}
+
+.d-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.d-header-text strong {
+  font-size: calc(22px * var(--d-scale, 1));
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-header-text span {
+  font-size: calc(13px * var(--d-scale, 1));
+  color: var(--pos-d-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-night .d-header-text strong {
+  font-size: 24px;
+}
+
+.d-night .d-header-text span {
+  font-size: 15px;
+}
+
+.d-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pos-d-text);
+  cursor: pointer;
+  position: relative;
+  flex: none;
+}
+
+.d-head-btn {
+  width: 48px;
+  height: 48px;
+}
+
+.d-icon-btn:active {
+  background: var(--pos-d-accent-tint);
+}
+
+.d-head-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--pos-primary);
+  color: var(--pos-on-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  padding: 0 4px;
+}
+
+.d-dropdown {
+  top: 48px;
+  left: 0;
+  min-width: 240px;
+}
+
+.d-menu-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+}
+
+/* ------------------------------------------------------------ the layouts */
+
+.d-row-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.d-stack-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.d-menu {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.d-menu-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.d-menu-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.d-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pos-d-surface);
+  border-inline-start: var(--d-stroke) solid var(--pos-d-border);
+  border-inline-end: var(--d-stroke) solid var(--pos-d-border);
+}
+
+.d-panel-lines {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.d-block {
+  flex: none;
+  background: var(--pos-d-surface);
+  border-top: var(--d-stroke) solid var(--pos-d-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.d-block-lines {
+  overflow-y: auto;
+}
+
+.d-warn {
+  margin: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ------------------------------------------------------------ chips (DesignChip) */
+
+.d-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-height: var(--d-target);
+  min-width: 56px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  color: var(--pos-d-text);
+  font-size: calc(15px * var(--d-scale, 1));
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-night .d-chip {
+  font-size: 17px;
+}
+
+.d-chip-on {
+  background: var(--pos-d-accent-tint);
+  border-color: var(--pos-primary);
+  color: var(--pos-primary);
+  font-weight: 600;
+}
+
+.d-night .d-chip-on {
+  border-width: var(--d-selected-stroke);
+}
+
+.d-chip-48 {
+  min-width: 48px;
+}
+
+.d-chip-64 {
+  min-width: 64px;
+}
+
+.d-chip-96 {
+  min-width: 96px;
+}
+
+.d-chip-120 {
+  min-width: 120px;
+}
+
+.d-chip-new {
+  border-color: var(--pos-primary);
+  color: var(--pos-primary);
+}
+
+.d-chip-danger {
+  color: var(--pos-d-red);
+}
+
+.d-chips {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  flex: none;
+}
+
+.d-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.d-two-rows {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, var(--d-target));
+  gap: 8px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: none;
+}
+
+.d-rail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-y: auto;
+  background: var(--pos-d-surface);
+  border-inline-end: var(--d-stroke) solid var(--pos-d-border);
+}
+
+.d-rail-chip {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  white-space: normal;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ the strips over the menu */
+
+.d-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  flex: none;
+  min-width: 0;
+}
+
+.d-strip-label {
+  font-size: calc(13px * var(--d-scale, 1));
+  color: var(--pos-d-secondary);
+  white-space: nowrap;
+  flex: none;
+}
+
+.d-night .d-strip-label {
+  font-size: 15px;
+}
+
+.d-qty-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 56px;
+  border-radius: 8px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  font-size: calc(20px * var(--d-scale, 1));
+  font-weight: 700;
+  flex: none;
+}
+
+.d-night .d-qty-box {
+  font-size: 22px;
+}
+
+.d-qty-box-on {
+  border: var(--d-selected-stroke) solid var(--pos-primary);
+  color: var(--pos-primary);
+}
+
+.d-name-field {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 8px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  padding: 0 12px;
+  text-align: start;
+  font-size: calc(15px * var(--d-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.d-name-empty {
+  color: var(--pos-d-secondary);
+}
+
+.d-root .d-name-empty {
+  color: var(--pos-d-secondary);
+}
+
+.d-name-missing {
+  border-color: var(--pos-d-amber-text);
+}
+
+.d-fav-list {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.d-fav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  cursor: pointer;
+}
+
+.d-fav-name {
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.d-night .d-fav-name {
+  font-size: 20px;
+}
+
+.d-fav-sub {
+  font-size: calc(13px * var(--d-scale, 1));
+  color: var(--pos-d-secondary);
+}
+
+.d-search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px;
+  min-height: 48px;
+  padding: 0 4px 0 12px;
+  border-radius: 10px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  color: var(--pos-d-secondary);
+  flex: none;
+}
+
+.d-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--pos-d-text);
+  font: inherit;
+  font-size: calc(15px * var(--d-scale, 1));
+  padding: 0 8px 0 0;
+}
+
+.d-kb-head {
+  background: var(--pos-d-surface);
+  padding: 6px 0;
+  flex: none;
+}
+
+.d-kb-modes {
+  padding: 0 12px;
+}
+
+.d-kb-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px 0;
+  min-height: 48px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: var(--d-stroke) solid var(--pos-primary);
+  background: var(--pos-d-page);
+  font-size: calc(20px * var(--d-scale, 1));
+  font-weight: 700;
+}
+
+.d-kb-field > span:first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--pos-d-surface);
+  flex: none;
+}
+
+.d-keys-row {
+  display: flex;
+  gap: 6px;
+}
+
+.d-key-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 48px;
+  border-radius: 8px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-page);
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.d-key-3 {
+  flex-grow: 3;
+}
+
+.d-key-15 {
+  flex-grow: 1.5;
+}
+
+.d-root .d-key-ok,
+.d-keypad .d-key-ok {
+  background: var(--pos-primary);
+  border-color: var(--pos-primary);
+  color: var(--pos-on-primary);
+}
+
+.d-keypad .d-key-ok:disabled {
+  background: var(--pos-d-surface);
+  border-color: var(--pos-d-border);
+  color: var(--pos-d-secondary);
+}
+
+.d-keypad {
+  width: 360px;
+  max-width: 100%;
+}
+
+.d-keypad-value {
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--pos-d-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.d-keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.d-keypad .d-key-btn {
+  height: 56px;
+  color: var(--pos-d-text);
+  background: var(--pos-d-surface);
+}
+
+/* ------------------------------------------------------------ the grid (DesignProductGrid) */
+
+.d-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.d-grid-row {
+  display: grid;
+}
+
+.d-empty {
+  text-align: center;
+  padding: 32px;
+  color: var(--pos-d-secondary);
+  font-size: calc(15px * var(--d-scale, 1));
+}
+
+.d-card,
+.d-photo,
+.d-key,
+.d-dish {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border-radius: 10px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  color: var(--pos-d-text);
+  text-align: start;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.d-card:active,
+.d-photo:active,
+.d-key:active,
+.d-row:active,
+.d-dish:active {
+  background: var(--pos-d-accent-tint);
+}
+
+.d-off > * {
+  opacity: 0.45;
+}
+
+.d-off .d-word {
+  opacity: 1;
+}
+
+.d-word {
+  color: var(--pos-d-red);
+  font-size: calc(12px * var(--d-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.d-night .d-word {
+  font-size: 14px;
+}
+
+.d-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--pos-d-accent-tint);
+  color: var(--pos-primary);
+  font-size: calc(12px * var(--d-scale, 1));
+  font-weight: 600;
+  flex: none;
+}
+
+.d-night .d-count {
+  font-size: 14px;
+}
+
+.d-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 8px;
+  background: var(--pos-d-accent-tint);
+  color: var(--pos-primary);
+}
+
+.d-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin: -4px 2px 0;
+  border-radius: 12px;
+  background: var(--pos-d-accent-tint);
+  color: var(--pos-primary);
+  font-size: 13px;
+  font-weight: 700;
+  font-style: italic;
+  cursor: pointer;
+}
+
+.d-price {
+  flex: 1;
+  min-width: 0;
+  color: var(--pos-d-secondary);
+  white-space: nowrap;
+}
+
+/* card: the name at the top-start, "+" at the top-end, the price at the bottom-start. */
+.d-card {
+  padding: 12px;
+  justify-content: space-between;
+}
+
+.d-card-top {
+  display: flex;
+  align-items: flex-start;
+  min-height: 0;
+  gap: 4px;
+}
+
+.d-card-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.d-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* photo: the picture's place (the name large on the page's colour), then the price and "+". */
+.d-photo-pic {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pos-d-page);
+  flex: none;
+  padding: 12px;
+}
+
+.d-photo-name {
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.d-photo-count {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.d-photo-info {
+  position: absolute;
+  top: 6px;
+  left: 2px;
+}
+
+.d-photo-foot {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  min-height: 0;
+}
+
+/* row: the name, the count, the price, the "i", a 44 px "+"; a divider under each. */
+.d-row {
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  color: var(--pos-d-text);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.d-row-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.d-row-price {
+  color: var(--pos-d-secondary);
+  font-size: calc(15px * var(--d-scale, 1));
+  white-space: nowrap;
+  padding: 0 8px;
+}
+
+.d-row-word {
+  min-width: 44px;
+  text-align: center;
+}
+
+/* key: a text key — the name bold, the price small in the accent; the count at the top-end. */
+.d-key {
+  justify-content: center;
+  padding: 6px 10px;
+}
+
+.d-key-text {
+  display: flex;
+  flex-direction: column;
+  padding-inline-end: 22px;
+  min-height: 0;
+}
+
+.d-key-name {
+  font-weight: 700;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.d-key-price {
+  color: var(--pos-primary);
+  white-space: nowrap;
+}
+
+.d-key-corner {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+}
+
+.d-key-info {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+}
+
+/* dish (תפריט ויזואלי, a text card): the name, the description, the dietary words, the price and the accent "+". */
+/* A text card is as tall as what it holds (Compose wraps it); the row keeps the tallest's height. */
+.d-dish {
+  padding: 12px;
+  gap: 4px;
+  height: auto;
+  align-self: start;
+}
+
+.d-dish-row {
+  height: 100%;
+}
+
+.d-dish-head .d-info {
+  margin-top: -6px;
+}
+
+.d-chev-up {
+  transform: rotate(180deg);
+  flex: none;
+}
+
+.d-dish-head {
+  display: flex;
+  align-items: flex-start;
+}
+
+.d-dish-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.d-dish-desc {
+  font-size: calc(13px * var(--d-scale, 1));
+  line-height: 1.25;
+  color: var(--pos-d-secondary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.d-dish-diet {
+  font-size: calc(12px * var(--d-scale, 1));
+  font-weight: 600;
+  color: var(--pos-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-dish-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.d-dish-price {
+  flex: 1;
+  font-size: calc(15px * var(--d-scale, 1));
+  font-weight: 600;
+}
+
+.d-dish-n {
+  color: var(--pos-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.d-root .d-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--pos-primary);
+  color: var(--pos-on-primary);
+  cursor: pointer;
+  flex: none;
+}
+
+.d-dish-row .d-add {
+  width: 48px;
+  height: 48px;
+}
+
+.d-added {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--pos-primary);
+  color: var(--pos-on-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ the bill (DesignBill) */
+
+.d-bill-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: var(--d-stroke) solid var(--pos-d-border);
+  flex: none;
+}
+
+.d-bill-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(18px * var(--d-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-night .d-bill-head strong {
+  font-size: 20px;
+}
+
+.d-bill-head span {
+  font-size: calc(13px * var(--d-scale, 1));
+  color: var(--pos-d-secondary);
+}
+
+.d-bill-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--pos-d-secondary);
+  font-size: calc(15px * var(--d-scale, 1));
+}
+
+.d-group-head {
+  padding: 10px 12px 4px;
+  font-size: calc(13px * var(--d-scale, 1));
+  font-weight: 600;
+  color: var(--pos-d-secondary);
+}
+
+.d-lines {
+  list-style: none;
+  margin: 0;
+  padding: 4px 12px;
+  display: grid;
+  column-gap: 8px;
+}
+
+.d-lines-cards {
+  row-gap: 8px;
+}
+
+.d-lrow {
+  border-bottom: 1px solid var(--pos-d-border);
+}
+
+.d-lrow-main {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  padding: 4px 0;
+}
+
+.d-selected .d-lrow-main,
+.d-lcard.d-selected {
+  border: var(--d-selected-stroke) solid var(--pos-primary);
+  border-radius: 8px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.d-lrow-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.d-line-name {
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-align: start;
+}
+
+.d-night .d-line-name {
+  font-size: 20px;
+}
+
+.d-line-sub {
+  font-size: calc(13px * var(--d-scale, 1));
+  color: var(--pos-d-secondary);
+  line-height: 1.25;
+}
+
+.d-line-selected {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pos-primary);
+}
+
+.d-line-price {
+  padding: 0 8px;
+  font-size: calc(15px * var(--d-scale, 1));
+  white-space: nowrap;
+}
+
+.d-night .d-line-price {
+  font-size: 18px;
+}
+
+.d-stepper {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.d-step {
+  width: 42px;
+  height: 42px;
+  margin: 3px;
+  border-radius: 8px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  font-size: calc(20px * var(--d-scale, 1));
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.d-step:disabled {
+  opacity: 0.3;
+}
+
+.d-step-n {
+  min-width: 28px;
+  text-align: center;
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+}
+
+.d-lcard {
+  border-radius: 10px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  padding: 10px;
+}
+
+.d-lcard-main {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.d-lcard-top {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.d-lcard-top .d-line-name {
+  flex: 1;
+}
+
+.d-lcard-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.d-lcard-qty {
+  padding: 8px;
+  color: var(--pos-d-secondary);
+  font-weight: 600;
+}
+
+.d-cline {
+  border-bottom: 1px solid var(--pos-d-border);
+}
+
+.d-cline-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 36px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: start;
+}
+
+.d-cline-name {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(15px * var(--d-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-night .d-cline-name {
+  font-size: 17px;
+}
+
+.d-cline-price {
+  font-size: calc(15px * var(--d-scale, 1));
+  white-space: nowrap;
+}
+
+.d-line-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+
+.d-line-actions .d-chip {
+  min-height: 36px;
+  min-width: 0;
+  padding: 4px 10px;
+  font-size: 14px;
+}
+
+.d-strip {
+  background: var(--pos-d-accent-tint);
+  padding: 6px 12px;
+  flex: none;
+}
+
+.d-strip-top {
+  display: flex;
+  align-items: center;
+}
+
+.d-strip-top .d-line-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.d-strip-buttons {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.d-strip-btn {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  font-size: calc(15px * var(--d-scale, 1));
+  cursor: pointer;
+}
+
+.d-root .d-strip-btn.d-red {
+  color: var(--pos-d-red);
+}
+
+.d-presets {
+  padding: 4px 12px;
+  flex: none;
+}
+
+.d-totals {
+  padding: 4px 0;
+  flex: none;
+  border-top: var(--d-stroke) solid var(--pos-d-border);
+}
+
+.d-total-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 16px;
+  font-size: calc(13px * var(--d-scale, 1));
+  color: var(--pos-d-secondary);
+}
+
+.d-total-main {
+  padding: 4px 16px;
+  font-size: calc(15px * var(--d-scale, 1));
+}
+
+.d-total-main strong {
+  font-size: calc(28px * var(--d-scale, 1));
+  font-weight: 700;
+  color: var(--pos-d-text);
+}
+
+.d-night .d-total-main strong {
+  font-size: 27px;
+}
+
+.d-root .d-total-row.d-red,
+.d-root .d-total-row.d-red strong {
+  color: var(--pos-d-red);
+}
+
+.d-total-warn {
+  padding: 0 16px;
+  font-size: 13px;
+  color: var(--pos-d-red);
+}
+
+.d-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-top: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  cursor: pointer;
+  flex: none;
+  width: 100%;
+}
+
+.d-summary-label {
+  max-width: calc(50% - 40px);
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-summary-chev {
+  display: inline-flex;
+  color: var(--pos-d-secondary);
+  transform: rotate(180deg);
+}
+
+.d-summary-chev-open {
+  transform: none;
+}
+
+/* Android's Row: the label weight(1, fill = false) and the spacer weight(1) share what is left — the total stands
+   about the middle, not at the far end. */
+.d-summary-spacer {
+  flex: 0 1 calc(50% - 60px);
+}
+
+.d-summary-total {
+  font-size: calc(20px * var(--d-scale, 1));
+  font-weight: 700;
+}
+
+.d-scrim {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.22);
+  z-index: 5;
+}
+
+.d-overlay {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--pos-d-surface);
+  border: var(--d-stroke) solid var(--pos-d-border);
+  border-radius: 10px 10px 0 0;
+}
+
+.d-overlay-sheet {
+  min-height: 60%;
+  max-height: 92%;
+}
+
+.d-sheet-head {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: var(--d-stroke) solid var(--pos-d-border);
+  font-size: calc(16px * var(--d-scale, 1));
+}
+
+/* תפריט ויזואלי: the pill in the bottom corner (the end — the left, in Hebrew), the drawer over the menu. */
+.d-pill {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 56px;
+  min-width: 220px;
+  max-width: 70%;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--pos-primary);
+  color: var(--pos-on-primary);
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.d-root .d-pill {
+  color: var(--pos-on-primary);
+}
+
+.d-pill span:first-child {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-drawer {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: var(--pos-d-surface);
+  border: var(--d-stroke) solid var(--pos-d-border);
+}
+
+.d-drawer-side {
+  top: 0;
+  bottom: 0;
+  left: 0;
+}
+
+.d-drawer-bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  max-height: 70%;
+  border-radius: 10px;
+}
+
+/* ------------------------------------------------------------ the action bar and the dock */
+
+.d-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--pos-d-surface);
+  flex: none;
+}
+
+.d-bar-row {
+  display: flex;
+  gap: 8px;
+}
+
+.d-bar-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.d-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: var(--d-stroke) solid var(--pos-d-border);
+  background: var(--pos-d-surface);
+  color: var(--pos-d-text);
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.d-root .d-btn {
+  color: var(--pos-d-text);
+}
+
+.d-root .d-btn-primary {
+  background: var(--pos-primary);
+  border-color: var(--pos-primary);
+  color: var(--pos-on-primary);
+}
+
+.d-root .d-btn:disabled {
+  background: var(--pos-d-surface);
+  border-color: var(--pos-d-border);
+  color: var(--pos-d-secondary);
+  cursor: default;
+}
+
+.d-btn-min {
+  min-width: 104px;
+  flex: none;
+}
+
+.d-btn-title {
+  max-width: 100%;
+  font-size: calc(16px * var(--d-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-night .d-btn-title {
+  font-size: 20px;
+}
+
+.d-btn-sub {
+  max-width: 100%;
+  font-size: calc(13px * var(--d-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.d-dock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--pos-d-surface);
+  border-top: var(--d-stroke) solid var(--pos-d-border);
+  flex: none;
+}
+
+.d-dock-handheld {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.d-dock-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.d-dock-amount {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-width: 0;
+}
+
+.d-dock-label {
+  font-size: 13px;
+  color: var(--pos-d-secondary);
+}
+
+.d-dock-total {
+  font-size: calc(28px * var(--d-scale, 1));
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.d-dock-amount-small {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.d-dock-saved {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--pos-primary);
+}
+
+.d-dock-detail {
+  font-size: 13px;
+  color: var(--pos-d-secondary);
+}
+
+.d-dock-primary {
+  flex: 1 1 0;
+  min-width: 160px;
+}
+
+.d-dock-btn {
+  flex: none;
+  min-width: 104px;
+  max-width: 140px;
+}
+
+.d-dock .d-btn-title {
+  white-space: normal;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.d-dock-more {
+  flex: none;
+}
+
+/* ------------------------------------------------------------ "הדבורה" (flow): the home */
+
+.d-flow-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 6px 12px 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 20px;
+  border: 1px solid var(--t-line);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.f-home {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--f-page);
+  color: var(--f-text);
+}
+
+.f-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 56px;
+  padding: 0 12px 0 4px;
+  border-bottom: 1px solid var(--f-border);
+  flex: none;
+}
+
+.f-title {
+  flex: 1;
+  margin: 0;
+  padding-inline-start: 6px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.f-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  color: var(--f-text);
+  cursor: pointer;
+}
+
+.f-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 22px;
+  border: 1px solid var(--f-border);
+  background: var(--f-surface);
+  color: var(--f-secondary);
+}
+
+.f-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--f-text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.f-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow-y: auto;
+}
+
+.f-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.f-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--f-border);
+  background: var(--f-surface);
+  color: var(--f-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.f-row-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--f-muted);
+  color: var(--f-text);
+  flex: none;
+}
+
+.f-row-badge-live {
+  background: var(--f-accent-tint);
+}
+
+.f-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.f-row-title {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.f-row-sub {
+  font-size: 13px;
+  color: var(--f-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.f-row-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: none;
+}
+
+.f-row-amount {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.f-row-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--f-secondary);
+}
+
+.f-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--f-secondary);
+}
+
+.f-dot-live {
+  background: var(--f-accent-text);
+}
+
+.f-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 32px;
+  text-align: center;
+  color: var(--f-secondary);
+  font-size: 15px;
+}
+
+.f-empty strong {
+  margin-top: 12px;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--f-text);
+}
+
+.f-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  border-radius: 48px;
+  border: 1px solid var(--f-border);
+  background: var(--f-surface);
+  color: var(--f-secondary);
+}
+
+.f-new {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--f-accent);
+  color: var(--f-on-accent);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.f-card {
+  width: 420px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.f-card-head {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.f-question {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.f-input {
+  height: 56px;
+  padding: 0 16px;
+  border-radius: 14px;
+  border: 1px solid var(--t-line);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 17px;
+}
+
+.f-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+
+.f-primary,
+.f-secondary {
+  height: 56px;
+  border-radius: 16px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.f-primary {
+  border: 0;
+  background: var(--t-accent);
+  color: var(--t-accent-text);
+}
+
+.f-primary:disabled {
+  background: var(--t-off-soft);
+  color: var(--t-muted);
+}
+
+.f-secondary {
+  border: 1px solid var(--t-line);
+  background: var(--t-surface);
+  color: var(--t-text);
+}
+
+/* "הדבורה"'s side menu (FlowDrawer.kt): the page's colour, flat rows, the far corners rounded. */
+.t-root[data-shell='flow'] .t-mdrawer {
+  background: var(--pos-d-page);
+  border-radius: 22px 0 0 22px;
+}
+
+.t-root[data-shell='flow'] .t-mgroup-card {
+  background: transparent;
+  border: 0;
+}
+
+.t-root[data-shell='flow'] .t-mrow {
+  min-height: 56px;
+  font-size: 17px;
+  font-weight: 500;
+}

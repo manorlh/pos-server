@@ -52,8 +52,9 @@ export function productTileTargetDp(phoneColumns: number): number {
   return 270;
 }
 
+/** The tablet's order panel beside the products (Android Adaptive.kt quickOrderPanelWidthDp): 30%, 360–440 dp. */
 export function sideBasketWidthDp(widthDp: number): number {
-  return Math.min(440, Math.max(340, Math.floor(widthDp * 0.3 + 0.5)));
+  return Math.min(440, Math.max(360, Math.floor(widthDp * 0.3 + 0.5)));
 }
 
 export function productColumnsFor(paneWidthDp: number, tileTargetDp: number, phoneColumns = 3): number {
@@ -61,10 +62,19 @@ export function productColumnsFor(paneWidthDp: number, tileTargetDp: number, pho
   return Math.min(8, Math.max(2, Math.floor((paneWidthDp - 2 * SIDE_PADDING_DP + GAP_DP) / (tileTargetDp + GAP_DP))));
 }
 
-export function productTileHeightDp(paneWidthDp: number, columns: number, baseHeightDp = 96): number {
+/** Above the products' grid on a tablet: the island, the till's line, the search and the categories (Android, dp). */
+export const PRODUCT_GRID_CHROME_DP = 180;
+
+/**
+ * A tile's height (Android Adaptive.kt productTileHeightDp): the tile size's own on a handheld; on a tablet's wider tiles
+ * nine tenths of their width (a photo, or the name as the picture, reads whole) — never under the size's own, never over
+ * 280, and on a short pane a row and a half in sight under the grid's top.
+ */
+export function productTileHeightDp(paneWidthDp: number, columns: number, baseHeightDp = 96, paneHeightDp: number | null = null): number {
   if (paneWidthDp < TABLET_MIN_SMALLEST_WIDTH_DP || columns <= 0) return baseHeightDp;
-  const tileW = (paneWidthDp - 2 * SIDE_PADDING_DP - (columns - 1) * GAP_DP) / columns;
-  return Math.min(Math.max(baseHeightDp, 140), Math.max(baseHeightDp, Math.floor(tileW * 0.6 + 0.5)));
+  const tileW = Math.floor((paneWidthDp - 2 * SIDE_PADDING_DP - (columns - 1) * GAP_DP) / columns);
+  const inSight = paneHeightDp === null ? Number.MAX_SAFE_INTEGER : Math.floor(((paneHeightDp - PRODUCT_GRID_CHROME_DP) * 2) / 3) - GAP_DP;
+  return Math.min(Math.max(Math.round(tileW * 0.9), baseHeightDp), Math.max(baseHeightDp, Math.min(280, inSight)));
 }
 
 export function tillLayout(p: DisplayProfile, opts: { phoneColumns?: number } = {}): TillLayout {
@@ -89,8 +99,9 @@ export function tillLayout(p: DisplayProfile, opts: { phoneColumns?: number } = 
     cartWidthDp,
     cartHeightFraction: panes === 'stacked' ? (cls === 'BIG' ? BIG_STACKED_CART_FRACTION : STACKED_CART_FRACTION) : 0,
     columns,
-    tileHeightDp: productTileHeightDp(productsWidth, columns),
-    checkoutMaxWidthDp: cls === 'BIG' ? 1100 : cls === 'TABLET' ? 720 : null,
+    tileHeightDp: productTileHeightDp(productsWidth, columns, 96, panes === 'stacked' ? Math.floor(h * (1 - (cls === 'BIG' ? BIG_STACKED_CART_FRACTION : STACKED_CART_FRACTION))) : h),
+    // The payment across the tablet's width as Android draws it (TillBigScreenWidth narrows the big screen only).
+    checkoutMaxWidthDp: cls === 'BIG' ? 1100 : null,
     reportMaxWidthDp: cls === 'HANDHELD' ? null : 960,
     reportTwoColumns: w >= 1400,
     touchMinDp: MIN_TOUCH_DP,

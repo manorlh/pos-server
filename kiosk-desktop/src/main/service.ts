@@ -1373,6 +1373,10 @@ export class KioskService extends EventEmitter {
         this.dirty();
       },
       onParameters: () => this.dirty(),
+      // The till's own pulls on the parameters' cadence ("עיצוב קופה"), on a device that may sell.
+      pullWithParameters: async () => {
+        if (this.fiscalRole && this.tillPull) await this.tillPull().catch((e: unknown) => this.log(`till pull: ${String(e)}`));
+      },
       // "סניף לא פעיל": the screens lock (once the customer is done) or are released at once.
       onShopActive: () => this.dirty(),
       onPendingCloseShift: (r: { requestId: string }) => {
@@ -4117,6 +4121,8 @@ export class KioskService extends EventEmitter {
         if (r.kind === 'full') {
           this.kv.delete('cloud.catalog');
           this.kv.delete('cloud.settings');
+          // As the Android till's reset clears its settings table: the design is asked for whole again.
+          this.cloud.setTillDesign(null);
         }
         result = {
           commandId: r.commandId,
@@ -4870,6 +4876,13 @@ export class KioskService extends EventEmitter {
 
   attachTillAutoClose(fn: (() => Promise<unknown>) | null) {
     this.tillAutoClose = fn;
+  }
+
+  /** The till's engine registers what it pulls with the parameters ("עיצוב קופה", main/till/tillDesign.ts). */
+  private tillPull: (() => Promise<unknown>) | null = null;
+
+  attachTillPull(fn: (() => Promise<unknown>) | null) {
+    this.tillPull = fn;
   }
 
   /**

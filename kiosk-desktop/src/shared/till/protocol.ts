@@ -654,6 +654,128 @@ export interface TileTextState {
   infoBadge: 'auto' | 'always' | 'off';
 }
 
+/**
+ * "עיצוב קופה" (pos-server docs/SPEC_TILL_DESIGN.md; core/till/tillDesign.ts builds it with client/src/lib/tillDesign.ts):
+ * the cloud's design for this till, resolved for each device profile. The window's size is the screens' to know, so
+ * the state carries a view per profile and the screens pick one — `designFor(design, tillDesignProfileOf(w, h))`
+ * (core/till/tillDesign.ts; Android `deviceProfileOf`: a short side under 600 dp — handheld, else sideways / upright).
+ */
+export type TillDesignProfileName = 'handheld' | 'tabletLandscape' | 'tabletPortrait';
+export type TillDesignTemplate = 'clean' | 'touch' | 'professional' | 'seated' | 'fast' | 'mobile' | 'courses' | 'payDock' | 'night' | 'visual';
+
+/** One button of the quick order's bar, as drawn. */
+export interface TillDesignAction {
+  /** pay | fastCard | cashWithChange | fastCash | cashNotes | hold | discount | customer | orderDetails | clear | repeatRound. */
+  action: string;
+  /** Its own label, else the design's text (pay), else the default — a preset's: its own, else the preset's name. */
+  label: string;
+  /** The bar's required button ("pay"): the accent-filled one. */
+  primary: boolean;
+  /** "הנחות קבועות": a `discount` button that applies this preset (one this till has) in one tap. */
+  presetId?: string;
+}
+
+/** What one device profile shows (the profile's overrides over the base, every "auto" settled for a quick order). */
+export interface TillDesignProfileState {
+  profile: TillDesignProfileName;
+  /** The template the cloud chose for this profile. */
+  template: TillDesignTemplate;
+  /** The one this till draws: "courses" is "clean" on a quick order (Android templateDrawn) — the Windows till has no tables. */
+  drawn: TillDesignTemplate;
+  /** "auto" settled by the till parameters (productTileSize / productTileSizeTablet). */
+  tileSize: 'xs' | 's' | 'm' | 'l';
+  tileStyle: 'card' | 'photo' | 'row' | 'key' | 'dish';
+  density: 'compact' | 'comfortable' | 'spacious';
+  /** The quick order's bill: beside (end / start), under the menu, a sheet, or "תפריט ויזואלי"'s drawer. */
+  billPosition: 'end' | 'start' | 'bottom' | 'sheet' | 'drawer';
+  billStyle: 'lines' | 'cards' | 'seats' | 'compact' | 'courses';
+  summaryCollapsible: boolean;
+  categoryBar: 'top' | 'side';
+  /** 0 — by the tile style and size over the pane's width (client lib `gridColumns`). */
+  columns: number;
+  images: 'auto' | 'show' | 'hide';
+  textSize: 'normal' | 'large';
+  /** The template's features a quick order has (searchField, quantityPresets, favorites, payDock, selectedLine, quickAddons, thumbs, dishCards). */
+  features: string[];
+  /** The quick order's bar. */
+  actionBar: TillDesignAction[];
+  /** "זרימה": this profile's shell. */
+  shell: 'classic' | 'flow';
+}
+
+/** The screen texts, each the business's wording or the default (client lib TEXT_DEFAULTS). */
+export type TillDesignTexts = Record<
+  | 'sendToKitchen'
+  | 'newSuffix'
+  | 'allSent'
+  | 'goToBill'
+  | 'pay'
+  | 'orderTitle'
+  | 'summary'
+  | 'emptyOrder'
+  | 'serviceType'
+  | 'takeAway'
+  | 'eatIn'
+  | 'customerName'
+  | 'addToSeat'
+  | 'seatGeneral'
+  | 'nextQuantity'
+  | 'otherQuantity'
+  | 'favorites'
+  | 'repeatRound',
+  string
+>;
+
+export interface TillDesignState {
+  /** The cloud's `configVersion` of the design held; null — none pulled yet (the defaults: today's screens). */
+  configVersion: string | null;
+  profiles: Record<TillDesignProfileName, TillDesignProfileState>;
+  /** accent: #RRGGBB, or null — the brand colour (brandPrimaryColor). mode: auto leaves the till's own theme. */
+  colors: { accent: string | null; mode: 'auto' | 'light' | 'dark' };
+  /** "שטרות": the chosen notes ([] — the next round amounts), how many, and the ones offered over the order's total now. */
+  quickCash: { notes: number[]; count: number; offered: number[] };
+  bar: { quantityPresets: number[]; favorites: string[]; repeatRound: boolean; openTabs: boolean };
+  /** Ids in order ([] — the catalog's); hidden categories leave the tabs only (search still finds them). */
+  menu: { categoryOrder: string[]; productOrder: string[]; hiddenCategories: string[] };
+  texts: TillDesignTexts;
+  /** "auto" settled by the parameters (askOrderName / askEatInTakeAway / tablesAskGuests: required, else off). */
+  fields: { customerName: 'off' | 'optional' | 'required'; serviceType: 'off' | 'optional' | 'required'; guests: 'off' | 'optional' | 'required' };
+  behavior: { summary: 'auto' | 'open' | 'closed'; lineStatus: boolean };
+  payDock: { savings: boolean };
+  night: { hand: 'right' | 'left'; quickAddons: boolean };
+  /** dietary: "auto" settled by showDietaryMarks. */
+  visual: { descriptionLines: number; dietary: 'show' | 'hide' };
+  professional: { keyboard: boolean; fKeys: boolean };
+  /** prefix: this till's (the cloud's `orderNumberPrefix`), "" while atOpen is off. */
+  orderNumber: { atOpen: boolean; prefix: string };
+  /** The tiles' text: the design's `look` over the parameters (the same as `TillState.tileText`). */
+  look: TileTextState;
+  /** "זרימה"'s options (the shell is per profile). background: #RRGGBB, or null — our palette. */
+  flow: {
+    home: 'auto' | 'orders' | 'tables';
+    firstStep: 'type' | 'table' | 'pickup';
+    askGuests: 'auto' | 'always' | 'never';
+    notes: boolean;
+    pickupName: 'auto' | 'off' | 'ask' | 'required';
+    background: string | null;
+  };
+  /** What the design sets that this till does not honour yet, by path (core/till/tillDesign.ts `unsupportedOf`). */
+  unsupported: string[];
+}
+
+/**
+ * The till's colours as Android settles them (domain/TillDesignOverlay.kt applyTillDesign; core/till/tillDesign.ts
+ * `themeOf`): the brand colour — the design's accent over the settings' `brandPrimaryColor`; the theme — the design's
+ * light / dark over the till parameter `themeMode`; the parameter `textColor` as a colour.
+ */
+export interface TillThemeState {
+  /** #RRGGBB, or null — none set (client lib posLook DEFAULT_BRAND, iOS blue). */
+  brand: string | null;
+  mode: 'system' | 'light' | 'dark';
+  /** "צבע גופן" (posLook textColorOfParam): #RRGGBB for the light theme, or null — the theme's own. */
+  textColor: string | null;
+}
+
 export interface CartLine {
   lineId: string;
   productId: string;
@@ -971,8 +1093,17 @@ export interface TillState {
   menu?: TillMenuState;
   /** "קיוסקים": only on a till that controls kiosks. */
   kiosks?: KiosksState;
-  /** The tiles' text (TileTextState); absent: the defaults (fit, 3 lines, s, auto). */
+  /** The tiles' text (TileTextState; the design's `look` over the parameters); absent: the defaults (fit, 3 lines, s, auto). */
   tileText?: TileTextState;
+  /** "הכל" among the order's categories (core/till/sellAllTab.ts, the parameter `sellAllTab`); absent: hidden, Android's default. */
+  sellAllTab?: 'first' | 'last' | 'hidden';
+  /**
+   * "עיצוב קופה" (TillDesignState), kept offline from the last pull. Optional: an engine from before it (an older shell
+   * or APK host behind a newer bundle) sends none — the screens then draw today's (clean) screens.
+   */
+  design?: TillDesignState;
+  /** The colours (TillThemeState). Optional for the same reason: absent — the defaults (iOS blue, the system's theme). */
+  theme?: TillThemeState;
   /** "דוח X סניפי" (core/till/shopX.ts): offered on this till, and the report last brought (until sign-out). */
   shopX?: ShopXState;
   /** "מכירות בהמתנה" (core/till/heldSales.ts). */

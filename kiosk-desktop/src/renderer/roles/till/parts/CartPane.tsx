@@ -1,15 +1,20 @@
 /**
- * The cart, as the engine says it: lines (a return in red, an OTH line at ₪0 with its reason), quantities, discounts, the
- * total with its VAT. Every change is an op (`sell.setQty`, `sell.discount`, `sell.remove`, `sell.clear`, `oth.*`); a
- * discount above what a cashier may give comes back as the engine's manager dialog, not as a rule here. What the operator's
- * role denies under "כשאין הרשאה" = להסתיר is left out (`hidden`: core/till/permissions.ts lineDiscountPercents,
- * lineRemoveShown, basketDiscountShown).
+ * The order panel, as the Android tablet's quick order draws it (ui/sell/TabletQuickOrder.kt QuickOrderPanel; P:/specs/
+ * till-visual-parity): the head — "הזמנה", how many items and the order's details, and "⋮" with what an ordinary sale
+ * never needs (the discount, the details, parking, the parked sales, clearing); the lines (a tap opens a line's options);
+ * the total; the quick bar (the design's, else the parameters' two quick-pay buttons) and "תשלום" across the width.
+ *
+ * Every change is still an op (`sell.setQty`, `sell.discount`, `sell.remove`, `sell.clear`, `oth.*`); a discount above
+ * what a cashier may give comes back as the engine's manager dialog, not as a rule here. What the operator's role denies
+ * under "כשאין הרשאה" = להסתיר is left out (`hidden`: core/till/permissions.ts lineDiscountPercents, lineRemoveShown,
+ * basketDiscountShown).
  */
 
 import { useState } from 'react';
-import type { SellState } from '../../../../shared/till/protocol';
+import type { SellState, TillDesignAction } from '../../../../shared/till/protocol';
 import { money, T } from '../text';
 import { PresetChips, type PresetItem } from './TillSheets';
+import { Icon } from '../theme/icons';
 import { CHOICES_TEXT } from '../../../../core/till/choices';
 
 export interface CartActions {
@@ -32,6 +37,20 @@ export interface CartActions {
   preset?(id: string): void;
   /** "עריכת המנה": a line with choices opened again in its sheet. */
   editLine?(lineId: string): void;
+  /**
+   * A quick-bar button (Android QuickPayButtonView / DesignBarButtonView): a tender straight into the payment's own flow
+   * (fastCard, cashWithChange, fastCash, a banknote), or one of the order's own actions. Absent: the bar shows "תשלום" only.
+   */
+  quick?(button: QuickButton): void;
+}
+
+/** One button of the quick bar as drawn: the design's action, a banknote's value for "שטרות". */
+export interface QuickButton {
+  action: string;
+  label: string;
+  presetId?: string;
+  /** "שטרות": the note (₪) this button counts. */
+  noteShekels?: number;
 }
 
 export interface CartView {
@@ -43,35 +62,123 @@ export interface CartView {
   order?: { strip: string | null; configured: boolean } | null;
   /** "הנחות קבועות": the one-tap buttons (in order, with their colours); none — no buttons. */
   presetButtons?: ReadonlyArray<PresetItem>;
+  /** "עיצוב קופה": the quick bar (TillState.design's profile `actionBar`), and the banknotes offered over the total. */
+  bar?: ReadonlyArray<TillDesignAction>;
+  notes?: readonly number[];
+  /** The design's word for "תשלום" (texts.pay). */
+  payWord?: string;
 }
 
 const CHIPS = [5, 10, 20] as const;
 
+/** An amount without its sign ("14.00"), as the Android line's "2 × 14.00". */
+function plain(agorot: number): string {
+  return (agorot / 100).toFixed(2);
+}
+
+/** What a line's discount takes off (agorot): the engine's figure, else its quantity at the unit price less its total. */
+function lineOff(l: SellState['lines'][number]): number {
+  if (l.refund) return 0;
+  if (typeof l.discountAgorot === 'number') return l.discountAgorot;
+  return l.discountPct > 0 ? Math.max(0, Math.round(l.qty * l.unitAgorot) - l.totalAgorot) : 0;
+}
+
+/** The tenders (enabled only for a payable order) and the buttons that are always there (Android designTenders). */
+const TENDERS = new Set(['fastCard', 'cashWithChange', 'fastCash', 'cashNotes']);
+const ALWAYS = new Set(['orderDetails']);
+
+/** The bar's buttons as Android lays them out (designBarButtons): "שטרות" one button per note, "pay" taken out. */
+export function quickButtons(bar: ReadonlyArray<TillDesignAction>, notes: readonly number[]): QuickButton[] {
+  const out: QuickButton[] = [];
+  for (const b of bar) {
+    if (b.action === 'pay' || b.action === 'repeatRound' || b.action === 'customer') continue;
+    if (b.action === 'cashNotes') {
+      for (const n of notes) out.push({ action: 'cashNotes', label: money(n * 100), noteShekels: n });
+      continue;
+    }
+    out.push({ action: b.action, label: b.label, ...(b.presetId ? { presetId: b.presetId } : {}) });
+  }
+  return out;
+}
+
+function tenderClass(action: string): string {
+  if (action === 'fastCard') return 't-quickpay-card';
+  if (action === 'cashWithChange' || action === 'cashNotes') return 't-quickpay-cash';
+  if (action === 'fastCash') return 't-quickpay-fastcash';
+  return 't-quickpay-other';
+}
+
 export function CartPane({ sell, actions, compact, view = {} }: { sell: SellState; actions: CartActions; compact?: boolean; view?: CartView }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [more, setMore] = useState(false);
   const empty = sell.lines.length === 0;
   const hidden = new Set(view.hidden ?? []);
   const discountShown = !hidden.has('DISCOUNT');
   const voidShown = !hidden.has('LINE_VOID');
   const othShown = view.othEnabled === true && !hidden.has('OTH');
-  const refundShown = !hidden.has('REFUND') || sell.refundMode === true;
   const mixed = (sell.refundTotalAgorot ?? 0) > 0;
   const payout = sell.totalAgorot < 0;
+  const refund = payout || mixed || sell.refundMode === true;
+  const payable = !empty && sell.totalAgorot > 0 && !refund;
+  const heldCount = view.heldCount ?? 0;
+  const buttons = actions.quick && !refund ? quickButtons(view.bar ?? [], view.notes ?? []).filter((b) => b.action !== 'discount' || discountShown) : [];
+  const rows: QuickButton[][] = [];
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
+  const subtitle = [sell.itemCount > 0 ? `${sell.itemCount} ${T.items}` : null, view.order?.strip ?? null].filter(Boolean).join(' · ');
+  const close = (fn?: () => void) => () => {
+    setMore(false);
+    fn?.();
+  };
   return (
     <section className={`t-cart${compact ? ' t-cart-compact' : ''}`} aria-label={T.cart}>
       <header className="t-cart-head">
-        <span>{T.cart}</span>
-        <span className="t-muted">
-          {sell.itemCount} {T.items}
-        </span>
+        <div className="t-cart-title">
+          <strong>{T.order}</strong>
+          {subtitle ? <span>{subtitle}</span> : null}
+        </div>
+        <div style={{ position: 'relative' }}>
+          <button type="button" className="t-more" aria-label={T.moreOptions} aria-expanded={more} onClick={() => setMore(true)}>
+            <Icon name="moreVert" />
+            {heldCount > 0 ? <span className="t-more-count">{heldCount}</span> : null}
+          </button>
+          {more ? (
+            <>
+              <div className="t-dropdown-scrim" onClick={() => setMore(false)} />
+              <div className="t-dropdown" role="menu" style={{ top: 44, left: 0 }}>
+                {actions.basketDiscount && (discountShown || sell.basketDiscount) ? (
+                  <button type="button" role="menuitem" className="t-dropdown-row" disabled={empty} onClick={close(actions.basketDiscount)}>
+                    <span className="t-dropdown-icon">%</span>
+                    {T.menuDiscount}
+                  </button>
+                ) : null}
+                {actions.orderEdit && view.order?.configured ? (
+                  <button type="button" role="menuitem" className="t-dropdown-row" onClick={close(actions.orderEdit)}>
+                    <Icon name="edit" className="t-dropdown-icon" />
+                    {T.menuDetails}
+                  </button>
+                ) : null}
+                {actions.hold ? (
+                  <button type="button" role="menuitem" className="t-dropdown-row" disabled={empty || refund} onClick={close(actions.hold)}>
+                    <Icon name="pause" className="t-dropdown-icon" />
+                    {T.hold}
+                  </button>
+                ) : null}
+                {actions.held && heldCount > 0 ? (
+                  <button type="button" role="menuitem" className="t-dropdown-row" onClick={close(actions.held)}>
+                    <Icon name="list" className="t-dropdown-icon" />
+                    {T.menuHeld(heldCount)}
+                  </button>
+                ) : null}
+                <div className="t-dropdown-sep" />
+                <button type="button" role="menuitem" className="t-dropdown-row t-dropdown-danger" disabled={empty} onClick={close(actions.clear)}>
+                  <Icon name="delete" className="t-dropdown-icon" />
+                  {T.menuClear}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
       </header>
-      {view.order && (view.order.strip || (view.order.configured && !empty)) ? (
-        // The quick order's details (Android OrderDetailsStrip): a tap changes them.
-        <button type="button" className="t-order-strip" onClick={() => actions.orderEdit?.()} disabled={!actions.orderEdit || !view.order.configured}>
-          <span>{view.order.strip ?? T.orderDetails}</span>
-          {view.order.configured ? <span aria-hidden="true">✎</span> : null}
-        </button>
-      ) : null}
       {sell.refundMode ? (
         <div className="t-warn t-small" role="note">
           {T.refundModeBanner}
@@ -82,25 +189,37 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
         {sell.lines.map((l) => (
           <li key={l.lineId} className={`t-line${l.refund ? ' t-line-refund' : ''}`}>
             <button type="button" className="t-line-main" onClick={() => setOpen(open === l.lineId ? null : l.lineId)} aria-expanded={open === l.lineId}>
-              <span className="t-line-name">
-                {l.refund ? `${T.returnedLine}: ` : ''}
-                {l.name}
-              </span>
-              {l.oth ? <span className="t-badge">{T.othTag(l.oth)}</span> : l.discountPct > 0 ? <span className="t-badge">-{l.discountPct}%</span> : null}
-              {l.fromReceipt ? <span className="t-badge">{T.receiptDoc(l.fromReceipt)}</span> : null}
-              {/* "כלול בשובר #12" (a production voucher covers it); a ₪0 line's value beside it. */}
-              {l.voucher ? <span className="t-badge">{l.voucherValueAgorot ? `${money(l.voucherValueAgorot)} · ${l.voucher}` : l.voucher}</span> : null}
-              <span className="t-line-total">{l.refund ? `−${money(l.totalAgorot)}` : money(l.totalAgorot)}</span>
-              {l.subLines && l.subLines.length > 0 ? (
-                // What it was ordered with (CartLineMenuInfo): the choices, a meal's components, the notes, the allergy.
-                <span className="t-line-subs">
-                  {l.subLines.map((w, i) => (
-                    <span key={i} className={`t-line-sub${w.startsWith('!') || w.startsWith(CHOICES_TEXT.allergyDeclared('')) ? ' t-line-sub-alert' : ''}`}>
-                      {w}
-                    </span>
-                  ))}
+              <span className="t-line-text">
+                <span className="t-line-name">
+                  {l.refund ? `${T.returnedLine}: ` : ''}
+                  {l.name}
                 </span>
-              ) : null}
+                <span className="t-line-sub">
+                  {/* "2 × 14.00" (CartLineRow): the quantity at the unit price, left to right; a return's money back and a
+                      discount's amount in red beside it. */}
+                  <bdi dir="ltr">{`${l.qty} × ${plain(l.unitAgorot)}`}</bdi>
+                  {l.refund ? <span className="t-line-off">−{money(l.totalAgorot)}</span> : null}
+                  {l.oth ? (
+                    <span className="t-badge">{T.othTag(l.oth)}</span>
+                  ) : lineOff(l) > 0 ? (
+                    <bdi className="t-line-off">-{money(lineOff(l))}</bdi>
+                  ) : null}
+                  {l.fromReceipt ? <span className="t-badge">{T.receiptDoc(l.fromReceipt)}</span> : null}
+                  {/* "כלול בשובר #12" (a production voucher covers it); a ₪0 line's value beside it. */}
+                  {l.voucher ? <span className="t-badge">{l.voucherValueAgorot ? `${money(l.voucherValueAgorot)} · ${l.voucher}` : l.voucher}</span> : null}
+                </span>
+                {l.subLines && l.subLines.length > 0
+                  ? // What it was ordered with (CartLineMenuInfo): the choices, a meal's components, the notes, the allergy.
+                    l.subLines.map((w, i) => (
+                      <span key={i} className={`t-line-note${w.startsWith('!') || w.startsWith(CHOICES_TEXT.allergyDeclared('')) ? ' t-line-sub-alert' : ''}`}>
+                        {w}
+                      </span>
+                    ))
+                  : null}
+              </span>
+              <span className="t-line-chev" aria-hidden="true">
+                {open === l.lineId ? '⌃' : '⌄'}
+              </span>
             </button>
             <div className="t-qty">
               <button type="button" className="t-step" aria-label="פחות" disabled={l.qty <= 1 && !voidShown && !l.refund} onClick={() => actions.setQty(l.lineId, l.qty - 1)}>
@@ -156,7 +275,7 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
       </ol>
       <footer className="t-cart-foot">
         {sell.basketDiscount ? (
-          <div className="t-total-row t-small">
+          <div className="t-total-row t-discount-row">
             <span>{sell.basketDiscount.preset ? sell.basketDiscount.preset.name : T.basketDiscount}</span>
             <span>−{money(sell.basketDiscount.amountAgorot)}</span>
           </div>
@@ -176,16 +295,12 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
         ) : null}
         <div className="t-total-row">
           <span>{payout ? T.basketToRefund : T.total}</span>
-          <strong className="t-total">{money(Math.abs(sell.totalAgorot))}</strong>
+          <strong className={`t-total${payout ? ' t-total-refund' : ''}`}>{money(Math.abs(sell.totalAgorot))}</strong>
         </div>
-        <div className="t-muted t-small">
+        <div className="t-muted t-small t-vat">
           {T.vatIncluded} {money(Math.abs(sell.vatAgorot))}
+          {sell.promotionsAgorot ? ` · הנחת מבצע −${money(sell.promotionsAgorot)}` : ''}
         </div>
-        {sell.promotionsAgorot ? (
-          <div className="t-muted t-small">
-            הנחת מבצע −{money(sell.promotionsAgorot)}
-          </div>
-        ) : null}
         {actions.preset && view.presetButtons && view.presetButtons.length > 0 && (discountShown || sell.basketDiscount?.preset) ? (
           // "הנחות קבועות": a tap applies (in the preset's colour), the same tap takes it off.
           <PresetChips
@@ -195,36 +310,34 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
             onTap={(id) => actions.preset?.(id)}
           />
         ) : null}
-        <div className="t-cart-tools">
-          {actions.basketDiscount && (discountShown || sell.basketDiscount) ? (
-            <button type="button" className="t-chip" disabled={empty} onClick={actions.basketDiscount}>
-              {T.basketDiscount}
-            </button>
-          ) : null}
-          {actions.refund && refundShown ? (
-            <button type="button" className={`t-chip${sell.refundMode ? ' t-chip-on' : ''}`} onClick={actions.refund}>
-              {sell.refundMode ? T.refundEnd : T.refund}
-            </button>
-          ) : null}
-          {actions.hold ? (
-            <button type="button" className="t-chip" disabled={empty} onClick={actions.hold}>
-              {T.hold}
-            </button>
-          ) : null}
-          {actions.held && (view.heldCount ?? 0) > 0 ? (
-            <button type="button" className="t-chip" onClick={actions.held}>
-              {T.heldOpen(view.heldCount ?? 0)}
-            </button>
-          ) : null}
-        </div>
-        <div className="t-cart-buttons">
-          <button type="button" className="t-btn t-btn-ghost" disabled={empty} onClick={actions.clear}>
-            {T.cartClear}
-          </button>
-          <button type="button" className="t-btn t-btn-primary t-btn-wide" disabled={empty} onClick={actions.pay}>
-            {empty ? T.barEmpty : payout ? `${T.basketToRefund} ${money(-sell.totalAgorot)}` : `${T.charge} ${money(sell.totalAgorot)}`}
-          </button>
-        </div>
+        {rows.map((row, i) => (
+          // The bar two to a row over the payment (Android: `chunked(2)`), a tender in its colour, the rest quiet.
+          <div key={i} className="t-quickpay">
+            {row.map((b) => (
+              <button
+                key={`${b.action}:${b.presetId ?? ''}:${b.noteShekels ?? ''}`}
+                type="button"
+                className={`t-quickpay-btn ${tenderClass(b.action)}`}
+                disabled={TENDERS.has(b.action) ? !payable : !(ALWAYS.has(b.action) || !empty)}
+                onClick={() => actions.quick?.(b)}
+              >
+                {b.action === 'fastCash' ? `${b.label} · ${money(sell.totalAgorot)}` : b.label}
+                {b.action === 'cashNotes' && b.noteShekels ? <small>{T.noteChange(money(Math.max(0, b.noteShekels * 100 - sell.totalAgorot)))}</small> : null}
+              </button>
+            ))}
+            {row.length === 1 ? <span style={{ flex: 1 }} /> : null}
+          </div>
+        ))}
+        <button type="button" className={`t-payall${buttons.length === 0 || refund ? ' t-payall-prominent' : ''}`} disabled={empty} onClick={actions.pay}>
+          {refund ? (
+            <span>{payout ? `${T.basketToRefund} ${money(-sell.totalAgorot)}` : `${T.charge} ${money(sell.totalAgorot)}`}</span>
+          ) : (
+            <>
+              <span>{view.payWord?.trim() || T.payWord}</span>
+              <small>{T.payHint}</small>
+            </>
+          )}
+        </button>
       </footer>
     </section>
   );

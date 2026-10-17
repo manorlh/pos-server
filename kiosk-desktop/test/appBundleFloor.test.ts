@@ -13,6 +13,10 @@ import { APP_BUILD_TARGET, APP_CSS_TARGETS, APP_MIN_CHROME, APP_MIN_SAFARI } fro
 
 const root = path.resolve(__dirname, '..');
 const css = readFileSync(path.join(root, 'src/renderer/roles/till/till.css'), 'utf8');
+/** The Android look over it (P:/specs/till-visual-parity): the same floor, file by file. */
+const look = readFileSync(path.join(root, 'src/renderer/roles/till/theme/look.css'), 'utf8');
+/** "עיצוב קופה"'s designed screens (roles/till/design): the same floor. */
+const design = readFileSync(path.join(root, 'src/renderer/roles/till/theme/design.css'), 'utf8');
 const rules = readFileSync(path.join(root, 'src/renderer/.browserslistrc'), 'utf8')
   .split(/\r?\n/)
   .map((l) => l.trim())
@@ -38,8 +42,9 @@ describe('the floor, said once in each tool\'s words', () => {
   });
 });
 
-describe('the till\'s CSS', () => {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
+for (const [name, file] of [['till.css', css], ['theme/look.css', look], ['theme/design.css', design]] as const)
+describe(`the till's CSS: ${name}`, () => {
+  const code = file.replace(/\/\*[\s\S]*?\*\//g, '');
 
   it('has no colour function, selector or at-rule above Chromium 108', () => {
     for (const re of [/oklch\(/i, /oklab\(/i, /color-mix\(/i, /:has\(/, /@starting-style/, /@scope/, /anchor-name/, /position-anchor/, /field-sizing/, /@container\s+style/, /:popover-open/, /text-wrap:\s*(balance|pretty)/, /\binset\s*:/]) {
@@ -85,14 +90,15 @@ describe('the till\'s CSS', () => {
     }
   });
 
-  it('lite turns transitions, animations and shadows off, and reduced motion turns transitions off', () => {
+  it.runIf(name === 'till.css')('lite turns transitions, animations and shadows off, and reduced motion turns transitions off', () => {
     expect(code).toMatch(/\.t-root\[data-lite='1'\] \*[\s\S]*?transition: none !important;[\s\S]*?animation: none !important;[\s\S]*?box-shadow: none !important;/);
     expect(code).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
   });
 
   it('colours are hex or rgba tokens', () => {
     const colours = code.match(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/g) ?? [];
-    expect(colours.length).toBeGreaterThan(10);
+    // look.css paints with the root's variables (theme/tillTheme.ts) — its few literals are hex too.
+    if (name === 'till.css') expect(colours.length).toBeGreaterThan(10);
     expect(colours.filter((c) => c.startsWith('hsl'))).toEqual([]);
   });
 });
