@@ -286,7 +286,7 @@ class TestMigration:
         heads = script.get_heads()
         assert len(heads) == 1
         assert "b7e3a9d1c5f2" in {r.revision for r in script.walk_revisions("base", heads[0])}
-        assert script.get_revision("b7e3a9d1c5f2").down_revision == "c7d2f9a4e1b8"
+        assert script.get_revision("b7e3a9d1c5f2").down_revision == "a1d5e8c3b7f2"
 
     def test_the_check_gets_windows7_and_sqlite_is_left_to_the_model(self, monkeypatch):
         module = self._module(monkeypatch)

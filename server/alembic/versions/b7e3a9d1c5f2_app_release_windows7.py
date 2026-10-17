@@ -9,7 +9,7 @@ Idempotent (the CHECK's text looked at first). SQLite (the CI) cannot alter a CH
 (create_all) already has the value there, so nothing is done on it.
 
 Revision ID: b7e3a9d1c5f2
-Revises: c7d2f9a4e1b8
+Revises: a1d5e8c3b7f2
 Create Date: 2026-10-17 12:00:00
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import context, op
 
 revision: str = "b7e3a9d1c5f2"
-down_revision: Union[str, None] = "c7d2f9a4e1b8"
+down_revision: Union[str, None] = "a1d5e8c3b7f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
