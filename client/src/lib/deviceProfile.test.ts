@@ -406,6 +406,20 @@ describe('adding a device', () => {
     }
   });
 
+  it('"נקודת מכירה" rides with a shop only (P:/specs/area-gaps.md §1)', () => {
+    const inShop = { ...draft, companyId: 'c', shopId: 's' };
+    assert.equal(pairingRequestBody({ ...inShop, areaId: 'a1' }, noKiosk).areaId, 'a1');
+    assert.equal('areaId' in pairingRequestBody({ ...inShop, areaId: '' }, noKiosk), false);
+    assert.equal('areaId' in pairingRequestBody({ ...draft, areaId: 'a1' }, noKiosk), false);
+  });
+
+  it('"שליטה מקופות": sent only when chosen', () => {
+    const kiosk = { ...draft, role: 'kiosk' as const, companyId: 'c', shopId: 's' };
+    const base = { name: '', controllerMachineIds: [], lockDevice: false };
+    assert.equal((pairingRequestBody(kiosk, { ...base, controllerSource: 'area' }).kiosk as Record<string, unknown>).controllerSource, 'area');
+    assert.equal('controllerSource' in (pairingRequestBody(kiosk, base).kiosk as Record<string, unknown>), false);
+  });
+
   it('a cash server: Windows, its shop and its name ("שרת מזומן" when blank)', () => {
     const cash = { role: 'cash_host' as const, model: '' as const, platform: 'windows' as const, companyId: 'c', shopId: 's' };
     assert.deepEqual(pairingRequestBody({ ...cash, name: '  שרת   מזומן 2 ' }, noKiosk), {

@@ -76,6 +76,16 @@ def generate_pairing_code(
         # "סניף לא פעיל": no code for an inactive shop (409 `shop_inactive`, Hebrew) — said
         # while the dialog is open; redeeming one made before is refused too.
         shop_active.refuse_pairing(db.query(Shop).filter(Shop.id == shop_id).first())
+    # "נקודת מכירה" (P:/specs/area-gaps.md §1): a live area of that shop, said while the dialog is open.
+    area_id = None
+    if body.area_id is not None:
+        if shop_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="area_requires_shop")
+        from app.services import areas
+
+        area = areas.area_in_shop(db, body.area_id, shop_id)
+        areas.refuse_archived(area)
+        area_id = area.id
 
     # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk needs a shop and valid
     # controlling tills; a KDS / board a shop and its screen — said now, while the dialog is
@@ -178,6 +188,7 @@ def generate_pairing_code(
             # "שם המכשיר — לא חובה": a till's name from the form (already cleaned by the schema).
             machine_name=body.name if device_role in (None, "till") else None,
             license_product=license_product,
+            area_id=area_id,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(
@@ -234,6 +245,19 @@ def validate_pairing(
             "deviceRole": device_profile.effective_role(db, machine),
             "licenseProduct": product,
             "licenseProductLabel": device_license.label(product),
+        })
+    except Exception:  # noqa: BLE001
+        pass
+    # "נקודת מכירה" (P:/specs/area-gaps.md §1): where it landed, for the pairing screen. Never fails the pairing.
+    try:
+        from app.models.shop_area import ShopArea
+
+        shop = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
+        area = db.get(ShopArea, machine.area_id) if machine.area_id is not None else None
+        answer.update({
+            "shopName": shop.name if shop is not None else None,
+            "areaId": str(area.id) if area is not None else None,
+            "areaName": area.name if area is not None else None,
         })
     except Exception:  # noqa: BLE001
         pass

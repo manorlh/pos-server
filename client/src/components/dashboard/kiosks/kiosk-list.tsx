@@ -284,7 +284,12 @@ export function KioskList({
                 <UnprintedCell k={k} />
               </Labeled>
             </div>
-            {k.shopName ? <div className="text-xs text-muted-foreground">{k.shopName}</div> : null}
+            {k.shopName ? (
+              <div className="text-xs text-muted-foreground">
+                {k.shopName}
+                {k.areaName ? ` · ${tc('area')}: ${k.areaName}` : ''}
+              </div>
+            ) : null}
             {actions(k)}
           </div>
         ))}
@@ -297,6 +302,7 @@ export function KioskList({
             <TableRow>
               <TableHead>{tc('kiosk')}</TableHead>
               <TableHead>{tc('shop')}</TableHead>
+              <TableHead>{tc('area')}</TableHead>
               <TableHead>{tc('connection')}</TableHead>
               <TableHead>{tc('state')}</TableHead>
               <TableHead>{tc('today')}</TableHead>
@@ -314,6 +320,7 @@ export function KioskList({
               <TableRow key={k.machineId} className={cn(k.paused && 'bg-amber-50/60 dark:bg-amber-950/20')}>
                 <TableCell className="max-w-48">{name(k)}</TableCell>
                 <TableCell className="text-sm">{k.shopName ?? '—'}</TableCell>
+                <TableCell className="text-sm">{k.areaName ?? '—'}</TableCell>
                 <TableCell>
                   <ConnectionBadge k={k} nowMs={nowMs} />
                 </TableCell>

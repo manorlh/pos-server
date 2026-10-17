@@ -477,6 +477,8 @@ export interface AddDeviceDraft {
   name?: string;
   companyId: string;
   shopId: string;
+  /** "נקודת מכירה" of the shop (P:/specs/area-gaps.md §1): '' = none. Sent only with a shop. */
+  areaId?: string;
   /** Android unless said: a device of the other platform cannot redeem the code. */
   platform?: DevicePlatform;
   /** "Windows 7 (קופה)": a Windows till code for the Windows 7 build (till only, license "קופה בלבד"). */
@@ -534,6 +536,8 @@ export interface KioskDraft {
   name: string;
   controllerMachineIds: string[];
   lockDevice: boolean;
+  /** "שליטה מקופות" (P:/specs/area-gaps.md §2): '' = by the levels above (nothing sent). */
+  controllerSource?: '' | 'list' | 'area' | 'both';
 }
 
 /**
@@ -546,6 +550,7 @@ function kioskBody(kiosk: KioskDraft): Record<string, unknown> {
     ...(kiosk.name.trim() ? { name: kiosk.name.trim() } : {}),
     controllerMachineIds: kiosk.controllerMachineIds,
     lockDevice: kiosk.lockDevice,
+    ...(kiosk.controllerSource ? { controllerSource: kiosk.controllerSource } : {}),
   };
 }
 
@@ -569,6 +574,7 @@ export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record
     platform: d.platform ?? 'android',
     ...(d.companyId ? { companyId: d.companyId } : {}),
     ...(d.shopId ? { shopId: d.shopId } : {}),
+    ...(d.shopId && d.areaId ? { areaId: d.areaId } : {}),
   };
   // "Windows 7 (קופה)": the server refuses it for anything but a Windows till licensed "קופה בלבד".
   if (d.windows7 && (d.platform ?? 'android') === 'windows' && d.role === 'till') body.windows7 = true;

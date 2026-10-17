@@ -67,6 +67,7 @@ import {
 import { RequestTillZDialog, ZModeDialog } from '@/components/dashboard/till-z/till-z-dialogs';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
+import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { DeviceModelSelect } from '@/components/dashboard/machines/device-model';
 import {
@@ -151,6 +152,9 @@ function initialDevicesView(search: string): StoredDevicesView {
   return stored ?? { filters: EMPTY_FILTERS, sort: DEFAULT_SORT, layout: 'table' };
 }
 
+/** The add dialog's "ללא נקודת מכירה" (a Select value may not be ''). */
+const PAIR_NO_AREA = '__none__';
+
 export default function MachinesPage() {
   const t = useTranslations('machines');
   const tv = useTranslations('machines.devicesView');
@@ -183,6 +187,8 @@ export default function MachinesPage() {
   const [pairingComplete, setPairingComplete] = useState(false);
   const [pairCompanyId, setPairCompanyId] = useState('');
   const [pairShopId, setPairShopId] = useState('');
+  /** "נקודת מכירה" (P:/specs/area-gaps.md §1): '' = none. Reset whenever the shop changes. */
+  const [pairAreaId, setPairAreaId] = useState('');
   const [pairPreAssignLabel, setPairPreAssignLabel] = useState<string | null>(null);
   /** Required before a code is generated: the till learns from it whether it prints. */
   const [pairDeviceModel, setPairDeviceModel] = useState<DeviceModel | ''>('');
@@ -432,6 +438,7 @@ export default function MachinesPage() {
     setPairingComplete(false);
     setPairCompanyId('');
     setPairShopId('');
+    setPairAreaId('');
     setPairPreAssignLabel(null);
     setPairDeviceModel('');
     setPairDeviceRole('');
@@ -484,12 +491,15 @@ export default function MachinesPage() {
     name: pairName,
     companyId: pairCompanyId,
     shopId: pairShopId,
+    areaId: pairAreaId,
     platform: pairPlatform,
     windows7: pairWin7,
     kds: pairKds,
     mirrorTillId: pairMirrorTill,
   };
   const pairMissing = addDeviceMissing(pairDraft);
+  // The chosen shop's live points of sale, for "נקודת מכירה" in the add dialog.
+  const { data: pairAreas = [] } = useShopAreas(pairShopId || null, false);
   const pairSells = takesTerminal(pairDeviceRole);
   const pairBuiltinTerminal =
     pairPlatform !== 'android' ? false : pairDeviceModel ? capabilitiesOf(pairDeviceModel, { kiosk: pairDeviceRole === 'kiosk' }).builtinTerminal : null;
@@ -1261,6 +1271,7 @@ export default function MachinesPage() {
                     onValueChange={(v) => {
                       setPairCompanyId(v ?? '');
                       setPairShopId('');
+                      setPairAreaId('');
                       setPairWorkConfig(EMPTY_WORK_CONFIG);
                       // A kiosk's controlling tills are of its own company.
                       setPairKiosk((k) => ({ ...k, controllerMachineIds: [] }));
@@ -1285,6 +1296,7 @@ export default function MachinesPage() {
                     value={pairShopId}
                     onValueChange={(v) => {
                       setPairShopId(v ?? '');
+                      setPairAreaId('');
                       setPairWorkConfig(EMPTY_WORK_CONFIG);
                     }}
                     disabled={!pairCompanyId}
@@ -1314,11 +1326,41 @@ export default function MachinesPage() {
                     </p>
                   ) : null}
                 </div>
+                {/* "נקודת מכירה" (P:/specs/area-gaps.md §1): optional, the chosen shop's live areas. */}
+                {pairShopId && pairAreas.length > 0 ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="pair-area">{t('pairArea')}</Label>
+                    <Select
+                      value={pairAreaId || PAIR_NO_AREA}
+                      onValueChange={(v) => setPairAreaId(!v || v === PAIR_NO_AREA ? '' : v)}
+                      items={[
+                        { value: PAIR_NO_AREA, label: t('pairAreaNone') },
+                        ...pairAreas.map((a) => ({ value: a.id, label: a.name })),
+                      ]}
+                    >
+                      <SelectTrigger id="pair-area">
+                        <SelectValue placeholder={t('pairAreaNone')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={PAIR_NO_AREA} label={t('pairAreaNone')}>
+                          {t('pairAreaNone')}
+                        </SelectItem>
+                        {pairAreas.map((a) => (
+                          <SelectItem key={a.id} value={a.id} label={a.name}>
+                            {a.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">{t('pairAreaHint')}</p>
+                  </div>
+                ) : null}
               </div>
               {/* A kiosk's name, controlling tills and device lock — made as it pairs. */}
               {pairDeviceRole === 'kiosk' ? (
                 <KioskOptionsFields
                   shopId={pairShopId || null}
+                  areaId={pairAreaId || null}
                   machineId={null}
                   value={pairKiosk}
                   onChange={setPairKiosk}
@@ -1376,8 +1418,9 @@ export default function MachinesPage() {
                     const shopName = pairShopId
                       ? findBySameId(pairShops, pairShopId)?.name
                       : undefined;
+                    const areaName = pairAreaId ? pairAreas.find((a) => a.id === pairAreaId)?.name : undefined;
                     if (companyName && shopName) {
-                      setPairPreAssignLabel(`${companyName} — ${shopName}`);
+                      setPairPreAssignLabel(`${companyName} — ${shopName}${areaName ? ` · ${areaName}` : ''}`);
                     } else if (companyName) {
                       setPairPreAssignLabel(companyName);
                     } else {

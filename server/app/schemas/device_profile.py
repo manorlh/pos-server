@@ -22,6 +22,8 @@ class KioskOptionsIn(BaseModel):
     controller_machine_ids: List[str] = Field(default_factory=list, alias="controllerMachineIds", max_length=50)
     #: "נעל את המכשיר (מצב קיוסק)": the till parameter `kioskMode` at the machine's level.
     lock_device: bool = Field(False, alias="lockDevice")
+    #: "שליטה מקופות" (app/services/kiosk_controllers.py), set on the kiosk itself; absent — it inherits.
+    controller_source: Optional[Literal["list", "area", "both"]] = Field(None, alias="controllerSource")
     #: An older dashboard's kiosk pinpad (today's dialog sends "מסופון אשראי" as the pairing request's
     #: `terminal`, app/services/device_terminal.py, which wins over these). A Nayax pinpad's
     #: address, written to the machine's own settings layer — the

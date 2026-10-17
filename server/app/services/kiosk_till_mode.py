@@ -320,6 +320,49 @@ def check_work_mode(db: Session, machine: Any, action: str) -> str:
     return mode
 
 
+#: "מצב עבודה" from a controlling till (P:/specs/area-gaps.md §3): who may press it there.
+TILL_SWITCH_PERMISSION = "KIOSK_TILL_MODE"
+TILL_SWITCH_LICENSE_MESSAGE = "מעבר בין קיוסק לקופה מהקופה אפשרי רק לקיוסק עם סוג רישיון \"משולב\" כשמצב הקופה מופעל"
+TILL_SWITCH_PERMISSION_MESSAGE = "נדרש קוד עובד עם הרשאת מעבר למצב קופה בקיוסק"
+
+
+def till_switch_allowed(db: Session, machine: Any, settings: Optional[Dict[str, Any]] = None) -> bool:
+    """A controlling till may switch this kiosk's work mode: its license is "משולב" and the gate is on."""
+    from app.services import device_license
+
+    settings = settings if settings is not None else effective(db, machine)
+    return bool(settings.get("enabled")) and device_license.product_of(db, machine) == device_license.KIOSK_TILL
+
+
+def require_till_switch(db: Session, till: Any, kiosk_machine: Any, pos_user_id: Optional[str]) -> Any:
+    """
+    `enter_till` / `return_kiosk` from a controlling till: 409 `till_mode_disabled` unless
+    [till_switch_allowed]; 403 `kiosk_till_mode_requires_permission` unless the employee named is active in
+    the till's shop and holds KIOSK_TILL_MODE by the cloud's roster. The employee otherwise.
+    """
+    from app.models.pos_user import PosUser
+    from app.services.kiosk_control import KioskCommandRefused
+    from app.services.till_roles import pos_user_allows
+
+    if not till_switch_allowed(db, kiosk_machine):
+        raise KioskCommandRefused(status.HTTP_409_CONFLICT, "till_mode_disabled", TILL_SWITCH_LICENSE_MESSAGE)
+    try:
+        ident = uuid.UUID(str(pos_user_id)) if pos_user_id else None
+    except (TypeError, ValueError):
+        ident = None
+    user = db.get(PosUser, ident) if ident is not None else None
+    if (
+        user is None
+        or not user.is_active
+        or user.shop_id != till.shop_id
+        or not pos_user_allows(user, TILL_SWITCH_PERMISSION)
+    ):
+        raise KioskCommandRefused(
+            status.HTTP_403_FORBIDDEN, "kiosk_till_mode_requires_permission", TILL_SWITCH_PERMISSION_MESSAGE,
+        )
+    return user
+
+
 def pending_work_mode(db: Session, kiosk: Any, *, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     """
     The latest `enter_till` / `return_kiosk` the kiosk has still to carry out ({id, mode, by}); an
@@ -382,6 +425,8 @@ def summary_part(db: Session, machine: Any, status_report: Any) -> Dict[str, Any
         "licenseProduct": product,
         "licenseProductLabel": device_license.label(product),
         "byLicense": device_license.stored(machine) is not None,
+        # "מצב עבודה" from a controlling till (P:/specs/area-gaps.md §3): "משולב" and the gate on.
+        "tillSwitch": bool(settings["enabled"]) and product == device_license.KIOSK_TILL,
     }
 
 
