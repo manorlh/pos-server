@@ -9,6 +9,8 @@
     "skipLibCheck": true
   },
   "files": [
+    "src/lib/kioskDesignGroups.ts",
+    "src/lib/kioskDesignGroups.test.ts",
     "src/lib/tenantSwitch.ts",
     "src/lib/tenantSwitch.test.ts",
     "src/lib/tillZ.ts",

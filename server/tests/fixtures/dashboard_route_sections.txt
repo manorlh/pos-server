@@ -323,6 +323,15 @@ POST /kds/shops/{shop_id}/overrides -> kds:edit
 DELETE /kds/shops/{shop_id}/overrides/{override_id} -> kds:edit
 POST /kds/shops/{shop_id}/pickup-token -> kds:edit
 PUT /kds/shops/{shop_id}/stations/{station_id} -> kds:edit
+GET /kiosk-designs -> kiosk_designs|kiosks:view
+POST /kiosk-designs -> kiosk_designs:edit
+GET /kiosk-designs/groups -> kiosk_designs|kiosks:view
+DELETE /kiosk-designs/{design_id} -> kiosk_designs:edit
+GET /kiosk-designs/{design_id} -> kiosk_designs|kiosks:view
+PUT /kiosk-designs/{design_id} -> kiosk_designs:edit
+POST /kiosk-designs/{design_id}/archive -> kiosk_designs:edit
+POST /kiosk-designs/{design_id}/duplicate -> kiosk_designs:edit
+POST /kiosk-designs/{design_id}/restore -> kiosk_designs:edit
 GET /kiosks -> kiosks:view
 POST /kiosks -> kiosks:edit
 GET /kiosks/candidates -> kiosks:view
@@ -335,6 +344,7 @@ POST /kiosks/live/hides/{hide_id}/extend -> kiosks|device_control:edit
 POST /kiosks/media -> kiosks:edit
 GET /kiosks/settings -> kiosks:view
 PUT /kiosks/settings -> kiosks:edit
+PUT /kiosks/settings/design -> kiosks|kiosk_designs:edit
 DELETE /kiosks/{machine_id} -> kiosks:edit
 PATCH /kiosks/{machine_id} -> kiosks:edit
 DELETE /kiosks/{machine_id}/banner -> kiosks|device_control:edit

@@ -2192,8 +2192,13 @@ def machine_layers(db: Session, machine) -> Layers:
 
 
 def effective_config(db: Session, machine) -> Dict[str, Any]:
-    """What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ machine (sanitised, repaired)."""
-    layers = machine_layers(db, machine)
+    """
+    What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ machine (sanitised, repaired), with the saved design its
+    nearest level assigns right before that level's own layer ("עיצובים שמורים לקיוסק", kiosk_designs.py).
+    """
+    from app.services import kiosk_designs
+
+    stack = kiosk_designs.machine_stack(db, machine)
     # "שליטה מרחוק בקיוסקים": the shop's quick hides and the kiosk's banner, over its settings
     # (app/services/kiosk_live.py) — every kiosk already applies both.
     from app.services import kiosk_live
@@ -2202,7 +2207,7 @@ def effective_config(db: Session, machine) -> Dict[str, Any]:
     # "קיוסק — מה נחסם כשאין אינטרנט" (till parameter `kioskOfflineBlockScope`): other than the default, in
     # `general.offlineBlockScope` — the Android web kiosk reads the config, not the parameters. So too
     # "קיוסק — כשאין מסופון אשראי" (`kioskNoTerminalFallback`), as `general.noTerminalFallback`.
-    cfg = kiosk_offline_block_overlay(db, machine, kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.machine)))
+    cfg = kiosk_offline_block_overlay(db, machine, kiosk_live.overlay(db, machine, resolve(*stack)))
     return kiosk_no_terminal_fallback_overlay(db, machine, cfg)
 
 

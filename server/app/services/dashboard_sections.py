@@ -239,6 +239,14 @@ SECTIONS: Tuple[Section, ...] = (
         (),
     ),
     Section("kiosks", "קיוסקים", "קיוסקים, הגדרותיהם ותקינות מכשירים.", ("/dashboard/kiosks", "/dashboard/kiosks/health")),
+    # "עיצובים שמורים לקיוסק" (P:/specs/kiosk-saved-designs.md): the library of named kiosk designs. Reading it
+    # comes with "קיוסקים" too; assigning one to a level is the kiosks' (or this section's) edit.
+    Section(
+        "kiosk_designs", "עיצובים שמורים לקיוסק",
+        "ספריית העיצובים השמורים של הקיוסקים: שמירה, שכפול, שינוי שם, עריכה, העברה לארכיון ומחיקה. "
+        "שיוך עיצוב לקיוסק / סניף / נקודת מכירה — גם עם \"קיוסקים\".",
+        ("/dashboard/kiosk-designs",),
+    ),
     Section("till_design", "עיצוב קופה", "מסכי ההזמנה של הקופות.", ("/dashboard/till-design",)),
     Section("kds", "KDS ותצורת עבודה", "מסכי מטבח ותצורת עבודה לעמדה.", ("/dashboard/kds", "/dashboard/workflow")),
     Section("printers", "מדפסות מטבח", "מדפסות מטבח / בר ומה מודפס איפה.", ("/dashboard/kitchen-printers",)),
@@ -678,6 +686,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/kiosks/live*", S("kiosks", "device_control")),
     (_ALL, "/kiosks/{}/commands", S("kiosks", "device_control")),
     (_ALL, "/kiosks/{}/banner", S("kiosks", "device_control")),
+    # "עיצובים שמורים לקיוסק" (app/routers/kiosk_designs.py): read with the kiosks too; assigning one either.
+    (_ALL, "/kiosks/settings/design", S("kiosks", "kiosk_designs")),
+    (_GET, "/kiosk-designs*", S("kiosk_designs", "kiosks", level=VIEW)),
+    (_ALL, "/kiosk-designs*", S("kiosk_designs")),
     (_ALL, "/kiosks*", S("kiosks")),
     # Remote control of tills and kiosks (app/routers/device_commands.py). One command's status is
     # also the tables page's: a table cancelled through the LAN host (`cancel_table`) is followed there

@@ -261,6 +261,30 @@ export interface KioskSettings {
   menuVersion?: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
+  /** "עיצוב: <שם>" (lib/kioskDesigns.ts): absent on an older server. */
+  design?: KioskDesignAssignment | null;
+}
+
+/** settings_view's `design` (pos-server app/services/kiosk_designs.py `assignment_view`). */
+export interface KioskDesignAssignment {
+  /** The design this level itself assigns. */
+  assigned: { id: string; name: string; archived: boolean } | null;
+  /** "ללא עיצוב" chosen at this level. */
+  off: boolean;
+  /** The design this level ends up with (its own, or a parent's), or null. */
+  effective: {
+    id: string;
+    name: string;
+    groups: string[];
+    level: string;
+    levelId: string | null;
+    levelName: string | null;
+    inherited: boolean;
+  } | null;
+  /** The level that said "ללא עיצוב" above, if that is why there is none. */
+  offAt: string | null;
+  /** This level's own edits inside the design's groups (they win over it), dotted paths. */
+  overDesign: string[];
 }
 
 export interface KioskDefaults {

@@ -402,6 +402,49 @@ def put_settings(
     }
 
 
+class KioskDesignAssignIn(BaseModel):
+    """`PUT /kiosks/settings/design`: "עיצוב: <שם>" on a level."""
+
+    #: A saved design (app/services/kiosk_designs.py); null with `off` false: inherit the nearest above.
+    designId: Optional[uuid.UUID] = None
+    #: "ללא עיצוב": stop an assignment from above at this level.
+    off: bool = False
+    #: Drop this level's own overrides in the design's groups (they would win over it).
+    clearOverlapping: bool = False
+
+
+@router.put("/settings/design")
+def put_settings_design(
+    body: KioskDesignAssignIn,
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
+    scope_id: uuid.UUID = Query(..., alias="id"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Assign a saved design to this level (or "ללא עיצוב", or inherit). Every kiosk below gets it on its next
+    sync — the configVersion of exactly those kiosks changes. Returns the level's settings view.
+    """
+    from app.services import kiosk_designs
+
+    scope = svc.settings_scope(db, current_user, level, scope_id, active_tenant_id)
+    try:
+        kiosk_designs.assign(
+            db, current_user, scope,
+            design_id=body.designId, off=body.off, clear_overlapping=body.clearOverlapping,
+        )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        kiosk_designs.assign(
+            db, current_user, scope,
+            design_id=body.designId, off=body.off, clear_overlapping=body.clearOverlapping,
+        )
+        db.commit()
+    return svc.settings_view(db, scope)
+
+
 @router.post("/media", status_code=status.HTTP_201_CREATED)
 async def upload_kiosk_media(
     file: UploadFile = File(...),

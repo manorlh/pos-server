@@ -298,6 +298,9 @@ export const NAV_SECTIONS: NavSection[] = [
       // action bar, colours, texts, fields — per company / shop / point of sale / till, with a
       // live preview; the same roles as the kiosks page.
       { href: '/dashboard/till-design', labelKey: 'tillDesign', icon: LayoutTemplate, gate: 'settingsWrite' },
+      // "עיצובים שמורים לקיוסק" (P:/specs/kiosk-saved-designs.md): named kiosk designs — save, duplicate, edit,
+      // archive — and where each is used; the kiosks page's roles.
+      { href: '/dashboard/kiosk-designs', labelKey: 'kioskDesigns', icon: Palette, gate: 'settingsWrite' },
       // "תקינות מכשירים": each kiosk's parts (app, terminal, printer, till link, KDS, media,
       // uploads) live, and its open alerts — the same roles as the kiosks page.
       { href: '/dashboard/kiosks/health', labelKey: 'deviceHealth', icon: HeartPulse, gate: 'settingsWrite' },

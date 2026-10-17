@@ -1543,15 +1543,18 @@ def settings_scope(db: Session, user: User, level: str, scope_id: Any, tenant_id
 
 
 def _parent_layers(db: Session, scope: SettingsScope) -> List[Dict[str, Any]]:
-    layers = cfgsvc.layers_for(db, company_id=scope.company_id, shop_id=scope.shop_id, machine_id=scope.machine_id)
-    if scope.level == "company":
-        return []
-    if scope.level == "shop":
-        return [layers.company]
-    return [layers.company, layers.shop]
+    """
+    What a level inherits: the layers above it and, placed right before its own, the saved design it or a
+    parent assigns ("עיצובים שמורים לקיוסק", app/services/kiosk_designs.py `compose`).
+    """
+    from app.services import kiosk_designs
+
+    return kiosk_designs.parent_stack(db, scope)
 
 
 def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
+    from app.services import kiosk_designs
+
     row = cfgsvc.layer_row(db, scope.level, scope.entity_id)
     parents = _parent_layers(db, scope)
     overrides = cfgsvc.sanitize_stored_layer(row.overrides if row is not None else {})
@@ -1576,6 +1579,8 @@ def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
         "updatedAt": _iso(row.updated_at) if row is not None else None,
         "updatedBy": updated_by,
         "updatedByUserId": str(row.updated_by_user_id) if row is not None and row.updated_by_user_id else None,
+        # "עיצוב: <שם>": the design this level assigns, the one it ends up with, and its own edits over it.
+        "design": kiosk_designs.assignment_view(db, scope, overrides),
     }
 
 
