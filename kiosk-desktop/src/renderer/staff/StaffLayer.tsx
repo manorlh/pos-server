@@ -36,7 +36,7 @@ import { WORK_TEXT } from '../../core/workMode';
 import { WorkModePanel } from './WorkModePanel';
 import { KioskZPanel } from './KioskZPanel';
 import { KioskHistoryPanel } from './KioskHistoryPanel';
-import { UnpairControl } from '../roles/UnpairControl';
+import { ForeignRowsPanel, UnpairControl } from '../roles/UnpairControl';
 
 /** CashMag on the manager's screen: where the server's address came from, what an unclear payment was. */
 const CASHMAG_SOURCE: Record<string, string> = { cloud: 'מהענן', local: 'מקומי (kiosk.json)', default: 'לא מוגדר' };
@@ -811,6 +811,7 @@ function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onCl
             </Panel>
           ) : null}
           <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />
+          {info.foreignRows ? <ForeignRowsPanel rows={info.foreignRows} onDone={refresh} /> : null}
           {/* Why it was refused, what waits, "ניתוק בכל זאת" — under the button, where the technician looks. */}
           <UnpairControl
             label="ניתוק הקיוסק מהענן"

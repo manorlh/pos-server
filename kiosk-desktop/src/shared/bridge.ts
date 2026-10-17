@@ -466,6 +466,11 @@ export interface AdminWorkMode {
 
 export interface TechnicianInfo {
   machine: KioskView['machine'];
+  /**
+   * "רשומות מהמכשיר הקודם (N) — לא נשלחו, נשמרו בגיבוי": outbox rows made under another pairing (a forced unpair, then a
+   * pairing to another machine) — held, never sent here; they go again only if the device is paired to their machine.
+   */
+  foreignRows?: { count: number; title: string; lines: string[]; machineIds: string[] } | null;
   deviceRole: string | null;
   /** "סוג רישיון" (core/deviceLicense.ts): the product, "סוג רישיון: …", and the mismatch warning; null — none said. */
   license?: { product: string; label: string | null; info: string | null; warning: string | null } | null;
@@ -677,7 +682,9 @@ export type TechnicianAction =
    * and whether "ניתוק בכל זאת" may go); `force` with the technician's `code` again and `confirm` (and `confirmMoney`
    * when money records wait) exports everything pending to a backup, then unpairs.
    */
-  | { type: 'unpair'; force?: boolean; code?: string; confirm?: boolean; confirmMoney?: boolean };
+  | { type: 'unpair'; force?: boolean; code?: string; confirm?: boolean; confirmMoney?: boolean }
+  /** "ייצוא לקובץ": the rows of the previous pairing (held, never sent under this one) to unpair-backups. */
+  | { type: 'exportForeign' };
 
 export interface TechnicianActionResult {
   ok: boolean;

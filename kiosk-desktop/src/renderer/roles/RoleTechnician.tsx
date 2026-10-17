@@ -15,7 +15,7 @@ import { kiosk } from '../bridge';
 import { DISPLAY_SCALE_TEXT, DisplayScaleControl } from './DisplayScaleControl';
 import { updateLine } from './updateText';
 import { DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
-import { UnpairControl } from './UnpairControl';
+import { ForeignRowsPanel, UnpairControl } from './UnpairControl';
 
 /** The hidden corner: put it anywhere a role screen fills the window. */
 export function useTechnicianCorner(): [boolean, (open: boolean) => void, (e: React.PointerEvent) => void] {
@@ -166,6 +166,7 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
             </div>
             {/* "יציאה לשולחן העבודה": a manager's code (DESKTOP_EXIT), not the technician's. */}
             <DesktopExitMenuButton onOpen={() => setExitOpen(true)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 py-2 text-sm font-bold text-white" />
+            {info?.foreignRows ? <ForeignRowsPanel rows={info.foreignRows} onDone={refresh} /> : null}
             <UnpairControl label="ניתוק המכשיר מהענן" buttonClassName="w-full rounded-xl bg-red-600 py-2 text-sm font-bold text-white disabled:opacity-40" onDone={refresh} />
           </>
         )}
