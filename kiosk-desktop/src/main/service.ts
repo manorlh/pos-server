@@ -553,6 +553,7 @@ export class KioskService extends EventEmitter {
       // The cloud away: the shop's LAN host takes the orders (its print server; never for an independent kiosk).
       lanTarget: () => this.lanTarget(),
       kioskName: () => this.operator().name,
+      areaId: () => this.areaIdHere(),
     });
     this.cashPay = new CashPay({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log, fetch: opts.fetch });
     this.cashCredits = new CashCredits({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log });

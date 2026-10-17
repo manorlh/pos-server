@@ -411,6 +411,13 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                     {tMachines('deviceRole.kds')}
                   </Link>
                 ) : null}
+                {/* Which orders the screen shows (follows its point of sale, or as set on the KDS page). */}
+                {machine.kdsScreen?.scopeLabel ? <span className="text-xs text-muted-foreground">{machine.kdsScreen.scopeLabel}</span> : null}
+                {machine.kdsScreen?.scopeWarningText ? (
+                  <span role="note" className="text-xs text-amber-700 dark:text-amber-400">
+                    {machine.kdsScreen.scopeWarningText}
+                  </span>
+                ) : null}
                 {isCashHost(machine) ? (
                   <Link href="/dashboard/cash-stations" className="text-xs text-primary hover:underline">
                     {tMachines('deviceRole.cashStationsLink')}

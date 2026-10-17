@@ -51,6 +51,8 @@ export interface PayAtTillDeps {
   lanTarget?: () => LanTarget | null;
   /** This kiosk's name on the host's list. */
   kioskName?: () => string | null;
+  /** This kiosk's point of sale (null: none) — the host's locked tills list only their own kiosks' orders. */
+  areaId?: () => string | null;
   /** Tests: the LAN request (default: main/kiosk/lanClient.ts). */
   lanPost?: LanPost;
 }
@@ -239,7 +241,7 @@ export class PayAtTill {
     const post = this.d.lanPost ?? defaultLanPost;
     for (let i = 0; i < list.length; i += LAN_CHUNK) {
       const chunk = list.slice(i, i + LAN_CHUNK);
-      const r = await post(target, LAN_OPEN_ORDERS_PATH, lanOrdersBody(me, this.d.kioskName?.() ?? null, chunk)).catch(() => null);
+      const r = await post(target, LAN_OPEN_ORDERS_PATH, lanOrdersBody(me, this.d.kioskName?.() ?? null, chunk, this.d.areaId?.() ?? null)).catch(() => null);
       if (!r || r.status !== 200) {
         if (this.lanOk !== false) this.d.log(`pay at till: the LAN host ${target.address}:${target.port} did not take the orders (${r ? `HTTP ${r.status}` : 'no answer'})`);
         this.lanOk = false;

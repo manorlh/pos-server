@@ -226,9 +226,17 @@ def get_local_shop_z_request(
     return out
 
 
+class LocalShopZRequestIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: "Z לנקודת מכירה" (P:/specs/area-z-configs.md §3): the main till closes only this point of sale's tills.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+
+
 @router.post("/shops/{shop_id}/local-shop-z-request", status_code=status.HTTP_201_CREATED)
 def post_local_shop_z_request(
     shop_id: uuid.UUID,
+    body: Optional[LocalShopZRequestIn] = None,
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -238,9 +246,17 @@ def post_local_shop_z_request(
     never starts one itself). The main till gets it on its next heartbeat, closes every
     participating till over the LAN and produces the Z; a till that blocks it is named here.
     """
+    from app.services import area_scope
+
     shop = _shop(db, shop_id, current_user, active_tenant_id)
+    area_id = body.area_id if isinstance(body, LocalShopZRequestIn) else None
+    if area_id is None:
+        # The whole shop's Z: a manager of some points of sale only may not ask for it.
+        area_scope.refuse_shop_level(db, current_user)
+    else:
+        area_scope.check_area(db, current_user, area_id)
     try:
-        LZ.request_from_dashboard(db, current_user, shop)
+        LZ.request_from_dashboard(db, current_user, shop, area_id=area_id)
     except LZ.LocalShopZRefused as refused:
         db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)

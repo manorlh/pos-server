@@ -174,7 +174,8 @@ AREA_LOCAL = "area_z_local_mode"
 AREA_NOT_MASTER = "not_area_master_till"
 AREA_REFUSAL_TEXT = {
     NOT_IN_AREA: "הקופה אינה משויכת לנקודת מכירה",
-    AREA_LOCAL: "במצב מקומי סוגרים Z לכל הסניף בלבד",
+    # Local mode: the area Z is the main till's, over the LAN (P:/specs/area-z-configs.md §3) — not the cloud's.
+    AREA_LOCAL: "במצב מקומי Z לנקודת מכירה מופק בקופה הראשית של הסניף",
     AREA_NOT_MASTER: "Z לנקודת המכירה נסגר מהקופה הראשית של הנקודה",
     INDEPENDENT: "קופה עצמאית אינה סוגרת Z סניפי",
 }

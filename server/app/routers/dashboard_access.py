@@ -250,6 +250,24 @@ def check_grant(db: Session, actor: User, values: dict, *, current: Optional[DA.
                 f"אפשר לתת רק לשוניות שיש לך, ועד הרמה שלך: {labels}.",
                 status.HTTP_403_FORBIDDEN,
             )
+    # A manager of some points of sale grants only inside their own: a profile of their points of sale /
+    # devices — never the whole shop, never another point of sale (P:/specs/area-coverage-audit.md).
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, actor)
+    if reach.narrowed:
+        areas = values.get("area_ids")
+        machines = values.get("machine_ids")
+        if areas is None and machines is None and current is not None:
+            pass  # an older dashboard: the profile keeps its own (checked when it was set)
+        else:
+            areas, machines = list(areas or []), list(machines or [])
+            if not areas and not machines:
+                raise _error("grant_exceeds_own", "מנהל נקודת מכירה נותן הרשאות רק לנקודות המכירה שלו.", status.HTTP_403_FORBIDDEN)
+            if any(uuid.UUID(str(a)) not in reach.area_ids for a in areas) or any(
+                uuid.UUID(str(m)) not in reach.reachable_machine_ids for m in machines
+            ):
+                raise _error("grant_exceeds_own", "אחת מנקודות המכירה או המכשירים אינם בהיקף שלך.", status.HTTP_403_FORBIDDEN)
     # The org scope: only changes are checked, and only inside the granter's own.
     now = (
         bool(current.org_wide) if current else False,

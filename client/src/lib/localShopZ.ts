@@ -35,6 +35,9 @@ export interface LocalShopZRequest {
   zReportId?: string | null;
   shopSequenceNumber?: number | null;
   completedAt?: string | null;
+  /** "Z לנקודת מכירה" (P:/specs/area-z-configs.md §3): the main till closes only this point of sale's tills. */
+  areaId?: string | null;
+  areaName?: string | null;
 }
 
 export interface LocalShopZState {

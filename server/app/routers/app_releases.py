@@ -702,7 +702,10 @@ def _rollout_machines(db: Session, user: User, tenant_id):
         query = query.filter(POSMachine.shop_id == user.shop_id)
     else:
         return None
-    return query
+    # A manager of some points of sale: their devices only (P:/specs/area-coverage-audit.md).
+    from app.services import area_scope
+
+    return area_scope.filter_machine_column(query, db, user, POSMachine.id)
 
 
 def _rollout_order(row: RolloutRow):

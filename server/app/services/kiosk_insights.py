@@ -99,7 +99,13 @@ def scope_kiosks(db: Session, ctx, kiosk_id: Optional[uuid_mod.UUID] = None) -> 
     if machine_filter is not None:
         q = q.filter(POSMachine.id == machine_filter)
     out: Dict[Any, Dict[str, Any]] = {}
+    # A manager of some points of sale: their kiosks only (P:/specs/area-coverage-audit.md).
+    from app.services import area_scope
+
+    reach = area_scope.allowed_machine_ids(db, getattr(ctx, "user", None) or getattr(getattr(ctx, "scope", None), "user", None))
     for machine, device in q.all():
+        if reach is not None and machine.id not in reach:
+            continue
         if area is not None:
             mine = machine.area_id if machine.area_id is not None else D.AREA_NONE
             if str(mine) != str(area):
