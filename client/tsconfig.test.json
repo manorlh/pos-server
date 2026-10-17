@@ -227,6 +227,8 @@
     "src/lib/cashDrawer.test.ts",
     "src/lib/drawerTips.ts",
     "src/lib/drawerTips.test.ts",
+    "src/lib/cashWithTips.ts",
+    "src/lib/cashWithTips.test.ts",
     "src/lib/zCashMovements.ts",
     "src/lib/zCashMovements.test.ts",
     "src/lib/zCashWallets.ts",

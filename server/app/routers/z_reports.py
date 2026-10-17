@@ -124,7 +124,13 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     drawer_tips = z_print.drawer_tips_of(z)
     if drawer_tips is not None:
         item.card_tips_from_drawer = drawer_tips["cardTipsFromDrawer"]
+        item.card_tips_unpaid = drawer_tips.get("cardTipsUnpaid")
         item.drawer_cash = drawer_tips["drawerCash"]
+    # "מזומן במכשיר": the cash the tills' cash devices took — inside the cash, out of the expected cash.
+    device = z_print.device_cash_of(z)
+    if device is not None:
+        item.device_cash = device["total"]
+        item.device_cash_by_kind = {k: str(Decimal(v).quantize(Decimal("0.01"))) for k, v in device["byKind"].items()}
     # Cash In / Out and safe deposits inside the expected cash — only on a Z the parameter applied
     # to when it was produced, and as it froze them (never the parameter as it stands now).
     movements = z_print.cash_movements_of(z)
@@ -449,7 +455,11 @@ def get_z_print_documents(
                 "number": z.z_number,
                 "shopId": str(z.shop_id) if z.shop_id else None,
                 "document": _with_failed_payments(
-                    db, z, z_print.build_print_document(z, tzinfo, printed_at=printed_at), tzinfo
+                    db, z,
+                    z_print.build_print_document(
+                        z, tzinfo, printed_at=printed_at, per_till_cash=z_print.per_till_cash_of(db, z),
+                    ),
+                    tzinfo,
                 ),
             }
             for z in rows
@@ -473,7 +483,9 @@ def get_z_print_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
     tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, None))
     # With "עסקאות שלא הושלמו" (informational, docs/SPEC_FAILED_PAYMENTS.md), as the till prints it.
-    return _with_failed_payments(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
+    return _with_failed_payments(
+        db, z, z_print.build_print_document(z, tzinfo, per_till_cash=z_print.per_till_cash_of(db, z)), tzinfo,
+    )
 
 
 def _with_derived_sales(section: dict) -> dict:
@@ -548,6 +560,9 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
         for s in shifts
     ]
     out.business = _business_of(z)
+    # "zPrintPerTillCash" (P:/specs/x-z-cash-with-tips.md §3): whether a print of this shop / area Z
+    # carries the per-till drawer table under the summary.
+    out.print_per_till_cash = z_print.per_till_cash_of(db, z)
     sections = [s for s in (z.per_machine or []) if isinstance(s, dict)]
     if any("cardBrands" in s for s in sections):
         out.card_brands = card_brands.merge_breakdowns(s.get("cardBrands") for s in sections)

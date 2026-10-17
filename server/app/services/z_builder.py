@@ -310,6 +310,40 @@ def card_tips_from_drawer(shift: Shift) -> Optional[Decimal]:
     return amount.quantize(CENT)
 
 
+def card_tips_unpaid(shift: Shift) -> Optional[Decimal]:
+    """
+    The card tips a shift's till owed staff because its drawer could not pay them
+    ("לא שולמו — לתשלום לעובדים", `cashDrawer.cardTipsShortfall` = partial, P:/specs/x-z-cash-with-tips.md
+    §2), as frozen on its close (`till.cardTipsUnpaid`). None when the close froze no paid amount
+    (the parameter was off); an older close that froze only the paid amount reads 0. Information:
+    never in the expected cash.
+    """
+    from app.services.cash_with_tips import frozen_unpaid
+
+    return frozen_unpaid(getattr(shift, "till_totals", None))
+
+
+def device_cash_of(shift: Shift) -> Decimal:
+    """
+    "מזומן במכשיר" of a shift: the cash its cash device (a CashMag recycler / a PayLink station) took — inside
+    `total_cash`, in the device, never in the drawer. The cloud's own count (`total_device_cash`, from the
+    documents' `cashDevice` legs); a shift computed before it was stored reads its till's frozen
+    `till.totalDeviceCash`, else none.
+    """
+    own = getattr(shift, "total_device_cash", None)
+    if own is not None:
+        return _dec(own)
+    till = getattr(shift, "till_totals", None)
+    if isinstance(till, dict) and not isinstance(till.get("totalDeviceCash"), bool):
+        try:
+            amount = Decimal(str(till.get("totalDeviceCash")))
+        except (ArithmeticError, ValueError):
+            return ZERO
+        if amount.is_finite():
+            return amount.quantize(CENT)
+    return ZERO
+
+
 def _shift_expected(shift: Shift, with_movements: bool = False) -> Decimal:
     """
     The server's own expected drawer at a shift's close: its float + cash takings + cash
@@ -318,9 +352,12 @@ def _shift_expected(shift: Shift, with_movements: bool = False) -> Decimal:
     `with_movements` ("Z — מזומן צפוי כולל הפקדות ותנועות מזומן", app/services/z_expected_cash.py):
     plus the shift's Cash In, less its Cash Out and its safe deposits, as its till froze them on
     the close — the drawer the till's X reckons. Off, exactly as before.
+
+    "מזומן במכשיר" (`device_cash_of`): the cash a cash device took is in the device, never in the drawer —
+    out of the expected (still in `total_cash`: the fiscal figures do not move).
     """
     expected = (
-        _dec(shift.opening_cash) + _dec(shift.total_cash) + _dec(shift.total_cash_tips)
+        _dec(shift.opening_cash) + _dec(shift.total_cash) - device_cash_of(shift) + _dec(shift.total_cash_tips)
         - (card_tips_from_drawer(shift) or ZERO)
     )
     if with_movements:
@@ -389,8 +426,8 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
     if not shifts:
         return {
             "opening": ZERO, "expected": ZERO, "counted": None, "over_short": None,
-            "uncounted": 0, "cash_sales": ZERO, "cash_tips": ZERO, "between_shifts": ZERO,
-            "card_tips_from_drawer": None, "drawer_cash": None,
+            "uncounted": 0, "cash_sales": ZERO, "device_cash": ZERO, "cash_tips": ZERO, "between_shifts": ZERO,
+            "card_tips_from_drawer": None, "card_tips_unpaid": None, "drawer_cash": None,
             "cash_movements": ZEC.NONE if with_movements else None,
             "cash_wallets": CW.NONE,
         }
@@ -401,9 +438,12 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
         else sum((_dec(s.counted_cash) - _shift_expected(s, with_movements) for s in shifts), ZERO)
     )
     cash_sales = sum((_dec(s.total_cash) for s in shifts), ZERO)
+    device_cash = sum((device_cash_of(s) for s in shifts), ZERO)
     cash_tips = sum((_dec(s.total_cash_tips) for s in shifts), ZERO)
     paid_out = [amount for amount in (card_tips_from_drawer(s) for s in shifts) if amount is not None]
     tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
+    owed = [amount for amount in (card_tips_unpaid(s) for s in shifts) if amount is not None]
+    tips_unpaid = sum(owed, ZERO) if owed else None
     between_shifts = sum(
         (
             _dec(after.opening_cash) - _shift_closing(before, with_movements)
@@ -424,7 +464,7 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
     return {
         "opening": opening,
         "expected": (
-            opening + cash_sales + cash_tips - (tips_from_drawer or ZERO) + between_shifts
+            opening + cash_sales - device_cash + cash_tips - (tips_from_drawer or ZERO) + between_shifts
             + (ZEC.net(movements) if movements is not None else ZERO)
             + CW.net(wallets)
         ),
@@ -432,10 +472,12 @@ def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> 
         "over_short": over_short,
         "uncounted": uncounted,
         "cash_sales": cash_sales,
+        "device_cash": device_cash,
         "cash_tips": cash_tips,
         "between_shifts": between_shifts,
         "card_tips_from_drawer": tips_from_drawer,
-        "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
+        "card_tips_unpaid": tips_unpaid,
+        "drawer_cash": None if tips_from_drawer is None else cash_sales - device_cash + cash_tips - tips_from_drawer,
         "cash_movements": movements,
         "cash_wallets": wallets,
     }
@@ -471,7 +513,10 @@ def z_cash_summary(
         for m in moved:
             movements = ZEC.add(movements, m)
     tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
+    owed = [t["card_tips_unpaid"] for t in tills if t["card_tips_unpaid"] is not None]
+    tips_unpaid = sum(owed, ZERO) if owed else None
     cash_sales = sum((t["cash_sales"] for t in tills), ZERO)
+    device_cash = sum((t["device_cash"] for t in tills), ZERO)
     cash_tips = sum((t["cash_tips"] for t in tills), ZERO)
     wallets = CW.NONE
     for t in tills:
@@ -483,10 +528,12 @@ def z_cash_summary(
         "over_short": _sum_or_none([t["over_short"] for t in tills]) if tills else None,
         "uncounted": sum(t["uncounted"] for t in tills),
         "cash_sales": cash_sales,
+        "device_cash": device_cash,
         "cash_tips": cash_tips,
         "between_shifts": sum((t["between_shifts"] for t in tills), ZERO),
         "card_tips_from_drawer": tips_from_drawer,
-        "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
+        "card_tips_unpaid": tips_unpaid,
+        "drawer_cash": None if tips_from_drawer is None else cash_sales - device_cash + cash_tips - tips_from_drawer,
         "cash_movements": movements,
         "cash_wallets": wallets,
     }
@@ -568,6 +615,13 @@ def machine_section(
         "overShort": _money(cash["over_short"]),
         # Net of cash refunds: the cash the whole period took.
         "cashSalesNet": _money(cash["cash_sales"]),
+        # "מזומן במכשיר": the part of it a cash device (CashMag / PayLink) took — in the device, out of
+        # `expectedCash` — and per device kind. Only when there was any: a section without it reads as before.
+        **(
+            {"deviceCash": _money(cash["device_cash"]), "deviceCashByKind": totals.device_cash_json()}
+            if cash["device_cash"] != ZERO
+            else {}
+        ),
         # Cash put into or taken out of the drawer between its shifts (the next float
         # less what the last shift left); part of expectedCash. Usually 0.
         "betweenShiftAdjustments": _money(cash["between_shifts"]),
@@ -583,9 +637,12 @@ def machine_section(
         # (Σ of what its closes froze; already out of expectedCash) and the cash the
         # drawer holds from the period ("מזומן במגירה" = cashSalesNet + cash tips − them).
         # Only when a close carried the figure: a section without it reads as before.
+        # "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): the card tips its drawer
+        # could not pay (Σ frozen; 0 for an older close) — information, not in expectedCash.
         **(
             {
                 "cardTipsFromDrawer": _money(cash["card_tips_from_drawer"]),
+                "cardTipsUnpaid": _money(cash["card_tips_unpaid"] or ZERO),
                 "drawerCash": _money(cash["drawer_cash"]),
             }
             if cash["card_tips_from_drawer"] is not None
@@ -918,10 +975,20 @@ def build_z(
             z.header = {**z.header, CW.STAFF: staff}
             if isinstance(z.header.get("reportSections"), dict):
                 z.header = {**z.header, "reportSections": {**z.header["reportSections"], CW.STAFF: staff}}
+        # "מזומן במכשיר": the cash the tills' cash devices took (inside `total_cash_sales`, out of
+        # `expected_cash`) and per device kind — only when there was any.
+        if cash["device_cash"] != ZERO:
+            z.header = {
+                **z.header,
+                "deviceCash": _money(cash["device_cash"]),
+                "deviceCashByKind": overall.device_cash_json(),
+            }
         if cash["card_tips_from_drawer"] is not None:
             z.header = {
                 **z.header,
                 "cardTipsFromDrawer": _money(cash["card_tips_from_drawer"]),
+                # Σ of what the closes froze as owed to staff (P:/specs/x-z-cash-with-tips.md §2).
+                "cardTipsUnpaid": _money(cash["card_tips_unpaid"] or ZERO),
                 "drawerCash": _money(cash["drawer_cash"]),
             }
     if till_z:

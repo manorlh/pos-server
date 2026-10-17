@@ -502,6 +502,59 @@ def reconcile(
         _wake(tills)
 
 
+def reconcile_till_cash(db: Session, till: POSMachine, raw_alerts: Any, *, now: Optional[datetime] = None) -> None:
+    """
+    A TILL's own cash-device alerts ("מכשיר מזומן" — its CashMag recycler or its PayLink station unreachable / at
+    fault), reported on its `kiosk/sync` like a kiosk's (`status.alerts`, kind "cash"): only that kind is taken from
+    a till (printer / terminal / help stay a kiosk's). Each is the cash device's cash alert exactly as a kiosk's
+    (app/services/cash_alerts.py `open_kiosk_alert`: the manager and the unit's alert tills), raised once while it
+    lasts and closed once the till stops saying so. The rows are kept per till (`kiosk_alerts.kiosk_machine_id` =
+    the till) only to know what is open; no till lists them as a kiosk's (a till has no kiosk device). Never fails
+    the sync. The caller commits.
+    """
+    now = _now(now)
+    reported = [a for a in _clean_reported(raw_alerts) if a["kind"] == CASH_KIND]
+    open_rows = {k: r for k, r in _open_alerts(db, till.id).items() if r.kind == CASH_KIND}
+    keys = {a["key"] for a in reported}
+    raised: List[KioskAlert] = []
+    cleared = False
+    for key, row in open_rows.items():
+        if key not in keys:
+            row.cleared_at = now
+            row.clear_reason = "recovered"
+            cleared = True
+    name = (till.name or "קופה").strip() or "קופה"
+    for a in reported:
+        text = alert_text(name, a["kind"], a["reason"], a["detail"], a["text"])
+        row = open_rows.get(a["key"])
+        if row is None:
+            row = KioskAlert(
+                id=uuid.uuid4(), tenant_id=till.tenant_id, shop_id=till.shop_id, kiosk_machine_id=till.id,
+                kind=a["kind"], key=a["key"], reason=a["reason"], text=text, detail=a["detail"],
+                request_id=None, raised_at=now, last_reported_at=now, ping_count=0, pinged_at=None,
+            )
+            db.add(row)
+            raised.append(row)
+            continue
+        row.last_reported_at = now
+        if row.reason != a["reason"] or row.text != text or row.detail != a["detail"]:
+            row.reason, row.text, row.detail = a["reason"], text, a["detail"]
+            raised.append(row)
+    db.flush()
+    if not raised and not cleared:
+        return
+    try:
+        from app.services import cash_alerts
+
+        with db.begin_nested():
+            for row in raised:
+                cash_alerts.open_kiosk_alert(db, till, name, row, now=now)
+            if not any(r.kind == CASH_KIND for r in _open_alerts(db, till.id).values()):
+                cash_alerts.resolve_kiosk_alerts(db, till, now=now)
+    except Exception:  # noqa: BLE001 - the till's sync goes on
+        logger.exception("till cash alert failed for %s", till.id)
+
+
 def kiosk_view(db: Session, kiosk: POSMachine, *, now: Optional[datetime] = None) -> Dict[str, Any]:
     """What the kiosk is told back: its open alert keys and its help request's state."""
     now = _now(now)

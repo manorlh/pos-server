@@ -1034,6 +1034,8 @@ export interface HealthState {
   cloud: 'online' | 'offline' | 'demo';
   /** The receipt printer as the print queue last saw it. */
   printer: 'ok' | 'none' | 'error';
+  /** "אין נייר במדפסת הקבלות…" — the receipt printer has no paper (core/printerPaper.ts); absent: it has. */
+  paperBanner?: string | null;
   terminal: 'ok' | 'none' | 'busy';
   /**
    * "ללא אשראי" — the business's payment integration is "none" (P:/specs/payment-integration-none.md, the Android
