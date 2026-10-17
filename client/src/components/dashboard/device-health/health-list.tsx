@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
 import { OVERALL_STATES, batteryNotWatched, orderedParts, overallTone, type HealthOverall, type KioskHealthRow } from '@/lib/kioskInsights';
 import { AutoStartLine } from '@/components/dashboard/machines/auto-start';
+import { ClockTrustBadge } from '@/components/dashboard/machines/clock-trust';
 import { OverallBadge, PartPill, TONE, ToneIcon, agoText, detailLines, type HealthLabels } from './health-ui';
 
 export function HealthSummaryChips({
@@ -135,6 +136,7 @@ export function KioskHealthCard({
         {row.online && row.screen ? <span className="text-muted-foreground">{t('screen', { screen: L.screen(row.screen) })}</span> : null}
         {!row.enabled ? <span className="rounded-full bg-muted px-2 py-0.5 font-medium">{t('disabled')}</span> : null}
         <AutoStartLine status={row.autoStart} />
+        <ClockTrustBadge status={row.clockTrust} skewMs={row.clockSkewMs} />
         {row.paused ? (
           <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium', TONE.warn.pill)}>
             <PauseCircle className="h-3.5 w-3.5" aria-hidden /> {t('paused')}

@@ -23,6 +23,8 @@ export type AlertCategory =
   | 'z_shift'
   | 'card_transmission'
   | 'till_printer'
+  // "שעון המכשיר לא מדויק" (pos-server clock_trust.py, status_watch `till_clock`).
+  | 'till_clock'
   // P:/specs/push-more.md §A, §B: the battery, and kinds sent where a level turns "שלח התראה לטלפון" on.
   | 'device_battery'
   | 'discounts'
@@ -60,6 +62,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'z_shift',
   'card_transmission',
   'till_printer',
+  'till_clock',
   'device_battery',
   'discounts',
   'cash_difference',

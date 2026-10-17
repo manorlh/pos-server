@@ -22,6 +22,7 @@ import { DesktopExitMenuButton } from '../desktop/DesktopExit';
 import { answered, Btn, NoteBar, Panel, PinPad, Shell, SynqpayPairing, time } from '../staff/staffParts';
 import { ForeignRowsPanel, UnpairControl } from '../roles/UnpairControl';
 import { deviceLine } from '../../core/pairingMemory';
+import { clockRowView } from '../../core/clockTrust';
 import { PrinterPicker } from './PrinterPicker';
 
 const LIGHT: Record<TechLightView, string> = { ok: '#16A34A', warn: '#D97706', bad: '#DC2626', unknown: '#9CA3AF' };
@@ -96,6 +97,7 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
     return r;
   };
   const s = info?.setup;
+  const clock = clockRowView(s?.computer.clockSkewMs ?? null, s?.computer.clockTrust);
   const title = s?.role === 'kiosk' ? T.titleKiosk : T.titleTill;
   if (!info) return <Shell m={m} title={title} onClose={onClose}>…</Shell>;
   const ident = net?.identity ?? null;
@@ -299,12 +301,15 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
             value={!s.computer.battery || s.computer.battery.percent === null ? 'אין סוללה — מחובר לחשמל' : `${s.computer.battery.percent}%${s.computer.battery.charging ? ' · בטעינה' : ''}`}
             light={s.computer.battery && s.computer.battery.percent !== null ? (s.computer.battery.percent > 20 || s.computer.battery.charging ? 'ok' : 'bad') : null}
           />
-          <Row
-            m={m}
-            label={T.computerClock}
-            value={s.computer.clockSkewMs === null ? 'לא נמדד' : Math.abs(s.computer.clockSkewMs) < 2_000 ? 'תקין' : `${s.computer.clockSkewMs > 0 ? 'מקדים' : 'מאחר'} ${Math.round(Math.abs(s.computer.clockSkewMs) / 1000)} שניות`}
-            light={s.computer.clockSkewMs === null ? null : Math.abs(s.computer.clockSkewMs) < 60_000 ? 'ok' : 'bad'}
-          />
+          <Row m={m} label={T.computerClock} value={clock.lastFix ? `${clock.text} · ${clock.lastFix}` : clock.text} light={clock.light} />
+          {clock.offerFix || clock.light === 'bad' ? (
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span style={{ color: m.c.mutedText }}>{T.clockFixHint}</span>
+              <Btn m={m} onClick={() => void act({ type: 'clockFix' })}>
+                {T.clockFix}
+              </Btn>
+            </div>
+          ) : null}
           {s.autostart ? <Row m={m} label={T.autostart} value={s.autostart.enabled ? T.autostartOn : T.autostartOff} light={s.autostart.enabled ? 'ok' : 'bad'} /> : null}
         </Panel>
       ) : null}

@@ -196,6 +196,10 @@ class MachineHeartbeatBody(BaseModel):
     #: deviceOwner, ready}`, cleaned key by key in `autostart.clean_report` and kept in
     #: `device_info["autostart"]` — never a 422. Absent (an older build): as it was.
     autostart: Optional[Dict[str, Any]] = None
+    #: Trusted time and the clock auto-fix (app/services/clock_trust.py): `{source, reason, offsetMs, autoFix,
+    #: autoFixEnabled, autoTime, pending, pendingReason, lastFix*}`, cleaned key by key in `clock_trust.clean_report`
+    #: and kept in `device_info["clockTrust"]` — never a 422. Absent (an older build): as it was.
+    clock_trust: Optional[Dict[str, Any]] = Field(None, alias="clockTrust")
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -478,6 +482,9 @@ class POSMachineResponse(POSMachineBase):
     #: "פתיחה אוטומטית" (app/services/autostart.py `status_of`): `{state: ready | missing | off, via:
     #: lock | home | permission | null, reportedAt}` — null while the device has not reported (no indicator).
     auto_start: Optional[Dict[str, Any]] = Field(None, alias="autoStart")
+    #: "שעון המכשיר" (app/services/clock_trust.py `status_of_machine`): `{source: device | server, offsetMs, autoFix,
+    #: autoFixEnabled, autoTime, pending, pendingReason, lastFix, reportedAt}` — null while the device has not reported.
+    clock_trust: Optional[Dict[str, Any]] = Field(None, alias="clockTrust")
     # Null means "the device could not read it", never "flat". The dashboard must
     # render it as unknown rather than as 0%.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")

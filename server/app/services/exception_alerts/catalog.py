@@ -102,6 +102,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("shift_open_overdue", "משמרת פתוחה מעבר לזמן", "medium", "audit_exception", link="shift"),
     Kind("card_transmission_overdue", "שידור אשראי באיחור", "medium", "audit_exception", amount=True),
     Kind("till_printer", "תקלת מדפסת בקופה", "medium", "audit_exception"),
+    Kind("till_clock", "שעון המכשיר לא מדויק", "medium", "audit_exception"),
     # Listed by the exception rules as planned; nothing reports them yet.
     Kind("price_override", "שינוי מחיר ידני", "medium", "audit_exception", amount=True, link="document"),
     Kind("card_failures", "כשלי חיוב באשראי", "medium", "audit_exception"),
@@ -170,7 +171,7 @@ KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
 #: a target reached; the phone alerts carry them; the board's lights as alerts, manager-problems §2).
 OPT_IN_KINDS = frozenset({
     "till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted",
-    "z_missing", "shift_open_overdue", "card_transmission_overdue", "till_printer",
+    "z_missing", "shift_open_overdue", "card_transmission_overdue", "till_printer", "till_clock",
 })
 #: A table's payment reversals and restores: texted only by a rule that names them (the phone alerts
 #: have their own type, `payment_reversals`).

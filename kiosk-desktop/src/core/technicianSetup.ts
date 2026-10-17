@@ -168,6 +168,8 @@ export const TECH_TEXT = {
   computerOs: 'מערכת הפעלה',
   computerBattery: 'סוללה',
   computerClock: 'שעון מול השרת',
+  clockFix: 'תיקון שעון',
+  clockFixHint: 'מפעיל שעה אוטומטית ב-Windows ומסנכרן, וכשהשעון רחוק — מכוון אותו לפי שעון השרת. Windows יבקש אישור מנהל.',
   autostart: 'הפעלה אוטומטית',
   autostartOn: 'פעילה — האפליקציה עולה עם Windows',
   autostartOff: 'לא פעילה',

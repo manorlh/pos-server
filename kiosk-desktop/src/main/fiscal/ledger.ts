@@ -39,6 +39,7 @@ import type { Db } from '../db/sqlite';
 import type { Kv } from '../db/schema';
 import type { ApprovedCard } from '../payment/provider';
 import type { Outbox } from '../sync/outbox';
+import { nowDate } from '../clock/trustedClock';
 
 /**
  * `refunded` / `partial_refund`: a completed sale a credit note credited (in full / in part — SaleRepository.settleCredit);
@@ -428,7 +429,7 @@ export class Ledger {
    * The open shift, or a new one: as the kiosk itself (float 0), or — at a till — as the employee signed in,
    * with the float counted into the drawer (`openingCashAgorot`).
    */
-  openShift(operator: { id: string; name: string }, now = new Date(), openingCashAgorot = 0): ShiftRow {
+  openShift(operator: { id: string; name: string }, now = nowDate(), openingCashAgorot = 0): ShiftRow {
     return this.db.tx(() => {
       const open = this.currentShift();
       if (open) return open;
@@ -505,7 +506,7 @@ export class Ledger {
       if (!shift) return { kind: 'none' as const };
       const pending = this.pendingInShift(shift.id);
       if (pending > 0) return { kind: 'pending' as const, count: pending };
-      const now = (input.now ?? new Date()).toISOString();
+      const now = (input.now ?? nowDate()).toISOString();
       const payload = shiftCloseWire(shift, this.docsOfShift(shift.id), { ...input, now });
       this.db.run("UPDATE shifts SET status = 'closing', closed_at = ?, close_payload = ? WHERE id = ?", now, JSON.stringify(payload), shift.id);
       this.outbox.enqueue('shift_close', shift.id);
@@ -516,7 +517,7 @@ export class Ledger {
   markCloseAccepted(shiftId: string, z: { zReportId?: string | null; zNumber?: number | null }) {
     this.db.run(
       "UPDATE shifts SET status = 'closed', close_accepted_at = ?, z_report_id = COALESCE(?, z_report_id), z_number = COALESCE(?, z_number) WHERE id = ?",
-      new Date().toISOString(),
+      nowDate().toISOString(),
       z.zReportId ?? null,
       z.zNumber ?? null,
       shiftId,
@@ -585,7 +586,7 @@ export class Ledger {
   private insertSale(input: SaleInput, status: 'pending' | 'completed'): DocDraft | null {
     const shift = this.currentShift();
     if (!shift) return null;
-    const now = (input.now ?? new Date()).toISOString();
+    const now = (input.now ?? nowDate()).toISOString();
     const number = this.counters.next(input.documentType);
     const draft: DocDraft = {
       id: randomUUID(),
@@ -654,7 +655,7 @@ export class Ledger {
    * outbox row. Only from pending. A document of a mixed basket completes with every pending document of its basket — the
    * card on the one(s) whose legs hold it, each credit note settling its original (SaleRepository.completeBasket).
    */
-  completeCardSale(id: string, card: ApprovedCard | null, now = new Date()): DocDraft | null {
+  completeCardSale(id: string, card: ApprovedCard | null, now = nowDate()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
@@ -727,7 +728,7 @@ export class Ledger {
       if (!shift) return null;
       const refusal = check?.() ?? null;
       if (refusal) return { refused: refusal };
-      const now = (input.now ?? new Date()).toISOString();
+      const now = (input.now ?? nowDate()).toISOString();
       const out: DocDraft[] = [];
       for (const doc of input.documents) {
         const number = this.counters.next(doc.documentType);
@@ -795,7 +796,7 @@ export class Ledger {
    * Paid at the cash station: completed with its cash leg, in one transaction with its outbox row. Only from pending.
    * [tipAgorot]: the change owed the customer left as a tip (§11.15א) — on top of the document's own tip.
    */
-  completeCashSale(id: string, cash: DocCashLeg, now = new Date(), tipAgorot = 0): DocDraft | null {
+  completeCashSale(id: string, cash: DocCashLeg, now = nowDate(), tipAgorot = 0): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
@@ -813,7 +814,7 @@ export class Ledger {
    * the legs as they settled (the device's leg for what was left, the change owed left as a tip in it), the cash handed over
    * and the change — in one transaction with its outbox row. Only from pending.
    */
-  completeDeviceCashSale(id: string, f: { cash: DocCashLeg; payments: DocLeg[]; tenderedAgorot: number; changeAgorot: number; tipAgorot: number }, now = new Date()): DocDraft | null {
+  completeDeviceCashSale(id: string, f: { cash: DocCashLeg; payments: DocLeg[]; tenderedAgorot: number; changeAgorot: number; tipAgorot: number }, now = nowDate()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
@@ -830,7 +831,7 @@ export class Ledger {
    * Cash + card (§11.15ב): the cash part the station holds for this sale, kept on the pending document while the card
    * is charged for the rest — `completeCardSale` then writes both legs (live, or when an unknown card is settled).
    */
-  attachCashPart(id: string, cash: DocCashLeg, now = new Date()): DocDraft | null {
+  attachCashPart(id: string, cash: DocCashLeg, now = nowDate()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
@@ -844,7 +845,7 @@ export class Ledger {
    * Certainly not charged: cancelled (the number stays burned), with the lookup's evidence. A basket stands or falls
    * together: every pending document of it is cancelled (SaleRepository.voidCardSale → voidBasket).
    */
-  voidCardSale(id: string, voidMeta: Record<string, unknown> | null, now = new Date()): DocDraft | null {
+  voidCardSale(id: string, voidMeta: Record<string, unknown> | null, now = nowDate()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
@@ -861,7 +862,7 @@ export class Ledger {
   }
 
   markSynced(ids: string[]) {
-    const at = new Date().toISOString();
+    const at = nowDate().toISOString();
     this.db.tx(() => {
       for (const id of ids) this.db.run('UPDATE documents SET synced_at = ? WHERE id = ?', at, id);
     });

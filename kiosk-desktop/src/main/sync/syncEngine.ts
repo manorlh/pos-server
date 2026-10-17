@@ -13,6 +13,8 @@
  *  - nothing here is on the customer's path: the screens only ever read the local copies.
  */
 
+import { secureTimeSource } from '../../core/clockTrust';
+import { noteMeasurement } from '../clock/trustedClock';
 import { stockLevelsOf } from '@dash-lib/kioskSoldOut';
 import { shopActiveAfter, shopActiveSaid } from '@dash-lib/shopActive';
 import { apiBase, tokenRevoked, type Api, type ApiReply } from './api';
@@ -205,7 +207,11 @@ export class SyncEngine {
     const date = reply.headers.get('date');
     if (date) {
       const server = Date.parse(date);
-      if (Number.isFinite(server)) this.status.clockSkewMs = Math.round((sentAt + Date.now()) / 2 - server);
+      if (Number.isFinite(server)) {
+        this.status.clockSkewMs = Math.round((sentAt + Date.now()) / 2 - server);
+        // Trusted time (core/clockTrust.ts): documents follow the server's clock from 90 s of skew — measured over TLS only.
+        noteMeasurement(this.status.clockSkewMs, secureTimeSource(this.api.base));
+      }
     }
     const b = reply.body ?? {};
     this.noteShopActive(shopActiveSaid(b));

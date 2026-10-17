@@ -29,6 +29,10 @@ Each case is ONE `audit_exceptions` row (the ORM hooks carry it to the log and t
 * `till_printer` — a till with an open shift, heard from (online), whose printer reports no
   paper / overheated / an error for `minutes`, timed from the first pass that saw it (this
   process; a restart starts the minutes again). Once per fault streak (`till_printer:<till>:<n>`).
+* `till_clock` — "שעון המכשיר לא מדויק" (app/services/clock_trust.py): a till or kiosk with an open shift, heard from,
+  whose clock is off from the server's by the rule's `minutes` (5) or more. High while it stamps documents with its own
+  wrong time (an older build, no verified answer), medium once it stamps the server's. Once per streak
+  (`till_clock:<till>:<n>`); closed when the clock is within the minutes again.
 
 **Closing.** When the light goes out (a Z took the shifts, the shift closed, the transmission
 went through, the printer is fine again) the row gets `details.resolvedAt` and is marked
@@ -63,7 +67,8 @@ Z_MISSING = "z_missing"
 SHIFT_OPEN_OVERDUE = "shift_open_overdue"
 CARD_TRANSMISSION_OVERDUE = "card_transmission_overdue"
 TILL_PRINTER = "till_printer"
-KINDS = (Z_MISSING, SHIFT_OPEN_OVERDUE, CARD_TRANSMISSION_OVERDUE, TILL_PRINTER)
+TILL_CLOCK = "till_clock"
+KINDS = (Z_MISSING, SHIFT_OPEN_OVERDUE, CARD_TRANSMISSION_OVERDUE, TILL_PRINTER, TILL_CLOCK)
 
 #: The background pass runs every minute; this watch at most this often.
 INTERVAL = timedelta(minutes=2)
@@ -550,6 +555,62 @@ def scan_printers(db: Session, rules: _Rules, world: _World, now: datetime) -> i
     return changed
 
 
+# ── The device's clock ───────────────────────────────────────────────────────
+
+
+def scan_clocks(db: Session, rules: _Rules, world: _World, now: datetime) -> int:
+    from app.services import clock_trust as CT
+
+    changed = 0
+    for machine_id in {s.machine_id for s in world.open_shifts}:
+        machine = world.machines.get(machine_id)
+        if machine is None or not machine.is_active or machine.clock_skew_ms is None:
+            continue
+        if not MS.is_online(machine.last_heartbeat_at, now=now):
+            continue
+        rule = rules.machine(machine, TILL_CLOCK)
+        if rule is None:
+            continue
+        minutes = int(rule.params.get("minutes") or 5)
+        skew = int(machine.clock_skew_ms)
+        if abs(skew) < minutes * 60_000:
+            continue
+        if any(r.machine_id == machine.id for r in _open_rows(db, (TILL_CLOCK,), now)):
+            continue  # this streak is recorded
+        streak = (
+            db.query(AuditException.id)
+            .filter(AuditException.exception_type == TILL_CLOCK, AuditException.machine_id == machine.id)
+            .count()
+            + 1
+        )
+        fixed = CT.corrected(machine)
+        status = CT.status_of_machine(machine) or {}
+        summary = f"{_till_name(machine)}: שעון המכשיר לא מדויק ({CT.skew_words(skew)})" + (
+            " — המסמכים נחתמים לפי שעון השרת" if fixed else " — המסמכים נחתמים בשעה של המכשיר"
+        )
+        if _write(
+            db, kind=TILL_CLOCK, key=f"{TILL_CLOCK}:{machine.id}:{streak}", occurred_at=now, now=now,
+            severity="medium" if fixed else "high", machine=machine, threshold=minutes,
+            value=abs(skew) // 60_000,
+            details={
+                "summary": summary,
+                "skewMs": skew,
+                "corrected": fixed,
+                "autoFix": status.get("autoFix"),
+                "autoFixEnabled": status.get("autoFixEnabled"),
+                "lastFix": status.get("lastFix"),
+            },
+        ) is not None:
+            changed += 1
+    for row in _open_rows(db, (TILL_CLOCK,), now):
+        machine = world.machines.get(row.machine_id) or (db.get(POSMachine, row.machine_id) if row.machine_id else None)
+        limit = int(row.threshold or 5) * 60_000
+        if machine is None or machine.clock_skew_ms is None or abs(int(machine.clock_skew_ms)) < limit:
+            resolve(row, now, "שעון המכשיר תוקן")
+            changed += 1
+    return changed
+
+
 # ── One pass ─────────────────────────────────────────────────────────────────
 
 
@@ -571,6 +632,7 @@ def scan(db: Session, *, now: Optional[datetime] = None) -> int:
         ("z", lambda: scan_z(db, rules, world, awaiting, now)),
         ("transmission", lambda: scan_transmissions(db, rules, now)),
         ("printer", lambda: scan_printers(db, rules, world, now)),
+        ("clock", lambda: scan_clocks(db, rules, world, now)),
     ):
         try:
             with db.begin_nested():

@@ -16,6 +16,7 @@ from app.services import display_devices
 from app.services import device_identity
 from app.services import device_management
 from app.services import autostart
+from app.services import clock_trust
 from app.services import device_commands
 from app.services import document_prefix
 from app.services import lan_server
@@ -316,6 +317,8 @@ def _enrich_machine_status(
     result.update(device_management.machine_fields(machine))
     # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off from its last report; null: unknown.
     result.update(autostart.machine_fields(machine))
+    # "שעון המכשיר" (app/services/clock_trust.py): documents on the server's clock, the auto-fix and the last fix.
+    result.update(clock_trust.machine_fields(machine))
     # The card terminal: what Agamento reports beside the number the settings expect.
     if terminal_settings is None:
         terminal_settings = terminal_settings_for(db, [machine])
@@ -903,6 +906,10 @@ def post_my_heartbeat(
     # `device_info["autostart"]`; absent leaves it as it was. Never fails a beat.
     if body is not None and body.autostart is not None:
         autostart.apply_heartbeat(machine, body.autostart)
+    # "שעון המכשיר" (app/services/clock_trust.py): trusted time and the auto-fix, kept in `device_info["clockTrust"]`;
+    # absent leaves it as it was. Never fails a beat.
+    if body is not None and body.clock_trust is not None:
+        clock_trust.apply_heartbeat(machine, body.clock_trust)
     # "תמיכה מרחוק": QuickSupport on the device, the first signer pin or a mismatch's alert
     # (app/services/remote_support.py); absent leaves it as it was, and it never fails a beat.
     if body is not None and body.remote_support is not None:

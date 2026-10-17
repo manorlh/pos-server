@@ -22,6 +22,7 @@
  * "no data yet", never as a fault.
  */
 
+import { ClockTrustLines } from '@/components/dashboard/machines/clock-trust';
 import { useTranslations } from 'next-intl';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
@@ -299,6 +300,9 @@ export function MachineHealthPanel({ machine: m }: { machine: PosMachine }) {
           {skewText(m.clockSkewMs)}
         </span>
       </div>
+
+      {/* "שעון המכשיר" (lib/clockTrust.ts): documents on the server's clock, the auto-fix, the last fix. */}
+      <ClockTrustLines status={m.clockTrust} skewMs={m.clockSkewMs} />
 
       <div className="text-muted-foreground text-xs">
         {m.lastHealthReportAt

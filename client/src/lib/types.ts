@@ -4,6 +4,7 @@ import type { TillDataState } from './zDataState';
 import type { AutoReopenMode } from './availabilityReopen';
 import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
+import type { ClockTrustStatus } from './clockTrust';
 import type { LicenseProduct } from './deviceLicense';
 import type { PresetDiscount } from './presetDiscounts';
 import type { OpenFormatProductionReport } from './taxOpenFormatForm';
@@ -903,6 +904,8 @@ export interface PosMachine {
   deviceInfo?: Record<string, unknown>;
   /** "פתיחה אוטומטית" (lib/autoStart.ts): ready / missing / off; null — never reported (no indicator). */
   autoStart?: AutoStartStatus | null;
+  /** "שעון המכשיר" (lib/clockTrust.ts): documents on the server's clock, the auto-fix, the last fix; null — never reported. */
+  clockTrust?: ClockTrustStatus | null;
   isActive: boolean;
   lastHeartbeatAt?: string;
   mqttConnected?: boolean | null;

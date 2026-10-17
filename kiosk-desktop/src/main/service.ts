@@ -216,6 +216,9 @@ import type {
   DisplayScaleView,
   AdminActionResult,
 } from '../shared/bridge';
+import { configureTrustedClock, nowDate, type LastFix, type StoredMeasurement } from './clock/trustedClock';
+import { ClockFix, CLOCK_AUTO_FIX_KEY, clockAutoFixOn } from './clock/clockFix';
+import type { Runner } from './clock/windowsClockFix';
 
 export interface PlatformHooks {
   quit(): void;
@@ -240,6 +243,8 @@ export interface PlatformHooks {
   setAutostart?(on: boolean): void;
   /** TeamViewer QuickSupport's path when installed (null: none). */
   quickSupportPath?(): string | null;
+  /** Runs a process (main/index.ts: `execFile`) — "תיקון שעון" (main/clock/windowsClockFix.ts); absent: not on this build. */
+  runProcess?: Runner;
 }
 
 export interface ServiceOptions {
@@ -430,6 +435,8 @@ export class KioskService extends EventEmitter {
   readonly sync: SyncEngine;
   /** The pinpad that moved (a DHCP change), found again by its identity — ARP first (payment/pinpadRelocator.ts). */
   readonly relocator: PinpadRelocator;
+  /** "תיקון שעון" and the heartbeat's `clockTrust` (main/clock/clockFix.ts). */
+  readonly clockFix: ClockFix;
   /** The technician's setup actions (main/technician/technicianSetup.ts). */
   readonly techSetup: TechnicianSetup;
   /** The cloud's word on the basket a moment ago (core/basketCheck.ts), until the catalog catches up. */
@@ -501,6 +508,16 @@ export class KioskService extends EventEmitter {
     this.db = openDb(path.join(opts.dataDir, 'kiosk.db'));
     migrate(this.db);
     this.kv = new Kv(this.db);
+    // Trusted time (core/clockTrust.ts): the last measurement and fix, kept across a restart.
+    configureTrustedClock({
+      store: {
+        load: () => ({ m: this.kv.getJson<StoredMeasurement>(CLOCK_MEASUREMENT_KEY), lastFix: this.kv.getJson<LastFix>(CLOCK_LAST_FIX_KEY) }),
+        save: (m, fix) => {
+          this.kv.setJson(CLOCK_MEASUREMENT_KEY, m);
+          this.kv.setJson(CLOCK_LAST_FIX_KEY, fix);
+        },
+      },
+    });
     this.workSessions = new WorkSessions(this.kv);
     this.cloud = new CloudStore(this.kv, opts.secretBox ?? PLAIN_BOX);
     const creds = this.cloud.credentials();
@@ -629,6 +646,12 @@ export class KioskService extends EventEmitter {
       machineName: () => null,
       adopt: (c) => this.adopt(c),
       changed: () => this.dirty(),
+      log: this.log,
+    });
+    this.clockFix = new ClockFix({
+      run: this.platform.runProcess ?? null,
+      enabled: () => clockAutoFixOn(this.cloud.parameters()[CLOCK_AUTO_FIX_KEY]),
+      busy: () => paymentGuard(this.activity()) !== null,
       log: this.log,
     });
     this.relocator = new PinpadRelocator({
@@ -804,6 +827,8 @@ export class KioskService extends EventEmitter {
 
   async start(): Promise<void> {
     this.printQueue.recover();
+    // "תיקון שעון": whether this app runs elevated (the auto-fix is only for one that does).
+    void this.clockFix.init().catch(() => undefined);
     // "בונים": what a restart left in flight recovered, the queue running (offline too: the LAN and the printers).
     this.kitchen.start();
     this.kitchenKds.start();
@@ -1206,7 +1231,7 @@ export class KioskService extends EventEmitter {
   }
 
   /** The basket priced for the till: the same engine as the kiosk's (priceBasket — choices, meals, promotions by the clock), from the till's catalog. */
-  priceTillBasket(input: StartPaymentIn, now = new Date(), hooks?: TillLineHooks) {
+  priceTillBasket(input: StartPaymentIn, now = nowDate(), hooks?: TillLineHooks) {
     return this.priceBasket(input, now, 'till', hooks);
   }
 
@@ -1368,6 +1393,8 @@ export class KioskService extends EventEmitter {
           ...(this.batteryNow && this.batteryNow.percent !== null
             ? { batteryPercent: this.batteryNow.percent, batteryStatus: this.batteryNow.charging ? 'charging' : 'discharging' }
             : {}),
+          // Trusted time and the clock auto-fix (pos-server app/services/clock_trust.py).
+          clockTrust: this.clockFix.report(),
           ...(this.fiscalRole ? { offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch } } : {}),
           ...Object.fromEntries([...this.heartbeatParts].map(([key, part]) => [key, part()])),
           // The cloud's words (core/printerPaper.ts) — "אין נייר במדפסת" reaches the manager (status_watch.py).
@@ -1430,6 +1457,8 @@ export class KioskService extends EventEmitter {
       },
       afterBeat: async () => {
         const id = this.machineId;
+        // "תיקון שעון": by itself only when elevated, `clockAutoFix` on, off by 90 s and nothing being paid.
+        await this.clockFix.afterMeasurement().catch((e) => this.log(`clock: ${String(e)}`));
         // What the kiosk made is delivered whatever mode the device works in now (a kiosk row, not the effective
         // word): a till by role at home still sends the orders it took while away, a kiosk by role in its till
         // session the ones its customers placed before (Android syncNow: `if (next.kiosk)` on the cloud's own word).
@@ -1884,7 +1913,7 @@ export class KioskService extends EventEmitter {
    */
   private priceBasket(
     input: StartPaymentIn,
-    now = new Date(),
+    now = nowDate(),
     channel: 'kiosk' | 'till' = 'kiosk',
     hooks?: TillLineHooks,
   ): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[]; voucherOutcomes: VoucherOutcome[] } {
@@ -2420,7 +2449,7 @@ export class KioskService extends EventEmitter {
         slipCode,
         txShort: shortTx(txId),
         stationName: this.cashStationName(),
-        at: new Date(),
+        at: nowDate(),
       }),
     );
   }
@@ -2549,7 +2578,7 @@ export class KioskService extends EventEmitter {
       let owedAs: OwedChoice | null = owed ? (tx.changeOwedAs ?? null) : null;
       if (owed && !owedAs) owedAs = tx.changeOwedAsk && live ? await this.askOwedChoice(orderId, tx, amount) : 'slip';
       if (this.stopped) return;
-      const done = this.ledger.completeCashSale(docId, this.cashLegOf(tx, owedAs), new Date(), owedAs === 'tip' ? tx.changeOwedAgorot : 0);
+      const done = this.ledger.completeCashSale(docId, this.cashLegOf(tx, owedAs), nowDate(), owedAs === 'tip' ? tx.changeOwedAgorot : 0);
       if (done && done.status === 'completed') {
         const doneView =
           tx.hostId === CASHMAG_HOST_ID
@@ -3490,7 +3519,7 @@ export class KioskService extends EventEmitter {
         number: formatDocNumber(doc.prefix, String(doc.number)),
         copy: copy ? 'copy' : 'original',
         issuedAt: new Date(doc.createdAt),
-        printedAt: new Date(),
+        printedAt: nowDate(),
         cashierName: doc.cashierName,
         business: this.business(),
         lines: this.receiptLines(doc),
@@ -3869,7 +3898,7 @@ export class KioskService extends EventEmitter {
         businessDate: i.businessDate,
         openedAt: i.openedAt,
         closedAt: i.closedAt,
-        printedAt: new Date(),
+        printedAt: nowDate(),
         copy: false,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
         till: i.till,
@@ -3902,7 +3931,7 @@ export class KioskService extends EventEmitter {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
     const zNumber = z.zNumber ?? z.number ?? null;
-    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date(), perTillCash: zPrintPerTill(this.cloud.parameters()) }), {
+    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: nowDate(), perTillCash: zPrintPerTill(this.cloud.parameters()) }), {
       kind: 'report',
       code: 'z',
       number: zNumber !== null && zNumber !== undefined ? String(zNumber) : null,
@@ -5091,6 +5120,7 @@ export class KioskService extends EventEmitter {
         ...(({ hostname, os, cpu, memoryGb }) => ({ hostname, os, cpu, memoryGb }))(machineFacts()),
         serial: this.opts.deviceInfo.serial ?? null,
         clockSkewMs: this.sync.status.clockSkewMs,
+        clockTrust: this.clockFix.report(),
         battery: this.batteryNow,
       },
       autostart: this.platform.autostart?.() ?? null,
@@ -5448,6 +5478,8 @@ export class KioskService extends EventEmitter {
         return this.techSetup.sendLogs(a.range, a.note ?? null);
       case 'appLog':
         return { ok: true, log: this.techSetup.appLog(20) };
+      case 'clockFix':
+        return this.clockFix.technicianFix();
       case 'autostartOn':
         if (!this.platform.setAutostart) return { ok: false, message: 'לא נתמך בגרסת פיתוח' };
         this.platform.setAutostart(true);
@@ -5943,6 +5975,10 @@ export class KioskService extends EventEmitter {
     return parameterOn(this.cloud.parameters()[key]);
   }
 }
+
+/** Trusted time (main/clock/trustedClock.ts): the last measurement against the cloud and the last clock fix. */
+const CLOCK_MEASUREMENT_KEY = 'clock.measurement';
+const CLOCK_LAST_FIX_KEY = 'clock.lastFix';
 
 /** "ניתוק הקיוסק מהענן": how long the server's answer is waited for, and one delivery of the outbox before refusing. */
 const UNPAIR_PROBE_MS = 6_000;

@@ -75,7 +75,7 @@ EXCEPTION_LABELS = {
     "long_order": "הזמנה ארוכה", "attendance_manual": "נוכחות ידנית", "till_offline": "קופה לא מחוברת",
     "kiosk_offline": "קיוסק לא מחובר", "z_missing": "Z חסר", "user_session_release": "שחרור משתמש",
     "card_decision_override": "הכרעת אשראי ידנית", "forced_z_close": "סגירת Z בכפייה",
-    "z_transmission_failed": "שידור Z נכשל", "offline_z_gap": "פער Z לא מקוון", "till_printer": "תקלת מדפסת",
+    "z_transmission_failed": "שידור Z נכשל", "offline_z_gap": "פער Z לא מקוון", "till_printer": "תקלת מדפסת", "till_clock": "שעון מכשיר",
 }
 
 #: (key, label, kind, icon) — the cards, in order (covers and per cover only when tables traded).

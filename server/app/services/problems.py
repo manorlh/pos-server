@@ -86,6 +86,8 @@ KIND_GROUP: Dict[str, str] = {
     "till_offline": "devices",
     "kiosk_offline": "devices",
     "till_printer": "devices",
+    # "שעון המכשיר לא מדויק" (app/services/clock_trust.py).
+    "till_clock": "devices",
     "kiosk_printer": "devices",
     "kiosk_terminal": "devices",
     "device_battery": "devices",

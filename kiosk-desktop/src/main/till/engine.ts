@@ -220,6 +220,7 @@ import {
   type DocPrepaidRedemption,
   type VoucherInfoTotals,
 } from '../../core/till/vouchers';
+import { nowMs as trustedNowMs } from '../clock/trustedClock';
 import { TillVouchers } from './tillVouchers';
 import type { KioskService } from '../service';
 import { HeldStore } from './heldStore';
@@ -824,7 +825,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   constructor(private readonly o: TillEngineOptions) {
     this.svc = o.svc;
     this.compare = o.compare ?? ((p, h) => bcrypt.compare(p, h));
-    this.nowFn = o.now ?? (() => Date.now());
+    this.nowFn = o.now ?? (() => trustedNowMs());
     this.log = o.log ?? (() => undefined);
     this.held = new HeldStore(this.svc.kv, this.nowFn);
     this.lastActivityAt = this.nowFn();

@@ -2215,6 +2215,12 @@ from app.services.autostart import PARAMETER_SPECS as _AUTOSTART_SPECS  # noqa: 
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _AUTOSTART_SPECS)
 
+# "תיקון שעון אוטומטי" (app/services/clock_trust.py): `clockAutoFix`, on by default — a device owner (Android) or an
+# elevated Windows app fixes its own clock; documents follow the server's clock from 90 s of skew either way.
+from app.services.clock_trust import PARAMETER_SPECS as _CLOCK_TRUST_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CLOCK_TRUST_SPECS)
+
 # "צבע ותמונה למחלקה" (P:/specs/category-color-image.md §2, app/services/category_display.py): how the
 # order screens show a category's colour and picture — `categoryColors` (off / chip / accent),
 # `categoryImages` (off / bar / landing), `categoryImageSize` (s / m / l). Off, off, m: today's screens.

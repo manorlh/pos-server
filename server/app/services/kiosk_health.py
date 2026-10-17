@@ -43,6 +43,7 @@ from app.models.kiosk import KioskDevice
 from app.models.kiosk_ops import KioskAlert
 from app.models.pos_machine import POSMachine
 from app.services import autostart
+from app.services import clock_trust
 
 logger = logging.getLogger(__name__)
 
@@ -435,6 +436,9 @@ def _row(db: Session, summary: Dict[str, Any], device: KioskDevice, machine: POS
         "batteryMonitored": battery_monitoring is None,
         # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off; null — never reported.
         "autoStart": autostart.status_of_machine(machine),
+        # "שעון המכשיר" (app/services/clock_trust.py): the skew, and whether documents follow the server's clock.
+        "clockSkewMs": getattr(machine, "clock_skew_ms", None),
+        "clockTrust": clock_trust.status_of_machine(machine),
         "ordersToday": summary.get("ordersToday"),
         "salesTodayAgorot": summary.get("salesTodayAgorot"),
         "lastOrderAt": summary.get("lastOrderAt"),
@@ -535,6 +539,8 @@ def devices_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None,
             "batteryMonitored": monitoring is None,
             # "פתיחה אוטומטית" (app/services/autostart.py): ready / missing / off; null — never reported.
             "autoStart": autostart.status_of_machine(m),
+            "clockSkewMs": getattr(m, "clock_skew_ms", None),
+            "clockTrust": clock_trust.status_of_machine(m),
             "overall": "offline" if not online else ("error" if part["level"] == "error" else "warn" if part["level"] == "warn" else "ok"),
         })
     out.sort(key=lambda d: (d["shopName"] or "", d["name"] or ""))

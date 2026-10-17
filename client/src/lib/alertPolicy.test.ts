@@ -15,8 +15,9 @@ import {
 } from './alertPolicy';
 
 describe('the alert policy among the exception rules', () => {
-  it('names the four kinds of the spec', () => {
-    assert.deepEqual([...ALERT_POLICY_TYPES], ['z_missing', 'shift_open_overdue', 'card_transmission_overdue', 'till_printer']);
+  it('names the four kinds of the spec, and the device clock (clock_trust)', () => {
+    assert.deepEqual([...ALERT_POLICY_TYPES], ['z_missing', 'shift_open_overdue', 'card_transmission_overdue', 'till_printer', 'till_clock']);
+    assert.equal(isAlertPolicyType('till_clock'), true);
     assert.equal(isAlertPolicyType('till_printer'), true);
     assert.equal(isAlertPolicyType('till_offline'), false);
   });

@@ -28,6 +28,7 @@ import type { Api } from '../sync/api';
 import type { Ledger } from './ledger';
 import type { TransmitResult } from '../payment/provider';
 import { kioskZPrintsHere } from '../../core/kioskZ';
+import { nowDate } from '../clock/trustedClock';
 
 const OWED = 'tillZ.owed';
 const PENDING = 'tillZ.pendingRequest';
@@ -85,7 +86,7 @@ export class TillZService {
       const at = autoCloseTimeOf(input.kioskAt, input.paramAt);
       if (!at) return;
       const shift = this.d.ledger.currentShift();
-      const now = input.now ?? new Date();
+      const now = input.now ?? nowDate();
       if (!shift || !autoCloseDue(now.getTime(), at, Date.parse(shift.opened_at))) return;
       const closed = this.d.ledger.closeShift({ closedByName: input.closerName, vatRate: input.vatRate, now });
       if (closed.kind !== 'closed') return;
@@ -132,7 +133,7 @@ export class TillZService {
 
   /** The card deals transmitted before the shift closed (the admin's Z): what this Z carries, not a second batch. */
   setCardTransmission(t: TransmitResult | null) {
-    this.cardTransmission = t ? cardTransmissionWire(t) : { outcome: 'skipped', at: new Date().toISOString() };
+    this.cardTransmission = t ? cardTransmissionWire(t) : { outcome: 'skipped', at: nowDate().toISOString() };
   }
 
   /**
@@ -166,7 +167,7 @@ export class TillZService {
     if (ready !== 'ready') return { kind: 'waiting', why: 'closes not delivered yet' };
     if (!this.cardTransmission) {
       const t = await this.d.transmit().catch(() => null);
-      this.cardTransmission = t ? cardTransmissionWire(t) : { outcome: 'skipped', at: new Date().toISOString() };
+      this.cardTransmission = t ? cardTransmissionWire(t) : { outcome: 'skipped', at: nowDate().toISOString() };
     }
     let pending = this.d.kv.getJson<{ machineId: string; id: string }>(PENDING);
     if (!pending || pending.machineId !== machineId) {
@@ -223,7 +224,7 @@ export class TillZService {
         (z.machineId as string) ?? machineId,
         Number.isFinite(number) ? number : 0,
         typeof z.machineSequenceEpoch === 'number' ? z.machineSequenceEpoch : 0,
-        (z.closedAt as string) ?? new Date().toISOString(),
+        (z.closedAt as string) ?? nowDate().toISOString(),
         (z.businessDate as string) ?? null,
         'printed',
         JSON.stringify(answer),
@@ -273,7 +274,7 @@ export function cardTransmissionWire(t: TransmitResult): Record<string, unknown>
     error: t.error,
     transactionCount: t.transactionCount,
     amount: t.amountAgorot === null ? null : (t.amountAgorot / 100).toFixed(2),
-    at: new Date().toISOString(),
+    at: nowDate().toISOString(),
     // An automatic Z has nobody to confirm a failed transmission: recorded, never blocking.
     confirmedFailure: t.outcome === 'failed' || t.outcome === 'unknown' || t.outcome === 'busy' ? true : undefined,
     confirmedByName: t.outcome === 'failed' || t.outcome === 'unknown' || t.outcome === 'busy' ? 'קיוסק (אוטומטי)' : undefined,

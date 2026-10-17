@@ -17,6 +17,7 @@ import type { BatteryAlertView } from '../core/batteryAlerts';
 import type { UnpairCheck } from '../core/unpairGuard';
 import type { LastPairing } from '../core/pairingMemory';
 import type { CloseDayKind } from '@dash-lib/shopActive';
+import type { ClockTrustReport } from '../core/clockTrust';
 
 export type KioskPhase = 'unpaired' | 'waiting' | 'kiosk';
 
@@ -558,7 +559,7 @@ export interface TechnicianSetupView {
   /** "חיבור מרחוק": TeamViewer QuickSupport's path when installed. */
   quickSupportPath: string | null;
   /** "המחשב". */
-  computer: { hostname: string; os: string; cpu: string; memoryGb: number; serial: string | null; clockSkewMs: number | null; battery: { percent: number | null; charging: boolean } | null };
+  computer: { hostname: string; os: string; cpu: string; memoryGb: number; serial: string | null; clockSkewMs: number | null; clockTrust?: ClockTrustReport | null; battery: { percent: number | null; charging: boolean } | null };
   /** "הפעלה אוטומטית" with Windows (null: not known here — a dev build). */
   autostart: { enabled: boolean } | null;
   /** "מיסוי". */
@@ -892,6 +893,8 @@ export type TechnicianAction =
   | { type: 'appLog' }
   /** "הפעלה אוטומטית": on again with Windows. */
   | { type: 'autostartOn' }
+  /** "תיקון שעון": automatic time on and a resync (and the server's time when off by 90 s) — through UAC unless elevated. */
+  | { type: 'clockFix' }
   /** The manager's menu's checks, from here too: "בדיקה מול מכשיר המזומן", "בדיקת חיבור לשרת CashMag", "הפקת Z / סגירת משמרת". */
   | { type: 'cashRecheck' }
   | { type: 'cashmagCheck' }

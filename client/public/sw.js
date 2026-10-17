@@ -100,7 +100,7 @@ self.addEventListener('fetch', (event) => {
  * P:/specs/manager-problems.md §3 "התראת Push שנלחצת פותחת את הכרטיס שלה").
  */
 const PROBLEM_KINDS = new Set([
-  'till_offline', 'kiosk_offline', 'till_printer', 'kiosk_printer', 'kiosk_terminal', 'device_battery',
+  'till_offline', 'kiosk_offline', 'till_printer', 'till_clock', 'kiosk_printer', 'kiosk_terminal', 'device_battery',
   'z_missing', 'shift_open_overdue', 'forced_z_close', 'z_forced_open_shifts', 'z_forced_pending_cloud_refund',
   'shop_z_producer_forced', 'local_shop_z_till_unsynced', 'cloud_closed_shift_late_documents',
   'card_transmission_overdue', 'z_transmission_failed', 'failed_payment', 'card_unresolved', 'terminal_mismatch',
