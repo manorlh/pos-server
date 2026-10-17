@@ -1,8 +1,12 @@
 /**
- * "בון מטבח במדפסת הקיוסק" — where a kiosk's kitchen bon goes (`printing.bonOnKiosk`, off by default;
- * docs/SPEC_KIOSK.md §5, the owner 07.10.2026: "אין צורך שידפיס את בון של המטבח"). The port of
+ * "בון מטבח במדפסת הקיוסק" — where a kiosk's kitchen bon goes (`printing.bonOnKiosk`: true / false / "auto", auto
+ * by default — the owner 17.10.2026: "אותה מדפסת יכולה להיות הכל"; docs/SPEC_KIOSK.md §29.1). The port of
  * pos-android domain/KioskOrders.kt `KioskBon.route` / `ownShare` / `isOwnPrinter`, pinned by the
  * shared cases test/fixtures/kiosk_bon_route.json (the same bytes as pos-android's).
+ *
+ * auto: the kitchen printers if any take the kiosk's orders, else the KDS if it takes the order, else the kiosk's own
+ * printer (after the receipt / pickup slip). true: as auto, and the routing's share for "this till" prints on the kiosk.
+ * false (a level chose it): never on the kiosk.
  *
  * Before its kitchen queue (main/kitchen) the Windows kiosk reached no kitchen printer: `windowsBonRoute` is that
  * route (every page on its own printer) — still what it does while it has never had the printers' settings.
@@ -11,30 +15,47 @@
 
 export type KioskBonRoute = 'single' | 'kitchen' | 'own' | 'none';
 
+/** `printing.bonOnKiosk`: on / off as a level chose it, or "auto" (the default). */
+export type BonOnKioskSetting = boolean | 'auto';
+
+/** The setting as the config has it: true / false as chosen, anything else (missing, "auto") auto. */
+export function bonOnKioskSetting(v: unknown): BonOnKioskSetting {
+  return v === true || v === false ? v : 'auto';
+}
+
 export interface KioskBonFacts {
   /** One named bon printer (`bonMode: "single"` with `bonPrinterId`). */
   single: boolean;
   /** That printer is the kiosk's own. */
   singleOwn: boolean;
-  bonOnKiosk: boolean;
+  bonOnKiosk: BonOnKioskSetting;
   /** Kitchen printers that may take the kiosk's orders. */
   kitchenPrinters: number;
+  /** The KDS takes the order (a KDS kiosk in a shop that runs it). */
+  kds?: boolean;
   /** The kiosk has a printer of its own that would take it. */
   ownPrinter: boolean;
 }
 
+/** The kiosk's own printer may take the bon: on, or auto when the KDS does not take the order. */
+export function kioskOwnMayPrint(setting: BonOnKioskSetting, kds: boolean): boolean {
+  return setting === true || (setting === 'auto' && !kds);
+}
+
 export function kioskBonRoute(f: KioskBonFacts): KioskBonRoute {
-  if (f.single && (!f.singleOwn || f.bonOnKiosk)) return 'single';
+  const own = kioskOwnMayPrint(f.bonOnKiosk, f.kds === true);
+  if (f.single && (!f.singleOwn || own)) return 'single';
   if (f.kitchenPrinters > 0) return 'kitchen';
-  if (!f.bonOnKiosk) return 'none';
+  if (!own) return 'none';
   if (f.ownPrinter) return 'own';
-  // On, and nothing of its own to print on: the routing, which says no printer takes it.
-  return 'kitchen';
+  // On, and nothing of its own to print on: the routing, which says no printer takes it (a staff alert).
+  // Auto: no printer anywhere — no bon, no alert on every order.
+  return f.bonOnKiosk === true ? 'kitchen' : 'none';
 }
 
 /** The routing's share for "this till" (lines routed nowhere, the till copy) may print on the kiosk itself. */
-export function kioskBonOwnShare(route: KioskBonRoute, bonOnKiosk: boolean): boolean {
-  return route === 'kitchen' && bonOnKiosk;
+export function kioskBonOwnShare(route: KioskBonRoute, bonOnKiosk: BonOnKioskSetting): boolean {
+  return route === 'kitchen' && bonOnKiosk === true;
 }
 
 /** A printer that is the kiosk's own: its USB port or head, a cloud printer it hosts, a receipt printer set to it alone. */
@@ -44,14 +65,22 @@ export function isOwnPrinter(p: { type: string | null; purpose: string | null; i
 }
 
 /** The Windows kiosk's bon: everything it prints is on its own printer. */
-export function windowsBonRoute(printing: { bonMode?: string | null; bonPrinterId?: string | null; bonOnKiosk?: boolean | null }): KioskBonRoute {
+export function windowsBonRoute(printing: KioskPrintingFacts, kds = false): KioskBonRoute {
   return kioskBonRoute({
     single: printing.bonMode === 'single' && !!printing.bonPrinterId,
     singleOwn: true,
-    bonOnKiosk: printing.bonOnKiosk === true,
+    bonOnKiosk: bonOnKioskSetting(printing.bonOnKiosk),
     kitchenPrinters: 0,
+    kds,
     ownPrinter: true,
   });
+}
+
+/** The kiosk's `printing` as the bon route reads it. */
+export interface KioskPrintingFacts {
+  bonMode?: string | null;
+  bonPrinterId?: string | null;
+  bonOnKiosk?: boolean | string | null;
 }
 
 /**
@@ -61,17 +90,19 @@ export function windowsBonRoute(printing: { bonMode?: string | null; bonPrinterI
  * kiosk never online): as before ([windowsBonRoute]). Its own printer is its receipt printer: always there.
  */
 export function windowsBonRouteFor(
-  printing: { bonMode?: string | null; bonPrinterId?: string | null; bonOnKiosk?: boolean | null },
+  printing: KioskPrintingFacts,
   config: { printers: ReadonlyArray<{ id: string; type: string | null; purpose: string | null; isHost: boolean; scope: string | null; inScope: boolean }> } | null,
+  kds = false,
 ): KioskBonRoute {
-  if (!config) return windowsBonRoute(printing);
+  if (!config) return windowsBonRoute(printing, kds);
   const single = printing.bonMode === 'single' && !!printing.bonPrinterId;
   const named = single ? config.printers.find((p) => p.id === printing.bonPrinterId) : undefined;
   return kioskBonRoute({
     single,
     singleOwn: !!named && isOwnPrinter(named),
-    bonOnKiosk: printing.bonOnKiosk === true,
+    bonOnKiosk: bonOnKioskSetting(printing.bonOnKiosk),
     kitchenPrinters: config.printers.filter((p) => p.inScope && (p.purpose ?? 'kitchen') !== 'receipt').length,
+    kds,
     ownPrinter: true,
   });
 }
@@ -87,3 +118,11 @@ export function bonViaKitchen(route: KioskBonRoute, printing: { bonMode?: string
 
 /** Said on an order whose bon the kiosk did not print by this setting. */
 export const BON_NOT_ON_KIOSK = 'לא מודפס בקיוסק — "בון מטבח במדפסת הקיוסק" כבוי';
+
+/** Said on an order with no bon under "auto": no kitchen printer, no KDS for it, and no printer of the kiosk's own. */
+export const BON_NO_PRINTER = 'אין בון — אין מדפסת מטבח, KDS או מדפסת בקיוסק';
+
+/** Why an order of route "none" has no bon. */
+export function bonNoneDetail(printing: KioskPrintingFacts): string {
+  return bonOnKioskSetting(printing.bonOnKiosk) === false ? BON_NOT_ON_KIOSK : BON_NO_PRINTER;
+}

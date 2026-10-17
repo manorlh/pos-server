@@ -2500,13 +2500,17 @@ describe('"אפקטים" — motion.effects: auto / full / light (the till\'s Ki
 
 describe('"בון מטבח במדפסת הקיוסק" — printing.bonOnKiosk (the server kiosk_config.py, the till KioskBon.route)', () => {
   const codes = (c: KioskConfig) => validateKioskConfig(c).map((e) => `${e.path}:${e.code}`);
-  it('off by default — an existing kiosk whose layers never had it too — and a boolean', () => {
-    assert.equal(KIOSK_DEFAULTS.printing.bonOnKiosk, false);
+  it('auto by default (the owner 17.10.2026) — an existing kiosk whose layers never had it too — and on / off / auto', () => {
+    assert.equal(KIOSK_DEFAULTS.printing.bonOnKiosk, 'auto');
     const royal = resolveKioskConfig({ printing: { bonMode: 'single', bonPrinterId: 'p-usb', receiptPrinterId: 'p-usb', bonAutoRetryMin: 0 } });
-    assert.equal(royal.printing.bonOnKiosk, false);
+    assert.equal(royal.printing.bonOnKiosk, 'auto');
     assert.deepEqual(validateKioskConfig(royal), []);
     assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }).printing.bonOnKiosk, true);
+    // An explicit off stays off.
     assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }, { printing: { bonOnKiosk: false } }).printing.bonOnKiosk, false);
+    assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: false } }).printing.bonOnKiosk, false);
+    assert.equal(resolveKioskConfig({ printing: { bonOnKiosk: true } }, { printing: { bonOnKiosk: 'auto' } }).printing.bonOnKiosk, 'auto');
+    assert.deepEqual(codes(cfg({ printing: { bonOnKiosk: 'auto' } })).filter((c) => c.startsWith('printing.bonOnKiosk')), []);
     assert.ok(codes(cfg({ printing: { bonOnKiosk: 'yes' } })).includes('printing.bonOnKiosk:enum'));
   });
 });

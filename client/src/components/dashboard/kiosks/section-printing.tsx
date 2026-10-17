@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { ensureTillLocalPrinter, fetchKitchenPrinters, fetchTillLocalPrinters } from '@/lib/kitchenPrintersApi';
-import { KIOSK_LIMITS, type BonMode } from '@/lib/kioskConfig';
+import { BON_ON_KIOSK_AUTO, KIOSK_LIMITS, type BonMode, type BonOnKiosk } from '@/lib/kioskConfig';
 import { NONE_VALUE, bonPrinterChoices, choiceOf, type LocalConnection } from '@/lib/kioskBonPrinters';
 import { useKioskEditor, useKioskField } from './editor-context';
 import { FieldShell, NumberField, OptionSelect, SectionCard, SegmentField, SwitchField } from './fields';
@@ -87,7 +87,7 @@ export function PrintingSection() {
       >
         <SwitchField path="printing.orderNumberOnReceipt" label={tf('printing.orderNumberOnReceipt')} hint={t('orderNumberOnReceiptHint')} />
         <SwitchField path="printing.pickupSlip" label={tf('printing.pickupSlip')} hint={t('pickupSlipHint')} />
-        <SwitchField path="printing.bonOnKiosk" label={tf('printing.bonOnKiosk')} hint={t('bonOnKioskHint')} />
+        <BonOnKioskField label={tf('printing.bonOnKiosk')} hint={t('bonOnKioskHint')} />
       </SectionCard>
 
       <SectionCard
@@ -152,5 +152,29 @@ export function PrintingSection() {
         </FieldShell>
       </SectionCard>
     </div>
+  );
+}
+
+type BonOnKioskChoice = 'auto' | 'on' | 'off';
+
+/**
+ * "בון מטבח במדפסת הקיוסק" (`printing.bonOnKiosk`, docs/SPEC_KIOSK.md §29.1): auto (the default — the owner
+ * 17.10.2026: "אותה מדפסת יכולה להיות הכל": the kitchen printers, else the KDS, else the kiosk's printer), on, off.
+ */
+function BonOnKioskField({ label, hint }: { label: string; hint: string }) {
+  const t = useTranslations('kiosks.printing.bonOnKioskMode');
+  const f = useKioskField<BonOnKiosk>('printing.bonOnKiosk');
+  const value: BonOnKioskChoice = f.value === true ? 'on' : f.value === false ? 'off' : 'auto';
+  const toValue = (c: BonOnKioskChoice): BonOnKiosk => (c === 'on' ? true : c === 'off' ? false : BON_ON_KIOSK_AUTO);
+  return (
+    <FieldShell path="printing.bonOnKiosk" label={label} hint={hint}>
+      <OptionSelect
+        value={value}
+        disabled={f.disabled}
+        ariaLabel={label}
+        options={(['auto', 'on', 'off'] as const).map((c) => ({ value: c, label: t(c) }))}
+        onChange={(v) => f.set(toValue(v as BonOnKioskChoice))}
+      />
+    </FieldShell>
   );
 }

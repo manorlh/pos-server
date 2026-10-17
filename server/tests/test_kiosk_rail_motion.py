@@ -53,6 +53,9 @@ def test_every_existing_template_and_style_resolves_as_before(case):
     if case["resolved"]["layout"]["quickAdd"] == "off" and not _chose_quick_add(case["layers"]):
         assert seen["layout"]["quickAdd"] == "no_choices"
         seen["layout"]["quickAdd"] = "off"
+    # 17.10 (owner, "אותה מדפסת יכולה להיות הכל"): "בון מטבח במדפסת הקיוסק" defaults to auto — no baseline layer chose it.
+    assert seen["printing"]["bonOnKiosk"] == "auto" and case["resolved"]["printing"]["bonOnKiosk"] is False
+    seen["printing"]["bonOnKiosk"] = False
     assert seen == case["resolved"]
     assert {k: cfg["layout"][k] for k in NEW_LAYOUT_KEYS} == {k: L.LAYOUT_DEFAULTS[k] for k in NEW_LAYOUT_KEYS}
     assert all(cfg["theme"][k] is None for k in C.RAIL_MOTION_COLOR_KEYS)

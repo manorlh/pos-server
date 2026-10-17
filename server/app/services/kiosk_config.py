@@ -333,6 +333,8 @@ SUCCESS_MESSAGE_MAX = 300
 #: transparent PNG) or on a rounded light plate ("plate", for a logo with its own background).
 WAIT_LOGO_STYLES = ("plain", "plate")
 BON_MODES = ("routing", "single")
+# `printing.bonOnKiosk`: true / false / this (the default, docs/SPEC_KIOSK.md §29.1).
+BON_ON_KIOSK_AUTO = "auto"
 PICKUP_SCOPES = ("kiosk", "shop")
 #: "מספר הזמנה": with the kiosk's letter ("A-17", today's) or the number alone ("17", the owner
 #: 09.10.2026). The number alone is told apart by nothing but the number, so it always comes from
@@ -566,12 +568,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # An unprinted bon prints again by itself when the printer comes back — once, and only
         # when younger than this many minutes (docs/SPEC_KIOSK.md §16.8); 0: never by itself.
         "bonAutoRetryMin": 10,
-        # "בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §5, the owner 07.10.2026): may the kiosk's own
-        # printer take its kitchen bon — when it has no kitchen printer (its USB printer, §14), and the
-        # routing's share for "this till"? Off by default, so every kiosk — an existing one too — gets
-        # it off: the bon never prints on the kiosk; a kitchen printer that does not answer keeps it in
-        # its queue and the staff's alert. `bonMode: "single"` with a named printer is unchanged.
-        "bonOnKiosk": False,
+        # "בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §29.1): may the kiosk's own printer take its
+        # kitchen bon? `"auto"` (the default — the owner 17.10.2026: "אותה מדפסת יכולה להיות הכל"):
+        # the kitchen printers if the shop has any for it, else the KDS if it takes the order, else the
+        # kiosk's own printer (after the receipt / pickup slip). `true`: as "auto", and the routing's
+        # share for "this till" prints on the kiosk too. `false` — only when a level chose it (layers
+        # are pruned overrides, so a stored false was always somebody's choice; the 07.10 default
+        # was never written into a layer): the bon never prints on the kiosk.
+        "bonOnKiosk": BON_ON_KIOSK_AUTO,
     },
     "pickup": {"scope": "kiosk", "prefix": "", "start": 1, "max": 999, "labelFormat": "prefixed"},
     "timers": {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8},
@@ -802,6 +806,15 @@ class Bool(Node):
         if not isinstance(value, bool):
             return _fail(errors, path, "invalid_type", "must be true or false")
         return value
+
+
+class BoolOrAuto(Node):
+    """true / false / "auto" — a switch whose default follows the facts (e.g. `printing.bonOnKiosk`)."""
+
+    def check(self, value, path, errors):
+        if isinstance(value, bool) or value == BON_ON_KIOSK_AUTO:
+            return value
+        return _fail(errors, path, "invalid_type", 'must be true, false or "auto"')
 
 
 class Int(Node):
@@ -1498,7 +1511,7 @@ SCHEMA = Obj({
         "pickupSlip": Bool(),
         "orderNumberOnReceipt": Bool(),
         "bonAutoRetryMin": Int(0, 120),
-        "bonOnKiosk": Bool(),
+        "bonOnKiosk": BoolOrAuto(),
     }),
     "pickup": Obj({
         "scope": Enum(PICKUP_SCOPES),

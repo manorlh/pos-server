@@ -102,7 +102,8 @@ const events = (svc: KioskService) =>
 
 describe('"היסטוריית עסקאות": each sale with how its pages printed', () => {
   it('today’s sale: time, label, amount, payment, the receipt, and each item ticket — one the queue gave up on is "לא הודפס", in the corner too', async () => {
-    const { svc } = kiosk();
+    // "בון מטבח במדפסת הקיוסק" off (chosen): no bon on this kiosk.
+    const { svc } = kiosk({ printing: { bonOnKiosk: false } });
     const tx = sale(svc, 'order-1');
     expect(svc.printItemTickets('order-1')).toBe(2);
     svc.printReceipt('order-1', false);
@@ -231,6 +232,13 @@ describe('"הדפסה חוזרת" — under REPRINT', () => {
 
 describe('the kitchen bon again — only where bons are on', () => {
   it('"בון למטבח" and "הדפס שוב את הבון האחרון": a fresh bon marked "הדפסה חוזרת", recorded', async () => {
+    for (const bonOnKiosk of [true, 'auto', undefined]) {
+      const { svc: k } = kiosk({ printing: bonOnKiosk === undefined ? {} : { bonOnKiosk } });
+      await k.adminUnlock('7001');
+      // Auto (the default, the owner 17.10.2026): no kitchen printer — the kiosk's own printer takes it.
+      expect((await k.adminHistory({ days: 1, query: '' })).bonsOn).toBe(true);
+      k.stop();
+    }
     const { svc } = kiosk({ printing: { bonOnKiosk: true } });
     sale(svc, 'order-1');
     svc.printBon('order-1', false);
@@ -248,8 +256,8 @@ describe('the kitchen bon again — only where bons are on', () => {
     expect(events(svc).map((e) => e.details.kind)).toEqual(['kitchen_bon']);
   });
 
-  it('with bons off the kiosk offers none', async () => {
-    const { svc } = kiosk();
+  it('with bons off (chosen) the kiosk offers none', async () => {
+    const { svc } = kiosk({ printing: { bonOnKiosk: false } });
     sale(svc, 'order-1');
     await svc.adminUnlock('7001');
     const h = await svc.adminHistory({ days: 1, query: '' });

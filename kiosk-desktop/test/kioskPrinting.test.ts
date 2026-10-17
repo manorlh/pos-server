@@ -1,9 +1,10 @@
 /**
  * The Windows kiosk's printing, as the owner asked on 07.10.2026 after testing the Royal kiosk:
  *
- *  - "בון מטבח במדפסת הקיוסק" (`printing.bonOnKiosk`, off by default): every page this kiosk prints is
- *    on its own printer, so off it prints no kitchen bon — not after a card sale, not "ממתין לתשלום
- *    בקופה" before a cash-at-the-till one (the till prints it then); on, as before.
+ *  - "בון מטבח במדפסת הקיוסק" (`printing.bonOnKiosk`, auto by default — the owner 17.10.2026: "אותה
+ *    מדפסת יכולה להיות הכל"): with no kitchen printer and no KDS the bon prints on the kiosk's own
+ *    printer, after the customer's papers; off (chosen) it prints no kitchen bon — not after a card
+ *    sale, not "ממתין לתשלום בקופה" before a cash-at-the-till one (the till prints it then); on, as before.
  *  - "שוברים" (item tickets): printed here right after the slip and the receipt, by the till's rules —
  *    each product's mode from the catalog, "שוברי פריט" (`itemTicketMode`) from the parameters.
  *  - Every receipt says where it was issued: "סניף הרצליה · קופה 3 · קיוסק רויאל".
@@ -17,7 +18,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isOwnPrinter, kioskBonOwnShare, kioskBonRoute, windowsBonRoute } from '../src/core/kioskBonRoute';
+import { bonOnKioskSetting, isOwnPrinter, kioskBonOwnShare, kioskBonRoute, windowsBonRoute, type BonOnKioskSetting } from '../src/core/kioskBonRoute';
 import {
   itemTicketSetting,
   itemTicketsPrint,
@@ -36,14 +37,14 @@ const fixture = (name: string) => readFileSync(path.join(here, 'fixtures', name)
 const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 
 // The LF-normalised SHA-256 the Android and the cloud's tests pin too.
-const BON_ROUTE_SHA256 = 'a4d79f8812154a8a4f147932e50193cfd699803f013cc496679744ccc1a28cb2';
+const BON_ROUTE_SHA256 = '3d08defb3ad99d79d7c80bae7eded16236b69aa08ab869902de0bb410bd5213a';
 const ITEM_TICKETS_SHA256 = 'a743a959ea2942cfb7a8534c91815b1e780e4f78921553465bb2c941d9cd09f7';
 const PLACE_SHA256 = 'eab9011b51428a3f797ffb7df3792a2a6e103b1dcd7450667fa8c63cdd7d2a4f';
 
 describe('where the bon goes (kiosk_bon_route.json, shared with pos-android)', () => {
   const text = fixture('kiosk_bon_route.json');
   const root = JSON.parse(text) as {
-    cases: Array<{ name: string; single: boolean; singleOwn: boolean; bonOnKiosk: boolean; kitchenPrinters: number; ownPrinter: boolean; route: string; ownShare: boolean }>;
+    cases: Array<{ name: string; single: boolean; singleOwn: boolean; bonOnKiosk: BonOnKioskSetting; kitchenPrinters: number; kds?: boolean; ownPrinter: boolean; route: string; ownShare: boolean }>;
     ownPrinter: Array<{ name: string; type: string | null; purpose: string | null; isHost: boolean; scope: string | null; own: boolean }>;
   };
 
@@ -61,8 +62,20 @@ describe('where the bon goes (kiosk_bon_route.json, shared with pos-android)', (
     expect(isOwnPrinter(c)).toBe(c.own);
   });
 
-  it('the Windows kiosk: off (the default) no bon at all, a named printer included; on, as before', () => {
-    expect(windowsBonRoute({})).toBe('none');
+  it('the cases hold auto, on and off, with and without the KDS', () => {
+    expect(new Set(root.cases.map((c) => String(c.bonOnKiosk)))).toEqual(new Set(['auto', 'true', 'false']));
+    expect(root.cases.some((c) => c.kds === true)).toBe(true);
+  });
+
+  it('the setting as the config has it: true / false as chosen, else auto', () => {
+    expect([true, false, 'auto', undefined, null, 'on'].map(bonOnKioskSetting)).toEqual([true, false, 'auto', 'auto', 'auto', 'auto']);
+  });
+
+  it('the Windows kiosk: auto (the default) on its own printer unless the KDS takes it; off (chosen) no bon at all, a named printer included; on, as before', () => {
+    expect(windowsBonRoute({})).toBe('own');
+    expect(windowsBonRoute({ bonMode: 'routing', bonOnKiosk: 'auto' })).toBe('own');
+    expect(windowsBonRoute({ bonMode: 'routing', bonOnKiosk: 'auto' }, true)).toBe('none');
+    expect(windowsBonRoute({ bonMode: 'single', bonPrinterId: 'p1', bonOnKiosk: 'auto' })).toBe('single');
     expect(windowsBonRoute({ bonMode: 'routing', bonOnKiosk: false })).toBe('none');
     expect(windowsBonRoute({ bonMode: 'single', bonPrinterId: 'p1', bonOnKiosk: false })).toBe('none');
     expect(windowsBonRoute({ bonMode: 'routing', bonOnKiosk: true })).toBe('own');
@@ -181,8 +194,19 @@ const docsOf = <T>(svc: KioskService, orderId: string, kind: 'bon' | 'ticket' | 
   svc.printQueue.jobsFor(orderId, kind).map((j) => JSON.parse(j.doc) as T);
 
 describe('the Windows kiosk prints', () => {
-  it('no kitchen bon with the setting off (the default) — said on the order; on, the bon as before', () => {
-    const off = kiosk({});
+  it('auto (the default): no kitchen printer, no KDS — the bon on the kiosk’s own printer', () => {
+    const auto = kiosk({});
+    try {
+      const a = paidOrder(auto);
+      auto.printBon(a, false);
+      expect(auto.printQueue.jobsFor(a, 'bon')).toHaveLength(1);
+    } finally {
+      auto.stop();
+    }
+  });
+
+  it('no kitchen bon with the setting off (chosen) — said on the order; on, the bon as before', () => {
+    const off = kiosk({ bonOnKiosk: false });
     const on = kiosk({ bonOnKiosk: true });
     try {
       const a = paidOrder(off);

@@ -213,8 +213,9 @@ def test_defaults_are_valid_and_complete():
         "pickupSlip": False, "orderNumberOnReceipt": True,
         # An unprinted bon prints again by itself when the printer is back, within this many minutes (§16.8).
         "bonAutoRetryMin": 10,
-        # "בון מטבח במדפסת הקיוסק" (§5): off — the kiosk never prints the kitchen bon on its own printer.
-        "bonOnKiosk": False,
+        # "בון מטבח במדפסת הקיוסק" (§29.1, the owner 17.10.2026): auto — kitchen printers, else the KDS,
+        # else the kiosk's own printer.
+        "bonOnKiosk": "auto",
     }
     assert cfg["timers"] == {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8}
     assert cfg["hours"]["ranges"] == [{"days": [0, 1, 2, 3, 4, 5, 6], "open": "08:00", "close": "23:00"}]
@@ -1042,31 +1043,38 @@ def test_new_keys_have_safe_defaults_and_validate():
     assert got["general.reduceMotion"] == "invalid_type"
 
 
-def test_bon_on_kiosk_is_off_for_every_kiosk_until_a_level_turns_it_on():
-    """"בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §5, the owner 07.10.2026): off by default — an
-    existing kiosk whose stored layers never had the key gets it off; any level may turn it on."""
-    assert C.DEFAULT_CONFIG["printing"]["bonOnKiosk"] is False
+def test_bon_on_kiosk_is_auto_for_every_kiosk_unless_a_level_chose_it():
+    """"בון מטבח במדפסת הקיוסק" (docs/SPEC_KIOSK.md §29.1, the owner 17.10.2026: "אותה מדפסת יכולה
+    להיות הכל"): "auto" by default — an existing kiosk whose stored layers never had the key gets it
+    auto; a level that chose on / off (layers are pruned overrides) keeps its choice."""
+    assert C.DEFAULT_CONFIG["printing"]["bonOnKiosk"] == "auto" == C.BON_ON_KIOSK_AUTO
     # An existing kiosk: its stored layers (the Royal kiosk's, single printer and all) say nothing of it.
     existing = {"printing": {"bonMode": "single", "bonPrinterId": str(uuid.uuid4()), "receiptPrinterId": None, "bonAutoRetryMin": 0}}
     cleaned, errors = C.validate_layer(existing)
     assert errors == []
     cfg = C.resolve({}, {}, cleaned)
-    assert cfg["printing"]["bonOnKiosk"] is False
+    assert cfg["printing"]["bonOnKiosk"] == "auto"
     assert C.validate_config(cfg) == []
-    # The key changes what every kiosk is sent: its version moves, so each kiosk takes the new config.
+    # The value changes what every kiosk is sent: its version moves, so each kiosk takes the new config.
     before = json.loads(json.dumps(cfg))
-    before["printing"].pop("bonOnKiosk")
+    before["printing"]["bonOnKiosk"] = False
     assert C.config_version(before) != C.config_version(cfg)
-    # On at the shop, off again on one kiosk.
+    # On at the shop, off again on one kiosk — an explicit off stays off.
     on, errors = C.validate_layer({"printing": {"bonOnKiosk": True}})
     assert errors == []
     assert C.resolve({}, on, {})["printing"]["bonOnKiosk"] is True
     assert C.resolve({}, on, {"printing": {"bonOnKiosk": False}})["printing"]["bonOnKiosk"] is False
+    off, errors = C.validate_layer({"printing": {"bonOnKiosk": False}})
+    assert errors == [] and C.resolve(off)["printing"]["bonOnKiosk"] is False
+    # "auto" chosen on one kiosk under a company that said on.
+    auto, errors = C.validate_layer({"printing": {"bonOnKiosk": "auto"}})
+    assert errors == [] and C.resolve(on, {}, auto)["printing"]["bonOnKiosk"] == "auto"
     # null in a layer is "inherit".
     inherit, errors = C.validate_layer({"printing": {"bonOnKiosk": None}})
     assert errors == [] and C.resolve(on, inherit)["printing"]["bonOnKiosk"] is True
-    _c, errors = C.validate_layer({"printing": {"bonOnKiosk": "yes"}})
-    assert paths(errors) == {"printing.bonOnKiosk": "invalid_type"}
+    for bad in ("yes", "on", 1, "AUTO"):
+        _c, errors = C.validate_layer({"printing": {"bonOnKiosk": bad}})
+        assert paths(errors) == {"printing.bonOnKiosk": "invalid_type"}, bad
 
 
 def test_one_paper_the_order_number_on_the_receipt_and_no_separate_slip_by_default():

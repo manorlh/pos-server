@@ -144,7 +144,7 @@ export class PrintQueue {
     this.working = true;
     try {
       for (;;) {
-        const next = this.db.get<PrintJob>("SELECT * FROM print_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1");
+        const next = this.db.get<PrintJob>("SELECT * FROM print_jobs WHERE status = 'queued' ORDER BY created_at, rowid LIMIT 1");
         if (!next) break;
         this.db.run("UPDATE print_jobs SET status = 'sending', attempts = attempts + 1, updated_at = ? WHERE id = ?", Date.now(), next.id);
         this.emit();

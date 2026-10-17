@@ -87,7 +87,7 @@ import {
   type ReprintKind,
   type TicketJob,
 } from '../core/kioskReprint';
-import { BON_NOT_ON_KIOSK, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
+import { bonNoneDetail, bonViaKitchen, windowsBonRouteFor, type KioskBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
 import { centreOn, job as escposJob, printerRaster, RECEIPT_WIDTHS } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
@@ -2768,7 +2768,6 @@ export class KioskService extends EventEmitter {
       this.dirty();
       return;
     }
-    this.printBon(orderId, false);
     // A KDS order: to the kitchen screens instead of the bon (`bonStep` prints none for it).
     this.releaseToKds(orderId);
     if (cfg.printing.pickupSlip) {
@@ -2777,6 +2776,9 @@ export class KioskService extends EventEmitter {
     if (policy === 'always') this.printReceipt(orderId, false);
     // "שוברים": the sale's item tickets right after the slip and the receipt, on the same printer.
     this.printItemTickets(orderId);
+    // The bon after the customer's papers (the owner 17.10.2026: "אותה מדפסת יכולה להיות הכל"): on the kiosk's own
+    // printer it comes out last, a page of its own with its cut; to kitchen printers it is the kitchen queue's as always.
+    this.printBon(orderId, false);
     this.orders.update(orderId, (o) => ({ ...o, receiptStatus: receiptAfterApproval(policy, false) }));
     void me;
     void this.sync.flush();
@@ -3055,7 +3057,7 @@ export class KioskService extends EventEmitter {
     // the order (it may be offline: the bon prints all the same). No kitchen printer and "בון מטבח במדפסת הקיוסק" off:
     // never here — the till that takes the money prints it.
     const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
-    const bonRoute: KioskBonRoute = windowsBonRouteFor(cfg.printing, kitchenConfig);
+    const bonRoute: KioskBonRoute = windowsBonRouteFor(cfg.printing, kitchenConfig, order.fulfillmentMode === 'KDS');
     const kitchenFirst = cfg.payment.cashAtTillKitchenBeforePay && order.fulfillmentMode === 'BON' && bonRoute !== 'none';
     order.kitchenSent = kitchenFirst;
     const placed = await this.payAtTill.place(order, { offline });
@@ -3713,12 +3715,12 @@ export class KioskService extends EventEmitter {
     const doc = o.transactionId ? this.ledger.doc(o.transactionId) : null;
     if (!doc) return;
     const cfg = this.config();
-    // "בון מטבח במדפסת הקיוסק" (off by default) and the shop's kitchen printers (core/kioskBonRoute.ts): the Android
+    // "בון מטבח במדפסת הקיוסק" (auto by default) and the shop's kitchen printers (core/kioskBonRoute.ts): the Android
     // kiosk's route — the kitchen printers by the routing, the one bon printer it names, its own printer, or none.
     const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
-    const route = windowsBonRouteFor(cfg.printing, kitchenConfig);
+    const route = windowsBonRouteFor(cfg.printing, kitchenConfig, o.fulfillmentMode === 'KDS');
     if (route === 'none') {
-      this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'none', bonDetail: BON_NOT_ON_KIOSK }));
+      this.orders.update(orderId, (x) => ({ ...x, bonStatus: 'none', bonDetail: bonNoneDetail(cfg.printing) }));
       return;
     }
     this.orders.update(orderId, (x) => ({ ...x, bonRequestedAtMs: x.bonRequestedAtMs ?? Date.now(), bonStatus: 'queued' })); // write-ahead
@@ -4488,7 +4490,8 @@ export class KioskService extends EventEmitter {
   /** Bons print on this kiosk at all: its bon route is not "none" (core/kioskBonRoute.ts — "בון מטבח במדפסת הקיוסק"). */
   private bonsOn(): boolean {
     const kitchenConfig = this.kitchen.known() ? this.kitchen.config() : null;
-    return windowsBonRouteFor(this.config().printing, kitchenConfig) !== 'none';
+    const cfg = this.config();
+    return windowsBonRouteFor(cfg.printing, kitchenConfig, cfg.general.fulfillmentMode === 'KDS') !== 'none';
   }
 
   /** An order's item-ticket jobs as the history reads them: which ticket each printed, how it went, the page itself. */
@@ -4713,7 +4716,7 @@ export class KioskService extends EventEmitter {
       this.printBon(orderId, true);
       const after = this.orders.get(orderId);
       // Not on this kiosk ("בון מטבח במדפסת הקיוסק" off), or no printer takes it: said, not "sent".
-      if (!this.bonsOn()) failure = BON_NOT_ON_KIOSK;
+      if (!this.bonsOn()) failure = bonNoneDetail(this.config().printing);
       else if (after?.bonStatus === 'failed') failure = after.bonDetail ?? 'הבון לא הודפס';
     }
     this.recordReprint(kind, order, who, { failed: failure !== null, tickets, ...(kind === 'item_tickets' ? { only } : {}) });

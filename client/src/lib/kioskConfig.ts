@@ -662,12 +662,18 @@ export interface KioskPrinting {
   /** An unprinted bon prints again by itself when the printer comes back, if younger than this (min); 0: never. */
   bonAutoRetryMin: number;
   /**
-   * "בון מטבח במדפסת הקיוסק" (off by default, the server's kiosk_config.py): the kiosk's own printer
-   * may take its kitchen bon — when it has no kitchen printer, or the one bon printer named is its
-   * own. Off: the bon never prints on the kiosk (a kitchen printer that does not answer keeps it).
+   * "בון מטבח במדפסת הקיוסק" (the server's kiosk_config.py, docs/SPEC_KIOSK.md §29.1). `'auto'` (the
+   * default — the owner 17.10.2026: "אותה מדפסת יכולה להיות הכל"): the kitchen printers if any take the
+   * kiosk's orders, else the KDS if it takes the order, else the kiosk's own printer. `true`: as auto,
+   * and the routing's share for "this till" prints on the kiosk too. `false` (a level chose it): the
+   * bon never prints on the kiosk (a kitchen printer that does not answer keeps it).
    */
-  bonOnKiosk: boolean;
+  bonOnKiosk: BonOnKiosk;
 }
+
+/** `printing.bonOnKiosk`: on / off as chosen, or "auto" (the default). */
+export type BonOnKiosk = boolean | 'auto';
+export const BON_ON_KIOSK_AUTO = 'auto' as const;
 
 export type PickupScope = 'kiosk' | 'shop';
 
@@ -1103,7 +1109,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     pickupSlip: false,
     orderNumberOnReceipt: true,
     bonAutoRetryMin: 10,
-    bonOnKiosk: false,
+    bonOnKiosk: BON_ON_KIOSK_AUTO,
   },
   pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999, labelFormat: 'prefixed' },
   timers: { inactivitySec: 60, warningSec: 20, successSec: 12, attractSlideSec: 8 },
@@ -2053,7 +2059,7 @@ export function validateKioskConfig(
   if (typeof pr.pickupSlip !== 'boolean') e.push({ path: 'printing.pickupSlip', code: 'enum' });
   if (typeof pr.orderNumberOnReceipt !== 'boolean') e.push({ path: 'printing.orderNumberOnReceipt', code: 'enum' });
   checkRange(e, 'printing.bonAutoRetryMin', pr.bonAutoRetryMin, { min: 0, max: 120 });
-  if (typeof pr.bonOnKiosk !== 'boolean') e.push({ path: 'printing.bonOnKiosk', code: 'enum' });
+  if (typeof pr.bonOnKiosk !== 'boolean' && pr.bonOnKiosk !== BON_ON_KIOSK_AUTO) e.push({ path: 'printing.bonOnKiosk', code: 'enum' });
 
   const pk = cfg.pickup;
   checkEnum(e, 'pickup.scope', pk.scope, ['kiosk', 'shop']);
