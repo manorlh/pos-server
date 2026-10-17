@@ -288,3 +288,56 @@ describe('the main-process API scan (scripts/win7MainApis.mjs)', () => {
     expect(scanMainSource('src/main/x.ts', '// net.fetch( is Electron 28')).toEqual([]);
   });
 });
+
+describe('Windows 7 till: zoom, printers (core/windowZoom.ts, printer/transports.ts)', () => {
+  it('the till and the whole Windows 7 build at 100% — the kiosk keeps its 540-px design', async () => {
+    const { shellAutoZoom, kioskWindowZoom } = await import('../src/core/windowZoom');
+    expect(shellAutoZoom({ build: 'win7', role: 'till', width: 1024, height: 768 })).toBe(1);
+    expect(shellAutoZoom({ build: 'win7', role: null, width: 1024, height: 768 })).toBe(1);
+    expect(shellAutoZoom({ build: 'standard', role: 'till', width: 1366, height: 768 })).toBe(1);
+    expect(shellAutoZoom({ build: 'standard', role: 'kiosk', width: 1024, height: 768 })).toBe(kioskWindowZoom(1024, 768));
+    expect(kioskWindowZoom(1024, 768)).toBeGreaterThan(1.2);
+  });
+
+  it('wmic lists the queues when the PowerShell helper cannot start (UTF-16 and ANSI output)', async () => {
+    const { parseWmicPrinters } = await import('../src/main/printer/transports');
+    const text = [
+      '',
+      '',
+      'DetectedErrorState=0',
+      'DriverName=BTP-R880NP',
+      'Name=BTP-R880NP(U) 1',
+      'PortName=USB001',
+      'PrinterStatus=3',
+      'WorkOffline=FALSE',
+      '',
+      '',
+      'DetectedErrorState=9',
+      'DriverName=Microsoft XPS Document Writer',
+      'Name=Microsoft XPS Document Writer',
+      'PortName=XPSPort:',
+      'PrinterStatus=1',
+      'WorkOffline=TRUE',
+      '',
+    ].join('\r\r\n');
+    for (const out of [Buffer.from(`\uFEFF${text}`, 'utf16le'), Buffer.from(text, 'latin1')]) {
+      const list = parseWmicPrinters(out);
+      expect(list).toHaveLength(2);
+      expect(list[0]).toMatchObject({ name: 'BTP-R880NP(U) 1', port: 'USB001', detected: 0, offline: false, status: 3 });
+      expect(list[1]).toMatchObject({ name: 'Microsoft XPS Document Writer', offline: true, detected: 9 });
+    }
+  });
+
+  it('the helper gets ASCII JSON (Windows 7 PowerShell 2 reads stdin in the console code page) and C# 2 code', async () => {
+    const { asciiJson, SPOOLER_HELPER_PS1 } = await import('../src/main/printer/transports');
+    const line = asciiJson({ op: 'send', printer: 'מדפסת קבלות' });
+    expect(line).toMatch(/^[\x20-\x7e]+$/);
+    expect(JSON.parse(line).printer).toBe('מדפסת קבלות');
+    // Add-Type on PowerShell 2 compiles C# 2: no `var`, no object initialisers.
+    const cs = /Add-Type -TypeDefinition @"([\s\S]*?)"@/.exec(SPOOLER_HELPER_PS1)![1];
+    expect(cs).not.toMatch(/\bvar\s+\w+\s*=/);
+    expect(cs).not.toMatch(/new\s+\w+\s*\{/);
+    // PowerShell 3+ only cmdlets stay behind the legacy switch.
+    expect(SPOOLER_HELPER_PS1).not.toMatch(/Get-Printer|\[pscustomobject\]/i);
+  });
+});

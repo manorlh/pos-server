@@ -41,6 +41,8 @@ export interface TillElectronOptions {
   /** Whether the till preview is on (kiosk.json `tillPreview`, `--till-preview`). */
   enabled(): boolean;
   log(m: string): void;
+  /** The shell's key guard for the till's page too (no Alt+F4 / reload; the support keys): true = the key is taken. */
+  onKey?(input: Electron.Input): boolean;
   /**
    * "ניהול הקיוסק" from the till's corner: `allowed` — never during a payment (the engine's checkout, a card at the
    * terminal); `open` — the shell's window shows its manager's menu (renderer staff/ShellStaff.tsx) while the till's view
@@ -54,6 +56,10 @@ export interface TillElectron {
   onRole(role: string | null): void;
   /** The manager's menu over the till is closed: the till's view is laid back over the window. */
   resume(): void;
+  /** The shell's menu or technician's screen (a keyboard shortcut, the tray): the till's view set aside first. */
+  open(screen: 'admin' | 'technician'): boolean;
+  /** The window is back from the desktop: the till's view fitted and focused again. */
+  refit(): void;
   stop(): void;
 }
 
@@ -93,14 +99,23 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   // The till's corner: the shell's manager's menu, never during a payment.
   // The till's six taps (top-left, the PIN screen too): the shell's technician's screen, never during a payment either.
   const openShell = (e: Electron.IpcMainEvent, screen: 'admin' | 'technician') => {
-    if (!fromTill(e) || !o.admin || parked) return;
+    if (!fromTill(e)) return;
+    openScreen(screen);
+  };
+  /** The shell's menu / technician's screen over the till: the view is set aside (zero size) first. */
+  const openScreen = (screen: 'admin' | 'technician'): boolean => {
+    if (!o.admin) return false;
+    if (parked) return true;
     if (!o.admin.allowed()) {
       o.log(`till: the ${screen === 'admin' ? 'manager corner' : 'technician taps'} wait — a payment is on`);
-      return;
+      return false;
     }
-    parked = true;
-    fit();
+    if (view) {
+      parked = true;
+      fit();
+    }
     o.admin.open(screen);
+    return true;
   };
   ipcMain.on(APP_IPC.admin, (e) => openShell(e, 'admin'));
   ipcMain.on(APP_IPC.technician, (e) => openShell(e, 'technician'));
@@ -141,6 +156,9 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     fit();
     win.on('resize', fit);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    view.webContents.on('before-input-event', (e, input) => {
+      if (o.onKey?.(input)) e.preventDefault();
+    });
     view.webContents.on('will-navigate', (e, url) => {
       if (!url.startsWith('r2m://app/')) e.preventDefault();
     });
@@ -184,6 +202,11 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
       if (wanted) show();
       else hide();
       if (view && r) view.webContents.send(APP_IPC.role, r as DeviceRoleName);
+    },
+    open: (screen) => openScreen(screen),
+    refit: () => {
+      fit();
+      if (!parked) view?.webContents.focus();
     },
     resume: () => {
       if (!parked) return;

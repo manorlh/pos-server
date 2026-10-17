@@ -4895,9 +4895,12 @@ export class KioskService extends EventEmitter {
   }
 
   async technicianInfo(): Promise<TechnicianInfo> {
-    const scan = await this.usbWatch.refresh();
+    // The screen opens at once: a fresh USB scan only if it answers within 2.5 s (PowerShell on a Windows 7 J1900 can
+    // take far longer — the screen looked like it never opened), else the last one; "בדוק הכל שוב" asks again.
+    const fresh = this.usbWatch.refresh().catch(() => null);
+    const scan = await Promise.race([fresh, new Promise<null>((r) => setTimeout(() => r(null), 2_500))]) ?? this.usbWatch.current();
     const admin = this.adminInfo();
-    const queues = scan?.queues ?? (await this.transport.list().catch(() => []));
+    const queues = scan?.queues ?? (await Promise.race([this.transport.list().catch(() => []), new Promise<never[]>((r) => setTimeout(() => r([]), 2_500))]));
     const me = this.cloud.machine();
     // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
     const u = this.platform.updateStatus?.() ?? null;
@@ -5126,6 +5129,13 @@ export class KioskService extends EventEmitter {
         this.log('technician: restart');
         setTimeout(() => this.platform.restartApp?.(), 300);
         return { ok: true, message: 'האפליקציה עולה מחדש…' };
+      }
+      case 'quitApp': {
+        const guard = paymentGuard(this.activity());
+        if (guard) return { ok: false, message: TECH_TEXT.blocked };
+        this.log('technician: the app closed (יציאה מהתוכנה)');
+        setTimeout(() => this.platform.quit(), 300);
+        return { ok: true, message: 'התוכנה נסגרת…' };
       }
       case 'networkCheck':
         return this.technicianNetwork();

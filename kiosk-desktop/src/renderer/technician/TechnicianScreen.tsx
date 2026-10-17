@@ -74,6 +74,7 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
   const [net, setNet] = useState<TechnicianActionResult['network'] | null>(null);
   const [probe, setProbe] = useState<TechnicianActionResult['pinpad'] | null>(null);
   const [restartArmed, setRestartArmed] = useState(false);
+  const [quitArmed, setQuitArmed] = useState(false);
   const [manager, setManager] = useState<ManagerAsk | null>(null);
   const top = useRef<HTMLDivElement>(null);
   const refresh = () => void kiosk.technicianInfo().then(setInfo).catch(() => undefined);
@@ -156,6 +157,22 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
             }}
           >
             {restartArmed ? T.restartConfirm : T.restart}
+          </Btn>
+          <Btn
+            m={m}
+            danger
+            onClick={() => {
+              if (!quitArmed) {
+                setQuitArmed(true);
+                setNote(T.quitConfirm);
+                window.setTimeout(() => setQuitArmed(false), 5_000);
+                return;
+              }
+              setQuitArmed(false);
+              void act({ type: 'quitApp' });
+            }}
+          >
+            {quitArmed ? T.quitConfirm : T.quit}
           </Btn>
           {/* Android's "הגדרות Android": on Windows, the desktop (a manager's DESKTOP_EXIT). */}
           <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.buttonInk, borderRadius: 8 }} />

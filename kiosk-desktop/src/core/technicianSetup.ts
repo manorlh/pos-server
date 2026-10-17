@@ -31,6 +31,8 @@ export const TECH_TEXT = {
   z: 'הפקת Z / סגירת משמרת',
   restart: 'הפעלה מחדש של האפליקציה',
   restartConfirm: 'לחצו שוב להפעלה מחדש',
+  quit: 'יציאה מהתוכנה',
+  quitConfirm: 'לחצו שוב לסגירת התוכנה',
   blocked: 'לא בזמן הזמנה או תשלום',
   lightCloud: 'ענן',
   lightPinpad: 'מסופון',

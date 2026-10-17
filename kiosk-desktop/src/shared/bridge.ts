@@ -839,6 +839,8 @@ export type TechnicianAction =
   | { type: 'syncNow' }
   /** "הפעלה מחדש של האפליקציה" — never over an order or a payment. */
   | { type: 'restart' }
+  /** "יציאה מהתוכנה": the app closes (never during a payment) — the technician's way out, Windows 7 too. */
+  | { type: 'quitApp' }
   /** "מידע רשת" + "שיוך" from the cloud: the adapters, Wi-Fi, `/health`, the cloud API (its answer is the identity), the LAN host. */
   | { type: 'networkCheck' }
   /** "כתובת שרת": "בדיקת חיבור" of a new address, then "שמירה" (`confirm`: "נתק ועבור לענן החדש"). */
