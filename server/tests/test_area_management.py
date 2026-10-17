@@ -540,3 +540,161 @@ class TestMigration:
         assert "ALTER TABLE area_product_overrides ADD COLUMN price NUMERIC(10, 2)" in sql
         assert "CREATE TABLE price_policies" in sql and "CREATE TABLE price_changes" in sql
         assert sql.count("UPDATE ") == 1 and "DROP " not in sql
+
+
+# ── Bulk / scheduled price changes ───────────────────────────────────────────
+
+
+class TestBulkPrices:
+    def test_the_arithmetic(self):
+        from app.services.price_bulk import compute
+
+        D = Decimal
+        assert compute(D("10"), "set", D("12")) == D("12.00")
+        assert compute(D("10"), "add", D("1.5")) == D("11.50")
+        assert compute(D("10"), "pct", D("10")) == D("11.00")
+        assert compute(D("10"), "pct", D("7"), "0.90") == D("10.90")
+        assert compute(D("10.95"), "add", D("0"), "0.90") == D("11.90")
+        assert compute(D("10.40"), "add", D("0"), "1") == D("10.00")
+        assert compute(D("3"), "add", D("-5")) == D("0.00")
+
+    def test_whole_shop_keeps_area_prices_unless_asked(self, a):
+        from app.services import price_bulk as PB
+
+        a.db.add(AreaProductOverride(area_id=a.bar.id, product_id=a.cola.id, price=Decimal("9")))
+        a.db.commit()
+        spec = PB.build_spec(a.db, a.manager, a.shop, {"categoryIds": [str(a.cat.id)], "op": "add", "value": 2})
+        pv = PB.preview(a.db, a.manager, spec)
+        cola = next(r for r in pv["rows"] if r["productId"] == str(a.cola.id))
+        assert (cola["oldPrice"], cola["newPrice"], cola["areaOverridesAction"]) == (10.0, 12.0, "keep")
+        PB.apply(a.db, a.manager, spec)
+        a.db.commit()
+        assert _synced(a, a.t1, a.cola)["price"] == 9.0 and _synced(a, a.t2, a.cola)["price"] == 12.0
+        spec = PB.build_spec(a.db, a.manager, a.shop, {"productIds": [str(a.cola.id)], "op": "set", "value": 13,
+                                                     "overrideAreas": True})
+        PB.apply(a.db, a.manager, spec)
+        a.db.commit()
+        assert _synced(a, a.t1, a.cola)["price"] == 13.0
+
+    def test_selected_areas_and_the_area_managers_reach(self, a):
+        from app.services import price_bulk as PB
+
+        spec = PB.build_spec(a.db, a.ahmash, a.shop, {"productIds": [str(a.cola.id)], "op": "pct", "value": 10,
+                                                    "areaIds": [str(a.bar.id), str(a.kitchen.id)]})
+        rows = PB.preview(a.db, a.ahmash, spec)["rows"]
+        assert [r["refused"] is None for r in rows] == [True, False]
+        out = PB.apply(a.db, a.ahmash, spec)
+        a.db.commit()
+        assert out["written"] == 1 and _synced(a, a.t1, a.cola)["price"] == 11.0 and _synced(a, a.t2, a.cola)["price"] == 10.0
+        whole = PB.build_spec(a.db, a.ahmash, a.shop, {"productIds": [str(a.cola.id)], "op": "set", "value": 1})
+        assert PB.preview(a.db, a.ahmash, whole)["counts"]["refused"] == 1
+
+    def test_policy_refuses_rows(self, a):
+        from app.services import price_bulk as PB
+
+        a.db.add(PricePolicy(company_id=a.company.id, tenant_id=a.tenant.id, editors="area",
+                             locked_product_ids=[str(a.beer.id)]))
+        a.db.flush()
+        spec = PB.build_spec(a.db, a.manager, a.shop, {"categoryIds": [str(a.cat.id)], "op": "add", "value": 1})
+        rows = {r["productId"]: r for r in PB.preview(a.db, a.manager, spec)["rows"]}
+        assert rows[str(a.beer.id)]["refused"] == PP.MSG_LOCKED and rows[str(a.cola.id)]["refused"] is None
+
+    def test_scheduled_then_put_back(self, a):
+        from datetime import timedelta
+
+        from app.services import price_bulk as PB
+
+        spec = PB.build_spec(a.db, a.manager, a.shop, {"productIds": [str(a.cola.id)], "op": "set", "value": 15,
+                                                     "areaIds": [str(a.bar.id)]})
+        sched = PB.schedule(a.db, a.manager, spec, starts_at=NOW + timedelta(hours=1), ends_at=NOW + timedelta(hours=3),
+                            label="game night")
+        a.db.commit()
+        assert PB.run_due(a.db, now=NOW) == {"applied": 0, "reverted": 0}
+        assert PB.run_due(a.db, now=NOW + timedelta(hours=1)) == {"applied": 1, "reverted": 0}
+        assert _synced(a, a.t1, a.cola)["price"] == 15.0 and sched.status == "applied"
+        assert PB.run_due(a.db, now=NOW + timedelta(hours=3)) == {"applied": 0, "reverted": 1}
+        assert _synced(a, a.t1, a.cola)["price"] == 10.0 and sched.status == "reverted"
+        assert [c.source for c in a.db.query(PriceChange).all()] == ["schedule", "schedule"]
+
+    def test_a_revert_leaves_a_price_changed_meanwhile(self, a):
+        from datetime import timedelta
+
+        from app.services import price_bulk as PB
+
+        spec = PB.build_spec(a.db, a.manager, a.shop, {"productIds": [str(a.cola.id)], "op": "set", "value": 15})
+        sched = PB.schedule(a.db, a.manager, spec, starts_at=NOW, ends_at=NOW + timedelta(hours=1), label=None)
+        a.db.commit()
+        PB.run_due(a.db, now=NOW)
+        _row(a, a.cola).price = Decimal("17")
+        a.db.commit()
+        PB.run_due(a.db, now=NOW + timedelta(hours=1))
+        assert _row(a, a.cola).price == Decimal("17") and a.cola.name in sched.error
+
+
+# ── Price from the till ──────────────────────────────────────────────────────
+
+
+class TestTillPrice:
+    def _put(self, a, till, price, level=None, token=None, operator=None):
+        from app.middleware.auth import CatalogAuthority
+        from app.routers import till_price as R
+
+        auth = CatalogAuthority(db=a.db, machine=till, elevation_token=token, operator_id=operator)
+        return R.till_price_set(str(till.id), str(a.cola.id), R.TillPriceIn(price=price, level=level),
+                                machine=till, authority=auth, db=a.db)
+
+    @pytest.fixture
+    def staff(self, a, monkeypatch):
+        from app.middleware import auth as AUTH
+
+        boss = PosUser(id=uuid.uuid4(), tenant_id=a.tenant.id, shop_id=a.shop.id, username="boss", pin_hash="x")
+        a.db.add(boss)
+        a.db.commit()
+        monkeypatch.setattr(AUTH, "authorize_catalog",
+                            lambda db, machine, token, operator, scope: AUTH.CatalogActor(pos_user_id=boss.id))
+        return boss
+
+    def test_levels_and_the_question(self, a):
+        from app.services import till_price as TPR
+
+        assert TPR.allowed_levels(a.db, a.t1) == ["area", "shop"]
+        assert TPR.asks(a.db, a.t1, _row(a, a.cola)) is True
+        _row(a, a.cola).area_ids = [str(a.bar.id)]
+        assert TPR.asks(a.db, a.t1, _row(a, a.cola)) is False  # sold only here: no question
+        a.t1.area_id = None
+        assert TPR.allowed_levels(a.db, a.t1) == ["shop"]
+        a.t1.area_id = a.bar.id
+        set_param(a, "tillPriceChangeAsk", "shop", a.shop.id, False)
+        _row(a, a.cola).area_ids = None
+        assert TPR.asks(a.db, a.t1, _row(a, a.cola)) is False
+        set_param(a, "tillPriceChangeLevels", "shop", a.shop.id, "off")
+        assert TPR.allowed_levels(a.db, a.t1) == []
+
+    def test_the_default_level_is_the_tills_area(self, a, staff):
+        out = self._put(a, a.t1, 11)
+        assert out["level"] == "area" and out["effectivePrice"] == 11.0
+        assert _synced(a, a.t2, a.cola)["price"] == 10.0
+        out = self._put(a, a.t1, 12, level="shop")
+        assert out["level"] == "shop" and _synced(a, a.t2, a.cola)["price"] == 12.0
+        log = a.db.query(PriceChange).filter(PriceChange.source == "till").all()
+        assert {c.actor_pos_user_id for c in log} == {staff.id} and {c.machine_id for c in log} == {a.t1.id}
+
+    def test_level_off_and_policy_and_approval(self, a, staff):
+        set_param(a, "tillPriceChangeLevels", "shop", a.shop.id, "area")
+        with pytest.raises(HTTPException) as e:
+            self._put(a, a.t1, 12, level="shop")
+        assert e.value.detail["code"] == "till_price_level"
+        a.db.rollback()
+        set_param(a, "tillPriceChangeLevels", "shop", a.shop.id, "auto")
+        a.db.add(PricePolicy(company_id=a.company.id, tenant_id=a.tenant.id, editors="shop"))
+        a.db.flush()
+        with pytest.raises(HTTPException) as e:
+            self._put(a, a.t1, 12, level="area")
+        assert e.value.detail["code"] == "price_policy"
+        a.db.rollback()
+        set_param(a, "tillPriceChangeApproval", "shop", a.shop.id, True)
+        with pytest.raises(HTTPException) as e:
+            self._put(a, a.t1, 12, level="shop")
+        assert e.value.status_code == 401
+        a.db.rollback()
+        assert self._put(a, a.t1, 12, level="shop", token="grant")["level"] == "shop"

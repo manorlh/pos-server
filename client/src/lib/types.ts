@@ -143,6 +143,11 @@ export interface ScopeSelection {
   companyId: string | null;
   shopId: string | null;
   machineId: string | null;
+  /**
+   * "נקודת מכירה" (P:/specs/chain-areas.md §2): a point of sale of the selected shop, or null — "כל הנקודות".
+   * Not a level of its own: it narrows the shop level (`?area=`), and only with a shop.
+   */
+  areaId?: string | null;
 }
 
 /**

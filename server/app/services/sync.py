@@ -347,6 +347,8 @@ def _serialize_merged_product(
         # On this till's own list, whatever the till's mode — see machine_catalog.
         "inMachineCatalog": bool(catalog_item is not None and catalog_item.is_included),
         "shopListed": shop_listed,
+        # "שיוך מוצר לנקודות מכירה" (chain-areas §6, §9.6): the shop's points of sale where it is sold; null — all.
+        "soldInAreas": sorted(_areas.stored_ids(override)) if _areas.stored_ids(override) is not None else None,
         "createdAt": (local.created_at if local else global_p.created_at).isoformat()
         if (local and local.created_at) or global_p.created_at
         else None,

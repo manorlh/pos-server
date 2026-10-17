@@ -29,6 +29,8 @@ interface InternalUser extends UserCapabilities {
   /** "תצוגת מנהל פשוטה": the short manager menu (the server's default for the role / template). */
   simpleMode: boolean;
   simpleModeDefault: boolean;
+  /** "עובדים על" (P:/specs/chain-areas.md §2): the top-bar scope saved per organization (`preferences.dashboardScope`). */
+  dashboardScope?: Record<string, unknown>;
 }
 
 export interface TenantSummary {
@@ -127,6 +129,10 @@ export const useAuth = create<AuthState>((set) => ({
           homePage: parseHomePage(data.preferences?.homePage),
           simpleMode: data.preferences?.simpleMode === true,
           simpleModeDefault: data.preferences?.simpleModeDefault === true,
+          dashboardScope:
+            data.preferences?.dashboardScope && typeof data.preferences.dashboardScope === 'object'
+              ? data.preferences.dashboardScope
+              : {},
         },
         tenants,
         activeTenantId,

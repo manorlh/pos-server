@@ -242,10 +242,10 @@ def check(db: Session, user: Any, product: Any, *, level: str, shop_id: Any, new
         raise refused
 
 
-def check_till(db: Session, product: Any, *, shop_id: Any, new_price: Any) -> None:
-    """A price written from a till of `shop_id` — a shop-level change by the shop's staff."""
+def check_till(db: Session, product: Any, *, shop_id: Any, new_price: Any, level: str = SHOP) -> None:
+    """A price written from a till of `shop_id` — by the shop's staff, at the level it lands on (shop / area)."""
     policy = effective(db, shop_id=shop_id)
-    refused = refusal(policy, actor=SHOP, product=product, level=SHOP, new_price=new_price)
+    refused = refusal(policy, actor=level, product=product, level=level, new_price=new_price)
     if refused is not None:
         raise refused
 

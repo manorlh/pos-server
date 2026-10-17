@@ -500,6 +500,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/products/{}/prices", S("products", level=VIEW)),
     (_GET, "/products/{}/price-changes", S("products", level=VIEW)),
     (_GET, "/products/{}/levels-summary", S("products", "item_blocks", level=VIEW)),
+    # "שינוי מחירים מרוכז / מתוזמן" (P:/specs/chain-areas.md §9.5).
+    ("POST", "/shops/{}/prices/bulk/preview", S("products", level=VIEW)),
+    (_ALL, "/shops/{}/prices*", S("products")),
+    (_GET, "/shops/{}/price-schedules", S("products", level=VIEW)),
+    (_ALL, "/price-schedules*", S("products")),
     (_GET, "/categories", S("products", "quick_actions", "promotions", level=VIEW)),
     # "חסימות ואזל": a product's sold-out / blocked state, also for a manager without the catalog.
     (_GET, "/availability/reopens", S("products", "item_blocks")),

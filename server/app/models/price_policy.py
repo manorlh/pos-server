@@ -55,3 +55,33 @@ class PriceChange(Base):
     #: "dashboard" | "till"
     source = Column(String(12), nullable=False, default="dashboard", server_default="dashboard")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+class PriceSchedule(Base):
+    """
+    "שינוי מחירים מתוזמן" (P:/specs/chain-areas.md §9.5): a bulk price change applied by the server at `starts_at`
+    and, when `ends_at` is set, put back then. `items` are the prices frozen when it was saved (what the preview
+    showed): `[{productId, level: "shop"|"area", targetId, newPrice}]`; on apply each gains `oldPrice` (the level's
+    own price before, null = it had none) so the revert restores exactly that — unless someone changed it since.
+    """
+
+    __tablename__ = "price_schedules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = Column(String(120), nullable=True)
+    starts_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    ends_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    #: "pending" | "applied" | "reverted" | "cancelled" | "failed"
+    status = Column(String(12), nullable=False, default="pending", server_default="pending", index=True)
+    #: The request as sent (op, rounding, scope) — for the list's "what".
+    spec = Column(JSONB, nullable=True)
+    items = Column(JSONB, nullable=False, default=list, server_default="[]")
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name = Column(String(200), nullable=True)
+    applied_at = Column(DateTime(timezone=True), nullable=True)
+    reverted_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

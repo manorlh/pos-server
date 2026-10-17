@@ -215,6 +215,32 @@ export interface DashboardAccess {
   companyIds?: string[];
   shopIds?: string[];
   template?: string | null;
+  /**
+   * "מנהל נקודת מכירה" (P:/specs/chain-areas.md §3): the points of sale the user is narrowed to (with their shop),
+   * whatever their sections. Empty — the whole shops of their role.
+   */
+  areaIds?: string[];
+  areas?: AccessArea[];
+}
+
+export interface AccessArea {
+  id: string;
+  name: string;
+  shopId: string;
+}
+
+/** The user's points of sale, read whether or not their sections are restricted. */
+export function parseAccessAreas(raw: unknown): { areaIds: string[]; areas: AccessArea[] } {
+  if (!raw || typeof raw !== 'object') return { areaIds: [], areas: [] };
+  const value = raw as Record<string, unknown>;
+  const areaIds = Array.isArray(value.areaIds) ? value.areaIds.map(String) : [];
+  const areas = Array.isArray(value.areas)
+    ? value.areas
+        .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+        .map((a) => ({ id: String(a.id ?? ''), name: String(a.name ?? ''), shopId: String(a.shopId ?? '') }))
+        .filter((a) => a.id && a.shopId)
+    : [];
+  return { areaIds, areas };
 }
 
 /** Nothing narrowed: the super admin, a full-access user, or a server that predates profiles. */
@@ -224,7 +250,8 @@ export const UNRESTRICTED: DashboardAccess = { restricted: false, sections: {} }
 export function parseDashboardAccess(raw: unknown): DashboardAccess {
   if (!raw || typeof raw !== 'object') return UNRESTRICTED;
   const value = raw as Record<string, unknown>;
-  if (value.restricted !== true) return UNRESTRICTED;
+  const reach = parseAccessAreas(value);
+  if (value.restricted !== true) return reach.areaIds.length ? { ...UNRESTRICTED, ...reach } : UNRESTRICTED;
   const sections: Partial<Record<SectionId, AccessLevel>> = {};
   const rawSections = value.sections;
   if (rawSections && typeof rawSections === 'object') {
@@ -242,6 +269,7 @@ export function parseDashboardAccess(raw: unknown): DashboardAccess {
     companyIds: ids(value.companyIds),
     shopIds: ids(value.shopIds),
     template: typeof value.template === 'string' ? value.template : null,
+    ...reach,
   };
 }
 

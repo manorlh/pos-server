@@ -3030,3 +3030,57 @@ def reset_values(
         if write_value(db, parameters[key], scope_type, scope_id, None, user=user, now=now):
             cleared.append(key)
     return cleared
+
+
+# "שינוי מחיר מהקופה" (P:/specs/chain-areas.md §9.6): which levels a till's price change may land on, whether the till
+# asks "איפה לשנות?", and whether an authorised person's code is always required. Read by the cloud
+# (`PUT /sync/{m}/products/{id}/price`, app/services/till_price.py) and by the tills (their dialog).
+TILL_PRICE_LEVELS_KEY = "tillPriceChangeLevels"
+TILL_PRICE_LEVELS_AUTO = "auto"
+TILL_PRICE_LEVELS_OPTIONS = ("auto", "area", "area_shop", "shop", "off")
+TILL_PRICE_LEVELS_LABELS = {
+    "auto": "אוטומטי — נקודת המכירה של הקופה או כל הסניף (בסניף בלי נקודות: כל הסניף) (ברירת מחדל)",
+    "area": "רק בנקודת המכירה של הקופה",
+    "area_shop": "בנקודת המכירה או בכל הסניף",
+    "shop": "רק בכל הסניף",
+    "off": "לא ניתן לשנות מחיר מהקופה",
+}
+TILL_PRICE_ASK_KEY = "tillPriceChangeAsk"
+TILL_PRICE_APPROVAL_KEY = "tillPriceChangeApproval"
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=TILL_PRICE_LEVELS_KEY,
+        label="שינוי מחיר מהקופה — איפה",
+        value_type="enum",
+        enum_options=TILL_PRICE_LEVELS_OPTIONS,
+        enum_labels=TILL_PRICE_LEVELS_LABELS,
+        default_value=TILL_PRICE_LEVELS_AUTO,
+        description=(
+            "לאן נכנס מחיר שמשנים בקופה (\"ניהול קטלוג\"): בנקודת המכירה של הקופה בלבד, בכל הסניף, או בשתיהן לבחירה. "
+            "באוטומטי: בסניף עם נקודות מכירה — ברירת המחדל היא נקודת המכירה של הקופה ואפשר לבחור גם \"כל הסניף\"; "
+            "בסניף בלי נקודות — כל הסניף (כמו היום). מדיניות המחירים של הרשת (מי רשאי לשנות, מחירים נעולים, טווח) חלה תמיד. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TILL_PRICE_ASK_KEY,
+        label="שינוי מחיר מהקופה — לשאול \"איפה לשנות?\"",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשאפשר לשנות גם בנקודת המכירה וגם בכל הסניף, הקופה שואלת \"איפה לשנות?\" — רק אם המוצר נמכר גם מחוץ "
+            "לנקודת המכירה של הקופה. כבוי: המחיר נכנס לרמת ברירת המחדל בלי שאלה."
+        ),
+    ),
+    BuiltinParameter(
+        key=TILL_PRICE_APPROVAL_KEY,
+        label="שינוי מחיר מהקופה — תמיד באישור מורשה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "דלוק: כל שינוי מחיר מהקופה דורש קוד של מורשה (מנהל עם הרשאת שינוי מחיר) או אישור מרחוק — גם כשהעובד "
+            "המחובר עצמו מורשה. המאשר נרשם ביומן שינויי המחיר."
+        ),
+    ),
+)

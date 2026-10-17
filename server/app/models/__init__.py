@@ -179,7 +179,7 @@ from app.models.kds import (
 # "הרשאות דשבורד": per dashboard user — sections, org scope, templates, audit.
 from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
 # "מדיניות מחירים של הרשת" and the price changes log (P:/specs/chain-areas.md §9).
-from app.models.price_policy import PriceChange, PricePolicy
+from app.models.price_policy import PriceChange, PricePolicy, PriceSchedule
 # "הפצה בוואטסאפ": prepaid vouchers sent per recipient (app/services/voucher_distribution.py).
 from app.models import voucher_distribution as _voucher_distribution  # noqa: F401,E402
 # "שליטה חיה": blocks on items ("אזל" / "חסום"), the kiosks' quick hides, remote commands to devices.
@@ -287,7 +287,7 @@ __all__ = [
     "DocumentRefusal",
     "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",
-    "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate", "PriceChange", "PricePolicy",
+    "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate", "PriceChange", "PricePolicy", "PriceSchedule",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey", "DeviceLogUpload",

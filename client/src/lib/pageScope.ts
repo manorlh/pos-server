@@ -66,10 +66,13 @@ export function scopeLevelOf(selection: ScopeSelection): ScopeLevel {
 /** Drop every id deeper than `maxLevel`. */
 export function clampSelection(selection: ScopeSelection, maxLevel: ScopeLevel): ScopeSelection {
   const max = SCOPE_LEVEL_ORDER[maxLevel];
+  const shopId = max >= SCOPE_LEVEL_ORDER.shop ? selection.shopId : null;
   return {
     companyId: max >= SCOPE_LEVEL_ORDER.company ? selection.companyId : null,
-    shopId: max >= SCOPE_LEVEL_ORDER.shop ? selection.shopId : null,
+    shopId,
     machineId: max >= SCOPE_LEVEL_ORDER.machine ? selection.machineId : null,
+    // The point of sale travels with its shop (P:/specs/chain-areas.md §2).
+    areaId: shopId ? (selection.areaId ?? null) : null,
   };
 }
 

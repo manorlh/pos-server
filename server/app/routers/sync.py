@@ -726,6 +726,13 @@ def machine_update_cloud_product(
                 from app.services import price_policy
 
                 if price_policy.money(value) != price_policy.money(override.price):
+                    from app.services import till_price
+
+                    if "shop" not in till_price.allowed_levels(db, machine):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail={"code": "till_price_level", "message": "לא ניתן לשנות את מחיר הסניף מהקופה"},
+                        )
                     price_policy.check_till(db, product, shop_id=shop.id, new_price=value)
                     price_policy.record(
                         db, product=product, level=price_policy.SHOP, target_id=shop.id, old=override.price,

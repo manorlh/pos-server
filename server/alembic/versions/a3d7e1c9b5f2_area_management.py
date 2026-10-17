@@ -10,6 +10,7 @@ P:/specs/chain-areas.md (owner, 17.10 — "ניהול נקודות מכירה", 
 * `area_product_overrides.price` (NUMERIC(10,2), null) — a point of sale's own price (null = the shop's).
 * `price_policies` — per company: who below the chain may change prices, locks, allowed range. No row = today.
 * `price_changes` — every price written (who, level, old → new, from where).
+* `price_schedules` — bulk price changes the server applies at a time (and puts back at another).
 
 (The dashboard's top-bar scope is a user preference, `users.preferences.dashboardScope` — no schema.)
 
@@ -38,6 +39,7 @@ USERS = "pos_users"
 AREA_OVERRIDES = "area_product_overrides"
 POLICIES = "price_policies"
 CHANGES = "price_changes"
+SCHEDULES = "price_schedules"
 
 
 def _offline() -> bool:
@@ -52,7 +54,7 @@ def _offline() -> bool:
 
 def _has_table(table: str) -> bool:
     if _offline():
-        return table not in (POLICIES, CHANGES)
+        return table not in (POLICIES, CHANGES, SCHEDULES)
     return sa.inspect(op.get_bind()).has_table(table)
 
 
@@ -122,9 +124,40 @@ def upgrade() -> None:
         if name not in have:
             op.create_index(name, CHANGES, cols)
 
+    if not _has_table(SCHEDULES):
+        op.create_table(
+            SCHEDULES,
+            sa.Column("id", uid, primary_key=True),
+            sa.Column("tenant_id", uid, sa.ForeignKey("tenants.id"), nullable=False),
+            sa.Column("shop_id", uid, sa.ForeignKey("shops.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("label", sa.String(120), nullable=True),
+            sa.Column("starts_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("ends_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("status", sa.String(12), nullable=False, server_default="pending"),
+            sa.Column("spec", jsonb, nullable=True),
+            sa.Column("items", jsonb, nullable=False, server_default="[]"),
+            sa.Column("created_by_user_id", uid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("created_by_name", sa.String(200), nullable=True),
+            sa.Column("applied_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("reverted_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("error", sa.String(500), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=now),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=now),
+        )
+    have = _indexes(SCHEDULES)
+    for name, cols in (
+        ("ix_price_schedules_tenant_id", ["tenant_id"]),
+        ("ix_price_schedules_shop_id", ["shop_id"]),
+        ("ix_price_schedules_starts_at", ["starts_at"]),
+        ("ix_price_schedules_ends_at", ["ends_at"]),
+        ("ix_price_schedules_status", ["status"]),
+    ):
+        if name not in have:
+            op.create_index(name, SCHEDULES, cols)
+
 
 def downgrade() -> None:
-    for table in (CHANGES, POLICIES):
+    for table in (SCHEDULES, CHANGES, POLICIES):
         if _has_table(table):
             op.drop_table(table)
     if "price" in _columns(AREA_OVERRIDES):

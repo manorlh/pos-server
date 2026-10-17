@@ -510,3 +510,153 @@ def get_areas_overview(
     if mine is not None:
         areas = [a for a in areas if a.id in mine]
     return area_overview.overview(db, shop, areas, whole_shop=mine is None)
+
+
+# ── Bulk and scheduled price changes ─────────────────────────────────────────
+
+
+class BulkPriceIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    product_ids: Optional[List[uuid.UUID]] = Field(None, alias="productIds", max_length=2000)
+    category_ids: Optional[List[uuid.UUID]] = Field(None, alias="categoryIds", max_length=500)
+    op: Literal["set", "add", "pct"]
+    value: float = Field(ge=-1_000_000, le=1_000_000)
+    round: Literal["none", "0.90", "0.50", "1", "0.10"] = "none"
+    #: null — the shop's own price ("כל הנקודות"); a list — those points of sale's own prices.
+    area_ids: Optional[List[uuid.UUID]] = Field(None, alias="areaIds", max_length=200)
+    #: "גם לדרוס מחירים מיוחדים בנקודות": with the shop's price, clear the points of sale's own.
+    override_areas: bool = Field(False, alias="overrideAreas")
+    starts_at: Optional[datetime] = Field(None, alias="startsAt")
+    ends_at: Optional[datetime] = Field(None, alias="endsAt")
+    label: Optional[str] = Field(None, max_length=120)
+
+    def raw(self) -> Dict[str, Any]:
+        return {
+            "productIds": [str(p) for p in self.product_ids or []],
+            "categoryIds": [str(c) for c in self.category_ids or []],
+            "op": self.op, "value": self.value, "round": self.round,
+            "areaIds": None if self.area_ids is None else [str(a) for a in self.area_ids],
+            "overrideAreas": self.override_areas,
+        }
+
+
+def _bulk_shop(db: Session, user: User, shop_id: Any, tenant_id: Any) -> Shop:
+    from app.routers.shops import _check_shop_access
+
+    shop = db.get(Shop, _uuid(shop_id)) if _uuid(shop_id) is not None else None
+    if shop is None or str(shop.tenant_id) != str(tenant_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    _check_shop_access(user, shop, db)
+    if user.role == UserRole.CASHIER:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    area_scope.check_shop_read(db, user, shop.id)
+    return shop
+
+
+@router.post("/shops/{shop_id}/prices/bulk/preview")
+def bulk_price_preview(
+    shop_id: str,
+    body: BulkPriceIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Item × target: old → new, the points of sale's own prices kept / replaced, and what is refused (and why)."""
+    from app.services import price_bulk as PB
+
+    shop = _bulk_shop(db, current_user, shop_id, active_tenant_id)
+    spec = PB.build_spec(db, current_user, shop, body.raw())
+    return PB.preview(db, current_user, spec)
+
+
+@router.post("/shops/{shop_id}/prices/bulk")
+def bulk_price_apply(
+    shop_id: str,
+    body: BulkPriceIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Now (no `startsAt`, or one already past) — written and the shop's devices nudged; with `endsAt` also a schedule
+    that puts it back then. A later `startsAt` — a pending schedule the server applies at that time.
+    """
+    from app.services import price_bulk as PB
+
+    shop = _bulk_shop(db, current_user, shop_id, active_tenant_id)
+    spec = PB.build_spec(db, current_user, shop, body.raw())
+    now = datetime.now(timezone.utc)
+    starts = body.starts_at if body.starts_at is None or body.starts_at.tzinfo else body.starts_at.replace(tzinfo=timezone.utc)
+    if starts is not None and starts > now:
+        sched = PB.schedule(db, current_user, spec, starts_at=starts, ends_at=body.ends_at, label=body.label)
+        db.commit()
+        return {"scheduled": PB.schedule_out(sched)}
+    if body.ends_at is not None:
+        sched = PB.schedule(db, current_user, spec, starts_at=now, ends_at=body.ends_at, label=body.label)
+        db.flush()
+        PB.apply_schedule(db, sched, now=now)
+        db.commit()
+        PB.notify(db, shop.id)
+        return {"scheduled": PB.schedule_out(sched)}
+    result = PB.apply(db, current_user, spec)
+    db.commit()
+    PB.notify(db, shop.id)
+    return result
+
+
+@router.get("/shops/{shop_id}/price-schedules")
+def list_price_schedules(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.models.price_policy import PriceSchedule
+    from app.services import price_bulk as PB
+
+    shop = _bulk_shop(db, current_user, shop_id, active_tenant_id)
+    rows = (
+        db.query(PriceSchedule)
+        .filter(PriceSchedule.shop_id == shop.id)
+        .order_by(PriceSchedule.starts_at.desc())
+        .limit(100)
+        .all()
+    )
+    return {"schedules": [PB.schedule_out(r) for r in rows]}
+
+
+def _schedule_for_write(db: Session, user: User, schedule_id: str, tenant_id: Any):
+    from app.models.price_policy import PriceSchedule
+
+    sched = db.get(PriceSchedule, _uuid(schedule_id)) if _uuid(schedule_id) is not None else None
+    if sched is None or str(sched.tenant_id) != str(tenant_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule_not_found")
+    _bulk_shop(db, user, sched.shop_id, tenant_id)
+    if area_scope.narrowed(db, user):
+        for item in sched.items or []:
+            if item.get("level") != "area" or not area_scope.area_ok(db, user, item.get("targetId")):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=area_scope.OUTSIDE)
+    return sched
+
+
+@router.post("/price-schedules/{schedule_id}/cancel")
+def cancel_price_schedule(
+    schedule_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """A pending one is dropped; an applied one with an end is put back now."""
+    from app.services import price_bulk as PB
+
+    sched = _schedule_for_write(db, current_user, schedule_id, active_tenant_id)
+    if sched.status == "pending":
+        sched.status = "cancelled"
+    elif sched.status == "applied":
+        PB.revert_schedule(db, sched)
+    else:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="schedule_finished")
+    db.commit()
+    PB.notify(db, sched.shop_id)
+    return PB.schedule_out(sched)
