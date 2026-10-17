@@ -35,6 +35,15 @@ describe('prepaidProductOf', () => {
     assert.deepEqual(p.blocked, { goods: null, itemDiscount: null });
   });
 
+  it('its category and whether it is on, for the two-pane picker', () => {
+    const p = prepaidProductOf({ id: 'p5', name: 'z', price: 1, categoryId: 'c1', isActive: false });
+    assert.equal(p.categoryId, 'c1');
+    assert.equal(p.isActive, false);
+    const old = prepaidProductOf({ id: 'p6', name: 'w', price: 1 });
+    assert.equal(old.categoryId, null);
+    assert.equal(old.isActive, true);
+  });
+
   it('an older server (no blocked, no notes) reads as usable; unknown codes are dropped', () => {
     const old = prepaidProductOf({ id: 'p3', name: 'x', price: 1 });
     assert.equal(prepaidBlockOf(old, 'items'), null);

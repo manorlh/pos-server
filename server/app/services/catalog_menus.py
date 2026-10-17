@@ -74,6 +74,7 @@ UNKNOWN_CATEGORY = "catalog_menu_unknown_category"
 UNKNOWN_PRODUCT = "catalog_menu_unknown_product"
 OUT_OF_REACH = "catalog_menu_out_of_reach"
 BAD_TIME = "catalog_menu_bad_time"
+TOO_MANY_AT_TARGET = "catalog_menu_too_many_at_target"
 
 TENANT_WIDE_ROLES = (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR)
 
@@ -820,6 +821,8 @@ def create_menu(db: Session, user: User, tenant_id, body: MenuIn) -> CatalogMenu
     db.add(m)
     db.flush()
     _apply(db, tenant_id, m, body)
+    if body.assignments is not None:
+        replace_menu_assignments(db, user, tenant_id, m, body.assignments)
     bump(db, tenant_id)
     return m
 
@@ -830,6 +833,8 @@ def update_menu(db: Session, user: User, tenant_id, m: CatalogMenu, body: MenuIn
     if body.company_id != m.company_id:
         check_menu_write(db, user, tenant_id, body.company_id)
     _apply(db, tenant_id, m, body)
+    if body.assignments is not None:
+        replace_menu_assignments(db, user, tenant_id, m, body.assignments)
     bump(db, tenant_id)
     return m
 
@@ -893,6 +898,55 @@ def resolve_menu_target(db: Session, user: User, tenant_id, level: str, target_i
     if not may_write_company(db, user, tenant_id, group.company_id):
         raise _bad(FORBIDDEN, status.HTTP_403_FORBIDDEN)
     return group
+
+
+def replace_menu_assignments(db: Session, user: User, tenant_id, m: CatalogMenu, items) -> None:
+    """
+    The menu editor's "שייך ל": where this one menu applies — the same rows the "שיוך" tab edits
+    per target (one source of truth). Each wanted target is checked as `set_target` checks it
+    (the user manages it; the menu sits on its company or above). The menu's other rows go —
+    only those at targets the user may set: an assignment another manager made elsewhere stays.
+    A target already holding [MENUS_PER_TARGET_MAX] menus refuses one more.
+    """
+    from app.schemas.catalog_menu import MENUS_PER_TARGET_MAX
+    from app.services.menu import _require_writer
+
+    _require_writer(user)
+    wanted: Dict[Tuple[str, str], Any] = {}
+    for item in items:
+        entity = resolve_menu_target(db, user, tenant_id, item.level, item.target_id)
+        if m.company_id is not None and str(m.company_id) not in _target_companies(db, item.level, entity):
+            raise _bad(OUT_OF_REACH)
+        wanted[(item.level, str(item.target_id))] = item
+    now = _now()
+    for row in db.query(CatalogMenuAssignment).filter(CatalogMenuAssignment.menu_id == m.id).all():
+        item = wanted.pop((row.level, str(row.target_id)), None)
+        if item is None:
+            try:
+                resolve_menu_target(db, user, tenant_id, row.level, row.target_id)
+            except HTTPException:
+                continue  # not the user's to take away
+            db.delete(row)
+        elif (row.priority or 0) != item.priority:
+            row.priority = item.priority
+            row.updated_at = now
+    for (level, _key), item in wanted.items():
+        held = (
+            db.query(func.count(CatalogMenuAssignment.id))
+            .filter(
+                CatalogMenuAssignment.tenant_id == tenant_id,
+                CatalogMenuAssignment.level == level,
+                CatalogMenuAssignment.target_id == item.target_id,
+            )
+            .scalar()
+        )
+        if (held or 0) >= MENUS_PER_TARGET_MAX:
+            raise _bad(TOO_MANY_AT_TARGET)
+        db.add(CatalogMenuAssignment(
+            id=uuid.uuid4(), tenant_id=tenant_id, menu_id=m.id, level=level, target_id=item.target_id,
+            priority=item.priority, created_by=getattr(user, "id", None), created_at=now, updated_at=now,
+        ))
+    db.flush()
 
 
 def set_target(db: Session, user: User, tenant_id, body: TargetAssignmentsIn) -> None:

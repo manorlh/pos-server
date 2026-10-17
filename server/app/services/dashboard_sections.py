@@ -494,6 +494,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/products", S("products", "quick_actions", "promotions", level=VIEW)),
     (_GET, "/products/{}", S("products", "quick_actions", "promotions", level=VIEW)),
     (_GET, "/categories", S("products", "quick_actions", "promotions", level=VIEW)),
+    # The two-pane product & category picker (menus, promotions, production vouchers): the same readers.
+    (_GET, "/catalog-picker", S("products", "quick_actions", "promotions", "prepaid_vouchers", level=VIEW)),
     # "חסימות ואזל": a product's sold-out / blocked state, also for a manager without the catalog.
     (_GET, "/availability/reopens", S("products", "item_blocks")),
     (_ALL, "/catalog-import/*", S("products")),
