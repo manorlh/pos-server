@@ -4,8 +4,9 @@
  * while the cloud says this device is a till. The logic is roles/till.ts (Electron-free, tested).
  *
  * Same window, same app, same installer as the kiosk: the till is a VIEW the shell shows for the
- * role, with its own preload (no `window.kiosk` there) and a sandboxed renderer. Windows 7's build
- * (Electron 22, §13.2) has no WebContentsView: it falls back to BrowserView there.
+ * role, with its own preload (no `window.kiosk` there) and a sandboxed renderer. The view's API is chosen by
+ * capability in shell/viewCompat.ts: WebContentsView on Electron 30+, BrowserView on Windows 7's build (Electron 22,
+ * §13.2), whose experimental WebContentsView has no setBounds.
  */
 
 import { ipcMain, protocol, type BrowserWindow } from 'electron';
@@ -13,6 +14,7 @@ import * as electron from 'electron';
 import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { handleScheme, textReply, unhandleScheme } from '../shell/schemeHandler';
+import { createOverlayView, electronMajor, type ElectronViewsLike, type OverlayView, type WindowViewsLike } from '../shell/viewCompat';
 import { APP_IPC } from '../../shared/till/appBridge';
 import type { DeviceRoleName, EngineEvent, HwRequest } from '../../shared/till/protocol';
 import type { TillRole } from './till';
@@ -30,11 +32,6 @@ const MIME: Record<string, string> = {
   woff: 'font/woff',
   woff2: 'font/woff2',
 };
-
-interface ViewLike {
-  webContents: Electron.WebContents;
-  setBounds(b: { x: number; y: number; width: number; height: number }): void;
-}
 
 export interface TillElectronOptions {
   role: TillRole;
@@ -60,31 +57,8 @@ export interface TillElectron {
   stop(): void;
 }
 
-function makeView(preload: string, isDev: boolean): ViewLike {
-  const webPreferences = { preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, devTools: isDev };
-  const e = electron as unknown as {
-    WebContentsView?: new (o: { webPreferences: typeof webPreferences }) => ViewLike;
-    BrowserView?: new (o: { webPreferences: typeof webPreferences }) => ViewLike;
-  };
-  if (e.WebContentsView) return new e.WebContentsView({ webPreferences });
-  if (e.BrowserView) return new e.BrowserView({ webPreferences });
-  throw new Error('no view class in this Electron');
-}
-
-function attach(win: BrowserWindow, view: ViewLike) {
-  const w = win as unknown as { contentView?: { addChildView(v: ViewLike): void }; setBrowserView?(v: ViewLike): void };
-  if (w.contentView?.addChildView) w.contentView.addChildView(view);
-  else w.setBrowserView?.(view);
-}
-
-function detach(win: BrowserWindow, view: ViewLike) {
-  const w = win as unknown as { contentView?: { removeChildView(v: ViewLike): void }; setBrowserView?(v: ViewLike | null): void };
-  if (w.contentView?.removeChildView) w.contentView.removeChildView(view);
-  else w.setBrowserView?.(null);
-}
-
 export function attachTillRole(o: TillElectronOptions): TillElectron {
-  let view: ViewLike | null = null;
+  let view: OverlayView<Electron.WebContents> | null = null;
   let watchdog: NodeJS.Timeout | null = null;
   /** Set aside (zero size, no input) while the shell's manager's menu is up; the renderer and its state stay. */
   let parked = false;
@@ -144,7 +118,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     const win = o.main();
     if (!win || !view) return;
     const b = win.getContentBounds();
-    view.setBounds(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
+    view.fit(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
   };
 
   const show = () => {
@@ -155,8 +129,15 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
       o.log('till: no verified bundle — the placeholder stays');
       return;
     }
-    view = makeView(o.preload, o.isDev);
-    attach(win, view);
+    const webPreferences = { preload: o.preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, devTools: o.isDev };
+    try {
+      view = createOverlayView<Electron.WebContents>(electron as unknown as ElectronViewsLike, win as unknown as WindowViewsLike, webPreferences, electronMajor(), o.log);
+      view.attach();
+    } catch (err) {
+      o.log(`till: the view could not be created — ${err instanceof Error ? err.message : String(err)}`);
+      view = null;
+      return;
+    }
     fit();
     win.on('resize', fit);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -187,7 +168,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     if (!view) return;
     if (win) {
       win.removeListener('resize', fit);
-      detach(win, view);
+      view.detach();
     }
     // Electron 22 (Windows 7) has no webContents.close(): destroy() there.
     const wc = view.webContents as unknown as { close?(): void; destroy?(): void };

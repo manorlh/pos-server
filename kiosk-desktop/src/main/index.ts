@@ -439,6 +439,8 @@ function registerKioskProtocol() {
 
 /** One PayLink unit's utility process (the vendor's DLL never loads in the main process). */
 function paylinkWorker(): WorkerLink {
+  // utilityProcess came in Electron 22 (the Windows 7 build's line); guarded so an older/odd runtime fails here, not at start.
+  if (typeof utilityProcess?.fork !== 'function') throw new Error('utilityProcess is missing in this Electron — PayLink needs it');
   const child = utilityProcess.fork(path.join(__dirname, 'paylinkWorker.js'), [], { serviceName: 'R2M PayLink', stdio: 'ignore' });
   return {
     post: (msg) => child.postMessage(msg),
