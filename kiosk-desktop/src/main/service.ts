@@ -5,6 +5,7 @@
  * screens (shared/bridge.ts) from local data only.
  */
 
+import { cloudPrinterOf, PROBE_EVERY_MS } from '../core/printerPaper';
 import { createHash, pbkdf2Sync, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -209,6 +210,7 @@ import type {
   TechnicianAction,
   TechnicianActionResult,
   TechnicianInfo,
+  OskMode,
   DisplayScaleView,
   AdminActionResult,
 } from '../shared/bridge';
@@ -306,6 +308,8 @@ export interface LocalSettings {
 
 const LOCAL_SETTINGS = 'local.settings';
 const LOCAL_PAUSE = 'local.pause';
+/** "מקלדת מסך" (renderer/osk/OnScreenKeyboard.tsx): auto / always / off, this device's own. */
+const LOCAL_OSK = 'local.osk';
 const TECH_LOCK = 'technician.lock';
 /** The Nayax LAN pinpad's pinned certificate (payment/nayaxProvider.ts `pinpad.pin:<host:port>`, under the providers' `provider.`). */
 const PINPAD_PIN_PREFIX = 'provider.pinpad.pin:';
@@ -383,6 +387,8 @@ export class KioskService extends EventEmitter {
   /** "העבר מכשיר לקופה אחרת" (§6.3): the dashboard's `move_pairing` command, polled every minute (not on a cash host). */
   readonly moveCommands: DeviceCommands;
   private lastCommandPoll = 0;
+  /** When the receipt printer was last asked how it is (tick30). */
+  private lastPrinterProbe = 0;
   readonly ledger: Ledger;
   readonly media: MediaStore;
   readonly pay: PayService;
@@ -1327,6 +1333,8 @@ export class KioskService extends EventEmitter {
         const lastNumber = Math.max(lastLocal ?? 0, beat.lastTillZNumber ?? 0);
         const failure = this.printQueue.lastFailure;
         const health = this.printQueue.health();
+        const cloud = cloudPrinterOf(health);
+        const probed = this.printQueue.probed;
         return {
           ...(this.opts.deviceInfo.serial ? { serialNumber: this.opts.deviceInfo.serial } : {}),
           // "עקיפת בדיקת מספר מסוף" as this kiosk applies it (core/terminalCheckBypass.ts).
@@ -1338,9 +1346,16 @@ export class KioskService extends EventEmitter {
             : {}),
           ...(this.fiscalRole ? { offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch } } : {}),
           ...Object.fromEntries([...this.heartbeatParts].map(([key, part]) => [key, part()])),
+          // The cloud's words (core/printerPaper.ts) — "אין נייר במדפסת" reaches the manager (status_watch.py).
           printer: {
-            status: health === 'no_paper' ? 'no_paper' : health === 'ok' ? 'ok' : health === 'unknown' ? 'unknown' : health === 'unavailable' ? 'unavailable' : 'error',
-            ...(failure ? { message: failure.error, at: new Date(failure.at).toISOString() } : {}),
+            status: cloud.status,
+            ...(probed && (!failure || probed.at > failure.at)
+              ? { ...(cloud.message ? { message: cloud.message } : {}), at: new Date(probed.at).toISOString() }
+              : failure
+                ? { message: failure.error, at: new Date(failure.at).toISOString() }
+                : cloud.message
+                  ? { message: cloud.message }
+                  : {}),
             ...(this.printQueue.lastOkAt ? { lastPrintOkAt: new Date(this.printQueue.lastOkAt).toISOString() } : {}),
           },
         };
@@ -3962,6 +3977,11 @@ export class KioskService extends EventEmitter {
 
   private async tick30() {
     if (!this.paired) return;
+    // The receipt printer asked how it is, idle, once a minute (core/printerPaper.ts): paper out is known at once.
+    if (Date.now() - this.lastPrinterProbe >= PROBE_EVERY_MS) {
+      this.lastPrinterProbe = Date.now();
+      void this.printQueue.probe();
+    }
     if (Date.now() - this.lastCommandPoll >= 60_000) {
       this.lastCommandPoll = Date.now();
       void this.moveCommands.poll();
@@ -4934,9 +4954,12 @@ export class KioskService extends EventEmitter {
   }
 
   async technicianInfo(): Promise<TechnicianInfo> {
-    const scan = await this.usbWatch.refresh();
+    // The screen opens at once: a fresh USB scan only if it answers within 2.5 s (PowerShell on a Windows 7 J1900 can
+    // take far longer — the screen looked like it never opened), else the last one; "בדוק הכל שוב" asks again.
+    const fresh = this.usbWatch.refresh().catch(() => null);
+    const scan = await Promise.race([fresh, new Promise<null>((r) => setTimeout(() => r(null), 2_500))]) ?? this.usbWatch.current();
     const admin = this.adminInfo();
-    const queues = scan?.queues ?? (await this.transport.list().catch(() => []));
+    const queues = scan?.queues ?? (await Promise.race([this.transport.list().catch(() => []), new Promise<never[]>((r) => setTimeout(() => r([]), 2_500))]));
     const me = this.cloud.machine();
     // The updater's own state — opening the screen never starts a download ("בדוק עכשיו" does).
     const u = this.platform.updateStatus?.() ?? null;
@@ -4964,7 +4987,14 @@ export class KioskService extends EventEmitter {
       displayScale: this.displayScaleView(),
       foreignRows: this.foreignRowsView(),
       setup: this.technicianSetupView(admin, admin.printer),
+      osk: this.oskMode(),
     };
+  }
+
+  /** "מקלדת מסך" on this device (default auto). */
+  oskMode(): OskMode {
+    const v = this.kv.get(LOCAL_OSK);
+    return v === 'always' || v === 'off' ? v : 'auto';
   }
 
   /** The pinpad's terminal as the device knows it: the cloud's `expectedTerminalNumber`, else the one it learned. */
@@ -5184,6 +5214,19 @@ export class KioskService extends EventEmitter {
         this.log('technician: restart');
         setTimeout(() => this.platform.restartApp?.(), 300);
         return { ok: true, message: 'האפליקציה עולה מחדש…' };
+      }
+      case 'setOsk': {
+        if (a.mode !== 'auto' && a.mode !== 'always' && a.mode !== 'off') return { ok: false, message: 'ערך לא חוקי' };
+        this.kv.set(LOCAL_OSK, a.mode);
+        this.log(`technician: on-screen keyboard ${a.mode}`);
+        return { ok: true, message: 'נשמר' };
+      }
+      case 'quitApp': {
+        const guard = paymentGuard(this.activity());
+        if (guard) return { ok: false, message: TECH_TEXT.blocked };
+        this.log('technician: the app closed (יציאה מהתוכנה)');
+        setTimeout(() => this.platform.quit(), 300);
+        return { ok: true, message: 'התוכנה נסגרת…' };
       }
       case 'networkCheck':
         return this.technicianNetwork();

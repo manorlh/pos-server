@@ -1,0 +1,2486 @@
+{
+  "spec": "P:/specs/x-z-cash-with-tips.md",
+  "version": 1,
+  "labels": {
+    "title": "מזומן במגירה",
+    "opening": "קופה פותחת",
+    "cashSales": "מזומן ממכירות",
+    "deviceCash": "מזומן במכשיר",
+    "cashTips": "טיפים במזומן",
+    "cashIn": "הכנסות מזומן",
+    "cashOut": "הוצאות",
+    "deposits": "הפקדה לכספת",
+    "walletIn": "הכסף אצל עובדים",
+    "walletDeposits": "הפקדות מעובדים",
+    "between": "תנועות בין משמרות",
+    "cardTips": "טיפים באשראי",
+    "cardTipsPaid": "שולמו מהמגירה",
+    "cardTipsUnpaid": "לא שולמו — לתשלום לעובדים",
+    "total": "= מזומן במגירה (כולל טיפים)",
+    "short": "חסר במגירה",
+    "unpaidDay": "טיפים באשראי שטרם שולמו",
+    "tillTable": "מזומן במגירה לפי קופה",
+    "tillTotals": "סה״כ",
+    "perTill": "פירוט לפי קופה",
+    "summaryCash": "סה״כ מזומן",
+    "summaryTips": "טיפים",
+    "summaryUnpaid": "טיפים באשראי שטרם שולמו",
+    "summaryNet": "= סה״כ מזומן נטו (אחרי טיפים)"
+  },
+  "drawerCases": [
+    {
+      "name": "param_off",
+      "note": "the block is always shown; no card tip lines, nothing taken off",
+      "input": {
+        "opening": "500",
+        "cashSales": "1200",
+        "cashTips": "50",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "30",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": false,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "1720.00",
+        "paid": null,
+        "unpaid": null,
+        "frozenShortfall": null,
+        "needsChoice": false,
+        "total": "1720.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "500.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "1200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashOut",
+            "label": "הוצאות",
+            "amount": "-30.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "1720.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "plenty_partial",
+      "note": "",
+      "input": {
+        "opening": "200",
+        "cashSales": "1000",
+        "cashTips": "40",
+        "cardTips": "150",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "1240.00",
+        "paid": "150.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "1090.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "1000.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "40.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "150.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-150.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "1090.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "plenty_negative",
+      "note": "",
+      "input": {
+        "opening": "200",
+        "cashSales": "1000",
+        "cashTips": "40",
+        "cardTips": "150",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "negative",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "1240.00",
+        "paid": "150.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "negative",
+        "needsChoice": false,
+        "total": "1090.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "1000.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "40.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "150.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-150.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "1090.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "exactly_enough",
+      "note": "available == card tips: all paid, drawer at zero, not short",
+      "input": {
+        "opening": "0",
+        "cashSales": "100",
+        "cashTips": "20",
+        "cardTips": "120",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "120.00",
+        "paid": "120.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "0.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "100.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "20.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "120.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-120.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "0.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "short_partial",
+      "note": "pays only what is there; remainder owed to staff; drawer never below zero",
+      "input": {
+        "opening": "0",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "10",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "40.00",
+        "paid": "40.00",
+        "unpaid": "40.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "0.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashOut",
+            "label": "הוצאות",
+            "amount": "-10.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-40.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsUnpaid",
+            "label": "לא שולמו — לתשלום לעובדים",
+            "amount": "40.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "0.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "short_negative",
+      "note": "pays everything; drawer below zero, shown in red with the shortfall",
+      "input": {
+        "opening": "0",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "10",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "negative",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "40.00",
+        "paid": "80.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "negative",
+        "needsChoice": false,
+        "total": "-40.00",
+        "short": true,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashOut",
+            "label": "הוצאות",
+            "amount": "-10.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "-40.00",
+            "bold": true,
+            "warn": true
+          },
+          {
+            "key": "short",
+            "label": "חסר במגירה",
+            "amount": "40.00",
+            "bold": true,
+            "warn": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "ask_choice_partial",
+      "note": "",
+      "input": {
+        "opening": "0",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "ask",
+        "askChoice": "partial",
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "50.00",
+        "paid": "50.00",
+        "unpaid": "30.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "0.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsUnpaid",
+            "label": "לא שולמו — לתשלום לעובדים",
+            "amount": "30.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "0.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "ask_choice_negative",
+      "note": "",
+      "input": {
+        "opening": "0",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "ask",
+        "askChoice": "negative",
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "50.00",
+        "paid": "80.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "negative",
+        "needsChoice": false,
+        "total": "-30.00",
+        "short": true,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "-30.00",
+            "bold": true,
+            "warn": true
+          },
+          {
+            "key": "short",
+            "label": "חסר במגירה",
+            "amount": "30.00",
+            "bold": true,
+            "warn": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "ask_no_choice_yet",
+      "note": "an X before the close: previewed as partial, the close must ask",
+      "input": {
+        "opening": "0",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "ask",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "50.00",
+        "paid": "50.00",
+        "unpaid": "30.00",
+        "frozenShortfall": "partial",
+        "needsChoice": true,
+        "total": "0.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsUnpaid",
+            "label": "לא שולמו — לתשלום לעובדים",
+            "amount": "30.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "0.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "ask_not_short",
+      "note": "enough cash: no question, frozen as partial",
+      "input": {
+        "opening": "100",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "ask",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "150.00",
+        "paid": "80.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "70.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "100.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "70.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "zero_card_tips",
+      "note": "parameter on with no card tips: both tip lines show 0.00",
+      "input": {
+        "opening": "100",
+        "cashSales": "300",
+        "cashTips": "15",
+        "cardTips": "0",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "415.00",
+        "paid": "0.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "415.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "100.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "300.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "15.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "415.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "already_negative_before_tips",
+      "note": "partial pays nothing when the drawer is already below zero",
+      "input": {
+        "opening": "0",
+        "cashSales": "20",
+        "cashTips": "0",
+        "cardTips": "60",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "50",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "-30.00",
+        "paid": "0.00",
+        "unpaid": "60.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "-30.00",
+        "short": true,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "20.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashOut",
+            "label": "הוצאות",
+            "amount": "-50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "60.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsUnpaid",
+            "label": "לא שולמו — לתשלום לעובדים",
+            "amount": "60.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "-30.00",
+            "bold": true,
+            "warn": true
+          },
+          {
+            "key": "short",
+            "label": "חסר במגירה",
+            "amount": "30.00",
+            "bold": true,
+            "warn": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "movements_and_wallets",
+      "note": "",
+      "input": {
+        "opening": "300",
+        "cashSales": "900",
+        "cashTips": "60",
+        "cardTips": "200",
+        "movements": {
+          "cashIn": "100",
+          "cashOut": "40",
+          "deposits": "500"
+        },
+        "wallet": {
+          "walletIn": "70",
+          "walletDeposits": "30"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "780.00",
+        "paid": "200.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "580.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "300.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "900.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "60.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashIn",
+            "label": "הכנסות מזומן",
+            "amount": "100.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashOut",
+            "label": "הוצאות",
+            "amount": "-40.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "deposits",
+            "label": "הפקדה לכספת",
+            "amount": "-500.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "walletIn",
+            "label": "הכסף אצל עובדים",
+            "amount": "-70.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "walletDeposits",
+            "label": "הפקדות מעובדים",
+            "amount": "30.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "580.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "z_movements_excluded_with_between",
+      "note": "a Z without cashDrawer.zExpectedCashMovements: no movement lines, between-shift line shown",
+      "input": {
+        "opening": "300",
+        "cashSales": "900",
+        "cashTips": "60",
+        "cardTips": "200",
+        "movements": null,
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "-25.50",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "1234.50",
+        "paid": "200.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "1034.50",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "300.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "900.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "60.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "between",
+            "label": "תנועות בין משמרות",
+            "amount": "-25.50",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "1034.50",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "blind_count_hidden",
+      "note": "expected cash hidden: no total / short lines; tip lines stay",
+      "input": {
+        "opening": "0",
+        "cashSales": "50",
+        "cashTips": "0",
+        "cardTips": "80",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "negative",
+        "askChoice": null,
+        "showDrawerCash": false
+      },
+      "expect": {
+        "available": "50.00",
+        "paid": "80.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "negative",
+        "needsChoice": false,
+        "total": "-30.00",
+        "short": true,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-80.00",
+            "bold": false,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "agorot",
+      "note": "",
+      "input": {
+        "opening": "0.10",
+        "cashSales": "10.05",
+        "cashTips": "0.33",
+        "cardTips": "12.47",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true
+      },
+      "expect": {
+        "available": "10.48",
+        "paid": "10.48",
+        "unpaid": "1.99",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "0.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.10",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "10.05",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.33",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "12.47",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-10.48",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsUnpaid",
+            "label": "לא שולמו — לתשלום לעובדים",
+            "amount": "1.99",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "0.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "device_cash",
+      "note": "cash a cash device took (CashMag / PayLink, 'מזומן במכשיר') is in the cash takings, never in the drawer",
+      "input": {
+        "opening": "200",
+        "cashSales": "1000",
+        "cashTips": "40",
+        "cardTips": "150",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true,
+        "deviceCash": "300"
+      },
+      "expect": {
+        "available": "940.00",
+        "paid": "150.00",
+        "unpaid": "0.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "790.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "200.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "1000.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "deviceCash",
+            "label": "מזומן במכשיר",
+            "amount": "-300.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "40.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "150.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-150.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "790.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "device_cash_tips_short",
+      "note": "the device's cash pays no card tips: only what the drawer holds (20.00) is paid",
+      "input": {
+        "opening": "0",
+        "cashSales": "100",
+        "cashTips": "0",
+        "cardTips": "50",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": true,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true,
+        "deviceCash": "80"
+      },
+      "expect": {
+        "available": "20.00",
+        "paid": "20.00",
+        "unpaid": "30.00",
+        "frozenShortfall": "partial",
+        "needsChoice": false,
+        "total": "0.00",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "100.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "deviceCash",
+            "label": "מזומן במכשיר",
+            "amount": "-80.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTips",
+            "label": "טיפים באשראי",
+            "amount": "50.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsPaid",
+            "label": "שולמו מהמגירה",
+            "amount": "-20.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cardTipsUnpaid",
+            "label": "לא שולמו — לתשלום לעובדים",
+            "amount": "30.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "0.00",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "device_cash_refund_param_off",
+      "note": "a credit refunded through the device: a negative device figure adds back",
+      "input": {
+        "opening": "100",
+        "cashSales": "250",
+        "cashTips": "0",
+        "cardTips": "0",
+        "movements": {
+          "cashIn": "0",
+          "cashOut": "0",
+          "deposits": "0"
+        },
+        "wallet": {
+          "walletIn": "0",
+          "walletDeposits": "0"
+        },
+        "between": "0",
+        "param": false,
+        "shortfall": "partial",
+        "askChoice": null,
+        "showDrawerCash": true,
+        "deviceCash": "-30.50"
+      },
+      "expect": {
+        "available": "380.50",
+        "paid": null,
+        "unpaid": null,
+        "frozenShortfall": null,
+        "needsChoice": false,
+        "total": "380.50",
+        "short": false,
+        "lines": [
+          {
+            "key": "opening",
+            "label": "קופה פותחת",
+            "amount": "100.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashSales",
+            "label": "מזומן ממכירות",
+            "amount": "250.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "deviceCash",
+            "label": "מזומן במכשיר",
+            "amount": "30.50",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "cashTips",
+            "label": "טיפים במזומן",
+            "amount": "0.00",
+            "bold": false,
+            "warn": false
+          },
+          {
+            "key": "total",
+            "label": "= מזומן במגירה (כולל טיפים)",
+            "amount": "380.50",
+            "bold": true,
+            "warn": false
+          }
+        ]
+      }
+    }
+  ],
+  "tillTableCases": [
+    {
+      "name": "shop3_one_short_partial",
+      "note": "one till's cash never pays another till's tips",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "קופה 1",
+          "input": {
+            "opening": "500",
+            "cashSales": "2000",
+            "cashTips": "100",
+            "cardTips": "300",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 2",
+          "input": {
+            "opening": "0",
+            "cashSales": "40",
+            "cashTips": "0",
+            "cardTips": "90",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 3",
+          "input": {
+            "opening": "200",
+            "cashSales": "700",
+            "cashTips": "20",
+            "cardTips": "50",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": false,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "קופה 1",
+            "cashSales": "2000.00",
+            "cashTips": "100.00",
+            "cardTipsPaid": "300.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "2300.00",
+            "short": false
+          },
+          {
+            "till": "קופה 2",
+            "cashSales": "40.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": "40.00",
+            "cardTipsUnpaid": "50.00",
+            "drawerCash": "0.00",
+            "short": false
+          },
+          {
+            "till": "קופה 3",
+            "cashSales": "700.00",
+            "cashTips": "20.00",
+            "cardTipsPaid": null,
+            "cardTipsUnpaid": null,
+            "drawerCash": "920.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "2740.00",
+          "cashTips": "120.00",
+          "cardTipsPaid": "340.00",
+          "cardTipsUnpaid": "50.00",
+          "drawerCash": "3220.00",
+          "anyShort": false
+        },
+        "unpaidTotal": "50.00",
+        "summary": {
+          "totalCash": "3560.00",
+          "tips": "460.00",
+          "unpaid": "50.00",
+          "netCash": "3050.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "3560.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "460.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryUnpaid",
+              "label": "טיפים באשראי שטרם שולמו",
+              "amount": "50.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "3050.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "shop3_one_short_negative",
+      "note": "",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "קופה 1",
+          "input": {
+            "opening": "500",
+            "cashSales": "2000",
+            "cashTips": "100",
+            "cardTips": "300",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "negative",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 2",
+          "input": {
+            "opening": "0",
+            "cashSales": "40",
+            "cashTips": "0",
+            "cardTips": "90",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "negative",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 3",
+          "input": {
+            "opening": "200",
+            "cashSales": "700",
+            "cashTips": "20",
+            "cardTips": "50",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": false,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "קופה 1",
+            "cashSales": "2000.00",
+            "cashTips": "100.00",
+            "cardTipsPaid": "300.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "2300.00",
+            "short": false
+          },
+          {
+            "till": "קופה 2",
+            "cashSales": "40.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": "90.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "-50.00",
+            "short": true
+          },
+          {
+            "till": "קופה 3",
+            "cashSales": "700.00",
+            "cashTips": "20.00",
+            "cardTipsPaid": null,
+            "cardTipsUnpaid": null,
+            "drawerCash": "920.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "2740.00",
+          "cashTips": "120.00",
+          "cardTipsPaid": "390.00",
+          "cardTipsUnpaid": "0.00",
+          "drawerCash": "3170.00",
+          "anyShort": true
+        },
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "3560.00",
+          "tips": "510.00",
+          "unpaid": "0.00",
+          "netCash": "3050.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "3560.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "510.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "3050.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "shop3_blind",
+      "note": "",
+      "showDrawerCash": false,
+      "tills": [
+        {
+          "till": "קופה 1",
+          "input": {
+            "opening": "500",
+            "cashSales": "2000",
+            "cashTips": "100",
+            "cardTips": "300",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 2",
+          "input": {
+            "opening": "0",
+            "cashSales": "40",
+            "cashTips": "0",
+            "cardTips": "90",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "negative",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 3",
+          "input": {
+            "opening": "200",
+            "cashSales": "700",
+            "cashTips": "20",
+            "cardTips": "50",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": false,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "קופה 1",
+            "cashSales": "2000.00",
+            "cashTips": "100.00",
+            "cardTipsPaid": "300.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": null,
+            "short": false
+          },
+          {
+            "till": "קופה 2",
+            "cashSales": "40.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": "90.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": null,
+            "short": false
+          },
+          {
+            "till": "קופה 3",
+            "cashSales": "700.00",
+            "cashTips": "20.00",
+            "cardTipsPaid": null,
+            "cardTipsUnpaid": null,
+            "drawerCash": null,
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "2740.00",
+          "cashTips": "120.00",
+          "cardTipsPaid": "390.00",
+          "cardTipsUnpaid": "0.00",
+          "drawerCash": null,
+          "anyShort": false
+        },
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": null,
+          "tips": "510.00",
+          "unpaid": "0.00",
+          "netCash": null,
+          "lines": [
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "510.00",
+              "bold": false,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "area2_cash_tips_and_unpaid",
+      "note": "summary: total cash before payouts − (cash tips + card tips paid) − unpaid = business cash",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "בר",
+          "input": {
+            "opening": "300",
+            "cashSales": "1500",
+            "cashTips": "220",
+            "cardTips": "400",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "1000"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "מטבח",
+          "input": {
+            "opening": "100",
+            "cashSales": "80",
+            "cashTips": "10",
+            "cardTips": "350",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "בר",
+            "cashSales": "1500.00",
+            "cashTips": "220.00",
+            "cardTipsPaid": "400.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "620.00",
+            "short": false
+          },
+          {
+            "till": "מטבח",
+            "cashSales": "80.00",
+            "cashTips": "10.00",
+            "cardTipsPaid": "190.00",
+            "cardTipsUnpaid": "160.00",
+            "drawerCash": "0.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "1580.00",
+          "cashTips": "230.00",
+          "cardTipsPaid": "590.00",
+          "cardTipsUnpaid": "160.00",
+          "drawerCash": "620.00",
+          "anyShort": false
+        },
+        "unpaidTotal": "160.00",
+        "summary": {
+          "totalCash": "1210.00",
+          "tips": "820.00",
+          "unpaid": "160.00",
+          "netCash": "230.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "1210.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "820.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryUnpaid",
+              "label": "טיפים באשראי שטרם שולמו",
+              "amount": "160.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "230.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "area2_net_negative",
+      "note": "net below zero: staff are owed more than the drawers hold",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "בר",
+          "input": {
+            "opening": "0",
+            "cashSales": "100",
+            "cashTips": "50",
+            "cardTips": "300",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "negative",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "מטבח",
+          "input": {
+            "opening": "0",
+            "cashSales": "30",
+            "cashTips": "0",
+            "cardTips": "10",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "בר",
+            "cashSales": "100.00",
+            "cashTips": "50.00",
+            "cardTipsPaid": "300.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "-150.00",
+            "short": true
+          },
+          {
+            "till": "מטבח",
+            "cashSales": "30.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": "10.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "20.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "130.00",
+          "cashTips": "50.00",
+          "cardTipsPaid": "310.00",
+          "cardTipsUnpaid": "0.00",
+          "drawerCash": "-130.00",
+          "anyShort": true
+        },
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "180.00",
+          "tips": "360.00",
+          "unpaid": "0.00",
+          "netCash": "-180.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "180.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "360.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "-180.00",
+              "bold": true,
+              "warn": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "shop2_device_cash",
+      "note": "the cash sales column keeps every cash taking; the drawer column leaves out the device's",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "קופה 1",
+          "input": {
+            "opening": "300",
+            "cashSales": "1200",
+            "cashTips": "30",
+            "cardTips": "100",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null,
+            "deviceCash": "700"
+          }
+        },
+        {
+          "till": "קופה 2",
+          "input": {
+            "opening": "100",
+            "cashSales": "400",
+            "cashTips": "0",
+            "cardTips": "20",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "קופה 1",
+            "cashSales": "1200.00",
+            "cashTips": "30.00",
+            "cardTipsPaid": "100.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "730.00",
+            "short": false
+          },
+          {
+            "till": "קופה 2",
+            "cashSales": "400.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": "20.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "480.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "1600.00",
+          "cashTips": "30.00",
+          "cardTipsPaid": "120.00",
+          "cardTipsUnpaid": "0.00",
+          "drawerCash": "1210.00",
+          "anyShort": false
+        },
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "1330.00",
+          "tips": "150.00",
+          "unpaid": "0.00",
+          "netCash": "1180.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "1330.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "150.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "1180.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "shop2_all_off",
+      "note": "no till froze the parameter: paid/unpaid columns null, unpaidTotal 0.00",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "קופה 1",
+          "input": {
+            "opening": "100",
+            "cashSales": "300",
+            "cashTips": "0",
+            "cardTips": "40",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": false,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "קופה 2",
+          "input": {
+            "opening": "100",
+            "cashSales": "50",
+            "cashTips": "0",
+            "cardTips": "0",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": false,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "קופה 1",
+            "cashSales": "300.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": null,
+            "cardTipsUnpaid": null,
+            "drawerCash": "400.00",
+            "short": false
+          },
+          {
+            "till": "קופה 2",
+            "cashSales": "50.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": null,
+            "cardTipsUnpaid": null,
+            "drawerCash": "150.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "350.00",
+          "cashTips": "0.00",
+          "cardTipsPaid": null,
+          "cardTipsUnpaid": null,
+          "drawerCash": "550.00",
+          "anyShort": false
+        },
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "550.00",
+          "tips": "0.00",
+          "unpaid": "0.00",
+          "netCash": "550.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "550.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "0.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "550.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cardTipsFromDrawerOf, hasDrawerTips, shiftDrawerCash } from './drawerTips';
+import { cardTipsFromDrawerOf, deviceCashOf, hasDrawerTips, shiftDrawerCash } from './drawerTips';
 
 describe('cardTipsFromDrawerOf', () => {
   it('reads the frozen amount, a zero included', () => {
@@ -35,6 +35,20 @@ describe('shiftDrawerCash', () => {
   it('adds the cash tips and keeps agorot exact', () => {
     assert.equal(shiftDrawerCash(100.1, '0.2', 0.3), 100);
     assert.equal(shiftDrawerCash(null, undefined, 0), 0);
+  });
+
+  it('leaves the cash device cash out ("מזומן במכשיר")', () => {
+    assert.equal(shiftDrawerCash('430.00', '0.00', 0, '330.00'), 100);
+    assert.equal(shiftDrawerCash('100.00', '5.00', 5, -20), 120);
+  });
+});
+
+describe('deviceCashOf', () => {
+  it('is a figure only when there was any', () => {
+    assert.equal(deviceCashOf('330.00'), 330);
+    assert.equal(deviceCashOf('0.00'), null);
+    assert.equal(deviceCashOf(null), null);
+    assert.equal(deviceCashOf('x'), null);
   });
 });
 

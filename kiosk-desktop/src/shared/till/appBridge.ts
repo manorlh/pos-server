@@ -36,6 +36,8 @@ export interface R2mAppBridge {
   openAdmin?(): void;
   /** "בדיקות ומידע" from the till's six taps (top-left): the shell sets the till's view aside and asks the technician's code. */
   openTechnician?(): void;
+  /** "מקלדת מסך" on this device (the technician's screen): the till's own on-screen keyboard. */
+  oskMode?(): Promise<'auto' | 'always' | 'off'>;
 }
 
 /** The IPC channel names (one place, for the preload and the main process). */
@@ -50,4 +52,5 @@ export const APP_IPC = {
   keepAwake: 'app:keepAwake',
   admin: 'app:admin',
   technician: 'app:technician',
+  osk: 'app:osk',
 } as const;

@@ -6,7 +6,7 @@
  * One rule, four copies: the reference is %TEMP%\xzcash\gen_golden.py, pinned by x_z_cash_with_tips_golden.json
  * (test/tillCashWithTips.test.ts). Works in agorot. Pure.
  *
- *  - available = opening + cash takings + cash tips (+ Cash In − Cash Out − deposits when part of the expected cash)
+ *  - available = opening + cash takings − the cash device's ("מזומן במכשיר": in the device, never the drawer) + cash tips (+ Cash In − Cash Out − deposits when part of the expected cash)
  *    + wallet deposits − wallet in + between-shift adjustments — the expected cash before the tips payout;
  *  - partial: paid = min(card tips, max(available, 0)), the rest owed to staff; negative: all paid; ask: asked at the
  *    close only when short (before it, previewed as partial with `needsChoice`);
@@ -17,6 +17,7 @@ export const CASH_WITH_TIPS_LABELS = {
   title: 'מזומן במגירה',
   opening: 'קופה פותחת',
   cashSales: 'מזומן ממכירות',
+  deviceCash: 'מזומן במכשיר',
   cashTips: 'טיפים במזומן',
   cashIn: 'הכנסות מזומן',
   cashOut: 'הוצאות',
@@ -84,6 +85,8 @@ export function cardTipsShortfallOf(parameters: Record<string, unknown>): CardTi
 export interface DrawerInput {
   opening: number;
   cashSales: number;
+  /** "מזומן במכשיר": the part of cashSales a cash device (CashMag / PayLink) took — never in the drawer. Absent: none. */
+  deviceCash?: number;
   cashTips: number;
   cardTips: number;
   /** null: the movements are not part of this report's expected cash (a Z without zExpectedCashMovements). */
@@ -115,7 +118,7 @@ export interface CashLine {
 /** The expected cash before the tips payout. */
 export function availableOf(inp: DrawerInput): number {
   const w = inp.wallet ?? { walletIn: 0, walletDeposits: 0 };
-  let a = inp.opening + inp.cashSales + inp.cashTips + w.walletDeposits - w.walletIn + (inp.between ?? 0);
+  let a = inp.opening + inp.cashSales - (inp.deviceCash ?? 0) + inp.cashTips + w.walletDeposits - w.walletIn + (inp.between ?? 0);
   if (inp.movements) a += inp.movements.cashIn - inp.movements.cashOut - inp.movements.deposits;
   return a;
 }
@@ -147,6 +150,11 @@ export function cashBlock(inp: DrawerInput, paid: number | null, unpaid: number 
   let total = inp.opening + inp.cashSales + inp.cashTips;
   add('opening', inp.opening);
   add('cashSales', inp.cashSales);
+  const device = inp.deviceCash ?? 0;
+  if (device !== 0) {
+    add('deviceCash', -device);
+    total -= device;
+  }
   add('cashTips', inp.cashTips);
   const mv = inp.movements;
   if (mv) {
@@ -309,8 +317,9 @@ const ag = (shekels: number | undefined) => Math.round((shekels ?? 0) * 100);
 export function xDrawerInput(t: XCashFigures, show: boolean): DrawerInput {
   return {
     opening: ag(t.openingCash),
-    // The drawer's cash takings: the cash device's are in the device.
-    cashSales: ag(t.totalCash) - ag(t.totalDeviceCash),
+    // Every cash taking; the cash device's are in the device — their own line, off the drawer.
+    cashSales: ag(t.totalCash),
+    deviceCash: ag(t.totalDeviceCash),
     cashTips: ag(t.totalCashTips),
     cardTips: ag(t.totalCardTips),
     movements: { cashIn: ag(t.cashIn), cashOut: ag(t.cashOut), deposits: ag(t.deposits) },
@@ -340,6 +349,8 @@ export function zDrawer(z: Record<string, unknown>): { input: DrawerInput; paid:
   const input: DrawerInput = {
     opening: agorotOf(z.openingCash) ?? 0,
     cashSales: agorotOf(z.cashSalesNet) ?? agorotOf(z.totalCashSales) ?? agorotOf(z.totalCash) ?? 0,
+    // "מזומן במכשיר" (the cloud's Z, absent before it): already out of the Z's expectedCash.
+    deviceCash: agorotOf(z.deviceCash) ?? 0,
     cashTips: agorotOf(z.totalCashTips) ?? 0,
     cardTips: (paid ?? 0) + (unpaid ?? 0),
     movements,

@@ -104,6 +104,13 @@ class ShiftCloseIn(BaseModel):
     #: Two more, always in a Z's expected cash (P:/specs/drawer-away.md §5.6, app/services/cash_wallets.py):
     #: `walletIn` (the cash the shift's payments left with employees) and `walletDeposits` (what employees
     #: deposited into this drawer) — only when not zero.
+    #: "מזומן במגירה כולל טיפים" (P:/specs/x-z-cash-with-tips.md §2), beside `cardTipsFromDrawer` (the **paid**
+    #: amount, unchanged) and only with that parameter on: `cardTipsUnpaid` (card tips the drawer could not pay,
+    #: owed to staff — never in the expected cash) and `cardTipsShortfall` (the resolved mode, `partial` /
+    #: `negative`). An older close carries only `cardTipsFromDrawer`: read as paid, unpaid 0. Never compared.
+    #: `totalDeviceCash` ("מזומן במכשיר", the till's own count of the cash its cash device took, inside
+    #: `totalCash`, already out of its `expectedCash`): read only for a shift the cloud counted before it kept
+    #: its own (`shifts.total_device_cash`); never compared.
     till: Optional[Dict[str, Any]] = None
     close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
     #: A training shift's close ("מצב הדרכה"): quarantined, answered like a real close.
@@ -142,6 +149,9 @@ class ShiftTotalsOut(BaseModel):
     discounts_total: Optional[Decimal] = Field(None, alias="discountsTotal")
     total_refunds: Optional[Decimal] = Field(None, alias="totalRefunds")
     total_cash: Optional[Decimal] = Field(None, alias="totalCash")
+    #: "מזומן במכשיר": the part of `totalCash` a cash device (CashMag / PayLink, the legs' `cashDevice`) took —
+    #: in the device, never the drawer, so out of the expected cash. Null on a shift counted before it.
+    total_device_cash: Optional[Decimal] = Field(None, alias="totalDeviceCash")
     total_card: Optional[Decimal] = Field(None, alias="totalCard")
     #: Net of the `exchange` legs of mixed baskets (§1.2a) — in neither cash nor card,
     #: zero when every basket is complete. Null on a shift closed before it was stored.

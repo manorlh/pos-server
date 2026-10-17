@@ -23,6 +23,7 @@ import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanDir } from './win7Floor.mjs';
+import { scanMainSources } from './win7MainApis.mjs';
 
 const root = existsSync(path.join(process.cwd(), 'vite.config.mts')) ? process.cwd() : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const legacy = path.join(root, 'legacy');
@@ -82,6 +83,14 @@ if (problems.length) {
   process.exit(3);
 }
 console.log('floor scan: nothing above Chromium 108 / V8 10.8 in legacy/dist');
+
+// Electron APIs newer than 22 in the main process / preloads only behind a feature test (scripts/win7MainApis.mjs).
+const apiProblems = scanMainSources(root);
+if (apiProblems.length) {
+  for (const p of apiProblems) console.error(`${p.file}:${p.line}: ${p.what} — Electron 22 needs a fallback`);
+  process.exit(3);
+}
+console.log('main API scan: every Electron API newer than 22 is feature-tested');
 
 // Under Electron 22 itself (never the packed app, never the app's data folder): the main process's Node 16 parts
 // (polyfills, better-sqlite3, the service and its schema, fetch, serialport) and every screen in Chromium 108.

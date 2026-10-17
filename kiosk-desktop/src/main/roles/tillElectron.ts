@@ -4,8 +4,9 @@
  * while the cloud says this device is a till. The logic is roles/till.ts (Electron-free, tested).
  *
  * Same window, same app, same installer as the kiosk: the till is a VIEW the shell shows for the
- * role, with its own preload (no `window.kiosk` there) and a sandboxed renderer. Windows 7's build
- * (Electron 22, §13.2) has no WebContentsView: it falls back to BrowserView there.
+ * role, with its own preload (no `window.kiosk` there) and a sandboxed renderer. The view's API is chosen by
+ * capability in shell/viewCompat.ts: WebContentsView on Electron 30+, BrowserView on Windows 7's build (Electron 22,
+ * §13.2), whose experimental WebContentsView has no setBounds.
  */
 
 import { ipcMain, protocol, type BrowserWindow } from 'electron';
@@ -13,6 +14,7 @@ import * as electron from 'electron';
 import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { handleScheme, textReply, unhandleScheme } from '../shell/schemeHandler';
+import { createOverlayView, electronMajor, type ElectronViewsLike, type OverlayView, type WindowViewsLike } from '../shell/viewCompat';
 import { APP_IPC } from '../../shared/till/appBridge';
 import type { DeviceRoleName, EngineEvent, HwRequest } from '../../shared/till/protocol';
 import type { TillRole } from './till';
@@ -31,11 +33,6 @@ const MIME: Record<string, string> = {
   woff2: 'font/woff2',
 };
 
-interface ViewLike {
-  webContents: Electron.WebContents;
-  setBounds(b: { x: number; y: number; width: number; height: number }): void;
-}
-
 export interface TillElectronOptions {
   role: TillRole;
   main(): BrowserWindow | null;
@@ -44,6 +41,10 @@ export interface TillElectronOptions {
   /** Whether the till preview is on (kiosk.json `tillPreview`, `--till-preview`). */
   enabled(): boolean;
   log(m: string): void;
+  /** The shell's key guard for the till's page too (no Alt+F4 / reload; the support keys): true = the key is taken. */
+  onKey?(input: Electron.Input): boolean;
+  /** "מקלדת מסך" (the technician's choice on this device). */
+  oskMode?(): 'auto' | 'always' | 'off';
   /**
    * "ניהול הקיוסק" from the till's corner: `allowed` — never during a payment (the engine's checkout, a card at the
    * terminal); `open` — the shell's window shows its manager's menu (renderer staff/ShellStaff.tsx) while the till's view
@@ -57,34 +58,15 @@ export interface TillElectron {
   onRole(role: string | null): void;
   /** The manager's menu over the till is closed: the till's view is laid back over the window. */
   resume(): void;
+  /** The shell's menu or technician's screen (a keyboard shortcut, the tray): the till's view set aside first. */
+  open(screen: 'admin' | 'technician'): boolean;
+  /** The window is back from the desktop: the till's view fitted and focused again. */
+  refit(): void;
   stop(): void;
 }
 
-function makeView(preload: string, isDev: boolean): ViewLike {
-  const webPreferences = { preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, devTools: isDev };
-  const e = electron as unknown as {
-    WebContentsView?: new (o: { webPreferences: typeof webPreferences }) => ViewLike;
-    BrowserView?: new (o: { webPreferences: typeof webPreferences }) => ViewLike;
-  };
-  if (e.WebContentsView) return new e.WebContentsView({ webPreferences });
-  if (e.BrowserView) return new e.BrowserView({ webPreferences });
-  throw new Error('no view class in this Electron');
-}
-
-function attach(win: BrowserWindow, view: ViewLike) {
-  const w = win as unknown as { contentView?: { addChildView(v: ViewLike): void }; setBrowserView?(v: ViewLike): void };
-  if (w.contentView?.addChildView) w.contentView.addChildView(view);
-  else w.setBrowserView?.(view);
-}
-
-function detach(win: BrowserWindow, view: ViewLike) {
-  const w = win as unknown as { contentView?: { removeChildView(v: ViewLike): void }; setBrowserView?(v: ViewLike | null): void };
-  if (w.contentView?.removeChildView) w.contentView.removeChildView(view);
-  else w.setBrowserView?.(null);
-}
-
 export function attachTillRole(o: TillElectronOptions): TillElectron {
-  let view: ViewLike | null = null;
+  let view: OverlayView<Electron.WebContents> | null = null;
   let watchdog: NodeJS.Timeout | null = null;
   /** Set aside (zero size, no input) while the shell's manager's menu is up; the renderer and its state stay. */
   let parked = false;
@@ -108,6 +90,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   ipcMain.handle(APP_IPC.info, (e) => (fromTill(e) ? role.info() : null));
   ipcMain.handle(APP_IPC.hello, (e, since: unknown) => (fromTill(e) ? role.hello(typeof since === 'number' ? since : undefined) : null));
   ipcMain.handle(APP_IPC.call, (e, c: unknown) => (fromTill(e) ? role.call(c) : { id: -1, ok: false, error: { code: 'permission_denied', message: 'אין הרשאה' } }));
+  ipcMain.handle(APP_IPC.osk, (e) => (fromTill(e) ? (o.oskMode?.() ?? 'auto') : 'off'));
   ipcMain.on(APP_IPC.ready, (e) => {
     if (!fromTill(e)) return;
     role.reportReady();
@@ -119,14 +102,23 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   // The till's corner: the shell's manager's menu, never during a payment.
   // The till's six taps (top-left, the PIN screen too): the shell's technician's screen, never during a payment either.
   const openShell = (e: Electron.IpcMainEvent, screen: 'admin' | 'technician') => {
-    if (!fromTill(e) || !o.admin || parked) return;
+    if (!fromTill(e)) return;
+    openScreen(screen);
+  };
+  /** The shell's menu / technician's screen over the till: the view is set aside (zero size) first. */
+  const openScreen = (screen: 'admin' | 'technician'): boolean => {
+    if (!o.admin) return false;
+    if (parked) return true;
     if (!o.admin.allowed()) {
       o.log(`till: the ${screen === 'admin' ? 'manager corner' : 'technician taps'} wait — a payment is on`);
-      return;
+      return false;
     }
-    parked = true;
-    fit();
+    if (view) {
+      parked = true;
+      fit();
+    }
     o.admin.open(screen);
+    return true;
   };
   ipcMain.on(APP_IPC.admin, (e) => openShell(e, 'admin'));
   ipcMain.on(APP_IPC.technician, (e) => openShell(e, 'technician'));
@@ -144,7 +136,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     const win = o.main();
     if (!win || !view) return;
     const b = win.getContentBounds();
-    view.setBounds(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
+    view.fit(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
   };
 
   const show = () => {
@@ -155,11 +147,21 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
       o.log('till: no verified bundle — the placeholder stays');
       return;
     }
-    view = makeView(o.preload, o.isDev);
-    attach(win, view);
+    const webPreferences = { preload: o.preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, devTools: o.isDev };
+    try {
+      view = createOverlayView<Electron.WebContents>(electron as unknown as ElectronViewsLike, win as unknown as WindowViewsLike, webPreferences, electronMajor(), o.log);
+      view.attach();
+    } catch (err) {
+      o.log(`till: the view could not be created — ${err instanceof Error ? err.message : String(err)}`);
+      view = null;
+      return;
+    }
     fit();
     win.on('resize', fit);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    view.webContents.on('before-input-event', (e, input) => {
+      if (o.onKey?.(input)) e.preventDefault();
+    });
     view.webContents.on('will-navigate', (e, url) => {
       if (!url.startsWith('r2m://app/')) e.preventDefault();
     });
@@ -187,7 +189,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
     if (!view) return;
     if (win) {
       win.removeListener('resize', fit);
-      detach(win, view);
+      view.detach();
     }
     // Electron 22 (Windows 7) has no webContents.close(): destroy() there.
     const wc = view.webContents as unknown as { close?(): void; destroy?(): void };
@@ -203,6 +205,11 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
       if (wanted) show();
       else hide();
       if (view && r) view.webContents.send(APP_IPC.role, r as DeviceRoleName);
+    },
+    open: (screen) => openScreen(screen),
+    refit: () => {
+      fit();
+      if (!parked) view?.webContents.focus();
     },
     resume: () => {
       if (!parked) return;

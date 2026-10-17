@@ -13,7 +13,7 @@
  * 9 = offline…). Nothing is ever printed to a real printer by the tests.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { parseStatus, STATUS_OFFLINE, STATUS_PAPER, STATUS_PRINTER, type PrinterStatusBits } from '../../core/escpos';
@@ -169,9 +169,16 @@ function R2mFromJson([string]$s) {
   if ($R2mJson) { return New-Object PSObject -Property ($R2mJson.DeserializeObject($s)) }
   return ($s | ConvertFrom-Json)
 }
-function R2mToJson($o) {
+function R2mJsonText($o) {
   if ($R2mJson) { return $R2mJson.Serialize($o) }
   return ($o | ConvertTo-Json -Compress -Depth 4)
+}
+function R2mToJson($o) {
+  $j = R2mJsonText $o
+  # ASCII only on the pipe (Windows 7's console code page would spoil a Hebrew printer name): a JSON escape for the rest.
+  $sb = New-Object System.Text.StringBuilder
+  foreach ($ch in $j.ToCharArray()) { if ([int]$ch -gt 127) { [void]$sb.Append([char]92).Append('u').Append(('{0:x4}' -f [int]$ch)) } else { [void]$sb.Append($ch) } }
+  return $sb.ToString()
 }
 function R2mWmi([string]$class, [string]$filter) {
   if ($R2mLegacy) {
@@ -198,7 +205,9 @@ public static class R2mRaw {
     IntPtr h;
     if (!OpenPrinter(printer, out h, IntPtr.Zero)) return "open:" + Marshal.GetLastWin32Error();
     try {
-      var di = new DOCINFO { pDocName = docName, pDataType = "RAW" };
+      DOCINFO di = new DOCINFO();
+      di.pDocName = docName;
+      di.pDataType = "RAW";
       if (StartDocPrinter(h, 1, di) == 0) return "startdoc:" + Marshal.GetLastWin32Error();
       try {
         if (!StartPagePrinter(h)) return "startpage:" + Marshal.GetLastWin32Error();
@@ -255,6 +264,59 @@ interface Pending {
   resolve: (v: Record<string, unknown>) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+/** How long PowerShell may take to compile the helper and say "ready" (a J1900 on Windows 7 is slow at it). */
+export const HELPER_START_MS = 45_000;
+
+/** JSON with every non-ASCII character escaped: Windows 7's PowerShell 2 reads its stdin in the console's code page. */
+export function asciiJson(v: unknown): string {
+  return JSON.stringify(v).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/**
+ * `wmic printer get … /format:list` (Windows 7 has it; no PowerShell needed): the queues when the helper cannot start.
+ * Redirected, wmic writes UTF-16 on some systems and the ANSI page on others.
+ */
+export function parseWmicPrinters(out: Buffer | string): Array<Record<string, unknown>> {
+  const text = typeof out === 'string' ? out : out.includes(0) ? out.toString('utf16le') : out.toString('latin1');
+  const list: Array<Record<string, unknown>> = [];
+  let cur: Record<string, string> = {};
+  const flush = () => {
+    if (cur.Name) {
+      list.push({
+        name: cur.Name,
+        port: cur.PortName || null,
+        driver: cur.DriverName || null,
+        detected: cur.DetectedErrorState ? Number(cur.DetectedErrorState) : null,
+        offline: /^true$/i.test(cur.WorkOffline ?? ''),
+        status: cur.PrinterStatus ? Number(cur.PrinterStatus) : null,
+      });
+    }
+    cur = {};
+  };
+  for (const raw of text.replace(/^\uFEFF/, '').split(/\r?\n|\r/)) {
+    const line = raw.trim();
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq);
+    // Each printer's block starts again at its first key (the keys come in the order asked, alphabetical).
+    if (key in cur) flush();
+    cur[key] = line.slice(eq + 1);
+  }
+  flush();
+  return list;
+}
+
+function wmicPrinters(): Promise<Array<Record<string, unknown>>> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'wmic',
+      ['printer', 'get', 'DetectedErrorState,DriverName,Name,PortName,PrinterStatus,WorkOffline', '/format:list'],
+      { encoding: 'buffer', windowsHide: true, timeout: 20_000 },
+      (err, stdout) => (err ? reject(err) : resolve(parseWmicPrinters(stdout))),
+    );
+  });
 }
 
 /** The long-lived PowerShell helper (Windows only). */
@@ -318,7 +380,22 @@ export class SpoolerHelper {
   }
 
   async call(op: Record<string, unknown>, timeoutMs = 20_000): Promise<Record<string, unknown>> {
-    await this.start();
+    // A PowerShell that never says "ready" (a broken one, Windows 7's first .NET compile) never hangs the caller.
+    let startTimer: NodeJS.Timeout | null = null;
+    try {
+      await Promise.race([
+        this.start(),
+        new Promise<never>((_, reject) => {
+          startTimer = setTimeout(() => {
+            this.log('spooler helper: no "ready" in time — restarting it next time');
+            this.dispose();
+            reject(new Error('spooler helper start timeout'));
+          }, HELPER_START_MS);
+        }),
+      ]);
+    } finally {
+      if (startTimer) clearTimeout(startTimer);
+    }
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -326,7 +403,7 @@ export class SpoolerHelper {
         reject(new Error('spooler helper timeout'));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.proc!.stdin.write(`${JSON.stringify({ ...op, id })}\n`);
+      this.proc!.stdin.write(`${asciiJson({ ...op, id })}\n`);
     });
   }
 
@@ -395,7 +472,14 @@ export class DefaultTransport implements Transport {
 
   async list(): Promise<Array<{ name: string; port: string | null; health: PrinterHealth }>> {
     if (process.platform !== 'win32') return [];
-    const r = await this.helper.call({ op: 'list' });
+    let r: Record<string, unknown>;
+    try {
+      r = await this.helper.call({ op: 'list' });
+    } catch (e) {
+      // No PowerShell helper (Windows 7 without its compiler, a broken PowerShell): wmic still lists the queues.
+      this.log(`printers: helper failed (${e instanceof Error ? e.message : String(e)}) — wmic`);
+      r = { ok: true, printers: await wmicPrinters() };
+    }
     const printers = Array.isArray(r.printers) ? (r.printers as Array<Record<string, unknown>>) : r.printers ? [r.printers as Record<string, unknown>] : [];
     return printers.map((p) => ({
       name: String(p.name ?? ''),
@@ -407,8 +491,15 @@ export class DefaultTransport implements Transport {
   /** The queues, the USB printer devices present and the USB ports (the helper's `usb` op; usbPrinters.ts). */
   async usbScan(): Promise<UsbScan> {
     if (process.platform !== 'win32') return { queues: [], devices: null, ports: null, at: Date.now() };
-    const r = await this.helper.call({ op: 'usb' }, 15_000);
-    if (r.ok !== true) throw new Error(`spooler: ${String(r.error ?? 'usb scan failed')}`);
+    let r: Record<string, unknown>;
+    try {
+      r = await this.helper.call({ op: 'usb' }, 15_000);
+      if (r.ok !== true) throw new Error(`spooler: ${String(r.error ?? 'usb scan failed')}`);
+    } catch (e) {
+      // The queues from wmic at least (their ports say USB001…): "אוטומטי" still finds the USB printer's queue.
+      this.log(`usb printers: helper failed (${e instanceof Error ? e.message : String(e)}) — wmic`);
+      r = { ok: true, queues: await wmicPrinters(), devices: null, ports: null };
+    }
     return scanOf(r, (q) => healthOfWin32(typeof q.detected === 'number' ? q.detected : null, q.offline === true, typeof q.status === 'number' ? q.status : null), Date.now());
   }
 
