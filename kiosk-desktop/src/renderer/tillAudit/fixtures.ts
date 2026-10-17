@@ -19,7 +19,8 @@ import {
   type TillState,
   type XReport,
 } from '../../shared/till/protocol';
-import { initialState } from '../../shared/till/mockEngine';
+import { demoDesignState, initialState } from '../../shared/till/mockEngine';
+import { demoDesignConfig, themeOf, withTotal } from '../../core/till/tillDesign';
 import { kioskControlRows } from '../../core/till/kioskControl';
 import { drawerOf } from '../../core/till/cashWithTips';
 import * as P2 from './phase2Fixtures';
@@ -493,7 +494,10 @@ export class AuditEngine implements EngineEndpoint {
   readonly catalog = P2.withChoices(stressCatalog());
 
   constructor(state: string) {
-    this.st = stateFor(state);
+    const s = stateFor(state);
+    // "עיצוב קופה" as the demo takes it: /tillAudit.html?state=sell&design=night&accent=%23E11D48&mode=dark.
+    const cfg = typeof location !== 'undefined' ? demoDesignConfig(location.search) : null;
+    this.st = cfg ? { ...s, design: withTotal(demoDesignState(cfg, true), s.sell.totalAgorot), theme: themeOf(cfg, {}, {}) } : s;
   }
 
   hello(): HelloReply {

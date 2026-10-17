@@ -163,6 +163,8 @@ import { autoCloseDue, autoCloseTimeOf } from '../../core/tillZ';
 import { cardLast, dueOf, handedTotal, paidOf, quickNotes, takeCash, validCashAmount, type TenderLeg } from '../../core/till/tender';
 import { HIDDEN_MENU_PARAM, parseHiddenMenu } from '../../core/till/menuHide';
 import { tileTextOf } from '../../core/till/tileText';
+import { PARAM_SELL_ALL_TAB, parseSellAllTab } from '../../core/till/sellAllTab';
+import { designParameters, tendersOf, themeOf } from '../../core/till/tillDesign';
 import { SHOP_X_TEXT, shopXDocumentOf, shopXOffered, shopXRefusal, type ShopXDocument } from '../../core/till/shopX';
 import type { StartPaymentIn } from '../../shared/bridge';
 import {
@@ -230,6 +232,7 @@ import { TillItemBlocks } from './tillItemBlocks';
 import { TillPrintQueue } from './tillPrintQueue';
 import { TillCustomerDisplay } from './tillCustomerDisplay';
 import { TillMenuService } from './tillMenuService';
+import { TillDesignService } from './tillDesign';
 import { TillKiosks } from './tillKiosks';
 import { KIOSK_CONTROL_TEXT } from '../../core/till/kioskControl';
 import { TillKioskOrders } from './tillKioskOrders';
@@ -771,6 +774,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly menu: TillMenuService;
   /** "קיוסקים": a controlling till's kiosks (tillKiosks.ts). */
   readonly kiosks: TillKiosks;
+  /** "עיצוב קופה": the cloud's design, pulled with the parameters and kept offline (tillDesign.ts). */
+  readonly design: TillDesignService;
   /** "הזמנות קיוסק לתשלום": the kiosks' orders paid at this till (tillKioskOrders.ts) — `kioskOrders` below. */
   /*
    * Phase 2 (P:/specs/windows-till-menu-parity.md §7): the Android menu's features, each its own module registered with the
@@ -853,6 +858,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.customerDisplay = new TillCustomerDisplay(this.ctx);
     this.customerDisplay.start();
     this.kiosks = new TillKiosks(this.ctx);
+    this.design = new TillDesignService({
+      api: this.svc.api,
+      machineId: () => this.svc.machineId,
+      read: () => this.svc.cloud.tillDesign(),
+      write: (v) => this.svc.cloud.setTillDesign(v),
+      changed: () => this.ctx.changed(),
+      log: (m) => this.log(m),
+    });
+    // Pulled on the parameters' cadence (the service's sync), as the Android till pulls it with them.
+    this.svc.attachTillPull?.(() => this.design.pull());
     this.menu = new TillMenuService(this.ctx, {
       zOnly: () => this.shiftsHidden(),
       tillZMode: () => zModeOf(this.svc.cloud.heartbeat().zMode) === 'till',
@@ -1076,6 +1091,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.tick) clearInterval(this.tick);
     this.tick = null;
     this.svc.attachTillAutoClose?.(null);
+    this.svc.attachTillPull?.(null);
     this.svc.attachTillRemoteClose?.(null);
   }
 
@@ -1854,7 +1870,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /* ------------------------------------------------------------- the order's details */
 
   private orderQuestions(): OrderQuestions {
-    return orderQuestionsOf(this.svc.cloud.parameters());
+    // "עיצוב קופה": fields.customerName / serviceType over askOrderName / askEatInTakeAway (Android applyTillDesign).
+    return orderQuestionsOf(designParameters(this.svc.cloud.parameters(), this.design.config()));
   }
 
   private orderFacts(): OrderFacts {
@@ -5085,7 +5102,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(user && !this.locked ? { menu: this.menu.state() } : {}),
       ...(user && !this.locked && this.kiosks.count() > 0 ? { kiosks: this.kiosks.state() } : {}),
       ...(user && !this.locked ? { menuOffers: { shopZ: this.shopZ.menuShown([]), cloudZ: this.cloudZ.available() } } : {}),
-      tileText: tileTextOf(params),
+      // The design's `look` over the tile-text parameters (Android applyTillDesign).
+      tileText: tileTextOf(designParameters(params, this.design.config())),
+      // "הכל" in the order's categories (Android SellAllTab: hidden unless the parameter says first / last).
+      sellAllTab: parseSellAllTab(params[PARAM_SELL_ALL_TAB]),
+      design: this.design.state({
+        parameters: params,
+        tenders: tendersOf(params, !this.svc.pay.noCard),
+        presets: this.presetDiscounts().presets.map((p) => ({ id: p.id, name: p.name })),
+        totalAgorot: net,
+      }),
+      theme: themeOf(this.design.config(), params, this.svc.cloud.settings().settings),
       drawer: this.drawer.state(),
       users: this.sessions.state(),
       owed: this.cash.state(),

@@ -10,7 +10,9 @@
  * its main process behind IPC (main/roles/till.ts).
  */
 
+import { parseSellAllTab } from '../../core/till/sellAllTab';
 import { job, type MonoBitmap } from '../../core/escpos';
+import { demoDesignConfig, designState, resolveTillDesign, tendersOf, themeOf, withTotal, type TillDesignConfig } from '../../core/till/tillDesign';
 import { bytesToBase64 } from './bytes';
 import { demoCatalog } from './catalogDemo';
 import {
@@ -33,6 +35,7 @@ import {
   type OpArgs,
   type TillErrorCode,
   type TillOp,
+  type TillDesignState,
   type TillState,
   type XReport,
   tillBusy,
@@ -57,6 +60,22 @@ export interface MockEngineOptions {
   rolesAllowed?: DeviceRoleName[];
   now?: () => number;
   schedule?: (fn: () => void, ms: number) => void;
+  /**
+   * "עיצוב קופה" for the demo (`TillState.design`). Absent: the page's query names it — /app.html?design=night&accent=%23E11D48&mode=dark
+   * (core/till/tillDesign.ts demoDesignConfig: a template or "flow", the accent, the colour mode) — else the defaults.
+   */
+  design?: TillDesignConfig | null;
+}
+
+/** The page's query string in a browser; "" elsewhere (the Windows shell's main process, the tests). */
+function pageQuery(): string {
+  const loc = (globalThis as { location?: { search?: unknown } }).location;
+  return loc && typeof loc.search === 'string' ? loc.search : '';
+}
+
+/** The demo's design view: no parameters (every "auto" its default), a card tender only with a terminal. */
+export function demoDesignState(cfg: TillDesignConfig | null | undefined, terminal: boolean): TillDesignState {
+  return designState(cfg ?? resolveTillDesign(), { parameters: {}, configVersion: cfg ? 'demo' : null, tenders: tendersOf({}, terminal), presets: null });
 }
 
 class Refusal extends Error {
@@ -98,7 +117,7 @@ function demoReceiptBitmap(lines: number): MonoBitmap {
   return { width, height, rowBytes, data };
 }
 
-export function initialState(o: { role: DeviceRoleName; rolesAllowed: DeviceRoleName[]; terminal: boolean; printer: boolean; catalogVersion: number; nowIso: string }): TillState {
+export function initialState(o: { role: DeviceRoleName; rolesAllowed: DeviceRoleName[]; terminal: boolean; printer: boolean; catalogVersion: number; nowIso: string; design?: TillDesignConfig | null }): TillState {
   return {
     protocol: TILL_PROTOCOL,
     session: { cashier: { id: 'demo-cashier', name: 'קופאי הדגמה' }, locked: false, permissions: ['SELL', 'SHIFT_OPEN', 'SHIFT_CLOSE', 'REPORT_X'], demo: true },
@@ -109,6 +128,11 @@ export function initialState(o: { role: DeviceRoleName; rolesAllowed: DeviceRole
     health: { cloud: 'demo', printer: o.printer ? 'ok' : 'none', terminal: o.terminal ? 'ok' : 'none', outbox: 0 },
     dialog: null,
     mode: { role: o.role, current: o.role, rolesAllowed: o.rolesAllowed.slice() },
+    design: demoDesignState(o.design, o.terminal),
+    // ?accent= / ?mode= reach the colours as a design's do (no brand colour in the demo's settings).
+    theme: themeOf(o.design, {}, {}),
+    // "הכל" (the parameter sellAllTab): the demo's query may set it (?allTab=first|last); unset — hidden, Android's default.
+    sellAllTab: parseSellAllTab(new URLSearchParams(pageQuery()).get('allTab')),
   };
 }
 
@@ -133,6 +157,7 @@ export class MockTillEngine implements EngineEndpoint {
   constructor(private readonly o: MockEngineOptions = {}) {
     this.catalog = o.catalog ?? demoCatalog();
     this.st = initialState({
+      design: o.design !== undefined ? o.design : demoDesignConfig(pageQuery()),
       role: o.role ?? 'till',
       rolesAllowed: o.rolesAllowed ?? [],
       terminal: o.terminal === true,
@@ -159,7 +184,10 @@ export class MockTillEngine implements EngineEndpoint {
   }
 
   snapshot(): TillState {
-    return JSON.parse(JSON.stringify(this.st)) as TillState;
+    const s = JSON.parse(JSON.stringify(this.st)) as TillState;
+    // "שטרות": the banknotes over the order's total now, as the real engine sends them.
+    if (s.design) s.design = withTotal(s.design, s.sell.totalAgorot);
+    return s;
   }
 
   get currentSeq(): number {

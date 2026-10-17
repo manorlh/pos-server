@@ -19,8 +19,9 @@ import { money, T } from '../text';
 
 /** The tile's padding and its price line (CSS px): what is left for the name. */
 const TILE_PAD_X = 22;
-const TILE_PAD_Y = 16;
-const PRICE_LINE = 22;
+// theme/look.css's tile (Android ProductTile): 5 around, the picture's 24 over the name and 2 under it, the price pill 30.
+const TILE_PAD_Y = 36;
+const PRICE_LINE = 30;
 
 const GAP = 6;
 const OVERSCAN_ROWS = 3;
@@ -73,6 +74,8 @@ export function ProductGrid({
   onInfo,
   onHold,
   tileText = TILE_TEXT_DEFAULTS,
+  inCart,
+  namePx = 16,
   arrange,
 }: {
   products: Product[];
@@ -85,6 +88,10 @@ export function ProductGrid({
   /** A tile held 7 s (Android LOCK_PRESS_MS): "חסום / אזל" for it (absent: a hold is a tap). */
   onHold?(productId: string): void;
   tileText?: TileTextState;
+  /** How many of each product the order holds: its count in the tile's corner (Android ProductTile's badge). */
+  inCart?: ReadonlyMap<string, number>;
+  /** The name's own size before the fit steps it down: 16 on a handheld, 22 / 18 as a tablet's picture (Android). */
+  namePx?: number;
   /** "עריכת מסך" on: the tiles are arranged (no sale, no "i", no 7 s hold). */
   arrange?: GridArrange;
 }) {
@@ -225,13 +232,13 @@ export function ProductGrid({
   const nameHeight = Math.max(16, tileHeight - TILE_PAD_Y - PRICE_LINE);
   // Once per name per tile width (and per setting): the J1900 never lays out a name twice.
   const cache = useRef<{ key: string; map: Map<string, NameLayout> }>({ key: '', map: new Map() });
-  const cacheKey = `${textWidth}|${nameHeight}|${tileText.fit}|${tileText.maxLines}|${tileText.minSize}`;
+  const cacheKey = `${textWidth}|${nameHeight}|${namePx}|${tileText.fit}|${tileText.maxLines}|${tileText.minSize}`;
   if (cache.current.key !== cacheKey) cache.current = { key: cacheKey, map: new Map() };
   const layoutOf = (name: string) => {
     const layouts = cache.current.map;
     let l = layouts.get(name);
     if (!l) {
-      l = nameLayout(name, textWidth, nameHeight, tileText);
+      l = nameLayout(name, textWidth, nameHeight, tileText, namePx);
       layouts.set(name, l);
     }
     return l;
@@ -338,6 +345,12 @@ export function ProductGrid({
                 <span className="t-tile-price" style={{ fontSize: price.px }}>
                   {price.text}
                 </span>
+                {inCart && (inCart.get(p.id) ?? 0) > 0 ? (
+                  // The count in the order, in the brand colour at the tile's start corner (ProductTile, 22 dp).
+                  <span className="t-tile-count" aria-hidden="true">
+                    {Math.ceil(inCart.get(p.id) ?? 0)}
+                  </span>
+                ) : null}
                 {p.sale ? <span className="t-tile-badge">{p.sale === 'blocked' ? T.blockedBadge : p.sale === 'unavailable' ? T.unavailableBadge : T.soldOutBadge}</span> : null}
                 {info ? (
                   // The "i" (top left; never the cart): a span, so the tile stays one button — its tap stops here.

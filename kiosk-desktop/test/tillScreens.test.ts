@@ -34,7 +34,7 @@ describe('the till app', () => {
     expect(html).toContain('data-lite="1"');
     expect(html).toContain('data-layout="TABLET"');
     expect(html).toContain('מצב הדגמה');
-    expect(html).toContain('הסל ריק');
+    expect(html).toContain('ההזמנה ריקה');
     expect(html).toContain('קופאי הדגמה');
     host.dispose();
   });

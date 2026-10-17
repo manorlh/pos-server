@@ -117,7 +117,10 @@ function sizesDown(base: number, min: number): number[] {
  *    still does not fit, the minimum takes up to `productNameMaxLines` lines (as many as the box holds); "…" only past
  *    those.
  */
-export function nameLayout(name: string, widthPx: number, heightPx: number, s: TileTextSettings): NameLayout {
+export function nameLayout(name: string, widthPx: number, heightPx: number, s: TileTextSettings, basePx = NAME_PX): NameLayout {
+  // `basePx`: the tile's own size — NAME_PX on the handheld's tiles, the tablet's name-as-the-picture larger (Android
+  // roomyPictureNameStyle: 22 on the medium and large tiles, 18 on the small).
+  const NAME_PX = basePx;
   const room = (px: number) => Math.max(1, Math.floor(heightPx / (px * LINE)));
   const most = Math.min(4, Math.max(1, s.maxLines));
   if (s.fit === 'clip') {
