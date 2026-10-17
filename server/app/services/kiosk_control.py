@@ -821,6 +821,16 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
     from app.services import device_license
 
     license_product = device_license.product_of(db, machine, device)
+    if device is None and isinstance(raw_status, dict) and "alerts" in raw_status:
+        # "מכשיר מזומן" on a till (its CashMag / PayLink unreachable or at fault): the till reports it here like a
+        # kiosk, kind "cash" only — the device's cash alert (kiosk_ops.reconcile_till_cash). Never fails the sync.
+        from app.services import kiosk_ops
+
+        try:
+            with db.begin_nested():
+                kiosk_ops.reconcile_till_cash(db, machine, raw_status.get("alerts"), now=now)
+        except Exception:  # noqa: BLE001
+            logger.exception("till cash alerts failed for %s", machine.id)
     if device is None or not device.enabled:
         return {"kiosk": False, "serverTime": _iso(now), "controls": controls, "licenseProduct": license_product}
     bundle = cfgsvc.effective_bundle(db, machine)
