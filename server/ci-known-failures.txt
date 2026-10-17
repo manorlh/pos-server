@@ -6,7 +6,4 @@
 tests/test_till_roles.py::TestMigration::test_upgrade_adds_the_tables_and_the_columns_and_moves_no_data
 tests/test_till_roles.py::TestMigration::test_downgrade_drops_them
 tests/test_kitchen_ticket_designs.py::TestMigration::test_upgrade_adds_the_table_and_the_nullable_columns_and_writes_no_row
-# Fail on main already (the register-number migration chain: `alembic upgrade head` from an empty schema stops at f6a7b8c9d0e2).
 tests/test_register_number.py::TestMigration
-tests/test_register_number.py::TestCallSites::test_pairing_with_a_code_pre_assigned_to_a_shop
-tests/test_register_number.py::TestCallSites::test_field_install_claim
