@@ -18,6 +18,16 @@ import tailwindcss from '@tailwindcss/vite';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const client = path.resolve(here, '../client/src');
 
+/**
+ * The Windows 7 build (P:/specs/windows7-till.md, `R2M_WIN7=1`, scripts/build-win7.mjs): the same screens for
+ * Electron 22 = Chromium 108 — JS lowered to chrome108, CSS through Lightning CSS with that target (nesting lowered,
+ * colour fallbacks) — into legacy/dist/renderer.
+ */
+const WIN7 = process.env.R2M_WIN7 === '1';
+const rendererOut = path.join(here, WIN7 ? 'legacy/dist/renderer' : 'dist/renderer');
+/** Lightning CSS targets for Chromium 108 (major << 16). */
+const WIN7_CSS_TARGETS = { chrome: 108 << 16, edge: 108 << 16 };
+
 export const sharedAlias = {
   '@kiosk-shared': path.join(client, 'kiosk-shared'),
   '@dash-lib': path.join(client, 'lib'),
@@ -63,10 +73,10 @@ function kioskPublic(): Plugin {
       });
     },
     closeBundle() {
-      if (existsSync(src)) cpSync(src, path.join(here, 'dist/renderer/kiosk'), { recursive: true });
+      if (existsSync(src)) cpSync(src, path.join(rendererOut, 'kiosk'), { recursive: true });
       // The bridge's tray icon (main/bridge/electron.ts reads dist/renderer/tray.png).
       const icon = path.join(here, 'build', 'icon.png');
-      if (existsSync(icon)) cpSync(icon, path.join(here, 'dist/renderer/tray.png'));
+      if (existsSync(icon)) cpSync(icon, path.join(rendererOut, 'tray.png'));
     },
   };
 }
@@ -83,14 +93,16 @@ export default defineConfig(({ mode }) => ({
     dedupe: sharedDedupe,
   },
   json: { namedExports: true, stringify: false },
+  ...(WIN7 ? { css: { transformer: 'lightningcss' as const, lightningcss: { targets: WIN7_CSS_TARGETS } } } : {}),
   server: {
     port: 5178,
     fs: { allow: [here, client] },
   },
   build: {
-    outDir: path.join(here, 'dist/renderer'),
+    outDir: rendererOut,
     emptyOutDir: true,
-    target: 'chrome130',
+    target: WIN7 ? 'chrome108' : 'chrome130',
+    ...(WIN7 ? { cssTarget: 'chrome108', cssMinify: 'lightningcss' as const } : {}),
     sourcemap: mode === 'development',
     reportCompressedSize: false,
     chunkSizeWarningLimit: 900,

@@ -6,6 +6,9 @@
  * native module to rebuild per Electron version, nothing downloaded at install, a smaller
  * installer. Its API is the same synchronous shape as better-sqlite3 (prepare → run/get/all), so
  * better-sqlite3 can replace it behind this adapter without touching any caller.
+ *
+ * The Windows 7 build (Electron 22 = Node 16.17, P:/specs/windows7-till.md) has no `node:sqlite`: there the
+ * engine is better-sqlite3 (prebuilt for Electron 22, in that installer's node_modules) — `betterSqliteEngine`.
  */
 
 export type SqlValue = string | number | bigint | null | Uint8Array;
@@ -40,10 +43,79 @@ interface DatabaseLike {
 
 type DatabaseCtor = new (path: string) => DatabaseLike;
 
+/** better-sqlite3's statement: `reader` says whether it returns rows (get / all refuse a statement that does not). */
+interface BetterStatement {
+  readonly reader: boolean;
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+}
+
+interface BetterDatabase {
+  exec(sql: string): unknown;
+  prepare(sql: string): BetterStatement;
+  close(): unknown;
+}
+
+/** better-sqlite3 binds a blob only as a Buffer; node:sqlite takes any Uint8Array. */
+function bindable(params: SqlValue[]): unknown[] {
+  return params.map((p) => (p instanceof Uint8Array && !Buffer.isBuffer(p) ? Buffer.from(p.buffer, p.byteOffset, p.byteLength) : p));
+}
+
+/**
+ * better-sqlite3 behind node:sqlite's shape — the Windows 7 build (Electron 22, Node 16.17) has no `node:sqlite`.
+ * Same SQLite file, same SQL; a statement that returns no rows answers get / all with nothing, as node:sqlite does.
+ */
+export function betterSqliteEngine(Better: new (path: string) => BetterDatabase): DatabaseCtor {
+  return class implements DatabaseLike {
+    private readonly db: BetterDatabase;
+    constructor(path: string) {
+      this.db = new Better(path);
+    }
+    exec(sql: string): void {
+      this.db.exec(sql);
+    }
+    prepare(sql: string): StatementLike {
+      const s = this.db.prepare(sql);
+      return {
+        run: (...params) => s.run(...bindable(params)),
+        get: (...params) => {
+          if (s.reader) return s.get(...bindable(params));
+          s.run(...bindable(params));
+          return undefined;
+        },
+        all: (...params) => {
+          if (s.reader) return s.all(...bindable(params));
+          s.run(...bindable(params));
+          return [];
+        },
+      };
+    }
+    close(): void {
+      this.db.close();
+    }
+  };
+}
+
+/** A module the bundle must not inline (a native one, found in the app's node_modules at run time). */
+function requireAtRunTime(name: string): unknown {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require(name);
+}
+
 function loadEngine(): DatabaseCtor {
-  const mod = process.getBuiltinModule?.('node:sqlite') as { DatabaseSync?: DatabaseCtor } | undefined;
+  const getBuiltin = (process as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
+  const mod = getBuiltin?.('node:sqlite') as { DatabaseSync?: DatabaseCtor } | undefined;
   if (mod?.DatabaseSync) return mod.DatabaseSync;
-  throw new Error('node:sqlite is not available in this runtime (Node ≥ 22.13 / Electron ≥ 35 required)');
+  // The Windows 7 build (Electron 22 = Node 16.17): better-sqlite3, prebuilt for that Electron, in its node_modules.
+  let better: unknown;
+  try {
+    better = requireAtRunTime('better-sqlite3');
+  } catch {
+    better = null;
+  }
+  if (typeof better === 'function') return betterSqliteEngine(better as new (path: string) => BetterDatabase);
+  throw new Error('No SQLite engine: node:sqlite is not in this runtime (Node ≥ 22.13 / Electron ≥ 35) and better-sqlite3 is not installed');
 }
 
 export function openDb(path: string): Db {

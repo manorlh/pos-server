@@ -27,6 +27,8 @@
  */
 
 import bcrypt from 'bcryptjs';
+import { licenseProductFor } from '../core/appBuild';
+import { APP_BUILD } from './appBuild';
 import { displayName, NO_LOCK, type ExitLock, type RosterUser } from '../core/desktopExit';
 import { normalizeRole } from '../core/roles';
 import {
@@ -881,7 +883,8 @@ export function createWorkMode(svc: KioskService, log: (m: string) => void = () 
     cloudKnown: () => svc.cloud.parametersKnown() && svc.cloud.kioskSnapshot() !== null,
     deviceRole: () => svc.cloud.machine()?.deviceRole ?? null,
     parameters: () => svc.cloud.parameters(),
-    licenseProduct: () => svc.cloud.licenseProduct(),
+    // The Windows 7 build is a till only: its kiosk mode never opens, whatever the cloud's license (core/appBuild.ts).
+    licenseProduct: () => licenseProductFor(APP_BUILD, svc.cloud.licenseProduct()),
     roster: () => svc.cloud.posUsers(),
     shopId: () => svc.shopIdHere(),
     kioskFacts: () => svc.kioskSideFacts(),

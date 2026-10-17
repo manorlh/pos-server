@@ -22,6 +22,8 @@ import { KdsModule } from './kds';
 import type { RoleContext } from './types';
 import { CashHostModule, type CashModuleOptions } from '../cash/module';
 import type { CashHostView, CashStaffAction, CashStaffResult } from '../../shared/cash';
+import { applyBuildRoles, type AppBuild, type RoleLock } from '../../core/appBuild';
+import { APP_BUILD } from '../appBuild';
 
 /**
  * Whether the service may act as a till: the cloud's `machines/me` `fiscal: false` (a KDS / board
@@ -55,12 +57,15 @@ export class RoleManager extends EventEmitter {
   private cashTimer: NodeJS.Timeout | null = null;
   private staffUntil = 0;
   private staffName: string | null = null;
+  /** The Windows 7 build runs only the till (core/appBuild.ts): another role the cloud gives is locked, not run. */
+  private lock: RoleLock | null = null;
 
   constructor(
     private readonly svc: KioskService,
     private readonly updates: () => UpdateView,
     private readonly log: (m: string) => void = () => undefined,
     private readonly cashOptions: Omit<CashModuleOptions, 'log'> = {},
+    private readonly build: AppBuild = APP_BUILD,
   ) {
     super();
     this.kdsDevice = svc.kv.getJson<KdsDeviceFact>(KDS_DEVICE) ?? null;
@@ -157,13 +162,17 @@ export class RoleManager extends EventEmitter {
     const { me, deviceRole } = this.facts();
     // "מצב עבודה": `isKiosk()` is the effective word (a till by role at home is no kiosk; away in its kiosk mode it is one);
     // a kiosk by role in its till session opens as the till.
-    const next = resolveRole({ paired: this.svc.paired, deviceRole, kioskActive: this.svc.isKiosk(), kdsDevice: this.kdsDevice, tillSession: this.svc.inTillSession() });
+    const resolved = resolveRole({ paired: this.svc.paired, deviceRole, kioskActive: this.svc.isKiosk(), kdsDevice: this.kdsDevice, tillSession: this.svc.inTillSession() });
+    // The Windows 7 build: a role other than the till is not run — the device says why and sells nothing.
+    const { role: next, lock } = applyBuildRoles(this.build, resolved);
+    if ((lock?.role ?? null) !== (this.lock?.role ?? null)) this.log(lock ? `role ${lock.role} refused: this build runs the till only` : 'role lock lifted');
+    this.lock = lock;
     if (next !== this.current) {
       this.log(`role ${this.current ?? '—'} → ${next ?? '—'}`);
       this.current = next;
       this.switchModule(next);
     }
-    this.svc.setFiscalRole(fiscalOf(me?.fiscal, next));
+    this.svc.setFiscalRole(lock ? false : fiscalOf(me?.fiscal, next));
     this.syncEmbeddedCash();
     this.emitView();
   }
@@ -279,7 +288,13 @@ export class RoleManager extends EventEmitter {
       update: this.updates(),
       shopActive: this.svc.cloud.shopActive(),
       workMode: this.svc.workMode?.view() ?? null,
+      roleLock: this.lock,
     };
+  }
+
+  /** The role the cloud gave that this build does not run (the Windows 7 build: anything but the till), or null. */
+  roleLock(): RoleLock | null {
+    return this.lock;
   }
 
   emitView() {
