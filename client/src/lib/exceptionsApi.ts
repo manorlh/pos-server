@@ -48,6 +48,11 @@ export const EXCEPTION_TYPES = [
   'card_decision_override',
   // "הוחלפה קופה": a replacement device took over a till (§4.6.2).
   'till_replaced',
+  // A device's records of another pairing (P:/specs/foreign-records-upload.md §3-§4), for support: a document
+  // refused on the ordinary sync, records uploaded to their own till from another device, and those refused there.
+  'document_foreign_machine',
+  'foreign_records_uploaded',
+  'foreign_records_refused',
   // "העברת שרת מקומי" from the cloud (P:/specs/local-server-switch.md): who, from, to, forced or not.
   'local_server_switched',
   // "גיבוי אוטומטי לשרת המקומי" (P:/specs/dedicated-local-server.md §11.7): the cloud moved it by itself.

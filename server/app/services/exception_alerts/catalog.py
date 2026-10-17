@@ -84,6 +84,10 @@ KINDS: Tuple[Kind, ...] = (
     Kind("till_reset", "איפוס נתוני קופה ע״י התמיכה", "high", "audit_exception"),
     Kind("card_decision_override", "הכרעת אשראי בניגוד לבדיקה במסוף", "high", "audit_exception", amount=True),
     Kind("till_replaced", "הוחלפה קופה", "medium", "audit_exception"),
+    # P:/specs/foreign-records-upload.md §3-§4 (app/services/foreign_records.py) — for support.
+    Kind("document_foreign_machine", "מסמך של קופה אחרת נדחה בסנכרון", "high", "audit_exception"),
+    Kind("foreign_records_uploaded", "רשומות של קופה הועלו ממכשיר אחר", "medium", "audit_exception"),
+    Kind("foreign_records_refused", "רשומות של קופה אחרת נדחו", "high", "audit_exception"),
     Kind("local_server_switched", "השרת המקומי הועבר מהענן", "medium", "audit_exception"),
     Kind("local_server_failover", "גיבוי אוטומטי: השרת המקומי הועבר לבד", "high", "audit_exception"),
     Kind("local_server_failover_changed", "הגדרות הגיבוי האוטומטי לשרת המקומי שונו", "medium", "audit_exception"),

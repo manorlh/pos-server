@@ -215,6 +215,8 @@ CATEGORIES = CATEGORIES + (
 INTEGRITY_KINDS = (
     "document_refused", "document_number_conflict", "z_totals_mismatch", "shift_totals_mismatch",
     "local_shop_z_mismatch", "offline_z_gap", "offline_z_conflict",
+    # A device's records of another pairing (P:/specs/foreign-records-upload.md §3-§4): support's.
+    "document_foreign_machine", "foreign_records_uploaded", "foreign_records_refused",
 )
 INTEGRITY = Category("integrity", "שלמות נתונים",
                      "מסמך שנדחה בענן, מספור כפול, פער בסכומי Z או משמרת, חור או התנגשות במספור Z אופליין — מכל הארגונים. למנהל-על בלבד.",

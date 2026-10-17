@@ -90,6 +90,11 @@ def post_cash_movement(
     db: Session = Depends(get_db),
 ):
     _assigned(machine)
+    # Another machine's movement (its own `machineId`): `409 document_foreign_machine` — it goes to its
+    # own till through `POST /sync/{m}/foreign-records` (P:/specs/foreign-records-upload.md §3).
+    from app.services import foreign_records as FR
+
+    FR.refuse_foreign_stamp(db, machine, body.machine_id)
     existing = db.get(CashMovement, body.id)
     if existing is not None and existing.machine_id != machine.id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="movement_id_conflict")

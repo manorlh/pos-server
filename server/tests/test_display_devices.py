@@ -283,6 +283,8 @@ def _machine_routes():
 #: sale in progress), kiosk orders / pickup numbers / commands / open orders, training sales.
 FISCAL_ROUTES = {
     ("POST", "/sync/{machine_id}/transactions"),
+    # A device's records of its previous pairing, filed under that till (P:/specs/foreign-records-upload.md §4).
+    ("POST", "/sync/{machine_id}/foreign-records"),
     ("POST", "/sync/{machine_id}/shifts"),
     ("POST", "/sync/{machine_id}/shifts/{shift_id}/close"),
     ("POST", "/sync/{machine_id}/shift-close/ack"),
@@ -336,6 +338,8 @@ FISCAL_ROUTES = {
 #: config, and the removed (410) endpoints. A new till write must be added to one list.
 OPEN_WRITES = {
     ("POST", "/machines/me/heartbeat"),
+    # The device says it unpaired (P:/specs/foreign-records-upload.md §5.1) — any role, a screen too.
+    ("POST", "/sync/{machine_id}/unpaired"),
     ("POST", "/elevation/sessions"),
     ("DELETE", "/elevation/sessions/current"),
     ("POST", "/sync/{machine_id}/kds/release"),
