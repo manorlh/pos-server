@@ -26,6 +26,10 @@ export interface PrepaidProductOption {
   /** The base price (a product sold by weight: per its unit). */
   price: number;
   sku?: string | null;
+  /** Its category (the two-pane picker's tree); null — none, or an older server. */
+  categoryId?: string | null;
+  /** Off in the catalog ("לא פעיל"); absent — on. */
+  isActive?: boolean;
   isWeighed?: boolean;
   unitLabel?: string | null;
   isOpenPrice?: boolean;
@@ -60,6 +64,8 @@ export function prepaidProductOf(p: Record<string, unknown>): PrepaidProductOpti
     name: String(p.name ?? ''),
     price: Number(p.price ?? 0),
     sku: typeof p.sku === 'string' ? p.sku : null,
+    categoryId: typeof p.categoryId === 'string' ? p.categoryId : null,
+    isActive: p.isActive !== false,
     isWeighed: p.isWeighed === true,
     unitLabel: typeof p.unitLabel === 'string' && p.unitLabel ? p.unitLabel : null,
     isOpenPrice: p.isOpenPrice === true,

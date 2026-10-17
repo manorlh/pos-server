@@ -58,7 +58,8 @@ class KioskSettings(Base):
     __tablename__ = "kiosk_settings"
     __table_args__ = (
         UniqueConstraint("level", "company_id", "shop_id", "machine_id", name="uq_kiosk_settings_scope"),
-        CheckConstraint("level IN ('company', 'shop', 'machine')", name="ck_kiosk_settings_level"),
+        # "area": a point of sale's layer, between the shop's and the kiosk's (P:/specs/chain-areas.md §5).
+        CheckConstraint("level IN ('company', 'shop', 'area', 'machine')", name="ck_kiosk_settings_level"),
         # NULLs compare distinct in the constraint above, so each level also gets its own
         # partial unique index: one row per company, per shop, per machine.
         Index(
@@ -73,6 +74,10 @@ class KioskSettings(Base):
             "uq_kiosk_settings_machine", "machine_id", unique=True,
             postgresql_where=text("level = 'machine'"), sqlite_where=text("level = 'machine'"),
         ),
+        Index(
+            "uq_kiosk_settings_area", "area_id", unique=True,
+            postgresql_where=text("level = 'area'"), sqlite_where=text("level = 'area'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -81,6 +86,8 @@ class KioskSettings(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=True)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="CASCADE"), nullable=True)
+    #: The point of sale of an "area" layer (`shop_areas.id`).
+    area_id = Column(UUID(as_uuid=True), ForeignKey("shop_areas.id", ondelete="CASCADE"), nullable=True)
     #: The partial layer, camelCase as on the wire. `null` values are never stored.
     overrides = Column(KioskJSON, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

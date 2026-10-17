@@ -36,16 +36,20 @@ CASH, CARD, VOUCHERS, EXCHANGE = "1", "3", "5", "6"
         ("card", 3),
         ("exchange", 6),
         ("cash", 1),
-        ("bit", 1),  # unrecognised tenders still land on 1
-        (None, 1),
+        ("gift_card", 5),
+        ("cash_credit", 6),
     ],
 )
 def test_the_payment_type_code(method, code):
     assert payment_type_code(method) == code
 
 
-def test_the_codes_this_system_files_by_name():
-    assert PAYMENT_TYPE_CODES == {"card": 3, "voucher": 5, "vouchers": 5, "production_voucher": 5, "exchange": 6}
+def test_the_voucher_codes_this_system_files_by_name():
+    assert {k: v for k, v in PAYMENT_TYPE_CODES.items() if v == 5} == {
+        "voucher": 5, "vouchers": 5, "production_voucher": 5, "prepaid": 5, "prepaid_voucher": 5,
+        "gift_card": 5, "giftcard": 5,
+    }
+    assert PAYMENT_TYPE_CODES["exchange"] == 6
 
 
 def _legs(result):

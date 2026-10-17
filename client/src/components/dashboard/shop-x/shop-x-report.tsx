@@ -10,6 +10,8 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { sameId } from '@/lib/entityLookup';
+import { useScope } from '@/lib/scope';
 import { AlertTriangle, ChevronDown, Printer, RefreshCw } from 'lucide-react';
 import {
   fetchShopXReport,
@@ -68,9 +70,13 @@ function print(doc: ShopXPrintDocument) {
 
 export function ShopXReportCard({ shopId }: { shopId: string }) {
   const [refresh, setRefresh] = useState(0);
+  // The top bar's point of sale, in this shop: the X of its tills only (P:/specs/chain-areas.md §11.2 d).
+  const bar = useScope();
+  const areaId = bar.areaId && sameId(bar.shopId, shopId) ? bar.areaId : null;
+  const areaName = areaId && bar.area && sameId(bar.area.id, areaId) ? bar.area.name : null;
   const query = useQuery<ShopXResponse>({
-    queryKey: ['shop-x', shopId, refresh],
-    queryFn: () => fetchShopXReport(shopId, refresh > 0),
+    queryKey: ['shop-x', shopId, areaId, refresh],
+    queryFn: () => fetchShopXReport(shopId, refresh > 0, areaId),
     staleTime: 30_000,
   });
   const data = query.data;
@@ -79,7 +85,7 @@ export function ShopXReportCard({ shopId }: { shopId: string }) {
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <div>
-          <CardTitle className="text-base">דוח X סניפי</CardTitle>
+          <CardTitle className="text-base">{areaId ? `דוח X — ${areaName ?? 'נקודת מכירה'}` : 'דוח X סניפי'}</CardTitle>
           <p className="text-muted-foreground text-xs">דוח ביניים, אינו סוגר יום</p>
         </div>
         <div className="flex gap-2">

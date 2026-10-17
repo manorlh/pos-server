@@ -35,6 +35,9 @@ class PosUserCreate(BaseModel):
     pin: str
     #: "צבע מלצר" (P:/specs/table-waiter-assignment.md §3): `#rrggbb`; none — automatic.
     table_color: Optional[str] = Field(None, alias="tableColor", max_length=9)
+    #: "נקודות מכירה" (P:/specs/chain-areas.md §8): the points of sale whose devices they sign in on; none — all.
+    #: Omitted by a manager of points of sale: their own.
+    area_ids: Optional[List[uuid.UUID]] = Field(None, alias="areaIds", max_length=200)
 
     @field_validator("pin")
     @classmethod
@@ -73,6 +76,8 @@ class PosUserUpdate(BaseModel):
     table_color: Optional[str] = Field(None, alias="tableColor", max_length=9)
     #: "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): `{zoneIds, tableIds}` of the shop; null — no fixed scope.
     table_scope: Optional[dict] = Field(None, alias="tableScope")
+    #: "נקודות מכירה" (P:/specs/chain-areas.md §8): null or [] — every device of the shop.
+    area_ids: Optional[List[uuid.UUID]] = Field(None, alias="areaIds", max_length=200)
 
     @field_validator("pin")
     @classmethod
@@ -123,6 +128,8 @@ class PosUserResponse(BaseModel):
     table_color_effective: Optional[str] = Field(None, alias="tableColorEffective")
     #: "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3): null — no fixed scope.
     table_scope: Optional[dict] = Field(None, alias="tableScope")
+    #: "נקודות מכירה" (P:/specs/chain-areas.md §8): null — every device of the shop.
+    area_ids: Optional[List[str]] = Field(None, alias="areaIds")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 
@@ -162,6 +169,10 @@ class PosUserSyncRow(BaseModel):
     denied_ui: Optional[str] = Field(None, alias="deniedUi")
     #: "אל תציג שוב" (P:/specs/fire-restaurant-flow.md §8.5): the hints the employee dismissed; [] — none.
     hints_dismissed: List[str] = Field(default_factory=list, alias="hintsDismissed")
+    #: "נקודות מכירה" (P:/specs/chain-areas.md §8): the points of sale (`shop_areas.id`) whose devices the employee
+    #: signs in on; null — every device of the shop. A device in no point of sale refuses an employee with a list.
+    #: Absent from an older server: no restriction.
+    area_ids: Optional[List[str]] = Field(None, alias="areaIds")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

@@ -32,6 +32,8 @@ import type { MenuBlock } from '@dash-lib/menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import { addonOnlyRow, sellableOnKiosk } from '@dash-lib/kioskSellable';
 import { noteImagesOf, optionImagesOf } from '@dash-lib/kioskItemFlow';
+import { kioskNotesAllowed } from '@dash-lib/kioskNotes';
+import { kioskOpenFor } from '@dash-lib/kioskLayout';
 import { decideSoldOut, itemBlocksOf, kioskSoldOut, rowAvailable, type SaleState, type SoldOutState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
@@ -127,6 +129,10 @@ export interface KProduct {
   trackStock: boolean;
   /** A meal (menu.meals): its window opens, never the card's quick "+". */
   meal: boolean;
+  /** "הערה בקיוסק" (client lib/kioskNotes.ts): the kiosk offers a note on it (with its switches on). */
+  notesAllowed?: boolean;
+  /** "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor): null — as the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
   /**
    * The till's catalog only (`buildKioskCatalog` channel `till`): "מחייב אישור מנהל במכירה" (itself or its
    * category) — the till sells it to a user who may (SELL_RESTRICTED_ITEMS), never a kiosk.
@@ -199,12 +205,14 @@ function restrictedRow(p: Row, restricted: ReadonlySet<string>): boolean {
 export { sellableOnKiosk };
 
 /**
- * Is this product on a till's sell screen: not delisted, not "קיוסק בלבד" (`salesChannel` kiosk_only — the till hides
+ * Is this product on a till's sell screen: not delisted (nor unlisted at this point of sale), not "קיוסק בלבד" (`salesChannel` kiosk_only — the till hides
  * it from its sell screen, pos-server models/product.py), on this till's list when its catalog is "selected".
  * A manager-approval item is on it (flagged `restricted`; the user's rights decide).
  */
 export function sellableOnTill(p: Row, machineCatalogMode: string | null | undefined): boolean {
   if (p.deleted === true) return false;
+  // Not sold at this device's point of sale (chain-areas §6: `shopListed: false`, with `inStock: false`) — hidden, not "אזל".
+  if (p.shopListed === false) return false;
   if (p.inStock === false) return false;
   if (p.salesChannel === 'kiosk_only') return false;
   if (machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
@@ -347,8 +355,12 @@ export function buildKioskCatalog(
     const ids = menuGroupIdsFor(links, [p.id], p.categoryId, parentOf);
     const list = ids.map((id) => groupsById.get(id)).filter((g): g is KGroup => !!g && g.options.length > 0);
     if (list.length > 0) groups[p.id] = list;
+    // "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor): the dish's own, inherited from its category.
+    p.kioskOpen = kioskOpenFor(menu.kioskOpen, [p.id], p.categoryId, parentOf);
     // Menu.notesFor: its own chips, else the nearest category's up the tree; then the shop's for every dish.
-    const q = menuNotesFor(notes, [p.id], p.categoryId, parentOf);
+    // "הערה בקיוסק" (client lib/kioskNotes.ts): the dish's own, else its category's up the tree, else none.
+    p.notesAllowed = kioskNotesAllowed(menu.kioskNotes, [p.id], p.categoryId, parentOf);
+    const q = p.notesAllowed ? menuNotesFor(notes, [p.id], p.categoryId, parentOf) : [];
     if (q.length > 0) quickNotes[p.id] = q;
     // Menu.hasOwnNotes: chips of its own or its category's — the shop's for every dish never open a sheet.
     if (q.length > 0 && menuNotesFor({ ...notes, all: undefined }, [p.id], p.categoryId, parentOf).length > 0) ownNotes[p.id] = true;

@@ -88,8 +88,10 @@ def _visible_machines_query(db: Session, user: User, tenant_id, shop_ids: List[u
     if user.role == UserRole.DISTRIBUTOR:
         return query.filter(POSMachine.distributor_id == user.id)
     # Company and shop managers are already bounded by `shop_ids`, which came from
-    # their own shop rule; super admin sees the tenant.
-    return query
+    # their own shop rule; super admin sees the tenant. A manager of points of sale: their devices.
+    from app.services import area_scope
+
+    return area_scope.filter_machine_column(query, db, user, POSMachine.id)
 
 
 def _sales_fields(bucket: Dict[str, float]) -> dict:

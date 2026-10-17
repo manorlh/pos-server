@@ -74,13 +74,23 @@ def _check_shop_access(user: User, shop: Shop, db: Session):
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
 
-def _check_shop_override_write(user: User, shop: Shop, db: Session) -> None:
+def _check_shop_member_write(user: User, shop: Shop, db: Session) -> None:
+    """A write about something *inside* the shop (a point of sale's or a device's level): the role and the shop.
+    The caller checks that the point of sale / device is the user's (app/services/area_scope.py)."""
     if user.role == UserRole.CASHIER:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions",
         )
     _check_shop_access(user, shop, db)
+
+
+def _check_shop_override_write(user: User, shop: Shop, db: Session) -> None:
+    _check_shop_member_write(user, shop, db)
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): the shop's own row is the whole shop's.
+    from app.services import area_scope
+
+    area_scope.refuse_shop_level(db, user)
 
 
 @router.get("/{shop_id}/product-overrides", response_model=ShopProductCatalogRowListResponse)
@@ -375,7 +385,11 @@ def upsert_shop_product_override(
         general_item.refuse_general_item_unlist(g)
 
     if "price" in payload:
-        ovr.price = payload["price"]
+        # "מי רשאי לשנות מחירים" and the log (P:/specs/chain-areas.md §9).
+        from app.services import price_policy
+
+        if price_policy.money(payload["price"]) != price_policy.money(ovr.price):
+            price_policy.set_shop_price(db, current_user, g, ovr, payload["price"])
     if "is_listed" in payload:
         listed = bool(payload["is_listed"])
         if listed != ovr.is_listed and ovr.assigned_by_rule:
@@ -419,6 +433,12 @@ def list_shops(
         query = query.filter(Shop.id == current_user.shop_id)
     elif company_id:
         query = query.filter(Shop.company_id == company_id)
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the shops that hold their points of sale.
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, current_user)
+    if reach.narrowed:
+        query = query.filter(Shop.id.in_(list(reach.shop_ids) or [uuid_mod.uuid4()]))
 
     return query.all()
 

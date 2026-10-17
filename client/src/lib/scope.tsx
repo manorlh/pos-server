@@ -45,7 +45,8 @@ import {
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { create } from 'zustand';
 import { useQuery } from '@tanstack/react-query';
-import { fetchCompanies, fetchMachines, fetchShops } from './api';
+import { api, fetchCompanies, fetchMachines, fetchShopAreas, fetchShops } from './api';
+import { clampToAreaReach, savedScopeFor, scopePatch } from './areaScope';
 import { useAuth } from './auth';
 import { buildCompanyTree, companyPath, companySubtreeIds } from './companyTree';
 import { findBySameId, sameId } from './entityLookup';
@@ -64,13 +65,15 @@ import type {
   ScopeLevel,
   ScopeSelection,
   Shop,
+  ShopArea,
 } from './types';
 
 export { SCOPE_PARAM };
 
 const STORAGE_PREFIX = 'dashboardScope:';
 
-const EMPTY_SELECTION: ScopeSelection = { companyId: null, shopId: null, machineId: null };
+const EMPTY_SELECTION: ScopeSelection = { companyId: null, shopId: null, machineId: null, areaId: null };
+const EMPTY_AREAS: ShopArea[] = [];
 
 const EMPTY_COMPANIES: Company[] = [];
 const EMPTY_SHOPS: Shop[] = [];
@@ -86,6 +89,7 @@ function readStored(tenantId: string | null): ScopeSelection {
       companyId: parsed.companyId ?? null,
       shopId: parsed.shopId ?? null,
       machineId: parsed.machineId ?? null,
+      areaId: parsed.shopId ? (parsed.areaId ?? null) : null,
     };
   } catch {
     // A corrupt or unreadable entry must not stop the dashboard loading.
@@ -125,6 +129,13 @@ function writeStored(tenantId: string | null, selection: ScopeSelection): void {
  * belongs to. Only `[id]` routes live under these prefixes, so a segment here
  * is always an id and never a sibling page name.
  */
+const AREA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `?area=` as the scope reads it: an id, else nothing ("כל הנקודות"). */
+function scopeAreaId(raw: string | null): string | null {
+  return raw && AREA_ID_RE.test(raw) ? raw : null;
+}
+
 function pathScope(pathname: string): Partial<ScopeSelection> {
   const match = /^\/dashboard\/(companies|shops|machines)\/([^/]+)/.exec(pathname);
   if (!match) return {};
@@ -148,7 +159,8 @@ function sameSelection(a: ScopeSelection, b: ScopeSelection): boolean {
   return (
     (a.companyId ?? '') === (b.companyId ?? '') &&
     (a.shopId ?? '') === (b.shopId ?? '') &&
-    (a.machineId ?? '') === (b.machineId ?? '')
+    (a.machineId ?? '') === (b.machineId ?? '') &&
+    (a.areaId ?? '') === (b.areaId ?? '')
   );
 }
 
@@ -160,6 +172,12 @@ export interface ScopeContextValue extends ScopeSelection {
   company?: Company;
   shop?: Shop;
   machine?: PosMachine;
+  /** "נקודת מכירה" (P:/specs/chain-areas.md §2): the selected point of sale, and the selected shop's live ones. */
+  area?: ShopArea;
+  areas: ShopArea[];
+  areasLoading: boolean;
+  /** Null — "כל הנקודות". Clears a device standing elsewhere. */
+  setArea: (areaId: string | null) => void;
   /** Root-first company chain for the breadcrumbs and the selector label. */
   companyPath: Company[];
 
@@ -240,6 +258,9 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       companyId: implied.companyId ?? (searchParams.get(SCOPE_PARAM.company) || null),
       shopId: implied.shopId ?? (searchParams.get(SCOPE_PARAM.shop) || null),
       machineId: implied.machineId ?? (searchParams.get(SCOPE_PARAM.machine) || null),
+      // `?area=` is shared with the reports' area filter (REPORT_FILTER_PARAMS.areaId), which
+      // also takes `none` ("ללא נקודת מכירה"): only an id is a point of sale in the scope.
+      areaId: scopeAreaId(searchParams.get(SCOPE_PARAM.area)),
     };
   }, [pathname, searchParams]);
 
@@ -298,6 +319,36 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
 
   const tree = useMemo(() => buildCompanyTree(companies), [companies]);
 
+  // ── "נקודת מכירה" (P:/specs/chain-areas.md §2) ─────────────────────────────
+  // The selected shop's points of sale (the server lists a manager of points of sale only theirs).
+  // Archived ones are fetched too — a report may filter on one through the same `?area=` — but
+  // only the live ones are offered.
+  const areasQuery = useQuery<ShopArea[]>({
+    queryKey: ['shop-areas', rawUrlSelection.shopId, true],
+    queryFn: () => fetchShopAreas(rawUrlSelection.shopId as string, true),
+    enabled: !!activeTenantId && !!rawUrlSelection.shopId,
+    staleTime: 30_000,
+  });
+  const allAreas = areasQuery.data ?? EMPTY_AREAS;
+  const areas = useMemo(
+    () => (allAreas.some((a) => a.archivedAt) ? allAreas.filter((a) => !a.archivedAt) : allAreas),
+    [allAreas],
+  );
+  const access = useAuth((s) => s.user?.dashboardAccess ?? null);
+  const savedScopes = useAuth((s) => s.user?.dashboardScope ?? null);
+
+  // The scope is kept on the server too, per user and organization: the phone and the computer agree.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveOnServer = useCallback((tenantId: string | null, next: ScopeSelection) => {
+    if (!tenantId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      api.put('/users/me/preferences', scopePatch(tenantId, next)).catch(() => {
+        // An older server refuses the key: the browser's copy still remembers it.
+      });
+    }, 800);
+  }, []);
+
   /**
    * Write a selection into the URL, keeping every other query param intact. `extra`
    * sets (a string) or removes (null) a page's own params in the same write.
@@ -319,6 +370,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       apply(SCOPE_PARAM.company, next.companyId, !!implied.companyId);
       apply(SCOPE_PARAM.shop, next.shopId, !!implied.shopId);
       apply(SCOPE_PARAM.machine, next.machineId, !!implied.machineId);
+      apply(SCOPE_PARAM.area, next.shopId ? (next.areaId ?? null) : null, false);
       for (const [key, value] of Object.entries(extra ?? {})) {
         if (value) params.set(key, value);
         else params.delete(key);
@@ -326,10 +378,11 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       const query = params.toString();
       const href = query ? `${pathname}?${query}` : pathname;
       writeStored(activeTenantId, next);
+      saveOnServer(activeTenantId, next);
       if (mode === 'push') router.push(href, { scroll: false });
       else router.replace(href, { scroll: false });
     },
-    [activeTenantId, pathname, router, scopeIsCurrent, searchParams],
+    [activeTenantId, pathname, router, saveOnServer, scopeIsCurrent, searchParams],
   );
 
   // ── Restore the last visit ───────────────────────────────────────────────────
@@ -347,7 +400,8 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     // scope over it would flash the wrong entity's name in the breadcrumbs before
     // the page's own route-sync corrected it.
     if (isDrillRoute(pathname)) return;
-    const stored = readStored(activeTenantId);
+    const local = readStored(activeTenantId);
+    const stored = isEmpty(local) ? (savedScopeFor(savedScopes, activeTenantId) ?? local) : local;
     if (isEmpty(stored)) return;
     commit(stored, 'replace');
     // `urlSelection` is deliberately not a dependency: this must fire once per
@@ -409,8 +463,26 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // A point of sale only with its shop, and only one of that shop's live ones.
+    if (!next.shopId) next.areaId = null;
+    if (next.areaId && areasQuery.isSuccess && sameId(areasQuery.data?.[0]?.shopId ?? next.shopId, next.shopId)) {
+      if (!findBySameId(allAreas, next.areaId)) next.areaId = null;
+    }
+    // "מנהל נקודת מכירה" (§3): held to their points of sale — no "כל הנקודות", no other shop.
+    const held = clampToAreaReach(next, access);
+    if (held) {
+      next.companyId = held.companyId;
+      next.shopId = held.shopId;
+      next.machineId = held.machineId;
+      next.areaId = held.areaId;
+    }
+
     if (!sameSelection(next, urlSelection)) commit(next, 'replace');
   }, [
+    access,
+    allAreas,
+    areasQuery.data,
+    areasQuery.isSuccess,
     activeTenantId,
     commit,
     companies,
@@ -436,6 +508,10 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     () => findBySameId(machines, urlSelection.machineId),
     [machines, urlSelection.machineId],
   );
+  const area = useMemo(
+    () => findBySameId(allAreas, urlSelection.areaId ?? null),
+    [allAreas, urlSelection.areaId],
+  );
 
   const path = useMemo(() => companyPath(tree, urlSelection.companyId), [tree, urlSelection.companyId]);
 
@@ -452,14 +528,16 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
 
   const machineOptions = useMemo(() => {
     if (urlSelection.shopId) {
-      return machines.filter((m) => sameId(m.shopId, urlSelection.shopId));
+      return machines.filter(
+        (m) => sameId(m.shopId, urlSelection.shopId) && (!urlSelection.areaId || sameId(m.areaId ?? null, urlSelection.areaId)),
+      );
     }
     if (urlSelection.companyId) {
       const shopIds = shopOptions.map((s) => s.id);
       return machines.filter((m) => m.shopId && shopIds.some((id) => sameId(id, m.shopId)));
     }
     return machines;
-  }, [machines, shopOptions, urlSelection.companyId, urlSelection.shopId]);
+  }, [machines, shopOptions, urlSelection.areaId, urlSelection.companyId, urlSelection.shopId]);
 
   const setCompany = useCallback(
     (companyId: string | null) => {
@@ -468,7 +546,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       // Deeper levels always go: a shop under company A is not a shop under B.
-      commit({ companyId: companyId || null, shopId: null, machineId: null }, 'push');
+      commit({ companyId: companyId || null, shopId: null, machineId: null, areaId: null }, 'push');
     },
     [commit, pathname, router],
   );
@@ -486,7 +564,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       if (!shopId) {
-        commit({ ...urlSelection, shopId: null, machineId: null }, 'push');
+        commit({ ...urlSelection, shopId: null, machineId: null, areaId: null }, 'push');
         return;
       }
       const target = findBySameId(shops, shopId);
@@ -497,11 +575,26 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
           companyId: target?.companyId ?? urlSelection.companyId ?? null,
           shopId,
           machineId: null,
+          areaId: null,
         },
         'push',
       );
     },
     [commit, pathname, router, shops, urlSelection],
+  );
+
+  const setArea = useCallback(
+    (areaId: string | null) => {
+      if (!urlSelection.shopId) return;
+      const keepMachine =
+        !!urlSelection.machineId &&
+        (!areaId || sameId(findBySameId(machines, urlSelection.machineId)?.areaId ?? null, areaId));
+      commit(
+        { ...urlSelection, areaId: areaId || null, machineId: keepMachine ? urlSelection.machineId : null },
+        'push',
+      );
+    },
+    [commit, machines, urlSelection],
   );
 
   const setMachine = useCallback(
@@ -527,6 +620,8 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
           companyId: targetShop?.companyId ?? urlSelection.companyId ?? null,
           shopId: target?.shopId ?? urlSelection.shopId ?? null,
           machineId,
+          // A device stands in its point of sale: the scope follows it there.
+          areaId: target?.areaId ?? (sameId(target?.shopId ?? null, urlSelection.shopId) ? urlSelection.areaId ?? null : null),
         },
         'push',
       );
@@ -551,12 +646,19 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
           companyId: next.companyId ?? null,
           shopId: next.shopId ?? null,
           machineId: next.machineId ?? null,
+          // A caller that says nothing about the point of sale keeps it while the shop stays.
+          areaId:
+            next.areaId !== undefined
+              ? next.areaId
+              : sameId(next.shopId ?? null, urlSelection.shopId)
+                ? urlSelection.areaId ?? null
+                : null,
         },
         mode,
         extra,
       );
     },
-    [commit],
+    [commit, urlSelection.areaId, urlSelection.shopId],
   );
 
   const registerSpec = useCallback((id: string, next: PageScopeSpec | null) => {
@@ -577,6 +679,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     if (urlSelection.companyId) params.set(SCOPE_PARAM.company, urlSelection.companyId);
     if (urlSelection.shopId) params.set(SCOPE_PARAM.shop, urlSelection.shopId);
     if (urlSelection.machineId) params.set(SCOPE_PARAM.machine, urlSelection.machineId);
+    if (urlSelection.shopId && urlSelection.areaId) params.set(SCOPE_PARAM.area, urlSelection.areaId);
     const query = params.toString();
     return query ? `?${query}` : '';
   }, [urlSelection]);
@@ -594,6 +697,10 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       company,
       shop,
       machine,
+      area,
+      areas,
+      areasLoading: areasQuery.isLoading,
+      setArea,
       companyPath: path,
       companies,
       shops,
@@ -614,6 +721,10 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       resolution,
     }),
     [
+      area,
+      areas,
+      areasQuery.isLoading,
+      setArea,
       clear,
       companies,
       companiesQuery.isLoading,
@@ -716,7 +827,13 @@ export function useSyncScopeFromRoute(target: Partial<ScopeSelection>): void {
   const machineId = target.machineId ?? null;
 
   useEffect(() => {
-    const next: ScopeSelection = { companyId, shopId, machineId };
+    // A drill-down route says nothing about the point of sale: it stays while the shop does.
+    const next: ScopeSelection = {
+      companyId,
+      shopId,
+      machineId,
+      areaId: shopId && sameId(shopId, selection.shopId) ? selection.areaId ?? null : null,
+    };
     if (sameSelection(next, selection)) return;
     setScope(next, 'replace');
   }, [companyId, machineId, selection, setScope, shopId]);

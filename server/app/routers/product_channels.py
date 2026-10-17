@@ -63,8 +63,16 @@ def channel_condition(model: Any, channel: str, on: bool):
     return cond if on else not_(cond)
 
 
+#: "הערה בקיוסק" in bulk (`kioskNotes`): allow, block, or back to the category's (app/services/kiosk_notes.py).
+KIOSK_NOTES_VALUES = {"on": True, "off": False, "inherit": None}
+#: "בקיוסק: פתיחת חלון" in bulk (`kioskOpen`): as the kiosk (null), always the window, straight in (kiosk_tap.py).
+KIOSK_OPEN_VALUES = {"kiosk": None, "window": "window", "direct": "direct"}
+
+
 def _clean_set(v):
-    if not isinstance(v, dict) or not v:
+    if v is None or v == {}:
+        return {}
+    if not isinstance(v, dict):
         raise ValueError("set at least one channel")
     out = {}
     for key, value in v.items():
@@ -99,8 +107,26 @@ class BulkIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     selection: BulkSelection
-    set: Dict[str, bool]
+    set: Dict[str, bool] = Field(default_factory=dict)
+    #: "הערה בקיוסק": "on" | "off" | "inherit" — instead of (or with) the channels.
+    kiosk_notes: Optional[str] = Field(None, alias="kioskNotes")
+    #: "בקיוסק: פתיחת חלון": "kiosk" | "window" | "direct".
+    kiosk_open: Optional[str] = Field(None, alias="kioskOpen")
     dry_run: bool = Field(True, alias="dryRun")
+
+    @field_validator("kiosk_open")
+    @classmethod
+    def _kiosk_open(cls, v):
+        if v is not None and v not in KIOSK_OPEN_VALUES:
+            raise ValueError("kioskOpen must be kiosk, window or direct")
+        return v
+
+    @field_validator("kiosk_notes")
+    @classmethod
+    def _kiosk_notes(cls, v):
+        if v is not None and v not in KIOSK_NOTES_VALUES:
+            raise ValueError("kioskNotes must be on, off or inherit")
+        return v
 
     @field_validator("set", mode="before")
     @classmethod
@@ -134,7 +160,7 @@ def _matching_query(db: Session, user: User, tenant_id, f: BulkFilter):
 
 def _row(p: Product) -> Dict[str, Any]:
     return {"id": str(p.id), "name": p.name, "categoryId": str(p.category_id) if p.category_id else None,
-            "appearsIn": list(PC.appears_in(p))}
+            "appearsIn": list(PC.appears_in(p)), "kioskNotes": p.kiosk_notes, "kioskOpen": p.kiosk_open}
 
 
 @router.get("/list")
@@ -175,6 +201,8 @@ def bulk_product_channels(
 ):
     if not body.dry_run and current_user.role not in _CATALOG_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    if not body.set and body.kiosk_notes is None and body.kiosk_open is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="set a channel, kioskNotes or kioskOpen")
     sel = body.selection
     if (sel.ids is None) == (sel.all_matching is None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="choose ids or allMatching")
@@ -212,10 +240,13 @@ def bulk_product_channels(
         allowed.append(p)
 
     changes = []
+    notes_to = KIOSK_NOTES_VALUES.get(body.kiosk_notes) if body.kiosk_notes is not None else None
     for p in allowed:
         before = list(PC.appears_in(p))
-        after = _after(p, body.set)
-        if after != before:
+        after = _after(p, body.set) if body.set else before
+        notes_change = body.kiosk_notes is not None and p.kiosk_notes != notes_to
+        open_change = body.kiosk_open is not None and p.kiosk_open != KIOSK_OPEN_VALUES[body.kiosk_open]
+        if after != before or notes_change or open_change:
             changes.append((p, before, after))
     result = {
         "matched": len(products) + len(missing),
@@ -225,14 +256,26 @@ def bulk_product_channels(
         "refusedSample": refused[:SAMPLE_SIZE] + [{"id": m, "name": None, "reason": "not_found"} for m in missing[:SAMPLE_SIZE]],
         "sample": [{"id": str(p.id), "name": p.name, "before": b, "after": a} for p, b, a in changes[:SAMPLE_SIZE]],
         "set": body.set,
+        "kioskNotes": body.kiosk_notes,
+        "kioskOpen": body.kiosk_open,
         "applied": False,
     }
     if body.dry_run or not changes:
         return result
     now = datetime.now(timezone.utc)
-    for p, _before, after in changes:
-        PC.apply(p, appears=after)
+    for p, before, after in changes:
+        if after != before:
+            PC.apply(p, appears=after)
+        if body.kiosk_notes is not None:
+            p.kiosk_notes = notes_to
+        if body.kiosk_open is not None:
+            p.kiosk_open = KIOSK_OPEN_VALUES[body.kiosk_open]
         p.updated_at = now
+    if body.kiosk_notes is not None or body.kiosk_open is not None:
+        # "הערה בקיוסק" rides the menu block (app/services/kiosk_notes.py).
+        from app.services import menu as menu_svc
+
+        menu_svc.bump(db, active_tenant_id)
     db.commit()
     notify_all_machines_for_tenant(db, str(active_tenant_id), reason="product_change")
     logger.info("product channels bulk set=%s changed=%d refused=%d by=%s",

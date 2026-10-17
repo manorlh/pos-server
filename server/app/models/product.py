@@ -58,6 +58,12 @@ class Product(Base):
     # Item-ticket ("שובר") mode. NULL inherits the category's `ticket_mode`; any value
     # (including "off") wins over it. See app/services/item_ticket.py.
     ticket_mode = Column(String(16), nullable=True)
+    # "הערה בקיוסק" (app/services/kiosk_notes.py): the kiosk offers a note on this dish. NULL inherits
+    # the category's (and up the tree); true / false wins. Nothing set anywhere: no note (owner 17.10).
+    kiosk_notes = Column(Boolean, nullable=True)
+    # "בקיוסק: פתיחת חלון" (app/services/kiosk_tap.py): NULL inherits the category's (none — as the kiosk's
+    # "הוספה מהירה"); "window" — a tap always opens the dish; "direct" — straight in when nothing must be chosen.
+    kiosk_open = Column(String(16), nullable=True)
     # An entry ticket ("כרטיס כניסה"): how many entries one unit grants. More than 1 prints
     # that many separate tickets per unit ("כניסה 2/4"), whatever the ticket mode. NULL or 1
     # is an ordinary product.

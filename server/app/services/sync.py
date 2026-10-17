@@ -29,6 +29,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.category import Category, CatalogLevel as CategoryCatalogLevel
 from app.models.customer import Customer
 from app.models.pos_machine import POSMachine
+from app.services import price_policy as _prices
+from app.services import product_areas as _areas
 from app.services.machine_health import (
     normalize_battery_percent,
     normalize_battery_status,
@@ -203,9 +205,14 @@ def _serialize_merged_product(
     area_changed_at: Optional[datetime] = None,
     blocks: Any = None,
     is_kiosk: bool = False,
+    area_id: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
+
+    `area_id`: the point of sale the device stands in (None = none) — a product the shop sells only in other
+    points of sale reaches it unlisted, and a point of sale's own price wins over the shop's
+    (P:/specs/chain-areas.md §6, §9; app/services/product_areas.py, app/services/price_policy.py).
 
     `company_override` must be the row of the *shop's own* company
     (`availability.company_level_company_id`), `area_override` the row of the area the
@@ -231,8 +238,8 @@ def _serialize_merged_product(
     active_blocks = list(getattr(blocks, "active", None) or [])
 
     row_id = local.id if local is not None else global_p.id
-    price = float(override.price) if override and override.price is not None else float(global_p.price)
-    shop_listed = override.is_listed if override is not None else True
+    price, price_level = _prices.resolve(global_p, override, area_override)
+    shop_listed = (override.is_listed if override is not None else True) and _areas.sold_in_area(override, area_id)
     base_in_stock = local.in_stock if local is not None else global_p.in_stock
     effective_in_stock = bool(shop_listed and base_in_stock)
     stock_qty = local.stock_quantity if local is not None else global_p.stock_quantity
@@ -271,6 +278,8 @@ def _serialize_merged_product(
         "name": global_p.name,
         "description": global_p.description,
         "price": price,
+        # Where the price came from: "area" | "shop" | "base" (the chain's) — chain-areas §9.
+        "priceLevel": price_level,
         "sku": global_p.sku,
         "globalSku": global_p.global_sku,
         "imageUrl": image_url,
@@ -338,6 +347,8 @@ def _serialize_merged_product(
         # On this till's own list, whatever the till's mode — see machine_catalog.
         "inMachineCatalog": bool(catalog_item is not None and catalog_item.is_included),
         "shopListed": shop_listed,
+        # "שיוך מוצר לנקודות מכירה" (chain-areas §6, §9.6): the shop's points of sale where it is sold; null — all.
+        "soldInAreas": sorted(_areas.stored_ids(override)) if _areas.stored_ids(override) is not None else None,
         "createdAt": (local.created_at if local else global_p.created_at).isoformat()
         if (local and local.created_at) or global_p.created_at
         else None,
@@ -651,6 +662,7 @@ def _products_merged_for_shop_machine(
             area_changed_at=area_changed_at if isinstance(area_changed_at, datetime) else None,
             blocks=product_blocks.get(str(g.id)),
             is_kiosk=device_is_kiosk,
+            area_id=getattr(machine, "area_id", None),
         )
         if row is not None:
             out.append(row)

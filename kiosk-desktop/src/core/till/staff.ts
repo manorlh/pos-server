@@ -104,14 +104,58 @@ export const TEXT = {
   locked: (ms: number) => `יותר מדי ניסיונות. נסו שוב בעוד ${Math.max(1, Math.ceil(ms / 1000))} שניות.`,
   noApprover: (code: string) => `אין בסניף מנהל עם ההרשאה "${permLabel(code)}"`,
   managerWrong: 'קוד מנהל שגוי',
+  notInArea: 'העובד לא משויך לנקודת המכירה של הקופה',
 } as const;
 
-/** The shop's users who may sign in here: active, of this shop, with a PIN. */
-export function loginCandidates(users: readonly RosterUser[], shopId: string | null | undefined): RosterUser[] {
+/**
+ * "עובדי קופה לפי נקודת מכירה" (P:/specs/chain-areas.md §8): the roster's `areaIds` — null / absent: every device of the
+ * shop (an older cloud sends none); a list: only a device standing in one of those points of sale. A device in no point of
+ * sale refuses a user with a list (restricted is restricted). An empty list is no list (the cloud stores none as null).
+ */
+export function allowedInArea(user: Pick<RosterUser, 'areaIds'>, deviceAreaId: string | null | undefined): boolean {
+  const ids = user.areaIds;
+  if (!Array.isArray(ids) || ids.length === 0) return true;
+  if (!deviceAreaId) return false;
+  const here = deviceAreaId.toLowerCase();
+  return ids.some((id) => typeof id === 'string' && id.toLowerCase() === here);
+}
+
+/** `{id, name}` of a point of sale as the cloud sends it (`machines/me` / the settings sync `area`); null for none. */
+export function areaRefOf(v: unknown): { id: string; name: string | null } | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (typeof r.id !== 'string' || !r.id) return null;
+  return { id: r.id, name: typeof r.name === 'string' ? r.name : null };
+}
+
+/**
+ * The device's point of sale: the settings sync's `area` once it said one (null there = in none — a move out counts), else
+ * `machines/me`'s (`undefined`: the settings never carried the key — an older copy or cloud).
+ */
+export function deviceAreaOf(settingsArea: unknown, machineArea: unknown): { id: string; name: string | null } | null {
+  return settingsArea !== undefined ? areaRefOf(settingsArea) : areaRefOf(machineArea);
+}
+
+/** deviceAreaOf's id. */
+export function deviceAreaIdOf(settingsArea: unknown, machineArea: unknown): string | null {
+  return deviceAreaOf(settingsArea, machineArea)?.id ?? null;
+}
+
+/** The shop's users who may sign in on the shop's devices: active, of this shop, with a PIN (the point of sale aside). */
+function shopCandidates(users: readonly RosterUser[], shopId: string | null | undefined): RosterUser[] {
   return users.filter((u) => u.isActive && !!u.pinHash && ofShop(u, shopId));
 }
 
-export type LoginOutcome = 'granted' | 'wrong' | 'locked_out' | 'locked' | 'no_staff' | 'short';
+/**
+ * The shop's users who may sign in here: active, of this shop, with a PIN — and allowed on this device's point of sale
+ * (`areaId`: the device's, null when it stands in none; omitted — the point of sale is not checked).
+ */
+export function loginCandidates(users: readonly RosterUser[], shopId: string | null | undefined, areaId?: string | null): RosterUser[] {
+  const shop = shopCandidates(users, shopId);
+  return areaId === undefined ? shop : shop.filter((u) => allowedInArea(u, areaId));
+}
+
+export type LoginOutcome = 'granted' | 'wrong' | 'locked_out' | 'locked' | 'no_staff' | 'short' | 'not_in_area';
 
 export interface LoginDecision {
   outcome: LoginOutcome;
@@ -121,10 +165,16 @@ export interface LoginDecision {
   message: string | null;
 }
 
-/** One try at the lock screen. A running lock refuses without looking at the PIN; five wrong ones lock it for a minute. */
+/**
+ * One try at the lock screen. A running lock refuses without looking at the PIN; five wrong ones lock it for a minute.
+ * A known code of an employee not allowed on this device's point of sale (`areaId`, §8) is refused in words of its own —
+ * not a wrong code (no try spent).
+ */
 export async function tryLogin(input: {
   users: readonly RosterUser[];
   shopId: string | null | undefined;
+  /** The device's point of sale (null: none); omitted — not checked. */
+  areaId?: string | null;
   pin: string;
   lock: ExitLock | null | undefined;
   nowMs: number;
@@ -134,11 +184,17 @@ export async function tryLogin(input: {
   const lockedFor = Math.max(0, lock.lockedUntilMs - input.nowMs);
   const base = { user: null, lock, triesLeft: Math.max(0, MAX_FAILURES - lock.failures) };
   if (lockedFor > 0) return { ...base, outcome: 'locked', triesLeft: 0, message: TEXT.locked(lockedFor) };
-  const candidates = loginCandidates(input.users, input.shopId);
+  const candidates = shopCandidates(input.users, input.shopId);
   if (candidates.length === 0) return { ...base, outcome: 'no_staff', message: TEXT.loginNoStaff };
   const pin = String(input.pin ?? '').trim();
   if (pin.length < 4) return { ...base, outcome: 'short', message: TEXT.loginShort };
-  const user = await findByPin(candidates, pin, input.compare);
+  // Those allowed here first (two employees may share a code); a code that is only someone else's is refused by name.
+  const here = input.areaId === undefined ? candidates : candidates.filter((u) => allowedInArea(u, input.areaId));
+  const user = await findByPin(here, pin, input.compare);
+  if (!user && here.length < candidates.length) {
+    const elsewhere = await findByPin(candidates.filter((u) => !here.includes(u)), pin, input.compare);
+    if (elsewhere) return { ...base, outcome: 'not_in_area', message: TEXT.notInArea };
+  }
   if (user) return { outcome: 'granted', user, lock: NO_LOCK, triesLeft: MAX_FAILURES, message: null };
   const failures = lock.failures + 1;
   if (failures >= MAX_FAILURES) {

@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * The dashboard's single scope control: organization ▸ company ▸ shop ▸ device.
+ * The dashboard's single scope control: organization ▸ company ▸ shop ▸ point of sale ▸ device,
+ * under a "עובדים על" chip that names the whole selection (P:/specs/chain-areas.md §2).
  *
  * Four selects in a row, each narrowed by the one before it. Choosing a level
  * clears everything deeper (the provider enforces that; the bar only has to show
@@ -15,11 +16,12 @@
  */
 
 import { useTranslations } from 'next-intl';
-import { Building2, Layers, Monitor, RotateCcw, Store } from 'lucide-react';
+import { Building2, Layers, MapPin, Monitor, RotateCcw, Store } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useScope } from '@/lib/scope';
 import { companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
 import { SCOPE_LEVEL_ORDER, levelEnabledForSpec } from '@/lib/pageScope';
+import { areaOptionsFor, mayPickWholeShop, workingOnLabel } from '@/lib/areaScope';
 import type { ScopeLevel } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -81,6 +83,7 @@ export function ScopeBar() {
   const t = useTranslations('scope');
   const scope = useScope();
   const tenants = useAuth((s) => s.tenants);
+  const access = useAuth((s) => s.user?.dashboardAccess ?? null);
   const activeTenantId = useAuth((s) => s.activeTenantId);
 
   const tenantName =
@@ -124,6 +127,34 @@ export function ScopeBar() {
     ...scope.machineOptions.map((machine) => ({ value: machine.id, label: machine.name })),
   ];
 
+  // "נקודת מכירה" (P:/specs/chain-areas.md §2): only when the shop has live points of sale. A manager
+  // of points of sale gets only theirs, never "כל הנקודות", and a locked picker when they have one.
+  const areaOptions = areaOptionsFor(scope.areas, access);
+  const wholeShopAllowed = mayPickWholeShop(access);
+  const showArea = Boolean(scope.shopId) && areaOptions.length > 0;
+  const areaLocked = !wholeShopAllowed && areaOptions.length === 1;
+  const areaLabel = (a: { name: string; archivedAt?: string | null }) =>
+    a.archivedAt ? t('archivedArea', { name: a.name }) : a.name;
+  const areaItems = [
+    ...(wholeShopAllowed ? [{ value: ALL, label: t('allAreas') }] : []),
+    ...areaOptions.map((a) => ({ value: a.id, label: a.name })),
+    // A point of sale the shop no longer lists (archived, from a report link) still reads by name.
+    ...(scope.area && !areaOptions.some((a) => a.id === scope.area?.id)
+      ? [{ value: scope.area.id, label: areaLabel(scope.area) }]
+      : []),
+  ];
+
+  // "עובדים על: <רשת> › <סניף> › <נקודה|כל הנקודות>"
+  const workingOn = workingOnLabel(
+    [
+      scope.company?.name ?? (scope.companyId ? null : tenantName),
+      scope.shop?.name ?? (scope.shopId ? null : t('allShops')),
+    ],
+    t('allAreas'),
+    showArea,
+    scope.area ? areaLabel(scope.area) : null,
+  );
+
   const hasSelection = Boolean(scope.companyId || scope.shopId || scope.machineId);
 
   return (
@@ -131,6 +162,12 @@ export function ScopeBar() {
       aria-label={t('barLabel')}
       className="rounded-lg border bg-card p-3 shadow-sm"
     >
+      <p className="mb-2 flex flex-wrap items-center gap-1.5 text-sm" data-testid="scope-working-on">
+        <span className="text-muted-foreground">{t('workingOn')}</span>
+        <Badge variant="secondary" className="max-w-full truncate font-medium">
+          {workingOn}
+        </Badge>
+      </p>
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-[9rem] space-y-1">
           <Label className="flex items-center gap-1.5 text-xs">
@@ -231,6 +268,34 @@ export function ScopeBar() {
             </SelectContent>
           </Select>
         </ScopeField>
+
+        {showArea ? (
+          <ScopeField
+            label={t('area')}
+            icon={MapPin}
+            disabled={!shopEnabled || areaLocked}
+            disabledHint={areaLocked ? t('areaLocked') : t('notUsedHere')}
+            required={false}
+            requiredHint={t('requiredHere')}
+          >
+            <Select
+              value={scope.areaId ?? (wholeShopAllowed ? ALL : null)}
+              onValueChange={(v) => scope.setArea(!v || v === ALL ? null : (v as string))}
+              items={areaItems}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={wholeShopAllowed ? t('allAreas') : t('area')} />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {areaItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value} label={item.label}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </ScopeField>
+        ) : null}
 
         <ScopeField
           label={t('machine')}

@@ -40,6 +40,8 @@ export interface AccessTemplate {
   sections: SectionGrants;
   builtin: boolean;
   fullAccess: boolean;
+  /** "מנהל נקודת מכירה" (P:/specs/chain-areas.md §3): the user must be given at least one point of sale. */
+  needsAreas?: boolean;
 }
 
 export interface AccessAuditRow {

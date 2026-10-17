@@ -114,6 +114,7 @@ import {
   type ReturnVia,
   type RosterUser,
 } from '../core/desktopExit';
+import { deviceAreaOf } from '../core/till/staff';
 import { DESKTOP_IDLE_RETURN_KEY, idleReturnMinutesFor } from '@dash-lib/desktopIdleReturn';
 import { kioskCloseDay, newSaleAllowed, SHOP_LOCK_FLOW, SHOP_LOCK_TEXT } from '@dash-lib/shopActive';
 import { CLOSE_DAY_TEXT, closeDayCandidates, closeDayZText } from '../core/shopLock';
@@ -4147,6 +4148,16 @@ export class KioskService extends EventEmitter {
   shopIdHere(): string | null {
     const me = this.cloud.machine()?.shopId;
     return this.cloud.credentials()?.shopId ?? (typeof me === 'string' ? me : null);
+  }
+
+  /** The point of sale this device stands in (chain-areas §8: who may sign in here): the settings sync's, else machines/me; null for none. */
+  areaIdHere(): string | null {
+    return this.areaHere()?.id ?? null;
+  }
+
+  /** The point of sale this device stands in, `{id, name}` (areaIdHere's). */
+  areaHere(): { id: string; name: string | null } | null {
+    return deviceAreaOf(this.cloud.settings().area, this.cloud.machine()?.area);
   }
 
   /** Whoever opened the admin, if their role (read again now) allows leaving the kiosk (`DESKTOP_EXIT`). */

@@ -33,6 +33,11 @@ class Category(Base):
     # Item-ticket ("שובר") printing for products of this category: "per_unit",
     # "per_line", "per_sale" or "off". NULL is "off". See app/services/item_ticket.py.
     ticket_mode = Column(String(16), nullable=True)
+    # "הערה בקיוסק" for its dishes (app/services/kiosk_notes.py): NULL inherits the parent's; none set
+    # up the tree — off. A product's own value wins.
+    kiosk_notes = Column(Boolean, nullable=True)
+    # "בקיוסק: פתיחת חלון" for its dishes (app/services/kiosk_tap.py): NULL inherits the parent's.
+    kiosk_open = Column(String(16), nullable=True)
     # The course its products' table lines are fired in by default (docs/SPEC_MENU_MODIFIERS.md
     # §8); null inherits the parent's. Not a key: a deleted course reads as none.
     course_id = Column(UUID(as_uuid=True), nullable=True)

@@ -6,6 +6,7 @@ import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
 import type { LicenseProduct } from './deviceLicense';
 import type { PresetDiscount } from './presetDiscounts';
+import type { OpenFormatProductionReport } from './taxOpenFormatForm';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -143,6 +144,11 @@ export interface ScopeSelection {
   companyId: string | null;
   shopId: string | null;
   machineId: string | null;
+  /**
+   * "נקודת מכירה" (P:/specs/chain-areas.md §2): a point of sale of the selected shop, or null — "כל הנקודות".
+   * Not a level of its own: it narrows the shop level (`?area=`), and only with a shop.
+   */
+  areaId?: string | null;
 }
 
 /**
@@ -1267,6 +1273,10 @@ export interface Category {
   voucherId?: string;
   /** Null/absent is "off". */
   ticketMode?: TicketMode | null;
+  /** "הערה בקיוסק" for its dishes (lib/kioskNotes.ts): null inherits the parent's; none set — off. */
+  kioskNotes?: boolean | null;
+  /** "בקיוסק: פתיחת חלון" for its dishes (lib/kioskLayout.ts kioskOpenFor): null inherits the parent's. */
+  kioskOpen?: 'window' | 'direct' | null;
   /**
    * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): every product here and beneath it needs a
    * manager's code at the till and is not shown at a kiosk. The category's own flag.
@@ -1309,6 +1319,10 @@ export interface Product {
   voucherId?: string;
   /** The product's own mode; null/absent inherits its category's. */
   ticketMode?: TicketMode | null;
+  /** "הערה בקיוסק" (lib/kioskNotes.ts): true / false; null inherits its category's (none set — off). */
+  kioskNotes?: boolean | null;
+  /** "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts tapPathOf): null — as its category / the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
   /** An entry ticket: entries per unit (> 1 prints that many tickets per unit). Null/1 = ordinary. */
   ticketEntries?: number | null;
   trackStock?: boolean;
@@ -1592,6 +1606,8 @@ export interface TaxOpenFormatPreview {
   flaggedDocuments?: { transactionId: string; documentNumber: string | null; code: string; text: string }[];
   /** Duplicate copies left out of the file (each document once). */
   excludedDuplicateCopies?: number;
+  /** The production report (1.31 §2.6) of the preview run; absent on an older server. */
+  productionReport?: OpenFormatProductionReport;
 }
 
 export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';

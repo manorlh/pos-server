@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
+import { sameId } from '@/lib/entityLookup';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { useScope, useScopeQuery } from '@/lib/scope';
@@ -180,10 +181,16 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   // Null until changed: "קיוסק" alone when the context's device is a kiosk, else the quick defaults' channels.
   const [channelsPick, setChannelsPick] = useState<BlockChannel[] | null>(null);
   const contextMachine = context?.machineId ?? null;
-  // Null until changed (and with no device / point of sale in the context): the quick defaults' level.
-  const [levelPick, setLevelPick] = useState<Level | null>(contextMachine ? 'devices' : scope.areaId ? 'areas' : null);
+  // The top bar's level is the sheet's (P:/specs/chain-areas.md §10): a point of sale → "נקודות מכירה" on it,
+  // "כל הנקודות" → the whole shop. Null until changed (and with neither): the quick defaults' level.
+  const barArea =
+    scope.areaId ?? (scopeCtx.areaId && sameId(scopeCtx.shopId, shopId) ? scopeCtx.areaId : null);
+  const barOnShop = !!scopeCtx.shopId && sameId(scopeCtx.shopId, shopId);
+  const [levelPick, setLevelPick] = useState<Level | null>(
+    contextMachine ? 'devices' : barArea ? 'areas' : barOnShop ? 'shop' : null,
+  );
   const [picked, setPicked] = useState<Set<string>>(
-    () => new Set([contextMachine ?? scope.machineId, scope.areaId].filter((x): x is string => !!x)),
+    () => new Set([contextMachine ?? scope.machineId, barArea].filter((x): x is string => !!x)),
   );
   const [eventId, setEventId] = useState<string | null>(scope.eventId ?? null);
   const [look, setLook] = useState<KioskDisplay | null>(null);
@@ -375,6 +382,15 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
                     ברמה הזו החסימה חלה רק על הקופות והקיוסקים; הזמנות אונליין ותפריט דיגיטלי נחסמים ברמת סניף, נקודת מכירה או חברה.
                   </p>
                 ) : null}
+                {level === 'shop' && (t?.areas.length ?? 0) > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setLevelPick('areas')}
+                    className="min-h-11 text-sm font-medium text-primary hover:underline"
+                  >
+                    בנקודות מכירה מסוימות…
+                  </button>
+                ) : null}
                 {level === 'areas' ? listFor((t?.areas ?? []).map((a) => ({ id: a.id, label: a.name }))) : null}
                 {level === 'devices'
                   ? listFor(devices.map((d) => ({ id: d.id, label: `${d.isKiosk ? 'קיוסק' : 'קופה'} · ${named(d).label}` })))
@@ -472,7 +488,15 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
             סגור
           </Button>
           <Button onClick={() => save.mutate()} disabled={!canSave} className="min-h-11">
-            {save.isPending ? 'שומר…' : kind === 'blocked' ? 'חסום' : 'סמן אזל'}
+            {save.isPending
+              ? 'שומר…'
+              : level === 'shop'
+                ? kind === 'blocked'
+                  ? 'חסום בכל הסניף'
+                  : 'אזל בכל הסניף'
+                : kind === 'blocked'
+                  ? 'חסום'
+                  : 'סמן אזל'}
           </Button>
         </DialogFooter>
       </DialogContent>

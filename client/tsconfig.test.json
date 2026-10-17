@@ -75,6 +75,7 @@
     "src/lib/kioskLayout.ts",
     "src/lib/kioskLayout.test.ts",
     "src/lib/kioskCountBadge.test.ts",
+    "src/lib/kioskNotes.test.ts",
     "src/lib/kioskInfoButton.test.ts",
     "src/lib/kioskTopBar.ts",
     "src/lib/kioskTopBar.test.ts",
@@ -104,6 +105,10 @@
     "src/lib/kioskMenus.test.ts",
     "src/lib/kioskSellable.ts",
     "src/lib/kioskSellable.test.ts",
+    "src/lib/areaScope.ts",
+    "src/lib/areaScope.test.ts",
+    "src/lib/bulkPrice.ts",
+    "src/lib/bulkPrice.test.ts",
     "src/lib/kioskItemFlow.ts",
     "src/lib/kioskItemFlow.test.ts",
     "src/lib/addonRole.ts",
@@ -400,6 +405,8 @@
     "src/lib/cashStations.ts",
     "src/lib/cashStations.test.ts",
     "src/lib/presetDiscounts.ts",
-    "src/lib/presetDiscounts.test.ts"
+    "src/lib/presetDiscounts.test.ts",
+    "src/lib/catalogPicker.ts",
+    "src/lib/catalogPicker.test.ts"
   ]
 }

@@ -314,6 +314,7 @@ export class SyncEngine {
       businessInfo: (b.businessInfo as Record<string, unknown>) ?? null,
       settingsUpdatedAt: typeof b.settingsUpdatedAt === 'string' ? b.settingsUpdatedAt : null,
       serverTime: typeof b.serverTime === 'string' ? b.serverTime : null,
+      ...('area' in b ? { area: b.area ?? null } : {}),
     });
     this.hooks.onSettings();
   }

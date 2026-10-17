@@ -260,7 +260,7 @@ def visible_machines_query(db: Session, user: User, tenant_id):
     if shops_q is None:
         return None
     shop_ids = shops_q.with_entities(Shop.id)
-    return db.query(POSMachine).filter(
+    query = db.query(POSMachine).filter(
         POSMachine.tenant_id == tenant_id,
         POSMachine.is_active.is_(True),
         POSMachine.shop_id.in_(shop_ids),
@@ -270,6 +270,10 @@ def visible_machines_query(db: Session, user: User, tenant_id):
             else []
         ),
     )
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the devices of their points of sale.
+    from app.services import area_scope
+
+    return area_scope.filter_machine_column(query, db, user, POSMachine.id)
 
 
 def _shop_visible(db: Session, user: User, tenant_id, shop_id) -> bool:
@@ -293,13 +297,25 @@ def resolve_target(db: Session, user: User, tenant_id, level: str, target_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=TARGET_NOT_FOUND)
 
     if level == "company":
+        from app.services import area_scope
+
         allowed = user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR) or (
             user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, entity.id)
+            and not area_scope.narrowed(db, user)
         )
     elif level == "shop":
-        allowed = _shop_visible(db, user, tenant_id, entity.id)
+        from app.services import area_scope
+
+        # A whole shop is never a manager of points of sale's target.
+        allowed = _shop_visible(db, user, tenant_id, entity.id) and not area_scope.narrowed(db, user)
     elif level == "area":
-        allowed = entity.archived_at is None and _shop_visible(db, user, tenant_id, entity.shop_id)
+        from app.services import area_scope
+
+        allowed = (
+            entity.archived_at is None
+            and _shop_visible(db, user, tenant_id, entity.shop_id)
+            and area_scope.area_ok(db, user, entity.id)
+        )
     else:
         visible = visible_machines_query(db, user, tenant_id)
         allowed = visible is not None and visible.filter(POSMachine.id == entity.id).first() is not None

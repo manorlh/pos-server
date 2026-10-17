@@ -559,6 +559,10 @@ def _validate_products(
     return products
 
 
+#: The most products one picker answer carries (the two-pane picker loads the whole catalog once).
+PRODUCTS_LIMIT_MAX = 5000
+
+
 def eligible_products(
     db: Session,
     user: User,
@@ -591,7 +595,7 @@ def eligible_products(
     shop_ids = shop_ids or None
     related = _related_companies(db, company.id)
     group = _company_group(db, company.id)
-    limit = max(1, min(int(limit), 200))
+    limit = max(1, min(int(limit), PRODUCTS_LIMIT_MAX))
     text = (search or "").strip()
 
     def searched(q):
@@ -643,6 +647,9 @@ def eligible_products(
             "name": p.name,
             "price": float(p.price or 0),
             "sku": p.sku,
+            # The picker's tree (its category; a till-made one may have none).
+            "categoryId": str(p.category_id) if getattr(p, "category_id", None) else None,
+            "isActive": bool(getattr(p, "is_available", True)),
             "isWeighed": bool(p.is_weighed),
             "unitLabel": (p.unit_label or DEFAULT_WEIGHT_UNIT) if p.is_weighed else p.unit_label,
             "isOpenPrice": bool(p.is_open_price),

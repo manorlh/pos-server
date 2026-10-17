@@ -99,5 +99,9 @@ def test_the_list_filter_reads_the_model(bw):
 def test_set_is_validated():
     with pytest.raises(Exception):
         R.BulkIn.model_validate({"selection": {"ids": []}, "set": {"web": True}})
+    # Nothing to set (no channel and no "הערה בקיוסק", tests/test_kiosk_notes.py): refused by the route.
+    body = R.BulkIn.model_validate({"selection": {"ids": []}, "set": {}})
     with pytest.raises(Exception):
-        R.BulkIn.model_validate({"selection": {"ids": []}, "set": {}})
+        R.bulk_product_channels(body, current_user=None, active_tenant_id=None, db=None)
+    with pytest.raises(Exception):
+        R.BulkIn.model_validate({"selection": {"ids": []}, "kioskNotes": "maybe"})
