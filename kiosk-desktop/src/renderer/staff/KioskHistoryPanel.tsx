@@ -17,7 +17,7 @@ import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
 import type { AdminAction, AdminActionResult, AdminHistory, HistoryRow } from '../../shared/bridge';
 import { kindLabel, REPRINT_TEXT, ticketStateText, type ReprintKind } from '../../core/kioskReprint';
 import { kiosk } from '../bridge';
-import { PinPad } from './StaffLayer';
+import { PinPad } from './staffParts';
 
 const shekels = (agorot: number) => `₪${(agorot / 100).toFixed(2)}`;
 const two = (n: number) => String(n).padStart(2, '0');

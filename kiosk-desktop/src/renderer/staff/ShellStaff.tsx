@@ -13,23 +13,13 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { resolveKioskConfig, resolveThemeColors } from '@dash-lib/kioskConfig';
-import type { PreviewModel } from '@kiosk-shared/index';
 import type { KioskView } from '../../shared/bridge';
 import { shell } from '../roles/shellBridge';
 import { StaffLayer } from './StaffLayer';
 import { AdminHoldBar, useAdminCornerHold } from './adminHold';
+import { staffModel } from './staffParts';
 
-let neutral: PreviewModel | null = null;
-
-/** The staff screens' look away from the kiosk: the default kiosk theme, light (hairlines, no shadows — a Celeron). */
-export function staffModel(): PreviewModel {
-  if (!neutral) {
-    const cfg = resolveKioskConfig();
-    neutral = { cfg, c: resolveThemeColors(cfg.theme), radius: cfg.theme.cornerRadius, light: true } as unknown as PreviewModel;
-  }
-  return neutral;
-}
+export { staffModel } from './staffParts';
 
 export function ShellStaff({ view, paying = false, children }: { view: KioskView; paying?: boolean; children: ReactNode }) {
   const [open, setOpen] = useState<'none' | 'admin' | 'technician'>('none');

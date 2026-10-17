@@ -4,6 +4,7 @@
  * it never charges anything and never reaches the network.
  */
 
+import { demoTechnicianAction, demoTechnicianSetup } from './technician/technicianDemo';
 import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
 import type { CashPayView, KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
@@ -326,12 +327,14 @@ function webBridge(): KioskBridge {
         terminal: admin.terminal,
         update: { current: '0.5.11', available: '0.5.12', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
         quickSupport: null,
+        // The rest of the screen (technician/technicianDemo.ts): made-up facts.
+        setup: demoTechnicianSetup(),
       };
     },
     cashOwedChoice: async () => undefined,
     cashSplit: async () => ({ ok: false, message: 'web demo' }),
     cashQuestion: async () => undefined,
-    technicianAction: async () => ({ ok: false, message: 'web demo' }),
+    technicianAction: (a) => demoTechnicianAction(a),
     on: (event, fn) => {
       const set = listeners.get(event) ?? new Set();
       listeners.set(event, set);

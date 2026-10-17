@@ -251,7 +251,9 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     sendPreset(presetId);
   };
   const main = (() => {
-    if (s.session.locked || !s.session.cashier) return <LockScreen demo={host.demo} onLogin={(pin) => void run('session.login', { pin })} />;
+    if (s.session.locked || !s.session.cashier)
+      // "טכנאי" under the pad, as Android's login screen (the six taps work here too).
+      return <LockScreen demo={host.demo} onLogin={(pin) => void run('session.login', { pin })} onTechnician={host.ui.openTechnician ? () => host.ui.openTechnician!() : undefined} />;
     if (s.checkout.phase !== 'idle') {
       return (
         <CheckoutScreen
