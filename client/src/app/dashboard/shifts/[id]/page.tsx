@@ -25,7 +25,8 @@ import { formatCurrency, formatDate, formatDateTimeInZone, moneyValue } from '@/
 import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { Shift } from '@/lib/types';
-import { cardTipsFromDrawerOf, shiftDrawerCash } from '@/lib/drawerTips';
+import { ShiftCashWithTips } from '@/components/dashboard/z-report/cash-with-tips';
+import { deviceCashOf } from '@/lib/drawerTips';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { PeriodTransmissionSummary } from '@/components/dashboard/machines/card-transmission';
 import {
@@ -134,8 +135,6 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const late = shift.lateDocuments ?? 0;
   const basis = shift.reconstructionBasis ?? null;
   const till = shift.tillTotals ?? null;
-  // "טיפ באשראי משולם מהמזומן": what the till froze on the close (null when the parameter was off).
-  const tipsFromDrawer = open ? null : cardTipsFromDrawerOf(till);
   const offline = offlineOf(shift.offline);
   // The till's X against the cloud's, key by key — when the two disagree.
   const mismatch: ShiftMismatchRow[] =
@@ -308,6 +307,10 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           <CardContent className="space-y-1 text-sm">
             <MoneyRow label={t('detail.openingCash')} value={shift.openingCash} />
             <MoneyRow label={t('detail.cashTaken')} value={totals?.totalCash} />
+            {/* "מזומן במכשיר": inside the cash taken, in the cash device (CashMag / PayLink) — never the drawer. */}
+            {deviceCashOf(totals?.totalDeviceCash) !== null ? (
+              <MoneyRow label={t('detail.deviceCash')} value={totals?.totalDeviceCash} />
+            ) : null}
             <MoneyRow label={t('detail.cashTips')} value={totals?.totalCashTips} />
             <MoneyRow label={t('detail.expectedCash')} value={shift.expectedCash} strong />
             <MoneyRow label={t('detail.countedCash')}>
@@ -316,16 +319,18 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
             <MoneyRow label={t('detail.overShort')}>
               {open ? '—' : <OverShort value={shift.discrepancy} />}
             </MoneyRow>
-            {tipsFromDrawer !== null ? (
-              <>
-                <MoneyRow label={t('detail.cardTipsFromDrawer')} value={tipsFromDrawer} />
-                <MoneyRow
-                  label={t('detail.drawerCash')}
-                  value={shiftDrawerCash(totals?.totalCash, totals?.totalCashTips, tipsFromDrawer)}
-                  strong
-                />
-              </>
-            ) : null}
+            {/* "מזומן במגירה כולל טיפים" (x-z-cash-with-tips §1): always — the card tips lines from what the
+                close froze (paid, owed to staff, the mode), in place of the old two rows. */}
+            <ShiftCashWithTips
+              shift={{
+                openingCash: shift.openingCash,
+                totalCash: totals?.totalCash,
+                totalDeviceCash: totals?.totalDeviceCash,
+                totalCashTips: totals?.totalCashTips,
+                tillTotals: till,
+                open,
+              }}
+            />
             {!open && shift.countedCash == null ? (
               <p className="text-muted-foreground pt-1 text-xs">
                 {shift.unattended ? t('detail.uncountedUnattended') : t('detail.uncounted')}

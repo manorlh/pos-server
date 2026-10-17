@@ -28,7 +28,7 @@ function Rows({ rows }: { rows: ShopXPrintSection['rows'] }) {
   return (
     <dl className="divide-y text-sm">
       {rows.map((r, i) => (
-        <div key={i} className="flex items-baseline justify-between gap-3 py-1">
+        <div key={i} className={`flex items-baseline justify-between gap-3 py-1 ${r.warn ? 'text-red-600 dark:text-red-400' : ''}`}>
           <dt className={r.emphasis ? 'font-semibold' : 'text-muted-foreground'}>{r.label}</dt>
           <dd className={`tabular-nums ${r.emphasis ? 'font-semibold' : ''}`}>{r.value}</dd>
         </div>

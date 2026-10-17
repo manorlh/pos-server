@@ -33,6 +33,7 @@
  * never applied twice. Electron-free: tests drive it over a real KioskService with a fake terminal and printer.
  */
 
+import { paperBannerOf } from '../../core/printerPaper';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { formatShekelSign, ofShekels, times } from '../../core/money';
@@ -5093,6 +5094,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       health: {
         cloud: this.svc.isOffline ? 'offline' : 'online',
         printer: health === 'ok' ? 'ok' : health === 'unknown' ? 'none' : 'error',
+        // "אין נייר במדפסת" (core/printerPaper.ts): a banner on the till until the roll is changed.
+        ...(paperBannerOf(health) ? { paperBanner: paperBannerOf(health) } : {}),
         terminal,
         ...(this.svc.pay.noCard ? { noCard: true } : {}),
         outbox: this.svc.outbox.count(),

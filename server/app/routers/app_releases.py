@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -72,6 +71,7 @@ from app.schemas.app_release import (
 )
 from app.services import app_updates as AU
 from app.services import device_profile
+from app.services import release_storage as RS
 from app.services import till_parameters as TP
 from app.services.apk_manifest import ApkManifestError, read_apk_version
 from app.services.kiosk_web_bundle import BundleError, read_bundle
@@ -85,6 +85,7 @@ router = APIRouter(tags=["app-releases"])
 
 VERSION_NAME_MAX = 64
 _CHUNK = 1024 * 1024
+ANDROID_MEDIA = "application/vnd.android.package-archive"
 
 
 def _now() -> datetime:
@@ -107,8 +108,11 @@ def _live_counts(db: Session) -> dict:
     )
 
 
-def _out(release: AppRelease, assignment_count: int = 0) -> AppReleaseOut:
+def _out(release: AppRelease, assignment_count: int = 0, available: Optional[bool] = None) -> AppReleaseOut:
+    loc = RS.location_of(release)
     return AppReleaseOut(
+        file_available=RS.available(release) if available is None else available,
+        file_storage=loc.kind if loc is not None else None,
         id=release.id,
         platform=AU.release_platform(release),
         version_code=release.version_code,
@@ -123,6 +127,13 @@ def _out(release: AppRelease, assignment_count: int = 0) -> AppReleaseOut:
         bridge_api=getattr(release, "bridge_api", None),
         file_deleted_at=getattr(release, "file_deleted_at", None),
     )
+
+
+def _refuse_missing_file(release: AppRelease) -> None:
+    """`409 app_release_file_missing` — its file is in no storage ("הקובץ לא זמין — יש להעלות
+    מחדש"): it cannot be sent until it is uploaded again."""
+    if not RS.available(release):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_file_missing")
 
 
 def _refuse_deleted_file(release: AppRelease) -> None:
@@ -304,6 +315,57 @@ def _settle_bundle(path: Path, size: int, typed_name: Optional[str], typed_code:
     return manifest.version, manifest.version_code, manifest.bridge_api
 
 
+_EXT = {AU.PLATFORM_WINDOWS: "exe", AU.PLATFORM_WINDOWS7: "exe", AU.PLATFORM_KIOSK_WEB: "zip"}
+_MEDIA = {
+    AU.PLATFORM_WINDOWS: "application/vnd.microsoft.portable-executable",
+    AU.PLATFORM_WINDOWS7: "application/vnd.microsoft.portable-executable",
+    AU.PLATFORM_KIOSK_WEB: "application/zip",
+}
+
+
+def _check_file(platform: str, partial: Path, size: int, typed_name, typed_code, filename, release_id):
+    """The uploaded file checked for its platform: `(versionName, versionCode, bridgeApi,
+    signing cert SHA-256)`, or the 422 that says what is wrong with it."""
+    bridge_api = None
+    if platform == AU.PLATFORM_KIOSK_WEB:
+        name, code, bridge_api = _settle_bundle(partial, size, typed_name, typed_code)
+    elif platform in AU.WINDOWS_PLATFORMS:
+        if size == 0 or not _starts_with_mz(partial):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_installer")
+        name, code = _settle_windows_version(typed_name, typed_code, filename)
+    else:
+        if size == 0 or not zipfile.is_zipfile(partial):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_apk")
+        try:
+            parsed = read_apk_version(str(partial))
+        except ApkManifestError as exc:
+            logger.warning("app release %s: manifest not read (%s)", release_id, exc)
+            parsed = None
+        name, code = _settle_version(typed_name, typed_code, parsed)
+    # The signing certificate's SHA-256 (the provisioning QR's checksum): best effort.
+    cert_sha256 = signing_cert_sha256_or_none(str(partial)) if platform == AU.PLATFORM_ANDROID else None
+    return name, code, bridge_api, cert_sha256
+
+
+def _keep(partial: Path, release_id, ext: str, sha256: str, size: int, platform: str) -> str:
+    """Put the checked upload in release storage (the shared bucket, else local disk): the
+    `file_path` to record. `503 app_release_storage_unavailable` when the bucket refuses it."""
+    try:
+        return RS.store(partial, f"{release_id}.{ext}", sha256, size, _MEDIA.get(platform, ANDROID_MEDIA))
+    except RS.StorageError as exc:
+        logger.error("app release %s: storing the file failed: %s", release_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="app_release_storage_unavailable"
+        )
+
+
+def _discard(file_path: str) -> None:
+    try:
+        RS.remove_stored(file_path)
+    except Exception:  # best effort: an orphan object is harmless, the row is what counts
+        logger.warning("app release file %s left behind", file_path, exc_info=True)
+
+
 # ── Releases ─────────────────────────────────────────────────────────────────
 
 
@@ -347,33 +409,17 @@ def upload_app_release(
     platform = _platform_or_422(platform)
     typed_name = _clean_version_name(version_name)
     release_id = uuid.uuid4()
-    directory = _releases_dir()
-    ext = {AU.PLATFORM_WINDOWS: "exe", AU.PLATFORM_WINDOWS7: "exe", AU.PLATFORM_KIOSK_WEB: "zip"}.get(platform, "apk")
-    partial = directory / f"{release_id}.{ext}.part"
-    final = directory / f"{release_id}.{ext}"
+    ext = _EXT.get(platform, "apk")
+    partial = _releases_dir() / f"{release_id}.{ext}.part"
+    stored: Optional[str] = None
     committed = False
-    bridge_api = None
     try:
         sha256, size = _store_upload(file, partial, get_settings().app_release_max_bytes)
-        if platform == AU.PLATFORM_KIOSK_WEB:
-            name, code, bridge_api = _settle_bundle(partial, size, typed_name, version_code)
-        elif platform in AU.WINDOWS_PLATFORMS:
-            if size == 0 or not _starts_with_mz(partial):
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_installer")
-            name, code = _settle_windows_version(typed_name, version_code, getattr(file, "filename", None))
-        else:
-            if size == 0 or not zipfile.is_zipfile(partial):
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_apk")
-            try:
-                parsed = read_apk_version(str(partial))
-            except ApkManifestError as exc:
-                logger.warning("app release %s: manifest not read (%s)", release_id, exc)
-                parsed = None
-            name, code = _settle_version(typed_name, version_code, parsed)
-        # The signing certificate's SHA-256 (the provisioning QR's checksum): best effort.
-        cert_sha256 = signing_cert_sha256_or_none(str(partial)) if platform == AU.PLATFORM_ANDROID else None
+        name, code, bridge_api, cert_sha256 = _check_file(
+            platform, partial, size, typed_name, version_code, getattr(file, "filename", None), release_id
+        )
         _refuse_taken_version(db, name, platform)
-        os.replace(partial, final)
+        stored = _keep(partial, release_id, ext, sha256, size, platform)
         release = AppRelease(
             id=release_id,
             platform=platform,
@@ -383,7 +429,7 @@ def upload_app_release(
             signing_cert_sha256=cert_sha256,
             bridge_api=bridge_api,
             size_bytes=size,
-            file_path=str(final),
+            file_path=stored,
             notes=(notes or "").strip() or None,
             uploaded_by_user_id=getattr(admin, "id", None),
             is_active=True,
@@ -397,10 +443,10 @@ def upload_app_release(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_version_taken")
         committed = True
     finally:
-        # Nothing is left on disk for an upload that did not become a release.
+        # Nothing is left in storage for an upload that did not become a release.
         _remove(partial)
-        if not committed:
-            _remove(final)
+        if not committed and stored is not None:
+            _discard(stored)
     db.refresh(release)
     return _out(release)
 
@@ -421,7 +467,92 @@ def list_app_releases(
     if platform is not None and platform.strip():
         query = query.filter(AppRelease.platform == _platform_or_422(platform))
     releases = query.order_by(AppRelease.created_at.desc()).all()
-    return [_out(r, counts.get(r.id, 0)) for r in releases]
+    present = RS.availability(releases)
+    return [_out(r, counts.get(r.id, 0), present.get(r.id, False)) for r in releases]
+
+
+@router.get("/app-releases/storage-status")
+def get_app_release_storage_status(_admin: User = Depends(get_current_super_admin)):
+    """
+    Where uploaded release files are kept (app/services/release_storage.py): `backend` "s3" |
+    "local", `shared` (every API machine serves them), `ephemeral` (local disk on Fly: the other
+    machine 404s the file and the next deploy deletes it — the dashboard warns).
+    """
+    return RS.storage_status()
+
+
+@router.post(
+    "/app-releases/{release_id}/file",
+    response_model=AppReleaseOut,
+    response_model_by_alias=True,
+)
+def reupload_app_release_file(
+    release_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    _admin: User = Depends(get_current_super_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    "העלאה מחדש" — attach the build's file again to an existing release whose file is no longer
+    available (e.g. kept on a machine's disk that a deploy wiped). The file is checked as on
+    upload, and must be the SAME build: its SHA-256 equal to the release's (`422
+    app_release_sha_mismatch`), its version the release's (`422 app_release_version_mismatch`).
+    `409 app_release_file_deleted` for a release whose file was deleted on purpose ("מחיקת
+    קובץ"). The devices it is assigned to are told (they may now be offered it again).
+    """
+    release = _release(db, release_id)
+    _refuse_deleted_file(release)
+    platform = AU.release_platform(release)
+    ext = _EXT.get(platform, "apk")
+    partial = _releases_dir() / f"{release.id}.{ext}.reupload-{uuid.uuid4().hex}.part"
+    stored: Optional[str] = None
+    committed = False
+    old_path = release.file_path
+    try:
+        sha256, size = _store_upload(file, partial, get_settings().app_release_max_bytes)
+        if release.sha256 and sha256 != release.sha256.lower():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "app_release_sha_mismatch", "msg": f"Expected SHA-256 {release.sha256}"},
+            )
+        try:
+            name, code, _bridge_api, cert_sha256 = _check_file(
+                platform, partial, size, None, None, getattr(file, "filename", None), release.id
+            )
+        except HTTPException as exc:
+            # The version could not be read (an installer renamed, an APK manifest not parsed):
+            # the SHA-256 already matched, so the release names it.
+            if isinstance(exc.detail, dict) and exc.detail.get("code") in ("windows_version_required", "apk_version_required"):
+                name, code, cert_sha256 = release.version_name, release.version_code, None
+            else:
+                raise
+        if name != release.version_name or code != release.version_code:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "app_release_version_mismatch",
+                    "msg": f"The file is {name} ({code}); the release is {release.version_name} ({release.version_code})",
+                },
+            )
+        stored = _keep(partial, release.id, ext, sha256, size, platform)
+        release.file_path = stored
+        release.size_bytes = size
+        if not release.sha256:
+            release.sha256 = sha256
+        if cert_sha256 and not release.signing_cert_sha256:
+            release.signing_cert_sha256 = cert_sha256
+        db.commit()
+        committed = True
+    finally:
+        _remove(partial)
+        if not committed and stored is not None and stored != old_path:
+            _discard(stored)
+    RS.forget(old_path)
+    db.refresh(release)
+    logger.info("app release %s %s: file uploaded again (%s)", platform, release.version_name, stored)
+    background_tasks.add_task(AU.publish_update_notify, _targets_of_release(db, release.id))
+    return _out(release, _live_counts(db).get(release.id, 0))
 
 
 @router.patch(
@@ -554,7 +685,7 @@ def create_app_release_assignment(
     Send the release to one target — it reaches only the devices of the release's
     platform. The newest assignment at a level wins there, so sending again to the same
     target replaces what it had. `404 <level>_not_found`, `409 app_release_retired`,
-    `409 app_release_file_deleted`.
+    `409 app_release_file_deleted`, `409 app_release_file_missing` (in no storage: upload it again).
 
     * `rolloutPercent` (1..100, default 100; `422 rollout_percent_invalid`) — staged
       rollout: only that share of the target's devices (a fixed hash per device) takes
@@ -574,6 +705,7 @@ def create_app_release_assignment(
     _refuse_deleted_file(release)
     if not release.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_retired")
+    _refuse_missing_file(release)
     rollout_percent = _rollout_percent_or_422(body.rollout_percent)
     window_start, window_end = _install_window_or_422(body.install_window)
     if body.allow_downgrade and AU.release_platform(release) not in AU.DOWNGRADE_PLATFORMS:

@@ -14,13 +14,14 @@
  */
 
 import { ipcMain, protocol, type BrowserWindow } from 'electron';
+import * as electron from 'electron';
 import { createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { DEMO_IPC, DEMO_TILL_URL, demoNavigationAllowed, demoShellUrl, isDemoRole, type DemoRole } from '../../core/demoMode';
 import { handleScheme, textReply } from '../shell/schemeHandler';
 import { resolveAppPath, verifyAppBundleDir, type AppBundleManifest } from '../roles/appBundle';
 import { APP_CSP, ENGINE_PROTOCOLS } from '../roles/till';
-import { attachView, detachView, makeView, type ViewLike } from '../roles/tillElectron';
+import { createOverlayView, electronMajor, type ElectronViewsLike, type OverlayView, type WindowViewsLike } from '../shell/viewCompat';
 
 const MIME: Record<string, string> = {
   html: 'text/html; charset=utf-8',
@@ -53,7 +54,7 @@ export interface DemoShell {
 
 export function startDemoShell(o: DemoShellOptions): DemoShell {
   let role: DemoRole = o.role;
-  let view: ViewLike | null = null;
+  let view: OverlayView<Electron.WebContents> | null = null;
   let parked = false;
   o.log(`demo: ${role} (no service, no cloud, no terminal)`);
 
@@ -86,13 +87,21 @@ export function startDemoShell(o: DemoShellOptions): DemoShell {
   const fit = () => {
     if (!view || win.isDestroyed()) return;
     const b = win.getContentBounds();
-    view.setBounds(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
+    view.fit(parked ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: b.width, height: b.height });
   };
 
   const showTill = () => {
     if (view || !manifest) return;
-    view = makeView(o.preload, o.isDev);
-    attachView(win, view);
+    // The same view as the real till's (shell/viewCompat.ts): WebContentsView, or BrowserView on Windows 7's Electron 22.
+    const webPreferences = { preload: o.preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, devTools: o.isDev };
+    try {
+      view = createOverlayView<Electron.WebContents>(electron as unknown as ElectronViewsLike, win as unknown as WindowViewsLike, webPreferences, electronMajor(), o.log);
+      view.attach();
+    } catch (err) {
+      o.log(`demo: the till view could not be created — ${err instanceof Error ? err.message : String(err)}`);
+      view = null;
+      return;
+    }
     guard(view.webContents);
     view.webContents.on('render-process-gone', () => setTimeout(() => view?.webContents.reload(), 500));
     fit();
@@ -103,7 +112,7 @@ export function startDemoShell(o: DemoShellOptions): DemoShell {
   const hideTill = () => {
     if (!view) return;
     win.removeListener('resize', fit);
-    if (!win.isDestroyed()) detachView(win, view);
+    if (!win.isDestroyed()) view.detach();
     const wc = view.webContents as unknown as { close?(): void; destroy?(): void };
     if (wc.close) wc.close();
     else wc.destroy?.();

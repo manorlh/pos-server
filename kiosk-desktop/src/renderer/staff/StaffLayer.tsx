@@ -82,7 +82,8 @@ export function StaffLayer({
     view.state.cardBlocked ? t('staffCard') : null,
     view.staff.unprintedBons > 0 ? `${t('staffBons')} (${view.staff.unprintedBons})` : null,
     (view.staff.unprintedTickets ?? 0) > 0 ? `${t('staffTickets')} (${view.staff.unprintedTickets})` : null,
-    view.staff.printer !== 'ok' && view.staff.printer !== 'unknown' ? t('staffPrinter') : null,
+    // "אין נייר במדפסת" (core/printerPaper.ts) said as it is; any other fault as "תקלת מדפסת".
+    view.staff.printer === 'no_paper' ? t('staffNoPaper') : view.staff.printer !== 'ok' && view.staff.printer !== 'unknown' && view.staff.printer !== 'paper_low' ? t('staffPrinter') : null,
   ].filter(Boolean);
   return (
     <>

@@ -7,6 +7,7 @@
  * charge).
  */
 
+import { currentLook, type PrinterSeen } from '../../core/printerPaper';
 import { randomUUID } from 'node:crypto';
 import { centreOn, job, receiptContentWidth, RASTER_80MM, toMono, trimBottom, type MonoBitmap } from '../../core/escpos';
 import type { PrintDoc } from '../../core/printDocs';
@@ -46,6 +47,8 @@ export class PrintQueue {
   private listeners = new Set<() => void>();
   lastOkAt: number | null = null;
   lastFailure: { at: number; error: string; health: PrinterHealth } | null = null;
+  /** The last status probe (`probe`): what the printer said of itself with nothing printing. */
+  probed: PrinterSeen | null = null;
 
   constructor(
     private readonly db: Db,
@@ -179,10 +182,35 @@ export class PrintQueue {
     return job(centreOn(mono, RASTER_80MM), { cut: true });
   }
 
-  /** The printer as the last print left it (never a query over a payment). */
+  /**
+   * The printer as last seen (core/printerPaper.ts `currentLook`): the newest of the last print that went through,
+   * the last that failed and the last idle probe — never a query over a payment.
+   */
   health(): 'ok' | 'unknown' | PrinterHealth {
-    if (!this.lastFailure) return this.lastOkAt ? 'ok' : 'unknown';
-    if (this.lastOkAt && this.lastOkAt > this.lastFailure.at) return 'ok';
-    return this.lastFailure.health;
+    return currentLook([
+      this.lastOkAt ? { at: this.lastOkAt, look: 'ok' } : null,
+      this.lastFailure ? { at: this.lastFailure.at, look: this.lastFailure.health } : null,
+      this.probed,
+    ]);
+  }
+
+  /**
+   * Asks the receipt printer how it is (`DLE EOT` on a network printer, the spooler's word on a USB one) — only with a
+   * printer configured and nothing printing, so a roll that ran out is known (and reported, and shown) before the next
+   * receipt fails. A probe that cannot tell changes nothing.
+   */
+  async probe(): Promise<void> {
+    const target = this.target();
+    const configured = (target.transport === 'tcp' && !!target.host) || (target.transport === 'spooler' && !!target.queueName);
+    if (!configured || this.working) return;
+    const before = this.health();
+    try {
+      const { health } = await this.transport.status(target);
+      if (this.working) return;
+      this.probed = { at: Date.now(), look: health };
+    } catch {
+      return;
+    }
+    if (this.health() !== before) this.emit();
   }
 }

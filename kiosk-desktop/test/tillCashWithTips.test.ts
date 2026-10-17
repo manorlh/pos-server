@@ -28,13 +28,14 @@ import { formatShekelSign } from '../src/core/money';
 import { principalLegs } from '../src/main/fiscal/ledger';
 import { readyTill } from './tillEngineHarness';
 
-const GOLDEN_SHA = '9e7ccd52d809f17d5633e2dfbbf51107076c5afc708097aa0903e15cb379b13d';
+const GOLDEN_SHA = '1f87e1c89566b147a4c097febe5c789b73f0a16340f94275757eb31f82c0eb98';
 const raw = readFileSync(join(__dirname, 'fixtures', 'x_z_cash_with_tips_golden.json'));
 
 type Money = string;
 interface GoldenInput {
   opening: Money;
   cashSales: Money;
+  deviceCash?: Money;
   cashTips: Money;
   cardTips: Money;
   movements: { cashIn: Money; cashOut: Money; deposits: Money } | null;
@@ -57,6 +58,7 @@ function inputOf(g: GoldenInput): DrawerInput {
   return {
     opening: ag(g.opening),
     cashSales: ag(g.cashSales),
+    deviceCash: ag(g.deviceCash),
     cashTips: ag(g.cashTips),
     cardTips: ag(g.cardTips),
     movements: g.movements ? { cashIn: ag(g.movements.cashIn), cashOut: ag(g.movements.cashOut), deposits: ag(g.movements.deposits) } : null,

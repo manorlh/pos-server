@@ -23,3 +23,15 @@ export function kioskWindowZoom(contentWidth: number, contentHeight: number, loc
   if (contentWidth > contentHeight) zoom = Math.min(zoom, contentHeight / KIOSK_LANDSCAPE_MIN_CSS_HEIGHT);
   return Math.max(KIOSK_MIN_ZOOM, Math.min(KIOSK_MAX_ZOOM, zoom));
 }
+
+/**
+ * The automatic zoom the shell gives the window (main/index.ts `autoZoomFor`): the kiosk's ~540-px design only.
+ * The till is drawn at 100% like the Android tablet (its own layout fits 1024×768 and up): on the till role, and
+ * always on the Windows 7 build (till only, 1024×768 PCs), the automatic part is 1 — "גודל תצוגה" (displayScale)
+ * still multiplies it. The till's view shares the window's zoom (both pages are on host `app`, and Chromium keeps
+ * zoom per host), so this is the one place that sizes the till too.
+ */
+export function shellAutoZoom(o: { build: string; role: string | null; width: number; height: number }): number {
+  if (o.build === 'win7' || o.role === 'till') return 1;
+  return kioskWindowZoom(o.width, o.height);
+}

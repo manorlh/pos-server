@@ -19,6 +19,7 @@ const ORDER = [
   'totalDiscounts',
   'totalRefunds',
   'totalCash',
+  'deviceCash',
   'totalCard',
   'totalExchange',
   'totalTips',
@@ -29,6 +30,7 @@ const ORDER = [
   'countedCash',
   'overShort',
   'cardTipsFromDrawer',
+  'cardTipsUnpaid',
   'drawerCash',
 ];
 

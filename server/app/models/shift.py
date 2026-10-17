@@ -113,6 +113,9 @@ class Shift(Base):
     discounts_total = Column(Numeric(12, 2), nullable=True)
     total_refunds = Column(Numeric(12, 2), nullable=True)
     total_cash = Column(Numeric(12, 2), nullable=True)
+    #: "מזומן במכשיר": the part of total_cash a cash device (CashMag / PayLink) took — in the device, never
+    #: in the drawer (out of every expected cash). NULL on a shift computed before it was stored.
+    total_device_cash = Column(Numeric(12, 2), nullable=True)
     total_card = Column(Numeric(12, 2), nullable=True)
     #: Net of the `exchange` tender legs: what the sale halves of mixed baskets settled
     #: against their credit halves. Not money in any drawer or acquirer, and in neither

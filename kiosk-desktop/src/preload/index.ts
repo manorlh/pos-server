@@ -37,6 +37,7 @@ const api: KioskBridge = {
   adminHistory: (input) => ipcRenderer.invoke('kiosk:adminHistory', input),
   technicianUnlock: (code) => ipcRenderer.invoke('kiosk:technicianUnlock', code),
   technicianInfo: () => ipcRenderer.invoke('kiosk:technicianInfo'),
+  oskMode: () => ipcRenderer.invoke('kiosk:oskMode'),
   technicianAction: (a) => ipcRenderer.invoke('kiosk:technicianAction', a),
   shopLockCloseDay: (pin) => ipcRenderer.invoke('kiosk:shopLockCloseDay', pin),
   on: (event, fn) => {

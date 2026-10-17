@@ -411,9 +411,36 @@ DRAWER_LABEL = z_print.DRAWER_CASH_LABEL
 
 
 def _with_drawer_tips(w, seq=12, **extra):
-    section = _section(w.tills[0], expectedCash="40.00", cardTipsFromDrawer="10.00", drawerCash="40.00")
-    header = {"businessName": "Acme Ltd", "shopName": "Center", "cardTipsFromDrawer": "10.00", "drawerCash": "40.00"}
-    return _z(w, seq, per_machine=[section], header=header, expected_cash=Decimal("40.00"), **extra)
+    # Float 0, cash sales 40, cash tips 10, card tips 15 of which the drawer paid 10 (5 owed): expected 40.
+    section = _section(
+        w.tills[0], openingCash="0.00", cashSalesNet="40.00", expectedCash="40.00",
+        cardTipsFromDrawer="10.00", cardTipsUnpaid="5.00", drawerCash="40.00",
+    )
+    header = {
+        "businessName": "Acme Ltd", "shopName": "Center",
+        "cardTipsFromDrawer": "10.00", "cardTipsUnpaid": "5.00", "drawerCash": "40.00",
+    }
+    return _z(w, seq, per_machine=[section], header=header, opening_cash=Decimal("0.00"), expected_cash=Decimal("40.00"), **extra)
+
+
+#: "מזומן במגירה" (P:/specs/x-z-cash-with-tips.md §1) on 80 mm paper, for `_with_drawer_tips`.
+BLOCK_TITLE = "מזומן במגירה"
+BLOCK_ROWS = [
+    ("קופה פותחת", "₪0.00"),
+    ("מזומן ממכירות", "₪40.00"),
+    ("טיפים במזומן", "₪10.00"),
+    ("טיפים באשראי", "₪15.00"),
+    ("שולמו מהמגירה", "-₪10.00"),
+    ("לא שולמו, לתשלום לעובדים", "₪5.00"),
+    ("מזומן במגירה כולל טיפים", "₪40.00"),
+]
+
+
+def _pairs(doc, title):
+    for s in doc["sections"]:
+        if s["title"] == title:
+            return [(r["label"], r["value"]) for r in s["rows"]]
+    return None
 
 
 class TestCardTipsPaidFromTheDrawer:
@@ -429,18 +456,75 @@ class TestCardTipsPaidFromTheDrawer:
                 assert TIPS_LABEL not in labels and DRAWER_LABEL not in labels, s["title"]
         assert z_print.drawer_tips_of(z) is None
 
-    def test_the_z_the_summary_and_the_till_print_them_at_the_bottom(self, w):
+    def test_the_z_the_summary_and_the_till_print_the_block_after_the_drawer(self, w):
+        # The block replaces the old two bottom rows: "קופה" ends at the variance, "מזומן במגירה" follows.
         z = _with_drawer_tips(w)
-        for doc in (z_print.build_print_document(z, _tz()), z_print.build_summary_document(z, _tz())):
-            assert _labels(doc, "קופה")[-2:] == [TIPS_LABEL, DRAWER_LABEL]
-            cash = _rows(doc, "קופה")
-            assert (cash[TIPS_LABEL], cash[DRAWER_LABEL]) == ("₪10.00", "₪40.00")
-            assert cash["מזומן צפוי"] == "₪40.00"
-        till = _rows(z_print.build_print_document(z, _tz()), "קופה 1 · Till 1")
-        assert (till[TIPS_LABEL], till[DRAWER_LABEL]) == ("₪10.00", "₪40.00")
         part = z_print.build_till_document(z, w.tills[0].id, _tz())
-        assert _labels(part, "קופה")[-2:] == [TIPS_LABEL, DRAWER_LABEL]
-        assert _rows(part, "קופה")[DRAWER_LABEL] == "₪40.00"
+        for doc in (z_print.build_print_document(z, _tz()), z_print.build_summary_document(z, _tz()), part):
+            titles = _titles(doc)
+            assert titles[titles.index("קופה") + 1] == BLOCK_TITLE
+            assert _labels(doc, "קופה")[-1] == "הפרש"
+            assert TIPS_LABEL not in _labels(doc, "קופה")
+            assert _pairs(doc, BLOCK_TITLE) == BLOCK_ROWS
+            assert _rows(doc, "קופה")["מזומן צפוי"] == "₪40.00"
+            # One till: no summary, no per-till table.
+            assert "פירוט לפי קופה" not in titles and z_print.SUMMARY_TITLE not in titles
+        till = _rows(z_print.build_print_document(z, _tz()), "קופה 1 · Till 1")
+        assert (till["שולמו מהמגירה"], till["לא שולמו, לתשלום לעובדים"]) == ("-₪10.00", "₪5.00")
+        assert TIPS_LABEL not in till and DRAWER_LABEL not in till
+
+    def test_the_block_is_always_there_without_tips_lines_when_the_parameter_was_off(self, w):
+        doc = z_print.build_print_document(_z(w, 12), _tz())
+        labels = _labels(doc, BLOCK_TITLE)
+        assert labels[:3] == ["קופה פותחת", "מזומן ממכירות", "טיפים במזומן"]
+        assert "טיפים באשראי" not in labels and "שולמו מהמגירה" not in labels
+        assert _rows(doc, BLOCK_TITLE)["מזומן במגירה כולל טיפים"] == "₪500.00"
+
+    def test_a_drawer_below_zero_is_red_with_the_shortfall(self, w):
+        section = _section(
+            w.tills[0], openingCash="0.00", cashSalesNet="50.00", expectedCash="-30.00",
+            cardTipsFromDrawer="80.00", cardTipsUnpaid="0.00",
+        )
+        z = _z(w, 12, per_machine=[section], opening_cash=Decimal("0"), expected_cash=Decimal("-30.00"),
+               header={"businessName": "Acme Ltd", "cardTipsFromDrawer": "80.00", "cardTipsUnpaid": "0.00"})
+        doc = z_print.build_print_document(z, _tz())
+        rows = {r["label"]: r for s in doc["sections"] if s["title"] == BLOCK_TITLE for r in s["rows"]}
+        assert rows["מזומן במגירה כולל טיפים"]["value"] == "-₪30.00" and rows["מזומן במגירה כולל טיפים"]["warn"]
+        assert rows["חסר במגירה"]["value"] == "₪30.00" and rows["חסר במגירה"]["warn"]
+        assert "warn" not in rows["קופה פותחת"]
+        till = _rows(doc, "קופה 1 · Till 1")
+        assert till["חסר במגירה"] == "₪30.00"
+
+    def test_a_shop_z_has_the_per_till_table(self, w):
+        one = _section(w.tills[0], openingCash="100.00", cashSalesNet="200.00", expectedCash="260.00",
+                       cardTipsFromDrawer="50.00", cardTipsUnpaid="0.00")
+        two = _section(w.tills[1], openingCash="0.00", cashSalesNet="40.00", expectedCash="0.00",
+                       cardTipsFromDrawer="40.00", cardTipsUnpaid="50.00")
+        z = _z(w, 12, per_machine=[one, two], opening_cash=Decimal("100"), expected_cash=Decimal("260.00"),
+               machine_count=2)
+        doc = z_print.build_print_document(z, _tz())
+        titles = _titles(doc)
+        # The drawers' summary first, then the block, then the per-till table (x-z-cash-with-tips §3).
+        at = titles.index(z_print.SUMMARY_TITLE)
+        assert titles[at + 1: at + 3] == [BLOCK_TITLE, "פירוט לפי קופה"]
+        # In the drawers before payouts: 260 + 50 paid and 0 + 40 paid = 350; tips: 10 cash + 90 paid; 50 owed.
+        assert _pairs(doc, z_print.SUMMARY_TITLE) == [
+            ("סה״כ מזומן", "₪350.00"),
+            ("טיפים", "₪100.00"),
+            ("טיפים באשראי שטרם שולמו", "₪50.00"),
+            ("מזומן נטו אחרי טיפים", "₪200.00"),
+        ]
+        table = _pairs(doc, "פירוט לפי קופה")
+        assert table[0] == ("קופה 1", "₪260.00")
+        assert ("קופה 2", "₪0.00") in table
+        assert ("סה״כ", "₪260.00") in table
+        assert table[-1] == ("טיפים באשראי שטרם שולמו", "₪50.00")
+        block = _rows(doc, BLOCK_TITLE)
+        assert (block["שולמו מהמגירה"], block["לא שולמו, לתשלום לעובדים"]) == ("-₪90.00", "₪50.00")
+        assert block["מזומן במגירה כולל טיפים"] == "₪260.00"
+        # "zPrintPerTillCash" = summary_only: the summary without the table.
+        short = _titles(z_print.build_print_document(z, _tz(), per_till_cash=False))
+        assert z_print.SUMMARY_TITLE in short and "פירוט לפי קופה" not in short
 
     def test_the_labels_fit_80mm(self, w):
         doc = z_print.build_print_document(_with_drawer_tips(w), _tz())
@@ -458,8 +542,13 @@ class TestCardTipsPaidFromTheDrawer:
         with_tips = _section(w.tills[0], cardTipsFromDrawer="10.00", drawerCash="40.00")
         without = _section(w.tills[1], cashSalesNet="25.00", totalCashTips="5.00")
         z = _z(w, 12, per_machine=[with_tips, without])
-        assert z_print.drawer_tips_of(z) == {"cardTipsFromDrawer": Decimal("10.00"), "drawerCash": Decimal("70.00")}
-        cash = _rows(z_print.build_print_document(z, _tz()), "קופה")
-        assert (cash[TIPS_LABEL], cash[DRAWER_LABEL]) == ("₪10.00", "₪70.00")
+        assert z_print.drawer_tips_of(z) == {
+            "cardTipsFromDrawer": Decimal("10.00"), "cardTipsUnpaid": Decimal("0"), "drawerCash": Decimal("70.00"),
+        }
+        block = _rows(z_print.build_print_document(z, _tz()), BLOCK_TITLE)
+        assert block["שולמו מהמגירה"] == "-₪10.00"
+        # The total is the Z's expected cash, whatever the paper's other lines.
+        assert block["מזומן במגירה כולל טיפים"] == "₪500.00"
         out = zr_router.z_to_out(z).model_dump(by_alias=True, mode="json")
         assert (Decimal(out["cardTipsFromDrawer"]), Decimal(out["drawerCash"])) == (Decimal("10"), Decimal("70"))
+        assert Decimal(out["cardTipsUnpaid"]) == Decimal("0")

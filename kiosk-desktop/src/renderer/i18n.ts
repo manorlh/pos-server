@@ -51,6 +51,7 @@ export const LIVE: Record<string, string> = {
   staffBons: 'בונים לא הודפסו',
   staffTickets: 'שובר פריט לא הודפס',
   staffPrinter: 'תקלת מדפסת',
+  staffNoPaper: 'אין נייר במדפסת',
   staffCard: 'תשלום לבירור',
   poweredBy: 'POWERED BY R2M POS',
   // "מזומן בקופה" and vouchers (as the browser kiosk's web-i18n.ts).

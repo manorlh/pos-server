@@ -22,6 +22,7 @@ import {
   windowsVersionCode,
   CLEANUP_CONFIRM_WORD,
   canSend,
+  fileMissing,
   cleanupConfirmed,
   fileDeleteBlock,
   newestActiveIds,
@@ -225,5 +226,26 @@ describe('deleting old release files', () => {
     assert.equal(parseKeep('51'), null);
     assert.equal(parseKeep('2.5'), null);
     assert.equal(parseKeep(''), null);
+  });
+});
+
+describe('a release whose file is in no storage', () => {
+  it('is missing only when the server says unavailable and it was not deleted', () => {
+    assert.equal(fileMissing({ fileAvailable: false }), true);
+    assert.equal(fileMissing({ fileAvailable: true }), false);
+    // An older server sends no fileAvailable: available.
+    assert.equal(fileMissing({}), false);
+    // Deleted on purpose is its own state ("הקובץ נמחק"), not "upload again".
+    assert.equal(fileMissing({ fileAvailable: false, fileDeletedAt: '2026-10-02T00:00:00Z' }), false);
+  });
+
+  it('cannot be sent and is not the newest until uploaded again', () => {
+    assert.equal(canSend({ isActive: true, fileAvailable: false }), false);
+    assert.equal(canSend({ isActive: true, fileAvailable: true }), true);
+    const rows = [
+      { id: 'new', platform: 'android', versionCode: 5, isActive: true, assignmentCount: 0, fileAvailable: false },
+      { id: 'old', platform: 'android', versionCode: 4, isActive: true, assignmentCount: 0 },
+    ];
+    assert.deepEqual([...newestActiveIds(rows)], ['old']);
   });
 });
