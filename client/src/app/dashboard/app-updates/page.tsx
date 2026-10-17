@@ -20,7 +20,7 @@ import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Eraser, Send, Trash2, Upload } from 'lucide-react';
+import { Eraser, RotateCcw, Send, Trash2, TriangleAlert, Upload } from 'lucide-react';
 import {
   cancelAppReleaseAssignment,
   createAppReleaseAssignment,
@@ -30,9 +30,11 @@ import {
   fetchAppReleaseFileDeleteCheck,
   fetchAppReleaseRollout,
   fetchAppReleases,
+  fetchAppReleaseStorageStatus,
   fetchCompanies,
   fetchShops,
   updateAppRelease,
+  reuploadAppReleaseFile,
   runAppReleaseCleanup,
   updateAppReleaseAssignment,
   uploadAppRelease,
@@ -51,6 +53,7 @@ import {
   checkInstallWindow,
   cleanupConfirmed,
   fileDeleteBlock,
+  fileMissing,
   filterByPlatform,
   newestActiveIds,
   parseKeep,
@@ -70,6 +73,7 @@ import type {
   AppReleaseAssignment,
   AppReleaseCleanupRow,
   AppReleaseRolloutRow,
+  AppReleaseStorageStatus,
   AppUpdateStatus,
   Company,
   Shop,
@@ -162,6 +166,10 @@ function useAppUpdateErrorText() {
     if (code === 'app_release_latest') return t('fileLatest');
     if (code === 'app_release_not_retired') return t('fileNotRetired');
     if (code === 'app_release_file_delete_failed') return t('fileDeleteFailed');
+    if (code === 'app_release_file_missing') return t('fileMissing');
+    if (code === 'app_release_sha_mismatch') return t('shaMismatch');
+    if (code === 'app_release_version_mismatch') return withMsg(t('releaseVersionMismatch'));
+    if (code === 'app_release_storage_unavailable') return t('storageUnavailable');
     if (code === 'cleanup_confirm_required') return t('cleanupConfirmRequired');
     if (code === 'keep_invalid') return t('keepInvalid');
     if (code?.endsWith('_not_found')) return t('targetNotFound');
@@ -197,6 +205,11 @@ function AppUpdatesAdmin() {
     queryKey: ['app-releases'],
     queryFn: () => fetchAppReleases(),
   });
+  const { data: storage } = useQuery<AppReleaseStorageStatus>({
+    queryKey: ['app-release-storage'],
+    queryFn: fetchAppReleaseStorageStatus,
+    staleTime: 5 * 60_000,
+  });
 
   return (
     <div className="space-y-4">
@@ -207,6 +220,15 @@ function AppUpdatesAdmin() {
         </div>
         <PlatformSwitch value={platform} onChange={setPlatform} withAll />
       </div>
+      {storage?.ephemeral ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{t('storageWarning')}</span>
+        </div>
+      ) : null}
       <ReleasesCard releases={releases} loading={isLoading} platform={platform} />
       <SendCard releases={releases} platform={platform} />
       <AssignmentsCard releases={releases} platform={platform} />
@@ -519,6 +541,17 @@ function ReleasesCard({
                             {t('fileDelete.deletedBadge')}
                           </Badge>
                         </div>
+                      ) : fileMissing(r) ? (
+                        <div className="mt-1 space-y-1">
+                          <Badge
+                            variant="outline"
+                            className="h-auto whitespace-normal border-amber-300 text-start text-amber-800 dark:border-amber-800 dark:text-amber-300"
+                            title={t('fileMissing.hint')}
+                          >
+                            {t('fileMissing.badge')}
+                          </Badge>
+                          <ReuploadButton release={r} />
+                        </div>
                       ) : null}
                     </TableCell>
                     <TableCell className="text-xs">{formatWhen(r.createdAt)}</TableCell>
@@ -559,6 +592,59 @@ function ReleasesCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ── Uploading a missing file again ───────────────────────────────────────────
+
+/** "העלאה מחדש": pick the same build's file; the server checks its SHA-256 and version. */
+function ReuploadButton({ release }: { release: AppRelease }) {
+  const t = useTranslations('appUpdates');
+  const tc = useTranslations('common');
+  const qc = useQueryClient();
+  const errorText = useAppUpdateErrorText();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const reupload = useMutation({
+    mutationFn: (file: File) => reuploadAppReleaseFile(release.id, file, setProgress),
+    onSuccess: (r) => {
+      setProgress(null);
+      invalidateReleases(qc);
+      toast.success(t('fileMissing.done', { version: r.versionName }));
+    },
+    onError: (err: unknown) => {
+      setProgress(null);
+      toast.error(errorText(err, tc('error')));
+    },
+  });
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        ref={inputRef}
+        type="file"
+        className="hidden"
+        accept={ACCEPT[platformOf(release)]}
+        aria-label={t('fileMissing.reupload')}
+        onChange={(e) => {
+          const chosen = e.target.files?.[0];
+          e.target.value = '';
+          if (chosen) reupload.mutate(chosen);
+        }}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={reupload.isPending}
+        title={t('fileMissing.hint')}
+        onClick={() => inputRef.current?.click()}
+      >
+        <RotateCcw className="h-4 w-4 ms-1" />
+        {reupload.isPending ? t('fileMissing.reuploading') : t('fileMissing.reupload')}
+      </Button>
+      {progress !== null ? (
+        <span className="text-muted-foreground text-xs tabular-nums">{Math.round(progress * 100)}%</span>
+      ) : null}
+    </div>
   );
 }
 

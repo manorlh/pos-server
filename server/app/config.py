@@ -146,11 +146,24 @@ class Settings(BaseSettings):
     product_image_bg_model_dir: str = str(Path(__file__).resolve().parent.parent / "var" / "rembg")
     product_image_max_side: int = 1024
 
-    # Till app releases ("עדכון קופות"): uploaded APKs, one `<release id>.apk` each.
-    # Local disk, not Cloudinary — the tills download them through the API, which
-    # checks that the release is the one assigned to that till.
+    # Till app releases ("עדכוני גרסה"): uploaded APKs / installers / kiosk bundles, one
+    # `<release id>.apk|.exe|.zip` each. Not Cloudinary — the devices download them through the
+    # API, which checks that the release is the one assigned to that device.
+    #
+    # Where they are kept (app/services/release_storage.py): an S3-compatible bucket shared by
+    # every API machine when RELEASE_STORAGE_BUCKET (or Fly Tigris' BUCKET_NAME) and its keys are
+    # set, else the local disk under `app_releases_dir` — which on Fly is per machine and wiped
+    # by every deploy, so production must have the bucket.
     app_releases_dir: str = str(Path(__file__).resolve().parent.parent / "var" / "app_releases")
     app_release_max_bytes: int = 200 * 1024 * 1024
+    release_storage_bucket: str = ""
+    #: https://fly.storage.tigris.dev, https://<account>.r2.cloudflarestorage.com, … ; empty → AWS S3.
+    release_storage_endpoint: str = ""
+    release_storage_region: str = ""
+    release_storage_access_key_id: str = ""
+    release_storage_secret_access_key: str = ""
+    #: Key prefix inside the bucket.
+    release_storage_prefix: str = "app-releases/"
 
 
 @lru_cache()
