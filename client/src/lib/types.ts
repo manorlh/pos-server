@@ -3467,6 +3467,63 @@ export interface AppRelease {
   assignmentCount: number;
   /** Kiosk web bundles: the bridge API the bundle needs from the kiosk's APK; null otherwise. */
   bridgeApi?: number | null;
+  /** Its stored file was deleted ("הקובץ נמחק"): never offered, downloaded or sent again. */
+  fileDeletedAt?: string | null;
+}
+
+/** `GET /app-releases/{id}/file-delete-check`. */
+export interface AppReleaseFileDeleteCheck {
+  releaseId: string;
+  allowed: boolean;
+  /** app_release_has_assignments | app_release_latest | app_release_not_retired */
+  reasons: string[];
+  /** Active: deleting retires it in the same confirm. */
+  needsRetire: boolean;
+  /** Active devices that last reported running this version (a warning only). */
+  devicesOnVersion: number;
+  alreadyDeleted: boolean;
+  sizeBytes: number;
+  versionName: string;
+  platform: string;
+}
+
+export interface AppReleaseFileDeleteResult {
+  release: AppRelease;
+  storageResult: 'deleted' | 'already_missing' | null;
+  retired: boolean;
+  devicesOnVersion: number;
+  freedBytes: number;
+}
+
+export interface AppReleaseCleanupRow {
+  releaseId: string;
+  versionName: string;
+  versionCode: number;
+  sizeBytes: number;
+  isActive: boolean;
+  devicesOnVersion: number;
+  reasons: string[];
+}
+
+/** `GET /app-releases/file-cleanup` ("ניקוי גרסאות ישנות" preview). */
+export interface AppReleaseCleanupPreview {
+  keep: number;
+  confirmWord: string;
+  platforms: {
+    platform: string;
+    kept: AppReleaseCleanupRow[];
+    delete: AppReleaseCleanupRow[];
+    skipped: AppReleaseCleanupRow[];
+    totalBytes: number;
+  }[];
+  totalBytes: number;
+  totalCount: number;
+}
+
+export interface AppReleaseCleanupResult {
+  deleted: AppRelease[];
+  failed: { releaseId: string; versionName?: string | null; reason: string }[];
+  freedBytes: number;
 }
 
 export interface AppReleaseAssignment {
