@@ -46,6 +46,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.services import kiosk_landscape as landscape_rules
+from app.services import kiosk_service_size as service_size
 from app.services import kiosk_layout as layouts
 from app.services import kiosk_motion as motion_engine
 
@@ -984,10 +985,16 @@ class Obj(Node):
 
     merges = True
 
-    def __init__(self, fields: Dict[str, Node], *, fill: Optional[Dict[str, Any]] = None, merges: bool = True):
+    def __init__(
+        self, fields: Dict[str, Node], *, fill: Optional[Dict[str, Any]] = None, merges: bool = True,
+        optional: Sequence[str] = (),
+    ):
         self.fields = fields
         self.fill = fill or {}
         self.merges = merges
+        #: Keys a complete value may leave out (absent stays absent: the defaults never carry them, so the
+        #: config's version does not move for a kiosk that never set them — e.g. general.serviceCardSize).
+        self.optional = frozenset(optional)
 
     def check(self, value, path, errors):
         if not isinstance(value, dict):
@@ -1002,6 +1009,8 @@ class Obj(Node):
                 raw = value[key]
             elif key in self.fill:
                 raw = copy.deepcopy(self.fill[key])
+            elif key in self.optional:
+                continue
             else:
                 _fail(errors, _join(path, key), "required", "required")
                 continue
@@ -1252,6 +1261,15 @@ HOURS_RANGE = Obj(
     merges=False,
 )
 
+def _service_size_fields() -> Dict[str, Node]:
+    """`general.serviceCardSize` and its numeric overrides (dp, in range and on their step)."""
+    fields: Dict[str, Node] = {"serviceCardSize": Enum(service_size.SERVICE_CARD_SIZES)}
+    for key, (lo, hi, step) in service_size.NUMBER_SPECS.items():
+        fields[key] = Int(lo, hi, step=step)
+    assert tuple(fields) == service_size.KEYS
+    return fields
+
+
 def _landscape_node() -> PartialObj:
     """`landscape`: every key optional, also in a complete config; each one the normal design's vocabulary."""
     theme = {
@@ -1281,6 +1299,8 @@ def _landscape_node() -> PartialObj:
         "layout": PartialObj(layout),
         "attract": PartialObj(attract),
         "sizes": PartialObj(sizes),
+        # "גודל כרטיסי לקחת / לשבת" in landscape only (kiosk_service_size.settings_in_force).
+        "general": PartialObj(_service_size_fields()),
     })
 
 
@@ -1306,7 +1326,10 @@ SCHEMA = Obj({
         "offlineNotice": Bool(),
         "soldOutMode": Enum(SOLD_OUT_MODES),
         "renderer": Enum(RENDERERS),
-    }),
+        # "גודל כרטיסי לקחת / לשבת" (kiosk_service_size.py, P:/specs/kiosk-service-size.md): optional — absent
+        # is "auto" (today's portrait; capped in landscape), and DEFAULT_CONFIG has none (the same configVersion).
+        **_service_size_fields(),
+    }, optional=service_size.KEYS),
     "theme": Obj({
         "mode": Enum(THEME_MODES),
         "font": Enum(tuple(FONTS_BY_ID)),
@@ -1580,6 +1603,14 @@ def limits() -> Dict[str, Any]:
                 for key, (d, lo, hi, step) in landscape_rules.SIZE_SPECS.items()
             },
             "overrideKeys": {k: list(v) for k, v in landscape_rules.OVERRIDE_KEYS.items()},
+            "generalKeys": list(service_size.KEYS),
+        },
+        # "גודל כרטיסי לקחת / לשבת": the choices, the numeric overrides' ranges (dp), the presets.
+        "serviceSize": {
+            "sizes": list(service_size.SERVICE_CARD_SIZES),
+            "default": service_size.DEFAULT_SERVICE_CARD_SIZE,
+            "numbers": {k: {"min": lo, "max": hi, "step": step} for k, (lo, hi, step) in service_size.NUMBER_SPECS.items()},
+            "presets": service_size.PRESETS,
         },
         "hours": {"rangesMax": HOURS_RANGES_MAX},
         "upsell": {"maxShown": {"min": 1, "max": UPSELL_MAX_SHOWN}},
