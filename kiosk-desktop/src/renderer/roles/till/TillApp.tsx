@@ -12,11 +12,14 @@
  *    backdrop-filter, a virtualised grid, and "lite" (`data-lite`) turns transitions off;
  *  - "ניהול הקיוסק" (staff/adminHold.tsx — the Android KioskAdminCorner): two seconds held in the top-right corner asks
  *    the Windows shell for its manager's menu (a manager's code, the work mode, the technician, status, reprints, the
- *    desktop) — never during a payment; a host without that menu (a browser) leaves the corner unarmed.
+ *    desktop) — never during a payment; a host without that menu (a browser) leaves the corner unarmed;
+ *  - the bar is the Android till's (ui/nav/BottomBar.kt, in its order from the right): "תפריט" — the ☰ drawer of
+ *    parts/TillMenuDrawer.tsx, its rows core/till/tillMenu.ts's (P:/specs/windows-till-menu-parity.md) — and "הזמנה מהירה";
+ *    a menu screen lights neither, and leaving it goes back to the till.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { tillBusy, type OpArgs, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type XReport } from '../../../shared/till/protocol';
+import { tillBusy, type OpArgs, type BasketDiscountMode, type DeviceRoleName, type DocumentDetail, type LocalReportKind, type ReportPreset, type TillState, type XReport } from '../../../shared/till/protocol';
 import { capabilityTiles, NO_CAPS } from '../../host/caps';
 import type { HostCaps, TillHost } from '../../host/TillHost';
 import type { DisplayProfile } from './layout/displayProfileAdapter';
@@ -30,10 +33,12 @@ import { BasketDiscountSheet, PresetForSheet, HeldSheet, NoticeDialog, OrderDeta
 import { ORDER_TEXT } from '../../../core/till/orderDetails';
 import { FAILOVER_TEXT } from '../../../core/kitchen/failover';
 import { CheckoutScreen } from './screens/CheckoutScreen';
-import { DrawerScreen, type DrawerLog, type WalletRow } from './screens/DrawerScreen';
+import { DrawerScreen, type DrawerLog, type DrawerSheet, type WalletRow } from './screens/DrawerScreen';
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
 import { LockScreen } from './screens/LockScreen';
-import { MenuScreen } from './screens/MenuScreen';
+import { LocalReportScreen } from './screens/LocalReportScreen';
+import { MenuActionSheet, TillMenuDrawer } from './parts/TillMenuDrawer';
+import { MENU_TEXT, buildTillMenu, folderOpenAtStart, type MenuTarget, type TillMenuFacts } from '../../../core/till/tillMenu';
 import { SellScreen } from './screens/SellScreen';
 import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { ShopXScreen } from './screens/ShopXScreen';
@@ -49,7 +54,20 @@ import { useTillEngine } from './useTillEngine';
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps' | 'shopx' | 'drawer' | 'drawerOpen' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
+type View = 'sell' | 'shift' | 'history' | 'recent' | 'report' | 'caps' | 'shopx' | 'drawer' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
+
+/** The menu's report rows and the local report each is. */
+const REPORT_OF: Partial<Record<MenuTarget, LocalReportKind>> = { shiftHistory: 'shifts', tillZHistory: 'tillZs', productSales: 'products', workers: 'workers', tips: 'tips' };
+
+/** The cash menu's actions (Android `cashActions`, in its order) and the drawer's sheet each opens. */
+const CASH_ACTIONS: Array<{ id: 'cashIn' | 'cashOut' | 'deposit' | 'count' | 'walletDeposit' | 'log'; label: string; sheet: DrawerSheet }> = [
+  { id: 'cashIn', label: 'הכנסת מזומן', sheet: 'CASH_IN' },
+  { id: 'cashOut', label: 'הוצאת מזומן', sheet: 'CASH_OUT' },
+  { id: 'deposit', label: 'הפקדה / ריקון חלקי', sheet: 'DEPOSIT' },
+  { id: 'count', label: 'ספירת מגירה', sheet: 'count' },
+  { id: 'walletDeposit', label: 'הפקדת מזומן מעובד', sheet: 'wallets' },
+  { id: 'log', label: 'לוג פתיחות מגירה', sheet: 'log' },
+];
 
 /** The sell screen's sheets: the basket discount, OTH (from a line), the receipt picker, the held sales (at a close too). */
 type Sheet =
@@ -68,6 +86,12 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   const [caps, setCaps] = useState<HostCaps>(NO_CAPS);
   const [view, setView] = useState<View>('sell');
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  /** "תפריט": the drawer is open; the menu row whose screen is on show; "מזומן במגירה"'s action sheet. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAt, setMenuAt] = useState<MenuTarget | null>(null);
+  const [cashSheet, setCashSheet] = useState(false);
+  const [drawerAt, setDrawerAt] = useState<DrawerSheet>('menu');
+  const [reportKind, setReportKind] = useState<LocalReportKind>('products');
   const { state, catalog, status, toasts, run, attempt, say } = engine;
 
   useEffect(() => {
@@ -87,6 +111,21 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     const ok = state.health.terminal !== 'none';
     return { ...t, available: ok, reason: ok ? 'מסופון זמין' : 'אין אמצעי תשלום זמינים – פנו למנהל' };
   }, [tiles, host.demo, state]);
+
+  // The menu closes when nobody is signed in any more, or a payment starts (it is never open over one); Esc closes it.
+  const menuMayStay = !!state?.session.cashier && !state.session.locked && state.checkout.phase === 'idle';
+  useEffect(() => {
+    if (!menuMayStay) {
+      setMenuOpen(false);
+      setCashSheet(false);
+    }
+  }, [menuMayStay]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
 
   // Ready once the till is drawn; the screen stays awake while the till is open.
   const readySent = useRef(false);
@@ -125,6 +164,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   };
 
   const loadHistory = useCallback(async () => (await run('doc.history', {})) as HistoryRow[] | undefined, [run]);
+  /** "24 השעות האחרונות" (Android RecentDocumentsScreen): the documents of the last day, each opening as in the history. */
+  const loadRecent = useCallback(async () => (await run('doc.history', { hours: 24 })) as HistoryRow[] | undefined, [run]);
   const loadDetail = useCallback(
     async (documentId: string, quantities?: Record<string, number>) => (await run('doc.detail', quantities ? { documentId, quantities } : { documentId })) as DocumentDetail | undefined,
     [run],
@@ -162,9 +203,18 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       move: (jobId, toId) => run('printQueue.move', { jobId, toId }),
       handled: (jobId) => run('printQueue.handled', { jobId }),
       endRedirect: (fromId) => run('printQueue.endRedirect', { fromId }),
-      back: () => setView('menu'),
+      back: () => setView('sell'),
     }),
     [run],
+  );
+  const askReport = useCallback(
+    (kind: LocalReportKind, preset: ReportPreset) =>
+      void attempt('report.local', { kind, preset }).then((r) => {
+        if (r.ok) return;
+        say(r.message, 'error');
+        setView('sell');
+      }),
+    [attempt, say],
   );
   const recentReceipts = useCallback(async () => (await run('refund.recent', {})) as ReceiptRow[] | undefined, [run]);
   const findReceipt = useCallback(async (query: string) => (await run('refund.find', { query })) as ReceiptFind | undefined, [run]);
@@ -250,6 +300,78 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     if (p && p.forWhom !== 'none' && s.sell.basketDiscount?.preset?.id !== presetId) return setSheet({ kind: 'presetFor', presetId, fromDiscount });
     sendPreset(presetId);
   };
+  // "תפריט": the rows (core/till/tillMenu.ts) and the one on show; never over a payment, never signed out.
+  const menuReady = !!s.session.cashier && !s.session.locked && s.checkout.phase === 'idle';
+  const menuCurrent: MenuTarget | null =
+    view === 'shift' && (menuAt === 'shift' || menuAt === 'shiftClose' || menuAt === 'tillZ')
+      ? menuAt
+      : view === 'report'
+        ? ((Object.keys(REPORT_OF) as MenuTarget[]).find((t) => REPORT_OF[t] === reportKind) ?? null)
+        : view === 'caps'
+          ? 'diagnostics'
+          : view === 'shopx' || view === 'history' || view === 'recent' || view === 'transmission' || view === 'printQueue' || view === 'blocks' || view === 'users' || view === 'owed'
+            ? view
+            : null;
+  const menuGroups = buildTillMenu(menuFactsOf(s, { demo: host.demo, settings: !!host.ui.openAdmin, current: menuCurrent }));
+  /** A row tapped: the drawer closes and its screen opens (the sync stays: it runs in place). */
+  const onMenu = (t: MenuTarget) => {
+    if (t === 'sync') return void run('menu.sync', {});
+    setMenuOpen(false);
+    const report = REPORT_OF[t];
+    if (report) {
+      setReportKind(report);
+      setMenuAt(t);
+      return setView('report');
+    }
+    switch (t) {
+      case 'shift':
+      case 'shiftClose':
+      case 'tillZ':
+        setMenuAt(t);
+        return setView('shift');
+      case 'drawerOpen':
+        setDrawerAt('reason');
+        return setView('drawer');
+      case 'drawerRemote':
+        setDrawerAt('remote');
+        return setView('drawer');
+      case 'cashMenu':
+        return setCashSheet(true);
+      case 'refund':
+        setView('sell');
+        return void run('refund.button', {});
+      case 'refundEnd':
+        setView('sell');
+        return void run('refund.end', {});
+      case 'update':
+        return void run('menu.update', {});
+      case 'support':
+        return void run('menu.support', {});
+      case 'settings':
+        return host.ui.openAdmin?.();
+      // "אבחון" (Android: the technician's screen behind its code): the shell's technician screen where the host has one,
+      // else the device's capabilities.
+      case 'diagnostics':
+        if (host.ui.openTechnician) return host.ui.openTechnician();
+        return setView('caps');
+      case 'workMode':
+        return void run('mode.switch', { to: 'kiosk' });
+      case 'signOut':
+        return void run('session.logout', {});
+      case 'shopx':
+      case 'history':
+      case 'recent':
+      case 'transmission':
+      case 'printQueue':
+      case 'blocks':
+      case 'users':
+      case 'owed':
+        setMenuAt(t);
+        return setView(t);
+      default:
+        return undefined;
+    }
+  };
   const main = (() => {
     if (s.session.locked || !s.session.cashier) return <LockScreen demo={host.demo} onLogin={(pin) => void run('session.login', { pin })} />;
     if (s.checkout.phase !== 'idle') {
@@ -298,39 +420,37 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             x: async () => (await run('report.x', {})) as XReport | undefined,
             z: async (countedCashAgorot) => closing<{ message?: string }>('z.produce', countedCashAgorot === undefined ? {} : { countedCashAgorot }),
             switchTo: (to: DeviceRoleName) => void run('mode.switch', { to }),
-            back: () => setView(host.demo ? 'sell' : 'menu'),
+            back: () => setView('sell'),
           }}
         />
       );
     }
-    if (view === 'menu') {
+    if (view === 'recent') {
       return (
-        <MenuScreen
-          state={s}
-          go={(to) => {
-            if (to === 'refund') {
-              setView('sell');
-              void run('refund.button', {});
-              return;
-            }
-            if (to === 'held') {
-              setView('sell');
-              setSheet({ kind: 'held' });
-              return;
-            }
-            setView(to);
-          }}
-          signOut={() => void run('session.logout', {})}
-          switchTo={() => void run('mode.switch', { to: 'kiosk' })}
+        <HistoryScreen
+          title={MENU_TEXT.recent}
+          load={loadRecent}
+          reprint={(id) => void run('doc.reprint', { documentId: id })}
           back={() => setView('sell')}
+          detail={loadDetail}
+          refund={async (documentId, quantities) => {
+            const r = await attempt('doc.refund', { documentId, quantities });
+            if (!r.ok) say(r.message, 'error');
+            return r.ok && !(r.value && typeof r.value === 'object' && 'dialogId' in (r.value as object));
+          }}
+          refundHidden={(s.session.hidden ?? []).includes('REFUND')}
         />
       );
     }
-    if ((view === 'drawer' || view === 'drawerOpen') && s.drawer) {
+    if (view === 'report') {
+      return <LocalReportScreen kind={reportKind} report={s.menu?.report ?? null} ask={askReport} reprintZ={(id) => void run('report.reprintZ', { id })} back={() => setView('sell')} />;
+    }
+    if (view === 'drawer' && s.drawer) {
       return (
         <DrawerScreen
+          key={drawerAt}
           drawer={s.drawer}
-          initial={view === 'drawerOpen' ? 'reason' : 'menu'}
+          initial={drawerAt}
           actions={{
             open: (reason, note) => run('drawer.open', { reason, note }),
             openRemote: (machineId, reason, note) => run('drawer.openRemote', { machineId, reason, note }),
@@ -341,7 +461,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             wallets: async () => (await run('drawer.wallets', {})) as { wallets: WalletRow[]; offline: boolean } | undefined,
             deposit: (employeeId, countedAgorot) => run('drawer.walletDeposit', { employeeId, countedAgorot }),
             log: async () => (await run('drawer.log', {})) as DrawerLog | undefined,
-            back: () => setView('menu'),
+            back: () => setView('sell'),
           }}
         />
       );
@@ -353,7 +473,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           actions={{
             refresh: () => void run('owed.refresh', {}),
             pay: (id) => void run('owed.pay', { id }),
-            back: () => setView('menu'),
+            back: () => setView('sell'),
           }}
         />
       );
@@ -368,7 +488,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             release: (sessionId) => void run('users.release', { sessionId }),
             close: () => {
               void run('users.close', {});
-              setView('menu');
+              setView('sell');
             },
           }}
         />
@@ -378,7 +498,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return <PrintQueueScreen actions={printQueueActions} />;
     }
     if (view === 'blocks') {
-      return <BlocksScreen actions={blocksActions} catalog={catalog} back={() => setView('menu')} />;
+      return <BlocksScreen actions={blocksActions} catalog={catalog} back={() => setView('sell')} />;
     }
     if (view === 'transmission') {
       return (
@@ -391,7 +511,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             authorize: () => void run('transmission.authorize', {}),
             read: () => void run('transmission.read', {}),
             more: () => void run('transmission.more', {}),
-            back: () => setView('menu'),
+            back: () => setView('sell'),
           }}
         />
       );
@@ -402,7 +522,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           shopX={s.shopX}
           load={(refresh) => void run('report.shopX', refresh ? { refresh: true } : {})}
           print={() => void run('report.shopX', { print: true })}
-          back={() => setView('menu')}
+          back={() => setView('sell')}
         />
       );
     }
@@ -411,7 +531,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         <HistoryScreen
           load={loadHistory}
           reprint={(id) => void run('doc.reprint', { documentId: id })}
-          back={() => setView('menu')}
+          back={() => setView('sell')}
           detail={loadDetail}
           refund={async (documentId, quantities) => {
             const r = await attempt('doc.refund', { documentId, quantities });
@@ -428,7 +548,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         <div className="t-report" style={layout.reportMaxWidthDp ? { maxWidth: layout.reportMaxWidthDp } : undefined}>
           <div className="t-report-head">
             <h1 className="t-report-title">{T.caps}</h1>
-            <button type="button" className="t-btn t-btn-ghost" onClick={() => setView(host.demo ? 'sell' : 'menu')}>
+            <button type="button" className="t-btn t-btn-ghost" onClick={() => setView('sell')}>
               {T.back}
             </button>
           </div>
@@ -484,30 +604,23 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         <div className="t-brand">
           R2M <b>POS</b>
         </div>
+        {/* The Android bar (BottomBar.kt), from the right: "תפריט" (an action, never lit), "הזמנה מהירה" (lit on the till). */}
         <nav className="t-nav">
-          <button type="button" className={`t-nav-btn${view === 'sell' ? ' t-nav-on' : ''}`} onClick={() => setView('sell')}>
-            {T.sell}
+          <button
+            type="button"
+            className={`t-nav-btn t-nav-menu${menuOpen ? ' t-nav-on' : ''}`}
+            data-nav="menu"
+            disabled={!menuReady}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(true)}
+          >
+            <NavGlyph name="menu" />
+            <span>{T.menu}</span>
           </button>
-          {/* "הסתרת פריטים בתפריט": `shift` (or, on a till with no shifts, `till_z`) hides the way in; a till with no shift open
-              still reaches it from the sell screen. */}
-          {(s.menuHidden ?? []).includes(s.shift.hidden ? 'till_z' : 'shift') ? null : (
-            <button type="button" className={`t-nav-btn${view === 'shift' ? ' t-nav-on' : ''}`} onClick={() => setView('shift')}>
-              {s.shift.hidden ? T.produceZ : T.shift}
-            </button>
-          )}
-          {host.demo ? (
-            <button type="button" className={`t-nav-btn${view === 'caps' ? ' t-nav-on' : ''}`} onClick={() => setView('caps')}>
-              {T.caps}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={`t-nav-btn${view !== 'sell' && view !== 'shift' ? ' t-nav-on' : ''}`}
-              onClick={() => setView('menu')}
-            >
-              {T.menu}
-            </button>
-          )}
+          <button type="button" className={`t-nav-btn${view === 'sell' && !menuOpen ? ' t-nav-on' : ''}`} data-nav="sell" onClick={() => setView('sell')}>
+            <NavGlyph name="catalog" />
+            <span>{T.quickOrder}</span>
+          </button>
         </nav>
         <div className="t-health" aria-label="מצב">
           <span className={`t-dot ${s.health.cloud === 'online' ? 't-dot-ok' : s.health.cloud === 'demo' ? 't-dot-demo' : 't-dot-off'}`} title={s.health.cloud === 'offline' ? T.offline : T.online} />
@@ -605,6 +718,37 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         ) : null}
       </div>
       <main className="t-main">{main}</main>
+      {menuOpen && menuReady ? (
+        <TillMenuDrawer
+          groups={menuGroups}
+          folderOpen={folderOpenAtStart(menuGroups, menuCurrent, s.shift.open, s.shift.hidden === true)}
+          user={{
+            name: s.session.cashier?.name ?? '',
+            roleName: s.menu?.roleName ?? null,
+            shopName: s.menu?.shopName ?? null,
+            posNumber: s.menu?.posNumber ?? null,
+            identity: s.menu?.identity ?? [],
+          }}
+          onTarget={onMenu}
+          onClose={() => setMenuOpen(false)}
+        />
+      ) : null}
+      {cashSheet && s.drawer && s.session.cashier ? (
+        <MenuActionSheet
+          title={MENU_TEXT.cashMenu}
+          actions={CASH_ACTIONS.filter((a) => s.drawer!.offered[a.id]).map((a) => ({
+            id: a.id,
+            label: a.label,
+            onTap: () => {
+              setCashSheet(false);
+              setDrawerAt(a.sheet);
+              setMenuAt('cashMenu');
+              setView('drawer');
+            },
+          }))}
+          onClose={() => setCashSheet(false)}
+        />
+      ) : null}
       {s.session.cashier && s.sell.refundChooser && !s.dialog && sheet?.kind !== 'receipt' ? (
         <RefundChooser onCatalog={() => void run('refund.catalog', {})} onReceipt={() => setSheet({ kind: 'receipt' })} onClose={() => void run('refund.end', {})} />
       ) : null}
@@ -708,5 +852,46 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         ))}
       </div>
     </>,
+  );
+}
+
+/** The menu's facts from the engine's state and the host (core/till/tillMenu.ts builds the rows from them). */
+export function menuFactsOf(s: TillState, host: { demo: boolean; settings: boolean; current: MenuTarget | null }): TillMenuFacts {
+  return {
+    shiftOpen: s.shift.open,
+    zOnly: s.shift.hidden === true,
+    tillZMode: s.z.zMode === 'till',
+    hidden: s.menuHidden ?? [],
+    denied: s.session.hidden ?? [],
+    refundMode: s.sell.refundMode === true,
+    drawer: s.drawer?.offered ?? null,
+    drawerHosts: s.drawer?.hosts ?? [],
+    owedCount: s.owed?.items.length ?? 0,
+    sync: s.menu?.sync ?? null,
+    update: s.menu?.update ?? null,
+    showTillZHistory: s.menu?.showTillZHistory === true,
+    localReports: !!s.menu,
+    shopX: s.shopX?.offered === true,
+    settings: host.settings,
+    printQueueCount: s.printQueue?.count ?? 0,
+    printQueue: !host.demo,
+    blocks: !host.demo,
+    signedInUsers: s.users?.offered === true,
+    workMode: s.mode.rolesAllowed.includes('kiosk') ? { label: s.mode.switchLabel ?? MENU_TEXT.toKiosk } : null,
+    support: s.menu?.support === true,
+    current: host.current,
+  };
+}
+
+/** The bar's two pictures (BottomBar.kt): the ☰ and the catalog's four tiles. */
+function NavGlyph({ name }: { name: 'menu' | 'catalog' }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden fill="currentColor">
+      {name === 'menu' ? (
+        <path d="M3 6h18v2H3zM3 11h18v2H3zM3 16h18v2H3z" />
+      ) : (
+        <path d="M4.5 3h4.5A1.5 1.5 0 0 1 10.5 4.5V9A1.5 1.5 0 0 1 9 10.5H4.5A1.5 1.5 0 0 1 3 9V4.5A1.5 1.5 0 0 1 4.5 3zM15 3h4.5A1.5 1.5 0 0 1 21 4.5V9a1.5 1.5 0 0 1-1.5 1.5H15A1.5 1.5 0 0 1 13.5 9V4.5A1.5 1.5 0 0 1 15 3zM4.5 13.5H9a1.5 1.5 0 0 1 1.5 1.5v4.5A1.5 1.5 0 0 1 9 21H4.5A1.5 1.5 0 0 1 3 19.5V15a1.5 1.5 0 0 1 1.5-1.5zM15 13.5h4.5A1.5 1.5 0 0 1 21 15v4.5a1.5 1.5 0 0 1-1.5 1.5H15a1.5 1.5 0 0 1-1.5-1.5V15a1.5 1.5 0 0 1 1.5-1.5z" />
+      )}
+    </svg>
   );
 }

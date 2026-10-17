@@ -15,6 +15,7 @@ import {
   type EngineEvent,
   type EngineReply,
   type HelloReply,
+  type LocalReportView,
   type TillState,
   type XReport,
 } from '../../shared/till/protocol';
@@ -168,6 +169,24 @@ function richState(): TillState {
     terminalOffline: { text: 'המסוף עובד במצב לא מקוון (עסקאות נשמרות לשידור)\nלא ניתן לשלם בכרטיס דביט / דיירקט / כרטיס זר כרגע', tone: 'amber' },
     order: { dining: 'take_away', name: 'Jonathan', strip: 'לקחת  ·  Jonathan', configured: true, ask: null },
     shopX: { offered: true, report: null, at: null, busy: false, error: null },
+    // "תפריט" (core/till/tillMenu.ts): the profile card, the sync, a release ready, the reports folder.
+    menu: {
+      roleName: 'מנהלת משמרת — Senior Shift Manager',
+      shopName: 'רויאל בר — סניף הרצליה פיתוח (מתחם הקניון)',
+      posNumber: '12',
+      identity: [
+        { label: 'חברה', value: 'רויאל בר בע״מ — Royal Bar Holdings Ltd.' },
+        { label: 'סניף', value: 'רויאל בר — סניף הרצליה פיתוח (מתחם הקניון)' },
+        { label: 'מספר קופה', value: '12' },
+        { label: 'שם קופה', value: 'קופה 12 — דלפק ראשי (Main Counter)' },
+        { label: 'גרסה', value: '0.5.11' },
+      ],
+      sync: { running: false, lastAt: '2026-10-16 12:28', error: null, waiting: 3 },
+      update: { version: '0.5.12', phase: 'ready', message: null },
+      showTillZHistory: true,
+      support: true,
+      report: null,
+    },
     transmission: {
       supported: true,
       deferredSupported: true,
@@ -347,10 +366,58 @@ const blockRow = (i: number) => ({
   why: i === 3 ? 'רק מנהל אזור יכול לשחרר חסימה ברמת אזור' : null,
 });
 
+/** The menu's local reports, long names and big sums (core/till/localReports.ts). */
+function localReport(kind: string, preset: string): LocalReportView {
+  const ranged = kind === 'products' || kind === 'workers' || kind === 'tips';
+  const p = (ranged ? preset : null) as LocalReportView['preset'];
+  if (kind === 'tillZs') {
+    return {
+      kind: 'tillZs',
+      title: 'דוחות Z',
+      subtitle: null,
+      preset: null,
+      empty: null,
+      sections: [{ title: null, rows: Array.from({ length: 8 }, (_, i) => ({ label: `Z ${412 - i}`, value: `${16 - i}/10/2026 23:5${i}`, sub: 'הודפס', reprintZ: `z${i}` })) }],
+    };
+  }
+  if (kind === 'shifts') {
+    return {
+      kind: 'shifts',
+      title: 'היסטוריית משמרות',
+      subtitle: null,
+      preset: null,
+      empty: null,
+      sections: [
+        {
+          title: null,
+          rows: Array.from({ length: 8 }, (_, i) => ({
+            label: `משמרת #${1287 - i} · ${i === 0 ? 'פתוחה' : `בדוח Z ${412 - i}`}`,
+            value: '99,999.90 ₪',
+            sub: `16/10/2026 08:0${i}–16:1${i} · נפתחה ע״י ${LONG[i % LONG.length]} · 214 מסמכים`,
+            tone: i === 0 ? ('ok' as const) : null,
+          })),
+        },
+      ],
+    };
+  }
+  return {
+    kind: kind as LocalReportView['kind'],
+    title: kind === 'workers' ? 'דוח לפי עובד' : kind === 'tips' ? 'דוח תשר' : 'מכירות לפי מוצר',
+    subtitle: 'היום · 16/10/2026',
+    preset: p,
+    empty: null,
+    sections: [
+      { title: null, rows: [{ label: 'מכירות', value: '99,999.90 ₪' }, { label: 'זיכויים', value: '−1,234.50 ₪' }, { label: 'נטו', value: '98,765.40 ₪', emphasis: true }] },
+      { title: kind === 'workers' ? 'אלכסנדרה בן־דוד' : 'מכירות לפי מוצר', rows: Array.from({ length: 10 }, (_, i) => ({ label: LONG[i % LONG.length], value: `${9_999 - i * 37}.90 ₪`, sub: `${120 - i} יחידות` })) },
+    ],
+  };
+}
+
 /** The engine: the state of `?state=`, and every list a screen asks for. Nothing changes, nothing is sent. */
 export class AuditEngine implements EngineEndpoint {
   private readonly listeners = new Set<(e: EngineEvent) => void>();
   private st: TillState;
+  private seq = 1;
   readonly catalog = stressCatalog();
 
   constructor(state: string) {
@@ -372,6 +439,14 @@ export class AuditEngine implements EngineEndpoint {
 
   private answer(op: string, a: Record<string, unknown>): unknown {
     switch (op) {
+      case 'report.local': {
+        // The menu's local reports: put in the state, as the engine does (the screen draws `menu.report`).
+        const report = localReport(String(a.kind ?? 'products'), typeof a.preset === 'string' ? a.preset : 'today');
+        if (this.st.menu) this.st = { ...this.st, menu: { ...this.st.menu, report } };
+        const state = JSON.parse(JSON.stringify(this.st)) as TillState;
+        queueMicrotask(() => this.listeners.forEach((fn) => fn({ ev: 'state', seq: ++this.seq, data: state })));
+        return undefined;
+      }
       case 'catalog.snapshot':
         return JSON.parse(JSON.stringify(this.catalog)) as Catalog;
       case 'doc.history':

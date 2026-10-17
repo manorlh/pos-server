@@ -5,7 +5,7 @@
  * engine's (its dialogs ask a manager's code, which drawer, "לפתוח מגירה?").
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DrawerState } from '../../../../shared/till/protocol';
 import { parseAmount } from '../amount';
 import { money, T } from '../text';
@@ -105,6 +105,14 @@ export function DrawerScreen({ drawer, initial, actions }: { drawer: DrawerState
     </div>
   );
   const toMenu = () => (initial && initial !== 'menu' ? actions.back() : setSheet('menu'));
+  // Opened on one sheet from the menu's "מזומן במגירה" (the Android action sheet): what that sheet loads, once.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    if (initial === 'wallets' || initial === 'log' || initial === 'count') go(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (sheet === 'remote') {
     return (

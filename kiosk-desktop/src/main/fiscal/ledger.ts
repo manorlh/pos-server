@@ -816,6 +816,18 @@ export class Ledger {
     return this.db.all<{ payload: string }>('SELECT payload FROM documents WHERE shift_id = ? ORDER BY series, number', shiftId).map((r) => JSON.parse(r.payload) as DocDraft);
   }
 
+  /** The reportable documents written in [fromIso, toIso) (UTC ISO), newest first: the menu's range reports. */
+  docsBetween(fromIso: string, toIso: string): DocDraft[] {
+    return this.db
+      .all<{ payload: string }>("SELECT payload FROM documents WHERE status IN ('completed', 'refunded', 'partial_refund') AND created_at >= ? AND created_at < ? ORDER BY created_at DESC", fromIso, toIso)
+      .map((r) => JSON.parse(r.payload) as DocDraft);
+  }
+
+  /** The till's shifts, newest first ("היסטוריית משמרות"). */
+  recentShifts(limit = 60): ShiftRow[] {
+    return this.db.all<ShiftRow>('SELECT * FROM shifts ORDER BY sequence_number DESC, opened_at DESC LIMIT ?', limit);
+  }
+
   todaysDocs(day: string): DocDraft[] {
     return this.db
       .all<{ payload: string }>("SELECT payload FROM documents WHERE status IN ('completed', 'refunded', 'partial_refund') AND created_at >= ? ORDER BY created_at DESC", new Date(`${day}T00:00:00`).toISOString())

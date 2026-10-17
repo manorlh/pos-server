@@ -42,6 +42,8 @@ const admin = [{ hold: 'admin' }, { tap: '1', after: 120 }, { tap: '2', after: 1
 const has = (t) => `document.body.innerText.includes(${JSON.stringify(t)})`;
 
 const menu = (row) => [{ tap: 'תפריט', after: 700 }, { tap: row, after: 1000 }];
+/** A report in the menu's "דוחות" folder (folded: its row opens it first). */
+const report = (row) => [{ tap: 'תפריט', after: 700 }, { sel: '[data-menu=reports]', after: 500 }, { tap: row, after: 1000 }];
 const TILL = [
   { id: 't-lock', query: 'state=lock' },
   { id: 't-sell', query: 'state=sell' },
@@ -62,9 +64,16 @@ const TILL = [
   { id: 't-pay-return', query: 'state=pay-return' },
   { id: 't-pay-payout', query: 'state=pay-payout' },
   { id: 't-pay-done', query: 'state=pay-done' },
-  { id: 't-shift', query: 'state=sell', steps: [{ tap: 'משמרת', index: 0, after: 1200 }] },
+  { id: 't-shift', query: 'state=sell', steps: menu('משמרת (דו״ח X)') },
   { id: 't-menu', query: 'state=sell', steps: [{ tap: 'תפריט', after: 900 }], expect: has('חסומים כעת') },
-  { id: 't-drawer', query: 'state=sell', steps: menu('מזומן במגירה') },
+  { id: 't-menu-reports', query: 'state=sell', steps: [{ tap: 'תפריט', after: 700 }, { sel: '[data-menu=reports]', after: 600 }], expect: has('מכירות לפי מוצר') },
+  { id: 't-cash-sheet', query: 'state=sell', steps: menu('מזומן במגירה'), expect: has('הכנסת מזומן') },
+  { id: 't-drawer', query: 'state=sell', steps: [...menu('מזומן במגירה'), { tap: 'הכנסת מזומן', after: 1000 }] },
+  { id: 't-recent', query: 'state=sell', steps: report('24 השעות האחרונות'), expect: has('40000123') },
+  { id: 't-report-products', query: 'state=sell', steps: report('מכירות לפי מוצר'), expect: has('משמרת בוקר') },
+  { id: 't-report-workers', query: 'state=sell', steps: report('דוח לפי עובד') },
+  { id: 't-report-shifts', query: 'state=sell', steps: report('היסטוריית משמרות'), expect: has('משמרת #1287') },
+  { id: 't-report-zs', query: 'state=sell', steps: report('דוחות Z'), expect: has('Z 412') },
   { id: 't-drawer-open', query: 'state=sell', steps: menu('פתיחת מגירה') },
   { id: 't-history', query: 'state=sell', steps: menu('היסטוריה'), expect: has('40000123') },
   { id: 't-history-detail', query: 'state=sell', steps: [...menu('היסטוריה'), { tap: '40000123', after: 1200 }] },
@@ -74,7 +83,7 @@ const TILL = [
   { id: 't-users', query: 'state=sell', steps: menu('עובדים מחוברים') },
   { id: 't-owed', query: 'state=sell', steps: menu('עודף חייב ללקוח') },
   { id: 't-transmission', query: 'state=sell', steps: menu('פעולות אשראי') },
-  { id: 't-shop-x', query: 'state=sell', steps: [...menu('דוח X סניפי'), { wait: 600 }] },
+  { id: 't-shop-x', query: 'state=sell', steps: [...report('דוח X סניפי'), { wait: 600 }] },
 ];
 
 export const SCENARIOS = [

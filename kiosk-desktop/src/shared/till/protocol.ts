@@ -172,6 +172,13 @@ export const TILL_OPS = [
   'printQueue.move',
   'printQueue.handled',
   'printQueue.endRedirect',
+  // "תפריט" as the Android drawer (core/till/tillMenu.ts, main/till/tillMenuService.ts): "סנכרון מול הענן", "עדכון גרסה",
+  // "תמיכה מרחוק"; the local reports (24 hours, shifts, Zs, products, workers, tips) and a Z's copy.
+  'menu.sync',
+  'menu.update',
+  'menu.support',
+  'report.local',
+  'report.reprintZ',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -246,6 +253,10 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'printQueue.move',
   'printQueue.handled',
   'printQueue.endRedirect',
+  'menu.sync',
+  'menu.update',
+  'menu.support',
+  'report.reprintZ',
 ]);
 
 export interface OpArgs {
@@ -268,7 +279,8 @@ export interface OpArgs {
   'checkout.cancel': Record<string, never>;
   'checkout.finish': Record<string, never>;
   'dialog.answer': { dialogId: string; action: string; answers?: Record<string, string> };
-  'doc.history': { limit?: number };
+  /** `hours`: the documents of the last so many hours ("24 השעות האחרונות"); absent — today's. */
+  'doc.history': { limit?: number; hours?: number };
   'doc.reprint': { documentId: string };
   /** A credit note for [quantities] (original line id → quantity) of the document: cash or the original's card. */
   'doc.refund': { documentId: string; quantities?: Record<string, number> };
@@ -373,6 +385,55 @@ export interface OpArgs {
   'printQueue.move': { jobId: string; toId: string; alsoNext?: boolean };
   'printQueue.handled': { jobId: string };
   'printQueue.endRedirect': { fromId: string };
+  'menu.sync': Record<string, never>;
+  /** "עדכון גרסה": install the release that is ready (the app restarts into it). */
+  'menu.update': Record<string, never>;
+  'menu.support': Record<string, never>;
+  /** A local report; `preset`: the range of the products / workers / tips reports (absent: today). */
+  'report.local': { kind: LocalReportKind; preset?: ReportPreset };
+  /** "הדפס שוב" on a Z of "דוחות Z": a copy, marked so. */
+  'report.reprintZ': { id: string };
+}
+
+/** The reports of the menu's "דוחות" folder the till builds from its own records (core/till/localReports.ts). */
+export type LocalReportKind = 'shifts' | 'tillZs' | 'products' | 'workers' | 'tips';
+
+/** The range chips of the products / workers / tips reports (Android RangePreset, less "custom"). */
+export type ReportPreset = 'today' | 'yesterday' | 'week' | 'morning' | 'evening';
+
+/** A local report as the screen draws it: a title, its range, sections of rows; a Z row may be printed again. */
+export interface LocalReportView {
+  kind: LocalReportKind;
+  title: string;
+  subtitle: string | null;
+  /** The range's chips (the products / workers / tips reports); null — none. */
+  preset: ReportPreset | null;
+  sections: Array<{
+    title: string | null;
+    rows: Array<{ label: string; value: string; sub?: string | null; emphasis?: boolean; tone?: 'ok' | 'warn' | 'error' | null; reprintZ?: string | null }>;
+  }>;
+  /** Nothing in the range: its sentence. */
+  empty: string | null;
+}
+
+/**
+ * The ☰ menu's facts the screens cannot know (core/till/tillMenu.ts builds the rows): who the till is (the profile card and
+ * its details), the sync on demand, the release the cloud assigned, what the engine offers.
+ */
+export interface TillMenuState {
+  /** The profile card: the role's name, the till's place; the details a tap shows (support asks "which till?"). */
+  roleName: string | null;
+  shopName: string | null;
+  posNumber: string | null;
+  identity: Array<{ label: string; value: string }>;
+  sync: { running: boolean; lastAt: string | null; error: string | null; waiting: number };
+  update: { version: string; phase: 'available' | 'downloading' | 'ready' | 'installing' | 'failed'; message: string | null } | null;
+  /** "דוחות Z": this till makes its Zs or holds some. */
+  showTillZHistory: boolean;
+  /** "תמיכה מרחוק" can be asked here (a Windows shell). */
+  support: boolean;
+  /** The local report last brought (`report.local`, after "דוחות בקופה"); null — none asked yet. */
+  report: LocalReportView | null;
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -800,6 +861,8 @@ export interface TillState {
    * this till does not show. Hiding only hides — the engine's rules are untouched. Absent: none.
    */
   menuHidden?: string[];
+  /** The ☰ menu's own facts (TillMenuState); absent (the demo): the menu shows what the rest of the state allows. */
+  menu?: TillMenuState;
   /** The tiles' text (TileTextState); absent: the defaults (fit, 3 lines, s, auto). */
   tileText?: TileTextState;
   /** "דוח X סניפי" (core/till/shopX.ts): offered on this till, and the report last brought (until sign-out). */

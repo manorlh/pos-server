@@ -32,9 +32,11 @@ export interface HistoryActions {
   refund?(id: string, quantities: Record<string, number>): Promise<boolean>;
   /** "כשאין הרשאה" = להסתיר: the refund's entries left out. */
   refundHidden?: boolean;
+  /** The screen's title: "היסטוריה" (today's), "24 השעות האחרונות" (the menu's report). */
+  title?: string;
 }
 
-export function HistoryScreen({ load, reprint, back, detail, refund, refundHidden }: HistoryActions) {
+export function HistoryScreen({ load, reprint, back, detail, refund, refundHidden, title }: HistoryActions) {
   const [rows, setRows] = useState<HistoryRow[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const reload = useCallback(() => {
@@ -63,7 +65,7 @@ export function HistoryScreen({ load, reprint, back, detail, refund, refundHidde
   return (
     <div className="t-report">
       <div className="t-report-head">
-        <h1 className="t-report-title">{T.history}</h1>
+        <h1 className="t-report-title">{title ?? T.history}</h1>
         <button type="button" className="t-btn t-btn-ghost" onClick={back}>
           {T.back}
         </button>
