@@ -113,6 +113,8 @@ export const T = {
   zConfirmOpenShift: (n: number | string) => `משמרת #${n} פתוחה. היא תיסגר קודם: ספירת הקופה והדפסת דו״ח X, ואז יופק דו״ח Z.`,
   openingFloat: 'קופה פותחת',
   menu: 'תפריט',
+  /** The bar's sell item (Android nav_catalog). */
+  quickOrder: 'הזמנה מהירה',
   history: 'היסטוריה',
   signOut: 'יציאה מהמשתמש',
   switchUser: 'החלפת משתמש',
