@@ -17,6 +17,9 @@ class PairingCode(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True, index=True)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True)
+    #: "נקודת מכירה" chosen with the code (P:/specs/area-gaps.md §1): a live area of `shop_id`. The device
+    #: that redeems it lands in that area (`areas.set_machine_area`); one archived or gone by then — none.
+    area_id = Column(UUID(as_uuid=True), ForeignKey("shop_areas.id", ondelete="SET NULL"), nullable=True)
     pos_machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True)
 
     #: A terminal this code *replaces*.

@@ -18,8 +18,10 @@ from app.services.machine_names import settle_default_name
 from app.services import machine_catalog, transmissions
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
+import logging
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class PairingAssignmentError(ValueError):
@@ -105,6 +107,7 @@ def create_pairing_code(
     terminal_options: Optional[dict] = None,
     machine_name: Optional[str] = None,
     license_product: Optional[str] = None,
+    area_id: Optional[uuid.UUID] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
@@ -156,6 +159,7 @@ def create_pairing_code(
         terminal_options=terminal_options,
         machine_name=machine_name,
         license_product=license_product,
+        area_id=area_id,
         expires_at=expires_at,
         is_used=False,
     )
@@ -286,6 +290,10 @@ def validate_pairing_code(
                 db.commit()
                 db.refresh(pos_machine)
 
+    # "נקודת מכירה" chosen with the code (P:/specs/area-gaps.md §1): before the role and the work config,
+    # so the kiosk / its settings resolve in its area from the start. Never fails the pairing.
+    apply_area_on_pairing(db, pairing_code, pos_machine)
+
     # "סוג מכשיר (תפקיד)": a kiosk code makes the machine a kiosk now, in its shop, so the
     # till's very first sync opens it as one (docs/SPEC_DEVICE_ROLE_MODEL.md). Never fails
     # the pairing.
@@ -308,6 +316,35 @@ def validate_pairing_code(
     work_config.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
+
+
+def apply_area_on_pairing(db: Session, pairing_code: PairingCode, machine: POSMachine) -> bool:
+    """
+    Put a just-paired machine in the code's "נקודת מכירה" (P:/specs/area-gaps.md §1): only a new device (a
+    replacement keeps its till's area), only into a live area of the shop it landed in. Commits; True when
+    the area was set. Never raises — an area archived or gone since the code was made leaves none.
+    """
+    area_id = getattr(pairing_code, "area_id", None)
+    if area_id is None or getattr(pairing_code, "target_machine_id", None) is not None:
+        return False
+    if machine.shop_id is None or machine.shop_id != pairing_code.shop_id:
+        return False
+    from app.services import areas
+
+    try:
+        area = areas.get_area(db, area_id)
+        if area is None or area.shop_id != machine.shop_id or getattr(area, "archived_at", None) is not None:
+            logger.info("pairing code %s: area %s no longer usable; machine %s left without one", pairing_code.id, area_id, machine.id)
+            return False
+        if not areas.set_machine_area(machine, area.id):
+            return False
+        db.commit()
+        db.refresh(machine)
+    except Exception:  # noqa: BLE001 - the pairing stands whatever happens here
+        db.rollback()
+        logger.exception("pairing code %s: area not applied to machine %s", pairing_code.id, machine.id)
+        return False
+    return True
 
 
 def _code_license(pairing_code: PairingCode) -> Optional[str]:
