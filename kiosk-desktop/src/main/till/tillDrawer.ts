@@ -204,6 +204,28 @@ export class TillDrawer {
     for (const t of this.timers) t.unref?.();
     this.offJobs?.();
     this.offJobs = svc.printJobs.register('till', this.jobs);
+    // "פתח מגירה (בדיקה)" on the technician's screen: an opening like any other — audited, `TEST`, the technician's.
+    svc.setDrawerTester(() => this.technicianTest());
+  }
+
+  /**
+   * The technician's test opening (Android CashDrawerDiagnosticsSection): through the service with `technician` (nobody
+   * signed in may still test), on this till's own drawer — the receipt printer's — whatever "פתיחת מגירה" says.
+   */
+  async technicianTest(): Promise<{ ok: boolean; message: string }> {
+    const out: DrawerOutcome = await this.service.requestOpen({ context: 'TEST', reason: 'TEST', technician: true }, { kind: 'own', id: 'local', name: 'הקופה' });
+    switch (out.kind) {
+      case 'opened':
+        return { ok: true, message: DRAWER_TEXT.opened };
+      case 'denied':
+        return { ok: false, message: DRAWER_TEXT.denied(out.reason) };
+      case 'approval':
+        return { ok: false, message: out.message };
+      case 'failed':
+        return { ok: false, message: `${DRAWER_TEXT.failed} — ${out.reason}` };
+      default:
+        return { ok: false, message: DRAWER_TEXT.failed };
+    }
   }
 
   stop() {
@@ -212,6 +234,7 @@ export class TillDrawer {
     this.offJobs?.();
     this.offJobs = null;
     this.c.svc.setCapabilities('till.documentRelay', null);
+    this.c.svc.setDrawerTester(null);
   }
 
   /** The other tills' drawers as targets ("המגירה ב<קופה>"). */

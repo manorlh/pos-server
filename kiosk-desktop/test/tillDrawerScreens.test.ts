@@ -15,7 +15,9 @@ import { UsersScreen } from '../src/renderer/roles/till/screens/UsersScreen';
 import { OwedScreen } from '../src/renderer/roles/till/screens/OwedScreen';
 import { CheckoutScreen } from '../src/renderer/roles/till/screens/CheckoutScreen';
 import { EngineDialog } from '../src/renderer/roles/till/parts/EngineDialog';
-import { MenuScreen } from '../src/renderer/roles/till/screens/MenuScreen';
+import { TillMenuDrawer } from '../src/renderer/roles/till/parts/TillMenuDrawer';
+import { menuFactsOf } from '../src/renderer/roles/till/TillApp';
+import { buildTillMenu } from '../src/core/till/tillMenu';
 import { initialState } from '../src/shared/till/mockEngine';
 
 const noop = () => undefined;
@@ -117,16 +119,32 @@ describe('the employees, the change owed, the credit', () => {
 
   it('the menu: the drawer rows by the engine\'s word, "עובדים מחוברים" where the rule is on', () => {
     const base: TillState = initialState({ role: 'till', rolesAllowed: [], terminal: false, printer: false, catalogVersion: 1, nowIso: '2026-10-09T12:00:00.000Z' });
-    const s: TillState = { ...base, drawer: drawer(), users: { notice: null, offered: true, list: null, busy: false, error: null }, owed: { items: [{ id: 'o', line: 'x', amountAgorot: 1 }] } };
-    const html = renderToStaticMarkup(createElement(MenuScreen, { state: s, go: noop, signOut: noop, switchTo: noop, back: noop }));
+    const open = { ...base.shift, open: true };
+    const s: TillState = { ...base, shift: open, drawer: drawer(), users: { notice: null, offered: true, list: null, busy: false, error: null }, owed: { items: [{ id: 'o', line: 'x', amountAgorot: 1 }] } };
+    const draw = (st: TillState, demo: boolean) =>
+      renderToStaticMarkup(
+        createElement(TillMenuDrawer, {
+          groups: buildTillMenu(menuFactsOf(st, { demo, settings: false, current: null })),
+          folderOpen: false,
+          user: { name: 'דנה כהן', roleName: 'קופאי/ת', shopName: 'מרכז', posNumber: '3', identity: [] },
+          onTarget: noop,
+          onClose: noop,
+        }),
+      );
+    const html = draw(s, false);
     expect(html).toContain('עובדים מחוברים');
     expect(html).toContain('עודף חייב ללקוח');
+    expect(html).toContain('פתיחת מגירה');
+    expect(html).toContain('מזומן במגירה');
     expect(html).not.toContain('פתיחת מגירה בקופה אחרת');
-    // The demo's engine says nothing of the drawer: "בקרוב" as before; the rows Android has no "soon" for are not there.
-    const demo = renderToStaticMarkup(createElement(MenuScreen, { state: base, go: noop, signOut: noop, switchTo: noop, back: noop }));
-    expect(demo).toContain('<span>פתיחת מגירה</span><small class="t-soon">בקרוב</small>');
-    expect(demo).toContain('<span>עובדים מחוברים</span><small class="t-soon">בקרוב</small>');
-    expect(demo).not.toContain('פתיחת מגירה בקופה אחרת');
+    // The profile card: initials, the name, "role · shop · till".
+    expect(html).toContain('דכ');
+    expect(html).toContain('קופאי/ת · מרכז · קופה 3');
+    // The demo's engine says nothing of the drawer: no drawer rows at all — never a "soon" button that does nothing.
+    const demo = draw({ ...base, shift: open }, true);
+    expect(demo).not.toContain('פתיחת מגירה');
+    expect(demo).not.toContain('בקרוב');
     expect(demo).not.toContain('עודף חייב ללקוח');
+    expect(demo).toContain('יציאה מהמשתמש');
   });
 });

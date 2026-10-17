@@ -14,6 +14,7 @@ import { useTranslations } from 'next-intl';
 import { Monitor, Smartphone, Tablet } from 'lucide-react';
 import { AS_TODAY, displayProfile, kioskDisplay } from '@/lib/displayProfile';
 import { applyLandscape, landscapeLook, lookColumnPx, lookColumns } from '@/lib/kioskLandscape';
+import { serviceSizeLook } from '@/lib/kioskServiceSize';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
 import { fetchGroups, fetchProductMenu, fetchUpsells } from '@/lib/menuApi';
@@ -462,6 +463,8 @@ export function KioskPreview({
   const panelWidth = display.sideCart ? Math.round((display.panelWidthDp * FRAME_SIZE[frame].w) / FRAME_DEVICE_DP[frame]) : null;
   // The landscape sizes ("לא ענקיים") in this frame's CSS px.
   const look = landscapeLook(config, display, FRAME_SIZE[frame].w, FRAME_SIZE[frame].w / FRAME_DEVICE_DP[frame]);
+  // "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts): the service cards in this frame's CSS px — live as edited.
+  const serviceLook = serviceSizeLook(config, display.landscape, FRAME_SIZE[frame].w, FRAME_SIZE[frame].h, FRAME_SIZE[frame].w / FRAME_DEVICE_DP[frame]);
   const panel = cartPanelShown(shownTheme, FRAME_DEVICE_DP[frame]);
   const side = shownTheme.categoryLayout !== 'top';
   // "אפקטים": the preview draws the configured profile ("auto" — the device's choice — previews the full look).
@@ -561,6 +564,7 @@ export function KioskPreview({
   const model: PreviewModel = {
     cfg: shownConfig,
     landscape: look,
+    serviceSize: serviceLook,
     panelWidth,
     twoColumns: display.twoColumns,
     contentMaxWidth: display.contentMaxWidthDp ? Math.round((display.contentMaxWidthDp * FRAME_SIZE[frame].w) / FRAME_DEVICE_DP[frame]) : null,

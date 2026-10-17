@@ -7,6 +7,7 @@
  */
 
 import { lookCategoryImagePx, type LandscapeLook } from '@/lib/kioskLandscape';
+import type { ServiceSizeLook } from '@/lib/kioskServiceSize';
 import {
   useEffect,
   useLayoutEffect,
@@ -358,6 +359,11 @@ export interface PreviewModel {
    * CSS px — the category column, a category's tile and picture, a dish's columns and picture. Absent / null: portrait.
    */
   landscape?: LandscapeLook | null;
+  /**
+   * "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts, P:/specs/kiosk-service-size.md): the service cards (and the
+   * attract screen's two buttons) in these screens' CSS px. Absent / null: today's (portrait, nothing set).
+   */
+  serviceSize?: ServiceSizeLook | null;
   c: ResolvedThemeColors;
   radius: number;
   btnRadius: number;
@@ -990,14 +996,17 @@ function ScreenBody({ children, footer, m, top, bottom }: { children: ReactNode;
       </div>
     );
   }
+  // Landscape below two columns: one column centred at the content width, its action under it (never stretched
+  // to a window's edges). Portrait (no content width): as it was.
+  const narrowTo: CSSProperties | undefined = m.contentMaxWidth ? { maxWidth: m.contentMaxWidth, marginInline: 'auto', width: '100%' } : undefined;
   return (
     <div className="flex h-full flex-col">
       {top}
-      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]">{narrowTo ? <div style={narrowTo}>{children}</div> : children}</div>
       {bottom}
       {footer ? (
         <div className="shrink-0 p-3" style={{ background: `linear-gradient(to top, ${m.c.background}, ${m.c.background}00)` }}>
-          {footer}
+          {narrowTo ? <div style={narrowTo}>{footer}</div> : footer}
         </div>
       ) : null}
     </div>
@@ -1362,10 +1371,21 @@ export function AttractServiceButtons({ m, box, onPick }: { m: PreviewModel; box
   const cta = m.cfg.attract.cta;
   const fill = cta.fillColor ?? m.c.button;
   const text = cta.textColor ?? m.c.buttonText;
-  const radius = ctaRadiusPx(cta, box.h, m.cfg.theme);
-  const fontSp = ctaFontSp({ ...cta, subtitle: '' }, box.h);
+  // "גודל כרטיסי לקחת / לשבת": never higher / wider than the service cards (lib/kioskServiceSize.ts), centred in the box.
+  const sz = m.serviceSize;
+  const gap = 12;
+  const h = sz?.cardHeightPx != null ? Math.min(box.h, sz.cardHeightPx) : box.h;
+  const each = Math.max(0, Math.floor((box.w - gap) / 2));
+  const w = sz?.cardMaxWidthPx != null ? Math.min(each, sz.cardMaxWidthPx) : each;
+  const inner = sz ? w * 2 + gap : box.w;
+  const radius = ctaRadiusPx(cta, h, m.cfg.theme);
+  const fontSp = ctaFontSp({ ...cta, subtitle: '' }, h);
   return (
-    <div className="absolute z-20 flex gap-3" style={{ left: box.x, top: box.y, width: box.w, height: box.h }}>
+    <div
+      data-service-buttons
+      className="absolute z-20 flex gap-3"
+      style={{ left: box.x + Math.round((box.w - inner) / 2), top: box.y + Math.round((box.h - h) / 2), width: inner, height: h }}
+    >
       {m.cfg.general.serviceTypes.map((t) => (
         <button
           key={t}
@@ -1619,10 +1639,15 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
   const [picked, setPicked] = useState<'take_away' | 'eat_in' | null>(null);
   const look = kioskServiceLook(cfg.theme, m.c);
   const narrow = m.screen.w < 600;
-  const tile = Math.min(360, Math.round(m.screen.w * 0.4));
-  const gap = narrow ? 10 : 16;
-  const pad = narrow ? 14 : 24;
-  const badge = Math.round(tile * 0.34);
+  // "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts): the chosen / landscape measures; else today's.
+  const sz = m.serviceSize;
+  const tile = sz?.cardMaxWidthPx ?? Math.min(360, Math.round(m.screen.w * 0.4));
+  const cardMinHeight = sz?.cardHeightPx ?? Math.round(tile * 0.85);
+  // A low card (a landscape window): less padding inside, the same order.
+  const compact = cardMinHeight < 170;
+  const gap = narrow || compact ? 10 : 16;
+  const pad = narrow ? 14 : compact ? 16 : 24;
+  const badge = sz?.iconPx ?? Math.round(tile * 0.34);
   const choose = (type: 'take_away' | 'eat_in') => {
     m.setService(type);
     m.go('catalog');
@@ -1648,8 +1673,8 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
       <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
         <div className="my-auto w-full shrink-0 overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, maxWidth: tile * 2 + gap + pad * 2, borderRadius: Math.max(16, m.radius) }}>
           <CardHeader m={m} caption={m.txt('serviceCaption')} />
-          <div className="flex flex-col gap-4" style={{ padding: pad }}>
-            <ScreenImage m={m} k="service" height={110} />
+          <div className={`flex flex-col ${compact ? 'gap-3' : 'gap-4'}`} style={{ padding: pad }}>
+            <ScreenImage m={m} k="service" height={compact ? 72 : 110} />
             <div className="space-y-1 text-center">
               <h2 className="text-2xl font-extrabold leading-tight">{m.txt('serviceTitle')}</h2>
               <p className="kt-13" style={{ color: m.c.mutedText }}>
@@ -1675,8 +1700,9 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
                       setPicked(type);
                       m.setService(type);
                     }}
-                    className="k-tap relative flex flex-col items-center justify-center gap-2 text-center transition-colors duration-200 active:scale-95"
-                    style={{ ...fill(on), minHeight: Math.round(tile * 0.85), padding: narrow ? 10 : 18, borderRadius: Math.max(14, m.radius) }}
+                    data-service-card={type}
+                    className={`k-tap relative flex flex-col items-center justify-center text-center transition-colors duration-200 active:scale-95 ${compact ? 'gap-1' : 'gap-2'}`}
+                    style={{ ...fill(on), minHeight: cardMinHeight, padding: narrow || compact ? 10 : 18, borderRadius: Math.max(14, m.radius) }}
                   >
                     <span
                       className="flex items-center justify-center transition-colors duration-200"
@@ -3091,126 +3117,173 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
   const count = cartCount(m.cart);
   const min = cfg.payment.minOrderAgorot / 100;
   const below = min > 0 && total < min;
-  return (
-    <ScreenBody
-      m={m}
-      top={<TickerSlot m={m} screen="cart" position="top" />}
-      bottom={<TickerSlot m={m} screen="cart" position="bottom" />}
-      footer={
-        <div className="space-y-1.5">
-          {below ? (
-            <p className="text-center text-xs font-medium" style={{ color: '#B45309' }}>
-              {m.t('minOrder', { amount: m.money(min) })}
-            </p>
-          ) : null}
-          <BigButton m={m} onClick={() => m.go('pay')} disabledLook={below || m.cart.length === 0}>
-            <span>{m.txt('checkoutCta')}</span>
-            <span className="tabular-nums">· {m.money(total)}</span>
-          </BigButton>
-        </div>
-      }
-    >
-      <div className="space-y-4 p-4">
-        <ScreenImage m={m} k="cart" height={80} />
-        <div className="flex items-center justify-between gap-2">
-          <LiveBack m={m} />
+  const image = <ScreenImage m={m} k="cart" height={80} />;
+  const head = (
+    <div className="flex items-center justify-between gap-2">
+      <LiveBack m={m} />
+      <div className="min-w-0 flex-1">
+        <h2 className="text-xl font-extrabold">{m.txt('cartTitle')}</h2>
+        <p className="kt-11" style={{ color: m.c.mutedText }}>
+          {m.txt('reviewHint')}
+        </p>
+      </div>
+      <button type="button" className="k-hit shrink-0 px-3 py-1.5 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
+        {m.txt('addMoreCta')}
+      </button>
+    </div>
+  );
+  const chips =
+    count > 0 ? (
+      <div className="flex flex-wrap items-center gap-1.5 kt-11 font-semibold">
+        <span className="rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
+          {count === 1 ? m.txt('reviewItemsOne') : m.txt('reviewItems').replace('{n}', String(count))}
+        </span>
+        {serviceAsked(m) ? (
+          <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
+            {m.service === 'eat_in' ? <UtensilsCrossed className="h-3.5 w-3.5" /> : <ShoppingBag className="h-3.5 w-3.5" />}
+            {m.service === 'eat_in' ? m.txt('eatInLabel') : m.txt('takeAwayLabel')}
+          </span>
+        ) : null}
+      </div>
+    ) : null;
+  const lines = (
+    <div data-cart-lines className="divide-y overflow-hidden" style={{ ...cardStyle(m) }}>
+      {m.cart.map((l) => (
+        <div key={l.key} className="flex items-center gap-3 p-3" style={{ borderColor: m.c.border }}>
+          <ProductImage m={m} p={l.product} className="h-12 w-12 shrink-0" style={{ borderRadius: Math.min(m.radius, 12) }} />
           <div className="min-w-0 flex-1">
-            <h2 className="text-xl font-extrabold">{m.txt('cartTitle')}</h2>
-            <p className="kt-11" style={{ color: m.c.mutedText }}>
-              {m.txt('reviewHint')}
-            </p>
-          </div>
-          <button type="button" className="k-hit shrink-0 px-3 py-1.5 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
-            {m.txt('addMoreCta')}
-          </button>
-        </div>
-        {count > 0 ? (
-          <div className="flex flex-wrap items-center gap-1.5 kt-11 font-semibold">
-            <span className="rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
-              {count === 1 ? m.txt('reviewItemsOne') : m.txt('reviewItems').replace('{n}', String(count))}
-            </span>
-            {serviceAsked(m) ? (
-              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
-                {m.service === 'eat_in' ? <UtensilsCrossed className="h-3.5 w-3.5" /> : <ShoppingBag className="h-3.5 w-3.5" />}
-                {m.service === 'eat_in' ? m.txt('eatInLabel') : m.txt('takeAwayLabel')}
-              </span>
+            <div className="truncate text-sm font-bold" style={textSize(m, 'cartLines', 14)}>
+              {l.product.name}
+            </div>
+            {l.extras.length > 0 ? (
+              <div className="truncate kt-11" style={{ color: m.c.mutedText, ...textSize(m, 'cartLines', 11) }}>
+                {l.extras.join(' · ')}
+              </div>
+            ) : null}
+            <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'cartLines', 12) }}>
+              {m.money(l.unit * l.qty)}
+            </div>
+            {m.pricing?.lines[l.key]?.promotionAgorot ? (
+              <div className="truncate kt-11 font-semibold tabular-nums" style={{ color: m.c.accentInk }}>
+                {m.t('promotionLine', { name: m.pricing.lines[l.key].promotionName ?? '', amount: m.money(m.pricing.lines[l.key].promotionAgorot / 100) })}
+              </div>
             ) : null}
           </div>
-        ) : null}
-        <div className="divide-y overflow-hidden" style={{ ...cardStyle(m) }}>
-          {m.cart.map((l) => (
-            <div key={l.key} className="flex items-center gap-3 p-3" style={{ borderColor: m.c.border }}>
-              <ProductImage m={m} p={l.product} className="h-12 w-12 shrink-0" style={{ borderRadius: Math.min(m.radius, 12) }} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold" style={textSize(m, 'cartLines', 14)}>
-                  {l.product.name}
-                </div>
-                {l.extras.length > 0 ? (
-                  <div className="truncate kt-11" style={{ color: m.c.mutedText, ...textSize(m, 'cartLines', 11) }}>
-                    {l.extras.join(' · ')}
-                  </div>
-                ) : null}
-                <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'cartLines', 12) }}>
-                  {m.money(l.unit * l.qty)}
-                </div>
-                {m.pricing?.lines[l.key]?.promotionAgorot ? (
-                  <div className="truncate kt-11 font-semibold tabular-nums" style={{ color: m.c.accentInk }}>
-                    {m.t('promotionLine', { name: m.pricing.lines[l.key].promotionName ?? '', amount: m.money(m.pricing.lines[l.key].promotionAgorot / 100) })}
-                  </div>
-                ) : null}
-              </div>
-              <Stepper
-                m={m}
-                small
-                value={l.qty}
-                onChange={(n) =>
-                  m.setCart(n <= 0 ? m.cart.filter((x) => x.key !== l.key) : m.cart.map((x) => (x.key === l.key ? { ...x, qty: n } : x)))
-                }
-              />
+          <Stepper
+            m={m}
+            small
+            value={l.qty}
+            onChange={(n) =>
+              m.setCart(n <= 0 ? m.cart.filter((x) => x.key !== l.key) : m.cart.map((x) => (x.key === l.key ? { ...x, qty: n } : x)))
+            }
+          />
+        </div>
+      ))}
+      {m.cart.length === 0 ? (
+        <p className="p-6 text-center text-sm" style={{ color: m.c.mutedText }}>
+          {m.t('cartEmpty')}
+        </p>
+      ) : null}
+    </div>
+  );
+  const summary =
+    m.cart.length > 0 ? (
+      <div data-cart-summary className="space-y-1.5 p-3" style={{ background: `${m.c.primary}0D`, borderRadius: Math.min(Math.max(m.radius, 8), 16) }}>
+        <div className="flex items-center justify-between kt-13" style={{ color: m.c.mutedText }}>
+          <span>{m.txt('reviewSubtotal')}</span>
+          <span className="tabular-nums">{m.money(subtotal)}</span>
+        </div>
+        {/* The promotions the kiosk will charge with (the real kiosk's pricing). */}
+        {promotions.map((a) => (
+          <div key={a.name} className="flex items-center justify-between kt-13 font-semibold" style={{ color: m.c.accentInk }}>
+            <span className="min-w-0 truncate">{a.name}</span>
+            <span className="tabular-nums">−{m.money(a.discountAgorot / 100)}</span>
+          </div>
+        ))}
+        <div className="flex items-center justify-between border-t pt-1.5 text-base font-extrabold" style={{ borderColor: m.c.border }}>
+          <span>{m.txt('reviewTotal')}</span>
+          <span className="tabular-nums" style={{ color: m.c.primaryInk }}>
+            {m.money(total)}
+          </span>
+        </div>
+      </div>
+    ) : null;
+  const upsellRow =
+    cfg.general.upsellEnabled && upsell.length > 0 ? (
+      <section className="space-y-2">
+        <h3 className="text-sm font-extrabold">{m.txt('upsellTitle')}</h3>
+        <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 [scrollbar-width:none]">
+          {upsell.map((p) => (
+            <div key={p.id} className="w-28 shrink-0">
+              <ProductCard m={m} p={p} />
             </div>
           ))}
-          {m.cart.length === 0 ? (
-            <p className="p-6 text-center text-sm" style={{ color: m.c.mutedText }}>
-              {m.t('cartEmpty')}
-            </p>
-          ) : null}
         </div>
-        {m.cart.length > 0 ? (
-          <div className="space-y-1.5 p-3" style={{ background: `${m.c.primary}0D`, borderRadius: Math.min(Math.max(m.radius, 8), 16) }}>
-            <div className="flex items-center justify-between kt-13" style={{ color: m.c.mutedText }}>
-              <span>{m.txt('reviewSubtotal')}</span>
-              <span className="tabular-nums">{m.money(subtotal)}</span>
-            </div>
-            {/* The promotions the kiosk will charge with (the real kiosk's pricing). */}
-            {promotions.map((a) => (
-              <div key={a.name} className="flex items-center justify-between kt-13 font-semibold" style={{ color: m.c.accentInk }}>
-                <span className="min-w-0 truncate">{a.name}</span>
-                <span className="tabular-nums">−{m.money(a.discountAgorot / 100)}</span>
-              </div>
-            ))}
-            <div className="flex items-center justify-between border-t pt-1.5 text-base font-extrabold" style={{ borderColor: m.c.border }}>
-              <span>{m.txt('reviewTotal')}</span>
-              <span className="tabular-nums" style={{ color: m.c.primaryInk }}>
-                {m.money(total)}
-              </span>
-            </div>
+      </section>
+    ) : null;
+  const pay = (
+    <div data-cart-pay className="space-y-1.5">
+      {below ? (
+        <p className="text-center text-xs font-medium" style={{ color: '#B45309' }}>
+          {m.t('minOrder', { amount: m.money(min) })}
+        </p>
+      ) : null}
+      <BigButton m={m} onClick={() => m.go('pay')} disabledLook={below || m.cart.length === 0}>
+        <span>{m.txt('checkoutCta')}</span>
+        <span className="tabular-nums">· {m.money(total)}</span>
+      </BigButton>
+    </div>
+  );
+  if (m.twoColumns) {
+    // Landscape, wide (P:/specs/kiosk-landscape-till-mode.md §4.5): one composition centred in the window — the head
+    // across it, the lines beside the side column of the summary and "לתשלום" right under it (never a lone button at
+    // a window's edge; 0.5.9 owner screenshots, 17.10).
+    const contentPx = Math.min(m.screen.w, m.contentMaxWidth ?? m.screen.w);
+    const sidePx = cartSideColumnPx(contentPx);
+    return (
+      <div className="flex h-full flex-col">
+        <TickerSlot m={m} screen="cart" position="top" />
+        <div data-cart-content className="mx-auto flex min-h-0 w-full flex-1 flex-col" style={{ maxWidth: contentPx }}>
+          <div className="shrink-0 space-y-3 px-4 pt-4">
+            {image}
+            {head}
+            {chips}
           </div>
-        ) : null}
-        {cfg.general.upsellEnabled && upsell.length > 0 ? (
-          <section className="space-y-2">
-            <h3 className="text-sm font-extrabold">{m.txt('upsellTitle')}</h3>
-            <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 [scrollbar-width:none]">
-              {upsell.map((p) => (
-                <div key={p.id} className="w-28 shrink-0">
-                  <ProductCard m={m} p={p} />
-                </div>
-              ))}
+          <div className="flex min-h-0 flex-1 gap-4 px-4 pb-3 pt-3">
+            <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto [scrollbar-width:none]">
+              {lines}
+              {upsellRow}
             </div>
-          </section>
-        ) : null}
+            <aside data-cart-side className="flex min-h-0 shrink-0 flex-col gap-3 overflow-y-auto [scrollbar-width:none]" style={{ width: sidePx }}>
+              {summary}
+              {pay}
+            </aside>
+          </div>
+        </div>
+        <TickerSlot m={m} screen="cart" position="bottom" />
+      </div>
+    );
+  }
+  return (
+    <ScreenBody m={m} top={<TickerSlot m={m} screen="cart" position="top" />} bottom={<TickerSlot m={m} screen="cart" position="bottom" />} footer={pay}>
+      <div className="space-y-4 p-4">
+        {image}
+        {head}
+        {chips}
+        {lines}
+        {summary}
+        {upsellRow}
       </div>
     </ScreenBody>
   );
+}
+
+/**
+ * The basket's side column in a wide landscape window (px): about a third of the content, never so narrow that
+ * "לתשלום · ₪99,999.90" wraps, never wider than the lines beside it need.
+ */
+export function cartSideColumnPx(contentPx: number): number {
+  return Math.max(240, Math.min(400, Math.round(contentPx * 0.36)));
 }
 
 /* -------------------------------------------------------------------- tip */
@@ -3270,6 +3343,10 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
     setOwn({ pct: null, agorot: null });
     onDone?.(0);
   };
+  // Landscape, wide (§4.5): the card at the content width in two columns — the question and the tiles beside the
+  // order's total and the main button (no scrolling for "המשך"); portrait and narrow windows as before.
+  const two = !!m.twoColumns;
+  const area = (a: string): CSSProperties | undefined => (two ? { gridArea: a } : undefined);
   const tileStyle = (on: boolean): CSSProperties => ({
     background: on ? `${m.c.primary}14` : m.c.surface,
     border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
@@ -3280,11 +3357,20 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
     <div className="relative flex h-full flex-col">
       <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-3 [scrollbar-width:none]">
         {/* Never squeezed (shrink-0): a short window scrolls the whole card, "המשך ללא טיפ" included (layout audit 16.10). */}
-        <div className="my-auto w-full max-w-[640px] shrink-0 overflow-hidden" style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius) }}>
+        <div
+          data-tip-card
+          className={cn('my-auto w-full shrink-0 overflow-hidden', !two && 'max-w-[640px]')}
+          style={{ ...cardStyle(m), background: m.c.surface, borderRadius: Math.max(16, m.radius), ...(two ? { maxWidth: Math.min(m.screen.w - 24, Math.max(640, m.contentMaxWidth ?? 640)) } : {}) }}
+        >
           <CardHeader m={m} caption={m.txt('tipCaption')} start={<LiveBack m={m} size={32} />} />
-          <div className="flex flex-col gap-4 p-4">
-            <CheckoutBarRow m={m} steps={steps} current="tip" />
-            <div className="flex flex-col items-center gap-2 text-center">
+          <div
+            className={two ? 'grid items-start gap-x-5 gap-y-4 p-4' : 'flex flex-col gap-4 p-4'}
+            style={two ? { gridTemplateColumns: 'minmax(0,1.2fr) minmax(0,1fr)', gridTemplateAreas: '"bar bar" "head sum" "tiles act"' } : undefined}
+          >
+            <div style={area('bar')}>
+              <CheckoutBarRow m={m} steps={steps} current="tip" />
+            </div>
+            <div className="flex flex-col items-center gap-2 text-center" style={area('head')}>
               <span className="flex h-12 w-12 items-center justify-center" style={{ background: `${m.c.primary}1F`, color: m.c.primary, borderRadius: 14 }}>
                 <Heart className="h-6 w-6" />
               </span>
@@ -3293,7 +3379,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
                 {m.txt('tipSubtitle')}
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-2 gap-2.5" style={area('tiles')}>
               {presets.map((p, i) => {
                 const on = value.agorot === null && value.pct === p;
                 return (
@@ -3335,7 +3421,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
                 </button>
               ) : null}
             </div>
-            <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius }}>
+            <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius, ...area('sum') }}>
               <div className="flex items-center justify-between kt-13">
                 <span style={{ color: m.c.mutedText }}>{m.txt('tipOrderTotal')}</span>
                 <span className="font-semibold tabular-nums">{money(goods)}</span>
@@ -3351,7 +3437,7 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
                 </span>
               </div>
             </div>
-            <div className="space-y-2">
+            <div data-tip-actions className="space-y-2" style={area('act')}>
               <BigButton m={m} onClick={go} disabledLook={mustChoose}>
                 <span>{toPay ? m.txt('tipContinue') : m.txt('entryContinue')}</span>
                 <span className="tabular-nums">· {money(total)}</span>

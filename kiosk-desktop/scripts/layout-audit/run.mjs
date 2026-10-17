@@ -5,6 +5,7 @@
  *   npm run dev:web -- --port 5201            (the demo bridge / demo till — another terminal)
  *   node scripts/layout-audit/run.mjs --base http://localhost:5201 --out <dir> [--hosts win-kiosk,win-till]
  *        [--screens attract,catalog-rail] [--only 21.5in] [--shots issues|all|none] [--parallel 3]
+ *        [--windows 1536x864,1815x1080,1080x1920]   (instead of the matrix: these windows in DIPs, at 100%)
  *
  * Writes <out>/results.json (every render: the matrix cases it stands for, the issues) and <out>/shots/… (a
  * screenshot with the issues boxed). Exit code 1 when any issue is left.
@@ -15,11 +16,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkerSource } from './checker.mjs';
 import { launch, openPage, sleep } from './cdp.mjs';
-import { casesFor, distinctRenders } from './matrix.mjs';
+import { casesFor, distinctRenders, windowCases } from './matrix.mjs';
 import { ALLOW, SCENARIOS } from './scenarios.mjs';
 
 function args() {
-  const out = { base: 'http://localhost:5201', out: 'layout-audit-out', hosts: null, screens: null, only: null, shots: 'issues', shotCap: 0, parallel: 3, port: 9333, resume: null };
+  const out = { base: 'http://localhost:5201', out: 'layout-audit-out', hosts: null, screens: null, only: null, shots: 'issues', shotCap: 0, parallel: 3, port: 9333, resume: null, windows: null };
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
     const k = a[i].replace(/^--/, '');
@@ -171,7 +172,7 @@ async function main() {
   const hosts = opts.hosts ? opts.hosts.split(',') : [...new Set(SCENARIOS.flatMap((s) => s.hosts))];
   const jobs = [];
   for (const host of hosts) {
-    const renders = distinctRenders(casesFor(host)).filter((c) => !opts.only || opts.only.split(',').some((o) => c.covers.some((id) => id.includes(o))));
+    const renders = distinctRenders(opts.windows ? windowCases(host, opts.windows) : casesFor(host)).filter((c) => !opts.only || opts.only.split(',').some((o) => c.covers.some((id) => id.includes(o))));
     for (const sc of SCENARIOS.filter((s) => s.hosts.includes(host) && (!opts.screens || opts.screens.split(',').includes(s.id)))) {
       for (const c of renders) jobs.push({ sc, c });
     }

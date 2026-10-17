@@ -19,7 +19,7 @@ import {
 } from '@/lib/kioskConfig';
 import type { KioskLevel, KioskServerError, KioskSourceCatalog } from '@/lib/kioskApi';
 import type { LayoutTemplate } from '@/lib/kioskLayout';
-import { LANDSCAPE_OVERRIDE_KEYS, type LandscapeSection } from '@/lib/kioskLandscape';
+import { LANDSCAPE_GENERAL_KEYS, LANDSCAPE_OVERRIDE_KEYS, type LandscapeSection } from '@/lib/kioskLandscape';
 import type { MotionDemo } from './kiosk-preview';
 
 import type { PreviewScreen } from '@/kiosk-shared/types';
@@ -79,6 +79,8 @@ export type KioskEditorOrientation = 'portrait' | 'landscape';
 /** The landscape block's path for a design path (`theme.cartStyle` → `landscape.theme.cartStyle`), or null. */
 export function landscapePathOf(path: string): string | null {
   const [section, key, ...rest] = path.split('.');
+  // "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts): the service cards' size has a landscape value too.
+  if (rest.length === 0 && section === 'general' && key && (LANDSCAPE_GENERAL_KEYS as readonly string[]).includes(key)) return `landscape.${path}`;
   if (rest.length > 0 || !key || !(section in LANDSCAPE_OVERRIDE_KEYS)) return null;
   return (LANDSCAPE_OVERRIDE_KEYS[section as LandscapeSection] as readonly string[]).includes(key) ? `landscape.${path}` : null;
 }

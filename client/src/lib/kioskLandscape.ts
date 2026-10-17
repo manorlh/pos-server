@@ -9,6 +9,8 @@
  * screens (`PreviewModel.landscape`); in portrait both are today's exactly.
  */
 
+import { SERVICE_SIZE_KEYS, validateServiceSize, type ServiceSizeKey } from './kioskServiceSize';
+
 /* ---------------------------------------------------------------- the block */
 
 export const LANDSCAPE_SIZE_KEYS = [
@@ -68,7 +70,12 @@ export interface KioskLandscape {
   layout?: Partial<Record<(typeof LANDSCAPE_OVERRIDE_KEYS.layout)[number], unknown>> | null;
   attract?: { playlist?: unknown[] | null } | null;
   sizes?: Partial<Record<LandscapeSizeKey, number | null>> | null;
+  /** "גודל כרטיסי לקחת / לשבת" in landscape (lib/kioskServiceSize.ts reads it; applyLandscape leaves it). */
+  general?: Partial<Record<ServiceSizeKey, unknown>> | null;
 }
+
+/** The `general` keys a landscape block may set: the service cards' size (lib/kioskServiceSize.ts). */
+export const LANDSCAPE_GENERAL_KEYS: readonly ServiceSizeKey[] = SERVICE_SIZE_KEYS;
 
 /** layout.catalog / layout.basket → theme.categoryLayout / cartStyle (the server's LAYOUT_BACK_COMPAT). */
 const BACK_COMPAT_CATEGORY: Record<string, string> = { rail: 'side', top: 'top', landing: 'side', list: 'side', shelves: 'top', magazine: 'side', wall: 'side' };
@@ -282,7 +289,17 @@ export function validateLandscape(block: unknown, vocab: Record<string, readonly
   if (block === undefined || block === null) return out;
   if (!isDict(block)) return [{ path: 'landscape', code: 'enum' }];
   for (const key of Object.keys(block)) {
-    if (!['theme', 'layout', 'attract', 'sizes'].includes(key)) out.push({ path: `landscape.${key}`, code: 'unknownKey' });
+    if (!['theme', 'layout', 'attract', 'sizes', 'general'].includes(key)) out.push({ path: `landscape.${key}`, code: 'unknownKey' });
+  }
+  const general = block.general;
+  if (general !== undefined && general !== null) {
+    if (!isDict(general)) out.push({ path: 'landscape.general', code: 'enum' });
+    else {
+      for (const key of Object.keys(general)) {
+        if (!(LANDSCAPE_GENERAL_KEYS as readonly string[]).includes(key)) out.push({ path: `landscape.general.${key}`, code: 'unknownKey' });
+      }
+      out.push(...validateServiceSize(general, 'landscape.general'));
+    }
   }
   for (const section of ['theme', 'layout'] as const) {
     const part = block[section];
