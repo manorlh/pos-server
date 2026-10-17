@@ -22,6 +22,7 @@ import type { HostCaps, TillHost } from '../../host/TillHost';
 import type { DisplayProfile } from './layout/displayProfileAdapter';
 import { tillLayout } from './layout/tillLayout';
 import { AdminHoldBar, useAdminCornerHold } from '../../staff/adminHold';
+import { TechnicianCorner, tillTechnicianArmed } from '../../../core/technician';
 import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
@@ -205,6 +206,16 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     onOpen: () => host.ui.openAdmin?.(),
   });
 
+  // "בדיקות ומידע": six taps in the top-left corner within 3 s → the shell's technician's code and screen — on every till
+  // screen, the PIN screen too (no employee's or manager's code needed to unpair or fix the display), never while paying.
+  // Watched in the capture phase without taking the taps: what is drawn in the corner still gets them.
+  const techCorner = useRef(new TechnicianCorner());
+  const onTechTap = (e: React.PointerEvent) => {
+    if (!host.ui.openTechnician) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    if (techCorner.current.tap(e.clientX - rect.left, e.clientY - rect.top, Date.now(), tillTechnicianArmed(state?.checkout.phase ?? null))) host.ui.openTechnician();
+  };
+
   const root = (children: ReactNode) => (
     <div
       className="t-root"
@@ -215,6 +226,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       style={profile.scale !== 1 ? ({ zoom: profile.scale, '--t-zoom': String(profile.scale) } as CSSProperties) : undefined}
       onPointerDown={touch}
       {...adminHold.handlers}
+      onPointerDownCapture={(e) => {
+        onTechTap(e);
+        adminHold.handlers.onPointerDownCapture(e);
+      }}
     >
       {children}
       <AdminHoldBar progress={adminHold.progress} rtl={adminHold.rtl} />

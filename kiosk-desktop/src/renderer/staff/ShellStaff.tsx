@@ -32,15 +32,16 @@ export function staffModel(): PreviewModel {
 }
 
 export function ShellStaff({ view, paying = false, children }: { view: KioskView; paying?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState<'none' | 'admin'>('none');
+  const [open, setOpen] = useState<'none' | 'admin' | 'technician'>('none');
   /** Opened by the till's corner: closing gives the till its screen back. */
   const [forTill, setForTill] = useState(false);
   const hold = useAdminCornerHold({ rtl: true, armed: () => open === 'none' && !paying, onOpen: () => setOpen('admin') });
   useEffect(
     () =>
-      shell.on('admin', () => {
+      // The till's corner (`admin`) or its six taps (`technician` — the technician's code, no manager's).
+      shell.on('admin', (p) => {
         setForTill(true);
-        setOpen('admin');
+        setOpen(p?.screen === 'technician' ? 'technician' : 'admin');
       }),
     [],
   );
