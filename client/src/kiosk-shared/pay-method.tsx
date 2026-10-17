@@ -187,6 +187,8 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
   // Working (a voucher checked, the order placed): the tiles, never the confirmation.
   const asking = confirming && !cashOff && !live.busy;
 
+  // "איך תרצו לשלם?" as a sheet: two tiles a row; on a landscape window (a content width) all in one row, up to four.
+  const sheetColumns = m.contentMaxWidth && live.tiles.length >= 3 ? Math.min(4, live.tiles.length) : 2;
   const tile = (t: KioskPayTile) => {
     const Icon = ICONS[t.method];
     const off = t.off !== null || live.busy;
@@ -206,7 +208,7 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
           className={cn(
             'flex w-full flex-col items-center gap-2 px-3 py-5 text-center transition-transform duration-150',
             off ? 'opacity-55' : 'active:scale-[0.97]',
-            live.tiles.length === 1 && 'col-span-2',
+            live.tiles.length === 1 && sheetColumns === 2 && 'col-span-2',
           )}
           style={{ background: rc.cardBg, color: rc.cardText, border: `1.5px solid ${m.c.border}`, borderRadius: Math.max(radius, 18) }}
         >
@@ -279,7 +281,14 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
                 </BigButton>
               </div>
             ) : (
-              <div className={sheet ? 'grid grid-cols-2 gap-2.5' : 'flex flex-col gap-2.5'}>{live.tiles.map(tile)}</div>
+              <div
+                data-pay-tiles
+                className={sheet ? 'grid gap-2.5' : 'flex flex-col gap-2.5'}
+                // Landscape: the tiles in one row (up to four) — a short window shows them all without scrolling.
+                style={sheet ? { gridTemplateColumns: `repeat(${sheetColumns}, minmax(0, 1fr))` } : undefined}
+              >
+                {live.tiles.map(tile)}
+              </div>
             )}
             {/* "רשות": passed with the default method. */}
             {live.skip && !asking ? (
@@ -359,7 +368,10 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
           <div className="flex items-center px-3 pt-1">
             <LiveBack m={m} size={32} />
           </div>
-          {body}
+          {/* Landscape: the sheet's content at the content width, centred (never edge to edge on a wide window). */}
+          <div data-pay-content className="mx-auto w-full" style={m.contentMaxWidth ? { maxWidth: m.contentMaxWidth } : undefined}>
+            {body}
+          </div>
         </div>
       </div>
     );

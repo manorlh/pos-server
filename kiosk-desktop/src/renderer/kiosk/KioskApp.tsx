@@ -9,6 +9,7 @@
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
 import { browserFacts, displayProfile, kioskDisplay, kioskTargetCssPx } from '@dash-lib/displayProfile';
 import { applyLandscape, landscapeLook, lookColumns } from '@dash-lib/kioskLandscape';
+import { serviceSizeLook } from '@dash-lib/kioskServiceSize';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -736,6 +737,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   // …and the landscape sizes ("לא ענקיים") in this window's CSS px (the page zoom: cssPerDip), never a dish wider than the
   // landscape tile (the standard catalog's rail and side basket beside).
   const look = landscapeLook(cfg, screenDisplay.display, size.w, screenDisplay.cssPerDip);
+  // "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts): the service cards in this window's CSS px.
+  const serviceLook = serviceSizeLook(cfg, screenDisplay.display.landscape, size.w, size.h, screenDisplay.cssPerDip);
   const panelPx = screenDisplay.display.sideCart ? Math.round(screenDisplay.display.panelWidthDp * screenDisplay.cssPerDip) : 132;
   const cols = lookColumns(
     look,
@@ -847,6 +850,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   const m: PreviewModel = {
     cfg,
     landscape: look,
+    serviceSize: serviceLook,
     // Landscape: the cart and the checkout's steps in two columns, a readable width (kiosk-shared ScreenBody).
     twoColumns: screenDisplay.display.twoColumns,
     contentMaxWidth: screenDisplay.display.contentMaxWidthDp ? Math.round(screenDisplay.display.contentMaxWidthDp * screenDisplay.cssPerDip) : null,

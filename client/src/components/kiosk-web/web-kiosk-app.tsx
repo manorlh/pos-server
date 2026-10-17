@@ -19,6 +19,7 @@
 import { layoutOf, productColumns } from '@/lib/kioskLayout';
 import { browserFacts, displayProfile, kioskDisplay, kioskTargetCssPx } from '@/lib/displayProfile';
 import { applyLandscape, landscapeLook, lookColumns } from '@/lib/kioskLandscape';
+import { serviceSizeLook } from '@/lib/kioskServiceSize';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -207,6 +208,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const cfg = useMemo(() => applyLandscape(view.config as KioskConfig, display).config, [view.config, display]);
   // …and the landscape sizes ("לא ענקיים") in this root's px (laid out in dp: one px per dp).
   const look = useMemo(() => landscapeLook(cfg, display, size.w, 1), [cfg, display, size.w]);
+  // "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts): the service cards (dp = px here).
+  const serviceLook = useMemo(() => serviceSizeLook(cfg, display.landscape, size.w, size.h, 1), [cfg, display.landscape, size.w, size.h]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // The card only through a paired Windows bridge (§28, lib/kioskBridge.ts).
   const cardReady = view.pay.usable.includes('card');
@@ -892,6 +895,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const m: PreviewModel = {
     cfg,
     landscape: look,
+    serviceSize: serviceLook,
     // Landscape (lib/displayProfile.ts): the cart and the checkout's steps in two columns, a readable width.
     twoColumns: display.twoColumns,
     contentMaxWidth: display.contentMaxWidthDp,

@@ -40,6 +40,54 @@ const toDetails = [...toTip, { tap: 'המשך ללא טיפ' }, { waitFor: says(
 const toPayMethod = [...toDetails, { tap: 'המשך ללא שם' }, { waitFor: says('מזומן בקופה') }];
 const admin = [{ hold: 'admin' }, { tap: '1', after: 120 }, { tap: '2', after: 120 }, { tap: '3', after: 120 }, { tap: '4', after: 120 }, { tap: 'אישור', after: 1200 }];
 const has = (t) => `document.body.innerText.includes(${JSON.stringify(t)})`;
+const insideJs = `const inside = (r) => r.left >= -0.5 && r.top >= -0.5 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;`;
+/**
+ * The basket's review fits: "לתשלום" wholly in the window; in a landscape content column (two columns: under the
+ * summary, centred on it, the column centred in the window).
+ */
+const cartFits = `(() => {
+  ${insideJs}
+  const pay = document.querySelector('[data-cart-pay] button') || document.querySelector('[data-cart-pay]');
+  if (!pay || !inside(pay.getBoundingClientRect())) return false;
+  const r = pay.getBoundingClientRect();
+  const c = document.querySelector('[data-cart-content]');
+  if (!c) return true;
+  const cr = c.getBoundingClientRect();
+  if (r.left < cr.left - 1 || r.right > cr.right + 1) return false;
+  if (Math.abs(cr.left - (innerWidth - cr.right)) > 2) return false;
+  const sm = document.querySelector('[data-cart-summary]');
+  if (!sm) return true;
+  const sr = sm.getBoundingClientRect();
+  return r.top >= sr.bottom - 1 && r.top - sr.bottom <= 40 && Math.abs((r.left + r.right) / 2 - (sr.left + sr.right) / 2) <= 4;
+})()`;
+/** The tip step: its main button and "המשך ללא טיפ" in the window without scrolling. */
+const tipFits = `(() => {
+  ${insideJs}
+  const act = document.querySelector('[data-tip-actions]');
+  return !!act && [...act.querySelectorAll('button')].every((b) => inside(b.getBoundingClientRect()));
+})()`;
+/** "איך תרצו לשלם?": every tile in the window; the sheet's content centred, no wider than the window less 2×12 px. */
+const payMethodFits = `(() => {
+  ${insideJs}
+  const tiles = [...document.querySelectorAll('[data-pay-tiles] > *')];
+  if (!tiles.length || !tiles.every((t) => inside(t.getBoundingClientRect()))) return false;
+  const c = document.querySelector('[data-pay-content]');
+  if (!c || innerWidth <= innerHeight) return true;
+  const cr = c.getBoundingClientRect();
+  return Math.abs(cr.left - (innerWidth - cr.right)) <= 2;
+})()`;
+/**
+ * The service screen fits (P:/specs/kiosk-service-size.md): both cards and "להמשך" wholly inside the window, and in
+ * landscape a card no taller than 45% of it.
+ */
+const serviceFits = `(() => {
+  const cards = [...document.querySelectorAll('[data-service-card]')].map((e) => e.getBoundingClientRect());
+  const next = [...document.querySelectorAll('button')].find((b) => (b.innerText || '').includes('להמשך'));
+  if (cards.length < 2 || !next) return false;
+  const inside = (r) => r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;
+  if (!cards.every(inside) || !inside(next.getBoundingClientRect())) return false;
+  return innerWidth <= innerHeight || cards.every((r) => r.height <= innerHeight * 0.45 + 1);
+})()`;
 
 const menu = (row) => [{ tap: 'תפריט', after: 700 }, { tap: row, after: 1000 }];
 const TILL = [
@@ -82,6 +130,11 @@ export const SCENARIOS = [
   { id: 'k-attract', hosts: KIOSK, query: Q },
   { id: 'k-pairing', hosts: KIOSK, query: `${Q}&unpaired=1`, expect: `!!document.querySelector('input')` },
   { id: 'k-service', hosts: KIOSK, query: Q, steps: start, expect: has('טייק אווי') },
+  // "גודל כרטיסי לקחת / לשבת" (P:/specs/kiosk-service-size.md): the two cards and "להמשך" all in the window, never huge.
+  { id: 'k-service-fit', hosts: KIOSK, query: Q, steps: start, expect: serviceFits },
+  { id: 'k-service-small', hosts: KIOSK, query: `${Q}&svcsize=small`, steps: start, expect: serviceFits },
+  { id: 'k-service-large', hosts: KIOSK, query: `${Q}&svcsize=large`, steps: start, expect: serviceFits },
+  { id: 'k-service-attract', hosts: KIOSK, query: `${Q}&placement=attract`, expect: `!!document.querySelector('[data-service-buttons]')` },
   { id: 'k-menu-rail', hosts: KIOSK, query: Q, steps: toMenu, expect: `!!document.querySelector('[data-dish]')` },
   { id: 'k-menu-tabs', hosts: KIOSK, query: 'layout=tabs&stress=1', steps: toMenu, expect: `!!document.querySelector('[data-dish]')` },
   { id: 'k-menu-classic', hosts: KIOSK, query: 'layout=standard&stress=1&style=classic', steps: toMenu, expect: has('שניצל עוף') },
@@ -89,9 +142,15 @@ export const SCENARIOS = [
   { id: 'k-upsell', hosts: KIOSK, query: Q, steps: [...basket, ...toCart, { tap: 'לתשלום' }, { waitFor: upsellShown }], expect: upsellShown },
   { id: 'k-cart', hosts: KIOSK, query: Q, steps: [...toMenu, ...fillCart, ...addBig, ...toCart], expect: has('בדקו את ההזמנה') },
   { id: 'k-side-cart', hosts: KIOSK, query: Q, steps: [...toMenu, ...fillCart, ...addBig] },
+  // The basket's review in landscape (owner, 0.5.9 17.10): "לתשלום" inside the window, in the content column under the
+  // summary, the composition centred — never a lone button at the window's edge. The rail and the standard template.
+  { id: 'k-cart-fit', hosts: KIOSK, query: Q, steps: [...toMenu, ...fillCart, ...addBig, ...toCart], expect: cartFits },
+  { id: 'k-cart-fit-standard', hosts: KIOSK, query: 'stress=1', steps: [...toMenu, { sel: '[data-add=direct]', after: 300 }, { sel: '[data-add=direct]', index: 1, after: 300, optional: true }, ...toCart], expect: cartFits },
   { id: 'k-tip', hosts: KIOSK, query: PAY, steps: toTip, expect: has('המשך ללא טיפ') },
   { id: 'k-details', hosts: KIOSK, query: PAY, steps: toDetails, expect: has('המשך ללא שם') },
   { id: 'k-pay-method', hosts: KIOSK, query: PAY, steps: toPayMethod, expect: has('מזומן בקופה') },
+  { id: 'k-tip-fit', hosts: KIOSK, query: PAY, steps: toTip, expect: tipFits },
+  { id: 'k-pay-method-fit', hosts: KIOSK, query: PAY, steps: toPayMethod, expect: payMethodFits },
   { id: 'k-card-wait', hosts: KIOSK, query: `${Q}&pay=card`, steps: [...basket, ...toCheckout, { tap: 'המשך ללא שם', after: 300 }], after: 200, expect: has('הצמידו') },
   { id: 'k-cash-at-till', hosts: KIOSK, query: PAY, steps: [...toPayMethod, { tap: 'מזומן בקופה', after: 2200 }] },
   { id: 'k-cash-insert', hosts: KIOSK, query: `${PAY}&cash=insert`, steps: [...toPayMethod, { sel: '[data-method=cash_device]', after: 1600, optional: true }, { tap: 'מזומן', index: 0, after: 1600, if: `!document.body.innerText.includes('הכניסו')` }] },

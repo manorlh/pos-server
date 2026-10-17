@@ -12,6 +12,7 @@
  */
 
 import { validateLandscape, type KioskLandscape } from './kioskLandscape';
+import { validateServiceSize, type ServiceCardSize } from './kioskServiceSize';
 import {
   KIOSK_LAYOUT_DEFAULTS,
   KIOSK_WELCOME_DEFAULTS,
@@ -111,6 +112,14 @@ export interface KioskGeneral {
   servicePlacement: ServicePlacement;
   /** "לאכול כאן או לקחת?": a tap picks and "להמשך" goes on (default), or a tap goes on at once. */
   serviceSelect: ServiceSelect;
+  /**
+   * "גודל כרטיסי לקחת / לשבת" (lib/kioskServiceSize.ts, P:/specs/kiosk-service-size.md): absent = auto (today's
+   * portrait; capped in landscape). The numeric overrides are dp; each optional.
+   */
+  serviceCardSize?: ServiceCardSize;
+  serviceIconSize?: number;
+  serviceCardMaxWidth?: number;
+  serviceCardHeight?: number;
 }
 
 export type ServiceMode = 'types' | 'none';
@@ -1812,6 +1821,7 @@ export function validateKioskConfig(
   checkEnum(e, 'general.serviceMode', g.serviceMode, SERVICE_MODES);
   checkEnum(e, 'general.servicePlacement', g.servicePlacement, SERVICE_PLACEMENTS);
   checkEnum(e, 'general.serviceSelect', g.serviceSelect, SERVICE_SELECTS);
+  e.push(...validateServiceSize(g, 'general'));
   for (const key of ['askTableNumber', 'upsellEnabled', 'searchEnabled', 'notesEnabled', 'quickNotesEnabled', 'showAllergens', 'showDietary', 'reduceMotion', 'offlineSound', 'blockWhenOffline', 'offlineNotice'] as const) {
     if (typeof g[key] !== 'boolean') e.push({ path: `general.${key}`, code: 'enum' });
   }
