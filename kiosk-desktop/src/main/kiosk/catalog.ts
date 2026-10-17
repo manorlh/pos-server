@@ -199,12 +199,14 @@ function restrictedRow(p: Row, restricted: ReadonlySet<string>): boolean {
 export { sellableOnKiosk };
 
 /**
- * Is this product on a till's sell screen: not delisted, not "קיוסק בלבד" (`salesChannel` kiosk_only — the till hides
+ * Is this product on a till's sell screen: not delisted (nor unlisted at this point of sale), not "קיוסק בלבד" (`salesChannel` kiosk_only — the till hides
  * it from its sell screen, pos-server models/product.py), on this till's list when its catalog is "selected".
  * A manager-approval item is on it (flagged `restricted`; the user's rights decide).
  */
 export function sellableOnTill(p: Row, machineCatalogMode: string | null | undefined): boolean {
   if (p.deleted === true) return false;
+  // Not sold at this device's point of sale (chain-areas §6: `shopListed: false`, with `inStock: false`) — hidden, not "אזל".
+  if (p.shopListed === false) return false;
   if (p.inStock === false) return false;
   if (p.salesChannel === 'kiosk_only') return false;
   if (machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;

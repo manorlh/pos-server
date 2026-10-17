@@ -1177,4 +1177,7 @@ def list_item(z: ZReport, tzinfo) -> Dict[str, Any]:
         # …and two "Z 1" of one till by its run (SPEC_INDEPENDENT_TILL §3.1).
         "sequenceEpoch": int(getattr(z, "machine_sequence_epoch", 0) or 0),
         "sequenceStartedAt": sequence_started_of(z),
+        # "Z לנקודת מכירה" (P:/specs/chain-areas.md §11.2b): the point of sale's name as the Z froze it.
+        "areaId": str(z.area_id) if getattr(z, "area_id", None) is not None else None,
+        "areaName": ((z.header or {}).get("areaName") if getattr(z, "area_id", None) is not None else None),
     }

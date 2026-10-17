@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import Column, Boolean, ForeignKey, DateTime, Numeric, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -36,6 +36,10 @@ class ShopProductOverride(Base):
     # than by hand. The scope only ever touches rows carrying this flag; a hand-added
     # row is never listed, unlisted or deleted by it.
     assigned_by_rule = Column(Boolean, nullable=False, default=False, server_default="false")
+    # "שיוך מוצר לנקודות מכירה" (P:/specs/chain-areas.md §6): the shop's points of sale (`shop_areas.id`
+    # strings) where the product is sold. Null — every point of sale of the shop, and every device in none.
+    # A device standing in another point of sale gets the row unlisted (app/services/product_areas.py).
+    area_ids = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

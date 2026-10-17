@@ -805,7 +805,12 @@ def _products_for_till(
         active_blocks = list(getattr(blocks, "active", None) or [])
 
         gate = gates.get(key) or {}
-        listed = bool(published.get("shopListed", True))
+        # "שיוך מוצר לנקודות מכירה" (P:/specs/chain-areas.md §6): live, like the availability levels.
+        from app.services import product_areas
+
+        listed = bool(published.get("shopListed", True)) and product_areas.sold_in_area(
+            ovr, getattr(machine, "area_id", None)
+        )
         levels = availability.resolve_levels(
             gate.get("product", True),
             gate.get("company"),
@@ -834,6 +839,11 @@ def _products_for_till(
         elif g is not None:
             row["imageUrl"] = g.image_url
         row["inStock"] = bool(listed and base_in_stock)
+        row["shopListed"] = listed
+        # A point of sale's own price, live over the publication's (chain-areas §9).
+        if area is not None and getattr(area, "price", None) is not None:
+            row["price"] = float(area.price)
+            row["priceLevel"] = "area"
         row["lockAvailable"] = bool(listed and resolved.available)
         row["isAvailable"] = row["lockAvailable"] and not sold_out.manual_in_force(active_blocks)
         row["blocks"] = [sold_out.block_out(b) for b in active_blocks]

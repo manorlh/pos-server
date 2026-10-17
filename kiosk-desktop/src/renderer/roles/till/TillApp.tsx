@@ -856,7 +856,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       return (
         <ShopXScreen
           shopX={s.shopX}
-          load={(refresh) => void run('report.shopX', refresh ? { refresh: true } : {})}
+          load={(refresh, scope) => void run('report.shopX', { ...(refresh ? { refresh: true } : {}), ...(scope === 'area' ? { scope } : {}) })}
           print={() => void run('report.shopX', { print: true })}
           back={() => setView('sell')}
         />

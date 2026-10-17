@@ -127,6 +127,8 @@ export const T = {
   shopXLoading: 'מביא את הדוח מהענן…',
   shopXRefresh: 'רענן',
   shopXPrint: 'הדפס',
+  shopXWholeShop: 'כל הסניף',
+  shopXArea: 'X לנקודת המכירה',
   infoAdd: 'הוסף לסל',
   infoClose: 'סגירה',
   infoAllergens: 'אלרגנים',

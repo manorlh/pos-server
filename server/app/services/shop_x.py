@@ -578,10 +578,12 @@ def build(
     requested_by: Optional[str] = None,
     tzinfo=None,
     now: Optional[datetime] = None,
+    area: Any = None,
 ) -> Dict[str, Any]:
     """
     The report as JSON (money as decimal strings, like a Z's sections). Reads only.
     `settings.per_till` / `per_employee` add the per-till and per-employee sections.
+    `area`: "X לנקודת מכירה" — only the tills standing in that point of sale now (P:/specs/chain-areas.md §11.2d).
     """
     from app.services.transmissions import period_block
     from app.services.z_builder import machine_section, z_cash_summary
@@ -590,6 +592,8 @@ def build(
 
     now = now or datetime.now(timezone.utc)
     tills = shop_tills(db, shop.id)
+    if area is not None:
+        tills = [m for m in tills if m.area_id is not None and str(m.area_id) == str(area.id)]
     parts = [_part(db, m, shop.id) for m in tills]
     # A till that left the shop with nothing of the period here is nobody's concern.
     parts = [p for p in parts if p.shifts or p.machine.shop_id == shop.id]
@@ -664,6 +668,8 @@ def build(
         "number": None,
         "shopId": str(shop.id),
         "shopName": shop.name,
+        "areaId": str(area.id) if area is not None else None,
+        "areaName": area.name if area is not None else None,
         "generatedAt": now.isoformat(),
         "requestedBy": requested_by,
         "requestedFrom": None if requester is None else {
@@ -713,7 +719,7 @@ def build(
             },
             # "מזומן אצל עובדים (טרם הופקד)", per employee, now — null when nobody holds any.
             "cashWithStaff": _cash_with_staff(db, shop.id, [p.machine.id for p in parts], now),
-            "openTables": open_tables(db, shop),
+            "openTables": open_tables(db, shop) if area is None else _area_open_tables(db, shop, area),
             "untransmitted": untransmitted,
         },
         "tills": sections if settings.per_till else [],
@@ -723,6 +729,11 @@ def build(
     # read them), dropped from the paper with `perTill` off.
     report["_sections"] = sections
     return report
+
+
+def _area_open_tables(db: Session, shop: Shop, area: Any) -> Dict[str, Any]:
+    """Tables are the shop's (no point of sale of their own): an area's X shows none of them."""
+    return {"count": 0, "amount": "0.00"}
 
 
 def _cash_with_staff(db: Session, shop_id: Any, machine_ids: Sequence[Any], now: datetime) -> Optional[Dict[str, Any]]:
@@ -803,7 +814,10 @@ class _ReportAsZ:
         self.per_machine = sections
         self.machine = None
         self.machine_id = None
-        self.area_id = None
+        # "X לנקודת מכירה" (P:/specs/chain-areas.md §11.2d): "אזור <שם>" under the shop, as on an area's Z.
+        self.area_id = report.get("areaId")
+        if report.get("areaName"):
+            self.header["areaName"] = report["areaName"]
         self.is_till_z = False
         self.z_number = None
         self.business_date = business_date

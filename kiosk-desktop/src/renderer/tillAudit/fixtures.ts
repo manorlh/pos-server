@@ -409,7 +409,7 @@ const blockRow = (i: number) => ({
   },
   releasable: i !== 3,
   wide: i === 4,
-  why: i === 3 ? 'רק מנהל אזור יכול לשחרר חסימה ברמת אזור' : null,
+  why: i === 3 ? 'רק מנהל נקודת מכירה יכול לשחרר חסימה ברמת נקודת מכירה' : null,
 });
 
 /** The menu's local reports, long names and big sums (core/till/localReports.ts). */
@@ -533,7 +533,7 @@ export class AuditEngine implements EngineEndpoint {
           mayBlock: true,
           what: [{ v: 'product', label: 'Double Smash Burger with Caramelized Onions', id: 'p2' }, { v: 'category', label: 'מחלקה · Chef’s Specials & Signature Dishes', id: 'd2' }],
           channels: [{ v: 'pos', label: 'קופה', access: 'open' }, { v: 'kiosk', label: 'קיוסק', access: 'open' }, { v: 'online', label: 'הזמנות אונליין', access: 'approval' }, { v: 'menu', label: 'תפריט דיגיטלי', access: 'locked_permission' }],
-          levels: [{ v: 'machine', label: 'הקופה הזו', access: 'open' }, { v: 'area', label: 'אזור — טרסה ובר', access: 'approval' }, { v: 'shop', label: 'כל הסניף', access: 'approval' }, { v: 'event', label: 'אירוע', access: 'locked_till' }],
+          levels: [{ v: 'machine', label: 'הקופה הזו', access: 'open' }, { v: 'area', label: 'נקודת מכירה — טרסה ובר', access: 'approval' }, { v: 'shop', label: 'כל הסניף', access: 'approval' }, { v: 'event', label: 'אירוע', access: 'locked_till' }],
           devices: [{ id: 'm1', label: 'קופה 1 — דלפק ראשי', access: 'open' }, { id: 'm2', label: 'קיוסק כניסה (Kiosk A)', access: 'approval' }],
           events: [{ id: 'e1', name: 'אירוע חברה — Annual Conference 2026' }],
           defaults: { channels: ['pos', 'kiosk'], level: 'machine', kind: 'sold_out' },

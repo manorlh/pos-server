@@ -163,6 +163,14 @@ app.include_router(close_day.router, prefix=_prefix)
 app.include_router(pairing.router, prefix=_prefix)
 app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(elevation.router, prefix=_prefix)
+# "ניהול נקודות מכירה", product points of sale and prices along the chain (P:/specs/chain-areas.md) — before
+# the products router, so `/products/areas/bulk` is never read as a product id.
+from app.routers import area_management as area_management_router  # noqa: E402
+
+app.include_router(area_management_router.router, prefix=_prefix)
+from app.routers import till_price as till_price_router  # noqa: E402
+
+app.include_router(till_price_router.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
 # "מופיע ב — עריכה בכמות": the bulk screen over item-blocks' "מופיע ב" (products.appears_in).
 from app.routers import product_channels as product_channels_router  # noqa: E402
@@ -702,6 +710,19 @@ from app.routers import remote_approvals as remote_approvals_router  # noqa: E40
 app.include_router(remote_approvals_router.router, prefix=_prefix)
 app.include_router(remote_approvals_router.users_router, prefix=_prefix)
 app.include_router(remote_approvals_router.shops_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_price_schedules_worker():
+    """"שינוי מחירים מתוזמן" (P:/specs/chain-areas.md §9.5): apply / put back scheduled prices every 30 s."""
+    import os
+
+    if os.environ.get("PRICE_SCHEDULES_WORKER_ENABLED", "true").strip().lower() in ("0", "false", "no", "off"):
+        return
+    from app.database import SessionLocal
+    from app.services.price_bulk import start_background_worker as start_price_worker
+
+    start_price_worker(SessionLocal)
 
 
 @app.on_event("startup")

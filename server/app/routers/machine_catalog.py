@@ -35,7 +35,7 @@ from app.models.category import Category
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
-from app.routers.shops import _check_shop_access, _check_shop_override_write
+from app.routers.shops import _check_shop_access, _check_shop_member_write
 from app.schemas.machine_catalog import (
     MachineCatalogCategory,
     MachineCatalogProduct,
@@ -161,7 +161,7 @@ def get_machine_catalog(
     machine, shop = machine_and_shop_or_error(db, machine_id, active_tenant_id)
     _check_machine_access(current_user, machine, db)
     _check_shop_access(current_user, shop, db)
-    can_edit = _allowed(_check_shop_override_write, current_user, shop, db)
+    can_edit = _allowed(_check_shop_member_write, current_user, shop, db)
     return build_picture(db, machine, shop, can_edit)
 
 
@@ -176,7 +176,7 @@ def set_machine_catalog(
     """Replace the till's mode and list. Wakes the till when anything changed."""
     machine, shop = machine_and_shop_or_error(db, machine_id, active_tenant_id)
     _check_machine_access(current_user, machine, db)
-    _check_shop_override_write(current_user, shop, db)
+    _check_shop_member_write(current_user, shop, db)
     change = apply_or_404(db, machine, body)
     db.commit()
     db.refresh(machine)

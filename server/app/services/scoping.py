@@ -33,6 +33,16 @@ def scope_query_by_user(
     """
     if current_user.role == UserRole.SUPER_ADMIN:
         return query
+    scoped = _role_scope(query, current_user, db, shop_column=shop_column, machine_column=machine_column)
+    if scoped is None:
+        return None
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the devices of their points of sale.
+    from app.services import area_scope
+
+    return area_scope.filter_machine_column(scoped, db, current_user, machine_column)
+
+
+def _role_scope(query: Query, current_user: User, db: Session, *, shop_column, machine_column) -> Optional[Query]:
     if current_user.role == UserRole.DISTRIBUTOR:
         return query.join(POSMachine, POSMachine.id == machine_column).filter(
             POSMachine.distributor_id == current_user.id
