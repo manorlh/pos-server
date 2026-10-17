@@ -252,6 +252,9 @@ describe('the transport', () => {
     expect(world.received.get('COM3')).toEqual([...DRAWER_KICK]);
     expect(await t.status(target)).toEqual({ health: 'paper_low', detail: 'COM3' });
     expect(await t.status({ ...target, comPort: 'COM8' })).toEqual({ health: 'unavailable', detail: 'COM8' });
+    // A printer that keeps silent on DLE EOT: unknown, never "unavailable" (no false alert).
+    world.printers_('COM6', { baud: 9600, status: OK_STATUS, silent: true });
+    expect(await t.status({ transport: 'serial', comPort: 'COM6' })).toEqual({ health: 'unknown', detail: 'COM6' });
     await expect(t.send({ transport: 'serial', comPort: null }, DRAWER_KICK)).rejects.toThrow(/no serial port/);
     world.printers_('COM4', { baud: 9600, status: OK_STATUS, failAfter: 1100 });
     await expect(t.send({ transport: 'serial', comPort: 'COM4' }, new Uint8Array(3000))).rejects.toThrow(/^write: /);

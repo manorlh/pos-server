@@ -455,8 +455,9 @@ export class DefaultTransport implements Transport {
   async status(target: PrinterTarget): Promise<{ health: PrinterHealth; detail: string | null }> {
     const line = serialLineOf(target);
     if (line) {
-      const bits = await this.serial.status(line);
-      return { health: bits ? healthOfBits(bits) : 'unavailable', detail: line.path };
+      // No answer on an open port: a printer silent on status (unknown — never an alert); the port not there: unavailable.
+      const r = await this.serial.ask(line);
+      return { health: r.bits ? healthOfBits(r.bits) : r.opened ? 'unknown' : 'unavailable', detail: line.path };
     }
     if (target.transport === 'tcp' && target.host) {
       const bits = await tcpStatus(target.host, target.port ?? 9100);

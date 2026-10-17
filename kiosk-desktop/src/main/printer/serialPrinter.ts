@@ -283,9 +283,19 @@ export class SerialPrinters {
 
   /** DLE EOT 1 / 2 / 4 (never during a job: after it); null — no answer at all (or the port did not open). */
   async status(line: SerialLine): Promise<PrinterStatusBits | null> {
+    return (await this.ask(line)).bits;
+  }
+
+  /**
+   * DLE EOT 1 / 2 / 4, and whether the port opened at all: a port that opened with no answer is a printer that keeps
+   * silent on status (unknown), a port that did not open is no printer there (unavailable).
+   */
+  async ask(line: SerialLine): Promise<{ opened: boolean; bits: PrinterStatusBits | null }> {
     const wait = this.o.answerMs ?? 150;
+    let opened = false;
     try {
-      return await this.withPort(line, async (port, answers) => {
+      const bits = await this.withPort(line, async (port, answers) => {
+        opened = true;
         const got: Array<number | null> = [];
         for (const q of [STATUS_PRINTER, STATUS_OFFLINE, STATUS_PAPER]) {
           const before = answers.length;
@@ -296,9 +306,10 @@ export class SerialPrinters {
         if (got.every((b) => b === null)) return null;
         return parseStatus(got[0] ?? null, got[1] ?? null, got[2] ?? null);
       });
+      return { opened, bits };
     } catch (e) {
       this.log(`serial status ${line.path}: ${e instanceof Error ? e.message : String(e)}`);
-      return null;
+      return { opened, bits: null };
     }
   }
 
