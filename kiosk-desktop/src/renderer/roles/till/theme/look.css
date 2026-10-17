@@ -1436,3 +1436,52 @@
 .t-dialog.t-sheet.t-dialog-wide {
   max-width: 760px;
 }
+
+/* ------------------------------------------------------------- the menu's screens (Android's sub-screen frame) */
+
+/* The head: "→ חזרה" in the brand colour at the start, the screen's name at the end (Android's sub-screen bar). */
+.t-report-head {
+  flex-direction: row-reverse;
+  min-height: 48px;
+}
+
+.t-report-head .t-btn-ghost {
+  padding: 0 8px;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.t-report-head .t-btn-ghost:not(.t-btn-small)::before {
+  content: '→';
+  margin-inline-end: 6px;
+  font-size: 20px;
+}
+
+.t-report-head .t-report-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--t-text);
+}
+
+/* The figures: a grey card (surfaceContainerHigh, 16 corners), label and value on one row each, tight. */
+.t-figures {
+  align-self: flex-start;
+  align-content: start;
+  gap: 8px 16px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--pos-container-high);
+}
+
+.t-figures dt {
+  color: var(--t-text);
+}
+
+.t-figures dd {
+  font-weight: 400;
+}
+
+.t-report-body > section,
+.t-list {
+  background: var(--pos-container-high);
+}
