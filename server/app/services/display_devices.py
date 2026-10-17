@@ -216,12 +216,26 @@ def kds_screen_fields(kds_device: Any) -> Optional[Dict[str, Any]]:
     """The machine's screen, for the dashboard: its KDS role, name and whether it is on."""
     if kds_device is None:
         return None
-    return {
+    out = {
         "role": kds_device.role,
         "name": kds_device.name,
         "isActive": bool(kds_device.is_active),
         "shopId": str(kds_device.shop_id) if kds_device.shop_id else None,
     }
+    # Which orders it shows ("מציג: נקודת מכירה בר" / "מציג: כל הסניף") — the KDS page's words.
+    from sqlalchemy.orm import object_session
+
+    db = object_session(kds_device)
+    if db is not None:
+        try:
+            from app.services import kds as KDS
+
+            eff = KDS.effective_scope(db, kds_device)
+            out["scopeLabel"] = KDS.scope_label(db, eff)
+            out["scopeWarningText"] = KDS.SCOPE_WARNING_TEXT.get(eff["warning"]) if eff["warning"] else None
+        except Exception:  # noqa: BLE001 - shown only
+            logger.exception("kds scope label for machine %s", getattr(kds_device, "machine_id", None))
+    return out
 
 
 # ── The refusal ───────────────────────────────────────────────────────────────

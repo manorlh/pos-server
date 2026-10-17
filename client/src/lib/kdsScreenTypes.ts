@@ -28,6 +28,8 @@ export interface BoardView {
   notConfigured: boolean;
   /** How the board looks, from its KDS screen in the dashboard (`kds_devices.display`); null = the defaults. */
   display?: BoardDisplay | null;
+  /** "מציג: נקודת מכירה בר" / "מציג: כל הסניף" — which orders the board shows (the cloud's words). */
+  scopeLabel?: string | null;
 }
 
 /**
@@ -248,6 +250,8 @@ export interface KdsDeviceInfo {
   /** station | expo | manager (pickup is the board role). */
   role: string;
   stations: Array<{ id: string; name: string }>;
+  /** "מציג: נקודת מכירה בר" / "מציג: כל הסניף" — which orders this screen shows (the cloud's words). */
+  scopeLabel?: string | null;
 }
 
 export interface KdsView {

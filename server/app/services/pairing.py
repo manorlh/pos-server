@@ -338,6 +338,9 @@ def apply_area_on_pairing(db: Session, pairing_code: PairingCode, machine: POSMa
             return False
         if not areas.set_machine_area(machine, area.id):
             return False
+        from app.services import kds
+
+        kds.on_machine_area_changed(db, machine)
         db.commit()
         db.refresh(machine)
     except Exception:  # noqa: BLE001 - the pairing stands whatever happens here

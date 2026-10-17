@@ -870,7 +870,15 @@ export interface PosMachine {
    * Its KDS screen, or null. On a fiscal till: a screen paired on the KDS page before
    * display devices existed (flagged "מסך מטבח על קופה").
    */
-  kdsScreen?: { role: 'station' | 'expo' | 'pickup' | 'manager'; name: string; isActive: boolean; shopId: string | null } | null;
+  kdsScreen?: {
+    role: 'station' | 'expo' | 'pickup' | 'manager';
+    name: string;
+    isActive: boolean;
+    shopId: string | null;
+    /** "מציג: נקודת מכירה בר" / "מציג: כל הסניף". */
+    scopeLabel?: string;
+    scopeWarningText?: string | null;
+  } | null;
   /** The model chosen on the dashboard, and the one the device named itself at pairing. */
   deviceModelChosen?: DeviceModel | null;
   deviceModelReported?: DeviceModel | null;
@@ -1273,6 +1281,10 @@ export interface Category {
   voucherId?: string;
   /** Null/absent is "off". */
   ticketMode?: TicketMode | null;
+  /** "הערה בקיוסק" for its dishes (lib/kioskNotes.ts): null inherits the parent's; none set — off. */
+  kioskNotes?: boolean | null;
+  /** "בקיוסק: פתיחת חלון" for its dishes (lib/kioskLayout.ts kioskOpenFor): null inherits the parent's. */
+  kioskOpen?: 'window' | 'direct' | null;
   /**
    * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): every product here and beneath it needs a
    * manager's code at the till and is not shown at a kiosk. The category's own flag.
@@ -1315,6 +1327,10 @@ export interface Product {
   voucherId?: string;
   /** The product's own mode; null/absent inherits its category's. */
   ticketMode?: TicketMode | null;
+  /** "הערה בקיוסק" (lib/kioskNotes.ts): true / false; null inherits its category's (none set — off). */
+  kioskNotes?: boolean | null;
+  /** "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts tapPathOf): null — as its category / the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
   /** An entry ticket: entries per unit (> 1 prints that many tickets per unit). Null/1 = ordinary. */
   ticketEntries?: number | null;
   trackStock?: boolean;

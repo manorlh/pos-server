@@ -567,7 +567,7 @@ function ProduceZ() {
                         ) : null}
                         {!onlyTill && q.data.dashboardZBlocked ? (
                           // In local mode: "בקש מהקופה הראשית" instead of starting a run.
-                          <LocalShopZWizardNotice shopId={q.data.shopId}>
+                          <LocalShopZWizardNotice shopId={q.data.shopId} areaId={areaByShop[q.data.shopId] ?? null}>
                             <Card className="border-amber-500/50">
                               <CardContent className="py-3 text-sm">
                                 {t('onlyFromMainTill', {

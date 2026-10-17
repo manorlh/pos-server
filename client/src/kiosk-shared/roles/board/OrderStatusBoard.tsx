@@ -34,6 +34,8 @@ function chime() {
 
 const FLASH_MS = 8_000;
 const ANNOUNCE_MS = 4_000;
+/** The board's scope line ("מציג: נקודת מכירה בר") stays this long after it appears or after a touch. */
+const SCOPE_SHOW_MS = 60_000;
 
 function useClock(): string {
   const [now, setNow] = useState(() => new Date());
@@ -314,6 +316,21 @@ export function OrderStatusBoard({
   const soundOn = useRef(true);
   const clock = useClock();
   const display = forced ?? board?.display ?? DEFAULT_BOARD_DISPLAY;
+  // The scope line: shown for a minute after it is first known / changes, and again for a minute on a touch.
+  const [scopeNow, setScopeNow] = useState(() => Date.now());
+  const [scopeUntil, setScopeUntil] = useState(() => Date.now() + SCOPE_SHOW_MS);
+  const scopeLabel = board?.scopeLabel ?? null;
+  const [seenScope, setSeenScope] = useState<string | null>(null);
+  if (scopeLabel !== seenScope) {
+    // A new / changed label (adjusting state while rendering, not in an effect).
+    setSeenScope(scopeLabel);
+    setScopeUntil(scopeNow + SCOPE_SHOW_MS);
+  }
+  useEffect(() => {
+    const t = setInterval(() => setScopeNow(Date.now()), 5_000);
+    return () => clearInterval(t);
+  }, []);
+  const scopeShown = scopeNow < scopeUntil;
   useEffect(() => {
     soundOn.current = display.sound && !silent;
   }, [display.sound, silent]);
@@ -370,6 +387,9 @@ export function OrderStatusBoard({
       style={{ background: palette.bg, color: palette.text }}
       onPointerDown={(e) => {
         bridge.activity();
+        const at = Date.now();
+        setScopeNow(at);
+        setScopeUntil(at + SCOPE_SHOW_MS);
         onPointerDown?.(e);
       }}
     >
@@ -383,6 +403,12 @@ export function OrderStatusBoard({
           </div>
         </div>
       </header>
+      {/* Which orders the board shows ("מציג: נקודת מכירה בר"): for the staff, small, the first minute and on every touch. */}
+      {board?.scopeLabel && scopeShown ? (
+        <div className="pointer-events-none absolute bottom-[1.5vmin] start-[2vmin] z-10 rounded-md px-2 py-1 text-[1.8vmin]" style={{ background: palette.note, color: palette.noteText }}>
+          {board.scopeLabel}
+        </div>
+      ) : null}
       {board?.offline ? (
         <div className="mx-[3vmin] mb-[1.5vmin] shrink-0 rounded-xl px-4 py-2 text-center text-[2.2vmin] font-semibold" style={{ background: palette.note, color: palette.noteText }}>
           אין חיבור — מוצג המידע האחרון{updated ? ` (עודכן ${updated})` : ''}

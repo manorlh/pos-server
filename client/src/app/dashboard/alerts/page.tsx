@@ -40,12 +40,13 @@ export default function AlertsPage() {
   const t = useTranslations('phoneAlerts');
   const qc = useQueryClient();
   const { effective } = usePageScope({ maxLevel: 'machine', silent: true });
-  const scope = { companyId: effective.companyId, shopId: effective.shopId, machineId: effective.machineId };
+  // "נקודת מכירה" in the top bar narrows the feed too (P:/specs/area-coverage-audit.md).
+  const scope = { companyId: effective.companyId, shopId: effective.shopId, areaId: effective.areaId ?? null, machineId: effective.machineId };
   const [show, setShow] = useState<'open' | 'all'>('open');
   const [sheet, setSheet] = useState(false);
 
   const feed = useQuery<AlertsFeed>({
-    queryKey: ['alerts-feed', 'page', scope.companyId ?? null, scope.shopId ?? null, scope.machineId ?? null, show],
+    queryKey: ['alerts-feed', 'page', scope.companyId ?? null, scope.shopId ?? null, scope.areaId ?? null, scope.machineId ?? null, show],
     queryFn: () => fetchAlertsFeed(scope, { open: show === 'open', days: show === 'open' ? 7 : 3, limit: 100 }),
     refetchInterval: 30_000,
   });
@@ -62,7 +63,7 @@ export default function AlertsPage() {
   const tp = useTranslations('problems');
   const tc = useTranslations('common');
   const days = show === 'open' ? 7 : 3;
-  const { companyId, shopId, machineId } = scope;
+  const { companyId, shopId, areaId, machineId } = scope;
   const feedRows = feed.data?.alerts;
   const historyRows = history.data;
   const exportTables = useMemo(() => {
@@ -74,7 +75,7 @@ export default function AlertsPage() {
       rowFill: (a) => (a.acknowledged ? null : a.severity === 'high' ? EXCEL_FILL.missing : a.severity === 'medium' ? EXCEL_FILL.difference : null),
       // The feed is not paged: the export asks again at the API's most.
       exportRows: async () =>
-        (await fetchAlertsFeed({ companyId, shopId, machineId }, { open: show === 'open', days, limit: 200 })).alerts,
+        (await fetchAlertsFeed({ companyId, shopId, areaId, machineId }, { open: show === 'open', days, limit: 200 })).alerts,
       columns: [
         { key: 'occurredAt', header: t('export.time'), kind: 'datetime', required: true, value: (a) => a.occurredAt },
         { key: 'category', header: t('export.category'), width: 18, value: (a) => a.categoryLabel },
@@ -107,7 +108,7 @@ export default function AlertsPage() {
       ],
     };
     return [alerts as ReportTableSpec<unknown>, ...((historyRows ?? []).length ? [sent as ReportTableSpec<unknown>] : [])];
-  }, [companyId, days, feedRows, historyRows, machineId, shopId, show, t, tc, tp]);
+  }, [areaId, companyId, days, feedRows, historyRows, machineId, shopId, show, t, tc, tp]);
   const listed = feedRows ?? [];
   const exportKpis: ReportKpi[] = feed.data
     ? [

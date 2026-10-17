@@ -466,7 +466,7 @@ export function KdsScreen({
             <ChefHat className="shrink-0 text-[var(--k-accent)]" size={34} />
             <div className="min-w-0">
               <div className="truncate text-[26px] font-black leading-tight">{roleTitle(view?.device)}</div>
-              <div className="truncate text-base text-[var(--k-muted)]">{[view?.device?.name ?? machineName, view?.shopName ?? shopName].filter(Boolean).join(' · ')}</div>
+              <div className="truncate text-base text-[var(--k-muted)]">{[view?.device?.name ?? machineName, view?.shopName ?? shopName, view?.device?.scopeLabel].filter(Boolean).join(' · ')}</div>
             </div>
             <div className="flex-1" />
             {look.counts && ready ? (

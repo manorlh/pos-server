@@ -118,6 +118,7 @@ def build_discounts_report(
     *,
     shop_id=None,
     machine_id=None,
+    area_filter=None,
 ) -> Dict[str, Any]:
     """`{window, generatedAt, oth: {...}, club: {...}, basketByKind: [...]}` — see the module."""
     from app.services.reports import _is_refund_condition, _load_zoneinfo, build_scoped_transaction_query
@@ -141,7 +142,7 @@ def build_discounts_report(
         # Production vouchers booked as a deduction: not discounts — their own category.
         "productionVouchers": {"totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0}, "byBatch": []},
     }
-    tx_q = build_scoped_transaction_query(db, user, tenant_id, window, shop_id=shop_id, machine_id=machine_id)
+    tx_q = build_scoped_transaction_query(db, user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, area_filter=area_filter)
     if tx_q is None:
         return out
     sales = tx_q.filter(~_is_refund_condition())

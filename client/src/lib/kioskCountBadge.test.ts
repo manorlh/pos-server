@@ -1,7 +1,7 @@
 /**
  * Run with `npm test`. "קיוסק: לחיצה על פריט מוסיפה לסל, ותג כמות על הפריט"
  * (P:/specs/kiosk-tap-add-count-badge.md): `layout.cartCountBadge` — on by default in every template,
- * per level, validated — the badge's count (every variant of a dish), and "הוספה מהירה" — no_required
+ * per level, validated — the badge's count (every variant of a dish), and "הוספה מהירה" — no_choices
  * by default since 17.10 (owner), a level's explicit "off" kept. The shared layouts' sources (read as text: this runner does not compile React) draw the
  * badge on every dish card of every template and nowhere a count of their own.
  */
@@ -62,7 +62,7 @@ describe('the count of a dish in the basket', () => {
     assert.equal(dishBadgeCount(cfg, dishCartCounts(basket).cola ?? 0), 2);
     const off = resolveKioskConfig({ layout: { quickAdd: 'no_required', cartCountBadge: false } });
     assert.equal(dishBadgeCount(off, dishCartCounts(basket).cola ?? 0), null);
-    // Default quick add (no_required since 17.10): the tap puts it in.
+    // Default quick add (no_choices since 17.10): the tap puts in a dish with no choices at all.
     const today = resolveKioskConfig({});
     assert.equal(tapPathOf(cola, layoutOf(today).quickAdd, false, false), 'direct');
     // A level that chose "off": the tap opens the dish; its "+" still adds.
@@ -70,16 +70,18 @@ describe('the count of a dish in the basket', () => {
     assert.equal(tapPathOf(cola, layoutOf(chose).quickAdd, false, false), 'sheet');
     assert.equal(tapPathOf(cola, layoutOf(chose).quickAdd, true, false), 'direct');
     // A config from an older cloud without the key: the new default.
-    assert.equal(layoutOf({ layout: { template: 'list' } } as unknown as KioskConfig).quickAdd, 'no_required');
+    assert.equal(layoutOf({ layout: { template: 'list' } } as unknown as KioskConfig).quickAdd, 'no_choices');
+    // …but not one with optional add-ons ("ואם יש לו תוספות ובחירות — זה גם יפתח").
+    assert.equal(tapPathOf({ ...cola, hasChoices: true }, layoutOf(today).quickAdd, false, false), 'sheet');
     // A dish with a choice to make opens its window either way.
     assert.equal(tapPathOf({ addPath: 'sheet' }, layoutOf(cfg).quickAdd, false, false), 'sheet');
   });
 });
 
 describe('layout.cartCountBadge: on by default, per level, validated', () => {
-  it('is on in the defaults; quick add is no_required by default (17.10), the ⓘ auto', () => {
+  it('is on in the defaults; quick add is no_choices by default (17.10), the ⓘ auto', () => {
     assert.equal(KIOSK_LAYOUT_DEFAULTS.cartCountBadge, true);
-    assert.equal(KIOSK_LAYOUT_DEFAULTS.quickAdd, 'no_required');
+    assert.equal(KIOSK_LAYOUT_DEFAULTS.quickAdd, 'no_choices');
     assert.equal(KIOSK_LAYOUT_DEFAULTS.infoButton, 'auto');
     assert.ok(LAYOUT_TEMPLATE_KEYS.includes('cartCountBadge'));
   });
@@ -91,7 +93,7 @@ describe('layout.cartCountBadge: on by default, per level, validated', () => {
         const cfg = resolveKioskConfig({ theme: { uiStyle: style }, layout: { template } } as never);
         assert.equal(cfg.layout.cartCountBadge, true, style);
         assert.equal(cartCountBadgeOn(cfg), true, style);
-        assert.equal(cfg.layout.quickAdd, template === 'wall' ? 'always' : 'no_required', style);
+        assert.equal(cfg.layout.quickAdd, template === 'wall' ? 'always' : 'no_choices', style);
         assert.deepEqual(validateLayout(cfg), [], style);
       }
     });
@@ -226,7 +228,7 @@ describe('the badge on every dish card of every template (the shared layouts\' s
     const he = JSON.parse(src('messages/he.json')) as { kiosks: { layouts: Record<string, unknown> & { keys: Record<string, string> } } };
     const t = he.kiosks.layouts;
     assert.equal(t.behaviourTitle, 'התנהגות');
-    assert.equal(t.quickAddHint, 'לחיצה על מנה בלי בחירות מכניסה אותה לסל. ברירת מחדל: כשאין חובה לבחור');
+    assert.equal(t.quickAddHint, 'לחיצה על מנה מכניסה אותה ישר לסל. ברירת מחדל: רק כשאין תוספות ובחירות. מוצר או קטגוריה יכולים לקבוע אחרת ("בקיוסק: פתיחת חלון"), ומנה שמאפשרת הערה בקיוסק נפתחת.');
     assert.equal(t.keys.cartCountBadge, 'תג כמות על המנה');
     for (const k of ['cartCountBadgeHint', 'cartCountBadgeOn', 'cartCountBadgeOff', 'behaviourPreviewHint']) assert.equal(typeof t[k], 'string', k);
     const box = editor.slice(editor.indexOf("{t('behaviourTitle')}"), editor.indexOf("{t('behaviourPreviewHint')}"));

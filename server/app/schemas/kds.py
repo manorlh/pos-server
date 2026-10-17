@@ -257,6 +257,9 @@ class KdsScopeIn(_Body):
 
     area_ids: List[uuid.UUID] = Field(default_factory=list, alias="areaIds", max_length=50)
     machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="machineIds", max_length=100)
+    #: "תצוגה לפי נקודת המכירה של המסך": the orders of the point of sale the screen's device stands in
+    #: (follows it when moved). None (an older dashboard): a new screen in a point of sale gets it on.
+    follow_area: Optional[bool] = Field(None, alias="followArea")
 
 
 class KdsDeviceIn(_Body):

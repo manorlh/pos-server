@@ -32,6 +32,8 @@ import { agorotOfShekels, mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, p
 import { layMenu, menuInputsOf, type KioskMenuState } from './kioskMenus';
 import { addonOnlyRow, sellableOnKiosk } from './kioskSellable';
 import { noteImagesOf, optionImagesOf } from './kioskItemFlow';
+import { kioskNotesAllowed } from './kioskNotes';
+import { kioskOpenFor } from './kioskLayout';
 import type { MenuBlock } from './menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from './kioskUpsellRules';
 import { kioskSoldOut, rowAvailable, type SaleState } from './kioskSoldOut';
@@ -120,6 +122,10 @@ export interface WebProduct {
   allergens: string[];
   /** As the catalog sends them (the till's held sale carries these). */
   allergenCodes: string[];
+  /** "הערה בקיוסק" (lib/kioskNotes.ts): the kiosk offers a note on it (with its switches on). */
+  notesAllowed?: boolean;
+  /** "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor): null — as the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
   sku: string | null;
   barcode: string | null;
   trackStock: boolean;
@@ -321,8 +327,12 @@ export function buildWebCatalog(
     const ids = menuGroupIdsFor(links, [p.id], p.categoryId, parentOf);
     const list = ids.map((id) => groupsById.get(id)).filter((g): g is WebGroup => !!g && g.options.length > 0);
     if (list.length > 0) groups[p.id] = list;
+    // "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor): the dish's own, inherited from its category.
+    p.kioskOpen = kioskOpenFor(menu.kioskOpen, [p.id], p.categoryId, parentOf);
     // Menu.notesFor: its own chips, else the nearest category's up the tree; then the shop's for every dish.
-    const q = menuNotesFor(notes, [p.id], p.categoryId, parentOf);
+    // "הערה בקיוסק" (lib/kioskNotes.ts): the dish's own, else its category's up the tree, else none.
+    p.notesAllowed = kioskNotesAllowed(menu.kioskNotes, [p.id], p.categoryId, parentOf);
+    const q = p.notesAllowed ? menuNotesFor(notes, [p.id], p.categoryId, parentOf) : [];
     if (q.length > 0) quickNotes[p.id] = q;
   }
   const upsells = (Array.isArray(menu.upsells) ? (menu.upsells as Row[]) : []).map((u) => {

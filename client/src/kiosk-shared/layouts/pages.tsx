@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react';
+import { dishNoteFieldOn } from '@/lib/kioskNotes';
 import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { KioskSwap, itemEnter, sheetEnter } from '@/components/dashboard/kiosks/preview-motion';
@@ -155,7 +156,7 @@ export function PagesProductSheet({
               );
             })}
           </div>
-          {m.cfg.general.notesEnabled && m.live?.noteField ? m.live.noteField(note, setNote) : null}
+          {dishNoteFieldOn(m.cfg, product) && m.live?.noteField ? m.live.noteField(note, setNote) : null}
         </div>
       );
     }

@@ -28,6 +28,7 @@ POST /sync/{machine_id}/shop-z/remote-part      → the remote machine answers (
 """
 from __future__ import annotations
 
+import uuid
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -71,6 +72,7 @@ def till_shop_z_history(
 @router.get("/sync/{machine_id}/shop-z/shift-guard")
 def till_shop_z_shift_guard(
     machine_id: str,
+    area_id: Optional[uuid.UUID] = Query(None, alias="areaId"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
@@ -85,14 +87,17 @@ def till_shop_z_shift_guard(
 
     machine = _machine(machine_id, machine)
     shop = db.get(Shop, machine.shop_id)
-    required = G.required(db, shop)
-    blockers = [b for b in G.shop_blockers(db, shop) if b["machineId"] != str(machine.id)] if required else []
+    # `areaId`: the main till's point-of-sale Z (P:/specs/area-z-configs.md §3) — only that area's tills block it.
+    area_id = area_id if isinstance(area_id, uuid.UUID) else None
+    required = G.required(db, shop, area_id=area_id)
+    blockers = [b for b in G.shop_blockers(db, shop, area_id=area_id) if b["machineId"] != str(machine.id)] if required else []
     return {"required": required, "blockers": blockers}
 
 
 @router.get("/sync/{machine_id}/shop-z/cloud-refund-guard")
 def till_shop_z_cloud_refund_guard(
     machine_id: str,
+    area_id: Optional[uuid.UUID] = Query(None, alias="areaId"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
@@ -113,7 +118,7 @@ def till_shop_z_cloud_refund_guard(
     shop = db.get(Shop, machine.shop_id)
     if not CRG.enabled() or shop is None:
         return {"required": False, "hold": False, "message": None, "refunds": []}
-    scope = CRG.shop_scope(db, shop)
+    scope = CRG.shop_scope(db, shop, area_id if isinstance(area_id, uuid.UUID) else None)
     closing = [m.id for m in scope if ZR.is_seated_in(m, shop.id) and CRG.closes_open_shift(db, m)]
     refunds = CRG.pending(db, [m.id for m in scope], closing=closing)
     held = [r for r in refunds if not r["landsInThisZ"]]

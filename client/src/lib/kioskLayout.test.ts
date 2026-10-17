@@ -53,7 +53,7 @@ import { KIOSK_ICON_DATA } from './kioskIconData';
 import { KIOSK_TEXT_REGISTRY_DATA } from './kioskTextRegistryData';
 import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, textShownUnder, validateKioskTexts, webTextOverride } from './kioskTexts';
 
-const TEMPLATES_SHA256 = '76adf38cfe6b67e2b0e0c5534acc2dbab030f9c95a429b9a713acbc225e83f4d';
+const TEMPLATES_SHA256 = '19f4a0b01e438f71921e84fda94d3b67fb75821d3506f162084335f046b7b8aa';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
 const REGISTRY_SHA256 = 'fc07e8b1f8350ea35238ef67c012e7c63129a81b4f229a3fd4ba0f4c708c3240';
 
@@ -428,10 +428,10 @@ describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additi
       // "תמונת מחלקה מהקטלוג" (P:/specs/category-color-image.md §3), added after the baseline: on.
       assert.equal(cfg.catalog.categoryImagesFromCatalog, true);
       delete cfg.catalog.categoryImagesFromCatalog;
-      // 17.10 (owner): "הוספה מהירה" defaults to no_required — only where no level chose it; the rest as before.
+      // 17.10 (owner): "הוספה מהירה" defaults to no_choices — only where no level chose it; the rest as before.
       const chose = c.layers.some((l) => !!l && typeof l === 'object' && 'quickAdd' in ((l as { layout?: object }).layout ?? {}));
       if ((c.resolved.layout as Record<string, unknown>).quickAdd === 'off' && !chose) {
-        assert.equal(cfg.layout.quickAdd, 'no_required');
+        assert.equal(cfg.layout.quickAdd, 'no_choices');
         cfg.layout.quickAdd = 'off';
       }
       assert.deepEqual(cfg, c.resolved);

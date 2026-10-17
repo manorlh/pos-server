@@ -107,6 +107,7 @@ import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
 import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
 import { catalogContinuous, dishCartCounts, doneCard, layoutOf, pricePillOn, reachLow, sheetMotionOf, tapPathOf, topBarItems, type LayoutTopBarItem } from '@/lib/kioskLayout';
 import { DishCountBadge } from '@/kiosk-shared/layouts/count-badge';
+import { dishNoteFieldOn, dishQuickNotesOn } from '@/lib/kioskNotes';
 import { DishInfoButton } from '@/kiosk-shared/layouts/info-button';
 import { catalogSearch } from '@/lib/kioskTopBar';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
@@ -138,6 +139,17 @@ export interface PProduct {
   dietaryTags: DietaryTag[];
   /** The real kiosk: the dish's allergen codes (its window lists them) — the ⓘ's rule counts them (info-button.tsx). */
   allergens?: string[];
+  /**
+   * The real kiosk: "הערה בקיוסק" (lib/kioskNotes.ts) — false: no note field and no chips on this dish, whatever
+   * the kiosk's switches. Absent (the preview's samples, an older cloud): as the switches say.
+   */
+  notesAllowed?: boolean;
+  /** The real kiosk: the dish has option groups (required or optional) — "הוספה מהירה" no_choices opens it (tapPathOf). */
+  hasChoices?: boolean;
+  /** The real kiosk: the dish's "בקיוסק: פתיחת חלון" (lib/kioskLayout.ts kioskOpenFor); null — as the kiosk. */
+  kioskOpen?: 'window' | 'direct' | null;
+  /** The real kiosk: it offers a note here (lib/kioskNotes.ts dishNotesOpen) — a tap opens its window. */
+  notesOn?: boolean;
   /** The real kiosk: a bigger picture for the product sheet (imageUrl is the card's). */
   imageLarge?: string | null;
   /**
@@ -2689,7 +2701,7 @@ export function ProductSheet({
                 </div>
               );
             })}
-            {cfg.general.quickNotesEnabled && quick.length > 0 ? (
+            {dishQuickNotesOn(cfg, product) && quick.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
                 {quick.map((q) => {
                   const on = notes.includes(q);
@@ -2729,7 +2741,7 @@ export function ProductSheet({
                 })}
               </div>
             ) : null}
-            {cfg.general.notesEnabled ? (
+            {dishNoteFieldOn(cfg, product) ? (
               m.live?.noteField ? (
                 m.live.noteField(note, setNote)
               ) : (

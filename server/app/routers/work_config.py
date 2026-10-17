@@ -53,6 +53,10 @@ def _machine(db: Session, machine_id: uuid.UUID, user: User, tenant_id) -> POSMa
         user.role == UserRole.DISTRIBUTOR and machine.distributor_id == user.id
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # A manager of some points of sale: their devices only (P:/specs/area-coverage-audit.md).
+    from app.services import area_scope
+
+    area_scope.check_machine(db, user, machine)
     return machine
 
 

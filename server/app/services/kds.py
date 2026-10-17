@@ -38,6 +38,7 @@ The rules, in one place:
 """
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 import types
@@ -64,11 +65,14 @@ from app.models.outbox import OutboxEvent
 from app.models.pos_machine import POSMachine
 from app.models.printers import KitchenStation
 from app.models.shop import Shop
+from app.models.shop_area import ShopArea
 from app.schemas.kds import KdsActionIn, KdsItemIn, KdsReleaseIn
 from app.services import kds_display as DISPLAY
 from app.services import kds_workflow as WF
 from app.services.areas import as_utc
 from app.services.kds_routing import load_context, route
+
+logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
 QTY = Decimal("0.001")
@@ -217,20 +221,163 @@ def device_out(
         "display": DISPLAY.effective(device, shop),
         # Whether that look is the screen's own (else the shop's default / the built-in one).
         "displayOwn": DISPLAY.own_display(device) is not None,
-        # The screen's orders (any role): these points of sale / machines; both empty = the whole shop.
-        "scope": scope_out(getattr(device, "scope", None)),
+        # The screen's orders (any role) as they are shown NOW: these points of sale / machines; both
+        # empty = the whole shop. "תצוגה לפי נקודת המכירה של המסך" resolved (`effective_scope`), so every
+        # screen (Android, Windows, browser) follows its device's point of sale without knowing the rule.
+        **_scope_fields(db, device, shop),
     }
 
 
-def scope_out(raw: Any) -> Dict[str, List[str]]:
-    """A stored `kds_devices.scope`, cleaned (both lists empty = the whole shop)."""
+def scope_out(raw: Any) -> Dict[str, Any]:
+    """
+    A stored `kds_devices.scope`, cleaned (both lists empty = the whole shop). `followArea`
+    ("תצוגה לפי נקודת המכירה של המסך"): the screen shows the orders of the point of sale its own
+    device stands in, wherever it is moved (P:/specs/area-coverage-audit.md, KDS).
+    """
     r = raw if isinstance(raw, dict) else {}
 
     def ids(key: str) -> List[str]:
         v = r.get(key)
         return [str(x) for x in v if isinstance(x, str) and x] if isinstance(v, list) else []
 
-    return {"areaIds": ids("areaIds"), "machineIds": ids("machineIds")}
+    return {"areaIds": ids("areaIds"), "machineIds": ids("machineIds"), "followArea": r.get("followArea") is True}
+
+
+#: Where a screen's orders come from, in the owner's words (`scopeSource`).
+SCOPE_SHOP, SCOPE_AREA, SCOPE_OWN = "shop", "area", "own"
+SCOPE_WARN_EMPTY_AREA = "area_has_no_sellers"
+SCOPE_WARN_WHOLE_SHOP = "whole_shop_with_areas"
+
+
+def effective_scope(db: Session, device: KdsDevice) -> Dict[str, Any]:
+    """
+    The orders a screen shows now: `{areaIds, machineIds, source, areaId, areaName, warning}`.
+
+    * `followArea` and the screen's device stands in a live point of sale that has a till or a kiosk:
+      that point of sale's orders (source "area").
+    * `followArea` but the point of sale has no till / kiosk (a kitchen area whose orders come from the
+      bar): the whole shop, warned — never an empty screen.
+    * Otherwise the lists as set (source "own"), or the whole shop (source "shop").
+    """
+    raw = scope_out(getattr(device, "scope", None))
+    out: Dict[str, Any] = {
+        "areaIds": raw["areaIds"], "machineIds": raw["machineIds"],
+        "source": SCOPE_OWN if (raw["areaIds"] or raw["machineIds"]) else SCOPE_SHOP,
+        "areaId": None, "areaName": None, "warning": None,
+    }
+    machine = db.get(POSMachine, device.machine_id) if getattr(device, "machine_id", None) else None
+    area_id = getattr(machine, "area_id", None) if machine is not None else None
+    area = db.get(ShopArea, area_id) if area_id is not None else None
+    if area is not None and (area.archived_at is not None or str(area.shop_id) != str(device.shop_id)):
+        area = None
+    if raw["followArea"] and area is not None:
+        out["areaId"], out["areaName"] = str(area.id), area.name
+        sellers = (
+            db.query(POSMachine.id)
+            .filter(
+                POSMachine.shop_id == device.shop_id,
+                POSMachine.area_id == area.id,
+                POSMachine.is_active.is_(True),
+                POSMachine.id != device.machine_id,
+            )
+            .all()
+        )
+        from app.services.display_devices import is_fiscal
+
+        if any(is_fiscal(db.get(POSMachine, r[0])) for r in sellers):
+            out.update(areaIds=[str(area.id)], machineIds=raw["machineIds"], source=SCOPE_AREA)
+        else:
+            out.update(areaIds=[], machineIds=raw["machineIds"], warning=SCOPE_WARN_EMPTY_AREA,
+                       source=SCOPE_OWN if raw["machineIds"] else SCOPE_SHOP)
+    if out["source"] == SCOPE_SHOP and out["warning"] is None:
+        has_areas = db.query(ShopArea.id).filter(
+            ShopArea.shop_id == device.shop_id, ShopArea.archived_at.is_(None)
+        ).first() is not None
+        if has_areas:
+            out["warning"] = SCOPE_WARN_WHOLE_SHOP
+    return out
+
+
+def scope_label(db: Session, eff: Dict[str, Any]) -> str:
+    """"מציג: נקודת מכירה בר" / "מציג: כל הסניף" / "מציג: נקודות מכירה וקופות נבחרות"."""
+    if eff["source"] == SCOPE_AREA:
+        return f"מציג: נקודת מכירה {eff['areaName']}"
+    if eff["source"] == SCOPE_SHOP:
+        return "מציג: כל הסניף"
+    names = []
+    for a in eff["areaIds"]:
+        row = db.get(ShopArea, _uuid_or_none(a))
+        if row is not None:
+            names.append(row.name)
+    if names and not eff["machineIds"]:
+        return ("מציג: נקודת מכירה " if len(names) == 1 else "מציג: נקודות מכירה ") + ", ".join(names)
+    return "מציג: נקודות מכירה וקופות נבחרות"
+
+
+SCOPE_WARNING_TEXT = {
+    SCOPE_WARN_EMPTY_AREA: "בנקודת המכירה של המסך אין קופות או קיוסקים — המסך מציג את כל הסניף",
+    SCOPE_WARN_WHOLE_SHOP: "בסניף יש נקודות מכירה והמסך מציג את הזמנות כל הסניף",
+}
+
+
+def _uuid_or_none(value: Any) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _scope_fields(db: Session, device: KdsDevice, shop: Optional[Shop]) -> Dict[str, Any]:
+    eff = effective_scope(db, device)
+    return {
+        "scope": {"areaIds": eff["areaIds"], "machineIds": eff["machineIds"]},
+        # As set on the dashboard (the dialog edits this): the lists and `followArea`.
+        "scopeSetting": scope_out(getattr(device, "scope", None)),
+        "scopeSource": eff["source"],
+        "scopeAreaId": eff["areaId"],
+        "scopeAreaName": eff["areaName"],
+        "scopeLabel": scope_label(db, eff),
+        "scopeWarning": eff["warning"],
+        "scopeWarningText": SCOPE_WARNING_TEXT.get(eff["warning"]) if eff["warning"] else None,
+    }
+
+
+def on_machine_area_changed(db: Session, machine: POSMachine) -> None:
+    """
+    A device of the shop changed its point of sale: its own screen may start following it
+    (`follow_area_on_move`), and every screen of the shop reads its scope again (the version moves —
+    a screen following an area that just got or lost its tills changes what it shows). Never raises.
+    """
+    try:
+        follow_area_on_move(db, machine)
+        if machine.shop_id is not None and db.query(KdsDevice.id).filter(KdsDevice.shop_id == machine.shop_id).first():
+            bump(db, machine.shop_id, machine.tenant_id)
+    except Exception:  # noqa: BLE001 - a move never fails on the screens
+        logger.exception("kds: area change not applied to screens for machine %s", getattr(machine, "id", None))
+
+
+def follow_area_on_move(db: Session, machine: POSMachine) -> bool:
+    """
+    The device moved into a point of sale (pairing, the areas page, the device page): its screen,
+    if it is one and has no scope of its own yet, follows the device's point of sale from now on.
+    An explicit scope (lists, or `followArea: false`) is never touched. Never raises.
+    """
+    try:
+        if getattr(machine, "area_id", None) is None:
+            return False
+        device = db.query(KdsDevice).filter(KdsDevice.machine_id == machine.id).first()
+        if device is None:
+            return False
+        raw = device.scope if isinstance(device.scope, dict) else {}
+        if raw.get("areaIds") or raw.get("machineIds") or "followArea" in raw:
+            return False
+        device.scope = {"areaIds": [], "machineIds": [], "followArea": True}
+        bump(db, device.shop_id, device.tenant_id)
+        db.flush()
+        return True
+    except Exception:  # noqa: BLE001 - a move never fails on the screen's scope
+        logger.exception("kds: follow area on move failed for machine %s", getattr(machine, "id", None))
+        return False
 
 
 def in_scope(order: KitchenOrder, scope: Dict[str, Any]) -> bool:
@@ -1504,7 +1651,7 @@ def board(db: Session, machine: POSMachine, since: Optional[int] = None) -> Dict
     if since is not None and since == state.version:
         return {"syncType": "unchanged", **base}
     if device.role == "pickup":
-        scope = scope_out(getattr(device, "scope", None))
+        scope = base["device"]["scope"]
         pickup = pickup_board(
             db, device.shop_id,
             ready_minutes=DISPLAY.ready_minutes(base["device"]["display"]),
@@ -1513,7 +1660,7 @@ def board(db: Session, machine: POSMachine, since: Optional[int] = None) -> Dict
         return {"syncType": "full", **base, "pickup": pickup}
 
     # A screen of its own points of sale / tills and kiosks (§15): only their orders.
-    scope = scope_out(getattr(device, "scope", None))
+    scope = base["device"]["scope"]
     orders = [o for o in _open_orders(db, device.shop_id, now) if in_scope(o, scope)]
     tasks, changes, groups, dispatches = _bundle(db, orders)
     mine = set(device.station_ids or [])
@@ -1983,6 +2130,7 @@ def save_device(db: Session, shop: Shop, machine_id: Any, body) -> KdsDevice:
     if body.role == "station" and not station_ids:
         raise _refuse("station_device_needs_a_station", status.HTTP_422_UNPROCESSABLE_ENTITY)
     device = db.query(KdsDevice).filter(KdsDevice.machine_id == machine.id).first()
+    created = device is None
     if device is None:
         display_devices.make_screen(db, machine)
         device = KdsDevice(id=uuid.uuid4(), tenant_id=shop.tenant_id, shop_id=shop.id, machine_id=machine.id)
@@ -2001,6 +2149,12 @@ def save_device(db: Session, shop: Shop, machine_id: Any, body) -> KdsDevice:
     scope = getattr(body, "scope", None)
     if scope is not None:
         device.scope = _scope_in(db, shop, scope)
+    if created and getattr(machine, "area_id", None) is not None and (
+        scope is None or (not scope.area_ids and not scope.machine_ids and scope.follow_area is None)
+    ):
+        # A new screen of a device in a point of sale shows that point of sale's orders by default
+        # ("תצוגה לפי נקודת המכירה של המסך"); the dialog's explicit choice always wins.
+        device.scope = {"areaIds": [], "machineIds": [], "followArea": True}
     _set_screen_flag(db, machine.id, bool(body.is_active))
     bump(db, shop.id, shop.tenant_id)
     db.flush()
@@ -2020,9 +2174,15 @@ def _scope_in(db: Session, shop: Shop, scope) -> Optional[Dict[str, List[str]]]:
         raise _refuse("area_not_in_shop", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if any(m not in machines for m in machine_ids):
         raise _refuse("machine_not_in_shop", status.HTTP_422_UNPROCESSABLE_ENTITY)
-    if not area_ids and not machine_ids:
+    follow = getattr(scope, "follow_area", None)
+    if not area_ids and not machine_ids and follow is None:
         return None
-    return {"areaIds": area_ids, "machineIds": machine_ids}
+    out: Dict[str, Any] = {"areaIds": area_ids, "machineIds": machine_ids}
+    if follow is not None:
+        # True: the device's own point of sale (its lists are ignored for areas); False: said "no" —
+        # a later move of the device never turns it on.
+        out["followArea"] = bool(follow)
+    return out
 
 
 def set_display_defaults(db: Session, shop: Shop, body) -> Dict[str, Optional[Dict[str, Any]]]:
