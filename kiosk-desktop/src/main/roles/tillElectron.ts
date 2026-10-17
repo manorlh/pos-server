@@ -49,7 +49,7 @@ export interface TillElectronOptions {
    * terminal); `open` — the shell's window shows its manager's menu (renderer staff/ShellStaff.tsx) while the till's view
    * is set aside, until `resume`.
    */
-  admin?: { allowed(): boolean; open(): void };
+  admin?: { allowed(): boolean; open(screen: 'admin' | 'technician'): void };
 }
 
 export interface TillElectron {
@@ -115,16 +115,19 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   ipcMain.on(APP_IPC.idle, (e, idle: unknown, busy: unknown) => fromTill(e) && role.reportIdle(idle === true, busy === true));
   ipcMain.on(APP_IPC.keepAwake, () => undefined); // the shell already keeps the display on (powerSaveBlocker)
   // The till's corner: the shell's manager's menu, never during a payment.
-  ipcMain.on(APP_IPC.admin, (e) => {
+  // The till's six taps (top-left, the PIN screen too): the shell's technician's screen, never during a payment either.
+  const openShell = (e: Electron.IpcMainEvent, screen: 'admin' | 'technician') => {
     if (!fromTill(e) || !o.admin || parked) return;
     if (!o.admin.allowed()) {
-      o.log('till: the manager corner waits — a payment is on');
+      o.log(`till: the ${screen === 'admin' ? 'manager corner' : 'technician taps'} wait — a payment is on`);
       return;
     }
     parked = true;
     fit();
-    o.admin.open();
-  });
+    o.admin.open(screen);
+  };
+  ipcMain.on(APP_IPC.admin, (e) => openShell(e, 'admin'));
+  ipcMain.on(APP_IPC.technician, (e) => openShell(e, 'technician'));
 
   const offEngine = role.onEngineEvent(
     (ev: EngineEvent) => view?.webContents.send(APP_IPC.event, ev),

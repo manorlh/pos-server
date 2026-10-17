@@ -597,7 +597,7 @@ void app.whenReady().then(async () => {
     // "ניהול הקיוסק" from the till's corner: never during a payment; the shell's window shows the menu (staff/ShellStaff.tsx).
     admin: {
       allowed: () => !tillEngine?.paying(),
-      open: () => sendShell('shell:admin', { from: 'till' }),
+      open: (screen) => sendShell('shell:admin', { from: 'till', screen }),
     },
   });
   roles.on('view', (v) => tillView?.onRole(v.role));

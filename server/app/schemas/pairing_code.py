@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any
 import uuid
 from datetime import datetime
 
-from app.schemas.device_profile import KdsScreenOptionsIn, KioskOptionsIn
+from app.schemas.device_profile import DeviceTerminalIn, KdsScreenOptionsIn, KioskOptionsIn
 from app.services.machine_names import MachineNameRefused, clean_machine_name
 from app.schemas.work_config import WorkConfigIn
 from app.schemas.pos_machine import DeviceModel, DevicePlatform, DeviceRole
@@ -38,6 +38,10 @@ class PairingCodeGenerateRequest(BaseModel):
     #: "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): a preset and overrides, applied to the
     #: machine right after it pairs. Absent / null: "לפי הסניף". Needs `shopId`.
     work_config: Optional[WorkConfigIn] = Field(None, alias="workConfig")
+    #: "מסופון אשראי" (app/services/device_terminal.py): a till / kiosk's card terminal type and its non-secret
+    #: fields, by the device's platform and role (422 `device_terminal_*` otherwise), written to the machine's
+    #: own settings as it pairs. Absent / "auto": nothing written — the layers above decide, as before.
+    terminal: Optional[DeviceTerminalIn] = None
     #: "שם המכשיר — לא חובה" (docs/SPEC_PAIRING_QR.md §4): a till's name, given when it is added.
     #: Blank / absent: the server's default ("קופה N" once the machine has a number). The device that
     #: redeems the code gets this name, whatever name it sends itself.
@@ -87,6 +91,8 @@ class PairingCodeResponse(BaseModel):
     #: The plan the code carries, and — once a device redeemed it — how applying it went.
     work_config: Optional[Dict[str, Any]] = Field(None, alias="workConfig")
     work_config_result: Optional[Dict[str, Any]] = Field(None, alias="workConfigResult")
+    #: The terminal choice the code carries (the settings it writes; never a secret), if any.
+    terminal_options: Optional[Dict[str, Any]] = Field(None, alias="terminalOptions")
     #: The name the code was given in the add-device form, if any.
     machine_name: Optional[str] = Field(None, alias="machineName")
     expires_at: datetime = Field(..., alias="expiresAt")
