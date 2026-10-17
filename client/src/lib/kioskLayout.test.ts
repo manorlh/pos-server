@@ -434,6 +434,10 @@ describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additi
         assert.equal(cfg.layout.quickAdd, 'no_choices');
         cfg.layout.quickAdd = 'off';
       }
+      // 17.10 (owner, "אותה מדפסת יכולה להיות הכל"): "בון מטבח במדפסת הקיוסק" defaults to auto — no baseline layer chose it.
+      assert.equal(cfg.printing.bonOnKiosk, 'auto');
+      assert.equal((c.resolved.printing as Record<string, unknown>).bonOnKiosk, false);
+      cfg.printing.bonOnKiosk = false;
       assert.deepEqual(cfg, c.resolved);
     });
   }

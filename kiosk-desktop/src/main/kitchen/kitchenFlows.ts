@@ -11,7 +11,7 @@
  */
 
 import type { SaleLine } from '../../core/sale';
-import { kioskBonOwnShare, type KioskBonRoute } from '../../core/kioskBonRoute';
+import { bonOnKioskSetting, kioskBonOwnShare, type KioskBonRoute } from '../../core/kioskBonRoute';
 import { kdsHoldOf, kdsWorkflowOf } from '../../core/kitchen/kds';
 import { kioskBonHeadline, kitchenLinesOfSale, LABELS, saleTicket } from '../../core/kitchen/tickets';
 import { kdsSaleRelease, saleDispatchId } from '../kiosk/kdsRelease';
@@ -123,7 +123,7 @@ export interface KioskBonInput {
 export function kioskBonToKitchen(
   kitchen: KitchenService,
   route: KioskBonRoute,
-  printing: { bonPrinterId?: string | null; bonOnKiosk?: boolean | null },
+  printing: { bonPrinterId?: string | null; bonOnKiosk?: boolean | string | null },
   b: KioskBonInput,
   categoryOf: (productId: string) => string | null,
 ): { jobIds: string[]; detail: string | null } {
@@ -144,7 +144,7 @@ export function kioskBonToKitchen(
       unroutedToTill: false,
       onlyPrinterId: route === 'single' ? (printing.bonPrinterId ?? null) : null,
       // The till copy on the kiosk's own printer only with the setting on.
-      ownPrinter: kioskBonOwnShare(route, printing.bonOnKiosk === true),
+      ownPrinter: kioskBonOwnShare(route, bonOnKioskSetting(printing.bonOnKiosk)),
       idSeed: `kiosk-bon:${b.orderId}:${b.nonce ?? 'first'}:${copy}`,
       refId: b.orderId,
     });

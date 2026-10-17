@@ -402,12 +402,12 @@ async function kioskSettled(k: KioskRig, quietMs = 300) {
 const kioskKinds = (k: KioskRig) => k.drawn.map((d) => d.doc.kind);
 
 describe('the kiosk (Windows 10/11; the Windows 7 build is till only but prints through the same code)', () => {
-  it('receiptPolicy "always": the pickup slip, the receipt, the item tickets — each once, cut; never the drawer', async () => {
+  it('receiptPolicy "always": the pickup slip, the receipt, the item tickets, then the bon (auto, no kitchen printer) — each once, cut; never the drawer', async () => {
     const k = kiosk();
     await cardSale(k, [{ productId: 'p-burger', qty: 1 }, { productId: 'p-cola', qty: 2 }]);
-    await kioskSettled(k);
-    expect(kioskKinds(k)).toEqual(['slip', 'receipt', 'ticket', 'ticket', 'ticket']);
-    expect(printer.pageJobs()).toHaveLength(5);
+    await kioskSettled(k, 600);
+    expect(kioskKinds(k)).toEqual(['slip', 'receipt', 'ticket', 'ticket', 'ticket', 'bon']);
+    expect(printer.pageJobs()).toHaveLength(6);
     for (const j of printer.pageJobs()) expect(j.parsed.cuts).toBe(1);
     expect(printer.kicks()).toHaveLength(0);
   });
@@ -415,39 +415,50 @@ describe('the kiosk (Windows 10/11; the Windows 7 build is till only but prints 
   it('receiptPolicy "ask": no receipt until the customer says yes — and a second "yes" (a double tap) prints none', async () => {
     const k = kiosk({ payment: { receiptPolicy: 'ask' }, printing: { pickupSlip: false } });
     const id = await cardSale(k, [{ productId: 'p-burger', qty: 1 }]);
-    await kioskSettled(k);
-    expect(kioskKinds(k)).toEqual(['ticket']);
+    await kioskSettled(k, 600);
+    expect(kioskKinds(k)).toEqual(['ticket', 'bon']);
     await k.svc.receiptChoice(id, true);
     await k.svc.receiptChoice(id, true);
     await kioskSettled(k);
-    expect(kioskKinds(k)).toEqual(['ticket', 'receipt']);
+    expect(kioskKinds(k)).toEqual(['ticket', 'bon', 'receipt']);
   });
 
   it('receiptPolicy "never": no receipt (a "yes" from a stale screen prints none either); the tickets still print', async () => {
     const k = kiosk({ payment: { receiptPolicy: 'never' }, printing: { pickupSlip: false } });
     const id = await cardSale(k, [{ productId: 'p-cola', qty: 1 }]);
     await k.svc.receiptChoice(id, true);
-    await kioskSettled(k);
-    expect(kioskKinds(k)).toEqual(['ticket']);
+    await kioskSettled(k, 600);
+    expect(kioskKinds(k)).toEqual(['ticket', 'bon']);
   });
 
-  it('one printer for everything: "בון מטבח במדפסת הקיוסק" on and no kitchen printer — the bon on the kiosk receipt printer', async () => {
-    const k = kiosk({ printing: { pickupSlip: false, bonOnKiosk: true } });
+  it('one printer for everything (the owner 17.10.2026): "בון מטבח במדפסת הקיוסק" auto and no kitchen printer — the bon on the kiosk receipt printer, last, cut', async () => {
+    for (const bonOnKiosk of ['auto', true] as const) {
+      printer.reset();
+      const k = kiosk({ printing: { pickupSlip: false, bonOnKiosk } });
+      await cardSale(k, [{ productId: 'p-burger', qty: 1 }]);
+      await kioskSettled(k, 600);
+      expect(kioskKinds(k)).toEqual(['receipt', 'ticket', 'bon']);
+      expect(printer.pageJobs()).toHaveLength(3);
+      for (const j of printer.pageJobs()) expect(j.parsed.cuts).toBe(1);
+    }
+  });
+
+  it('"בון מטבח במדפסת הקיוסק" off (chosen): no bon on the kiosk', async () => {
+    const k = kiosk({ printing: { pickupSlip: false, bonOnKiosk: false } });
     await cardSale(k, [{ productId: 'p-burger', qty: 1 }]);
     await kioskSettled(k, 600);
-    expect(kioskKinds(k).sort()).toEqual(['bon', 'receipt', 'ticket']);
-    expect(printer.pageJobs()).toHaveLength(3);
+    expect(kioskKinds(k)).toEqual(['receipt', 'ticket']);
   });
 
   it('a copy of the receipt prints once, marked "העתק"', async () => {
     const k = kiosk({ printing: { pickupSlip: false } });
     const id = await cardSale(k, [{ productId: 'p-cola', qty: 2 }]);
-    await kioskSettled(k);
-    expect(kioskKinds(k)).toEqual(['receipt', 'ticket', 'ticket']);
+    await kioskSettled(k, 600);
+    expect(kioskKinds(k)).toEqual(['receipt', 'ticket', 'ticket', 'bon']);
     k.svc.printReceipt(id, true);
     await kioskSettled(k);
-    expect(kioskKinds(k)).toEqual(['receipt', 'ticket', 'ticket', 'receipt']);
-    expect(JSON.stringify(k.drawn[3].doc)).toContain('העתק');
+    expect(kioskKinds(k)).toEqual(['receipt', 'ticket', 'ticket', 'bon', 'receipt']);
+    expect(JSON.stringify(k.drawn[4].doc)).toContain('העתק');
   });
 
   it('"מזומן בקופה" with no cloud: the slip to take to the till ("ממתינה לסנכרון"), once', async () => {

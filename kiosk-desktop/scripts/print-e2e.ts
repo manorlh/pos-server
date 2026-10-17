@@ -518,7 +518,8 @@ async function run() {
       general: { blockWhenOffline: false },
       payment: { methods: ['card', 'cash_at_till'], receiptPolicy: 'always', tipEnabled: false },
       pickup: { scope: 'kiosk', prefix: 'K', start: 1, max: 99 },
-      printing: { pickupSlip: true, bonOnKiosk: true },
+      // "בון מטבח במדפסת הקיוסק" left at its default (auto, the owner 17.10.2026): no kitchen printer — the bon here.
+      printing: { pickupSlip: true },
     },
   });
   kiosk.applyProvider();
@@ -544,6 +545,7 @@ async function run() {
   await until(() => progress.find((p) => p.orderId === orderId && p.phase === 'approved'));
   f = record('kiosk-card-order', await settle(printer, kiosk, from, 1_500), kinds(d0));
   check('kiosk card order: slip + receipt + bon + 3 tickets, no drawer', f.pages === 6 && f.kicks.length === 0, f);
+  check('kiosk card order: the bon last, after the customer’s papers', kinds(d0).at(-1) === 'bon', kinds(d0));
 
   // 15. A receipt copy (the manager's reprint).
   from = printer.jobs.length;
