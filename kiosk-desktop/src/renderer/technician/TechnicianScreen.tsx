@@ -468,7 +468,7 @@ function IdentityPanel({
       <Row m={m} label={T.company} value={pick(ident?.company, id?.company ?? info.companyName)} />
       <Row m={m} label={T.shop} value={pick(ident?.shop, id?.shop ?? info.shopName)} />
       {ident?.branchCode ? <Row m={m} label={T.branchCode} value={ident.branchCode} ltr /> : null}
-      {ident?.area ? <Row m={m} label={T.area} value={ident.area} /> : null}
+      {(ident?.area ?? info.areaName) ? <Row m={m} label={T.area} value={(ident?.area ?? info.areaName) as string} /> : null}
       <Row m={m} label={T.machineName} value={pick(ident?.machineName, id?.machineName ?? info.machine?.name)} />
       <Row m={m} label={T.machineId} value={id?.machineId ?? info.machine?.machineId ?? '—'} ltr />
       <Row m={m} label={T.posNumber} value={pick(ident?.posNumber, id?.posNumber ?? info.machine?.posNumber)} ltr />

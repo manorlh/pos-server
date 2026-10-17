@@ -4861,6 +4861,7 @@ export class KioskService extends EventEmitter {
       // "סוג רישיון": what the cloud licensed the device as, and a warning when it does not fit the role.
       license: license.product ? { product: license.product, label: license.label, info: license.info, warning: license.warning } : null,
       shopName: me?.shopName ?? null,
+      areaName: typeof me?.areaName === 'string' && me.areaName ? me.areaName : null,
       companyName: me?.companyName ?? null,
       network: { online: !this.offlineNow, lastBeatOkAt: this.sync.status.lastBeatOkAt, serverUrl: this.cloud.credentials()?.serverUrl ?? null, interfaces: this.platform.interfaces() },
       printer: { ...admin.printer, queues: queues.map((q) => `${q.name} (${q.health})`) },

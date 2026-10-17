@@ -57,6 +57,7 @@ import {
   type KioskDraft,
 } from '@/lib/deviceProfile';
 import { getKdsShop } from '@/lib/kdsApi';
+import { ControllerSourceSelect } from '@/components/dashboard/kiosks/controller-source';
 import type { DeviceModel, PosMachine, Shop } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -158,12 +159,15 @@ export function KioskOptionsFields({
   machineId,
   value,
   onChange,
+  areaId,
 }: {
   shopId: string | null;
   /** The machine becoming a kiosk; null for a device not paired yet. */
   machineId: string | null;
   value: KioskDraft;
   onChange: (next: KioskDraft) => void;
+  /** A device not paired yet: the "נקודת מכירה" chosen with it ('' / null — none). */
+  areaId?: string | null;
 }) {
   const t = useTranslations('kiosks.convert');
   const tr = useTranslations('machines.deviceRole');
@@ -177,6 +181,10 @@ export function KioskOptionsFields({
     const kioskIds = new Set(all.filter((m) => m.deviceRole === 'kiosk' || isDisplayDevice(m)).map((m) => m.id));
     return controllerOptions(shopId, machineId, shops ?? [], all, kioskIds);
   }, [machines, shops, shopId, machineId]);
+  // "שליטה מקופות": warn when the kiosk would have no point of sale to take its tills from.
+  const hasArea = machineId
+    ? (machines ?? []).some((m) => m.id === machineId && !!m.areaId)
+    : !!areaId;
 
   return (
     <div className="space-y-3 rounded-lg border border-dashed p-3">
@@ -203,6 +211,12 @@ export function KioskOptionsFields({
         />
         <p className="text-xs text-muted-foreground">{t('controllersHint')}</p>
       </div>
+      <ControllerSourceSelect
+        id={`kiosk-controller-source-${machineId ?? 'new'}`}
+        value={value.controllerSource ?? ''}
+        onChange={(controllerSource) => onChange({ ...value, controllerSource })}
+        hasArea={machinesQuery.isSuccess || !machineId ? hasArea : null}
+      />
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
