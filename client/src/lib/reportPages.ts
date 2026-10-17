@@ -183,6 +183,7 @@ export const NOT_REPORT_PAGES: PageExclusion[] = [
   { route: 'start', reason: "the landing redirect to the user's opening page" },
   { route: 'stock/quick-block', reason: "a live control: blocks items on the tills now" },
   { route: 'till-design', reason: "settings: the till's look" },
+  { route: 'kiosk-designs', reason: "settings: the kiosks' saved designs library" },
   { route: 'till-messages', reason: "sends messages the tills must acknowledge" },
   { route: 'till-parameters', reason: "settings: till parameters" },
   { route: 'till-roles', reason: "settings: till roles and permissions" },
