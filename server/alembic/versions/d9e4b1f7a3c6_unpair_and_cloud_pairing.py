@@ -10,7 +10,7 @@
 Add-only and idempotent (each column looked at first: the API's create_all may have made it).
 
 Revision ID: d9e4b1f7a3c6
-Revises: c7d2f9a4e1b8
+Revises: a1d5e8c3b7f2
 Create Date: 2026-10-17 23:30:00
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "d9e4b1f7a3c6"
-down_revision: Union[str, Sequence[str], None] = "c7d2f9a4e1b8"
+down_revision: Union[str, Sequence[str], None] = "a1d5e8c3b7f2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
