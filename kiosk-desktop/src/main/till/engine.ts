@@ -3987,6 +3987,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.kitchenWarning = unrouted.length > 0 ? `פריטים שלא נותבו למדפסת: ${unrouted.join(', ')}` : null;
     this.kickDrawer(doc);
     this.printOrAsk(doc);
+    // "שוברים" (item tickets) after the receipt, on this till's printer — as the Android checkout's (printItemTickets):
+    // operational paper, printed whatever "דוחות בלבד" / "שאל לפני הדפסה" say.
+    this.svc.printTillItemTickets(doc);
   }
 
   /**
@@ -4023,11 +4026,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       else this.refundDrawer(...docs.filter((d) => isCreditType(d.documentType)));
     }
     if (o.handBack > 0) this.toast(WORDS.checkoutRefundDone(sh(o.handBack)), 'ok');
-    if (this.printMode().off) return;
-    for (const d of docs) {
-      this.svc.printDocReceipt(d, false);
-      if (isCreditType(d.documentType)) this.svc.printDocReceipt(d, true, true);
+    if (!this.printMode().off) {
+      for (const d of docs) {
+        this.svc.printDocReceipt(d, false);
+        if (isCreditType(d.documentType)) this.svc.printDocReceipt(d, true, true);
+      }
+      // The summary with the one figure that crossed the counter (Android ReceiptService.printBasket).
+      if (docs.length > 1) this.svc.printBasketSummary(docs);
     }
+    // The sale's item tickets ("שוברים"), never the credit notes' — whatever the print mode (Android printItemTickets).
+    if (sale) this.svc.printTillItemTickets(sale);
   }
 
   /**

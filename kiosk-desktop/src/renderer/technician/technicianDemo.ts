@@ -4,6 +4,34 @@
  */
 
 import type { TechnicianAction, TechnicianActionResult, TechnicianSetupView } from '../../shared/bridge';
+import { pickerView, type PickerView } from '../../core/printerPicker';
+
+/**
+ * "מדפסות" in the demo: a view a smoke run captured from a real device (`window.__R2M_PICKER__`, set by printerPicker.html),
+ * else made-up printers.
+ */
+export function demoPicker(): PickerView {
+  const snap = typeof window !== 'undefined' ? (window as unknown as { __R2M_PICKER__?: PickerView }).__R2M_PICKER__ : undefined;
+  if (snap) return snap;
+  return pickerView(
+    {
+      queues: [
+        { name: 'SNBC BTP-R880NPV', port: 'BYUSBC_BTP-S70_1', health: 'ok' },
+        { name: 'Microsoft Print to PDF', port: 'PORTPROMPT:', health: 'ok' },
+      ],
+      usbNoDriver: [],
+      serial: [{ path: 'COM3', name: 'USB-SERIAL CH340 (COM3)' }],
+      network: [
+        { host: '192.168.1.71', port: 9100, health: 'ok' },
+        { host: '192.168.1.88', port: 9100, health: 'no_paper' },
+      ],
+      saved: [{ host: '192.168.1.71', port: 9100, health: 'ok', name: 'מטבח חם' }],
+      chosen: { receipt: null, bon: { transport: 'tcp', host: '192.168.1.71', port: 9100 }, ticket: null },
+      autoQueue: 'SNBC BTP-R880NPV',
+    },
+    { widthDots: 576, widths: [576, 512, 432, 384], scannedAt: Date.now(), lanScanning: false, subnet: '192.168.1.0/24' },
+  );
+}
 
 const role = (): TechnicianSetupView['role'] => (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tech') === 'till' ? 'till' : 'kiosk');
 
@@ -93,6 +121,12 @@ export async function demoTechnicianAction(a: TechnicianAction): Promise<Technic
       return { ok: true, printers: { subnet: '192.168.1.0/24', found: [{ host: '192.168.1.71', port: 9100, health: 'ok', known: 'מטבח חם' }, { host: '192.168.1.88', port: 9100, health: 'ok', known: null }] } };
     case 'pinpadSearch':
       return { ok: true, pinpads: [{ host: '192.168.1.60', port: 8080, terminal: '1815155', merchant: 'עסק הדגמה', serial: 'P400-0001', match: 'same' }] };
+    case 'printerDiscover':
+    case 'printerChoose':
+    case 'printerWidth':
+      return { ok: true, picker: demoPicker() };
+    case 'printerTestTarget':
+      return { ok: true, message: 'הדגמה — דף בדיקה' };
     case 'appLog':
       return { ok: true, log: ['2026-10-17T09:00:00.000Z log [kiosk] sync: heartbeat ok', '2026-10-17T09:00:30.000Z log [kiosk] printer: ok'] };
     default:

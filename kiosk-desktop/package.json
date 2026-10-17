@@ -14,6 +14,7 @@
     "dev": "node scripts/build-main.mjs --dev && vite build --mode development && electron .",
     "dev:web": "vite --mode web",
     "smoke": "node scripts/build-main.mjs --smoke && node dist/smoke/smoke.js",
+    "print-e2e": "vite build && node scripts/build-main.mjs && node scripts/build-main.mjs --print-e2e && electron dist-e2e/print-e2e.js",
     "cash-sim": "node scripts/build-main.mjs --cash-sim && node dist/cash-sim/cash-sim.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
