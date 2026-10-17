@@ -33,6 +33,7 @@ import type { CloudZState } from '../../core/till/cloudZ';
 import type { PrintersState } from '../../core/till/printersView';
 import type { ScreenEditState } from '../../core/till/screenEdit';
 import type { KioskOrdersState } from '../../core/till/kioskOrders';
+import type { DeviceCashState, DeviceCashView } from '../../core/till/deviceCash';
 
 export type { ChoiceGroupView, ProductChoices };
 
@@ -205,7 +206,7 @@ export const TILL_OPS = [
  * The feature modules' ops (main/till/tillContext.ts `TillFeature`, registered by the engine): each module's prefix — its
  * ops are routed to it, never in [TILL_OPS]. Their arguments are each module's own (checked there).
  */
-export const FEATURE_PREFIXES = ['catalog', 'shopZ', 'attendance', 'ready', 'alerts', 'voucherBalance', 'voucherStation', 'cloudZ', 'printers', 'screenEdit', 'kioskOrders'] as const;
+export const FEATURE_PREFIXES = ['catalog', 'shopZ', 'attendance', 'ready', 'alerts', 'voucherBalance', 'voucherStation', 'cloudZ', 'printers', 'screenEdit', 'kioskOrders', 'deviceCash'] as const;
 export type FeaturePrefix = (typeof FEATURE_PREFIXES)[number];
 export type FeatureOp = `${FeaturePrefix}.${string}`;
 
@@ -875,6 +876,11 @@ export interface CheckoutState {
    * and (amber) what the customer did not take.
    */
   voucherSuccess?: { title: string; detail: string | null; notTaken: string | null; note: string | null } | null;
+  /**
+   * "מזומן במכשיר" (main/till/tillDeviceCash.ts): the payment at CashMag / the cash station — connecting, the machine someone
+   * else's, "הכנס מזומן", its question, the change owed, an answer not known, and on the done screen what the device gave and owes.
+   */
+  deviceCash?: DeviceCashView | null;
 }
 
 export interface ShiftState {
@@ -1019,6 +1025,8 @@ export interface TillState {
   screenEdit?: ScreenEditState;
   /** "הזמנות קיוסק לתשלום" (main/till/tillKioskOrders.ts). */
   kioskOrders?: KioskOrdersState;
+  /** "מזומן במכשיר" and its screen "מכשיר מזומן" (main/till/tillDeviceCash.ts); absent — no cash device on this till. */
+  deviceCash?: DeviceCashState;
   order?: {
     dining: 'take_away' | 'eat_in' | null;
     name: string | null;
@@ -1138,6 +1146,8 @@ export interface XReport {
   depositsAgorot?: number;
   walletInAgorot?: number;
   walletDepositsAgorot?: number;
+  /** "מזומן במכשיר": the cash the till's cash device took — inside the cash, never in the drawer's expected cash. */
+  deviceCashAgorot?: number;
   /** "שוברי הפקה": what production vouchers paid as a tender; and the vouchers' sections (information, in no figure above). */
   vouchersAgorot?: number;
   voucherInfo?: Array<{ label: string; value: string; title?: boolean }>;
