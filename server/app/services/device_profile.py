@@ -221,6 +221,8 @@ def check_pairing_request(
         "controllerMachineIds": controllers,
         "lockDevice": bool(getattr(kiosk, "lock_device", False)),
         **({"pinpadHost": pinpad[0], "pinpadPort": pinpad[1]} if pinpad else {}),
+        # "שליטה מקופות" (kiosk_controllers.py): only when chosen — absent, the kiosk inherits.
+        **({"controllerSource": kiosk.controller_source} if getattr(kiosk, "controller_source", None) else {}),
     }
 
 
@@ -323,6 +325,11 @@ def apply_on_pairing(db: Session, pairing_code, machine: POSMachine) -> bool:
         )
         # "מסופון חיצוני ברשת — חובה לקיוסק": the address given with the code, if any.
         pinpad_written = apply_pinpad(machine, options.get("pinpadHost"), options.get("pinpadPort"))
+        # "שליטה מקופות" chosen with the code (P:/specs/area-gaps.md §2).
+        if options.get("controllerSource"):
+            from app.services import kiosk_controllers
+
+            kiosk_controllers.set_source(db, machine, options.get("controllerSource"), user)
         db.commit()
     except (HTTPException, IntegrityError, DeviceProfileRefused) as exc:
         db.rollback()
@@ -501,6 +508,11 @@ def change_role(
             ) from exc
         set_kiosk_cache(machine, True)
         written = apply_pinpad(machine, *pinpad) if pinpad else False
+        # "שליטה מקופות" chosen with the role change (P:/specs/area-gaps.md §2).
+        if getattr(kiosk, "controller_source", None):
+            from app.services import kiosk_controllers
+
+            kiosk_controllers.set_source(db, machine, kiosk.controller_source, user)
         return RoleChange(lock=lock, pinpad=written)
     if role == ROLE_TILL and device is not None:
         kiosk_control.remove(db, device)

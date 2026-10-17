@@ -103,12 +103,16 @@ class KioskCreateIn(_Camel):
     controller_machine_ids: Optional[List[str]] = Field(None, alias="controllerMachineIds", max_length=50)
     #: Also turn on the Android device lock (the till parameter `kioskMode`) for this till.
     lock_device: bool = Field(False, alias="lockDevice")
+    #: "שליטה מקופות" (app/services/kiosk_controllers.py): set on the kiosk itself; absent — it inherits.
+    controller_source: Optional[Literal["list", "area", "both"]] = Field(None, alias="controllerSource")
 
 
 class KioskPatchIn(_Camel):
     name: Optional[str] = Field(None, max_length=100)
     enabled: Optional[bool] = None
     controller_machine_ids: Optional[List[str]] = Field(None, alias="controllerMachineIds", max_length=50)
+    #: "שליטה מקופות" on the kiosk itself; "inherit" clears it (the levels above decide); absent — no change.
+    controller_source: Optional[Literal["list", "area", "both", "inherit"]] = Field(None, alias="controllerSource")
 
 
 class KioskSettingsIn(_Camel):

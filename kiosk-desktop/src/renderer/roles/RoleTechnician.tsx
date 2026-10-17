@@ -102,6 +102,7 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
               <div>
                 {info?.machine?.name ?? shellView.machineName ?? '—'} · {info?.shopName ?? shellView.shopName ?? '—'}
               </div>
+              {info?.areaName ? <div>נקודת מכירה: {info.areaName}</div> : null}
               <div dir="ltr" className="text-end text-xs text-neutral-500">
                 {info?.machine?.machineId}
               </div>

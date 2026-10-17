@@ -469,6 +469,8 @@ export interface TechnicianInfo {
   /** "סוג רישיון" (core/deviceLicense.ts): the product, "סוג רישיון: …", and the mismatch warning; null — none said. */
   license?: { product: string; label: string | null; info: string | null; warning: string | null } | null;
   shopName: string | null;
+  /** "נקודת מכירה" (machines/me `areaName`, P:/specs/area-gaps.md §1); null / absent — none. */
+  areaName?: string | null;
   companyName: string | null;
   network: { online: boolean; lastBeatOkAt: number | null; serverUrl: string | null; interfaces: Array<{ name: string; address: string }> };
   printer: AdminInfo['printer'];
