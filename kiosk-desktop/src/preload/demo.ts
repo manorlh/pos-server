@@ -27,9 +27,36 @@ const api: R2mDemoBridge = {
 
 contextBridge.exposeInMainWorld('r2mDemo', api);
 
+/**
+ * The page's DOM, typed only as far as the ribbon needs it: this preload is also checked by tsconfig.legacy.json (the
+ * Windows 7 build's gate: ES2022 + Node 16 types, no DOM lib — that gate is for the main process), so it reaches the
+ * page through `globalThis` instead of the DOM lib's `document` / `window`. At run time these are the real objects.
+ */
+interface RibbonNode {
+  setAttribute(name: string, value: string): void;
+  style: { cssText: string };
+  textContent: string | null;
+  append(...nodes: RibbonNode[]): void;
+  appendChild(node: RibbonNode): RibbonNode;
+}
+interface RibbonButton extends RibbonNode {
+  type: string;
+  addEventListener(type: 'click', fn: (e: { stopPropagation(): void }) => void): void;
+}
+interface RibbonPage {
+  document: {
+    readyState: string;
+    body: RibbonNode;
+    createElement(tag: 'div' | 'span'): RibbonNode;
+    createElement(tag: 'button'): RibbonButton;
+  };
+  addEventListener(type: 'DOMContentLoaded', fn: () => void, opts: { once: boolean }): void;
+}
+const page = globalThis as unknown as RibbonPage;
+
 /** The ribbon: top centre, out of the corners (the manager's hold top-right, the technician's taps top-left). */
 function ribbon() {
-  const bar = document.createElement('div');
+  const bar = page.document.createElement('div');
   bar.setAttribute('data-demo-ribbon', '');
   bar.setAttribute('dir', 'rtl');
   bar.setAttribute('role', 'note');
@@ -37,9 +64,9 @@ function ribbon() {
     'position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:2147483647;display:flex;gap:8px;align-items:center;' +
     'padding:2px 12px;border-radius:0 0 10px 10px;background:rgba(217,119,6,.92);color:#fff;font:700 12px/18px Arial,sans-serif;' +
     'box-shadow:0 1px 4px rgba(0,0,0,.25);user-select:none;';
-  const label = document.createElement('span');
+  const label = page.document.createElement('span');
   label.textContent = DEMO_TEXT.ribbon;
-  const card = document.createElement('button');
+  const card = page.document.createElement('button');
   card.type = 'button';
   card.style.cssText = 'all:unset;cursor:pointer;padding:0 8px;border-radius:8px;background:rgba(255,255,255,.22);font:600 11px/18px Arial,sans-serif;';
   const paint = () => (card.textContent = DEMO_TEXT.card[outcome]);
@@ -50,9 +77,9 @@ function ribbon() {
     paint();
   });
   bar.append(label, card);
-  document.body.appendChild(bar);
+  page.document.body.appendChild(bar);
 }
 
 // The hidden pages (none in the demo) and the print window never come here; every demo page gets the ribbon.
-if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', ribbon, { once: true });
+if (page.document.readyState === 'loading') page.addEventListener('DOMContentLoaded', ribbon, { once: true });
 else ribbon();
