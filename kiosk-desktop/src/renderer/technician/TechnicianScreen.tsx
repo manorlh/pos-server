@@ -234,6 +234,31 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
         </Panel>
       ) : null}
 
+      {/* "מקלדת מסך": the app's own keyboard (renderer/osk) — Windows 7 has no touch keyboard of its own. */}
+      {info.osk ? (
+        <Panel m={m} title="מקלדת מסך">
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ['auto', 'אוטומטי (במסך מגע)'],
+                ['always', 'תמיד'],
+                ['off', 'כבויה'],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => void act({ type: 'setOsk', mode })}
+                className="px-3 py-1.5 text-xs font-bold"
+                style={{ background: info.osk === mode ? m.c.button : `${m.c.button}1A`, color: info.osk === mode ? '#fff' : m.c.buttonInk, borderRadius: 8 }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
       <Panel m={m} title={T.network}>
         {!net ? <div className="text-xs">בודק…</div> : null}
         {net ? (

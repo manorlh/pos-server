@@ -341,3 +341,14 @@ describe('Windows 7 till: zoom, printers (core/windowZoom.ts, printer/transports
     expect(SPOOLER_HELPER_PS1).not.toMatch(/Get-Printer|\[pscustomobject\]/i);
   });
 });
+
+describe('"מקלדת מסך" (renderer/osk/OnScreenKeyboard.tsx)', () => {
+  it('auto: after a touch on the field, or on a touch screen nobody typed on for a minute', async () => {
+    const { autoOpens } = await import('../src/renderer/osk/OnScreenKeyboard');
+    const now = 1_000_000;
+    expect(autoOpens({ now, lastTouchAt: now - 300, lastPhysicalKeyAt: now - 1_000, touchScreen: false })).toBe(true);
+    expect(autoOpens({ now, lastTouchAt: 0, lastPhysicalKeyAt: 0, touchScreen: true })).toBe(true);
+    expect(autoOpens({ now, lastTouchAt: 0, lastPhysicalKeyAt: now - 5_000, touchScreen: true })).toBe(false);
+    expect(autoOpens({ now, lastTouchAt: 0, lastPhysicalKeyAt: 0, touchScreen: false })).toBe(false);
+  });
+});

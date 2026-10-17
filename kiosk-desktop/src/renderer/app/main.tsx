@@ -8,6 +8,7 @@ import '../roles/till/till.css';
 import { createRoot } from 'react-dom/client';
 import { TillApp } from '../roles/till/TillApp';
 import { pickHost } from './pickHost';
+import { OnScreenKeyboard, type OskMode } from '../osk/OnScreenKeyboard';
 
 void pickHost().then((host) => {
   const root = createRoot(document.getElementById('root')!);
@@ -19,6 +20,15 @@ void pickHost().then((host) => {
       </div>,
     );
 });
+
+// "מקלדת מסך" in the Windows till (its shell says auto / always / off; other hosts have their own keyboards).
+const appBridge = (window as unknown as { r2mApp?: { oskMode?: () => Promise<OskMode> } }).r2mApp;
+if (appBridge?.oskMode) {
+  const holder = document.createElement('div');
+  document.body.appendChild(holder);
+  const getMode = () => appBridge.oskMode!();
+  createRoot(holder).render(<OnScreenKeyboard getMode={getMode} />);
+}
 
 // A till has no context menu and no pinch zoom (the inputs keep text selection, till.css).
 window.addEventListener('contextmenu', (e) => e.preventDefault());

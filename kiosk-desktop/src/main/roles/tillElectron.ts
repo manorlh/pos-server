@@ -43,6 +43,8 @@ export interface TillElectronOptions {
   log(m: string): void;
   /** The shell's key guard for the till's page too (no Alt+F4 / reload; the support keys): true = the key is taken. */
   onKey?(input: Electron.Input): boolean;
+  /** "מקלדת מסך" (the technician's choice on this device). */
+  oskMode?(): 'auto' | 'always' | 'off';
   /**
    * "ניהול הקיוסק" from the till's corner: `allowed` — never during a payment (the engine's checkout, a card at the
    * terminal); `open` — the shell's window shows its manager's menu (renderer staff/ShellStaff.tsx) while the till's view
@@ -88,6 +90,7 @@ export function attachTillRole(o: TillElectronOptions): TillElectron {
   ipcMain.handle(APP_IPC.info, (e) => (fromTill(e) ? role.info() : null));
   ipcMain.handle(APP_IPC.hello, (e, since: unknown) => (fromTill(e) ? role.hello(typeof since === 'number' ? since : undefined) : null));
   ipcMain.handle(APP_IPC.call, (e, c: unknown) => (fromTill(e) ? role.call(c) : { id: -1, ok: false, error: { code: 'permission_denied', message: 'אין הרשאה' } }));
+  ipcMain.handle(APP_IPC.osk, (e) => (fromTill(e) ? (o.oskMode?.() ?? 'auto') : 'off'));
   ipcMain.on(APP_IPC.ready, (e) => {
     if (!fromTill(e)) return;
     role.reportReady();

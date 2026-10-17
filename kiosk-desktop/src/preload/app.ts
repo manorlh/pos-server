@@ -27,6 +27,7 @@ const bridge: R2mAppBridge = {
   keepAwake: (on) => ipcRenderer.send(APP_IPC.keepAwake, on === true),
   openAdmin: () => ipcRenderer.send(APP_IPC.admin),
   openTechnician: () => ipcRenderer.send(APP_IPC.technician),
+  oskMode: () => ipcRenderer.invoke(APP_IPC.osk),
 };
 
 contextBridge.exposeInMainWorld('r2mApp', bridge);

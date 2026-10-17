@@ -513,7 +513,12 @@ export interface TechnicianInfo {
    * same on a kiosk and a till. Absent from an older service (the screen shows what it has).
    */
   setup?: TechnicianSetupView;
+  /** "מקלדת מסך" on this device (renderer/osk/OnScreenKeyboard.tsx). Absent from an older service. */
+  osk?: OskMode;
 }
+
+/** "מקלדת מסך": the app's on-screen keyboard — after a touch on a touch screen (`auto`), always, or never. */
+export type OskMode = 'auto' | 'always' | 'off';
 
 export type TechLightView = 'ok' | 'warn' | 'bad' | 'unknown';
 
@@ -740,6 +745,8 @@ export interface KioskBridge {
   adminAction(action: AdminAction): Promise<AdminActionResult>;
   technicianUnlock(code: string): Promise<{ outcome: 'granted' | 'wrong' | 'locked_out' | 'locked'; triesLeft: number; lockedForMs: number }>;
   technicianInfo(): Promise<TechnicianInfo>;
+  /** "מקלדת מסך" for the shell's screens ('off' on the kiosk, which draws its own). Absent from an older preload. */
+  oskMode?(): Promise<OskMode>;
   technicianAction(action: TechnicianAction): Promise<TechnicianActionResult>;
   /**
    * "סגירת משמרת ו-Z" on the shop's lock ("סניף לא פעיל"): a manager's code, then the kiosk's own
@@ -841,6 +848,7 @@ export type TechnicianAction =
   | { type: 'restart' }
   /** "יציאה מהתוכנה": the app closes (never during a payment) — the technician's way out, Windows 7 too. */
   | { type: 'quitApp' }
+  | { type: 'setOsk'; mode: OskMode }
   /** "מידע רשת" + "שיוך" from the cloud: the adapters, Wi-Fi, `/health`, the cloud API (its answer is the identity), the LAN host. */
   | { type: 'networkCheck' }
   /** "כתובת שרת": "בדיקת חיבור" of a new address, then "שמירה" (`confirm`: "נתק ועבור לענן החדש"). */

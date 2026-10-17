@@ -19,7 +19,7 @@
 import { windowsDisplayReport } from './displayReport';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray, utilityProcess } from 'electron';
 import { attachCustomerDisplay } from './shell/customerDisplayWindow';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -172,6 +172,23 @@ let appTray: Tray | null = null;
 /** The shell's menu / technician's screen from a key or the tray (set once the till's glue is up). */
 let openShellScreen: ((screen: 'admin' | 'technician') => void) | null = null;
 let shuttingDown = false;
+/**
+ * Windows 10/11's own touch keyboard set to come up in desktop mode (TabletTip 1.7, EnableDesktopModeAutoInvoke = 1):
+ * then "מקלדת מסך" on `auto` stays down — never two keyboards. Read once at start; Windows 7 has no such thing.
+ */
+let systemTouchKeyboard = false;
+function readSystemTouchKeyboard() {
+  if (process.platform !== 'win32' || (Number(os.release().split('.')[0]) || 0) < 10) return;
+  execFile('reg', ['query', String.raw`HKCU\Software\Microsoft\TabletTip\1.7`, '/v', 'EnableDesktopModeAutoInvoke'], { windowsHide: true, timeout: 5_000 }, (err, out) => {
+    systemTouchKeyboard = !err && /EnableDesktopModeAutoInvoke\s+REG_DWORD\s+0x0*1\s*$/im.test(String(out));
+    if (systemTouchKeyboard) console.log('[shell] Windows touch keyboard comes up by itself — "מקלדת מסך" auto stays down');
+  });
+}
+/** "מקלדת מסך" as the pages get it: the technician's choice; `auto` gives way to Windows' own auto keyboard. */
+function oskModeNow(): 'auto' | 'always' | 'off' {
+  const mode = service?.oskMode() ?? 'auto';
+  return mode === 'auto' && systemTouchKeyboard ? 'off' : mode;
+}
 /** The desktop shortcut "חזרה לקיוסק" launches the app with this; the running one takes it (second-instance). */
 const RETURN_ARG = '--return-to-kiosk';
 const printWaiters = new Map<number, (r: { width: number; height: number; rgba: Uint8Array } | { error: string }) => void>();
@@ -465,6 +482,9 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:adminHistory', (_e, input) => svc.adminHistory(input));
   ipcMain.handle('kiosk:technicianUnlock', (_e, code: string) => svc.technicianUnlock(code));
   ipcMain.handle('kiosk:technicianInfo', () => svc.technicianInfo());
+  // "מקלדת מסך" on the shell's screens — never on the kiosk's (it draws its own keyboard for the customer).
+  ipcMain.handle('kiosk:oskMode', () => (roles?.role() === 'kiosk' ? 'off' : oskModeNow()));
+  readSystemTouchKeyboard();
   ipcMain.handle('kiosk:technicianAction', (_e, a) => svc.technicianAction(a));
   ipcMain.handle('kiosk:shopLockCloseDay', (_e, pin: unknown) => svc.shopLockCloseDay(typeof pin === 'string' ? pin.slice(0, 12) : ''));
   // The shell (shared/roles.ts): the role, the update status, the KDS and board screens.
@@ -727,6 +747,7 @@ void app.whenReady().then(async () => {
     isDev,
     enabled: () => true,
     onKey: (input) => guardKey(input),
+    oskMode: () => oskModeNow(),
     log: (m) => console.log(`[shell] ${m}`),
     // "ניהול הקיוסק" from the till's corner: never during a payment; the shell's window shows the menu (staff/ShellStaff.tsx).
     admin: {
