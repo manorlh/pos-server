@@ -20,7 +20,7 @@ import { DISPLAY_SCALE_TEXT, DisplayScaleControl } from '../roles/DisplayScaleCo
 import { updateLine } from '../roles/updateText';
 import { DesktopExitMenuButton } from '../desktop/DesktopExit';
 import { answered, Btn, NoteBar, Panel, PinPad, Shell, SynqpayPairing, time } from '../staff/staffParts';
-import { UnpairControl } from '../roles/UnpairControl';
+import { ForeignRowsPanel, UnpairControl } from '../roles/UnpairControl';
 
 const LIGHT: Record<TechLightView, string> = { ok: '#16A34A', warn: '#D97706', bad: '#DC2626', unknown: '#9CA3AF' };
 const dateTime = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'אף פעם');
@@ -400,6 +400,8 @@ export function TechnicianScreen({ m, onClose, onDesktopExit }: { m: PreviewMode
       <section className="space-y-1.5 rounded-xl border-2 p-3 text-sm" style={{ borderColor: '#DC2626' }}>
         <h3 className="text-sm font-extrabold text-red-600">{T.danger}</h3>
         <div className="text-xs">{T.dangerNote}</div>
+        {/* "רשומות מהמכשיר הקודם": another pairing's rows — held, never sent here; "ייצוא לקובץ". */}
+        {info?.foreignRows ? <ForeignRowsPanel rows={info.foreignRows} onDone={refresh} /> : null}
         {s && s.outbox > 0 ? <div className="text-xs font-semibold text-red-600">יש {s.outbox} פריטים שטרם נשלחו לענן</div> : null}
         {/* Why it was refused, what waits, "ניתוק בכל זאת" (core/unpairGuard.ts) — under the button, where the technician looks. */}
         <UnpairControl
