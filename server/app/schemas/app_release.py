@@ -63,6 +63,8 @@ class AppReleaseOut(BaseModel):
     #: Android: hex SHA-256 of the signing certificate (the provisioning QR's checksum); null
     #: for Windows or when the APK's signature block could not be read.
     signing_cert_sha256: Optional[str] = Field(None, alias="signingCertSha256")
+    #: Its stored file was deleted ("הקובץ נמחק"): never offered, downloaded or sent again.
+    file_deleted_at: Optional[datetime] = Field(None, alias="fileDeletedAt")
 
 
 class AppReleaseUpdate(BaseModel):

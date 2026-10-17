@@ -816,6 +816,8 @@ export interface XInput {
     walletDeposits?: number;
     /** "שוברי הפקה": what production vouchers paid as a tender (core/sale.ts buildXTill) — only when not zero. */
     totalVouchers?: number;
+    /** "מזומן במכשיר" (core/sale.ts buildXTill): inside the cash, never the drawer's — only when not zero. */
+    totalDeviceCash?: number;
     /** The production vouchers' sections (core/till/vouchers.ts voucherInfoJson): information, in no figure above. */
     prepaidVouchersInfo?: Record<string, unknown>;
     /** The tips by method (the block's "טיפים במזומן", the card tips the drawer pays). */
@@ -864,6 +866,8 @@ export function xDoc(x: XInput): ZDoc {
   r('סה"כ נטו', money(t.totalSales - t.totalDiscounts - t.totalRefunds), true);
   d();
   r('מזומן', money(t.totalCash));
+  // The cash the till's cash device took: inside the cash above, in the device — never the drawer's.
+  if (t.totalDeviceCash) r('מזומן במכשיר', money(t.totalDeviceCash));
   r('כרטיס אשראי', money(t.totalCard));
   if (t.totalVouchers) r('שוברי הפקה', money(t.totalVouchers));
   if (b.dealerType === 'exempt') r('מע"מ', 'עוסק פטור — ללא מע״מ');

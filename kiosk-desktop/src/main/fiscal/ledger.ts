@@ -132,6 +132,11 @@ export interface DocLeg {
   cashCredit?: { code: string; redemptionId: string };
   /** A production voucher's leg: its hold (the document confirms it, §4.2) or its `/redeem` redemption, its number. */
   voucher?: { redemptionId: string; reservationId: string | null; serial: number };
+  /**
+   * "מזומן במכשיר" (core/till/deviceCash.ts): a cash leg the till's cash device took — sent with the document's `cash`
+   * (§11.7 `cashDevice`), counted as cash by every report, never the drawer's.
+   */
+  device?: true;
 }
 
 /** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
@@ -276,6 +281,22 @@ export interface DocCreditLeg {
   redemptionId: string;
   code: string;
   amountAgorot: number;
+}
+
+/** A cash leg's `cashDevice` on the wire (§11.7): the device's transaction, what went in, the change given and owed. */
+function cashDeviceWire(c: DocCashLeg, split: boolean): Record<string, unknown> {
+  return {
+    txId: c.txId,
+    stationId: c.stationId,
+    hostId: c.hostId,
+    receivedAgorot: c.receivedAgorot,
+    changeAgorot: c.changeAgorot,
+    changeOwedAgorot: c.changeOwedAgorot,
+    roundingAgorot: c.roundingAgorot,
+    slipCode: c.slipCode,
+    ...(c.changeOwedAs ? { changeOwedAs: c.changeOwedAs } : {}),
+    ...(split ? { splitAgorot: c.splitAgorot } : {}),
+  };
 }
 
 /** What the vouchers' legs and the cash credits pay. */
@@ -788,6 +809,24 @@ export class Ledger {
   }
 
   /**
+   * A till sale paid at its cash device ("מזומן במכשיר", core/till/deviceCash.ts): completed with the device's transaction,
+   * the legs as they settled (the device's leg for what was left, the change owed left as a tip in it), the cash handed over
+   * and the change — in one transaction with its outbox row. Only from pending.
+   */
+  completeDeviceCashSale(id: string, f: { cash: DocCashLeg; payments: DocLeg[]; tenderedAgorot: number; changeAgorot: number; tipAgorot: number }, now = new Date()): DocDraft | null {
+    return this.db.tx(() => {
+      const d = this.doc(id);
+      if (!d || d.status !== 'pending') return d;
+      const tip = Math.max(0, Math.round(f.tipAgorot));
+      const totals = tip > 0 ? { ...d.totals, tipAgorot: d.totals.tipAgorot + tip, chargeAgorot: d.totals.chargeAgorot + tip } : d.totals;
+      const next: DocDraft = { ...d, status: 'completed', card: null, cash: f.cash, payments: f.payments, tenderedAgorot: f.tenderedAgorot, changeAgorot: f.changeAgorot, totals, updatedAt: now.toISOString() };
+      this.db.run("UPDATE documents SET status = 'completed', updated_at = ?, tip_agorot = ?, payload = ? WHERE id = ?", next.updatedAt, next.totals.tipAgorot, JSON.stringify(next), id);
+      this.outbox.enqueue('transaction', id);
+      return next;
+    });
+  }
+
+  /**
    * Cash + card (§11.15ב): the cash part the station holds for this sale, kept on the pending document while the card
    * is charged for the rest — `completeCardSale` then writes both legs (live, or when an unknown card is settled).
    */
@@ -1202,6 +1241,8 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
           method: leg.method,
           amount: r2(leg.amountAgorot),
           ...(leg.method === 'cash_credit' && leg.cashCredit ? { cashCredit: { code: leg.cashCredit.code, redemptionId: leg.cashCredit.redemptionId } } : {}),
+          // "מזומן במכשיר": the device's transaction on its leg (§11.7), as a kiosk's cash leg carries it.
+          ...(leg.method === 'cash' && leg.device && d.cash ? { cashDevice: cashDeviceWire(d.cash, false) } : {}),
           // A "שוברי הפקה" leg names the hold it pays (§4.2): the document confirms it even when the till's confirm never landed.
           ...(leg.method === 'production_voucher' && leg.voucher?.reservationId && !isTestVoucherId(leg.voucher.reservationId) ? { reservationId: leg.voucher.reservationId } : {}),
           createdAt: d.updatedAt,
@@ -1256,18 +1297,7 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
                 sequence: cashSeq,
                 method: 'cash',
                 amount: r2(amounts.cash),
-                cashDevice: {
-                  txId: d.cash.txId,
-                  stationId: d.cash.stationId,
-                  hostId: d.cash.hostId,
-                  receivedAgorot: d.cash.receivedAgorot,
-                  changeAgorot: d.cash.changeAgorot,
-                  changeOwedAgorot: d.cash.changeOwedAgorot,
-                  roundingAgorot: d.cash.roundingAgorot,
-                  slipCode: d.cash.slipCode,
-                  ...(d.cash.changeOwedAs ? { changeOwedAs: d.cash.changeOwedAs } : {}),
-                  ...(split ? { splitAgorot: d.cash.splitAgorot } : {}),
-                },
+                cashDevice: cashDeviceWire(d.cash, split),
                 createdAt: d.updatedAt,
               },
             ]

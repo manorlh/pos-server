@@ -190,6 +190,7 @@ def provisioning_apk(token: str, db: Session = Depends(get_db)):
     if (
         release is None
         or not release.is_active
+        or getattr(release, "file_deleted_at", None) is not None
         or AU.release_platform(release) != AU.PLATFORM_ANDROID
         or not os.path.isfile(release.file_path)
     ):

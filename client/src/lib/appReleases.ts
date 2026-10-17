@@ -136,3 +136,67 @@ export function checkInstallWindow(start: string, end: string): InstallWindowChe
   if (!s || !e || !HHMM.test(s) || !HHMM.test(e) || s === e) return { ok: false };
   return { ok: true, window: { start: s, end: e } };
 }
+
+// ── Deleting old release files ("מחיקת קובץ" / "ניקוי גרסאות ישנות") ──────────
+// Twin of pos-server app/services/app_release_files.py: the server decides; these only
+// disable the trash icon early and check the typed confirmation word.
+
+/** The word the owner types to run the bulk cleanup (the server's `CLEANUP_CONFIRM_WORD`). */
+export const CLEANUP_CONFIRM_WORD = 'מחק';
+export const CLEANUP_DEFAULT_KEEP = 3;
+export const CLEANUP_MAX_KEEP = 50;
+
+export function cleanupConfirmed(typed: string | null | undefined): boolean {
+  return (typed ?? '').trim() === CLEANUP_CONFIRM_WORD;
+}
+
+/** "keep the last N": a whole number 1..50, else null. */
+export function parseKeep(text: string): number | null {
+  const t = (text ?? '').trim();
+  if (!/^[0-9]+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= 1 && n <= CLEANUP_MAX_KEEP ? n : null;
+}
+
+type ReleaseLike = {
+  id: string;
+  platform?: string | null;
+  versionCode: number;
+  isActive: boolean;
+  createdAt?: string | null;
+  assignmentCount: number;
+  fileDeletedAt?: string | null;
+};
+
+/** Per platform, the id of its newest active release whose file is kept (the server's `newest_releases`). */
+export function newestActiveIds(releases: readonly ReleaseLike[]): Set<string> {
+  const best = new Map<AppPlatform, ReleaseLike>();
+  for (const r of releases) {
+    if (!r.isActive || r.fileDeletedAt) continue;
+    const p = platformOf(r);
+    const cur = best.get(p);
+    if (
+      !cur ||
+      r.versionCode > cur.versionCode ||
+      (r.versionCode === cur.versionCode && (r.createdAt ?? '') > (cur.createdAt ?? ''))
+    ) {
+      best.set(p, r);
+    }
+  }
+  return new Set([...best.values()].map((r) => r.id));
+}
+
+export type FileDeleteBlock = 'deleted' | 'assigned' | 'latest' | null;
+
+/** Why the row's trash icon is disabled, or null when the server is worth asking. */
+export function fileDeleteBlock(release: ReleaseLike, newestIds: ReadonlySet<string>): FileDeleteBlock {
+  if (release.fileDeletedAt) return 'deleted';
+  if (release.assignmentCount > 0) return 'assigned';
+  if (release.isActive && newestIds.has(release.id)) return 'latest';
+  return null;
+}
+
+/** A release whose file was deleted can never be sent again (download / assign disabled). */
+export function canSend(release: { isActive: boolean; fileDeletedAt?: string | null }): boolean {
+  return release.isActive && !release.fileDeletedAt;
+}

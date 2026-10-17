@@ -293,3 +293,50 @@ def kiosk_alert_cleared(db: Session, alert: Any, *, now: Optional[datetime] = No
             _resolve(entry, KIOSK_RESOLVED_NOTE, now or datetime.now(timezone.utc))
     except Exception:  # noqa: BLE001
         logger.exception("kiosk bon alert %s: not resolved", getattr(alert, "id", None))
+
+
+# ── A kitchen screen's bon printed through a till (app/services/kds_print.py) ────
+
+KDS_RESOLVED_NOTE = "הודפס בסוף"
+
+
+def kds_alert_key(job_id: Any) -> str:
+    return f"{KIND}:kds:{job_id}"
+
+
+def kds_unprinted(db: Session, job: Any, now: Optional[datetime] = None) -> bool:
+    """A screen's bon failed or expired at (or before) its till: "בון לא הודפס", for the screen. True when new."""
+    now = now or datetime.now(timezone.utc)
+    payload = job.payload if isinstance(job.payload, dict) else {}
+    meta = payload.get("_kds") if isinstance(payload.get("_kds"), dict) else {}
+    screen = db.get(POSMachine, job.source_machine_id) if job.source_machine_id is not None else None
+    if screen is None:
+        return False
+    title = payload.get("customerName") or payload.get("tableName") or payload.get("orderRef")
+    taken = bool(job.deliveries) or job.delivered_at is not None
+    reason = "error" if job.status == "failed" else ("host_silent" if taken else "expired")
+    bon = {
+        "id": str(job.id),
+        "state": "failed",
+        "reason": reason,
+        "printerId": str(job.printer_id) if job.printer_id else None,
+        "printerName": _clip(job.printer_name, 80),
+        "title": _clip(title, 80),
+        "items": len(payload.get("lines") or []),
+        "since": job.created_at.isoformat() if job.created_at else None,
+        "error": _clip(job.error, 200) if job.status == "failed" else None,
+        "kds": True,
+        "screen": _clip(meta.get("name"), 80),
+        "host": _clip(meta.get("hostName"), 80),
+    }
+    summary = summary_of(bon)
+    if bon["screen"]:
+        summary = f"{summary} · נשלח ממסך {bon['screen']}"[:300]
+    return _record_open(db, kds_alert_key(job.id), f"kds:{job.id}"[:100], bon, _scope(db, screen), now, summary=summary)
+
+
+def kds_printed(db: Session, job: Any, now: Optional[datetime] = None) -> None:
+    """It printed after all: its "בון לא הודפס" (if any) is over."""
+    entry = L.find(db, kds_alert_key(job.id))
+    if entry is not None and entry.acknowledged_at is None:
+        _resolve(entry, KDS_RESOLVED_NOTE, now or datetime.now(timezone.utc))

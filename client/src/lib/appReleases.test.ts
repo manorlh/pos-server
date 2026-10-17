@@ -20,6 +20,12 @@ import {
   rolloutRowKey,
   versionFromInstallerName,
   windowsVersionCode,
+  CLEANUP_CONFIRM_WORD,
+  canSend,
+  cleanupConfirmed,
+  fileDeleteBlock,
+  newestActiveIds,
+  parseKeep,
 } from './appReleases';
 
 describe('platforms', () => {
@@ -165,5 +171,59 @@ describe('kiosk web bundles', () => {
     const web = rolloutRowKey({ machineId: 'm1', platform: 'kiosk_web' });
     assert.notEqual(android, web);
     assert.equal(rolloutRowKey({ machineId: 'm1' }), android);
+  });
+});
+
+describe('deleting old release files', () => {
+  const rel = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    platform: 'android',
+    versionCode: 1,
+    isActive: true,
+    createdAt: '2026-10-01T00:00:00Z',
+    assignmentCount: 0,
+    fileDeletedAt: null as string | null,
+    ...extra,
+  });
+
+  it('the newest active release per platform, ignoring retired and deleted ones', () => {
+    const rows = [
+      rel('a1', { versionCode: 10 }),
+      rel('a2', { versionCode: 12, isActive: false }),
+      rel('a3', { versionCode: 11 }),
+      rel('a4', { versionCode: 13, fileDeletedAt: '2026-10-02T00:00:00Z' }),
+      rel('w1', { platform: 'windows', versionCode: 5 }),
+      rel('k1', { platform: 'kiosk_web', versionCode: 2, createdAt: '2026-10-01T00:00:00Z' }),
+      rel('k2', { platform: 'kiosk_web', versionCode: 2, createdAt: '2026-10-03T00:00:00Z' }),
+    ];
+    assert.deepEqual([...newestActiveIds(rows)].sort(), ['a3', 'k2', 'w1']);
+  });
+
+  it('blocks the trash icon for deleted, assigned and newest-active rows', () => {
+    const newest = new Set(['n']);
+    assert.equal(fileDeleteBlock(rel('x', { fileDeletedAt: '2026-10-02T00:00:00Z' }), newest), 'deleted');
+    assert.equal(fileDeleteBlock(rel('x', { assignmentCount: 2 }), newest), 'assigned');
+    assert.equal(fileDeleteBlock(rel('n'), newest), 'latest');
+    assert.equal(fileDeleteBlock(rel('n', { isActive: false }), newest), null);
+    assert.equal(fileDeleteBlock(rel('old'), newest), null); // active, older: retire + delete
+  });
+
+  it('a deleted file is never sent again', () => {
+    assert.equal(canSend({ isActive: true }), true);
+    assert.equal(canSend({ isActive: true, fileDeletedAt: '2026-10-02T00:00:00Z' }), false);
+    assert.equal(canSend({ isActive: false }), false);
+  });
+
+  it('the cleanup needs the typed word and a keep of 1..50', () => {
+    assert.equal(CLEANUP_CONFIRM_WORD, 'מחק');
+    assert.equal(cleanupConfirmed(' מחק '), true);
+    assert.equal(cleanupConfirmed('מחקו'), false);
+    assert.equal(cleanupConfirmed(''), false);
+    assert.equal(cleanupConfirmed(null), false);
+    assert.equal(parseKeep('3'), 3);
+    assert.equal(parseKeep('0'), null);
+    assert.equal(parseKeep('51'), null);
+    assert.equal(parseKeep('2.5'), null);
+    assert.equal(parseKeep(''), null);
   });
 });

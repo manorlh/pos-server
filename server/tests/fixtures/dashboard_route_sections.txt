@@ -10,12 +10,16 @@ DELETE /app-release-assignments/{assignment_id} -> super_admin
 PATCH /app-release-assignments/{assignment_id} -> super_admin
 GET /app-releases -> super_admin
 POST /app-releases -> super_admin
+GET /app-releases/file-cleanup -> super_admin
+POST /app-releases/file-cleanup -> super_admin
 GET /app-releases/rollout -> devices|reports|cockpit:view
 GET /app-releases/windows/latest -> kiosks|devices:view
 GET /app-releases/windows/latest/download -> kiosks|devices:view
 PATCH /app-releases/{release_id} -> super_admin
 GET /app-releases/{release_id}/assignments -> super_admin
 POST /app-releases/{release_id}/assignments -> super_admin
+DELETE /app-releases/{release_id}/file -> super_admin
+GET /app-releases/{release_id}/file-delete-check -> super_admin
 GET /approvals -> approvals:view
 GET /approvals/catalog -> approval_settings|approvals|pos_users:view
 GET /approvals/pending-count -> approvals:view
@@ -323,6 +327,9 @@ GET /kds/shops/{shop_id} -> kds|devices:view
 GET /kds/shops/{shop_id}/board -> kds:view
 DELETE /kds/shops/{shop_id}/devices/{machine_id} -> kds:edit
 PUT /kds/shops/{shop_id}/devices/{machine_id} -> kds:edit
+GET /kds/shops/{shop_id}/devices/{machine_id}/print -> kds:view
+PUT /kds/shops/{shop_id}/devices/{machine_id}/print -> kds:edit
+POST /kds/shops/{shop_id}/devices/{machine_id}/print/test -> kds:edit
 PUT /kds/shops/{shop_id}/display-defaults -> kds:edit
 POST /kds/shops/{shop_id}/overrides -> kds:edit
 DELETE /kds/shops/{shop_id}/overrides/{override_id} -> kds:edit
@@ -878,6 +885,9 @@ POST /sync/{machine_id}/kds/actions -> till
 GET /sync/{machine_id}/kds/board -> till
 GET /sync/{machine_id}/kds/device -> till
 GET /sync/{machine_id}/kds/orders/status -> till
+GET /sync/{machine_id}/kds/print -> till
+POST /sync/{machine_id}/kds/print-jobs -> till
+GET /sync/{machine_id}/kds/print-jobs/status -> till
 POST /sync/{machine_id}/kds/ready-actions -> till
 GET /sync/{machine_id}/kds/ready-orders -> till
 POST /sync/{machine_id}/kds/release -> till

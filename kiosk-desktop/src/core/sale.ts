@@ -302,7 +302,8 @@ export interface XDoc {
   grossAgorot: number;
   itemsQty: number;
   documentDiscountAgorot: number;
-  payments: Array<{ method: string; amountAgorot: number }>;
+  /** `device`: a cash leg the till's cash device took ("מזומן במכשיר") — cash, never the drawer's. */
+  payments: Array<{ method: string; amountAgorot: number; device?: boolean }>;
   paymentMethod: string | null;
   vatAgorot: number | null;
   vatRate: number | null;
@@ -349,6 +350,11 @@ export interface XTill {
   deposits?: number;
   walletIn?: number;
   walletDeposits?: number;
+  /**
+   * "מזומן במכשיר" (core/till/deviceCash.ts): the cash the till's cash device (CashMag / a PayLink station) took — inside
+   * totalCash (it is cash to every report), never in the drawer: off expectedCash. Only when not zero.
+   */
+  totalDeviceCash?: number;
   /** "שוברי הפקה": what production vouchers paid as a tender — only when not zero; never cash, card or the drawer. */
   totalVouchers?: number;
   /** The X's production vouchers sections (core/till/vouchers.ts voucherInfoJson) — information, in no figure above. */
@@ -379,7 +385,8 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     count = 0,
     exchangeIn = 0,
     exchangeOut = 0,
-    vouchers = 0;
+    vouchers = 0,
+    device = 0;
   let vatComplete = true;
   const ids: string[] = [];
   for (const d of docs) {
@@ -399,7 +406,11 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
     const sign = credit ? -1 : 1;
     const legs = d.payments.length > 0 ? d.payments : [{ method: d.paymentMethod ?? 'cash', amountAgorot: credit ? d.grossAgorot : d.grossAgorot - d.documentDiscountAgorot }];
     for (const leg of legs) {
-      if (leg.method === 'cash') cash += sign * leg.amountAgorot;
+      if (leg.method === 'cash') {
+        cash += sign * leg.amountAgorot;
+        // Taken by the till's cash device: the money is in the device, not the drawer.
+        if ((leg as { device?: boolean }).device === true) device += sign * leg.amountAgorot;
+      }
       else if (leg.method === 'card') card += sign * leg.amountAgorot;
       // Neither cash nor card, and never in the drawer: the exchange row (XReport.kt).
       else if (leg.method === 'exchange') {
@@ -421,7 +432,7 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
   const s = (a: number) => toShekels(a);
   const till: XTill = {
     openingCash: s(openingCashAgorot),
-    expectedCash: s(openingCashAgorot + cash + cashTips),
+    expectedCash: s(openingCashAgorot + cash - device + cashTips),
     totalSales: s(sales),
     totalDiscounts: s(discounts),
     totalRefunds: s(refunds),
@@ -438,6 +449,7 @@ export function buildXTill(docs: readonly XDoc[], openingCashAgorot: number, cur
   if (exchangeIn !== 0 || exchangeIn - exchangeOut !== 0) till.totalExchange = s(exchangeIn - exchangeOut);
   if (exchangeIn !== 0) till.exchangeReceived = s(exchangeIn);
   if (vouchers !== 0) till.totalVouchers = s(vouchers);
+  if (device !== 0) till.totalDeviceCash = s(device);
   return { till, reportableIds: ids };
 }
 

@@ -31,6 +31,7 @@ import type { KvStore } from './kioskWebStore';
 import { KDS_CACHE_KEY, KDS_OUTBOX_KEY, KdsModule, boardView, feedShows, type RoleApi, type RoleApiReply, type RoleKv } from './kdsScreenEngine';
 import type { BoardView, KdsActionInput, KdsView } from './kdsScreenTypes';
 import { shopActiveAfter, shopActiveKept, shopActiveSaid } from './shopActive';
+import { KdsRelayPrinter } from './kdsRelayPrinter';
 
 export type ScreenRoute = 'kds' | 'board';
 
@@ -185,11 +186,27 @@ export class ScreenWebService {
   private readonly keys: ReturnType<typeof screenKeys>;
   /** The credentials of a pairing handed to another route (the page writes them there). */
   handedOver: KioskCredentials | null = null;
+  /**
+   * "דרך קופה בסניף" (docs/SPEC_KDS.md §17): where the screen's bons go and the ones on their way — no install. Its
+   * status is read at start, every minute, and after `machines/me`.
+   */
+  readonly printer: KdsRelayPrinter;
 
   constructor(private readonly deps: ScreenWebDeps) {
     this.keys = screenKeys(deps.route);
     this.kv = new ScreenKv(deps.store, this.keys.kvPrefix);
     this.api = new KioskApi(apiBase(deps.defaultServer || 'https://invalid.local'), () => this.creds?.accessToken ?? null, deps.fetchFn);
+    this.printer = new KdsRelayPrinter({
+      api: {
+        get: async (path, opts) => this.seen(await this.api.get(path, opts)),
+        post: async (path, body, opts) => this.seen(await this.api.post(path, body, opts)),
+      },
+      machineId: () => this.creds?.machineId ?? null,
+      now: deps.now,
+      uuid: deps.uuid,
+      timers: deps.timers,
+      log: (m) => this.log(m),
+    });
   }
 
   private now(): number {
@@ -223,6 +240,7 @@ export class ScreenWebService {
     if (!this.kds) {
       this.kds = new KdsModule(this.context(), () => this.onEngine(), { now: this.deps.now, uuid: this.deps.uuid, feedEveryMs: this.deps.feedEveryMs });
       this.kds.start();
+      this.printer.start();
     }
     this.schedule(0);
   }
@@ -231,6 +249,7 @@ export class ScreenWebService {
     this.stopped = true;
     this.kds?.stop();
     this.kds = null;
+    this.printer.stop();
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
   }

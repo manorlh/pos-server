@@ -2933,6 +2933,8 @@ def get_app_update_apk(
     if resolved is None or resolved[1].id != release_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
     release = resolved[1]
+    if getattr(release, "file_deleted_at", None) is not None:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="app_release_file_deleted")
     if not os.path.isfile(release.file_path):
         logger.error("app release %s: file missing at %s", release.id, release.file_path)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release file missing")

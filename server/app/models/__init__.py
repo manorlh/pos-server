@@ -50,7 +50,7 @@ from app.models.card_transmission import (
 )
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.offline_authorization import OfflineAuthorization, OfflineAuthorizationItem
-from app.models.app_release import AppRelease, AppReleaseAssignment, AppReleaseMachineStatus
+from app.models.app_release import AppRelease, AppReleaseAssignment, AppReleaseFileDeletion, AppReleaseMachineStatus
 from app.models.accounting import AccountingExportBatch, AccountingExportItem, AccountingSettings
 from app.models.till_message import TillMessage, TillMessageReceipt
 from app.models.audit_exception import AuditException, ExceptionRuleValue, TillEvent
@@ -248,7 +248,7 @@ __all__ = [
     "CardTransmission", "CardTransmissionItem", "TransmitRequest", "TransmitRequestStatus",
     "TillParameter", "TillParameterValue",
     "OfflineAuthorization", "OfflineAuthorizationItem",
-    "AppRelease", "AppReleaseAssignment", "AppReleaseMachineStatus",
+    "AppRelease", "AppReleaseAssignment", "AppReleaseFileDeletion", "AppReleaseMachineStatus",
     "AccountingSettings", "AccountingExportBatch", "AccountingExportItem",
     "TillMessage", "TillMessageReceipt",
     "AuditException", "ExceptionRuleValue", "TillEvent",

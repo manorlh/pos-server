@@ -14,11 +14,12 @@
 
 import { useEffect, useState } from 'react';
 import { Download, Expand, LogOut, RotateCw, X } from 'lucide-react';
-import type { BridgeAgent } from '@/lib/kioskBridge';
+import type { BridgeAgent, BridgeState } from '@/lib/kioskBridge';
 import type { ScreenWebService, ScreenWebView } from '@/lib/screenWebService';
 import { technicianCodeMatches } from '@/components/kiosk-web/web-staff';
 import { isStandalone, useInstallPrompt } from '@/components/kiosk-web/web-shell';
 import { ScreenBridgeSection } from './screen-bridge';
+import { ScreenPrintSection } from './screen-print';
 
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 5 * 60_000;
@@ -28,7 +29,19 @@ function timeText(ms: number | null): string {
   return ms ? new Date(ms).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
 }
 
-export function ScreenStaff({ view, svc, bridge = null, onClose }: { view: ScreenWebView; svc: ScreenWebService; bridge?: BridgeAgent | null; onClose: () => void }) {
+export function ScreenStaff({
+  view,
+  svc,
+  bridge = null,
+  bridgeState = null,
+  onClose,
+}: {
+  view: ScreenWebView;
+  svc: ScreenWebService;
+  bridge?: BridgeAgent | null;
+  bridgeState?: BridgeState | null;
+  onClose: () => void;
+}) {
   const [unlocked, setUnlocked] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +158,8 @@ export function ScreenStaff({ view, svc, bridge = null, onClose }: { view: Scree
                 </b>
               </div>
             </div>
+            {/* How the screen prints (docs/SPEC_KDS.md §17): the path, where its bons go, the how-to, a test print. */}
+            <ScreenPrintSection printer={svc.printer} bridgeState={bridgeState} />
             {bridge ? <ScreenBridgeSection agent={bridge} route={view.route} technicianCode={code} /> : null}
             <div className="flex flex-wrap gap-2">
               {install.canInstall && !isStandalone() ? (
