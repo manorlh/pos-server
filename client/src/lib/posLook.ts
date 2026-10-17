@@ -423,6 +423,7 @@ export function schemeVars(s: PosScheme): Record<string, string> {
     '--pos-on-background': s.onBackground,
     '--pos-surface': s.surface,
     '--pos-on-surface': s.onSurface,
+    '--pos-surface-variant': s.surfaceVariant,
     '--pos-on-surface-variant': s.onSurfaceVariant,
     '--pos-container-lowest': s.surfaceContainerLowest,
     '--pos-container-low': s.surfaceContainerLow,
@@ -445,4 +446,58 @@ export function schemeVars(s: PosScheme): Record<string, string> {
     '--pos-d-amber-fill': d.amberFill,
     '--pos-d-red': d.red,
   };
+}
+
+// ── the kiosk (pos-android ui/kiosk, the native renderer) ─────────────────────────────────
+
+/**
+ * The Android kiosk's dp per CSS px of the kiosk's web screens: those screens are drawn for 540 CSS px across a portrait
+ * kiosk (the Windows window's zoom, kiosk-desktop core/windowZoom.ts), which the Android kiosk lays out as ~785 dp
+ * (kiosk-shared/layouts/parts.tsx DP_PER_PX, the same number). A native size in dp is `kioskPx(dp)` CSS px here — the
+ * same proportion to the screens' type (a 22 sp button word is 15 CSS px here). Side by side with an mdpi Android shot
+ * of the same panel (P:/specs/till-visual-parity/android, 1080 dp across a 1080 px portrait) the Windows window's zoom
+ * (×2 there, ×1.8 at 1920×1080, ×1.44 at 1536×864) draws the web ~1.38× / 1.24× / 1.0× larger: that is the window's
+ * zoom (KIOSK_DESIGN_SHORT_SIDE_PX), not these sizes.
+ */
+export const KIOSK_DP_PER_PX = 785 / 540;
+
+/** A native kiosk size (dp / sp) in the kiosk web screens' CSS px, to the half pixel. */
+export function kioskPx(dp: number): number {
+  return Math.round((dp / KIOSK_DP_PER_PX) * 2) / 2;
+}
+
+/** KioskTheme.kt KioskThemed's typography (sp, before the style's typeScale and weight shift). */
+export const KIOSK_TYPE_SP = {
+  displayLarge: 56,
+  displayMedium: 42,
+  headlineLarge: 32,
+  headlineMedium: 26,
+  titleLarge: 22,
+  titleMedium: 18,
+  titleSmall: 16,
+  bodyLarge: 18,
+  bodyMedium: 16,
+  bodySmall: 14,
+  labelLarge: 18,
+  labelMedium: 15,
+  labelSmall: 13,
+} as const;
+
+/** KioskStyle.surfaceAlt — the stepper's track, a secondary button, a quiet fill — on a light / dark kiosk. */
+export const KIOSK_SURFACE_ALT = { light: '#EFF1F6', dark: '#242832' } as const;
+
+export function kioskSurfaceAlt(dark: boolean): Hex {
+  return dark ? KIOSK_SURFACE_ALT.dark : KIOSK_SURFACE_ALT.light;
+}
+
+/** KioskStyle.danger, and the alphas of the native kiosk's disabled button (KioskButton: text 12 % under text 40 %). */
+export const KIOSK_DANGER: Hex = '#DC2626';
+export const KIOSK_DISABLED = { fill: 0.12, text: 0.4 } as const;
+
+/** `hex` at `alpha` as #RRGGBBAA (CSS; Chromium 108 safe — no color-mix). */
+export function kioskAlpha(hex: Hex, alpha: number): string {
+  const n = normalizeHex(hex);
+  if (!n) return hex;
+  const a = Math.round(Math.min(1, Math.max(0, alpha)) * 255);
+  return `${n}${a.toString(16).padStart(2, '0').toUpperCase()}`;
 }

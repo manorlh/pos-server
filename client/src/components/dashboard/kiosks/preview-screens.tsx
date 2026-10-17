@@ -22,11 +22,11 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
   ChevronRight,
   CircleHelp,
   Clock,
-  CreditCard,
   Heart,
   Languages,
   Minus,
@@ -36,8 +36,8 @@ import {
   ShoppingCart,
   Sparkles,
   Trash2,
+  Utensils,
   UtensilsCrossed,
-  WifiOff,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -113,6 +113,7 @@ import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
 import { ERROR_COLOR, FEEDBACK_CSS, SuccessMark, badgePop, engineRoot, errorFx, revealIn, successFx } from './preview-feedback';
 import { EntryHeader, EntryWindow } from './preview-entry';
 import { PREVIEW_FOOTER_PX, TickerSlot } from './preview-ticker';
+import { KIOSK_DISABLED, kioskAlpha, kioskPx, kioskSurfaceAlt } from '@/lib/posLook';
 
 /* ----------------------------------------------------------------- model */
 
@@ -683,12 +684,14 @@ export function PricePill({ m, p, className }: { m: PreviewModel; p: PProduct; c
   return (
     <span
       data-price-pill
-      className={cn('flex w-full items-center justify-center rounded-full px-3 py-1.5 kt-15 font-extrabold tabular-nums', className)}
+      className={cn('flex w-full items-center justify-center rounded-full px-3 py-1 kt-15 font-extrabold tabular-nums', className)}
+      // The Android kiosk's KioskPricePill: 48 dp tall at least; a sold-out dish's pill quiet grey (surfaceAlt) under the
+      // muted words, crossed out — not the pill's colours faded.
       style={{
-        background: rc.pricePillBg,
-        color: rc.pricePillText,
+        minHeight: kioskPx(48),
+        background: p.soldOut ? kioskSurfaceAlt(m.c.dark) : rc.pricePillBg,
+        color: p.soldOut ? m.c.mutedText : rc.pricePillText,
         textDecoration: p.soldOut ? 'line-through' : undefined,
-        opacity: p.soldOut ? 0.6 : 1,
         ...textSize(m, 'productPrice', 15),
       }}
     >
@@ -934,25 +937,45 @@ export function BigButton({ m, children, onClick, variant = 'primary', className
       onClick={onClick}
       // `k-tap`: the motion engine's press (preview-feedback.tsx), over today's when it is there.
       aria-disabled={disabledLook || undefined}
-      className={`k-tap ${variant === 'primary' ? 'k-tap-solid' : ''} k-min-target relative flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook ? 'opacity-50' : ''} ${className}`}
-      style={{ ...buttonStyle(m, variant), ...textSize(m, 'buttons', 15) }}
+      className={`k-tap ${variant === 'primary' ? 'k-tap-solid' : ''} k-min-target relative flex w-full items-center justify-center gap-2 px-4 py-3 kt-15 font-bold transition-transform duration-150 active:scale-[0.98] ${disabledLook && !disabledStyle(m) ? 'opacity-50' : ''} ${className}`}
+      style={{ ...buttonStyle(m, variant), ...(disabledLook ? disabledStyle(m) : null), ...textSize(m, 'buttons', 15) }}
     >
       {children}
     </button>
   );
 }
 
+/**
+ * A button that cannot be pressed yet, as the Android kiosk draws it (KioskButton enabled = false): the words' colour at
+ * 12 % under the words at 40 % — a grey that reads as "not yet" on any style — rather than the button at half strength.
+ * Null when the words' colour is not a hex (the half-strength look then).
+ */
+export function disabledStyle(m: Pick<PreviewModel, 'c'>): CSSProperties | null {
+  const fill = kioskAlpha(m.c.text, KIOSK_DISABLED.fill);
+  if (fill === m.c.text) return null;
+  return { background: fill, color: kioskAlpha(m.c.text, KIOSK_DISABLED.text) };
+}
+
+/**
+ * "− n +" as the Android kiosk's QuantityStepper: one pill track (surfaceAlt) holding a quiet minus, the number and a
+ * filled plus in the button's colour — 56 dp circles in the dish's window, 44 dp on a basket's line (here in CSS px).
+ * A basket line's minus at one is a bin (it removes the line).
+ */
 export function Stepper({ m, value, onChange, small = false }: { m: PreviewModel; value: number; onChange: (n: number) => void; small?: boolean }) {
-  const size = small ? 26 : 34;
-  const btn: CSSProperties = { width: size, height: size, borderRadius: 999, background: `${m.c.button}1A`, color: m.c.buttonInk };
+  const size = kioskPx(small ? 44 : 56);
+  const quiet: CSSProperties = { width: size, height: size, borderRadius: 999, color: m.c.text };
+  const filled: CSSProperties = { width: size, height: size, borderRadius: 999, background: m.c.button, color: m.c.buttonText };
+  const icon = small ? 'h-4 w-4' : 'h-5 w-5';
   return (
-    <div className="flex items-center gap-2.5">
-      <button type="button" style={btn} className="k-hit flex items-center justify-center" onClick={() => onChange(value - 1)}>
-        {value <= 1 && small ? <Trash2 className="h-3.5 w-3.5" /> : <Minus className="h-4 w-4" />}
+    <div data-stepper className="flex w-fit shrink-0 items-center rounded-full p-[3px]" style={{ background: kioskSurfaceAlt(m.c.dark) }}>
+      <button type="button" style={quiet} className="k-hit flex items-center justify-center" onClick={() => onChange(value - 1)} aria-label="−">
+        {value <= 1 && small ? <Trash2 className="h-4 w-4" /> : <Minus className={icon} />}
       </button>
-      <span className="min-w-4 text-center text-sm font-bold tabular-nums">{value}</span>
-      <button type="button" style={btn} className="k-hit flex items-center justify-center" onClick={() => onChange(value + 1)}>
-        <Plus className="h-4 w-4" />
+      <span className={cn('text-center font-bold tabular-nums', small ? 'kt-15' : 'text-lg')} style={{ minWidth: kioskPx(small ? 36 : 48), color: m.c.text }}>
+        {value}
+      </span>
+      <button type="button" style={filled} className="k-hit flex items-center justify-center" onClick={() => onChange(value + 1)} aria-label="+">
+        <Plus className={icon} />
       </button>
     </div>
   );
@@ -1287,6 +1310,31 @@ const ATTRACT_STACK_GAP = 16;
 
 /** The header pills over the hero, as the till draws them (white, dark text). */
 const ATTRACT_PILL: CSSProperties = { background: 'rgba(255,255,255,0.92)', color: '#14161A', borderRadius: 9999 };
+/** The attract header's pills: the Android kiosk's KioskPill (52 dp) in CSS px. */
+const ATTRACT_PILL_PX = kioskPx(52);
+/** The language switch's words (the Android kiosk's kapp_lang_*); another language: its code. */
+const LANGUAGE_NAMES: Record<string, string> = { he: 'עברית', en: 'English', ar: 'العربية', ru: 'Русский' };
+
+/**
+ * The attract header's start (the Android kiosk's): the logo on a light plate the header's height, else the business's
+ * name in white on a dark pill, else the initial as before.
+ */
+function AttractBrand({ m }: { m: PreviewModel }) {
+  if (m.logoUrl) {
+    return (
+      <div className="flex h-full items-center justify-center overflow-hidden" style={{ maxWidth: kioskPx(200), padding: kioskPx(10), borderRadius: kioskPx(18), background: 'rgba(255,255,255,0.92)' }}>
+        <Img src={m.logoUrl} className="max-h-full max-w-full object-contain" />
+      </div>
+    );
+  }
+  const name = m.brandName.trim();
+  if (!name) return <Logo m={m} />;
+  return (
+    <span className="max-w-[60%] truncate rounded-full px-3.5 py-1.5 text-lg font-bold" style={{ background: 'rgba(0,0,0,0.32)', color: '#FFFFFF' }}>
+      {name}
+    </span>
+  );
+}
 
 /** A stacked item the fitting left out: still measured (same width), never drawn or touched. */
 const ATTRACT_HIDDEN: CSSProperties = { position: 'absolute', insetInline: 0, top: 0, visibility: 'hidden', pointerEvents: 'none' };
@@ -1450,13 +1498,14 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
       items.push({
         key: s,
         node: (
-          <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 [scrollbar-width:none]">
-            {m.categories.slice(0, 8).map((cat) => (
+          // The Android kiosk's category cards (170 dp, the name in titleMedium bold) — every category, in CSS px.
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none]">
+            {m.categories.map((cat) => (
               <button
                 key={cat.id}
                 type="button"
-                className="w-20 shrink-0 p-1.5 text-center"
-                style={cardStyle(m)}
+                className="shrink-0 p-2 text-center"
+                style={{ ...cardStyle(m), width: kioskPx(150) }}
                 onClick={(e) => {
                   e.stopPropagation();
                   next();
@@ -1465,12 +1514,12 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
                 <div className="mx-auto flex justify-center">
                   {layoutOf(cfg).categoryIcons ? (
                     // The layout's category icons ("מבנה הקיוסק"), else today's picture or initial.
-                    <CategoryVisual m={m} cat={cat} mode={layoutOf(cfg).categoryIcons} size={56} />
+                    <CategoryVisual m={m} cat={cat} mode={layoutOf(cfg).categoryIcons} size={64} />
                   ) : (
-                    <CategoryImage m={m} cat={cat} size={56} radius={Math.max(10, m.radius - 4)} />
+                    <CategoryImage m={m} cat={cat} size={64} radius={Math.max(10, m.radius - 4)} />
                   )}
                 </div>
-                <div className="mt-1 truncate kt-11 font-medium">{cat.name}</div>
+                <div className="k-name mt-1.5 truncate kt-13 font-bold">{cat.name}</div>
               </button>
             ))}
           </div>
@@ -1493,32 +1542,30 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
       />
       {/* The style's idle scan line (tech), under the content. */}
       <KioskScanLine m={m} />
+      {/* The header as the Android kiosk's attract screen: the logo on a light plate (else the business's name in a dark
+          pill), the languages as a switch and "עזרה" — white pills a finger's size (52 / 44 dp there). */}
       <div className="absolute inset-x-4 flex items-center justify-between gap-2" style={{ top: 16, height: 44 }}>
-        <Logo m={m} />
-        <div className="flex items-center gap-1.5">
+        <AttractBrand m={m} />
+        <div className="flex items-center gap-2">
           {langs.length > 1 ? (
-            <span className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium" style={ATTRACT_PILL}>
-              <Languages className="h-3.5 w-3.5" />
-              {langs.map((l) => l.toUpperCase()).join(' · ')}
+            <span className="flex items-center rounded-full p-[3px]" style={{ ...ATTRACT_PILL, minHeight: ATTRACT_PILL_PX }}>
+              {langs.map((l, i) => (
+                <span
+                  key={l}
+                  className="flex items-center rounded-full px-3 kt-13 font-semibold"
+                  style={{ minHeight: kioskPx(44), ...(i === 0 ? { background: '#14161A', color: '#FFFFFF' } : null) }}
+                >
+                  {LANGUAGE_NAMES[l] ?? l.toUpperCase()}
+                </span>
+              ))}
             </span>
           ) : null}
           {cfg.attract.showHelp ? (
             m.live?.help ? (
-              <button
-                type="button"
-                className="k-hit flex items-center gap-1 px-2.5 py-1 text-xs font-medium"
-                style={ATTRACT_PILL}
-                title={m.txt('helpText')}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  m.live?.help?.();
-                }}
-              >
-                <CircleHelp className="h-3.5 w-3.5" /> {m.t('help')}
-              </button>
+              <HelpPill m={m} />
             ) : (
-              <span className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium" style={ATTRACT_PILL} title={m.txt('helpText')}>
-                <CircleHelp className="h-3.5 w-3.5" /> {m.t('help')}
+              <span className="flex items-center gap-1.5 px-3 kt-13 font-semibold" style={{ ...ATTRACT_PILL, minHeight: ATTRACT_PILL_PX }} title={m.txt('helpText')}>
+                <CircleHelp className="h-4 w-4" /> {m.t('help')}
               </span>
             )
           ) : null}
@@ -1609,10 +1656,29 @@ export function LiveBack({ m, size = 36 }: { m: PreviewModel; size?: number }) {
       type="button"
       aria-label={m.t('back')}
       onClick={back}
+      // The Android kiosk's back (KioskRoundButton): a quiet grey circle (surfaceAlt), the arrow in the words' colour.
       className="k-hit flex shrink-0 items-center justify-center rounded-full transition-transform duration-150 active:scale-95"
-      style={{ width: size, height: size, background: `${m.c.button}1A`, color: m.c.buttonInk }}
+      style={{ width: size, height: size, background: kioskSurfaceAlt(m.c.dark), color: m.c.text }}
     >
-      <ChevronRight className="h-5 w-5" />
+      <ArrowRight className="h-5 w-5 ltr:rotate-180" aria-hidden />
+    </button>
+  );
+}
+
+/** "עזרה" as the Android kiosk's KioskPill (52 dp, white, the words #14161A) — calls the staff (the live kiosk only). */
+export function HelpPill({ m }: { m: PreviewModel }) {
+  return (
+    <button
+      type="button"
+      className="k-hit flex items-center gap-1.5 px-3 kt-13 font-semibold"
+      style={{ ...ATTRACT_PILL, minHeight: ATTRACT_PILL_PX, boxShadow: '0 1px 3px rgba(17,24,39,0.12)' }}
+      title={m.txt('helpText')}
+      onClick={(e) => {
+        e.stopPropagation();
+        m.live?.help?.();
+      }}
+    >
+      <CircleHelp className="h-4 w-4" aria-hidden /> {m.t('help')}
     </button>
   );
 }
@@ -1666,9 +1732,11 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
       : { background: m.c.surface, color: m.c.text, border: `1.5px solid ${m.c.border}` };
   return (
     <div className="flex h-full flex-col">
-      {m.live?.back ? (
-        <div className="flex shrink-0 items-center px-4 pt-4">
-          <LiveBack m={m} />
+      {/* The Android kiosk's header (KioskHeader): back at the start, "עזרה" at the end. */}
+      {m.live?.back || (m.live?.help && cfg.attract.showHelp) ? (
+        <div className="flex shrink-0 items-center justify-between px-4 pt-4">
+          {m.live?.back ? <LiveBack m={m} /> : <span />}
+          {m.live?.help && cfg.attract.showHelp ? <HelpPill m={m} /> : null}
         </div>
       ) : null}
       {/* Centred by its own auto margins, never squeezed (shrink-0): on a short window (a landscape kiosk, 960×540) the card
@@ -1714,7 +1782,7 @@ export function ServiceScreen({ m }: { m: PreviewModel }) {
                       {type === 'take_away' ? (
                         <ShoppingBag style={{ width: badge * 0.5, height: badge * 0.5 }} />
                       ) : (
-                        <UtensilsCrossed style={{ width: badge * 0.5, height: badge * 0.5 }} />
+                        <Utensils style={{ width: badge * 0.5, height: badge * 0.5 }} />
                       )}
                     </span>
                     <span className="font-extrabold leading-tight" style={{ fontSize: `calc(${Math.max(15, Math.min(26, Math.round(tile * 0.1)))}px * var(--k-scale, 1))` }}>
@@ -1770,6 +1838,26 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
   const added = m.justAddedId === p.id;
   const inCart = dishCartCounts(m.cart)[p.id] ?? 0;
   const direct = (plus: boolean) => !!m.quickAdd && tapPathOf(p, layoutOf(m.cfg).quickAdd, plus, !!m.mealOf?.(p)) === 'direct';
+  const pill = pricePillOn(m.cfg);
+  // The round "+" (the Android kiosk's 44 dp) on the picture's corner: beside the price (as Android draws it) a narrow
+  // card's price was cut to "…90" — the price keeps the card's whole width.
+  const plus = (className: string) =>
+    p.soldOut ? null : (
+      <span
+        data-add={p.addPath === 'direct' ? 'direct' : 'sheet'}
+        className={cn('flex shrink-0 items-center justify-center shadow-md transition-all duration-200 group-hover:scale-110', className)}
+        style={{ ...buttonStyle(m), width: kioskPx(44), height: kioskPx(44), borderRadius: 999, background: added ? m.c.accent : m.c.button }}
+        onClick={(e) => {
+          // Nothing to choose: straight in, the picture flying from its card. Anything else
+          // goes on to the card, which opens the dish's window.
+          if (!direct(true)) return;
+          e.stopPropagation();
+          m.quickAdd?.(p, e.currentTarget.closest('button')?.querySelector('[data-pic]')?.getBoundingClientRect() ?? null);
+        }}
+      >
+        {added ? <Check className="h-5 w-5 kiosk-pop" /> : <Plus className="h-5 w-5" />}
+      </span>
+    );
   return (
     <button
       type="button"
@@ -1786,40 +1874,31 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {p.soldOut ? (
           <span className="absolute start-2 top-2 rounded-full bg-black/70 px-2 py-0.5 kt-10 font-bold text-white">{m.t('soldOut')}</span>
-        ) : (
-          <span
-            data-add={p.addPath === 'direct' ? 'direct' : 'sheet'}
-            className="absolute bottom-2 end-2 flex h-7 w-7 items-center justify-center shadow-md transition-all duration-200 group-hover:scale-110"
-            style={{ ...buttonStyle(m), borderRadius: 999, background: added ? m.c.accent : m.c.button }}
-            onClick={(e) => {
-              // Nothing to choose: straight in, the picture flying from its card. Anything else
-              // goes on to the card, which opens the dish's window.
-              if (!direct(true)) return;
-              e.stopPropagation();
-              m.quickAdd?.(p, e.currentTarget.parentElement?.getBoundingClientRect() ?? null);
-            }}
-          >
-            {added ? <Check className="h-4 w-4 kiosk-pop" /> : <Plus className="h-4 w-4" />}
-          </span>
-        )}
+        ) : null}
+        {plus('absolute bottom-2 end-2')}
         <DishCountBadge m={m} inCart={inCart} size={large ? 28 : 24} className="end-2 top-2" />
         {/* "כפתור פרטים" (ⓘ): the window a quick-add tap skips. */}
         <DishInfoButton m={m} p={p} card={{ descriptionLines: 2, dietaryOnCard: true, cardPicture: 'large' }} size={large ? 28 : 24} className="absolute start-2 top-2" />
       </div>
-      <div className={large ? 'space-y-1 p-3' : 'space-y-0.5 p-2'} style={p.soldOut ? { opacity: 0.6 } : undefined}>
-        <div className={`line-clamp-2 font-bold leading-snug ${large ? 'text-base' : 'kt-13'}`} style={textSize(m, 'productName', large ? 16 : 13)}>
+      {/* The Android kiosk's card (KioskCatalogScreen ProductCard): the name and the description always two lines each,
+          so a row's cards are equal; the price big in the words' colour. */}
+      <div className={large ? 'p-3' : 'px-2.5 py-2'} style={p.soldOut ? { opacity: 0.6 } : undefined}>
+        <div className={`k-name-block line-clamp-2 font-bold leading-tight ${large ? 'text-base' : 'kt-15'}`} style={{ minHeight: '2.5em', ...textSize(m, 'productName', large ? 16 : 15) }}>
           {p.name}
         </div>
-        {showDesc ? (
-          <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText, ...textSize(m, 'productDescription', 11) }}>
-            {p.description}
+        {m.cfg.theme.showDescriptions ? (
+          <div className="line-clamp-2 kt-11 leading-snug" style={{ color: m.c.mutedText, minHeight: '2.75em', ...textSize(m, 'productDescription', 11) }}>
+            {showDesc ? p.description : null}
           </div>
         ) : null}
         <DietaryChips m={m} tags={p.dietaryTags} />
-        {pricePillOn(m.cfg) ? (
+        {pill ? (
           <PricePill m={m} p={p} className="mt-1.5" />
         ) : (
-          <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'productPrice', 13) }}>
+          <div
+            className="mt-1.5 kt-15 font-extrabold tabular-nums"
+            style={{ color: p.soldOut ? m.c.mutedText : m.c.text, textDecoration: p.soldOut ? 'line-through' : undefined, ...textSize(m, 'productPrice', 15) }}
+          >
             {m.money(p.price)}
           </div>
         )}
@@ -2005,19 +2084,24 @@ export function CartBar({ m }: { m: PreviewModel }) {
       <BigButton
         m={m}
         onClick={() => m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
+        // The Android kiosk's bar (KioskCatalogScreen CartBar): 72 dp tall, the count in a circle, a cart, the label, the
+        // total big — here in CSS px.
         className="justify-between shadow-lg animate-in slide-in-from-bottom-4 duration-300"
       >
-        <CartTarget
-          register={m.setCartTarget}
-          key={m.cartBump}
-          // A darker bubble: white on a white tint over the button was 3:1 (layout audit 16.10).
-          className={cn('flex h-6 min-w-6 items-center justify-center rounded-full bg-black/20 px-1.5 text-xs tabular-nums', pop.className)}
-          style={pop.style}
-        >
-          {count}
-        </CartTarget>
-        <span>{m.cfg.general.skipCart === 'off' ? m.t('viewCart') : m.txt('checkoutCta')}</span>
-        <span className="tabular-nums">
+        <span className="flex items-center gap-2" style={{ minHeight: kioskPx(72) - 24 }}>
+          <CartTarget
+            register={m.setCartTarget}
+            key={m.cartBump}
+            // A darker bubble: white on a white tint over the button was 3:1 (layout audit 16.10).
+            className={cn('flex items-center justify-center rounded-full bg-black/20 px-1.5 kt-13 font-bold tabular-nums', pop.className)}
+            style={{ ...pop.style, height: kioskPx(44), minWidth: kioskPx(44) }}
+          >
+            {count}
+          </CartTarget>
+          <ShoppingCart className="h-5 w-5" aria-hidden />
+          <span>{m.cfg.general.skipCart === 'off' ? m.t('viewCart') : m.txt('checkoutCta')}</span>
+        </span>
+        <span className="text-lg font-extrabold tabular-nums">
           <CountUp value={basketTotal(m)} ms={m.motion.countUpMs} format={m.money} />
         </span>
       </BigButton>
@@ -2025,66 +2109,79 @@ export function CartBar({ m }: { m: PreviewModel }) {
   );
 }
 
-/** The side order panel (cartStyle = panel, wide frame) on the end side. */
+/**
+ * The side order panel (cartStyle = panel, wide frame) on the end side — the Android kiosk's CartPanel: the count in a
+ * filled circle first (where the dish lands), the title big beside it; an empty basket's cart icon; each line's name and
+ * price over its own small "− n +"; "סה״כ לתשלום" with the amount; "לתשלום · ₪" full width. The preview's narrow frame
+ * (no panelWidth) keeps a compact version of the same.
+ */
 export function CartPanel({ m }: { m: PreviewModel }) {
   const count = cartCount(m.cart);
   const pop = badgePop(m, count > 0);
+  // The preview's 132 px panel cannot hold the kiosk's sizes: the same parts, smaller.
+  const roomy = (m.panelWidth ?? 132) >= 200;
+  const circle = roomy ? kioskPx(44) : 22;
+  const setQty = (key: string, n: number) =>
+    m.setCart(n <= 0 ? m.cart.filter((x) => x.key !== key) : m.cart.map((x) => (x.key === key ? { ...x, qty: n } : x)));
+  const off = count === 0;
   return (
-    <div className="flex shrink-0 flex-col border-s" style={{ width: m.panelWidth ?? 132, borderColor: m.c.border, background: m.c.surface }}>
-      <CartTarget
-        register={m.setCartTarget}
-        className="relative flex items-center justify-between gap-1 border-b px-2 py-2"
-        style={{ borderColor: m.c.border }}
-      >
-        <AddGlow m={m} radius={0} />
-        <span className="truncate text-xs font-extrabold">{m.txt('cartTitle')}</span>
-        <span
+    // The hairline on its start edge stays (the classic style's panel is white on a white menu).
+    <div className={cn('flex shrink-0 flex-col border-s', roomy ? 'p-3' : 'p-2')} style={{ width: m.panelWidth ?? 132, background: m.c.surface, borderColor: m.c.border }}>
+      <div className="flex items-center gap-2.5">
+        <CartTarget
+          register={m.setCartTarget}
           key={m.cartBump}
-          className={cn('flex h-5 min-w-5 items-center justify-center rounded-full px-1 kt-10 font-bold tabular-nums', pop.className)}
-          style={{ background: m.c.button, color: m.c.buttonText, ...pop.style }}
+          className={cn('relative flex shrink-0 items-center justify-center rounded-full font-bold tabular-nums', roomy ? 'kt-15' : 'kt-11', pop.className)}
+          style={{ width: circle, height: circle, background: m.c.button, color: m.c.buttonText, ...pop.style }}
         >
+          <AddGlow m={m} radius={999} />
           {count}
-        </span>
-      </CartTarget>
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2 [scrollbar-width:none]">
+        </CartTarget>
+        <span className={cn('truncate font-bold', roomy ? 'text-lg' : 'text-xs')}>{m.txt('cartTitle')}</span>
+      </div>
+      <div className={cn('min-h-0 flex-1 overflow-y-auto [scrollbar-width:none]', roomy ? 'mt-2.5 space-y-3' : 'mt-2 space-y-2')}>
         {m.cart.length === 0 ? (
-          <p className="pt-6 text-center kt-11" style={{ color: m.c.mutedText }}>
-            {m.t('cartEmpty')}
-          </p>
+          <div className="flex h-full flex-col items-center justify-center gap-1 text-center" style={{ color: m.c.mutedText }}>
+            <ShoppingCart style={{ width: roomy ? kioskPx(48) : 22, height: roomy ? kioskPx(48) : 22 }} aria-hidden />
+            <p className={roomy ? 'kt-13 font-semibold' : 'kt-11'}>{m.t('cartEmpty')}</p>
+          </div>
         ) : (
           m.cart.map((l) => (
-            <div key={l.key} className="space-y-1 rounded-lg p-1.5" style={{ background: m.c.dark ? '#FFFFFF0D' : '#0000000A' }}>
-              <div className="line-clamp-2 kt-11 font-semibold leading-tight" style={textSize(m, 'cartLines', 11)}>
-                {l.product.name}
-              </div>
-              <div className="flex items-center justify-between gap-1">
-                <span className="kt-10 tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'cartLines', 10) }}>
+            <div key={l.key} data-panel-line className="space-y-1">
+              <div className="flex items-start gap-2">
+                <span className={cn('k-name-block line-clamp-2 min-w-0 flex-1 font-semibold leading-tight', roomy ? 'kt-13' : 'kt-11')} style={textSize(m, 'cartLines', roomy ? 13 : 11)}>
+                  {l.product.name}
+                </span>
+                <span className={cn('shrink-0 font-bold tabular-nums', roomy ? 'kt-13' : 'kt-10')} style={textSize(m, 'cartLines', roomy ? 13 : 10)}>
                   {m.money(l.unit * l.qty)}
                 </span>
+              </div>
+              {roomy ? (
+                <Stepper m={m} small value={l.qty} onChange={(n) => setQty(l.key, n)} />
+              ) : (
                 <span className="kt-10 tabular-nums" style={{ color: m.c.mutedText }}>
                   ×{l.qty}
                 </span>
-              </div>
+              )}
             </div>
           ))
         )}
       </div>
-      <div className="space-y-1.5 border-t p-2" style={{ borderColor: m.c.border }}>
-        <div className="flex items-center justify-between kt-11 font-bold">
-          <span>{m.t('total')}</span>
-          <span className="tabular-nums">
-            <CountUp value={basketTotal(m)} ms={m.motion.countUpMs} format={m.money} />
-          </span>
-        </div>
-        <button
-          type="button"
-          className={`k-tap k-tap-solid k-min-target relative w-full px-2 py-2 kt-11 font-bold ${count === 0 ? 'opacity-50' : ''}`}
-          style={buttonStyle(m)}
-          onClick={() => count > 0 && m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
-        >
-          {m.txt('checkoutCta')}
-        </button>
+      <div className={cn('flex items-center justify-between gap-2 font-bold', roomy ? 'mt-2.5' : 'mt-2')}>
+        <span className={roomy ? 'kt-15' : 'kt-11'}>{roomy ? m.txt('reviewTotal') : m.t('total')}</span>
+        <span className={cn('font-extrabold tabular-nums', roomy ? 'text-lg' : 'kt-11')}>
+          <CountUp value={basketTotal(m)} ms={m.motion.countUpMs} format={m.money} />
+        </span>
       </div>
+      <button
+        type="button"
+        aria-disabled={off || undefined}
+        className={cn('k-tap k-tap-solid k-min-target relative w-full font-bold', roomy ? 'mt-2.5 px-3 kt-15' : 'mt-2 px-2 py-2 kt-11', off && !disabledStyle(m) && 'opacity-50')}
+        style={{ ...buttonStyle(m), ...(off ? disabledStyle(m) : null), ...(roomy ? { minHeight: kioskPx(64) } : null) }}
+        onClick={() => count > 0 && m.go(m.cfg.general.skipCart === 'off' ? 'cart' : 'pay')}
+      >
+        {roomy ? `${m.txt('checkoutCta')} · ${m.money(basketTotal(m))}` : m.txt('checkoutCta')}
+      </button>
     </div>
   );
 }
@@ -2304,7 +2401,7 @@ function CategorySwap({ m, current }: { m: PreviewModel; current: string | null 
         const cat = m.categories.find((c) => c.id === id);
         return cat ? (
           <section data-section={cat.id} className="space-y-2">
-            <h3 className="text-sm font-extrabold">{cat.name}</h3>
+            <h3 className="k-name text-lg font-extrabold leading-tight">{cat.name}</h3>
             <ProductGrid m={m} products={cat.products} enter />
           </section>
         ) : null;
@@ -2371,7 +2468,7 @@ function SideCatalog({ m }: { m: PreviewModel }) {
             ) : (
               m.categories.map((cat, i) => (
                 <section key={cat.id} data-section={cat.id} className="space-y-2">
-                  <h3 className="text-sm font-extrabold">{cat.name}</h3>
+                  <h3 className="k-name text-lg font-extrabold leading-tight">{cat.name}</h3>
                   <ProductGrid m={m} products={cat.products} enter={i === 0} />
                 </section>
               ))
@@ -2436,7 +2533,7 @@ function TopCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; active
           {!one && m.categories.length > 0 ? (
             m.categories.map((cat, i) => (
               <section key={cat.id} data-section={cat.id} className="space-y-2">
-                <h3 className="text-sm font-extrabold">{cat.name}</h3>
+                <h3 className="k-name text-lg font-extrabold leading-tight">{cat.name}</h3>
                 <ProductGrid m={m} products={cat.products} enter={i === 0} />
               </section>
             ))
@@ -2596,7 +2693,7 @@ export function ProductSheet({
                   {product.description}
                 </p>
               ) : null}
-              <div className="mt-1.5 font-bold tabular-nums" style={{ color: m.c.primaryInk }}>
+              <div className="mt-1.5 text-lg font-extrabold tabular-nums" style={{ color: m.c.text }}>
                 {m.money(product.price)}
               </div>
               {showDietary && product.dietaryTags.length > 0 ? (
@@ -3062,11 +3159,12 @@ export function UpsellWindow({
                           <div className="line-clamp-2 kt-11 font-bold leading-snug">{p.name}</div>
                           {showPrice ? <div className="kt-11 font-bold tabular-nums" style={{ color: m.c.primaryInk }}>+{m.money(p.price)}</div> : null}
                         </div>
+                        {/* The Android kiosk's round "+" (48 dp, a shadow) at this window's size. */}
                         <span
-                          className="flex h-6 w-6 shrink-0 items-center justify-center"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center shadow-md"
                           style={{ ...buttonStyle(m), borderRadius: 999, background: count > 0 ? m.c.accent : m.c.button }}
                         >
-                          {count > 0 ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                          {count > 0 ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                         </span>
                       </div>
                     </button>
@@ -3132,9 +3230,8 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
           {m.txt('reviewHint')}
         </p>
       </div>
-      <button type="button" className="k-hit shrink-0 px-3 py-1.5 text-xs font-semibold" style={buttonStyle(m, 'soft')} onClick={() => m.go('catalog')}>
-        {m.txt('addMoreCta')}
-      </button>
+      {/* "עזרה" at the header's end, as the Android kiosk's basket ("הוספת מנות" went down beside "לתשלום"). */}
+      {m.live?.help && cfg.attract.showHelp ? <HelpPill m={m} /> : null}
     </div>
   );
   const chips =
@@ -3145,7 +3242,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
         </span>
         {serviceAsked(m) ? (
           <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1" style={{ background: `${m.c.primary}14`, color: m.c.text }}>
-            {m.service === 'eat_in' ? <UtensilsCrossed className="h-3.5 w-3.5" /> : <ShoppingBag className="h-3.5 w-3.5" />}
+            {m.service === 'eat_in' ? <Utensils className="h-3.5 w-3.5" /> : <ShoppingBag className="h-3.5 w-3.5" />}
             {m.service === 'eat_in' ? m.txt('eatInLabel') : m.txt('takeAwayLabel')}
           </span>
         ) : null}
@@ -3155,9 +3252,10 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
     <div data-cart-lines className="divide-y overflow-hidden" style={{ ...cardStyle(m) }}>
       {m.cart.map((l) => (
         <div key={l.key} className="flex items-center gap-3 p-3" style={{ borderColor: m.c.border }}>
-          <ProductImage m={m} p={l.product} className="h-12 w-12 shrink-0" style={{ borderRadius: Math.min(m.radius, 12) }} />
+          {/* The Android kiosk's basket line: an 84 dp picture, the name on up to two lines, the price in the words' colour. */}
+          <ProductImage m={m} p={l.product} className="shrink-0" style={{ width: kioskPx(84), height: kioskPx(84), borderRadius: Math.min(m.radius, 16) }} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-bold" style={textSize(m, 'cartLines', 14)}>
+            <div className="k-name-block line-clamp-2 text-sm font-bold leading-snug" style={textSize(m, 'cartLines', 14)}>
               {l.product.name}
             </div>
             {l.extras.length > 0 ? (
@@ -3165,7 +3263,7 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
                 {l.extras.join(' · ')}
               </div>
             ) : null}
-            <div className="text-xs font-bold tabular-nums" style={{ color: m.c.primaryInk, ...textSize(m, 'cartLines', 12) }}>
+            <div className="text-sm font-extrabold tabular-nums" style={{ color: m.c.text, ...textSize(m, 'cartLines', 14) }}>
               {m.money(l.unit * l.qty)}
             </div>
             {m.pricing?.lines[l.key]?.promotionAgorot ? (
@@ -3226,6 +3324,17 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
         </div>
       </section>
     ) : null;
+  const addMore = (
+    <button
+      type="button"
+      data-add-more
+      className="k-tap k-min-target relative flex items-center justify-center px-3 py-3 kt-15 font-semibold"
+      style={{ flex: m.twoColumns ? undefined : '1 1 0', background: kioskSurfaceAlt(m.c.dark), color: m.c.text, borderRadius: m.btnRadius, ...textSize(m, 'buttons', 15) }}
+      onClick={() => m.go('catalog')}
+    >
+      {m.txt('addMoreCta')}
+    </button>
+  );
   const pay = (
     <div data-cart-pay className="space-y-1.5">
       {below ? (
@@ -3233,10 +3342,18 @@ export function CartScreen({ m, upsell }: { m: PreviewModel; upsell: PProduct[] 
           {m.t('minOrder', { amount: m.money(min) })}
         </p>
       ) : null}
-      <BigButton m={m} onClick={() => m.go('pay')} disabledLook={below || m.cart.length === 0}>
-        <span>{m.txt('checkoutCta')}</span>
-        <span className="tabular-nums">· {m.money(total)}</span>
-      </BigButton>
+      {/* The Android kiosk's actions: "הוספת מנות" (its quiet secondary button) beside "לתשלום · ₪", 1 : 1.4 — in the
+          landscape side column under it ("לתשלום" first, right under the summary). */}
+      <div className={cn('flex gap-2.5', m.twoColumns && 'flex-col')}>
+        {m.twoColumns ? null : addMore}
+        <div style={{ flex: m.twoColumns ? undefined : '1.4 1 0' }}>
+          <BigButton m={m} onClick={() => m.go('pay')} disabledLook={below || m.cart.length === 0}>
+            <span>{m.txt('checkoutCta')}</span>
+            <span className="tabular-nums">· {m.money(total)}</span>
+          </BigButton>
+        </div>
+        {m.twoColumns ? addMore : null}
+      </div>
     </div>
   );
   if (m.twoColumns) {
@@ -3352,11 +3469,14 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
   // order's total and the main button (no scrolling for "המשך"); portrait and narrow windows as before.
   const two = !!m.twoColumns;
   const area = (a: string): CSSProperties | undefined => (two ? { gridArea: a } : undefined);
+  // The Android kiosk's tip tile (KioskTipScreen TipTile): 108 dp tall at least, corners min(radius, 18), a chosen one on
+  // the brand colour at 10 % with its 2 dp edge.
   const tileStyle = (on: boolean): CSSProperties => ({
-    background: on ? `${m.c.primary}14` : m.c.surface,
+    background: on ? `${m.c.primary}1A` : m.c.surface,
     border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
     color: on ? m.c.primary : m.c.text,
-    borderRadius: radius,
+    borderRadius: Math.min(radius, 18),
+    minHeight: kioskPx(108),
   });
   return (
     <div className="relative flex h-full flex-col">
@@ -3496,51 +3616,6 @@ export function TipScreen({ m, steps: previewSteps, onDone }: { m: PreviewModel;
 }
 
 /* -------------------------------------------------------------------- pay */
-
-/**
- * The kiosk charges on an external pinpad standing next to its screen: a small kiosk
- * silhouette, an arrow, and the pinpad beside it with the card tapping it — never a card
- * on the screen itself.
- */
-function PinpadScene({ m, muted = false }: { m: PreviewModel; muted?: boolean }) {
-  const dark = m.c.dark;
-  const body = dark ? '#2A303B' : '#1F2937';
-  return (
-    <div className={`relative flex h-36 items-end justify-center gap-3 ${muted ? 'opacity-50 grayscale' : ''}`} dir="rtl" aria-hidden>
-      {/* The kiosk's own screen. */}
-      <div className="flex h-32 w-20 flex-col items-center justify-start gap-1 rounded-lg p-1.5 shadow-md" style={{ background: body }}>
-        <div className="flex w-full flex-1 flex-col items-center justify-center gap-1 rounded" style={{ background: m.c.background }}>
-          <span className="h-1 w-8 rounded-full" style={{ background: `${m.c.text}55` }} />
-          <span className="h-1.5 w-10 rounded-full" style={{ background: m.c.primary }} />
-          <span className="h-1 w-6 rounded-full" style={{ background: `${m.c.text}33` }} />
-        </div>
-        <span className="h-1 w-6 rounded-full bg-white/30" />
-      </div>
-      {!muted ? <ArrowLeft className="kiosk-nudge mb-10 h-5 w-5" style={{ color: m.c.button }} /> : <span className="mb-10 w-5" />}
-      {/* The pinpad beside it. */}
-      <div className="relative">
-        {!muted ? <span className="kiosk-ring absolute -inset-3 rounded-2xl" style={{ background: `${m.c.button}26` }} /> : null}
-        <div className="relative flex h-24 w-14 flex-col items-center gap-1 rounded-xl p-1.5 shadow-lg" style={{ background: body }}>
-          <span className="h-5 w-full rounded" style={{ background: muted ? '#4B5563' : '#10B981CC' }} />
-          <span className="grid grid-cols-3 gap-0.5">
-            {Array.from({ length: 9 }, (_, i) => (
-              <span key={i} className="h-1.5 w-2.5 rounded-sm bg-white/35" />
-            ))}
-          </span>
-        </div>
-        {!muted ? (
-          <div
-            className="kiosk-card absolute left-1/2 -top-12 flex h-9 w-14 flex-col justify-between rounded-md p-1 shadow-xl"
-            style={{ background: `linear-gradient(135deg, ${m.c.primary}, ${m.c.accent})`, color: '#fff' }}
-          >
-            <CreditCard className="h-3 w-3" />
-            <span className="kt-8 tracking-widest">••42</span>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 /**
  * The real kiosk's payment, as the till shows it: preparing (a spinner), the card awaited on
@@ -4010,7 +4085,7 @@ function CountdownRing({ left, total, color, size = 34 }: { left: number; total:
           style={{ transition: 'stroke-dashoffset 1s linear' }}
         />
       </svg>
-      <span className="relative text-xs font-extrabold tabular-nums">{left}</span>
+      <span className={cn('relative font-extrabold tabular-nums', size > 34 ? 'kt-13' : 'text-xs')}>{left}</span>
     </span>
   );
 }
@@ -4074,7 +4149,7 @@ function SuccessCard({ m }: { m: PreviewModel }) {
           <div className="flex items-center justify-center gap-8 kt-13 font-semibold">
             {service ? (
               <span className="inline-flex items-center gap-1.5">
-                {service === 'take_away' ? <ShoppingBag className="h-4 w-4" /> : <UtensilsCrossed className="h-4 w-4" />}
+                {service === 'take_away' ? <ShoppingBag className="h-4 w-4" /> : <Utensils className="h-4 w-4" />}
                 {service === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}
               </span>
             ) : null}
@@ -4085,9 +4160,10 @@ function SuccessCard({ m }: { m: PreviewModel }) {
           </div>
           {receipt === 'always' ? <p className="text-base font-bold">{m.t('receiptAlways')}</p> : null}
           {cfg.success.message.trim() ? <p className="text-sm font-semibold">{cfg.success.message}</p> : null}
+          {/* The receipt's question takes the new order's place until it is answered (the Android kiosk's done card). */}
           {receipt === 'ask' ? (
-            <div className="space-y-2">
-              <div className="text-sm font-semibold">{m.t('receiptAsk')}</div>
+            <div className="space-y-2 pt-1">
+              <div className="text-lg font-bold">{m.t('receiptAsk')}</div>
               <div className="grid grid-cols-2 gap-2">
                 <BigButton m={m} variant="soft" onClick={live ? () => live.onReceipt(false) : undefined}>
                   {m.t('receiptNo')}
@@ -4097,17 +4173,21 @@ function SuccessCard({ m }: { m: PreviewModel }) {
                 </BigButton>
               </div>
             </div>
-          ) : null}
-          <button
-            type="button"
-            data-new-order
-            onClick={live ? live.onNewOrder : () => m.go('attract')}
-            className="flex w-full items-center justify-center gap-3 px-4 py-3.5 text-lg font-extrabold transition-transform duration-150 active:scale-[0.98]"
-            style={{ ...buttonStyle(m), borderRadius: Math.max(14, m.btnRadius === 999 ? 18 : m.btnRadius) }}
-          >
-            <CountdownRing left={left} total={total} color={m.c.buttonText} />
-            <span className="flex-1 text-center">{m.t('newOrder')}</span>
-          </button>
+          ) : (
+            // "הזמנה חדשה" in the style's button shape, the ring counting down at its end and a space as wide at its
+            // start, so the words sit in the middle (KioskDoneCardUi NewOrderButton: 76 dp tall, a 52 dp ring).
+            <button
+              type="button"
+              data-new-order
+              onClick={live ? live.onNewOrder : () => m.go('attract')}
+              className="!mt-5 flex w-full items-center gap-2 px-3 text-lg font-extrabold transition-transform duration-150 active:scale-[0.98]"
+              style={{ ...buttonStyle(m), minHeight: kioskPx(76) }}
+            >
+              <span aria-hidden className="shrink-0" style={{ width: kioskPx(52) }} />
+              <span className="flex-1 text-center">{m.t('newOrder')}</span>
+              <CountdownRing left={left} total={total} color={m.c.buttonText} size={kioskPx(52)} />
+            </button>
+          )}
         </div>
       </div>
     </ScreenBody>
@@ -4225,23 +4305,36 @@ export function PausedScreen({ m, variant, pause }: { m: PreviewModel; variant: 
   if (variant === 'paused' || variant === 'closed') return <ClosedScreen m={m} reason={variant} pause={variant === 'paused' ? (pause ?? {}) : {}} />;
   const title = variant === 'offline' ? m.txt('offlineTitle') : m.txt('noPaymentTitle');
   const body = variant === 'offline' ? m.txt('offlineBody') : m.txt('noPaymentBody');
-  // The till's own "no payment" / "no internet" screens carry no business messages.
+  // The till's own "no payment" / "no internet" (the Android kiosk's KioskRestNotice): the closed screen's look — the
+  // kiosk's colour edge to edge, the business, everything centred — with its own words and "עזרה" to call the staff.
+  // The paused screen's messages show here too, as there.
+  return <RestNotice m={m} title={title} body={body} />;
+}
+
+function RestNotice({ m, title, body }: { m: PreviewModel; title: string; body: string }) {
   return (
-    <ScreenBody m={m}>
-      <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
-        {variant === 'noPayment' ? (
-          <PinpadScene m={m} muted />
-        ) : (
-          <span className="flex h-20 w-20 items-center justify-center rounded-full" style={{ background: '#FEF3C7', color: '#B45309' }}>
-            <WifiOff className="h-10 w-10" />
-          </span>
-        )}
-        <h2 className="text-2xl font-extrabold">{title}</h2>
-        <p className="text-sm" style={{ color: m.c.mutedText }}>
-          {body}
-        </p>
-      </div>
-    </ScreenBody>
+    <RestFrame m={m}>
+      {(look) => (
+        <>
+          <h2 className="mt-3 text-3xl font-extrabold leading-tight" style={{ color: look.title }}>
+            {title}
+          </h2>
+          <p className="mt-2 text-lg font-semibold">
+            {body}
+          </p>
+          {m.live?.help && m.cfg.attract.showHelp ? (
+            <button
+              type="button"
+              className="k-tap relative mt-6 flex items-center gap-1.5 rounded-full px-3 kt-13 font-semibold"
+              style={{ ...ATTRACT_PILL, minHeight: ATTRACT_PILL_PX }}
+              onClick={() => m.live?.help?.()}
+            >
+              <CircleHelp className="h-4 w-4" aria-hidden /> {m.t('help')}
+            </button>
+          ) : null}
+        </>
+      )}
+    </RestFrame>
   );
 }
 
@@ -4274,15 +4367,7 @@ function RestCup({ tint }: { tint: string }) {
  * the big title, the subtitle, when it is back and "אפשר להזמין בקופה". Still with reduce motion.
  */
 function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRestReason; pause: RestPause }) {
-  const { cfg } = m;
-  const words = kioskRestText(reason, cfg, pause, m.txt, new Date(m.nowMs));
-  const image = cfg.screenImages?.paused;
-  // "תמונת רקע" behind every screen and no picture of its own: the root's picture shows through (no fill).
-  const clear = wallpaperEverywhere(cfg.theme) && !image;
-  const look = clear ? kioskRestLookOverBackdrop(cfg.theme, m.c) : kioskRestLook(cfg.theme, m.c);
-  const messages = messagesFor(cfg, 'paused', ['closed', 'notice', 'banner'], m.nowMs);
-  const fill = clear ? 'transparent' : look.from === look.to ? look.from : `linear-gradient(${look.diagonal ? '135deg' : '180deg'}, ${look.from}, ${look.to})`;
-  const ink = look.ink;
+  const words = kioskRestText(reason, m.cfg, pause, m.txt, new Date(m.nowMs));
   const clock = words.backClock;
   const back =
     clock === null || words.backInDays === null
@@ -4293,7 +4378,46 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
           ? m.t('rest.backTomorrow', { time: clock })
           : m.t('rest.backOn', { day: m.t(`day${words.backWeekday ?? 0}`), time: clock });
   return (
-    <div className="relative h-full overflow-hidden" style={{ background: fill, color: ink }}>
+    <RestFrame m={m}>
+      {(look) => (
+        <>
+          <RestCup tint={look.glow ? look.title : look.ink} />
+          <h2 className="mt-5 text-4xl font-extrabold leading-tight" style={{ color: look.title }}>
+            {words.title}
+          </h2>
+          <p className="mt-2 text-xl font-semibold">
+            {words.subtitle}
+          </p>
+          {back ? (
+            // A darker pill under light words (a light one under dark): `${ink}24` lightened the ground under white words to 3.7:1.
+            <div className="mt-5 rounded-full px-5 py-2 text-base font-bold tabular-nums" style={{ background: isDarkColor(look.ink) ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.22)' }}>
+              {back}
+            </div>
+          ) : null}
+          <p className="mt-4 text-sm font-semibold">
+            {m.t('rest.orderAtTill')}
+          </p>
+        </>
+      )}
+    </RestFrame>
+  );
+}
+
+/**
+ * The rest screens' ground (the till's KioskClosedScreen and KioskRestNotice): the kiosk's colour edge to edge (or the
+ * root's picture through it), the screen's own picture under the colour, the style's pattern, spots or glow, then a
+ * centred column — the logo or the business's name, the screen's own content, the paused screen's messages.
+ */
+function RestFrame({ m, children }: { m: PreviewModel; children: (look: ReturnType<typeof kioskRestLook>) => ReactNode }) {
+  const { cfg } = m;
+  const image = cfg.screenImages?.paused;
+  // "תמונת רקע" behind every screen and no picture of its own: the root's picture shows through (no fill).
+  const clear = wallpaperEverywhere(cfg.theme) && !image;
+  const look = clear ? kioskRestLookOverBackdrop(cfg.theme, m.c) : kioskRestLook(cfg.theme, m.c);
+  const messages = messagesFor(cfg, 'paused', ['closed', 'notice', 'banner'], m.nowMs);
+  const fill = clear ? 'transparent' : look.from === look.to ? look.from : `linear-gradient(${look.diagonal ? '135deg' : '180deg'}, ${look.from}, ${look.to})`;
+  return (
+    <div className="relative h-full overflow-hidden" style={{ background: fill, color: look.ink }}>
       {/* The screen's own picture ("paused"), when given: under the colour, never instead of it. */}
       {image ? (
         <>
@@ -4323,22 +4447,7 @@ function ClosedScreen({ m, reason, pause }: { m: PreviewModel; reason: KioskRest
               {m.brandName}
             </div>
           ) : null}
-          <RestCup tint={look.glow ? look.title : ink} />
-          <h2 className="mt-5 text-4xl font-extrabold leading-tight" style={{ color: look.title }}>
-            {words.title}
-          </h2>
-          <p className="mt-2 text-xl font-semibold">
-            {words.subtitle}
-          </p>
-          {back ? (
-            // A darker pill under light words (a light one under dark): `${ink}24` lightened the ground under white words to 3.7:1.
-            <div className="mt-5 rounded-full px-5 py-2 text-base font-bold tabular-nums" style={{ background: isDarkColor(ink) ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.22)' }}>
-              {back}
-            </div>
-          ) : null}
-          <p className="mt-4 text-sm font-semibold">
-            {m.t('rest.orderAtTill')}
-          </p>
+          {children(look)}
           {messages.length > 0 ? (
             <div className="mt-5 w-full">
               <CenteredMessages m={m} list={messages} />
