@@ -6,8 +6,8 @@
  */
 
 import { useState } from 'react';
-import { UNPAIR_TEXT, type UnpairCheck } from '../../core/unpairGuard';
-import type { TechnicianActionResult } from '../../shared/bridge';
+import { FOREIGN_TEXT, UNPAIR_TEXT, type UnpairCheck } from '../../core/unpairGuard';
+import type { TechnicianActionResult, TechnicianInfo } from '../../shared/bridge';
 import { kiosk } from '../bridge';
 
 export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: { label: string; buttonClassName: string; buttonStyle?: React.CSSProperties; onDone?: () => void }) {
@@ -101,6 +101,35 @@ export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * "רשומות מהמכשיר הקודם (N) — לא נשלחו, נשמרו בגיבוי" (TechnicianInfo.foreignRows): rows of another pairing, held —
+ * never sent under this one; "ייצוא לקובץ" writes them (with their records and a copy of the database) to unpair-backups.
+ */
+export function ForeignRowsPanel({ rows, className, onDone }: { rows: NonNullable<TechnicianInfo['foreignRows']>; className?: string; onDone?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const exportNow = async () => {
+    setBusy(true);
+    const r: TechnicianActionResult = await kiosk.technicianAction({ type: 'exportForeign' }).catch((e: unknown) => ({ ok: false, message: `שגיאה: ${String(e)}` }));
+    setBusy(false);
+    setResult({ ok: r.ok, message: r.message ?? (r.ok ? 'בוצע' : 'הייצוא נכשל') });
+    onDone?.();
+  };
+  return (
+    <div className={className ?? 'space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950'} data-foreign-rows>
+      <div className="font-bold">{rows.title}</div>
+      {rows.lines.map((l) => (
+        <div key={l}>{l}</div>
+      ))}
+      <div className="text-amber-800">{FOREIGN_TEXT.hint}</div>
+      <button type="button" disabled={busy} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40" onClick={() => void exportNow()}>
+        {busy ? '…' : FOREIGN_TEXT.export}
+      </button>
+      {result ? <div className={`whitespace-pre-wrap break-words font-semibold ${result.ok ? 'text-emerald-800' : 'text-red-800'}`}>{result.message}</div> : null}
     </div>
   );
 }

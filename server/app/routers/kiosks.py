@@ -258,6 +258,22 @@ def post_till_kiosk_command(
             return JSONResponse(status_code=refused.status_code, content=refused.body)
         name = " ".join(p for p in (manager.first_name or "", manager.last_name or "") if p).strip() or manager.username
         actor = svc.till_actor(machine, kiosk_machine, name)
+    elif body.action in ("enter_till", "return_kiosk"):
+        # "מצב עבודה" from a controlling till (P:/specs/area-gaps.md §3): a "משולב" license with the gate on,
+        # and an employee holding KIOSK_TILL_MODE — else refused (and audited) with a Hebrew message.
+        from app.services import kiosk_till_mode
+
+        try:
+            switcher = kiosk_till_mode.require_till_switch(db, machine, kiosk_machine, body.pos_user_id)
+        except svc.KioskCommandRefused as refused:
+            svc.audit_refusal(
+                db, kiosk_machine=kiosk_machine, action=body.action, source="till",
+                requested_by_machine_id=machine.id, requested_by_name=machine.name, detail=refused.body["detail"],
+            )
+            db.commit()
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
+        name = " ".join(p for p in (switcher.first_name or "", switcher.last_name or "") if p).strip() or switcher.username
+        actor = svc.till_actor(machine, kiosk_machine, name)
     elif kiosk_z.requires_manager(kiosk_machine, body.action):
         # "הפקת Z" for a kiosk with its own Z, from a till: a manager's approval too (kiosk_z.py).
         try:
@@ -294,11 +310,18 @@ def post_till_kiosk_command(
 def list_kiosks(
     company_id: Optional[uuid.UUID] = Query(None, alias="companyId"),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    area_id: Optional[str] = Query(None, alias="areaId"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    return svc.list_kiosks(db, current_user, active_tenant_id, company_id=company_id, shop_id=shop_id)
+    """The kiosks in scope; `areaId=<id|none>` — of one point of sale, or of none (P:/specs/area-gaps.md §4)."""
+    from app.services.areas import parse_area_filter
+
+    return svc.list_kiosks(
+        db, current_user, active_tenant_id, company_id=company_id, shop_id=shop_id,
+        area_filter=parse_area_filter(area_id),
+    )
 
 
 @router.get("/defaults")
@@ -480,6 +503,11 @@ def create_kiosk(
             db, current_user, machine,
             name=body.name, controller_ids=body.controller_machine_ids, lock_device=body.lock_device,
         )
+        if body.controller_source:
+            # "שליטה מקופות" (app/services/kiosk_controllers.py), on the kiosk itself.
+            from app.services import kiosk_controllers
+
+            kiosk_controllers.set_source(db, machine, body.controller_source, current_user)
     except device_license.LicenseRefused as refused:
         # "סוג רישיון": a "קופה בלבד" till never becomes a kiosk (409 `license_till_only`, Hebrew `message`).
         db.rollback()
@@ -514,6 +542,13 @@ def patch_kiosk(
             db, machine, device,
             name=body.name, enabled=body.enabled, controller_ids=body.controller_machine_ids,
         )
+        if body.controller_source is not None:
+            # "שליטה מקופות" on the kiosk itself; "inherit" — back to the levels above.
+            from app.services import kiosk_controllers
+
+            kiosk_controllers.set_source(
+                db, machine, None if body.controller_source == "inherit" else body.controller_source, current_user,
+            )
     except device_license.LicenseRefused as refused:
         # "סוג רישיון": a "קיוסק בלבד" kiosk is never switched off — it would work as a till (409).
         db.rollback()

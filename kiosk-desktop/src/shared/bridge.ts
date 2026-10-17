@@ -466,10 +466,17 @@ export interface AdminWorkMode {
 
 export interface TechnicianInfo {
   machine: KioskView['machine'];
+  /**
+   * "רשומות מהמכשיר הקודם (N) — לא נשלחו, נשמרו בגיבוי": outbox rows made under another pairing (a forced unpair, then a
+   * pairing to another machine) — held, never sent here; they go again only if the device is paired to their machine.
+   */
+  foreignRows?: { count: number; title: string; lines: string[]; machineIds: string[] } | null;
   deviceRole: string | null;
   /** "סוג רישיון" (core/deviceLicense.ts): the product, "סוג רישיון: …", and the mismatch warning; null — none said. */
   license?: { product: string; label: string | null; info: string | null; warning: string | null } | null;
   shopName: string | null;
+  /** "נקודת מכירה" (machines/me `areaName`, P:/specs/area-gaps.md §1); null / absent — none. */
+  areaName?: string | null;
   companyName: string | null;
   network: { online: boolean; lastBeatOkAt: number | null; serverUrl: string | null; interfaces: Array<{ name: string; address: string }> };
   printer: AdminInfo['printer'];
@@ -849,4 +856,6 @@ export type TechnicianAction =
   /** The manager's menu's checks, from here too: "בדיקה מול מכשיר המזומן", "בדיקת חיבור לשרת CashMag", "הפקת Z / סגירת משמרת". */
   | { type: 'cashRecheck' }
   | { type: 'cashmagCheck' }
-  | { type: 'kioskZ' };
+  | { type: 'kioskZ' }
+  /** "ייצוא לקובץ": the rows of the previous pairing (held, never sent under this one) to unpair-backups. */
+  | { type: 'exportForeign' };

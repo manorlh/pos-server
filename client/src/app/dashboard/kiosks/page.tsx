@@ -24,7 +24,7 @@ import { useAuth } from '@/lib/auth';
 import { usePageScope } from '@/lib/scope';
 import { areaOptionsFor, isAreaNarrowed } from '@/lib/areaScope';
 import { sameId } from '@/lib/entityLookup';
-import { fetchKiosks, type KioskLevel, type KioskSummary } from '@/lib/kioskApi';
+import { fetchKiosks, filterKiosksByArea, kioskAreaOptions, type KioskLevel, type KioskSummary } from '@/lib/kioskApi';
 import { KioskList } from '@/components/dashboard/kiosks/kiosk-list';
 import { KioskListExport } from '@/components/dashboard/kiosks/kiosk-list-export';
 import { KioskDetailDialog } from '@/components/dashboard/kiosks/kiosk-detail-dialog';
@@ -70,6 +70,12 @@ export default function KiosksPage() {
   });
   const kiosks = useMemo(() => kiosksQuery.data ?? [], [kiosksQuery.data]);
   const detail = kiosks.find((k) => k.machineId === detailId) ?? null;
+  // "נקודת מכירה" (P:/specs/area-gaps.md §4): '' — all, 'none' — kiosks with none, else one area's.
+  // Follows the top bar's point of sale (P:/specs/chain-areas.md §2) until the list's own filter is changed.
+  const [chosenFilter, setAreaFilter] = useState<string | null>(null);
+  const areaFilter = chosenFilter ?? effective.areaId ?? '';
+  const areaOptions = useMemo(() => kioskAreaOptions(kiosks), [kiosks]);
+  const shownKiosks = useMemo(() => filterKiosksByArea(kiosks, areaFilter), [kiosks, areaFilter]);
 
   // "נקודת מכירה" (P:/specs/chain-areas.md §5): the shop's live points of sale the user may pick; the top bar's
   // one by default. A manager of points of sale has only that level and the kiosk's.
@@ -177,12 +183,29 @@ export default function KiosksPage() {
                 <RefreshCw className={cn('h-3.5 w-3.5', kiosksQuery.isFetching && 'animate-spin')} /> {t('list.refreshing')}
               </span>
               <span className="flex flex-wrap items-center gap-2">
-                {kiosks.length > 0 ? <span className="text-xs text-muted-foreground">{t('list.count', { n: kiosks.length })}</span> : null}
+                {areaOptions.length > 0 ? (
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {t('list.areaFilter')}
+                    <select
+                      className="h-8 rounded-md border bg-background px-2 text-xs text-foreground"
+                      value={areaFilter}
+                      onChange={(e) => setAreaFilter(e.target.value)}
+                    >
+                      <option value="">{t('list.areaAll')}</option>
+                      {areaOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.value === 'none' ? t('list.areaNone') : o.label} ({o.count})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {kiosks.length > 0 ? <span className="text-xs text-muted-foreground">{t('list.count', { n: shownKiosks.length })}</span> : null}
                 <KioskListExport
-                  kiosks={kiosks}
+                  kiosks={shownKiosks}
                   nowMs={nowMs}
                   place={shop?.name ?? null}
-                  disabled={!kiosksQuery.data || kiosks.length === 0}
+                  disabled={!kiosksQuery.data || shownKiosks.length === 0}
                 />
               </span>
             </div>
@@ -209,7 +232,7 @@ export default function KiosksPage() {
                 ) : null}
               </div>
             ) : (
-              <KioskList kiosks={kiosks} nowMs={nowMs} onManage={(k) => setDetailId(k.machineId)} onSettings={openSettings} />
+              <KioskList kiosks={shownKiosks} nowMs={nowMs} onManage={(k) => setDetailId(k.machineId)} onSettings={openSettings} />
             )}
           </div>
         ) : (

@@ -63,6 +63,8 @@ export interface KioskTillMode {
   licenseProduct?: 'till' | 'kiosk' | 'kiosk_till' | null;
   licenseProductLabel?: string | null;
   byLicense?: boolean;
+  /** "מצב עבודה" from a controlling till (P:/specs/area-gaps.md §3): "משולב" and the gate on. */
+  tillSwitch?: boolean;
 }
 
 /** The screen the kiosk lays itself out on (P:/specs/kiosk-landscape-till-mode.md §2), as it reported it. */
@@ -91,6 +93,9 @@ export interface KioskSummary {
   posNumber: string | null;
   shopId: string | null;
   shopName: string | null;
+  /** "נקודת מכירה" of the kiosk (P:/specs/area-gaps.md §4); null — none (absent from an older server). */
+  areaId?: string | null;
+  areaName?: string | null;
   companyId: string | null;
   enabled: boolean;
   online: boolean;
@@ -154,7 +159,47 @@ export interface KioskSummary {
   terminalIdentity?: KioskTerminalIdentity | null;
   controllerMachineIds: string[];
   controllers: KioskControllerRef[];
+  /** "שליטה מקופות" (pos-server app/services/kiosk_controllers.py): as it resolves, and as set on the kiosk itself (null — inherited). */
+  controllerSource?: KioskControllerSource;
+  controllerSourceOwn?: KioskControllerSource | null;
+  /** The tills of the kiosk's point of sale that control it by `area` / `both`. */
+  areaControllers?: KioskControllerRef[];
+  /** Every till that controls it now (the list and / or the point of sale). */
+  controllersEffective?: string[];
 }
+
+/**
+ * "נקודת מכירה" filter of the kiosks page (P:/specs/area-gaps.md §4): the areas the kiosks stand in, by name,
+ * then "none" last — each with its count. Empty when no kiosk has an area (no filter is shown then).
+ */
+export function kioskAreaOptions(kiosks: KioskSummary[]): Array<{ value: string; label: string; count: number }> {
+  const byArea = new Map<string, { label: string; count: number }>();
+  let none = 0;
+  for (const k of kiosks) {
+    if (!k.areaId) {
+      none += 1;
+      continue;
+    }
+    const entry = byArea.get(k.areaId) ?? { label: k.areaName || k.areaId.slice(0, 8), count: 0 };
+    entry.count += 1;
+    byArea.set(k.areaId, entry);
+  }
+  if (byArea.size === 0) return [];
+  const out = [...byArea.entries()]
+    .map(([value, e]) => ({ value, label: e.label, count: e.count }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'he-IL', { sensitivity: 'base', numeric: true }));
+  return none > 0 ? [...out, { value: 'none', label: 'none', count: none }] : out;
+}
+
+/** The kiosks of one area ('' — all; 'none' — those with none). */
+export function filterKiosksByArea(kiosks: KioskSummary[], area: string): KioskSummary[] {
+  if (!area) return kiosks;
+  if (area === 'none') return kiosks.filter((k) => !k.areaId);
+  return kiosks.filter((k) => k.areaId === area);
+}
+
+/** "שליטה מקופות" (pos-server app/services/kiosk_controllers.py). */
+export type KioskControllerSource = 'list' | 'area' | 'both';
 
 export interface KioskTerminalIdentity {
   /** The effective expected terminal number; it counts for a kiosk only when `expectedSource` is "machine". */
@@ -331,6 +376,7 @@ export async function createKiosk(body: {
   name?: string;
   controllerMachineIds?: string[];
   lockDevice?: boolean;
+  controllerSource?: KioskControllerSource;
 }): Promise<KioskSummary> {
   const { data } = await api.post<KioskSummary>('/kiosks', body);
   return data;
@@ -338,7 +384,13 @@ export async function createKiosk(body: {
 
 export async function updateKiosk(
   machineId: string,
-  body: { name?: string; enabled?: boolean; controllerMachineIds?: string[] },
+  body: {
+    name?: string;
+    enabled?: boolean;
+    controllerMachineIds?: string[];
+    /** "inherit" clears the kiosk's own value. */
+    controllerSource?: KioskControllerSource | 'inherit';
+  },
 ): Promise<KioskSummary> {
   const { data } = await api.patch<KioskSummary>(`/kiosks/${machineId}`, body);
   return data;

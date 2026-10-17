@@ -45,7 +45,19 @@ export interface OutboxRow {
   attempts: number;
   last_error: string | null;
   next_at: number;
+  /** The pairing the row was made under (schema 3); null — made before, or while unpaired. */
+  machine_id?: string | null;
+  tenant_id?: string | null;
 }
+
+/** The pairing the device is under now: its rows are the ones sent, counted and refused over. */
+export interface OutboxOwner {
+  machineId: string;
+  tenantId: string | null;
+}
+
+/** Owner unknown (a row from before schema 3 whose pairing could not be told): never sent under any pairing. */
+export const UNKNOWN_OWNER = 'unknown';
 
 const BACKOFF_MIN_MS = 60_000;
 const BACKOFF_MAX_MS = 3_600_000;
@@ -57,7 +69,23 @@ export function backoffMs(attempts: number): number {
 export class Outbox {
   private listeners = new Set<() => void>();
 
-  constructor(private readonly db: Db) {}
+  /**
+   * `owner`: the pairing now (null — unpaired). Without one (tests, tools) every row is this device's, as before. With
+   * one, the rows of another pairing (another machine, or tenant) are held: never due, never counted, never sent —
+   * `foreign()` lists them (the technician's "רשומות מהמכשיר הקודם").
+   */
+  constructor(
+    private readonly db: Db,
+    private readonly owner: () => OutboxOwner | null = () => null,
+  ) {}
+
+  /** The WHERE of this pairing's rows ('' — no pairing: every row). */
+  private mine(): { sql: string; params: string[] } {
+    const o = this.owner();
+    if (!o) return { sql: '', params: [] };
+    if (o.tenantId) return { sql: ' AND machine_id = ? AND (tenant_id IS NULL OR tenant_id = ?)', params: [o.machineId, o.tenantId] };
+    return { sql: ' AND machine_id = ?', params: [o.machineId] };
+  }
 
   onEnqueue(fn: () => void): () => void {
     this.listeners.add(fn);
@@ -66,23 +94,74 @@ export class Outbox {
 
   /** Idempotent: one row per (kind, ref). Call inside the transaction that writes the entity. */
   enqueue(kind: OutboxKind, refId: string): void {
-    this.db.run('INSERT OR IGNORE INTO outbox (kind, ref_id, created_at) VALUES (?, ?, ?)', kind, refId, new Date().toISOString());
+    const o = this.owner();
+    this.db.run(
+      'INSERT OR IGNORE INTO outbox (kind, ref_id, created_at, machine_id, tenant_id) VALUES (?, ?, ?, ?, ?)',
+      kind,
+      refId,
+      new Date().toISOString(),
+      o?.machineId ?? null,
+      o?.tenantId ?? null,
+    );
     queueMicrotask(() => this.listeners.forEach((fn) => fn()));
   }
 
-  /** Every row whose backoff is over. */
+  /** Every row of this pairing whose backoff is over. */
   due(nowMs = Date.now()): OutboxRow[] {
-    return this.db.all<OutboxRow>('SELECT * FROM outbox WHERE next_at <= ? ORDER BY seq', nowMs);
+    const m = this.mine();
+    return this.db.all<OutboxRow>(`SELECT * FROM outbox WHERE next_at <= ?${m.sql} ORDER BY seq`, nowMs, ...m.params);
   }
 
+  /** This pairing's rows. */
   all(): OutboxRow[] {
+    const m = this.mine();
+    return this.db.all<OutboxRow>(`SELECT * FROM outbox WHERE 1 = 1${m.sql} ORDER BY seq`, ...m.params);
+  }
+
+  /** Every row on the device, whoever's (the backups). */
+  everything(): OutboxRow[] {
     return this.db.all<OutboxRow>('SELECT * FROM outbox ORDER BY seq');
   }
 
+  /** The rows of another pairing (held; none while unpaired — nothing is sent then). */
+  foreign(): OutboxRow[] {
+    if (!this.owner()) return [];
+    const mine = new Set(this.all().map((r) => r.seq));
+    return this.everything().filter((r) => !mine.has(r.seq));
+  }
+
+  /** This pairing's rows (of one kind). */
   count(kind?: OutboxKind): number {
+    const m = this.mine();
     return kind
-      ? (this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM outbox WHERE kind = ?', kind)?.n ?? 0)
-      : (this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM outbox')?.n ?? 0);
+      ? (this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM outbox WHERE kind = ?${m.sql}`, kind, ...m.params)?.n ?? 0)
+      : (this.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM outbox WHERE 1 = 1${m.sql}`, ...m.params)?.n ?? 0);
+  }
+
+  /** This pairing's rows per kind. */
+  countsByKind(): Array<{ kind: string; n: number }> {
+    const m = this.mine();
+    return this.db.all<{ kind: string; n: number }>(`SELECT kind, COUNT(*) AS n FROM outbox WHERE 1 = 1${m.sql} GROUP BY kind`, ...m.params);
+  }
+
+  /** This pairing's rows of these kinds, gone (after "ניתוק בכל זאת" — they are in the backup). */
+  removeKinds(kinds: readonly string[]): void {
+    const m = this.mine();
+    this.db.tx(() => {
+      for (const k of kinds) this.db.run(`DELETE FROM outbox WHERE kind = ?${m.sql}`, k, ...m.params);
+    });
+  }
+
+  /** Rows with no owner yet (from before schema 3, or made while unpaired): `owner` tells each one's. */
+  stampUnowned(owner: (row: OutboxRow) => { machineId: string; tenantId: string | null }): number {
+    const rows = this.db.all<OutboxRow>('SELECT * FROM outbox WHERE machine_id IS NULL');
+    this.db.tx(() => {
+      for (const r of rows) {
+        const o = owner(r);
+        this.db.run('UPDATE outbox SET machine_id = ?, tenant_id = ? WHERE seq = ?', o.machineId, o.tenantId, r.seq);
+      }
+    });
+    return rows.length;
   }
 
   remove(kind: OutboxKind, refId: string): void {
