@@ -13,7 +13,7 @@ import { LABELS, drawerCase, tillTableCase, type DrawerInput } from '@dash-lib/c
 
 const FIXTURE = path.join(__dirname, 'fixtures', 'x_z_cash_with_tips_golden.json');
 const SERVER_COPY = path.join(__dirname, '..', '..', 'server', 'tests', 'fixtures', 'x_z_cash_with_tips_golden.json');
-const GOLDEN_SHA256 = '9e7ccd52d809f17d5633e2dfbbf51107076c5afc708097aa0903e15cb379b13d';
+const GOLDEN_SHA256 = '1f87e1c89566b147a4c097febe5c789b73f0a16340f94275757eb31f82c0eb98';
 
 const bytes = () => readFileSync(FIXTURE);
 const golden = () => JSON.parse(bytes().toString('utf8'));

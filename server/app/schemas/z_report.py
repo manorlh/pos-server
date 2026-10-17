@@ -81,6 +81,11 @@ class ZReportOut(BaseModel):
     #: tips the drawers could not pay, owed to staff — Σ of what the closes froze (0 for an older close).
     #: Information: not in `expectedCash`. Null with `cardTipsFromDrawer`.
     card_tips_unpaid: Optional[Decimal] = Field(None, alias="cardTipsUnpaid")
+    #: "מזומן במכשיר": the part of the cash a cash device (CashMag recycler / PayLink station) took — in the
+    #: device, never in a drawer, so out of `expectedCash` (still in the cash takings: fiscal figures unchanged).
+    #: Null when there was none. `deviceCashByKind`: per kind (`cashmag` / `paylink`), decimal strings.
+    device_cash: Optional[Decimal] = Field(None, alias="deviceCash")
+    device_cash_by_kind: Optional[Dict[str, str]] = Field(None, alias="deviceCashByKind")
     #: "מזומן במגירה": cash sales (net of cash refunds) + cash tips − `cardTipsFromDrawer`.
     #: Null with it.
     drawer_cash: Optional[Decimal] = Field(None, alias="drawerCash")

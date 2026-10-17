@@ -156,7 +156,14 @@ export function SectionTipsRows({ s }: { s: DrawerFigures }) {
 export function ShiftCashWithTips({
   shift,
 }: {
-  shift: { openingCash?: Money; totalCash?: Money; totalCashTips?: Money; tillTotals?: Record<string, unknown> | null; open?: boolean };
+  shift: {
+    openingCash?: Money;
+    totalCash?: Money;
+    totalDeviceCash?: Money;
+    totalCashTips?: Money;
+    tillTotals?: Record<string, unknown> | null;
+    open?: boolean;
+  };
 }) {
   const t = useTranslations('cashWithTips');
   const labels = useLabels();

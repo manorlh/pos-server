@@ -212,9 +212,12 @@ class _ShiftView:
         till = dict(shift.till_totals) if isinstance(shift.till_totals, dict) else {}
         if totals is None:
             self.total_cash = shift.total_cash
+            self.total_device_cash = getattr(shift, "total_device_cash", None)
             self.total_cash_tips = shift.total_cash_tips
         else:
             self.total_cash = totals.total_cash
+            # "מזומן במכשיר" (z_builder.device_cash_of): never the drawer's.
+            self.total_device_cash = totals.total_device_cash
             self.total_cash_tips = totals.total_cash_tips
         if movements is not None:
             cash_in, cash_out, deposits = movements
@@ -746,6 +749,8 @@ def build(
             "drawer": {
                 "opening": _money(cash["opening"]),
                 "cashSales": _money(cash["cash_sales"]),
+                # "מזומן במכשיר": inside cashSales, out of the expected — zero when none.
+                "deviceCash": _money(cash["device_cash"]),
                 "cashTips": _money(cash["cash_tips"]),
                 "cashIn": _money(movements[0]),
                 "cashOut": _money(movements[1]),
@@ -791,7 +796,8 @@ def _cash_with_tips(cash: Dict[str, Any], sections: Sequence[Dict[str, Any]], ne
 
     movements = cash["cash_movements"] or ZEC.NONE
     inp = {
-        "opening": cash["opening"], "cashSales": cash["cash_sales"], "cashTips": cash["cash_tips"],
+        "opening": cash["opening"], "cashSales": cash["cash_sales"], "deviceCash": cash["device_cash"],
+        "cashTips": cash["cash_tips"],
         "movements": {"cashIn": movements[0], "cashOut": movements[1], "deposits": movements[2]},
         "wallet": {"walletIn": cash["cash_wallets"][0], "walletDeposits": cash["cash_wallets"][1]},
         "between": cash["between_shifts"],
@@ -908,6 +914,9 @@ class _ReportAsZ:
         self.vat_total = _dec(summary["vatTotal"]) if summary["vatTotal"] is not None else None
         self.payment_breakdown = summary["paymentBreakdown"]
         self.total_cash_sales = _dec(drawer["cashSales"])
+        # "מזומן במכשיר" on the paper's payments and drawer block (z_print.device_cash_of).
+        if _dec(drawer.get("deviceCash")):
+            self.header["deviceCash"] = str(_dec(drawer.get("deviceCash")))
         self.total_card_sales = None
         self.total_tips = _dec(summary["tips"]["total"])
         self.total_cash_tips = _dec(summary["tips"]["cash"])

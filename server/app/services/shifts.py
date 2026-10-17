@@ -954,6 +954,7 @@ def shift_totals_out(shift: Shift) -> Optional[ShiftTotalsOut]:
         discounts_total=shift.discounts_total,
         total_refunds=shift.total_refunds,
         total_cash=shift.total_cash,
+        total_device_cash=getattr(shift, "total_device_cash", None),
         total_card=shift.total_card,
         total_exchange=shift.total_exchange,
         total_tips=shift.total_tips,

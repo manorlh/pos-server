@@ -20,9 +20,11 @@ Three things, all pure (Decimal, two places — never a float):
 * **The per-till table** (§3): a shop / area Z or X — each drawer apart (one till's cash never
   pays another till's tips), a totals row, and the unpaid card tips of the day.
 
-Inputs are the golden's: `{opening, cashSales, cashTips, cardTips, movements (None = not part of
-this expected), wallet, between, param, shortfall, askChoice, showDrawerCash}`, money as decimal
-strings or Decimals.
+Inputs are the golden's: `{opening, cashSales, deviceCash, cashTips, cardTips, movements (None = not
+part of this expected), wallet, between, param, shortfall, askChoice, showDrawerCash}`, money as decimal
+strings or Decimals. `cashSales` is every cash taking (the X's / Z's cash); `deviceCash` ("מזומן במכשיר",
+absent = 0) the part of it a cash device (CashMag recycler / PayLink station) took — in the device, never
+in the drawer: its own line, off the total and off what the drawer may pay tips from.
 """
 from __future__ import annotations
 
@@ -47,11 +49,17 @@ PAID_KEY = "cardTipsFromDrawer"
 UNPAID_KEY = "cardTipsUnpaid"
 FROZEN_SHORTFALL_KEY = "cardTipsShortfall"
 
+#: A Z section's / X's "מזומן במכשיר": the cash its cash devices took (inside `totalCash` / `cashSalesNet`,
+#: never in `expectedCash`), and per device kind (`cashmag` / `paylink`).
+DEVICE_CASH_KEY = "deviceCash"
+DEVICE_CASH_BY_KIND_KEY = "deviceCashByKind"
+
 #: The screens' words (the golden's `labels`).
 LABELS: Dict[str, str] = {
     "title": "מזומן במגירה",
     "opening": "קופה פותחת",
     "cashSales": "מזומן ממכירות",
+    "deviceCash": "מזומן במכשיר",
     "cashTips": "טיפים במזומן",
     "cashIn": "הכנסות מזומן",
     "cashOut": "הוצאות",
@@ -95,7 +103,7 @@ PAPER_LABELS: Dict[str, str] = {
 
 #: The order of the block's lines (§1).
 LINE_KEYS = (
-    "opening", "cashSales", "cashTips", "cashIn", "cashOut", "deposits", "walletIn", "walletDeposits",
+    "opening", "cashSales", "deviceCash", "cashTips", "cashIn", "cashOut", "deposits", "walletIn", "walletDeposits",
     "between", "cardTips", "cardTipsPaid", "cardTipsUnpaid", "total", "short",
 )
 
@@ -177,7 +185,10 @@ def _wallet(inp: Dict[str, Any]) -> Tuple[Decimal, Decimal]:
 def available_of(inp: Dict[str, Any]) -> Decimal:
     """The expected cash before the tips payout (§2 "available")."""
     win, wdep = _wallet(inp)
-    total = _z(inp.get("opening")) + _z(inp.get("cashSales")) + _z(inp.get("cashTips")) + wdep - win + _z(inp.get("between"))
+    total = (
+        _z(inp.get("opening")) + _z(inp.get("cashSales")) - _z(inp.get("deviceCash")) + _z(inp.get("cashTips"))
+        + wdep - win + _z(inp.get("between"))
+    )
     mv = _movements(inp)
     if mv is not None:
         total += mv[0] - mv[1] - mv[2]
@@ -208,6 +219,11 @@ def block(
     total = opening + sales + ctips
     add("opening", opening)
     add("cashSales", sales)
+    # "מזומן במכשיר": inside the cash takings, in the device — never the drawer's.
+    device = _z(inp.get("deviceCash"))
+    if device != 0:
+        add("deviceCash", -device)
+        total -= device
     add("cashTips", ctips)
     mv = _movements(inp)
     if mv is not None:
@@ -404,6 +420,8 @@ def figures_of_section(s: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], Opti
     inp: Dict[str, Any] = {
         "opening": opening,
         "cashSales": sales,
+        # "מזומן במכשיר" (absent: none — a Z from before it, or no cash device): out of `expectedCash` already.
+        "deviceCash": _z(s.get(DEVICE_CASH_KEY)),
         "movements": None if mv is None else {k: _z(mv.get(k)) for k in ("cashIn", "cashOut", "deposits")},
         "wallet": {"walletIn": _z((w or {}).get("walletIn")), "walletDeposits": _z((w or {}).get("walletDeposits"))},
         "between": _z(s.get("betweenShiftAdjustments")),

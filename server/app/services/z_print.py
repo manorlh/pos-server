@@ -268,10 +268,48 @@ def _vat_rows(z: ZReport, dealer_type: Optional[str] = None) -> List[Optional[di
     ]
 
 
+#: "מזומן במכשיר" — cash a cash device took (inside "מזומן", never in the drawer) — and its kinds.
+DEVICE_CASH_LABEL = "מזומן במכשיר"
+DEVICE_KIND_NAMES = {"cashmag": "CashMag", "paylink": "PayLink"}
+
+
+def device_cash_of(z: Any) -> Optional[Dict[str, Any]]:
+    """
+    A Z's "מזומן במכשיר": `{"total": Decimal, "byKind": {kind: Decimal}}` — as its header froze it, else Σ of its
+    sections' (a till Z, a till's own section); None when there was none (or a Z from before it).
+    """
+    header = getattr(z, "header", None) or {}
+    if _dec(header.get("deviceCash")):
+        kinds = header.get("deviceCashByKind") if isinstance(header.get("deviceCashByKind"), dict) else {}
+        return {"total": _dec(header.get("deviceCash")), "byKind": {k: _dec(v) or ZERO for k, v in kinds.items()}}
+    total = ZERO
+    kinds: Dict[str, Decimal] = {}
+    for s in _sections_of(z):
+        total += _dec(s.get("deviceCash")) or ZERO
+        for k, v in (s.get("deviceCashByKind") or {}).items() if isinstance(s.get("deviceCashByKind"), dict) else ():
+            kinds[k] = kinds.get(k, ZERO) + (_dec(v) or ZERO)
+    if total == ZERO:
+        return None
+    return {"total": total, "byKind": {k: v for k, v in kinds.items() if v != ZERO}}
+
+
+def _device_rows(device: Optional[Dict[str, Any]]) -> List[Optional[dict]]:
+    """Under "מזומן": "מזומן במכשיר" and — with more than one kind of device — each kind's."""
+    if not device:
+        return []
+    out: List[Optional[dict]] = [row(DEVICE_CASH_LABEL, money(device["total"]))]
+    kinds = device.get("byKind") or {}
+    if len(kinds) > 1:
+        for kind in sorted(kinds):
+            out.append(row(f"{DEVICE_CASH_LABEL} · {DEVICE_KIND_NAMES.get(kind, kind)}", money(kinds[kind])))
+    return out
+
+
 def _payment_rows(z: ZReport) -> List[Optional[dict]]:
     b = _payment_buckets(z.payment_breakdown, z)
     return [
         row("מזומן", money(b["cash"])),
+        *_device_rows(device_cash_of(z)),
         row("אשראי", money(b["card"])),
         row("שוברי הפקה", money(b["voucher"])),
         row("אחר", money(b["other"])),
@@ -299,13 +337,18 @@ DRAWER_CASH_LABEL = "מזומן במגירה"
 
 
 def _section_drawer_cash(s: dict) -> Optional[Decimal]:
-    """A section's drawer cash: as frozen, else (no card tips paid out) its cash + cash tips."""
+    """
+    A section's drawer cash: as frozen, else (no card tips paid out) its cash − its cash device's ("מזומן
+    במכשיר", never in the drawer) + cash tips.
+    """
     if s.get("drawerCash") is not None:
         return _dec(s.get("drawerCash"))
     cash = _dec(s.get("cashSalesNet"))
     if cash is None:
         cash = _dec(s.get("totalCash"))
-    return None if cash is None else cash + (_dec(s.get("totalCashTips")) or ZERO)
+    if cash is None:
+        return None
+    return cash - (_dec(s.get("deviceCash")) or ZERO) + (_dec(s.get("totalCashTips")) or ZERO)
 
 
 def drawer_tips_of(z: ZReport) -> Optional[Dict[str, Optional[Decimal]]]:
@@ -388,8 +431,10 @@ def cash_with_tips_input(z: Any):
     between = sum((_dec(s.get("betweenShiftAdjustments")) or ZERO for s in sections), ZERO)
     movements = cash_movements_of(z)
     tips = drawer_tips_of(z)
+    device = device_cash_of(z)
     pseudo = {
         "openingCash": opening, "expectedCash": expected, "cashSalesNet": cash_sales,
+        "deviceCash": device["total"] if device else None,
         "betweenShiftAdjustments": between,
         "cashMovements": ZEC.block(movements) if movements is not None else None,
         "cashWallets": CW.block(cash_wallets_of(z)) or None,
@@ -781,6 +826,7 @@ def _till_section(s: dict) -> dict:
             *_document_rows(s),
             row("סה״כ נטו", money(net), emphasis=True),
             row("מזומן", money(s.get("totalCash"))),
+            *_device_rows(device_cash_of(_TillAsZ(s))),
             row("אשראי", money(s.get("totalCard"))),
             *_movement_rows(ZEC.movements_of_block(s.get(ZEC.BLOCK))),
             *_wallet_rows(_section_wallets(s)),

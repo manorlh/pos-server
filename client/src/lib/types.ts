@@ -1929,6 +1929,8 @@ export interface ShiftTotals {
   discountsTotal?: Money | null;
   totalRefunds?: Money | null;
   totalCash?: Money | null;
+  /** "מזומן במכשיר": the part of the cash a cash device (CashMag / PayLink) took — never in the drawer. */
+  totalDeviceCash?: Money | null;
   totalCard?: Money | null;
   totalTips?: Money | null;
   totalCashTips?: Money | null;
@@ -2351,6 +2353,10 @@ export interface ZReport {
    * Null/absent with cardTipsFromDrawer.
    */
   cardTipsUnpaid?: Money | null;
+  /** "מזומן במכשיר": the part of the cash a cash device (CashMag / PayLink) took — never in the drawer. */
+  deviceCash?: Money | null;
+  /** Per device kind (`cashmag` / `paylink`). */
+  deviceCashByKind?: Record<string, Money> | null;
   /**
    * The Z print setting `zPrintPerTillCash` (x-z-cash-with-tips §3): false = `summary_only` — a print of a
    * shop / area Z carries the drawers' summary without the per-till table. Absent on older servers (true).
@@ -2581,6 +2587,10 @@ export interface ZReportMachineSection {
   cardTipsFromDrawer?: Money | null;
   /** Card tips this till's drawer could not pay, owed to staff (x-z-cash-with-tips §2); absent with the above. */
   cardTipsUnpaid?: Money | null;
+  /** "מזומן במכשיר": the part of the cash a cash device (CashMag / PayLink) took — never in the drawer. */
+  deviceCash?: Money | null;
+  /** Per device kind (`cashmag` / `paylink`). */
+  deviceCashByKind?: Record<string, Money> | null;
   /** Net of cash refunds: the cash the period took (the block's "מזומן ממכירות"). */
   cashSalesNet?: Money | null;
   /** A self-order kiosk's part: no drawer. */

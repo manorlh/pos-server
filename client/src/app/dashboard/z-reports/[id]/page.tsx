@@ -21,6 +21,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { zShowsExempt } from '@/lib/dealerType';
 import { CashWithTipsCard, SectionTipsRows } from '@/components/dashboard/z-report/cash-with-tips';
+import { deviceCashOf } from '@/lib/drawerTips';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
@@ -271,6 +272,8 @@ function TillCard({
           </div>
           <div className="rounded border bg-muted/30 p-3">
             <PaymentBreakdownRows breakdown={s.paymentBreakdown} />
+            {/* "מזומן במכשיר": inside the cash, in the cash device (CashMag / PayLink) — out of the expected cash. */}
+            {deviceCashOf(s.deviceCash) !== null ? <MoneyRow label={t('deviceCash')} value={s.deviceCash} /> : null}
           </div>
           <div className="space-y-1 rounded border bg-muted/30 p-3">
             <MoneyRow label={t('openingCash')} value={s.openingCash} />
@@ -581,6 +584,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             </CardHeader>
             <CardContent className="text-sm">
               <PaymentBreakdownRows breakdown={z.paymentBreakdown} />
+              {deviceCashOf(z.deviceCash) !== null ? <MoneyRow label={t('deviceCash')} value={z.deviceCash} /> : null}
             </CardContent>
           </Card>
           <Card>

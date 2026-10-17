@@ -461,7 +461,11 @@ OFFLINE_COMPARED_DRAWER = (
     "openingCash", "expectedCash", "countedCash", "overShort", "cardTipsFromDrawer", "drawerCash",
     # "לא שולמו — לתשלום לעובדים" (P:/specs/x-z-cash-with-tips.md §2): Σ of what the closes froze.
     "cardTipsUnpaid",
+    # "מזומן במכשיר": the cash its cash devices took, out of `expectedCash` (absent on the cloud's side = none).
+    "deviceCash",
 )
+#: Drawer figures a section carries only when not zero: absent on the cloud's side reads 0.
+_ZERO_WHEN_ABSENT = ("deviceCash",)
 
 #: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": the figures of the `cashMovements` block a till
 #: prints in its section, compared too (the block's presence is the till's declared value).
@@ -566,8 +570,9 @@ def offline_discrepancies(
     for key in OFFLINE_COMPARED_DRAWER:
         if not till_report or key not in till_report:
             continue
-        if _differs(till_report.get(key), section.get(key)):
-            out.append({"key": key, "till": till_report.get(key), "cloud": section.get(key)})
+        cloud = section.get(key, "0.00" if key in _ZERO_WHEN_ABSENT else None)
+        if _differs(till_report.get(key), cloud):
+            out.append({"key": key, "till": till_report.get(key), "cloud": cloud})
     # The cash movements a till said went into its expected cash (when it said so).
     printed = (till_report or {}).get(ZEC.BLOCK)
     if isinstance(printed, dict):

@@ -126,6 +126,11 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         item.card_tips_from_drawer = drawer_tips["cardTipsFromDrawer"]
         item.card_tips_unpaid = drawer_tips.get("cardTipsUnpaid")
         item.drawer_cash = drawer_tips["drawerCash"]
+    # "מזומן במכשיר": the cash the tills' cash devices took — inside the cash, out of the expected cash.
+    device = z_print.device_cash_of(z)
+    if device is not None:
+        item.device_cash = device["total"]
+        item.device_cash_by_kind = {k: str(Decimal(v).quantize(Decimal("0.01"))) for k, v in device["byKind"].items()}
     # Cash In / Out and safe deposits inside the expected cash — only on a Z the parameter applied
     # to when it was produced, and as it froze them (never the parameter as it stands now).
     movements = z_print.cash_movements_of(z)

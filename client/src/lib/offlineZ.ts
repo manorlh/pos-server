@@ -19,6 +19,7 @@ const ORDER = [
   'totalDiscounts',
   'totalRefunds',
   'totalCash',
+  'deviceCash',
   'totalCard',
   'totalExchange',
   'totalTips',

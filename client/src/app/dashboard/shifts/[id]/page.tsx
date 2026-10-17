@@ -26,6 +26,7 @@ import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { Shift } from '@/lib/types';
 import { ShiftCashWithTips } from '@/components/dashboard/z-report/cash-with-tips';
+import { deviceCashOf } from '@/lib/drawerTips';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { PeriodTransmissionSummary } from '@/components/dashboard/machines/card-transmission';
 import {
@@ -306,6 +307,10 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           <CardContent className="space-y-1 text-sm">
             <MoneyRow label={t('detail.openingCash')} value={shift.openingCash} />
             <MoneyRow label={t('detail.cashTaken')} value={totals?.totalCash} />
+            {/* "מזומן במכשיר": inside the cash taken, in the cash device (CashMag / PayLink) — never the drawer. */}
+            {deviceCashOf(totals?.totalDeviceCash) !== null ? (
+              <MoneyRow label={t('detail.deviceCash')} value={totals?.totalDeviceCash} />
+            ) : null}
             <MoneyRow label={t('detail.cashTips')} value={totals?.totalCashTips} />
             <MoneyRow label={t('detail.expectedCash')} value={shift.expectedCash} strong />
             <MoneyRow label={t('detail.countedCash')}>
@@ -320,6 +325,7 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
               shift={{
                 openingCash: shift.openingCash,
                 totalCash: totals?.totalCash,
+                totalDeviceCash: totals?.totalDeviceCash,
                 totalCashTips: totals?.totalCashTips,
                 tillTotals: till,
                 open,

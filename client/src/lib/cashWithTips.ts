@@ -23,6 +23,7 @@ export const SHORTFALL_OPTIONS: readonly Shortfall[] = ['partial', 'negative', '
 export type LineKey =
   | 'opening'
   | 'cashSales'
+  | 'deviceCash'
   | 'cashTips'
   | 'cashIn'
   | 'cashOut'
@@ -45,6 +46,7 @@ export const LABELS: Record<LabelKey, string> = {
   title: 'מזומן במגירה',
   opening: 'קופה פותחת',
   cashSales: 'מזומן ממכירות',
+  deviceCash: 'מזומן במכשיר',
   cashTips: 'טיפים במזומן',
   cashIn: 'הכנסות מזומן',
   cashOut: 'הוצאות',
@@ -85,6 +87,8 @@ export interface Wallet {
 export interface DrawerInput {
   opening?: Money;
   cashSales?: Money;
+  /** "מזומן במכשיר": the part of cashSales a cash device (CashMag / PayLink) took — never in the drawer. */
+  deviceCash?: Money;
   cashTips?: Money;
   cardTips?: Money;
   movements?: Movements | null;
@@ -175,7 +179,7 @@ export function payout(param: boolean, shortfall: unknown, askChoice: unknown, a
 
 /** The expected cash before the tips payout (§2 "available"), agorot. */
 export function availableOf(inp: DrawerInput): number {
-  let total = ag(inp.opening) + ag(inp.cashSales) + ag(inp.cashTips)
+  let total = ag(inp.opening) + ag(inp.cashSales) - ag(inp.deviceCash) + ag(inp.cashTips)
     + ag(inp.wallet?.walletDeposits) - ag(inp.wallet?.walletIn) + ag(inp.between);
   if (inp.movements) total += ag(inp.movements.cashIn) - ag(inp.movements.cashOut) - ag(inp.movements.deposits);
   return total;
@@ -203,6 +207,11 @@ export function block(
   let total = opening + sales + ctips;
   add('opening', opening);
   add('cashSales', sales);
+  const device = ag(inp.deviceCash);
+  if (device !== 0) {
+    add('deviceCash', -device);
+    total -= device;
+  }
   add('cashTips', ctips);
   if (inp.movements) {
     const cin = ag(inp.movements.cashIn);
@@ -381,6 +390,8 @@ export interface DrawerFigures {
   expectedCash?: Money;
   cashSalesNet?: Money;
   totalCash?: Money;
+  /** "מזומן במכשיר": inside the cash, never in expectedCash (absent: none). */
+  deviceCash?: Money;
   betweenShiftAdjustments?: Money;
   cashMovements?: Movements | null;
   cashWallets?: Wallet | null;
@@ -406,6 +417,7 @@ export function figuresOfSection(
   const input: DrawerInput = {
     opening: money(opening),
     cashSales: money(sales),
+    deviceCash: money(ag(s.deviceCash)),
     cashTips: '0.00',
     movements: s.cashMovements
       ? { cashIn: money(ag(s.cashMovements.cashIn)), cashOut: money(ag(s.cashMovements.cashOut)), deposits: money(ag(s.cashMovements.deposits)) }
@@ -444,6 +456,7 @@ export interface ZDrawerLike {
   openingCash?: Money;
   expectedCash?: Money;
   totalCashSales?: Money;
+  deviceCash?: Money;
   betweenShiftAdjustments?: Money;
   cashMovements?: Movements | null;
   cashWallets?: Wallet | null;
@@ -471,6 +484,7 @@ export function cashWithTipsOfZ(
   if (sections.length > 0 && sections.every((s) => s.kiosk)) return null;
   const allNet = sections.length > 0 && sections.every((s) => s.cashSalesNet !== null && s.cashSalesNet !== undefined);
   const cashSales = allNet ? sections.reduce((sum, s) => sum + ag(s.cashSalesNet), 0) : ag(z.totalCashSales);
+  const device = sections.length > 0 ? sections.reduce((sum, s) => sum + ag(s.deviceCash), 0) : ag(z.deviceCash);
   const between = sections.length > 0
     ? sections.reduce((sum, s) => sum + ag(s.betweenShiftAdjustments), 0)
     : ag(z.betweenShiftAdjustments);
@@ -478,6 +492,7 @@ export function cashWithTipsOfZ(
     openingCash: z.openingCash,
     expectedCash: z.expectedCash,
     cashSalesNet: money(cashSales),
+    deviceCash: money(device),
     betweenShiftAdjustments: money(between),
     cashMovements: z.cashMovements ?? null,
     cashWallets: z.cashWallets ?? null,
@@ -532,6 +547,8 @@ export function shiftCashWithTips(
     openingCash?: Money;
     totalCash?: Money;
     totalCashTips?: Money;
+    /** "מזומן במכשיר" the cloud counted (absent: the close's own `totalDeviceCash`, else none). */
+    totalDeviceCash?: Money;
     tillTotals?: Record<string, unknown> | null;
     open?: boolean;
   },
@@ -544,6 +561,7 @@ export function shiftCashWithTips(
   const input: DrawerInput = {
     opening: shift.openingCash,
     cashSales: shift.totalCash,
+    deviceCash: shift.totalDeviceCash ?? (shift.tillTotals?.totalDeviceCash as Money) ?? null,
     cashTips: shift.totalCashTips,
     movements: moved ? { cashIn: till!.cashIn as Money, cashOut: till!.cashOut as Money, deposits: till!.deposits as Money } : null,
     wallet: till ? { walletIn: till.walletIn as Money, walletDeposits: till.walletDeposits as Money } : null,

@@ -19,7 +19,9 @@
  *   document, when there were any (`offline-summary.tsx`).
  */
 
+import { Fragment } from 'react';
 import { useTranslations } from 'next-intl';
+import { deviceCashOf } from '@/lib/drawerTips';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
@@ -58,17 +60,45 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Payments({ breakdown }: { breakdown: Record<string, Money> | null | undefined }) {
+const DEVICE_KIND_NAMES: Record<string, string> = { cashmag: 'CashMag', paylink: 'PayLink' };
+
+/**
+ * The tenders; under the cash, "מזומן במכשיר" — the part of it a cash device (CashMag / PayLink) took, never in the
+ * drawer — and, with more than one kind of device, each kind's.
+ */
+function Payments({
+  breakdown,
+  device,
+  deviceByKind,
+}: {
+  breakdown: Record<string, Money> | null | undefined;
+  device?: Money | null;
+  deviceByKind?: Record<string, Money> | null;
+}) {
   const t = useTranslations('zReports.print');
   const label = usePaymentMethodLabel();
   const entries = Object.entries(breakdown ?? {});
   if (entries.length === 0) return <Row label={t('noPayments')} value="" />;
   const rank = (k: string) => (k === 'cash' ? 0 : k === 'card' ? 1 : 2);
   entries.sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]));
+  const deviceAmount = deviceCashOf(device);
+  const kinds = Object.entries(deviceByKind ?? {}).filter(([, v]) => deviceCashOf(v) !== null);
   return (
     <>
       {entries.map(([method, amount]) => (
-        <Row key={method} label={label(method)} value={formatCurrency(amount)} />
+        <Fragment key={method}>
+          <Row label={label(method)} value={formatCurrency(amount)} />
+          {method === 'cash' && deviceAmount !== null ? (
+            <>
+              <Row label={t('deviceCash')} value={formatCurrency(deviceAmount)} />
+              {kinds.length > 1
+                ? kinds.sort((a, b) => a[0].localeCompare(b[0])).map(([kind, v]) => (
+                    <Row key={kind} label={t('deviceCashKind', { kind: DEVICE_KIND_NAMES[kind] ?? kind })} value={formatCurrency(v)} />
+                  ))
+                : null}
+            </>
+          ) : null}
+        </Fragment>
       ))}
     </>
   );
@@ -319,7 +349,7 @@ function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?:
           <Row label={t('documents')} value={count(s.transactionsCount)} />
           <SalesRows x={s} dealerType={dealerType} />
           <SubHeading>{t('paymentsTitle')}</SubHeading>
-          <Payments breakdown={s.paymentBreakdown} />
+          <Payments breakdown={s.paymentBreakdown} device={s.deviceCash} deviceByKind={s.deviceCashByKind} />
           <SubHeading>{t('cashTitle')}</SubHeading>
           <Row label={t('openingCash')} value={formatCurrency(s.openingCash)} />
           {hasBetweenShiftAdjustments(s.betweenShiftAdjustments) ? (
@@ -452,7 +482,7 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
       <Section title={t('paymentsTitle')}>
         <table className="w-full text-xs">
           <tbody>
-            <Payments breakdown={z.paymentBreakdown} />
+            <Payments breakdown={z.paymentBreakdown} device={z.deviceCash} deviceByKind={z.deviceCashByKind} />
           </tbody>
         </table>
       </Section>

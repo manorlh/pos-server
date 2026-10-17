@@ -74,6 +74,8 @@ export interface ZReportSections {
     /** "הכסף אצלי" (P:/specs/drawer-away.md §5.6): only when not zero. */
     walletIn?: Money;
     walletDeposits?: Money;
+    /** "מזומן במכשיר": cash a cash device took — out of the expected; only when not zero. */
+    deviceCash?: Money;
   } | null;
   /** "מזומן אצל עובדים (טרם הופקד)" — the whole Z's, as frozen when it was built (drawer-away §5.6). */
   cashWithStaff?: { total: Money; employees: { employeeId: string; employeeName: string | null; amount: Money }[] } | null;
@@ -232,6 +234,7 @@ export function zSectionLines(s: ZReportSections | null | undefined, L: ZSection
       [l('drawerOpening'), fmt(d.opening), false],
       [l('drawerCashReceipts'), fmt(d.cashReceipts), false],
     ];
+    if (ag(d.deviceCash)) rows.push([l('drawerDeviceCash'), fmt(money(-ag(d.deviceCash))), false]);
     if ((d.tipsPaidFromDrawer ?? null) !== null) rows.push([l('drawerTipsPaid'), fmt(neg(d.tipsPaidFromDrawer)), false]);
     if (ag(d.betweenShifts)) rows.push([l('drawerBetweenShifts'), signed(d.betweenShifts), false]);
     if (ag(d.cashIn)) rows.push([l('drawerCashIn'), fmt(d.cashIn), false]);

@@ -6,6 +6,10 @@
  * when the parameter was on); a Z and its sections carry `cardTipsFromDrawer` and
  * `drawerCash` ("מזומן במגירה") only then. Without the figure nothing new is shown. Tips
  * are no revenue: the sales and tips figures never change — only the drawer.
+ *
+ * "מזומן במכשיר": cash a cash device (CashMag recycler / PayLink station) took is inside the cash
+ * takings but never in the drawer — a Z / section / shift carries it as `deviceCash` /
+ * `totalDeviceCash` (absent: none) and the drawer leaves it out.
  */
 
 type Amount = string | number | null | undefined;
@@ -23,10 +27,26 @@ export function cardTipsFromDrawerOf(tillTotals: Record<string, unknown> | null 
   return n !== null && n >= 0 ? n : null;
 }
 
-/** "מזומן במגירה" of one shift: its cash takings + cash tips − the card tips paid from the drawer. */
-export function shiftDrawerCash(totalCash: Amount, totalCashTips: Amount, cardTipsFromDrawer: number): number {
-  const cents = Math.round(((amount(totalCash) ?? 0) + (amount(totalCashTips) ?? 0) - cardTipsFromDrawer) * 100);
+/**
+ * "מזומן במגירה" of one shift: its cash takings − its cash device's ("מזומן במכשיר") + cash tips − the card
+ * tips paid from the drawer.
+ */
+export function shiftDrawerCash(
+  totalCash: Amount,
+  totalCashTips: Amount,
+  cardTipsFromDrawer: number,
+  deviceCash: Amount = 0,
+): number {
+  const cents = Math.round(
+    ((amount(totalCash) ?? 0) - (amount(deviceCash) ?? 0) + (amount(totalCashTips) ?? 0) - cardTipsFromDrawer) * 100,
+  );
   return cents / 100;
+}
+
+/** "מזומן במכשיר" of a Z / section / shift (`deviceCash`, `totalDeviceCash`, or a close's frozen figure); null: none. */
+export function deviceCashOf(value: Amount): number | null {
+  const n = amount(value);
+  return n !== null && n !== 0 ? n : null;
 }
 
 /** Whether a Z or section carries the figure (then both rows are shown; a zero is a figure). */

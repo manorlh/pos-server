@@ -416,6 +416,7 @@ class _Acc:
             "countRequired": bool(d.get("countRequired")),
             "walletIn": opt(d.get("walletIn")),
             "walletDeposits": opt(d.get("walletDeposits")),
+            "deviceCash": opt(d.get("deviceCash")),
         }
         if self.drawer is None:
             self.drawer = part
@@ -427,7 +428,10 @@ class _Acc:
         for k in ("counted", "overShort"):
             acc[k] = None if acc[k] is None or part[k] is None else acc[k] + part[k]
         # The optional lines: the sum of those that have one; none when none does.
-        for k in ("tipsPaidFromDrawer", "tipsUnpaidFromDrawer", "cashIn", "expenses", "safeDrop", "walletIn", "walletDeposits"):
+        for k in (
+            "tipsPaidFromDrawer", "tipsUnpaidFromDrawer", "cashIn", "expenses", "safeDrop", "walletIn", "walletDeposits",
+            "deviceCash",
+        ):
             if part[k] is not None:
                 acc[k] = (acc[k] or 0) + part[k]
         acc["countRequired"] = acc["countRequired"] or part["countRequired"]
@@ -450,6 +454,7 @@ class _Acc:
             "countRequired": bool(count_required),
             "walletIn": agorot(drawer.get("walletIn")),
             "walletDeposits": agorot(drawer.get("walletDeposits")),
+            "deviceCash": agorot(drawer.get("deviceCash")),
         }
 
     def set_transmission(self, transmission: Optional[Dict[str, Any]]) -> None:
@@ -569,7 +574,9 @@ class _Acc:
                 "gap": money(d["overShort"]) if show else None,
             }
             # "הכסף אצלי" (P:/specs/drawer-away.md §5.6): only when it moved anything — else the drawer as before.
-            for k in ("walletIn", "walletDeposits"):
+            # "מזומן במכשיר": the cash receipts a cash device took are in the device, never the drawer — only when
+            # there was any, else the drawer as before.
+            for k in ("walletIn", "walletDeposits", "deviceCash"):
                 if d.get(k):
                     drawer[k] = money(d[k])
 
@@ -717,6 +724,7 @@ LABELS_HE: Dict[str, Any] = {
     "drawerExpenses": "הוצאות",
     "drawerSafeDrop": "הפקדה לכספת",
     "drawerWalletIn": "הכסף אצל עובדים",
+    "drawerDeviceCash": "מזומן במכשיר",
     "drawerWalletDeposits": "הפקדות מעובדים",
     "cashWithStaff": "מזומן אצל עובדים (טרם הופקד)",
     "cashWithStaffTotal": "סה״כ אצל עובדים",
@@ -890,6 +898,8 @@ def lines(
             (L["drawerOpening"], fmt(d.get("opening")), False),
             (L["drawerCashReceipts"], fmt(d.get("cashReceipts")), False),
         ]
+        if _ag(d.get("deviceCash")):
+            rows.append((L["drawerDeviceCash"], fmt(money(-_ag(d.get("deviceCash")))), False))
         if d.get("tipsPaidFromDrawer") is not None:
             rows.append((L["drawerTipsPaid"], fmt(_neg(d.get("tipsPaidFromDrawer"))), False))
         if _ag(d.get("betweenShifts")):
@@ -1226,6 +1236,8 @@ def _drawer_of(cash: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "walletIn": _money_text(wallet_in) if wallet_in else None,
         "walletDeposits": _money_text(wallet_deposits) if wallet_deposits else None,
+        # "מזומן במכשיר": out of the expected — printed only when not zero.
+        "deviceCash": _money_text(cash.get("device_cash")) if cash.get("device_cash") else None,
         "opening": _money_text(cash.get("opening")),
         "expected": _money_text(cash.get("expected")),
         "counted": _money_text(cash.get("counted")),
