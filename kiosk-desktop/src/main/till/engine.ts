@@ -229,6 +229,8 @@ import { TillShopXLan } from './tillShopXLan';
 import { TillItemBlocks } from './tillItemBlocks';
 import { TillPrintQueue } from './tillPrintQueue';
 import { TillCustomerDisplay } from './tillCustomerDisplay';
+import { TillMenuService } from './tillMenuService';
+import { TillKiosks } from './tillKiosks';
 import { FAILOVER_TEXT, ticketTitleOf } from '../../core/kitchen/failover';
 import { IB_TEXT } from '../../core/till/itemBlocks';
 import type { LanCall } from '../kitchen/kitchenNet';
@@ -352,6 +354,7 @@ const ENTRIES: ReadonlyArray<readonly [string, EntryKind]> = [
   [PERM.REPRINT, 'option'],
   [PERM.SHOP_X, 'legacy'],
   ['VIEW_REPORTS', 'legacy'],
+  ['KIOSK_CONTROL', 'option'],
 ];
 /** The most recent receipts "זיכוי מקבלה" lists (RecentReceiptCount). */
 const RECENT_RECEIPTS = 8;
@@ -714,6 +717,10 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly printQueue: TillPrintQueue;
   /** "מסך לקוח": the second screen's settings and state (tillCustomerDisplay.ts). */
   readonly customerDisplay: TillCustomerDisplay;
+  /** "תפריט" as the Android drawer: the profile card, the sync, the update, support, the local reports (tillMenuService.ts). */
+  readonly menu: TillMenuService;
+  /** "קיוסקים": a controlling till's kiosks (tillKiosks.ts). */
+  readonly kiosks: TillKiosks;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -754,6 +761,15 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.printQueue = new TillPrintQueue(this.ctx);
     this.customerDisplay = new TillCustomerDisplay(this.ctx);
     this.customerDisplay.start();
+    this.kiosks = new TillKiosks(this.ctx);
+    this.menu = new TillMenuService(this.ctx, {
+      zOnly: () => this.shiftsHidden(),
+      tillZMode: () => zModeOf(this.svc.cloud.heartbeat().zMode) === 'till',
+      openShiftFigures: (shiftId) => {
+        const x = this.xFigures(shiftId).till;
+        return { netAgorot: ofShekels(x.totalSales - x.totalDiscounts - x.totalRefunds), transactions: x.transactionsCount };
+      },
+    });
     this.lastTouchAt = this.lastActivityAt;
     this.sessions = new TillSessions(this.ctx, {
       completeSignIn: (user) => this.completeSignIn(user),
@@ -1044,7 +1060,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'dialog.answer':
         return this.answerDialog(String(a.dialogId ?? ''), String(a.action ?? ''), (a.answers ?? {}) as Record<string, string>);
       case 'doc.history':
-        return this.history();
+        return this.history(typeof a.hours === 'number' && a.hours > 0 ? a.hours : null);
       case 'doc.reprint':
         return this.reprint(String(a.documentId ?? ''));
       case 'doc.detail':
@@ -1199,6 +1215,36 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         this.signedIn();
         this.svc.kitchen.endRedirect(String(a.fromId ?? ''));
         return undefined;
+      case 'menu.sync':
+        this.menu.sync();
+        return undefined;
+      case 'menu.update':
+        return this.menu.update();
+      case 'menu.support':
+        return this.menu.support();
+      // The folder's reports: "דוחות בקופה" (VIEW_REPORTS) — a manager's code where the role asks one.
+      case 'report.local': {
+        const kind = (['shifts', 'tillZs', 'products', 'workers', 'tips'] as const).find((k) => k === a.kind);
+        if (!kind) return refuse('invalid_args');
+        this.menu.clearReport();
+        return this.gate('VIEW_REPORTS', () => this.menu.open(kind, a.preset));
+      }
+      case 'report.reprintZ':
+        this.menu.reprintZ(String(a.id ?? ''));
+        return undefined;
+      case 'kiosks.refresh':
+        this.kiosks.refresh();
+        return undefined;
+      case 'kiosks.command': {
+        const action = (['pause', 'resume', 'close_shift', 'till_z', 'bon_print', 'bon_handled', 'reprint_bon', 'reprint_receipt'] as const).find((x) => x === a.action);
+        if (!action) return refuse('invalid_args');
+        const kioskId = String(a.kioskId ?? '');
+        const extra = { message: typeof a.message === 'string' ? a.message : null, minutes: typeof a.minutes === 'number' ? a.minutes : null };
+        // "שליטה בקיוסק" (KIOSK_CONTROL): the lock, the reopening and a kiosk's own Z — a manager's code where the role asks.
+        if (action === 'pause' || action === 'resume' || action === 'till_z') return this.gate('KIOSK_CONTROL', (by) => this.kiosks.command(kioskId, action, extra, by), { relax: false });
+        this.kiosks.command(kioskId, action, extra, null);
+        return undefined;
+      }
       case 'blocks.list':
         return this.itemBlocks.list();
       case 'blocks.sheet':
@@ -3554,11 +3600,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /* --------------------------------------------------------- documents, copies */
 
-  private history() {
+  /** Today's documents — or, "24 השעות האחרונות", those of the last [hours]. */
+  private history(hours: number | null) {
     this.signedIn();
-    return this.svc.ledger
-      .todaysDocs(localDate(this.nowFn()))
-      .slice(0, 40)
+    const docs = hours ? this.svc.ledger.docsBetween(new Date(this.nowFn() - hours * 3_600_000).toISOString(), new Date(this.nowFn() + 60_000).toISOString()) : this.svc.ledger.todaysDocs(localDate(this.nowFn()));
+    return docs
+      .slice(0, hours ? 200 : 40)
       .map((d) => ({
         id: d.id,
         ref: formatDocNumber(d.prefix, String(d.number)),
@@ -4379,6 +4426,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       },
       dialog,
       menuHidden: parseHiddenMenu(params[HIDDEN_MENU_PARAM]),
+      ...(user && !this.locked ? { menu: this.menu.state() } : {}),
+      ...(user && !this.locked && this.kiosks.count() > 0 ? { kiosks: this.kiosks.state() } : {}),
       tileText: tileTextOf(params),
       drawer: this.drawer.state(),
       users: this.sessions.state(),

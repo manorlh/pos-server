@@ -3731,11 +3731,29 @@ export class KioskService extends EventEmitter {
     ) ?? '';
   }
 
-  private printZ(z: Record<string, unknown>) {
+  /**
+   * "דוחות Z" in the till's menu: a Z this till holds, on paper again — a copy ("העתק"), never a new number. False: no such
+   * Z here (or its answer unreadable).
+   */
+  reprintTillZ(id: string): boolean {
+    const row = this.db.get<{ payload: string }>('SELECT payload FROM till_zs WHERE id = ?', id);
+    if (!row) return false;
+    let z: Record<string, unknown> | null = null;
+    try {
+      z = ((JSON.parse(row.payload) as Record<string, unknown>).zReport ?? null) as Record<string, unknown> | null;
+    } catch {
+      z = null;
+    }
+    if (!z) return false;
+    this.printZ(z, true);
+    return true;
+  }
+
+  private printZ(z: Record<string, unknown>, copy = false) {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
     const zNumber = z.zNumber ?? z.number ?? null;
-    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy: false, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date() }), {
+    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date() }), {
       kind: 'report',
       code: 'z',
       number: zNumber !== null && zNumber !== undefined ? String(zNumber) : null,
@@ -4919,6 +4937,21 @@ export class KioskService extends EventEmitter {
       options: [{ id: LOCAL_DESTINATION, label: REMOTE_DOC_TEXT.local }, ...remote.map((d) => ({ id: d.id, label: d.name })), { id: TILL_CHOICE_ASK, label: 'לשאול בכל פעם' }],
       scope: s.enabled ? REMOTE_DOC_TEXT.scope(REMOTE_DOC_TEXT.scopeOf(s.documents)) : null,
     };
+  }
+
+  /** "תמיכה מרחוק" in the till's menu: TeamViewer QuickSupport when installed (the path it ran), else null. */
+  launchQuickSupport(): Promise<string | null> {
+    return this.platform.launchQuickSupport();
+  }
+
+  /** "עדכון גרסה" in the till's menu: the updater as the technician sees it; null — no updater here (tests, a browser). */
+  updateView(): UpdateView | null {
+    return this.platform.updateStatus?.() ?? null;
+  }
+
+  /** "התקן" on the menu's "עדכון גרסה": the release that is ready, now (the app restarts into it). */
+  installUpdate(): Promise<{ ok: boolean; message?: string }> {
+    return this.platform.installUpdate ? this.platform.installUpdate() : Promise.resolve({ ok: false, message: 'לא נתמך' });
   }
 
   async technicianAction(a: TechnicianAction): Promise<TechnicianActionResult> {
