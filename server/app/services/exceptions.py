@@ -182,6 +182,12 @@ RULES: Tuple[RuleSpec, ...] = (
     # "הוחלפה קופה": a replacement device took over a till (§4.6.2) — the old and the new
     # device, who, when, why, and whether support produced its Z first.
     RuleSpec("till_replaced", True, (), "medium", "z", push_default=False),
+    # "רשומות של קופה אחרת" (P:/specs/foreign-records-upload.md §3, §4) — for support, always recorded:
+    # a document another pairing made, refused on the ordinary sync; previous-pairing records uploaded to
+    # their own till from another device; and those refused there (or the whole upload).
+    RuleSpec("document_foreign_machine", True, (), "high", "z", push_default=False),
+    RuleSpec("foreign_records_uploaded", True, (), "medium", "z", push_default=False),
+    RuleSpec("foreign_records_refused", True, (), "high", "z", push_default=False),
     # "העברת שרת מקומי" (app/services/local_server_switch.py): the shop's local server moved from
     # the cloud — who, when, from which till to which, what moved, forced or not, the old
     # server's shift closed, the shop Z released. Always recorded (high when forced).
