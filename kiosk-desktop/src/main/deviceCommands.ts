@@ -10,6 +10,9 @@
  *    `done` with {log_id} (P:/specs/device-logs-api.md §1–§2); a failed upload → `failed`;
  *  - anything else → `refused` `not_supported`.
  *
+ * A screen device (kiosk / till) polls the same list for its own actions only (`only`, `handlers`): `move_pairing`
+ * ("העבר מכשיר לקופה אחרת", P:/specs/foreign-records-upload.md §6.3); the rest is left for whoever handles it.
+ *
  * A command answered here is remembered (by id) so a slow cloud never gets it twice.
  */
 
@@ -30,6 +33,10 @@ export interface DeviceCommandsDeps {
   busy(): string | null;
   restart(): void;
   now?: () => number;
+  /** Only these actions are this poller's: any other command is left alone (no answer). */
+  only?: readonly string[];
+  /** Actions of a module's own: the answer they come to. */
+  handlers?: Record<string, (c: { id: string; params: Record<string, unknown> }) => Promise<{ status: 'done' | 'refused' | 'failed'; detail: string | null; result?: Record<string, unknown>; after?: () => Promise<void> }>>;
 }
 
 interface Command {
@@ -75,6 +82,7 @@ export class DeviceCommands {
       for (const c of r.body?.commands ?? []) {
         if (!c || typeof c.id !== 'string' || this.done.has(c.id)) continue;
         if (c.status !== 'pending' && c.status !== 'delivered') continue;
+        if (this.d.only && !this.d.only.includes(c.action)) continue;
         await this.handle(m, c);
       }
     } catch (e) {
@@ -95,6 +103,16 @@ export class DeviceCommands {
   }
 
   private async handle(m: string, c: Command): Promise<void> {
+    const own = this.d.handlers?.[c.action];
+    if (own) {
+      // Answered before anything the handler does after it: remembered as done either way.
+      this.done.add(c.id);
+      const r = await own({ id: c.id, params: c.params ?? {} }).catch((e: unknown) => ({ status: 'failed' as const, detail: String(e).slice(0, 300), result: { outcome: 'failed' } }));
+      await this.ack(m, c.id, r.status, r.detail, r.result);
+      // What must wait for the answer (a move: the old pairing's token is gone after it).
+      if ('after' in r && r.after) await r.after();
+      return;
+    }
     if (c.action === 'restart_app') {
       const busy = this.d.busy();
       if (busy) {

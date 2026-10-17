@@ -444,7 +444,8 @@ export class SyncEngine {
           return true;
         });
         if (sent.length === 0) continue;
-        const docs = sent.map((id) => documentWire(this.ledger.doc(id)!));
+        // The issuing machine on each document (P:/specs/foreign-records-upload.md §2): a cloud refuses another till's.
+        const docs = sent.map((id) => ({ ...documentWire(this.ledger.doc(id)!), machineId: this.machineId }));
         const reply = await this.api.post(this.machinePath('transactions'), { transactions: docs }, { timeoutMs: 60_000 });
         if (reply.kind === 'offline') return this.stopFlush(reply.reason);
         if (reply.kind === 'refused') {
@@ -542,10 +543,16 @@ export async function pair(
     if (reply.status === 409) return { ok: false, error: reply.detail ?? 'הקופה עדיין פתוחה', status: 409 };
     return { ok: false, error: `שגיאת שרת ${reply.status}`, status: reply.status };
   }
-  const b = reply.body ?? {};
-  if (typeof b.accessToken !== 'string' || typeof b.machineId !== 'string') return { ok: false, error: 'תשובת צימוד לא תקינה' };
-  const credentials: Credentials = {
-    serverUrl: apiBase(input.serverUrl),
+  const credentials = credentialsFrom(reply.body ?? {}, input.serverUrl);
+  if (!credentials) return { ok: false, error: 'תשובת צימוד לא תקינה' };
+  return { ok: true, credentials, machine: null };
+}
+
+/** A pairing answer (pairing/validate, or the cloud pairing's poll — the same shape) as credentials (null — not one). */
+export function credentialsFrom(b: Record<string, unknown>, serverUrl: string): Credentials | null {
+  if (typeof b.accessToken !== 'string' || typeof b.machineId !== 'string') return null;
+  return {
+    serverUrl: apiBase(serverUrl),
     accessToken: b.accessToken,
     machineId: b.machineId,
     machineCode: (b.machineCode as string) ?? null,
@@ -555,5 +562,4 @@ export async function pair(
     realtimeChannel: (b.realtimeChannel as string) ?? null,
     pairedAt: new Date().toISOString(),
   };
-  return { ok: true, credentials, machine: null };
 }

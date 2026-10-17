@@ -104,7 +104,7 @@ describe('after a forced unpair', () => {
     expect(h.svc.outbox.count()).toBe(0);
     expect(h.svc.outbox.due()).toEqual([]);
     const info = await h.svc.technicianInfo();
-    expect(info.foreignRows).toEqual({ count: 1, title: FOREIGN_TEXT.title(1), lines: ['1 × שידורי אשראי'], machineIds: [MACHINE] });
+    expect(info.foreignRows).toMatchObject({ count: 1, title: FOREIGN_TEXT.title(1), lines: ['1 × שידורי אשראי'], machineIds: [MACHINE], machines: [{ machineId: MACHINE, label: 'קופה 2', held: 1, uploaded: 0, refused: 0 }] });
     expect(info.foreignRows!.title).toBe('רשומות מהמכשיר הקודם (1) — לא נשלחו, נשמרו בגיבוי');
     // A delivery under the new pairing never sends it.
     h.sent.length = 0;

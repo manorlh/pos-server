@@ -356,6 +356,7 @@ function bridge(svc: KioskService) {
   svc.on('toast', (t) => send('kiosk:toast', t));
   ipcMain.handle('kiosk:bootstrap', () => svc.view());
   ipcMain.handle('kiosk:pair', (_e, input) => svc.pair(input));
+  ipcMain.handle('kiosk:pairingScreen', (_e, a) => svc.pairingScreen(a ?? { type: 'view' }));
   ipcMain.on('kiosk:reportFlow', (_e, input) => svc.reportFlow(input));
   ipcMain.on('kiosk:funnel', (_e, events) => svc.funnelEvents(events));
   ipcMain.handle('kiosk:battery', (_e, reading) => svc.battery(reading));
