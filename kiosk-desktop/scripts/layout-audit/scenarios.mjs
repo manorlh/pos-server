@@ -113,6 +113,8 @@ const TILL = [
   { id: 't-pay-payout', query: 'state=pay-payout' },
   { id: 't-pay-done', query: 'state=pay-done' },
   { id: 't-shift', query: 'state=sell', steps: menu('משמרת (דו״ח X)') },
+  // "מזומן במגירה" (x-z-cash-with-tips): the X's block under the figures, short and red.
+  { id: 't-shift-x-cash', query: 'state=sell', steps: [...menu('משמרת (דו״ח X)'), { tap: 'דוח X', after: 1000 }], expect: has('= מזומן במגירה (כולל טיפים)') },
   { id: 't-menu', query: 'state=sell', steps: [{ tap: 'תפריט', after: 900 }], expect: has('חסומים כעת') },
   { id: 't-menu-reports', query: 'state=sell', steps: [{ tap: 'תפריט', after: 700 }, { sel: '[data-menu=reports]', after: 600 }], expect: has('מכירות לפי מוצר') },
   { id: 't-cash-sheet', query: 'state=sell', steps: menu('מזומן במגירה'), expect: has('הכנסת מזומן') },

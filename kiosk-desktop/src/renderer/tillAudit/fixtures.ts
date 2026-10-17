@@ -21,6 +21,7 @@ import {
 } from '../../shared/till/protocol';
 import { initialState } from '../../shared/till/mockEngine';
 import { kioskControlRows } from '../../core/till/kioskControl';
+import { drawerOf } from '../../core/till/cashWithTips';
 import * as P2 from './phase2Fixtures';
 
 const LONG = [
@@ -176,7 +177,7 @@ function richState(): TillState {
       busy: false,
       note: { text: 'נשלח לקיוסק — יבוצע כשאין תשלום פתוח', ok: true },
       rows: kioskControlRows([
-        { machineId: 'k1', name: 'קיוסק כניסה ראשית — Main Entrance Kiosk A', online: true, flowState: 'ordering', ordersToday: 1234, salesTodayAgorot: 9_999_990, printerStatus: 'ok', bonPrinter: 'error', unprintedBons: 2, unprintedOrders: [{ localId: 'l1', label: '57' }], alerts: [{ kind: 'terminal', text: 'המסופון לא מגיב מזה 5 דקות' }], shiftOpen: true, zMode: 'cloud' },
+        { machineId: 'k1', name: 'קיוסק כניסה ראשית — Main Entrance Kiosk A', online: true, flowState: 'ordering', ordersToday: 1234, salesTodayAgorot: 9_999_990, printerStatus: 'ok', bonPrinter: 'error', unprintedBons: 2, unprintedOrders: [{ localId: 'l1', label: '57' }], alerts: [{ kind: 'terminal', text: 'המסופון לא מגיב מזה 5 דקות' }], shiftOpen: true, zMode: 'cloud', areaName: 'נקודת מכירה מרכזית — Main Food Court', tillMode: { mode: 'kiosk', tillSwitch: true, blockedText: 'יש הזמנה בתשלום בקיוסק' } },
         { machineId: 'k2', name: 'קיוסק טרסה', online: false, lastSeenAt: iso(40), paused: true, pausedBy: 'Jonathan Livingston-Smith', pausedAt: iso(30), pausedUntil: null, ordersToday: 0, salesTodayAgorot: 0, shiftOpen: false, zMode: 'till' },
       ]),
     },
@@ -375,6 +376,21 @@ function xReport(): XReport {
     walletDepositsAgorot: 9_000,
     vouchersAgorot: 12_990,
     voucherInfo: [{ label: 'שוברי הפקה', value: '', title: true }, { label: 'שובר #12 · ארוחת צהריים לעובדים — Annual Company Conference 2026', value: '37 פריטים · 2,345.00 ₪' }],
+    // "מזומן במגירה" (x-z-cash-with-tips): every line of the block, the drawer short (red) after paying all the card tips.
+    cardTipsFromDrawerAgorot: 9_999_990,
+    cardTipsUnpaidAgorot: 0,
+    drawerCashAgorot: -5_432_100,
+    cashBlock: drawerOf({
+      opening: 50_000,
+      cashSales: 4_567_890,
+      cashTips: 99_990,
+      cardTips: 9_999_990,
+      movements: { cashIn: 10_000, cashOut: 5_000, deposits: 4_000_000 },
+      wallet: { walletIn: 12_000, walletDeposits: 9_000 },
+      between: 0,
+      param: true,
+      shortfall: 'negative',
+    }).lines.map((l) => ({ key: l.key, label: l.label, amountAgorot: l.agorot, bold: l.bold, warn: l.warn })),
   };
 }
 
