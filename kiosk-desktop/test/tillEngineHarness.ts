@@ -102,6 +102,8 @@ export interface HarnessOptions {
   voucherLan?: TillEngineOptions['voucherLan'];
   /** The window's hooks ("גודל תצוגה": autoZoom / refreshZoom). */
   platform?: ConstructorParameters<typeof KioskService>[0]['platform'];
+  /** "ניתוק בכל זאת": where the backups go. */
+  unpairBackupDir?: string;
 }
 
 const PRODUCTS: Array<Record<string, unknown>> = [
@@ -148,6 +150,7 @@ export function harness(o: HarnessOptions = {}): Harness {
     deviceInfo: { platform: 'windows' },
     transport: printer,
     platform: o.platform,
+    unpairBackupDir: o.unpairBackupDir,
     fetch: fetchFn,
     providers: [() => terminal],
     downloader: async () => {

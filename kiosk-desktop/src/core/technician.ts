@@ -79,6 +79,32 @@ export function mayOpen(flow: { screen: string; busy: boolean }, cardInFlight: b
   return !cardInFlight && !flow.busy && flow.screen !== 'pay';
 }
 
+/**
+ * The till's screens (roles/till/TillApp.tsx — the PIN screen too, where nobody is signed in and no manager's code may
+ * be at hand): the taps may open the technician's screen unless a payment is on (the tender or a card at the terminal).
+ * A till whose engine is not up yet (`null`) may: that is when the technician is wanted most.
+ */
+export function tillTechnicianArmed(phase: 'idle' | 'tender' | 'card_waiting' | 'done' | null): boolean {
+  return phase !== 'tender' && phase !== 'card_waiting';
+}
+
+/**
+ * The six taps in the physical top-left corner, as a screen's root sees them (x, y from its own top-left): true on
+ * the tap that completes the sequence. A tap while unarmed starts the count over.
+ */
+export class TechnicianCorner {
+  private readonly taps = new TapSequence();
+
+  tap(x: number, y: number, nowMs: number, armed: boolean): boolean {
+    if (!armed) {
+      this.taps.reset();
+      return false;
+    }
+    if (!inTechnicianZone(x, y)) return false;
+    return this.taps.tap(nowMs);
+  }
+}
+
 /** PBKDF2-HMAC-SHA256 of the digits, salted with the prefix and the machine id ("pbkdf2-sha256$10000$<hex>"). */
 export type Pbkdf2 = (password: string, salt: string, iterations: number, keyLen: number) => Uint8Array;
 

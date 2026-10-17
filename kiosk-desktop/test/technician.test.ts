@@ -1,6 +1,8 @@
 import { pbkdf2Sync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { attempt, codeMatches, hashCode, inTechnicianZone, LOCKOUT_MS, mayOpen, NO_LOCK, TapSequence } from '../src/core/technician';
+import { attempt, codeMatches, hashCode, inTechnicianZone, LOCKOUT_MS, mayOpen, NO_LOCK, TapSequence, TechnicianCorner, tillTechnicianArmed } from '../src/core/technician';
+import { readFileSync } from 'node:fs';
+import { APP_IPC } from '../src/shared/till/appBridge';
 
 const pbkdf2 = (p: string, s: string, it: number, len: number) => pbkdf2Sync(p, s, it, len, 'sha256');
 
@@ -61,5 +63,42 @@ describe('the six taps', () => {
     expect(mayOpen({ screen: 'catalog', busy: true }, false)).toBe(false);
     expect(mayOpen({ screen: 'attract', busy: false }, true)).toBe(false);
     expect(mayOpen({ screen: 'attract', busy: false }, false)).toBe(true);
+  });
+});
+
+describe('the till’s six taps (roles/till/TillApp.tsx — the PIN screen too)', () => {
+  it('are armed on every till screen and with the engine not up yet, never while paying', () => {
+    expect(tillTechnicianArmed(null)).toBe(true);
+    expect(tillTechnicianArmed('idle')).toBe(true);
+    expect(tillTechnicianArmed('done')).toBe(true);
+    expect(tillTechnicianArmed('tender')).toBe(false);
+    expect(tillTechnicianArmed('card_waiting')).toBe(false);
+  });
+
+  it('open on the sixth tap in the top-left corner within 3 s; outside the zone or unarmed they do not', () => {
+    const c = new TechnicianCorner();
+    for (let i = 0; i < 5; i++) expect(c.tap(5, 5, 1_000 + i * 100, true)).toBe(false);
+    expect(c.tap(5, 5, 1_600, true)).toBe(true);
+    // Elsewhere on the screen: not counted.
+    const d = new TechnicianCorner();
+    for (let i = 0; i < 10; i++) expect(d.tap(400, 300, 1_000 + i * 100, true)).toBe(false);
+    // A payment in the middle starts the count over.
+    const e = new TechnicianCorner();
+    for (let i = 0; i < 5; i++) e.tap(5, 5, 1_000 + i * 100, true);
+    expect(e.tap(5, 5, 1_550, false)).toBe(false);
+    expect(e.tap(5, 5, 1_600, true)).toBe(false);
+    // Too slow: the window is 3 s.
+    const f = new TechnicianCorner();
+    for (let i = 0; i < 6; i++) expect(f.tap(5, 5, i * 700, true)).toBe(false);
+  });
+
+  it('reach the shell through its own channel, the till view’s preload, the main process and the shell’s menu', () => {
+    expect(APP_IPC.technician).toBe('app:technician');
+    const src = (p: string) => readFileSync(new URL(`../src/${p}`, import.meta.url), 'utf8');
+    expect(src('preload/app.ts')).toContain('openTechnician: () => ipcRenderer.send(APP_IPC.technician)');
+    expect(src('main/roles/tillElectron.ts')).toContain("ipcMain.on(APP_IPC.technician, (e) => openShell(e, 'technician'))");
+    expect(src('main/index.ts')).toContain("sendShell('shell:admin', { from: 'till', screen })");
+    expect(src('renderer/staff/ShellStaff.tsx')).toContain("p?.screen === 'technician' ? 'technician' : 'admin'");
+    expect(src('renderer/roles/till/TillApp.tsx')).toContain('host.ui.openTechnician()');
   });
 });

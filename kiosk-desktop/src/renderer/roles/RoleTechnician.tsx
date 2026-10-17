@@ -15,6 +15,7 @@ import { kiosk } from '../bridge';
 import { DISPLAY_SCALE_TEXT, DisplayScaleControl } from './DisplayScaleControl';
 import { updateLine } from './updateText';
 import { DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
+import { UnpairControl } from './UnpairControl';
 
 /** The hidden corner: put it anywhere a role screen fills the window. */
 export function useTechnicianCorner(): [boolean, (open: boolean) => void, (e: React.PointerEvent) => void] {
@@ -46,7 +47,7 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
   }, [onClose, unlocked, note]);
   const act = async (a: Parameters<typeof kiosk.technicianAction>[0]) => {
     setBusy(true);
-    const r = await kiosk.technicianAction(a).catch(() => ({ ok: false, message: 'שגיאה' }));
+    const r = await kiosk.technicianAction(a).catch((e: unknown) => ({ ok: false, message: `שגיאה: ${e instanceof Error ? e.message : String(e)}` }));
     setBusy(false);
     setNote(r.message ?? (r.ok ? 'בוצע' : 'נכשל'));
     refresh();
@@ -90,7 +91,8 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
           </div>
         ) : (
           <>
-            {note ? <div className="rounded-xl bg-white p-2 text-center text-sm font-semibold">{note}</div> : null}
+            {/* Sticky: the answer stays in sight whatever button far down the screen was pressed. */}
+            {note ? <div role="status" className="sticky top-0 z-10 whitespace-pre-wrap break-words rounded-xl bg-white p-2 text-center text-sm font-semibold shadow">{note}</div> : null}
             <div className={panel}>
               <div className="font-bold">שיוך</div>
               <div>
@@ -164,9 +166,7 @@ export function RoleTechnician({ shellView, onClose }: { shellView: ShellView; o
             </div>
             {/* "יציאה לשולחן העבודה": a manager's code (DESKTOP_EXIT), not the technician's. */}
             <DesktopExitMenuButton onOpen={() => setExitOpen(true)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-neutral-900 py-2 text-sm font-bold text-white" />
-            <button type="button" className="w-full rounded-xl bg-red-600 py-2 text-sm font-bold text-white" onClick={() => act({ type: 'unpair' })}>
-              ניתוק המכשיר מהענן
-            </button>
+            <UnpairControl label="ניתוק המכשיר מהענן" buttonClassName="w-full rounded-xl bg-red-600 py-2 text-sm font-bold text-white disabled:opacity-40" onDone={refresh} />
           </>
         )}
       </div>
