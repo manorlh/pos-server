@@ -85,7 +85,13 @@ import {
   writeLiveItemsState,
 } from './liveItemsView';
 import { ACCOUNTING_EXPORT_EXTRAS, parseAccountingExportForm } from './accountingExportForm';
-import { taxOpenFormatExtras, taxOpenFormatMode, taxOpenFormatParams } from './taxOpenFormatForm';
+import {
+  decodeProductionReport,
+  reportDate,
+  taxOpenFormatExtras,
+  taxOpenFormatMode,
+  taxOpenFormatParams,
+} from './taxOpenFormatForm';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -903,6 +909,23 @@ describe('ZIP export pages: the form in the URL (accounting-export, tax-reports)
       companyId: 'c1',
       year: 2025,
     });
+  });
+
+  it('tax: the production report the download carries (base64 of UTF-8 JSON), Hebrew intact', () => {
+    const report = {
+      title: 'הפקת קבצים במבנה אחיד',
+      documents: [{ code: 320, name: 'חשבונית מס קבלה', count: 3, total: '179.80', cancelledCount: 1, cancelledTotal: '11.80' }],
+      records: [{ code: 'A100', name: 'רשומת פתיחה', count: 1 }],
+    };
+    const header = Buffer.from(JSON.stringify(report), 'utf-8').toString('base64');
+    const back = decodeProductionReport(header)!;
+    assert.equal(back.documents[0].name, 'חשבונית מס קבלה');
+    assert.equal(back.records[0].name, 'רשומת פתיחה');
+    assert.equal(decodeProductionReport(null), null);
+    assert.equal(decodeProductionReport('not base64 json'), null);
+    assert.equal(decodeProductionReport(Buffer.from('{"documents":1}').toString('base64')), null);
+    assert.equal(reportDate('2026-09-03'), '03/09/2026');
+    assert.equal(reportDate(null), '');
   });
 
   it('tax: nothing to send while something is missing or wrong', () => {

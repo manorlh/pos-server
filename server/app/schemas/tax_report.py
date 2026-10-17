@@ -21,6 +21,8 @@ class TaxOpenFormatPreviewResponse(BaseModel):
     flagged_documents: List[Dict[str, Any]] = Field(default_factory=list, alias="flaggedDocuments")
     #: Duplicate copies in the window, left out of the file (counted once, SHIFTS_API §1.2d).
     excluded_duplicate_copies: int = Field(0, alias="excludedDuplicateCopies")
+    #: The production report (1.31 §2.6, `open_format/production_report.py`) of this run.
+    production_report: Optional[Dict[str, Any]] = Field(None, alias="productionReport")
 
     class Config:
         populate_by_name = True

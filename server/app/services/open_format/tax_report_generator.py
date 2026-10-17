@@ -20,12 +20,16 @@ clarifications). The ones that are easy to get wrong:
   מ. בסיס", "חובה כאשר ערך שדה 1034 = 1") is the base document's branch, and on a line with
   no base document its own document's branch.
 * **Payment records** (D120, "פרטי קבלה / הפקדה", 1.31 §4.5) only under a document that
-  records a receipt (`PAYMENT_RECORD_DOCUMENT_TYPES`: 320, 400…) — never under a 330.
+  records a receipt (`PAYMENT_RECORD_DOCUMENT_TYPES`: 320, 400…) — never under a 330, and
+  never under a cancelled document (C100 1228 = 1, `writes_payment_records`).
+* **Tender codes** (D120 1306): every tender string is mapped by name
+  (`PAYMENT_TYPE_CODES`); one the table does not know is 9 "אחר" and logged — never cash.
 """
 
 from __future__ import annotations
 
 import codecs
+import logging
 import random
 import re
 import time
@@ -41,6 +45,8 @@ from zoneinfo import ZoneInfo
 
 from app.services.open_format.defaults import DEFAULT_SOFTWARE_INFO, DEFAULT_TAX_REPORT_CONFIG, SoftwareInfo, TaxReportConfig
 from app.services.open_format.israeli_tax_id import customer_vat_field, normalize_israeli_9_digit
+
+logger = logging.getLogger(__name__)
 
 
 class BusinessInfoDict(TypedDict, total=False):
@@ -322,9 +328,13 @@ def build_a000_record(
     record += pad_right(business_info.get("companyCity", ""), 30)
     record += pad_right(business_info.get("companyZip", ""), 8)
 
+    # 1023 שנת המס — "אם התוכנה חד שנתית": written only by single-year software (A000 1011
+    # = 1). Multi-year software (1011 = 2, this one) leaves it blank and states the period
+    # in 1024 / 1025 (תאריך התחלה / סיום חתך, "אם התוכנה רב שנתית").
+    single_year = software_info.software_type == "single-year"
     if year_key:
         yr = int(date_range["year"])
-        record += str(yr)
+        record += str(yr) if single_year else pad_right("", 4)
         record += f"{yr}0101"
         record += format_date(min(date(yr, 12, 31), proc.date()))
     else:
@@ -332,7 +342,7 @@ def build_a000_record(
         end = _local(date_range["end"], tz)
         start_day = start.date() if isinstance(start, datetime) else start
         end_day = end.date() if isinstance(end, datetime) else end
-        record += str(start_day.year)
+        record += str(start_day.year) if single_year else pad_right("", 4)
         record += format_date(start_day)
         record += format_date(min(end_day, proc.date()))
 
@@ -417,6 +427,11 @@ def build_b110_record(
     return record[:B110_RECORD_LEN]
 
 
+#: M100 / D110 (1263) יחידת מידה: every item is sold by the unit (the system has no other
+#: unit of measure), the same text on the item and on each line that sells it.
+UNIT_OF_MEASURE = "יחידה"
+
+
 def build_m100_record(vat_number: str, record_number: int, product: Dict[str, str]) -> str:
     vat = normalize_israeli_9_digit(vat_number)
     r = "M100"
@@ -428,7 +443,7 @@ def build_m100_record(vat_number: str, record_number: int, product: Dict[str, st
     r += pad_right(product.get("name") or "", 50)
     r += pad_right("", 10)
     r += pad_right("", 30)
-    r += pad_right("יחידה", 20)
+    r += pad_right(UNIT_OF_MEASURE, 20)
     r += format_amount12(0)
     r += format_amount12(0)
     r += format_amount12(0)
@@ -485,6 +500,27 @@ def carries_payment_records(filed_type: Optional[int]) -> bool:
         return int(filed_type) in PAYMENT_RECORD_DOCUMENT_TYPES
     except (TypeError, ValueError):
         return False
+
+
+def is_cancelled(transaction: Dict[str, Any]) -> bool:
+    """C100 1228 = 1, "מסמך מבוטל": the document's number was issued and then cancelled."""
+    return transaction.get("status") == "cancelled"
+
+
+def writes_payment_records(transaction: Dict[str, Any], filed_type: Optional[int]) -> bool:
+    """
+    Whether the document gets D120 records: a type that records a receipt
+    (`carries_payment_records`) **and** not cancelled.
+
+    A cancelled document (C100 1228 = 1, "מסמך מבוטל") is still filed — its number was
+    issued, so the series has no hole — but it received no money: in this system it is the
+    shell of a declined or abandoned card sale (`failed_payments`, "מכירות שבוטלו"). D120 is
+    "פרטי קבלה" (1.31 §4.5), the details of money received, so a cancelled document has none:
+    writing its tender legs would report a card payment that never happened, with no
+    acquirer or card name because the terminal never approved it. The same document is
+    already outside the cash account's totals (B110 1415 / 1416).
+    """
+    return carries_payment_records(filed_type) and not is_cancelled(transaction)
 
 
 def is_receipt_document(transaction: Dict[str, Any]) -> bool:
@@ -688,6 +724,16 @@ def document_amounts(
     return amounts
 
 
+def customer_key(customer: Dict[str, Any]) -> str:
+    """
+    C100 1225 (X(15)): the customer's key in this system — the `key` the export resolved
+    (the linked customer's id, else the buyer's ח.פ. the document was made out to). Blank
+    for the general customer.
+    """
+    key = re.sub(r"[^0-9A-Za-z]", "", str(customer.get("key") or ""))
+    return key[:15].upper()
+
+
 def build_c100_record(
     transaction: Dict[str, Any],
     vat_number: str,
@@ -734,8 +780,9 @@ def build_c100_record(
     f1223 = format_cents(money.total)
     wht = float(transaction.get("whtDeduction") or 0)
     f1224 = format_amount12(wht)
-    seq_key = pad_left(str(record_number % 10_000_000_000_000), 15, "0")[-15:]
-    f1225 = pad_right(seq_key, 15)
+    # 1225 מפתח הלקוח אצל המוכר: the business's own key of the customer
+    # (`customer_key`) — blank for the general customer (לקוח כללי), never the record number.
+    f1225 = pad_right(customer_key(customer), 15)
     f1226 = pad_right("", 10)
     f1228 = "1" if transaction.get("status") == "cancelled" else "0"
     f1230 = doc_date_str
@@ -813,7 +860,8 @@ def build_d110_record(
     record += base_dt + base_num + tt
     record += pad_right(product.get("sku") or "", 20)
     record += pad_right(product.get("name") or "", 30)
-    record += pad_right("", 50) + pad_right("", 30) + pad_right("", 20)
+    # 1261 יצרן, 1262 מספר סידורי — not kept; 1263 יחידת מידה — as the item's M100 says.
+    record += pad_right("", 50) + pad_right("", 30) + pad_right(UNIT_OF_MEASURE, 20)
     record += format_quantity_signed(float(item.get("quantity") or 0))
     record += format_cents(line_amounts.unit)
     record += format_cents(line_amounts.discount)
@@ -826,24 +874,50 @@ def build_d110_record(
     return record[:339]
 
 
-#: D120 field 1306 (סוג אמצעי התשלום, מבנה אחיד 1.31 §4.5: 1 מזומן, 2 המחאה, 3 כרטיס
-#: אשראי, 4 העברה בנקאית, 5 תווי קנייה, 6 תלוש החלפה, 7 שטר, 8 הוראת קבע, 9 אחר) for the
-#: tenders this system files by name:
+#: D120 field 1306 (סוג אמצעי התשלום, מבנה אחיד 1.31 §4.5): 1 מזומן, 2 המחאה, 3 כרטיס
+#: אשראי, 4 העברה בנקאית, 5 תווי קנייה, 6 תלוש החלפה, 7 שטר, 8 הוראת קבע, 9 אחר.
+PAY_CASH, PAY_CHEQUE, PAY_CARD, PAY_TRANSFER, PAY_VOUCHERS, PAY_EXCHANGE_SLIP = 1, 2, 3, 4, 5, 6
+PAY_PROMISSORY_NOTE, PAY_STANDING_ORDER, PAY_OTHER = 7, 8, 9
+
+#: Every tender string this system stores (till, kiosk, web till, imports — the labels of
+#: `day_summary.PAYMENT_LABELS`), by name:
 #:
-#: * 3 = כרטיס אשראי — `card`.
-#: * 5 = תווי קנייה — a prepaid / production voucher ("שובר הפקה") paying for the goods on it:
-#:   `voucher`, the leg every till and kiosk order writes for a redemption since the tender
-#:   first shipped (pos-android `PaymentMethod.VOUCHER`, `CheckoutViewModel.applyVoucher`;
-#:   a kiosk order's voucher reaches the till's document the same way), `vouchers` (the
-#:   alias the Z already counts as a voucher, `z_print._VOUCHER`), and `production_voucher`
-#:   (the contract's tender code for the `payment` accounting mode). No till or kiosk writes
-#:   `voucher` for anything else: a return is a credit note (330) whose legs mirror the
-#:   original's, and a mixed basket's offset is `exchange`.
-#: * 6 = תלוש החלפה — the `exchange` leg that settles the sale half of a mixed basket
-#:   against its credit half (docs/SHIFTS_API.md §1.2a).
-#:
-#: Anything else is 1 (unchanged: mapping a new tender string is a filing decision).
-PAYMENT_TYPE_CODES = {"card": 3, "voucher": 5, "vouchers": 5, "production_voucher": 5, "exchange": 6}
+#: * 1 מזומן — `cash`.
+#: * 2 המחאה — `check` / `cheque`. The cheque's bank, branch, account, number and due date
+#:   (1307–1311) are not recorded with the leg, so they stay zeros.
+#: * 3 כרטיס אשראי — `card` / `credit_card` (1313–1315 from the terminal's answer).
+#: * 4 העברה בנקאית — `transfer` / `bank_transfer` / `wire`, and the bank apps `bit` and
+#:   `paybox`: an account-to-account transfer into the business's bank account.
+#: * 5 תווי קנייה — a prepaid / production voucher ("שובר הפקה") or a gift card paying for
+#:   the goods on it: `voucher` (every till and kiosk redemption, pos-android
+#:   `PaymentMethod.VOUCHER`), `vouchers` (`z_print._VOUCHER`), `production_voucher` (the
+#:   contract's code for the `payment` accounting mode), `prepaid` / `prepaid_voucher`,
+#:   `gift_card` / `giftcard`.
+#: * 6 תלוש החלפה — `exchange`, the leg that settles the sale half of a mixed basket against
+#:   its credit half (docs/SHIFTS_API.md §1.2a), and `cash_credit` ("זיכוי מזומן"): a slip
+#:   the business issued instead of change, redeemed against a purchase.
+#: * 9 אחר — `credit` / `on_account` / `charge` (הקפה: no money taken yet), `external`,
+#:   `other`, and any string this table does not know (`payment_type_code` logs it). Never 1:
+#:   filing an unknown tender as cash would overstate the cash takings.
+PAYMENT_TYPE_CODES = {
+    "cash": PAY_CASH,
+    "check": PAY_CHEQUE, "cheque": PAY_CHEQUE,
+    "card": PAY_CARD, "credit_card": PAY_CARD,
+    "transfer": PAY_TRANSFER, "bank_transfer": PAY_TRANSFER, "wire": PAY_TRANSFER,
+    "bit": PAY_TRANSFER, "paybox": PAY_TRANSFER,
+    "voucher": PAY_VOUCHERS, "vouchers": PAY_VOUCHERS, "production_voucher": PAY_VOUCHERS,
+    "prepaid": PAY_VOUCHERS, "prepaid_voucher": PAY_VOUCHERS, "gift_card": PAY_VOUCHERS, "giftcard": PAY_VOUCHERS,
+    "exchange": PAY_EXCHANGE_SLIP, "cash_credit": PAY_EXCHANGE_SLIP,
+    "credit": PAY_OTHER, "on_account": PAY_OTHER, "charge": PAY_OTHER, "external": PAY_OTHER,
+    "other": PAY_OTHER,
+}
+
+#: The D120 1306 codes, as the production report (§2.6) names them.
+PAYMENT_TYPE_NAMES = {
+    PAY_CASH: "מזומן", PAY_CHEQUE: "המחאה", PAY_CARD: "כרטיס אשראי", PAY_TRANSFER: "העברה בנקאית",
+    PAY_VOUCHERS: "תווי קנייה", PAY_EXCHANGE_SLIP: "תלוש החלפה", PAY_PROMISSORY_NOTE: "שטר",
+    PAY_STANDING_ORDER: "הוראת קבע", PAY_OTHER: "אחר",
+}
 
 #: D120 field 1313 (קוד החברה הסולקת): "1-ישראכרט, 2-כאל, 3-דיינרס, 4-אמריקן אקספרס,
 #: 6-לאומי כארד" — by the acquirer the till read off the terminal (`card_brands.ACQUIRERS`).
@@ -855,8 +929,20 @@ CREDIT_REGULAR = 1
 CREDIT_INSTALMENTS = 2
 
 
-def payment_type_code(method: Optional[str]) -> int:
-    return PAYMENT_TYPE_CODES.get((method or "").strip().lower(), 1)
+def payment_type_code(method: Optional[str], unmapped: Optional[Dict[str, int]] = None) -> int:
+    """
+    D120 1306 of a tender string (`PAYMENT_TYPE_CODES`). One the table does not know — or
+    none at all — is 9 "אחר", counted in `unmapped` and logged: never cash.
+    """
+    key = (method or "").strip().lower()
+    code = PAYMENT_TYPE_CODES.get(key)
+    if code is not None:
+        return code
+    if unmapped is not None:
+        unmapped[key or "(none)"] = unmapped.get(key or "(none)", 0) + 1
+    else:
+        logger.warning("open format: tender %r has no D120 1306 code; filed as 9 (אחר)", method)
+    return PAY_OTHER
 
 
 def card_fields(card: Optional[Dict[str, Any]]) -> Tuple[int, str, int]:
@@ -898,6 +984,7 @@ def build_d120_record(
     payment_amount_override: Optional[float] = None,
     tz: Optional[tzinfo] = None,
     card: Optional[Dict[str, Any]] = None,
+    unmapped: Optional[Dict[str, int]] = None,
 ) -> str:
     """
     One payment record (D120) — one *tender leg* of the document.
@@ -907,13 +994,10 @@ def build_d120_record(
     single-tender document produces exactly the record it produced before split
     tender existed, to the byte.
 
-    The payment-type code (field 1306) is `payment_type_code`: card → 3, a prepaid /
-    production voucher (`voucher`, `vouchers`, `production_voucher`) → 5 (תווי קנייה),
-    `exchange` → 6, everything else → 1. The מבנה אחיד field has further codes (cheque,
-    bank transfer) and this system stores whatever tender string the till sends, but
-    mapping new strings onto tax codes is a filing decision, not a refactor, and a
-    wrong code is not something the merchant finds out about from us. Unrecognised
-    tenders keep landing on 1 exactly as they did before.
+    The payment-type code (field 1306) is `payment_type_code` (`PAYMENT_TYPE_CODES`):
+    cash 1, cheque 2, card 3, bank transfer 4, vouchers 5, exchange slip 6, and 9 (אחר)
+    for a tender the table does not know — counted in `unmapped` (the export logs and
+    reports them), never filed as cash.
 
     `card` (the leg's `cardAcquirer`, `cardBrand`, `creditPayments`) fills 1313–1315 on
     a card leg (`card_fields`).
@@ -925,7 +1009,7 @@ def build_d120_record(
         else float(cart.get("totalAmount") or 0)
     )
     method = payment_method if payment_method is not None else transaction.get("paymentMethod")
-    payment_type = payment_type_code(method)
+    payment_type = payment_type_code(method, unmapped)
     doc_type_val = doc_type if doc_type is not None else transaction.get("documentType")
     doc_production_date = _document_moment(transaction, tz)
     vat = normalize_israeli_9_digit(vat_number)
@@ -1086,6 +1170,19 @@ class TaxReportResult:
     unique_id: str
     #: When the file was produced (A000 1026/1027), in the business's time zone.
     process_date: Optional[datetime] = None
+    #: A000 1012 — where the file was written (blank when no drive is configured).
+    output_path: str = ""
+    #: The production report's (1.31 §2.6) document table: per filed type (C100 1203) the
+    #: count of C100 records and Σ 1223 in agorot — every document of the file, cancelled
+    #: ones included — and of those, the cancelled (1228 = 1).
+    document_totals: Dict[int, Dict[str, int]] = field(default_factory=dict)
+    #: Per D120 1306 code: records and Σ 1312 in agorot.
+    payment_totals: Dict[int, Dict[str, int]] = field(default_factory=dict)
+    #: Tender strings with no 1306 code (filed as 9 "אחר") and how many records each.
+    unmapped_tenders: Dict[str, int] = field(default_factory=dict)
+    #: A000 1024 / 1025 — the period the file covers (local dates).
+    period_start: Optional[date] = None
+    period_end: Optional[date] = None
 
 
 def _branch_sort_key(code: str):
@@ -1149,6 +1246,9 @@ def generate_tax_report(
     record_number = 1
 
     tx_by_id = {str(t["id"]): t for t in transactions}
+    document_totals: Dict[int, Dict[str, int]] = {}
+    payment_totals: Dict[int, Dict[str, int]] = {}
+    unmapped: Dict[str, int] = {}
 
     # First pass: what each document is filed as, and its money — the cash account's
     # totals (B110) come before the documents in the file.
@@ -1235,6 +1335,14 @@ def generate_tax_report(
         )
         record_counts["C100"] += 1
         record_number += 1
+        totals = document_totals.setdefault(
+            int(doc_type), {"count": 0, "totalAgorot": 0, "cancelledCount": 0, "cancelledAgorot": 0}
+        )
+        totals["count"] += 1
+        totals["totalAgorot"] += money.total
+        if is_cancelled(transaction):
+            totals["cancelledCount"] += 1
+            totals["cancelledAgorot"] += money.total
 
         line_number = 1
         # A receipt carries no item lines: its header and its payments only.
@@ -1273,9 +1381,10 @@ def generate_tax_report(
         # One payment record per tender leg. A single-tender document still produces
         # exactly one, with the document-level method and amount, as before. Only under a
         # document that records a receipt (`carries_payment_records`): a credit note (330)
-        # has none — its money is the cash account's credit side (B110 1416).
+        # has none — its money is the cash account's credit side (B110 1416) — and never
+        # under a cancelled document, which received no money (`writes_payment_records`).
         cards = payment_leg_cards(transaction)
-        legs = resolve_payment_legs(transaction) if carries_payment_records(doc_type) else []
+        legs = resolve_payment_legs(transaction) if writes_payment_records(transaction, doc_type) else []
         for payment_line, (leg_method, leg_amount) in enumerate(legs, start=1):
             if amount_sign < 0:
                 # A receipt refund: the money went back, so each payment is negative.
@@ -1293,8 +1402,13 @@ def generate_tax_report(
                     payment_amount_override=leg_amount,
                     tz=zone,
                     card=cards[payment_line - 1] if payment_line - 1 < len(cards) else None,
+                    unmapped=unmapped,
                 )
             )
+            line = bkmv_lines[-1]
+            pay = payment_totals.setdefault(int(line[49]), {"count": 0, "totalAgorot": 0})
+            pay["count"] += 1
+            pay["totalAgorot"] += (-1 if line[103] == "-" else 1) * int(line[104:118])
             record_counts["D120"] += 1
             record_number += 1
 
@@ -1330,12 +1444,24 @@ def generate_tax_report(
         if count > 0:
             ini_lines.append(build_summary_record(record_type, count))
 
+    if unmapped:
+        logger.warning(
+            "open format: tenders with no D120 1306 code, filed as 9 (אחר): %s",
+            ", ".join(f"{k} ×{v}" for k, v in sorted(unmapped.items())),
+        )
+    a000 = ini_lines[0]
     return TaxReportResult(
         ini_content=ini_lines,
         bkmv_content=bkmv_lines,
         record_counts=record_counts,
         unique_id=unique_id,
         process_date=proc,
+        output_path=output_path,
+        document_totals=dict(sorted(document_totals.items())),
+        payment_totals=dict(sorted(payment_totals.items())),
+        unmapped_tenders=dict(sorted(unmapped.items())),
+        period_start=date(int(a000[366:370]), int(a000[370:372]), int(a000[372:374])),
+        period_end=date(int(a000[374:378]), int(a000[378:380]), int(a000[380:382])),
     )
 
 

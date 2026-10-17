@@ -9,6 +9,10 @@
  * (`useReportFilters`: the range, the mode and the tax year), so a link opens the same form. The
  * export itself is as it always was — one click asks for the preview, then downloads the ZIP
  * (`OPENFRMT-<vat>-<time>.zip`); a link never starts it. "ייצא ZIP" writes the form to the URL.
+ *
+ * After the download the page shows the file's production report (1.31 §2.6, "דוח הפקה";
+ * `OpenFormatProductionReportView`) — the one the server sent with that very ZIP — ready to
+ * print or save as PDF; everything else on the page is hidden in print.
  */
 
 import { useState } from 'react';
@@ -35,6 +39,8 @@ import { dealerTypeOf } from '@/lib/dealerType';
 import { useCanProduceZ } from '@/lib/zAccess';
 import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
 import { OpenFormatSoftwareCard } from '@/components/dashboard/open-format-software-card';
+import { OpenFormatProductionReportView } from '@/components/dashboard/open-format-production-report';
+import type { OpenFormatProductionReport } from '@/lib/taxOpenFormatForm';
 
 /** The form in the URL: today by default (as before), the date range, this year. */
 const SPEC: ReportFilterSpec = {
@@ -90,6 +96,7 @@ export default function TaxReportsPage() {
 
   const [isExporting, setIsExporting] = useState(false);
   const [preview, setPreview] = useState<TaxOpenFormatPreview | null>(null);
+  const [report, setReport] = useState<{ report: OpenFormatProductionReport; previewOnly: boolean } | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
   const today = businessToday();
@@ -108,15 +115,19 @@ export default function TaxReportsPage() {
     setIsExporting(true);
     setExportError(null);
     setPreview(null);
+    setReport(null);
 
     try {
       const previewResult = await fetchTaxOpenFormatPreview(params);
       setPreview(previewResult);
 
-      const blob = await downloadTaxOpenFormat(params);
+      const { blob, report: fileReport } = await downloadTaxOpenFormat(params);
       const vat8 = (previewResult.businessInfo.vatNumber || '00000000').replace(/\D/g, '').slice(0, 8).padStart(8, '0');
       const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(4, 12);
-      triggerBlobDownload(blob, `OPENFRMT-${vat8}-${ts}.zip`);
+      // The server's name: the production's local MMDDhhmm, as A000 1026/1027 and the report.
+      triggerBlobDownload(blob, fileReport?.fileName || `OPENFRMT-${vat8}-${ts}.zip`);
+      if (fileReport) setReport({ report: fileReport, previewOnly: false });
+      else if (previewResult.productionReport) setReport({ report: previewResult.productionReport, previewOnly: true });
       toast.success(t('exportSuccess'));
     } catch (err: unknown) {
       const msg = axiosErrorToToastMessage(err, tc('error'));
@@ -129,7 +140,7 @@ export default function TaxReportsPage() {
 
   return (
     <div className="min-w-0 max-w-3xl space-y-4 max-sm:px-1">
-      <div>
+      <div className="print:hidden">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <FileText className="size-6" aria-hidden />
           {t('title')}
@@ -143,7 +154,9 @@ export default function TaxReportsPage() {
           would put one number in it twice, and the export refuses such a file
           (docs/SPEC_DOCUMENT_PREFIX.md §5, §9). Listed here before anyone exports.
         */}
-        <DocumentPrefixConflictsAlert companyId={companyId || null} shopId={shopId || null} canEdit={canProduceZ} />
+        <div className="print:hidden">
+          <DocumentPrefixConflictsAlert companyId={companyId || null} shopId={shopId || null} canEdit={canProduceZ} />
+        </div>
         <Card className="print:hidden" role="search">
           <CardHeader>
             <CardTitle>{t('exportSettings')}</CardTitle>
@@ -255,7 +268,7 @@ export default function TaxReportsPage() {
         </Card>
 
         {exportError && (
-          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm">
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm print:hidden">
             <div className="flex items-center gap-2 font-medium text-destructive">
               <AlertCircle className="size-4" />
               {tc('error')}
@@ -266,10 +279,15 @@ export default function TaxReportsPage() {
         )}
 
         {/* A000 1006–1012: what the file says about the software, and what is still a placeholder. */}
-        <OpenFormatSoftwareCard />
+        {/* 1.31 §2.6: the production report of the file just downloaded — printable. */}
+        {report ? <OpenFormatProductionReportView report={report.report} previewOnly={report.previewOnly} /> : null}
+
+        <div className="print:hidden">
+          <OpenFormatSoftwareCard />
+        </div>
 
         {preview && (
-          <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2">
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-2 print:hidden">
             <div className="flex items-center gap-2 font-medium">
               <CheckCircle className="size-4 text-green-600" />
               {t('exportComplete')}
