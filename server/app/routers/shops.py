@@ -433,6 +433,12 @@ def list_shops(
         query = query.filter(Shop.id == current_user.shop_id)
     elif company_id:
         query = query.filter(Shop.company_id == company_id)
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the shops that hold their points of sale.
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, current_user)
+    if reach.narrowed:
+        query = query.filter(Shop.id.in_(list(reach.shop_ids) or [uuid_mod.uuid4()]))
 
     return query.all()
 

@@ -278,7 +278,7 @@ export interface OpArgs {
   /** `keepHeld`: "סגור והשאר מושהות" where the shop allows it (`allowCloseWithHeldSales`). */
   'shift.close': { countedCashAgorot: number; keepHeld?: boolean };
   'report.x': Record<string, never>;
-  'report.shopX': { refresh?: boolean; print?: boolean };
+  'report.shopX': { refresh?: boolean; print?: boolean; scope?: 'shop' | 'area' };
   /** `countedCashAgorot`: the drawer's count when the shift is still open (it is closed first). */
   'z.produce': { countedCashAgorot?: number; keepHeld?: boolean };
   'discount.preview': { mode: BasketDiscountMode; input: string };
@@ -923,6 +923,10 @@ export interface ShopXState {
   at: number | null;
   busy: boolean;
   error: string | null;
+  /** "X לנקודת המכירה" (chain-areas §11.2d): the point of sale the till stands in — offered then; null / absent: the whole shop only. */
+  areaName?: string | null;
+  /** What the report on screen covers: the whole shop (default) or the till's point of sale. */
+  scope?: 'shop' | 'area';
 }
 
 export interface XReport {

@@ -682,6 +682,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private toasts: Array<{ tone: 'info' | 'error' | 'ok'; text: string }> = [];
   /** "דוח X סניפי": the report last brought, while the user who asked is signed in. */
   private shopXDoc: { doc: ShopXDocument; at: number } | null = null;
+  /** What the shop X asked last covers: the whole shop, or this till's point of sale (`scope=area`). */
+  private shopXScope: 'shop' | 'area' = 'shop';
   private shopXBusy = false;
   private shopXError: string | null = null;
   private offView: (() => void) | null = null;
@@ -1058,7 +1060,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'report.x':
         return this.reportX();
       case 'report.shopX':
-        return this.shopX(a.refresh === true, a.print === true);
+        return this.shopX(a.refresh === true, a.print === true, a.scope === 'area' ? 'area' : undefined);
       case 'z.produce':
         return this.zProduce(a.countedCashAgorot, a.keepHeld === true);
       case 'mode.switch':
@@ -1276,6 +1278,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const d = await tryLogin({
       users: this.roster(),
       shopId: this.shop(),
+      areaId: this.svc.areaIdHere(),
       pin,
       lock: this.svc.kv.getJson<ExitLock>(LOGIN_LOCK) ?? NO_LOCK,
       nowMs: this.nowFn(),
@@ -1322,6 +1325,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     // The shop's figures were for the user who asked: gone with them; so is a refund's authority.
     this.shopXDoc = null;
     this.shopXError = null;
+    this.shopXScope = 'shop';
     this.refundGrant = null;
     this.refundChooser = false;
     if (user) this.sessions.left(user);
@@ -3843,9 +3847,12 @@ export class KioskCoreTillEngine implements EngineEndpoint {
    * one: the cloud hears the approver as `X-Pos-User-Id`). `print`: the one on screen to the receipt printer. Offline:
    * the till's own X stays (§2.4). Nothing changes here — not a document, no number.
    */
-  private shopX(refresh: boolean, print: boolean) {
+  private shopX(refresh: boolean, print: boolean, scope?: 'shop' | 'area') {
     const user = this.signedIn();
     if (!this.shopXHere()) return refuse('permission_denied', SHOP_X_TEXT.notHere);
+    // "X לנקודת המכירה" (P:/specs/chain-areas.md §11.2d): only the tills of this till's point of sale; none — refused.
+    const area = scope === 'area';
+    if (area && !this.svc.areaIdHere()) return refuse('permission_denied', 'הקופה אינה משויכת לנקודת מכירה');
     if (print) {
       if (!this.shopXDoc) return refuse('invalid_args');
       this.svc.printShopX(this.shopXDoc.doc, `shopx:${this.shopXDoc.at}`);
@@ -3865,8 +3872,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         const headers = { 'X-Pos-User-Id': who.id };
         const path = `sync/${machine}/shop-x`;
         const r = refresh
-          ? await this.svc.api.post(path, { posUserName: displayName(user), refresh: true, outbox: { documents: this.svc.outbox.count() } }, { headers, timeoutMs: 90_000 })
-          : await this.svc.api.get(path, { headers, timeoutMs: 45_000 });
+          ? await this.svc.api.post(path, { posUserName: displayName(user), refresh: true, outbox: { documents: this.svc.outbox.count() }, ...(area ? { scope: 'area' } : {}) }, { headers, timeoutMs: 90_000 })
+          : await this.svc.api.get(area ? `${path}?scope=area` : path, { headers, timeoutMs: 45_000 });
         if (r.kind === 'offline') {
           this.shopXError = SHOP_X_TEXT.needsCloud;
           return refuse('permission_denied', SHOP_X_TEXT.needsCloud);
@@ -3882,6 +3889,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
           return refuse('permission_denied', SHOP_X_TEXT.failed);
         }
         this.shopXDoc = { doc, at: this.nowFn() };
+        this.shopXScope = area ? 'area' : 'shop';
         return { ok: true };
       } finally {
         this.shopXBusy = false;
@@ -4389,6 +4397,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         at: this.shopXDoc?.at ?? null,
         busy: this.shopXBusy,
         error: this.shopXError,
+        areaName: this.svc.areaIdHere() ? (this.svc.areaHere()?.name ?? 'נקודת המכירה') : null,
+        scope: this.shopXScope,
       },
       mode: {
         role: (homeTill ? 'till' : 'kiosk') as DeviceRoleName,

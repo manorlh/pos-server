@@ -129,6 +129,13 @@ function writeStored(tenantId: string | null, selection: ScopeSelection): void {
  * belongs to. Only `[id]` routes live under these prefixes, so a segment here
  * is always an id and never a sibling page name.
  */
+const AREA_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `?area=` as the scope reads it: an id, else nothing ("כל הנקודות"). */
+function scopeAreaId(raw: string | null): string | null {
+  return raw && AREA_ID_RE.test(raw) ? raw : null;
+}
+
 function pathScope(pathname: string): Partial<ScopeSelection> {
   const match = /^\/dashboard\/(companies|shops|machines)\/([^/]+)/.exec(pathname);
   if (!match) return {};
@@ -251,7 +258,9 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       companyId: implied.companyId ?? (searchParams.get(SCOPE_PARAM.company) || null),
       shopId: implied.shopId ?? (searchParams.get(SCOPE_PARAM.shop) || null),
       machineId: implied.machineId ?? (searchParams.get(SCOPE_PARAM.machine) || null),
-      areaId: searchParams.get(SCOPE_PARAM.area) || null,
+      // `?area=` is shared with the reports' area filter (REPORT_FILTER_PARAMS.areaId), which
+      // also takes `none` ("ללא נקודת מכירה"): only an id is a point of sale in the scope.
+      areaId: scopeAreaId(searchParams.get(SCOPE_PARAM.area)),
     };
   }, [pathname, searchParams]);
 
@@ -311,13 +320,20 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   const tree = useMemo(() => buildCompanyTree(companies), [companies]);
 
   // ── "נקודת מכירה" (P:/specs/chain-areas.md §2) ─────────────────────────────
-  // The selected shop's live points of sale (the server lists a manager of points of sale only theirs).
+  // The selected shop's points of sale (the server lists a manager of points of sale only theirs).
+  // Archived ones are fetched too — a report may filter on one through the same `?area=` — but
+  // only the live ones are offered.
   const areasQuery = useQuery<ShopArea[]>({
-    queryKey: ['shop-areas', rawUrlSelection.shopId, false],
-    queryFn: () => fetchShopAreas(rawUrlSelection.shopId as string, false),
+    queryKey: ['shop-areas', rawUrlSelection.shopId, true],
+    queryFn: () => fetchShopAreas(rawUrlSelection.shopId as string, true),
     enabled: !!activeTenantId && !!rawUrlSelection.shopId,
+    staleTime: 30_000,
   });
-  const areas = areasQuery.data ?? EMPTY_AREAS;
+  const allAreas = areasQuery.data ?? EMPTY_AREAS;
+  const areas = useMemo(
+    () => (allAreas.some((a) => a.archivedAt) ? allAreas.filter((a) => !a.archivedAt) : allAreas),
+    [allAreas],
+  );
   const access = useAuth((s) => s.user?.dashboardAccess ?? null);
   const savedScopes = useAuth((s) => s.user?.dashboardScope ?? null);
 
@@ -450,7 +466,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     // A point of sale only with its shop, and only one of that shop's live ones.
     if (!next.shopId) next.areaId = null;
     if (next.areaId && areasQuery.isSuccess && sameId(areasQuery.data?.[0]?.shopId ?? next.shopId, next.shopId)) {
-      if (!findBySameId(areas, next.areaId)) next.areaId = null;
+      if (!findBySameId(allAreas, next.areaId)) next.areaId = null;
     }
     // "מנהל נקודת מכירה" (§3): held to their points of sale — no "כל הנקודות", no other shop.
     const held = clampToAreaReach(next, access);
@@ -464,7 +480,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     if (!sameSelection(next, urlSelection)) commit(next, 'replace');
   }, [
     access,
-    areas,
+    allAreas,
     areasQuery.data,
     areasQuery.isSuccess,
     activeTenantId,
@@ -493,8 +509,8 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
     [machines, urlSelection.machineId],
   );
   const area = useMemo(
-    () => findBySameId(areas, urlSelection.areaId ?? null),
-    [areas, urlSelection.areaId],
+    () => findBySameId(allAreas, urlSelection.areaId ?? null),
+    [allAreas, urlSelection.areaId],
   );
 
   const path = useMemo(() => companyPath(tree, urlSelection.companyId), [tree, urlSelection.companyId]);

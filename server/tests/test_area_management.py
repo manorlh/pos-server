@@ -539,7 +539,42 @@ class TestMigration:
         assert "ALTER TABLE pos_users ADD COLUMN area_ids JSONB" in sql
         assert "ALTER TABLE area_product_overrides ADD COLUMN price NUMERIC(10, 2)" in sql
         assert "CREATE TABLE price_policies" in sql and "CREATE TABLE price_changes" in sql
-        assert sql.count("UPDATE ") == 1 and "DROP " not in sql
+        assert "ALTER TABLE kiosk_settings ADD COLUMN area_id UUID" in sql
+        assert "CHECK (level IN ('company', 'shop', 'area', 'machine'))" in sql
+        assert "CREATE UNIQUE INDEX uq_kiosk_settings_area ON kiosk_settings (area_id) WHERE level = 'area'" in sql
+        # Add-only but for the level check, replaced by a wider one.
+        assert sql.count("UPDATE ") == 1 and sql.count("DROP ") == 1 and "DROP CONSTRAINT IF EXISTS ck_kiosk_settings_level" in sql
+
+
+# ── Kiosk config: a point of sale's layer; the "מנהל נקודת מכירה" template ─────────
+
+
+class TestKioskAreaLayer:
+    def test_the_area_layer_sits_between_shop_and_kiosk(self, a):
+        from app.models.kiosk import KioskSettings
+        from app.services import kiosk_config as C
+        from app.services import kiosk_control as KC
+
+        a.db.add(KioskSettings(id=uuid.uuid4(), tenant_id=a.tenant.id, level="shop", shop_id=a.shop.id,
+                               overrides={"theme": {"primaryColor": "#111111"}}))
+        a.db.add(KioskSettings(id=uuid.uuid4(), tenant_id=a.tenant.id, level="area", area_id=a.bar.id,
+                               overrides={"theme": {"primaryColor": "#222222"}}))
+        a.db.commit()
+        assert C.machine_layers(a.db, a.t1).area == {"theme": {"primaryColor": "#222222"}}
+        assert C.machine_layers(a.db, a.t2).area == {}
+        scope = KC.settings_scope(a.db, a.ahmash, "area", a.bar.id, a.tenant.id)
+        assert scope.entity_id == a.bar.id and KC._parent_layers(a.db, scope)[1] == {"theme": {"primaryColor": "#111111"}}
+        area_scope.forget(a.db)
+        with pytest.raises(HTTPException):
+            KC.settings_scope(a.db, a.ahmash, "area", a.kitchen.id, a.tenant.id)
+
+    def test_the_area_manager_template_is_offered_and_needs_areas(self, a):
+        from app.services import dashboard_access as DA
+        from app.services import dashboard_sections as DS
+
+        names = {t["id"]: t for t in DA.builtin_templates_out()}
+        assert names[DS.AREA_MANAGER_TEMPLATE]["name"] == "מנהל נקודת מכירה"
+        assert names[DS.AREA_MANAGER_TEMPLATE]["needsAreas"] is True
 
 
 # ── Bulk / scheduled price changes ───────────────────────────────────────────

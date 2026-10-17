@@ -324,7 +324,7 @@ def get_candidates(
 
 @router.get("/settings")
 def get_settings(
-    level: Literal["company", "shop", "machine"] = Query(...),
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
     scope_id: uuid.UUID = Query(..., alias="id"),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
@@ -337,7 +337,7 @@ def get_settings(
 @router.put("/settings")
 def put_settings(
     body: KioskSettingsIn,
-    level: Literal["company", "shop", "machine"] = Query(...),
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
     scope_id: uuid.UUID = Query(..., alias="id"),
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
@@ -354,6 +354,8 @@ def put_settings(
 
     if level == "machine":
         area_scope.check_machine_ids(db, current_user, [scope_id])
+    elif level == "area":
+        area_scope.check_area(db, current_user, scope_id)
     else:
         area_scope.refuse_shop_level(db, current_user)
     # "עריכת תפריט הקיוסק": the shop's menu changed on a kiosk since the dashboard loaded it.

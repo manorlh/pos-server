@@ -81,6 +81,8 @@ SECTIONS: Tuple[Section, ...] = (
         (
             "/dashboard/products", "/dashboard/categories", "/dashboard/modifiers", "/dashboard/upsells",
             "/dashboard/menus", "/dashboard/assortment", "/dashboard/display-order",
+            # "מחירים" (P:/specs/chain-areas.md §9.5): bulk / scheduled price changes and the chain's policy.
+            "/dashboard/prices",
             # "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone — its
             # routes (`/till-parameters/catalog-admin`) stay SUPER_ADMIN in ROUTE_RULES.
             "/dashboard/catalog-admin",
@@ -197,7 +199,8 @@ SECTIONS: Tuple[Section, ...] = (
     Section(
         "organization", "חברות וסניפים",
         "הקמה ועריכה של חברות, סניפים ועמדות (הרשימות עצמן גלויות לכולם לבחירת היקף).",
-        ("/dashboard/companies", "/dashboard/shops"),
+        # "ניהול נקודות מכירה" (P:/specs/chain-areas.md §12).
+        ("/dashboard/companies", "/dashboard/shops", "/dashboard/areas"),
     ),
     Section(
         "devices", "מכשירים",
@@ -344,11 +347,10 @@ BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
     # shop's terminals, so off for the area manager (below).
     "terminals_offline": EDIT,
 }
-#: "מנהל אזור" — the same, meant for a user scoped to a point of sale. Dashboard users cannot be
-#: scoped to one yet (Saturday): until then the label says so and the template is `hidden` — not
-#: offered where admins assign templates.
+#: "מנהל נקודת מכירה" — the same, for a user scoped to points of sale (`area_ids`, app/services/area_scope.py,
+#: P:/specs/chain-areas.md §3): choosing it requires picking their points of sale.
 AREA_MANAGER_TEMPLATE = "area_manager"
-AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)"
+AREA_MANAGER_LABEL = "מנהל נקודת מכירה"
 #: Less two: "שחרור עובד מחובר במכשיר" is off for the area manager (P:/specs/exclusive-login-v2.md §2), and
 #: so is "מסופונים — מצב לא מקוון" (the whole shop's terminals, P:/specs/nayax-deferred-all.md §9).
 AREA_MANAGER_SECTIONS: Dict[str, str] = {
@@ -366,7 +368,7 @@ BUILTIN_TEMPLATES = {
     FULL_TEMPLATE: {"label": FULL_LABEL, "sections": {}, "fullAccess": True},
     BRANCH_MANAGER_TEMPLATE: {"label": BRANCH_MANAGER_LABEL, "sections": BRANCH_MANAGER_SECTIONS, "fullAccess": False},
     AREA_MANAGER_TEMPLATE: {
-        "label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False, "hidden": True,
+        "label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False, "needsAreas": True,
     },
     APPROVER_TEMPLATE: {"label": APPROVER_LABEL, "sections": APPROVER_SECTIONS, "fullAccess": False},
 }

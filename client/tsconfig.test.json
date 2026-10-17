@@ -101,6 +101,8 @@
     "src/lib/kioskSellable.test.ts",
     "src/lib/areaScope.ts",
     "src/lib/areaScope.test.ts",
+    "src/lib/bulkPrice.ts",
+    "src/lib/bulkPrice.test.ts",
     "src/lib/kioskItemFlow.ts",
     "src/lib/kioskItemFlow.test.ts",
     "src/lib/addonRole.ts",

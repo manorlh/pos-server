@@ -211,7 +211,7 @@ export default function ShopStockPage() {
                   {/* "פתיחת פריטים אוטומטית אחרי Z": the inventory setting, per company, shop or point of sale. */}
                   <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} />
                   {/* "חסימות מהקופה": which till blocks what, who releases, the quick block's defaults. */}
-                  <ItemBlockControlCard companyId={effective.companyId} shopId={effective.shopId} />
+                  <ItemBlockControlCard companyId={effective.companyId} shopId={effective.shopId} areaId={effective.areaId} />
                 </div>
               ) : null}
               {tab === 'leftover' ? <LeftoverTab scope={scope} /> : null}

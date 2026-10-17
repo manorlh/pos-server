@@ -11,6 +11,8 @@ P:/specs/chain-areas.md (owner, 17.10 — "ניהול נקודות מכירה", 
 * `price_policies` — per company: who below the chain may change prices, locks, allowed range. No row = today.
 * `price_changes` — every price written (who, level, old → new, from where).
 * `price_schedules` — bulk price changes the server applies at a time (and puts back at another).
+* `kiosk_settings.area_id` + level "area" — a point of sale's layer of the kiosk config (between shop and kiosk):
+  the level check constraint is replaced to allow it, and one row per point of sale (partial unique index).
 
 (The dashboard's top-bar scope is a user preference, `users.preferences.dashboardScope` — no schema.)
 
@@ -40,6 +42,9 @@ AREA_OVERRIDES = "area_product_overrides"
 POLICIES = "price_policies"
 CHANGES = "price_changes"
 SCHEDULES = "price_schedules"
+KIOSK = "kiosk_settings"
+KIOSK_CHECK = "ck_kiosk_settings_level"
+KIOSK_AREA_INDEX = "uq_kiosk_settings_area"
 
 
 def _offline() -> bool:
@@ -155,8 +160,27 @@ def upgrade() -> None:
         if name not in have:
             op.create_index(name, SCHEDULES, cols)
 
+    if _has_table(KIOSK) and "area_id" not in _columns(KIOSK):
+        op.add_column(KIOSK, sa.Column("area_id", uid, sa.ForeignKey("shop_areas.id", ondelete="CASCADE"), nullable=True))
+    if _offline() or op.get_bind().dialect.name == "postgresql":
+        op.execute(f"ALTER TABLE {KIOSK} DROP CONSTRAINT IF EXISTS {KIOSK_CHECK}")
+        op.create_check_constraint(KIOSK_CHECK, KIOSK, "level IN ('company', 'shop', 'area', 'machine')")
+    if KIOSK_AREA_INDEX not in _indexes(KIOSK):
+        op.create_index(
+            KIOSK_AREA_INDEX, KIOSK, ["area_id"], unique=True,
+            postgresql_where=sa.text("level = 'area'"), sqlite_where=sa.text("level = 'area'"),
+        )
+
 
 def downgrade() -> None:
+    if KIOSK_AREA_INDEX in _indexes(KIOSK):
+        op.drop_index(KIOSK_AREA_INDEX, table_name=KIOSK)
+    if "area_id" in _columns(KIOSK):
+        op.execute(f"DELETE FROM {KIOSK} WHERE level = 'area'")
+        if op.get_bind().dialect.name == "postgresql":
+            op.execute(f"ALTER TABLE {KIOSK} DROP CONSTRAINT IF EXISTS {KIOSK_CHECK}")
+            op.create_check_constraint(KIOSK_CHECK, KIOSK, "level IN ('company', 'shop', 'machine')")
+        op.drop_column(KIOSK, "area_id")
     for table in (SCHEDULES, CHANGES, POLICIES):
         if _has_table(table):
             op.drop_table(table)

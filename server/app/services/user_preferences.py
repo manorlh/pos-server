@@ -10,7 +10,7 @@ computer too — never only in one browser's storage.
   everyone signed in and shows what they may see.
 * `simpleMode` — "תצוגת מנהל פשוטה": the menu collapsed to the manager's own (the cockpit, a
   short list of reports, the settings they may change). Unset, it is on only for a user given
-  "מנהל סניף / אירוע" or "מנהל אזור" — never by role alone (a shop manager keeps the full menu
+  "מנהל סניף / אירוע" or "מנהל נקודת מכירה" — never by role alone (a shop manager keeps the full menu
   unless they are on one of those) — and off for everyone else; `simpleModeDefault` says which.
 * `reportColumns` — "עמודות" (P:/specs/reports-upgrade.md §4.4): per report key, the columns the
   user shows (`visible`) and their order (`order`). Merged per report on write: a report sent as
@@ -58,7 +58,7 @@ HOME_PAGES = (
     "products",
 )
 def simple_mode_default(db: Optional[Session], user: User) -> bool:
-    """On only for a user on a manager template ("מנהל סניף / אירוע", "מנהל אזור")."""
+    """On only for a user on a manager template ("מנהל סניף / אירוע", "מנהל נקודת מכירה")."""
     if db is None or not callable(getattr(db, "get", None)):
         return False
     from app.models.dashboard_access import DashboardAccessProfile

@@ -93,6 +93,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     pages: [
       '/dashboard/products', '/dashboard/categories', '/dashboard/modifiers', '/dashboard/upsells',
       '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
+      // "מחירים" (P:/specs/chain-areas.md §9): its API is `products` (bulk / schedules / price policy).
+      '/dashboard/prices',
       // "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone (its menu gate,
       // the page's role check, and its API `/till-parameters/catalog-admin` is SUPER_ADMIN).
       '/dashboard/catalog-admin',
@@ -133,7 +135,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
-  { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
+  // "ניהול נקודות מכירה" (P:/specs/chain-areas.md §12) sits with the shops; its API
+  // (`GET /shops/{id}/areas/overview`) is devices | item_blocks | organization — PAGES_ALSO_OPENED_BY.
+  { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops', '/dashboard/areas'] },
   // "עמדות מזומן" (P:/specs/cash-paylink.md §12) are devices too: the server's `/cash-stations*` routes are
   // `devices` (and read by `kiosks` as well — PAGES_ALSO_OPENED_BY).
   { id: 'devices', pages: ['/dashboard/machines', '/dashboard/cash-stations'] },
@@ -182,6 +186,7 @@ export function canEditTablesLayout(access: DashboardAccess): boolean {
  */
 export const PAGES_ALSO_OPENED_BY: Readonly<Record<string, readonly SectionId[]>> = {
   '/dashboard/stock/quick-block': ['item_blocks'],
+  '/dashboard/areas': ['devices', 'item_blocks'],
   // The server lets the kiosks' people read the cash stations (`GET /cash-stations*`: devices | kiosks, view).
   '/dashboard/cash-stations': ['kiosks'],
   // The server maps `GET /reports/preset-discounts` to reports | promotions (as the discounts report).
@@ -197,7 +202,7 @@ function alsoOpened(access: DashboardAccess, pathname: string): boolean {
   );
 }
 
-/** "מנהל סניף / אירוע" and "מנהל אזור" — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
+/** "מנהל סניף / אירוע" and "מנהל נקודת מכירה" (id `area_manager`) — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
 export const MANAGER_TEMPLATES = ['branch_manager', 'area_manager'] as const;
 
 /** "מנהל ארגון" — what a new user gets until the super admin opens more (server `ORG_MANAGER_SECTIONS`). */

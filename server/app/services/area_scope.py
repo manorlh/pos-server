@@ -134,6 +134,10 @@ def reach_of(db: Session, user: Any) -> AreaReach:
 
 
 def _load(db: Session, user_id) -> AreaReach:
+    from app.services.dashboard_access import profiles_available
+
+    if not profiles_available(db):
+        return NOT_NARROWED  # a world without profiles: nobody is narrowed
     try:
         from app.models.dashboard_access import DashboardAccessProfile
 

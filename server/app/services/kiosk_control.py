@@ -1456,13 +1456,14 @@ def list_commands(db: Session, kiosk_machine_id, limit: int = 20) -> List[Dict[s
 class SettingsScope:
     """One layer's place: the entity, its tenant, and the ids along its path."""
 
-    def __init__(self, level: str, entity, tenant_id, company_id=None, shop_id=None, machine_id=None):
+    def __init__(self, level: str, entity, tenant_id, company_id=None, shop_id=None, machine_id=None, area_id=None):
         self.level, self.entity, self.tenant_id = level, entity, tenant_id
         self.company_id, self.shop_id, self.machine_id = company_id, shop_id, machine_id
+        self.area_id = area_id
 
     @property
     def entity_id(self):
-        return {"company": self.company_id, "shop": self.shop_id, "machine": self.machine_id}[self.level]
+        return {"company": self.company_id, "shop": self.shop_id, "area": self.area_id, "machine": self.machine_id}[self.level]
 
 
 def settings_scope(db: Session, user: User, level: str, scope_id: Any, tenant_id) -> SettingsScope:
@@ -1480,22 +1481,43 @@ def settings_scope(db: Session, user: User, level: str, scope_id: Any, tenant_id
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
         check_shop_scope(db, user, shop, tenant_id)
         return SettingsScope("shop", shop, shop.tenant_id, company_id=shop.company_id, shop_id=shop.id)
+    if level == "area":
+        # A point of sale's layer (P:/specs/chain-areas.md §5): its shop's reach, and a manager of points of
+        # sale's own only.
+        from app.models.shop_area import ShopArea
+        from app.services import area_scope
+
+        area = db.get(ShopArea, eid) if eid else None
+        shop = db.get(Shop, area.shop_id) if area is not None else None
+        if area is None or shop is None or area.archived_at is not None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+        check_shop_scope(db, user, shop, tenant_id)
+        area_scope.check_area(db, user, area.id)
+        return SettingsScope(
+            "area", area, shop.tenant_id, company_id=shop.company_id, shop_id=shop.id, area_id=area.id,
+        )
     if level == "machine":
         machine, _device = kiosk_for_dashboard(db, user, eid, tenant_id)
         return SettingsScope(
             "machine", machine, machine.tenant_id,
             company_id=_company_of(db, machine), shop_id=machine.shop_id, machine_id=machine.id,
+            area_id=getattr(machine, "area_id", None),
         )
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_level")
 
 
 def _parent_layers(db: Session, scope: SettingsScope) -> List[Dict[str, Any]]:
-    layers = cfgsvc.layers_for(db, company_id=scope.company_id, shop_id=scope.shop_id, machine_id=scope.machine_id)
+    layers = cfgsvc.layers_for(
+        db, company_id=scope.company_id, shop_id=scope.shop_id, machine_id=scope.machine_id,
+        area_id=getattr(scope, "area_id", None),
+    )
     if scope.level == "company":
         return []
     if scope.level == "shop":
         return [layers.company]
-    return [layers.company, layers.shop]
+    if scope.level == "area":
+        return [layers.company, layers.shop]
+    return [layers.company, layers.shop, layers.area]
 
 
 def settings_view(db: Session, scope: SettingsScope) -> Dict[str, Any]:
@@ -1557,6 +1579,7 @@ def save_settings(
             company_id=scope.company_id if scope.level == "company" else None,
             shop_id=scope.shop_id if scope.level == "shop" else None,
             machine_id=scope.machine_id if scope.level == "machine" else None,
+            area_id=scope.area_id if scope.level == "area" else None,
         )
         db.add(row)
     row.overrides = cleaned

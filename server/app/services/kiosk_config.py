@@ -2119,6 +2119,7 @@ def _layer_row(db: Session, level: str, entity_id) -> Any:
     column = {
         "company": KioskSettings.company_id,
         "shop": KioskSettings.shop_id,
+        "area": KioskSettings.area_id,
         "machine": KioskSettings.machine_id,
     }[level]
     return db.query(KioskSettings).filter(KioskSettings.level == level, column == entity_id).first()
@@ -2140,13 +2141,20 @@ class Layers:
     company: Dict[str, Any] = field(default_factory=dict)
     shop: Dict[str, Any] = field(default_factory=dict)
     machine: Dict[str, Any] = field(default_factory=dict)
+    #: The kiosk's point of sale's layer (P:/specs/chain-areas.md §5), between the shop's and the kiosk's.
+    area: Dict[str, Any] = field(default_factory=dict)
 
 
-def layers_for(db: Session, *, company_id=None, shop_id=None, machine_id=None) -> Layers:
+def layers_for(db: Session, *, company_id=None, shop_id=None, machine_id=None, area_id=None) -> Layers:
+    try:
+        area = _overrides(_layer_row(db, "area", area_id))
+    except Exception:  # noqa: BLE001 - a database before the column: no point-of-sale layer
+        area = {}
     return Layers(
         company=_overrides(_layer_row(db, "company", company_id)),
         shop=_overrides(_layer_row(db, "shop", shop_id)),
         machine=_overrides(_layer_row(db, "machine", machine_id)),
+        area=area,
     )
 
 
@@ -2157,11 +2165,12 @@ def machine_layers(db: Session, machine) -> Layers:
         company_id=shop.company_id if shop is not None else None,
         shop_id=machine.shop_id,
         machine_id=machine.id,
+        area_id=getattr(machine, "area_id", None),
     )
 
 
 def effective_config(db: Session, machine) -> Dict[str, Any]:
-    """What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ machine (sanitised, repaired)."""
+    """What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ its point of sale ⊕ machine (sanitised, repaired)."""
     layers = machine_layers(db, machine)
     # "שליטה מרחוק בקיוסקים": the shop's quick hides and the kiosk's banner, over its settings
     # (app/services/kiosk_live.py) — every kiosk already applies both.
@@ -2171,7 +2180,7 @@ def effective_config(db: Session, machine) -> Dict[str, Any]:
     # "קיוסק — מה נחסם כשאין אינטרנט" (till parameter `kioskOfflineBlockScope`): other than the default, in
     # `general.offlineBlockScope` — the Android web kiosk reads the config, not the parameters. So too
     # "קיוסק — כשאין מסופון אשראי" (`kioskNoTerminalFallback`), as `general.noTerminalFallback`.
-    cfg = kiosk_offline_block_overlay(db, machine, kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.machine)))
+    cfg = kiosk_offline_block_overlay(db, machine, kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.area, layers.machine)))
     return kiosk_no_terminal_fallback_overlay(db, machine, cfg)
 
 

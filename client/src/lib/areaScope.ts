@@ -78,8 +78,9 @@ export function savedScopeFor(saved: unknown, tenantId: string | null): ScopeSel
     machineId: pick('machineId'),
     areaId: pick('areaId'),
   };
-  if (!out.companyId && !out.shopId && !out.machineId && !out.areaId) return null;
+  // A point of sale only with its shop: one on its own says nothing.
   if (!out.shopId) out.areaId = null;
+  if (!out.companyId && !out.shopId && !out.machineId) return null;
   return out;
 }
 

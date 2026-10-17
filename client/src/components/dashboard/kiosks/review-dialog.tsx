@@ -30,6 +30,8 @@ import {
   type KioskLayer,
 } from '@/lib/kioskConfig';
 import { fetchKioskSettings, type KioskLevel, type KioskSummary } from '@/lib/kioskApi';
+import { sameId } from '@/lib/entityLookup';
+import { useScope } from '@/lib/scope';
 
 const MAX_KIOSKS = 12;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
@@ -164,10 +166,15 @@ export function ReviewDialog({
   const [showJson, setShowJson] = useState(false);
   const here = useMemo(() => diffKioskConfigs(saved, draft), [saved, draft]);
 
+  // A point of sale's kiosks: those whose machine stands in it now.
+  const machines = useScope().machines;
   const affected = useMemo(() => {
     if (level === 'machine') return [];
+    if (level === 'area') {
+      return kiosks.filter((k) => sameId(machines.find((m) => sameId(m.id, k.machineId))?.areaId ?? null, targetId));
+    }
     return kiosks.filter((k) => (level === 'shop' ? k.shopId === targetId : k.companyId === targetId));
-  }, [kiosks, level, targetId]);
+  }, [kiosks, level, machines, targetId]);
   const shown = affected.slice(0, MAX_KIOSKS);
   const shopIds = level === 'company' ? Array.from(new Set(shown.map((k) => k.shopId).filter((x): x is string => !!x))) : [];
 
@@ -195,7 +202,7 @@ export function ReviewDialog({
     const shopLayer = level === 'company' ? shopQueries[shopIds.indexOf(k.shopId ?? '')]?.data?.overrides : undefined;
     // Resolved as the server will: defaults, the style's preset, then the layers.
     const next =
-      level === 'shop'
+      level === 'shop' || level === 'area'
         ? inheritedLayers
           ? resolveKioskConfig(inheritedLayers, layer, ms.overrides)
           : deepMergeKiosk(draft, ms.overrides)

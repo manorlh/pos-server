@@ -2,7 +2,8 @@
 
 /**
  * What can be done to several selected products at once: move them to a category, lock
- * or unlock them at one company / shop / point of sale / till, or delete them.
+ * or unlock them at one company / shop / point of sale / till, add them to / remove them from points of sale
+ * (`POST /products/areas/bulk`), change their prices (BulkPriceDialog), or delete them.
  *
  * There is no bulk endpoint — each product goes through the same request its own
  * dialog makes (`PUT /products/{id}`, `PUT /products/{id}/availability/{level}/{id}`,
@@ -15,8 +16,15 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { FolderInput, Lock, Trash2, X } from 'lucide-react';
+import { FolderInput, Lock, MapPin, Tag, Trash2, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { useScope } from '@/lib/scope';
+import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
+import { AreaChips } from '@/components/dashboard/prices/area-chips';
+import { BulkPriceDialog } from '@/components/dashboard/prices/bulk-price-dialog';
+import { PRODUCT_AREAS_KEY } from '@/components/dashboard/prices/product-areas-section';
 import { formatApiErrorDetail } from '@/lib/apiError';
 import { entitySelectItems } from '@/lib/selectItems';
 import type { Category, Product } from '@/lib/types';
@@ -47,7 +55,7 @@ interface RunState {
   finished: boolean;
 }
 
-type Action = 'category' | 'availability' | 'delete';
+type Action = 'category' | 'availability' | 'delete' | 'areas' | 'prices';
 type AvailabilityChoice = 'active' | 'locked' | 'inherit';
 
 const LEVEL_PATH = { company: 'companies', shop: 'shops', area: 'areas', machine: 'machines' } as const;
@@ -89,6 +97,53 @@ export function ProductBulkActions({
   const [scope, setScope] = useState<OrgScope>(EMPTY_ORG_SCOPE);
   const [choice, setChoice] = useState<AvailabilityChoice>('locked');
   const [run, setRun] = useState<RunState | null>(null);
+
+  // "הוספה/הסרה מנקודות מכירה" (P:/specs/chain-areas.md §6): the top bar's shop, or one picked here.
+  const topBar = useScope();
+  const [areasShop, setAreasShop] = useState('');
+  const [areaIds, setAreaIds] = useState<string[]>([]);
+  const [areasAction, setAreasAction] = useState<'add' | 'remove'>('add');
+  const [areasBusy, setAreasBusy] = useState(false);
+  const [areasResult, setAreasResult] = useState<{
+    changed: number;
+    unchanged: number;
+    refused: { name: string; detail: string }[];
+  } | null>(null);
+  const areasShopId = topBar.shopId ?? (areasShop || null);
+  const shopAreas = useShopAreas(areasShopId);
+  const liveShopAreas = (shopAreas.data ?? []).filter((a) => !a.archivedAt);
+
+  const openAreas = () => {
+    setAreaIds(topBar.areaId ? [topBar.areaId] : []);
+    setAreasAction('add');
+    setAction('areas');
+  };
+
+  const applyAreas = async () => {
+    if (!areasShopId || !areaIds.length) return;
+    setAreasBusy(true);
+    try {
+      const { data } = await api.post('/products/areas/bulk', {
+        productIds: selected.map((p) => p.id),
+        shopId: areasShopId,
+        areaIds,
+        action: areasAction,
+      });
+      const names = new Map(selected.map((p) => [p.id.toLowerCase(), p.name]));
+      const refused = ((data?.refused ?? []) as { productId: string; detail: unknown }[]).map((r) => ({
+        name: names.get(String(r.productId).toLowerCase()) ?? String(r.productId),
+        detail: formatApiErrorDetail(r.detail) ?? '',
+      }));
+      setAction(null);
+      setAreasResult({ changed: data?.changed?.length ?? 0, unchanged: data?.unchanged?.length ?? 0, refused });
+      qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: [PRODUCT_AREAS_KEY] });
+    } catch (err) {
+      toast.error(axiosErrorToToastMessage(err, t('unknownError')));
+    } finally {
+      setAreasBusy(false);
+    }
+  };
 
   const target = deepestOrgScope(scope);
   const scopeTarget = target && target.level !== 'tenant' && target.id ? target : null;
@@ -186,6 +241,14 @@ export function ProductBulkActions({
                 <Lock className="h-3.5 w-3.5" aria-hidden />
                 {t('setAvailability')}
               </Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={openAreas}>
+                <MapPin className="h-3.5 w-3.5" aria-hidden />
+                הוספה/הסרה מנקודות מכירה
+              </Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => setAction('prices')}>
+                <Tag className="h-3.5 w-3.5" aria-hidden />
+                שינוי מחירים
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -276,6 +339,107 @@ export function ProductBulkActions({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={action === 'areas'} onOpenChange={(o) => !o && !areasBusy && setAction(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>הוספה/הסרה מנקודות מכירה · {selected.length} מוצרים</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {topBar.shopId ? (
+              <p className="text-sm">
+                סניף: <span className="font-medium">{topBar.shop?.name ?? ''}</span>
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <Label htmlFor="bulk-areas-shop">סניף</Label>
+                <select
+                  id="bulk-areas-shop"
+                  className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
+                  value={areasShop}
+                  onChange={(e) => {
+                    setAreasShop(e.target.value);
+                    setAreaIds([]);
+                  }}
+                >
+                  <option value="">בחרו סניף…</option>
+                  {topBar.shops.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div role="radiogroup" aria-label="פעולה" className="inline-flex w-fit gap-0.5 rounded-lg border p-0.5">
+              {(['add', 'remove'] as const).map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  role="radio"
+                  aria-checked={areasAction === a}
+                  onClick={() => setAreasAction(a)}
+                  className={
+                    areasAction === a
+                      ? 'rounded-md bg-primary px-3 py-1 text-sm font-medium text-primary-foreground'
+                      : 'rounded-md px-3 py-1 text-sm text-muted-foreground hover:bg-muted'
+                  }
+                >
+                  {a === 'add' ? 'הוספה' : 'הסרה'}
+                </button>
+              ))}
+            </div>
+            {areasShopId ? (
+              <div className="space-y-1">
+                <Label>נקודות מכירה</Label>
+                <AreaChips areas={liveShopAreas.map((a) => ({ id: a.id, name: a.name }))} value={areaIds} onChange={setAreaIds} />
+              </div>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              {areasAction === 'add'
+                ? 'המוצרים יימכרו גם בנקודות שנבחרו. מוצר שהסניף לא מוכר — יירשם בסניף רק בנקודות האלה.'
+                : 'המוצרים לא יוצגו במכשירי הנקודות שנבחרו. הסרה מכל הנקודות — הסניף מפסיק למכור.'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={areasBusy} onClick={() => setAction(null)}>{t('cancel')}</Button>
+            <Button disabled={!areasShopId || !areaIds.length || areasBusy} onClick={() => void applyAreas()}>
+              {areasBusy ? 'שומר…' : t('apply')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!areasResult} onOpenChange={(o) => !o && setAreasResult(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>נקודות מכירה עודכנו</DialogTitle>
+          </DialogHeader>
+          {areasResult ? (
+            <div className="space-y-2 text-sm">
+              <p>
+                שונו: {areasResult.changed} · ללא שינוי: {areasResult.unchanged}
+                {areasResult.refused.length ? <span className="text-destructive"> · סורבו: {areasResult.refused.length}</span> : null}
+              </p>
+              {areasResult.refused.length ? (
+                <ul className="max-h-60 space-y-1 overflow-y-auto rounded-md border p-2">
+                  {areasResult.refused.map((r, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="font-medium">{r.name}</span>
+                      <span className="text-destructive">{r.detail}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button onClick={() => setAreasResult(null)}>{t('close')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {action === 'prices' ? (
+        <BulkPriceDialog open onOpenChange={(o) => !o && setAction(null)} productIds={selected.map((p) => p.id)} />
+      ) : null}
 
       <Dialog open={!!run} onOpenChange={(o) => !o && !busy && setRun(null)}>
         <DialogContent className="max-w-lg" showCloseButton={!busy}>

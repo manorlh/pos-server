@@ -601,9 +601,10 @@ def builtin_templates_out() -> List[dict]:
             "sections": dict(spec["sections"]),
             "builtin": True,
             "fullAccess": spec["fullAccess"],
+            # "מנהל נקודת מכירה": saving it needs the user's points of sale (P:/specs/chain-areas.md §3).
+            "needsAreas": bool(spec.get("needsAreas")),
         }
         for key, spec in DS.BUILTIN_TEMPLATES.items()
-        # Not offered yet ("מנהל אזור" until dashboard users can be scoped to a point of sale).
         if not spec.get("hidden")
     ]
 
