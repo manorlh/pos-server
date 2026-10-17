@@ -102,6 +102,7 @@ DELETE /catalog-menus/assignments -> products:edit
 DELETE /catalog-menus/{menu_id} -> products:edit
 GET /catalog-menus/{menu_id} -> products:view
 PUT /catalog-menus/{menu_id} -> products:edit
+GET /catalog-picker -> products|quick_actions|promotions|prepaid_vouchers:view
 POST /catalog/push -> products:edit
 GET /categories -> products|quick_actions|promotions:view
 POST /categories -> products:edit

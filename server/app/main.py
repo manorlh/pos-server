@@ -545,6 +545,10 @@ app.include_router(kiosk_web_router.till_router, prefix=_prefix)
 from app.routers import catalog_menus as catalog_menus_router  # noqa: E402
 
 app.include_router(catalog_menus_router.router, prefix=_prefix)
+# The lean catalog of the dashboard's product & category picker (menus, promotions, vouchers).
+from app.routers import catalog_picker as catalog_picker_router  # noqa: E402
+
+app.include_router(catalog_picker_router.router, prefix=_prefix)
 # "קבוצות מכשירים": named groups of tills, a menu assignment level of their own.
 from app.routers import machine_groups as machine_groups_router  # noqa: E402
 

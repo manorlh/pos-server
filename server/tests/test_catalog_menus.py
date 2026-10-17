@@ -613,6 +613,101 @@ class TestCrud:
         assert {t["name"] for t in narrowed["targets"] if t["level"] == "shop"} == {"Center"}
 
 
+class TestEditorAssignments:
+    """The editor's "שייך ל": the same assignment rows the "שיוך" tab edits — one source of truth."""
+
+    def test_created_with_its_places_and_shown_in_the_targets(self, mw):
+        menu = create(mw, name="בר", companyId=str(mw.company.id), assignments=[
+            {"level": "shop", "targetId": str(mw.shop.id)},
+            {"level": "area", "targetId": str(mw.bar.id), "priority": 5},
+        ])
+        assert {(a["level"], a["targetName"], a["priority"]) for a in menu["assignments"]} == {
+            ("shop", "Center", 0), ("area", "Bar", 5),
+        }
+        targets = R.get_catalog_menu_targets(company_id=None, shop_id=None, **_ctx(mw))
+        assert {(a["level"], a["menuId"], a["priority"]) for a in targets["assignments"]} == {
+            ("shop", menu["id"], 0), ("area", menu["id"], 5),
+        }
+
+    def test_an_update_replaces_them_and_without_the_key_keeps_them(self, mw):
+        menu = create(mw, name="בר", companyId=str(mw.company.id), assignments=[{"level": "shop", "targetId": str(mw.shop.id)}])
+        out = R.update_catalog_menu(menu["id"], body(name="בר", companyId=str(mw.company.id), assignments=[
+            {"level": "machine", "targetId": str(mw.t1.id)}, {"level": "machine", "targetId": str(mw.t2.id), "priority": 2},
+        ]), BackgroundTasks(), **_ctx(mw))
+        assert {(a["level"], a["targetId"], a["priority"]) for a in out["assignments"]} == {
+            ("machine", str(mw.t1.id), 0), ("machine", str(mw.t2.id), 2),
+        }
+        out = R.update_catalog_menu(menu["id"], body(name="בר 2", companyId=str(mw.company.id)), BackgroundTasks(), **_ctx(mw))
+        assert len(out["assignments"]) == 2
+        out = R.update_catalog_menu(
+            menu["id"], body(name="בר 2", companyId=str(mw.company.id), assignments=[]), BackgroundTasks(), **_ctx(mw),
+        )
+        assert out["assignments"] == []
+
+    def test_what_the_user_cannot_set_stays(self, mw):
+        menu = create(mw, name="משותף", companyId=str(mw.company.id), assignments=[{"level": "shop", "targetId": str(mw.shop.id)}])
+        # A row at a target the user cannot resolve (here: one gone since) is not theirs to take away.
+        gone = uuid.uuid4()
+        mw.db.add(CatalogMenuAssignment(
+            id=uuid.uuid4(), tenant_id=mw.tenant.id, menu_id=uuid.UUID(menu["id"]), level="shop", target_id=gone,
+            priority=0, created_at=OLD, updated_at=OLD,
+        ))
+        mw.db.commit()
+        out = R.update_catalog_menu(
+            menu["id"], body(name="משותף", companyId=str(mw.company.id), assignments=[]), BackgroundTasks(),
+            **_ctx(mw, mw.company_manager),
+        )
+        assert [(a["level"], a["targetId"]) for a in out["assignments"]] == [("shop", str(gone))]
+        # A shop manager may not write a company's menu at all (its assignments with it).
+        assert refused(
+            R.update_catalog_menu, menu["id"], body(name="משותף", companyId=str(mw.company.id), assignments=[]),
+            BackgroundTasks(), **_ctx(mw, mw.manager),
+        ).status_code == 403
+
+    def test_refused_where_the_tab_refuses(self, mw):
+        assert refused(create, mw, name="יריב", companyId=str(mw.rival.id), assignments=[
+            {"level": "shop", "targetId": str(mw.shop.id)},
+        ]).detail == CM.OUT_OF_REACH
+        assert refused(create, mw, name="x", companyId=str(mw.company.id), assignments=[
+            {"level": "shop", "targetId": str(uuid.uuid4())},
+        ]).status_code == 404
+        with pytest.raises(ValidationError):
+            body(assignments=[{"level": "shop", "targetId": str(mw.shop.id)}] * 2)
+        with pytest.raises(ValidationError):
+            body(assignments=[{"level": "planet", "targetId": str(mw.shop.id)}])
+
+
+class TestCatalogPicker:
+    """`GET /catalog-picker`: the lean catalog of the two-pane picker."""
+
+    def test_categories_and_products_with_what_the_filters_need(self, mw):
+        from app.models.product_availability_override import CompanyProductOverride
+        from app.routers import catalog_picker as P
+
+        mw.beer.in_stock = False
+        mw.burger.dietary_tags = ["vegan", "", 5]
+        mw.db.add(CompanyProductOverride(
+            id=uuid.uuid4(), company_id=mw.company.id, product_id=mw.pasta.id, is_available=False,
+        ))
+        mw.db.commit()
+        out = P.get_catalog_picker(**_ctx(mw))
+        assert [c["name"] for c in out["categories"]] == ["Hot", "Mains", "Drinks"]
+        rows = {p["name"]: p for p in out["products"]}
+        # Never a till's own copy: one cola.
+        assert [p["name"] for p in out["products"]].count("cola") == 1
+        assert rows["cola"]["categoryId"] == str(mw.drinks.id) and rows["cola"]["price"] == 12.0
+        assert rows["beer"]["inStock"] is False and rows["cola"]["inStock"] is True
+        assert rows["pasta"]["isActive"] is False and rows["eggs"]["isActive"] is True
+        assert rows["burger"]["tags"] == ["vegan", "5"]
+        assert out["total"] == len(out["products"]) and out["truncated"] is False
+
+    def test_the_route_is_mounted_and_readable_like_the_product_list(self):
+        from app.services import dashboard_sections as DS
+
+        rule = DS.rule_for("GET", "/catalog-picker")
+        assert rule.kind == "section" and {"products", "promotions"} <= set(rule.sections)
+
+
 # ── The dashboard: what is active, the simulator ──────────────────────────────
 
 

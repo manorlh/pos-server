@@ -10,11 +10,11 @@
  * the rules of use may change later ([BatchRulesCard]) and apply from the next sale.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Search, X } from 'lucide-react';
-import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
+import { Loader2 } from 'lucide-react';
+import { VoucherItemsPicker } from '@/components/dashboard/prepaid-vouchers/voucher-catalog-picker';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import {
   PREPAID_KINDS,
@@ -33,11 +33,10 @@ import {
 import { maxVouchersProblem, oneOfBatchPerSale, usesPerSaleProblem, voucherFieldsFor } from '@/lib/voucherFields';
 import {
   fetchPrepaidCategories,
-  searchPrepaidProducts,
   type PrepaidProductOption,
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
-import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
+import { type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -103,70 +102,6 @@ export function usePrepaidCategoryOptions(companyId: string): MultiSelectOption[
     };
     return data.map((c) => ({ id: c.id, label: path(c.id) })).sort((a, b) => a.label.localeCompare(b.label, 'he'));
   }, [data]);
-}
-
-/**
- * The products an item discount is on: chips of what is chosen, and a search over every product a
- * batch of [companyId] may be looking for (`GET /prepaid-vouchers/products?purpose=item_discount`,
- * the save's rule): one an item discount cannot take is shown greyed with why ("לא מקבל הנחות"),
- * so nothing offered is refused on save and nothing is silently missing (§7.14).
- */
-function TargetProductsPicker({ companyId, shopIds, value, onChange }: {
-  companyId: string;
-  shopIds?: string[];
-  value: PrepaidProductOption[];
-  onChange: (next: PrepaidProductOption[]) => void;
-}) {
-  const t = useTranslations('prepaidVouchers.kinds');
-  const tc = useTranslations('prepaidVouchers.create');
-  const te = useTranslations('prepaidVouchers.eligibility');
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(search), 300);
-    return () => window.clearTimeout(id);
-  }, [search]);
-  const products = useQuery({
-    queryKey: ['prepaid-voucher-products', companyId, debounced, 'item_discount', shopIds ?? []],
-    queryFn: () => searchPrepaidProducts(debounced, companyId, { purpose: 'item_discount', shopIds }),
-    enabled: !!companyId,
-  });
-  const chosen = new Set(value.map((p) => p.id));
-  return (
-    <div className="space-y-1.5">
-      <span className="text-sm font-medium">{t('products')}</span>
-      {value.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {value.map((p) => (
-            <span key={p.id} className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 py-0.5 ps-2.5 pe-1 text-xs">
-              <span className="truncate">{p.name}</span>
-              <button type="button" onClick={() => onChange(value.filter((x) => x.id !== p.id))}
-                aria-label={tc('remove')} className="rounded-full p-0.5 hover:bg-muted">
-                <X className="h-3 w-3" aria-hidden />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <div className="relative">
-        <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tc('searchProducts')} className="ps-8"
-          disabled={!companyId} />
-      </div>
-      <div className="max-h-44 overflow-y-auto rounded-lg border">
-        <PrepaidProductPickList
-          products={products.data}
-          purpose="item_discount"
-          chosen={chosen}
-          onPick={(p) => onChange([...value, p])}
-          pending={!!companyId && products.isPending}
-          pendingText="…"
-          emptyText={companyId ? tc('noProducts') : tc('pickCompany')}
-        />
-      </div>
-      <p className="text-xs text-muted-foreground">{te('searchHint')}</p>
-    </div>
-  );
 }
 
 /** What a discount voucher gives: ₪ or %, how much, a minimum and cap (whole sale), or what it is on (items). */
@@ -246,32 +181,26 @@ export function DiscountTermsFields({
       {fields.visible.has('targets') ? (
         <div className="space-y-2">
           <p className="text-sm font-medium">{t('targets')}</p>
-          <TargetProductsPicker companyId={companyId} shopIds={shopIds} value={value.products} onChange={(products) => set({ products })} />
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <Label>{t('categories')}</Label>
-              <div className="flex gap-1">
-                <Button type="button" size="sm" variant="ghost" disabled={!categoryOptions.length}
-                  onClick={() => set({ categoryIds: categoryOptions.map((c) => c.id) })}>
-                  {t('allCategories')}
-                </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={!value.categoryIds.length}
-                  onClick={() => set({ categoryIds: [] })}>
-                  {t('clearCategories')}
-                </Button>
-              </div>
-            </div>
-            <EntityMultiSelect
-              label={t('categories')}
-              options={categoryOptions}
-              selected={value.categoryIds}
-              onChange={(categoryIds) => set({ categoryIds })}
-              allLabel={t('categories')}
-              clearLabel={t('categories')}
-              emptyLabel={t('targetsEmpty')}
-              disabled={!companyId}
-            />
-          </div>
+          <VoucherItemsPicker
+            companyId={companyId}
+            shopIds={shopIds}
+            purpose="item_discount"
+            unavailableText={companyId ? null : t('pickCompanyFirst')}
+            listHeight={320}
+            value={{ categoryIds: value.categoryIds, productIds: value.products.map((p) => p.id) }}
+            onChange={(next, options) => {
+              const had = new Map(value.products.map((p) => [p.id, p]));
+              set({
+                categoryIds: next.categoryIds,
+                products: next.productIds
+                  .map((id) => options.get(id) ?? had.get(id))
+                  .filter((p): p is PrepaidProductOption => !!p),
+              });
+            }}
+          />
+          {!value.products.length && !value.categoryIds.length ? (
+            <p className="text-xs text-muted-foreground">{t('targetsEmpty')}</p>
+          ) : null}
           <div className="space-y-1">
             <Label htmlFor="pv-units">{t('maxUnits')}</Label>
             <Input id="pv-units" type="number" min={1} max={100} className="h-9 w-28" value={value.maxUnits}

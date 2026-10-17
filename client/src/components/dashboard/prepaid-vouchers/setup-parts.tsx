@@ -11,8 +11,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
-import { checkPrepaidGroups, searchPrepaidProducts, type PrepaidGroupBody } from '@/lib/prepaidVouchersApi';
+import { AlertTriangle, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { checkPrepaidGroups, type PrepaidGroupBody } from '@/lib/prepaidVouchersApi';
 import type { PrepaidProductOption } from '@/lib/prepaidVoucherProducts';
 import {
   MAX_GROUP_QTY,
@@ -34,10 +34,9 @@ import {
   type VoucherSelection,
 } from '@/lib/voucherPresets';
 import { EXAMPLE_UNITS, namesText, type SummaryGroup } from '@/lib/voucherSummary';
-import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
+import { VoucherItemsPicker } from '@/components/dashboard/prepaid-vouchers/voucher-catalog-picker';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
 import { usePrepaidCategoryOptions } from '@/components/dashboard/prepaid-vouchers/voucher-terms';
-import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -112,61 +111,11 @@ export function PresetPicker({ value, onPick }: { value: VoucherPreset | null; o
 
 // ── What a group takes: products, categories, the whole menu, exclusions ──────
 
-function Chips({ values, onRemove, removeLabel }: { values: NamedRef[]; onRemove: (id: string) => void; removeLabel: string }) {
-  if (!values.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {values.map((p) => (
-        <span key={p.id} className="inline-flex max-w-full items-center gap-1 rounded-full border bg-muted/40 py-0.5 ps-2.5 pe-1 text-xs">
-          <span className="truncate">{p.name}</span>
-          <button type="button" onClick={() => onRemove(p.id)} aria-label={`${removeLabel}: ${p.name}`} className="rounded-full p-0.5 hover:bg-muted">
-            <X className="h-3 w-3" aria-hidden />
-          </button>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/** Search the company's products (the save's own rule, every product with why not) and pick one. */
-function ProductSearch({ companyId, shopIds, chosen, onPick, idPrefix }: {
-  companyId: string;
-  shopIds?: string[];
-  chosen: NamedRef[];
-  onPick: (p: PrepaidProductOption) => void;
-  idPrefix: string;
-}) {
-  const t = useTranslations('prepaidVouchers.setup');
-  const tc = useTranslations('common');
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(search), 300);
-    return () => window.clearTimeout(id);
-  }, [search]);
-  const ids = shopIds ?? [];
-  const products = useQuery({
-    queryKey: ['prepaid-voucher-products', companyId, debounced, 'items', ids],
-    queryFn: () => searchPrepaidProducts(debounced, companyId, { purpose: 'items', shopIds: ids }),
-    enabled: !!companyId,
-  });
-  return (
-    <div className="space-y-1">
-      <div className="relative">
-        <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-        <Input id={`${idPrefix}-search`} value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('searchProducts')}
-          className="ps-8" disabled={!companyId} aria-label={t('searchProducts')} />
-      </div>
-      <div className="max-h-40 overflow-y-auto rounded-lg border">
-        <PrepaidProductPickList products={products.data} purpose="items" chosen={new Set(chosen.map((p) => p.id))}
-          onPick={onPick} pending={!!companyId && products.isPending} pendingText={tc('loading')}
-          emptyText={companyId ? t('noProducts') : t('pickCompanyFirst')} />
-      </div>
-    </div>
-  );
-}
-
-/** The products, categories (or the whole menu) one group takes, and what it excludes. */
+/**
+ * The products, categories (or the whole menu) one group takes, and what it excludes — each in
+ * the shared two-pane picker (a category's tick = the department, "כולל תת-מחלקות" folds its
+ * sub-departments into it).
+ */
 export function GroupItemsPicker({ companyId, shopIds, group, onChange, idPrefix }: {
   companyId: string;
   shopIds?: string[];
@@ -177,12 +126,16 @@ export function GroupItemsPicker({ companyId, shopIds, group, onChange, idPrefix
   const t = useTranslations('prepaidVouchers.setup');
   const categoryOptions = usePrepaidCategoryOptions(companyId);
   const set = (patch: Partial<DraftGroup>) => onChange({ ...group, ...patch });
+  const known = [...group.categories, ...group.excludeCategories, ...group.products, ...group.excludeProducts];
   const catRefs = (ids: string[]): NamedRef[] => ids.map((id) => ({
-    id, name: (categoryOptions.find((c) => c.id === id)?.label.split(' › ').pop()) ?? group.categories.concat(group.excludeCategories).find((c) => c.id === id)?.name ?? id,
+    id, name: (categoryOptions.find((c) => c.id === id)?.label.split(' › ').pop()) ?? known.find((c) => c.id === id)?.name ?? id,
   }));
+  const productRefs = (ids: string[], options: Map<string, PrepaidProductOption>): NamedRef[] =>
+    ids.map((id) => ({ id, name: options.get(id)?.name ?? known.find((p) => p.id === id)?.name ?? id }));
   const [showExclude, setShowExclude] = useState(group.excludeProducts.length + group.excludeCategories.length > 0);
+  const unavailable = companyId ? null : t('pickCompanyFirst');
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" id={`${idPrefix}-items`}>
       <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/30 px-3 py-2">
         <div className="min-w-0">
           <p className="text-sm font-medium">{t('allItems')}</p>
@@ -191,37 +144,31 @@ export function GroupItemsPicker({ companyId, shopIds, group, onChange, idPrefix
         <Switch checked={group.allItems} onCheckedChange={(v) => set({ allItems: !!v })} aria-label={t('allItems')} />
       </div>
       {group.allItems ? null : (
-        <>
-          <div className="space-y-1">
-            <Label>{t('categories')}</Label>
-            <EntityMultiSelect label={t('categories')} options={categoryOptions} selected={group.categories.map((c) => c.id)}
-              onChange={(ids) => set({ categories: catRefs(ids) })} allLabel={t('categories')} clearLabel={t('categories')}
-              emptyLabel={t('categoriesEmpty')} disabled={!companyId} />
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>{t('itemsPick')}</Label>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" className="h-3.5 w-3.5 accent-primary" checked={group.includeSubcategories}
                 onChange={(e) => set({ includeSubcategories: e.target.checked })} />
               {t('includeSubcategories')}
             </label>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor={`${idPrefix}-search`}>{t('products')}</Label>
-            <Chips values={group.products} removeLabel={t('remove')} onRemove={(id) => set({ products: group.products.filter((p) => p.id !== id) })} />
-            <ProductSearch companyId={companyId} shopIds={shopIds} chosen={group.products} idPrefix={idPrefix}
-              onPick={(p) => set({ products: [...group.products, { id: p.id, name: p.name }] })} />
-          </div>
-        </>
+          <VoucherItemsPicker companyId={companyId} shopIds={shopIds} purpose="items" unavailableText={unavailable}
+            withSubcategories={group.includeSubcategories}
+            value={{ categoryIds: group.categories.map((c) => c.id), productIds: group.products.map((p) => p.id) }}
+            onChange={(next, options) => set({ categories: catRefs(next.categoryIds), products: productRefs(next.productIds, options) })} />
+        </div>
       )}
       {showExclude ? (
         <div className="space-y-2 rounded-lg border border-dashed p-2">
           <p className="text-sm font-medium">{t('excludeTitle')}</p>
           <p className="text-xs text-muted-foreground">{t('excludeHint')}</p>
-          <EntityMultiSelect label={t('excludeCategories')} options={categoryOptions} selected={group.excludeCategories.map((c) => c.id)}
-            onChange={(ids) => set({ excludeCategories: catRefs(ids) })} allLabel={t('excludeCategories')} clearLabel={t('excludeCategories')}
-            emptyLabel={t('excludeCategories')} disabled={!companyId} />
-          <Chips values={group.excludeProducts} removeLabel={t('remove')}
-            onRemove={(id) => set({ excludeProducts: group.excludeProducts.filter((p) => p.id !== id) })} />
-          <ProductSearch companyId={companyId} shopIds={shopIds} chosen={group.excludeProducts} idPrefix={`${idPrefix}-x`}
-            onPick={(p) => set({ excludeProducts: [...group.excludeProducts, { id: p.id, name: p.name }] })} />
+          <VoucherItemsPicker companyId={companyId} shopIds={shopIds} purpose="items" unavailableText={unavailable}
+            withSubcategories={group.includeSubcategories} listHeight={280}
+            value={{ categoryIds: group.excludeCategories.map((c) => c.id), productIds: group.excludeProducts.map((p) => p.id) }}
+            onChange={(next, options) => set({
+              excludeCategories: catRefs(next.categoryIds), excludeProducts: productRefs(next.productIds, options),
+            })} />
         </div>
       ) : (
         <Button type="button" size="sm" variant="ghost" onClick={() => setShowExclude(true)}>{t('excludeOpen')}</Button>
