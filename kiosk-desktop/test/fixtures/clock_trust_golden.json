@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "about": "Trusted time and the clock auto-fix (feat/clock-trust). One rule in pos-android domain/ClockTrust.kt, kiosk-desktop core/clockTrust.ts and pos-server app/services/clock_trust.py (vocabulary). skewMs = device minus server, positive when the device is ahead. bootWallMs = wall minus monotonic at the measurement: when it moves by more than stepToleranceMs the wall clock was stepped (or the device restarted) and the measurement no longer applies.",
+  "constants": {
+    "trustMs": 90000,
+    "stepToleranceMs": 120000,
+    "freshMs": 600000,
+    "cooldownMs": 1800000,
+    "autoTimeGraceMs": 180000,
+    "setTimeMinSdk": 28
+  },
+  "vocabulary": {
+    "sources": ["device", "server"],
+    "trustReasons": ["none", "insecure", "small", "stepped", "applied"],
+    "capabilities": ["device_owner", "elevated", "none"],
+    "actions": ["none", "enable_auto_time", "set_time", "prompt"],
+    "fixReasons": ["unknown", "ok", "insecure", "stale", "off", "manual", "busy", "auto_time_off", "waiting_network_time", "sdk", "cooldown", "fix"],
+    "results": ["ok", "failed", "refused"]
+  },
+  "trusted": [
+    { "name": "never measured", "wallMs": 1760000000000, "monoMs": 5000000, "m": null, "expect": { "nowMs": 1760000000000, "source": "device", "reason": "none" } },
+    { "name": "measured over plain http", "wallMs": 1760000000000, "monoMs": 5000000, "m": { "skewMs": 600000, "bootWallMs": 1759995000000, "secure": false }, "expect": { "nowMs": 1760000000000, "source": "device", "reason": "insecure" } },
+    { "name": "a minute ahead is left alone", "wallMs": 1760000000000, "monoMs": 5000000, "m": { "skewMs": 60000, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1760000000000, "source": "device", "reason": "small" } },
+    { "name": "89.999 s behind is left alone", "wallMs": 1760000000000, "monoMs": 5000000, "m": { "skewMs": -89999, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1760000000000, "source": "device", "reason": "small" } },
+    { "name": "exactly 90 s ahead is corrected", "wallMs": 1760000000000, "monoMs": 5000000, "m": { "skewMs": 90000, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1759999910000, "source": "server", "reason": "applied" } },
+    { "name": "7 minutes behind is corrected", "wallMs": 1760000000000, "monoMs": 5000000, "m": { "skewMs": -420000, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1760000420000, "source": "server", "reason": "applied" } },
+    { "name": "a clock never set (years behind) is corrected", "wallMs": 1700000000000, "monoMs": 3600000, "m": { "skewMs": -60000000000, "bootWallMs": 1699996400000, "secure": true }, "expect": { "nowMs": 1760000000000, "source": "server", "reason": "applied" } },
+    { "name": "NTP slew of 30 s since the measurement still applies", "wallMs": 1760000030000, "monoMs": 5000000, "m": { "skewMs": -420000, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1760000450000, "source": "server", "reason": "applied" } },
+    { "name": "the wall clock was stepped since (someone fixed it)", "wallMs": 1760000420000, "monoMs": 5000000, "m": { "skewMs": -420000, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1760000420000, "source": "device", "reason": "stepped" } },
+    { "name": "the device restarted (monotonic started again)", "wallMs": 1760000000000, "monoMs": 60000, "m": { "skewMs": -420000, "bootWallMs": 1759995000000, "secure": true }, "expect": { "nowMs": 1760000000000, "source": "device", "reason": "stepped" } }
+  ],
+  "fix": [
+    { "name": "no measurement", "in": { "skewMs": null, "ageMs": null, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "none", "reason": "unknown" } },
+    { "name": "clock fine", "in": { "skewMs": 3000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "none", "reason": "ok" } },
+    { "name": "never from an unverified answer", "in": { "skewMs": -420000, "ageMs": 1000, "secure": false, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "prompt", "reason": "insecure" } },
+    { "name": "an old measurement waits for a fresh one", "in": { "skewMs": -420000, "ageMs": 600001, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "none", "reason": "stale" } },
+    { "name": "clockAutoFix off", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": false, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "prompt", "reason": "off" } },
+    { "name": "not device owner: staff fix it in Settings", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "none", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "prompt", "reason": "manual" } },
+    { "name": "a sale in progress waits", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": true, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "none", "reason": "busy" } },
+    { "name": "owner: automatic time first", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "enable_auto_time", "reason": "auto_time_off" } },
+    { "name": "owner: automatic time not readable is turned on", "in": { "skewMs": 900000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": null, "sdk": 26, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "enable_auto_time", "reason": "auto_time_off" } },
+    { "name": "owner: network time gets its grace", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": true, "sdk": 30, "busy": false, "sinceAutoTimeMs": 179999, "sinceSetTimeMs": null }, "expect": { "action": "none", "reason": "waiting_network_time" } },
+    { "name": "owner: network time did not fix it, set from the server", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": true, "sdk": 30, "busy": false, "sinceAutoTimeMs": 180000, "sinceSetTimeMs": null }, "expect": { "action": "set_time", "reason": "fix" } },
+    { "name": "owner: automatic time already on (not by us), set from the server", "in": { "skewMs": 420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": true, "sdk": 28, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "set_time", "reason": "fix" } },
+    { "name": "owner: turned on recently but off again, set from the server", "in": { "skewMs": 420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": false, "sdk": 30, "busy": false, "sinceAutoTimeMs": 60000, "sinceSetTimeMs": null }, "expect": { "action": "set_time", "reason": "fix" } },
+    { "name": "owner on Android 7-8.1 cannot set the time", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": true, "sdk": 27, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "prompt", "reason": "sdk" } },
+    { "name": "owner: once per half hour", "in": { "skewMs": -420000, "ageMs": 1000, "secure": true, "enabled": true, "capability": "device_owner", "autoTimeOn": true, "sdk": 30, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": 1799999 }, "expect": { "action": "none", "reason": "cooldown" } },
+    { "name": "Windows elevated: fix", "in": { "skewMs": 3600000, "ageMs": 5000, "secure": true, "enabled": true, "capability": "elevated", "autoTimeOn": null, "sdk": null, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "set_time", "reason": "fix" } },
+    { "name": "Windows elevated: once per half hour", "in": { "skewMs": 3600000, "ageMs": 5000, "secure": true, "enabled": true, "capability": "elevated", "autoTimeOn": null, "sdk": null, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": 60000 }, "expect": { "action": "none", "reason": "cooldown" } },
+    { "name": "Windows without admin: the technician's button", "in": { "skewMs": 3600000, "ageMs": 5000, "secure": true, "enabled": true, "capability": "none", "autoTimeOn": null, "sdk": null, "busy": false, "sinceAutoTimeMs": null, "sinceSetTimeMs": null }, "expect": { "action": "prompt", "reason": "manual" } }
+  ]
+}

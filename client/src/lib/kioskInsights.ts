@@ -547,6 +547,19 @@ export interface HealthAutoStart {
   reportedAt?: string | null;
 }
 
+/**
+ * "שעון המכשיר" as the server sends it (kiosk_health / clock_trust.status_of_machine). The same shape as
+ * lib/clockTrust.ts `ClockTrustStatus`, written out here to keep this file import-free.
+ */
+export interface HealthClockTrust {
+  source: string;
+  offsetMs?: number | null;
+  autoFix?: string | null;
+  autoFixEnabled?: boolean | null;
+  lastFix?: { at: string; action?: string | null; result?: string | null; fromMs?: number | null } | null;
+  reportedAt?: string | null;
+}
+
 export interface KioskHealthRow {
   machineId: string;
   name: string;
@@ -582,6 +595,9 @@ export interface KioskHealthRow {
   batteryMonitored?: boolean;
   /** "פתיחה אוטומטית" (lib/autoStart.ts); null: never reported — no indicator. Not a part: no effect on `overall`. */
   autoStart?: HealthAutoStart | null;
+  /** "שעון המכשיר" (lib/clockTrust.ts): the skew and whether documents follow the server's clock; null: never reported. */
+  clockSkewMs?: number | null;
+  clockTrust?: HealthClockTrust | null;
 }
 
 /** The battery part of a device whose battery is not watched ("ללא סוללה" / "ניטור סוללה כבוי"). */
@@ -608,6 +624,9 @@ export interface HealthDevice {
   batteryMonitored?: boolean;
   /** "פתיחה אוטומטית" (lib/autoStart.ts); null: never reported — no indicator. */
   autoStart?: HealthAutoStart | null;
+  /** "שעון המכשיר" (lib/clockTrust.ts); null: never reported. */
+  clockSkewMs?: number | null;
+  clockTrust?: HealthClockTrust | null;
   overall: 'ok' | 'warn' | 'error' | 'offline';
 }
 

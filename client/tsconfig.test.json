@@ -139,6 +139,8 @@
     "src/lib/deviceManagement.test.ts",
     "src/lib/autoStart.ts",
     "src/lib/autoStart.test.ts",
+    "src/lib/clockTrust.ts",
+    "src/lib/clockTrust.test.ts",
     "src/lib/optionSearch.ts",
     "src/lib/optionSearch.test.ts",
     "src/lib/deviceModelSearch.ts",

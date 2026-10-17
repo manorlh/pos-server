@@ -49,6 +49,7 @@ import {
   type WalletBalance,
 } from '../../core/till/drawerAway';
 import type { CashMovementRow, DrawerEventRow, DrawerStore } from './drawerStore';
+import { nowIso } from '../clock/trustedClock';
 
 /** Who acts at the drawer: the signed-in employee, or the manager who approved (their profile with its limits). */
 export interface DrawerPerson extends DrawerUser {
@@ -121,7 +122,7 @@ export class CashDrawerService {
   private readonly warn: (m: string) => void;
 
   constructor(private readonly d: DrawerServiceDeps) {
-    this.now = d.now ?? (() => new Date().toISOString());
+    this.now = d.now ?? (() => nowIso());
     this.newId = d.newId ?? (() => randomUUID());
     this.warn = d.warn ?? (() => undefined);
   }

@@ -105,6 +105,8 @@ export const EXCEPTION_TYPES = [
   'shift_open_overdue',
   'card_transmission_overdue',
   'till_printer',
+  // "שעון המכשיר לא מדויק" (pos-server clock_trust.py): details summary, skewMs, corrected, autoFix, lastFix, resolvedAt.
+  'till_clock',
   // "זיהויים חדשים" (P:/specs/push-more.md §C, §B2): the exception alerts' background watches, each
   // closed by itself when the case is over (details: summary, resolvedAt; value = minutes or %).
   'shop_not_opened',

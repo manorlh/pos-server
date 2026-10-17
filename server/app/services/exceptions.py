@@ -246,6 +246,8 @@ RULES: Tuple[RuleSpec, ...] = (
     ),
     # A till with an open shift whose printer has no paper, overheated or errs for `minutes`.
     RuleSpec("till_printer", True, (ParamSpec("minutes", 3, 1, 240, integer=True),), "medium", "machine_status"),
+    # "שעון המכשיר לא מדויק" (app/services/clock_trust.py): a till with an open shift whose clock is off by `minutes`.
+    RuleSpec("till_clock", True, (ParamSpec("minutes", 5, 2, 1440, integer=True),), "medium", "machine_status"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",

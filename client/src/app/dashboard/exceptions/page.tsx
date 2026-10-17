@@ -138,6 +138,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   shift_open_overdue: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
   card_transmission_overdue: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
   till_printer: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
+  till_clock: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100',
   // "זיהויים חדשים" (P:/specs/push-more.md §C, §B2).
   shop_not_opened: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
   sales_pace_low: 'bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-100',

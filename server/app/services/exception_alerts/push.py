@@ -207,6 +207,14 @@ CATEGORIES = CATEGORIES + (
              "הוסרה, עודף נמוך או אזל, דלת פתוחה, זיכוי מוחזק ועודף חייב ללקוח.",
              ("cash_unit",)),
 )
+# "שעון המכשיר לא מדויק" (app/services/clock_trust.py, status_watch `till_clock`): a till trading with a wrong clock.
+# On for a new user; a saved preference gets it when it chooses it (no data step).
+CATEGORIES = CATEGORIES + (
+    Category("till_clock", "שעון מכשיר",
+             "קופה או קיוסק עם משמרת פתוחה ששעון המכשיר רחוק משעון השרת ביותר מכמה דקות — עם ציון אם המסמכים "
+             "כבר נחתמים לפי שעון השרת.",
+             ("till_clock",)),
+)
 #: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
 #: super admin receives it — from every organization, past the organizations' scoping (a super
 #: admin is not a member of each); a company never does, and cannot switch it off for them. Its
@@ -788,7 +796,7 @@ def home_url(db: Session, user: Any) -> str:
 
 #: Kinds that describe a state of a till: a newer alert replaces the older one on the phone (a late
 #: transmission turning high replaces its medium one).
-STATE_KINDS = frozenset({"till_offline", "kiosk_offline", "card_transmission_overdue", "till_printer"})
+STATE_KINDS = frozenset({"till_offline", "kiosk_offline", "card_transmission_overdue", "till_printer", "till_clock"})
 
 
 #: Alert types whose message names the employee, the approver, the reason and the document.

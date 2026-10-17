@@ -12,6 +12,7 @@ import { Battery, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, BellR
 import { cn } from '@/lib/utils';
 import { batteryNotWatched, deviceKind, levelTone, type BatteryEvent, type BatteryEventRow, type HealthBattery, type HealthDevice, type HealthLevel } from '@/lib/kioskInsights';
 import { AutoStartLine } from '@/components/dashboard/machines/auto-start';
+import { ClockTrustBadge } from '@/components/dashboard/machines/clock-trust';
 import { OverallBadge, TONE, agoText, type HealthLabels } from './health-ui';
 
 /** A battery icon that shows the charge (and charging), coloured by the part's level, and its percent. */
@@ -104,6 +105,7 @@ export function DeviceBatteryCard({
         </p>
       ) : null}
       <AutoStartLine status={device.autoStart} />
+      <ClockTrustBadge status={device.clockTrust} skewMs={device.clockSkewMs} />
       {alertOpen ? (
         <p className={cn('flex items-start gap-1.5 rounded-lg px-2 py-1 text-xs', TONE[tone].pill)}>
           <BellRing className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

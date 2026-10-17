@@ -19,7 +19,7 @@
 import { windowsDisplayReport } from './displayReport';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray, utilityProcess } from 'electron';
 import { attachCustomerDisplay } from './shell/customerDisplayWindow';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -555,6 +555,18 @@ void app.whenReady().then(async () => {
       setAutostart: (on) => {
         if (app.isPackaged && !isDev) app.setLoginItemSettings({ openAtLogin: on, path: process.execPath });
       },
+      // "תיקון שעון" (main/clock/windowsClockFix.ts): PowerShell / net.exe, only on Windows and a packaged app.
+      ...(process.platform === 'win32' && app.isPackaged && !isDev
+        ? {
+            runProcess: (file: string, args: string[], opts?: { timeoutMs?: number }) =>
+              new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+                execFile(file, args, { windowsHide: true, timeout: opts?.timeoutMs ?? 60_000 }, (err, stdout, stderr) => {
+                  const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? ((err as { code: number }).code) : null) : 0;
+                  resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+                });
+              }),
+          }
+        : {}),
       autoZoom: () => (main && !main.isDestroyed() ? autoZoomFor(main) : 1),
       refreshZoom: () => applyZoom(),
       checkUpdate: () => updater!.checkNow(),
