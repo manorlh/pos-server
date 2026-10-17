@@ -4,7 +4,9 @@
 `layout.cartCountBadge` — how many of a dish the basket holds, on the dish's card in every template:
 on by default (no template sets it), a level may turn it off and a lower one back on, refused when it
 is not a boolean, and it reaches the kiosk in its config (a new config version when it changes).
-`layout.quickAdd` ("הוספה מהירה") keeps its default: off everywhere but the wall.
+`layout.quickAdd` ("הוספה מהירה"): since 17.10 (owner) no_required by default — a tap on a dish with nothing to
+choose puts it in — always on the wall; a level that chose "off" keeps it (only an unset key follows the default).
+`layout.infoButton` ("כפתור פרטים", ⓘ): auto | always | off, default auto.
 """
 from __future__ import annotations
 
@@ -18,10 +20,12 @@ from test_kiosks import convert, get_settings, paths, put, refused, sync, w  # n
 # ── The default ──────────────────────────────────────────────────────────────
 
 
-def test_the_badge_is_on_by_default_and_quick_add_keeps_its_default():
+def test_the_badge_is_on_by_default_and_quick_add_is_no_required():
     assert L.LAYOUT_DEFAULTS["cartCountBadge"] is True
     assert C.DEFAULT_CONFIG["layout"]["cartCountBadge"] is True
-    assert L.LAYOUT_DEFAULTS["quickAdd"] == "off"
+    assert L.LAYOUT_DEFAULTS["quickAdd"] == "no_required"
+    assert C.DEFAULT_CONFIG["layout"]["quickAdd"] == "no_required"
+    assert L.LAYOUT_DEFAULTS["infoButton"] == "auto" and "infoButton" in L.LAYOUT_TEMPLATE_KEYS
     assert "cartCountBadge" in L.LAYOUT_TEMPLATE_KEYS
     assert C.validate_config(C.default_config()) == []
 
@@ -32,7 +36,8 @@ def test_every_template_draws_the_badge_and_keeps_its_quick_add(template):
     for style in C.UI_PRESETS:
         cfg = C.resolve({"theme": {"uiStyle": style}, "layout": {"template": template}})
         assert cfg["layout"]["cartCountBadge"] is True, style
-        assert cfg["layout"]["quickAdd"] == ("always" if template == "wall" else "off"), style
+        assert cfg["layout"]["quickAdd"] == ("always" if template == "wall" else "no_required"), style
+        assert cfg["layout"]["infoButton"] == "auto", style
         assert C.validate_config(cfg) == []
 
 
@@ -110,3 +115,59 @@ def test_a_bad_value_is_refused_with_the_contract_shape(w):
     err = refused(put, w, "machine", w.kiosk.id, {"layout": {"cartCountBadge": "yes"}})
     assert err.status_code == 422
     assert {"path": "layout.cartCountBadge", "code": "invalid_type"}.items() <= err.detail["errors"][0].items()
+
+
+# ── "הוספה מהירה" by default (17.10): explicit wins ──────────────────────────
+
+
+def test_a_level_that_chose_off_keeps_it():
+    assert C.resolve({"layout": {"quickAdd": "off"}})["layout"]["quickAdd"] == "off"
+    # The company's "off" reaches a shop and a kiosk that never chose; a lower level may still turn it on.
+    assert C.resolve({"layout": {"quickAdd": "off"}}, {}, {})["layout"]["quickAdd"] == "off"
+    assert C.resolve({"layout": {"quickAdd": "off"}}, {}, {"layout": {"quickAdd": "always"}})["layout"]["quickAdd"] == "always"
+    # …and a template picked below does not take it back.
+    assert C.resolve({"layout": {"quickAdd": "off"}}, {"layout": {"template": "magazine"}})["layout"]["quickAdd"] == "off"
+
+
+def test_a_level_that_never_chose_gets_the_new_default():
+    for layers in ([], [{}], [{"layout": {"cartCountBadge": False}}], [{"theme": {"uiStyle": "wolt"}}, {}, {"layout": {"template": "list"}}]):
+        assert C.resolve(*layers)["layout"]["quickAdd"] == "no_required", layers
+
+
+def test_off_saves_as_an_explicit_choice_and_reaches_the_kiosk(w):
+    convert(w)
+    assert sync(w, w.kiosk)["config"]["layout"]["quickAdd"] == "no_required"
+    view = put(w, "company", w.company.id, {"layout": {"quickAdd": "off"}})
+    assert view["overrides"] == {"layout": {"quickAdd": "off"}}
+    assert sync(w, w.kiosk)["config"]["layout"]["quickAdd"] == "off"
+
+
+# ── "כפתור פרטים" (layout.infoButton) ───────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["auto", "always", "off"])
+def test_the_info_button_saves(value):
+    clean, errors = C.validate_layer({"layout": {"infoButton": value}})
+    assert errors == [] and clean == {"layout": {"infoButton": value}}
+
+
+@pytest.mark.parametrize("bad", ["sometimes", True, 1])
+def test_an_unknown_info_button_is_refused(bad):
+    _clean, errors = C.validate_layer({"layout": {"infoButton": bad}})
+    assert "layout.infoButton" in paths(errors)
+
+
+def test_the_info_button_golden_speaks_the_servers_vocabulary():
+    import hashlib
+    import json
+    from pathlib import Path
+
+    data = (Path(__file__).parent / "fixtures" / "kiosk_info_button_golden.json").read_bytes().replace(b"\r\n", b"\n")
+    assert hashlib.sha256(data).hexdigest() == INFO_GOLDEN_SHA256
+    doc = json.loads(data)
+    assert tuple(doc["constants"]["modes"]) == L.LAYOUT_INFO_BUTTONS
+    assert doc["constants"]["default"] == L.LAYOUT_DEFAULTS["infoButton"]
+
+
+#: The same constant in the dashboard's kioskInfoButton.test.ts and pos-android's KioskInfoButtonTest.
+INFO_GOLDEN_SHA256 = "c2b7a0eee3c6d2e649ec4145485332d1a14dc7089435d5aa31d8f61c49e175dc"

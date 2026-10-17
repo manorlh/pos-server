@@ -395,6 +395,8 @@ export function LayoutSection() {
         <div className="space-y-3 rounded-2xl border bg-muted/30 p-3" data-behaviour>
           <div className="text-sm font-semibold">{t('behaviourTitle')}</div>
           <LayoutChoice name="quickAdd" hint={t('quickAddHint')} />
+          {/* "כפתור פרטים" (ⓘ): with quick add a tap skips the dish's window — the ⓘ opens it (lib/kioskLayout dishInfoButtonOn). */}
+          <LayoutChoice name="infoButton" hint={t('infoButtonHint')} />
           <CartCountBadgeField />
           <p className="text-xs text-muted-foreground">{t('behaviourPreviewHint')}</p>
         </div>

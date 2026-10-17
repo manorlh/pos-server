@@ -41,6 +41,8 @@ LAYOUT_CARDS = ("tile", "row", "plate", "bleed", "button", "outlined")
 LAYOUT_FLOWS = ("free", "guided")
 LAYOUT_ITEM_VIEWS = ("sheet", "full", "modal", "inline", "steps", "popover")
 LAYOUT_QUICK_ADDS = ("off", "no_required", "always")
+#: "כפתור פרטים" (ⓘ) on a dish's card: auto — when a tap skips its window and it holds more; always; off.
+LAYOUT_INFO_BUTTONS = ("auto", "always", "off")
 LAYOUT_MEAL_VIEWS = ("sheet", "steps", "tray")
 LAYOUT_MEAL_UPSELLS = ("off", "first", "after")
 LAYOUT_BASKETS = ("bar", "panel", "summary", "fab", "drawer", "receipt")
@@ -79,6 +81,7 @@ LAYOUT_VOCABULARY: Dict[str, Tuple[Any, ...]] = {
     "flow": LAYOUT_FLOWS,
     "itemView": LAYOUT_ITEM_VIEWS,
     "quickAdd": LAYOUT_QUICK_ADDS,
+    "infoButton": LAYOUT_INFO_BUTTONS,
     "mealView": LAYOUT_MEAL_VIEWS,
     "mealUpsell": LAYOUT_MEAL_UPSELLS,
     "basket": LAYOUT_BASKETS,
@@ -111,7 +114,10 @@ LAYOUT_DEFAULTS: Dict[str, Any] = {
     "card": None,
     "flow": "free",
     "itemView": "sheet",
-    "quickAdd": "off",
+    # "הוספה מהירה": a tap on a dish with nothing to choose puts it in (owner 17.10; was "off"). A layer
+    # that set "off" explicitly keeps it — the stored layers hold only what a level chose.
+    "quickAdd": "no_required",
+    "infoButton": "auto",
     # "תג כמות" (P:/specs/kiosk-tap-add-count-badge.md): how many of the dish the basket holds, on its
     # card in every template — on unless a level turns it off (no template sets it).
     "cartCountBadge": True,

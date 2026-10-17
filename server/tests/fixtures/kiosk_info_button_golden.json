@@ -1,0 +1,2396 @@
+{
+  "version": 1,
+  "about": "layout.infoButton (ⓘ on a dish card): client lib/kioskLayout.ts dishInfoButtonOn ⇔ pos-android domain KioskLayouts.infoButtonOn. Same bytes in pos-server server/tests/fixtures and pos-android app/src/test/resources.",
+  "constants": {
+    "descriptionLineChars": 30,
+    "touchTarget": 48,
+    "modes": [
+      "auto",
+      "always",
+      "off"
+    ],
+    "default": "auto"
+  },
+  "cases": [
+    {
+      "name": "nothing more than the card | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "nothing more than the card | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "nothing more than the card | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "nothing more than the card | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "a short description the card shows whole | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "a short description the card shows whole | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a short description the card shows whole | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 40,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "a description longer than two lines | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a description longer than two lines | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a description longer than two lines | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a description longer than two lines | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a description longer than two lines | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a description longer than two lines | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a description longer than two lines | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a description longer than two lines | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a description longer than two lines | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a description longer than two lines | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 61,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "exactly two lines | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "exactly two lines | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "exactly two lines | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "exactly two lines | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 60,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "descriptions off on the card: any description | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "descriptions off on the card: any description | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "descriptions off on the card: any description | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "descriptions off on the card: any description | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "descriptions off on the card: any description | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "descriptions off on the card: any description | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "descriptions off on the card: any description | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "descriptions off on the card: any description | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "descriptions off on the card: any description | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "descriptions off on the card: any description | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 5,
+        "descriptionLines": 0,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "one line (the list) | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "one line (the list) | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "one line (the list) | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "one line (the list) | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "one line (the list) | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "one line (the list) | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "one line (the list) | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "one line (the list) | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "one line (the list) | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "one line (the list) | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 31,
+        "descriptionLines": 1,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "three lines (the magazine) | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "three lines (the magazine) | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "three lines (the magazine) | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines (the magazine) | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 90,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "three lines, longer | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "three lines, longer | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "three lines, longer | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "three lines, longer | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "three lines, longer | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "three lines, longer | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "three lines, longer | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "three lines, longer | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "three lines, longer | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "three lines, longer | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 91,
+        "descriptionLines": 3,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "allergens in the window | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "allergens in the window | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "allergens in the window | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "allergens in the window | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "allergens in the window | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "allergens in the window | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "allergens in the window | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "allergens in the window | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "allergens in the window | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "allergens in the window | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 2,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "dietary marks already on the card | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "dietary marks already on the card | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "dietary marks already on the card | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks already on the card | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 2,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "dietary marks not on the card | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "dietary marks not on the card | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "dietary marks not on the card | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "dietary marks not on the card | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "dietary marks not on the card | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "dietary marks not on the card | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "dietary marks not on the card | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "dietary marks not on the card | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "dietary marks not on the card | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "dietary marks not on the card | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 1,
+        "dietaryOnCard": false,
+        "picture": true,
+        "cardPicture": "large"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "a thumbnail: the window has a bigger picture | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "small"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "no picture on the card (the wall) | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "no picture on the card (the wall) | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "no picture on the card (the wall) | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "no picture on the card (the wall) | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "no picture on the card (the wall) | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "no picture on the card (the wall) | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "no picture on the card (the wall) | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "no picture on the card (the wall) | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": false
+    },
+    {
+      "name": "no picture on the card (the wall) | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "no picture on the card (the wall) | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": true,
+        "cardPicture": "none"
+      },
+      "more": true,
+      "on": true
+    },
+    {
+      "name": "no picture at all, none on the card | mode auto | tap adds",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode auto | tap adds | sold out",
+      "mode": "auto",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode auto | tap opens",
+      "mode": "auto",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode always | tap adds",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "no picture at all, none on the card | mode always | tap adds | sold out",
+      "mode": "always",
+      "skipsWindow": true,
+      "soldOut": true,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode always | tap opens",
+      "mode": "always",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": true
+    },
+    {
+      "name": "no picture at all, none on the card | mode off | tap adds",
+      "mode": "off",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode off | tap opens",
+      "mode": "off",
+      "skipsWindow": false,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode None | tap adds",
+      "mode": null,
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    },
+    {
+      "name": "no picture at all, none on the card | mode bogus | tap adds",
+      "mode": "bogus",
+      "skipsWindow": true,
+      "soldOut": false,
+      "facts": {
+        "descriptionChars": 0,
+        "descriptionLines": 2,
+        "allergens": 0,
+        "dietary": 0,
+        "dietaryOnCard": true,
+        "picture": false,
+        "cardPicture": "none"
+      },
+      "more": false,
+      "on": false
+    }
+  ]
+}
