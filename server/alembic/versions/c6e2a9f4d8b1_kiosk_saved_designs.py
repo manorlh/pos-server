@@ -5,7 +5,7 @@ layer per company or shop), its audit `kiosk_design_audit`, and the assignment o
 (`kiosk_settings.design_id`, `kiosk_settings.design_off`). Add-only.
 
 Revision ID: c6e2a9f4d8b1
-Revises: a1d5e8c3b7f2
+Revises: d9e4b1f7a3c6
 Create Date: 2026-10-17 15:00:00
 
 """
@@ -16,7 +16,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "c6e2a9f4d8b1"
-down_revision: Union[str, Sequence[str], None] = "a1d5e8c3b7f2"
+down_revision: Union[str, Sequence[str], None] = "d9e4b1f7a3c6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
