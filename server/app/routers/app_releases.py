@@ -121,7 +121,14 @@ def _out(release: AppRelease, assignment_count: int = 0) -> AppReleaseOut:
         assignment_count=assignment_count,
         signing_cert_sha256=getattr(release, "signing_cert_sha256", None),
         bridge_api=getattr(release, "bridge_api", None),
+        file_deleted_at=getattr(release, "file_deleted_at", None),
     )
+
+
+def _refuse_deleted_file(release: AppRelease) -> None:
+    """`409 app_release_file_deleted` — its file was deleted ("מחיקת קובץ"): nothing to send."""
+    if getattr(release, "file_deleted_at", None) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_file_deleted")
 
 
 def _releases_dir() -> Path:
@@ -432,10 +439,13 @@ def update_app_release(
     """
     Notes, and retiring (`isActive: false`) or reinstating. A retired release is offered
     to no till, so the tills it was assigned to fall back to what else applies to them.
+    Reinstating a release whose file was deleted is `409 app_release_file_deleted`.
     """
     release = _release(db, release_id)
     sent = body.model_fields_set
     retire_changed = "is_active" in sent and body.is_active is not None and body.is_active != release.is_active
+    if retire_changed and body.is_active:
+        _refuse_deleted_file(release)
     if "notes" in sent:
         release.notes = body.notes
     if "is_active" in sent and body.is_active is not None:
@@ -543,7 +553,8 @@ def create_app_release_assignment(
     """
     Send the release to one target — it reaches only the devices of the release's
     platform. The newest assignment at a level wins there, so sending again to the same
-    target replaces what it had. `404 <level>_not_found`, `409 app_release_retired`.
+    target replaces what it had. `404 <level>_not_found`, `409 app_release_retired`,
+    `409 app_release_file_deleted`.
 
     * `rolloutPercent` (1..100, default 100; `422 rollout_percent_invalid`) — staged
       rollout: only that share of the target's devices (a fixed hash per device) takes
@@ -560,6 +571,7 @@ def create_app_release_assignment(
       midnight). The Windows app honours it; the Android till ignores it today.
     """
     release = _release(db, release_id)
+    _refuse_deleted_file(release)
     if not release.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="app_release_retired")
     rollout_percent = _rollout_percent_or_422(body.rollout_percent)
@@ -702,7 +714,10 @@ def _rollout_machines(db: Session, user: User, tenant_id):
         query = query.filter(POSMachine.shop_id == user.shop_id)
     else:
         return None
-    return query
+    # A manager of some points of sale: their devices only (P:/specs/area-coverage-audit.md).
+    from app.services import area_scope
+
+    return area_scope.filter_machine_column(query, db, user, POSMachine.id)
 
 
 def _rollout_order(row: RolloutRow):

@@ -10,6 +10,7 @@
  */
 import { api } from './api';
 import type { ScreenDisplay } from './kdsScreenTypes';
+import type { KdsPrintJob, KdsPrintPath, KdsPrintStatus } from './kdsPrint';
 import type { WorkflowLevelView, WorkflowScopeType, WorkflowValues } from './workflowMode';
 
 // ── Workflow configuration ──────────────────────────────────────────────────────
@@ -71,13 +72,23 @@ export interface KdsDevice {
   display?: ScreenDisplay | null;
   /** Whether `display` is the screen's own (false: the shop's default / the built-in look). */
   displayOwn?: boolean;
-  /** The screen's orders (any role): these points of sale / tills and kiosks; both empty = the whole shop (§15). */
+  /** The screen's orders (any role) as shown now: these points of sale / tills and kiosks; both empty = the whole shop (§15). */
   scope?: KdsBoardScope;
+  /** As set (the dialog edits this): the lists and `followArea` ("תצוגה לפי נקודת המכירה של המסך"). */
+  scopeSetting?: KdsBoardScope;
+  /** "shop" | "area" (follows its device's point of sale) | "own" (the lists). */
+  scopeSource?: 'shop' | 'area' | 'own';
+  /** "מציג: נקודת מכירה בר" / "מציג: כל הסניף" — the cloud's words, shown on every screen too. */
+  scopeLabel?: string;
+  scopeWarning?: 'area_has_no_sellers' | 'whole_shop_with_areas' | null;
+  scopeWarningText?: string | null;
 }
 
 export interface KdsBoardScope {
   areaIds: string[];
   machineIds: string[];
+  /** True: the orders of the point of sale the screen's own device stands in (follows it when moved). */
+  followArea?: boolean;
 }
 
 /** The shop's default look per kind — the screens without a look of their own show it. */
@@ -289,5 +300,59 @@ export interface KdsShopBoard {
 
 export async function getKdsBoard(shopId: string): Promise<KdsShopBoard> {
   const { data } = await api.get<KdsShopBoard>(`/kds/shops/${shopId}/board`);
+  return data;
+}
+
+// ── KDS: how a screen prints ("הדפסה", docs/SPEC_KDS.md §17) ──────────────────────
+
+export interface KdsPrintTarget {
+  key: string;
+  printerId: string | null;
+  printerName: string | null;
+  name: string;
+  hostMachineId: string;
+  hostName: string | null;
+  connection: string;
+  /** A till's own printer (its head, its USB / Bluetooth printer). */
+  local: boolean;
+  sameArea: boolean;
+  printServer: boolean;
+  online: boolean;
+  /** Within the screen's `remotePrintHosts`. */
+  allowed: boolean;
+}
+
+export interface KdsPrintCard {
+  machineId: string;
+  machineName: string | null;
+  /** This screen's own values (null — as its shop / point of sale says). */
+  own: { path: KdsPrintPath | null; hostMachineId: string | null; printerId: string | null };
+  effective: { path: KdsPrintPath; hostMachineId: string | null; printerId: string | null };
+  status: KdsPrintStatus;
+  targets: KdsPrintTarget[];
+  remotePrint: { enabled: boolean; timeoutSec: number; hostsLimited: boolean };
+  recentJobs: KdsPrintJob[];
+  canEdit: boolean;
+}
+
+export interface KdsPrintSettingsInput {
+  path: KdsPrintPath | null;
+  hostMachineId: string | null;
+  printerId: string | null;
+}
+
+export async function getScreenPrint(shopId: string, machineId: string): Promise<KdsPrintCard> {
+  const { data } = await api.get<KdsPrintCard>(`/kds/shops/${shopId}/devices/${machineId}/print`);
+  return data;
+}
+
+export async function saveScreenPrint(shopId: string, machineId: string, body: KdsPrintSettingsInput): Promise<KdsPrintCard> {
+  const { data } = await api.put<KdsPrintCard>(`/kds/shops/${shopId}/devices/${machineId}/print`, body);
+  return data;
+}
+
+/** "הדפסת בדיקה" on the screen's path (the job; follow it with `getScreenPrint`'s `recentJobs`). */
+export async function testScreenPrint(shopId: string, machineId: string): Promise<KdsPrintJob> {
+  const { data } = await api.post<KdsPrintJob>(`/kds/shops/${shopId}/devices/${machineId}/print/test`);
   return data;
 }

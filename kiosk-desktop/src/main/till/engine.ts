@@ -163,6 +163,8 @@ import { autoCloseDue, autoCloseTimeOf } from '../../core/tillZ';
 import { cardLast, dueOf, handedTotal, paidOf, quickNotes, takeCash, validCashAmount, type TenderLeg } from '../../core/till/tender';
 import { HIDDEN_MENU_PARAM, parseHiddenMenu } from '../../core/till/menuHide';
 import { tileTextOf } from '../../core/till/tileText';
+import { PARAM_SELL_ALL_TAB, parseSellAllTab } from '../../core/till/sellAllTab';
+import { designParameters, tendersOf, themeOf } from '../../core/till/tillDesign';
 import { SHOP_X_TEXT, shopXDocumentOf, shopXOffered, shopXRefusal, type ShopXDocument } from '../../core/till/shopX';
 import type { StartPaymentIn } from '../../shared/bridge';
 import {
@@ -230,6 +232,7 @@ import { TillItemBlocks } from './tillItemBlocks';
 import { TillPrintQueue } from './tillPrintQueue';
 import { TillCustomerDisplay } from './tillCustomerDisplay';
 import { TillMenuService } from './tillMenuService';
+import { TillDesignService } from './tillDesign';
 import { TillKiosks } from './tillKiosks';
 import { KIOSK_CONTROL_TEXT } from '../../core/till/kioskControl';
 import { TillKioskOrders } from './tillKioskOrders';
@@ -251,6 +254,8 @@ import type { LanCall } from '../kitchen/kitchenNet';
 import { REFUSED_OFFLINE_TEXT, TX_TEXT, offlineRefusedCard } from '../../core/till/transmission';
 import { TillSessions } from './userSessions';
 import { CREDIT_TEXT, TillCash, redeemCredit } from './tillCash';
+import { DeviceGate, TillDeviceCash, type TillDeviceCashDeps } from './tillDeviceCash';
+import { DEVICE_CASH_TEXT, deviceSettle, type DeviceLegMeta } from '../../core/till/deviceCash';
 import type { DialogSpec, TillContext, TillFeature } from './tillContext';
 import {
   ORDER_TEXT,
@@ -326,6 +331,8 @@ export interface TillEngineOptions {
   shopXLan?: { lanCall?: LanCall; sleep?: (ms: number) => Promise<void>; manual?: boolean };
   /** Vouchers through the shop's LAN host: the LAN call (tests). */
   voucherLan?: LanCall;
+  /** "מזומן במכשיר": the CashMag / cash station clients (tests: fakes); absent — the device's own (svc.cashMag, svc.cashPay). */
+  deviceCash?: TillDeviceCashDeps;
 }
 
 class Refusal extends Error {
@@ -561,7 +568,8 @@ interface BasketRec {
 }
 
 interface CheckoutRec {
-  phase: CheckoutState['phase'] | 'card_unknown';
+  /** `device_waiting`: the cash device takes the money ("מזומן במכשיר"); `device_unknown`: its answer was lost. */
+  phase: CheckoutState['phase'] | 'card_unknown' | 'device_waiting' | 'device_unknown';
   totalAgorot: number;
   legs: Array<TenderLeg & { status: 'approved' | 'pending' }>;
   docId: string | null;
@@ -746,6 +754,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly sessions: TillSessions;
   /** "עודף חייב ללקוח" / "שולם ללקוח", "זיכוי מזומן" (tillCash.ts). */
   readonly cash: TillCash;
+  /** "מזומן במכשיר": CashMag / the shop's cash station at the payment (tillDeviceCash.ts). */
+  readonly deviceCash: TillDeviceCash;
   /** Vouchers at the payment: discount and production vouchers, "מצב בדיקה" (tillVouchers.ts). */
   readonly vouchers: TillVouchers;
   /** "הדפסה בקופה אחרת" (tillRemotePrint.ts). */
@@ -764,6 +774,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly menu: TillMenuService;
   /** "קיוסקים": a controlling till's kiosks (tillKiosks.ts). */
   readonly kiosks: TillKiosks;
+  /** "עיצוב קופה": the cloud's design, pulled with the parameters and kept offline (tillDesign.ts). */
+  readonly design: TillDesignService;
   /** "הזמנות קיוסק לתשלום": the kiosks' orders paid at this till (tillKioskOrders.ts) — `kioskOrders` below. */
   /*
    * Phase 2 (P:/specs/windows-till-menu-parity.md §7): the Android menu's features, each its own module registered with the
@@ -846,6 +858,16 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.customerDisplay = new TillCustomerDisplay(this.ctx);
     this.customerDisplay.start();
     this.kiosks = new TillKiosks(this.ctx);
+    this.design = new TillDesignService({
+      api: this.svc.api,
+      machineId: () => this.svc.machineId,
+      read: () => this.svc.cloud.tillDesign(),
+      write: (v) => this.svc.cloud.setTillDesign(v),
+      changed: () => this.ctx.changed(),
+      log: (m) => this.log(m),
+    });
+    // Pulled on the parameters' cadence (the service's sync), as the Android till pulls it with them.
+    this.svc.attachTillPull?.(() => this.design.pull());
     this.menu = new TillMenuService(this.ctx, {
       zOnly: () => this.shiftsHidden(),
       tillZMode: () => zModeOf(this.svc.cloud.heartbeat().zMode) === 'till',
@@ -932,6 +954,32 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.register(new TillCloudZ(this.ctx, { print: (doc, refId, title) => this.svc.printReport(doc, refId, title) }));
     this.register(new TillPrinters(this.ctx));
     this.register(new TillScreenEdit(this.ctx));
+    // "מזומן במכשיר" (tillDeviceCash.ts): its documents are its own to settle after a restart — never a card's recovery.
+    this.deviceCash = this.register(
+      new TillDeviceCash(
+        this.ctx,
+        {
+          begin: () => this.deviceBegin(),
+          complete: (docId, meta) => this.deviceComplete(docId, meta),
+          void: (docId, meta) => {
+            this.svc.ledger.voidCardSale(docId, meta);
+            void this.svc.sync.flush();
+          },
+          done: (doc) => this.deviceDone(doc),
+          failed: (message) => this.deviceFailed(message),
+          unknown: (message) => {
+            this.checkout.phase = 'device_unknown';
+            this.checkout.cardStatus = null;
+            this.checkout.cardError = message;
+          },
+          liveDocId: () => (this.checkout.phase === 'device_waiting' || this.checkout.phase === 'device_unknown' ? this.checkout.docId : null),
+          // The Windows till takes no tip of its own (a kiosk order's tip is the kiosk's): the change owed is never one.
+          tipOk: () => false,
+        },
+        o.deviceCash,
+      ),
+    );
+    this.deviceCash.start();
     this.restorePending();
     // A kiosk order this till was paying when it stopped, with no document of it pending: back to the list.
     if (this.kioskOrders.current() && !this.checkout.kioskOrder) this.kioskOrders.abandoned();
@@ -1043,6 +1091,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.tick) clearInterval(this.tick);
     this.tick = null;
     this.svc.attachTillAutoClose?.(null);
+    this.svc.attachTillPull?.(null);
     this.svc.attachTillRemoteClose?.(null);
   }
 
@@ -1081,7 +1130,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
    * ("ניהול הקיוסק", main/roles/tillElectron.ts) waits, as the kiosk's does on its pay screen.
    */
   paying(): boolean {
-    return this.checkout.phase === 'tender' || this.checkout.phase === 'card_waiting' || this.svc.pay.cardInFlight;
+    const ph = this.checkout.phase;
+    return ph === 'tender' || ph === 'card_waiting' || ph === 'device_waiting' || ph === 'device_unknown' || this.svc.pay.cardInFlight;
   }
 
   get currentSeq(): number {
@@ -1820,7 +1870,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   /* ------------------------------------------------------------- the order's details */
 
   private orderQuestions(): OrderQuestions {
-    return orderQuestionsOf(this.svc.cloud.parameters());
+    // "עיצוב קופה": fields.customerName / serviceType over askOrderName / askEatInTakeAway (Android applyTillDesign).
+    return orderQuestionsOf(designParameters(this.svc.cloud.parameters(), this.design.config()));
   }
 
   private orderFacts(): OrderFacts {
@@ -3414,6 +3465,100 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     return undefined;
   }
 
+  /* --------------------------------------------------------- "מזומן במכשיר" (tillDeviceCash.ts) */
+
+  /**
+   * The payment opens at the cash device: the tenders' own refusals, then the pending document — numbered, with the earlier
+   * legs and the device's for what is left — BEFORE the device hears anything (as a card's). A voucher close that must be
+   * confirmed asks first and comes back here.
+   */
+  private deviceBegin(): { docId: string; amountAgorot: number } {
+    this.signedIn();
+    this.tenderOpen();
+    if (this.checkout.basket) refuse('invalid_args', DEVICE_CASH_TEXT.inBasket);
+    this.noRealMoneyInTest();
+    if (this.svc.pay.cardInFlight) refuse('checkout_busy');
+    const legs = this.approvedLegs();
+    const due = dueOf(this.checkout.totalAgorot, legs);
+    if (due < 1) refuse('invalid_args');
+    const gate = this.voucherCloseGate(() => this.deviceCash.apply('deviceCash.pay', {}));
+    if (gate) throw new DeviceGate(gate);
+    if (!this.ensureShift()) refuse('shift_not_open', WORDS.shiftNone);
+    const f = this.checkout.frozen!;
+    const doc = this.svc.ledger.openCardSale({
+      documentType: saleDocumentType(this.svc.business().dealerType),
+      prefix: this.prefix(),
+      branchId: this.svc.business().branchId,
+      operator: this.operator(),
+      orderId: null,
+      lines: f.lines,
+      tracked: f.tracked,
+      totals: f.totals,
+      promotions: f.promotions,
+      payments: [...docLegs(legs), { method: 'cash', amountAgorot: due, device: true }],
+      creditLegs: creditLegsOf(legs),
+      channel: 'till',
+      ...this.voucherDocFields(f),
+      ...(this.discountApprover && f.totals.discountAgorot > 0 ? { approvedByPosUserId: this.discountApprover } : {}),
+      ...this.basketDocField(f),
+    });
+    if (!doc) return refuse('shift_not_open', WORDS.shiftNone);
+    this.checkout.docId = doc.id;
+    this.checkout.docIds = [doc.id];
+    this.checkout.legs.push({ method: 'cash', amountAgorot: due, handedAgorot: 0, status: 'pending' });
+    this.checkout.phase = 'device_waiting';
+    this.checkout.cardStatus = null;
+    this.checkout.cardError = null;
+    return { docId: doc.id, amountAgorot: due };
+  }
+
+  /** The device paid: the pending document completed with its transaction — the earlier legs, the device's for what was left. */
+  private deviceComplete(docId: string, meta: DeviceLegMeta): DocDraft | null {
+    const d = this.svc.ledger.doc(docId);
+    if (!d || d.status !== 'pending') return d;
+    const payments = d.payments ?? [];
+    const earlier = payments.filter((l) => !l.device);
+    const total = payments.reduce((s, l) => s + l.amountAgorot, 0);
+    const settledNow = deviceSettle(
+      total,
+      earlier.map((l) => ({ method: l.method as TenderLeg['method'], amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0 })),
+      meta,
+    );
+    if (!settledNow) {
+      this.log(`device cash: document ${docId} does not settle (${total} agorot)`);
+      return null;
+    }
+    const leg = settledNow.legs[settledNow.legs.length - 1];
+    const done = this.svc.ledger.completeDeviceCashSale(docId, {
+      cash: { ...meta, changeOwedAs: meta.changeOwedAs ?? null },
+      payments: [...earlier, { method: 'cash', amountAgorot: leg.amountAgorot, device: true }],
+      tenderedAgorot: settledNow.tenderedAgorot,
+      changeAgorot: settledNow.changeAgorot,
+      tipAgorot: settledNow.tipAgorot,
+    });
+    void this.svc.sync.flush();
+    return done;
+  }
+
+  /** The live sale paid at the device: the done screen (the device gave the change — none from the drawer). */
+  private deviceDone(doc: DocDraft) {
+    if (this.checkout.docId !== doc.id) return;
+    this.finalize(doc);
+    this.checkout.changeAgorot = 0;
+  }
+
+  /** The device did not take the money: back to the tenders, the words shown. */
+  private deviceFailed(message: string) {
+    const c = this.checkout;
+    if (c.phase !== 'device_waiting' && c.phase !== 'device_unknown') return;
+    c.legs = c.legs.filter((l) => !(l.method === 'cash' && l.status === 'pending'));
+    c.docId = null;
+    c.docIds = [];
+    c.phase = 'tender';
+    c.cardStatus = null;
+    c.cardError = message;
+  }
+
   private prefix(): string | null {
     const me = this.svc.cloud.machine();
     return prefixFor(me?.documentPrefix ?? null, me?.posNumber ?? null);
@@ -3699,7 +3844,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       c.cardStatus = WORDS.cancelling;
       return undefined;
     }
-    if (c.phase === 'card_unknown') refuse('card_in_flight');
+    if (c.phase === 'card_unknown' || c.phase === 'device_unknown') refuse('card_in_flight');
+    // "חזרה" / "ביטול" while the cash device takes the money: the device's own cancel (it gives back what went in).
+    if (c.phase === 'device_waiting') return this.deviceCash.cancel();
     if (c.phase !== 'tender') refuse('invalid_args');
     const handed = handedTotal(this.approvedLegs());
     const reset = () => {
@@ -3793,6 +3940,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   private checkoutFinish() {
     if (this.checkout.phase !== 'done') refuse('invalid_args');
     this.vouchers.clear();
+    this.deviceCash.clearDone();
     this.checkout = idleCheckout();
     return undefined;
   }
@@ -3888,8 +4036,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
    * the money goes (drawer-away §5.3). The cash is what the cash legs took.
    */
   private kickDrawer(doc: DocDraft) {
+    // "מזומן במכשיר": the device's leg is in the device — only cash taken at the counter opens the drawer.
     const cash = legsOf(doc)
-      .filter((l) => l.method === 'cash')
+      .filter((l) => l.method === 'cash' && !l.device)
       .reduce((sum, l) => sum + l.amountAgorot, 0);
     if (cash <= 0) return;
     void Promise.resolve(this.drawer.afterCashSale({ id: doc.id, documentType: doc.documentType, number: doc.number }, cash)).catch((e: unknown) => this.log(`cash drawer: ${String(e)}`));
@@ -4325,6 +4474,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(t.deposits ? { depositsAgorot: a(t.deposits) } : {}),
       ...(t.walletIn ? { walletInAgorot: a(t.walletIn) } : {}),
       ...(t.walletDeposits ? { walletDepositsAgorot: a(t.walletDeposits) } : {}),
+      ...(t.totalDeviceCash ? { deviceCashAgorot: a(t.totalDeviceCash) } : {}),
       ...(t.totalVouchers ? { vouchersAgorot: a(t.totalVouchers) } : {}),
       ...(typeof t.cardTipsFromDrawer === 'number' ? { cardTipsFromDrawerAgorot: a(t.cardTipsFromDrawer), cardTipsUnpaidAgorot: a(t.cardTipsUnpaid ?? 0), drawerCashAgorot: a(t.drawerCash ?? 0) } : {}),
       ...(t.cardTipsNeedsChoice ? { cardTipsNeedsChoice: true } : {}),
@@ -4481,7 +4631,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   autoCloseLook(): AutoCloseSaleLook {
     const c = this.checkout;
     return {
-      cardInFlight: this.svc.pay.cardInFlight || c.phase === 'card_waiting' || c.phase === 'card_unknown',
+      cardInFlight: this.svc.pay.cardInFlight || c.phase === 'card_waiting' || c.phase === 'card_unknown' || c.phase === 'device_waiting' || c.phase === 'device_unknown',
       checkoutOpen: c.phase !== 'idle',
       paymentTaken: c.phase === 'done' || c.legs.length > 0 || c.docId !== null,
       basketOpen: this.cart.length > 0,
@@ -4637,7 +4787,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (this.stopped || !this.svc.fiscal) return 'pending';
     if (this.svc.ledger.shiftByCloseRequest(requestId)) return 'closed';
     const c = this.checkout;
-    if (this.svc.pay.cardInFlight || c.phase === 'card_waiting' || c.phase === 'card_unknown') return 'pending';
+    if (this.svc.pay.cardInFlight || c.phase === 'card_waiting' || c.phase === 'card_unknown' || c.phase === 'device_waiting' || c.phase === 'device_unknown') return 'pending';
     const open = this.svc.ledger.currentShift();
     if (!open) return 'none';
     const closed = this.svc.ledger.closeShift({
@@ -4845,7 +4995,9 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     const permissions = user ? SESSION_CODES.filter((code) => stateOf(user, code) !== 'deny') : [];
     const health = this.svc.printQueue.health();
     const terminal = this.svc.pay.cardInFlight ? 'busy' : this.svc.pay.configured && this.svc.pay.monitor.state !== 'unreachable' ? 'ok' : 'none';
-    const checkoutPhase: CheckoutState['phase'] = c.phase === 'card_unknown' ? 'tender' : c.phase;
+    // A cash device taking the money shows as money in flight; its lost answer, as the card's, on the tenders.
+    const checkoutPhase: CheckoutState['phase'] = c.phase === 'card_unknown' || c.phase === 'device_unknown' ? 'tender' : c.phase === 'device_waiting' ? 'card_waiting' : c.phase;
+    const device = c.phase === 'idle' ? null : this.deviceCash.checkoutView();
     const dialog = this.pending?.dialog ?? null;
     const params = this.svc.cloud.parameters();
     const oth = othSettingsOf(params);
@@ -4919,6 +5071,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         ...(c.phase !== 'idle' && c.phase !== 'done' && !c.basket && c.frozen ? { vouchers: this.voucherView(c.frozen, dueOf(c.totalAgorot, approved)) } : {}),
         ...(c.testEnd ? { testEnd: c.testEnd } : {}),
         ...(c.phase === 'done' && c.voucherSuccess ? { voucherSuccess: c.voucherSuccess } : {}),
+        ...(device ? { deviceCash: device } : {}),
       },
       shift: {
         hidden: this.shiftsHidden(),
@@ -4949,7 +5102,17 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(user && !this.locked ? { menu: this.menu.state() } : {}),
       ...(user && !this.locked && this.kiosks.count() > 0 ? { kiosks: this.kiosks.state() } : {}),
       ...(user && !this.locked ? { menuOffers: { shopZ: this.shopZ.menuShown([]), cloudZ: this.cloudZ.available() } } : {}),
-      tileText: tileTextOf(params),
+      // The design's `look` over the tile-text parameters (Android applyTillDesign).
+      tileText: tileTextOf(designParameters(params, this.design.config())),
+      // "הכל" in the order's categories (Android SellAllTab: hidden unless the parameter says first / last).
+      sellAllTab: parseSellAllTab(params[PARAM_SELL_ALL_TAB]),
+      design: this.design.state({
+        parameters: params,
+        tenders: tendersOf(params, !this.svc.pay.noCard),
+        presets: this.presetDiscounts().presets.map((p) => ({ id: p.id, name: p.name })),
+        totalAgorot: net,
+      }),
+      theme: themeOf(this.design.config(), params, this.svc.cloud.settings().settings),
       drawer: this.drawer.state(),
       users: this.sessions.state(),
       owed: this.cash.state(),
@@ -5013,7 +5176,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
 
   /** A till document left pending by a crash or a restart mid-card: the sale is not lost, the answer is asked for. */
   private restorePending() {
-    const doc = this.svc.ledger.pendingDocs().find((d) => d.channel === 'till');
+    // A cash device's pending document is the device's to settle (tillDeviceCash.ts), never a card's.
+    const doc = this.svc.ledger.pendingDocs().find((d) => d.channel === 'till' && !(d.payments ?? []).some((l) => l.device));
     if (!doc) return;
     const docs = doc.basketId ? this.svc.ledger.basketDocs(doc.basketId).filter((d) => d.status === 'pending') : [doc];
     const carrier = docs.find((d) => (d.payments ?? []).some((l) => l.method === 'card')) ?? doc;

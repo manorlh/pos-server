@@ -229,6 +229,15 @@ def _dash_gate_allows(db: Session, user: User, rtype: C.RequestType) -> bool:
     return dashboard_access.effective_access(db, user).allows(section, "edit")
 
 
+def _employee_in_area(pu: PosUser, machine: POSMachine) -> bool:
+    """The employee works where the till stands: no points of sale of their own (every one), or its own."""
+    areas = getattr(pu, "area_ids", None)
+    if not isinstance(areas, list) or not areas:
+        return True
+    area = getattr(machine, "area_id", None)
+    return area is None or str(area) in {str(a) for a in areas}
+
+
 def _dash_scope_covers(db: Session, user: User, machine: POSMachine) -> bool:
     from app.services.company_hierarchy import user_may_use_machine
 
@@ -303,6 +312,10 @@ def evaluate(
         # ── Through a till role (a linked employee) ──
         for pu in sorted(employees, key=lambda p: 0 if str(p.shop_id) == str(machine.shop_id) else 1):
             if str(pu.shop_id) != str(machine.shop_id) and not dash_scope:
+                continue
+            # "עובדי קופה לפי נקודת מכירה" (P:/specs/chain-areas.md §8): an employee of other points of sale
+            # does not get this point of sale's requests (P:/specs/area-coverage-audit.md, approvals routing).
+            if not _employee_in_area(pu, machine):
                 continue
             eff = effective.get(pu.id)
             if eff is None:

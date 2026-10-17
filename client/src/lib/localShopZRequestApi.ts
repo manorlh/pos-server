@@ -14,9 +14,13 @@ export async function fetchLocalShopZRequest(shopId: string): Promise<LocalShopZ
   return data;
 }
 
-/** An open request is answered again, never doubled. 409 `not_local_mode` outside local mode. */
-export async function requestLocalShopZ(shopId: string): Promise<LocalShopZState> {
-  const { data } = await api.post<LocalShopZState>(`/shops/${shopId}/local-shop-z-request`);
+/**
+ * An open request is answered again, never doubled. 409 `not_local_mode` outside local mode; with
+ * `areaId` ("Z לנקודת מכירה", P:/specs/area-z-configs.md §3) 409 `request_pending_other_scope` while
+ * another scope's request is open, `main_till_needs_update` when the main till's build cannot.
+ */
+export async function requestLocalShopZ(shopId: string, areaId?: string | null): Promise<LocalShopZState> {
+  const { data } = await api.post<LocalShopZState>(`/shops/${shopId}/local-shop-z-request`, areaId ? { areaId } : undefined);
   return data;
 }
 

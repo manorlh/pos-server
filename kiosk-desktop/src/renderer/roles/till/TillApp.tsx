@@ -25,6 +25,7 @@ import './css/attendance.css';
 import './css/readyOrders.css';
 import './css/alerts.css';
 import './css/voucherBalance.css';
+import './css/deviceCash.css';
 import './css/voucherStation.css';
 import './css/cloudZ.css';
 import './css/printers.css';
@@ -52,6 +53,7 @@ import { KiosksScreen } from './screens/KiosksScreen';
 import { MenuActionSheet, TillMenuDrawer } from './parts/TillMenuDrawer';
 import { MENU_TEXT, buildTillMenu, folderOpenAtStart, type MenuTarget, type TillMenuFacts } from '../../../core/till/tillMenu';
 import { SellScreen } from './screens/SellScreen';
+import type { QuickButton } from './parts/CartPane';
 import { ChoicesSheet, type ChoicesTarget } from './parts/ChoicesSheet';
 import { CatalogAdminScreen } from './screens/CatalogAdminScreen';
 import { ShopZScreen } from './screens/ShopZScreen';
@@ -59,6 +61,7 @@ import { AttendanceClockButton, AttendanceScreen } from './screens/AttendanceScr
 import { ReadyOrdersScreen, type ReadyOrdersActions } from './screens/ReadyOrdersScreen';
 import { AlertsLine, AlertsScreen } from './screens/AlertsScreen';
 import { VoucherBalanceScreen } from './screens/VoucherBalanceScreen';
+import { DeviceCashScreen } from './screens/DeviceCashScreen';
 import { VoucherStationScreen } from './screens/VoucherStationScreen';
 import { CloudZScreen } from './screens/CloudZScreen';
 import { PrintersScreen } from './screens/PrintersScreen';
@@ -75,6 +78,8 @@ import { PrintQueueScreen, type PrintQueueActions, type QueueRow } from './scree
 import type { BlockSheetView, BlocksListView } from '../../../core/till/itemBlocks';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
+import { tillThemeVars, useSystemDark } from './theme/tillTheme';
+import { designFor, tillDesignProfileOf } from '../../../core/till/tillDesign';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
@@ -101,7 +106,8 @@ type View =
   | 'voucherBalance'
   | 'cloudZ'
   | 'printers'
-  | 'alerts';
+  | 'alerts'
+  | 'deviceCash';
 
 /** The menu's report rows and the local report each is. */
 const REPORT_OF: Partial<Record<MenuTarget, LocalReportKind>> = { shiftHistory: 'shifts', tillZHistory: 'tillZs', productSales: 'products', workers: 'workers', tips: 'tips' };
@@ -140,6 +146,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   const [cashSheet, setCashSheet] = useState(false);
   const [drawerAt, setDrawerAt] = useState<DrawerSheet>('menu');
   const [reportKind, setReportKind] = useState<LocalReportKind>('products');
+  /** "מזומן עם עודף" from the quick bar: the payment opens on its cash pad. */
+  const [padFirst, setPadFirst] = useState(false);
+  /** "הדבורה"'s home on screen: no island over it (Android FlowShell). */
+  const [flowHomeShown, setFlowHomeShown] = useState(false);
   /** "תוספות / ארוחה / הערות": the sheet open for a product tapped, or for a cart line ("עריכת המנה"). */
   const [choices, setChoices] = useState<ChoicesTarget | null>(null);
   /** "הזמנות קיוסק ממתינות לתשלום": the list over the till. */
@@ -354,6 +364,12 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     if (techCorner.current.tap(e.clientX - rect.left, e.clientY - rect.top, Date.now(), tillTechnicianArmed(state?.checkout.phase ?? null))) host.ui.openTechnician();
   };
 
+  // "עיצוב קופה" for this window's profile (Android ProvideTillDesign: the profile follows the window), and the colours
+  // the Android till paints (theme/tillTheme.ts): the design's accent and mode over the brand and "ערכת צבע".
+  const systemDark = useSystemDark();
+  const design = state?.design ? designFor(state.design, tillDesignProfileOf(profile.widthDp, profile.heightDp)) : null;
+  const night = design?.drawn === 'night';
+  const themeVars = useMemo(() => tillThemeVars(state?.theme, systemDark, night), [state?.theme, systemDark, night]);
   const root = (children: ReactNode) => (
     <div
       className="t-root"
@@ -361,7 +377,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       lang="he"
       data-lite={host.device.lite ? '1' : '0'}
       data-layout={layout.cls}
-      style={profile.scale !== 1 ? ({ zoom: profile.scale, '--t-zoom': String(profile.scale) } as CSSProperties) : undefined}
+      data-template={design?.drawn ?? 'clean'}
+      data-shell={design?.shell ?? 'classic'}
+      data-dark={themeVars.colorScheme === 'dark' ? '1' : '0'}
+      style={{ ...themeVars, ...(profile.scale !== 1 ? { zoom: profile.scale, '--t-zoom': String(profile.scale) } : {}) } as CSSProperties}
       onPointerDown={touch}
       {...adminHold.handlers}
       onPointerDownCapture={(e) => {
@@ -428,7 +447,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
               view === 'voucherBalance' ||
               view === 'cloudZ' ||
               view === 'printers' ||
-              view === 'alerts'
+              view === 'alerts' ||
+              view === 'deviceCash'
             ? view
             : null;
   const menuGroups = buildTillMenu(menuFactsOf(s, { demo: host.demo, settings: !!host.ui.openAdmin, current: menuCurrent }));
@@ -505,6 +525,10 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         setMenuAt(t);
         setView('printers');
         return act('printers.open');
+      case 'deviceCash':
+        setMenuAt(t);
+        setView('deviceCash');
+        return act('deviceCash.open');
       case 'screenEdit':
         setView('sell');
         return act('screenEdit.start');
@@ -525,6 +549,42 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         return undefined;
     }
   };
+  // "עיצוב קופה" / "כפתור תשלום מהיר": a quick-bar button (Android QuickOrderPanel's), through the payment's own ops.
+  const startCheckout = async () => {
+    setPadFirst(false);
+    const r = await attempt('checkout.start', {});
+    if (!r.ok) say(r.message, 'error');
+    return r.ok;
+  };
+  const quick = (b: QuickButton) => {
+    switch (b.action) {
+      case 'fastCard':
+        return void startCheckout().then((ok) => ok && run('checkout.card', {}));
+      case 'fastCash':
+        return void startCheckout().then((ok) => ok && run('checkout.cash', { amountAgorot: s.sell.totalAgorot }));
+      case 'cashNotes':
+        return void startCheckout().then((ok) => ok && b.noteShekels && run('checkout.cash', { amountAgorot: b.noteShekels * 100 }));
+      case 'cashWithChange':
+        setPadFirst(true);
+        return void attempt('checkout.start', {}).then((r) => {
+          if (!r.ok) {
+            setPadFirst(false);
+            say(r.message, 'error');
+          }
+        });
+      case 'hold':
+        return setSheet({ kind: 'held' });
+      case 'discount':
+        return b.presetId ? tapPreset(b.presetId, false) : setSheet({ kind: 'discount' });
+      case 'orderDetails':
+        return void run('order.edit', {});
+      case 'clear':
+        return void run('sell.clear', {});
+      default:
+        return undefined;
+    }
+  };
+  const identity = [s.menu?.shopName, s.menu?.posNumber ? `קופה ${s.menu.posNumber}` : null].filter(Boolean).join(' · ') || null;
   const main = (() => {
     if (s.session.locked || !s.session.cashier)
       // "טכנאי" under the pad, as Android's login screen (the six taps work here too).
@@ -543,7 +603,11 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           layout={layout}
           cardTile={cardTile}
           noCard={s.health.noCard === true}
+          startWithPad={padFirst}
+          lines={s.sell.lines}
+          wideCash={profile.widthDp >= 840 && profile.widthDp > profile.heightDp && profile.heightDp >= 600}
           demo={s.session.demo}
+          deviceCash={s.deviceCash ?? null}
           actions={{
             cash: (amountAgorot) => void run('checkout.cash', { amountAgorot }),
             card: () => void run('checkout.card', {}),
@@ -566,6 +630,15 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
                   voucher: (code: string) => void run('checkout.voucher', { code }),
                   removeVoucher: (id: string) => void run('checkout.removeVoucher', { id }),
                   finishTest: () => void run('checkout.finishTest', {}),
+                  // "מזומן במכשיר" (main/till/tillDeviceCash.ts).
+                  device: {
+                    pay: () => act('deviceCash.pay'),
+                    cancel: () => act('deviceCash.cancel'),
+                    answer: (confirm: boolean) => act('deviceCash.answer', { confirm }),
+                    recheck: () => act('deviceCash.recheck'),
+                    markNotPaid: () => act('deviceCash.markNotPaid'),
+                    owedPaid: () => act('deviceCash.owedPaid'),
+                  },
                 }),
           }}
         />
@@ -802,6 +875,21 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         />
       );
     }
+    if (view === 'deviceCash' && s.deviceCash) {
+      return (
+        <DeviceCashScreen
+          state={s.deviceCash}
+          actions={{
+            check: () => act('deviceCash.check'),
+            acknowledge: (txId) => act('deviceCash.acknowledge', { txId }),
+            back: () => {
+              void run('deviceCash.close', {});
+              setView('sell');
+            },
+          }}
+        />
+      );
+    }
     if (view === 'owed') {
       return (
         <OwedScreen
@@ -950,7 +1038,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           discount: (lineId: string, pct: number) => void run('sell.discount', { lineId, pct }),
           remove: (lineId) => void run('sell.remove', { lineId }),
           clear: () => void run('sell.clear', {}),
-          pay: () => void run('checkout.start', {}),
+          pay: () => void startCheckout(),
+          quick,
           ...(host.demo
             ? {}
             : {
@@ -974,14 +1063,34 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           heldCount: s.held?.count ?? 0,
           order: s.order ? { strip: s.order.strip, configured: s.order.configured } : null,
           presetButtons,
+          bar: design?.actionBar ?? [],
+          notes: s.design?.quickCash.offered ?? [],
+          payWord: s.design?.texts.pay,
         }}
+        identity={identity}
+        design={design}
+        quick={quick}
+        onMenu={menuReady ? () => setMenuOpen(true) : undefined}
+        onFlowHome={setFlowHomeShown}
+        ops={
+          host.demo
+            ? { addQty: (productId, qty) => void run('sell.add', { productId, qty }) }
+            : {
+                addQty: (productId, qty) => void run('sell.add', { productId, qty }),
+                orderDetails: (d) => void run('order.details', d),
+                resume: (id) => void run('held.resume', { id }),
+                park: (label) => void run('held.hold', label ? { label } : {}),
+              }
+        }
       />
     );
   })();
 
+  // The island is the shell's (Android PosShell): the sign-in and the payment are screens of their own, over it.
+  const islandShown = !s.session.locked && !!s.session.cashier && s.checkout.phase === 'idle' && !(flowHomeShown && view === 'sell');
   return root(
     <>
-      <header className="t-top">
+      <header className={`t-top${islandShown ? '' : ' t-top-bare'}`}>
         <div className="t-brand">
           R2M <b>POS</b>
         </div>
@@ -1106,6 +1215,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         ) : null}
       </div>
       <main className="t-main">{main}</main>
+      {/* "Powered by R2M" under the sell screen, as the Android till's shell draws it. */}
+      {islandShown && view === 'sell' ? <div className="t-powered">Powered by <b>R2M</b></div> : null}
       {menuOpen && menuReady ? (
         <TillMenuDrawer
           groups={menuGroups}
@@ -1321,6 +1432,7 @@ export function menuFactsOf(s: TillState, host: { demo: boolean; settings: boole
     printers: !host.demo && !!s.menu,
     screenEdit: s.screenEdit?.available === true,
     alerts: s.alerts ? { line: s.alerts.subtitle } : null,
+    deviceCash: s.deviceCash && (s.deviceCash.kind || s.deviceCash.unresolvedCount > 0) ? { name: s.deviceCash.name, unresolved: s.deviceCash.unresolvedCount } : null,
   };
 }
 

@@ -84,7 +84,16 @@ export function LocalShopZRequestCard({ shopId }: { shopId: string }) {
  * wizard cannot start it and the request to the main till; otherwise `children` (the
  * wizard's own notice) as it was.
  */
-export function LocalShopZWizardNotice({ shopId, children }: { shopId: string; children: ReactNode }) {
+export function LocalShopZWizardNotice({
+  shopId,
+  areaId = null,
+  children,
+}: {
+  shopId: string;
+  /** The wizard is on one point of sale: the request asks the main till for that point of sale's Z. */
+  areaId?: string | null;
+  children: ReactNode;
+}) {
   const t = useTranslations('independentTill.localShopZ');
   const tillLabel = useTillLabel();
   const { data } = useLocalShopZ(shopId);
@@ -93,7 +102,8 @@ export function LocalShopZWizardNotice({ shopId, children }: { shopId: string; c
     <Card className="border-amber-500/50">
       <CardContent className="space-y-3 py-3 text-sm">
         <p>{t('wizardNotice', { till: tillLabel(data.mainTill) })}</p>
-        <LocalShopZBody shopId={shopId} state={data} />
+        {areaId ? <p className="text-xs text-muted-foreground">{t('areaNotice')}</p> : null}
+        <LocalShopZBody shopId={shopId} state={data} areaId={areaId} />
       </CardContent>
     </Card>
   );
@@ -116,7 +126,7 @@ function ToneIcon({ tone }: { tone: RequestTone }) {
   return <Clock className={cls} aria-hidden />;
 }
 
-function LocalShopZBody({ shopId, state }: { shopId: string; state: LocalShopZState }) {
+function LocalShopZBody({ shopId, state, areaId = null }: { shopId: string; state: LocalShopZState; areaId?: string | null }) {
   const t = useTranslations('independentTill.localShopZ');
   const tc = useTranslations('common');
   const qc = useQueryClient();
@@ -139,7 +149,7 @@ function LocalShopZBody({ shopId, state }: { shopId: string; state: LocalShopZSt
   const settle = (out: LocalShopZState) => qc.setQueryData(localShopZKey(shopId), out);
 
   const ask = useMutation({
-    mutationFn: () => requestLocalShopZ(shopId),
+    mutationFn: () => requestLocalShopZ(shopId, areaId),
     onSuccess: (out) => {
       settle(out);
       toast.success(t('requested'));
@@ -191,6 +201,7 @@ function LocalShopZBody({ shopId, state }: { shopId: string; state: LocalShopZSt
               <span>{t(`status.${view.key}`, view.values)}</span>
             )}
           </div>
+          {req.areaName ? <p className="text-xs text-muted-foreground">{t('areaOfRequest', { area: req.areaName })}</p> : null}
           {view.tone === 'error' ? <p className="text-xs">{t('retrying')}</p> : null}
           {status === 'waiting' ? (
             <p className="text-xs text-muted-foreground">
@@ -211,7 +222,7 @@ function LocalShopZBody({ shopId, state }: { shopId: string; state: LocalShopZSt
         <div className="flex flex-wrap gap-2">
           {canRequestShopZ(state) ? (
             <Button size="sm" disabled={busy} onClick={() => ask.mutate()}>
-              {ask.isPending ? t('requesting') : t('request')}
+              {ask.isPending ? t('requesting') : areaId ? t('requestArea') : t('request')}
             </Button>
           ) : null}
           {canCancelShopZ(state) ? (

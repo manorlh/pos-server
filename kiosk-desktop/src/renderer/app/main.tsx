@@ -5,6 +5,8 @@
  */
 
 import '../roles/till/till.css';
+import '../roles/till/theme/look.css';
+import '../roles/till/theme/design.css';
 import { createRoot } from 'react-dom/client';
 import { TillApp } from '../roles/till/TillApp';
 import { pickHost } from './pickHost';

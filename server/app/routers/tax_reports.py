@@ -67,6 +67,11 @@ def _resolve_scope_entities(
     active_tenant_id,
     current_user: User,
 ) -> tuple[Company, Optional[Shop], Optional[uuid.UUID], Optional[uuid.UUID]]:
+    # The legal entity's file (a shop's or a company's documents): never for a manager of some points of
+    # sale only (P:/specs/area-coverage-audit.md) — 403 `needs_whole_shop_scope`.
+    from app.services import area_scope
+
+    area_scope.refuse_shop_level(db, current_user)
     if scope == "shop":
         if not shop_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shopId is required when scope=shop")

@@ -19,7 +19,8 @@ import {
   type TillState,
   type XReport,
 } from '../../shared/till/protocol';
-import { initialState } from '../../shared/till/mockEngine';
+import { demoDesignState, initialState } from '../../shared/till/mockEngine';
+import { demoDesignConfig, themeOf, withTotal } from '../../core/till/tillDesign';
 import { kioskControlRows } from '../../core/till/kioskControl';
 import { drawerOf } from '../../core/till/cashWithTips';
 import * as P2 from './phase2Fixtures';
@@ -232,6 +233,12 @@ function richState(): TillState {
   };
 }
 
+const DEVICE_CASH: NonNullable<TillState['deviceCash']> = { kind: 'cashmag', name: 'CashMag', available: true, reason: null, unresolvedCount: 0, screen: null };
+
+function deviceView(stage: NonNullable<TillState['checkout']['deviceCash']>['stage'], over: Partial<NonNullable<TillState['checkout']['deviceCash']>> = {}): NonNullable<TillState['checkout']['deviceCash']> {
+  return { kind: 'cashmag', name: 'CashMag', stage, message: '', insertedAgorot: 0, dueAgorot: 5_730, canCancel: true, cancelLabel: 'ביטול', question: null, position: null, longWait: false, txShort: null, done: null, ...over };
+}
+
 function checkout(s: TillState, over: Partial<TillState['checkout']>): TillState {
   const total = s.sell.totalAgorot;
   return { ...s, checkout: { phase: 'tender', totalAgorot: total, paidAgorot: 0, dueAgorot: total, changeAgorot: 0, legs: [], documentRef: null, ...over } };
@@ -253,6 +260,26 @@ export function stateFor(name: string): TillState {
       return checkout(s, { paidAgorot: 5_000_000, dueAgorot: s.sell.totalAgorot - 5_000_000, tenderedAgorot: 5_000_000, legs: [{ method: 'cash', amountAgorot: 5_000_000, status: 'approved' }, { method: 'card', amountAgorot: 2_500_000, status: 'approved' }, { method: 'cash_credit', amountAgorot: 13_990, status: 'approved', credit: { code: 'CC:7F3A-91B2', redemptionId: 'r1' } }], deferredNotice: 'המסוף עובד במצב לא מקוון — בתשלום באשראי: לא ניתן לשלם בכרטיס דביט / דיירקט / כרטיס זר כרגע' });
     case 'pay-card':
       return checkout(s, { phase: 'card_waiting', cardStatus: 'הצמד, הכנס או העבר את הכרטיס במסוף (99,999.90 ₪)', legs: [{ method: 'card', amountAgorot: s.sell.totalAgorot, status: 'pending' }] });
+    // "מזומן במכשיר" (main/till/tillDeviceCash.ts): the tender, the busy machine, the money going in, the done screen.
+    case 'pay-device':
+      return { ...checkout(s, {}), deviceCash: DEVICE_CASH };
+    case 'pay-device-busy':
+      return { ...checkout(s, { phase: 'card_waiting', deviceCash: deviceView('busy', { message: 'עמדת המזומן בשימוש כרגע על ידי לקוח אחר — יש להמתין לסיום', cancelLabel: 'חזרה' }) }), deviceCash: { ...DEVICE_CASH, available: false, reason: 'תשלום כבר בתהליך' } };
+    case 'pay-device-insert':
+      return { ...checkout(s, { phase: 'card_waiting', deviceCash: deviceView('insert', { message: 'הכנס מזומן במכשיר', insertedAgorot: 2_000, cancelLabel: 'ביטול' }) }), deviceCash: DEVICE_CASH };
+    case 'pay-device-unknown':
+      return { ...checkout(s, { deviceCash: deviceView('unknown', { message: 'אין תשובה ממכשיר המזומן (עסקה 3F2A9C10) — לא ידוע אם שולם. "בדוק שוב" כשהמכשיר עונה.', canCancel: false, txShort: '3F2A9C10' }) }), deviceCash: DEVICE_CASH };
+    case 'pay-device-done':
+      return {
+        ...checkout(s, {
+          phase: 'done',
+          dueAgorot: 0,
+          paidAgorot: s.sell.totalAgorot,
+          documentRef: 'חשבונית מס קבלה 40000124',
+          deviceCash: deviceView('done', { done: { notice: 'המכשיר נתן עודף 40 ₪ · המכשיר חייב ללקוח עודף של 2.70 ₪ — יש לתת מהמגירה', owedAgorot: 270, owedFromDrawer: true, owedPaid: false } }),
+        }),
+        deviceCash: DEVICE_CASH,
+      };
     case 'pay-card-unknown':
       return checkout(s, { cardError: 'המסוף לא ענה — לא ידוע אם העסקה עברה. אל תחייבו שוב לפני בדיקה.', cardUnknown: true });
     case 'pay-vouchers':
@@ -467,7 +494,10 @@ export class AuditEngine implements EngineEndpoint {
   readonly catalog = P2.withChoices(stressCatalog());
 
   constructor(state: string) {
-    this.st = stateFor(state);
+    const s = stateFor(state);
+    // "עיצוב קופה" as the demo takes it: /tillAudit.html?state=sell&design=night&accent=%23E11D48&mode=dark.
+    const cfg = typeof location !== 'undefined' ? demoDesignConfig(location.search) : null;
+    this.st = cfg ? { ...s, design: withTotal(demoDesignState(cfg, true), s.sell.totalAgorot), theme: themeOf(cfg, {}, {}) } : s;
   }
 
   hello(): HelloReply {

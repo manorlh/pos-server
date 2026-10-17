@@ -36,6 +36,7 @@ import {
 } from '../core/noTerminalFallback';
 import { lanTargetOf, type LanHost, type LanTarget } from '../core/lanOpenOrders';
 import { CashPay, type CashOutcome, type CashProgress } from './kiosk/cashPay';
+import { isTillCashRef } from '../core/till/deviceCash';
 import { CashCredits } from './kiosk/cashCredits';
 import { CashMagPay, CASHMAG_STATION_NAME, txViewOf as cashmagTxView, type CashMagEntry, type CashMagLocalConfig, type CashMagProgress } from './kiosk/cashmagPay';
 import { CASHMAG_ERRORS, CASHMAG_HOST_ID, cashmagConfigText, type CashMagConfig } from '../core/cash/cashmag';
@@ -556,6 +557,7 @@ export class KioskService extends EventEmitter {
       // The cloud away: the shop's LAN host takes the orders (its print server; never for an independent kiosk).
       lanTarget: () => this.lanTarget(),
       kioskName: () => this.operator().name,
+      areaId: () => this.areaIdHere(),
     });
     this.cashPay = new CashPay({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log, fetch: opts.fetch });
     this.cashCredits = new CashCredits({ api: this.api, kv: this.kv, machineId: () => this.machineId, log: this.log });
@@ -563,7 +565,8 @@ export class KioskService extends EventEmitter {
     this.cashMag = new CashMagPay({
       kv: this.kv,
       params: () => this.cloud.parameters(),
-      local: () => opts.cashmagLocal ?? null,
+      // The kiosk's own kiosk.json `cashmag` only on a kiosk: a till's CashMag settings are the cloud's (P:/specs/cashmag.md §4.2).
+      local: () => (this.isKiosk() ? (opts.cashmagLocal ?? null) : null),
       kioskName: () => this.cloud.machine()?.machineName ?? null,
       log: this.log,
       driverFor: opts.cashmagDriver,
@@ -1361,6 +1364,10 @@ export class KioskService extends EventEmitter {
         this.dirty();
       },
       onParameters: () => this.dirty(),
+      // The till's own pulls on the parameters' cadence ("עיצוב קופה"), on a device that may sell.
+      pullWithParameters: async () => {
+        if (this.fiscalRole && this.tillPull) await this.tillPull().catch((e: unknown) => this.log(`till pull: ${String(e)}`));
+      },
       // "סניף לא פעיל": the screens lock (once the customer is done) or are released at once.
       onShopActive: () => this.dirty(),
       onPendingCloseShift: (r: { requestId: string }) => {
@@ -1397,7 +1404,9 @@ export class KioskService extends EventEmitter {
         // taken — with what a LAN till did with them — and the vouchers to give back.
         if (id && this.hasKioskRow()) await this.pullLanHost().catch((e) => this.log(`LAN host: ${String(e)}`));
         if (id && this.hasKioskRow()) await this.payAtTill.flush().catch((e) => this.log(`pay at till: ${String(e)}`));
-        // "מזומן" at the cash station: which station and its secret (ETag), and payments still to settle.
+        // "מזומן" at the cash station: which station and its secret (ETag) — a kiosk's, and a till's ("מזומן במכשיר",
+        // main/till/tillDeviceCash.ts, which settles its own payments) — and the kiosk's payments still to settle.
+        if (id && this.fiscalRole && !this.isKiosk()) await this.cashPay.pull().catch((e) => this.log(`cash: ${String(e)}`));
         if (id && this.isKiosk()) {
           await this.cashPay.pull().catch((e) => this.log(`cash: ${String(e)}`));
           if (!this.cashPay.inFlight && this.cashPay.pending().length > 0) await this.settleCash();
@@ -2470,8 +2479,9 @@ export class KioskService extends EventEmitter {
         this.ledger.voidCardSale(e.docId, { cashTxId: e.txId, device: 'cashmag', outcome });
         void this.sync.flush();
       },
-      // The pay screen still finishing it (the change-owed choice): its own path writes the document.
-      live: (e: CashMagEntry) => this.payProgress?.orderId === e.orderId && (this.payProgress.phase === 'starting' || this.payProgress.phase === 'charging'),
+      // The pay screen still finishing it (the change-owed choice): its own path writes the document. A till's payment
+      // ("מזומן במכשיר") is the till's own to settle (main/till/tillDeviceCash.ts).
+      live: (e: CashMagEntry) => isTillCashRef(e.orderId) || (this.payProgress?.orderId === e.orderId && (this.payProgress.phase === 'starting' || this.payProgress.phase === 'charging')),
     });
     this.dirty();
   }
@@ -2603,6 +2613,8 @@ export class KioskService extends EventEmitter {
   async settleCash(): Promise<void> {
     for (const p of this.cashPay.pending()) {
       if (this.cashPay.inFlight && this.payProgress?.orderId === p.orderId) continue;
+      // A till's payment at the station ("מזומן במכשיר"): the till settles its own (main/till/tillDeviceCash.ts).
+      if (isTillCashRef(p.orderId)) continue;
       const doc = this.ledger.doc(p.docId);
       const r = await this.cashPay.lookUp(p.txId);
       if (r.kind === 'offline') continue;
@@ -4095,6 +4107,8 @@ export class KioskService extends EventEmitter {
         if (r.kind === 'full') {
           this.kv.delete('cloud.catalog');
           this.kv.delete('cloud.settings');
+          // As the Android till's reset clears its settings table: the design is asked for whole again.
+          this.cloud.setTillDesign(null);
         }
         result = {
           commandId: r.commandId,
@@ -4848,6 +4862,13 @@ export class KioskService extends EventEmitter {
 
   attachTillAutoClose(fn: (() => Promise<unknown>) | null) {
     this.tillAutoClose = fn;
+  }
+
+  /** The till's engine registers what it pulls with the parameters ("עיצוב קופה", main/till/tillDesign.ts). */
+  private tillPull: (() => Promise<unknown>) | null = null;
+
+  attachTillPull(fn: (() => Promise<unknown>) | null) {
+    this.tillPull = fn;
   }
 
   /**

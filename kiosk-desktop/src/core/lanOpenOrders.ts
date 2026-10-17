@@ -56,11 +56,21 @@ export function lanTargetOf(printers: unknown): LanTarget | null {
   return { address, port, secret, machineId: str(h.machineId), name: str(h.name) };
 }
 
-/** The body the LAN host takes: the cloud's shape of each order (it reads it as KioskOpenOrder.fromJson) and when it was taken. */
-export function lanOrdersBody(kioskMachineId: string, kioskName: string | null, orders: readonly OpenOrder[]): Record<string, unknown> {
+/**
+ * The body the LAN host takes: the cloud's shape of each order (it reads it as KioskOpenOrder.fromJson) and when it was taken.
+ * `kioskAreaId`: the kiosk's point of sale — a till locked to its point of sale (`areaScopeLock`) lists only its own
+ * kiosks' orders, as the Android kiosk says it (KioskPayAtTill.kt); null — the whole shop's.
+ */
+export function lanOrdersBody(
+  kioskMachineId: string,
+  kioskName: string | null,
+  orders: readonly OpenOrder[],
+  kioskAreaId: string | null = null,
+): Record<string, unknown> {
   return {
     kioskMachineId,
     kioskName,
+    kioskAreaId,
     orders: orders.map((o) => ({ ...openOrderWire(o), createdAtMs: o.createdAtMs })),
   };
 }

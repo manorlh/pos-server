@@ -368,6 +368,8 @@ OPEN_WRITES = {
     ("POST", "/sync/{machine_id}/print-jobs/{job_id}/ack"),
     ("POST", "/sync/{machine_id}/print-jobs/{job_id}/cancel"),
     ("POST", "/sync/{machine_id}/print-redirects"),
+    # "איך המסך מדפיס" (app/services/kds_print.py): a screen's bon through a till of the shop — no fiscal effect.
+    ("POST", "/sync/{machine_id}/kds/print-jobs"),
     # "בון לא הודפס" (app/services/bon_alerts.py): the device's own print queue, reported — no fiscal effect.
     ("POST", "/sync/{machine_id}/kitchen/bon-alerts"),
     ("POST", "/sync/{machine_id}/printers"),

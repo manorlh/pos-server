@@ -109,7 +109,8 @@ export type MenuTarget =
   | 'cloudZ'
   | 'printers'
   | 'screenEdit'
-  | 'alerts';
+  | 'alerts'
+  | 'deviceCash';
 
 export interface MenuRow {
   /** The Android MenuHide key (null: a row of the Windows till's own, "עודף חייב ללקוח"). */
@@ -207,6 +208,8 @@ export const MENU_TEXT = {
   printers: 'מדפסות',
   screenEdit: 'עריכת מסך',
   alerts: 'התראות',
+  deviceCash: 'מכשיר מזומן',
+  deviceCashUnresolved: (n: number) => `${n} ממתינים לבירור`,
 } as const;
 
 /** What the menu is built from: the engine's state and what the host can do. */
@@ -229,6 +232,11 @@ export interface TillMenuFacts {
   drawerHosts?: ReadonlyArray<{ id: string; label: string }>;
   /** "עודף חייב ללקוח": debts the cloud routes to this till. */
   owedCount?: number;
+  /**
+   * "מכשיר מזומן" (main/till/tillDeviceCash.ts — Android's CashMag screen, `CASH_DRAWER.APPROVE_OPEN`): a cash device on this
+   * till, or a payment of it waiting for "טופל". Absent: none.
+   */
+  deviceCash?: { name: string; unresolved: number } | null;
   /** The engine can sync on demand ("סנכרון מול הענן") and how the last went. */
   sync?: { running: boolean; lastAt: string | null; error: string | null; waiting: number } | null;
   /** A release the cloud assigned this till (null: none — no row). */
@@ -318,6 +326,10 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
     }
     // The Windows till's own: the change owed to a customer the cloud routes here (Android: its alerts list).
     if ((f.owedCount ?? 0) > 0) shift.push({ key: null, target: 'owed', label: MENU_TEXT.owed, sub: String(f.owedCount), tile: 'orange', glyph: 'money', ...sel('owed') });
+    if (f.deviceCash && permitted('CASH_DRAWER.APPROVE_OPEN')) {
+      const u = f.deviceCash.unresolved;
+      shift.push({ key: null, target: 'deviceCash', label: MENU_TEXT.deviceCash, sub: u > 0 ? MENU_TEXT.deviceCashUnresolved(u) : f.deviceCash.name || null, ...(u > 0 ? { subError: true } : {}), tile: 'teal', glyph: 'money', ...sel('deviceCash') });
+    }
     if (shown('refund') && (f.refundMode || permitted('REFUND'))) {
       shift.push({ key: 'refund', target: f.refundMode ? 'refundEnd' : 'refund', label: f.refundMode ? MENU_TEXT.refundEnd : MENU_TEXT.refund, tile: 'red', glyph: 'return', ...(f.refundMode ? { selected: true } : {}) });
     }

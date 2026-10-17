@@ -147,7 +147,7 @@ function CategoryPage({ m, cat, onEnter }: { m: PreviewModel; cat: PCategory; on
           className="flex items-center gap-1.5 px-3 kt-13 font-bold"
           style={{ minHeight: 40 * u, borderRadius: 999, background: `${m.c.primary}1A`, color: m.c.primary }}
         >
-          <ArrowRight className="h-4 w-4" /> {kt(m, 'allCategories')}
+          <ArrowRight className="h-4 w-4 ltr:rotate-180" aria-hidden /> {kt(m, 'allCategories')}
         </button>
         <span className="truncate kt-11" style={{ color: m.c.mutedText }}>
           {kt(m, 'breadcrumbMenu')} ‹ <b>{cat.name}</b>

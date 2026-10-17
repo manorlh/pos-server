@@ -41,6 +41,8 @@ def build_tips_report(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     shift_id: Optional[uuid.UUID] = None,
+    area_filter=None,
+    machine_ids=None,
 ) -> TipsReportResponse:
     company = db.query(Company).filter(Company.id == shop.company_id).first()
     tenant = db.query(Tenant).filter(Tenant.id == shop.tenant_id).first() if shop.tenant_id else None
@@ -52,6 +54,14 @@ def build_tips_report(
         # arrives (`settle_credited_originals`); the tip it took was still taken.
         Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
     )
+    # "נקודת מכירה" (P:/specs/area-coverage-audit.md): the shift's stamped area, as every report.
+    from app.services.areas import transaction_area_predicate
+
+    area_pred = transaction_area_predicate(area_filter)
+    if area_pred is not None:
+        q = q.filter(area_pred)
+    if machine_ids is not None:
+        q = q.filter(Transaction.machine_id.in_(list(machine_ids) or [uuid.uuid4()]))
     if shift_id:
         q = q.filter(Transaction.shift_id == shift_id)
     else:
