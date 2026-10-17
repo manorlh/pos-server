@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { PreviewModel } from '@kiosk-shared/index';
-import type { TechLightView, TechnicianAction, TechnicianActionResult, TechnicianInfo, TechHttpCheck } from '../../shared/bridge';
+import type { TechLightView, TechnicianAction, TechnicianActionResult, TechnicianInfo, TechHttpCheck, TechSerialPort } from '../../shared/bridge';
 import { LOG_RANGES, signalLabel, symbologyOf, TECH_TEXT as T, type LogRange } from '../../core/technicianSetup';
 import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
@@ -674,6 +674,7 @@ function PrinterPanel({ m, info, act, askManager }: { m: PreviewModel; info: Tec
             רשת (IP:פורט)
           </Btn>
         </div>
+        <SerialPicker m={m} act={act} current={s?.printer.serial ?? null} />
       </div>
       {info.receipts ? (
         // "מדפסת לקבלות ולמסמכים": another till's printer the cloud offers this one (bill-print-other-till).
@@ -749,6 +750,107 @@ function PrinterPanel({ m, info, act, askManager }: { m: PreviewModel; info: Tec
         ) : null}
       </div>
     </Panel>
+  );
+}
+
+const SERIAL_BAUDS = [9600, 19200, 38400, 115200] as const;
+const LIKELY: Record<string, string> = { likely: 'מדפסת', possible: 'אולי מדפסת' };
+
+/**
+ * "מדפסת סריאלית (COM)": the built-in printer of an all-in-one terminal — the COM ports (the likely printers first), the
+ * speed (9600 unless "זיהוי אוטומטי" finds another), flow control, "בדיקה" (a test page to that port) and "השתמש".
+ */
+function SerialPicker({ m, act, current }: { m: PreviewModel; act: Act; current: { comPort: string; baudRate: number; flow: 'none' | 'rtscts' } | null }) {
+  const [ports, setPorts] = useState<TechSerialPort[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [path, setPath] = useState(current?.comPort ?? '');
+  const [baud, setBaud] = useState<number>(current?.baudRate ?? 9600);
+  const [flow, setFlow] = useState<'none' | 'rtscts'>(current?.flow ?? 'none');
+  const [detecting, setDetecting] = useState(false);
+  const com = path.trim().toUpperCase();
+  const valid = /^COM\d{1,3}$/.test(com);
+  const list = () => {
+    setLoading(true);
+    void act({ type: 'serialPorts' }).then((r) => {
+      setLoading(false);
+      setPorts(r.serialPorts ?? []);
+      const first = (r.serialPorts ?? []).find((p) => p.likely === 'likely' && !p.inUse);
+      if (first && !path.trim()) setPath(first.path);
+    });
+  };
+  return (
+    <div className="space-y-1.5 border-t pt-1.5" style={{ borderColor: m.c.border }}>
+      <div className="text-xs font-bold">מדפסת סריאלית (COM) — מדפסת מובנית במחשב קופה</div>
+      {current ? <div className="text-xs">✓ בשימוש: <span dir="ltr">{`${current.comPort} · ${current.baudRate}${current.flow === 'rtscts' ? ' · RTS/CTS' : ''}`}</span></div> : null}
+      <Btn m={m} onClick={list}>
+        {loading ? 'מחפש…' : 'הצג יציאות COM'}
+      </Btn>
+      {ports ? (
+        <div className="space-y-1">
+          {ports.length === 0 ? <div className="text-xs">לא נמצאו יציאות COM</div> : null}
+          {ports.map((p) => (
+            <button
+              key={p.path}
+              type="button"
+              disabled={!!p.inUse}
+              onClick={() => setPath(p.path)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg border p-1.5 text-start text-xs disabled:opacity-50"
+              style={{ borderColor: com === p.path ? m.c.text : m.c.border }}
+            >
+              <span className="font-bold" dir="ltr">
+                {com === p.path ? '✓ ' : ''}
+                {p.path}
+              </span>
+              <span className="min-w-0 flex-1 truncate" dir="ltr">
+                {p.label}
+                {p.usbId ? ` · ${p.usbId}` : ''}
+              </span>
+              <span className="shrink-0 font-semibold">{p.inUse ?? (p.likely ? LIKELY[p.likely] : '')}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <Field m={m} value={path} onChange={(v) => setPath(v.replace(/\s/g, '').slice(0, 6))} placeholder="COM3" ltr width="w-20" />
+        {SERIAL_BAUDS.map((b) => (
+          <Btn key={b} m={m} onClick={() => setBaud(b)}>
+            {baud === b ? `✓ ${b}` : String(b)}
+          </Btn>
+        ))}
+        <Btn
+          m={m}
+          onClick={() => {
+            if (!valid) return;
+            setDetecting(true);
+            void act({ type: 'serialDetect', comPort: com, flow }).then((r) => {
+              setDetecting(false);
+              if (r.baudRate) setBaud(r.baudRate);
+            });
+          }}
+        >
+          {detecting ? 'מזהה…' : 'זיהוי אוטומטי'}
+        </Btn>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn m={m} onClick={() => setFlow('none')}>
+          {flow === 'none' ? '✓ ' : ''}ללא בקרת זרימה
+        </Btn>
+        <Btn m={m} onClick={() => setFlow('rtscts')}>
+          {flow === 'rtscts' ? '✓ ' : ''}RTS/CTS
+        </Btn>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn m={m} onClick={() => valid && void act({ type: 'serialTest', comPort: com, baudRate: baud, flow })}>
+          בדיקה
+        </Btn>
+        <Btn m={m} onClick={() => valid && void act({ type: 'setPrinter', transport: 'serial', comPort: com, baudRate: baud, flow })}>
+          השתמש ב-{valid ? com : 'COM'}
+        </Btn>
+      </div>
+      <div className="text-xs" style={{ color: m.c.mutedText }}>
+        8 סיביות, ללא זוגיות, סיבית עצירה אחת. מצב המדפסת (נייר / מכסה) נבדק ב-DLE EOT, לא בזמן הדפסה.
+      </div>
+    </div>
   );
 }
 

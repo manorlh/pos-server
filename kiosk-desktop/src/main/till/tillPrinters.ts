@@ -399,6 +399,12 @@ export class TillPrinters implements TillFeature {
     if (this.deps.ownStatus) return this.deps.ownStatus();
     const svc = this.c.svc;
     const t0 = svc.printerResolution().target;
+    if (t0.transport === 'serial') {
+      // A COM port: DLE EOT over the line (after any job on it — main/printer/serialPrinter.ts); no answer — off / unplugged.
+      if (!t0.comPort) return { health: 'unknown', found: false };
+      const st = await svc.receiptPrinterStatus();
+      return { health: st.health === 'unavailable' ? 'offline' : st.health, found: true };
+    }
     if (t0.transport === 'tcp') {
       if (!t0.host) return { health: 'unknown', found: false };
       const port = t0.port ?? 9100;

@@ -211,13 +211,14 @@ export class PrintQueue {
   }
 
   /**
-   * Asks the receipt printer how it is (`DLE EOT` on a network printer, the spooler's word on a USB one) — only with a
+   * Asks the receipt printer how it is (`DLE EOT` on a network or a COM-port printer, the spooler's word on a USB one) — only with a
    * printer configured and nothing printing, so a roll that ran out is known (and reported, and shown) before the next
    * receipt fails. A probe that cannot tell changes nothing.
    */
   async probe(): Promise<void> {
     const target = this.target();
-    const configured = (target.transport === 'tcp' && !!target.host) || (target.transport === 'spooler' && !!target.queueName);
+    const configured =
+      (target.transport === 'tcp' && !!target.host) || (target.transport === 'spooler' && !!target.queueName) || (target.transport === 'serial' && !!target.comPort);
     if (!configured || this.working) return;
     const before = this.health();
     try {

@@ -89,6 +89,7 @@ export function BridgeWindow() {
   const [newOrigin, setNewOrigin] = useState('');
   const [link, setLink] = useState('');
   const [tcp, setTcp] = useState({ host: '', port: '9100' });
+  const [com, setCom] = useState({ port: '', baud: '9600' });
 
   useEffect(() => {
     void api.view().then(setV);
@@ -233,6 +234,26 @@ export function BridgeWindow() {
           <input dir="ltr" className={`${field} w-36`} placeholder="192.168.1.50" value={tcp.host} onChange={(e) => setTcp({ ...tcp, host: e.target.value })} />
           <input dir="ltr" className={`${field} w-20`} value={tcp.port} onChange={(e) => setTcp({ ...tcp, port: e.target.value })} />
           <button type="button" className={soft} disabled={!tcp.host.trim()} onClick={() => void run({ type: 'setPrinter', transport: 'tcp', host: tcp.host, port: Number(tcp.port) || 9100 })}>
+            שמירה
+          </button>
+        </div>
+        {/* A COM port: the built-in printer of an all-in-one terminal (8N1; the technician screen lists the ports and finds the speed). */}
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-neutral-400">או COM:</span>
+          <input dir="ltr" className={`${field} w-24`} placeholder="COM3" value={com.port} onChange={(e) => setCom({ ...com, port: e.target.value })} />
+          <select dir="ltr" className={field} value={com.baud} onChange={(e) => setCom({ ...com, baud: e.target.value })}>
+            {['9600', '19200', '38400', '115200'].map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className={soft}
+            disabled={!/^com\d{1,3}$/i.test(com.port.trim())}
+            onClick={() => void run({ type: 'setPrinter', transport: 'serial', comPort: com.port.trim(), baudRate: Number(com.baud) })}
+          >
             שמירה
           </button>
         </div>

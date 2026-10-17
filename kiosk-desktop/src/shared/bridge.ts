@@ -565,7 +565,17 @@ export interface TechnicianSetupView {
   /** "מיסוי". */
   tax: { dealer: string; vatPercent: number };
   /** "בדיקת מדפסת": the paper and the last prints. */
-  printer: { kind: 'usb' | 'network' | 'windows' | 'none'; branch: string | null; widthDots: number; cut: boolean; lastOkAt: number | null; lastFailure: string | null; port: number | null };
+  printer: {
+    kind: 'usb' | 'network' | 'windows' | 'serial' | 'none';
+    branch: string | null;
+    widthDots: number;
+    cut: boolean;
+    lastOkAt: number | null;
+    lastFailure: string | null;
+    port: number | null;
+    /** A serial printer as set (the picker's choice). */
+    serial?: { comPort: string; baudRate: number; flow: 'none' | 'rtscts' } | null;
+  };
   /** "מגירת כסף" through the receipt printer. */
   drawer: { via: string; pin: 2 | 5; onMs: number; pulses: number[]; audited: boolean };
   /** "קישור מסופון מחדש" / "כתובת המסופון". */
@@ -597,6 +607,17 @@ export interface TechnicianSetupView {
 }
 
 /** What one technician action came to — its words, and for the checks their facts. */
+/** A COM port on the technician's printer picker: `likely` — a printer's maker or name; `possible` — a serial bridge / the board's UART. */
+export interface TechSerialPort {
+  path: string;
+  label: string;
+  manufacturer: string | null;
+  usbId: string | null;
+  likely: 'likely' | 'possible' | null;
+  /** The payment terminal's port, never offered for the printer ("בשימוש המסופון"). */
+  inUse: string | null;
+}
+
 export interface TechnicianActionResult {
   ok: boolean;
   message?: string;
@@ -644,6 +665,10 @@ export interface TechnicianActionResult {
   pinpads?: Array<{ host: string; port: number; terminal: string | null; merchant: string | null; serial: string | null; match: 'same' | 'other' | 'unknown' }>;
   /** "חיפוש מדפסות ברשת". */
   printers?: { subnet: string; found: Array<{ host: string; port: number; health: string; known: string | null }> };
+  /** "יציאות COM": the serial ports, the likely printers first (main/printer/serialPrinter.ts). */
+  serialPorts?: TechSerialPort[];
+  /** "זיהוי אוטומטי": the speed the printer answered at. */
+  baudRate?: number;
   /** "יומן אפליקציה". */
   log?: string[];
   /** An unpair that was refused: what waits, and whether it may be forced (core/unpairGuard.ts). */
@@ -824,7 +849,14 @@ export interface AdminActionResult {
 
 export type TechnicianAction =
   | { type: 'printerTest' }
-  | { type: 'setPrinter'; transport: 'spooler' | 'tcp'; queueName?: string; host?: string; port?: number }
+  /** serial: `comPort` ("COM3"), `baudRate` (9600 / 19200 / 38400 / 115200; 9600 when not said), `flow` (none / rtscts). 8N1. */
+  | { type: 'setPrinter'; transport: 'spooler' | 'tcp' | 'serial'; queueName?: string; host?: string; port?: number; comPort?: string; baudRate?: number; flow?: 'none' | 'rtscts' }
+  /** The serial (COM) ports for the printer picker. */
+  | { type: 'serialPorts' }
+  /** "זיהוי אוטומטי": DLE EOT at 9600 / 19200 / 38400 / 115200 on the port — the speed that answers. Nothing is saved. */
+  | { type: 'serialDetect'; comPort: string; flow?: 'none' | 'rtscts' }
+  /** "בדיקה": a test page straight to the port at that speed, before (or without) choosing it. */
+  | { type: 'serialTest'; comPort: string; baudRate?: number; flow?: 'none' | 'rtscts' }
   /** "מדפסות" (core/printerPicker.ts): the printers found ([lan]: scan the network now). */
   | { type: 'printerDiscover'; lan?: boolean }
   /** A printer for a role: the device's ("receipt" — every page; null: אוטומטי) or the bons' / item tickets' own (null: the device's). */

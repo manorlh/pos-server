@@ -5,7 +5,9 @@
  *    takes the bytes as they are (winspool OpenPrinter / StartDocPrinter("RAW") / WritePrinter),
  *    through one long-lived PowerShell helper (no native module, no per-job start-up cost);
  *  - network: TCP 9100 (as the till: connect 3 s, socket 15 s, a refused connect retried 3 times,
- *    4 KB writes, 150 ms, close), with DLE EOT status (paper out / cover / offline).
+ *    4 KB writes, 150 ms, close), with DLE EOT status (paper out / cover / offline);
+ *  - serial: a COM port (an all-in-one terminal's built-in printer, no Windows driver), 8N1 at the
+ *    speed set, with DLE EOT status over the same line (serialPrinter.ts).
  *
  * Status on the spooler comes from Win32_Printer (DetectedErrorState: 4 = no paper, 7 = door open,
  * 9 = offline…). Nothing is ever printed to a real printer by the tests.
@@ -18,18 +20,29 @@ import { parseStatus, STATUS_OFFLINE, STATUS_PAPER, STATUS_PRINTER, type Printer
 import { printDirect, PrinterStatusMemory, rememberingLink } from '../../core/kitchen/delivery';
 import { tcpPrinterLink } from '../kitchen/kitchenNet';
 import { scanOf, type UsbScan } from './usbPrinters';
+import { normalizeBaud, normalizeFlow, SerialPrinterError, SerialPrinters, type SerialFlow, type SerialLine, type SerialPortView } from './serialPrinter';
 
 export interface PrinterTarget {
-  transport: 'spooler' | 'tcp' | 'none';
+  transport: 'spooler' | 'tcp' | 'serial' | 'none';
   /** The Windows printer (queue) name, for the spooler. */
   queueName?: string | null;
   host?: string | null;
   port?: number | null;
+  /** serial: the COM port ("COM3"), its speed (9600 when not set) and flow control (none when not set). 8N1 always. */
+  comPort?: string | null;
+  baudRate?: number | null;
+  flow?: SerialFlow | null;
   /**
    * "רוחב הדפסה" in dots (576 / 512 / 432 / 384 — core/escpos.ts printerRaster); none: 576. The width test ("בדיקת רוחב")
    * shows which: the widest frame printed whole.
    */
   widthDots?: number | null;
+}
+
+/** A serial target's line; null when it names no port. */
+export function serialLineOf(t: PrinterTarget): SerialLine | null {
+  if (t.transport !== 'serial' || !t.comPort) return null;
+  return { path: t.comPort, baudRate: normalizeBaud(t.baudRate), flow: normalizeFlow(t.flow) };
 }
 
 export type PrinterHealth = 'ok' | 'no_paper' | 'paper_low' | 'cover_open' | 'offline' | 'error' | 'unavailable' | 'unknown';
@@ -54,6 +67,10 @@ export interface Transport {
    * the printer plugged in. Optional: without it the queue list stands in.
    */
   usbScan?(): Promise<UsbScan>;
+  /** The serial (COM) ports, the likely printers marked — for the technician screen. Optional. */
+  serialPorts?(): Promise<SerialPortView[]>;
+  /** "זיהוי אוטומטי": the speed a printer on [path] answers at; null — none answered. Optional. */
+  serialDetect?(path: string, flow: SerialFlow): Promise<number | null>;
   dispose(): void;
 }
 
@@ -301,11 +318,6 @@ interface Pending {
 /** How long PowerShell may take to compile the helper and say "ready" (a J1900 on Windows 7 is slow at it). */
 export const HELPER_START_MS = 45_000;
 
-/** JSON with every non-ASCII character escaped: Windows 7's PowerShell 2 reads its stdin in the console's code page. */
-export function asciiJson(v: unknown): string {
-  return JSON.stringify(v).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
-}
-
 /**
  * `wmic printer get … /format:list` (Windows 7 has it; no PowerShell needed): the queues when the helper cannot start.
  * Redirected, wmic writes UTF-16 on some systems and the ANSI page on others.
@@ -448,12 +460,30 @@ export class SpoolerHelper {
 
 export class DefaultTransport implements Transport {
   private helper: SpoolerHelper;
+  private readonly serial: SerialPrinters;
 
-  constructor(private readonly log: (m: string) => void = () => undefined) {
+  constructor(
+    private readonly log: (m: string) => void = () => undefined,
+    serial?: SerialPrinters,
+  ) {
     this.helper = new SpoolerHelper(log);
+    this.serial = serial ?? new SerialPrinters({ log });
   }
 
   async send(target: PrinterTarget, bytes: Uint8Array, opts: SendOptions = {}): Promise<void> {
+    if (target.transport === 'serial') {
+      const line = serialLineOf(target);
+      if (!line) throw new Error('no serial port chosen');
+      // A page: DLE EOT before and after (serialPrinter.ts sendPage) — its PrinterNotReady / PrintUncertain as a network page's.
+      if (opts.page) return this.serial.sendPage(line, bytes);
+      try {
+        return await this.serial.send(line, bytes);
+      } catch (e) {
+        // As the spooler's "write:": a job that failed after its first byte may be on paper.
+        if (e instanceof SerialPrinterError && e.partial) throw new Error(`write: ${e.message}`);
+        throw e;
+      }
+    }
     if (target.transport === 'tcp') {
       if (!target.host) throw new Error('no printer address');
       if (opts.page) return tcpSendPage(target.host, target.port ?? 9100, bytes);
@@ -470,6 +500,12 @@ export class DefaultTransport implements Transport {
   }
 
   async status(target: PrinterTarget): Promise<{ health: PrinterHealth; detail: string | null }> {
+    const line = serialLineOf(target);
+    if (line) {
+      // No answer on an open port: a printer silent on status (unknown — never an alert); the port not there: unavailable.
+      const r = await this.serial.ask(line);
+      return { health: r.bits ? healthOfBits(r.bits) : r.opened ? 'unknown' : 'unavailable', detail: line.path };
+    }
     if (target.transport === 'tcp' && target.host) {
       const bits = await tcpStatus(target.host, target.port ?? 9100);
       return { health: bits ? healthOfBits(bits) : 'unavailable', detail: null };
@@ -513,6 +549,14 @@ export class DefaultTransport implements Transport {
       r = { ok: true, queues: await wmicPrinters(), devices: null, ports: null };
     }
     return scanOf(r, (q) => healthOfWin32(typeof q.detected === 'number' ? q.detected : null, q.offline === true, typeof q.status === 'number' ? q.status : null), Date.now());
+  }
+
+  serialPorts(): Promise<SerialPortView[]> {
+    return this.serial.list();
+  }
+
+  serialDetect(path: string, flow: SerialFlow): Promise<number | null> {
+    return this.serial.detectBaud(path, flow);
   }
 
   dispose() {
