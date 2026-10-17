@@ -1035,7 +1035,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           // "הזמנות קיוסק ממתינות לתשלום (N)" (KioskOpenOrdersBadge): a tap opens the list.
           <KioskOrdersStrip count={s.kioskOrders.waiting} onOpen={() => setKioskList(true)} />
         ) : null}
-        {s.alerts && !s.session.locked && view !== 'alerts' && s.alerts.line ? (
+        {s.alerts && !s.session.locked && view === 'sell' && s.checkout.phase === 'idle' && s.alerts.line ? (
           <AlertsLine view={s.alerts} onOpen={(s.menuHidden ?? []).includes('alerts') ? undefined : () => setView('alerts')} onSeenAll={() => act('alerts.seenAll')} />
         ) : null}
         {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
