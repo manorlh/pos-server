@@ -4,7 +4,7 @@
  * department and the search are the engine's state too (`sell.department`, `sell.search`).
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Catalog, Product, TillState } from '../../../../shared/till/protocol';
 import type { TillLayout } from '../layout/tillLayout';
 import { CartPane, type CartActions, type CartView, type QuickButton } from '../parts/CartPane';
@@ -347,7 +347,9 @@ export function SellScreen({
   if (layout.panes === 'stacked') {
     const cartPct = Math.round(layout.cartHeightFraction * 100);
     return (
-      <div className="t-sell t-sell-stacked" style={{ gridTemplateRows: `minmax(0, 1fr) ${cartPct}%` }}>
+      // The cart its share of the height — but never less than its head and its foot: the lines give way first, so
+      // "תשלום" is always in sight (the owner, 17.10; design.css "the fold").
+      <div className="t-sell t-sell-stacked" style={{ ['--t-cart-pct' as string]: `${cartPct}%` } as CSSProperties}>
         {catalogPane}
         <CartPane sell={sell} actions={cart} compact view={cartView} />
       </div>

@@ -129,6 +129,7 @@ import {
 } from '../../core/kioskFlow';
 import { inTechnicianZone, mayOpen as technicianMayOpen, TapSequence } from '../../core/technician';
 import { offlineNoticeShown, offlineNoticeText } from '../../core/offlineBlock';
+import { KIOSK_DP_PER_CSS_PX } from '../../core/windowZoom';
 import type { BasketChange, CashCreditLegIn, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn, VoucherAnswer } from '../../shared/bridge';
 import { scannedVoucherCode } from '../../core/kioskScan';
 import { cashCreditCodeOf } from '../../core/cash/credit';
@@ -193,11 +194,26 @@ function useWindowSize() {
  * Windows screen as its own scaling gives it, unaffected by this app's page zoom (outerWidth), which is what the
  * layout's decisions read (the side cart, the rail or the tabs, two columns). In a WebView the window as it is.
  */
+/** A box in dp as CSS px (× `k`, CSS px per dp). */
+function scaleBox<T extends { x: number; y: number; w: number; h: number }>(b: T, k: number): T {
+  return { ...b, x: Math.round(b.x * k), y: Math.round(b.y * k), w: Math.round(b.w * k), h: Math.round(b.h * k) };
+}
+
 function useKioskDisplay() {
   const read = () => {
     const w = window.outerWidth || window.innerWidth;
     const h = window.outerHeight || window.innerHeight;
-    return { display: kioskDisplay(displayProfile(browserFacts(w, h, 1))), cssPerDip: w > 0 ? window.innerWidth / w : 1 };
+    // Upright, the Windows window's page zoom draws the Android kiosk's dp at KIOSK_DP_PER_CSS_PX per CSS px
+    // (core/windowZoom.ts): its decisions read the window as the Android kiosk would see it (1080×1920: 540×960 dp), and
+    // its dp sizes come back at that proportion. On its side (the web's own landscape scale, KIOSK_LANDSCAPE_MIN_CSS_HEIGHT),
+    // not zoomed (a WebView, a small window): the window as it is.
+    if (w > 0 && h >= w && w / window.innerWidth > 1.05) {
+      const dpW = Math.round(window.innerWidth * KIOSK_DP_PER_CSS_PX);
+      const dpH = Math.round(window.innerHeight * KIOSK_DP_PER_CSS_PX);
+      return { display: kioskDisplay(displayProfile(browserFacts(dpW, dpH, 1))), cssPerDip: 1 / KIOSK_DP_PER_CSS_PX, cssPerDp: 1 / KIOSK_DP_PER_CSS_PX };
+    }
+    // cssPerDp 1: the screens' dp values (the attract button, the corners) drawn as CSS px, as before.
+    return { display: kioskDisplay(displayProfile(browserFacts(w, h, 1))), cssPerDip: w > 0 ? window.innerWidth / w : 1, cssPerDp: 1 };
   };
   const [state, setState] = useState(read);
   useEffect(() => {
@@ -852,7 +868,9 @@ export function KioskApp({ view }: { view: KioskView }) {
   const ticker = flow.screen === 'attract' ? tickerBandPx(cfg, 'attract', new Date(nowMs), FOOTER_PX) : { top: 0, bottom: 0 };
   const band = { top: ticker.top + statusPx, bottom: ticker.bottom };
   const attractSize = { w: size.w, h: size.h - band.top - band.bottom };
-  const attractBox = ctaBox(cfg.attract.cta, attractSize.w, attractSize.h);
+  // The attract button's box is the Android kiosk's (KioskCtaLayout, in dp): laid out on the window as dp, drawn in CSS px.
+  const dpK = screenDisplay.cssPerDp;
+  const attractBox = dpK === 1 ? ctaBox(cfg.attract.cta, attractSize.w, attractSize.h) : scaleBox(ctaBox(cfg.attract.cta, attractSize.w / dpK, attractSize.h / dpK), dpK);
   /** The start button's box over the whole window (below a strip at the top). */
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
@@ -865,8 +883,10 @@ export function KioskApp({ view }: { view: KioskView }) {
     // The side basket at its width (§4: 340–480 dp), in this window's CSS px.
     panelWidth: screenDisplay.display.sideCart ? Math.round(screenDisplay.display.panelWidthDp * screenDisplay.cssPerDip) : null,
     c: colors,
-    radius: cfg.theme.cornerRadius,
-    btnRadius: buttonRadius(cfg.theme),
+    // The theme's corners are dp (the Android kiosk's): in CSS px at this window's proportion.
+    radius: Math.round(cfg.theme.cornerRadius * dpK),
+    btnRadius: buttonRadius(cfg.theme) >= 999 ? buttonRadius(cfg.theme) : Math.round(buttonRadius(cfg.theme) * dpK),
+    cssPerDp: dpK,
     wide,
     cols,
     ratio: aspectRatioCss(cfg.theme.imageRatio),

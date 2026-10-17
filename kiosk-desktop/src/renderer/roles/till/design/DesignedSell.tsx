@@ -560,7 +560,9 @@ export function DesignedSell(props: DesignedSellProps) {
     />
   );
   const strip = selected ? <SelectedLineStrip line={selected} actions={cart} rules={rules} onDone={() => setSelectedLine(null)} /> : null;
-  const bar = (stacked: boolean) => (dock ? null : <ActionBar faces={faces} stacked={stacked} handheld={handheld} night={night} onClick={onBar} />);
+  const bar = (stacked: boolean) =>
+    dock ? null : <ActionBar faces={faces} stacked={stacked} handheld={handheld} night={night} short={size.h < 560} onClick={onBar} />;
+  const payFace = faces.find((f) => f.button.action === 'pay') ?? null;
   const summaryLabel = DT.labelAmount(texts.summary, countText);
 
   let body: ReactNode;
@@ -591,10 +593,20 @@ export function DesignedSell(props: DesignedSellProps) {
       <div className="d-stack-body">
         {menuPane}
         {!drawerOpen ? (
-          <button type="button" className="d-pill" aria-label={DT.summaryOpen} onClick={() => setDrawerOpen(true)}>
-            <span>{DT.drawerLabel(texts.orderTitle, countText, totalText)}</span>
-            <Icon name="keyboardArrowDown" size={22} className="d-chev-up" />
-          </button>
+          // The pill under the menu, not over it, and the payment beside it: on the Windows till the way to pay is
+          // always in sight (the owner, 17.10 — a 1024×768 till), where Android keeps it in the drawer.
+          <div className="d-pill-bar">
+            {payFace ? (
+              <button type="button" className="d-btn d-btn-primary d-pill-pay" disabled={!payFace.enabled} onClick={() => onBar(payFace.button)}>
+                <span className="d-btn-title">{payFace.title}</span>
+              </button>
+            ) : null}
+            <span className="d-grow" />
+            <button type="button" className="d-pill" aria-label={DT.summaryOpen} onClick={() => setDrawerOpen(true)}>
+              <span>{DT.drawerLabel(texts.orderTitle, countText, totalText)}</span>
+              <Icon name="keyboardArrowDown" size={22} className="d-chev-up" />
+            </button>
+          </div>
         ) : (
           <>
             <div className="d-scrim" onClick={() => setDrawerOpen(false)} />
@@ -748,7 +760,7 @@ export function DesignedSell(props: DesignedSellProps) {
   return (
     <div
       ref={rootRef}
-      className={`d-root${night ? ' d-night' : ''}${handheld ? ' d-handheld' : ''}`}
+      className={`d-root${night ? ' d-night' : ''}${handheld ? ' d-handheld' : ''}${size.h < 560 ? ' d-short' : ''}`}
       data-tile={design.tileStyle}
       style={{ ['--d-scale' as string]: String(scale) }}
     >

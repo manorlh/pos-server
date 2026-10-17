@@ -40,6 +40,20 @@ const toDetails = [...toTip, { tap: 'המשך ללא טיפ' }, { waitFor: says(
 const toPayMethod = [...toDetails, { tap: 'המשך ללא שם' }, { waitFor: says('מזומן בקופה') }];
 const admin = [{ hold: 'admin' }, { tap: '1', after: 120 }, { tap: '2', after: 120 }, { tap: '3', after: 120 }, { tap: '4', after: 120 }, { tap: 'אישור', after: 1200 }];
 const has = (t) => `document.body.innerText.includes(${JSON.stringify(t)})`;
+
+/**
+ * The way to pay in sight (the owner, 17.10, on the Windows 7 till at 1024×768): with the categories, the products and
+ * the order on screen, the order's pay button — the side panel's "תשלום", the one-pane bar, a designed screen's pay —
+ * lies wholly inside the window, never below the fold.
+ */
+export const PAY_IN_SIGHT = `(() => {
+  const vw = innerWidth, vh = innerHeight;
+  const inside = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top >= 0 && r.left >= 0 && r.bottom <= vh + 0.5 && r.right <= vw + 0.5; };
+  const pays = [...document.querySelectorAll('.t-payall, .t-cart-bar, .d-btn-primary')].filter((e) => e.offsetParent !== null);
+  const cats = document.querySelector('.t-departments, .d-rail, .d-chips, [role=tablist]');
+  const grid = document.querySelector('.t-grid, [aria-label="מוצרים"]');
+  return pays.length > 0 && pays.every(inside) && !!cats && inside(cats) && !!grid && grid.getBoundingClientRect().top < vh - 48;
+})()`;
 const insideJs = `const inside = (r) => r.left >= -0.5 && r.top >= -0.5 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;`;
 /**
  * The basket's review fits: "לתשלום" wholly in the window; in a landscape content column (two columns: under the
@@ -95,6 +109,11 @@ const report = (row) => [{ tap: 'תפריט', after: 700 }, { sel: '[data-menu=r
 const TILL = [
   { id: 't-lock', query: 'state=lock' },
   { id: 't-sell', query: 'state=sell' },
+  // The busiest sell screen (every strip, 98 items) and a demo order: pay in sight (PAY_IN_SIGHT) — run with
+  // --windows 1024x768,1024x768@125,1366x768 for the Windows 7 till's screens.
+  { id: 't-pay-in-sight', query: 'state=sell', expect: PAY_IN_SIGHT },
+  // Every "עיצוב קופה" template on the same order (P:/specs/till-visual-parity): laid out clean, and pay in sight.
+  ...['touch', 'professional', 'seated', 'fast', 'mobile', 'payDock', 'night', 'visual'].map((t) => ({ id: `t-design-${t}`, query: `state=sell&design=${t}`, expect: PAY_IN_SIGHT })),
   { id: 't-sell-empty', query: 'state=sell-empty' },
   { id: 't-item-info', query: 'state=sell-empty', steps: [{ sel: '.t-tile-info', after: 800 }] },
   { id: 't-order-ask', query: 'state=order-ask' },
@@ -213,12 +232,21 @@ export const ALLOW = [
   // brand when the cloud sets none) as a fill under white (4.0:1) and as text on the grouped grey (3.6:1) — exactly what the
   // Android till draws; a brand colour from the cloud repaints both alike.
   {
-    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge, .t-root .t-key-bare, .t-root .t-lock-hello, .t-root .t-pay-details-toggle, .t-root .t-tile-info-dot, .t-root .t-tile-count, .t-root .t-cart-bar, .t-root .t-ch-chip-on, .t-root .t-ch-pill, .t-root .t-ch-price, .t-root .t-ch-close, .t-root .t-ch-pre, .t-root .t-alert-group-name, .t-root .vbal-type',
+    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge, .t-root .t-key-bare, .t-root .t-lock-hello, .t-root .t-pay-details-toggle, .t-root .t-tile-info-dot, .t-root .t-tile-count, .t-root .t-cart-bar, .t-root .t-ch-chip-on, .t-root .t-ch-pill, .t-root .t-ch-price, .t-root .t-ch-close, .t-root .t-ch-pre, .t-root .t-alert-group-name, .t-root .vbal-type, .t-root .d-chip-on, .t-root .d-head-badge, .t-root .d-btn-primary, .t-root .d-count, .t-root .d-dock-saved',
     rules: ['contrast'],
     reason: "the Android till's brand colour (iOS blue) as Android draws it",
   },
   // An unavailable product at half strength, as Android's ProductTile (alpha 0.5): shown as off, not meant to be read as on.
   { selector: '.t-root .t-tile-off', rules: ['contrast'], reason: 'an unavailable tile at half strength, as Android ProductTile' },
+  // The same on a designed template's tile, row, key and dish card (DesignProductGrid TileFrame alpha 0.45).
+  { selector: '.t-root .d-off', rules: ['contrast'], reason: 'an unavailable designed tile at half strength, as Android DesignProductGrid' },
+  // The designed screens' brand text and fills as Android draws them (DesignProductGrid KeyTile's price in the accent, the
+  // "i" and the count on the accent's tint, תפריט ויזואלי's pill and count in the accent).
+  {
+    selector: '.t-root .d-key-price, .t-root .d-info, .t-root .d-dish-n, .t-root .d-pill, .t-root .d-pill-pay, .t-root .d-added',
+    rules: ['contrast'],
+    reason: "the Android till's brand colour (iOS blue) on the designed screens, as Android draws it",
+  },
   // The tenders' own colours under white (card #2563EB, cash #16A34A / #15803D), as Android's PayNowButtons / quick-pay.
   { selector: '.t-root .t-paynow-btn, .t-root .t-quickpay-btn', rules: ['contrast'], reason: "the Android till's tender colours" },
   // The customer display's basket is bottom-anchored on purpose: older lines go out at the top so the newest always shows.

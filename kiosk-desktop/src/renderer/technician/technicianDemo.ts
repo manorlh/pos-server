@@ -39,7 +39,7 @@ export function demoTechnicianSetup(): TechnicianSetupView {
   const r = role();
   return {
     role: r,
-    appVersion: '0.5.16',
+    appVersion: '0.5.18',
     lights: { cloud: 'ok', pinpad: 'ok', printer: 'ok', media: 'warn', mediaFiles: 42, mediaMissing: 1 },
     identity: {
       company: 'עסק הדגמה בע״מ',

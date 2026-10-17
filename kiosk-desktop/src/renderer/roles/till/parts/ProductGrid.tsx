@@ -22,6 +22,8 @@ const TILE_PAD_X = 22;
 // theme/look.css's tile (Android ProductTile): 5 around, the picture's 24 over the name and 2 under it, the price pill 30.
 const TILE_PAD_Y = 36;
 const PRICE_LINE = 30;
+/** Under this height (a small window's tiles) the name takes the picture's top too, clear of the corners' badges. */
+const SHORT_TILE = 130;
 
 const GAP = 6;
 const OVERSCAN_ROWS = 3;
@@ -228,17 +230,20 @@ export function ProductGrid({
   }, []);
 
   // The text box of one tile (the grid's width over its columns, less the gaps and the padding).
-  const textWidth = Math.max(40, Math.floor((viewWidth - (columns - 1) * GAP) / Math.max(1, columns)) - TILE_PAD_X);
-  const nameHeight = Math.max(16, tileHeight - TILE_PAD_Y - PRICE_LINE);
+  const textWidth = Math.max(40, Math.floor((viewWidth - (columns - 1) * GAP) / Math.max(1, columns)) - TILE_PAD_X - (tileHeight < SHORT_TILE ? 44 : 0));
+  const nameHeight = Math.max(16, tileHeight - (tileHeight < SHORT_TILE ? 14 : TILE_PAD_Y) - PRICE_LINE);
+  // A short tile (a small window keeping the pay button in sight) starts its name small enough for two lines — Android's
+  // pictureNameFit: the largest of its sizes that still gives the name two lines; never under the handheld's 16.
+  const basePx = Math.max(16, Math.min(namePx, Math.floor(nameHeight / (2 * 1.25))));
   // Once per name per tile width (and per setting): the J1900 never lays out a name twice.
   const cache = useRef<{ key: string; map: Map<string, NameLayout> }>({ key: '', map: new Map() });
-  const cacheKey = `${textWidth}|${nameHeight}|${namePx}|${tileText.fit}|${tileText.maxLines}|${tileText.minSize}`;
+  const cacheKey = `${textWidth}|${nameHeight}|${basePx}|${tileText.fit}|${tileText.maxLines}|${tileText.minSize}`;
   if (cache.current.key !== cacheKey) cache.current = { key: cacheKey, map: new Map() };
   const layoutOf = (name: string) => {
     const layouts = cache.current.map;
     let l = layouts.get(name);
     if (!l) {
-      l = nameLayout(name, textWidth, nameHeight, tileText, namePx);
+      l = nameLayout(name, textWidth, nameHeight, tileText, basePx);
       layouts.set(name, l);
     }
     return l;
@@ -324,7 +329,7 @@ export function ProductGrid({
               <button
                 key={p.id}
                 type="button"
-                className={`t-tile${p.sale ? ' t-tile-off' : ''}${info ? ' t-tile-has-info' : ''}`}
+                className={`t-tile${p.sale ? ' t-tile-off' : ''}${info ? ' t-tile-has-info' : ''}${tileHeight < SHORT_TILE ? ' t-tile-short' : ''}`}
                 style={{ borderInlineStartColor: colorOf.get(p.departmentId) ?? '#9aa1ab' }}
                 onPointerDown={() => holdStart(p.id)}
                 onPointerUp={holdEnd}

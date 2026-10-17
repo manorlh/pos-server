@@ -22,6 +22,7 @@ import {
   Stepper,
   basketTotal,
   cartCount,
+  disabledStyle,
   textSize,
   type PLine,
   type PreviewModel,
@@ -259,8 +260,9 @@ export function ReceiptBasket({ m }: { m: PreviewModel }) {
           type="button"
           disabled={empty}
           onClick={() => m.go('pay')}
-          className="k-tap k-tap-solid relative min-w-0 flex-1 px-4 kt-15 font-extrabold transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
-          style={{ minHeight: 46 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
+          // Nothing yet: the Android kiosk's disabled button (the words' colour at 12 % under them at 40 %), not half strength.
+          className={cn('k-tap k-tap-solid relative min-w-0 flex-1 px-4 kt-15 font-extrabold transition-transform duration-150 active:scale-[0.98]', empty && !disabledStyle(m) && 'opacity-50')}
+          style={{ minHeight: 46 * u, borderRadius: m.btnRadius, background: m.c.button, color: m.c.buttonText, ...(empty ? disabledStyle(m) : null), ...textSize(m, 'buttons', 15) }}
           data-text-key="basketPay"
         >
           {kt(m, 'basketPay')}
