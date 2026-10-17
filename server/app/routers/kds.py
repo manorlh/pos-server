@@ -161,6 +161,10 @@ def _check_scope(db: Session, user: User, tenant_id, scope_type: str, scope_id, 
         if company is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="company_not_found")
         ensure_same_tenant(company.tenant_id, tenant_id)
+        if write:
+            from app.services import area_scope
+
+            area_scope.refuse_shop_level(db, user)
         if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
             return
         if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, company.id):
@@ -171,6 +175,16 @@ def _check_scope(db: Session, user: User, tenant_id, scope_type: str, scope_id, 
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="shop_not_found")
     ensure_same_tenant(shop.tenant_id, tenant_id)
     (K.check_edit if write else K.check_read)(db, user, shop)
+    if write:
+        # "מנהל נקודת מכירה" (app/services/area_scope.py): their point of sale's / device's level only.
+        from app.services import area_scope
+
+        if scope_type == "area":
+            area_scope.check_area(db, user, scope_id)
+        elif scope_type == "machine":
+            area_scope.check_machine_ids(db, user, [scope_id])
+        else:
+            area_scope.refuse_shop_level(db, user)
 
 
 @router.get("/workflow/config")
@@ -245,6 +259,33 @@ def get_kds_shop(
     return out
 
 
+def _refuse_shop_level(db: Session, user: User) -> None:
+    from app.services import area_scope
+
+    area_scope.refuse_shop_level(db, user)
+
+
+def _check_device_scope(db: Session, user: User, machine_id, body: KdsDeviceIn) -> None:
+    """
+    "מנהל נקודת מכירה" (P:/specs/chain-areas.md §7): a screen of their own point of sale, showing only their
+    points of sale / devices — never "the whole shop" (an empty scope).
+    """
+    from app.services import area_scope
+
+    reach = area_scope.reach_of(db, user)
+    if not reach.narrowed:
+        return
+    area_scope.check_machine_ids(db, user, [machine_id])
+    scope = getattr(body, "scope", None)
+    areas = list(getattr(scope, "area_ids", None) or [])
+    machines = list(getattr(scope, "machine_ids", None) or [])
+    if not areas and not machines:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=area_scope.NEEDS_SHOP)
+    for a in areas:
+        area_scope.check_area(db, user, a)
+    area_scope.check_machine_ids(db, user, machines)
+
+
 @router.put("/kds/shops/{shop_id}/devices/{machine_id}")
 def put_kds_device(
     shop_id: uuid.UUID,
@@ -258,6 +299,7 @@ def put_kds_device(
     """Pairs a till of the shop as a KDS screen (and flags it `kdsScreen`, so it asks)."""
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    _check_device_scope(db, current_user, machine_id, body)
     device = KDS.save_device(db, shop, machine_id, body)
     out = KDS.device_out(db, device)
     db.commit()
@@ -276,6 +318,7 @@ def put_kds_display_defaults(
     """The shop's default look of its kitchen screens (`kds`) and boards (`board`) — §14."""
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    _refuse_shop_level(db, current_user)
     out = KDS.set_display_defaults(db, shop, body)
     db.commit()
     return {"displayDefaults": out}
@@ -299,6 +342,9 @@ def delete_kds_device(
 ):
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    from app.services import area_scope
+
+    area_scope.check_machine_ids(db, current_user, [machine_id])
     KDS.delete_device(db, shop, machine_id)
     db.commit()
     _notify_till(background_tasks, shop, machine_id)
@@ -315,6 +361,7 @@ def put_kds_station(
 ):
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    _refuse_shop_level(db, current_user)
     KDS.save_station_setting(db, shop, station_id, body)
     out = KDS.shop_overview(db, shop)
     db.commit()
@@ -331,6 +378,9 @@ def post_kds_override(
 ):
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    from app.services import area_scope
+
+    area_scope.check_area(db, current_user, body.area_id)
     out = KDS.add_override(db, shop, body)
     db.commit()
     return out
@@ -346,6 +396,13 @@ def delete_kds_override(
 ):
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    from app.services import area_scope
+
+    if area_scope.narrowed(db, current_user):
+        from app.models.kds import KdsRouteOverride
+
+        row = db.get(KdsRouteOverride, override_id)
+        area_scope.check_area(db, current_user, getattr(row, "area_id", None))
     KDS.delete_override(db, shop, override_id)
     db.commit()
 
@@ -360,6 +417,7 @@ def post_pickup_token(
     """A new opaque token for the public pickup screen (the old link stops working)."""
     shop = _shop(db, shop_id, active_tenant_id)
     K.check_edit(db, current_user, shop)
+    _refuse_shop_level(db, current_user)
     token = KDS.rotate_pickup_token(db, shop)
     db.commit()
     return {"pickupToken": token}

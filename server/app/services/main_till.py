@@ -168,6 +168,51 @@ def till_shop_z_refusal(db: Session, machine: POSMachine) -> Optional[str]:
     return None if is_on(_params(db, machine).get(SHOP_Z_MASTER_KEY)) else NOT_MASTER
 
 
+#: "Z לנקודת מכירה מהקופה" (P:/specs/chain-areas.md §11.2a) refusals.
+NOT_IN_AREA = "till_not_in_area"
+AREA_LOCAL = "area_z_local_mode"
+AREA_NOT_MASTER = "not_area_master_till"
+AREA_REFUSAL_TEXT = {
+    NOT_IN_AREA: "הקופה אינה משויכת לנקודת מכירה",
+    AREA_LOCAL: "במצב מקומי סוגרים Z לכל הסניף בלבד",
+    AREA_NOT_MASTER: "Z לנקודת המכירה נסגר מהקופה הראשית של הנקודה",
+    INDEPENDENT: "קופה עצמאית אינה סוגרת Z סניפי",
+}
+
+
+def till_area_z_refusal(db: Session, machine: POSMachine) -> Optional[str]:
+    """
+    None when this till may close its own point of sale's Z: it stands in a live point of sale, the shop is not
+    in local mode, and it is the point of sale's master — the lowest-numbered of its tills marked
+    `shopZMasterTill` (set at the point of sale's level marks them all; the first one runs it) — or a till that
+    may run the whole shop's Z.
+    """
+    from app.models.shop_area import ShopArea
+    from app.services.independent_till import is_independent
+    from app.services.local_shop_z import local_mode_of_shop
+
+    if is_independent(machine):
+        return INDEPENDENT
+    area = db.get(ShopArea, machine.area_id) if getattr(machine, "area_id", None) is not None else None
+    if area is None or area.archived_at is not None:
+        return NOT_IN_AREA
+    shop = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
+    if shop is not None and local_mode_of_shop(db, shop):
+        return AREA_LOCAL
+    if till_shop_z_refusal(db, machine) is None:
+        return None
+    if not is_on(_params(db, machine).get(SHOP_Z_MASTER_KEY)):
+        return AREA_NOT_MASTER
+    from app.services.printers import shop_machines
+
+    marked = [
+        m for m in shop_machines(db, machine.shop_id)
+        if m.area_id == machine.area_id and not is_independent(m) and is_on(_params(db, m).get(SHOP_Z_MASTER_KEY))
+    ]
+    first = min(marked, key=till_order) if marked else None
+    return None if first is not None and first.id == machine.id else AREA_NOT_MASTER
+
+
 def shop_tills_out(db: Session, shop_id: Any) -> List[Dict[str, Any]]:
     """
     The tills that may be the main till: the shop's, but its independent tills and the

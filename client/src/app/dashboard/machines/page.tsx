@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -26,6 +26,7 @@ import {
   sortDevices,
   viewFromParams,
   viewToParams,
+  URL_KEYS as DEVICES_URL_KEYS,
   type DeviceFilters,
   type DeviceSort,
   type DeviceViewContext,
@@ -372,6 +373,22 @@ export default function MachinesPage() {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [filters, sort, layout]);
+
+  // "נקודת מכירה" in the top bar (P:/specs/chain-areas.md §2.5): the list's area filter follows it,
+  // and stays changeable here. A link naming its own `areas` keeps them on the first pass.
+  const [urlHadAreas] = useState(() => new URLSearchParams(searchParams.toString()).has(DEVICES_URL_KEYS.area));
+  const lastScopeArea = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const next = effective.areaId ?? null;
+    const prev = lastScopeArea.current;
+    if (prev !== undefined && (prev ?? '') === (next ?? '')) return;
+    lastScopeArea.current = next;
+    if (prev === undefined && (urlHadAreas || !next)) return;
+    setFilters((f) => ({
+      ...f,
+      area: next ? [next] : f.area.filter((v) => !prev || !sameId(v, prev)),
+    }));
+  }, [effective.areaId, urlHadAreas]);
 
   const companyTree = useMemo(() => buildCompanyTree(companies), [companies]);
   const viewContext = useMemo<DeviceViewContext>(
@@ -829,6 +846,12 @@ export default function MachinesPage() {
           <Button
             onClick={() => {
               resetPairDialog();
+              // Created in the scope chosen (P:/specs/chain-areas.md §7): its company, shop and point of sale
+              // preselected (the point of sale at pairing: P:/specs/area-gaps.md §1).
+              const scopeCompanyId = scope.shop?.companyId ?? effective.companyId ?? null;
+              if (scopeCompanyId) setPairCompanyId(scopeCompanyId);
+              if (effective.shopId) setPairShopId(effective.shopId);
+              if (effective.shopId && effective.areaId) setPairAreaId(effective.areaId);
               setPairOpen(true);
             }}
             size="sm"

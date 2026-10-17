@@ -24,7 +24,6 @@ import {
 } from '@/lib/types';
 import { buildCompanyTree } from '@/lib/companyTree';
 import {
-  ProductShopPricesTable,
   ShopPriceOverridesEditor,
   ShopScopeSection,
   draftFromProduct,
@@ -85,6 +84,9 @@ import {
 import { AddonRoleBadge } from '@/components/dashboard/products/addon-role-badge';
 import { KioskNotesField, KioskOpenField } from '@/components/dashboard/products/kiosk-notes-field';
 import { ADDON_ROLES, addonRoleOf } from '@/lib/addonRole';
+// "נקודות מכירה" and "מחירים" by level (P:/specs/chain-areas.md §6, §9).
+import { ProductAreasSection } from '@/components/dashboard/prices/product-areas-section';
+import { ProductPricesSection, useProductPrices } from '@/components/dashboard/prices/product-prices-section';
 
 type SkuMode = 'auto' | 'manual';
 
@@ -144,6 +146,7 @@ function buildSavePayload(
   isNew: boolean,
   shopScope: ShopScopeInput | undefined,
   shopPrices: ShopPriceInput[] | undefined,
+  areaIds?: string[],
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     ...p,
@@ -159,6 +162,8 @@ function buildSavePayload(
   delete payload.shopScope;
   if (shopScope) payload.shopScope = shopScope;
   if (shopPrices && shopPrices.length > 0) payload.shopPrices = shopPrices;
+  // "יימכר רק ב<נקודה>": a new product made while the top bar is on a point of sale.
+  if (isNew && areaIds && areaIds.length > 0) payload.areaIds = areaIds;
   return payload;
 }
 
@@ -283,6 +288,12 @@ export default function ProductsPage() {
   });
   const tree = useMemo(() => buildCompanyTree(companies), [companies]);
 
+  // The chain's price is the form's "מחיר"; the price policy may keep it from this user (shown with the reason).
+  const levelPrices = useProductPrices(open && isGlobal && !isNew ? editing.id : null);
+  const basePriceLocked = !isNew && levelPrices.data ? !levelPrices.data.baseEditable : false;
+  // A new product while the top bar is on a point of sale is sold only there (§7).
+  const newProductArea = isNew && isGlobal && scopeSel.shopId && scopeSel.area ? scopeSel.area : null;
+
   const productShops = useQuery<ProductShopRow[]>({
     queryKey: ['product-shops', editing.id],
     enabled: open && !!editing.id && isGlobal,
@@ -320,9 +331,10 @@ export default function ProductsPage() {
       mode: SkuMode;
       shopScope?: ShopScopeInput;
       shopPrices?: ShopPriceInput[];
+      areaIds?: string[];
     }) => {
       const payload = buildSavePayload(
-        args.product, user?.companyId, args.mode, !args.product.id, args.shopScope, args.shopPrices,
+        args.product, user?.companyId, args.mode, !args.product.id, args.shopScope, args.shopPrices, args.areaIds,
       );
       return args.product.id
         ? api.put(`/products/${args.product.id}`, payload)
@@ -367,7 +379,13 @@ export default function ProductsPage() {
         ? shopPricesFromDraft(newShopPrices, (preview.data?.shops ?? []).map((s) => s.id))
         : undefined;
     // "הודעות לעובד" / "פריטים נלווים": trimmed, priced only when set.
-    save.mutate({ product: productExtrasPayload(editing), mode: skuMode, shopScope, shopPrices });
+    save.mutate({
+      product: productExtrasPayload(editing),
+      mode: skuMode,
+      shopScope,
+      shopPrices,
+      areaIds: newProductArea ? [newProductArea.id] : undefined,
+    });
   };
 
   return (
@@ -730,7 +748,12 @@ export default function ProductsPage() {
               <div className="space-y-1">
                 <Label>{t('price')}</Label>
                 <Input type="number" step="0.01" value={editing.price ?? 0}
+                  disabled={basePriceLocked}
+                  title={basePriceLocked ? levelPrices.data?.baseReason ?? undefined : undefined}
                   onChange={(e) => setEditing((p) => ({ ...p, price: parseFloat(e.target.value) }))} />
+                {basePriceLocked && levelPrices.data?.baseReason ? (
+                  <p className="text-xs text-muted-foreground">{levelPrices.data.baseReason}</p>
+                ) : null}
               </div>
             </div>
             <div className="space-y-1">
@@ -922,13 +945,18 @@ export default function ProductsPage() {
                 onChange={setNewShopPrices}
               />
             ) : null}
+            {newProductArea ? (
+              <p className="flex items-center gap-1.5 rounded-md border bg-muted/40 p-2 text-sm">
+                יימכר רק ב{newProductArea.name}
+                <span className="text-xs text-muted-foreground">(נקודת המכירה שבסרגל העליון; אפשר לשנות אחרי השמירה)</span>
+              </p>
+            ) : null}
+            {/* "נקודות מכירה" and "מחירים" by level: each saves on its own (P:/specs/chain-areas.md §6, §9). */}
             {isGlobal && !isNew && editing.id ? (
-              <ProductShopPricesTable
-                productId={editing.id}
-                basePrice={Number(editing.price ?? 0)}
-                rows={productShops.data}
-                isLoading={productShops.isLoading}
-              />
+              <ProductAreasSection productId={editing.id} preferredShopId={scopeSel.shopId} />
+            ) : null}
+            {isGlobal && !isNew && editing.id ? (
+              <ProductPricesSection productId={editing.id} preferredShopId={scopeSel.shopId} />
             ) : null}
             {isGlobal && !isNew && editing.id ? (
               <ProductAvailabilitySection productId={editing.id} />

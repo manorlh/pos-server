@@ -84,6 +84,10 @@ def _run_or_404(db: Session, run_id: uuid.UUID, user: User, tenant_id) -> "ZR.ZR
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z run not found")
     _shop_for(db, run.shop_id, user, tenant_id)
     _check_tills(db, user, [i.machine for i in run.items if i.machine is not None], tenant_id)
+    from app.services import area_scope
+
+    if area_scope.narrowed(db, user) and (run.area_id is None or not area_scope.area_ok(db, user, run.area_id)):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z run not found")
     return run
 
 
@@ -117,6 +121,10 @@ def get_z_candidates(
     are listed whatever area they are stamped with — the Z is about the till.
     """
     shop = _shop_for(db, shop_id, current_user, active_tenant_id)
+    # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §11.2c): only their own points of sale, never the whole shop.
+    from app.services import area_scope
+
+    area_scope.check_area(db, current_user, area_id if isinstance(area_id, uuid.UUID) else None)
     area = (
         areas.area_in_shop(db, area_id, shop.id)
         if isinstance(area_id, uuid.UUID)
@@ -395,6 +403,11 @@ def create_run_from_body(db: Session, current_user: User, active_tenant_id, body
     same confirmations, the same run. Returns the run (not committed), or the refusal response.
     """
     shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
+    # "מנהל נקודת מכירה" (P:/specs/chain-areas.md §11.2c): an area's Z of their own points of sale only.
+    from app.services import area_scope
+
+    area_scope.check_area(db, current_user, body.area_id)
+    area_scope.check_machine_ids(db, current_user, [m.machine_id for m in body.machines])
     # "Z only from the main till" (app/services/main_till.py): a shop Z of a shop that has
     # one is started there, not here — 409 `z_only_from_main_till`. A till's own Z ("Z לכל
     # קופה") is not a shop Z and stays the dashboard's to start.

@@ -1,0 +1,182 @@
+/* "התראות" (AlertsScreen, AlertsLine): never a modal — the list behind the bell and one slim line over the till. Only what
+   needs someone now is coloured (red; blue for a customer asking for help). Plain CSS for Chromium 108 on a Celeron. */
+
+.t-alerts-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.t-alerts-none {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 18px;
+}
+
+.t-alert-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.t-alert-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.t-alert-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 4px 0 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--t-accent);
+}
+
+.t-alert-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.t-alert-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px;
+  border-radius: 16px;
+  background: var(--t-off-soft);
+}
+
+.t-alert-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.t-alert-glyph {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  line-height: 22px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #b45309;
+}
+
+.t-alert-urgent .t-alert-glyph {
+  background: #c62828;
+}
+
+.t-alert-help .t-alert-glyph {
+  background: #1d4ed8;
+}
+
+.t-alert-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+}
+
+.t-alert-title-unseen {
+  font-weight: 700;
+}
+
+.t-alert-time {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+
+.t-alert-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: #c62828;
+}
+
+.t-alert-text {
+  margin: 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.t-alert-card .t-small {
+  margin: 0;
+}
+
+.t-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.t-alert-btn {
+  min-height: 48px;
+}
+
+/* The slim line over the till (Android TillAlertsLine): one row, the count and the most important unseen alert. */
+.t-alerts-line {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  min-width: 0;
+  padding-inline-start: 12px;
+  background: var(--t-off-soft);
+  color: var(--t-text);
+  font-size: 14px;
+}
+
+.t-alerts-line-urgent {
+  background: #c62828;
+  color: #ffffff;
+}
+
+.t-alerts-line-help {
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.t-alerts-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 48px;
+}
+
+.t-alerts-line-seen {
+  flex: 0 0 auto;
+  min-width: 64px;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+}

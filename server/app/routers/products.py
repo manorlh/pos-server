@@ -214,6 +214,18 @@ def _apply_shop_scope(
     return scope_svc.execute_plan(db, product, plan)
 
 
+def _apply_new_product_areas(db: Session, user: User, product: Product, area_ids) -> None:
+    """A new product's points of sale in each shop its scope listed it in (P:/specs/chain-areas.md §6)."""
+    from app.services import product_areas
+
+    db.flush()
+    rows = db.query(ShopProductOverride).filter(ShopProductOverride.global_product_id == product.id).all()
+    for row in rows:
+        chosen = product_areas.default_for_new(db, user, row.shop_id, area_ids)
+        if chosen:
+            row.area_ids = chosen
+
+
 def _apply_shop_prices(
     db: Session, user: User, product: Product, prices: List[ShopPriceIn], active_tenant_id
 ) -> Set[str]:
@@ -242,8 +254,12 @@ def _apply_shop_prices(
                 detail="Product is not sold in that shop",
             )
         rows.append((row, entry.price))
+    from app.services import price_policy
+
     for row, price in rows:
-        row.price = price  # None = back to the product's base price
+        # None = back to the product's base price; "מי רשאי לשנות מחירים" and the log (chain-areas §9).
+        if price_policy.money(price) != price_policy.money(row.price):
+            price_policy.set_shop_price(db, user, product, row, price)
     return {str(row.shop_id) for row, _ in rows}
 
 
@@ -499,6 +515,7 @@ def create_product(
     db.add(product)
     if data.shop_scope is not None:
         _apply_shop_scope(db, current_user, product, data.shop_scope, active_tenant_id)
+        _apply_new_product_areas(db, current_user, product, data.area_ids)
     if data.shop_prices:
         if data.shop_scope is None:
             raise HTTPException(
@@ -604,6 +621,17 @@ def update_product(
     kiosk_notes_changed = any(
         k in updates and updates[k] != getattr(product, k) for k in ("kiosk_notes", "kiosk_open")
     )
+    old_price = product.price
+    if "price" in updates and product.shop_id is None and product.pos_machine_id is None:
+        # The chain's price of a chain product: only the chain (P:/specs/chain-areas.md §9).
+        from app.services import price_policy
+
+        if price_policy.money(updates["price"]) != price_policy.money(old_price):
+            price_policy.check(db, current_user, product, level=price_policy.LEVEL_BASE, shop_id=None, new_price=updates["price"])
+            price_policy.record(
+                db, product=product, level=price_policy.LEVEL_BASE, target_id=None, old=old_price,
+                new=updates["price"], user=current_user,
+            )
     for field, value in updates.items():
         setattr(product, field, value)
     if kiosk_notes_changed:

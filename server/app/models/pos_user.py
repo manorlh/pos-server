@@ -87,6 +87,9 @@ class PosUser(Base):
     #: "שולחנות שהעובד רואה" (P:/specs/table-scope.md §3, §14): `{"zoneIds": [...], "tableIds": [...]}` of their
     #: shop; null — no fixed scope (today). With `tableAssignmentScope` their live assignments add to it.
     table_scope = Column(JSONB, nullable=True)
+    #: "נקודות מכירה שהעובד מתחבר בהן" (P:/specs/chain-areas.md §8): `shop_areas.id` strings — the employee signs
+    #: in only on tills / kiosks standing in these points of sale. Null or empty — every device of the shop (today).
+    area_ids = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

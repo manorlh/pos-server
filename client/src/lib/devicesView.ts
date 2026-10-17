@@ -539,7 +539,9 @@ export const URL_KEYS: Record<FilterKey | 'q' | 'sort', string> = {
   platform: 'platform',
   model: 'model',
   version: 'ver',
-  area: 'area',
+  // Not `area`: that is the top-bar scope's point of sale (SCOPE_PARAM.area), which this filter
+  // only defaults to (P:/specs/chain-areas.md §2.5).
+  area: 'areas',
   shop: 'shops',
   flag: 'flags',
   sort: 'sort',

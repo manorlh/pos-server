@@ -428,6 +428,15 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
 
 
 def _check_machine_list_access(current_user: User, machine: POSMachine, db: Session) -> bool:
+    if not _role_machine_access(current_user, machine, db):
+        return False
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the devices of their points of sale.
+    from app.services import area_scope
+
+    return area_scope.machine_ok(db, current_user, machine)
+
+
+def _role_machine_access(current_user: User, machine: POSMachine, db: Session) -> bool:
     if current_user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return True
     if current_user.role == UserRole.COMPANY_MANAGER and machine.shop_id:
@@ -486,6 +495,10 @@ def list_machines(
     if distributor_id:
         query = query.filter(POSMachine.distributor_id == distributor_id)
     query = areas.filter_on_column(query, POSMachine.area_id, area_filter)
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): only the devices of their points of sale.
+    from app.services import area_scope
+
+    query = area_scope.filter_machine_column(query, db, current_user, POSMachine.id)
 
     machines = query.offset(skip).limit(limit).all()
     return strip_money(_enrich_machines_batch(machines, db), db, current_user)

@@ -10,7 +10,7 @@ computer too — never only in one browser's storage.
   everyone signed in and shows what they may see.
 * `simpleMode` — "תצוגת מנהל פשוטה": the menu collapsed to the manager's own (the cockpit, a
   short list of reports, the settings they may change). Unset, it is on only for a user given
-  "מנהל סניף / אירוע" or "מנהל אזור" — never by role alone (a shop manager keeps the full menu
+  "מנהל סניף / אירוע" or "מנהל נקודת מכירה" — never by role alone (a shop manager keeps the full menu
   unless they are on one of those) — and off for everyone else; `simpleModeDefault` says which.
 * `reportColumns` — "עמודות" (P:/specs/reports-upgrade.md §4.4): per report key, the columns the
   user shows (`visible`) and their order (`order`). Merged per report on write: a report sent as
@@ -38,6 +38,12 @@ REPORT_COLUMNS_KEY = "reportColumns"
 #: "בקשות אישור גם בשעות שקטות": a remote approval request reaches the phone in quiet hours too.
 APPROVALS_QUIET_KEY = "approvalsInQuietHours"
 PROBLEMS_HIDDEN_KEY = "problemsHiddenGroups"
+#: "עובדים על" (P:/specs/chain-areas.md §2): the dashboard's top-bar scope per organization —
+#: `{tenantId: {companyId, shopId, areaId, machineId}}`, each a UUID string or absent. Never a grant: the
+#: dashboard clamps it to what the user may reach.
+DASHBOARD_SCOPE_KEY = "dashboardScope"
+DASHBOARD_SCOPE_FIELDS = ("companyId", "shopId", "areaId", "machineId")
+MAX_DASHBOARD_SCOPE_TENANTS = 50
 MAX_REPORT_COLUMN_REPORTS = 200
 DEFAULT_HOME_PAGE = "board"
 #: The opening pages offered in the profile, in the order offered.
@@ -52,7 +58,7 @@ HOME_PAGES = (
     "products",
 )
 def simple_mode_default(db: Optional[Session], user: User) -> bool:
-    """On only for a user on a manager template ("מנהל סניף / אירוע", "מנהל אזור")."""
+    """On only for a user on a manager template ("מנהל סניף / אירוע", "מנהל נקודת מכירה")."""
     if db is None or not callable(getattr(db, "get", None)):
         return False
     from app.models.dashboard_access import DashboardAccessProfile
@@ -75,7 +81,69 @@ def read_preferences(user: User, db: Optional[Session] = None) -> Dict[str, Any]
         "simpleModeDefault": default_simple,
         REPORT_COLUMNS_KEY: _read_report_columns(stored.get(REPORT_COLUMNS_KEY)),
         APPROVALS_QUIET_KEY: stored.get(APPROVALS_QUIET_KEY) is True,
+        DASHBOARD_SCOPE_KEY: _read_dashboard_scope(stored.get(DASHBOARD_SCOPE_KEY)),
     }
+
+
+def _uuid_text(value: Any) -> Optional[str]:
+    import uuid as _uuid
+
+    if not isinstance(value, str):
+        return None
+    try:
+        return str(_uuid.UUID(value))
+    except ValueError:
+        return None
+
+
+def _read_dashboard_scope(raw: Any) -> Dict[str, Dict[str, str]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Dict[str, str]] = {}
+    for tenant, value in raw.items():
+        key = _uuid_text(tenant)
+        if key is None or not isinstance(value, dict):
+            continue
+        out[key] = {f: _uuid_text(value.get(f)) for f in DASHBOARD_SCOPE_FIELDS if _uuid_text(value.get(f))}
+    return out
+
+
+def _write_dashboard_scope(current: Dict[str, Any], patch_value: Any) -> None:
+    """Merged per organization: a tenant sent as null is removed, `dashboardScope: null` removes all."""
+    if patch_value is None:
+        current.pop(DASHBOARD_SCOPE_KEY, None)
+        return
+    if not isinstance(patch_value, dict):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="dashboardScope must be an object")
+    stored = _read_dashboard_scope(current.get(DASHBOARD_SCOPE_KEY))
+    for tenant, value in patch_value.items():
+        key = _uuid_text(tenant)
+        if key is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="dashboardScope: keys are organization ids")
+        if value is None:
+            stored.pop(key, None)
+            continue
+        if not isinstance(value, dict) or set(value) - set(DASHBOARD_SCOPE_FIELDS):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="dashboardScope.<tenantId> must be {companyId, shopId, areaId, machineId}",
+            )
+        entry: Dict[str, str] = {}
+        for f in DASHBOARD_SCOPE_FIELDS:
+            v = value.get(f)
+            if v in (None, ""):
+                continue
+            parsed = _uuid_text(v)
+            if parsed is None:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"dashboardScope.{f} must be an id")
+            entry[f] = parsed
+        stored[key] = entry
+    if len(stored) > MAX_DASHBOARD_SCOPE_TENANTS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="dashboardScope: too many organizations")
+    if stored:
+        current[DASHBOARD_SCOPE_KEY] = stored
+    else:
+        current.pop(DASHBOARD_SCOPE_KEY, None)
 
 
 def _read_report_columns(raw: Any) -> Dict[str, Dict[str, List[str]]]:
@@ -153,6 +221,8 @@ def update_preferences(db: Session, user: User, patch: Dict[str, Any]) -> Dict[s
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="simpleMode must be true, false or null")
     if REPORT_COLUMNS_KEY in patch:
         _write_report_columns(current, patch[REPORT_COLUMNS_KEY])
+    if DASHBOARD_SCOPE_KEY in patch:
+        _write_dashboard_scope(current, patch[DASHBOARD_SCOPE_KEY])
     if APPROVALS_QUIET_KEY in patch:
         flag = patch[APPROVALS_QUIET_KEY]
         if flag is None or flag is False:

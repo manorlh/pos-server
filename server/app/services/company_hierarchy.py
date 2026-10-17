@@ -369,6 +369,15 @@ def user_may_use_machine(db: Session, user: User, machine) -> bool:
     role = getattr(user, "role", None)
     if role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return True
+    if not _shop_reach_allows_machine(db, user, machine, role):
+        return False
+    # "מנהל נקודת מכירה" (app/services/area_scope.py): and only a device of their points of sale.
+    from app.services import area_scope
+
+    return area_scope.machine_ok(db, user, machine)
+
+
+def _shop_reach_allows_machine(db: Session, user: User, machine, role) -> bool:
     shop = getattr(machine, "shop", None)
     if role == UserRole.COMPANY_MANAGER and shop is not None:
         return user_covers_shop(db, user, shop)

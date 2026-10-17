@@ -50,7 +50,7 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.user import User
 from app.routers.products import _check_product_access, _require_global_catalog_product
 from app.routers.settings import _check_company_settings_write
-from app.routers.shops import _check_shop_access, _check_shop_override_write
+from app.routers.shops import _check_shop_access, _check_shop_member_write, _check_shop_override_write
 from app.schemas.product_availability import (
     AreaAvailability,
     AvailabilityException,
@@ -640,7 +640,11 @@ def set_area_availability(
     if not shop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
-    _check_shop_override_write(current_user, shop, db)
+    _check_shop_member_write(current_user, shop, db)
+    # "מנהל נקודת מכירה": only their own points of sale (app/services/area_scope.py).
+    from app.services import area_scope
+
+    area_scope.check_area(db, current_user, area.id)
     if _assortment_row(db, shop.id, product.id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"
@@ -681,7 +685,7 @@ def set_machine_availability(
         )
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     _check_machine_access(current_user, machine, db)
-    _check_shop_override_write(current_user, shop, db)
+    _check_shop_member_write(current_user, shop, db)
     if _assortment_row(db, shop.id, product.id) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Product not in shop assortment"

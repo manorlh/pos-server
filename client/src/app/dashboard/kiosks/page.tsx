@@ -22,6 +22,8 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { usePageScope } from '@/lib/scope';
+import { areaOptionsFor, isAreaNarrowed } from '@/lib/areaScope';
+import { sameId } from '@/lib/entityLookup';
 import { fetchKiosks, filterKiosksByArea, kioskAreaOptions, type KioskLevel, type KioskSummary } from '@/lib/kioskApi';
 import { KioskList } from '@/components/dashboard/kiosks/kiosk-list';
 import { KioskListExport } from '@/components/dashboard/kiosks/kiosk-list-export';
@@ -69,11 +71,36 @@ export default function KiosksPage() {
   const kiosks = useMemo(() => kiosksQuery.data ?? [], [kiosksQuery.data]);
   const detail = kiosks.find((k) => k.machineId === detailId) ?? null;
   // "נקודת מכירה" (P:/specs/area-gaps.md §4): '' — all, 'none' — kiosks with none, else one area's.
-  const [areaFilter, setAreaFilter] = useState('');
+  // Follows the top bar's point of sale (P:/specs/chain-areas.md §2) until the list's own filter is changed.
+  const [chosenFilter, setAreaFilter] = useState<string | null>(null);
+  const areaFilter = chosenFilter ?? effective.areaId ?? '';
   const areaOptions = useMemo(() => kioskAreaOptions(kiosks), [kiosks]);
   const shownKiosks = useMemo(() => filterKiosksByArea(kiosks, areaFilter), [kiosks, areaFilter]);
 
-  const level: KioskLevel = chosenLevel ?? (shopId || role === 'shop_manager' ? 'shop' : 'company');
+  // "נקודת מכירה" (P:/specs/chain-areas.md §5): the shop's live points of sale the user may pick; the top bar's
+  // one by default. A manager of points of sale has only that level and the kiosk's.
+  const access = useAuth((s) => s.user?.dashboardAccess ?? null);
+  const areaManager = isAreaNarrowed(access);
+  const areaChoices = useMemo(
+    () => (shopId ? areaOptionsFor(scope.areas, access).map((a) => ({ id: a.id, name: a.name })) : []),
+    [access, scope.areas, shopId],
+  );
+  const [chosenAreaId, setChosenAreaId] = useState<string | null>(null);
+  const areaId =
+    [chosenAreaId, effective.areaId ?? null, areaChoices.length === 1 ? areaChoices[0].id : null].find(
+      (id) => !!id && areaChoices.some((a) => sameId(a.id, id)),
+    ) ?? null;
+  const kioskAreaOf = (machineId: string) => scope.machines.find((m) => sameId(m.id, machineId))?.areaId ?? null;
+
+  const defaultLevel: KioskLevel = areaManager
+    ? 'area'
+    : effective.areaId && areaChoices.length > 0
+      ? 'area'
+      : shopId || role === 'shop_manager'
+        ? 'shop'
+        : 'company';
+  const level: KioskLevel =
+    chosenLevel && !(areaManager && (chosenLevel === 'company' || chosenLevel === 'shop')) ? chosenLevel : defaultLevel;
   const fallbackMachineIds = useMemo(
     () => scope.machineOptions.map((m) => ({ id: m.id, shopId: m.shopId ?? null })),
     [scope.machineOptions],
@@ -223,6 +250,11 @@ export default function KiosksPage() {
               role={role}
               fallbackMachineIds={fallbackMachineIds}
               brandName={tenantName}
+              areas={areaChoices}
+              areaId={areaId}
+              onAreaChange={setChosenAreaId}
+              areaManager={areaManager}
+              kioskAreaOf={kioskAreaOf}
             />
           </div>
         )}

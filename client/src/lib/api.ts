@@ -65,6 +65,7 @@ import type {
 } from './types';
 import { normalizePosMachine } from './posMachine';
 import { tenantFallbackAfterForbidden } from './tenantSwitch';
+import { decodeProductionReport, type OpenFormatProductionReport } from './taxOpenFormatForm';
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL,
@@ -812,12 +813,19 @@ export async function fetchTaxOpenFormatPreview(
   return data;
 }
 
-export async function downloadTaxOpenFormat(params: TaxOpenFormatParams): Promise<Blob> {
-  const { data } = await api.get<Blob>('/reports/tax/openformat', {
+/**
+ * The ZIP, with the production report of that very file (1.31 §2.6; the server's
+ * `X-Open-Format-Report` header) — null from a server without it.
+ */
+export async function downloadTaxOpenFormat(
+  params: TaxOpenFormatParams,
+): Promise<{ blob: Blob; report: OpenFormatProductionReport | null }> {
+  const res = await api.get<Blob>('/reports/tax/openformat', {
     params,
     responseType: 'blob',
   });
-  return data;
+  const header = res.headers?.['x-open-format-report'];
+  return { blob: res.data, report: decodeProductionReport(typeof header === 'string' ? header : null) };
 }
 
 export async function fetchDashboardStats(params: {

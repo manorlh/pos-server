@@ -119,16 +119,19 @@ function roleOf(view: ControlView, own: ItemBlocksSettings): Effective<TillBlock
 export function ItemBlockControlCard({
   companyId,
   shopId,
+  areaId,
 }: {
-  /** The page's own scope, to start from. */
+  /** The page's own scope, to start from — down to the top bar's point of sale (P:/specs/chain-areas.md §2.5). */
   companyId?: string | null;
   shopId?: string | null;
+  areaId?: string | null;
 }) {
   const t = useTranslations('itemBlockControl');
   const [scope, setScope] = useState<OrgScope>(() => ({
     ...EMPTY_ORG_SCOPE,
     companyId: companyId ?? '',
     shopId: companyId && shopId ? shopId : '',
+    areaId: companyId && shopId && areaId ? areaId : '',
   }));
   const target = deepestOrgScope(scope);
   const level = target && target.level !== 'tenant' ? (target.level as ControlLevel) : undefined;

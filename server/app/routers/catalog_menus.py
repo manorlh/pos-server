@@ -6,7 +6,8 @@ Dashboard (Clerk/user JWT; the rules in app/services/catalog_menus.py):
 GET    /catalog-menus                    → the menus the user sees, with items and assignments
 POST   /catalog-menus                    → create
 GET    /catalog-menus/{id}
-PUT    /catalog-menus/{id}               → replace (categories and products in their order)
+PUT    /catalog-menus/{id}               → replace (categories and products in their order; with
+                                           `assignments`, where it applies — the "שיוך" rows)
 DELETE /catalog-menus/{id}
 PUT    /catalog-menus-order              → `{"ids": [...]}`, the list's drag order
 GET    /catalog-menus-targets            → companies, shops, points of sale and tills, with
@@ -92,7 +93,7 @@ def create_catalog_menu(
     db: Session = Depends(get_db),
 ):
     menu = CM.create_menu(db, current_user, active_tenant_id, body)
-    _changed(db, active_tenant_id, background_tasks)
+    _changed(db, active_tenant_id, background_tasks, parameters=body.assignments is not None)
     return CM.one_menu_out(db, current_user, menu)
 
 
@@ -117,7 +118,7 @@ def update_catalog_menu(
 ):
     menu = CM.get_menu(db, current_user, active_tenant_id, menu_id)
     CM.update_menu(db, current_user, active_tenant_id, menu, body)
-    _changed(db, active_tenant_id, background_tasks)
+    _changed(db, active_tenant_id, background_tasks, parameters=body.assignments is not None)
     return CM.one_menu_out(db, current_user, menu)
 
 

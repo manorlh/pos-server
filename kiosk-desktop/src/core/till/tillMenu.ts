@@ -13,10 +13,10 @@
  *    the sync and the device's rows stay (Android "קופה סגורה");
  *  - a Z-only till ("קופה עצמאית", no shifts in the UI): "דו״ח X" and "הפק Z", the section "הקופה".
  *
- * A row is here only when this till can carry it out: what the Windows engine does not have yet (the catalog's
- * management, the shop's Z, attendance, the ready orders, the kiosks' orders, the voucher station, printers, editing the
- * screen, the cloud's Zs, alerts, tables) is not shown — never a button that does nothing — and is
- * listed, with what it needs, in the spec's "phase 2". Pure: the screen draws what this returns (test/tillMenu.test.ts).
+ * A row is here only when this till can carry it out — never a button that does nothing. Phase 2 (P:/specs/windows-till-
+ * menu-parity.md §7) added the catalog's management, the shop's Z, attendance, the ready orders, the kiosks' orders, the
+ * voucher station and balance, the cloud's Zs, printers, editing the screen and alerts, each by its module's own facts;
+ * tables stay out until their module exists (phase 3). Pure: the screen draws what this returns (test/tillMenu.test.ts).
  */
 
 import type { MenuItemKey } from './menuHide';
@@ -63,7 +63,10 @@ export type MenuGlyph =
   | 'exit'
   | 'warning'
   | 'kiosk'
-  | 'cart';
+  | 'cart'
+  | 'edit'
+  | 'done'
+  | 'bell';
 
 /** Where a row leads: a screen of the till, or an action the screen carries out. */
 export type MenuTarget =
@@ -95,7 +98,18 @@ export type MenuTarget =
   | 'users'
   | 'kiosks'
   | 'support'
-  | 'signOut';
+  | 'signOut'
+  | 'catalogAdmin'
+  | 'shopZ'
+  | 'attendance'
+  | 'readyOrders'
+  | 'kioskOrders'
+  | 'voucherStation'
+  | 'voucherBalance'
+  | 'cloudZ'
+  | 'printers'
+  | 'screenEdit'
+  | 'alerts';
 
 export interface MenuRow {
   /** The Android MenuHide key (null: a row of the Windows till's own, "עודף חייב ללקוח"). */
@@ -120,7 +134,7 @@ export interface MenuRow {
 }
 
 export interface MenuGroup {
-  id: 'shift' | 'reports' | 'manage' | 'device';
+  id: 'top' | 'shift' | 'reports' | 'manage' | 'device';
   /** The small grey title above the card (null: none). */
   title: string | null;
   rows: MenuRow[];
@@ -181,6 +195,18 @@ export const MENU_TEXT = {
   backToKiosk: 'חזרה למצב קיוסק',
   workModeSub: 'המכשיר יחזור להזמנה עצמית ללקוחות',
   close: 'סגור תפריט',
+  // Phase 2 (Android strings.xml): the rows the modules brought.
+  catalogAdmin: 'ניהול קטלוג',
+  shopZ: 'סגירת Z סניפי',
+  attendance: 'נוכחות',
+  readyOrders: 'הזמנות להכנה',
+  kioskOrders: 'הזמנות קיוסק לתשלום',
+  kioskOrdersSub: (n: number) => `${n} ממתינות`,
+  voucherBalance: 'בירור יתרת שובר',
+  cloudZ: 'דוחות Z',
+  printers: 'מדפסות',
+  screenEdit: 'עריכת מסך',
+  alerts: 'התראות',
 } as const;
 
 /** What the menu is built from: the engine's state and what the host can do. */
@@ -230,6 +256,29 @@ export interface TillMenuFacts {
   support: boolean;
   /** The screen on show now (the row is tinted; the report folder opens on it). */
   current?: MenuTarget | null;
+  /* ── phase 2: what each module says of its row (absent: no row) ── */
+  /** "ניהול קטלוג": `catalogAdmin.entryShown` (enabled, the shift / manager rule, CATALOG_VIEW not hidden). */
+  catalogAdmin?: boolean;
+  /** "סגירת Z סניפי": this till is the shop's Z master (cloud Z mode, not independent — tillShopZ.menuShown). */
+  shopZ?: boolean;
+  /** "נוכחות": on (`attendanceEnabled`), with its second line. */
+  attendance?: { line: string | null } | null;
+  /** "הזמנות להכנה": the KDS workflow offers it. */
+  readyOrders?: boolean;
+  /** "הזמנות קיוסק לתשלום": how many wait (0: no row). */
+  kioskOrders?: number;
+  /** "עמדת שובר": the row's words ("יציאה למסך רגיל" / "חזרה לעמדת שובר"); null — no row. */
+  voucherStation?: { label: string } | null;
+  /** "בירור יתרת שובר": `voucherBalanceCheckEnabled`. */
+  voucherBalance?: boolean;
+  /** "דוחות Z" from the cloud (an older cloud: none). */
+  cloudZ?: boolean;
+  /** "מדפסות": the engine has the screen. */
+  printers?: boolean;
+  /** "עריכת מסך": `screenEditEnabled`, CATALOG_WRITE not hidden. */
+  screenEdit?: boolean;
+  /** "התראות": the list, with its second line ("אין התראות פתוחות" / "N פתוחות"). */
+  alerts?: { line: string | null } | null;
 }
 
 const has = (list: readonly string[], v: string) => list.includes(v);
@@ -241,6 +290,12 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
   const tillClosed = !f.shiftOpen && !f.zOnly;
   const sel = (t: MenuTarget) => (f.current === t ? { selected: true } : {});
   const groups: MenuGroup[] = [];
+
+  /* ── the top (no title): "ניהול קטלוג", "סגירת Z סניפי" — open till or closed, as their modules say ── */
+  const top: MenuRow[] = [];
+  if (f.catalogAdmin && shown('catalog_admin')) top.push({ key: 'catalog_admin', target: 'catalogAdmin', label: MENU_TEXT.catalogAdmin, tile: 'orange', glyph: 'edit', ...sel('catalogAdmin') });
+  if (f.shopZ && shown('shop_z')) top.push({ key: 'shop_z', target: 'shopZ', label: MENU_TEXT.shopZ, tile: 'pink', glyph: 'receipt', ...sel('shopZ') });
+  if (top.length > 0) groups.push({ id: 'top', title: null, rows: top });
 
   /* ── "משמרת" / "הקופה" ── */
   const shift: MenuRow[] = [];
@@ -269,11 +324,20 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
   }
   // Open till or closed: the batch is the terminal's, not a shift's.
   if (shown('transmission')) shift.push({ key: 'transmission', target: 'transmission', label: MENU_TEXT.transmission, tile: 'orange', glyph: 'send', ...sel('transmission') });
+  // "נוכחות" (attendanceEnabled), open till or closed, with the employee's state on its second line.
+  if (f.attendance && shown('attendance')) shift.push({ key: 'attendance', target: 'attendance', label: MENU_TEXT.attendance, sub: f.attendance.line, tile: 'indigo', glyph: 'person', ...sel('attendance') });
   if (f.sync && shown('sync_now')) {
     const s = f.sync;
     const sub = s.running ? null : s.error ? MENU_TEXT.syncFailed(s.error) : s.waiting > 0 ? MENU_TEXT.syncWaiting(s.waiting) : s.lastAt ? MENU_TEXT.syncLast(s.lastAt) : null;
     shift.push({ key: 'sync_now', target: 'sync', label: s.running ? MENU_TEXT.syncing : MENU_TEXT.sync, sub, ...(s.error && !s.running ? { subError: true } : {}), tile: 'cyan', glyph: 'refresh', inPlace: true, ...(s.running ? { busy: true } : {}) });
   }
+  // "הזמנות להכנה", "הזמנות קיוסק לתשלום" (an open till); the voucher station and the balance check.
+  if (!tillClosed && f.readyOrders && shown('ready_orders')) shift.push({ key: 'ready_orders', target: 'readyOrders', label: MENU_TEXT.readyOrders, tile: 'mint', glyph: 'done', ...sel('readyOrders') });
+  if (!tillClosed && (f.kioskOrders ?? 0) > 0 && shown('kiosk_orders')) {
+    shift.push({ key: 'kiosk_orders', target: 'kioskOrders', label: MENU_TEXT.kioskOrders, sub: MENU_TEXT.kioskOrdersSub(f.kioskOrders!), tile: 'orange', glyph: 'money' });
+  }
+  if (f.voucherStation && shown('voucher_station')) shift.push({ key: 'voucher_station', target: 'voucherStation', label: f.voucherStation.label, tile: 'graphite', glyph: 'receipt' });
+  if (f.voucherBalance && shown('voucher_balance')) shift.push({ key: 'voucher_balance', target: 'voucherBalance', label: MENU_TEXT.voucherBalance, tile: 'green', glyph: 'receipt', ...sel('voucherBalance') });
   // Only while the cloud has a release for this till.
   if (!tillClosed && f.update && shown('app_update')) {
     const u = f.update;
@@ -295,6 +359,8 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
     add('product_sales', 'productSales', MENU_TEXT.productSales, 'orange', 'chart');
     add('workers', 'workers', MENU_TEXT.workers, 'blue', 'person');
     add('tips', 'tips', MENU_TEXT.tips, 'yellow', 'money');
+    // "דוחות Z" from the cloud (Android reportDestinations: after the tips; tables' reports are not on Windows).
+    if (f.cloudZ) add('z_reports', 'cloudZ', MENU_TEXT.cloudZ, 'gray', 'receipt');
   }
   if (f.shopX && shown('shop_x') && permitted('SHOP_X_REPORT')) folder.push({ key: 'shop_x', target: 'shopx', label: MENU_TEXT.shopX, tile: 'cyan', glyph: 'chart', ...sel('shopx') });
   groups.push({ id: 'reports', title: MENU_TEXT.sectionReports, rows: reports, folder });
@@ -303,9 +369,11 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
   if (!tillClosed) {
     const manage: MenuRow[] = [];
     if (f.settings && shown('settings')) manage.push({ key: 'settings', target: 'settings', label: MENU_TEXT.settings, tile: 'gray', glyph: 'gear' });
+    if (f.printers && shown('printers')) manage.push({ key: 'printers', target: 'printers', label: MENU_TEXT.printers, tile: 'indigo', glyph: 'printer', ...sel('printers') });
     if (f.printQueue && shown('print_queue')) {
       manage.push({ key: 'print_queue', target: 'printQueue', label: MENU_TEXT.printQueue, tile: 'red', glyph: 'printer', ...(f.printQueueCount > 0 ? { badge: f.printQueueCount } : {}), ...sel('printQueue') });
     }
+    if (f.screenEdit && shown('screen_edit')) manage.push({ key: 'screen_edit', target: 'screenEdit', label: MENU_TEXT.screenEdit, tile: 'teal', glyph: 'edit' });
     // MenuHide.diagnosticsShown: kept while the settings are hidden — the technician's way in.
     if (shown('diagnostics') || has(f.hidden, 'settings')) manage.push({ key: 'diagnostics', target: 'diagnostics', label: MENU_TEXT.diagnostics, tile: 'graphite', glyph: 'build', ...sel('diagnostics') });
     groups.push({ id: 'manage', title: MENU_TEXT.sectionManage, rows: manage });
@@ -314,6 +382,7 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
   /* ── the device's rows, open till or closed: the work mode, the blocks, who is signed in, support, sign out ── */
   const device: MenuRow[] = [];
   if (f.workMode && shown('kiosk_mode')) device.push({ key: 'kiosk_mode', target: 'workMode', label: f.workMode.label, sub: MENU_TEXT.workModeSub, tile: 'graphite', glyph: 'kiosk' });
+  if (f.alerts && shown('alerts')) device.push({ key: 'alerts', target: 'alerts', label: MENU_TEXT.alerts, sub: f.alerts.line, tile: 'orange', glyph: 'bell', ...sel('alerts') });
   if (f.blocks && shown('blocks_now')) device.push({ key: 'blocks_now', target: 'blocks', label: MENU_TEXT.blocks, tile: 'red', glyph: 'warning', ...sel('blocks') });
   if (f.signedInUsers && shown('signed_in_users')) device.push({ key: 'signed_in_users', target: 'users', label: MENU_TEXT.users, tile: 'indigo', glyph: 'person', ...sel('users') });
   if ((f.kiosks ?? 0) > 0 && shown('managed_kiosks')) device.push({ key: 'managed_kiosks', target: 'kiosks', label: MENU_TEXT.kiosks, sub: MENU_TEXT.kiosksSub(f.kiosks!), tile: 'graphite', glyph: 'cart', ...sel('kiosks') });

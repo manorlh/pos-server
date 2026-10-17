@@ -18,6 +18,7 @@ CATEGORIES_MAX = 300
 PRODUCTS_MAX = 3000
 RANGES_MAX = 8
 MENUS_PER_TARGET_MAX = 30
+ASSIGNMENTS_MAX = 300
 MONEY_MAX = Decimal("1000000")
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -59,6 +60,13 @@ class MenuProductIn(_Body):
         return None if value is None else Decimal(value).quantize(Decimal("0.01"))
 
 
+class MenuTargetIn(_Body):
+    """One place a menu applies, from the menu editor's "שייך ל" (the same rows as the "שיוך" tab)."""
+    level: Literal["company", "shop", "area", "group", "machine"]
+    target_id: uuid.UUID = Field(alias="targetId")
+    priority: int = Field(0, ge=-1000, le=1000)
+
+
 class MenuIn(_Body):
     name: str = Field(min_length=1, max_length=NAME_MAX)
     #: Null: the whole organization (super admin / distributor only).
@@ -76,6 +84,9 @@ class MenuIn(_Body):
     web_channels: Optional[List[Literal["online", "menu"]]] = Field(None, alias="webChannels")
     categories: List[MenuCategoryIn] = Field(default_factory=list, max_length=CATEGORIES_MAX)
     products: List[MenuProductIn] = Field(default_factory=list, max_length=PRODUCTS_MAX)
+    #: Where it applies (company / shop / point of sale / device group / till), replacing the
+    #: menu's own assignments that the user may set; None = leave them as they are.
+    assignments: Optional[List[MenuTargetIn]] = Field(None, max_length=ASSIGNMENTS_MAX)
 
     @field_validator("name")
     @classmethod
@@ -120,6 +131,12 @@ class MenuIn(_Body):
             if p.product_id in seen:
                 raise ValueError("menu_duplicate_product")
             seen.add(p.product_id)
+        seen = set()
+        for a in self.assignments or []:
+            key = (a.level, a.target_id)
+            if key in seen:
+                raise ValueError("menu_duplicate_assignment")
+            seen.add(key)
         return self
 
 

@@ -205,8 +205,13 @@ function ProduceZ() {
     searchParams.get('machineId') ??
     (presetShop && scope.shopId && presetShop === scope.shopId ? scope.machineId : null);
 
-  // An area only means something with the shop the link names.
-  const presetArea = searchParams.get('shopId') ? searchParams.get('areaId') : null;
+  // An area only means something with the shop the link names — or, with no link, the top bar's
+  // point of sale in its shop (P:/specs/chain-areas.md §11.2 c).
+  const presetArea = searchParams.get('shopId')
+    ? searchParams.get('areaId')
+    : presetShop && scope.shopId && presetShop === scope.shopId
+      ? (scope.areaId ?? null)
+      : null;
 
   const [shopIds, setShopIds] = useState<string[]>(() => (presetShop ? [presetShop] : []));
   const [overrides, setOverrides] = useState<Overrides>({});

@@ -102,6 +102,7 @@ DELETE /catalog-menus/assignments -> products:edit
 DELETE /catalog-menus/{menu_id} -> products:edit
 GET /catalog-menus/{menu_id} -> products:view
 PUT /catalog-menus/{menu_id} -> products:edit
+GET /catalog-picker -> products|quick_actions|promotions|prepaid_vouchers:view
 POST /catalog/push -> products:edit
 GET /categories -> products|quick_actions|promotions:view
 POST /categories -> products:edit
@@ -140,6 +141,8 @@ PUT /companies/{company_id} -> organization:edit
 GET /companies/{company_id}/dealer-turnover -> organization|reports:view
 POST /companies/{company_id}/menu-broadcast -> products:edit
 GET /companies/{company_id}/menu-broadcast/preview -> products:view
+GET /companies/{company_id}/price-policy -> products:view
+PUT /companies/{company_id}/price-policy -> products:edit
 GET /companies/{company_id}/push-policy -> users|organization:view
 PUT /companies/{company_id}/push-policy -> users|organization:edit
 GET /companies/{company_id}/settings -> till_settings:view
@@ -156,6 +159,8 @@ PUT /companies/{company_id}/till-roles/matrix -> pos_users:edit
 GET /companies/{company_id}/till-roles/users -> pos_users:view
 DELETE /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
 PUT /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
+GET /companies/{company_id}/till-tip-params -> till_settings|organization:view
+PUT /companies/{company_id}/till-tip-params -> till_settings|organization:edit
 GET /customer-display/displays -> till_settings|devices:view
 PUT /customer-display/displays/{machine_id}/till -> till_settings|devices:edit
 GET /customer-display/media -> till_settings|devices:view
@@ -587,6 +592,7 @@ POST /prepaid-vouchers/vouchers/{voucher_id}/cancel -> prepaid_vouchers:edit
 PUT /prepaid-vouchers/vouchers/{voucher_id}/note -> prepaid_vouchers:edit
 POST /prepaid-vouchers/vouchers/{voucher_id}/replace -> prepaid_vouchers:edit
 GET /prepaid-vouchers/vouchers/{voucher_id}/replacements -> prepaid_vouchers:view
+POST /price-schedules/{schedule_id}/cancel -> products:edit
 DELETE /printers/{printer_id} -> printers:edit
 PUT /printers/{printer_id} -> printers:edit
 POST /printers/{printer_id}/test -> printers:edit
@@ -602,11 +608,14 @@ POST /product-channels/bulk -> products:edit
 GET /product-channels/list -> products:view
 GET /products -> products|quick_actions|promotions:view
 POST /products -> products:edit
+POST /products/areas/bulk -> products:edit
 POST /products/availability-summary -> products|item_blocks:view
 POST /products/shop-scope/preview -> products:view
 DELETE /products/{product_id} -> products:edit
 GET /products/{product_id} -> products|quick_actions|promotions:view
 PUT /products/{product_id} -> products:edit
+GET /products/{product_id}/areas -> products:view
+PUT /products/{product_id}/areas -> products:edit
 GET /products/{product_id}/availability -> products|item_blocks:view
 PUT /products/{product_id}/availability/areas/{area_id} -> products|item_blocks:edit
 PUT /products/{product_id}/availability/companies/{company_id} -> products|item_blocks:edit
@@ -615,6 +624,12 @@ PUT /products/{product_id}/availability/shops/{shop_id} -> products|item_blocks:
 GET /products/{product_id}/kitchen-printers -> products|printers:view
 PUT /products/{product_id}/kitchen-printers/no-ticket -> products|printers:edit
 POST /products/{product_id}/kitchen-printers/reset -> products|printers:edit
+GET /products/{product_id}/levels-summary -> products|item_blocks:view
+GET /products/{product_id}/price-changes -> products:view
+PUT /products/{product_id}/price-lock -> products:edit
+GET /products/{product_id}/prices -> products:view
+PUT /products/{product_id}/prices/areas/{area_id} -> products:edit
+PUT /products/{product_id}/prices/shops/{shop_id} -> products:edit
 GET /products/{product_id}/shops -> products:view
 GET /promotions -> promotions:view
 POST /promotions -> promotions:edit
@@ -720,6 +735,7 @@ PUT /shops/{shop_id} -> organization:edit
 GET /shops/{shop_id}/active-log -> organization:view
 GET /shops/{shop_id}/areas -> reference
 POST /shops/{shop_id}/areas -> organization:edit
+GET /shops/{shop_id}/areas/overview -> devices|item_blocks|organization:view
 GET /shops/{shop_id}/deferred-terminals -> terminals_offline:view
 PUT /shops/{shop_id}/deferred-terminals/controllers -> terminals_offline:edit
 POST /shops/{shop_id}/deferred-terminals/switch -> terminals_offline:edit
@@ -754,6 +770,9 @@ GET /shops/{shop_id}/pos-users/{pos_user_id}/approval-overrides -> pos_users:vie
 PUT /shops/{shop_id}/pos-users/{pos_user_id}/approval-overrides -> pos_users:edit
 POST /shops/{shop_id}/pos-users/{pos_user_id}/reset-pin -> pos_users:edit
 PUT /shops/{shop_id}/pos-users/{pos_user_id}/till-role -> pos_users:edit
+GET /shops/{shop_id}/price-schedules -> products:view
+POST /shops/{shop_id}/prices/bulk -> products:edit
+POST /shops/{shop_id}/prices/bulk/preview -> products:view
 PUT /shops/{shop_id}/print-host -> printers:edit
 GET /shops/{shop_id}/print-redirects -> printers:view
 PUT /shops/{shop_id}/printer-options -> printers:edit
@@ -897,6 +916,8 @@ PUT /sync/{machine_id}/products/{product_id}/availability -> till
 DELETE /sync/{machine_id}/products/{product_id}/image -> till
 POST /sync/{machine_id}/products/{product_id}/image -> till
 GET /sync/{machine_id}/products/{product_id}/kitchen-printers -> till
+PUT /sync/{machine_id}/products/{product_id}/price -> till
+GET /sync/{machine_id}/products/{product_id}/price-options -> till
 GET /sync/{machine_id}/promotions -> till
 GET /sync/{machine_id}/settings -> till
 POST /sync/{machine_id}/shifts/{shift_id}/close -> till

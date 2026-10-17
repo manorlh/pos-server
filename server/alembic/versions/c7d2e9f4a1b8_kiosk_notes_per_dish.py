@@ -9,7 +9,7 @@ nothing set anywhere means no note (app/services/kiosk_notes.py).
 (app/services/kiosk_tap.py). Same inheritance. Nothing is backfilled.
 
 Revision ID: c7d2e9f4a1b8
-Revises: e8c1f4a7b2d9
+Revises: f1a7c3e9b2d6
 Create Date: 2026-10-17 16:30:00
 """
 from typing import Sequence, Union
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c7d2e9f4a1b8"
-down_revision: Union[str, Sequence[str], None] = "e8c1f4a7b2d9"
+down_revision: Union[str, Sequence[str], None] = "f1a7c3e9b2d6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

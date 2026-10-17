@@ -61,6 +61,8 @@ export interface RosterUser {
   /** The role's limits (`{code: {maxAmount, maxPercent}}`, shekels / percent): an "allow" above one asks a manager. */
   limits?: Record<string, Record<string, number>> | null;
   tillRoleName?: string | null;
+  /** "עובדי קופה לפי נקודת מכירה" (chain-areas §8): null / absent — every device of the shop; a list — only devices standing in those points of sale. */
+  areaIds?: string[] | null;
 }
 
 /**

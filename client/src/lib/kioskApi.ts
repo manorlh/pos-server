@@ -17,7 +17,8 @@ import {
 } from './kioskConfig';
 import type { KioskJob, KioskZKind } from './kioskZ';
 
-export type KioskLevel = 'company' | 'shop' | 'machine';
+/** `area`: a point of sale's layer, between the shop and the kiosk (P:/specs/chain-areas.md §5). */
+export type KioskLevel = 'company' | 'shop' | 'area' | 'machine';
 export type KioskFlowState =
   | 'attract'
   | 'ordering'
