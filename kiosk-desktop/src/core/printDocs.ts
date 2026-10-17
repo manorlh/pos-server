@@ -647,8 +647,11 @@ function cashBlockOps(lines: CashLine[], c: (text: string, size?: number, bold?:
   for (const l of lines) r(l.label, money(l.agorot / 100), l.bold);
 }
 
-/** "מזומן במגירה לפי קופה" of a Z over several tills (§3): each drawer by its own frozen figures, the totals, the unpaid tips. */
-function tillTableOps(sections: Array<Record<string, unknown>>, c: (text: string, size?: number, bold?: boolean) => void, r: (label: string, value: string, bold?: boolean) => void, d: () => void): void {
+/**
+ * A Z over several tills (§3): the summary of all the drawers first, then — unless `zPrintPerTillCash` = summary_only —
+ * "מזומן במגירה לפי קופה", each drawer by its own frozen figures, the totals, the unpaid tips.
+ */
+function tillTableOps(sections: Array<Record<string, unknown>>, c: (text: string, size?: number, bold?: boolean) => void, r: (label: string, value: string, bold?: boolean) => void, d: () => void, perTill: boolean): void {
   const table = tillTable(
     sections.map((s) => {
       const z = zDrawer(s);
@@ -658,6 +661,10 @@ function tillTableOps(sections: Array<Record<string, unknown>>, c: (text: string
     true,
   );
   const f = (a: number | null) => (a === null ? '—' : money(a / 100));
+  c(CASH_WITH_TIPS_LABELS.title, 20, true);
+  for (const l of table.summary.lines) r(l.label, f(l.agorot), l.bold);
+  if (!perTill) return;
+  d();
   c(CASH_WITH_TIPS_LABELS.tillTable, 20, true);
   for (const row of [...table.rows, { till: CASH_WITH_TIPS_LABELS.tillTotals, cashSales: table.totals.cashSales, cashTips: table.totals.cashTips, cardTipsPaid: table.totals.cardTipsPaid, cardTipsUnpaid: table.totals.cardTipsUnpaid, drawerCash: table.totals.drawerCash, short: table.totals.anyShort }]) {
     r(row.till, f(row.drawerCash), true);
@@ -688,7 +695,7 @@ const Z_BREAKDOWN_APART = new Set(['cash', 'card', 'exchange']);
 const Z_METHOD_NAMES: Record<string, string> = { voucher: 'שוברי הפקה', production_voucher: 'שוברי הפקה', cash_credit: 'זיכוי מזומן', check: 'המחאה', credit: 'זיכוי', other: 'אחר' };
 
 /** The till Z on paper (TillZRenderer), from the cloud's zReport (POST till-z answer). */
-export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo; shopName: string | null; posNumber: string | null; machineName: string | null; copy: boolean; logoUrl: string | null; printedAt: Date }): ZDoc {
+export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo; shopName: string | null; posNumber: string | null; machineName: string | null; copy: boolean; logoUrl: string | null; printedAt: Date; perTillCash?: boolean }): ZDoc {
   const ops: ZOp[] = [];
   const c = (text: string, size = 18, bold = false) => ops.push({ t: 'centred', text, size, bold });
   const r = (label: string, value: string, bold = false) => ops.push({ t: 'row', label, value, bold });
@@ -756,7 +763,7 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
   // "מזומן במגירה" (x-z-cash-with-tips §1): always — its total is the Z's expected cash; over several tills, by till (§3).
   d();
   const sections = Array.isArray(z.perMachine) ? (z.perMachine as unknown[]).filter((s): s is Record<string, unknown> => !!s && typeof s === 'object') : [];
-  if (sections.length > 1) tillTableOps(sections, c, r, d);
+  if (sections.length > 1) tillTableOps(sections, c, r, d, opts.perTillCash !== false);
   else {
     const one = zDrawer({ ...z, ...(sections[0] ?? {}), expectedCash: z.expectedCash ?? sections[0]?.expectedCash });
     cashBlockOps(cashBlock(one.input, one.paid, one.unpaid).lines, c, r);

@@ -19,7 +19,12 @@
     "short": "חסר במגירה",
     "unpaidDay": "טיפים באשראי שטרם שולמו",
     "tillTable": "מזומן במגירה לפי קופה",
-    "tillTotals": "סה״כ"
+    "tillTotals": "סה״כ",
+    "perTill": "פירוט לפי קופה",
+    "summaryCash": "סה״כ מזומן",
+    "summaryTips": "טיפים",
+    "summaryUnpaid": "טיפים באשראי שטרם שולמו",
+    "summaryNet": "= סה״כ מזומן נטו (אחרי טיפים)"
   },
   "drawerCases": [
     {
@@ -1467,7 +1472,43 @@
           "drawerCash": "3220.00",
           "anyShort": false
         },
-        "unpaidTotal": "50.00"
+        "unpaidTotal": "50.00",
+        "summary": {
+          "totalCash": "3560.00",
+          "tips": "460.00",
+          "unpaid": "50.00",
+          "netCash": "3050.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "3560.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "460.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryUnpaid",
+              "label": "טיפים באשראי שטרם שולמו",
+              "amount": "50.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "3050.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
       }
     },
     {
@@ -1580,7 +1621,36 @@
           "drawerCash": "3170.00",
           "anyShort": true
         },
-        "unpaidTotal": "0.00"
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "3560.00",
+          "tips": "510.00",
+          "unpaid": "0.00",
+          "netCash": "3050.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "3560.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "510.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "3050.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
       }
     },
     {
@@ -1693,7 +1763,251 @@
           "drawerCash": null,
           "anyShort": false
         },
-        "unpaidTotal": "0.00"
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": null,
+          "tips": "510.00",
+          "unpaid": "0.00",
+          "netCash": null,
+          "lines": [
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "510.00",
+              "bold": false,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "area2_cash_tips_and_unpaid",
+      "note": "summary: total cash before payouts − (cash tips + card tips paid) − unpaid = business cash",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "בר",
+          "input": {
+            "opening": "300",
+            "cashSales": "1500",
+            "cashTips": "220",
+            "cardTips": "400",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "1000"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "מטבח",
+          "input": {
+            "opening": "100",
+            "cashSales": "80",
+            "cashTips": "10",
+            "cardTips": "350",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "בר",
+            "cashSales": "1500.00",
+            "cashTips": "220.00",
+            "cardTipsPaid": "400.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "620.00",
+            "short": false
+          },
+          {
+            "till": "מטבח",
+            "cashSales": "80.00",
+            "cashTips": "10.00",
+            "cardTipsPaid": "190.00",
+            "cardTipsUnpaid": "160.00",
+            "drawerCash": "0.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "1580.00",
+          "cashTips": "230.00",
+          "cardTipsPaid": "590.00",
+          "cardTipsUnpaid": "160.00",
+          "drawerCash": "620.00",
+          "anyShort": false
+        },
+        "unpaidTotal": "160.00",
+        "summary": {
+          "totalCash": "1210.00",
+          "tips": "820.00",
+          "unpaid": "160.00",
+          "netCash": "230.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "1210.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "820.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryUnpaid",
+              "label": "טיפים באשראי שטרם שולמו",
+              "amount": "160.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "230.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "area2_net_negative",
+      "note": "net below zero: staff are owed more than the drawers hold",
+      "showDrawerCash": true,
+      "tills": [
+        {
+          "till": "בר",
+          "input": {
+            "opening": "0",
+            "cashSales": "100",
+            "cashTips": "50",
+            "cardTips": "300",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "negative",
+            "askChoice": null
+          }
+        },
+        {
+          "till": "מטבח",
+          "input": {
+            "opening": "0",
+            "cashSales": "30",
+            "cashTips": "0",
+            "cardTips": "10",
+            "movements": {
+              "cashIn": "0",
+              "cashOut": "0",
+              "deposits": "0"
+            },
+            "wallet": {
+              "walletIn": "0",
+              "walletDeposits": "0"
+            },
+            "between": "0",
+            "param": true,
+            "shortfall": "partial",
+            "askChoice": null
+          }
+        }
+      ],
+      "expect": {
+        "rows": [
+          {
+            "till": "בר",
+            "cashSales": "100.00",
+            "cashTips": "50.00",
+            "cardTipsPaid": "300.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "-150.00",
+            "short": true
+          },
+          {
+            "till": "מטבח",
+            "cashSales": "30.00",
+            "cashTips": "0.00",
+            "cardTipsPaid": "10.00",
+            "cardTipsUnpaid": "0.00",
+            "drawerCash": "20.00",
+            "short": false
+          }
+        ],
+        "totals": {
+          "cashSales": "130.00",
+          "cashTips": "50.00",
+          "cardTipsPaid": "310.00",
+          "cardTipsUnpaid": "0.00",
+          "drawerCash": "-130.00",
+          "anyShort": true
+        },
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "180.00",
+          "tips": "360.00",
+          "unpaid": "0.00",
+          "netCash": "-180.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "180.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "360.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "-180.00",
+              "bold": true,
+              "warn": true
+            }
+          ]
+        }
       }
     },
     {
@@ -1775,7 +2089,36 @@
           "drawerCash": "550.00",
           "anyShort": false
         },
-        "unpaidTotal": "0.00"
+        "unpaidTotal": "0.00",
+        "summary": {
+          "totalCash": "550.00",
+          "tips": "0.00",
+          "unpaid": "0.00",
+          "netCash": "550.00",
+          "lines": [
+            {
+              "key": "summaryCash",
+              "label": "סה״כ מזומן",
+              "amount": "550.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryTips",
+              "label": "טיפים",
+              "amount": "0.00",
+              "bold": false,
+              "warn": false
+            },
+            {
+              "key": "summaryNet",
+              "label": "= סה״כ מזומן נטו (אחרי טיפים)",
+              "amount": "550.00",
+              "bold": true,
+              "warn": false
+            }
+          ]
+        }
       }
     }
   ]

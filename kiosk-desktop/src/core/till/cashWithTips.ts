@@ -32,7 +32,19 @@ export const CASH_WITH_TIPS_LABELS = {
   unpaidDay: 'טיפים באשראי שטרם שולמו',
   tillTable: 'מזומן במגירה לפי קופה',
   tillTotals: 'סה״כ',
+  perTill: 'פירוט לפי קופה',
+  summaryCash: 'סה״כ מזומן',
+  summaryTips: 'טיפים',
+  summaryUnpaid: 'טיפים באשראי שטרם שולמו',
+  summaryNet: '= סה״כ מזומן נטו (אחרי טיפים)',
 } as const;
+
+/** `zPrintPerTillCash` (§3): a shop / area Z's paper prints the per-till table under the summary (default) or the summary only. */
+export const Z_PRINT_PER_TILL_CASH_KEY = 'zPrintPerTillCash';
+export function zPrintPerTill(parameters: Record<string, unknown>): boolean {
+  const v = parameters[Z_PRINT_PER_TILL_CASH_KEY];
+  return !(typeof v === 'string' && v.trim().toLowerCase() === 'summary_only');
+}
 
 /** The manager's question at the close (ask, only when short). */
 export const CARD_TIPS_ASK_TEXT = {
@@ -47,7 +59,8 @@ export const CARD_TIPS_SHORTFALL_KEY = 'cashDrawer.cardTipsShortfall';
 
 export type CardTipsShortfall = 'partial' | 'negative' | 'ask';
 export type CardTipsChoice = 'partial' | 'negative';
-export type CashLineKey = Exclude<keyof typeof CASH_WITH_TIPS_LABELS, 'title' | 'unpaidDay' | 'tillTable' | 'tillTotals'>;
+export type CashLineKey = Exclude<keyof typeof CASH_WITH_TIPS_LABELS, 'title' | 'unpaidDay' | 'tillTable' | 'tillTotals' | 'perTill' | SummaryKey>;
+export type SummaryKey = 'summaryCash' | 'summaryTips' | 'summaryUnpaid' | 'summaryNet';
 
 /** A parameter's "on" (main/sync/cloud.ts parameterOn's rule). */
 function on(v: unknown): boolean {
@@ -186,6 +199,17 @@ export interface TillTable {
   rows: TillTableRow[];
   totals: { cashSales: number; cashTips: number; cardTipsPaid: number | null; cardTipsUnpaid: number | null; drawerCash: number | null; anyShort: boolean };
   unpaidTotal: number;
+  /**
+   * The shop / area summary first (§3): Σ available before any payout, the tips (cash + card paid), the unpaid card tips, the
+   * business cash net of every tip; cash / net null where the expected cash is hidden.
+   */
+  summary: {
+    totalCash: number | null;
+    tips: number;
+    unpaid: number;
+    netCash: number | null;
+    lines: Array<{ key: SummaryKey; label: string; agorot: number; bold: boolean; warn: boolean }>;
+  };
 }
 
 /**
@@ -200,6 +224,7 @@ export function tillTable(tills: Array<{ till: string; input: DrawerInput; paid?
   let unpaidSum: number | null = null;
   let drawer = 0;
   let anyShort = false;
+  let availableSum = 0;
   for (const t of tills) {
     const inp = { ...t.input, showDrawerCash: show };
     let paid: number | null;
@@ -215,6 +240,7 @@ export function tillTable(tills: Array<{ till: string; input: DrawerInput; paid?
       unpaid = c.unpaid;
       total = c.total;
     }
+    availableSum += availableOf(inp);
     rows.push({ till: t.till, cashSales: inp.cashSales, cashTips: inp.cashTips, cardTipsPaid: paid, cardTipsUnpaid: unpaid, drawerCash: show ? total : null, short: show && total < 0 });
     cashSales += inp.cashSales;
     cashTips += inp.cashTips;
@@ -225,10 +251,20 @@ export function tillTable(tills: Array<{ till: string; input: DrawerInput; paid?
     drawer += total;
     anyShort = anyShort || total < 0;
   }
+  const tips = cashTips + (paidSum ?? 0);
+  const unpaid = unpaidSum ?? 0;
+  const net = availableSum - tips - unpaid;
+  const lines: TillTable['summary']['lines'] = [];
+  const sadd = (key: SummaryKey, agorot: number, bold = false, warn = false) => lines.push({ key, label: CASH_WITH_TIPS_LABELS[key], agorot, bold, warn });
+  if (show) sadd('summaryCash', availableSum);
+  sadd('summaryTips', tips);
+  if (unpaid > 0) sadd('summaryUnpaid', unpaid);
+  if (show) sadd('summaryNet', net, true, net < 0);
   return {
     rows,
     totals: { cashSales, cashTips, cardTipsPaid: paidSum, cardTipsUnpaid: unpaidSum, drawerCash: show ? drawer : null, anyShort: show && anyShort },
-    unpaidTotal: unpaidSum ?? 0,
+    unpaidTotal: unpaid,
+    summary: { totalCash: show ? availableSum : null, tips, unpaid, netCash: show ? net : null, lines },
   };
 }
 

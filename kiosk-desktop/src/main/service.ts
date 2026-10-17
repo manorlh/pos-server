@@ -55,6 +55,7 @@ import { rowOf as transmissionRowOf, type TransmissionRow } from '../core/till/t
 import { DEFAULT_PRINTER_KEY, TILL_PRINTER_KEY, type RemoteDocumentsRouter } from './till/tillRemotePrint';
 import { isCreditType as isCreditDoc } from '../core/sale';
 import { bonDoc, documentTitleFor, kioskBonStyle, receiptDoc, shopXPrintDoc, slipDoc, ticketDoc, xDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine, type TicketDoc, type XInput, type ZDoc } from '../core/printDocs';
+import { zPrintPerTill } from '../core/till/cashWithTips';
 import {
   appendLog,
   bonText,
@@ -3761,7 +3762,7 @@ export class KioskService extends EventEmitter {
     const me = this.cloud.machine();
     const logo = this.settingsMap().brandReceiptLogoUrl;
     const zNumber = z.zNumber ?? z.number ?? null;
-    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date() }), {
+    this.pagePrint('z', String(z.id ?? ''), zDoc(z, { business: this.business(), shopName: me?.shopName ?? null, posNumber: me?.posNumber ?? null, machineName: me?.machineName ?? null, copy, logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null, printedAt: new Date(), perTillCash: zPrintPerTill(this.cloud.parameters()) }), {
       kind: 'report',
       code: 'z',
       number: zNumber !== null && zNumber !== undefined ? String(zNumber) : null,

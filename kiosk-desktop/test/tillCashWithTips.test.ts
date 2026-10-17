@@ -19,6 +19,7 @@ import {
   tillTable,
   withCashWithTips,
   zDrawer,
+  zPrintPerTill,
   cashBlock,
   type DrawerInput,
 } from '../src/core/till/cashWithTips';
@@ -27,7 +28,7 @@ import { formatShekelSign } from '../src/core/money';
 import { principalLegs } from '../src/main/fiscal/ledger';
 import { readyTill } from './tillEngineHarness';
 
-const GOLDEN_SHA = '1933019e233b33ee6a009c1e567d7f9446f3e385474604e0b78401d59d5982e3';
+const GOLDEN_SHA = '9e7ccd52d809f17d5633e2dfbbf51107076c5afc708097aa0903e15cb379b13d';
 const raw = readFileSync(join(__dirname, 'fixtures', 'x_z_cash_with_tips_golden.json'));
 
 type Money = string;
@@ -97,6 +98,13 @@ describe('the shared golden (x_z_cash_with_tips_golden.json)', () => {
         rows: t.rows.map((r) => ({ till: r.till, cashSales: m(r.cashSales), cashTips: m(r.cashTips), cardTipsPaid: m(r.cardTipsPaid), cardTipsUnpaid: m(r.cardTipsUnpaid), drawerCash: m(r.drawerCash), short: r.short })),
         totals: { cashSales: m(t.totals.cashSales), cashTips: m(t.totals.cashTips), cardTipsPaid: m(t.totals.cardTipsPaid), cardTipsUnpaid: m(t.totals.cardTipsUnpaid), drawerCash: m(t.totals.drawerCash), anyShort: t.totals.anyShort },
         unpaidTotal: m(t.unpaidTotal),
+        summary: {
+          totalCash: m(t.summary.totalCash),
+          tips: m(t.summary.tips),
+          unpaid: m(t.summary.unpaid),
+          netCash: m(t.summary.netCash),
+          lines: t.summary.lines.map((l) => ({ key: l.key, label: l.label, amount: amountText(l.agorot), bold: l.bold, warn: l.warn })),
+        },
       }).toEqual(c.expect);
     });
   }
@@ -221,6 +229,17 @@ describe('the papers', () => {
     expect(r.find((x) => x[0] === 'קופה 2')?.[1]).toBe('₪0.00');
     expect(r.find((x) => x[0] === CASH_WITH_TIPS_LABELS.tillTotals)?.[1]).toBe(formatShekelSign(322_000));
     expect(r.find((x) => x[0] === CASH_WITH_TIPS_LABELS.unpaidDay)?.[1]).toBe('₪50.00');
+    // The summary of all the drawers first: Σ available 3,560, tips 460, unpaid 50, net 3,050.
+    expect(r.slice(r.findIndex((x) => x[0] === CASH_WITH_TIPS_LABELS.summaryCash)).slice(0, 4)).toEqual([
+      [CASH_WITH_TIPS_LABELS.summaryCash, formatShekelSign(356_000)],
+      [CASH_WITH_TIPS_LABELS.summaryTips, formatShekelSign(46_000)],
+      [CASH_WITH_TIPS_LABELS.summaryUnpaid, formatShekelSign(5_000)],
+      [CASH_WITH_TIPS_LABELS.summaryNet, formatShekelSign(305_000)],
+    ]);
+    // zPrintPerTillCash = summary_only: no per-till table on paper.
+    const only = zDoc(z, { ...zOpts, perTillCash: zPrintPerTill({ zPrintPerTillCash: 'summary_only' }) });
+    expect(only.ops.filter((o) => o.t === 'centred').map((o) => (o as { text: string }).text)).not.toContain(CASH_WITH_TIPS_LABELS.tillTable);
+    expect(zPrintPerTill({})).toBe(true);
   });
 });
 
