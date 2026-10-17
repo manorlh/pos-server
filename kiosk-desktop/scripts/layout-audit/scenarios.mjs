@@ -196,12 +196,14 @@ export const ALLOW = [
   // brand when the cloud sets none) as a fill under white (4.0:1) and as text on the grouped grey (3.6:1) — exactly what the
   // Android till draws; a brand colour from the cloud repaints both alike.
   {
-    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge',
+    selector: '.t-root .t-btn-primary, .t-root .t-btn-ghost, .t-root .t-chip-on, .t-root .t-nav-on, .t-root .t-payall-prominent, .t-root .t-pay-head, .t-root .t-link, .t-root .t-tender-main, .t-root .t-more-count, .t-root .t-mbadge, .t-root .t-key-bare, .t-root .t-lock-hello, .t-root .t-pay-details-toggle, .t-root .t-tile-info-dot, .t-root .t-tile-count',
     rules: ['contrast'],
     reason: "the Android till's brand colour (iOS blue) as Android draws it",
   },
   // An unavailable product at half strength, as Android's ProductTile (alpha 0.5): shown as off, not meant to be read as on.
   { selector: '.t-root .t-tile-off', rules: ['contrast'], reason: 'an unavailable tile at half strength, as Android ProductTile' },
+  // The tenders' own colours under white (card #2563EB, cash #16A34A / #15803D), as Android's PayNowButtons / quick-pay.
+  { selector: '.t-root .t-paynow-btn, .t-root .t-quickpay-btn', rules: ['contrast'], reason: "the Android till's tender colours" },
   // The customer display's basket is bottom-anchored on purpose: older lines go out at the top so the newest always shows.
   { selector: '[data-cd-lines] > *', rules: ['clipped', 'outside'], screens: ['d-basket', 'd-basket-split-light', 'd-tip', 'd-paying', 'd-change'], reason: 'the oldest lines leave at the top by design' },
 ];

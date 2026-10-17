@@ -279,6 +279,9 @@
 
 .t-tile-badge {
   z-index: 2;
+  bottom: 40px;
+  right: 9px;
+  left: auto;
   border-radius: 4px;
   background: var(--t-danger);
   color: var(--pos-on-error);
@@ -1371,7 +1374,7 @@
 
 /* "פרטי חשבון ▾" (SummaryCard): labelLarge in the brand colour; the lines under it, bodyMedium. */
 .t-pay-details-toggle {
-  min-height: 36px;
+  min-height: 48px;
   margin-top: 8px;
   padding: 6px 10px;
   border-radius: 8px;

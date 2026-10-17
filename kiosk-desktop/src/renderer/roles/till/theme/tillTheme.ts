@@ -10,12 +10,13 @@
  */
 
 import { useEffect, useState } from 'react';
-import { designColors, FIXED, nightColors, over, posScheme, schemeVars, type PosScheme } from '@dash-lib/posLook';
+import { designColors, nightColors, over, posScheme, schemeVars, type PosScheme } from '@dash-lib/posLook';
 import type { TillThemeState } from '../../../../shared/till/protocol';
 
 /** The `--t-*` tokens from a scheme: what till.css has always painted with, in the Android roles. */
 export function tillTokens(s: PosScheme): Record<string, string> {
-  const ok = s.dark ? '#30D158' : FIXED.cashGreen;
+  // Success text darker than the cash button's green, so it reads on its soft fill (4.5:1).
+  const ok = s.dark ? '#30D158' : '#157A35';
   const warn = s.dark ? '#FBBF24' : '#B45309';
   return {
     '--t-bg': s.background,
