@@ -3,18 +3,19 @@
  * matrix as each host sees it, and the checker's own rules — pinned, so a later change to any of them is a decision.
  */
 import { describe, expect, it } from 'vitest';
-import { KIOSK_LANDSCAPE_MIN_CSS_HEIGHT, kioskWindowZoom } from '../src/core/windowZoom';
+import { KIOSK_DESIGN_SHORT_SIDE_PX, KIOSK_LANDSCAPE_MIN_CSS_HEIGHT, KIOSK_MAX_ZOOM, kioskWindowZoom } from '../src/core/windowZoom';
 // @ts-expect-error — plain .mjs tooling (no types)
 import { blendOver, contrastRatio, gradientStops, inkBox, intersect, largeText, MIN_TARGET_MM, parseColor, targetDp, targetMm } from '../scripts/layout-audit/checker.mjs';
 // @ts-expect-error — plain .mjs tooling (no types)
 import { casesFor, distinctRenders, hostCase, loadMatrix, orientationsOf } from '../scripts/layout-audit/matrix.mjs';
 
 describe('the Windows kiosk window zoom', () => {
-  it('draws ~540 CSS px across the short side, upright and square as before', () => {
-    expect(kioskWindowZoom(1080, 1920)).toBe(2);
-    expect(kioskWindowZoom(1080, 1080)).toBe(2);
-    expect(kioskWindowZoom(400, 700)).toBe(1); // never under 1
-    expect(kioskWindowZoom(4000, 4000)).toBe(3); // never over 3
+  it('draws the Android kiosk’s 540 dp across the short side (371 CSS px at 1.45 dp each), upright and square (17.10)', () => {
+    expect(KIOSK_DESIGN_SHORT_SIDE_PX).toBe(371);
+    expect(kioskWindowZoom(1080, 1920)).toBeCloseTo(1080 / 371, 5);
+    expect(kioskWindowZoom(1080, 1080)).toBeCloseTo(1080 / 371, 5);
+    expect(kioskWindowZoom(300, 500)).toBe(1); // never under 1
+    expect(kioskWindowZoom(4000, 4000)).toBe(KIOSK_MAX_ZOOM); // never over the cap
     expect(kioskWindowZoom(1920, 1080, 1.25)).toBe(1.25); // the technician's zoom wins
   });
 

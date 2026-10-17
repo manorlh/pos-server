@@ -912,6 +912,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
+    // A browser draws a dp as a CSS px (no window zoom): the dp values (the attract button, the corners) as they are.
+    cssPerDp: 1,
     wide,
     cols,
     ratio: aspectRatioCss(cfg.theme.imageRatio),

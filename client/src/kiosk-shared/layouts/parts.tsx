@@ -57,12 +57,14 @@ export function dishColumnsFor(m: PreviewModel, widthPx: number): number {
 }
 
 /**
- * The frame's scale against the kiosk's 540 CSS px. "עיצוב לרוחב" (lib/kioskLandscape.ts): on a landscape screen against
- * its short side — the width there grew every chip, icon and badge to ×1.6 ("לא ענקיים").
+ * The frame's scale against the kiosk's 540 CSS px — as dp (m.cssPerDp): the upright Windows kiosk draws the Android
+ * kiosk's 540 dp in 371 CSS px, where a unit is the same 1 (34u ≈ the Android kiosk's 48 dp "+"). "עיצוב לרוחב"
+ * (lib/kioskLandscape.ts): on a landscape screen against its short side — the width there grew every chip, icon and
+ * badge to ×1.6 ("לא ענקיים").
  */
 export function unitOf(m: PreviewModel): number {
   const side = m.landscape ? Math.min(m.screen.w, m.screen.h) : m.screen.w;
-  return Math.min(1.6, Math.max(0.55, side / 540));
+  return Math.min(1.6, Math.max(0.55, side / (540 * (m.cssPerDp ?? 1))));
 }
 
 /** What a layout's dish card asks of its catalog: "רוצים להפוך לארוחה?" for a dish. */
