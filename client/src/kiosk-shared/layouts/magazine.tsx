@@ -15,6 +15,7 @@ import { DietaryChips, ProductImage, cardStyle, textSize, type PProduct, type Pr
 import { CategoryChips, PhaseFrame, useSectionSpy } from './frame';
 import { DP_PER_PX, Empty, cartCounts, kt, unitOf, useTapDish } from './parts';
 import { DishCountBadge } from './count-badge';
+import { DishInfoButton } from './info-button';
 
 export function MagazineCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
   const layout = layoutOf(m.cfg);
@@ -106,6 +107,7 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
         <ProductImage m={m} p={p} className="h-full w-full" />
         {p.soldOut ? <span className="absolute start-3 top-3 rounded-full bg-black/70 px-2.5 py-1 kt-11 font-bold text-white">{m.t('soldOut')}</span> : null}
         <DishCountBadge m={m} inCart={inCart} size={Math.round(34 * u)} className="end-3 top-3" />
+        <DishInfoButton m={m} p={p} card={{ descriptionLines: 3, dietaryOnCard: true, cardPicture: 'large' }} size={Math.round(34 * u)} className="absolute start-3 top-3" />
       </div>
       <div className="space-y-1 p-3.5">
         {label ? (
