@@ -37,6 +37,7 @@ import { DrawerScreen, type DrawerLog, type DrawerSheet, type WalletRow } from '
 import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
 import { LockScreen } from './screens/LockScreen';
 import { LocalReportScreen } from './screens/LocalReportScreen';
+import { KiosksScreen } from './screens/KiosksScreen';
 import { MenuActionSheet, TillMenuDrawer } from './parts/TillMenuDrawer';
 import { MENU_TEXT, buildTillMenu, folderOpenAtStart, type MenuTarget, type TillMenuFacts } from '../../../core/till/tillMenu';
 import { SellScreen } from './screens/SellScreen';
@@ -54,7 +55,7 @@ import { useTillEngine } from './useTillEngine';
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'history' | 'recent' | 'report' | 'caps' | 'shopx' | 'drawer' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue';
+type View = 'sell' | 'shift' | 'history' | 'recent' | 'report' | 'caps' | 'shopx' | 'drawer' | 'users' | 'owed' | 'transmission' | 'blocks' | 'printQueue' | 'kiosks';
 
 /** The menu's report rows and the local report each is. */
 const REPORT_OF: Partial<Record<MenuTarget, LocalReportKind>> = { shiftHistory: 'shifts', tillZHistory: 'tillZs', productSales: 'products', workers: 'workers', tips: 'tips' };
@@ -207,6 +208,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     }),
     [run],
   );
+  const refreshKiosks = useCallback(() => void run('kiosks.refresh', {}), [run]);
   const askReport = useCallback(
     (kind: LocalReportKind, preset: ReportPreset) =>
       void attempt('report.local', { kind, preset }).then((r) => {
@@ -309,7 +311,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         ? ((Object.keys(REPORT_OF) as MenuTarget[]).find((t) => REPORT_OF[t] === reportKind) ?? null)
         : view === 'caps'
           ? 'diagnostics'
-          : view === 'shopx' || view === 'history' || view === 'recent' || view === 'transmission' || view === 'printQueue' || view === 'blocks' || view === 'users' || view === 'owed'
+          : view === 'shopx' || view === 'history' || view === 'recent' || view === 'transmission' || view === 'printQueue' || view === 'blocks' || view === 'users' || view === 'owed' || view === 'kiosks'
             ? view
             : null;
   const menuGroups = buildTillMenu(menuFactsOf(s, { demo: host.demo, settings: !!host.ui.openAdmin, current: menuCurrent }));
@@ -366,6 +368,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       case 'blocks':
       case 'users':
       case 'owed':
+      case 'kiosks':
         setMenuAt(t);
         return setView(t);
       default:
@@ -439,6 +442,16 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             return r.ok && !(r.value && typeof r.value === 'object' && 'dialogId' in (r.value as object));
           }}
           refundHidden={(s.session.hidden ?? []).includes('REFUND')}
+        />
+      );
+    }
+    if (view === 'kiosks') {
+      return (
+        <KiosksScreen
+          kiosks={s.kiosks}
+          refresh={refreshKiosks}
+          command={(c) => void attempt('kiosks.command', c).then((r) => !r.ok && say(r.message, 'error'))}
+          back={() => setView('sell')}
         />
       );
     }
@@ -878,6 +891,7 @@ export function menuFactsOf(s: TillState, host: { demo: boolean; settings: boole
     blocks: !host.demo,
     signedInUsers: s.users?.offered === true,
     workMode: s.mode.rolesAllowed.includes('kiosk') ? { label: s.mode.switchLabel ?? MENU_TEXT.toKiosk } : null,
+    kiosks: s.kiosks?.rows.length ?? 0,
     support: s.menu?.support === true,
     current: host.current,
   };

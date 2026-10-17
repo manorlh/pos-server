@@ -1783,3 +1783,26 @@
 .t-lrep-warn .t-lrep-label {
   color: var(--t-warn);
 }
+
+/* "קיוסקים" (screens/KiosksScreen.tsx): each kiosk on its card. */
+.t-kiosk-card {
+  padding: 10px 14px;
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+  border: 1px solid var(--t-line);
+}
+.t-kiosk-card p {
+  margin: 0 0 4px;
+}
+.t-kiosk-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+.t-kiosk-lock {
+  margin: 8px 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--t-line);
+}

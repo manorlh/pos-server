@@ -15,7 +15,7 @@
  *
  * A row is here only when this till can carry it out: what the Windows engine does not have yet (the catalog's
  * management, the shop's Z, attendance, the ready orders, the kiosks' orders, the voucher station, printers, editing the
- * screen, the cloud's Zs, alerts, the managed kiosks, tables) is not shown — never a button that does nothing — and is
+ * screen, the cloud's Zs, alerts, tables) is not shown — never a button that does nothing — and is
  * listed, with what it needs, in the spec's "phase 2". Pure: the screen draws what this returns (test/tillMenu.test.ts).
  */
 
@@ -62,7 +62,8 @@ export type MenuGlyph =
   | 'phone'
   | 'exit'
   | 'warning'
-  | 'kiosk';
+  | 'kiosk'
+  | 'cart';
 
 /** Where a row leads: a screen of the till, or an action the screen carries out. */
 export type MenuTarget =
@@ -92,6 +93,7 @@ export type MenuTarget =
   | 'workMode'
   | 'blocks'
   | 'users'
+  | 'kiosks'
   | 'support'
   | 'signOut';
 
@@ -171,6 +173,8 @@ export const MENU_TEXT = {
   diagnostics: 'אבחון',
   blocks: 'חסומים כעת',
   users: 'עובדים מחוברים',
+  kiosks: 'קיוסקים',
+  kiosksSub: (n: number) => `${n} בשליטת הקופה`,
   support: 'תמיכה מרחוק',
   signOut: 'יציאה מהמשתמש',
   toKiosk: 'מעבר לקיוסק',
@@ -220,6 +224,8 @@ export interface TillMenuFacts {
   signedInUsers: boolean;
   /** The work mode's row: "מעבר לקיוסק" (a till by role) / "חזרה למצב קיוסק" (a kiosk working as a till); null — none. */
   workMode?: { label: string } | null;
+  /** "קיוסקים": the kiosks this till controls (0: no row — Android `rememberKioskControlEntry`). */
+  kiosks?: number;
   /** "תמיכה מרחוק" (TeamViewer QuickSupport on Windows). */
   support: boolean;
   /** The screen on show now (the row is tinted; the report folder opens on it). */
@@ -310,6 +316,7 @@ export function buildTillMenu(f: TillMenuFacts): MenuGroup[] {
   if (f.workMode && shown('kiosk_mode')) device.push({ key: 'kiosk_mode', target: 'workMode', label: f.workMode.label, sub: MENU_TEXT.workModeSub, tile: 'graphite', glyph: 'kiosk' });
   if (f.blocks && shown('blocks_now')) device.push({ key: 'blocks_now', target: 'blocks', label: MENU_TEXT.blocks, tile: 'red', glyph: 'warning', ...sel('blocks') });
   if (f.signedInUsers && shown('signed_in_users')) device.push({ key: 'signed_in_users', target: 'users', label: MENU_TEXT.users, tile: 'indigo', glyph: 'person', ...sel('users') });
+  if ((f.kiosks ?? 0) > 0 && shown('managed_kiosks')) device.push({ key: 'managed_kiosks', target: 'kiosks', label: MENU_TEXT.kiosks, sub: MENU_TEXT.kiosksSub(f.kiosks!), tile: 'graphite', glyph: 'cart', ...sel('kiosks') });
   if (f.support && shown('support')) device.push({ key: 'support', target: 'support', label: MENU_TEXT.support, tile: 'green', glyph: 'phone' });
   if (shown('switch_user')) device.push({ key: 'switch_user', target: 'signOut', label: MENU_TEXT.signOut, tile: 'red', glyph: 'exit', danger: true });
   groups.push({ id: 'device', title: null, rows: device });

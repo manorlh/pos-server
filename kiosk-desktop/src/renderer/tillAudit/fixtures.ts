@@ -20,6 +20,7 @@ import {
   type XReport,
 } from '../../shared/till/protocol';
 import { initialState } from '../../shared/till/mockEngine';
+import { kioskControlRows } from '../../core/till/kioskControl';
 
 const LONG = [
   'שניצל עוף בציפוי פנקו עם פירה תפוחי אדמה ורוטב פטריות שמנת',
@@ -169,6 +170,15 @@ function richState(): TillState {
     terminalOffline: { text: 'המסוף עובד במצב לא מקוון (עסקאות נשמרות לשידור)\nלא ניתן לשלם בכרטיס דביט / דיירקט / כרטיס זר כרגע', tone: 'amber' },
     order: { dining: 'take_away', name: 'Jonathan', strip: 'לקחת  ·  Jonathan', configured: true, ask: null },
     shopX: { offered: true, report: null, at: null, busy: false, error: null },
+    // "קיוסקים": two kiosks this till controls, one locked, one with an unprinted bon and an alert.
+    kiosks: {
+      busy: false,
+      note: { text: 'נשלח לקיוסק — יבוצע כשאין תשלום פתוח', ok: true },
+      rows: kioskControlRows([
+        { machineId: 'k1', name: 'קיוסק כניסה ראשית — Main Entrance Kiosk A', online: true, flowState: 'ordering', ordersToday: 1234, salesTodayAgorot: 9_999_990, printerStatus: 'ok', bonPrinter: 'error', unprintedBons: 2, unprintedOrders: [{ localId: 'l1', label: '57' }], alerts: [{ kind: 'terminal', text: 'המסופון לא מגיב מזה 5 דקות' }], shiftOpen: true, zMode: 'cloud' },
+        { machineId: 'k2', name: 'קיוסק טרסה', online: false, lastSeenAt: iso(40), paused: true, pausedBy: 'Jonathan Livingston-Smith', pausedAt: iso(30), pausedUntil: null, ordersToday: 0, salesTodayAgorot: 0, shiftOpen: false, zMode: 'till' },
+      ]),
+    },
     // "תפריט" (core/till/tillMenu.ts): the profile card, the sync, a release ready, the reports folder.
     menu: {
       roleName: 'מנהלת משמרת — Senior Shift Manager',

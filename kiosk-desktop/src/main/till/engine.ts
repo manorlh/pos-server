@@ -230,6 +230,7 @@ import { TillItemBlocks } from './tillItemBlocks';
 import { TillPrintQueue } from './tillPrintQueue';
 import { TillCustomerDisplay } from './tillCustomerDisplay';
 import { TillMenuService } from './tillMenuService';
+import { TillKiosks } from './tillKiosks';
 import { FAILOVER_TEXT, ticketTitleOf } from '../../core/kitchen/failover';
 import { IB_TEXT } from '../../core/till/itemBlocks';
 import type { LanCall } from '../kitchen/kitchenNet';
@@ -353,6 +354,7 @@ const ENTRIES: ReadonlyArray<readonly [string, EntryKind]> = [
   [PERM.REPRINT, 'option'],
   [PERM.SHOP_X, 'legacy'],
   ['VIEW_REPORTS', 'legacy'],
+  ['KIOSK_CONTROL', 'option'],
 ];
 /** The most recent receipts "זיכוי מקבלה" lists (RecentReceiptCount). */
 const RECENT_RECEIPTS = 8;
@@ -717,6 +719,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
   readonly customerDisplay: TillCustomerDisplay;
   /** "תפריט" as the Android drawer: the profile card, the sync, the update, support, the local reports (tillMenuService.ts). */
   readonly menu: TillMenuService;
+  /** "קיוסקים": a controlling till's kiosks (tillKiosks.ts). */
+  readonly kiosks: TillKiosks;
   /** The last op from the screens (a touch, a key): the idle lock counts from it too. */
   private lastTouchAt: number;
 
@@ -757,6 +761,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.printQueue = new TillPrintQueue(this.ctx);
     this.customerDisplay = new TillCustomerDisplay(this.ctx);
     this.customerDisplay.start();
+    this.kiosks = new TillKiosks(this.ctx);
     this.menu = new TillMenuService(this.ctx, {
       zOnly: () => this.shiftsHidden(),
       tillZMode: () => zModeOf(this.svc.cloud.heartbeat().zMode) === 'till',
@@ -1227,6 +1232,19 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       case 'report.reprintZ':
         this.menu.reprintZ(String(a.id ?? ''));
         return undefined;
+      case 'kiosks.refresh':
+        this.kiosks.refresh();
+        return undefined;
+      case 'kiosks.command': {
+        const action = (['pause', 'resume', 'close_shift', 'till_z', 'bon_print', 'bon_handled', 'reprint_bon', 'reprint_receipt'] as const).find((x) => x === a.action);
+        if (!action) return refuse('invalid_args');
+        const kioskId = String(a.kioskId ?? '');
+        const extra = { message: typeof a.message === 'string' ? a.message : null, minutes: typeof a.minutes === 'number' ? a.minutes : null };
+        // "שליטה בקיוסק" (KIOSK_CONTROL): the lock, the reopening and a kiosk's own Z — a manager's code where the role asks.
+        if (action === 'pause' || action === 'resume' || action === 'till_z') return this.gate('KIOSK_CONTROL', (by) => this.kiosks.command(kioskId, action, extra, by), { relax: false });
+        this.kiosks.command(kioskId, action, extra, null);
+        return undefined;
+      }
       case 'blocks.list':
         return this.itemBlocks.list();
       case 'blocks.sheet':
@@ -4409,6 +4427,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       dialog,
       menuHidden: parseHiddenMenu(params[HIDDEN_MENU_PARAM]),
       ...(user && !this.locked ? { menu: this.menu.state() } : {}),
+      ...(user && !this.locked && this.kiosks.count() > 0 ? { kiosks: this.kiosks.state() } : {}),
       tileText: tileTextOf(params),
       drawer: this.drawer.state(),
       users: this.sessions.state(),

@@ -113,6 +113,13 @@ function Glyph({ name }: { name: MenuGlyph }) {
         <path d="M12 10v4.5M12 17.5h.01" />
       </>
     ),
+    cart: (
+      <>
+        <path d="M3 4h2.5l2.2 10.5h10.6L20.5 7H6.4" />
+        <circle cx="9" cy="19" r="1.5" />
+        <circle cx="17" cy="19" r="1.5" />
+      </>
+    ),
     kiosk: (
       <>
         <rect x="6" y="2.5" width="12" height="15" rx="1.5" />

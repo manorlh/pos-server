@@ -299,3 +299,79 @@ describe('the engine\'s side of the menu (main/till/tillMenuService.ts)', () => 
     }
   });
 });
+
+describe('"קיוסקים" on a controlling till (core/till/kioskControl.ts, main/till/tillKiosks.ts)', () => {
+  const KIOSK = {
+    machineId: 'k-1',
+    name: 'קיוסק כניסה',
+    online: true,
+    paused: false,
+    flowState: 'ordering',
+    ordersToday: 12,
+    salesTodayAgorot: 45_600,
+    printerStatus: 'ok',
+    bonPrinter: 'ok',
+    unprintedBons: 1,
+    unprintedOrders: [{ localId: 'loc-7', label: '57' }],
+    alerts: [{ kind: 'terminal', text: 'המסופון לא מגיב' }],
+    shiftOpen: true,
+    zMode: 'cloud',
+  };
+
+  it('the rows in the Android words; the Z by the kiosk\'s Z mode', async () => {
+    const { kioskControlRows } = await import('../src/core/till/kioskControl');
+    const [r] = kioskControlRows([KIOSK, { nope: 1 }]);
+    expect(r).toMatchObject({
+      machineId: 'k-1',
+      stateLine: 'פעיל · מחובר · לקוח מזמין',
+      ordersLine: 'היום: 12 הזמנות · ₪456.00',
+      unprintedLine: '1 בונים ממתינים או נכשלו',
+      alertsLine: 'התראות פתוחות: המסופון לא מגיב',
+      unprintedOrders: [{ localId: 'loc-7', text: 'בון לא הודפס: הזמנה 57' }],
+      locked: null,
+      z: { action: 'close_shift', label: 'סגירת משמרת' },
+    });
+    expect(kioskControlRows([{ ...KIOSK, zMode: 'till' }])[0].z).toEqual({ action: 'till_z', label: 'הפקת Z' });
+    expect(kioskControlRows([{ ...KIOSK, paused: true, pausedBy: 'אבי', pausedAt: null, pausedUntil: null }])[0].locked).toEqual({ by: 'ננעל ע״י אבי · —', until: 'עד פתיחה ידנית' });
+    expect(kioskControlRows(null)).toEqual([]);
+  });
+
+  it('the menu\'s row only on a till that controls kiosks', () => {
+    expect(keys(buildTillMenu(FULL))).not.toContain('managed_kiosks');
+    const row = buildTillMenu({ ...FULL, kiosks: 2 }).flatMap((g) => g.rows).find((r) => r.key === 'managed_kiosks')!;
+    expect(row).toMatchObject({ label: 'קיוסקים', sub: '2 בשליטת הקופה', target: 'kiosks' });
+    expect(keys(buildTillMenu({ ...FULL, kiosks: 2, hidden: ['managed_kiosks'] }))).not.toContain('managed_kiosks');
+  });
+
+  it('a lock from the till: the manager named to the cloud, the answer said; a reprint goes as the operator', async () => {
+    const posted: Array<Record<string, unknown> | null> = [];
+    const h = await readyTill({ answers: { 'POST sync/m/kiosks/*': (b) => (posted.push(b), { id: 'cmd-1' }) } }, MANAGER_PIN);
+    try {
+      h.svc.cloud.setKioskSnapshot({ kiosk: false, controls: [KIOSK] });
+      expect(h.state().kiosks!.rows).toHaveLength(1);
+      await h.ok('kiosks.command', { kioskId: 'k-1', action: 'pause', minutes: 30, message: 'ניקיון' });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(posted[0]).toMatchObject({ action: 'pause', untilMode: 'minutes', minutes: 30, message: 'ניקיון', posUserId: 'u-manager' });
+      expect(h.state().kiosks!.note).toEqual({ text: 'בוצע', ok: true });
+      await h.ok('kiosks.command', { kioskId: 'k-1', action: 'reprint_bon', message: 'last' });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(posted[1]).toMatchObject({ action: 'reprint_bon', message: 'last' });
+      expect(h.state().kiosks!.note!.text).toBe('נשלח לקיוסק — יבוצע כשאין תשלום פתוח');
+      expect((await h.fail('kiosks.command', { kioskId: 'other', action: 'resume' })).code).toBe('invalid_args');
+    } finally {
+      h.stop();
+    }
+  });
+
+  it('the cloud refuses a till that is not the kiosk\'s controller: said in the till\'s words', async () => {
+    const h = await readyTill({ answers: { 'POST sync/m/kiosks/*': () => ({ __status: 403, detail: { code: 'not_kiosk_controller', message: 'x' } }) } }, MANAGER_PIN);
+    try {
+      h.svc.cloud.setKioskSnapshot({ kiosk: false, controls: [KIOSK] });
+      await h.ok('kiosks.command', { kioskId: 'k-1', action: 'resume' });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(h.state().kiosks!.note).toEqual({ text: 'הקופה הזו לא מורשית לשלוט בקיוסק הזה', ok: false });
+    } finally {
+      h.stop();
+    }
+  });
+});

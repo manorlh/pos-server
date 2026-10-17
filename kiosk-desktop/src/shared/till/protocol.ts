@@ -179,6 +179,9 @@ export const TILL_OPS = [
   'menu.support',
   'report.local',
   'report.reprintZ',
+  // "קיוסקים" on a controlling till (main/till/tillKiosks.ts): the kiosks again, a command to one.
+  'kiosks.refresh',
+  'kiosks.command',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -257,6 +260,7 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'menu.update',
   'menu.support',
   'report.reprintZ',
+  'kiosks.command',
 ]);
 
 export interface OpArgs {
@@ -393,6 +397,34 @@ export interface OpArgs {
   'report.local': { kind: LocalReportKind; preset?: ReportPreset };
   /** "הדפס שוב" on a Z of "דוחות Z": a copy, marked so. */
   'report.reprintZ': { id: string };
+  'kiosks.refresh': Record<string, never>;
+  /** `minutes`: "נעילה למכירה" for so long (absent: until reopened by hand); `message`: to the customers. */
+  'kiosks.command': { kioskId: string; action: 'pause' | 'resume' | 'close_shift' | 'till_z' | 'bon_print' | 'bon_handled' | 'reprint_bon' | 'reprint_receipt'; message?: string | null; minutes?: number | null };
+}
+
+/** One kiosk as the panel shows it. */
+export interface KioskControlRow {
+  machineId: string;
+  name: string;
+  online: boolean;
+  /** "פעיל" / "מושהה", the screen it is on, when last seen. */
+  stateLine: string;
+  ordersLine: string;
+  printerLine: string;
+  unprintedLine: string | null;
+  alertsLine: string | null;
+  unprintedOrders: Array<{ localId: string; text: string }>;
+  locked: { by: string; until: string } | null;
+  /** By its Z mode: "סגירת משמרת" (the shop's Z) or "הפקת Z" (its own); null with no shift open there. */
+  z: { action: 'close_shift' | 'till_z'; label: string } | null;
+  zNote: string | null;
+}
+
+/** "קיוסקים" (core/till/kioskControl.ts): the kiosks this till controls, a command on its way, how the last went. */
+export interface KiosksState {
+  rows: KioskControlRow[];
+  busy: boolean;
+  note: { text: string; ok: boolean } | null;
 }
 
 /** The reports of the menu's "דוחות" folder the till builds from its own records (core/till/localReports.ts). */
@@ -863,6 +895,8 @@ export interface TillState {
   menuHidden?: string[];
   /** The ☰ menu's own facts (TillMenuState); absent (the demo): the menu shows what the rest of the state allows. */
   menu?: TillMenuState;
+  /** "קיוסקים": only on a till that controls kiosks. */
+  kiosks?: KiosksState;
   /** The tiles' text (TileTextState); absent: the defaults (fit, 3 lines, s, auto). */
   tileText?: TileTextState;
   /** "דוח X סניפי" (core/till/shopX.ts): offered on this till, and the report last brought (until sign-out). */

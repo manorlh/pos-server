@@ -73,6 +73,7 @@ const TILL = [
   { id: 't-report-products', query: 'state=sell', steps: report('מכירות לפי מוצר'), expect: has('משמרת בוקר') },
   { id: 't-report-workers', query: 'state=sell', steps: report('דוח לפי עובד') },
   { id: 't-report-shifts', query: 'state=sell', steps: report('היסטוריית משמרות'), expect: has('משמרת #1287') },
+  { id: 't-kiosks', query: 'state=sell', steps: menu('קיוסקים'), expect: has('קיוסק טרסה') },
   { id: 't-report-zs', query: 'state=sell', steps: report('דוחות Z'), expect: has('Z 412') },
   { id: 't-drawer-open', query: 'state=sell', steps: menu('פתיחת מגירה') },
   { id: 't-history', query: 'state=sell', steps: menu('היסטוריה'), expect: has('40000123') },
