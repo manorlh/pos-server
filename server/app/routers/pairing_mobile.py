@@ -28,6 +28,7 @@ from app.schemas.pairing_mobile import (
     MobileShopRow,
     PairingSessionCreateResponse,
     PairingSessionSummary,
+    DeviceRequestClaimIn,
 )
 from app.services import access
 from app.services import training_mode as TM
@@ -226,7 +227,88 @@ def device_register(
         device_info=body.device_info,
         machine_name=body.machine_name,
     )
-    return DeviceRegisterResponse(device_nonce=row.device_nonce, expires_at=row.expires_at)
+    return DeviceRegisterResponse(
+        device_nonce=row.device_nonce, expires_at=row.expires_at,
+        device_code=row.device_code, code_expires_at=row.code_expires_at,
+    )
+
+
+# ── "צימוד מהענן" (P:/specs/foreign-records-upload.md §5.2, §6.2) ─────────────
+
+
+@router.get("/code-preview")
+def pairing_code_preview(
+    request: Request,
+    code: str = Query(..., min_length=1, max_length=32),
+    db: Session = Depends(get_db),
+):
+    """
+    What a pairing code pairs to, before the device redeems it (no auth, rate-limited per IP):
+    `{"bound": true, machineId, machineName, posNumber, shopName, companyName}` for a code bound to an
+    existing machine, `{"bound": false, shopName, companyName}` otherwise; 404 unknown / used / expired.
+    """
+    from app.services import cloud_pairing
+
+    check_rate_limit(request, "pairing_code_preview", max_calls=30, window_seconds=60)
+    out = cloud_pairing.code_preview(db, code)
+    if out is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="pairing_code_unknown")
+    return out
+
+
+@router.get("/device-requests")
+def list_device_requests(
+    shop_id: Optional[uuid_mod.UUID] = Query(None, alias="shopId"),
+    code: Optional[str] = Query(None, max_length=16),
+    current_user: User = Depends(get_current_distributor),
+    active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "מכשירים שממתינים לצימוד": waiting devices whose last pairing was in this tenant (narrowed to a shop),
+    plus any waiting device by its exact `code`: [{id, deviceCode, codeExpiresAt, platform, model, serial,
+    machineName, lastPairing, registeredAt}].
+    """
+    from app.services import cloud_pairing
+
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
+    return {"items": cloud_pairing.list_requests(db, active_tenant_id, shop_id=shop_id, code=code)}
+
+
+@router.post("/device-requests/claim")
+def claim_device_request(
+    body: DeviceRequestClaimIn,
+    current_user: User = Depends(get_current_distributor),
+    active_tenant_id: uuid_mod.UUID = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Claim a waiting device by its code: with `machineId` it becomes that existing machine (a bound code —
+    the re-pair / replacement rules); without, a new machine in `shopId`. `confirm: true` required (422
+    `confirm_required`). 404 `device_code_unknown`; 409 `adoption_refused` (an open shift of another
+    device, card sales not transmitted) / `shop_inactive`. The credentials go to the device's nonce poll.
+    """
+    from app.services import cloud_pairing
+    from app.services import display_devices
+
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
+    if not body.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "confirm_required", "message": "יש לאשר את הצימוד"},
+        )
+    try:
+        _row, _machine, out = cloud_pairing.claim(
+            db, current_user, active_tenant_id, device_code=body.device_code, machine_id=body.machine_id,
+            company_id=body.company_id, shop_id=body.shop_id, machine_name=body.machine_name,
+        )
+    except display_devices.PlatformMismatch as exc:
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=exc.body)
+    except TM.DeviceUnsupported as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    return out
 
 
 @router.get("/device/{nonce}/status")

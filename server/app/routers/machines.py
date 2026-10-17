@@ -1935,6 +1935,72 @@ def create_replacement_pairing_code(
     }
 
 
+# ── Re-pair and move (P:/specs/foreign-records-upload.md §5.2, §6.3) ──────────
+
+
+class MovePairingBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    target_machine_id: uuid_mod.UUID = Field(..., alias="targetMachineId")
+    #: The device unpairs even with records unsent (after its backup) — support only.
+    forced: bool = False
+
+
+@router.post("/{machine_id}/re-pair-code")
+def create_re_pair_code(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_distributor),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "קוד צימוד מחדש לקופה הזו": a pairing code bound to this machine (the replacement code,
+    `target_machine_id`) — the device that redeems it becomes this till: same id, numbering, shift / Z
+    linkage, settings, area, license. Not refused for an open shift: redeemed by the device it was bound
+    to (`deviceInfo.previousMachineId`) the shift is its own; by another device the replacement rules
+    apply at redemption (409 while the shift is open). 409 `shop_inactive`.
+    """
+    from app.services import cloud_pairing
+
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    code = cloud_pairing.create_re_pair_code(db, current_user, machine)
+    return cloud_pairing.re_pair_code_out(db, code, machine)
+
+
+@router.post("/{machine_id}/move-pairing", status_code=status.HTTP_201_CREATED)
+def move_pairing(
+    machine_id: uuid_mod.UUID,
+    body: MovePairingBody,
+    current_user: User = Depends(get_current_distributor),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "העבר מכשיר לקופה אחרת": device command `move_pairing` to this machine's device with a single-use code
+    bound to `targetMachineId` (24 h). The device runs its unpair guard (refuses with records unsent unless
+    `forced` — 403 `super_admin_only` for anyone but support), backs up, unpairs and re-pairs to the target;
+    its answer: `result.outcome` ok | refused_pending | failed. Returns the command.
+    """
+    from app.services import cloud_pairing
+    from app.services import device_commands as DC
+
+    access.require_feature(db, current_user, access.PAIR_DEVICES)
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    out = cloud_pairing.move_pairing(
+        db, current_user, active_tenant_id, machine, body.target_machine_id, forced=body.forced,
+    )
+    db.commit()
+    DC.wake([machine])
+    return out
+
+
 # ── "סוג מכשיר": role and model (docs/SPEC_DEVICE_ROLE_MODEL.md) ──────────────
 
 

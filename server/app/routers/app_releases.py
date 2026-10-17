@@ -317,7 +317,8 @@ def upload_app_release(
     platform: Annotated[Optional[str], Form()] = None,
 ):
     """
-    Upload one release; form field `platform` "android" (default), "windows" or "kiosk_web"
+    Upload one release; form field `platform` "android" (default), "windows", "windows7" (the Windows 7 till
+    build, app/services/windows7.py — the same installer rules as "windows") or "kiosk_web"
     (`422 invalid_platform` otherwise). SHA-256 and size are computed here.
 
     * Android — an APK: versionCode / versionName are read from its manifest, and the
@@ -340,7 +341,7 @@ def upload_app_release(
     typed_name = _clean_version_name(version_name)
     release_id = uuid.uuid4()
     directory = _releases_dir()
-    ext = {AU.PLATFORM_WINDOWS: "exe", AU.PLATFORM_KIOSK_WEB: "zip"}.get(platform, "apk")
+    ext = {AU.PLATFORM_WINDOWS: "exe", AU.PLATFORM_WINDOWS7: "exe", AU.PLATFORM_KIOSK_WEB: "zip"}.get(platform, "apk")
     partial = directory / f"{release_id}.{ext}.part"
     final = directory / f"{release_id}.{ext}"
     committed = False
@@ -349,7 +350,7 @@ def upload_app_release(
         sha256, size = _store_upload(file, partial, get_settings().app_release_max_bytes)
         if platform == AU.PLATFORM_KIOSK_WEB:
             name, code, bridge_api = _settle_bundle(partial, size, typed_name, version_code)
-        elif platform == AU.PLATFORM_WINDOWS:
+        elif platform in AU.WINDOWS_PLATFORMS:
             if size == 0 or not _starts_with_mz(partial):
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_installer")
             name, code = _settle_windows_version(typed_name, version_code, getattr(file, "filename", None))

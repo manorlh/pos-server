@@ -38,6 +38,10 @@ class DeviceRegisterResponse(BaseModel):
 
     device_nonce: str = Field(..., alias="deviceNonce")
     expires_at: datetime = Field(..., alias="expiresAt")
+    #: "קוד מכשיר" (P:/specs/foreign-records-upload.md §6.1): 6 characters (A-Z, 2-9, no look-alikes) the
+    #: device shows as XXX-XXX; the dashboard claims it by it. Grants nothing alone. Rotated by registering again.
+    device_code: Optional[str] = Field(None, alias="deviceCode")
+    code_expires_at: Optional[datetime] = Field(None, alias="codeExpiresAt")
 
 
 class DevicePollWaitingResponse(BaseModel):
@@ -102,3 +106,16 @@ class MobileContextResponse(BaseModel):
     default_shop_id: Optional[uuid.UUID] = Field(None, alias="defaultShopId")
     companies: List[MobileCompanyRow]
     shops: List[MobileShopRow] = Field(default_factory=list)
+
+
+class DeviceRequestClaimIn(BaseModel):
+    """`POST /pairing/device-requests/claim` (P:/specs/foreign-records-upload.md §6.2)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_code: str = Field(..., alias="deviceCode", min_length=4, max_length=16)
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
+    company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    machine_name: Optional[str] = Field(None, alias="machineName", max_length=255)
+    confirm: bool = False

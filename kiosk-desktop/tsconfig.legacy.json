@@ -1,0 +1,48 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "./legacy/node_modules/@types"
+    ],
+    "paths": {
+      "@kiosk-shared/*": [
+        "../client/src/kiosk-shared/*"
+      ],
+      "@dash-lib/*": [
+        "../client/src/lib/*"
+      ],
+      "@dash-messages/*": [
+        "../client/src/messages/*"
+      ],
+      "electron": [
+        "./legacy/node_modules/electron/electron.d.ts"
+      ],
+      "@/*": [
+        "../client/src/*"
+      ],
+      "undici": [
+        "./legacy/node_modules/undici"
+      ]
+    }
+  },
+  "include": [
+    "src/main",
+    "src/preload",
+    "src/legacy",
+    "legacy/types",
+    "scripts/win7-check.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "release",
+    "legacy/node_modules",
+    "legacy/dist"
+  ]
+}

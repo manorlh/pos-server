@@ -37,6 +37,14 @@ class DevicePairingRequest(Base):
     claimed_at = Column(DateTime(timezone=True), nullable=True)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    #: "קוד מכשיר" (P:/specs/foreign-records-upload.md §6.1): 6 characters the device shows, typed on the
+    #: dashboard to claim it — grants nothing alone (the credentials go to the nonce's poll only).
+    device_code = Column(String(8), nullable=True, index=True)
+    code_expires_at = Column(DateTime(timezone=True), nullable=True)
+    #: The tenant of the device's last pairing (`deviceInfo.lastPairing.tenantId`): its pending list.
+    last_tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    #: Who claimed it from the dashboard ("צימוד מהענן", §6.2).
+    claimed_by_user_id = Column(UUID(as_uuid=True), nullable=True)
 
     pairing_session = relationship("PairingSession", foreign_keys=[pairing_session_id])
     pos_machine = relationship("POSMachine", foreign_keys=[pos_machine_id])

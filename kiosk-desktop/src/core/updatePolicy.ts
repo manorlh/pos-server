@@ -1,7 +1,7 @@
 /**
  * When the Windows app takes an update — the pure rules (main/update/updater.ts runs them).
  *
- *  - The cloud offers (GET /sync/{m}/app-update?platform=windows) the release assigned to this
+ *  - The cloud offers (GET /sync/{m}/app-update?platform=windows — `windows7` from the Windows 7 build) the release assigned to this
  *    machine (machine → area → shop → company → tenant, staged by percent); only a Windows offer
  *    with an id and a SHA-256 is taken, and never a lower version unless the assignment is a
  *    rollback (`allowDowngrade`).
@@ -14,6 +14,7 @@
  */
 
 import type { AppRole } from '../shared/roles';
+import type { UpdatePlatform } from './appBuild';
 
 export interface UpdateOffer {
   available: boolean;
@@ -46,9 +47,13 @@ export function newer(a: string, b: string): boolean {
 
 const HEX64 = /^[0-9a-f]{64}$/i;
 
-/** Only a Windows release is for this app; never the version it runs; never lower unless a rollback. */
-export function acceptOffer(o: UpdateOffer | null | undefined, currentVersion: string): boolean {
-  if (!o || !o.available || o.platform !== 'windows' || !o.releaseId || !o.versionName || !o.sha256 || !HEX64.test(o.sha256)) return false;
+/**
+ * Only a release of the platform this build asked for is for this app (`windows`; the Windows 7 build asks for
+ * `windows7` — core/appBuild.ts — and never takes an Electron 44 installer); never the version it runs; never
+ * lower unless a rollback.
+ */
+export function acceptOffer(o: UpdateOffer | null | undefined, currentVersion: string, platform: UpdatePlatform = 'windows'): boolean {
+  if (!o || !o.available || o.platform !== platform || !o.releaseId || !o.versionName || !o.sha256 || !HEX64.test(o.sha256)) return false;
   if (o.versionName === currentVersion) return false;
   const code = o.versionCode ?? versionCodeOf(o.versionName);
   if (code < versionCodeOf(currentVersion) && o.allowDowngrade !== true) return false;

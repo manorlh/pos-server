@@ -42,6 +42,9 @@ import {
   isServerRole,
   splitDisplayDevices,
   platformsFor,
+  platformChoicesFor,
+  platformOfChoice,
+  WINDOWS7_CHOICE,
   webKioskLink,
   webPathOf,
   webScreenLink,
@@ -278,6 +281,28 @@ describe('roles', () => {
     }
     for (const r of NON_FISCAL_ROLES) assert.equal(typeof t.badge[r], 'string', r);
     for (const p of DEVICE_PLATFORMS) assert.equal(typeof (t.platforms as Record<string, unknown>)[p], 'string', p);
+    assert.equal(typeof (t.platforms as Record<string, unknown>)[WINDOWS7_CHOICE], 'string');
+    assert.equal(typeof t.windows7Note, 'string');
+  });
+});
+
+describe('"Windows 7 (קופה)" — the Windows 7 till build (P:/specs/windows7-till.md)', () => {
+  it('is offered for a till (and before a role is chosen) only, and pairs as Windows', () => {
+    assert.deepEqual(platformChoicesFor('till'), ['android', 'windows', 'windows7']);
+    assert.deepEqual(platformChoicesFor(''), ['android', 'windows', 'windows7']);
+    for (const role of ['kiosk', 'kds', 'order_status_board', 'customer_display', 'cash_host', 'local_server'] as const) {
+      assert.equal(platformChoicesFor(role).includes(WINDOWS7_CHOICE), false, role);
+    }
+    assert.equal(platformOfChoice(WINDOWS7_CHOICE), 'windows');
+    assert.equal(platformOfChoice('web'), 'web');
+  });
+
+  it('a Windows till code says windows7: true; nothing else ever does', () => {
+    const till = { role: 'till' as const, model: '' as const, companyId: '', shopId: '', platform: 'windows' as const, windows7: true };
+    assert.deepEqual(pairingRequestBody(till, { name: '', controllerMachineIds: [], lockDevice: false }), { deviceRole: 'till', platform: 'windows', windows7: true });
+    assert.equal('windows7' in pairingRequestBody({ ...till, windows7: false }, { name: '', controllerMachineIds: [], lockDevice: false }), false);
+    assert.equal('windows7' in pairingRequestBody({ ...till, platform: 'android' }, { name: '', controllerMachineIds: [], lockDevice: false }), false);
+    assert.equal('windows7' in pairingRequestBody({ ...till, role: 'kiosk' }, { name: '', controllerMachineIds: [], lockDevice: false }), false);
   });
 });
 

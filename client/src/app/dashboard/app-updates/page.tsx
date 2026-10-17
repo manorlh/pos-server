@@ -39,6 +39,7 @@ import { formatDateTime } from '@/lib/format';
 import {
   APP_PLATFORMS,
   allowsDowngrade,
+  isWindowsPlatform,
   behindCounts,
   checkInstallWindow,
   filterByPlatform,
@@ -88,6 +89,7 @@ const ANY = '__any__';
 const ACCEPT: Record<AppPlatform, string> = {
   android: '.apk,application/vnd.android.package-archive',
   windows: '.exe,application/vnd.microsoft.portable-executable,application/x-msdownload',
+  windows7: '.exe,application/vnd.microsoft.portable-executable,application/x-msdownload',
   kiosk_web: '.zip,application/zip',
 };
 
@@ -225,7 +227,7 @@ function PlatformBadge({ platform }: { platform?: string | null }) {
     <Badge
       variant="outline"
       className={cn(
-        p === 'windows'
+        p === 'windows' || p === 'windows7'
           ? 'border-sky-300 text-sky-800 dark:border-sky-800 dark:text-sky-300'
           : p === 'kiosk_web'
             ? 'border-violet-300 text-violet-800 dark:border-violet-800 dark:text-violet-300'
@@ -269,7 +271,7 @@ function ReleasesCard({
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const isWindows = uploadPlatform === 'windows';
+  const isWindows = isWindowsPlatform(uploadPlatform);
   // A kiosk web bundle carries its version in its manifest.json: no version fields.
   const isKioskWeb = uploadPlatform === 'kiosk_web';
   const nameFromFile = isWindows ? versionFromInstallerName(file?.name) : null;
@@ -513,7 +515,7 @@ function SendCard({ releases, platform }: { releases: AppRelease[]; platform: Pl
   );
   const release = active.find((r) => r.id === releaseId) ?? null;
   const releasePlatform = release ? platformOf(release) : null;
-  const isWindows = releasePlatform === 'windows';
+  const isWindows = isWindowsPlatform(releasePlatform);
   // Rollback and the install window: the Windows app and kiosk web bundles (never Android).
   const canRollback = allowsDowngrade(releasePlatform);
   const target = deepestOrgScope(scope);

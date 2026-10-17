@@ -28,7 +28,8 @@
 | `card` | null, tile, row, plate, bleed, button, outlined | null | כרטיס מנה; null = אריח (כמו היום) |
 | `flow` | free, guided | free | guided: פס שלבים וכפתור "המשך" |
 | `itemView` | sheet, full, modal, inline, steps, popover | sheet | חלון המנה |
-| `quickAdd` | off, no_required, always | off | נגיעה במנה בלי בחירות חובה מוסיפה אותה |
+| `quickAdd` | off, no_required, always | no_required | נגיעה במנה בלי בחירות חובה מוסיפה אותה. ברירת המחדל no_required מ-17.10 (הבעלים; קודם off) — רק לקיוסק שאף רמה לא בחרה לו: השכבות השמורות מחזיקות רק מה שרמה בחרה (העורך גוזם ערך ששווה למה שהיא יורשת), אז "off" שנבחר במפורש נשאר off |
+| `infoButton` | auto, always, off | auto | "כפתור פרטים" (ⓘ) על כרטיס מנה, פותח את חלון המנה עם "הוספה לסל". auto: כשנגיעה מכניסה את המנה ישר לסל ובחלון יש יותר מהכרטיס (תיאור ארוך מהשורות שבכרטיס — 30 תווים לשורה, אלרגנים, סימוני תזונה שהכרטיס לא מראה, תמונה שהכרטיס מראה קטנה או לא בכלל). כלל אחד: `dishInfoButtonOn` / `KioskLayouts.infoButtonOn`, גולדן `kiosk_info_button_golden.json`. מטרת מגע 48dp |
 | `mealView` | sheet, steps, tray | sheet | בניית ארוחה (tray — שלב 2) |
 | `mealUpsell` | off, first, after | off | "רוצים להפוך לארוחה?" (after — שלב 2) |
 | `basket` | null, bar, panel, summary, fab, drawer, receipt | null | הסל בזמן ההזמנה; null = לפי `theme.cartStyle` |

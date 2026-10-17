@@ -14,6 +14,7 @@ const channels: Record<keyof KioskEvents, string> = { view: 'kiosk:view', pay: '
 const api: KioskBridge = {
   bootstrap: () => ipcRenderer.invoke('kiosk:bootstrap'),
   pair: (input) => ipcRenderer.invoke('kiosk:pair', input),
+  pairingScreen: (a) => ipcRenderer.invoke('kiosk:pairingScreen', a),
   reportFlow: (input) => ipcRenderer.send('kiosk:reportFlow', input),
   funnel: (events) => ipcRenderer.send('kiosk:funnel', events),
   battery: (reading) => ipcRenderer.invoke('kiosk:battery', reading),

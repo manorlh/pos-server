@@ -30,6 +30,7 @@ import { PairedNotice } from './pairing/pairedNotice';
 import { OrderStatusBoard } from './roles/board/OrderStatusBoard';
 import { CashHostScreen } from './roles/cash/CashHostScreen';
 import { KdsScreen } from './roles/kds/KdsScreen';
+import { RoleLocked } from './roles/RoleLocked';
 import { RolePlaceholder } from './roles/RolePlaceholder';
 import { ShopLocked } from './roles/ShopLocked';
 import { ShellStaff } from './staff/ShellStaff';
@@ -52,6 +53,8 @@ function AppScreen({ initial, initialShell }: { initial: KioskView; initialShell
   useEffect(() => kiosk.on('view', setView), []);
   useEffect(() => shell.on('view', setShellView), []);
   if (view.phase === 'unpaired') return <ShellStaff view={view}><Pairing /></ShellStaff>;
+  // The Windows 7 build runs only the till: another role the cloud gave is shown as refused, never run (core/appBuild.ts).
+  if (shellView?.roleLock) return <ShellStaff view={view}><RoleLocked lock={shellView.roleLock} shellView={shellView} /></ShellStaff>;
   const role = shellView?.role ?? null;
   // "סניף לא פעיל": every screen here but the kiosk's sells nothing — locked at once.
   const shopActive = view.shopActive !== false && shellView?.shopActive !== false;

@@ -6,11 +6,25 @@
  */
 
 import { useState } from 'react';
-import { UNPAIR_TEXT, type UnpairCheck } from '../../core/unpairGuard';
-import type { TechnicianActionResult } from '../../shared/bridge';
+import { FOREIGN_TEXT, UNPAIR_TEXT, type UnpairCheck } from '../../core/unpairGuard';
+import type { TechnicianActionResult, TechnicianInfo } from '../../shared/bridge';
 import { kiosk } from '../bridge';
 
-export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: { label: string; buttonClassName: string; buttonStyle?: React.CSSProperties; onDone?: () => void }) {
+export function UnpairControl({
+  label,
+  buttonClassName,
+  buttonStyle,
+  onDone,
+  deviceLine,
+}: {
+  label: string;
+  buttonClassName: string;
+  buttonStyle?: React.CSSProperties;
+  onDone?: () => void;
+  /** "המכשיר הזה הוא קופה 3 · סניף X" — asked before the unpair goes (P:/specs/foreign-records-upload.md §1). */
+  deviceLine?: string | null;
+}) {
+  const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [check, setCheck] = useState<UnpairCheck | null>(null);
@@ -34,6 +48,7 @@ export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: {
   };
 
   const start = () => {
+    setAsking(false);
     setForcing(false);
     setConfirm(false);
     setConfirmMoney(false);
@@ -44,9 +59,23 @@ export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: {
 
   return (
     <div className="space-y-2">
-      <button type="button" disabled={busy} className={buttonClassName} style={buttonStyle} onClick={start}>
+      <button type="button" disabled={busy} className={buttonClassName} style={buttonStyle} onClick={() => (deviceLine ? setAsking(true) : start())}>
         {busy ? '…' : label}
       </button>
+      {asking ? (
+        <div className="space-y-2 rounded-lg border border-red-300 bg-white p-3 text-xs text-neutral-900" data-unpair-confirm>
+          <div className="font-bold">{deviceLine}</div>
+          <div>לנתק את המכשיר מהענן? אחרי הניתוק יוצג במסך הצימוד לאיזו קופה הוא היה מצומד.</div>
+          <div className="flex gap-2">
+            <button type="button" className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40" disabled={busy} onClick={start}>
+              כן, לנתק
+            </button>
+            <button type="button" className="rounded-lg bg-neutral-200 px-3 py-1.5 text-xs font-bold text-neutral-900" onClick={() => setAsking(false)}>
+              ביטול
+            </button>
+          </div>
+        </div>
+      ) : null}
       {result ? (
         <div
           role={result.ok ? 'status' : 'alert'}
@@ -101,6 +130,35 @@ export function UnpairControl({ label, buttonClassName, buttonStyle, onDone }: {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * "רשומות מהמכשיר הקודם (N) — לא נשלחו, נשמרו בגיבוי" (TechnicianInfo.foreignRows): rows of another pairing, held —
+ * never sent under this one; "ייצוא לקובץ" writes them (with their records and a copy of the database) to unpair-backups.
+ */
+export function ForeignRowsPanel({ rows, className, onDone }: { rows: NonNullable<TechnicianInfo['foreignRows']>; className?: string; onDone?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const exportNow = async () => {
+    setBusy(true);
+    const r: TechnicianActionResult = await kiosk.technicianAction({ type: 'exportForeign' }).catch((e: unknown) => ({ ok: false, message: `שגיאה: ${String(e)}` }));
+    setBusy(false);
+    setResult({ ok: r.ok, message: r.message ?? (r.ok ? 'בוצע' : 'הייצוא נכשל') });
+    onDone?.();
+  };
+  return (
+    <div className={className ?? 'space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950'} data-foreign-rows>
+      <div className="font-bold">{rows.title}</div>
+      {rows.lines.map((l) => (
+        <div key={l}>{l}</div>
+      ))}
+      <div className="text-amber-800">{FOREIGN_TEXT.hint}</div>
+      <button type="button" disabled={busy} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40" onClick={() => void exportNow()}>
+        {busy ? '…' : FOREIGN_TEXT.export}
+      </button>
+      {result ? <div className={`whitespace-pre-wrap break-words font-semibold ${result.ok ? 'text-emerald-800' : 'text-red-800'}`}>{result.message}</div> : null}
     </div>
   );
 }

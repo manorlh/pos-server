@@ -120,7 +120,25 @@ export function forceRefusal(c: UnpairCheck, r: ForceRequest): string | null {
   return null;
 }
 
-/** The backup's file name: `unpair-2026-10-17T21-04-05-123Z` (+ `.json` / `.kiosk.db`). */
-export function backupStem(nowMs: number): string {
-  return `unpair-${new Date(nowMs).toISOString().replace(/[:.]/g, '-')}`;
+/** The backup's file name: `unpair-2026-10-17T21-04-05-123Z` (+ `.json` / `.kiosk.db`); `foreign-…` for "ייצוא לקובץ". */
+export function backupStem(nowMs: number, prefix: 'unpair' | 'foreign' = 'unpair'): string {
+  return `${prefix}-${new Date(nowMs).toISOString().replace(/[:.]/g, '-')}`;
 }
+
+/**
+ * Rows of another pairing (main/sync/outbox.ts `foreign`): after "ניתוק בכל זאת" money rows stay on the device stamped
+ * with the machine they were made under. Paired to another machine they are held — never sent under it — and shown
+ * to the technician; paired to the same machine again they go as usual.
+ */
+export const FOREIGN_TEXT = {
+  title: (n: number) => `רשומות מהמכשיר הקודם (${n}) — לא נשלחו, נשמרו בגיבוי`,
+  hint: 'הן יישלחו רק אם המכשיר יצומד שוב לאותה קופה בענן',
+  export: 'ייצוא לקובץ',
+  exported: (file: string) => `נשמר: ${file}`,
+  exportFailed: (e: string) => `הייצוא נכשל: ${e}`,
+  none: 'אין רשומות מהמכשיר הקודם',
+  uploaded: (till: string, n: number) => `הועלו ל${till}: ${n}`,
+  refused: (n: number) => `נדחו: ${n} — נשמרו בגיבוי`,
+  requestRefused: (till: string, code: string) => `השרת לא קיבל את הרשומות של ${till} (${code}) — נשמרו בגיבוי`,
+  unsupported: 'השרת עוד לא מקבל רשומות של קופה קודמת — הן נשמרות במכשיר ובגיבוי',
+} as const;
