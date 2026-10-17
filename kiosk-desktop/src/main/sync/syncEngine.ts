@@ -43,6 +43,11 @@ export interface RemoteHooks {
   onSettings(): void;
   onParameters(): void;
   /**
+   * Pulled with the parameters, on their cadence (after a good beat, at most every 25 s, and in the full sync): the
+   * till's own copies — "עיצוב קופה" (main/till/tillDesign.ts). A failure is the hook's to log.
+   */
+  pullWithParameters?(): Promise<void>;
+  /**
    * "סניף לא פעיל" (client lib/shopActive.ts): the shop was turned off — or on again — in the cloud
    * (`shopActive` on the heartbeat, `machines/me`, the settings pull). The device locks once its
    * customer is done, or is released at once.
@@ -252,6 +257,7 @@ export class SyncEngine {
 
   async pulls(): Promise<void> {
     await this.pullParameters();
+    await this.hooks.pullWithParameters?.();
     await this.pullSettings();
     if (Date.now() - this.lastKioskSyncAttempt >= KIOSK_SYNC_MS) await this.kioskSync();
     await this.pullCatalog(false);
@@ -263,6 +269,7 @@ export class SyncEngine {
     await this.pullMachine();
     await this.pullSettings(true);
     await this.pullParameters();
+    await this.hooks.pullWithParameters?.();
     await this.kioskSync();
     await this.pullCatalog(true);
     await this.pullPromotions();

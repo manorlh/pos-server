@@ -9,6 +9,7 @@
 import { shopActiveKept } from '@dash-lib/shopActive';
 import { parseLicenseProduct, saidLicense, type LicenseProduct } from '../../core/deviceLicense';
 import type { Kv } from '../db/schema';
+import type { StoredTillDesign } from '../../core/till/tillDesign';
 
 export interface Credentials {
   serverUrl: string;
@@ -133,6 +134,7 @@ const K = {
   stock: 'cloud.stockLevels',
   shopActive: 'cloud.shopActive',
   license: 'cloud.licenseProduct',
+  tillDesign: 'cloud.tillDesign',
 } as const;
 
 export class CloudStore {
@@ -210,6 +212,19 @@ export class CloudStore {
   setParameters(p: Record<string, unknown>, etag: string | null) {
     this.write(K.params, p);
     if (etag) this.kv.set(K.paramsEtag, etag);
+  }
+
+  /** "עיצוב קופה": the last `GET /sync/{m}/till-design` bundle and its ETag (main/till/tillDesign.ts); null — none yet. */
+  tillDesign(): StoredTillDesign | null {
+    return this.read<StoredTillDesign>(K.tillDesign);
+  }
+
+  setTillDesign(v: StoredTillDesign | null) {
+    if (v) this.write(K.tillDesign, v);
+    else {
+      this.kv.delete(K.tillDesign);
+      this.cache.delete(K.tillDesign);
+    }
   }
 
   catalog(): CatalogSnapshot {
