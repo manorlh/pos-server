@@ -6,6 +6,7 @@ import { DEVICE_MODEL_IDS } from './deviceProfile';
 import type { AutoStartStatus } from './autoStart';
 import type { LicenseProduct } from './deviceLicense';
 import type { PresetDiscount } from './presetDiscounts';
+import type { OpenFormatProductionReport } from './taxOpenFormatForm';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -1592,6 +1593,8 @@ export interface TaxOpenFormatPreview {
   flaggedDocuments?: { transactionId: string; documentNumber: string | null; code: string; text: string }[];
   /** Duplicate copies left out of the file (each document once). */
   excludedDuplicateCopies?: number;
+  /** The production report (1.31 §2.6) of the preview run; absent on an older server. */
+  productionReport?: OpenFormatProductionReport;
 }
 
 export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';

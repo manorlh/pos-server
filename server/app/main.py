@@ -124,7 +124,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # How many vouchers a voucher file holds (GET /prepaid-vouchers/batches/{id}/file).
-    expose_headers=["X-Voucher-Count"],
+    # The open-format download's production report (routers/tax_reports.py, 1.31 §2.6).
+    expose_headers=["X-Voucher-Count", "X-Open-Format-Report"],
 )
 app.add_middleware(RequestContextMiddleware)
 # Compressed answers: a till pulls the tables' state (≈140 KB at 200 tables) every few

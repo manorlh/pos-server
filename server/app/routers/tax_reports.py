@@ -1,5 +1,7 @@
 """Dashboard tax reports — Israeli OPEN FORMAT export."""
 
+import base64
+import json
 from datetime import date
 from typing import Literal, Optional
 import uuid
@@ -20,8 +22,14 @@ from app.services.tax_reports import (
     build_tax_open_format_export,
     count_duplicate_copies,
     flagged_documents,
+    open_format_file_name,
+    production_report,
     resolve_export_context,
 )
+
+#: The download's production report (1.31 §2.6) of the very file in the body: base64 of its
+#: UTF-8 JSON (`production_report`). Exposed to the dashboard (main.py `expose_headers`).
+PRODUCTION_REPORT_HEADER = "X-Open-Format-Report"
 
 router = APIRouter(prefix="/reports/tax", tags=["tax-reports"])
 
@@ -129,6 +137,8 @@ def preview_tax_open_format(
         excluded_duplicate_copies=count_duplicate_copies(
             db, active_tenant_id, company_id=cid, shop_id=sid, start=ctx.start, end=ctx.end,
         ),
+        # Of this preview run; the download carries the report of the file itself.
+        production_report=production_report(ctx, result),
     )
 
 
@@ -157,15 +167,15 @@ def download_tax_open_format(
         db, active_tenant_id, ctx, company_id=cid, shop_id=sid,
     )
 
-    vat8 = (ctx.business_info.get("vatNumber") or "00000000")[:8].zfill(8)
-    from datetime import datetime
     # MMDDhhmm of the production, local time — the same moment as A000 1026/1027.
-    produced = result.process_date or datetime.now(ctx.zone)
-    ts = produced.strftime("%m%d%H%M")
-    filename = f"OPENFRMT-{vat8}-{ts}.zip"
+    filename = open_format_file_name(ctx, result)
+    report = json.dumps(production_report(ctx, result), ensure_ascii=False).encode("utf-8")
 
     return Response(
         content=zip_bytes,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            PRODUCTION_REPORT_HEADER: base64.b64encode(report).decode("ascii"),
+        },
     )
