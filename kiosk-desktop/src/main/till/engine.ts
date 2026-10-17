@@ -2978,18 +2978,21 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     if (c.phase !== 'tender' || !c.frozen || c.basket) return VOUCHER_TEXT.addItemsFirst;
     const p = this.priced();
     if (p.gone.length > 0) return 'חלק מהפריטים כבר לא נמכרים — חזרו לסל';
+    // A kiosk order's tip stays on top of the goods whatever the vouchers do.
+    const tip = Math.max(0, c.kioskOrder?.tipAgorot ?? 0);
+    const totals = tip > 0 ? { ...p.totals, tipAgorot: tip, chargeAgorot: p.totals.totalAgorot + tip } : p.totals;
     c.frozen = {
       lines: p.lines,
       tracked: p.tracked,
       promotions: p.promotions,
-      totals: p.totals,
+      totals,
       basketDiscountAgorot: p.basketDiscountAgorot,
       basketDiscount: p.basketDiscount,
       refunds: p.refunds,
       ...(p.voucherOutcomes ? { voucherOutcomes: p.voucherOutcomes } : {}),
       ...(p.prepaid ? { prepaid: p.prepaid, voucherLegs: p.voucherLegs } : {}),
     };
-    c.totalAgorot = p.totals.totalAgorot;
+    c.totalAgorot = totals.chargeAgorot;
     c.legs = [
       ...c.legs.filter((l) => l.external),
       ...(p.voucherLegs ?? []).filter((l) => l.amountAgorot > 0).map((l) => ({ method: 'production_voucher' as const, amountAgorot: l.amountAgorot, handedAgorot: 0, voucher: l.voucher, status: 'approved' as const })),

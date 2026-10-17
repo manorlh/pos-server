@@ -136,8 +136,8 @@ const TILL = [
   // Phase 2 (P:/specs/windows-till-menu-parity.md §7): the modules' screens and sheets.
   { id: 't-menu-phase2', query: 'state=sell', steps: [{ tap: 'תפריט', after: 900 }], expect: has('ניהול קטלוג') },
   { id: 't-dish-sheet', query: 'state=sell-empty', steps: [{ tap: 'פיצה מרגריטה של השף', after: 1000 }], expect: has('גודל המנה') },
-  { id: 't-meal-sheet', query: 'state=sell-empty', steps: [{ tap: 'ארוחת המבורגר עסקית', after: 1000 }], expect: has('סיכום') },
-  { id: 't-catalog-admin', query: 'state=sell', steps: menu('ניהול קטלוג'), expect: has('מצב: הכל') },
+  { id: 't-meal-sheet', query: 'state=sell-empty', steps: [{ wait: 600 }, { tap: 'ארוחת המבורגר עסקית', after: 1600 }], expect: has('סיכום') },
+  { id: 't-catalog-admin', query: 'state=sell', steps: [...menu('ניהול קטלוג'), { waitFor: has('מצב: הכל'), timeout: 5000 }], expect: has('מצב: הכל') },
   { id: 't-shop-z', query: 'state=sell', steps: menu('סגירת Z סניפי') },
   { id: 't-attendance', query: 'state=attendance', expect: has('יציאה להפסקה') },
   { id: 't-ready-orders', query: 'state=sell', steps: menu('הזמנות להכנה'), expect: has('מוכן לאיסוף') },

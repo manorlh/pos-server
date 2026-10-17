@@ -71,8 +71,6 @@
 
 .t-prn-history {
   margin: 0;
-  max-height: 360px;
-  overflow-y: auto;
 }
 
 .t-prn-history-row {

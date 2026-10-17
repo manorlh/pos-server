@@ -4,9 +4,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* A shop of many tills scrolls inside the report, never pushes the page sideways. */
-  max-height: 55vh;
-  overflow-y: auto;
+  /* A shop of many tills: the report scrolls (an inner scroll area below the fold was out of the window — layout audit). */
 }
 
 .t-shopz-row {

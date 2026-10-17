@@ -79,12 +79,12 @@
   min-width: 0;
 }
 
+/* One chip row that wraps (a scroll strip below the fold was a scroll area out of the window — layout audit 17.10). */
 .t-cadm-chiprow {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  overflow-x: auto;
-  overflow-y: hidden;
   padding-bottom: 4px;
   max-width: 100%;
 }
@@ -233,13 +233,12 @@
   text-align: left;
 }
 
+/* "+" (a new product): in the flow under the list — a floating button covered the last rows' prices (layout audit 17.10). */
 .t-cadm-fab {
-  position: fixed;
-  bottom: 24px;
-  left: 24px;
-  z-index: 12;
-  width: 64px;
-  height: 64px;
+  display: block;
+  margin: 12px 0 0;
+  width: 100%;
+  height: 56px;
   border: 0;
   border-radius: 18px;
   background: #1f5fd1;

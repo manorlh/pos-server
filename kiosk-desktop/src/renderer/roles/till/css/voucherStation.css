@@ -54,7 +54,7 @@
 .vst-test {
   padding: 10px 12px;
   border-radius: var(--t-radius, 10px);
-  background: #ea580c;
+  background: #c2410c;
   color: #ffffff;
   font-weight: 700;
   text-align: center;
@@ -283,7 +283,7 @@
   margin: 0;
   padding: 10px 12px;
   border-radius: var(--t-radius, 10px);
-  background: #ea580c;
+  background: #c2410c;
   color: #ffffff;
   font-weight: 700;
 }
@@ -343,12 +343,12 @@
 }
 
 .vst-tag-completes .vst-item-main {
-  border-color: #ea580c;
+  border-color: #c2410c;
   background: #fff1e8;
 }
 
 .vst-tag-voucher .vst-item-main {
-  border-color: #16a34a;
+  border-color: #15803d;
   background: #e3f3e8;
 }
 
@@ -396,8 +396,8 @@
 }
 
 .vst-green {
-  background: #16a34a;
-  border-color: #16a34a;
+  background: #15803d;
+  border-color: #15803d;
   color: #ffffff;
 }
 
@@ -417,14 +417,14 @@
 
 .vst-banner-missing,
 .vst-banner-alert {
-  background: #ea580c;
-  border-color: #ea580c;
+  background: #c2410c;
+  border-color: #c2410c;
   color: #ffffff;
 }
 
 .vst-banner-full {
-  background: #16a34a;
-  border-color: #16a34a;
+  background: #15803d;
+  border-color: #15803d;
   color: #ffffff;
 }
 
@@ -476,7 +476,7 @@
 .vst-chip-voucher {
   padding: 2px 8px;
   border-radius: 999px;
-  background: #16a34a;
+  background: #15803d;
   color: #ffffff;
   font-size: 13px;
   white-space: nowrap;
