@@ -88,6 +88,22 @@ export function casesFor(host, matrix = loadMatrix()) {
 }
 
 /**
+ * `--windows 1536x864,1080x1920`: exact windows (in DIPs, at 100% — the owner's screenshots: a 14" panel at 125% is a
+ * 1536×864 window) instead of the matrix; a window taller than wide is a portrait one.
+ */
+export function windowCases(host, spec) {
+  return String(spec)
+    .split(',')
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .map((w) => {
+      const [widthPx, heightPx] = w.split('x').map(Number);
+      const orientation = widthPx === heightPx ? 'square' : widthPx > heightPx ? 'landscape' : 'portrait';
+      return withMm(hostCase(host, { id: `win-${w}`, diagonalInches: null, widthPx, heightPx }, { orientation, widthPx, heightPx }, 1));
+    });
+}
+
+/**
  * The cases that draw differently: the same CSS viewport with the same decisions renders the same layout (the
  * pixel ratio only sharpens it). Each render keeps the list of matrix cases it stands for.
  */

@@ -37,7 +37,7 @@ import {
   Server,
   Coins,
 } from 'lucide-react';
-import { api, fetchMachines } from '@/lib/api';
+import { api, fetchMachines, fetchMachineSettings, patchMachineSettings } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   DEVICE_ROLES,
@@ -49,7 +49,6 @@ import {
   deviceProfileErrorMessage,
   deviceRoleOf,
   isDisplayDevice,
-  kioskDraftError,
   kioskPinpadMissing,
   platformsFor,
   type DevicePlatform,
@@ -77,13 +76,22 @@ import { DeviceModelSelect } from '@/components/dashboard/machines/device-model'
 import { DeviceLicensePicker, useMayManageLicense } from '@/components/dashboard/machines/device-license';
 import { licenseChoiceForRoleChange, parseLicenseProduct, type LicenseProduct } from '@/lib/deviceLicense';
 import { cn } from '@/lib/utils';
+import { DeviceTerminalFields } from '@/components/dashboard/machines/device-terminal';
+import {
+  TERMINAL_TEXT,
+  takesTerminal,
+  terminalDraftFromSettings,
+  terminalDraftHasErrors,
+  terminalSettingsPatch,
+  type TerminalDraft,
+} from '@/lib/deviceTerminal';
+import { paymentIntegrationErrorMessage, saveWarningMessages } from '@/lib/paymentIntegration';
+import type { PosSettingsPatch } from '@/lib/types';
 
 export const EMPTY_KIOSK_DRAFT: KioskDraft = {
   name: '',
   controllerMachineIds: [],
   lockDevice: true,
-  pinpadHost: '',
-  pinpadPort: '',
 };
 
 const ROLE_ICONS: Record<DeviceRole, typeof Store> = {
@@ -169,9 +177,6 @@ export function KioskOptionsFields({
     const kioskIds = new Set(all.filter((m) => m.deviceRole === 'kiosk' || isDisplayDevice(m)).map((m) => m.id));
     return controllerOptions(shopId, machineId, shops ?? [], all, kioskIds);
   }, [machines, shops, shopId, machineId]);
-  const draftError = kioskDraftError(value);
-  const hostError = draftError === 'pinpadHost';
-  const portError = draftError === 'pinpadPort';
 
   return (
     <div className="space-y-3 rounded-lg border border-dashed p-3">
@@ -210,39 +215,6 @@ export function KioskOptionsFields({
           <span className="block text-xs text-muted-foreground">{t('lockDeviceHint')}</span>
         </span>
       </label>
-      {/* "מכשירי הסליקה הם חיצוניים": the existing per-till pinpad keys (nayaxDeviceHost /
-          nayaxDevicePort), written to this machine's own settings when it becomes a kiosk. */}
-      <div className="space-y-1.5 rounded-md bg-muted/40 p-2">
-        <p className="flex items-center gap-1 text-sm font-medium">
-          <CreditCard className="h-3.5 w-3.5" aria-hidden /> {tr('pinpadTitle')}
-        </p>
-        <div className="grid gap-2 sm:grid-cols-[1fr_7rem]">
-          <label className="block space-y-1">
-            <span className="text-xs">{tr('pinpadHost')}</span>
-            <Input
-              dir="ltr"
-              value={value.pinpadHost}
-              placeholder="192.168.1.20"
-              aria-invalid={hostError ? true : undefined}
-              onChange={(e) => onChange({ ...value, pinpadHost: e.target.value })}
-            />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-xs">{tr('pinpadPort')}</span>
-            <Input
-              dir="ltr"
-              inputMode="numeric"
-              value={value.pinpadPort}
-              placeholder="8080"
-              aria-invalid={portError ? true : undefined}
-              onChange={(e) => onChange({ ...value, pinpadPort: e.target.value })}
-            />
-          </label>
-        </div>
-        {hostError ? <p className="text-xs text-destructive">{tr('pinpadHostInvalid')}</p> : null}
-        {portError ? <p className="text-xs text-destructive">{tr('pinpadPortInvalid')}</p> : null}
-        <p className="text-xs text-muted-foreground">{tr('pinpadHint')}</p>
-      </div>
     </div>
   );
 }
@@ -692,17 +664,58 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
   );
   const body = profileBody && chosenLicense && mayManageLicense ? { ...profileBody, licenseProduct: chosenLicense } : profileBody;
 
+  // "מסופון אשראי" (lib/deviceTerminal.ts): a till's or a kiosk's terminal type on its OWN settings layer —
+  // read from it, written back to it (`PATCH /machines/{id}/settings`, the server's own rules), after the role.
+  const sells = !display && !server && takesTerminal(role);
+  const platform = machine.platform === 'windows' || machine.platform === 'web' ? machine.platform : 'android';
+  const ownSettings = useQuery({
+    queryKey: ['machine-settings-own', machine.id],
+    queryFn: () => fetchMachineSettings(machine.id, false),
+    enabled: !display && !server,
+  });
+  const initialTerminal = useMemo(
+    () => terminalDraftFromSettings(ownSettings.data?.settings as Record<string, unknown> | undefined),
+    [ownSettings.data],
+  );
+  const [terminalEdit, setTerminalEdit] = useState<TerminalDraft | null>(null);
+  const terminal = terminalEdit ?? initialTerminal;
+  const terminalPatch = sells && ownSettings.isSuccess ? terminalSettingsPatch(initialTerminal, terminal) : null;
+  const terminalInvalid = sells && terminalDraftHasErrors(terminal);
+
   const save = useMutation({
-    mutationFn: () => api.put(`/machines/${machine.id}/device-profile`, body).then((r) => r.data),
-    onSuccess: () => {
+    mutationFn: async () => {
+      if (body) await api.put(`/machines/${machine.id}/device-profile`, body);
+      if (!terminalPatch) return [] as string[];
+      try {
+        const saved = await patchMachineSettings(machine.id, terminalPatch as PosSettingsPatch);
+        return saveWarningMessages(saved);
+      } catch (err) {
+        // The role / model are saved by now: say that the terminal is not.
+        const why = paymentIntegrationErrorMessage(err) ?? deviceProfileErrorMessage(err) ?? axiosErrorToToastMessage(err, tc('error'));
+        throw Object.assign(new Error(why), { terminalOnly: !!body, message: `${TERMINAL_TEXT.saveFailed}: ${why}` });
+      }
+    },
+    onSuccess: (warnings) => {
       void qc.invalidateQueries({ queryKey: ['machines'] });
       void qc.invalidateQueries({ queryKey: ['machine', machine.id] });
+      void qc.invalidateQueries({ queryKey: ['machine-settings-own', machine.id] });
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
       void qc.invalidateQueries({ queryKey: ['kiosk-candidates'] });
       toast.success(t('saved'));
+      for (const w of warnings) toast.warning(w);
       onOpenChange(false);
     },
-    onError: (err) => setError(deviceProfileErrorMessage(err) ?? axiosErrorToToastMessage(err, tc('error'))),
+    onError: (err) => {
+      if ((err as { terminalOnly?: boolean }).terminalOnly !== undefined) {
+        if ((err as { terminalOnly?: boolean }).terminalOnly) {
+          void qc.invalidateQueries({ queryKey: ['machines'] });
+          void qc.invalidateQueries({ queryKey: ['machine', machine.id] });
+        }
+        setError((err as Error).message);
+        return;
+      }
+      setError(deviceProfileErrorMessage(err) ?? axiosErrorToToastMessage(err, tc('error')));
+    },
   });
 
   return (
@@ -751,6 +764,19 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
         {becomesKiosk ? (
           <KioskOptionsFields shopId={machine.shopId ?? null} machineId={machine.id} value={kiosk} onChange={setKiosk} />
         ) : null}
+        {sells && ownSettings.isSuccess ? (
+          <DeviceTerminalFields
+            role={role as 'till' | 'kiosk'}
+            platform={platform}
+            builtinTerminal={platform === 'android' ? capabilitiesOf(model || null, { kiosk: role === 'kiosk' }).builtinTerminal : false}
+            value={terminal}
+            onChange={(next) => {
+              setTerminalEdit(next);
+              setError(null);
+            }}
+            idPrefix="device-profile-terminal"
+          />
+        ) : null}
         <div className="space-y-2">
           <Label htmlFor="device-profile-model">{tm('label')}</Label>
           <DeviceModelSelect
@@ -775,8 +801,8 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
           {tc('cancel')}
         </Button>
         <Button
-          disabled={!body || save.isPending || licenseBlocked || (becomesKiosk && !!kioskDraftError(kiosk))}
-          title={!body ? t('noChange') : undefined}
+          disabled={(!body && !terminalPatch) || save.isPending || (!!body && licenseBlocked) || terminalInvalid}
+          title={!body && !terminalPatch ? t('noChange') : undefined}
           onClick={() => save.mutate()}
         >
           {save.isPending ? <Loader2 className="animate-spin" /> : null}

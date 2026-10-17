@@ -87,6 +87,18 @@ function demoCheckout(): Record<string, unknown> {
   }
   const general: Record<string, unknown> = {};
   if (q.get('select') === 'instant') general.serviceSelect = 'instant';
+  // `&placement=attract`: "לקחת / לשבת" as the attract screen's two buttons.
+  if (q.get('placement') === 'attract') general.servicePlacement = 'attract';
+  // "גודל כרטיסי לקחת / לשבת": `&svcsize=auto|small|medium|large`, `&svcicon=` / `&svcw=` / `&svch=` (dp);
+  // `&lsvcsize=` the landscape block's size (lib/kioskServiceSize.ts).
+  const svcSize = q.get('svcsize');
+  if (svcSize) general.serviceCardSize = svcSize;
+  for (const [param, key] of [['svcicon', 'serviceIconSize'], ['svcw', 'serviceCardMaxWidth'], ['svch', 'serviceCardHeight']] as const) {
+    const n = Number(q.get(param));
+    if (q.get(param) && Number.isFinite(n)) general[key] = n;
+  }
+  const lsvc = q.get('lsvcsize');
+  if (lsvc) out.landscape = { general: { serviceCardSize: lsvc } };
   if (q.get('notes') === '1') general.notesEnabled = true;
   // "כיתוב רץ": `&ticker=top|bottom` runs it on every screen it may (`&reduce=1`: reduce motion, it stands still).
   if (q.get('reduce') === '1') general.reduceMotion = true;
