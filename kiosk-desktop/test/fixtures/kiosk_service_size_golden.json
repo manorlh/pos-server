@@ -1,0 +1,5570 @@
+{
+ "about": "גודל כרטיסי לקחת / לשבת (P:/specs/kiosk-service-size.md). The same bytes in pos-server server/tests/fixtures, kiosk-desktop/test/fixtures and pos-android app/src/test/resources; SHA-256 (LF) pinned in all three.",
+ "version": 1,
+ "sizes": [
+  "auto",
+  "small",
+  "medium",
+  "large"
+ ],
+ "default": "auto",
+ "keys": [
+  "serviceCardSize",
+  "serviceIconSize",
+  "serviceCardMaxWidth",
+  "serviceCardHeight"
+ ],
+ "numbers": {
+  "serviceIconSize": {
+   "min": 40,
+   "max": 160,
+   "step": 4
+  },
+  "serviceCardMaxWidth": {
+   "min": 160,
+   "max": 480,
+   "step": 4
+  },
+  "serviceCardHeight": {
+   "min": 100,
+   "max": 400,
+   "step": 4
+  }
+ },
+ "presets": {
+  "small": {
+   "cardMaxWidthDp": 220,
+   "cardHeightDp": 150,
+   "iconDp": 56
+  },
+  "medium": {
+   "cardMaxWidthDp": 280,
+   "cardHeightDp": 190,
+   "iconDp": 72
+  },
+  "large": {
+   "cardMaxWidthDp": 360,
+   "cardHeightDp": 250,
+   "iconDp": 96
+  }
+ },
+ "constants": {
+  "autoHeightPct": 26,
+  "autoHeightMinDp": 120,
+  "autoHeightMaxDp": 220,
+  "autoIconPct": 42,
+  "autoIconMaxDp": 96,
+  "autoWidthPct": 145,
+  "autoWidthMaxDp": 320,
+  "landscapeHeightShareMaxPct": 45,
+  "iconShareMaxPct": 60,
+  "widthMarginDp": 96,
+  "minHeightDp": 96,
+  "minIconDp": 32,
+  "minWidthDp": 120,
+  "attractGapDp": 12
+ },
+ "numberValue": [
+  {
+   "key": "serviceIconSize",
+   "raw": null,
+   "expect": null
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": true,
+   "expect": null
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": false,
+   "expect": null
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": "64",
+   "expect": null
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 0,
+   "expect": 40
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 39,
+   "expect": 40
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 40,
+   "expect": 40
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 41,
+   "expect": 40
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 42,
+   "expect": 44
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 43.9,
+   "expect": 44
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 64,
+   "expect": 64
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 98,
+   "expect": 100
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 99.5,
+   "expect": 100
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 159,
+   "expect": 160
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 160,
+   "expect": 160
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 161,
+   "expect": 160
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 400,
+   "expect": 160
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 480,
+   "expect": 160
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 500,
+   "expect": 160
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": -5,
+   "expect": 40
+  },
+  {
+   "key": "serviceIconSize",
+   "raw": 1000000000.0,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": null,
+   "expect": null
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": true,
+   "expect": null
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": false,
+   "expect": null
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": "64",
+   "expect": null
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 0,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 39,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 40,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 41,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 42,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 43.9,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 64,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 98,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 99.5,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 159,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 160,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 161,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 400,
+   "expect": 400
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 480,
+   "expect": 480
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 500,
+   "expect": 480
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": -5,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardMaxWidth",
+   "raw": 1000000000.0,
+   "expect": 480
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": null,
+   "expect": null
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": true,
+   "expect": null
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": false,
+   "expect": null
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": "64",
+   "expect": null
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 0,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 39,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 40,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 41,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 42,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 43.9,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 64,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 98,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 99.5,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 159,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 160,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 161,
+   "expect": 160
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 400,
+   "expect": 400
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 480,
+   "expect": 400
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 500,
+   "expect": 400
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": -5,
+   "expect": 100
+  },
+  {
+   "key": "serviceCardHeight",
+   "raw": 1000000000.0,
+   "expect": 400
+  }
+ ],
+ "sizeName": [
+  {
+   "raw": null,
+   "expect": "auto"
+  },
+  {
+   "raw": "auto",
+   "expect": "auto"
+  },
+  {
+   "raw": "small",
+   "expect": "small"
+  },
+  {
+   "raw": "medium",
+   "expect": "medium"
+  },
+  {
+   "raw": "large",
+   "expect": "large"
+  },
+  {
+   "raw": "LARGE",
+   "expect": "auto"
+  },
+  {
+   "raw": "",
+   "expect": "auto"
+  },
+  {
+   "raw": 3,
+   "expect": "auto"
+  },
+  {
+   "raw": true,
+   "expect": "auto"
+  }
+ ],
+ "settingsInForce": [
+  {
+   "name": "absent",
+   "general": {},
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "absent",
+   "general": {},
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "auto",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "auto",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "auto",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "auto",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "small",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "small",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "medium",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "medium",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "medium",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "medium",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "large",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "large",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "large",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "large",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "unknown size",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "huge",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "unknown size",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "huge",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "auto + icon 64",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": 64,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "auto + icon 64",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": 64,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "large + height 400",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "large",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": 400
+   }
+  },
+  {
+   "name": "large + height 400",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "large",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": 400
+   }
+  },
+  {
+   "name": "icon 160 + height 100",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": 160,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": 100
+   }
+  },
+  {
+   "name": "icon 160 + height 100",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": 160,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": 100
+   }
+  },
+  {
+   "name": "width 480 + height 300",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   }
+  },
+  {
+   "name": "width 480 + height 300",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   }
+  },
+  {
+   "name": "broken numbers",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": "80",
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": true
+   }
+  },
+  {
+   "name": "broken numbers",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": "80",
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": true
+   }
+  },
+  {
+   "name": "off-step numbers",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": 81,
+    "serviceCardMaxWidth": 10,
+    "serviceCardHeight": 9999
+   }
+  },
+  {
+   "name": "off-step numbers",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": 81,
+    "serviceCardMaxWidth": 10,
+    "serviceCardHeight": 9999
+   }
+  },
+  {
+   "name": "landscape block small",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": null,
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "landscape block small",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "large",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "medium",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "landscape block numbers",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "landscape block numbers",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": 64,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": 180
+   }
+  },
+  {
+   "name": "landscape block not an object",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "landscape": false,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  },
+  {
+   "name": "landscape block not an object",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "landscape": true,
+   "expect": {
+    "serviceCardSize": "small",
+    "serviceIconSize": null,
+    "serviceCardMaxWidth": null,
+    "serviceCardHeight": null
+   }
+  }
+ ],
+ "autoLandscape": [
+  {
+   "heightDp": 200,
+   "expect": {
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "heightDp": 320,
+   "expect": {
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "heightDp": 400,
+   "expect": {
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "heightDp": 461,
+   "expect": {
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "heightDp": 462,
+   "expect": {
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "heightDp": 480,
+   "expect": {
+    "cardMaxWidthDp": 180,
+    "cardHeightDp": 124,
+    "iconDp": 52
+   }
+  },
+  {
+   "heightDp": 533,
+   "expect": {
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 58
+   }
+  },
+  {
+   "heightDp": 600,
+   "expect": {
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 156,
+    "iconDp": 66
+   }
+  },
+  {
+   "heightDp": 768,
+   "expect": {
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 84
+   }
+  },
+  {
+   "heightDp": 800,
+   "expect": {
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "heightDp": 846,
+   "expect": {
+    "cardMaxWidthDp": 318,
+    "cardHeightDp": 219,
+    "iconDp": 92
+   }
+  },
+  {
+   "heightDp": 847,
+   "expect": {
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "heightDp": 864,
+   "expect": {
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "heightDp": 1080,
+   "expect": {
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "heightDp": 1200,
+   "expect": {
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "heightDp": 2160,
+   "expect": {
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  }
+ ],
+ "resolve": [
+  {
+   "name": "absent · 14in 1536x864 (125%)",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "absent · 1920x1080",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "absent · 1815x1080",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "absent · 1366x768",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 84
+   }
+  },
+  {
+   "name": "absent · 1280x800",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "absent · 1024x600",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 156,
+    "iconDp": 66
+   }
+  },
+  {
+   "name": "absent · Android tablet 1280x800 @1.5",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 58
+   }
+  },
+  {
+   "name": "absent · P18 1920x1200 @1.5",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "absent · portrait 1080x1920",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "absent · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "absent · portrait 800x1280",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "absent · tiny landscape 480x320",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "name": "auto · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "auto · 1920x1080",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "auto · 1815x1080",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "auto · 1366x768",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 84
+   }
+  },
+  {
+   "name": "auto · 1280x800",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "auto · 1024x600",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 156,
+    "iconDp": 66
+   }
+  },
+  {
+   "name": "auto · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 58
+   }
+  },
+  {
+   "name": "auto · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "auto · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "auto · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "auto · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "auto · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "auto"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "name": "small · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · 1920x1080",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · 1815x1080",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · 1366x768",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · 1280x800",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · 1024x600",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "small · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "medium · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · 1920x1080",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · 1815x1080",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · 1366x768",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · 1280x800",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · 1024x600",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "medium · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "medium"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "large · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · 1920x1080",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · 1815x1080",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · 1366x768",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · 1280x800",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · 1024x600",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 239,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 312,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 352,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 86
+   }
+  },
+  {
+   "name": "unknown size · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "unknown size · 1920x1080",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "unknown size · 1815x1080",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "unknown size · 1366x768",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 84
+   }
+  },
+  {
+   "name": "unknown size · 1280x800",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "unknown size · 1024x600",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 156,
+    "iconDp": 66
+   }
+  },
+  {
+   "name": "unknown size · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 58
+   }
+  },
+  {
+   "name": "unknown size · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "unknown size · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "unknown size · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "unknown size · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "unknown size · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "huge"
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "name": "auto + icon 64 · 14in 1536x864 (125%)",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · 1920x1080",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · 1815x1080",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · 1366x768",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · 1280x800",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · 1024x600",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 156,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · P18 1920x1200 @1.5",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · portrait 1080x1920",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · portrait 800x1280",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "auto + icon 64 · tiny landscape 480x320",
+   "general": {
+    "serviceIconSize": 64
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "large + height 400 · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 388,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 1920x1080",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 1815x1080",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 1366x768",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 345,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 1280x800",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 360,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 1024x600",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 270,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 239,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 360,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 312,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 352,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "large",
+    "serviceCardHeight": 400
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 86
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · 14in 1536x864 (125%)",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · 1920x1080",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · 1815x1080",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · 1366x768",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · 1280x800",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · 1024x600",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · P18 1920x1200 @1.5",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · portrait 1080x1920",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · portrait 800x1280",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "icon 160 + height 100 · tiny landscape 480x320",
+   "general": {
+    "serviceIconSize": 160,
+    "serviceCardHeight": 100
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 100,
+    "iconDp": 60
+   }
+  },
+  {
+   "name": "width 480 + height 300 · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "width 480 + height 300 · 1920x1080",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "width 480 + height 300 · 1815x1080",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "width 480 + height 300 · 1366x768",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": 84
+   }
+  },
+  {
+   "name": "width 480 + height 300 · 1280x800",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "width 480 + height 300 · 1024x600",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 464,
+    "cardHeightDp": 270,
+    "iconDp": 66
+   }
+  },
+  {
+   "name": "width 480 + height 300 · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 378,
+    "cardHeightDp": 239,
+    "iconDp": 58
+   }
+  },
+  {
+   "name": "width 480 + height 300 · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "width 480 + height 300 · portrait 1080x1920",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 480,
+    "cardHeightDp": 300,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "width 480 + height 300 · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 312,
+    "cardHeightDp": 300,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "width 480 + height 300 · portrait 800x1280",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 352,
+    "cardHeightDp": 300,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "width 480 + height 300 · tiny landscape 480x320",
+   "general": {
+    "serviceCardMaxWidth": 480,
+    "serviceCardHeight": 300
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 50
+   }
+  },
+  {
+   "name": "broken numbers · 14in 1536x864 (125%)",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "broken numbers · 1920x1080",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "broken numbers · 1815x1080",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   }
+  },
+  {
+   "name": "broken numbers · 1366x768",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 84
+   }
+  },
+  {
+   "name": "broken numbers · 1280x800",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "broken numbers · 1024x600",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 226,
+    "cardHeightDp": 156,
+    "iconDp": 66
+   }
+  },
+  {
+   "name": "broken numbers · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 58
+   }
+  },
+  {
+   "name": "broken numbers · P18 1920x1200 @1.5",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 302,
+    "cardHeightDp": 208,
+    "iconDp": 87
+   }
+  },
+  {
+   "name": "broken numbers · portrait 1080x1920",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "broken numbers · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "broken numbers · portrait 800x1280",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "broken numbers · tiny landscape 480x320",
+   "general": {
+    "serviceIconSize": "80",
+    "serviceCardHeight": true,
+    "serviceCardMaxWidth": null
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 174,
+    "cardHeightDp": 120,
+    "iconDp": 50
+   }
+  },
+  {
+   "name": "off-step numbers · 14in 1536x864 (125%)",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 388,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · 1920x1080",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 400,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · 1815x1080",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 400,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · 1366x768",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 345,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · 1280x800",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 360,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · 1024x600",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 270,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 239,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · P18 1920x1200 @1.5",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 360,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · portrait 1080x1920",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 400,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 400,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · portrait 800x1280",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 400,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "off-step numbers · tiny landscape 480x320",
+   "general": {
+    "serviceIconSize": 81,
+    "serviceCardHeight": 9999,
+    "serviceCardMaxWidth": 10
+   },
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 160,
+    "cardHeightDp": 144,
+    "iconDp": 80
+   }
+  },
+  {
+   "name": "landscape block small · 14in 1536x864 (125%)",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · 1920x1080",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · 1815x1080",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · 1366x768",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · 1280x800",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · 1024x600",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · Android tablet 1280x800 @1.5",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · P18 1920x1200 @1.5",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block small · portrait 1080x1920",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "landscape block small · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "landscape block small · portrait 800x1280",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   }
+  },
+  {
+   "name": "landscape block small · tiny landscape 480x320",
+   "general": {},
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "small"
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · 1920x1080",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · 1815x1080",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · 1366x768",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · 1280x800",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · 1024x600",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 312,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "large",
+    "cardMaxWidthDp": 352,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   }
+  },
+  {
+   "name": "portrait large, landscape block medium · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "large"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardSize": "medium",
+     "serviceIconSize": null
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "medium",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 72
+   }
+  },
+  {
+   "name": "landscape block numbers · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · 1920x1080",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · 1815x1080",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · 1366x768",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · 1280x800",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · 1024x600",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 180,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block numbers · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block numbers · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block numbers · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block numbers · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": {
+     "serviceCardHeight": 180,
+     "serviceIconSize": 64
+    }
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 64
+   }
+  },
+  {
+   "name": "landscape block not an object · 14in 1536x864 (125%)",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1536,
+    "heightDp": 864
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · 1920x1080",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1920,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · 1815x1080",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1815,
+    "heightDp": 1080
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · 1366x768",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1366,
+    "heightDp": 768
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · 1280x800",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · 1024x600",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1024,
+    "heightDp": 600
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · Android tablet 1280x800 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 853,
+    "heightDp": 533
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · P18 1920x1200 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 1280,
+    "heightDp": 800
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · portrait 1080x1920",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 1080,
+    "heightDp": 1920
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · portrait HIT kiosk 1080x1920 @1.5",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 720,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · portrait 800x1280",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": false,
+    "widthDp": 800,
+    "heightDp": 1280
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "landscape block not an object · tiny landscape 480x320",
+   "general": {
+    "serviceCardSize": "small"
+   },
+   "landscapeBlock": {
+    "general": "large"
+   },
+   "display": {
+    "landscape": true,
+    "widthDp": 480,
+    "heightDp": 320
+   },
+   "expect": {
+    "size": "small",
+    "cardMaxWidthDp": 192,
+    "cardHeightDp": 144,
+    "iconDp": 56
+   }
+  },
+  {
+   "name": "fractional 853.33x533.33",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 853.33,
+    "heightDp": 533.33
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 200,
+    "cardHeightDp": 138,
+    "iconDp": 58
+   }
+  },
+  {
+   "name": "fractional 1365.9x767.9",
+   "general": {},
+   "landscapeBlock": null,
+   "display": {
+    "landscape": true,
+    "widthDp": 1365.9,
+    "heightDp": 767.9
+   },
+   "expect": {
+    "size": "auto",
+    "cardMaxWidthDp": 289,
+    "cardHeightDp": 199,
+    "iconDp": 84
+   }
+  }
+ ],
+ "attractButtons": [
+  {
+   "name": "absent · 14in 1536x864 (125%) · box 768x96",
+   "boxWDp": 768,
+   "boxHDp": 96,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "absent · 14in 1536x864 (125%) · box 1228x260",
+   "boxWDp": 1228,
+   "boxHDp": 260,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 220
+   }
+  },
+  {
+   "name": "absent · 14in 1536x864 (125%) · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "absent · 1920x1080 · box 960x96",
+   "boxWDp": 960,
+   "boxHDp": 96,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "absent · 1920x1080 · box 1536x260",
+   "boxWDp": 1536,
+   "boxHDp": 260,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 220
+   }
+  },
+  {
+   "name": "absent · 1920x1080 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "absent · portrait 1080x1920 · box 540x96",
+   "boxWDp": 540,
+   "boxHDp": 96,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   },
+   "expect": {
+    "buttonWidthDp": 264,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "absent · portrait 1080x1920 · box 864x260",
+   "boxWDp": 864,
+   "boxHDp": 260,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   },
+   "expect": {
+    "buttonWidthDp": 426,
+    "buttonHeightDp": 260
+   }
+  },
+  {
+   "name": "absent · portrait 1080x1920 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "auto · 14in 1536x864 (125%) · box 768x96",
+   "boxWDp": 768,
+   "boxHDp": 96,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "auto · 14in 1536x864 (125%) · box 1228x260",
+   "boxWDp": 1228,
+   "boxHDp": 260,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 220
+   }
+  },
+  {
+   "name": "auto · 14in 1536x864 (125%) · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "auto · 1920x1080 · box 960x96",
+   "boxWDp": 960,
+   "boxHDp": 96,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "auto · 1920x1080 · box 1536x260",
+   "boxWDp": 1536,
+   "boxHDp": 260,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 319,
+    "buttonHeightDp": 220
+   }
+  },
+  {
+   "name": "auto · 1920x1080 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": 319,
+    "cardHeightDp": 220,
+    "iconDp": 92
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "auto · portrait 1080x1920 · box 540x96",
+   "boxWDp": 540,
+   "boxHDp": 96,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   },
+   "expect": {
+    "buttonWidthDp": 264,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "auto · portrait 1080x1920 · box 864x260",
+   "boxWDp": 864,
+   "boxHDp": 260,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   },
+   "expect": {
+    "buttonWidthDp": 426,
+    "buttonHeightDp": 260
+   }
+  },
+  {
+   "name": "auto · portrait 1080x1920 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "auto",
+    "cardMaxWidthDp": null,
+    "cardHeightDp": null,
+    "iconDp": null
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "small · 14in 1536x864 (125%) · box 768x96",
+   "boxWDp": 768,
+   "boxHDp": 96,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 220,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "small · 14in 1536x864 (125%) · box 1228x260",
+   "boxWDp": 1228,
+   "boxHDp": 260,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 220,
+    "buttonHeightDp": 150
+   }
+  },
+  {
+   "name": "small · 14in 1536x864 (125%) · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "small · 1920x1080 · box 960x96",
+   "boxWDp": 960,
+   "boxHDp": 96,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 220,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "small · 1920x1080 · box 1536x260",
+   "boxWDp": 1536,
+   "boxHDp": 260,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 220,
+    "buttonHeightDp": 150
+   }
+  },
+  {
+   "name": "small · 1920x1080 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "small · portrait 1080x1920 · box 540x96",
+   "boxWDp": 540,
+   "boxHDp": 96,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 220,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "small · portrait 1080x1920 · box 864x260",
+   "boxWDp": 864,
+   "boxHDp": 260,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 220,
+    "buttonHeightDp": 150
+   }
+  },
+  {
+   "name": "small · portrait 1080x1920 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "small",
+    "cardMaxWidthDp": 220,
+    "cardHeightDp": 150,
+    "iconDp": 56
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "medium · 14in 1536x864 (125%) · box 768x96",
+   "boxWDp": 768,
+   "boxHDp": 96,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 280,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "medium · 14in 1536x864 (125%) · box 1228x260",
+   "boxWDp": 1228,
+   "boxHDp": 260,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 280,
+    "buttonHeightDp": 190
+   }
+  },
+  {
+   "name": "medium · 14in 1536x864 (125%) · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "medium · 1920x1080 · box 960x96",
+   "boxWDp": 960,
+   "boxHDp": 96,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 280,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "medium · 1920x1080 · box 1536x260",
+   "boxWDp": 1536,
+   "boxHDp": 260,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 280,
+    "buttonHeightDp": 190
+   }
+  },
+  {
+   "name": "medium · 1920x1080 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "medium · portrait 1080x1920 · box 540x96",
+   "boxWDp": 540,
+   "boxHDp": 96,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 264,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "medium · portrait 1080x1920 · box 864x260",
+   "boxWDp": 864,
+   "boxHDp": 260,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 280,
+    "buttonHeightDp": 190
+   }
+  },
+  {
+   "name": "medium · portrait 1080x1920 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "medium",
+    "cardMaxWidthDp": 280,
+    "cardHeightDp": 190,
+    "iconDp": 72
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "large · 14in 1536x864 (125%) · box 768x96",
+   "boxWDp": 768,
+   "boxHDp": 96,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "large · 14in 1536x864 (125%) · box 1228x260",
+   "boxWDp": 1228,
+   "boxHDp": 260,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 250
+   }
+  },
+  {
+   "name": "large · 14in 1536x864 (125%) · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "large · 1920x1080 · box 960x96",
+   "boxWDp": 960,
+   "boxHDp": 96,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "large · 1920x1080 · box 1536x260",
+   "boxWDp": 1536,
+   "boxHDp": 260,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 250
+   }
+  },
+  {
+   "name": "large · 1920x1080 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "large · portrait 1080x1920 · box 540x96",
+   "boxWDp": 540,
+   "boxHDp": 96,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 264,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "large · portrait 1080x1920 · box 864x260",
+   "boxWDp": 864,
+   "boxHDp": 260,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 250
+   }
+  },
+  {
+   "name": "large · portrait 1080x1920 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 250,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "large + height 400 · 14in 1536x864 (125%) · box 768x96",
+   "boxWDp": 768,
+   "boxHDp": 96,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 388,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 14in 1536x864 (125%) · box 1228x260",
+   "boxWDp": 1228,
+   "boxHDp": 260,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 388,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 260
+   }
+  },
+  {
+   "name": "large + height 400 · 14in 1536x864 (125%) · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 388,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "large + height 400 · 1920x1080 · box 960x96",
+   "boxWDp": 960,
+   "boxHDp": 96,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · 1920x1080 · box 1536x260",
+   "boxWDp": 1536,
+   "boxHDp": 260,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 260
+   }
+  },
+  {
+   "name": "large + height 400 · 1920x1080 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  },
+  {
+   "name": "large + height 400 · portrait 1080x1920 · box 540x96",
+   "boxWDp": 540,
+   "boxHDp": 96,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 264,
+    "buttonHeightDp": 96
+   }
+  },
+  {
+   "name": "large + height 400 · portrait 1080x1920 · box 864x260",
+   "boxWDp": 864,
+   "boxHDp": 260,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 360,
+    "buttonHeightDp": 260
+   }
+  },
+  {
+   "name": "large + height 400 · portrait 1080x1920 · box 300x72",
+   "boxWDp": 300,
+   "boxHDp": 72,
+   "measures": {
+    "size": "large",
+    "cardMaxWidthDp": 360,
+    "cardHeightDp": 400,
+    "iconDp": 96
+   },
+   "expect": {
+    "buttonWidthDp": 144,
+    "buttonHeightDp": 72
+   }
+  }
+ ]
+}

@@ -495,6 +495,137 @@ export interface TechnicianInfo {
   quickSupport: string | null;
   /** "גודל תצוגה" (P:/specs/display-scale.md): the window's size now, its source, the cloud's and the local choice. */
   displayScale?: DisplayScaleView;
+  /**
+   * The rest of the technician's screen (P:/specs/windows-setup-parity.md — the Android technician screens on Windows): the
+   * same on a kiosk and a till. Absent from an older service (the screen shows what it has).
+   */
+  setup?: TechnicianSetupView;
+}
+
+export type TechLightView = 'ok' | 'warn' | 'bad' | 'unknown';
+
+/** One timed request on the technician's screen ("עונה · HTTP 200 · 85 ms"). */
+export interface TechHttpCheck {
+  url: string;
+  ok: boolean;
+  code: number | null;
+  ms: number;
+  error: string | null;
+}
+
+export interface TechnicianSetupView {
+  /** The screen's title and what it offers: "בדיקות ומידע קיוסק" on a kiosk, "טכנאי" elsewhere. */
+  role: 'kiosk' | 'till' | 'other';
+  appVersion: string;
+  lights: { cloud: TechLightView; pinpad: TechLightView; printer: TechLightView; media: TechLightView; mediaFiles: number; mediaMissing: number };
+  /** "שיוך": what the device keeps (the cloud's answer, when it came, is the `identity` of `networkCheck`). */
+  identity: {
+    company: string | null;
+    shop: string | null;
+    machineName: string | null;
+    machineId: string | null;
+    posNumber: string | null;
+    documentPrefix: string | null;
+    role: string | null;
+    zMode: string | null;
+    lastSyncAt: number | null;
+    configVersion: string | null;
+    serverUrl: string | null;
+    /** Android Settings' "ענן": "מוצרים", "קטלוג עודכן", "עובדים", "מכירות בתור". */
+    products: number;
+    catalogAt: number | null;
+    staff: number;
+  };
+  /** "חיבור מרחוק": TeamViewer QuickSupport's path when installed. */
+  quickSupportPath: string | null;
+  /** "המחשב". */
+  computer: { hostname: string; os: string; cpu: string; memoryGb: number; serial: string | null; clockSkewMs: number | null; battery: { percent: number | null; charging: boolean } | null };
+  /** "הפעלה אוטומטית" with Windows (null: not known here — a dev build). */
+  autostart: { enabled: boolean } | null;
+  /** "מיסוי". */
+  tax: { dealer: string; vatPercent: number };
+  /** "בדיקת מדפסת": the paper and the last prints. */
+  printer: { kind: 'usb' | 'network' | 'windows' | 'none'; branch: string | null; widthDots: number; cut: boolean; lastOkAt: number | null; lastFailure: string | null; port: number | null };
+  /** "מגירת כסף" through the receipt printer. */
+  drawer: { via: string; pin: 2 | 5; onMs: number; pulses: number[]; audited: boolean };
+  /** "קישור מסופון מחדש" / "כתובת המסופון". */
+  pinpad: {
+    network: boolean;
+    usb: boolean;
+    cardless: boolean;
+    host: string | null;
+    port: number | null;
+    expectedTerminal: string | null;
+    auto: string;
+    lastMove: string | null;
+    /** "טביעת התעודה (SHA-256)" the pinpad's TLS certificate is pinned to (null: none yet — the first answer pins it). */
+    certPin: string | null;
+  };
+  /** "מדפסות בונים". */
+  kitchen: { printers: Array<{ id: string; name: string; where: string; network: { host: string; port: number } | null }>; hostsRelay: boolean };
+  /** "מכשיר מזומן" / CashMag (the manager's menu's own views); null: none here. */
+  cash: AdminInfo['cash'] | null;
+  cashmag: AdminInfo['cashmag'] | null;
+  /** "צימוד מסוף SynqPay" on an external SynqPay terminal; null elsewhere. */
+  synqpay: SynqpayAdminInfo | null;
+  /** "הפקת Z / סגירת משמרת" on a kiosk (core/kioskZ.ts); null elsewhere. */
+  kioskZ: AdminInfo['kioskZ'] | null;
+  /** "כניסות טכנאי": the last entries, newest first. */
+  audit: Array<{ at: number; access: string }>;
+  /** Unsent documents ("בטל שיוך" and another cloud wait for them). */
+  outbox: number;
+}
+
+/** What one technician action came to — its words, and for the checks their facts. */
+export interface TechnicianActionResult {
+  ok: boolean;
+  message?: string;
+  /** A second press is asked ("נתק ועבור לענן החדש", "לחצו שוב"): its label. */
+  confirm?: string;
+  /** "מידע רשת" and "שיוך" from the cloud. */
+  network?: {
+    connection: 'wifi' | 'ethernet' | 'other' | 'none';
+    ssid: string | null;
+    signal: number | null;
+    adapters: Array<{ name: string; addresses: string[]; gateways: string[]; dns: string[] }>;
+    internet: TechHttpCheck | null;
+    api: TechHttpCheck | null;
+    lan: { label: string; check: TechHttpCheck | null } | null;
+    identity: {
+      tenant: string | null;
+      company: string | null;
+      shop: string | null;
+      branchCode: string | null;
+      area: string | null;
+      machineName: string | null;
+      posNumber: string | null;
+      documentPrefix: string | null;
+      role: string | null;
+      zRole: string | null;
+      controllers: string[] | null;
+    } | null;
+  };
+  /** "בדיקת חיבור" of a new server address. */
+  server?: { url: string; health: TechHttpCheck; same: TechHttpCheck | null; sameCloud: boolean };
+  /** "בדיקת מסופון / תקשורת". */
+  pinpad?: {
+    kind: string | null;
+    address: string | null;
+    tcp: { ok: boolean; ms: number; error: string | null } | null;
+    status: { ok: boolean; ms: number; detail: string | null } | null;
+    terminal: string | null;
+    merchant: string | null;
+    serial: string | null;
+    skipped: string | null;
+  };
+  /** "חיפוש מסופון ברשת". */
+  pinpads?: Array<{ host: string; port: number; terminal: string | null; merchant: string | null; serial: string | null; match: 'same' | 'other' | 'unknown' }>;
+  /** "חיפוש מדפסות ברשת". */
+  printers?: { subnet: string; found: Array<{ host: string; port: number; health: string; known: string | null }> };
+  /** "יומן אפליקציה". */
+  log?: string[];
+  /** An unpair that was refused: what waits, and whether it may be forced (core/unpairGuard.ts). */
+  unpair?: UnpairCheck;
 }
 
 /** "גודל תצוגה" on the technician's screen (core/displayScale.ts). */
@@ -679,11 +810,45 @@ export type TechnicianAction =
    * and whether "ניתוק בכל זאת" may go); `force` with the technician's `code` again and `confirm` (and `confirmMoney`
    * when money records wait) exports everything pending to a backup, then unpairs.
    */
-  | { type: 'unpair'; force?: boolean; code?: string; confirm?: boolean; confirmMoney?: boolean };
-
-export interface TechnicianActionResult {
-  ok: boolean;
-  message?: string;
-  /** An unpair that was refused: what waits, and whether it may be forced. */
-  unpair?: UnpairCheck;
-}
+  | { type: 'unpair'; force?: boolean; code?: string; confirm?: boolean; confirmMoney?: boolean }
+  /* --- the Android technician screens' setup (P:/specs/windows-setup-parity.md) --- */
+  /** "סנכרון עכשיו". */
+  | { type: 'syncNow' }
+  /** "הפעלה מחדש של האפליקציה" — never over an order or a payment. */
+  | { type: 'restart' }
+  /** "מידע רשת" + "שיוך" from the cloud: the adapters, Wi-Fi, `/health`, the cloud API (its answer is the identity), the LAN host. */
+  | { type: 'networkCheck' }
+  /** "כתובת שרת": "בדיקת חיבור" of a new address, then "שמירה" (`confirm`: "נתק ועבור לענן החדש"). */
+  | { type: 'serverTest'; url: string }
+  | { type: 'serverSave'; url: string; confirm?: boolean }
+  /** "בדיקת רוחב": frames of 384 / 432 / 512 / 576 dots on the receipt printer (or a kitchen printer on the network). */
+  | { type: 'printerWidthTest'; printerId?: string | null }
+  /** "חיפוש מדפסות ברשת" (port 9100, status only), then a printer found added to the shop (a manager's code). */
+  | { type: 'printerScan' }
+  | { type: 'printerAdd'; host: string; port: number; name: string; purpose: 'kitchen' | 'receipt'; code: string }
+  /** "מגירת כסף": its pin (2 / 5) and pulse, and "פתח מגירה (בדיקה)". */
+  | { type: 'drawerSet'; pin: 2 | 5; onMs: number }
+  | { type: 'drawerTest' }
+  /** "בדיקת מסופון / תקשורת" (reads only). */
+  | { type: 'pinpadProbe' }
+  /** "קישור מסופון מחדש": search the LAN, link the one picked. */
+  | { type: 'pinpadSearch' }
+  | { type: 'pinpadLink'; host: string; port: number }
+  /** "איפוס הצמדת התעודה": the pinpad's pinned certificate forgotten (the next answer is pinned again). */
+  | { type: 'pinpadPinReset' }
+  /** "כתובת המסופון" — a manager's code: the address on the network, or "חיבור USB". */
+  | { type: 'pinpadSetup'; connection: 'lan'; host: string; port: number | null; code: string }
+  | { type: 'pinpadSetup'; connection: 'usb'; code: string }
+  /** "מדפסות בונים": a test ticket, "רענן מהענן". */
+  | { type: 'kitchenTest'; printerId: string }
+  | { type: 'kitchenSync' }
+  /** "שלח לוגים לתמיכה" (`range`: hour / three / today). */
+  | { type: 'sendLogs'; range: 'hour' | 'three' | 'today'; note?: string | null }
+  /** "יומן אפליקציה": the last lines. */
+  | { type: 'appLog' }
+  /** "הפעלה אוטומטית": on again with Windows. */
+  | { type: 'autostartOn' }
+  /** The manager's menu's checks, from here too: "בדיקה מול מכשיר המזומן", "בדיקת חיבור לשרת CashMag", "הפקת Z / סגירת משמרת". */
+  | { type: 'cashRecheck' }
+  | { type: 'cashmagCheck' }
+  | { type: 'kioskZ' };

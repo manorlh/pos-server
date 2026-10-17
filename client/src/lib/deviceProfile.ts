@@ -514,32 +514,22 @@ export interface KioskDraft {
   name: string;
   controllerMachineIds: string[];
   lockDevice: boolean;
-  /** "מסופון חיצוני ברשת": the pinpad's address, '' = set elsewhere / later. */
-  pinpadHost: string;
-  /** '' = SPICy's own port (8080). */
-  pinpadPort: string;
   /** "שליטה מקופות" (P:/specs/area-gaps.md §2): '' = by the levels above (nothing sent). */
   controllerSource?: '' | 'list' | 'area' | 'both';
 }
 
-/** The kiosk part of a request body: its options, and the pinpad when an address is typed. */
+/**
+ * The kiosk part of a request body: its options. Its card terminal is no kiosk option any more: "מסופון
+ * אשראי" (lib/deviceTerminal.ts) is sent beside it as `terminal` (any till or kiosk), or written to the
+ * device's settings on the device page. The server still takes an older dashboard's `pinpadHost`.
+ */
 function kioskBody(kiosk: KioskDraft): Record<string, unknown> {
-  const host = kiosk.pinpadHost.trim();
-  const port = kiosk.pinpadPort.trim();
   return {
     ...(kiosk.name.trim() ? { name: kiosk.name.trim() } : {}),
     controllerMachineIds: kiosk.controllerMachineIds,
     lockDevice: kiosk.lockDevice,
-    ...(host ? { pinpadHost: host, ...(port ? { pinpadPort: Number(port) } : {}) } : {}),
     ...(kiosk.controllerSource ? { controllerSource: kiosk.controllerSource } : {}),
   };
-}
-
-/** A typed pinpad address the server would refuse (checked before sending). */
-export function kioskDraftError(kiosk: KioskDraft): 'pinpadHost' | 'pinpadPort' | null {
-  if (pinpadHostError(kiosk.pinpadHost)) return 'pinpadHost';
-  if (kiosk.pinpadHost.trim() && pinpadPortError(kiosk.pinpadPort)) return 'pinpadPort';
-  return null;
 }
 
 /** The screen part of a KDS / board request: a board takes only its name. */

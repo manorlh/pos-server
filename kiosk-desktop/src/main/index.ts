@@ -498,6 +498,8 @@ void app.whenReady().then(async () => {
     appVersion: appVersion(),
     deviceInfo: deviceInfoOf('Windows kiosk'),
     secretBox: secretBoxOf(),
+    // "שלח לוגים לתמיכה" / "יומן אפליקציה" on the technician's screen.
+    logs: rollingLog,
     renderer: renderPage,
     // "מזומן" at a CashMag machine: kiosk.json `cashmag` over the cloud's (never synced).
     cashmagLocal: cashmagLocalOf(install.cashmag),
@@ -511,6 +513,17 @@ void app.whenReady().then(async () => {
         if (!exe) return null;
         const err = await shell.openPath(exe);
         return err ? null : exe;
+      },
+      quickSupportPath: () => QUICKSUPPORT_PATHS.find((p) => existsSync(p)) ?? null,
+      // "הפעלה מחדש של האפליקציה" (the technician's screen).
+      restartApp: () => {
+        app.relaunch();
+        app.exit(0);
+      },
+      // "הפעלה אוטומטית": the login item the packaged app sets at every start (below); a dev build has none.
+      autostart: () => (app.isPackaged && !isDev ? { enabled: app.getLoginItemSettings({ path: process.execPath }).openAtLogin } : null),
+      setAutostart: (on) => {
+        if (app.isPackaged && !isDev) app.setLoginItemSettings({ openAtLogin: on, path: process.execPath });
       },
       autoZoom: () => (main && !main.isDestroyed() ? autoZoomFor(main) : 1),
       refreshZoom: () => applyZoom(),

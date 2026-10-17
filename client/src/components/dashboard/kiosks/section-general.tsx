@@ -24,6 +24,7 @@ import {
 } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldShell, MoveButtons, OrderedPick, SectionCard, Segmented, SegmentField, SwitchField } from './fields';
+import { ServiceSizeField } from './section-service-size';
 
 /**
  * "סוג שירות": one control, four choices — "שואלים" (both types, in the order of their buttons),
@@ -123,7 +124,7 @@ export function GeneralSection() {
 
       <SectionCard
         title={t('orderingTitle')}
-        paths={['general.serviceTypes', 'general.serviceMode', 'general.askTableNumber', 'general.serviceSelect', 'general.skipCart', 'general.languages']}
+        paths={['general.serviceTypes', 'general.serviceMode', 'general.askTableNumber', 'general.serviceSelect', 'general.serviceCardSize', 'general.serviceIconSize', 'general.serviceCardMaxWidth', 'general.serviceCardHeight', 'general.skipCart', 'general.languages']}
       >
         <ServiceTypesField />
         {served && services.value.includes('eat_in') ? (
@@ -145,6 +146,7 @@ export function GeneralSection() {
             options={SERVICE_SELECTS.map((v) => ({ value: v, label: t(`serviceSelectOption.${v}`) }))}
           />
         ) : null}
+        {served && services.value.length > 1 ? <ServiceSizeField /> : null}
         <SegmentField<SkipCartMode>
           path="general.skipCart"
           label={tf('general.skipCart')}

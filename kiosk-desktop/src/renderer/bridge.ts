@@ -4,6 +4,7 @@
  * it never charges anything and never reaches the network.
  */
 
+import { demoTechnicianAction, demoTechnicianSetup } from './technician/technicianDemo';
 import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
 import type { CashPayView, KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
@@ -87,6 +88,18 @@ function demoCheckout(): Record<string, unknown> {
   }
   const general: Record<string, unknown> = {};
   if (q.get('select') === 'instant') general.serviceSelect = 'instant';
+  // `&placement=attract`: "לקחת / לשבת" as the attract screen's two buttons.
+  if (q.get('placement') === 'attract') general.servicePlacement = 'attract';
+  // "גודל כרטיסי לקחת / לשבת": `&svcsize=auto|small|medium|large`, `&svcicon=` / `&svcw=` / `&svch=` (dp);
+  // `&lsvcsize=` the landscape block's size (lib/kioskServiceSize.ts).
+  const svcSize = q.get('svcsize');
+  if (svcSize) general.serviceCardSize = svcSize;
+  for (const [param, key] of [['svcicon', 'serviceIconSize'], ['svcw', 'serviceCardMaxWidth'], ['svch', 'serviceCardHeight']] as const) {
+    const n = Number(q.get(param));
+    if (q.get(param) && Number.isFinite(n)) general[key] = n;
+  }
+  const lsvc = q.get('lsvcsize');
+  if (lsvc) out.landscape = { general: { serviceCardSize: lsvc } };
   if (q.get('notes') === '1') general.notesEnabled = true;
   // "כיתוב רץ": `&ticker=top|bottom` runs it on every screen it may (`&reduce=1`: reduce motion, it stands still).
   if (q.get('reduce') === '1') general.reduceMotion = true;
@@ -312,14 +325,16 @@ function webBridge(): KioskBridge {
         network: { online: true, lastBeatOkAt: Date.now() - 20_000, serverUrl: 'https://api.example.invalid', interfaces: [{ name: 'Ethernet', address: '192.168.1.57' }, { name: 'Wi-Fi', address: '10.0.0.12' }] },
         printer: admin.printer,
         terminal: admin.terminal,
-        update: { current: '0.5.9', available: '0.5.10', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
+        update: { current: '0.5.10', available: '0.5.11', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
         quickSupport: null,
+        // The rest of the screen (technician/technicianDemo.ts): made-up facts.
+        setup: demoTechnicianSetup(),
       };
     },
     cashOwedChoice: async () => undefined,
     cashSplit: async () => ({ ok: false, message: 'web demo' }),
     cashQuestion: async () => undefined,
-    technicianAction: async () => ({ ok: false, message: 'web demo' }),
+    technicianAction: (a) => demoTechnicianAction(a),
     on: (event, fn) => {
       const set = listeners.get(event) ?? new Set();
       listeners.set(event, set);

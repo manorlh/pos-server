@@ -334,7 +334,7 @@ function EditorBody({
   };
 
   /** The previews side by side (portrait and landscape) while the landscape design is edited. */
-  const landscapeView = orientation === 'landscape' && (section === 'appearance' || section === 'attract');
+  const landscapeView = orientation === 'landscape' && (section === 'appearance' || section === 'attract' || section === 'general');
 
   const pickSection = (key: SectionKey) => {
     setSection(key);
@@ -421,7 +421,8 @@ function EditorBody({
                 </ul>
               </div>
             ) : null}
-            {section === 'appearance' || section === 'attract' ? <OrientationBar /> : null}
+            {/* "לאורך / לרוחב": the design, the attract screen and the service cards' size (general) have landscape values. */}
+            {section === 'appearance' || section === 'attract' || section === 'general' ? <OrientationBar /> : null}
             {section === 'general' ? (
               <GeneralSection />
             ) : section === 'appearance' ? (

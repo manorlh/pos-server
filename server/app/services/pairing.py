@@ -104,6 +104,7 @@ def create_pairing_code(
     platform: Optional[str] = None,
     kds_options: Optional[dict] = None,
     work_config: Optional[dict] = None,
+    terminal_options: Optional[dict] = None,
     machine_name: Optional[str] = None,
     license_product: Optional[str] = None,
     area_id: Optional[uuid.UUID] = None,
@@ -121,6 +122,8 @@ def create_pairing_code(
     (app/services/display_devices.py). `platform` ("android" | "windows") refuses a device
     of the other platform; None checks nothing. `work_config` ("תצורת עבודה", checked by
     `work_config.check_pairing_request`) is applied to the new machine right after it pairs.
+    `terminal_options` ("מסופון אשראי", cleaned by `device_terminal.clean_request`) is written to the new
+    machine's own settings layer as it pairs.
     `machine_name` (already cleaned, `machine_names.clean_machine_name`) is the name the new machine
     gets, over a name the device sends itself; None leaves the default (docs/SPEC_PAIRING_QR.md §4).
     `license_product` ("סוג רישיון", checked by `device_license.check_pairing`) is the new till / kiosk's
@@ -153,6 +156,7 @@ def create_pairing_code(
         platform=platform,
         kds_options=kds_options,
         work_config=work_config,
+        terminal_options=terminal_options,
         machine_name=machine_name,
         license_product=license_product,
         area_id=area_id,
@@ -285,6 +289,11 @@ def validate_pairing_code(
     # A KDS / board code: its screen row and `kdsScreen` (never fails the pairing; the
     # machine is non-fiscal whatever happens there).
     display_devices.apply_on_pairing(db, pairing_code, pos_machine)
+    # "מסופון אשראי" chosen in the dialog: its type and fields on the machine's own settings layer, once its
+    # role is set (a kiosk is one by now). Never fails the pairing.
+    from app.services import device_terminal
+
+    device_terminal.apply_on_pairing(db, pairing_code, pos_machine)
     # "תצורת עבודה" chosen in the dialog (docs/SPEC_DEVICE_WORK_CONFIG.md): last, once the
     # machine is in its shop with its role. Never fails the pairing; the outcome is kept on
     # the code for the device page.

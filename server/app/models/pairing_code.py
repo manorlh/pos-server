@@ -65,6 +65,10 @@ class PairingCode(Base):
     #: tablesMode, lanServerExcluded, link, enableLocalNetwork, receiptPrinter, workflowTargets}`),
     #: applied to the machine right after it pairs. Null: "לפי הסניף" — nothing to apply.
     work_config = Column(JSON, nullable=True)
+    #: "מסופון אשראי" chosen in the add-device dialog (a till / kiosk; app/services/device_terminal.py): the
+    #: cleaned settings patch (`paymentIntegration` and its non-secret fields), written to the machine's own
+    #: settings layer as it pairs. Null: nothing chosen — the layers above decide, as before.
+    terminal_options = Column(JSON, nullable=True)
     #: The optional name typed in the add-device form (docs/SPEC_PAIRING_QR.md §4), for a till; the
     #: machine gets it when the code is redeemed and it wins over a name the device itself sends.
     #: Null: the server's default ("קופה N" once the machine has a number).
