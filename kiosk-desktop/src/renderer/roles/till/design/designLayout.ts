@@ -82,8 +82,8 @@ export function dishNameLines(description: string | null | undefined, descriptio
  * padding, the name (18 px × 1.25, two lines), the description's lines (13 × 1.25), the dietary line and the price row
  * with its 44 px "+", 4 px apart. Fixed per grid, so the virtualised rows stay one height.
  */
-export function dishCardHeightDp(descriptionLines: number, dietary: boolean, scale = 1): number {
-  const name = 2 * 18 * 1.25 * scale;
+export function dishCardHeightDp(descriptionLines: number, dietary: boolean, scale = 1, nameLines = 2): number {
+  const name = Math.max(1, nameLines) * 18 * 1.25 * scale;
   const desc = Math.max(0, descriptionLines) * 13 * 1.25 * scale;
   const diet = dietary ? 12 * 1.25 * scale + 4 : 0;
   return Math.ceil(12 + name + 4 + (desc > 0 ? desc + 4 : 0) + diet + 44 + 12);
@@ -238,10 +238,11 @@ export function orderedCatalog(catalog: Catalog, menu: TillDesignView['menu'] | 
 export function shownProducts(all: readonly Product[], ordered: readonly Product[], departmentId: string | null, search: string): Product[] {
   const q = search.trim();
   if (q !== '') {
-    // A search reaches every product, in the menu's order first (the hidden after).
+    // A search reaches every product whatever the category (Android SellUiState.visibleProducts), in the menu's order
+    // first (the hidden after).
     const seen = new Set(ordered.map((p) => p.id));
     const pool = [...ordered, ...all.filter((p) => !seen.has(p.id))];
-    return pool.filter((p) => (departmentId === null || p.departmentId === departmentId) && (p.name.includes(q) || p.barcode === q || p.sku === q));
+    return pool.filter((p) => p.name.includes(q) || p.barcode === q || p.sku === q);
   }
   return ordered.filter((p) => departmentId === null || p.departmentId === departmentId);
 }

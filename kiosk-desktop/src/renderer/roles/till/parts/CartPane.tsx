@@ -68,6 +68,18 @@ export interface CartView {
 
 const CHIPS = [5, 10, 20] as const;
 
+/** An amount without its sign ("14.00"), as the Android line's "2 × 14.00". */
+function plain(agorot: number): string {
+  return (agorot / 100).toFixed(2);
+}
+
+/** What a line's discount takes off (agorot): the engine's figure, else its quantity at the unit price less its total. */
+function lineOff(l: SellState['lines'][number]): number {
+  if (l.refund) return 0;
+  if (typeof l.discountAgorot === 'number') return l.discountAgorot;
+  return l.discountPct > 0 ? Math.max(0, Math.round(l.qty * l.unitAgorot) - l.totalAgorot) : 0;
+}
+
 /** The tenders (enabled only for a payable order) and the buttons that are always there (Android designTenders). */
 const TENDERS = new Set(['fastCard', 'cashWithChange', 'fastCash', 'cashNotes']);
 const ALWAYS = new Set(['orderDetails']);
@@ -180,8 +192,15 @@ export function CartPane({ sell, actions, compact, view = {} }: { sell: SellStat
                   {l.name}
                 </span>
                 <span className="t-line-sub">
-                  <bdi>{l.refund ? `−${money(l.totalAgorot)}` : money(l.totalAgorot)}</bdi>
-                  {l.oth ? <span className="t-badge">{T.othTag(l.oth)}</span> : l.discountPct > 0 ? <span className="t-line-off">-{l.discountPct}%</span> : null}
+                  {/* "2 × 14.00" (CartLineRow): the quantity at the unit price, left to right; a return's money back and a
+                      discount's amount in red beside it. */}
+                  <bdi dir="ltr">{`${l.qty} × ${plain(l.unitAgorot)}`}</bdi>
+                  {l.refund ? <span className="t-line-off">−{money(l.totalAgorot)}</span> : null}
+                  {l.oth ? (
+                    <span className="t-badge">{T.othTag(l.oth)}</span>
+                  ) : lineOff(l) > 0 ? (
+                    <bdi className="t-line-off">-{money(lineOff(l))}</bdi>
+                  ) : null}
                   {l.fromReceipt ? <span className="t-badge">{T.receiptDoc(l.fromReceipt)}</span> : null}
                   {/* "כלול בשובר #12" (a production voucher covers it); a ₪0 line's value beside it. */}
                   {l.voucher ? <span className="t-badge">{l.voucherValueAgorot ? `${money(l.voucherValueAgorot)} · ${l.voucher}` : l.voucher}</span> : null}

@@ -10,6 +10,7 @@
  * its main process behind IPC (main/roles/till.ts).
  */
 
+import { parseSellAllTab } from '../../core/till/sellAllTab';
 import { job, type MonoBitmap } from '../../core/escpos';
 import { demoDesignConfig, designState, resolveTillDesign, tendersOf, themeOf, withTotal, type TillDesignConfig } from '../../core/till/tillDesign';
 import { bytesToBase64 } from './bytes';
@@ -130,6 +131,8 @@ export function initialState(o: { role: DeviceRoleName; rolesAllowed: DeviceRole
     design: demoDesignState(o.design, o.terminal),
     // ?accent= / ?mode= reach the colours as a design's do (no brand colour in the demo's settings).
     theme: themeOf(o.design, {}, {}),
+    // "הכל" (the parameter sellAllTab): the demo's query may set it (?allTab=first|last); unset — hidden, Android's default.
+    sellAllTab: parseSellAllTab(new URLSearchParams(pageQuery()).get('allTab')),
   };
 }
 

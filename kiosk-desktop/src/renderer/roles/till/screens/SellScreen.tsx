@@ -17,6 +17,10 @@ import { orderedCatalog, shownProducts } from '../design/designLayout';
 import { DesignedSell, type DesignOps } from '../design/DesignedSell';
 import { FlowHome } from '../design/FlowHome';
 import { DT } from '../design/designText';
+import { categoryBarOf } from '../../../../core/till/sellAllTab';
+
+/** From this many pills the folded row offers "כל המחלקות ▾" (Android TABLET_CATEGORY_ALL_FROM). */
+export const CATEGORY_ALL_FROM = 4;
 
 export function filterProducts(catalog: Catalog, departmentId: string | null, search: string) {
   const q = search.trim();
@@ -58,6 +62,8 @@ export function SellScreen({
   design = null,
   quick,
   ops,
+  onMenu,
+  onFlowHome,
 }: {
   state: TillState;
   catalog: Catalog | null;
@@ -83,8 +89,14 @@ export function SellScreen({
   quick?(button: QuickButton): void;
   /** The engine's ops the designed screens add (DesignOps: an add with a quantity, the order's details, a held sale back, a park). */
   ops?: DesignOps;
+  /** "הדבורה": the flow home's "☰" — the till's menu (absent: none). */
+  onMenu?(): void;
+  /** "הדבורה": whether its home is on screen (Android draws it without the island). */
+  onFlowHome?(home: boolean): void;
 }) {
   const [cartOpen, setCartOpen] = useState(false);
+  /** "כל המחלקות ▾": every category in sight, wrapped (Android TabletCategoryBar's open state). */
+  const [catsOpen, setCatsOpen] = useState(false);
   /** The "i" window's item (P:/specs/product-tile-text.md §4). */
   const [info, setInfo] = useState<Product | null>(null);
   const sell = state.sell;
@@ -92,11 +104,41 @@ export function SellScreen({
   // every template, clean included (Android MenuOrder).
   const ordered = useMemo(() => (catalog ? orderedCatalog(catalog, design?.menu) : null), [catalog, design?.menu]);
   const departments = ordered?.departments ?? [];
-  const products = catalog && ordered ? shownProducts(catalog.products, ordered.products, sell.departmentId, sell.search) : [];
+  // "הכל" as the parameter puts it (Android SellAllTab — hidden by default: the order opens on the first category). The
+  // order opening (nothing in it yet, nothing tapped) takes the mode's opening rule; a tapped tab stands.
+  const [chosen, setChosen] = useState(false);
+  const opening = useRef(sell.lines.length === 0);
+  useEffect(() => {
+    const empty = sell.lines.length === 0;
+    if (empty && !opening.current) setChosen(false);
+    opening.current = empty;
+  }, [sell.lines.length]);
+  const bar = categoryBarOf(
+    state.sellAllTab ?? 'hidden',
+    departments.map((d) => d.id),
+    sell.departmentId,
+    chosen,
+    (catalog?.departments ?? []).map((d) => d.id),
+  );
+  const pickDepartment = (id: string | null) => {
+    setChosen(true);
+    onDepartment(id);
+  };
+  // The order's count per product, for the tiles' badges.
+  const inCart = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of sell.lines) if (!l.refund) m.set(l.productId, (m.get(l.productId) ?? 0) + l.qty);
+    return m;
+  }, [sell.lines]);
+  const products = catalog && ordered ? shownProducts(catalog.products, ordered.products, bar.selected, sell.search) : [];
   // "הדבורה" (flow): the orders' home first; an order opened (or the one on the screen) shows the order screen, and a
   // sale done or cleared goes home again.
   const flow = design?.shell === 'flow';
   const [flowHome, setFlowHome] = useState(true);
+  const flowHomeShown = design?.shell === 'flow' && flowHome;
+  useEffect(() => {
+    onFlowHome?.(flowHomeShown);
+  }, [flowHomeShown, onFlowHome]);
   const hadLines = useRef(sell.lines.length > 0);
   useEffect(() => {
     const has = sell.lines.length > 0;
@@ -110,7 +152,7 @@ export function SellScreen({
       type="search"
       inputMode="search"
       autoFocus={autoFocus}
-      placeholder={design && design.drawn !== 'clean' ? DT.searchHint : T.searchOrScan}
+      placeholder={design && design.drawn !== 'clean' ? DT.searchHint : T.productSearch}
       value={sell.search}
       onChange={(e) => onSearch(e.target.value)}
       onKeyDown={(e) => {
@@ -150,6 +192,7 @@ export function SellScreen({
         dark={dark}
         brand={state.theme?.brand ?? null}
         onOrder={() => setFlowHome(false)}
+        onMenu={onMenu}
         onHeldSheet={cart.held}
         ops={ops}
       />
@@ -164,13 +207,15 @@ export function SellScreen({
           state={state}
           catalog={catalog}
           departments={departments}
+          tabs={bar.tabs}
+          selected={bar.selected}
           products={products}
           design={design}
           cart={cart}
           cartView={cartView ?? {}}
           quick={quick}
           onAdd={onAdd}
-          onDepartment={onDepartment}
+          onDepartment={pickDepartment}
           onSearch={onSearch}
           onHold={onHold}
           onInfo={setInfo}
@@ -194,18 +239,40 @@ export function SellScreen({
         </button>
       ) : null}
       {identity && layout.panes !== 'single' ? <div className="t-identity">{identity}</div> : null}
-      <div className="t-catalog-bar">
+      {/* The tablet's catalogue (Android TabletCatalog.kt): "חיפוש מוצר" across the pane with its picture, then the
+          category pills — one row that scrolls, "כל המחלקות ▾" opening them all (wrapped), "פחות ▴" folding back. */}
+      <div className="t-search-row">
+        <Icon name="search" />
+        {searchInput('t-search', false)}
+      </div>
+      <div className={`t-catalog-bar${catsOpen ? ' t-catalog-bar-open' : ''}`}>
         <div className="t-departments" role="tablist">
-          <button type="button" role="tab" aria-selected={sell.departmentId === null} className={`t-chip${sell.departmentId === null ? ' t-chip-on' : ''}`} onClick={() => onDepartment(null)}>
-            {T.allDepartments}
-          </button>
-          {departments.map((d) => (
-            <button key={d.id} type="button" role="tab" aria-selected={sell.departmentId === d.id} className={`t-chip${sell.departmentId === d.id ? ' t-chip-on' : ''}`} onClick={() => onDepartment(d.id)}>
-              {d.name}
+          {bar.tabs.map((id) => (
+            <button
+              key={id ?? 'all'}
+              type="button"
+              role="tab"
+              aria-selected={bar.selected === id}
+              className={`t-chip${bar.selected === id ? ' t-chip-on' : ''}`}
+              onClick={() => {
+                pickDepartment(id);
+                setCatsOpen(false);
+              }}
+            >
+              {id === null ? T.allDepartments : departments.find((d) => d.id === id)?.name}
             </button>
           ))}
+          {catsOpen ? (
+            <button type="button" className="t-chip t-chip-fold" onClick={() => setCatsOpen(false)}>
+              {T.categoriesLess} ▴
+            </button>
+          ) : null}
         </div>
-        {searchInput('t-search', false)}
+        {!catsOpen && bar.tabs.length >= CATEGORY_ALL_FROM ? (
+          <button type="button" className="t-chip t-chip-fold" onClick={() => setCatsOpen(true)}>
+            {T.categoriesAll} ▾
+          </button>
+        ) : null}
       </div>
       {!shiftOpen ? (
         <div className="t-warn" role="note">
@@ -228,6 +295,8 @@ export function SellScreen({
         onInfo={setInfo}
         onHold={onHold}
         tileText={state.tileText}
+        inCart={inCart}
+        namePx={layout.cls === 'HANDHELD' ? 16 : design?.tileSize === 'xs' || design?.tileSize === 's' ? 18 : 22}
       />
       {infoWindow}
     </section>
@@ -283,8 +352,8 @@ export function SellScreen({
 export function ItemInfo({ product: p, department, onAdd, onClose }: { product: Product; department: string | null; onAdd(): void; onClose(): void }) {
   const state = p.sale === 'blocked' ? T.blockedBadge : p.sale === 'unavailable' ? T.unavailableBadge : p.sale === 'sold_out' ? T.soldOutBadge : null;
   return (
-    <div className="t-overlay" role="dialog" aria-modal="true" aria-label={T.itemInfo} onClick={onClose}>
-      <div className="t-dialog t-item-info" onClick={(e) => e.stopPropagation()}>
+    <div className="t-overlay t-sheet-wrap" role="dialog" aria-modal="true" aria-label={T.itemInfo} onClick={onClose}>
+      <div className="t-dialog t-sheet t-item-info" onClick={(e) => e.stopPropagation()}>
         <h2 className="t-dialog-title">{p.name}</h2>
         {department ? <p className="t-muted t-small">{department}</p> : null}
         <p className="t-dialog-body t-item-desc">{p.description ?? T.infoNoDescription}</p>

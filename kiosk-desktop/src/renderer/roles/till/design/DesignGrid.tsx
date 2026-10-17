@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Product, TileTextState } from '../../../../shared/till/protocol';
-import { nameLayout, priceLayout, showsInfo, TILE_TEXT_DEFAULTS } from '../../../../core/till/tileText';
+import { linesAt, nameLayout, priceLayout, showsInfo, TILE_TEXT_DEFAULTS } from '../../../../core/till/tileText';
 import { money } from '../text';
 import { Icon } from '../theme/icons';
 import { HOLD_MS } from '../parts/ProductGrid';
@@ -120,11 +120,14 @@ export function DesignGrid(props: DesignGridProps) {
       ? 96
       : // A text card is as tall as what it holds: the description's lines only where the dishes have one, the dietary
         // line only where one has tags (a fixed height per grid — the rows are virtualised).
-        dishCardHeightDp(
-          products.some((p) => !!p.description) ? descriptionLines : 0,
-          dietaryShown && products.some((p) => (p.dietary ?? []).length > 0),
-          scale,
-        )
+        // Each card's own content (Compose wraps it): its name's lines (one beside a description), its description's,
+        // its dietary line — the row the tallest of them.
+        products.reduce((most, p) => {
+          const desc = p.description && descriptionLines > 0 ? Math.min(descriptionLines, linesAt(p.description, 13 * scale, tileW - 24)) : 0;
+          const nameLines = Math.min(dishNameLines(p.description, descriptionLines), linesAt(p.name, 18 * scale, tileW - 24 - 28));
+          const diet = dietaryShown && (p.dietary ?? []).length > 0;
+          return Math.max(most, dishCardHeightDp(desc, diet, scale, nameLines));
+        }, 0)
     : night
       ? 96
       : designTileHeightDp(shownStyle, tileSize, density, tileW);
@@ -212,6 +215,7 @@ export function DesignGrid(props: DesignGridProps) {
             <span className="d-dish-name" style={{ fontSize: name.px, WebkitLineClamp: name.lines }}>
               {p.name}
             </span>
+            {handheld ? null : info(p, name.whole)}
           </div>
           {p.description && descriptionLines > 0 ? (
             <span className="d-dish-desc" style={{ WebkitLineClamp: handheld ? 1 : descriptionLines }}>

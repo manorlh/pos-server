@@ -7,7 +7,7 @@
  */
 
 import { useState, type ReactNode } from 'react';
-import type { CheckoutState } from '../../../../shared/till/protocol';
+import type { CartLine, CheckoutState } from '../../../../shared/till/protocol';
 import type { CapabilityTile } from '../../../host/caps';
 import type { TillLayout } from '../layout/tillLayout';
 import { CashPad } from '../parts/CashPad';
@@ -217,6 +217,8 @@ export function CheckoutScreen({
   actions,
   noCard = false,
   startWithPad = false,
+  wideCash = false,
+  lines = [],
 }: {
   checkout: CheckoutState;
   layout: TillLayout;
@@ -227,7 +229,12 @@ export function CheckoutScreen({
   noCard?: boolean;
   /** "מזומן עם עודף" from the order's quick bar (Android QuickPayButton.CASH_WITH_CHANGE): the cash pad first. */
   startWithPad?: boolean;
+  /** A screen on its side, at least 840 × 600 (Android wideCashStep): the cash step across the whole screen. */
+  wideCash?: boolean;
+  /** The sale's lines, for "פרטי חשבון ▾" under the summary (Android SummaryCard). */
+  lines?: readonly CartLine[];
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [padOpen, setPadOpen] = useState(startWithPad);
   const [creditCode, setCreditCode] = useState('');
   const [voucherCode, setVoucherCode] = useState('');
@@ -375,8 +382,9 @@ export function CheckoutScreen({
   if (padOpen && !waiting) {
     return (
       <PayFrame onBack={() => setPadOpen(false)} back={T.back}>
-        <div className="t-checkout" style={style}>
+        <div className={`t-checkout${wideCash ? ' t-checkout-wide' : ''}`} style={wideCash ? undefined : style}>
           <CashPad
+            wide={wideCash}
             dueAgorot={checkout.dueAgorot}
             onConfirm={(handed) => {
               actions.cash(handed);
@@ -390,7 +398,7 @@ export function CheckoutScreen({
   }
 
   return (
-    <PayFrame onBack={actions.cancel} back={waiting ? T.checkoutCancel : hasLegs ? T.checkoutCancelPayment : T.checkoutBack}>
+    <PayFrame onBack={actions.cancel} back={waiting ? T.checkoutCancel : hasLegs ? T.checkoutCancelPayment : T.checkoutBack} foot>
     <div className="t-checkout" style={style}>
       {/* The summary (Android SummaryCard): what is left, large; the bill and what was paid under it. */}
       <section className="t-pay-summary" aria-label={T.amountDue}>
@@ -406,6 +414,24 @@ export function CheckoutScreen({
             <strong>{money(checkout.paidAgorot)}</strong>
           </div>
         </div>
+        {lines.length > 0 ? (
+          <>
+            <button type="button" className="t-pay-details-toggle" aria-expanded={detailsOpen} onClick={() => setDetailsOpen((o) => !o)}>
+              {detailsOpen ? T.hideDetails : T.showDetails}
+            </button>
+            {detailsOpen ? (
+              <ul className="t-pay-details">
+                {lines.map((l) => (
+                  <li key={l.lineId} className={l.refund ? 't-pay-details-refund' : undefined}>
+                    <span className="t-pay-details-name">{l.name}</span>
+                    {l.qty !== 1 ? <bdi className="t-muted">×{l.qty}</bdi> : null}
+                    <span>{l.refund ? `−${money(l.totalAgorot)}` : money(l.totalAgorot)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : null}
       </section>
       {checkout.legs.length > 0 ? (
         <ul className="t-legs">
@@ -495,9 +521,6 @@ export function CheckoutScreen({
           </button>
         </form>
       ) : null}
-      <button type="button" className="t-btn t-btn-ghost" onClick={actions.cancel}>
-        {waiting ? T.checkoutCancel : hasLegs ? T.checkoutCancelPayment : T.checkoutBack}
-      </button>
     </div>
     </PayFrame>
   );
@@ -507,7 +530,7 @@ export function CheckoutScreen({
  * The payment's frame (Android CheckoutHeader): the bar across the top in the brand colour — back at the start, "תשלום"
  * in the middle — over the screen's own content.
  */
-function PayFrame({ onBack, back, children }: { onBack(): void; back: string; children: ReactNode }) {
+function PayFrame({ onBack, back, children, foot = false }: { onBack(): void; back: string; children: ReactNode; foot?: boolean }) {
   return (
     <div className="t-pay">
       <header className="t-pay-head">
@@ -518,6 +541,14 @@ function PayFrame({ onBack, back, children }: { onBack(): void; back: string; ch
         <span className="t-pay-back-space" />
       </header>
       {children}
+      {foot ? (
+        // The bottom bar (Android: a surface under the screen): the way back in words.
+        <footer className="t-pay-foot">
+          <button type="button" className="t-btn t-btn-ghost" onClick={onBack}>
+            {back}
+          </button>
+        </footer>
+      ) : null}
     </div>
   );
 }

@@ -66,6 +66,9 @@ export interface DesignedSellProps {
   quick?(b: QuickButton): void;
   onAdd(productId: string): void;
   onDepartment(id: string | null): void;
+  /** The category bar's tabs (null: "הכל") and the one on screen, by `sellAllTab`; absent — "הכל" first, the engine's. */
+  tabs?: Array<string | null>;
+  selected?: string | null;
   onSearch(text: string): void;
   onHold?(productId: string): void;
   onInfo(p: Product): void;
@@ -446,10 +449,12 @@ export function DesignedSell(props: DesignedSellProps) {
           )
         : null;
 
-  const tabsAll: Array<string | null> = [null, ...props.departments.map((d) => d.id)];
+  // The tabs as the parameter `sellAllTab` puts them (SellScreen's categoryBarOf — Android SellAllTab).
+  const tabsAll: Array<string | null> = props.tabs ?? [null, ...props.departments.map((d) => d.id)];
+  const selectedId = props.tabs ? (props.selected ?? null) : sell.departmentId;
   const nameOf = new Map(props.departments.map((d) => [d.id, d.name] as const));
   const chip = (id: string | null, cls = '') => (
-    <button key={id ?? 'all'} type="button" role="tab" aria-selected={sell.departmentId === id} className={`d-chip${cls}${sell.departmentId === id ? ' d-chip-on' : ''}`} onClick={() => onDepartment(id)}>
+    <button key={id ?? 'all'} type="button" role="tab" aria-selected={selectedId === id} className={`d-chip${cls}${selectedId === id ? ' d-chip-on' : ''}`} onClick={() => onDepartment(id)}>
       {id === null ? DT.all : nameOf.get(id)}
     </button>
   );
@@ -588,7 +593,7 @@ export function DesignedSell(props: DesignedSellProps) {
         {!drawerOpen ? (
           <button type="button" className="d-pill" aria-label={DT.summaryOpen} onClick={() => setDrawerOpen(true)}>
             <span>{DT.drawerLabel(texts.orderTitle, countText, totalText)}</span>
-            <span aria-hidden="true">⌃</span>
+            <Icon name="keyboardArrowDown" size={22} className="d-chev-up" />
           </button>
         ) : (
           <>

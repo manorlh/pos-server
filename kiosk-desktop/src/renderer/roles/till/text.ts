@@ -20,6 +20,9 @@ export const T = {
   cartEmpty: 'ההזמנה ריקה — בחרו מוצרים מהקטלוג',
   /** The order panel (Android TabletQuickOrder.kt, strings_quick.xml). */
   order: 'הזמנה',
+  categoriesAll: 'כל המחלקות',
+  categoriesLess: 'פחות',
+  productSearch: 'חיפוש מוצר',
   moreOptions: 'אפשרויות נוספות',
   menuDiscount: 'הנחה',
   menuDetails: 'לקחת / לשבת · שם להזמנה',
@@ -85,7 +88,16 @@ export const T = {
   checkoutTitle: 'תשלום',
   /** Android login_enter_code. */
   loginEnterCode: 'הקלד/י את הקוד האישי שלך',
+  greetingMorning: 'בוקר טוב ☀️',
+  greetingNoon: 'צהריים טובים',
+  greetingEvening: 'ערב טוב',
+  greetingNight: 'לילה טוב',
+  /** The cash step (Android checkout_cash_received, checkout_exact). */
+  cashReceived: 'התקבל מזומן',
+  exactNote: 'מדויק',
   billTotal: 'סה״כ חשבון',
+  showDetails: 'פרטי חשבון ▾',
+  hideDetails: 'הסתר פרטים ▴',
   cardNow: (amount: string) => `אשראי מהיר • ${amount}`,
   cashChangeNow: (amount: string) => `מזומן עם עודף • ${amount}`,
   fastCashNow: (amount: string) => `מזומן מהיר • ${amount}`,

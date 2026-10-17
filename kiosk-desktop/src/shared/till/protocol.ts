@@ -1021,6 +1021,8 @@ export interface TillState {
   kiosks?: KiosksState;
   /** The tiles' text (TileTextState; the design's `look` over the parameters); absent: the defaults (fit, 3 lines, s, auto). */
   tileText?: TileTextState;
+  /** "הכל" among the order's categories (core/till/sellAllTab.ts, the parameter `sellAllTab`); absent: hidden, Android's default. */
+  sellAllTab?: 'first' | 'last' | 'hidden';
   /**
    * "עיצוב קופה" (TillDesignState), kept offline from the last pull. Optional: an engine from before it (an older shell
    * or APK host behind a newer bundle) sends none — the screens then draw today's (clean) screens.

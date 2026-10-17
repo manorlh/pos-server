@@ -8,7 +8,6 @@
  */
 
 import { useState } from 'react';
-import { Icon } from '../theme/icons';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'back'] as const;
 
@@ -31,7 +30,7 @@ export function PinPad({ label, submitLabel, onSubmit, minLength = 4 }: { label:
       <div className="t-pin-keys">
         {KEYS.map((k) => (
           <button key={k} type="button" className={`t-key${k === 'clear' || k === 'back' ? ' t-key-bare' : ''}`} aria-label={k === 'clear' ? 'נקה' : k === 'back' ? 'מחק ספרה' : undefined} onClick={() => press(k)}>
-            {k === 'clear' ? 'C' : k === 'back' ? <Icon name="backspace" size={26} /> : k}
+            {k === 'clear' ? 'C' : k === 'back' ? '⌫' : k}
           </button>
         ))}
       </div>

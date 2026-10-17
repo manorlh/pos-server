@@ -13,6 +13,7 @@ import type { CartLine, SellState } from '../../../../shared/till/protocol';
 import type { CartActions } from '../parts/CartPane';
 import { money, T } from '../text';
 import { DT } from './designText';
+import { Icon } from '../theme/icons';
 
 export interface BillRules {
   discountShown: boolean;
@@ -291,7 +292,7 @@ export function SummaryBar({ label, total, open, onClick }: { label: string; tot
     <button type="button" className="d-summary-bar" aria-label={open ? DT.summaryClose : DT.summaryOpen} aria-expanded={open} onClick={onClick}>
       <span className="d-summary-label">{label}</span>
       <span className={`d-summary-chev${open ? ' d-summary-chev-open' : ''}`} aria-hidden="true">
-        ⌃
+        <Icon name="keyboardArrowDown" size={22} />
       </span>
       <span className="d-summary-spacer" />
       <strong className="d-summary-total">{total}</strong>

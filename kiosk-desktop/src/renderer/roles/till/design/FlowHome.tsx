@@ -46,6 +46,7 @@ export function FlowHome({
   brand,
   onOrder,
   onHeldSheet,
+  onMenu,
   ops,
 }: {
   state: TillState;
@@ -58,6 +59,8 @@ export function FlowHome({
   onOrder(): void;
   /** Today's held sales sheet (where a held sale comes back without `ops.resume`). */
   onHeldSheet?(): void;
+  /** "☰": the till's menu (absent: not now). */
+  onMenu?(): void;
   ops?: DesignOps;
 }) {
   const palette = useMemo(() => flowPalette(design.flow.background, design.colors.accent ?? brand, dark), [design.flow.background, design.colors.accent, brand, dark]);
@@ -133,6 +136,11 @@ export function FlowHome({
           </>
         ) : (
           <>
+            {onMenu ? (
+              <button type="button" className="f-icon" aria-label="תפריט" onClick={onMenu}>
+                <Icon name="menu" />
+              </button>
+            ) : null}
             <h1 className="f-title">{DT.flowOrders}</h1>
             <button type="button" className="f-icon" aria-label={DT.flowSearch} onClick={() => setSearching(true)}>
               <Icon name="search" />

@@ -13,8 +13,9 @@ import { money, T } from '../text';
 
 function Sheet({ title, onClose, children, wide }: { title: string; onClose(): void; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="t-overlay" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
-      <div className={`t-dialog${wide ? ' t-dialog-wide' : ''}`} onClick={(e) => e.stopPropagation()}>
+    // A bottom sheet, as the Android till's InWindowSheet: up from the bottom, its top corners rounded.
+    <div className="t-overlay t-sheet-wrap" role="dialog" aria-modal="true" aria-label={title} onClick={onClose}>
+      <div className={`t-dialog t-sheet${wide ? ' t-dialog-wide' : ''}`} onClick={(e) => e.stopPropagation()}>
         <h2 className="t-dialog-title">{title}</h2>
         {children}
         <div className="t-dialog-actions">

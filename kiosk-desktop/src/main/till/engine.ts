@@ -163,6 +163,7 @@ import { autoCloseDue, autoCloseTimeOf } from '../../core/tillZ';
 import { cardLast, dueOf, handedTotal, paidOf, quickNotes, takeCash, validCashAmount, type TenderLeg } from '../../core/till/tender';
 import { HIDDEN_MENU_PARAM, parseHiddenMenu } from '../../core/till/menuHide';
 import { tileTextOf } from '../../core/till/tileText';
+import { PARAM_SELL_ALL_TAB, parseSellAllTab } from '../../core/till/sellAllTab';
 import { designParameters, tendersOf, themeOf } from '../../core/till/tillDesign';
 import { SHOP_X_TEXT, shopXDocumentOf, shopXOffered, shopXRefusal, type ShopXDocument } from '../../core/till/shopX';
 import type { StartPaymentIn } from '../../shared/bridge';
@@ -4446,6 +4447,8 @@ export class KioskCoreTillEngine implements EngineEndpoint {
       ...(user && !this.locked && this.kiosks.count() > 0 ? { kiosks: this.kiosks.state() } : {}),
       // The design's `look` over the tile-text parameters (Android applyTillDesign).
       tileText: tileTextOf(designParameters(params, this.design.config())),
+      // "הכל" in the order's categories (Android SellAllTab: hidden unless the parameter says first / last).
+      sellAllTab: parseSellAllTab(params[PARAM_SELL_ALL_TAB]),
       design: this.design.state({
         parameters: params,
         tenders: tendersOf(params, !this.svc.pay.noCard),

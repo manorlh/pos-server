@@ -98,6 +98,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   const [reportKind, setReportKind] = useState<LocalReportKind>('products');
   /** "מזומן עם עודף" from the quick bar: the payment opens on its cash pad. */
   const [padFirst, setPadFirst] = useState(false);
+  /** "הדבורה"'s home on screen: no island over it (Android FlowShell). */
+  const [flowHomeShown, setFlowHomeShown] = useState(false);
   const { state, catalog, status, toasts, run, attempt, say } = engine;
 
   useEffect(() => {
@@ -437,6 +439,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           cardTile={cardTile}
           noCard={s.health.noCard === true}
           startWithPad={padFirst}
+          lines={s.sell.lines}
+          wideCash={profile.widthDp >= 840 && profile.widthDp > profile.heightDp && profile.heightDp >= 600}
           demo={s.session.demo}
           actions={{
             cash: (amountAgorot) => void run('checkout.cash', { amountAgorot }),
@@ -667,6 +671,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         identity={identity}
         design={design}
         quick={quick}
+        onMenu={menuReady ? () => setMenuOpen(true) : undefined}
+        onFlowHome={setFlowHomeShown}
         ops={
           host.demo
             ? { addQty: (productId, qty) => void run('sell.add', { productId, qty }) }
@@ -682,7 +688,7 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
   })();
 
   // The island is the shell's (Android PosShell): the sign-in and the payment are screens of their own, over it.
-  const islandShown = !s.session.locked && !!s.session.cashier && s.checkout.phase === 'idle';
+  const islandShown = !s.session.locked && !!s.session.cashier && s.checkout.phase === 'idle' && !(flowHomeShown && view === 'sell');
   return root(
     <>
       <header className={`t-top${islandShown ? '' : ' t-top-bare'}`}>
@@ -803,6 +809,8 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         ) : null}
       </div>
       <main className="t-main">{main}</main>
+      {/* "Powered by R2M" under the sell screen, as the Android till's shell draws it. */}
+      {islandShown && view === 'sell' ? <div className="t-powered">Powered by <b>R2M</b></div> : null}
       {menuOpen && menuReady ? (
         <TillMenuDrawer
           groups={menuGroups}

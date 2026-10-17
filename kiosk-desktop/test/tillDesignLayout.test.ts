@@ -99,6 +99,7 @@ describe('the grid (DesignLayout.kt designColumns / designTileHeightDp)', () => 
     // A text card grows with its description's lines and the dietary line.
     expect(dishCardHeightDp(2, false)).toBeGreaterThan(dishCardHeightDp(0, false));
     expect(dishCardHeightDp(2, true)).toBeGreaterThan(dishCardHeightDp(2, false));
+    expect(dishCardHeightDp(0, false, 1, 1)).toBeLessThan(dishCardHeightDp(0, false, 1, 2));
   });
 
   it('the virtualised window: the rows on screen and three around', () => {

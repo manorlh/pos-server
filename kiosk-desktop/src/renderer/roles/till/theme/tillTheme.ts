@@ -67,7 +67,15 @@ export function tillThemeVars(theme: TillThemeState | undefined, systemDark: boo
     const d = designColors(s);
     vars['--pos-d-accent'] = d.accent;
   }
+  // The sign-in's wash: the brand at 8% (LoginScreen.kt), as rgba — Chromium 108 has no color-mix().
+  vars['--pos-primary-wash'] = rgba(vars['--pos-primary'] ?? s.primary, 0.08);
   return vars;
+}
+
+/** `#RRGGBB` at `alpha` as rgba(). */
+export function rgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.replace('#', '').slice(-6), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
 /** The device's dark setting, followed live (Android: isSystemInDarkTheme). Chromium 108: matchMedia's change event. */

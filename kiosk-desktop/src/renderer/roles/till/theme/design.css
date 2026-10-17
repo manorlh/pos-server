@@ -887,9 +887,25 @@
 }
 
 /* dish (תפריט ויזואלי, a text card): the name, the description, the dietary words, the price and the accent "+". */
+/* A text card is as tall as what it holds (Compose wraps it); the row keeps the tallest's height. */
 .d-dish {
   padding: 12px;
   gap: 4px;
+  height: auto;
+  align-self: start;
+}
+
+.d-dish-row {
+  height: 100%;
+}
+
+.d-dish-head .d-info {
+  margin-top: -6px;
+}
+
+.d-chev-up {
+  transform: rotate(180deg);
+  flex: none;
 }
 
 .d-dish-head {
@@ -1314,6 +1330,7 @@
 }
 
 .d-summary-label {
+  max-width: calc(50% - 40px);
   font-size: calc(16px * var(--d-scale, 1));
   font-weight: 600;
   white-space: nowrap;
@@ -1322,16 +1339,19 @@
 }
 
 .d-summary-chev {
+  display: inline-flex;
   color: var(--pos-d-secondary);
-  font-size: 18px;
-}
-
-.d-summary-chev-open {
   transform: rotate(180deg);
 }
 
+.d-summary-chev-open {
+  transform: none;
+}
+
+/* Android's Row: the label weight(1, fill = false) and the spacer weight(1) share what is left — the total stands
+   about the middle, not at the far end. */
 .d-summary-spacer {
-  flex: 1;
+  flex: 0 1 calc(50% - 60px);
 }
 
 .d-summary-total {

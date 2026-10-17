@@ -149,7 +149,7 @@
   padding: 0 18px;
   border: 0;
   border-radius: 999px;
-  background: var(--pos-container-high);
+  background: var(--pos-surface-variant);
   color: var(--t-text);
   font-size: 16px;
   font-weight: 500;
@@ -223,21 +223,40 @@
 }
 
 .t-tile-name {
-  flex: 1;
-  display: -webkit-box;
+  position: relative;
+  z-index: 1;
+  flex: none;
   max-width: none;
-  padding: 24px 4px 2px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, var(--pos-primary-container), var(--pos-container));
+  margin: auto 4px;
+  padding: 18px 0 0;
+  background: none;
   color: var(--pos-on-primary-container);
   font-weight: 700;
   line-height: 1.25;
   text-align: center;
-  align-content: center;
+}
+
+/* The picture's place (no photo on the Windows catalogue): the brand's wash, 12 corners, over the tile above the price —
+   drawn behind the name so the name keeps its own height (its clamp then cuts where it should). */
+.t-tile::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  left: 5px;
+  bottom: 37px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--pos-primary-container), var(--pos-container));
+}
+
+.t-tile-off::before {
+  opacity: 0.5;
 }
 
 .t-tile-price {
-  align-self: center;
+  position: relative;
+  z-index: 1;
+  align-self: flex-end;
   margin-top: 2px;
   padding: 2px 10px;
   border-radius: 999px;
@@ -259,6 +278,7 @@
 }
 
 .t-tile-badge {
+  z-index: 2;
   border-radius: 4px;
   background: var(--t-danger);
   color: var(--pos-on-error);
@@ -419,12 +439,12 @@
   font-weight: 600;
 }
 
-/* CartScreen.kt Stepper: a 48 circle in surfaceVariant, the sign in titleMedium. */
+/* CartScreen.kt Stepper: a 48 circle in surfaceVariant (the page's own grey), the sign in titleMedium. */
 .t-step {
   width: 48px;
   min-height: 48px;
   border: 0;
-  background: var(--pos-container-high);
+  background: var(--pos-surface-variant);
   color: var(--t-text);
   font-size: 18px;
   font-weight: 600;
@@ -628,8 +648,79 @@
 /* ------------------------------------------------------------- PIN (LoginScreen.kt PinEntry / PinPad) */
 
 .t-lock {
+  position: relative;
+  flex: 1 0 auto;
+  max-width: 560px;
+  min-height: 0;
+  margin: 0 auto !important;
+  padding: 0 20px 6px;
   background: transparent;
-  gap: 6px;
+  gap: 4px;
+}
+
+/* The brand's wash over the top 45% of the screen (primary at 8% → nothing). */
+.t-lock-wash {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 45%;
+  background: linear-gradient(to bottom, var(--pos-primary-wash, rgba(0, 122, 255, 0.08)), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+
+.t-lock > :not(.t-lock-wash) {
+  position: relative;
+}
+
+.t-lock-powered {
+  padding-top: 12px;
+}
+
+.t-lock-greeting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0 4px;
+}
+
+.t-lock-hello {
+  color: var(--t-accent);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.t-lock-time {
+  font-size: 44px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.t-lock-date {
+  color: var(--t-muted);
+  font-size: 14px;
+}
+
+.t-lock .t-pin {
+  flex: 1;
+  min-height: 0;
+}
+
+.t-lock .t-pin-keys {
+  margin: auto 0;
+}
+
+.t-lock .t-pin-submit {
+  flex: none;
+  align-self: center;
+  width: 100%;
+  max-width: 520px;
+}
+
+.t-lock-tech {
+  align-self: center;
+  color: var(--t-muted);
+  font-size: 13px;
 }
 
 .t-lock .t-report-title {
@@ -698,12 +789,13 @@
 
 .t-key-bare {
   background: transparent;
-  color: var(--t-text);
+  color: var(--t-accent);
   font-size: 22px;
   font-weight: 500;
 }
 
 .t-pin-submit {
+  flex: none;
   align-self: stretch;
   min-height: 56px;
   font-size: 15px;
@@ -751,6 +843,7 @@
 /* The strips over the screen. "בון לא הודפס" (KitchenPrintBanner): the error colour across the width, bold bodyMedium;
    the others (the alerts' strips) a soft amber band with the action as a tonal pill. */
 .t-banner {
+  border-radius: 0;
   padding: 8px 12px;
   background: var(--t-danger);
   color: var(--pos-on-error);
@@ -996,12 +1089,347 @@
 }
 
 /* No island over the sign-in and the payment (Android draws them as screens of their own): the status stays. */
-.t-top-bare .t-nav {
-  visibility: hidden;
+.t-top-bare {
+  display: none;
 }
 
-.t-top-bare {
-  min-height: 40px;
-  padding-top: 0;
+/* "חיפוש מוצר" (TabletSearchField): the picture and the words on surfaceVariant, 12 corners, across the pane. */
+.t-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 12px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--pos-surface-variant);
+  color: var(--t-muted);
+}
+
+.t-search-row .t-search {
+  flex: 1;
+  width: auto;
+  max-width: none;
+  padding: 0;
+  background: transparent;
+  font-size: 15px;
+}
+
+/* Folded: one row that scrolls sideways, "כל המחלקות ▾" at its end; open: every pill, wrapped, up to 248 high. */
+.t-catalog-bar {
+  align-items: flex-start;
+}
+
+.t-catalog-bar-open .t-departments {
+  flex-wrap: wrap;
+  max-height: 248px;
+  overflow-y: auto;
+}
+
+.t-catalog-bar .t-chip-fold {
+  flex-shrink: 0;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--pos-surface-variant);
+  color: var(--t-text);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* The tile's corners (ProductTile): the count in the order, a 22 brand circle at the start; the "i" a white 22 circle
+   with the brand's i at the end (TileInfoBadge). */
+.t-tile-count {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  right: 9px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--t-accent);
+  color: var(--t-accent-text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 22px;
+  text-align: center;
+}
+
+.t-tile-info {
+  z-index: 2;
+  top: 4px;
+  left: 4px;
+}
+
+.t-tile-info-dot {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: var(--t-surface);
+  color: var(--t-accent);
+  font: 700 13px/1 'Heebo', Arial, sans-serif;
+}
+
+/* The Android shell's foot under the sell screen: "Powered by R2M", labelSmall, muted. */
+.t-powered {
+  flex-shrink: 0;
+  padding: 2px 0 6px;
+  color: var(--t-muted);
+  font-size: 11px;
+  text-align: center;
+  direction: ltr;
+}
+
+/* The till's state and who is signed in are the menu's (Android: the drawer's card), not the bar's: the bar is the
+   island alone. Left in the page for the screens' tests and readers. */
+.t-top .t-health {
+  display: none;
+}
+
+/* ------------------------------------------------------------- the cash step (CheckoutScreen.kt CashStep / WideCashStep) */
+
+.t-cashpad {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* On its side: the figures on the left, the notes and keys on the right (1 : 1.15), left to right whatever the language,
+   the whole height and nothing to scroll. */
+.t-checkout-wide {
+  max-width: none;
+  height: 100%;
+  overflow: hidden;
+  padding: 16px;
+}
+
+.t-cashpad-wide {
+  flex: 1;
+  min-height: 0;
+  flex-direction: row;
+  direction: ltr;
+  gap: 16px;
+}
+
+.t-cashpad-wide > .t-cash-figures {
+  flex: 1;
+  direction: rtl;
+}
+
+.t-cashpad-wide > .t-cash-keys {
+  flex: 1.15;
+}
+
+.t-cash-figures {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* "סכום לתשלום": titleLarge muted, the amount headlineMedium bold, on a white card (20). */
+.t-cash-due {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-radius: 20px;
+  background: var(--t-surface);
+}
+
+.t-cash-due span {
+  color: var(--t-muted);
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.t-cash-due strong {
+  font-size: 25px;
+  font-weight: 700;
+}
+
+/* "התקבל מזומן": the big card (24 corners, the brand's 2 dp outline at 60%), the amount 64 bold. */
+.t-cash-input {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 140px;
+  padding: 16px;
+  border: 2px solid var(--pos-primary-60, var(--t-accent));
+  border-radius: 24px;
+  background: var(--t-surface);
+}
+
+.t-cashpad-wide .t-cash-input {
+  flex: 1;
+}
+
+.t-cash-input span {
+  color: var(--t-muted);
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.t-cash-input strong {
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.t-cash-input-blank strong {
+  color: var(--t-muted);
+}
+
+/* "עודף ללקוח" green / "חסר" red, on their colour at 12% (20 corners), the amount 40 bold. */
+.t-cash-left {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-radius: 20px;
+}
+
+.t-cash-left span {
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.t-cash-left strong {
+  font-size: 40px;
+  font-weight: 700;
+}
+
+.t-cash-left-ok {
+  background: var(--t-ok-soft);
+  color: #1f9d45;
+}
+
+.t-cash-left-short {
+  background: var(--t-danger-soft);
+  color: var(--t-danger);
+}
+
+.t-cash-figures .t-btn-wide {
+  flex: none;
+}
+
+.t-cash-confirm {
+  min-height: 56px;
+  font-size: 15px;
+}
+
+.t-cash-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* The notes: two rows of four, 68 high, the brand at 10% under the brand's headlineSmall bold (14 corners). */
+.t-cash-notes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  direction: rtl;
+}
+
+.t-cash-note {
+  min-height: 68px;
+  border-radius: 14px;
+  background: var(--pos-d-accent-tint);
+  color: var(--t-accent);
+  font-size: 21px;
+  font-weight: 700;
+}
+
+/* The keys (IosKeypad, filled): white cards (16 corners), headlineLarge medium; ⌫ on surfaceVariant; LTR. */
+.t-cash-keypad {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(58px, 1fr);
+  gap: 10px;
+  direction: ltr;
+}
+
+.t-cash-key {
+  min-height: 58px;
+  border-radius: 16px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 30px;
+  font-weight: 500;
+}
+
+.t-cash-key-back {
+  background: var(--pos-surface-variant);
+}
+
+/* "פרטי חשבון ▾" (SummaryCard): labelLarge in the brand colour; the lines under it, bodyMedium. */
+.t-pay-details-toggle {
+  min-height: 36px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--t-accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.t-pay-details {
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.t-pay-details li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.t-pay-details-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.t-pay-details-refund {
+  color: var(--t-danger);
+}
+
+/* The payment's foot: a white bar across the bottom with the way back. */
+.t-pay-foot {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding: 6px 14px;
+  background: var(--t-surface);
+  border-top: 1px solid var(--t-line);
+}
+
+/* Bottom sheets (Android InWindowSheet / ModalBottomSheet): up from the bottom edge, 640 wide at most, the top corners
+   28, the surface; the scrim as the dialogs'. */
+.t-sheet-wrap {
+  align-items: flex-end;
   padding-bottom: 0;
+}
+
+.t-dialog.t-sheet {
+  max-width: 640px;
+  max-height: 92%;
+  padding: 20px 16px 24px;
+  border-radius: 28px 28px 0 0;
+  background: var(--t-surface);
+}
+
+.t-dialog.t-sheet.t-dialog-wide {
+  max-width: 760px;
 }
