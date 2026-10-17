@@ -95,6 +95,8 @@ export interface HarnessOptions {
   /** The fake cloud's answers by `METHOD path` (a `…/*` key matches a prefix); a function gets the request's JSON body. */
   answers?: Record<string, (body: Record<string, unknown> | null) => unknown>;
   dealerType?: string;
+  /** The printer transport (default: a fake that prints nothing). */
+  transport?: Transport;
   now?: () => number;
   /** "הדפסה בקופה אחרת": the LAN, the clock, the drawing. */
   remotePrint?: TillRemotePrintOptions;
@@ -150,7 +152,7 @@ export function harness(o: HarnessOptions = {}): Harness {
     dataDir: mkdtempSync(path.join(os.tmpdir(), 'kd-till-')),
     appVersion: '0.5.0',
     deviceInfo: { platform: 'windows' },
-    transport: printer,
+    transport: o.transport ?? printer,
     platform: o.platform,
     unpairBackupDir: o.unpairBackupDir,
     fetch: fetchFn,

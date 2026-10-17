@@ -45,6 +45,7 @@ import { Kv, migrate } from '../db/schema';
 import type { ProviderFactory } from '../payment/provider';
 import { PrintQueue, type PageRenderer } from '../printer/printQueue';
 import { DefaultTransport, type PrinterTarget, type Transport } from '../printer/transports';
+import { serialTarget } from '../printer/serialPrinter';
 import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from '../printer/usbPrinters';
 import { KioskService, type PlatformHooks } from '../service';
 import { Api, apiBase, type FetchFn } from '../sync/api';
@@ -677,6 +678,8 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
       queueName: set.queueName?.trim() || null,
       host: set.host ?? null,
       port: set.port ?? null,
+      comPort: set.transport === 'serial' ? (set.comPort ?? null) : null,
+      baudRate: set.transport === 'serial' ? (set.baudRate ?? null) : null,
       health: q.health(),
       lastError: q.lastFailure?.error ?? null,
       lastOkAt: q.lastOkAt,
@@ -919,10 +922,12 @@ export class BridgeRuntime extends EventEmitter implements BridgeHost {
         return r.status === 200 ? { ok: true } : { ok: false, message: (r.body as { message: string }).message };
       }
       case 'setPrinter': {
+        const serial = a.transport === 'serial' ? serialTarget(a.comPort, a.baudRate, a.flow) : null;
+        if (a.transport === 'serial' && !serial) return { ok: false, message: 'יציאת COM לא תקינה' };
         const printer: PrinterTarget =
           a.transport === 'tcp'
             ? { transport: 'tcp', host: a.host?.trim() || null, port: a.port && a.port > 0 && a.port < 65_536 ? a.port : 9100 }
-            : { transport: 'spooler', queueName: a.queueName?.trim() || null };
+            : (serial ?? { transport: 'spooler', queueName: a.queueName?.trim() || null });
         if (printer.transport === 'tcp' && !/^[A-Za-z0-9.-]{1,120}$/.test(printer.host ?? '')) return { ok: false, message: 'כתובת מדפסת לא תקינה' };
         this.setSettings({ printer });
         this.svc?.setLocalSettings({ printer });

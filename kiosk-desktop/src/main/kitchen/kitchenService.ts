@@ -943,7 +943,8 @@ export class KitchenService {
         const r = await this.locked('own', () => printDirect(this.link(host, port), bytes, `${printer.name} (${host})`, markSending));
         return { kind: 'here', confirmed: r.confirmed };
       }
-      if (target.transport === 'spooler' && target.queueName) {
+      if ((target.transport === 'spooler' && target.queueName) || (target.transport === 'serial' && target.comPort)) {
+        // The Windows queue, or a COM port (an all-in-one's built-in printer): a "write:" failure may have reached the paper.
         await this.locked('own', async () => {
           markSending();
           try {

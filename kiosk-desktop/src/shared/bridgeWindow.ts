@@ -52,10 +52,13 @@ export interface BridgeWindowView {
     /** Where a page goes now, in words ("Windows: SNBC BTP-880 (USB · אוטומטי)"). */
     target: string;
     /** As set: a Windows queue with no name is "אוטומטי". */
-    transport: 'spooler' | 'tcp' | 'none';
+    transport: 'spooler' | 'tcp' | 'serial' | 'none';
     queueName: string | null;
     host: string | null;
     port: number | null;
+    /** serial: the COM port and its speed. */
+    comPort?: string | null;
+    baudRate?: number | null;
     health: string;
     lastError: string | null;
     lastOkAt: number | null;
@@ -76,7 +79,7 @@ export type BridgeWindowAction =
   | { type: 'newCode' }
   | { type: 'unpair' }
   | { type: 'unlink' }
-  | { type: 'setPrinter'; transport: 'spooler' | 'tcp'; queueName?: string | null; host?: string | null; port?: number | null }
+  | { type: 'setPrinter'; transport: 'spooler' | 'tcp' | 'serial'; queueName?: string | null; host?: string | null; port?: number | null; comPort?: string | null; baudRate?: number | null; flow?: 'none' | 'rtscts' | null }
   | { type: 'refreshQueues' }
   | { type: 'testPrint' }
   | { type: 'setDrawer'; on: boolean }

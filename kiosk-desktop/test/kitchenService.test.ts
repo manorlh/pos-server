@@ -216,6 +216,15 @@ describe('a network kitchen printer, directly (TCP 9100, the status read before 
     expect(r.spool.sent).toHaveLength(1);
     expect(r.k.job(q.jobIds[0])).toMatchObject({ state: 'done', relayVia: null });
   });
+
+  it('the same share on a receipt printer on a COM port (an all-in-one terminal\'s built-in printer)', async () => {
+    const r = rig({ own: { transport: 'serial', comPort: 'COM3', baudRate: 19200, flow: 'none' } });
+    await settings(r, { printers: [], categoryRoutes: {} });
+    const q = r.k.enqueue(sale([L('x', null, 'פסטה')]), [L('x', null, 'פסטה')], { unroutedToTill: true });
+    await drain(r);
+    expect(r.spool.sent).toHaveLength(1);
+    expect(r.k.job(q.jobIds[0])).toMatchObject({ state: 'done' });
+  });
 });
 
 describe('the shop\'s print server over the LAN — with no internet', () => {

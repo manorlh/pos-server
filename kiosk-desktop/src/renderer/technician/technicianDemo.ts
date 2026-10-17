@@ -57,6 +57,19 @@ export function demoTechnicianSetup(): TechnicianSetupView {
 
 export async function demoTechnicianAction(a: TechnicianAction): Promise<TechnicianActionResult> {
   switch (a.type) {
+    case 'serialPorts':
+      return {
+        ok: true,
+        serialPorts: [
+          { path: 'COM3', label: 'POS Printer (COM3)', manufacturer: 'SNBC', usbId: null, likely: 'likely', inUse: null },
+          { path: 'COM1', label: 'Communications Port (COM1)', manufacturer: '(Standard port types)', usbId: null, likely: 'possible', inUse: null },
+          { path: 'COM5', label: 'USB-SERIAL CH340 (COM5)', manufacturer: 'wch.cn', usbId: '1A86:7523', likely: 'possible', inUse: 'בשימוש המסופון' },
+        ],
+      };
+    case 'serialDetect':
+      return { ok: true, message: `המדפסת ב-${a.comPort} ענתה ב-19200`, baudRate: 19200 };
+    case 'serialTest':
+      return { ok: true, message: `דף בדיקה נשלח ל-${a.comPort} (${a.baudRate ?? 9600})` };
     case 'networkCheck':
       return {
         ok: true,

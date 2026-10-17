@@ -155,7 +155,8 @@ import type { SynqPayProvider } from './payment/synqpay/provider';
 import type { PaymentProvider, ProviderContext, ProviderFactory, TransmitResult } from './payment/provider';
 import { PrintQueue, type JobKind, type PageRenderer } from './printer/printQueue';
 import { connect as netConnect } from 'node:net';
-import { DefaultTransport, tcpSend, type PrinterTarget, type Transport } from './printer/transports';
+import { DefaultTransport, serialLineOf, tcpSend, type PrinterTarget, type Transport } from './printer/transports';
+import { comPortIn, parseSerialAddress, serialTarget } from './printer/serialPrinter';
 import { resolvePrinterTarget, targetText, usbStatusText, UsbPrinterWatch, type PrinterResolution } from './printer/usbPrinters';
 import { allocatePickup, OrderStore } from './kiosk/orders';
 import { PayAtTill, type VoucherResult } from './kiosk/payAtTill';
@@ -871,7 +872,13 @@ export class KioskService extends EventEmitter {
       // corner to choose one on the device — a MAC, which Android's Bluetooth printer uses, is not a name); else the spooler's automatic choice.
       const m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d+))?$/.exec(addr);
       const mac = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(addr);
-      printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
+      // A COM port ("COM3", "COM3:19200", "COM3:19200:rtscts"): the built-in printer of an all-in-one terminal.
+      const serial = parseSerialAddress(addr);
+      printer = m
+        ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 }
+        : serial
+          ? { transport: 'serial', comPort: serial.path, baudRate: serial.baudRate, flow: serial.flow }
+          : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
     const scale = parseDisplayScale(s.displayScale);
     return { printer, zoom: s.zoom ?? null, displayScale: scale === null ? null : displayScaleWire(scale), drawer: s.drawer ? parseDrawerKick(s.drawer) : null };
@@ -3318,6 +3325,7 @@ export class KioskService extends EventEmitter {
     const t = this.printerResolution().target;
     if (t.transport === 'tcp') return !!t.host;
     if (t.transport === 'spooler') return !!t.queueName;
+    if (t.transport === 'serial') return !!t.comPort;
     return false;
   }
 
@@ -3361,6 +3369,16 @@ export class KioskService extends EventEmitter {
 
   setDrawerTester(fn: (() => Promise<{ ok: boolean; message: string }>) | null): void {
     this.drawerTester = fn;
+  }
+
+  /**
+   * The receipt printer's own answer now (DLE EOT over a serial line or TCP, the queue's state on the spooler) — never while
+   * a page is on its way (`busy`: the last print's word stands).
+   */
+  async receiptPrinterStatus(): Promise<{ health: string; busy: boolean }> {
+    if (this.printQueue.busy) return { health: this.printQueue.health(), busy: true };
+    const s = await this.transport.status(this.printerResolution().target).catch(() => ({ health: 'unknown' as const }));
+    return { health: s.health, busy: false };
   }
 
   /** Raw ESC/POS bytes to the receipt printer now (a document another till sent to print here, main/till/remoteDrawer.ts). */
@@ -5008,13 +5026,17 @@ export class KioskService extends EventEmitter {
       autostart: this.platform.autostart?.() ?? null,
       tax: { dealer: dealer === 'exempt' ? 'עוסק פטור' : dealer === 'licensed' ? 'עוסק מורשה' : 'חברה בע״מ (ח.פ.)', vatPercent: Math.round(this.vatRate() * 1000) / 10 },
       printer: {
-        kind: target.transport === 'tcp' ? 'network' : target.transport === 'none' ? 'none' : res.via === 'usb' ? 'usb' : 'windows',
+        kind: target.transport === 'tcp' ? 'network' : target.transport === 'serial' ? 'serial' : target.transport === 'none' ? 'none' : res.via === 'usb' ? 'usb' : 'windows',
         branch,
         widthDots: 576,
         cut: true,
         lastOkAt: lastOk,
         lastFailure,
         port: target.transport === 'tcp' ? (target.port ?? 9100) : null,
+        serial: (() => {
+          const l = serialLineOf(target);
+          return l ? { comPort: l.path, baudRate: l.baudRate, flow: l.flow } : null;
+        })(),
       },
       drawer: { via: TECH_TEXT.drawerViaPrinter(printer.target), pin: kick.pin, onMs: kick.onMs, pulses: [...DRAWER_PULSES], audited: this.drawerTester !== null },
       pinpad: {
@@ -5090,11 +5112,26 @@ export class KioskService extends EventEmitter {
     switch (a.type) {
       case 'printerTest':
         return this.adminAction({ type: 'testPrint' });
-      case 'setPrinter':
+      case 'setPrinter': {
+        if (a.transport === 'serial') {
+          // A COM port: the built-in printer of an all-in-one terminal (printer/serialPrinter.ts).
+          const t = serialTarget(a.comPort, a.baudRate, a.flow);
+          if (!t) return { ok: false, message: 'יציאת COM לא תקינה' };
+          if (t.comPort === this.paymentComPort()) return { ok: false, message: `${t.comPort} בשימוש המסופון` };
+          this.setLocalSettings({ printer: t });
+          return { ok: true };
+        }
         // A Windows queue with no name: "אוטומטי" — the USB printer plugged in (printer/usbPrinters.ts).
         this.setLocalSettings({ printer: a.transport === 'tcp' ? { transport: 'tcp', host: a.host ?? null, port: a.port ?? 9100 } : { transport: 'spooler', queueName: a.queueName?.trim() || null } });
         void this.usbWatch.refresh();
         return { ok: true };
+      }
+      case 'serialPorts':
+        return this.serialPortsView();
+      case 'serialDetect':
+        return this.serialDetect(a.comPort, a.flow ?? 'none');
+      case 'serialTest':
+        return this.serialTest(a.comPort, a.baudRate, a.flow ?? 'none');
       case 'pinpadCheck': {
         // Read-only: getStatus, never a charge.
         const p = this.pay.current;
@@ -5692,6 +5729,54 @@ export class KioskService extends EventEmitter {
       message: st.ok ? 'המסופון עונה' : (st.detail ?? 'אין תשובה'),
       pinpad: { kind: d.kind, address: d.address, tcp, status, terminal: id?.terminal ?? null, merchant: id?.merchant ?? null, serial: id?.serial ?? null, skipped: null },
     };
+  }
+
+  /** The COM port the payment terminal's link names, if any — never offered to (or probed for) the printer. */
+  private paymentComPort(): string | null {
+    return comPortIn(this.pay.describe().address);
+  }
+
+  /** "יציאות COM": every serial port, the likely printers first. */
+  private async serialPortsView(): Promise<TechnicianActionResult> {
+    if (!this.transport.serialPorts) return { ok: false, message: 'אין תמיכה ביציאות COM במכשיר זה' };
+    try {
+      const pay = this.paymentComPort();
+      const ports = (await this.transport.serialPorts()).map((p) => ({ ...p, inUse: p.path === pay ? 'בשימוש המסופון' : null }));
+      return { ok: true, message: ports.length === 0 ? 'לא נמצאו יציאות COM' : undefined, serialPorts: ports };
+    } catch (e) {
+      return { ok: false, message: String((e as Error)?.message ?? e) };
+    }
+  }
+
+  /** "זיהוי אוטומטי": the speed the printer on [comPort] answers DLE EOT at. Never on the payment terminal's port, never during a job. */
+  private async serialDetect(comPort: string, flow: 'none' | 'rtscts'): Promise<TechnicianActionResult> {
+    const t = serialTarget(comPort, null, flow);
+    if (!t) return { ok: false, message: 'יציאת COM לא תקינה' };
+    if (t.comPort === this.paymentComPort()) return { ok: false, message: `${t.comPort} בשימוש המסופון` };
+    if (!this.transport.serialDetect) return { ok: false, message: 'אין תמיכה ביציאות COM במכשיר זה' };
+    if (this.printQueue.busy) return { ok: false, message: 'הדפסה בדרך — נסו שוב בעוד רגע' };
+    try {
+      const baud = await this.transport.serialDetect(t.comPort, t.flow);
+      return baud
+        ? { ok: true, message: `המדפסת ב-${t.comPort} ענתה ב-${baud}`, baudRate: baud }
+        : { ok: false, message: `אין תשובת מדפסת ב-${t.comPort} — בחרו מהירות ידנית ונסו בדיקה` };
+    } catch (e) {
+      return { ok: false, message: String((e as Error)?.message ?? e) };
+    }
+  }
+
+  /** "בדיקה" of a COM port: the test page straight to it (the setting is not changed). */
+  private async serialTest(comPort: string, baudRate: number | undefined, flow: 'none' | 'rtscts'): Promise<TechnicianActionResult> {
+    const t = serialTarget(comPort, baudRate, flow);
+    if (!t) return { ok: false, message: 'יציאת COM לא תקינה' };
+    if (t.comPort === this.paymentComPort()) return { ok: false, message: `${t.comPort} בשימוש המסופון` };
+    try {
+      const bytes = await this.printQueue.bytesOf(slipDoc({ businessName: 'בדיקת מדפסת', pickupLabel: t.comPort, service: 'take_away', itemCount: 0, totalAgorot: 0 }));
+      await this.transport.send(t, bytes);
+      return { ok: true, message: `דף בדיקה נשלח ל-${t.comPort} (${t.baudRate})` };
+    } catch (e) {
+      return { ok: false, message: `לא הודפס: ${String((e as Error)?.message ?? e)}` };
+    }
   }
 
   /** "בדיקת רוחב" (Android PrintersScreen): frames of 384 / 432 / 512 / 576 dots — the receipt printer, or a kitchen printer on the network. */

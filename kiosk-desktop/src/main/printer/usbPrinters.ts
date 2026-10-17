@@ -17,6 +17,7 @@
  */
 
 import { guessQueue, type PrinterHealth, type PrinterTarget, type Transport } from './transports';
+import { serialLineText } from './serialPrinter';
 
 export interface QueueInfo {
   name: string;
@@ -172,6 +173,7 @@ export function usbStatusText(pick: UsbPick | null): string {
 export function targetText(r: PrinterResolution): string {
   const t = r.target;
   if (t.transport === 'tcp') return `TCP ${t.host ?? '—'}:${t.port ?? 9100}`;
+  if (t.transport === 'serial') return `סריאלי: ${serialLineText({ path: t.comPort ?? null, baudRate: t.baudRate, flow: t.flow })}`;
   if (t.transport !== 'spooler') return '—';
   if (!r.auto) return `Windows: ${t.queueName ?? '—'}`;
   if (r.via === 'usb') return `Windows: ${t.queueName} (USB · אוטומטי)`;
