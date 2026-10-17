@@ -1978,6 +1978,12 @@ from app.services.kiosk_till_mode import PARAMETER_SPECS as _KIOSK_TILL_MODE_SPE
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KIOSK_TILL_MODE_SPECS)
 
+# "שליטה מקופות" (app/services/kiosk_controllers.py, P:/specs/area-gaps.md §2): the kiosk's explicit list
+# (default), its point of sale's tills, or both.
+from app.services.kiosk_controllers import PARAMETER_SPECS as _KIOSK_CONTROLLER_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KIOSK_CONTROLLER_SPECS)
+
 # "כפיית סגירה מרחוק כברירת מחדל" (app/services/remote_close_force.py): remote control's close or Z
 # forced from the moment the manager sends it (on); off waits for rest as before.
 from app.services.remote_close_force import PARAMETER_SPECS as _REMOTE_FORCE_SPECS  # noqa: E402

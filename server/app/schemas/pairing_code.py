@@ -16,6 +16,9 @@ class PairingCodeGenerateRequest(BaseModel):
 
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    #: "נקודת מכירה" (P:/specs/area-gaps.md §1): a live area of `shopId` the device lands in. Optional;
+    #: 400 `area_not_in_shop` / 409 `area_archived` / 400 `area_requires_shop` while the dialog is open.
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     #: The hardware the new device is (`DeviceModel`). Copied onto the machine when it
     #: pairs. Optional here so an older dashboard still generates codes; the dashboard
     #: requires it.
@@ -82,6 +85,7 @@ class PairingCodeResponse(BaseModel):
     distributor_id: uuid.UUID
     company_id: Optional[uuid.UUID] = Field(None, alias="companyId")
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     pos_machine_id: Optional[uuid.UUID] = Field(None, alias="posMachineId")
     device_model: Optional[str] = Field(None, alias="deviceModel")
     device_role: Optional[str] = Field(None, alias="deviceRole")

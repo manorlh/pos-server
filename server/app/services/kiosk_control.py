@@ -9,7 +9,8 @@ The self-order kiosk: devices, status, orders, commands, controllers and setting
 * **Controllers.** Tills that may pause / resume / close / Z a kiosk from their own screen:
   same tenant and company, active, never the kiosk itself, never another kiosk — else
   422 `invalid_controller:<id>`. A till not in the list gets 403 `not_kiosk_controller`
-  (across tenants too).
+  (across tenants too). "שליטה מקופות" (app/services/kiosk_controllers.py) may add — or put
+  in its place — every till of the kiosk's point of sale.
 * **Status.** The kiosk reports on `POST /sync/{id}/kiosk/sync`; the cleaned snapshot is
   kept on the device row (replaced whole, like the heartbeat's printer block).
 * **Orders.** Upserted by (machine, localId). The snapshot is written once; afterwards only
@@ -462,6 +463,14 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
 
     z_fields = kiosk_z.summary_fields(db, devices, machines, now=now)
 
+    # "נקודת מכירה" of each kiosk (P:/specs/area-gaps.md §4) and "שליטה מקופות" (kiosk_controllers.py).
+    from app.models.shop_area import ShopArea
+    from app.services import kiosk_controllers
+
+    area_ids = {m.area_id for m in machines.values() if m.area_id is not None}
+    area_names = (
+        {a.id: a.name for a in db.query(ShopArea).filter(ShopArea.id.in_(list(area_ids))).all()} if area_ids else {}
+    )
     controller_ids = {
         _uuid(c) for d in devices for c in (d.controller_machine_ids or []) if _uuid(c) is not None
     }
@@ -497,6 +506,8 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             "posNumber": machine.pos_number,
             "shopId": str(machine.shop_id) if machine.shop_id else None,
             "shopName": shop.name if shop is not None else None,
+            "areaId": str(machine.area_id) if machine.area_id is not None else None,
+            "areaName": area_names.get(machine.area_id) if machine.area_id is not None else None,
             "companyId": str(shop.company_id) if shop is not None else (str(d.company_id) if d.company_id else None),
             "enabled": bool(d.enabled),
             "online": is_online(machine.last_heartbeat_at, now=now),
@@ -543,6 +554,7 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             "controllers": [
                 {"machineId": c, "name": controller_names.get(_uuid(c))} for c in controllers
             ],
+            **kiosk_controllers.summary_fields(db, machine, d, controller_names),
             **z_fields.get(d.machine_id, {}),
         })
     return out
@@ -559,12 +571,17 @@ def summary(db: Session, device: KioskDevice, *, now: Optional[datetime] = None)
 
 
 def list_kiosks(
-    db: Session, user: User, tenant_id, *, company_id=None, shop_id=None, now: Optional[datetime] = None
+    db: Session, user: User, tenant_id, *, company_id=None, shop_id=None, area_filter=None, now: Optional[datetime] = None
 ) -> List[Dict[str, Any]]:
     require_kiosk_role(user)
     machine_ids = _scoped_machine_query(db, user, tenant_id).with_entities(POSMachine.id)
     if shop_id is not None:
         machine_ids = machine_ids.filter(POSMachine.shop_id == shop_id)
+    # "נקודת מכירה" (P:/specs/area-gaps.md §4): `areaId=<id|none>`, parsed by `areas.parse_area_filter`.
+    if area_filter is not None:
+        from app.services.areas import filter_on_column
+
+        machine_ids = filter_on_column(machine_ids, POSMachine.area_id, area_filter)
     if company_id is not None:
         machine_ids = machine_ids.filter(POSMachine.shop_id.in_(db.query(Shop.id).filter(Shop.company_id == company_id)))
     devices = (
@@ -710,7 +727,11 @@ def controlled_devices(db: Session, till: POSMachine) -> List[KioskDevice]:
         .order_by(KioskDevice.name, KioskDevice.machine_id)
         .all()
     )
-    mine = [d for d in devices if str(till.id) in {str(c) for c in (d.controller_machine_ids or [])}]
+    # "שליטה מקופות" (app/services/kiosk_controllers.py): the explicit list, the kiosk's point of sale, or both.
+    from app.services import kiosk_controllers
+
+    allowed = kiosk_controllers.controlled_ids(db, till, devices)
+    mine = [d for d in devices if str(d.machine_id) in allowed]
     # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a till locked to its point of
     # sale controls that area's kiosks and the shop's area-less ones, never another area's.
     from app.services import area_lock
@@ -1128,14 +1149,16 @@ def controller_target(db: Session, till: POSMachine, kiosk_machine_id: Any) -> T
     device = get_device(db, kiosk_machine_id)
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=KIOSK_NOT_FOUND)
-    allowed = {str(c) for c in (device.controller_machine_ids or [])}
+    # "שליטה מקופות" (app/services/kiosk_controllers.py): the explicit list, the kiosk's point of sale, or both.
+    from app.services import kiosk_controllers
+
+    kiosk_machine = db.get(POSMachine, device.machine_id)
     if (
         till.tenant_id is None
         or str(device.tenant_id) != str(till.tenant_id)
-        or str(till.id) not in allowed
+        or not kiosk_controllers.is_controller(db, till, device, kiosk_machine)
     ):
         raise _forbidden(NOT_KIOSK_CONTROLLER)
-    kiosk_machine = db.get(POSMachine, device.machine_id)
     if kiosk_machine is None or not kiosk_machine.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=KIOSK_NOT_FOUND)
     # Another point of sale's kiosk, while this till is locked to its own (403 `area_locked`).
@@ -1413,6 +1436,39 @@ def run_command(
             db.rollback()
         return CommandResult(audit("refused", detail=str(refused.body.get("detail"))), refused)
     return CommandResult(audit("requested", request_id=req.id, detail=None if created else "already_pending"))
+
+
+def audit_refusal(
+    db: Session,
+    *,
+    kiosk_machine: POSMachine,
+    action: str,
+    source: str,
+    detail: str,
+    requested_by_machine_id=None,
+    requested_by_user_id=None,
+    requested_by_name: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> KioskCommand:
+    """A command refused before `run_command` (a till's missing permission): audited as "refused". The caller commits."""
+    row = KioskCommand(
+        id=uuid.uuid4(),
+        tenant_id=kiosk_machine.tenant_id,
+        kiosk_machine_id=kiosk_machine.id,
+        action=action,
+        message=None,
+        force=False,
+        source=source,
+        requested_by_user_id=requested_by_user_id,
+        requested_by_machine_id=requested_by_machine_id,
+        requested_by_name=(requested_by_name or None) and requested_by_name[:200],
+        status="refused",
+        detail=(detail or None) and detail[:500],
+        created_at=_now(now),
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def command_out(row: KioskCommand) -> Dict[str, Any]:
