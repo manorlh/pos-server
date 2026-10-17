@@ -313,7 +313,7 @@ function webBridge(): KioskBridge {
         network: { online: true, lastBeatOkAt: Date.now() - 20_000, serverUrl: 'https://api.example.invalid', interfaces: [{ name: 'Ethernet', address: '192.168.1.57' }, { name: 'Wi-Fi', address: '10.0.0.12' }] },
         printer: admin.printer,
         terminal: admin.terminal,
-        update: { current: '0.5.9', available: '0.5.10', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
+        update: { current: '0.5.10', available: '0.5.11', status: 'downloaded', message: null, progress: null, lastCheckAt: Date.now() - 600_000, autoInstall: true, installWindow: { start: '03:00', end: '05:00' } },
         quickSupport: null,
         // The rest of the screen (technician/technicianDemo.ts): made-up facts.
         setup: demoTechnicianSetup(),
