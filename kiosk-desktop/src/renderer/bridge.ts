@@ -9,6 +9,7 @@ import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type Pa
 import type { CashPayView, KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
 import { CARD_FALLBACK_TEXT, withTillFallback } from '../core/noTerminalFallback';
+import { demoBridge, demoCardDelayMs, demoWorkMode, isCardOutcome, DEMO_TEXT, type DemoCardOutcome } from '../core/demoMode';
 
 /** The demo's tips: on, with "סכום אחר" (the demo config's checkout asks both). */
 const DEMO_TIPS = { tipEnabled: true, tipOther: true } as const;
@@ -255,6 +256,17 @@ function demoCashView(stage: string, dueAgorot: number): CashPayView {
   };
 }
 
+/**
+ * What the demo's card terminal answers: the installed app's ribbon (core/demoMode.ts, preload/demo.ts), else `&card=
+ * approve|decline|timeout` in the web demo — approved by default. Never a real terminal.
+ */
+function demoCardOutcome(): DemoCardOutcome {
+  const fromRibbon = demoBridge()?.cardOutcome();
+  if (isCardOutcome(fromRibbon)) return fromRibbon;
+  const q = new URLSearchParams(window.location.search).get('card');
+  return isCardOutcome(q) ? q : 'approve';
+}
+
 function webBridge(): KioskBridge {
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const fire = <K extends keyof KioskEvents>(k: K, p: KioskEvents[K]) => listeners.get(k)?.forEach((fn) => fn(p));
@@ -288,7 +300,13 @@ function webBridge(): KioskBridge {
         return { ok: true, orderId, amountAgorot: amount };
       }
       setTimeout(() => fire('pay', { ...base, phase: 'charging' }), 400);
-      setTimeout(() => fire('pay', { ...base, phase: 'approved', canCancel: false, pickupLabel: String(order), documentNumber: `9000000${order}`, receipt: 'ask' }), 2500);
+      // The simulated terminal: approved, declined, or no answer in time (the ribbon's choice).
+      const outcome = demoCardOutcome();
+      const done: PayProgress =
+        outcome === 'approve'
+          ? { ...base, phase: 'approved', canCancel: false, pickupLabel: String(order), documentNumber: `9000000${order}`, receipt: 'ask' }
+          : { ...base, phase: 'declined', canCancel: false, message: outcome === 'decline' ? DEMO_TEXT.declined : DEMO_TEXT.timedOut };
+      setTimeout(() => fire('pay', done), 400 + demoCardDelayMs(outcome));
       return { ok: true, orderId, amountAgorot: amount };
     },
     // "מזומן בקופה" in the demo: a number and the code, nothing sent anywhere.
@@ -310,9 +328,21 @@ function webBridge(): KioskBridge {
     helpRequest: async () => undefined,
     adminUnlock: async (pin) => (pin === '1234' ? { ok: true, name: 'מנהל הדגמה' } : { ok: false, error: 'קוד שגוי' }),
     // "ניהול הקיוסק" with demo data (staff/historyDemo.ts): the history and its reprints, another manager's code 1234.
-    adminInfo: async () => demoAdminInfo(),
+    // In the installed app's demo, "מצב עבודה" is a combined licence's: kiosk ↔ till (core/demoMode.ts).
+    adminInfo: async () => {
+      const info = await demoAdminInfo();
+      const demo = demoBridge();
+      return demo ? { ...info, workMode: demoWorkMode(new URLSearchParams(window.location.search).get('role') === 'till' ? 'till' : 'kiosk') } : info;
+    },
     adminHistory: async (input) => demoHistory(input),
-    adminAction: async (a) => demoAdminAction(a),
+    adminAction: async (a) => {
+      const demo = demoBridge();
+      if (demo && a.type === 'workMode') {
+        demo.switchTo(a.mode);
+        return { ok: true };
+      }
+      return demoAdminAction(a);
+    },
     technicianUnlock: async (code) => (code === '1995' ? { outcome: 'granted', triesLeft: 0, lockedForMs: 0 } : { outcome: 'wrong', triesLeft: 4, lockedForMs: 0 }),
     // The technician's screen with demo data (the printer and the terminal of the manager's demo).
     technicianInfo: async () => {

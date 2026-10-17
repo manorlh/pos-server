@@ -6,14 +6,23 @@
  * a `TillHost` without hardware (§3.1, the risk of v1 §7.6).
  */
 
-import { MockTillEngine } from '../../../shared/till/mockEngine';
-import type { EngineEndpoint, HwRequest } from '../../../shared/till/protocol';
+import { MockTillEngine, type MockEngineOptions } from '../../../shared/till/mockEngine';
+import type { DeviceRoleName, EngineEndpoint, HwRequest } from '../../../shared/till/protocol';
 import { browserCaps, type BrowserEnv } from '../caps';
 import { endpointLink, wsEngineLink, type WsLike } from '../engineLink';
 import { composePorts, DemoPrinterPort, executeHw, type ByteChannel, type HardwarePort } from '../HardwarePort';
 import type { BundleInfo, DeviceInfo, EngineLink, HostRole, TillHost } from '../TillHost';
 
-export type BrowserEngine = { kind: 'demo'; terminal?: boolean } | { kind: 'endpoint'; endpoint: EngineEndpoint } | { kind: 'ws'; url: string; connect(url: string): WsLike };
+export type BrowserEngine =
+  | {
+      kind: 'demo';
+      terminal?: boolean;
+      /** The installed app's demo (core/demoMode.ts): a combined licence's roles, the ribbon's card answer, the switch. */
+      rolesAllowed?: DeviceRoleName[];
+      cardOutcome?: MockEngineOptions['cardOutcome'];
+      onModeSwitch?: MockEngineOptions['onModeSwitch'];
+    }
+  | { kind: 'endpoint'; endpoint: EngineEndpoint } | { kind: 'ws'; url: string; connect(url: string): WsLike };
 
 export interface BrowserHostOptions {
   engine: BrowserEngine;
@@ -31,6 +40,9 @@ export interface BrowserHostOptions {
   /** The PWA's update gate listens here (client/src/lib/appPwa.ts): never mid-sale. */
   onIdleReport?(idle: boolean, busy: boolean): void;
   onReady?(): void;
+  /** The till's corner and six taps, where the page has a manager menu to open (the installed app's demo). */
+  openAdmin?(): void;
+  openTechnician?(): void;
 }
 
 export interface BrowserTillHost extends TillHost {
@@ -48,7 +60,7 @@ interface WakeLockLike {
 export function createBrowserHost(o: BrowserHostOptions): BrowserTillHost {
   const demo = o.engine.kind === 'demo';
   const demoPrinter = demo ? new DemoPrinterPort() : null;
-  const demoEngine = o.engine.kind === 'demo' ? new MockTillEngine({ terminal: o.engine.terminal === true, printerTarget: 'demo://printer', drawerTarget: 'demo://printer' }) : null;
+  const demoEngine = o.engine.kind === 'demo' ? new MockTillEngine({ terminal: o.engine.terminal === true, printerTarget: 'demo://printer', drawerTarget: 'demo://printer', rolesAllowed: o.engine.rolesAllowed, cardOutcome: o.engine.cardOutcome, onModeSwitch: o.engine.onModeSwitch }) : null;
   let link: EngineLink;
   let closeLink: () => void = () => undefined;
   const e = o.engine;
@@ -128,6 +140,8 @@ export function createBrowserHost(o: BrowserHostOptions): BrowserTillHost {
         const so = typeof screen !== 'undefined' ? (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }) : undefined;
         if (orientation !== 'any' && so?.lock) void so.lock(orientation).catch(() => undefined);
       },
+      ...(o.openAdmin ? { openAdmin: () => o.openAdmin!() } : {}),
+      ...(o.openTechnician ? { openTechnician: () => o.openTechnician!() } : {}),
     },
     dispose: () => {
       offHw();

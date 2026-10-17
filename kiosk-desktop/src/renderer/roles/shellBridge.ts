@@ -12,6 +12,7 @@ import type { AppRole, ShellBridge, ShellEvents, ShellView } from '../../shared/
 import { boardDemo } from '@dash-lib/kdsScreenDemo';
 import { kdsDemo } from './kds/kdsDemo';
 import { decideExit, displayName, NO_LOCK, type ExitLock, type RosterUser } from '../../core/desktopExit';
+import { demoBridge } from '../../core/demoMode';
 
 function demoRole(): AppRole {
   const r = new URLSearchParams(window.location.search).get('role') ?? '';
@@ -44,7 +45,11 @@ function webShell(): ShellBridge {
     { id: 'demo-mgr', username: 'manager', firstName: 'מנהלת', lastName: 'הדגמה', pinHash: '$2b$demo$1234', role: 'shop_manager', isActive: true, permissions: { DESKTOP_EXIT: 'allow' } },
     { id: 'demo-cash', username: 'cashier', firstName: 'קופאי', lastName: 'הדגמה', pinHash: '$2b$demo$5678', role: 'cashier', isActive: true, permissions: { DESKTOP_EXIT: 'deny' } },
   ];
+  // The installed app's "מצב הדגמה" (core/demoMode.ts): the till's corner opens this window's manager menu.
+  const demo = demoBridge();
+  demo?.onAdmin((p) => fire('admin', p));
   return {
+    ...(demo ? { adminClosed: () => demo.adminClosed() } : {}),
     view: async () => view,
     board: async () => board.view(),
     kds: async () => kds.view(),

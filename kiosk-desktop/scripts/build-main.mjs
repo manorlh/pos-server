@@ -66,10 +66,14 @@ if (cashSim) {
   await build({ ...common, entryPoints: [path.join(root, 'src/legacy/main.ts')], outfile: path.join(out, 'dist/main/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/index.ts')], outfile: path.join(out, 'dist/preload/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/app.ts')], outfile: path.join(out, 'dist/preload/app.js') });
+  // "מצב הדגמה" (main/demo/demoShell.ts): `window.r2mDemo` only.
+  await build({ ...common, entryPoints: [path.join(root, 'src/preload/demo.ts')], outfile: path.join(out, 'dist/preload/demo.js') });
 } else {
   await build({ ...common, entryPoints: [path.join(root, 'src/main/index.ts')], outfile: path.join(root, 'dist/main/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/index.ts')], outfile: path.join(root, 'dist/preload/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/main/cash/paylinkWorker.ts')], outfile: path.join(root, 'dist/main/paylinkWorker.js') });
   // The till role's view (main/roles/tillElectron.ts): `window.r2mApp` only.
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/app.ts')], outfile: path.join(root, 'dist/preload/app.js') });
+  // "מצב הדגמה" (main/demo/demoShell.ts): `window.r2mDemo` only.
+  await build({ ...common, entryPoints: [path.join(root, 'src/preload/demo.ts')], outfile: path.join(root, 'dist/preload/demo.js') });
 }

@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { DEMO_TEXT } from '../../core/demoMode';
 import { lastPairingLine, PAIRING_TEXT, showDeviceCode } from '../../core/pairingMemory';
 import type { PairingScreenView } from '../../shared/bridge';
 import { kiosk } from '../bridge';
@@ -165,6 +166,30 @@ export function Pairing() {
                 הקיוסק / המסך רץ בדפדפן? הפעלה כגשר לדפדפן
               </button>
             )}
+          </div>
+        ) : null}
+        {shell.startDemo ? (
+          // "מצב הדגמה — קופה / קיוסק" (core/demoMode.ts): a restart into the demo — its own data, no cloud, no charge.
+          <div className="space-y-2 border-t border-neutral-200 pt-3 text-center" data-demo-start>
+            <div className="text-sm font-bold">{DEMO_TEXT.start}</div>
+            <p className="text-xs text-neutral-500">{DEMO_TEXT.startHint}</p>
+            <div className="flex justify-center gap-2">
+              {(['till', 'kiosk'] as const).map((role) => (
+                <button
+                  key={role}
+                  type="button"
+                  disabled={busy}
+                  className="rounded-full bg-amber-500 px-5 py-2 text-sm font-bold text-white disabled:opacity-50"
+                  onClick={async () => {
+                    const r = await shell.startDemo!(role).catch((e: unknown) => ({ ok: false, message: String(e) }));
+                    if (!r.ok) setError(r.message ?? 'לא ניתן');
+                  }}
+                >
+                  {DEMO_TEXT.start} — {role === 'till' ? DEMO_TEXT.till : DEMO_TEXT.kiosk}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-neutral-400">{DEMO_TEXT.exitHint}</p>
           </div>
         ) : null}
       </div>
