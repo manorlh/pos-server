@@ -1092,6 +1092,12 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         {s.alerts && !s.session.locked && view === 'sell' && s.checkout.phase === 'idle' && s.alerts.line ? (
           <AlertsLine view={s.alerts} onOpen={(s.menuHidden ?? []).includes('alerts') ? undefined : () => setView('alerts')} onSeenAll={() => act('alerts.seenAll')} />
         ) : null}
+        {s.health.paperBanner ? (
+          // "אין נייר במדפסת הקבלות" (core/printerPaper.ts): shown until the roll is changed — locked screen too.
+          <div className="t-banner" role="alert">
+            {s.health.paperBanner}
+          </div>
+        ) : null}
         {s.printQueue?.banner && !s.session.locked && view !== 'printQueue' ? (
           // "בון לא הודפס במדפסת מטבח" (KitchenPrintBanner): never quieted; a tap opens the queue.
           <button type="button" className="t-banner t-banner-button" role="alert" onClick={() => setView('printQueue')}>

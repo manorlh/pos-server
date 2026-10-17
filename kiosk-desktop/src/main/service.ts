@@ -5,6 +5,7 @@
  * screens (shared/bridge.ts) from local data only.
  */
 
+import { cloudPrinterOf, PROBE_EVERY_MS } from '../core/printerPaper';
 import { createHash, pbkdf2Sync, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -382,6 +383,8 @@ export class KioskService extends EventEmitter {
   /** "העבר מכשיר לקופה אחרת" (§6.3): the dashboard's `move_pairing` command, polled every minute (not on a cash host). */
   readonly moveCommands: DeviceCommands;
   private lastCommandPoll = 0;
+  /** When the receipt printer was last asked how it is (tick30). */
+  private lastPrinterProbe = 0;
   readonly ledger: Ledger;
   readonly media: MediaStore;
   readonly pay: PayService;
@@ -1320,6 +1323,8 @@ export class KioskService extends EventEmitter {
         const lastNumber = Math.max(lastLocal ?? 0, beat.lastTillZNumber ?? 0);
         const failure = this.printQueue.lastFailure;
         const health = this.printQueue.health();
+        const cloud = cloudPrinterOf(health);
+        const probed = this.printQueue.probed;
         return {
           ...(this.opts.deviceInfo.serial ? { serialNumber: this.opts.deviceInfo.serial } : {}),
           // "עקיפת בדיקת מספר מסוף" as this kiosk applies it (core/terminalCheckBypass.ts).
@@ -1331,9 +1336,16 @@ export class KioskService extends EventEmitter {
             : {}),
           ...(this.fiscalRole ? { offlineTillZ: { pending: 0, conflict: false, lastNumber, epoch: beat.tillZEpoch } } : {}),
           ...Object.fromEntries([...this.heartbeatParts].map(([key, part]) => [key, part()])),
+          // The cloud's words (core/printerPaper.ts) — "אין נייר במדפסת" reaches the manager (status_watch.py).
           printer: {
-            status: health === 'no_paper' ? 'no_paper' : health === 'ok' ? 'ok' : health === 'unknown' ? 'unknown' : health === 'unavailable' ? 'unavailable' : 'error',
-            ...(failure ? { message: failure.error, at: new Date(failure.at).toISOString() } : {}),
+            status: cloud.status,
+            ...(probed && (!failure || probed.at > failure.at)
+              ? { ...(cloud.message ? { message: cloud.message } : {}), at: new Date(probed.at).toISOString() }
+              : failure
+                ? { message: failure.error, at: new Date(failure.at).toISOString() }
+                : cloud.message
+                  ? { message: cloud.message }
+                  : {}),
             ...(this.printQueue.lastOkAt ? { lastPrintOkAt: new Date(this.printQueue.lastOkAt).toISOString() } : {}),
           },
         };
@@ -3940,6 +3952,11 @@ export class KioskService extends EventEmitter {
 
   private async tick30() {
     if (!this.paired) return;
+    // The receipt printer asked how it is, idle, once a minute (core/printerPaper.ts): paper out is known at once.
+    if (Date.now() - this.lastPrinterProbe >= PROBE_EVERY_MS) {
+      this.lastPrinterProbe = Date.now();
+      void this.printQueue.probe();
+    }
     if (Date.now() - this.lastCommandPoll >= 60_000) {
       this.lastCommandPoll = Date.now();
       void this.moveCommands.poll();
